@@ -26,7 +26,7 @@ use base_prover_service_protocol::{
     DeleteProofRequest, GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
     PROOF_REQUEST_NOT_FOUND_MESSAGE, ProofRequestIdCollisionMessage,
     ProofRequestKind as ApiProofRequestKind, ProofResult as ApiProofResult, ProofStatus,
-    ProveBlockRangeRequest, ProveBlockRangeResponse, TeeKind, TeeProofResult,
+    ProveBlockRangeRequest, ProveBlockRangeResponse, TeeProofResult,
 };
 use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorObjectOwned};
 
@@ -337,6 +337,12 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     async fn read_intermediate_block_interval(&self, _: Address) -> Result<u64, ContractError> {
         Ok(512)
     }
+    async fn read_tee_nitro_image_hash(&self, _: Address) -> Result<B256, ContractError> {
+        Ok(B256::repeat_byte(0x05))
+    }
+    async fn read_tee_tdx_image_hash(&self, _: Address) -> Result<B256, ContractError> {
+        Ok(B256::repeat_byte(0x06))
+    }
     async fn intermediate_output_roots(&self, addr: Address) -> Result<Vec<B256>, ContractError> {
         if let Some(roots) = self.intermediate_roots_map.get(&addr) {
             return Ok(roots.clone());
@@ -472,6 +478,21 @@ pub fn test_proposal(block_number: u64) -> Proposal {
     }
 }
 
+/// Creates a dual-platform test TEE proof pair for the given L2 block number.
+pub fn test_tee_proof_pair(block_number: u64) -> crate::TeeProofPair {
+    let aggregate_proposal = test_proposal(block_number);
+    let proposals = (1..=block_number).map(test_proposal).collect::<Vec<_>>();
+    crate::TeeProofPair::new(
+        crate::TeeProof {
+            image_hash: B256::repeat_byte(0x05),
+            aggregate_proposal: aggregate_proposal.clone(),
+            proposals: proposals.clone(),
+        },
+        crate::TeeProof { image_hash: B256::repeat_byte(0x06), aggregate_proposal, proposals },
+    )
+    .unwrap()
+}
+
 /// Mock prover-service requester for pipeline tests.
 #[derive(Debug, Default)]
 pub struct MockProofRequester {
@@ -570,7 +591,7 @@ impl ProofRequesterProvider for MockProofRequester {
             result: Some(ApiProofResult::Tee(TeeProofResult {
                 aggregate_proposal,
                 proposals,
-                tee_kind: TeeKind::AwsNitro,
+                tee_kind: tee_request.tee_kind,
             })),
         })
     }
@@ -620,7 +641,7 @@ impl MockOutputProposer {
 impl OutputProposer for MockOutputProposer {
     async fn propose_output(
         &self,
-        _proposal: &Proposal,
+        _proof: &crate::TeeProofPair,
         _parent_address: Address,
         _intermediate_roots: &[B256],
     ) -> Result<(), ProposerError> {
@@ -634,7 +655,7 @@ impl OutputProposer for MockOutputProposer {
     async fn verify_proposal_proof(
         &self,
         game_address: Address,
-        _proposal: &Proposal,
+        _proof: &crate::TeeProofPair,
     ) -> Result<(), ProposerError> {
         self.verified.lock().unwrap().push(game_address);
         if let Some(error) = self.verify_error.lock().unwrap().take() {

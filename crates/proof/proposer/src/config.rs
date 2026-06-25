@@ -2,9 +2,8 @@
 
 use std::{net::SocketAddr, time::Duration};
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::Address;
 use base_cli_utils::{LogConfig, MetricsConfig};
-use base_prover_service_protocol::TeeKind;
 use base_retry::RetryConfig;
 use eyre::{Result, WrapErr};
 use url::Url;
@@ -32,10 +31,6 @@ pub struct ProposerConfig {
     pub dispute_game_factory_addr: Address,
     /// Game type ID for `AggregateVerifier` dispute games.
     pub game_type: u32,
-    /// Keccak256 hash of the TEE image PCR0.
-    pub tee_image_hash: B256,
-    /// TEE implementation to request from prover-service.
-    pub tee_kind: TeeKind,
     /// Polling interval for new blocks.
     pub poll_interval: Duration,
     /// RPC request timeout.
@@ -131,8 +126,6 @@ impl ProposerConfig {
             anchor_state_registry_addr: proposer.anchor_state_registry_addr,
             dispute_game_factory_addr: proposer.dispute_game_factory_addr,
             game_type: proposer.game_type,
-            tee_image_hash: proposer.tee_image_hash,
-            tee_kind: proposer.tee_kind,
             poll_interval: proposer.poll_interval,
             rpc_timeout: proposer.rpc_timeout,
             rollup_rpc: proposer.rollup_rpc,
@@ -179,8 +172,6 @@ mod tests {
             "0x2234567890123456789012345678901234567890",
             "--game-type",
             "1",
-            "--tee-image-hash",
-            "0x0000000000000000000000000000000000000000000000000000000000000001",
             "--rollup-rpc",
             "http://localhost:7545",
             "--private-key",
@@ -208,7 +199,6 @@ mod tests {
         assert!(!config.dry_run);
         assert!(config.allow_non_finalized);
         assert_eq!(config.game_type, 1);
-        assert_eq!(config.tee_kind, TeeKind::AwsNitro);
         assert_eq!(config.retry.max_attempts, Some(7));
         assert_eq!(config.recovery_scan_concurrency, 4);
         assert_eq!(config.admin_addr.unwrap().port(), 8545);

@@ -7,12 +7,11 @@
 use alloy_primitives::{Address, B256, U256};
 use async_trait::async_trait;
 use base_proof_contracts::{encode_create_calldata, encode_extra_data};
-use base_proof_primitives::{ProofEncoder, Proposal};
 use base_proof_submission::{AggregateProofSubmitter, ProofSubmissionError};
 use base_tx_manager::{TxCandidate, TxManager};
 use tracing::info;
 
-use crate::error::ProposerError;
+use crate::{TeeProofPair, error::ProposerError};
 
 /// Trait for submitting output proposals to L1 via dispute game creation.
 #[async_trait]
@@ -20,7 +19,7 @@ pub trait OutputProposer: Send + Sync {
     /// Creates a new dispute game for the given proposal.
     async fn propose_output(
         &self,
-        proposal: &Proposal,
+        proof: &TeeProofPair,
         parent_address: Address,
         intermediate_roots: &[B256],
     ) -> Result<(), ProposerError>;
@@ -29,7 +28,7 @@ pub trait OutputProposer: Send + Sync {
     async fn verify_proposal_proof(
         &self,
         game_address: Address,
-        proposal: &Proposal,
+        proof: &TeeProofPair,
     ) -> Result<(), ProposerError>;
 }
 
@@ -41,10 +40,11 @@ pub struct DryRunProposer;
 impl OutputProposer for DryRunProposer {
     async fn propose_output(
         &self,
-        proposal: &Proposal,
+        proof: &TeeProofPair,
         parent_address: Address,
         intermediate_roots: &[B256],
     ) -> Result<(), ProposerError> {
+        let proposal = proof.aggregate_proposal();
         info!(
             l2_block_number = proposal.l2_block_number,
             parent_address = %parent_address,
@@ -58,8 +58,9 @@ impl OutputProposer for DryRunProposer {
     async fn verify_proposal_proof(
         &self,
         game_address: Address,
-        proposal: &Proposal,
+        proof: &TeeProofPair,
     ) -> Result<(), ProposerError> {
+        let proposal = proof.aggregate_proposal();
         info!(
             game_address = %game_address,
             l2_block_number = proposal.l2_block_number,
@@ -95,13 +96,13 @@ impl<T> ProposalSubmitter<T> {
 impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
     async fn propose_output(
         &self,
-        proposal: &Proposal,
+        proof: &TeeProofPair,
         parent_address: Address,
         intermediate_roots: &[B256],
     ) -> Result<(), ProposerError> {
+        let proposal = proof.aggregate_proposal();
         let l2_block_number = proposal.l2_block_number;
-        let proof_data =
-            proposal.build_proof_data().map_err(|e| ProposerError::Internal(e.to_string()))?;
+        let proof_data = proof.build_proof_data()?;
         let extra_data = encode_extra_data(l2_block_number, parent_address, intermediate_roots);
         let calldata =
             encode_create_calldata(self.game_type, proposal.output_root, extra_data, proof_data);
@@ -140,11 +141,11 @@ impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
     async fn verify_proposal_proof(
         &self,
         game_address: Address,
-        proposal: &Proposal,
+        proof: &TeeProofPair,
     ) -> Result<(), ProposerError> {
+        let proposal = proof.aggregate_proposal();
         let l2_block_number = proposal.l2_block_number;
-        let proof_bytes = ProofEncoder::encode_dispute_proof_bytes(&proposal.signature)
-            .map_err(|e| ProposerError::Internal(e.to_string()))?;
+        let proof_bytes = proof.build_dispute_proof_bytes()?;
 
         info!(
             l2_block_number,
@@ -176,7 +177,7 @@ mod tests {
     use base_tx_manager::{SendHandle, SendResponse, TxManagerError};
 
     use super::*;
-    use crate::test_utils::test_proposal;
+    use crate::test_utils::test_tee_proof_pair;
 
     fn receipt_with_status(success: bool) -> TransactionReceipt {
         let inner = ReceiptEnvelope::Legacy(ReceiptWithBloom {
@@ -234,16 +235,20 @@ mod tests {
     #[tokio::test]
     async fn propose_output_reverted() {
         let submitter = test_submitter(Ok(receipt_with_status(false)));
-        let err =
-            submitter.propose_output(&test_proposal(200), Address::ZERO, &[]).await.unwrap_err();
+        let err = submitter
+            .propose_output(&test_tee_proof_pair(200), Address::ZERO, &[])
+            .await
+            .unwrap_err();
         assert!(matches!(err, ProposerError::Submission(ProofSubmissionError::TxReverted(_))));
     }
 
     #[tokio::test]
     async fn propose_output_tx_manager_error() {
         let submitter = test_submitter(Err(TxManagerError::NonceTooLow));
-        let err =
-            submitter.propose_output(&test_proposal(200), Address::ZERO, &[]).await.unwrap_err();
+        let err = submitter
+            .propose_output(&test_tee_proof_pair(200), Address::ZERO, &[])
+            .await
+            .unwrap_err();
         assert!(
             matches!(
                 err,

@@ -17,7 +17,10 @@ use crate::{
     error::ProposerError,
     proof_adapter::ProposerProofAdapter,
     proof_target::ProofTarget,
+    tee_proof::TeeImageHashes,
 };
+
+const TEE_KINDS: [TeeKind; 2] = [TeeKind::AwsNitro, TeeKind::IntelTdx];
 
 /// Static parameters needed to build and dispatch proposer proof requests.
 #[derive(Debug, Clone, Copy)]
@@ -30,10 +33,8 @@ pub struct ProofDispatcherConfig {
     pub proposer_address: Address,
     /// Number of L2 blocks between intermediate output root checkpoints.
     pub intermediate_block_interval: u64,
-    /// Expected TEE enclave image hash.
-    pub tee_image_hash: B256,
-    /// TEE implementation to request from prover-service.
-    pub tee_kind: TeeKind,
+    /// Expected TEE enclave image hashes.
+    pub tee_image_hashes: TeeImageHashes,
 }
 
 impl From<&DriverConfig> for ProofDispatcherConfig {
@@ -43,8 +44,7 @@ impl From<&DriverConfig> for ProofDispatcherConfig {
             block_interval: config.block_interval,
             proposer_address: config.proposer_address,
             intermediate_block_interval: config.intermediate_block_interval,
-            tee_image_hash: config.tee_image_hash,
-            tee_kind: config.tee_kind,
+            tee_image_hashes: config.tee_image_hashes,
         }
     }
 }
@@ -124,7 +124,7 @@ impl ProofDispatcher {
             proposer: self.config.proposer_address,
             intermediate_block_interval: self.config.intermediate_block_interval,
             l1_head_number: l1_header.number,
-            image_hash: self.config.tee_image_hash,
+            image_hash: B256::ZERO,
         })
     }
 
@@ -160,9 +160,13 @@ impl ProofDispatcher {
         Ok((l1_head_source, l1_head))
     }
 
-    async fn dispatch_request(&self, request: ProofRequest) -> Result<String, ProposerError> {
-        let request =
-            ProposerProofAdapter::tee_prove_block_range_request(request, self.config.tee_kind);
+    async fn dispatch_request(
+        &self,
+        mut request: ProofRequest,
+        tee_kind: TeeKind,
+    ) -> Result<String, ProposerError> {
+        request.image_hash = self.config.tee_image_hashes.for_kind(tee_kind);
+        let request = ProposerProofAdapter::tee_prove_block_range_request(request, tee_kind);
         let session_id = request.proof.session_id.clone();
         match self.proof_requester.prove_block_range(request).await {
             Ok(response) if response.session_id == session_id => Ok(response.session_id),
@@ -220,29 +224,46 @@ impl ProofDispatcher {
                     }
                 };
 
-            match self.dispatch_request(request).await {
-                Ok(session_id) => {
-                    Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_ACCEPTED).increment(1);
-                    info!(
-                        target_block,
-                        session_id = %session_id,
-                        from_block = current.l2_block_number,
-                        "Proof request accepted by prover service"
-                    );
-                    current.l2_block_number = target_block;
-                    current.output_root = claimed_l2_output_root;
-                }
-                Err(error) => {
-                    Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_FAILED).increment(1);
-                    Metrics::errors_total(error.metric_label()).increment(1);
+            let mut accepted = true;
+            for tee_kind in TEE_KINDS {
+                match self.dispatch_request(request.clone(), tee_kind).await {
+                    Ok(session_id) => {
+                        info!(
+                            target_block,
+                            session_id = %session_id,
+                            tee_kind = ?tee_kind,
+                            from_block = current.l2_block_number,
+                            "Proof request accepted by prover service"
+                        );
+                    }
+                    Err(error) => {
+                        Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_FAILED)
+                            .increment(1);
+                        Metrics::errors_total(error.metric_label()).increment(1);
 
-                    warn!(
-                        target_block,
-                        error = %error,
-                        "Proof dispatch failed, stopping tick at current cursor"
-                    );
-                    break;
+                        warn!(
+                            target_block,
+                            tee_kind = ?tee_kind,
+                            error = %error,
+                            "Proof dispatch failed, stopping tick at current cursor"
+                        );
+                        accepted = false;
+                        break;
+                    }
                 }
+            }
+
+            if accepted {
+                Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_ACCEPTED).increment(1);
+                info!(
+                    target_block,
+                    from_block = current.l2_block_number,
+                    "TEE proof requests accepted by prover service"
+                );
+                current.l2_block_number = target_block;
+                current.output_root = claimed_l2_output_root;
+            } else {
+                break;
             }
         }
     }
@@ -357,8 +378,10 @@ mod tests {
                 block_interval: 100,
                 proposer_address: Address::repeat_byte(0x04),
                 intermediate_block_interval: 300,
-                tee_image_hash: B256::repeat_byte(0x05),
-                tee_kind: TeeKind::AwsNitro,
+                tee_image_hashes: TeeImageHashes {
+                    nitro: B256::repeat_byte(0x05),
+                    tdx: B256::repeat_byte(0x06),
+                },
             },
         );
         let recovered = RecoveredState {
@@ -383,7 +406,10 @@ mod tests {
 
         let request =
             ProofRequest { claimed_l2_output_root: B256::repeat_byte(0xaa), ..Default::default() };
-        let error = dispatcher.dispatch_request(request).await.expect_err("dispatch should fail");
+        let error = dispatcher
+            .dispatch_request(request, TeeKind::AwsNitro)
+            .await
+            .expect_err("dispatch should fail");
 
         let ProposerError::Prover(message) = error else {
             panic!("expected mismatched session id to fail dispatch")
@@ -399,7 +425,10 @@ mod tests {
 
         let request =
             ProofRequest { claimed_l2_output_root: B256::repeat_byte(0xaa), ..Default::default() };
-        dispatcher.dispatch_request(request).await.expect("dispatch should accept");
+        dispatcher
+            .dispatch_request(request, TeeKind::AwsNitro)
+            .await
+            .expect("dispatch should accept");
     }
 
     #[tokio::test]
@@ -414,7 +443,7 @@ mod tests {
 
         dispatcher.tick(&mut current, 400).await;
 
-        assert_eq!(requester.requests.lock().unwrap().len(), 3);
+        assert_eq!(requester.requests.lock().unwrap().len(), 6);
         assert_eq!(current.l2_block_number, 400);
     }
 }

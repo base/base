@@ -2,8 +2,7 @@
 
 use std::{sync::Arc, time::Duration};
 
-use alloy_primitives::Address;
-use base_proof_primitives::Proposal;
+use alloy_primitives::{Address, B256};
 use base_proof_rpc::RollupProvider;
 use base_prover_service_client::ProofRequesterProvider;
 use base_prover_service_protocol::{DeleteProofRequest, GetProofRequest, ProofStatus, TeeKind};
@@ -12,8 +11,10 @@ use tracing::{debug, info, warn};
 
 use crate::{
     Metrics, ProofSubmitter, ProofTarget, ProposerError, ProposerProofAdapter, RecoveredState,
-    SubmitAction,
+    SubmitAction, TeeImageHashes, TeeProof, TeeProofPair,
 };
+
+const TEE_KINDS: [TeeKind; 2] = [TeeKind::AwsNitro, TeeKind::IntelTdx];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SubmitOutcome {
@@ -31,7 +32,7 @@ where
     rollup_client: Arc<R>,
     submitter: ProofSubmitter,
     block_interval: u64,
-    tee_kind: TeeKind,
+    tee_image_hashes: TeeImageHashes,
     submit_timeout: Option<Duration>,
 }
 
@@ -42,7 +43,7 @@ where
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProofCollector")
             .field("block_interval", &self.block_interval)
-            .field("tee_kind", &self.tee_kind)
+            .field("tee_image_hashes", &self.tee_image_hashes)
             .field("submit_timeout", &self.submit_timeout)
             .finish_non_exhaustive()
     }
@@ -58,10 +59,17 @@ where
         rollup_client: Arc<R>,
         submitter: ProofSubmitter,
         block_interval: u64,
-        tee_kind: TeeKind,
+        tee_image_hashes: TeeImageHashes,
         submit_timeout: Option<Duration>,
     ) -> Self {
-        Self { proof_requester, rollup_client, submitter, block_interval, tee_kind, submit_timeout }
+        Self {
+            proof_requester,
+            rollup_client,
+            submitter,
+            block_interval,
+            tee_image_hashes,
+            submit_timeout,
+        }
     }
 
     /// Runs one collector tick.
@@ -109,38 +117,32 @@ where
                 return false;
             };
 
-            let session_id = ProposerProofAdapter::tee_session_id_for_root(
-                claimed_l2_output_root,
-                self.tee_kind,
-            );
-            let (aggregate_proposal, proposals) = match Self::poll_proof(
-                self.proof_requester.as_ref(),
-                target_block,
-                &session_id,
-                self.tee_kind,
-                target_block <= dispatched_through,
-            )
-            .await
+            let proof = match self
+                .poll_proof_pair(
+                    self.proof_requester.as_ref(),
+                    target_block,
+                    claimed_l2_output_root,
+                    target_block <= dispatched_through,
+                )
+                .await
             {
                 Ok(Some(proof)) => proof,
                 Ok(None) => return false,
                 Err(error) => {
                     warn!(
                         target_block,
-                        session_id = %session_id,
                         error = %error,
                         "Deleting proof request after proof collection failure"
                     );
-                    return self.delete_proof_request(&session_id, target_block).await;
+                    return self.delete_proof_requests(claimed_l2_output_root, target_block).await;
                 }
             };
 
             match self
                 .submit_proof(
                     target_block,
-                    &session_id,
-                    aggregate_proposal,
-                    proposals,
+                    claimed_l2_output_root,
+                    proof,
                     current.parent_address,
                     cancel,
                 )
@@ -153,15 +155,50 @@ where
         }
     }
 
+    async fn poll_proof_pair(
+        &self,
+        proof_requester: &dyn ProofRequesterProvider,
+        target_block: u64,
+        claimed_l2_output_root: B256,
+        request_dispatched: bool,
+    ) -> Result<Option<TeeProofPair>, ProposerError> {
+        let nitro = Self::poll_proof(
+            proof_requester,
+            target_block,
+            claimed_l2_output_root,
+            TeeKind::AwsNitro,
+            self.tee_image_hashes.nitro,
+            request_dispatched,
+        )
+        .await?;
+        let tdx = Self::poll_proof(
+            proof_requester,
+            target_block,
+            claimed_l2_output_root,
+            TeeKind::IntelTdx,
+            self.tee_image_hashes.tdx,
+            request_dispatched,
+        )
+        .await?;
+
+        match (nitro, tdx) {
+            (Some(nitro), Some(tdx)) => TeeProofPair::new(nitro, tdx).map(Some),
+            _ => Ok(None),
+        }
+    }
+
     async fn poll_proof(
         proof_requester: &dyn ProofRequesterProvider,
         target_block: u64,
-        session_id: &str,
+        claimed_l2_output_root: B256,
         tee_kind: TeeKind,
+        image_hash: B256,
         request_dispatched: bool,
-    ) -> Result<Option<(Proposal, Vec<Proposal>)>, ProposerError> {
+    ) -> Result<Option<TeeProof>, ProposerError> {
+        let session_id =
+            ProposerProofAdapter::tee_session_id_for_root(claimed_l2_output_root, tee_kind);
         let response = match proof_requester
-            .get_proof(GetProofRequest { session_id: session_id.to_owned() })
+            .get_proof(GetProofRequest { session_id: session_id.clone() })
             .await
         {
             Ok(response) => response,
@@ -170,6 +207,7 @@ where
                     debug!(
                         target_block,
                         session_id = %session_id,
+                        tee_kind = ?tee_kind,
                         "Proof request not dispatched yet"
                     );
                     return Ok(None);
@@ -181,6 +219,7 @@ where
                 warn!(
                     target_block,
                     session_id = %session_id,
+                    tee_kind = ?tee_kind,
                     error = %error,
                     "Proof request missing"
                 );
@@ -191,6 +230,7 @@ where
                 warn!(
                     target_block,
                     session_id = %session_id,
+                    tee_kind = ?tee_kind,
                     error = %e,
                     "Failed to poll prover service"
                 );
@@ -211,6 +251,7 @@ where
                 debug!(
                     target_block,
                     session_id = %session_id,
+                    tee_kind = ?tee_kind,
                     status = ?response.status,
                     "Proof request still pending"
                 );
@@ -226,6 +267,7 @@ where
                 warn!(
                     target_block,
                     session_id = %session_id,
+                    tee_kind = ?tee_kind,
                     error = %error,
                     "Proof session failed"
                 );
@@ -242,15 +284,21 @@ where
                     warn!(
                         target_block,
                         session_id = %session_id,
+                        tee_kind = ?tee_kind,
                         error = %error,
                         "Proof session returned no result"
                     );
                     return Err(error);
                 };
 
-                match ProposerProofAdapter::tee_proof_result(result, tee_kind) {
+                match ProposerProofAdapter::tee_proof(result, tee_kind, image_hash) {
                     Ok(proof) => {
-                        info!(target_block, session_id = %session_id, "Proof request succeeded");
+                        info!(
+                            target_block,
+                            session_id = %session_id,
+                            tee_kind = ?tee_kind,
+                            "Proof request succeeded"
+                        );
                         Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_READY)
                             .increment(1);
                         Metrics::last_collected_block().set(target_block as f64);
@@ -261,10 +309,11 @@ where
                             .increment(1);
                         Metrics::errors_total(error.metric_label()).increment(1);
                         warn!(
-                            target_block,
-                            session_id = %session_id,
-                            error = %error,
-                            "Proof result rejected"
+                        target_block,
+                        session_id = %session_id,
+                        tee_kind = ?tee_kind,
+                        error = %error,
+                        "Proof result rejected"
                         );
                         Err(error)
                     }
@@ -276,9 +325,8 @@ where
     async fn submit_proof(
         &self,
         target_block: u64,
-        session_id: &str,
-        aggregate_proposal: Proposal,
-        proposals: Vec<Proposal>,
+        claimed_l2_output_root: B256,
+        proof: TeeProofPair,
         parent_address: Address,
         cancel: &CancellationToken,
     ) -> SubmitOutcome {
@@ -287,12 +335,7 @@ where
         let mut submit_timer = base_metrics::timed!(Metrics::proposal_total_duration_seconds());
         let result = match cancel
             .run_until_cancelled(async {
-                let submit = self.submitter.submit(
-                    &aggregate_proposal,
-                    &proposals,
-                    target_block,
-                    parent_address,
-                );
+                let submit = self.submitter.submit(&proof, target_block, parent_address);
                 match self.submit_timeout {
                     Some(timeout) => tokio::time::timeout(timeout, submit).await,
                     None => Ok(submit.await),
@@ -332,7 +375,7 @@ where
             Err(SubmitAction::RootMismatch) => {
                 Metrics::root_mismatch_total().increment(1);
                 warn!(target_block, "Output root mismatch at submit time");
-                self.delete_proof_request(session_id, target_block).await;
+                self.delete_proof_requests(claimed_l2_output_root, target_block).await;
                 return SubmitOutcome::Restart;
             }
             Err(SubmitAction::GameAlreadyExists) => {
@@ -354,7 +397,7 @@ where
                     error = %error,
                     "Submission discarded, deleting proof request for re-prove"
                 );
-                return if self.delete_proof_request(session_id, target_block).await {
+                return if self.delete_proof_requests(claimed_l2_output_root, target_block).await {
                     SubmitOutcome::Restart
                 } else {
                     SubmitOutcome::Idle
@@ -363,6 +406,16 @@ where
         }
 
         SubmitOutcome::Restart
+    }
+
+    async fn delete_proof_requests(&self, claimed_l2_output_root: B256, target_block: u64) -> bool {
+        let mut deleted_all = true;
+        for tee_kind in TEE_KINDS {
+            let session_id =
+                ProposerProofAdapter::tee_session_id_for_root(claimed_l2_output_root, tee_kind);
+            deleted_all &= self.delete_proof_request(&session_id, target_block).await;
+        }
+        deleted_all
     }
 
     async fn delete_proof_request(&self, session_id: &str, target_block: u64) -> bool {
@@ -409,7 +462,7 @@ mod tests {
         DriverConfig, OutputProposer,
         test_utils::{
             MockAggregateVerifier, MockDisputeGameFactory, MockOutputProposer, MockProofRequester,
-            MockRollupClient, test_proposal, test_sync_status,
+            MockRollupClient, test_sync_status,
         },
     };
 
@@ -469,9 +522,21 @@ mod tests {
             rollup_client,
             submitter,
             BLOCK_INTERVAL,
-            TeeKind::AwsNitro,
+            TeeImageHashes { nitro: B256::repeat_byte(0x05), tdx: B256::repeat_byte(0x06) },
             Some(std::time::Duration::from_secs(60)),
         )
+    }
+
+    async fn dispatch_pair(requester: &MockProofRequester, proof_request: ProofRequest) {
+        for tee_kind in [TeeKind::AwsNitro, TeeKind::IntelTdx] {
+            requester
+                .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(
+                    proof_request.clone(),
+                    tee_kind,
+                ))
+                .await
+                .expect("test setup should dispatch root session");
+        }
     }
 
     #[tokio::test]
@@ -521,13 +586,7 @@ mod tests {
             l1_head_number: 1000,
             ..Default::default()
         };
-        requester
-            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(
-                proof_request,
-                TeeKind::AwsNitro,
-            ))
-            .await
-            .expect("test setup should dispatch root session");
+        dispatch_pair(&requester, proof_request).await;
         let collector = make_collector(
             requester,
             rollup_client(target_block, Some(claimed_root)),
@@ -562,13 +621,7 @@ mod tests {
                 l1_head_number: 1000,
                 ..Default::default()
             };
-            requester
-                .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(
-                    proof_request,
-                    TeeKind::AwsNitro,
-                ))
-                .await
-                .expect("test setup should dispatch root session");
+            dispatch_pair(&requester, proof_request).await;
         }
 
         let mut factory = MockDisputeGameFactory::with_games(vec![]);
@@ -618,13 +671,7 @@ mod tests {
             l1_head_number: 1000,
             ..Default::default()
         };
-        requester
-            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(
-                proof_request,
-                TeeKind::AwsNitro,
-            ))
-            .await
-            .expect("test setup should dispatch root session");
+        dispatch_pair(&requester, proof_request).await;
         let collector = make_collector(
             Arc::clone(&requester) as Arc<dyn ProofRequesterProvider>,
             rollup_client(target_block, Some(claimed_root)),
@@ -657,13 +704,7 @@ mod tests {
             l1_head_number: 1000,
             ..Default::default()
         };
-        requester
-            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(
-                proof_request,
-                TeeKind::AwsNitro,
-            ))
-            .await
-            .expect("test setup should dispatch root session");
+        dispatch_pair(&requester, proof_request).await;
         let collector = make_collector(
             Arc::clone(&requester) as Arc<dyn ProofRequesterProvider>,
             rollup_client(target_block, Some(claimed_root)),
@@ -710,17 +751,12 @@ mod tests {
             Arc::new(MockOutputProposer::default()),
         );
 
-        let mut aggregate_proposal = test_proposal(target_block);
-        aggregate_proposal.output_root = stale_root;
+        let mut proof = crate::test_utils::test_tee_proof_pair(target_block);
+        proof.nitro.aggregate_proposal.output_root = stale_root;
+        proof.tdx.aggregate_proposal.output_root = stale_root;
+
         let outcome = collector
-            .submit_proof(
-                target_block,
-                &session_id,
-                aggregate_proposal,
-                vec![],
-                Address::ZERO,
-                &CancellationToken::new(),
-            )
+            .submit_proof(target_block, stale_root, proof, Address::ZERO, &CancellationToken::new())
             .await;
 
         assert_eq!(outcome, SubmitOutcome::Restart);

@@ -8,6 +8,7 @@ use base_prover_service_protocol::{
 };
 
 use crate::ProposerError;
+use crate::TeeProof;
 
 /// Conversion helpers for proposer proof requests and results.
 #[derive(Debug)]
@@ -57,6 +58,16 @@ impl ProposerProofAdapter {
         result: ProofResult,
         tee_kind: TeeKind,
     ) -> Result<(Proposal, Vec<Proposal>), ProposerError> {
+        let proof = Self::tee_proof(result, tee_kind, B256::ZERO)?;
+        Ok((proof.aggregate_proposal, proof.proposals))
+    }
+
+    /// Converts a prover-service TEE proof result into a typed single-platform TEE proof.
+    pub fn tee_proof(
+        result: ProofResult,
+        tee_kind: TeeKind,
+        image_hash: B256,
+    ) -> Result<TeeProof, ProposerError> {
         let result = match result {
             ProofResult::Tee(result) => result,
             ProofResult::Compressed(_) => {
@@ -77,7 +88,11 @@ impl ProposerProofAdapter {
             )));
         }
 
-        Ok((result.aggregate_proposal, result.proposals))
+        Ok(TeeProof {
+            image_hash,
+            aggregate_proposal: result.aggregate_proposal,
+            proposals: result.proposals,
+        })
     }
 }
 

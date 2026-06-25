@@ -30,7 +30,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::{
-    Metrics,
+    Metrics, TeeImageHashes,
     config::ProposerConfig,
     driver::{DriverConfig, PipelineHandle, ProposerDriverControl},
     output_proposer::{OutputProposer, ProposalSubmitter},
@@ -64,7 +64,6 @@ impl ProposerService {
             anchor_state_registry = %config.anchor_state_registry_addr,
             dispute_game_factory = %config.dispute_game_factory_addr,
             game_type = config.game_type,
-            tee_image_hash = %config.tee_image_hash,
             prover_timeout = ?config.prover_timeout,
             poll_interval = ?config.poll_interval,
             rpc_timeout = ?config.rpc_timeout,
@@ -127,11 +126,20 @@ impl ProposerService {
                 config.game_type
             ));
         }
-        let (block_interval, intermediate_block_interval, init_bond) = tokio::try_join!(
+        let (
+            block_interval,
+            intermediate_block_interval,
+            init_bond,
+            nitro_image_hash,
+            tdx_image_hash,
+        ) = tokio::try_join!(
             verifier_client.read_block_interval(impl_address),
             verifier_client.read_intermediate_block_interval(impl_address),
             factory_client.init_bonds(config.game_type),
+            verifier_client.read_tee_nitro_image_hash(impl_address),
+            verifier_client.read_tee_tdx_image_hash(impl_address),
         )?;
+        let tee_image_hashes = TeeImageHashes { nitro: nitro_image_hash, tdx: tdx_image_hash };
         if block_interval < 2 {
             return Err(eyre::eyre!(
                 "BLOCK_INTERVAL ({block_interval}) must be at least 2; single-block proposals are not supported"
@@ -149,6 +157,8 @@ impl ProposerService {
             init_bond = %init_bond,
             impl_address = %impl_address,
             game_type = config.game_type,
+            nitro_image_hash = %tee_image_hashes.nitro,
+            tdx_image_hash = %tee_image_hashes.tdx,
             "Read onchain config from AggregateVerifier and DisputeGameFactory"
         );
 
@@ -226,8 +236,7 @@ impl ProposerService {
             game_type: config.game_type,
             allow_non_finalized: config.allow_non_finalized,
             proposer_address: proposer_address.unwrap_or_default(),
-            tee_image_hash: config.tee_image_hash,
-            tee_kind: config.tee_kind,
+            tee_image_hashes,
             anchor_state_registry_address: config.anchor_state_registry_addr,
         };
         let proof_dispatcher = ProofDispatcher::new(
@@ -262,7 +271,7 @@ impl ProposerService {
             Arc::clone(&rollup_client),
             proof_submitter,
             driver_config.block_interval,
-            driver_config.tee_kind,
+            driver_config.tee_image_hashes,
             driver_config.submit_timeout,
         );
         let pipeline =

@@ -11,7 +11,7 @@ use futures::{StreamExt, stream};
 use tracing::{debug, info, instrument, warn};
 
 use crate::{
-    Metrics, RecoveredState, driver::DriverConfig, error::ProposerError,
+    Metrics, RecoveredState, TeeProofPair, driver::DriverConfig, error::ProposerError,
     output_proposer::OutputProposer, proposal_intervals::ProposalIntervals,
 };
 
@@ -24,7 +24,7 @@ const RECENT_GAME_LOOKUP_RETRY_DELAY: Duration = Duration::from_millis(100);
 /// recovery, re-prove the target, or chain into the next submission.
 #[derive(Debug)]
 pub enum SubmitAction {
-    /// Output root mismatch — the proved root no longer matches the canonical
+    /// Output root mismatch - the proved root no longer matches the canonical
     /// chain. The pipeline drops the cached recovery and re-proves on the
     /// next tick.
     RootMismatch,
@@ -33,9 +33,9 @@ pub enum SubmitAction {
     /// invalidate its recovery cache so the next forward walk discovers the
     /// existing game.
     GameAlreadyExists,
-    /// Transient failure — retry later with the same proof.
+    /// Transient failure - retry later with the same proof.
     Failed(ProposerError),
-    /// Proof is permanently invalid (e.g. signer not registered) — discard
+    /// Proof is permanently invalid (e.g. signer not registered) - discard
     /// and re-prove on the next attempt.
     Discard(ProposerError),
 }
@@ -88,19 +88,20 @@ impl ProofSubmitter {
     /// Validates the completed proof and submits it to L1 as a dispute game.
     ///
     /// Returns the next recovered state when the proof was submitted or
-    /// attached and the game address is known. Any other outcome — including
+    /// attached and the game address is known. Any other outcome - including
     /// RPC failures, root mismatches, invalid signers, or contract-level
-    /// rejections — is mapped to a [`SubmitAction`] variant that tells the
+    /// rejections - is mapped to a [`SubmitAction`] variant that tells the
     /// pipeline how to react.
     #[instrument(skip_all, fields(target_block = target_block, parent_address = %parent_address))]
     pub async fn submit(
         &self,
-        aggregate_proposal: &Proposal,
-        proposals: &[Proposal],
+        proof: &TeeProofPair,
         target_block: u64,
         parent_address: Address,
     ) -> Result<RecoveredState, SubmitAction> {
-        // JIT validation: check that the proved output root still matches canonical.
+        let aggregate_proposal = proof.aggregate_proposal();
+        let proposals = proof.proposals();
+
         let canonical_output = self
             .rollup_client
             .fresh_output_at_block(target_block)
@@ -117,7 +118,6 @@ impl ProofSubmitter {
             return Err(SubmitAction::RootMismatch);
         }
 
-        // Extract intermediate roots.
         let starting_block_number =
             target_block.checked_sub(self.block_interval).ok_or_else(|| {
                 SubmitAction::Failed(ProposerError::Internal(format!(
@@ -191,9 +191,7 @@ impl ProofSubmitter {
             })?;
 
         if existing_game != Address::ZERO {
-            return self
-                .attach_existing_game_proof(existing_game, aggregate_proposal, target_block)
-                .await;
+            return self.attach_existing_game_proof(existing_game, proof, target_block).await;
         }
 
         info!(
@@ -206,10 +204,8 @@ impl ProofSubmitter {
         );
 
         let mut propose_timer = base_metrics::timed!(Metrics::proposal_l1_tx_duration_seconds());
-        let propose_result = self
-            .output_proposer
-            .propose_output(aggregate_proposal, parent_address, &intermediate_roots)
-            .await;
+        let propose_result =
+            self.output_proposer.propose_output(proof, parent_address, &intermediate_roots).await;
 
         match propose_result {
             Ok(()) => {
@@ -231,7 +227,7 @@ impl ProofSubmitter {
                 let raced_game = self
                     .lookup_recent_game(aggregate_proposal.output_root, &extra_data, target_block)
                     .await?;
-                self.attach_existing_game_proof(raced_game, aggregate_proposal, target_block).await
+                self.attach_existing_game_proof(raced_game, proof, target_block).await
             }
             Err(e) => {
                 propose_timer.disarm();
@@ -303,9 +299,10 @@ impl ProofSubmitter {
     async fn attach_existing_game_proof(
         &self,
         game_address: Address,
-        aggregate_proposal: &Proposal,
+        proof: &TeeProofPair,
         target_block: u64,
     ) -> Result<RecoveredState, SubmitAction> {
+        let aggregate_proposal = proof.aggregate_proposal();
         let game_l1_head = self.verifier_client.l1_head(game_address).await.map_err(|e| {
             SubmitAction::Failed(ProposerError::Contract(format!(
                 "l1Head lookup failed for game {game_address}: {e}"
@@ -330,7 +327,7 @@ impl ProofSubmitter {
         );
 
         let mut attach_timer = base_metrics::timed!(Metrics::proposal_l1_tx_duration_seconds());
-        match self.output_proposer.verify_proposal_proof(game_address, aggregate_proposal).await {
+        match self.output_proposer.verify_proposal_proof(game_address, proof).await {
             Ok(()) => {
                 drop(attach_timer);
                 info!(target_block, game_address = %game_address, "TEE proof attached successfully");
@@ -427,17 +424,17 @@ mod tests {
     use super::*;
     use crate::test_utils::{
         MockAggregateVerifier, MockDisputeGameFactory, MockOutputProposer, MockRollupClient,
-        test_proposal, test_sync_status,
+        test_sync_status, test_tee_proof_pair,
     };
 
     const TEST_GAME_TYPE: u32 = 42;
     const TEST_BLOCK_INTERVAL: u64 = 100;
 
-    fn proof_result(target_block: u64) -> (Proposal, Vec<Proposal>) {
-        let mut aggregate_proposal = test_proposal(target_block);
-        aggregate_proposal.l1_origin_hash = B256::ZERO;
-        let proposals: Vec<Proposal> = (1..=target_block).map(test_proposal).collect();
-        (aggregate_proposal, proposals)
+    fn proof_result(target_block: u64) -> TeeProofPair {
+        let mut proof = test_tee_proof_pair(target_block);
+        proof.nitro.aggregate_proposal.l1_origin_hash = B256::ZERO;
+        proof.tdx.aggregate_proposal.l1_origin_hash = B256::ZERO;
+        proof
     }
 
     fn submitter(
@@ -473,9 +470,8 @@ mod tests {
             MockAggregateVerifier::default(),
         );
 
-        let (aggregate_proposal, proposals) = proof_result(TEST_BLOCK_INTERVAL);
         let result = submitter
-            .submit(&aggregate_proposal, &proposals, TEST_BLOCK_INTERVAL, Address::ZERO)
+            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
             .await;
 
         assert!(result.is_ok());
@@ -502,9 +498,8 @@ mod tests {
                     MockAggregateVerifier::default(),
                 );
 
-                let (aggregate_proposal, proposals) = proof_result(TEST_BLOCK_INTERVAL);
                 submitter
-                    .submit(&aggregate_proposal, &proposals, TEST_BLOCK_INTERVAL, Address::ZERO)
+                    .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
                     .await
                     .unwrap();
             });
@@ -540,9 +535,8 @@ mod tests {
             },
         );
 
-        let (aggregate_proposal, proposals) = proof_result(TEST_BLOCK_INTERVAL);
         let result = submitter
-            .submit(&aggregate_proposal, &proposals, TEST_BLOCK_INTERVAL, Address::ZERO)
+            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
             .await;
 
         assert!(result.is_ok());
@@ -560,9 +554,8 @@ mod tests {
             MockAggregateVerifier::default(),
         );
 
-        let (aggregate_proposal, proposals) = proof_result(TEST_BLOCK_INTERVAL);
         let result = submitter
-            .submit(&aggregate_proposal, &proposals, TEST_BLOCK_INTERVAL, Address::ZERO)
+            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
             .await;
 
         assert!(result.is_ok());
@@ -584,9 +577,8 @@ mod tests {
             MockAggregateVerifier::default(),
         );
 
-        let (aggregate_proposal, proposals) = proof_result(TEST_BLOCK_INTERVAL);
         let result = submitter
-            .submit(&aggregate_proposal, &proposals, TEST_BLOCK_INTERVAL, Address::ZERO)
+            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
             .await;
 
         let recovered = result.unwrap();
@@ -607,9 +599,8 @@ mod tests {
             MockAggregateVerifier::default(),
         );
 
-        let (aggregate_proposal, proposals) = proof_result(TEST_BLOCK_INTERVAL);
         let result = submitter
-            .submit(&aggregate_proposal, &proposals, TEST_BLOCK_INTERVAL, Address::ZERO)
+            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
             .await;
 
         assert!(matches!(
@@ -633,9 +624,8 @@ mod tests {
             verifier,
         );
 
-        let (aggregate_proposal, proposals) = proof_result(TEST_BLOCK_INTERVAL);
         let result = submitter
-            .submit(&aggregate_proposal, &proposals, TEST_BLOCK_INTERVAL, Address::ZERO)
+            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
             .await;
 
         assert!(matches!(result, Err(SubmitAction::GameAlreadyExists)));
@@ -669,9 +659,8 @@ mod tests {
                 MockAggregateVerifier::default(),
             );
 
-            let (aggregate_proposal, proposals) = proof_result(TEST_BLOCK_INTERVAL);
             let result = submitter
-                .submit(&aggregate_proposal, &proposals, TEST_BLOCK_INTERVAL, Address::ZERO)
+                .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
                 .await;
 
             match expected_discard_label {
@@ -694,9 +683,8 @@ mod tests {
             MockAggregateVerifier::default(),
         );
 
-        let (aggregate_proposal, proposals) = proof_result(TEST_BLOCK_INTERVAL);
         let result = submitter
-            .submit(&aggregate_proposal, &proposals, TEST_BLOCK_INTERVAL, Address::ZERO)
+            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
             .await;
 
         assert!(matches!(result, Err(SubmitAction::GameAlreadyExists)));

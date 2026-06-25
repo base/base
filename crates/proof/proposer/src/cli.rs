@@ -89,13 +89,13 @@ pub struct ProposerArgs {
     #[arg(long = "game-type", env = cli_env!("GAME_TYPE"))]
     pub game_type: u32,
 
-    /// Keccak256 hash of the TEE image PCR0 (0x-prefixed hex).
-    #[arg(long = "tee-image-hash", env = cli_env!("TEE_IMAGE_HASH"))]
-    pub tee_image_hash: B256,
+    /// Deprecated: TEE image hashes are read from the AggregateVerifier contract.
+    #[arg(long = "tee-image-hash", env = cli_env!("TEE_IMAGE_HASH"), hide = true)]
+    pub tee_image_hash: Option<B256>,
 
-    /// TEE implementation to request from prover-service.
-    #[arg(long = "tee-kind", env = cli_env!("TEE_KIND"), default_value = "aws_nitro", value_parser = parse_tee_kind)]
-    pub tee_kind: TeeKind,
+    /// Deprecated: the proposer always requests both Nitro and TDX proofs.
+    #[arg(long = "tee-kind", env = cli_env!("TEE_KIND"), hide = true, value_parser = parse_tee_kind)]
+    pub tee_kind: Option<TeeKind>,
 
     /// Polling interval for new blocks (e.g., "12s", "1m").
     #[arg(
@@ -216,8 +216,6 @@ mod tests {
             "0x2234567890123456789012345678901234567890",
             "--game-type",
             "1",
-            "--tee-image-hash",
-            "0x0000000000000000000000000000000000000000000000000000000000000001",
             "--rollup-rpc",
             "http://localhost:7545",
         ])
@@ -252,8 +250,6 @@ mod tests {
             "0x2234567890123456789012345678901234567890",
             "--game-type",
             "1",
-            "--tee-image-hash",
-            "0x0000000000000000000000000000000000000000000000000000000000000001",
             "--rollup-rpc",
             "http://localhost:7545",
             "--recovery-scan-concurrency",
