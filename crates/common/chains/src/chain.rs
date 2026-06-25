@@ -279,11 +279,11 @@ mod tests {
         let devnet_forks = ChainUpgrades::devnet();
         assert!(devnet_forks.is_azul_active_at_timestamp(0));
 
-        // Azul is scheduled on zeronet at 1775152800
+        // Azul is scheduled on zeronet at 1782348888
         let zeronet_forks = ChainUpgrades::zeronet();
         assert!(!zeronet_forks.is_azul_active_at_timestamp(0));
-        assert!(!zeronet_forks.is_azul_active_at_timestamp(1_775_152_799));
-        assert!(zeronet_forks.is_azul_active_at_timestamp(1_775_152_800));
+        assert!(!zeronet_forks.is_azul_active_at_timestamp(1_782_348_887));
+        assert!(zeronet_forks.is_azul_active_at_timestamp(1_782_348_888));
         assert!(zeronet_forks.is_azul_active_at_timestamp(u64::MAX));
     }
 
@@ -303,8 +303,8 @@ mod tests {
 
         let zeronet_forks = ChainUpgrades::zeronet();
         assert!(!zeronet_forks.is_beryl_active_at_timestamp(0));
-        assert!(!zeronet_forks.is_beryl_active_at_timestamp(1_780_678_799));
-        assert!(zeronet_forks.is_beryl_active_at_timestamp(1_780_678_800));
+        assert!(!zeronet_forks.is_beryl_active_at_timestamp(1_782_349_187));
+        assert!(zeronet_forks.is_beryl_active_at_timestamp(1_782_349_188));
         assert!(zeronet_forks.is_beryl_active_at_timestamp(u64::MAX));
     }
 
@@ -331,7 +331,7 @@ mod tests {
         let zeronet_forks = ChainUpgrades::zeronet();
         assert_eq!(
             zeronet_forks.ethereum_fork_activation(EthereumHardfork::Osaka),
-            ForkCondition::Timestamp(1_775_152_800)
+            ForkCondition::Timestamp(1_782_348_888)
         );
     }
 

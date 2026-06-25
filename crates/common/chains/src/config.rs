@@ -559,8 +559,8 @@ const ZERONET: ChainConfig = ChainConfig {
     pectra_blob_schedule_timestamp: None,
     isthmus_timestamp: 0,
     jovian_timestamp: 0,
-    azul_timestamp: Some(1_775_152_800),
-    beryl_timestamp: Some(1_780_678_800),
+    azul_timestamp: Some(1_782_348_888),
+    beryl_timestamp: Some(1_782_349_188),
     cobalt_timestamp: None,
 
     genesis_l1_hash: b256!("acb2c60e3887888b5111b05c8d8f32e2761c7d4a0f10562d199253ab072c3a71"),
@@ -637,8 +637,8 @@ mod tests {
 
     #[test]
     fn zeronet_beryl_is_scheduled() {
-        assert_eq!(ChainConfig::zeronet().beryl_timestamp, Some(1_780_678_800));
-        assert_eq!(ChainConfig::zeronet().upgrade_config().base.beryl, Some(1_780_678_800));
+        assert_eq!(ChainConfig::zeronet().beryl_timestamp, Some(1_782_349_188));
+        assert_eq!(ChainConfig::zeronet().upgrade_config().base.beryl, Some(1_782_349_188));
         assert_eq!(ChainConfig::zeronet().cobalt_timestamp, None);
         assert_eq!(ChainConfig::zeronet().upgrade_config().base.cobalt, None);
     }
