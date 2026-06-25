@@ -29,7 +29,6 @@ use tokio::{
     time::{Duration, Instant, timeout},
 };
 use tracing::{debug, info, warn};
-use uuid::Uuid;
 
 use crate::{Config, MeteringForwardMessage, metrics::Metrics};
 
@@ -97,7 +96,7 @@ impl IngressApiServer for IngressService {
         let tx_hash = transaction.tx_hash();
 
         Metrics::transactions_received().increment(1);
-        Self::emit_transaction_event(TransactionEventType::IngressReceived, tx_hash, None, None);
+        Self::emit_transaction_event(TransactionEventType::IngressReceived, tx_hash, None);
 
         let expiry_timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
             + self.send_transaction_default_lifetime_seconds;
@@ -130,7 +129,6 @@ impl IngressApiServer for IngressService {
                 TransactionEventType::SimulationStarted,
                 tx_hash,
                 Some(*bundle_hash),
-                None,
             );
             let simulation_start = Instant::now();
             let (meter_bundle_response, simulation_accepted): (Option<MeterBundleResponse>, bool) =
@@ -342,13 +340,11 @@ impl IngressService {
         event_type: TransactionEventType,
         tx_hash: B256,
         bundle_hash: Option<B256>,
-        bundle_id: Option<Uuid>,
     ) {
         Self::emit_transaction_event_with_data(
             event_type,
             tx_hash,
             bundle_hash,
-            bundle_id,
             serde_json::Map::new(),
         );
     }
@@ -366,7 +362,7 @@ impl IngressService {
             serde_json::json!(duration.as_secs_f64() * 1000.0),
         );
 
-        Self::emit_transaction_event_with_data(event_type, tx_hash, Some(bundle_hash), None, data);
+        Self::emit_transaction_event_with_data(event_type, tx_hash, Some(bundle_hash), data);
     }
 
     fn emit_simulation_failed_event(
@@ -397,7 +393,6 @@ impl IngressService {
             TransactionEventType::SimulationFailed,
             tx_hash,
             Some(bundle_hash),
-            None,
             data,
         );
     }
@@ -406,16 +401,11 @@ impl IngressService {
         event_type: TransactionEventType,
         tx_hash: B256,
         bundle_hash: Option<B256>,
-        bundle_id: Option<Uuid>,
         mut data: serde_json::Map<String, serde_json::Value>,
     ) {
         if let Some(bundle_hash) = bundle_hash {
             data.entry("bundle_hash".to_string())
                 .or_insert_with(|| serde_json::json!(bundle_hash.to_string()));
-        }
-        if let Some(bundle_id) = bundle_id {
-            data.entry("bundle_id".to_string())
-                .or_insert_with(|| serde_json::json!(bundle_id.to_string()));
         }
 
         if let Err(err) = transaction_event!(

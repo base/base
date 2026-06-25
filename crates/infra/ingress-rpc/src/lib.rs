@@ -220,8 +220,8 @@ impl BuilderConnector {
                             for tx_hash in &message.tx_hashes {
                                 emit_metering_send_event(
                                     TransactionEventType::IngressMeteringSendDropped,
-                                    Some(*tx_hash),
-                                    Some(event.bundle_hash),
+                                    *tx_hash,
+                                    event.bundle_hash,
                                     destination_index,
                                     Map::from_iter([(
                                         "drop_reason".to_string(),
@@ -247,8 +247,8 @@ impl BuilderConnector {
                         join_set.spawn(async move {
                             emit_metering_send_event(
                                 TransactionEventType::IngressMeteringSendAttempt,
-                                Some(tx_hash),
-                                Some(bundle_hash),
+                                tx_hash,
+                                bundle_hash,
                                 destination_index,
                                 Map::new(),
                             );
@@ -263,8 +263,8 @@ impl BuilderConnector {
                                 Ok(()) => {
                                     emit_metering_send_event(
                                         TransactionEventType::IngressMeteringSendSuccess,
-                                        Some(tx_hash),
-                                        Some(bundle_hash),
+                                        tx_hash,
+                                        bundle_hash,
                                         destination_index,
                                         Map::new(),
                                     );
@@ -277,8 +277,8 @@ impl BuilderConnector {
                                 Err(e) => {
                                     emit_metering_send_event(
                                         TransactionEventType::IngressMeteringSendFailure,
-                                        Some(tx_hash),
-                                        Some(bundle_hash),
+                                        tx_hash,
+                                        bundle_hash,
                                         destination_index,
                                         Map::from_iter([(
                                             "error".to_string(),
@@ -322,14 +322,12 @@ impl BuilderConnector {
 
 fn emit_metering_send_event(
     event_type: TransactionEventType,
-    tx_hash: Option<TxHash>,
-    bundle_hash: Option<alloy_primitives::B256>,
+    tx_hash: TxHash,
+    bundle_hash: alloy_primitives::B256,
     destination_index: usize,
     mut data: Map<String, serde_json::Value>,
 ) {
-    if let Some(bundle_hash) = bundle_hash {
-        data.entry("bundle_hash".to_string()).or_insert_with(|| json!(bundle_hash.to_string()));
-    }
+    data.entry("bundle_hash".to_string()).or_insert_with(|| json!(bundle_hash.to_string()));
     data.entry("target".to_string()).or_insert_with(|| json!("builder_metering"));
     data.entry("rpc_method".to_string()).or_insert_with(|| json!("base_setMeteringInformation"));
     data.entry("destination_index".to_string()).or_insert_with(|| json!(destination_index));
@@ -337,10 +335,10 @@ fn emit_metering_send_event(
     if let Err(err) = transaction_event!(
         producer: TransactionEventProducer::IngressRpc,
         event_type: event_type,
-        maybe_tx_hash: tx_hash,
+        tx_hash: tx_hash,
         id: {
             "destination_index" => destination_index,
-            "bundle_hash" => bundle_hash.map(|hash| hash.to_string()).unwrap_or_default(),
+            "bundle_hash" => bundle_hash.to_string(),
         },
         data: data,
     ) {
