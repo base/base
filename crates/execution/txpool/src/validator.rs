@@ -651,7 +651,7 @@ where
                 .iter()
                 .any(|change| matches!(change, AccountChange::Delegation(_)))
         {
-            Self::validate_eip8130_delegation(&*state, signed, sender, Some(sender_actor))?;
+            Self::validate_eip8130_delegation(&*state, sender, sender_actor)?;
         }
 
         let mut storage = StateProviderPrecompileStorage::new(&*state, local_chain_id, now);
@@ -746,13 +746,9 @@ where
     /// shared apply records the effect, matching inclusion, so it skips this gate.
     fn validate_eip8130_delegation(
         state: &dyn StateProvider,
-        signed: &Eip8130Signed,
         sender: Address,
-        sender_actor: Option<ResolvedActor>,
+        sender_actor: ResolvedActor,
     ) -> Result<(), InvalidPoolTransactionError> {
-        let _ = signed;
-        let sender_actor = sender_actor
-            .ok_or_else(|| Self::eip8130_error("delegation sender actor unavailable"))?;
         if sender_actor.actor_id != AccountConfigurationStorage::self_actor_id(sender) {
             return Err(Self::eip8130_error("delegation requires self actor"));
         }

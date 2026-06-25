@@ -154,13 +154,14 @@ impl TransactionAuthorizer {
 mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256, address, keccak256};
     use base_common_consensus::{
-        ActorChange, ConfigChange, CreateEntry, Delegation, Eip8130Constants, TxEip8130,
+        ActorChange, ConfigChange, CreateEntry, Delegation, Eip8130Constants, InitialActor,
+        TxEip8130,
     };
     use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
     use k256::ecdsa::SigningKey as K256SigningKey;
 
     use super::*;
-    use crate::{AuthorizeError, ConfigChangeAuthorizer, Operation};
+    use crate::{AccountChangeApplier, AuthorizeError, ConfigChangeAuthorizer, Operation};
 
     const NOW: u64 = 1_000;
     const LOCAL: u64 = 8453;
@@ -523,10 +524,6 @@ mod tests {
     // ─────────────────────────────────────────────────────────────────────────
     // Counterfactual create path
     // ─────────────────────────────────────────────────────────────────────────
-
-    use base_common_consensus::InitialActor;
-
-    use crate::AccountChangeApplier;
 
     /// Builds a K1-signed `CreateEntry` whose derived address matches `signer`
     /// and a matching `TxEip8130` with `sender = derived` and the create as the
