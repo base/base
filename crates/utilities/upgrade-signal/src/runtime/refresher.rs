@@ -5,7 +5,8 @@ use super::{
     UpgradeSignalApplySummary, UpgradeSignalRuntimeApplier, UpgradeSignalRuntimeValidation,
 };
 use crate::{
-    AlloyUpgradeSignalReader, UpgradeSignalConfig, UpgradeSignalError, UpgradeSignalSchedule,
+    AlloyUpgradeSignalReader, UpgradeSignalConfig, UpgradeSignalError, UpgradeSignalMetricLayer,
+    UpgradeSignalSchedule,
 };
 
 /// Reads and applies upgrade signal schedules while the node is running.
@@ -15,10 +16,12 @@ pub struct UpgradeSignalRefresher {
     pub config: UpgradeSignalConfig,
     /// L1 upgrade signal reader.
     pub reader: AlloyUpgradeSignalReader,
-    /// L2 chain ID whose runtime fork view is updated.
+    /// L2 chain ID whose runtime upgrade view is updated.
     pub chain_id: u64,
     /// Runtime schedule validation context.
     pub runtime_validation: UpgradeSignalRuntimeValidation,
+    /// Metric layer recorded by this refresher.
+    pub metrics_layer: UpgradeSignalMetricLayer,
 }
 
 impl UpgradeSignalRefresher {
@@ -28,23 +31,23 @@ impl UpgradeSignalRefresher {
         l1_provider: RootProvider,
         chain_id: u64,
         runtime_validation: UpgradeSignalRuntimeValidation,
+        metrics_layer: UpgradeSignalMetricLayer,
     ) -> Self {
-        let reader = AlloyUpgradeSignalReader::new(l1_provider, config.contract_address)
-            .with_block_tag(config.l1_block_tag);
-        Self { config, reader, chain_id, runtime_validation }
+        let reader = config.reader(l1_provider);
+        Self { config, reader, chain_id, runtime_validation, metrics_layer }
     }
 
     /// Reads, metrics-records, logs, and validates the current L1 schedule.
     pub async fn read_validated_schedule(
         &self,
     ) -> Result<UpgradeSignalSchedule, UpgradeSignalError> {
-        let application_schedule = self
+        let schedule = self
             .config
-            .read_validated_application_schedule(&self.reader, "runtime refresh")
+            .read_validated_schedule(&self.reader, "runtime refresh", &[self.metrics_layer])
             .await?;
-        self.runtime_validation.validate_schedule(self.chain_id, &application_schedule)?;
+        self.runtime_validation.validate_schedule(self.chain_id, &schedule)?;
 
-        Ok(application_schedule)
+        Ok(schedule)
     }
 
     /// Reads, validates, metrics-records, logs, and applies the current L1 schedule.
@@ -55,10 +58,10 @@ impl UpgradeSignalRefresher {
             target: "upgrade_signal",
             chain_id = summary.chain_id,
             l1_block_number = ?summary.l1_block_number,
-            applied_hardforks = summary.applied_hardforks,
-            cleared_hardforks = summary.cleared_hardforks,
-            ignored_hardforks = summary.ignored_hardforks,
-            configured_hardforks = summary.configured_hardforks,
+            applied_upgrades = summary.applied_upgrades,
+            cleared_upgrades = summary.cleared_upgrades,
+            ignored_upgrades = summary.ignored_upgrades,
+            configured_upgrades = summary.configured_upgrades,
             "applied runtime upgrade signal schedule"
         );
 

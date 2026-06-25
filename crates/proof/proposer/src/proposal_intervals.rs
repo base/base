@@ -3,7 +3,7 @@
 use crate::error::ProposerError;
 
 /// Shared proposal interval calculations.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub struct ProposalIntervals;
 
 impl ProposalIntervals {
@@ -26,17 +26,13 @@ impl ProposalIntervals {
         let count = block_interval / intermediate_block_interval;
         (1..=count)
             .map(|i| {
-                starting_block_number
-                    .checked_add(i.checked_mul(intermediate_block_interval).ok_or_else(|| {
+                starting_block_number.checked_add(i * intermediate_block_interval).ok_or_else(
+                    || {
                         ProposerError::Internal(
                             "overflow computing intermediate block number".into(),
                         )
-                    })?)
-                    .ok_or_else(|| {
-                        ProposerError::Internal(
-                            "overflow computing intermediate block number".into(),
-                        )
-                    })
+                    },
+                )
             })
             .collect()
     }

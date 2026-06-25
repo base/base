@@ -68,6 +68,9 @@ pub trait BaseTransaction {
 
     /// Returns `Some` if the transaction is a deposit.
     fn as_deposit(&self) -> Option<&Sealed<TxDeposit>>;
+
+    /// Returns `Some` if the transaction is an EIP-8130 transaction.
+    fn as_eip8130(&self) -> Option<&Eip8130Signed>;
 }
 
 impl BaseTransaction for BaseTxEnvelope {
@@ -77,6 +80,10 @@ impl BaseTransaction for BaseTxEnvelope {
 
     fn as_deposit(&self) -> Option<&Sealed<TxDeposit>> {
         self.as_deposit()
+    }
+
+    fn as_eip8130(&self) -> Option<&Eip8130Signed> {
+        self.as_eip8130()
     }
 }
 
@@ -96,6 +103,13 @@ where
         match self {
             Self::BuiltIn(b) => b.as_deposit(),
             Self::Other(t) => t.as_deposit(),
+        }
+    }
+
+    fn as_eip8130(&self) -> Option<&Eip8130Signed> {
+        match self {
+            Self::BuiltIn(b) => b.as_eip8130(),
+            Self::Other(t) => t.as_eip8130(),
         }
     }
 }

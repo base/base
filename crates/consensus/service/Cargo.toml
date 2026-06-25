@@ -15,6 +15,7 @@ workspace = true
 base-health.workspace = true
 base-metrics.workspace = true
 base-protocol.workspace = true
+base-upgrade-signal.workspace = true
 base-consensus-disc.workspace = true
 base-consensus-peers.workspace = true
 base-consensus-gossip.workspace = true
@@ -66,12 +67,12 @@ async-stream.workspace = true
 tokio-stream.workspace = true
 libp2p-stream.workspace = true
 http-body-util.workspace = true
-tracing = { workspace = true, features = ["std"] }
 strum = { workspace = true, features = ["derive"] }
+tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 tower-http.workspace = true
 derive_more = { workspace = true, features = ["debug", "eq"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 jsonrpsee = { workspace = true, features = ["server", "http-client"] }
 
 # Binary conductor commit endpoint
@@ -106,6 +107,7 @@ metrics = [
 	"base-consensus-providers/metrics",
 	"base-consensus-rpc/metrics",
 	"base-metrics/metrics",
+	"base-upgrade-signal/metrics",
 	"dep:metrics",
 	"libp2p/metrics",
 	"tower-http/metrics",

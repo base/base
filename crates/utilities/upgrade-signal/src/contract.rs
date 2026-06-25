@@ -11,24 +11,27 @@ use futures::future::{join_all, try_join};
 use tokio::time::sleep;
 use tracing::warn;
 
-use crate::{UpgradeSignal, UpgradeSignalError, UpgradeSignalMetrics, UpgradeSignalSchedule};
+use crate::{
+    UpgradeSignal, UpgradeSignalError, UpgradeSignalMetricLayer, UpgradeSignalMetrics,
+    UpgradeSignalSchedule,
+};
 
 sol! {
     /// L1 upgrade signal interface.
     ///
     /// The address can be a proxy. Nodes only depend on this read interface.
     interface IUpgradeSignal {
-        /// Emitted when an activation timestamp is set for a hardfork ID.
-        event TimestampSet(string indexed hardforkId, uint256 timestamp);
+        /// Emitted when an activation timestamp is set for an upgrade ID.
+        event TimestampSet(string indexed upgradeId, uint256 timestamp);
 
-        /// Emitted when a protocol version is set for a hardfork ID.
-        event ProtocolVersionSet(string indexed hardforkId, uint256 protocolVersion);
+        /// Emitted when a protocol version is set for an upgrade ID.
+        event ProtocolVersionSet(string indexed upgradeId, uint256 protocolVersion);
 
-        /// Returns the activation timestamp for `hardforkId`.
-        function getTimestamp(string hardforkId) external view returns (uint256);
+        /// Returns the activation timestamp for `upgradeId`.
+        function getTimestamp(string upgradeId) external view returns (uint256);
 
-        /// Returns the minimum node protocol version for `hardforkId`.
-        function getProtocolVersion(string hardforkId) external view returns (uint256);
+        /// Returns the minimum node protocol version for `upgradeId`.
+        function getProtocolVersion(string upgradeId) external view returns (uint256);
     }
 }
 
@@ -78,7 +81,7 @@ impl AlloyUpgradeSignalReader {
 
     /// Returns the L1 block number and concrete block ID for the configured block tag.
     ///
-    /// Pinning reads to a concrete block hash ensures every per-fork call in a schedule observes
+    /// Pinning reads to a concrete block hash ensures every per-upgrade call in a schedule observes
     /// the same L1 state. The block tag (finalized by default) keeps the schedule reorg-stable.
     pub async fn pinned_l1_block_id(&self) -> Result<(u64, BlockId), UpgradeSignalError> {
         let block = self
@@ -98,24 +101,24 @@ impl AlloyUpgradeSignalReader {
         u64::try_from(value).map_err(|_| UpgradeSignalError::timestamp_overflow(value))
     }
 
-    /// Reads one hardfork signal using a previously observed L1 block ID.
+    /// Reads one upgrade signal using a previously observed L1 block ID.
     pub async fn read_signal_at_l1_block(
         &self,
-        hardfork_id: BaseUpgrade,
+        upgrade_id: BaseUpgrade,
         l1_block_number: u64,
         l1_block: BlockId,
     ) -> Result<UpgradeSignal, UpgradeSignalError> {
         let (timestamp_output, version_output) = try_join(
             self.call_at_block(
                 IUpgradeSignal::getTimestampCall {
-                    hardforkId: hardfork_id.contract_id().to_string(),
+                    upgradeId: upgrade_id.contract_id().to_string(),
                 },
                 l1_block,
                 "getTimestamp failed",
             ),
             self.call_at_block(
                 IUpgradeSignal::getProtocolVersionCall {
-                    hardforkId: hardfork_id.contract_id().to_string(),
+                    upgradeId: upgrade_id.contract_id().to_string(),
                 },
                 l1_block,
                 "getProtocolVersion failed",
@@ -133,41 +136,42 @@ impl AlloyUpgradeSignalReader {
                     UpgradeSignalError::decode("getProtocolVersion decode failed", error)
                 })?;
 
-        Ok(UpgradeSignal { hardfork_id, activation_timestamp, protocol_version, l1_block_number })
+        Ok(UpgradeSignal { upgrade_id, activation_timestamp, protocol_version, l1_block_number })
     }
 
-    /// Reads the upgrade signal for `hardfork_id`.
+    /// Reads the upgrade signal for `upgrade_id`.
     pub async fn read_signal(
         &self,
-        hardfork_id: BaseUpgrade,
+        upgrade_id: BaseUpgrade,
     ) -> Result<UpgradeSignal, UpgradeSignalError> {
         let (l1_block_number, l1_block) = self.pinned_l1_block_id().await?;
-        self.read_signal_at_l1_block(hardfork_id, l1_block_number, l1_block).await
+        self.read_signal_at_l1_block(upgrade_id, l1_block_number, l1_block).await
     }
 
-    /// Reads the upgrade signal schedule for `hardfork_ids`.
+    /// Reads the upgrade signal schedule for `upgrade_ids`.
     ///
-    /// Records `l1_read_errors_total` on failure: all hardfork IDs if the L1 block fetch fails,
-    /// only the failing hardfork ID if a per-hardfork contract call fails.
+    /// Records `l1_read_errors_total` on failure: all upgrade IDs if the L1 block fetch fails,
+    /// only the failing upgrade ID if a per-upgrade contract call fails.
     pub async fn read_schedule(
         &self,
-        hardfork_ids: &[BaseUpgrade],
+        upgrade_ids: &[BaseUpgrade],
+        metrics_layers: &[UpgradeSignalMetricLayer],
     ) -> Result<UpgradeSignalSchedule, UpgradeSignalError> {
         let (l1_block_number, l1_block) = match self.pinned_l1_block_id().await {
             Ok(block) => block,
             Err(error) => {
-                UpgradeSignalMetrics::record_l1_read_errors(hardfork_ids);
+                UpgradeSignalMetrics::record_l1_read_errors_for_layers(metrics_layers, upgrade_ids);
                 return Err(error);
             }
         };
-        let mut signals = Vec::with_capacity(hardfork_ids.len());
+        let mut signals = Vec::with_capacity(upgrade_ids.len());
         let mut first_error = None;
 
-        for (hardfork_id, result) in
-            join_all(hardfork_ids.iter().copied().map(|hardfork_id| async move {
+        for (upgrade_id, result) in
+            join_all(upgrade_ids.iter().copied().map(|upgrade_id| async move {
                 (
-                    hardfork_id,
-                    self.read_signal_at_l1_block(hardfork_id, l1_block_number, l1_block).await,
+                    upgrade_id,
+                    self.read_signal_at_l1_block(upgrade_id, l1_block_number, l1_block).await,
                 )
             }))
             .await
@@ -175,7 +179,10 @@ impl AlloyUpgradeSignalReader {
             match result {
                 Ok(signal) => signals.push(signal),
                 Err(error) => {
-                    UpgradeSignalMetrics::record_l1_read_error(hardfork_id);
+                    UpgradeSignalMetrics::record_l1_read_error_for_layers(
+                        metrics_layers,
+                        upgrade_id,
+                    );
                     if first_error.is_none() {
                         first_error = Some(error);
                     }
@@ -196,14 +203,15 @@ impl AlloyUpgradeSignalReader {
     /// outright; after `max_attempts` failures the last error is returned (fail-fast).
     pub async fn read_schedule_with_retries(
         &self,
-        hardfork_ids: &[BaseUpgrade],
+        upgrade_ids: &[BaseUpgrade],
         max_attempts: u32,
         backoff: Duration,
+        metrics_layers: &[UpgradeSignalMetricLayer],
     ) -> Result<UpgradeSignalSchedule, UpgradeSignalError> {
         let max_attempts = max_attempts.max(1);
         let mut attempt = 1;
         loop {
-            match self.read_schedule(hardfork_ids).await {
+            match self.read_schedule(upgrade_ids, metrics_layers).await {
                 Ok(schedule) => return Ok(schedule),
                 Err(error) if attempt >= max_attempts => return Err(error),
                 Err(error) => {
@@ -221,19 +229,20 @@ impl AlloyUpgradeSignalReader {
         }
     }
 
-    /// Reads the schedule, tolerating per-fork failures.
+    /// Reads the schedule, tolerating per-upgrade failures.
     ///
-    /// Records `l1_read_errors_total` for each fork that fails and returns the signals that were
+    /// Records `l1_read_errors_total` for each upgrade that fails and returns the signals that were
     /// read successfully. Intended for the live metrics poller, which must not abort the whole
-    /// schedule (or the node) because a single fork read failed.
+    /// schedule (or the node) because a single upgrade read failed.
     pub async fn read_schedule_tolerant(
         &self,
-        hardfork_ids: &[BaseUpgrade],
+        upgrade_ids: &[BaseUpgrade],
+        metrics_layers: &[UpgradeSignalMetricLayer],
     ) -> UpgradeSignalSchedule {
         let (l1_block_number, l1_block) = match self.pinned_l1_block_id().await {
             Ok(block) => block,
             Err(error) => {
-                UpgradeSignalMetrics::record_l1_read_errors(hardfork_ids);
+                UpgradeSignalMetrics::record_l1_read_errors_for_layers(metrics_layers, upgrade_ids);
                 warn!(
                     target: "upgrade_signal",
                     error = %error,
@@ -242,12 +251,12 @@ impl AlloyUpgradeSignalReader {
                 return UpgradeSignalSchedule::default();
             }
         };
-        let mut signals = Vec::with_capacity(hardfork_ids.len());
-        for (hardfork_id, result) in
-            join_all(hardfork_ids.iter().copied().map(|hardfork_id| async move {
+        let mut signals = Vec::with_capacity(upgrade_ids.len());
+        for (upgrade_id, result) in
+            join_all(upgrade_ids.iter().copied().map(|upgrade_id| async move {
                 (
-                    hardfork_id,
-                    self.read_signal_at_l1_block(hardfork_id, l1_block_number, l1_block).await,
+                    upgrade_id,
+                    self.read_signal_at_l1_block(upgrade_id, l1_block_number, l1_block).await,
                 )
             }))
             .await
@@ -255,12 +264,15 @@ impl AlloyUpgradeSignalReader {
             match result {
                 Ok(signal) => signals.push(signal),
                 Err(error) => {
-                    UpgradeSignalMetrics::record_l1_read_error(hardfork_id);
+                    UpgradeSignalMetrics::record_l1_read_error_for_layers(
+                        metrics_layers,
+                        upgrade_id,
+                    );
                     warn!(
                         target: "upgrade_signal",
-                        hardfork_id = %hardfork_id.contract_id(),
+                        upgrade_id = %upgrade_id.contract_id(),
                         error = %error,
-                        "failed to read live L1 upgrade signal for hardfork"
+                        "failed to read live L1 upgrade signal for upgrade"
                     );
                 }
             }

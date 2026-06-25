@@ -5,10 +5,10 @@ use std::io::{self, Write};
 use anyhow::Result;
 use base_consensus_peers::BootNode;
 use basectl_cli::{
-    JsonOutput, KeyValueTable, MonitoringConfig, NodeEndpoint, P2pCommandError, P2pTargetError,
-    PeerListReport, PeerStatsReport, PeerSummary, add_peer, ban_peer, connect_peer,
-    disconnect_peer, fetch_connected_peers, fetch_info, fetch_raw_info, fetch_raw_peers,
-    list_banned_peers, remove_peer, unban_peer,
+    JsonOutput, MonitoringConfig, P2pCommandError, P2pInfoJson, P2pInfoTable, P2pTargetError,
+    PeerListReport, PeerSummary, add_peer, ban_peer, connect_peer, disconnect_peer,
+    fetch_connected_peers, fetch_info, fetch_raw_info, fetch_raw_peers, list_banned_peers,
+    remove_peer, unban_peer,
 };
 use serde::Serialize;
 use url::Url;
@@ -248,11 +248,11 @@ async fn run_info(config: MonitoringConfig, args: P2pArgs) -> Result<()> {
         }
         (true, false) => {
             let (node_info, peer_stats) = fetch_info(&el_rpc, &cl_rpc).await?;
-            JsonOutput::print(&InfoJson::from_report(&config.name, &node_info, &peer_stats))?;
+            JsonOutput::print(&P2pInfoJson::from_report(&config.name, &node_info, &peer_stats))?;
         }
         (false, _) => {
             let (node_info, peer_stats) = fetch_info(&el_rpc, &cl_rpc).await?;
-            print_info_pretty(&config.name, &node_info, &peer_stats)?;
+            P2pInfoTable::from_report(&config.name, &node_info, &peer_stats).print()?;
         }
     }
 
@@ -572,46 +572,6 @@ fn print_peer_action_pretty(action: &PeerActionJson) -> Result<()> {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct LayerInfoJson {
-    advertised_ip: Option<String>,
-    tcp_port: Option<u16>,
-    discovery: Option<basectl_cli::DiscoveryInfo>,
-    peer_count: Option<u32>,
-}
-
-impl LayerInfoJson {
-    fn from_endpoint(endpoint: Option<NodeEndpoint>, peer_count: Option<u32>) -> Self {
-        let (advertised_ip, tcp_port, discovery) = endpoint.map_or((None, None, None), |ep| {
-            (Some(ep.advertised_ip.to_string()), Some(ep.tcp_port), Some(ep.discovery))
-        });
-        Self { advertised_ip, tcp_port, discovery, peer_count }
-    }
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct InfoJson {
-    network: String,
-    el: LayerInfoJson,
-    cl: LayerInfoJson,
-}
-
-impl InfoJson {
-    fn from_report(
-        network: &str,
-        report: &basectl_cli::NodeInfoReport,
-        peer_stats: &PeerStatsReport,
-    ) -> Self {
-        Self {
-            network: network.to_string(),
-            el: LayerInfoJson::from_endpoint(report.el, peer_stats.el_count),
-            cl: LayerInfoJson::from_endpoint(report.cl, peer_stats.cl.map(|stats| stats.connected)),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
 struct PeersJson {
     network: String,
     el: Option<Vec<PeerSummary>>,
@@ -622,87 +582,6 @@ impl PeersJson {
     fn from_report(network: &str, report: &PeerListReport) -> Self {
         Self { network: network.to_string(), el: report.el.clone(), cl: report.cl.clone() }
     }
-}
-
-fn print_info_pretty(
-    network: &str,
-    report: &basectl_cli::NodeInfoReport,
-    peer_stats: &PeerStatsReport,
-) -> Result<()> {
-    let mut table = KeyValueTable::new();
-    let el_discovery = report.el.map(|endpoint| {
-        format_discovery_flags(endpoint.discovery.v4_enabled, endpoint.discovery.v5_enabled)
-            .to_string()
-    });
-    let cl_discovery = report.cl.map(|endpoint| {
-        format_discovery_flags(endpoint.discovery.v4_enabled, endpoint.discovery.v5_enabled)
-            .to_string()
-    });
-    table
-        .row("network", network)
-        .row(
-            "el_advertised_ip",
-            report
-                .el
-                .map(|endpoint| endpoint.advertised_ip.to_string())
-                .unwrap_or_else(|| unavailable_admin_method("admin_nodeInfo")),
-        )
-        .row(
-            "el_p2p_port",
-            report
-                .el
-                .map(|endpoint| endpoint.tcp_port.to_string())
-                .unwrap_or_else(|| unavailable_admin_method("admin_nodeInfo")),
-        )
-        .row(
-            "el_discovery_port",
-            report
-                .el
-                .map(|endpoint| endpoint.discovery.udp_port.to_string())
-                .unwrap_or_else(|| unavailable_admin_method("admin_nodeInfo")),
-        )
-        .row(
-            "el_discovery",
-            el_discovery.unwrap_or_else(|| unavailable_admin_method("admin_nodeInfo")),
-        )
-        .row(
-            "el_peer_count",
-            peer_stats
-                .el_count
-                .map(|count| count.to_string())
-                .unwrap_or_else(unavailable_el_peer_count),
-        )
-        .row(
-            "cl_advertised_ip",
-            report
-                .cl
-                .map(|endpoint| endpoint.advertised_ip.to_string())
-                .unwrap_or_else(unavailable_cl_endpoint),
-        )
-        .row(
-            "cl_p2p_port",
-            report
-                .cl
-                .map(|endpoint| endpoint.tcp_port.to_string())
-                .unwrap_or_else(unavailable_cl_endpoint),
-        )
-        .row(
-            "cl_discovery_port",
-            report
-                .cl
-                .map(|endpoint| endpoint.discovery.udp_port.to_string())
-                .unwrap_or_else(unavailable_cl_endpoint),
-        )
-        .row("cl_discovery", cl_discovery.unwrap_or_else(unavailable_cl_endpoint))
-        .row(
-            "cl_peer_count",
-            peer_stats
-                .cl
-                .map(|stats| stats.connected.to_string())
-                .unwrap_or_else(unavailable_cl_peer_stats),
-        );
-    table.print()?;
-    Ok(())
 }
 
 fn print_peers_pretty(network: &str, report: &PeerListReport) -> Result<()> {
@@ -741,31 +620,6 @@ fn write_peer_section<W: Write>(
         )?;
     }
     Ok(())
-}
-
-const fn format_discovery_flags(v4_enabled: bool, v5_enabled: bool) -> &'static str {
-    match (v4_enabled, v5_enabled) {
-        (true, true) => "v4+v5",
-        (true, false) => "v4",
-        (false, true) => "v5",
-        (false, false) => "disabled",
-    }
-}
-
-fn unavailable_admin_method(method: &str) -> String {
-    format!("unavailable (`{method}` not exposed by this RPC)")
-}
-
-fn unavailable_el_peer_count() -> String {
-    "unavailable (`net_peerCount` not exposed by this RPC)".to_string()
-}
-
-fn unavailable_cl_endpoint() -> String {
-    "unavailable (could not parse advertised endpoint from `opp2p_self`)".to_string()
-}
-
-fn unavailable_cl_peer_stats() -> String {
-    "unavailable (`opp2p_peerStats` not exposed by this RPC)".to_string()
 }
 
 #[cfg(test)]

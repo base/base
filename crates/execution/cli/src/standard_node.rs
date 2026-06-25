@@ -20,7 +20,7 @@ use base_upgrade_signal::UpgradeSignalStartupMode;
 use url::Url;
 
 use crate::upgrade_signal::{
-    ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalMetricsExtension,
+    ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalRuntimeExtension,
 };
 
 /// CLI arguments for metering RPC and priority-fee resource budgets.
@@ -277,8 +277,8 @@ impl StandardBaseRethNode {
         Ok(builder)
     }
 
-    /// Installs the upgrade signal metrics observer extension when configured.
-    pub fn install_upgrade_signal_metrics_extension<SB: PayloadServiceBuilder>(
+    /// Installs the upgrade signal runtime extension when execution-side live reads are configured.
+    pub fn install_upgrade_signal_runtime_extension<SB: PayloadServiceBuilder>(
         runner: &mut BaseNodeRunner<SB>,
         rollup_args: &RollupArgs,
     ) -> eyre::Result<()> {
@@ -286,7 +286,7 @@ impl StandardBaseRethNode {
             return Ok(());
         };
 
-        runner.install_ext::<ExecutionUpgradeSignalMetricsExtension>(config);
+        runner.install_ext::<ExecutionUpgradeSignalRuntimeExtension>(config);
 
         Ok(())
     }
@@ -294,17 +294,16 @@ impl StandardBaseRethNode {
     /// Validates execution upgrade signal arguments before node setup.
     ///
     /// Execution upgrade-signal polling is configured independently from consensus polling, so a
-    /// configured contract always requires an explicit `--upgrade-signal.l1-rpc`. This holds for
-    /// every mode, including the default metrics-only mode, which still polls the contract.
+    /// configured upgrade-signal contract always requires an explicit `--upgrade-signal.l1-rpc` for
+    /// its startup application, runtime admin refresh, and live metrics observer.
     pub fn validate_upgrade_signal_args(rollup_args: &RollupArgs) -> eyre::Result<()> {
-        if rollup_args.upgrade_signal.contract_address.is_some()
+        if rollup_args.upgrade_signal.config()?.is_some()
             && rollup_args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.is_none()
         {
             eyre::bail!(
                 "--upgrade-signal.contract (env BASE_NODE_UPGRADE_SIGNAL_CONTRACT) requires \
                  --upgrade-signal.l1-rpc (env BASE_NODE_UPGRADE_SIGNAL_L1_RPC) for execution \
-                 upgrade-signal polling; every mode, including the default metrics-only mode, \
-                 reads the contract over L1"
+                 upgrade-signal reads"
             );
         }
 
@@ -322,7 +321,7 @@ impl StandardBaseRethNode {
             .upgrade_signal_l1_rpc
             .upgrade_signal_l1_rpc
             .clone()
-            .expect("validated by validate_upgrade_signal_args");
+            .ok_or_else(|| eyre::eyre!("execution upgrade signal L1 RPC not configured"))?;
 
         Ok(Some(ExecutionUpgradeSignalConfig { signal_config, l1_rpc }))
     }
@@ -389,7 +388,7 @@ impl StandardBaseRethNode {
         runner.install_ext::<BundleExtension>(());
         runner.install_ext::<TxForwardingExtension>((&args).into());
         runner.install_ext::<ProofsHistoryExtension>(rollup_args.clone());
-        Self::install_upgrade_signal_metrics_extension(&mut runner, &rollup_args)?;
+        Self::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;
         let eip8130_rpc_mode = if flashblocks_config.is_some() {
             Eip8130RpcMode::Defer
         } else {
@@ -571,7 +570,7 @@ mod tests {
     }
 
     #[test]
-    fn test_upgrade_signal_contract_requires_execution_l1_rpc() {
+    fn test_execution_upgrade_signal_reads_require_l1_rpc() {
         let error = StandardBaseRethNode::validate_upgrade_signal_args(&RollupArgs {
             upgrade_signal: base_upgrade_signal::UpgradeSignalArgs {
                 contract_address: Some(address!("0000000000000000000000000000000000000001")),
@@ -579,7 +578,7 @@ mod tests {
             },
             ..Default::default()
         })
-        .expect_err("upgrade signal contract should require an explicit execution L1 RPC");
+        .expect_err("execution upgrade signal reads should require an explicit execution L1 RPC");
 
         assert!(error.to_string().contains("--upgrade-signal.l1-rpc"));
     }

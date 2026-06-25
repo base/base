@@ -8,7 +8,7 @@ use alloy_primitives::{Address, B256, Bytes, Sealable, Sealed, TxKind, U256};
 use base_common_consensus::{
     DepositSourceDomain, L1InfoDepositSource, Predeploys, SystemAddresses, TxDeposit,
 };
-use base_common_genesis::{RollupConfig, SystemConfig};
+use base_common_genesis::{BaseUpgrade, RollupConfig, SystemConfig};
 
 use crate::{
     BlockInfoError, DecodeError, L1BlockInfoBedrock, L1BlockInfoEcotone, L1BlockInfoIsthmus,
@@ -105,7 +105,9 @@ impl L1BlockInfoTx {
                     // where if present, activates the use of the Prague blob fee schedule. If the upgrade is
                     // not present, and L1 has activated pectra, the Prague blob fee schedule is used
                     // immediately.
-                    (rollup_config.upgrades.pectra_blob_schedule_time.is_none() ||
+                    (rollup_config
+                        .contract_upgrade_activation_timestamp(BaseUpgrade::PectraBlobSchedule)
+                        .is_none() ||
                         rollup_config.is_pectra_blob_schedule_active(l1_header.timestamp)) =>
                 {
                     BlobParams::prague()
@@ -395,7 +397,7 @@ mod tests {
 
     use alloy_primitives::{address, b256};
     use base_common_chains::Sepolia;
-    use base_common_genesis::UpgradeConfig;
+    use base_common_genesis::{RuntimeUpgradeRegistry, UpgradeConfig};
     use rstest::rstest;
 
     use super::*;
@@ -906,6 +908,70 @@ mod tests {
             u32::from_be_bytes(scalar[28..32].try_into().expect("Failed to parse base fee scalar"));
         assert_eq!(l1_info.blob_base_fee_scalar(), blob_base_fee_scalar);
         assert_eq!(l1_info.base_fee_scalar(), base_fee_scalar);
+    }
+
+    #[test]
+    fn test_try_new_ecotone_honors_runtime_pectra_blob_schedule() {
+        let chain_id = 9_100_001;
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+        RuntimeUpgradeRegistry::set_activation_timestamp(
+            chain_id,
+            BaseUpgrade::PectraBlobSchedule,
+            3,
+        );
+
+        let rollup_config = RollupConfig {
+            l2_chain_id: chain_id.into(),
+            upgrades: UpgradeConfig { ecotone_time: Some(1), ..Default::default() },
+            ..Default::default()
+        };
+        let mut l1_genesis = Sepolia::l1_config();
+        l1_genesis.prague_time = Some(2);
+
+        let system_config = SystemConfig::default();
+        let l1_header = Header {
+            timestamp: 2,
+            excess_blob_gas: Some(0x5080000),
+            blob_gas_used: Some(0x100000),
+            requests_hash: Some(B256::ZERO),
+            ..Default::default()
+        };
+        let l2_block_time = 0xFFu64;
+
+        let l1_info = L1BlockInfoTx::try_new(
+            &rollup_config,
+            &l1_genesis,
+            &system_config,
+            0,
+            &l1_header,
+            l2_block_time.saturating_sub(2),
+            l2_block_time,
+        )
+        .unwrap();
+
+        let L1BlockInfoTx::Ecotone(l1_info) = l1_info else {
+            panic!("Wrong fork");
+        };
+        assert_eq!(l1_info.blob_base_fee(), l1_header.blob_fee(BlobParams::cancun()).unwrap_or(1));
+
+        let l1_header = Header { timestamp: 3, ..l1_header };
+        let l1_info = L1BlockInfoTx::try_new(
+            &rollup_config,
+            &l1_genesis,
+            &system_config,
+            0,
+            &l1_header,
+            l2_block_time.saturating_sub(2),
+            l2_block_time,
+        )
+        .unwrap();
+
+        let L1BlockInfoTx::Ecotone(l1_info) = l1_info else {
+            panic!("Wrong fork");
+        };
+        assert_eq!(l1_info.blob_base_fee(), l1_header.blob_fee(BlobParams::prague()).unwrap_or(1));
+
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
     }
 
     #[test]

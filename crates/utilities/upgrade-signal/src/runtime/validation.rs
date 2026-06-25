@@ -43,7 +43,7 @@ impl UpgradeSignalRuntimeValidation {
             && !matches!(self.activation_admin_address, Some(address) if address != Address::ZERO)
             && schedule.signals.iter().any(|signal| {
                 signal.positive_activation_timestamp().is_some()
-                    && signal.hardfork_id == BaseUpgrade::Beryl
+                    && signal.upgrade_id == BaseUpgrade::Beryl
             })
         {
             return Err(UpgradeSignalError::missing_activation_admin_address(chain_id));
@@ -68,7 +68,7 @@ mod tests {
 
     fn beryl_schedule(timestamp: u64) -> UpgradeSignalSchedule {
         UpgradeSignalSchedule::new(vec![UpgradeSignal {
-            hardfork_id: BaseUpgrade::Beryl,
+            upgrade_id: BaseUpgrade::Beryl,
             activation_timestamp: timestamp,
             protocol_version: U256::from(7),
             l1_block_number: 1,

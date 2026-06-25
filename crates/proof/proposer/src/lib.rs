@@ -36,7 +36,7 @@ mod proof_dispatcher;
 pub use proof_dispatcher::{ProofDispatcher, ProofDispatcherConfig};
 
 mod proof_submitter;
-pub use proof_submitter::{ProofSubmitter, ProofSubmitterConfig, SubmitAction};
+pub use proof_submitter::{ProofSubmitter, SubmitAction};
 
 mod driver;
 pub use driver::{DriverConfig, PipelineHandle, ProposerDriverControl, RecoveredState};

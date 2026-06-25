@@ -73,12 +73,24 @@ use revm::{
 
 use crate::{
     BaseContext, BaseContextTr, BaseEvm, BaseHaltReason, BaseSpecId, BaseTransaction,
-    BaseTransactionError, BaseTxTr, L1BlockInfo, handler::BaseHandler,
+    BaseTransactionError, BaseTxTr, Eip8130PhaseStatuses, L1BlockInfo, handler::BaseHandler,
 };
 
 /// EIP-3529 maximum gas refund quotient: refunds are capped at `gas_used / 5`.
 /// Base is post-London, so this is constant across all live specs.
 const MAX_REFUND_QUOTIENT: u64 = 5;
+
+/// Maximum number of bisection steps the [`Eip8130Executor::simulate`] gas-limit
+/// search runs before returning the tightest verified-feasible pool it has found.
+/// The `POOL_SEARCH_TOLERANCE_PER_MILLE` early exit normally terminates the
+/// search in far fewer steps; this is a hard backstop against pathological ranges.
+const POOL_SEARCH_MAX_ITERS: u32 = 16;
+
+/// Early-exit tolerance (in parts-per-thousand) for the gas-limit search: once the
+/// `(highest - lowest)` window is within this fraction of `highest`, the search
+/// stops and returns `highest` (a verified-feasible pool). Mirrors the standard
+/// reth/geth estimator's 1.5% `ESTIMATE_GAS_ERROR_RATIO`.
+const POOL_SEARCH_TOLERANCE_PER_MILLE: u64 = 15;
 
 /// The resolved pre-call context of an EIP-8130 transaction: the authorized
 /// actors, the policy gate target, and the gas/fee parameters needed to dispatch
@@ -136,6 +148,11 @@ struct CallsResult {
     /// The return data of the call that reverted the transaction (or the
     /// `ActorPolicyViolation` payload for a policy-gate block); empty on success.
     output: Bytes,
+    /// Per-phase execution status, one entry per phase in `calls` and in phase
+    /// order: `0x01` if the phase committed, `0x00` if it reverted or was skipped
+    /// because an earlier phase reverted. Empty when `calls` was empty. This is
+    /// the EIP-8130 `phaseStatuses` array surfaced through the receipt.
+    phase_statuses: Vec<u8>,
 }
 
 /// Executes enshrined EIP-8130 transactions against the block-execution journal.
@@ -164,6 +181,12 @@ impl Eip8130Executor {
                 Journal: core::fmt::Debug,
             >,
     {
+        // Discard any phase statuses a previous transaction may have leaked into
+        // the thread-local slot (e.g. via a panic caught between its `set` and the
+        // receipt builder's `take`), so this transaction's receipt can only ever
+        // observe its own statuses. See [`Eip8130PhaseStatuses`] panic safety.
+        Eip8130PhaseStatuses::clear();
+
         // The signed envelope is cloned out of the context because the pipeline
         // borrows `ctx` mutably (journal/account access) while needing the
         // envelope's fields throughout. The clone deep-copies the account-change
@@ -244,13 +267,14 @@ impl Eip8130Executor {
         // chain.
         Self::warm_pre_call_accounts(evm);
 
-        let calls = match Self::execute_calls(evm, &signed, &outcome) {
-            Ok(calls) => calls,
-            Err(err) => {
-                Self::teardown_after_error(evm, checkpoint);
-                return Err(err);
-            }
-        };
+        let mut calls =
+            match Self::execute_calls(evm, &signed, &outcome, outcome.execution_gas_available) {
+                Ok(calls) => calls,
+                Err(err) => {
+                    Self::teardown_after_error(evm, checkpoint);
+                    return Err(err);
+                }
+            };
 
         let gas_used = match Self::settle_fees(
             evm.ctx_mut(),
@@ -285,6 +309,18 @@ impl Eip8130Executor {
         evm.ctx().local_mut().clear();
         evm.frame_stack().clear();
 
+        // Hand the per-phase statuses to the receipt builder, which runs on this
+        // same thread immediately after execution (see [`Eip8130PhaseStatuses`]).
+        // This is the only channel available: the receipt builder is generic over
+        // the EVM and the `ExecutionResult`'s `output` already carries the
+        // transaction's revert data. Published as the last step before returning —
+        // after the transaction is fully settled and committed — so neither a
+        // `settle_fees` error nor a panic in the journal teardown above can leave
+        // stale statuses in the slot for the next transaction; only the
+        // allocation-free result construction below runs before the builder's
+        // `take`.
+        Eip8130PhaseStatuses::set(core::mem::take(&mut calls.phase_statuses));
+
         // The gas refund is already folded into `gas_used` (via `net_used` in
         // `settle_fees`), so the `refunded` counter is left 0; the per-phase
         // receipt breakdown is deferred (see the module-level "Scope").
@@ -301,6 +337,402 @@ impl Eip8130Executor {
                 output: Output::Call(calls.output),
             })
         }
+    }
+
+    /// Read-only gas estimation for an EIP-8130 transaction — the
+    /// `eth_estimateGas` / `eth_call` path. Runs the same account-change apply,
+    /// auto-delegation, intrinsic-gas, and phased-`calls` pipeline as
+    /// [`Self::execute`] to measure gas, then reverts every journal write so no
+    /// state is committed.
+    ///
+    /// Unlike [`Self::execute`] it performs **no signature verification** and
+    /// **no fee settlement**: like `eth_call`/`eth_estimateGas` for every other
+    /// transaction type, estimation simulates from the request's `from` without a
+    /// signature. The sender actor and its policy are resolved from committed
+    /// account state (not from a recovered signer), so the proof-of-recovery
+    /// authorization token is never fabricated. This entrypoint is reachable only
+    /// from the read-only RPC simulation path; block execution and txpool
+    /// admission always go through [`Self::execute`] with full verification.
+    ///
+    /// Both the default-EOA (empty-`sender`) path and a configured sender are
+    /// supported: a configured sender is resolved as its owner self-actor from
+    /// committed state (the happy path), and the authentication gas of whichever
+    /// authenticator the caller declared is priced from the synthesized
+    /// `sender_auth` / `payer_auth` blob shape. No signature is ever verified, so
+    /// the declared authenticator only selects which schedule entry is charged.
+    pub fn simulate<DB, I, P>(
+        evm: &mut BaseEvm<DB, I, P>,
+    ) -> Result<ExecutionResult<BaseHaltReason>, EVMError<DB::Error, BaseTransactionError>>
+    where
+        DB: AlloyDatabase,
+        P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
+        BaseContext<DB>: BaseContextTr
+            + ContextTr<
+                Db = DB,
+                Tx = BaseTransaction<TxEnv>,
+                Block = BlockEnv,
+                Journal: core::fmt::Debug,
+            >,
+    {
+        let signed = evm
+            .ctx()
+            .tx()
+            .eip8130_parts()
+            .ok_or_else(|| {
+                BaseTransactionError::eip8130("transaction is not an EIP-8130 transaction")
+            })?
+            .signed
+            .clone();
+
+        let ctx = evm.ctx_mut();
+        let from = ctx.tx().base.caller;
+        // Estimation prices the happy path: it skips authorization, so it does not
+        // enforce expiry, and the EIP-8130 intrinsic schedule does not depend on
+        // the block timestamp — so no timestamp is read here (unlike `execute`).
+        let base_fee: u128 = u128::from(ctx.block().basefee());
+        let encoded =
+            ctx.tx().enveloped_tx().cloned().ok_or_else(|| {
+                BaseTransactionError::eip8130("missing enveloped transaction bytes")
+            })?;
+
+        let checkpoint = ctx.journal_mut().checkpoint();
+        let outcome = match Self::simulate_resolve(ctx, &signed, &encoded, from, base_fee) {
+            Ok(outcome) => outcome,
+            Err(err) => {
+                ctx.journal_mut().checkpoint_revert(checkpoint);
+                return Err(err.into());
+            }
+        };
+
+        // Dispatch `calls` from the resolved sender so `tx.origin` reads correctly
+        // (mirrors `prepay`'s caller overwrite on the execution path).
+        evm.ctx_mut().tx.base.caller = outcome.sender;
+
+        // Warm precompiles/coinbase and set the journal spec id exactly as
+        // [`Self::execute`] does, so the simulated `calls` are charged the same
+        // warm-access gas a real execution would — keeping the estimate aligned.
+        Self::warm_pre_call_accounts(evm);
+
+        // The estimate must return a gas *limit* that guarantees execution
+        // succeeds, not the net charge. Two effects make that more than the gas a
+        // single happy-path run consumes:
+        //
+        // 1. Refunds are credited to the payer *after* execution, so they never
+        //    rejoin the call pool; the limit must cover the gross call spend.
+        // 2. EIP-150 lets a `CALL` forward at most 63/64 of the gas available at
+        //    the call site. The calls are measured here against a large pool (the
+        //    request's `gas_limit`, defaulting to the block gas limit), so a
+        //    contract that forwards "all but 1/64" across nested calls would, at a
+        //    tighter `gas_limit == estimate`, forward less and could starve a deep
+        //    callee — OOG-ing even though this simulation succeeded.
+        //
+        // Rather than guess a headroom factor, search for the minimum call pool at
+        // which the calls still succeed — re-dispatching them at candidate pools
+        // over fresh journal checkpoints (each reverted), exactly as standard
+        // `eth_estimateGas` binary-searches the gas limit. The resolved sender,
+        // applied account changes, and warmed accounts above are shared by every
+        // probe, so only the call pool varies. Determinism of the EIP-8130 schedule
+        // keeps the search to a handful of iterations.
+        let ceiling_pool = outcome.execution_gas_available;
+
+        // First run at the request's full pool: measures the baseline call spend
+        // and decides whether the transaction can succeed at all. Probed under a
+        // nested checkpoint so its writes (and logs) are rolled back before the
+        // search reuses the resolved state.
+        let ceiling = match Self::probe_calls(evm, &signed, &outcome, ceiling_pool) {
+            Ok(ceiling) => ceiling,
+            Err(err) => {
+                Self::teardown_after_error(evm, checkpoint);
+                return Err(err);
+            }
+        };
+
+        // A revert/halt even at the full pool is a genuine failure (not a gas
+        // shortfall the search could fix): surface it like standard
+        // `eth_estimateGas`. Re-run once un-reverted to capture the revert output
+        // and any logs the committed phases emitted before the failing phase.
+        if ceiling.reverted {
+            let final_calls = match Self::execute_calls(evm, &signed, &outcome, ceiling_pool) {
+                Ok(final_calls) => final_calls,
+                Err(err) => {
+                    Self::teardown_after_error(evm, checkpoint);
+                    return Err(err);
+                }
+            };
+            let logs = evm.ctx_mut().journal_mut().take_logs();
+            evm.ctx_mut().journal_mut().checkpoint_revert(checkpoint);
+            let gross = outcome
+                .sender_intrinsic
+                .saturating_add(final_calls.call_gas_spent)
+                .saturating_add(outcome.payer_auth);
+            let result_gas = ResultGas::new_with_state_gas(gross, 0, 0, 0);
+            return Ok(ExecutionResult::Revert {
+                gas: result_gas,
+                logs,
+                output: final_calls.output,
+            });
+        }
+
+        let feasible_pool = match Self::search_estimate_pool(
+            evm,
+            &signed,
+            &outcome,
+            ceiling.call_gas_spent,
+            ceiling_pool,
+        ) {
+            Ok(pool) => pool,
+            Err(err) => {
+                Self::teardown_after_error(evm, checkpoint);
+                return Err(err);
+            }
+        };
+
+        // Final canonical run at the chosen pool (un-reverted) to capture the logs
+        // and output at the returned gas limit, then discard all simulated state.
+        let final_calls = match Self::execute_calls(evm, &signed, &outcome, feasible_pool) {
+            Ok(final_calls) => final_calls,
+            Err(err) => {
+                Self::teardown_after_error(evm, checkpoint);
+                return Err(err);
+            }
+        };
+        let logs = evm.ctx_mut().journal_mut().take_logs();
+        evm.ctx_mut().journal_mut().checkpoint_revert(checkpoint);
+
+        // gas_limit = intrinsic + feasible_pool + payer_auth. The on-chain call
+        // pool at this limit is `gas_limit - intrinsic = feasible_pool + payer_auth`
+        // (payer authentication is billed on top of the limit, not drawn from the
+        // pool), so it is at least `feasible_pool` — the verified-feasible amount —
+        // and the limit also covers the net charge (which never exceeds it).
+        let estimate_gas = outcome
+            .sender_intrinsic
+            .saturating_add(feasible_pool)
+            .saturating_add(outcome.payer_auth);
+        let result_gas = ResultGas::new_with_state_gas(estimate_gas, 0, 0, 0);
+        if final_calls.reverted {
+            Ok(ExecutionResult::Revert { gas: result_gas, logs, output: final_calls.output })
+        } else {
+            Ok(ExecutionResult::Success {
+                reason: SuccessReason::Return,
+                gas: result_gas,
+                logs,
+                output: Output::Call(final_calls.output),
+            })
+        }
+    }
+
+    /// Runs the phased `calls` at `pool` under a nested journal checkpoint and
+    /// reverts every write (and log) they made, leaving the journal at the
+    /// resolved pre-call state so the next probe starts identically. Used only by
+    /// the [`Self::simulate`] gas-limit search; returns the measured
+    /// [`CallsResult`] so the caller can read `reverted` / `call_gas_spent`.
+    fn probe_calls<DB, I, P>(
+        evm: &mut BaseEvm<DB, I, P>,
+        signed: &base_common_consensus::Eip8130Signed,
+        outcome: &Eip8130Outcome,
+        pool: u64,
+    ) -> Result<CallsResult, EVMError<DB::Error, BaseTransactionError>>
+    where
+        DB: AlloyDatabase,
+        P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
+        BaseContext<DB>: BaseContextTr
+            + ContextTr<
+                Db = DB,
+                Tx = BaseTransaction<TxEnv>,
+                Block = BlockEnv,
+                Journal: core::fmt::Debug,
+            >,
+    {
+        let checkpoint = evm.ctx_mut().journal_mut().checkpoint();
+        let calls = Self::execute_calls(evm, signed, outcome, pool)?;
+        evm.ctx_mut().journal_mut().checkpoint_revert(checkpoint);
+        Ok(calls)
+    }
+
+    /// Searches for the minimum call pool at which the `calls` still succeed,
+    /// given that they already succeeded at `ceiling_pool` consuming
+    /// `ceiling_spent`. Returns a verified-feasible pool in
+    /// `[ceiling_spent, ceiling_pool]`.
+    ///
+    /// Fast path: the measured spend is usually itself feasible (no gas lost to
+    /// EIP-150 forwarding), so a single probe at `ceiling_spent` resolves it. Only
+    /// when that probe fails does it bisect upward, seeded with the standard
+    /// `64/63` optimistic guess and bounded by [`POOL_SEARCH_MAX_ITERS`] and the
+    /// [`POOL_SEARCH_TOLERANCE_PER_MILLE`] early exit. Every bound assigned to
+    /// `highest` is a probe-verified success, so the returned value always
+    /// succeeds.
+    fn search_estimate_pool<DB, I, P>(
+        evm: &mut BaseEvm<DB, I, P>,
+        signed: &base_common_consensus::Eip8130Signed,
+        outcome: &Eip8130Outcome,
+        ceiling_spent: u64,
+        ceiling_pool: u64,
+    ) -> Result<u64, EVMError<DB::Error, BaseTransactionError>>
+    where
+        DB: AlloyDatabase,
+        P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
+        BaseContext<DB>: BaseContextTr
+            + ContextTr<
+                Db = DB,
+                Tx = BaseTransaction<TxEnv>,
+                Block = BlockEnv,
+                Journal: core::fmt::Debug,
+            >,
+    {
+        // The calls consumed `ceiling_spent` at the full pool, so no smaller pool
+        // can satisfy them; if `ceiling_spent` itself succeeds it is the answer.
+        let spent = ceiling_spent.min(ceiling_pool);
+        if spent >= ceiling_pool || !Self::probe_calls(evm, signed, outcome, spent)?.reverted {
+            return Ok(spent);
+        }
+
+        // `lowest` is a pool known (or assumed) to be insufficient; `highest` is a
+        // verified-feasible pool. Bisect to shrink the window onto the threshold.
+        let mut lowest = spent;
+        let mut highest = ceiling_pool;
+
+        // Optimistic 64/63 seed (covers one forwarding level), verified before use.
+        let seed = spent.saturating_mul(64) / 63;
+        if seed > lowest && seed < highest {
+            if Self::probe_calls(evm, signed, outcome, seed)?.reverted {
+                lowest = seed;
+            } else {
+                highest = seed;
+            }
+        }
+
+        let mut iters = 0;
+        while lowest + 1 < highest && iters < POOL_SEARCH_MAX_ITERS {
+            // Stop once the window is within the tolerated fraction of `highest`,
+            // returning `highest` (a verified-feasible pool).
+            if (highest - lowest).saturating_mul(1000)
+                <= highest.saturating_mul(POOL_SEARCH_TOLERANCE_PER_MILLE)
+            {
+                break;
+            }
+            let mid = lowest + (highest - lowest) / 2;
+            if Self::probe_calls(evm, signed, outcome, mid)?.reverted {
+                lowest = mid;
+            } else {
+                highest = mid;
+            }
+            iters += 1;
+        }
+
+        Ok(highest)
+    }
+
+    /// Resolves the [`Eip8130Outcome`] for [`Self::simulate`]: derives the
+    /// sender's owner self-actor from `sender` and reads its policy from
+    /// committed account state (no signature recovery), then applies account
+    /// changes, auto-delegates, and prices intrinsic gas — without validating or
+    /// advancing the nonce or checking the payer balance. The authentication gas
+    /// for the sender's (and any payer's) declared authenticator is priced from
+    /// the synthesized auth-blob shape via [`IntrinsicGas`]. Storage writes land
+    /// on the journal; the caller's checkpoint reverts them.
+    fn simulate_resolve<DB>(
+        ctx: &mut BaseContext<DB>,
+        signed: &base_common_consensus::Eip8130Signed,
+        encoded: &[u8],
+        sender: Address,
+        base_fee: u128,
+    ) -> Result<Eip8130Outcome, BaseTransactionError>
+    where
+        DB: AlloyDatabase,
+        BaseContext<DB>: BaseContextTr
+            + ContextTr<
+                Db = DB,
+                Tx = BaseTransaction<TxEnv>,
+                Block = BlockEnv,
+                Journal: core::fmt::Debug,
+            >,
+    {
+        let tx = signed.tx();
+        let nonce_key = tx.nonce_key;
+        let gas_limit = tx.gas_limit;
+        let max_fee = tx.max_fee_per_gas;
+        let max_priority = tx.max_priority_fee_per_gas;
+        // Use the declared payer (sponsor) so the published `TxContext` matches a
+        // real execution: a call that reads the payer from the `TxContext`
+        // precompile must see the same address it would on-chain, or it could take
+        // a different path and skew the estimate. No signature is verified here.
+        let payer = tx.payer.unwrap_or(sender);
+
+        let internals = EvmInternals::from_context(ctx);
+        let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
+
+        StorageCtx::enter(&mut provider, |sctx| {
+            let acc = AccountConfigurationStorage::new(sctx);
+            let nonce_mgr = NonceManagerStorage::new(sctx);
+
+            // 1. Resolve the default-EOA self actor from committed account state.
+            //    No signature recovery: revocation/expiry are not enforced here
+            //    because estimation prices the happy-path gas.
+            let sender_actor_id = AccountConfigurationStorage::self_actor_id(sender);
+            let state = acc.get_account_state(sender).map_err(BaseTransactionError::eip8130)?;
+            let policy_type = state.default_eoa_policy_type;
+            let policy_target = if policy_type == 0 {
+                Address::ZERO
+            } else {
+                acc.get_policy_manager(sender, sender_actor_id)
+                    .map_err(BaseTransactionError::eip8130)?
+            };
+
+            // 2. Nonce-channel first-use flag (drives intrinsic gas). Estimation
+            //    neither validates nor advances the nonce.
+            let protocol_nonce = sctx
+                .with_account_info(sender, |info| Ok(info.nonce))
+                .map_err(BaseTransactionError::eip8130)?;
+            let nonce_key_first_use = if nonce_key == Eip8130Constants::NONCE_KEY_MAX {
+                false
+            } else if nonce_key == U256::ZERO {
+                protocol_nonce == 0
+            } else {
+                nonce_mgr.get_nonce(sender, nonce_key).map_err(BaseTransactionError::eip8130)? == 0
+            };
+
+            // 3. Apply account changes and install deferred code effects so the
+            //    calls run against post-change code and create/delegation gas is
+            //    priced.
+            Self::apply_account_changes(signed, sctx, sender)?;
+
+            // 4. Auto-delegate a code-less sender to the default account. Unlike
+            //    the verifying path this is unconditional on a code-less sender: a
+            //    configured account already has code, so the check is a no-op for
+            //    it, and a basic-account sender is delegated to `DEFAULT_ACCOUNT`.
+            let sender_auto_delegated = Self::auto_delegate_codeless_sender(sctx, sender)?;
+
+            // 5. Intrinsic gas (auth gas is priced from the auth-blob shape, so a
+            //    stub signature of the right authenticator type estimates exactly).
+            let (sender_intrinsic, payer_auth, execution_gas_available) =
+                Self::resolve_execution_gas(
+                    signed,
+                    encoded,
+                    nonce_key_first_use,
+                    sender_auto_delegated,
+                    gas_limit,
+                )?;
+
+            // 6. Publish the transaction context for the `TxContext` precompile.
+            TxContextStorage::new(sctx)
+                .set_context(sender, payer, sender_actor_id)
+                .map_err(BaseTransactionError::eip8130)?;
+
+            Ok(Eip8130Outcome {
+                sender,
+                payer,
+                sender_actor_id,
+                policy_type,
+                policy_target,
+                gas_limit,
+                sender_intrinsic,
+                payer_auth,
+                execution_gas_available,
+                effective: FeeCheck::effective_gas_price(max_fee, max_priority, base_fee),
+                base_fee,
+                bump_protocol_nonce: false,
+            })
+        })
     }
 
     /// Runs the storage-backed pre-call pipeline (authorize, nonce, intrinsic
@@ -389,21 +821,7 @@ impl Eip8130Executor {
             };
 
             // 4. Apply account changes and install the deferred code effects.
-            let mut acc_mut = AccountConfigurationStorage::new(sctx);
-            let applied = AccountChangeApplier::apply(signed, &mut acc_mut, sender)
-                .map_err(BaseTransactionError::eip8130)?;
-            if let Some(created) = &applied.created {
-                sctx.set_code(created.address, Bytecode::new_raw(created.code.clone()))
-                    .map_err(BaseTransactionError::eip8130)?;
-            }
-            if let Some(delegation) = &applied.delegation {
-                let code = if delegation.target.is_zero() {
-                    Bytecode::default()
-                } else {
-                    Bytecode::new_eip7702(delegation.target)
-                };
-                sctx.set_code(delegation.account, code).map_err(BaseTransactionError::eip8130)?;
-            }
+            Self::apply_account_changes(signed, sctx, sender)?;
 
             // 5. Auto-delegate a code-less EOA sender to the default account so a
             // basic account can dispatch its calls. This is unconditional for
@@ -411,31 +829,20 @@ impl Eip8130Executor {
             // a non-zero target leaves non-empty code and is preserved here, but
             // clearing the sender's delegation in the same transaction leaves it
             // code-less and is intentionally re-delegated — a basic-account sender
-            // is always delegated to `DEFAULT_ACCOUNT`.
-            let sender_auto_delegated = if sender_is_eoa
-                && sctx
-                    .with_account_info(sender, |info| Ok(info.is_empty_code_hash()))
-                    .map_err(BaseTransactionError::eip8130)?
-            {
-                sctx.set_code(sender, Bytecode::new_eip7702(Eip8130Contracts::DEFAULT_ACCOUNT))
-                    .map_err(BaseTransactionError::eip8130)?;
-                true
-            } else {
-                false
-            };
+            // is always delegated to `DEFAULT_ACCOUNT`. The `&&` short-circuits so
+            // a configured (non-EOA) sender is never auto-delegated.
+            let sender_auto_delegated =
+                sender_is_eoa && Self::auto_delegate_codeless_sender(sctx, sender)?;
 
             // 6. Intrinsic gas under the EIP-8130 schedule.
-            let intrinsic = IntrinsicGas::compute(
-                signed,
-                encoded,
-                &IntrinsicGasInput::new(nonce_key_first_use, sender_auto_delegated),
-            )
-            .map_err(BaseTransactionError::eip8130)?;
-            let Some(execution_gas_available) = intrinsic.execution_gas_available(gas_limit) else {
-                return Err(BaseTransactionError::eip8130(
-                    "EIP-8130 sender-intrinsic gas exceeds the gas limit",
-                ));
-            };
+            let (sender_intrinsic, payer_auth, execution_gas_available) =
+                Self::resolve_execution_gas(
+                    signed,
+                    encoded,
+                    nonce_key_first_use,
+                    sender_auto_delegated,
+                    gas_limit,
+                )?;
 
             // 7. Fee caps and payer balance.
             FeeCheck::validate_fees(max_fee, max_priority, base_fee)
@@ -443,7 +850,7 @@ impl Eip8130Executor {
             let payer_balance = sctx
                 .with_account_info(payer, |info| Ok(info.balance))
                 .map_err(BaseTransactionError::eip8130)?;
-            FeeCheck::validate_balance(payer_balance, gas_limit, intrinsic.payer_auth, max_fee)
+            FeeCheck::validate_balance(payer_balance, gas_limit, payer_auth, max_fee)
                 .map_err(BaseTransactionError::eip8130)?;
 
             // 8. Publish the transaction context (sender / payer / actor id) so it
@@ -459,8 +866,8 @@ impl Eip8130Executor {
                 policy_type: sender_actor.policy_type,
                 policy_target: sender_actor.policy_target,
                 gas_limit,
-                sender_intrinsic: intrinsic.sender_intrinsic(),
-                payer_auth: intrinsic.payer_auth,
+                sender_intrinsic,
+                payer_auth,
                 execution_gas_available,
                 effective: FeeCheck::effective_gas_price(max_fee, max_priority, base_fee),
                 base_fee,
@@ -521,14 +928,21 @@ impl Eip8130Executor {
     }
 
     /// Dispatches the transaction's `calls` as EVM call frames, phase by phase,
-    /// from a single gas pool. Each phase runs under a journal checkpoint: a
+    /// from a single gas `pool`. Each phase runs under a journal checkpoint: a
     /// successful phase commits and its gas refund counts; a reverting phase (or
     /// one blocked by the policy gate) rolls back, is charged for the gas already
     /// consumed without refund, and skips every later phase.
+    ///
+    /// `pool` is the gas available to the calls (`gas_limit - sender_intrinsic`).
+    /// Block execution passes `outcome.execution_gas_available`; the read-only
+    /// estimate probes the same calls at several candidate pools to search for the
+    /// minimum gas limit that succeeds, so it is supplied explicitly rather than
+    /// read from `outcome`.
     fn execute_calls<DB, I, P>(
         evm: &mut BaseEvm<DB, I, P>,
         signed: &base_common_consensus::Eip8130Signed,
         outcome: &Eip8130Outcome,
+        pool: u64,
     ) -> Result<CallsResult, EVMError<DB::Error, BaseTransactionError>>
     where
         DB: AlloyDatabase,
@@ -541,10 +955,14 @@ impl Eip8130Executor {
                 Journal: core::fmt::Debug,
             >,
     {
-        let mut pool = outcome.execution_gas_available;
+        let mut remaining = pool;
         // Signed transaction-level refund counter: refunds are accounted across
         // the whole transaction, not per call. See [`CallsResult::refund`].
         let mut refund: i64 = 0;
+        let total_phases = signed.tx().calls.len();
+        // One status byte per phase; phases not reached after a revert are filled
+        // with `0x00` below.
+        let mut phase_statuses: Vec<u8> = Vec::with_capacity(total_phases);
 
         for phase in &signed.tx().calls {
             let checkpoint = evm.ctx_mut().journal_mut().checkpoint();
@@ -564,12 +982,13 @@ impl Eip8130Executor {
                     break;
                 }
 
-                let frame = Self::run_call(evm, outcome.sender, call.to, call.data.clone(), pool)?;
+                let frame =
+                    Self::run_call(evm, outcome.sender, call.to, call.data.clone(), remaining)?;
                 let gas = frame.gas();
-                // `run_call` caps the frame at `pool`, so a call can never report
-                // spending more than the pool held; treat a violation of that EVM
-                // invariant as a hard error rather than silently clamping to 0.
-                pool = pool.checked_sub(gas.total_gas_spent()).ok_or_else(|| {
+                // `run_call` caps the frame at `remaining`, so a call can never
+                // report spending more than the pool held; treat a violation of
+                // that EVM invariant as a hard error rather than silently clamping.
+                remaining = remaining.checked_sub(gas.total_gas_spent()).ok_or_else(|| {
                     BaseTransactionError::eip8130(
                         "EIP-8130 call consumed more gas than the phase pool contained",
                     )
@@ -591,11 +1010,16 @@ impl Eip8130Executor {
 
             if phase_reverted {
                 evm.ctx_mut().journal_mut().checkpoint_revert(checkpoint);
+                // This phase reverted; record it and report every remaining
+                // (unexecuted) phase as reverted too, per EIP-8130.
+                phase_statuses.push(0x00);
+                phase_statuses.resize(total_phases, 0x00);
                 return Ok(CallsResult {
-                    call_gas_spent: outcome.execution_gas_available.saturating_sub(pool),
+                    call_gas_spent: pool.saturating_sub(remaining),
                     refund,
                     reverted: true,
                     output: phase_output,
+                    phase_statuses,
                 });
             }
 
@@ -605,14 +1029,16 @@ impl Eip8130Executor {
             // later reverts — e.g. when a subsequent phase surfaces a database
             // error. Committed phases are only durable once `commit_tx` runs.
             evm.ctx_mut().journal_mut().checkpoint_commit();
+            phase_statuses.push(0x01);
             refund = refund.saturating_add(phase_refund);
         }
 
         Ok(CallsResult {
-            call_gas_spent: outcome.execution_gas_available.saturating_sub(pool),
+            call_gas_spent: pool.saturating_sub(remaining),
             refund,
             reverted: false,
             output: Bytes::new(),
+            phase_statuses,
         })
     }
 
@@ -793,17 +1219,9 @@ impl Eip8130Executor {
         BaseContext<DB>:
             BaseContextTr + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
     {
-        // Gas drawn from `gas_limit`: sender-intrinsic plus the gas consumed by
-        // calls, less the refund capped at EIP-3529's `gas_used / 5`. The cap
-        // denominator (`gross_used`) includes `sender_intrinsic` even though that
-        // is a fixed charge with no SSTORE/SELFDESTRUCT refund of its own; this
-        // matches the mainnet refund-cap convention, where intrinsic gas counts
-        // toward `gas_used` in the `gas_used / 5` ceiling.
-        let gross_used = outcome.sender_intrinsic.saturating_add(calls.call_gas_spent);
-        let refund = Self::capped_refund(calls.refund, gross_used);
-        let net_used = gross_used.saturating_sub(refund);
-        // Payer authentication is billed on top of the sender budget.
-        let billable_gas = net_used.saturating_add(outcome.payer_auth);
+        // Sender-intrinsic + call gas, less the EIP-3529-capped refund, plus payer
+        // authentication. Shared with the estimate path so they cannot diverge.
+        let billable_gas = Self::billable_gas(outcome, calls);
 
         let fee = U256::from(billable_gas)
             .checked_mul(U256::from(outcome.effective))
@@ -862,6 +1280,101 @@ impl Eip8130Executor {
     /// refunds across calls cancel exactly, as under one continuous execution.
     fn capped_refund(signed_refund: i64, gross_used: u64) -> u64 {
         u64::try_from(signed_refund.max(0)).unwrap_or(0).min(gross_used / MAX_REFUND_QUOTIENT)
+    }
+
+    /// The gas billed for an EIP-8130 transaction: sender-intrinsic plus the gas
+    /// its `calls` consumed, less the EIP-3529-capped refund, plus payer
+    /// authentication (billed on top of the sender budget).
+    ///
+    /// The refund-cap denominator (`gross_used`) includes `sender_intrinsic` —
+    /// like mainnet, where intrinsic gas counts toward the `gas_used / 5` ceiling —
+    /// but deliberately excludes `payer_auth`: payer authentication carries no
+    /// SSTORE/SELFDESTRUCT refund of its own, so it must not inflate the refund
+    /// ceiling. (Mainnet has no payer-auth concept, so this is an EIP-8130-specific
+    /// choice rather than literal mainnet parity.)
+    ///
+    /// This is the **net consensus charge** used by [`Self::settle_fees`]. The
+    /// read-only estimate ([`Self::simulate`]) uses the gross amount instead —
+    /// `sender_intrinsic + call_gas_spent + payer_auth` — because refunds are
+    /// credited after execution and are never available to the call pool during
+    /// execution, so the gas limit must cover the full gross spend.
+    fn billable_gas(outcome: &Eip8130Outcome, calls: &CallsResult) -> u64 {
+        let gross_used = outcome.sender_intrinsic.saturating_add(calls.call_gas_spent);
+        let refund = Self::capped_refund(calls.refund, gross_used);
+        let net_used = gross_used.saturating_sub(refund);
+        net_used.saturating_add(outcome.payer_auth)
+    }
+
+    /// Applies the transaction's account-configuration changes and installs the
+    /// deferred account-*code* effects (created-account code and delegation),
+    /// directly on the journal-backed storage. Shared verbatim by the verifying
+    /// ([`Self::authorize_and_apply`]) and read-only ([`Self::simulate_resolve`])
+    /// pipelines so the post-change code the `calls` run against is identical.
+    fn apply_account_changes(
+        signed: &base_common_consensus::Eip8130Signed,
+        sctx: StorageCtx<'_>,
+        sender: Address,
+    ) -> Result<(), BaseTransactionError> {
+        let mut acc_mut = AccountConfigurationStorage::new(sctx);
+        let applied = AccountChangeApplier::apply(signed, &mut acc_mut, sender)
+            .map_err(BaseTransactionError::eip8130)?;
+        if let Some(created) = &applied.created {
+            sctx.set_code(created.address, Bytecode::new_raw(created.code.clone()))
+                .map_err(BaseTransactionError::eip8130)?;
+        }
+        if let Some(delegation) = &applied.delegation {
+            let code = if delegation.target.is_zero() {
+                Bytecode::default()
+            } else {
+                Bytecode::new_eip7702(delegation.target)
+            };
+            sctx.set_code(delegation.account, code).map_err(BaseTransactionError::eip8130)?;
+        }
+        Ok(())
+    }
+
+    /// Auto-delegates a code-less sender to [`Eip8130Contracts::DEFAULT_ACCOUNT`]
+    /// so a basic account can dispatch its `calls`, returning whether the
+    /// delegation was installed (which feeds the intrinsic-gas schedule). The
+    /// caller decides *whether* to consider auto-delegation: the verifying path
+    /// only does so for an EOA sender, while estimation considers any code-less
+    /// sender (a configured account already has code, so the check is a no-op).
+    fn auto_delegate_codeless_sender(
+        sctx: StorageCtx<'_>,
+        sender: Address,
+    ) -> Result<bool, BaseTransactionError> {
+        let is_codeless = sctx
+            .with_account_info(sender, |info| Ok(info.is_empty_code_hash()))
+            .map_err(BaseTransactionError::eip8130)?;
+        if is_codeless {
+            sctx.set_code(sender, Bytecode::new_eip7702(Eip8130Contracts::DEFAULT_ACCOUNT))
+                .map_err(BaseTransactionError::eip8130)?;
+        }
+        Ok(is_codeless)
+    }
+
+    /// Computes the EIP-8130 intrinsic gas and the gas left for `calls`, returning
+    /// `(sender_intrinsic, payer_auth, execution_gas_available)`. Shared by both
+    /// pipelines so intrinsic pricing is computed identically for execution and
+    /// estimation. Errors when sender-intrinsic gas exceeds the gas limit.
+    fn resolve_execution_gas(
+        signed: &base_common_consensus::Eip8130Signed,
+        encoded: &[u8],
+        nonce_key_first_use: bool,
+        sender_auto_delegated: bool,
+        gas_limit: u64,
+    ) -> Result<(u64, u64, u64), BaseTransactionError> {
+        let intrinsic = IntrinsicGas::compute(
+            signed,
+            encoded,
+            &IntrinsicGasInput::new(nonce_key_first_use, sender_auto_delegated),
+        )
+        .map_err(BaseTransactionError::eip8130)?;
+        let execution_gas_available =
+            intrinsic.execution_gas_available(gas_limit).ok_or_else(|| {
+                BaseTransactionError::eip8130("EIP-8130 sender-intrinsic gas exceeds the gas limit")
+            })?;
+        Ok((intrinsic.sender_intrinsic(), intrinsic.payer_auth, execution_gas_available))
     }
 
     /// ABI-encodes the `ActorPolicyViolation(bytes32 actorId, address target)`
@@ -1016,6 +1529,325 @@ mod tests {
         // Fees were routed: base fee to the vault, priority tip to the beneficiary.
         assert!(outcome.state.contains_key(&Predeploys::BASE_FEE_VAULT));
         assert!(outcome.state.contains_key(&BENEFICIARY));
+    }
+
+    #[test]
+    fn simulate_estimate_covers_execution_gas_without_a_signature() {
+        let key = signing_key(0x77);
+        let sender = eoa_address(&key);
+        let target = address!("0x00000000000000000000000000000000000000c5");
+
+        let mut tx = base_tx();
+        tx.calls = vec![vec![Call { to: target, data: Bytes::new() }]];
+        let signed = eoa_signed(tx, &key);
+        let initial = U256::from(10u64).pow(U256::from(18u64));
+
+        // Reference: execute the fully-signed transaction and read its charged gas.
+        let mut evm_exec = evm_with_accounts(initial, sender, &[(target, bytes!("00"))]);
+        let exec_gas = evm_exec
+            .transact_raw(into_base_tx(&signed))
+            .expect("tx should execute")
+            .result
+            .gas()
+            .tx_gas_used();
+
+        // Estimate over the same shape with the sender supplied as `from` (the
+        // signature is never recovered on the simulate path).
+        let mut evm_sim = evm_with_accounts(initial, sender, &[(target, bytes!("00"))]);
+        evm_sim.ctx_mut().tx = into_base_tx(&signed);
+        evm_sim.ctx_mut().tx.base.caller = sender;
+        let sim_result =
+            Eip8130Executor::simulate(&mut evm_sim).expect("estimation should succeed");
+        let sim_gas = sim_result.tx_gas_used();
+
+        assert!(sim_result.is_success(), "estimation should report success");
+        assert!(sim_gas > 0, "estimated gas should be positive");
+        // The estimate is a gas *limit* that must cover the real execution charge.
+        // This transaction calls a STOP contract (no nested calls, no
+        // SSTORE/SELFDESTRUCT), so it loses no gas to EIP-150 forwarding and earns
+        // no refund: the gas-limit search converges on exactly the gas a real
+        // execution charges, so the estimate equals `exec_gas`.
+        assert_eq!(sim_gas, exec_gas, "no-forwarding estimate should equal the execution charge");
+
+        // Estimation never commits: a fresh execution after it still bumps the
+        // nonce from zero, proving no nonce was consumed by the simulation.
+        let mut evm_after = evm_with_accounts(initial, sender, &[(target, bytes!("00"))]);
+        let after = evm_after.transact_raw(into_base_tx(&signed)).expect("tx should execute");
+        assert_eq!(after.state.get(&sender).expect("sender").info.nonce, 1);
+    }
+
+    /// Builds an EVM with `balance` funded to `sender`, deploying `code` at
+    /// each contract address and pre-seeding the given `(address, slot, value)`
+    /// storage entries. Used by estimate tests that need known storage state.
+    fn evm_with_accounts_and_storage(
+        balance: U256,
+        sender: Address,
+        contracts: &[(Address, Bytes)],
+        storage: &[(Address, U256, U256)],
+    ) -> BaseEvm<InMemoryDB, NoOpInspector, PrecompilesMap> {
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(sender, AccountInfo { balance, ..Default::default() });
+        for (addr, code) in contracts {
+            db.insert_account_info(
+                *addr,
+                AccountInfo {
+                    code_hash: keccak256(code),
+                    code: Some(Bytecode::new_raw(code.clone())),
+                    ..Default::default()
+                },
+            );
+        }
+        for &(addr, slot, value) in storage {
+            db.insert_account_storage(addr, slot, value).unwrap();
+        }
+        Context::base()
+            .with_db(db)
+            .with_cfg(
+                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Isthmus))
+                    .with_chain_id(CHAIN_ID),
+            )
+            .with_block(BlockEnv {
+                number: U256::from(1u64),
+                timestamp: U256::from(NOW),
+                basefee: BASE_FEE,
+                beneficiary: BENEFICIARY,
+                ..Default::default()
+            })
+            .build_with_inspector(NoOpInspector)
+    }
+
+    #[test]
+    fn simulate_estimate_covers_gross_gas_when_sstore_refund_earned() {
+        // Proof that the estimate returns the GROSS call spend, not the net
+        // billable charge. The target contract clears storage slot 0 (pre-seeded
+        // to 1), earning an EIP-3529 SSTORE_CLEARS refund (~4800 gas). The old
+        // code returned `billable_gas` (call_gas_spent − capped_refund) as the
+        // estimate; using that as gas_limit leaves the call pool one refund-unit
+        // short, causing OOG. The fixed estimate returns the gross amount
+        // (intrinsic + call_gas_spent, no refund subtracted). Assertions:
+        //   - estimate_gas > charge_gas (gross > net when a refund is earned)
+        //   - executing at gas_limit = charge_gas reverts (pool too small)
+        //   - executing at gas_limit = estimate_gas succeeds
+        //
+        // Note: `charge_gas` here is `billable_gas` from a real execution run —
+        // the net consensus charge that the old code wrongly used as the estimate.
+        // The refund (~4800 gas) swamps any calldata-encoding variance between the
+        // two gas-limit values (~16 gas), so the `charge_gas` run reliably OOGs.
+        //
+        // Target bytecode: PUSH1 0, PUSH1 0, SSTORE (slot 0 ← 0), STOP.
+        let key = signing_key(0x7b);
+        let sender = eoa_address(&key);
+        let target = address!("0x00000000000000000000000000000000000000e1");
+        // PUSH1 0, PUSH1 0, SSTORE, STOP
+        let sstore_clears = bytes!("600060005500");
+        let initial = U256::from(10u64).pow(U256::from(18u64));
+        // Slot 0 starts non-zero so the SSTORE (slot 0 ← 0) earns a refund.
+        let storage = [(target, U256::ZERO, U256::from(1u64))];
+
+        // --- reference execution at a generous limit to obtain the net charge ---
+        let mut tx_ref = base_tx();
+        tx_ref.calls = vec![vec![Call { to: target, data: Bytes::new() }]];
+        let signed_ref = eoa_signed(tx_ref, &key);
+        let mut evm_ref = evm_with_accounts_and_storage(
+            initial,
+            sender,
+            &[(target, sstore_clears.clone())],
+            &storage,
+        );
+        let charge_gas = evm_ref
+            .transact_raw(into_base_tx(&signed_ref))
+            .expect("tx should execute")
+            .result
+            .tx_gas_used();
+
+        // --- estimate (simulation never commits state) ---
+        let mut tx_sim = base_tx();
+        tx_sim.calls = vec![vec![Call { to: target, data: Bytes::new() }]];
+        let signed_sim = eoa_signed(tx_sim, &key);
+        let mut evm_sim = evm_with_accounts_and_storage(
+            initial,
+            sender,
+            &[(target, sstore_clears.clone())],
+            &storage,
+        );
+        evm_sim.ctx_mut().tx = into_base_tx(&signed_sim);
+        evm_sim.ctx_mut().tx.base.caller = sender;
+        let estimate_gas = Eip8130Executor::simulate(&mut evm_sim)
+            .expect("estimation should succeed")
+            .tx_gas_used();
+
+        // The gross estimate must strictly exceed the net charge because a
+        // refund was earned.
+        assert!(
+            estimate_gas > charge_gas,
+            "estimate_gas ({estimate_gas}) must exceed net charge ({charge_gas}): \
+             refund must not reduce the gas limit"
+        );
+
+        // --- execute at gas_limit = charge_gas → must revert (OOG: refund was
+        //     subtracted from pool but is not available during execution) ---
+        let mut tx_low = base_tx();
+        tx_low.gas_limit = charge_gas;
+        tx_low.calls = vec![vec![Call { to: target, data: Bytes::new() }]];
+        let signed_low = eoa_signed(tx_low, &key);
+        let mut evm_low = evm_with_accounts_and_storage(
+            initial,
+            sender,
+            &[(target, sstore_clears.clone())],
+            &storage,
+        );
+        let result_low =
+            evm_low.transact_raw(into_base_tx(&signed_low)).expect("tx should not error");
+        assert!(
+            matches!(result_low.result, ExecutionResult::Revert { .. }),
+            "execution at gas_limit = charge_gas must revert: call pool too small \
+             because net charge subtracted the refund"
+        );
+
+        // --- execute at gas_limit = estimate_gas → must succeed ---
+        let mut tx_ok = base_tx();
+        tx_ok.gas_limit = estimate_gas;
+        tx_ok.calls = vec![vec![Call { to: target, data: Bytes::new() }]];
+        let signed_ok = eoa_signed(tx_ok, &key);
+        let mut evm_ok =
+            evm_with_accounts_and_storage(initial, sender, &[(target, sstore_clears)], &storage);
+        let result_ok = evm_ok.transact_raw(into_base_tx(&signed_ok)).expect("tx should not error");
+        assert!(
+            result_ok.result.is_success(),
+            "execution at gas_limit = estimate_gas must succeed"
+        );
+    }
+
+    #[test]
+    fn simulate_estimate_covers_63_64_gas_retention_in_nested_calls() {
+        // Proof that the estimate accounts for EIP-150's 63/64 gas forwarding
+        // rule in nested calls. A forwarder contract calls a gas-sink contract
+        // using `GAS` (all remaining gas); the sink does 100 cold SLOADs of
+        // distinct slots (~210 000 gas). With a naive gas limit equal to the
+        // net billable charge, the 1/64 retained by the forwarder at each hop
+        // leaves the sink short; the binary search finds the minimum feasible
+        // pool and returns a strictly larger estimate. Assertions:
+        //   - estimate_gas > charge_gas (search exceeded raw charge)
+        //   - executing at gas_limit = charge_gas reverts (sink OOGs, forwarder
+        //     reverts because it checks the CALL return value)
+        //   - executing at gas_limit = estimate_gas succeeds
+        //
+        // Sink bytecode (0xe3): PUSH1 100 counter, loop: DUP1 (slot = counter),
+        //   SLOAD, POP, PUSH1 1, SWAP1, SUB, DUP1, PUSH1 2 (JUMPDEST), JUMPI,
+        //   POP, STOP.
+        // Forwarder bytecode (0xe2): 5×PUSH1 0, PUSH20 sink, GAS, CALL, ISZERO,
+        //   PUSH1 <revert_label>, JUMPI, STOP, JUMPDEST, PUSH1 0, PUSH1 0, REVERT.
+        //   Reverts when the inner CALL fails, propagating sink OOG to the phase.
+        let key = signing_key(0x7c);
+        let sender = eoa_address(&key);
+        let forwarder = address!("0x00000000000000000000000000000000000000e2");
+        let sink = address!("0x00000000000000000000000000000000000000e3");
+
+        // Sink: PUSH1 100, JUMPDEST@2, DUP1, SLOAD (cold per-slot), POP, PUSH1 1,
+        //       SWAP1, SUB, DUP1, PUSH1 2, JUMPI, POP, STOP
+        let sink_code = bytes!("60645b80545060019003806002575000");
+        // Forwarder: PUSH1 0 ×5, PUSH20 sink (0xe3), GAS, CALL, ISZERO,
+        //            PUSH1 0x26 (=38), JUMPI, STOP, JUMPDEST@38, PUSH1 0, PUSH1 0, REVERT
+        // Offset check: 5×2=10, PUSH20=1+20=21 → ends @31, GAS@31, CALL@32,
+        //               ISZERO@33, PUSH1 0x26 @34, JUMPI@36, STOP@37,
+        //               JUMPDEST@38 ← matches 0x26 ✓
+        let mut fwd_bytes = Vec::new();
+        fwd_bytes.extend_from_slice(bytes!("6000600060006000600073").as_ref());
+        fwd_bytes.extend_from_slice(sink.as_slice());
+        fwd_bytes.extend_from_slice(bytes!("5af115602657005b60006000fd").as_ref());
+        let fwd_code = Bytes::from(fwd_bytes);
+
+        let initial = U256::from(10u64).pow(U256::from(18u64));
+
+        // --- reference execution at a generous limit for the net charge ---
+        let mut tx_ref = base_tx();
+        tx_ref.calls = vec![vec![Call { to: forwarder, data: Bytes::new() }]];
+        let signed_ref = eoa_signed(tx_ref, &key);
+        let mut evm_ref = evm_with_accounts(
+            initial,
+            sender,
+            &[(forwarder, fwd_code.clone()), (sink, sink_code.clone())],
+        );
+        let charge_gas = evm_ref
+            .transact_raw(into_base_tx(&signed_ref))
+            .expect("reference execution should succeed")
+            .result
+            .tx_gas_used();
+
+        // --- estimate (binary search must go beyond ceiling_spent) ---
+        let mut tx_sim = base_tx();
+        tx_sim.calls = vec![vec![Call { to: forwarder, data: Bytes::new() }]];
+        let signed_sim = eoa_signed(tx_sim, &key);
+        let mut evm_sim = evm_with_accounts(
+            initial,
+            sender,
+            &[(forwarder, fwd_code.clone()), (sink, sink_code.clone())],
+        );
+        evm_sim.ctx_mut().tx = into_base_tx(&signed_sim);
+        evm_sim.ctx_mut().tx.base.caller = sender;
+        let estimate_gas = Eip8130Executor::simulate(&mut evm_sim)
+            .expect("estimation should succeed")
+            .tx_gas_used();
+
+        // The search must find a strictly larger limit to cover the 63/64 loss.
+        assert!(
+            estimate_gas > charge_gas,
+            "estimate_gas ({estimate_gas}) must exceed the net charge ({charge_gas}): \
+             the 63/64 retention requires a higher gas limit than the raw spend"
+        );
+
+        // --- execute at gas_limit = charge_gas → must revert (sink OOGs) ---
+        let mut tx_low = base_tx();
+        tx_low.gas_limit = charge_gas;
+        tx_low.calls = vec![vec![Call { to: forwarder, data: Bytes::new() }]];
+        let signed_low = eoa_signed(tx_low, &key);
+        let mut evm_low = evm_with_accounts(
+            initial,
+            sender,
+            &[(forwarder, fwd_code.clone()), (sink, sink_code.clone())],
+        );
+        let result_low =
+            evm_low.transact_raw(into_base_tx(&signed_low)).expect("tx should not error");
+        assert!(
+            matches!(result_low.result, ExecutionResult::Revert { .. }),
+            "execution at gas_limit = charge_gas must revert: sink OOGs under 63/64 forwarding"
+        );
+
+        // --- execute at gas_limit = estimate_gas → must succeed ---
+        let mut tx_ok = base_tx();
+        tx_ok.gas_limit = estimate_gas;
+        tx_ok.calls = vec![vec![Call { to: forwarder, data: Bytes::new() }]];
+        let signed_ok = eoa_signed(tx_ok, &key);
+        let mut evm_ok =
+            evm_with_accounts(initial, sender, &[(forwarder, fwd_code), (sink, sink_code)]);
+        let result_ok = evm_ok.transact_raw(into_base_tx(&signed_ok)).expect("tx should not error");
+        assert!(
+            result_ok.result.is_success(),
+            "execution at gas_limit = estimate_gas must succeed"
+        );
+    }
+
+    #[test]
+    fn simulate_supports_configured_account_path() {
+        // The configured-sender path is estimable: simulation resolves the owner
+        // self-actor from committed state and prices the declared authenticator
+        // (here k1, via the prefixed `sender_auth` blob) without verifying the
+        // signature. Previously this path was rejected as unsupported.
+        let key = signing_key(0x78);
+        let sender = eoa_address(&key);
+
+        let mut tx = base_tx();
+        tx.sender = Some(sender);
+        let signed = configured_signed(tx, &key);
+
+        let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), sender);
+        evm.ctx_mut().tx = into_base_tx(&signed);
+        evm.ctx_mut().tx.base.caller = sender;
+
+        let result = Eip8130Executor::simulate(&mut evm)
+            .expect("configured-account estimation should succeed");
+        assert!(result.is_success(), "estimation should report success");
+        assert!(result.tx_gas_used() > 0, "estimated gas should be positive");
     }
 
     #[test]

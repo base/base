@@ -8,7 +8,7 @@ use std::{
     },
 };
 
-use base_proof_rpc::{L1Provider, RollupProvider};
+use base_proof_rpc::RollupProvider;
 use futures::FutureExt;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -26,20 +26,18 @@ use crate::{
 /// Runs concurrent dispatcher and collector tasks per [`Self::run`] session.
 /// The collector chains ready proofs internally and restarts both tasks only
 /// when it needs fresh onchain state.
-pub struct ProvingPipeline<L1, R>
+pub struct ProvingPipeline<R>
 where
-    L1: L1Provider + 'static,
     R: RollupProvider + 'static,
 {
     config: DriverConfig,
     proof_dispatcher: ProofDispatcher,
     proof_recovery: Arc<ProofRecovery>,
-    proof_collector: ProofCollector<L1, R>,
+    proof_collector: ProofCollector<R>,
 }
 
-impl<L1, R> std::fmt::Debug for ProvingPipeline<L1, R>
+impl<R> std::fmt::Debug for ProvingPipeline<R>
 where
-    L1: L1Provider + 'static,
     R: RollupProvider + 'static,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -47,9 +45,8 @@ where
     }
 }
 
-impl<L1, R> ProvingPipeline<L1, R>
+impl<R> ProvingPipeline<R>
 where
-    L1: L1Provider + 'static,
     R: RollupProvider + 'static,
 {
     /// Creates a new proving pipeline.
@@ -57,7 +54,7 @@ where
         config: DriverConfig,
         proof_dispatcher: ProofDispatcher,
         proof_recovery: Arc<ProofRecovery>,
-        proof_collector: ProofCollector<L1, R>,
+        proof_collector: ProofCollector<R>,
     ) -> Self {
         Self { config, proof_dispatcher, proof_recovery, proof_collector }
     }
@@ -219,7 +216,6 @@ mod tests {
     use super::*;
     use crate::{
         OutputProposer, ProofDispatcherConfig, ProofRecoveryConfig, ProofSubmitter,
-        ProofSubmitterConfig,
         test_utils::{
             MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
             MockOutputProposer, MockRollupClient, test_anchor_root, test_sync_status,
@@ -267,9 +263,7 @@ mod tests {
         }
     }
 
-    fn test_pipeline(
-        requester: Arc<RejectingProofRequester>,
-    ) -> ProvingPipeline<MockL1, MockRollupClient> {
+    fn test_pipeline(requester: Arc<RejectingProofRequester>) -> ProvingPipeline<MockRollupClient> {
         let proof_requester: Arc<dyn ProofRequesterProvider> =
             Arc::<RejectingProofRequester>::clone(&requester);
         let l1 = Arc::new(MockL1::new(1000));
@@ -316,19 +310,10 @@ mod tests {
         ));
         let proof_submitter = ProofSubmitter::new(
             output_proposer,
-            Arc::clone(&rollup),
-            Arc::clone(&l1),
+            Arc::<MockRollupClient>::clone(&rollup),
             Arc::new(MockDisputeGameFactory::with_games(vec![])),
             verifier,
-            ProofSubmitterConfig {
-                proposer_address: config.proposer_address,
-                game_type: config.game_type,
-                block_interval: config.block_interval,
-                intermediate_block_interval: config.intermediate_block_interval,
-                tee_image_hash: config.tee_image_hash,
-                tee_prover_registry_address: config.tee_prover_registry_address,
-                output_fetch_concurrency: config.recovery_scan_concurrency,
-            },
+            &config,
         );
         let proof_collector = ProofCollector::new(
             Arc::clone(&proof_requester),

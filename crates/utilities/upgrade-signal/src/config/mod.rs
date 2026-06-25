@@ -3,7 +3,7 @@
 use core::time::Duration;
 
 mod args;
-pub use args::{UpgradeSignalArgs, UpgradeSignalL1RpcArgs};
+pub use args::{UpgradeSignalArgs, UpgradeSignalL1RpcArgs, UpgradeSignalStartupConfig};
 
 mod error;
 pub use error::UpgradeSignalConfigError;

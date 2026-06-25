@@ -11,6 +11,9 @@ pub use format::{
 mod json;
 pub use json::{JsonOutput, TimestampJson};
 
+mod p2p;
+pub use p2p::{P2pInfoJson, P2pInfoTable, P2pLayerInfoJson};
+
 mod render;
 pub use render::{
     L1BlocksTableParams, build_gas_bar, render_da_backlog_bar, render_gas_usage_bar,

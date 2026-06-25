@@ -3,10 +3,12 @@
 use std::{path::Path, sync::Arc};
 
 use base_consensus_cli::{
-    CliMetrics, ConsensusNodeArgs, ConsensusNodeOverrides, EmbeddedConsensusNodeConfigArgs,
+    CliMetrics, ConsensusNodeArgs, ConsensusNodeConfigArgs, ConsensusNodeOverrides,
+    ConsensusNodeStartOptions, EmbeddedConsensusNodeConfigArgs,
 };
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{ExecutionNodeArgs, chainspec::chain_value_parser};
+use base_upgrade_signal::{UpgradeSignalRuntimeValidation, UpgradeSignalStartupMode};
 use clap::Args;
 use reth_cli_runner::CliRunner;
 use tokio_util::sync::CancellationToken;
@@ -48,24 +50,55 @@ impl RpcCommand {
         resolved_chain: ResolvedChainConfig,
         metrics_enabled: bool,
     ) -> eyre::Result<()> {
-        let execution_chain = match self.execution_chain {
+        let Self { execution_chain, execution, consensus } = self;
+        let mut execution_chain = match execution_chain {
             Some(chain) => chain,
             None => resolved_chain.execution_chain_spec()?,
         };
         let consensus_chain = resolved_chain.consensus_chain_args();
-        let consensus_args = ConsensusNodeArgs::new(consensus_chain, self.consensus.into());
-        let rollup_config = consensus_args.load_rollup_config()?;
-        if metrics_enabled {
-            CliMetrics::init_rollup_config(&rollup_config);
-        }
-
-        let execution =
-            self.execution.into_launch_config(execution_chain).with_unified_auth_endpoint();
-        let l2_engine_rpc = engine_ipc_url(execution.auth_ipc_path())?;
+        let mut execution = execution;
+        let mut consensus_config: ConsensusNodeConfigArgs = consensus.into();
+        execution
+            .standard
+            .rollup_args
+            .upgrade_signal_l1_rpc
+            .apply_default_from(&consensus_config.l1_rpc_args.l1_eth_rpc);
+        consensus_config.upgrade_signal = execution.standard.rollup_args.upgrade_signal.clone();
+        let consensus_args = ConsensusNodeArgs::new(consensus_chain, consensus_config);
+        let mut rollup_config = consensus_args.load_rollup_config()?;
 
         CliRunner::try_default_runtime()?.run_command_until_exit(|ctx| async move {
+            let upgrade_signal_runtime_validation =
+                UpgradeSignalRuntimeValidation::with_activation_admin_address(
+                    execution_chain.activation_admin_address,
+                );
+            execution
+                .standard
+                .rollup_args
+                .upgrade_signal
+                .apply_startup_to_sinks(
+                    &execution.standard.rollup_args.upgrade_signal_l1_rpc,
+                    "integrated startup",
+                    upgrade_signal_runtime_validation,
+                    execution_chain.chain().id(),
+                    Arc::make_mut(&mut execution_chain),
+                    &mut rollup_config,
+                )
+                .await?;
+
+            if metrics_enabled {
+                CliMetrics::init_rollup_config(&rollup_config);
+            }
             let _upgrade_countdown_metrics = metrics_enabled
                 .then(|| CliMetrics::spawn_upgrade_countdown_recorder(rollup_config.clone()));
+
+            let upgrade_signal_l1_rpc =
+                execution.standard.rollup_args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.clone();
+            let execution = execution
+                .into_launch_config(execution_chain)
+                .with_unified_auth_endpoint()
+                .with_upgrade_signal_startup_already_applied();
+            let l2_engine_rpc = engine_ipc_url(execution.auth_ipc_path())?;
             let task_executor = ctx.task_executor.clone();
             let launched = execution.launch_default(ctx).await?;
             let handle = launched.handle;
@@ -73,16 +106,16 @@ impl RpcCommand {
             let execution_node = handle.node;
             let execution_exit = handle.node_exit_future;
 
-            let overrides = ConsensusNodeOverrides {
-                l2_engine_rpc: Some(l2_engine_rpc),
-                l2_engine_jwt_secret: None,
-            };
-
             let consensus_cancellation = CancellationToken::new();
-            let consensus_exit = consensus_args.start_with_overrides_and_cancellation(
-                rollup_config,
-                overrides,
-                consensus_cancellation.clone(),
+            let consensus_exit = consensus_args.start_with_options(
+                ConsensusNodeStartOptions::new(rollup_config)
+                    .with_overrides(ConsensusNodeOverrides::embedded_execution(
+                        l2_engine_rpc,
+                        upgrade_signal_runtime_validation,
+                        upgrade_signal_l1_rpc,
+                    ))
+                    .with_cancellation(consensus_cancellation.clone())
+                    .with_upgrade_signal_startup_mode(UpgradeSignalStartupMode::AlreadyApplied),
             );
             tokio::pin!(execution_exit);
             tokio::pin!(consensus_exit);
@@ -126,7 +159,10 @@ pub(super) fn engine_ipc_url(path: &str) -> eyre::Result<Url> {
 mod tests {
     use std::process::Command;
 
-    use base_execution_chainspec::BaseChainSpec;
+    use base_common_genesis::BaseUpgrade;
+    use base_consensus_cli::ConsensusNodeConfigArgs;
+    use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
+    use base_upgrade_signal::UpgradeSignalRuntimeValidation;
     use clap::Parser;
 
     use crate::{
@@ -164,6 +200,114 @@ mod tests {
 
         assert_eq!(rpc.execution.node.network.port, 30333);
         assert_eq!(rpc.consensus.rpc_flags.listen_port, 9546);
+    }
+
+    #[test]
+    fn parses_upgrade_signal_args_once() {
+        let cli = BaseCli::parse_from(rpc_args(&[
+            "base",
+            "rpc",
+            "--upgrade-signal.contract",
+            "0x0000000000000000000000000000000000000001",
+            "--upgrade-signal.upgrade-id",
+            "azul",
+        ]));
+
+        let BaseCommand::Rpc(rpc) = cli.command else {
+            panic!("expected rpc command");
+        };
+
+        assert_eq!(
+            rpc.execution
+                .standard
+                .rollup_args
+                .upgrade_signal
+                .contract_address
+                .map(|address| address.to_string()),
+            Some("0x0000000000000000000000000000000000000001".to_string())
+        );
+        assert_eq!(rpc.execution.standard.rollup_args.upgrade_signal.upgrade_ids, ["azul"]);
+    }
+
+    #[test]
+    fn derives_upgrade_signal_l1_rpc_from_integrated_consensus_args() {
+        let cli = BaseCli::parse_from(rpc_args(&[
+            "base",
+            "rpc",
+            "--upgrade-signal.contract",
+            "0x0000000000000000000000000000000000000001",
+        ]));
+
+        let BaseCommand::Rpc(mut rpc) = cli.command else {
+            panic!("expected rpc command");
+        };
+        let consensus_config: ConsensusNodeConfigArgs = rpc.consensus.clone().into();
+
+        rpc.execution
+            .standard
+            .rollup_args
+            .upgrade_signal_l1_rpc
+            .apply_default_from(&consensus_config.l1_rpc_args.l1_eth_rpc);
+
+        assert_eq!(
+            rpc.execution
+                .standard
+                .rollup_args
+                .upgrade_signal_l1_rpc
+                .upgrade_signal_l1_rpc
+                .as_ref()
+                .map(|url| url.as_str()),
+            Some("http://localhost:8545/")
+        );
+    }
+
+    #[test]
+    fn preserves_explicit_upgrade_signal_l1_rpc() {
+        let cli = BaseCli::parse_from(rpc_args(&[
+            "base",
+            "rpc",
+            "--upgrade-signal.contract",
+            "0x0000000000000000000000000000000000000001",
+            "--upgrade-signal.l1-rpc",
+            "http://finalized-l1:8545",
+        ]));
+
+        let BaseCommand::Rpc(mut rpc) = cli.command else {
+            panic!("expected rpc command");
+        };
+        let consensus_config: ConsensusNodeConfigArgs = rpc.consensus.clone().into();
+
+        rpc.execution
+            .standard
+            .rollup_args
+            .upgrade_signal_l1_rpc
+            .apply_default_from(&consensus_config.l1_rpc_args.l1_eth_rpc);
+
+        assert_eq!(
+            rpc.execution
+                .standard
+                .rollup_args
+                .upgrade_signal_l1_rpc
+                .upgrade_signal_l1_rpc
+                .as_ref()
+                .map(|url| url.as_str()),
+            Some("http://finalized-l1:8545/")
+        );
+    }
+
+    #[test]
+    fn consensus_runtime_validation_uses_execution_activation_admin() {
+        let execution_chain = BaseChainSpecBuilder::base_mainnet()
+            .optional_activation_admin_address(None)
+            .without_fork(BaseUpgrade::Beryl)
+            .build();
+
+        let validation = UpgradeSignalRuntimeValidation::with_activation_admin_address(
+            execution_chain.activation_admin_address,
+        );
+
+        assert!(validation.require_activation_admin_for_beryl);
+        assert_eq!(validation.activation_admin_address, None);
     }
 
     #[test]

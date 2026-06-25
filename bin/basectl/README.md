@@ -100,7 +100,8 @@ is one of `caught_up` (within ±N blocks of the reference, where N is the
 P2P inspection and single-peer management commands for execution and
 consensus layers.
 
-- `basectl p2p info` shows the advertised endpoint per layer plus peer counts.
+- `basectl p2p info` shows the advertised endpoint per layer plus peer counts,
+  and the CL max peer count when the consensus RPC reports it.
 - `basectl p2p peers` shows the connected peer list per layer.
 - `basectl p2p add-peer <TARGET>` connects one peer. `enode://...` routes to
   the execution layer; `enr:...` or `/.../p2p/<peer-id>` routes to the
@@ -148,6 +149,7 @@ Important EL RPC note:
 - EL advertised endpoint data (`admin_nodeInfo`) and EL peer listings (`admin_peers`) require an admin-enabled EL RPC.
 - If the EL RPC does not expose those admin methods, `basectl p2p` degrades gracefully: EL peer count still appears, but EL endpoint fields or EL peer listings show as unavailable / `null`.
 - CL data comes from `opp2p_self`, `opp2p_peerStats`, and `opp2p_peers(true)` on the consensus RPC.
+- When exposed by the node, `opp2p_peerStats` also additively reports `maxPeerCount`, the configured CL max peer count.
 - CL ban/unban commands use `opp2p_blockPeer`, `opp2p_unblockPeer`, and `opp2p_listBlockedPeers` underneath, but the basectl command surface uses ban/unban terminology so it can stay consistent when EL ban support is added later.
 
 ### `basectl txpool`

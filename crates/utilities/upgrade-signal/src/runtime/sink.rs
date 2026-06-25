@@ -9,7 +9,7 @@ use crate::UpgradeSignalSchedule;
 /// Upgrade activation sink backed by the process-local runtime registry for one chain.
 #[derive(Debug, Clone, Default)]
 pub struct RuntimeRegistrySink {
-    /// L2 chain ID whose runtime fork view is mutated.
+    /// L2 chain ID whose runtime upgrade view is mutated.
     pub chain_id: u64,
     /// Buffered updates to apply to the runtime registry at finalize time.
     pub updates: UpgradeActivationOverrides,
@@ -27,10 +27,10 @@ impl UpgradeActivationSink for RuntimeRegistrySink {
 
     fn apply_activation(
         &mut self,
-        hardfork_id: BaseUpgrade,
+        upgrade_id: BaseUpgrade,
         activation: UpgradeActivation,
     ) -> Result<bool, Self::Error> {
-        self.updates.set_activation(hardfork_id, activation);
+        self.updates.set_activation(upgrade_id, activation);
         Ok(true)
     }
 
@@ -69,7 +69,7 @@ impl UpgradeSignalRuntimeApplier {
         for signal in &schedule.signals {
             let activation =
                 UpgradeActivation::from_timestamp(signal.positive_activation_timestamp());
-            let supported = staged_sink.apply_activation(signal.hardfork_id, activation)?;
+            let supported = staged_sink.apply_activation(signal.upgrade_id, activation)?;
 
             let action = if !supported {
                 UpgradeSignalApplyAction::Ignored
@@ -79,13 +79,13 @@ impl UpgradeSignalRuntimeApplier {
                 UpgradeSignalApplyAction::Cleared
             };
             match action {
-                UpgradeSignalApplyAction::Applied => summary.applied_hardforks += 1,
-                UpgradeSignalApplyAction::Cleared => summary.cleared_hardforks += 1,
-                UpgradeSignalApplyAction::Ignored => summary.ignored_hardforks += 1,
+                UpgradeSignalApplyAction::Applied => summary.applied_upgrades += 1,
+                UpgradeSignalApplyAction::Cleared => summary.cleared_upgrades += 1,
+                UpgradeSignalApplyAction::Ignored => summary.ignored_upgrades += 1,
             }
 
             summary.changes.push(UpgradeSignalApplyChange {
-                hardfork_id: signal.hardfork_id.contract_id().to_string(),
+                upgrade_id: signal.upgrade_id.contract_id().to_string(),
                 action,
                 activation_timestamp: signal.activation_timestamp,
                 minimum_protocol_version: signal.protocol_version.to_string(),
@@ -124,8 +124,8 @@ mod tests {
         UpgradeSignalSchedule::new(
             signals
                 .iter()
-                .map(|(hardfork_id, activation_timestamp)| UpgradeSignal {
-                    hardfork_id: *hardfork_id,
+                .map(|(upgrade_id, activation_timestamp)| UpgradeSignal {
+                    upgrade_id: *upgrade_id,
                     activation_timestamp: *activation_timestamp,
                     protocol_version: U256::from(7),
                     l1_block_number: 11,
@@ -148,9 +148,9 @@ mod tests {
             ]),
         );
 
-        assert_eq!(summary.applied_hardforks, 2);
-        assert_eq!(summary.cleared_hardforks, 1);
-        assert_eq!(summary.ignored_hardforks, 0);
+        assert_eq!(summary.applied_upgrades, 2);
+        assert_eq!(summary.cleared_upgrades, 1);
+        assert_eq!(summary.ignored_upgrades, 0);
         assert_eq!(
             RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Azul),
             Some(UpgradeActivation::Timestamp(42))
@@ -170,7 +170,7 @@ mod tests {
     #[derive(Debug, Clone, Default, Eq, PartialEq)]
     struct RecordingSink {
         applied: Vec<(BaseUpgrade, UpgradeActivation)>,
-        fail_on_hardfork_id: Option<BaseUpgrade>,
+        fail_on_upgrade_id: Option<BaseUpgrade>,
     }
 
     #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -181,14 +181,14 @@ mod tests {
 
         fn apply_activation(
             &mut self,
-            hardfork_id: BaseUpgrade,
+            upgrade_id: BaseUpgrade,
             activation: UpgradeActivation,
         ) -> Result<bool, Self::Error> {
-            if self.fail_on_hardfork_id == Some(hardfork_id) {
+            if self.fail_on_upgrade_id == Some(upgrade_id) {
                 return Err(RecordingSinkError);
             }
 
-            self.applied.push((hardfork_id, activation));
+            self.applied.push((upgrade_id, activation));
             Ok(true)
         }
     }
@@ -197,7 +197,7 @@ mod tests {
     fn apply_schedule_to_sink_is_transactional() {
         let mut sink = RecordingSink {
             applied: vec![(BaseUpgrade::Regolith, UpgradeActivation::Timestamp(1))],
-            fail_on_hardfork_id: Some(BaseUpgrade::Beryl),
+            fail_on_upgrade_id: Some(BaseUpgrade::Beryl),
         };
 
         let error = UpgradeSignalRuntimeApplier::apply_schedule_to_sink(

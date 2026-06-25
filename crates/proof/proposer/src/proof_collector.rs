@@ -3,8 +3,8 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::Address;
-use base_proof_primitives::ProofResult;
-use base_proof_rpc::{L1Provider, RollupProvider};
+use base_proof_primitives::Proposal;
+use base_proof_rpc::RollupProvider;
 use base_prover_service_client::ProofRequesterProvider;
 use base_prover_service_protocol::{DeleteProofRequest, GetProofRequest, ProofStatus, TeeKind};
 use tokio_util::sync::CancellationToken;
@@ -23,22 +23,20 @@ enum SubmitOutcome {
 }
 
 /// Polls the next expected proof and submits it when ready.
-pub struct ProofCollector<L1, R>
+pub struct ProofCollector<R>
 where
-    L1: L1Provider,
     R: RollupProvider,
 {
     proof_requester: Arc<dyn ProofRequesterProvider>,
     rollup_client: Arc<R>,
-    submitter: ProofSubmitter<L1, R>,
+    submitter: ProofSubmitter,
     block_interval: u64,
     tee_kind: TeeKind,
     submit_timeout: Option<Duration>,
 }
 
-impl<L1, R> std::fmt::Debug for ProofCollector<L1, R>
+impl<R> std::fmt::Debug for ProofCollector<R>
 where
-    L1: L1Provider,
     R: RollupProvider,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -50,16 +48,15 @@ where
     }
 }
 
-impl<L1, R> ProofCollector<L1, R>
+impl<R> ProofCollector<R>
 where
-    L1: L1Provider + 'static,
     R: RollupProvider + 'static,
 {
     /// Creates a proof collector.
     pub const fn new(
         proof_requester: Arc<dyn ProofRequesterProvider>,
         rollup_client: Arc<R>,
-        submitter: ProofSubmitter<L1, R>,
+        submitter: ProofSubmitter,
         block_interval: u64,
         tee_kind: TeeKind,
         submit_timeout: Option<Duration>,
@@ -106,12 +103,8 @@ where
                 return false;
             }
 
-            let Some(claimed_l2_output_root) = ProofTarget::canonical_output_root(
-                self.rollup_client.as_ref(),
-                target_block,
-                "collector",
-            )
-            .await
+            let Some(claimed_l2_output_root) =
+                ProofTarget::canonical_output_root(self.rollup_client.as_ref(), target_block).await
             else {
                 return false;
             };
@@ -120,7 +113,7 @@ where
                 claimed_l2_output_root,
                 self.tee_kind,
             );
-            let proof = match Self::poll_proof(
+            let (aggregate_proposal, proposals) = match Self::poll_proof(
                 self.proof_requester.as_ref(),
                 target_block,
                 &session_id,
@@ -143,7 +136,14 @@ where
             };
 
             match self
-                .submit_proof(target_block, &session_id, proof, current.parent_address, cancel)
+                .submit_proof(
+                    target_block,
+                    &session_id,
+                    aggregate_proposal,
+                    proposals,
+                    current.parent_address,
+                    cancel,
+                )
                 .await
             {
                 SubmitOutcome::Advanced(next) => *current = next,
@@ -159,7 +159,7 @@ where
         session_id: &str,
         tee_kind: TeeKind,
         request_dispatched: bool,
-    ) -> Result<Option<ProofResult>, ProposerError> {
+    ) -> Result<Option<(Proposal, Vec<Proposal>)>, ProposerError> {
         let response = match proof_requester
             .get_proof(GetProofRequest { session_id: session_id.to_owned() })
             .await
@@ -277,7 +277,8 @@ where
         &self,
         target_block: u64,
         session_id: &str,
-        proof: ProofResult,
+        aggregate_proposal: Proposal,
+        proposals: Vec<Proposal>,
         parent_address: Address,
         cancel: &CancellationToken,
     ) -> SubmitOutcome {
@@ -286,7 +287,12 @@ where
         let mut submit_timer = base_metrics::timed!(Metrics::proposal_total_duration_seconds());
         let result = match cancel
             .run_until_cancelled(async {
-                let submit = self.submitter.submit(&proof, target_block, parent_address);
+                let submit = self.submitter.submit(
+                    &aggregate_proposal,
+                    &proposals,
+                    target_block,
+                    parent_address,
+                );
                 match self.submit_timeout {
                     Some(timeout) => tokio::time::timeout(timeout, submit).await,
                     None => Ok(submit.await),
@@ -317,20 +323,11 @@ where
         }
 
         match result {
-            Ok(Some(next)) => {
+            Ok(next) => {
                 drop(submit_timer);
                 info!(target_block, "Submission successful");
                 Metrics::last_proposed_block().set(target_block as f64);
                 return SubmitOutcome::Advanced(next);
-            }
-            Ok(None) => {
-                drop(submit_timer);
-                info!(target_block, "Submission successful");
-                Metrics::last_proposed_block().set(target_block as f64);
-                warn!(
-                    target_block,
-                    "Submitted proof did not return a game address, recovering chain state"
-                );
             }
             Err(SubmitAction::RootMismatch) => {
                 Metrics::root_mismatch_total().increment(1);
@@ -409,10 +406,10 @@ mod tests {
 
     use super::*;
     use crate::{
-        OutputProposer, ProofSubmitterConfig,
+        DriverConfig, OutputProposer,
         test_utils::{
-            MockAggregateVerifier, MockDisputeGameFactory, MockL1, MockOutputProposer,
-            MockProofRequester, MockRollupClient, test_proposal, test_sync_status,
+            MockAggregateVerifier, MockDisputeGameFactory, MockOutputProposer, MockProofRequester,
+            MockRollupClient, test_proposal, test_sync_status,
         },
     };
 
@@ -437,7 +434,7 @@ mod tests {
         proof_requester: Arc<dyn ProofRequesterProvider>,
         rollup_client: Arc<MockRollupClient>,
         output_proposer: Arc<dyn OutputProposer>,
-    ) -> ProofCollector<MockL1, MockRollupClient> {
+    ) -> ProofCollector<MockRollupClient> {
         make_collector_with_contracts(
             proof_requester,
             rollup_client,
@@ -453,21 +450,17 @@ mod tests {
         output_proposer: Arc<dyn OutputProposer>,
         factory_client: Arc<dyn DisputeGameFactoryClient>,
         verifier_client: Arc<dyn AggregateVerifierClient>,
-    ) -> ProofCollector<MockL1, MockRollupClient> {
+    ) -> ProofCollector<MockRollupClient> {
         let submitter = ProofSubmitter::new(
             output_proposer,
-            Arc::clone(&rollup_client),
-            Arc::new(MockL1 { latest_block_number: 1000, ..Default::default() }),
+            Arc::<MockRollupClient>::clone(&rollup_client),
             factory_client,
             verifier_client,
-            ProofSubmitterConfig {
-                proposer_address: Address::repeat_byte(0x04),
-                game_type: 0,
+            &DriverConfig {
                 block_interval: BLOCK_INTERVAL,
                 intermediate_block_interval: BLOCK_INTERVAL,
-                tee_image_hash: B256::repeat_byte(0x05),
-                tee_prover_registry_address: None,
-                output_fetch_concurrency: 1,
+                recovery_scan_concurrency: 1,
+                ..Default::default()
             },
         );
 
@@ -719,13 +712,12 @@ mod tests {
 
         let mut aggregate_proposal = test_proposal(target_block);
         aggregate_proposal.output_root = stale_root;
-        let proof = ProofResult::Tee { aggregate_proposal, proposals: vec![] };
-
         let outcome = collector
             .submit_proof(
                 target_block,
                 &session_id,
-                proof,
+                aggregate_proposal,
+                vec![],
                 Address::ZERO,
                 &CancellationToken::new(),
             )

@@ -4,6 +4,7 @@ use std::fmt::Debug;
 
 use alloy_consensus::{BlockHeader, Receipt, ReceiptWithBloom, TxReceipt};
 use alloy_eips::eip2718::Encodable2718;
+use alloy_primitives::Address;
 use alloy_rpc_types_eth::{Log, TransactionReceipt};
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTransaction};
@@ -276,6 +277,13 @@ pub struct BaseReceiptBuilder {
     pub core_receipt: TransactionReceipt<ReceiptWithBloom<BaseReceipt<Log>>>,
     /// Additional Base receipt fields.
     pub receipt_fields: TransactionReceiptFields,
+    /// EIP-8130 gas payer (sender for self-pay, specified payer for sponsored). `None` for
+    /// non-EIP-8130 transactions.
+    pub payer: Option<Address>,
+    /// EIP-8130 per-phase execution statuses. Empty for non-EIP-8130 transactions.
+    pub phase_statuses: Vec<u8>,
+    /// EIP-8130 opaque transaction metadata. `None` for non-EIP-8130 transactions.
+    pub metadata: Option<alloy_primitives::Bytes>,
 }
 
 impl BaseReceiptBuilder {
@@ -291,6 +299,24 @@ impl BaseReceiptBuilder {
         let timestamp = input.meta.timestamp;
         let block_number = input.meta.block_number;
         let tx_signed = *input.tx.inner();
+
+        // EIP-8130 RPC-only fields, derived before `input` is consumed below. The payer is
+        // the sender for self-pay or the explicit payer for sponsored transactions; the
+        // per-phase statuses are persisted on the receipt and surfaced only at RPC.
+        let payer = tx_signed
+            .as_eip8130()
+            .map(|signed| signed.tx().payer.unwrap_or_else(|| input.tx.signer()));
+        // Omit empty metadata rather than serializing it as `"0x"`, matching how
+        // empty `phase_statuses` is skipped — only a non-empty commitment surfaces.
+        let metadata = tx_signed
+            .as_eip8130()
+            .map(|signed| signed.tx().metadata.clone())
+            .filter(|metadata| !metadata.is_empty());
+        let phase_statuses = match &input.receipt {
+            BaseReceipt::Eip8130(receipt) => receipt.phase_statuses.clone(),
+            _ => Vec::new(),
+        };
+
         let mut core_receipt = build_receipt(input, None, |receipt, next_log_index, meta| {
             let map_logs = move |receipt: alloy_consensus::Receipt| {
                 let Receipt { status, cumulative_gas_used, logs } = receipt;
@@ -303,7 +329,7 @@ impl BaseReceiptBuilder {
                 BaseReceipt::Eip1559(receipt) => BaseReceipt::Eip1559(map_logs(receipt)),
                 BaseReceipt::Eip7702(receipt) => BaseReceipt::Eip7702(map_logs(receipt)),
                 BaseReceipt::Deposit(receipt) => BaseReceipt::Deposit(receipt.map_inner(map_logs)),
-                BaseReceipt::Eip8130(receipt) => BaseReceipt::Eip8130(map_logs(receipt)),
+                BaseReceipt::Eip8130(receipt) => BaseReceipt::Eip8130(receipt.map_inner(map_logs)),
             };
             mapped_receipt.into_with_bloom()
         });
@@ -327,17 +353,17 @@ impl BaseReceiptBuilder {
             .l1_block_info(chain_spec, tx_signed, l1_block_info)?
             .build();
 
-        Ok(Self { core_receipt, receipt_fields })
+        Ok(Self { core_receipt, receipt_fields, payer, phase_statuses, metadata })
     }
 
     /// Builds [`BaseTransactionReceipt`] by combining core L1 receipt fields and additional Base
     /// receipt fields.
     pub fn build(self) -> BaseTransactionReceipt {
-        let Self { core_receipt: inner, receipt_fields } = self;
+        let Self { core_receipt: inner, receipt_fields, payer, phase_statuses, metadata } = self;
 
         let TransactionReceiptFields { l1_block_info, .. } = receipt_fields;
 
-        BaseTransactionReceipt { inner, l1_block_info }
+        BaseTransactionReceipt { inner, l1_block_info, payer, phase_statuses, metadata }
     }
 }
 

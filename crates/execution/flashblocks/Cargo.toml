@@ -91,4 +91,9 @@ base-execution-chainspec.workspace = true
 
 [features]
 default = [ "metrics" ]
-metrics = [ "base-metrics/metrics", "dep:metrics", "reth-evm/metrics" ]
+metrics = [
+	"base-common-evm/metrics",
+	"base-metrics/metrics",
+	"dep:metrics",
+	"reth-evm/metrics",
+]

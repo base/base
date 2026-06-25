@@ -24,6 +24,7 @@ alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 
 # general
 url.workspace = true
+eyre.workspace = true
 tracing.workspace = true
 futures.workspace = true
 metrics = { workspace = true, optional = true }

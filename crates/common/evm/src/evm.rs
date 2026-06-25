@@ -424,7 +424,17 @@ where
         if tx.is_eip8130() {
             #[cfg(feature = "std")]
             {
+                // Read-only RPC simulation (`eth_estimateGas` / `eth_call`):
+                // route to the unverified `simulate` path, which reverts all
+                // state internally, so report no committed state changes. This
+                // branch is reachable only when the parts were built on the RPC
+                // call path; the consensus/block path never sets the flag.
+                let simulate = tx.is_eip8130_simulate();
                 self.inner.ctx.set_tx(tx);
+                if simulate {
+                    let result = Eip8130Executor::simulate(self)?;
+                    return Ok(ResultAndState::new(result, EvmState::default()));
+                }
                 let result = Eip8130Executor::execute(self)?;
                 let state = self.inner.ctx.journal_mut().finalize();
                 return Ok(ResultAndState::new(result, state));
