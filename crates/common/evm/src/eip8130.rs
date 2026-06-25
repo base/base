@@ -45,11 +45,11 @@ use alloc::{boxed::Box, rc::Rc, vec::Vec};
 
 use alloy_evm::{Database as AlloyDatabase, EvmInternals};
 use alloy_primitives::{Address, B256, Bytes, U256};
-use base_common_consensus::{Eip8130Constants, Eip8130Contracts, Predeploys};
+use base_common_consensus::{AccountChange, Delegation, Eip8130Constants, Eip8130Contracts, Predeploys};
 use base_common_precompiles::{NonceManagerStorage, TxContextStorage};
 use base_execution_eip8130::{
-    AccountConfigurationStorage, FeeCheck, IntrinsicGas, IntrinsicGasInput, NonceMode,
-    NonceValidator, TransactionAuthorizer,
+    AccountChangeApplier, AccountConfigurationStorage, ApplyError, FeeCheck, IntrinsicGas,
+    IntrinsicGasInput, NonceMode, NonceValidator, TransactionAuthorizer,
 };
 use base_precompile_storage::{JournalStorageProvider, StorageCtx};
 use revm::{
@@ -1131,19 +1131,58 @@ impl Eip8130Executor {
         sender: Address,
     ) -> Result<(), BaseTransactionError> {
         let mut acc_mut = AccountConfigurationStorage::new(sctx);
-        let applied = AccountChangeApplier::apply(signed, &mut acc_mut, sender)
-            .map_err(BaseTransactionError::eip8130)?;
-        if let Some(created) = &applied.created {
+        let mut created_account = None;
+        let mut delegation_effect: Option<(Address, Address)> = None;
+        for (index, change) in signed.tx().account_changes.iter().enumerate() {
+            match change {
+                AccountChange::Create(entry) => {
+                    if index != 0 || created_account.is_some() {
+                        return Err(BaseTransactionError::eip8130(
+                            ApplyError::InvalidCreatePosition,
+                        ));
+                    }
+                    let created = AccountChangeApplier::apply_create(&mut acc_mut, entry)
+                        .map_err(BaseTransactionError::eip8130)?;
+                    if created.address != sender {
+                        return Err(BaseTransactionError::eip8130(
+                            ApplyError::CreateAddressMismatch {
+                                derived: created.address,
+                                sender,
+                            },
+                        ));
+                    }
+                    created_account = Some(created);
+                }
+                AccountChange::ConfigChange(cc) => {
+                    AccountChangeApplier::apply_config_change(
+                        &mut acc_mut,
+                        sender,
+                        &cc.actor_changes,
+                        cc.chain_id,
+                    )
+                    .map_err(BaseTransactionError::eip8130)?;
+                }
+                AccountChange::Delegation(Delegation { target }) => {
+                    if delegation_effect.is_some() {
+                        return Err(BaseTransactionError::eip8130(
+                            ApplyError::MultipleDelegations,
+                        ));
+                    }
+                    delegation_effect = Some((sender, *target));
+                }
+            }
+        }
+        if let Some(created) = &created_account {
             sctx.set_code(created.address, Bytecode::new_raw(created.code.clone()))
                 .map_err(BaseTransactionError::eip8130)?;
         }
-        if let Some(delegation) = &applied.delegation {
-            let code = if delegation.target.is_zero() {
+        if let Some((account, target)) = delegation_effect {
+            let code = if target.is_zero() {
                 Bytecode::default()
             } else {
-                Bytecode::new_eip7702(delegation.target)
+                Bytecode::new_eip7702(target)
             };
-            sctx.set_code(delegation.account, code).map_err(BaseTransactionError::eip8130)?;
+            sctx.set_code(account, code).map_err(BaseTransactionError::eip8130)?;
         }
         Ok(())
     }
