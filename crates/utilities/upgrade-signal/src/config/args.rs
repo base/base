@@ -106,6 +106,37 @@ impl UpgradeSignalArgs {
         let l1_rpc = l1_rpc_args.required_l1_rpc()?;
         Ok(Some(UpgradeSignalStartupConfig { signal_config, l1_rpc }))
     }
+
+    /// Applies one startup read to both execution and consensus schedules when startup mode applies.
+    pub async fn apply_startup_to_sinks<EL, CL>(
+        &self,
+        l1_rpc_args: &UpgradeSignalL1RpcArgs,
+        log_context: &'static str,
+        runtime_validation: UpgradeSignalRuntimeValidation,
+        chain_id: u64,
+        execution_sink: &mut EL,
+        consensus_sink: &mut CL,
+    ) -> eyre::Result<()>
+    where
+        EL: UpgradeActivationSink + Clone,
+        EL::Error: std::error::Error + Send + Sync + 'static,
+        CL: UpgradeActivationSink + Clone,
+        CL::Error: std::error::Error + Send + Sync + 'static,
+    {
+        if let Some(startup_config) = self.startup_config(l1_rpc_args)? {
+            startup_config
+                .apply_to_sinks(
+                    log_context,
+                    runtime_validation,
+                    chain_id,
+                    execution_sink,
+                    consensus_sink,
+                )
+                .await?;
+        }
+
+        Ok(())
+    }
 }
 
 /// Startup upgrade signal config with a resolved L1 RPC.
@@ -123,10 +154,9 @@ impl UpgradeSignalStartupConfig {
         self,
         log_context: &'static str,
         runtime_validation: UpgradeSignalRuntimeValidation,
-        el_chain_id: u64,
-        el_sink: &mut EL,
-        cl_chain_id: u64,
-        cl_sink: &mut CL,
+        chain_id: u64,
+        execution_sink: &mut EL,
+        consensus_sink: &mut CL,
     ) -> eyre::Result<()>
     where
         EL: UpgradeActivationSink + Clone,
@@ -139,10 +169,9 @@ impl UpgradeSignalStartupConfig {
                 self.l1_rpc,
                 log_context,
                 runtime_validation,
-                el_chain_id,
-                el_sink,
-                cl_chain_id,
-                cl_sink,
+                chain_id,
+                execution_sink,
+                consensus_sink,
             )
             .await
     }

@@ -122,10 +122,9 @@ impl UpgradeSignalConfig {
         l1_rpc: Url,
         log_context: &'static str,
         runtime_validation: UpgradeSignalRuntimeValidation,
-        el_chain_id: u64,
-        el_sink: &mut EL,
-        cl_chain_id: u64,
-        cl_sink: &mut CL,
+        chain_id: u64,
+        execution_sink: &mut EL,
+        consensus_sink: &mut CL,
     ) -> eyre::Result<()>
     where
         EL: UpgradeActivationSink + Clone,
@@ -142,13 +141,13 @@ impl UpgradeSignalConfig {
             )
             .await?;
 
-        runtime_validation.validate_schedule(el_chain_id, &schedule)?;
+        runtime_validation.validate_schedule(chain_id, &schedule)?;
 
-        UpgradeSignalRuntimeApplier::apply_schedule_to_sink(el_chain_id, &schedule, el_sink)
+        UpgradeSignalRuntimeApplier::apply_schedule_to_sink(chain_id, &schedule, execution_sink)
             .map_err(eyre::Report::new)?
             .log("execution chain spec");
 
-        UpgradeSignalRuntimeApplier::apply_schedule_to_sink(cl_chain_id, &schedule, cl_sink)
+        UpgradeSignalRuntimeApplier::apply_schedule_to_sink(chain_id, &schedule, consensus_sink)
             .map_err(eyre::Report::new)?
             .log("rollup config");
 

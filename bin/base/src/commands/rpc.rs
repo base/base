@@ -4,7 +4,7 @@ use std::{path::Path, sync::Arc};
 
 use base_consensus_cli::{
     CliMetrics, ConsensusNodeArgs, ConsensusNodeConfigArgs, ConsensusNodeOverrides,
-    EmbeddedConsensusNodeConfigArgs,
+    ConsensusNodeStartOptions, EmbeddedConsensusNodeConfigArgs,
 };
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{ExecutionNodeArgs, chainspec::chain_value_parser};
@@ -72,25 +72,19 @@ impl RpcCommand {
                 UpgradeSignalRuntimeValidation::with_activation_admin_address(
                     execution_chain.activation_admin_address,
                 );
-            if let Some(startup_config) = execution
+            execution
                 .standard
                 .rollup_args
                 .upgrade_signal
-                .startup_config(&execution.standard.rollup_args.upgrade_signal_l1_rpc)?
-            {
-                let el_chain_id = execution_chain.chain().id();
-                let cl_chain_id = rollup_config.l2_chain_id.id();
-                startup_config
-                    .apply_to_sinks(
-                        "integrated startup",
-                        upgrade_signal_runtime_validation,
-                        el_chain_id,
-                        Arc::make_mut(&mut execution_chain),
-                        cl_chain_id,
-                        &mut rollup_config,
-                    )
-                    .await?;
-            }
+                .apply_startup_to_sinks(
+                    &execution.standard.rollup_args.upgrade_signal_l1_rpc,
+                    "integrated startup",
+                    upgrade_signal_runtime_validation,
+                    execution_chain.chain().id(),
+                    Arc::make_mut(&mut execution_chain),
+                    &mut rollup_config,
+                )
+                .await?;
 
             if metrics_enabled {
                 CliMetrics::init_rollup_config(&rollup_config);
@@ -113,17 +107,16 @@ impl RpcCommand {
             let execution_exit = handle.node_exit_future;
 
             let consensus_cancellation = CancellationToken::new();
-            let consensus_exit = consensus_args
-                .start_with_overrides_and_cancellation_and_upgrade_signal_startup(
-                    rollup_config,
-                    ConsensusNodeOverrides::embedded_execution(
+            let consensus_exit = consensus_args.start_with_options(
+                ConsensusNodeStartOptions::new(rollup_config)
+                    .with_overrides(ConsensusNodeOverrides::embedded_execution(
                         l2_engine_rpc,
                         upgrade_signal_runtime_validation,
                         upgrade_signal_l1_rpc,
-                    ),
-                    consensus_cancellation.clone(),
-                    UpgradeSignalStartupMode::AlreadyApplied,
-                );
+                    ))
+                    .with_cancellation(consensus_cancellation.clone())
+                    .with_upgrade_signal_startup_mode(UpgradeSignalStartupMode::AlreadyApplied),
+            );
             tokio::pin!(execution_exit);
             tokio::pin!(consensus_exit);
 

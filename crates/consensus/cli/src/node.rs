@@ -118,6 +118,49 @@ impl ConsensusNodeCommand {
     }
 }
 
+/// Options used to start a consensus rollup node.
+#[derive(Debug, Clone)]
+pub struct ConsensusNodeStartOptions {
+    /// Rollup configuration for the node.
+    pub rollup_config: RollupConfig,
+    /// External endpoint and upgrade-signal overrides.
+    pub overrides: ConsensusNodeOverrides,
+    /// Cancellation token used to stop the node.
+    pub cancellation: CancellationToken,
+    /// Startup behavior for contract-backed upgrade signal application.
+    pub upgrade_signal_startup_mode: UpgradeSignalStartupMode,
+}
+
+impl ConsensusNodeStartOptions {
+    /// Creates start options with default overrides and a fresh cancellation token.
+    pub fn new(rollup_config: RollupConfig) -> Self {
+        Self {
+            rollup_config,
+            overrides: ConsensusNodeOverrides::default(),
+            cancellation: CancellationToken::new(),
+            upgrade_signal_startup_mode: UpgradeSignalStartupMode::ReadAndApply,
+        }
+    }
+
+    /// Sets caller-supplied endpoint overrides.
+    pub fn with_overrides(self, overrides: ConsensusNodeOverrides) -> Self {
+        Self { overrides, ..self }
+    }
+
+    /// Sets the cancellation token.
+    pub fn with_cancellation(self, cancellation: CancellationToken) -> Self {
+        Self { cancellation, ..self }
+    }
+
+    /// Sets upgrade-signal startup behavior.
+    pub fn with_upgrade_signal_startup_mode(
+        self,
+        upgrade_signal_startup_mode: UpgradeSignalStartupMode,
+    ) -> Self {
+        Self { upgrade_signal_startup_mode, ..self }
+    }
+}
+
 /// Consensus node arguments shared by the standalone and unified binaries.
 #[derive(Args, Clone, Debug)]
 pub struct ConsensusNodeArgs {
@@ -528,7 +571,7 @@ impl ConsensusNodeArgs {
         cfg: RollupConfig,
         overrides: ConsensusNodeOverrides,
     ) -> eyre::Result<()> {
-        self.start_with_overrides_and_cancellation(cfg, overrides, CancellationToken::new()).await
+        self.start_with_options(ConsensusNodeStartOptions::new(cfg).with_overrides(overrides)).await
     }
 
     /// Starts a rollup node with caller-supplied endpoint overrides and cancellation.
@@ -538,27 +581,26 @@ impl ConsensusNodeArgs {
         overrides: ConsensusNodeOverrides,
         cancellation: CancellationToken,
     ) -> eyre::Result<()> {
-        self.start_with_overrides_and_cancellation_and_upgrade_signal_startup(
-            cfg,
-            overrides,
-            cancellation,
-            UpgradeSignalStartupMode::ReadAndApply,
+        self.start_with_options(
+            ConsensusNodeStartOptions::new(cfg)
+                .with_overrides(overrides)
+                .with_cancellation(cancellation),
         )
         .await
     }
 
-    /// Starts a rollup node with explicit upgrade-signal startup behavior.
-    pub async fn start_with_overrides_and_cancellation_and_upgrade_signal_startup(
-        &self,
-        cfg: RollupConfig,
-        overrides: ConsensusNodeOverrides,
-        cancellation: CancellationToken,
-        startup_mode: UpgradeSignalStartupMode,
-    ) -> eyre::Result<()> {
-        self.build_rollup_node_with_overrides_and_upgrade_signal_startup(
-            cfg,
+    /// Starts a rollup node with caller-supplied options.
+    pub async fn start_with_options(&self, options: ConsensusNodeStartOptions) -> eyre::Result<()> {
+        let ConsensusNodeStartOptions {
+            rollup_config,
             overrides,
-            startup_mode,
+            cancellation,
+            upgrade_signal_startup_mode,
+        } = options;
+        self.build_rollup_node_with_overrides_and_upgrade_signal_startup(
+            rollup_config,
+            overrides,
+            upgrade_signal_startup_mode,
         )
         .await?
         .start_with_cancellation(cancellation)
