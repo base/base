@@ -506,11 +506,9 @@ where
 
         let (nonce_key_first_use, sender_nonce) =
             self.eip8130_nonce_state(&*state, local_chain_id, now, signed, sender, protocol_nonce)?;
-        let sender_auto_delegated = !Self::account_has_code(&*state, sender)
-            .map_err(|error| Self::state_read_error(error, "sender code read failed"))?
-            && !signed.tx().account_changes.iter().any(|change| {
-                matches!(change, AccountChange::Create(_) | AccountChange::Delegation(_))
-            });
+        let sender_auto_delegated = !signed.tx().account_changes.iter().any(|change| {
+            matches!(change, AccountChange::Create(_) | AccountChange::Delegation(_))
+        });
         let intrinsic = IntrinsicGas::compute(
             signed,
             self.eip8130_encoded(signed).as_ref(),
