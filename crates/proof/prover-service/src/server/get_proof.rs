@@ -3,11 +3,11 @@ use base_prover_service_db::{
     canonical_session_id,
 };
 use base_prover_service_protocol::{
-    GetProofRequest, GetProofResponse, PROOF_REQUEST_NOT_FOUND_MESSAGE, ProofResult, ProofStatus,
-    ZkProofResult, ZkVm,
+    ExecutionStats, GetProofRequest, GetProofResponse, PROOF_REQUEST_NOT_FOUND_MESSAGE,
+    ProofResult, ProofStatus, ZkProofResult, ZkVm,
 };
 use jsonrpsee::core::RpcResult;
-use tracing::info;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::{
@@ -15,12 +15,45 @@ use crate::{
     server::{ProverServiceServer, internal, invalid_argument, not_found, record_rpc_result},
 };
 
-fn is_dry_run_metadata(metadata: &serde_json::Value) -> bool {
+#[cfg(test)]
+fn execution_stats_from_metadata(metadata: &serde_json::Value) -> Option<ExecutionStats> {
+    is_dry_run_result_metadata(metadata).then_some(())?;
+    let stats = metadata.get(OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY)?;
+    execution_stats_from_value(stats)
+}
+
+fn execution_stats_from_value(stats: &serde_json::Value) -> Option<ExecutionStats> {
+    Some(ExecutionStats {
+        total_instruction_cycles: stats.get("total_instruction_cycles")?.as_u64()?,
+        total_sp1_gas: stats.get("total_sp1_gas")?.as_u64()?,
+        cycle_tracker: serde_json::from_value(stats.get("cycle_tracker")?.clone()).ok()?,
+        witness_generation_ms: milliseconds_from_metadata(stats.get("witness_generation_ms")?)?,
+        execution_ms: milliseconds_from_metadata(stats.get("execution_ms")?)?,
+    })
+}
+
+fn is_dry_run_result_metadata(metadata: &serde_json::Value) -> bool {
     metadata
         .get(OP_SUCCINCT_DRY_RUN_METADATA_KEY)
         .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false)
+        .unwrap_or_default()
         && metadata.get(OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY).is_some()
+}
+
+fn milliseconds_from_metadata(value: &serde_json::Value) -> Option<u64> {
+    if let Some(milliseconds) = value.as_u64() {
+        return Some(milliseconds);
+    }
+
+    let milliseconds = value.as_f64()?;
+    if milliseconds.is_sign_negative()
+        || !milliseconds.is_finite()
+        || milliseconds > u64::MAX as f64
+    {
+        return None;
+    }
+
+    Some(milliseconds as u64)
 }
 
 const fn should_use_dry_run_result(proof_req: &ProofRequest) -> bool {
@@ -39,26 +72,54 @@ impl ProverServiceServer {
         result
     }
 
-    async fn request_is_dry_run(&self, proof_request_id: Uuid) -> RpcResult<bool> {
+    async fn dry_run_execution_stats_for_request(
+        &self,
+        proof_request_id: Uuid,
+    ) -> RpcResult<(bool, Option<ExecutionStats>)> {
         let sessions = self
             .repo
             .get_sessions_for_request(proof_request_id)
             .await
             .map_err(|e| internal(format!("Database error: {e}")))?;
 
-        Ok(sessions
+        let mut has_dry_run_result = false;
+        for metadata in sessions
             .iter()
             .filter(|session| session.status == DbSessionStatus::Completed)
             .filter_map(|session| session.metadata.as_ref())
-            .any(is_dry_run_metadata))
+        {
+            if is_dry_run_result_metadata(metadata) {
+                has_dry_run_result = true;
+                if let Some(execution_stats) = metadata
+                    .get(OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY)
+                    .and_then(execution_stats_from_value)
+                {
+                    return Ok((true, Some(execution_stats)));
+                }
+            }
+        }
+
+        Ok((has_dry_run_result, None))
     }
 
     async fn succeeded_result(&self, proof_req: ProofRequest) -> RpcResult<Option<ProofResult>> {
-        if should_use_dry_run_result(&proof_req) && self.request_is_dry_run(proof_req.id).await? {
-            return Ok(Some(ProofResult::Compressed(ZkProofResult {
-                zk_vm: ZkVm::Sp1,
-                proof: Vec::new().into(),
-            })));
+        if should_use_dry_run_result(&proof_req) {
+            let (is_dry_run, execution_stats) =
+                self.dry_run_execution_stats_for_request(proof_req.id).await?;
+            if is_dry_run {
+                if execution_stats.is_none() {
+                    warn!(
+                        proof_request_id = %proof_req.id,
+                        "dry-run proof has no valid execution stats in session metadata"
+                    );
+                }
+
+                return Ok(Some(ProofResult::Compressed(ZkProofResult {
+                    zk_vm: ZkVm::Sp1,
+                    proof: Vec::new().into(),
+                    execution_stats,
+                })));
+            }
         }
 
         let result = proof_req
@@ -154,7 +215,28 @@ mod tests {
     }
 
     #[test]
-    fn dry_run_metadata_requires_marker_and_stats() {
+    fn dry_run_execution_stats_from_metadata_deserializes_integer_stats() {
+        let metadata = metadata_with_execution_stats(serde_json::json!({
+            "total_instruction_cycles": 100,
+            "total_sp1_gas": 200,
+            "cycle_tracker": {
+                "range": 42
+            },
+            "witness_generation_ms": 12,
+            "execution_ms": 34
+        }));
+
+        let stats = execution_stats_from_metadata(&metadata).expect("execution stats");
+
+        assert_eq!(stats.total_instruction_cycles, 100);
+        assert_eq!(stats.total_sp1_gas, 200);
+        assert_eq!(stats.cycle_tracker.get("range"), Some(&42));
+        assert_eq!(stats.witness_generation_ms, 12);
+        assert_eq!(stats.execution_ms, 34);
+    }
+
+    #[test]
+    fn dry_run_execution_stats_from_metadata_truncates_fractional_milliseconds() {
         let metadata = metadata_with_execution_stats(serde_json::json!({
             "total_instruction_cycles": 100,
             "total_sp1_gas": 200,
@@ -162,11 +244,52 @@ mod tests {
                 "range": 42
             },
             "witness_generation_ms": 12.5,
+            "execution_ms": 34.9
+        }));
+
+        let stats = execution_stats_from_metadata(&metadata).expect("execution stats");
+
+        assert_eq!(stats.witness_generation_ms, 12);
+        assert_eq!(stats.execution_ms, 34);
+    }
+
+    #[test]
+    fn dry_run_execution_stats_from_metadata_requires_marker_and_valid_stats() {
+        assert!(execution_stats_from_metadata(&serde_json::json!({ "dry_run": true })).is_none());
+
+        let metadata = metadata_with_execution_stats(serde_json::json!({
+            "total_instruction_cycles": "100",
+            "total_sp1_gas": 200,
+            "cycle_tracker": {},
+            "witness_generation_ms": 12,
+            "execution_ms": 34
+        }));
+
+        assert!(execution_stats_from_metadata(&metadata).is_none());
+
+        let metadata = metadata_with_execution_stats(serde_json::json!({
+            "total_instruction_cycles": 100,
+            "total_sp1_gas": 200,
+            "cycle_tracker": {},
+            "witness_generation_ms": -12.5,
             "execution_ms": 34.5
         }));
 
-        assert!(is_dry_run_metadata(&metadata));
-        assert!(!is_dry_run_metadata(&serde_json::json!({ "dry_run": true })));
+        assert!(execution_stats_from_metadata(&metadata).is_none());
+    }
+
+    #[test]
+    fn dry_run_result_metadata_accepts_malformed_stats_for_empty_result_compatibility() {
+        let metadata = metadata_with_execution_stats(serde_json::json!({
+            "total_instruction_cycles": "100",
+            "total_sp1_gas": 200,
+            "cycle_tracker": {},
+            "witness_generation_ms": 12,
+            "execution_ms": 34
+        }));
+
+        assert!(is_dry_run_result_metadata(&metadata));
+        assert!(execution_stats_from_metadata(&metadata).is_none());
     }
 
     #[test]
@@ -174,6 +297,7 @@ mod tests {
         let stored_result = ProofResult::Compressed(ZkProofResult {
             zk_vm: ZkVm::Sp1,
             proof: vec![0xAA, 0xBB].into(),
+            execution_stats: None,
         });
         let mut req = make_proof_request(ProofType::OpSuccinctSp1ClusterCompressed, None, None);
         req.result_payload =

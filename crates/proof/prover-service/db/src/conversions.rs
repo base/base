@@ -241,11 +241,16 @@ impl ProofRequest {
                 ProtocolProofResult::Compressed(ZkProofResult {
                     zk_vm: ProtocolZkVm::Sp1,
                     proof: proof.into(),
+                    execution_stats: None,
                 })
             }),
             Some(ProofType::OpSuccinctSp1ClusterSnarkGroth16) => self.snark_receipt.map(|proof| {
                 ProtocolProofResult::SnarkGroth16(SnarkGroth16ProofResult {
-                    proof: ZkProofResult { zk_vm: ProtocolZkVm::Sp1, proof: proof.into() },
+                    proof: ZkProofResult {
+                        zk_vm: ProtocolZkVm::Sp1,
+                        proof: proof.into(),
+                        execution_stats: None,
+                    },
                 })
             }),
             None => None,
@@ -420,6 +425,7 @@ mod tests {
         let expected = ProtocolProofResult::Compressed(ZkProofResult {
             zk_vm: ProtocolZkVm::Sp1,
             proof: vec![0xAA, 0xBB].into(),
+            execution_stats: None,
         });
         let mut req = proof_request(Some(ProofType::OpSuccinctSp1ClusterCompressed));
         req.stark_receipt = Some(vec![0xDE, 0xAD]);
@@ -439,6 +445,7 @@ mod tests {
             Some(ProtocolProofResult::Compressed(ZkProofResult {
                 zk_vm: ProtocolZkVm::Sp1,
                 proof: vec![1, 2, 3].into(),
+                execution_stats: None,
             }))
         );
     }
@@ -451,7 +458,11 @@ mod tests {
         assert_eq!(
             req.stored_proof_result().unwrap(),
             Some(ProtocolProofResult::SnarkGroth16(SnarkGroth16ProofResult {
-                proof: ZkProofResult { zk_vm: ProtocolZkVm::Sp1, proof: vec![4, 5, 6].into() },
+                proof: ZkProofResult {
+                    zk_vm: ProtocolZkVm::Sp1,
+                    proof: vec![4, 5, 6].into(),
+                    execution_stats: None
+                },
             }))
         );
     }

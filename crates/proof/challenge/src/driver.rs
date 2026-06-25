@@ -16,6 +16,7 @@
 //!    After the TEE proof is nullified, the game is re-scanned as Path 3.
 
 use std::{
+    collections::HashSet,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -24,18 +25,20 @@ use alloy_primitives::{Address, B256};
 use base_proof_contracts::{AggregateVerifierClient, GameStatus};
 use base_proof_primitives::ProofRequest as TeeProofRequest;
 use base_proof_rpc::L2Provider;
+use base_proof_submission::KnownRevert;
 use base_prover_service_client::ProofRequesterProvider;
 use base_prover_service_protocol::{SnarkGroth16ProofRequest, TeeKind, ZkProofRequest, ZkVm};
 use base_runtime::{Clock, TokioRuntime};
-use base_tx_manager::TxManager;
+use base_tx_manager::{TxManager, TxManagerError};
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    BondManager, CandidateGame, ChallengeSubmitter, ChallengerMetrics, DisputeIntent, GameCategory,
-    GameScanner, IntermediateValidationParams, L1HeadProvider, OutputValidator, PendingProof,
-    PendingProofs, ProofKind, ProofPhase, ProofUpdate, ValidatorError,
+    BondManager, CandidateGame, ChallengeSubmitError, ChallengeSubmitter, ChallengerMetrics,
+    DisputeIntent, GameCategory, GameScanner, IntermediateValidationParams, L1HeadProvider,
+    OutputValidator, PendingProof, PendingProofs, ProofKind, ProofPhase, ProofUpdate,
+    ValidatorError,
 };
 
 /// Configuration for the challenger [`Driver`].
@@ -45,6 +48,8 @@ pub struct DriverConfig {
     pub poll_interval: Duration,
     /// Maximum wall-clock time to wait for a ZK proof session before treating it as failed.
     pub max_proof_duration: Duration,
+    /// Retryable TEE submission failures to tolerate before falling back to ZK.
+    pub tee_submit_retry_limit: u32,
     /// Cancellation token for graceful shutdown.
     pub cancel: CancellationToken,
 }
@@ -112,12 +117,16 @@ where
     pub verifier_client: Arc<dyn AggregateVerifierClient>,
     /// In-flight proof sessions keyed by game address.
     pub pending_proofs: PendingProofs,
+    /// Games that hit terminal contract reverts and should not be rediscovered.
+    ignored_games: HashSet<Address>,
     /// Bond lifecycle manager (optional; enabled when claim addresses are configured).
     pub bond_manager: Option<BondManager<C>>,
     /// Interval between polling cycles.
     pub poll_interval: Duration,
     /// Maximum wall-clock time to wait for a ZK proof session before treating it as failed.
     pub max_proof_duration: Duration,
+    /// Retryable TEE submission failures to tolerate before falling back to ZK.
+    pub tee_submit_retry_limit: u32,
     /// Token used to signal graceful shutdown.
     pub cancel: CancellationToken,
 }
@@ -129,6 +138,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> std::fmt
         f.debug_struct("Driver")
             .field("pending_proofs", &self.pending_proofs.len())
             .field("poll_interval", &self.poll_interval)
+            .field("tee_submit_retry_limit", &self.tee_submit_retry_limit)
             .finish_non_exhaustive()
     }
 }
@@ -147,9 +157,11 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
             tee: components.tee,
             verifier_client: components.verifier_client,
             pending_proofs: PendingProofs::new(),
+            ignored_games: HashSet::new(),
             bond_manager: components.bond_manager,
             poll_interval: config.poll_interval,
             max_proof_duration: config.max_proof_duration,
+            tee_submit_retry_limit: config.tee_submit_retry_limit,
             cancel: config.cancel,
         }
     }
@@ -168,6 +180,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
             }
 
             ChallengerMetrics::pending_proofs().set(self.pending_proofs.len() as f64);
+            ChallengerMetrics::ignored_games().set(self.ignored_games.len() as f64);
 
             select! {
                 biased;
@@ -241,6 +254,11 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
     /// handler based on the game's [`GameCategory`].
     async fn process_candidate(&mut self, candidate: CandidateGame) -> eyre::Result<()> {
         let game_address = candidate.factory.proxy;
+
+        if self.ignored_games.contains(&game_address) {
+            debug!(game = %game_address, "skipping ignored game");
+            return Ok(());
+        }
 
         // If this game already has an in-flight proof session, skip it.
         // Pending proofs are polled separately in `poll_pending_proofs`.
@@ -806,27 +824,131 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
                 }
             }
             Err(e) => {
-                if targets_tee && let Some(p) = self.pending_proofs.get_mut(&game_address) {
-                    warn!(
-                        error = %e,
-                        game = %game_address,
-                        "TEE dispute tx failed, falling back to ZK"
-                    );
+                let known_revert = match &e {
+                    ChallengeSubmitError::KnownRevert(revert) => Some(*revert),
+                    ChallengeSubmitError::TxReverted { .. }
+                    | ChallengeSubmitError::TxManager(_) => None,
+                };
+
+                match known_revert {
+                    Some(KnownRevert::GameAlreadyExists) => {
+                        info!(
+                            error = %e,
+                            game = %game_address,
+                            "dispute game already exists, dropping pending proof"
+                        );
+                        self.pending_proofs.remove(&game_address);
+                        return Ok(());
+                    }
+                    Some(KnownRevert::ProofAlreadyVerified) => {
+                        info!(
+                            error = %e,
+                            game = %game_address,
+                            "dispute proof already verified onchain, dropping pending proof"
+                        );
+                        self.pending_proofs.remove(&game_address);
+                        return Ok(());
+                    }
+                    Some(KnownRevert::InvalidParentGame) => {
+                        warn!(
+                            error = %e,
+                            game = %game_address,
+                            "dispute game parent is invalid onchain, ignoring game"
+                        );
+                        self.ignore_game(game_address);
+                        return Ok(());
+                    }
+                    Some(KnownRevert::L1OriginTooOld) => {
+                        warn!(
+                            error = %e,
+                            game = %game_address,
+                            "dispute proof L1 origin is too old, ignoring game"
+                        );
+                        self.ignore_game(game_address);
+                        return Ok(());
+                    }
+                    Some(KnownRevert::InvalidSigner) if !targets_tee => {
+                        warn!(
+                            error = %e,
+                            game = %game_address,
+                            "dispute proof signer is invalid onchain, dropping pending proof"
+                        );
+                        self.pending_proofs.remove(&game_address);
+                        return Ok(());
+                    }
+                    _ if targets_tee && Self::should_fallback_from_tee_submit(&e) => {
+                        warn!(
+                            error = %e,
+                            game = %game_address,
+                            "TEE dispute tx failed, falling back to ZK"
+                        );
+                    }
+                    _ if targets_tee => {
+                        let Some(pending) = self.pending_proofs.get_mut(&game_address) else {
+                            return Ok(());
+                        };
+                        let has_zk_fallback = pending.kind.has_zk_fallback();
+
+                        if pending.tee_submit_retry_count >= self.tee_submit_retry_limit {
+                            warn!(
+                                error = %e,
+                                game = %game_address,
+                                retry_count = pending.tee_submit_retry_count,
+                                retry_limit = self.tee_submit_retry_limit,
+                                has_zk_fallback,
+                                "TEE dispute tx retry limit reached"
+                            );
+                            pending.phase = ProofPhase::NeedsRetry;
+                            return self.handle_proof_retry(game_address).await;
+                        }
+
+                        pending.tee_submit_retry_count =
+                            pending.tee_submit_retry_count.saturating_add(1);
+                        warn!(
+                            error = %e,
+                            game = %game_address,
+                            retry_count = pending.tee_submit_retry_count,
+                            retry_limit = self.tee_submit_retry_limit,
+                            has_zk_fallback,
+                            "TEE dispute tx failed, will retry next tick"
+                        );
+                        return Ok(());
+                    }
+                    _ => {
+                        warn!(
+                            error = %e,
+                            game = %game_address,
+                            "dispute tx failed, will retry next tick"
+                        );
+                        return Ok(());
+                    }
+                }
+
+                if let Some(p) = self.pending_proofs.get_mut(&game_address) {
                     // Don't retry the failed TEE submission — switch to the ZK
                     // fallback so the next retry uses the pre-built ZK request.
                     p.phase = ProofPhase::NeedsRetry;
                     return self.handle_proof_retry(game_address).await;
                 }
-                warn!(
-                    error = %e,
-                    game = %game_address,
-                    "dispute tx failed, will retry next tick"
-                );
-                // Leave entry as ReadyToSubmit for retry.
             }
         }
 
         Ok(())
+    }
+
+    const fn should_fallback_from_tee_submit(error: &ChallengeSubmitError) -> bool {
+        matches!(
+            error,
+            ChallengeSubmitError::KnownRevert(KnownRevert::InvalidSigner)
+                | ChallengeSubmitError::TxReverted { .. }
+                | ChallengeSubmitError::TxManager(TxManagerError::ExecutionReverted { .. })
+        )
+    }
+
+    fn ignore_game(&mut self, game_address: Address) {
+        self.pending_proofs.remove(&game_address);
+        self.ignored_games.insert(game_address);
+        ChallengerMetrics::ignored_games().set(self.ignored_games.len() as f64);
     }
 
     /// Handles a proof that needs retrying after failure.
@@ -878,6 +1000,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
                     p.kind = ProofKind::Zk { prove_request: fallback_request.clone() };
                     p.intent = fallback_intent;
                     p.retry_count = 0;
+                    p.tee_submit_retry_count = 0;
                 }
 
                 fallback_request
@@ -923,5 +1046,327 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::HashMap, sync::Arc, time::Duration};
+
+    use alloy_primitives::{Address, B256, Bytes};
+    use base_proof_contracts::l1_origin_too_old_selector;
+    use base_prover_service_protocol::{SnarkGroth16ProofRequest, ZkProofRequest, ZkVm};
+    use base_tx_manager::TxManagerError;
+    use tokio_util::sync::CancellationToken;
+
+    use super::*;
+    use crate::test_utils::{
+        MockAggregateVerifier, MockDisputeGameFactory, MockL2Provider, MockTxManager,
+        MockZkProofProvider, addr, factory_game, mock_anchor_registry, mock_state,
+        receipt_with_status,
+    };
+
+    fn proof_request() -> SnarkGroth16ProofRequest {
+        SnarkGroth16ProofRequest {
+            proof: ZkProofRequest {
+                start_block_number: 100,
+                number_of_blocks_to_prove: 10,
+                sequence_window: None,
+                l1_head: Some(B256::repeat_byte(0xAA)),
+                intermediate_root_interval: Some(10),
+                zk_vm: ZkVm::Sp1,
+            },
+            prover_address: Address::repeat_byte(0xCC),
+        }
+    }
+
+    fn driver_with_tx_error(
+        err: TxManagerError,
+    ) -> (Driver<MockL2Provider, MockZkProofProvider, MockTxManager>, Arc<MockZkProofProvider>)
+    {
+        driver_with_tx_manager(MockTxManager::new(Err(err)))
+    }
+
+    fn driver_with_tx_manager(
+        tx_manager: MockTxManager,
+    ) -> (Driver<MockL2Provider, MockZkProofProvider, MockTxManager>, Arc<MockZkProofProvider>)
+    {
+        let game_address = addr(0);
+        let mut verifier_games = HashMap::new();
+        verifier_games.insert(game_address, mock_state(GameStatus::InProgress, Address::ZERO, 100));
+        let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
+        let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
+        let scanner = GameScanner::new(
+            factory,
+            Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
+            mock_anchor_registry(Address::ZERO),
+        );
+        let proof_requester = Arc::new(MockZkProofProvider::default());
+        let components = DriverComponents {
+            scanner,
+            validator: OutputValidator::new(Arc::new(MockL2Provider::new())),
+            proof_requester: Arc::clone(&proof_requester),
+            submitter: ChallengeSubmitter::new(tx_manager),
+            tee: None,
+            verifier_client: verifier,
+            bond_manager: None,
+        };
+        let driver = Driver::new(
+            DriverConfig {
+                poll_interval: Duration::from_millis(10),
+                max_proof_duration: Duration::from_secs(60),
+                tee_submit_retry_limit: 3,
+                cancel: CancellationToken::new(),
+            },
+            components,
+        );
+
+        (driver, proof_requester)
+    }
+
+    fn insert_ready_proof(driver: &mut Driver<MockL2Provider, MockZkProofProvider, MockTxManager>) {
+        let game_address = addr(0);
+        driver.pending_proofs.insert(
+            game_address,
+            PendingProof::ready(
+                Bytes::from(vec![0x01, 0xAA]),
+                0,
+                B256::repeat_byte(0x22),
+                proof_request(),
+                DisputeIntent::Challenge,
+            ),
+        );
+    }
+
+    fn insert_ready_tee_proof(
+        driver: &mut Driver<MockL2Provider, MockZkProofProvider, MockTxManager>,
+    ) {
+        let game_address = addr(0);
+        driver.pending_proofs.insert(
+            game_address,
+            PendingProof {
+                phase: ProofPhase::ReadyToSubmit { proof_bytes: Bytes::from(vec![0x00, 0xAA]) },
+                kind: ProofKind::Tee {
+                    zk_fallback_request: Some(proof_request()),
+                    zk_fallback_intent: Some(DisputeIntent::Nullify),
+                },
+                invalid_index: 0,
+                expected_root: B256::repeat_byte(0x22),
+                retry_count: 0,
+                tee_submit_retry_count: 0,
+                intent: DisputeIntent::Nullify,
+            },
+        );
+    }
+
+    fn insert_ready_tee_proof_without_fallback(
+        driver: &mut Driver<MockL2Provider, MockZkProofProvider, MockTxManager>,
+    ) {
+        let game_address = addr(0);
+        driver.pending_proofs.insert(
+            game_address,
+            PendingProof {
+                phase: ProofPhase::ReadyToSubmit { proof_bytes: Bytes::from(vec![0x00, 0xAA]) },
+                kind: ProofKind::Tee { zk_fallback_request: None, zk_fallback_intent: None },
+                invalid_index: 0,
+                expected_root: B256::repeat_byte(0x22),
+                retry_count: 0,
+                tee_submit_retry_count: 0,
+                intent: DisputeIntent::Nullify,
+            },
+        );
+    }
+
+    fn candidate() -> CandidateGame {
+        let state = mock_state(GameStatus::InProgress, Address::ZERO, 100);
+        CandidateGame {
+            index: 0,
+            factory: factory_game(0, 1),
+            info: state.game_info,
+            starting_block_number: state.starting_block_number,
+            intermediate_block_interval: 10,
+            l1_head: state.l1_head,
+            tee_prover: state.tee_prover,
+            category: GameCategory::InvalidZkProposal,
+        }
+    }
+
+    fn assert_ready_tee_proof(driver: &Driver<MockL2Provider, MockZkProofProvider, MockTxManager>) {
+        let pending = driver.pending_proofs.get(&addr(0)).expect("pending proof should remain");
+        assert!(matches!(pending.phase, ProofPhase::ReadyToSubmit { .. }));
+        assert!(pending.kind.is_tee());
+    }
+
+    fn assert_zk_fallback_requested(
+        driver: &Driver<MockL2Provider, MockZkProofProvider, MockTxManager>,
+        proof_requester: &MockZkProofProvider,
+    ) {
+        let pending = driver.pending_proofs.get(&addr(0)).expect("pending proof should remain");
+        assert!(matches!(pending.phase, ProofPhase::AwaitingProof { .. }));
+        assert!(!pending.kind.is_tee());
+        let state = proof_requester.state.lock().unwrap();
+        assert_eq!(state.prove_block_range_log.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn proof_already_verified_revert_drops_pending_proof() {
+        let (mut driver, _proof_requester) =
+            driver_with_tx_error(TxManagerError::ExecutionReverted {
+                reason: Some("AlreadyProven(1)".to_string()),
+                data: None,
+            });
+        insert_ready_proof(&mut driver);
+
+        driver.poll_or_submit(addr(0)).await.unwrap();
+
+        assert!(!driver.pending_proofs.contains_key(&addr(0)));
+    }
+
+    #[tokio::test]
+    async fn game_already_exists_revert_drops_pending_proof() {
+        let (mut driver, _proof_requester) =
+            driver_with_tx_error(TxManagerError::ExecutionReverted {
+                reason: Some("GameAlreadyExists(0x00)".to_string()),
+                data: None,
+            });
+        insert_ready_proof(&mut driver);
+
+        driver.poll_or_submit(addr(0)).await.unwrap();
+
+        assert!(!driver.pending_proofs.contains_key(&addr(0)));
+    }
+
+    #[tokio::test]
+    async fn stale_l1_origin_revert_drops_pending_zk_proof() {
+        let (mut driver, proof_requester) =
+            driver_with_tx_error(TxManagerError::ExecutionReverted {
+                reason: None,
+                data: Some(Bytes::from(l1_origin_too_old_selector().to_vec())),
+            });
+        insert_ready_proof(&mut driver);
+
+        driver.poll_or_submit(addr(0)).await.unwrap();
+
+        assert!(!driver.pending_proofs.contains_key(&addr(0)));
+        assert!(driver.ignored_games.contains(&addr(0)));
+        let state = proof_requester.state.lock().unwrap();
+        assert!(state.prove_block_range_log.is_empty());
+    }
+
+    #[tokio::test]
+    async fn stale_l1_origin_revert_drops_pending_tee_proof_without_requesting_zk() {
+        let (mut driver, proof_requester) =
+            driver_with_tx_error(TxManagerError::ExecutionReverted {
+                reason: None,
+                data: Some(Bytes::from(l1_origin_too_old_selector().to_vec())),
+            });
+        insert_ready_tee_proof(&mut driver);
+
+        driver.poll_or_submit(addr(0)).await.unwrap();
+
+        assert!(!driver.pending_proofs.contains_key(&addr(0)));
+        assert!(driver.ignored_games.contains(&addr(0)));
+        let state = proof_requester.state.lock().unwrap();
+        assert!(state.prove_block_range_log.is_empty());
+    }
+
+    #[tokio::test]
+    async fn tee_submit_nonce_too_low_keeps_ready_proof_without_requesting_zk() {
+        let (mut driver, proof_requester) = driver_with_tx_error(TxManagerError::NonceTooLow);
+        insert_ready_tee_proof(&mut driver);
+
+        driver.poll_or_submit(addr(0)).await.unwrap();
+
+        assert_ready_tee_proof(&driver);
+        let pending = driver.pending_proofs.get(&addr(0)).expect("pending proof should remain");
+        assert_eq!(pending.tee_submit_retry_count, 1);
+        let state = proof_requester.state.lock().unwrap();
+        assert!(state.prove_block_range_log.is_empty());
+    }
+
+    #[tokio::test]
+    async fn tee_submit_retry_limit_falls_back_to_zk() {
+        let (mut driver, proof_requester) =
+            driver_with_tx_manager(MockTxManager::with_responses(vec![
+                Err(TxManagerError::NonceTooLow),
+                Err(TxManagerError::NonceTooLow),
+            ]));
+        driver.tee_submit_retry_limit = 1;
+        insert_ready_tee_proof(&mut driver);
+
+        driver.poll_or_submit(addr(0)).await.unwrap();
+
+        assert_ready_tee_proof(&driver);
+        {
+            let state = proof_requester.state.lock().unwrap();
+            assert!(state.prove_block_range_log.is_empty());
+        }
+
+        driver.poll_or_submit(addr(0)).await.unwrap();
+
+        assert_zk_fallback_requested(&driver, &proof_requester);
+    }
+
+    #[tokio::test]
+    async fn tee_submit_retry_limit_drops_proof_without_zk_fallback() {
+        let (mut driver, proof_requester) =
+            driver_with_tx_manager(MockTxManager::with_responses(vec![
+                Err(TxManagerError::NonceTooLow),
+                Err(TxManagerError::NonceTooLow),
+            ]));
+        driver.tee_submit_retry_limit = 1;
+        insert_ready_tee_proof_without_fallback(&mut driver);
+
+        driver.poll_or_submit(addr(0)).await.unwrap();
+
+        assert_ready_tee_proof(&driver);
+
+        driver.poll_or_submit(addr(0)).await.unwrap();
+
+        assert!(!driver.pending_proofs.contains_key(&addr(0)));
+        let state = proof_requester.state.lock().unwrap();
+        assert!(state.prove_block_range_log.is_empty());
+    }
+
+    #[tokio::test]
+    async fn tee_invalid_signer_revert_falls_back_to_zk() {
+        let (mut driver, proof_requester) =
+            driver_with_tx_error(TxManagerError::ExecutionReverted {
+                reason: Some("InvalidSigner()".to_string()),
+                data: None,
+            });
+        insert_ready_tee_proof(&mut driver);
+
+        driver.poll_or_submit(addr(0)).await.unwrap();
+
+        assert_zk_fallback_requested(&driver, &proof_requester);
+    }
+
+    #[tokio::test]
+    async fn tee_mined_tx_revert_falls_back_to_zk() {
+        let tx_hash = B256::repeat_byte(0x44);
+        let (mut driver, proof_requester) =
+            driver_with_tx_manager(MockTxManager::new(Ok(receipt_with_status(false, tx_hash))));
+        insert_ready_tee_proof(&mut driver);
+
+        driver.poll_or_submit(addr(0)).await.unwrap();
+
+        assert_zk_fallback_requested(&driver, &proof_requester);
+    }
+
+    #[tokio::test]
+    async fn ignored_game_is_not_reprocessed_from_scan() {
+        let (mut driver, proof_requester) =
+            driver_with_tx_error(TxManagerError::ExecutionReverted {
+                reason: None,
+                data: Some(Bytes::from(l1_origin_too_old_selector().to_vec())),
+            });
+        insert_ready_proof(&mut driver);
+
+        driver.poll_or_submit(addr(0)).await.unwrap();
+        driver.process_candidate(candidate()).await.unwrap();
+
+        let state = proof_requester.state.lock().unwrap();
+        assert!(state.prove_block_range_log.is_empty());
     }
 }

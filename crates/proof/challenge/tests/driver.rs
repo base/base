@@ -87,6 +87,7 @@ fn test_driver_with_tee(
     let config = DriverConfig {
         poll_interval: Duration::from_millis(10),
         max_proof_duration: Duration::from_secs(4 * 60 * 60),
+        tee_submit_retry_limit: 3,
         cancel: CancellationToken::new(),
     };
 
@@ -389,6 +390,7 @@ async fn test_step_scan_error_propagated() {
     let config = DriverConfig {
         poll_interval: Duration::from_millis(10),
         max_proof_duration: Duration::from_secs(4 * 60 * 60),
+        tee_submit_retry_limit: 3,
         cancel: CancellationToken::new(),
     };
 
@@ -862,10 +864,9 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
 }
 
 #[tokio::test]
-async fn test_step_tee_submission_failure_falls_back_to_zk() {
-    // TEE proof succeeds but the on-chain nullify() tx fails.
-    // The driver should immediately fall back to a ZK proof instead of
-    // retrying the same TEE proof indefinitely.
+async fn test_step_tee_contract_revert_falls_back_to_zk() {
+    // TEE proof succeeds but the on-chain nullify() call reverts.
+    // Contract-level failures are proof-specific enough to fall back to ZK.
     let (l2, factory, root_15, root_20) = base_game_mocks();
 
     let verifier = single_game_verifier(MockGameState {
@@ -895,14 +896,17 @@ async fn test_step_tee_submission_failure_falls_back_to_zk() {
         }),
     });
 
-    // TEE nullify() tx fails (NonceTooLow), ZK challenge() tx succeeds.
+    // TEE nullify() tx reverts, ZK challenge() tx succeeds.
     let tx_manager = MockTxManager::with_responses(vec![
-        Err(TxManagerError::NonceTooLow),
+        Err(TxManagerError::ExecutionReverted {
+            reason: Some("unexpected contract revert".to_string()),
+            data: None,
+        }),
         Ok(receipt_with_status(true, DEFAULT_TX_HASH)),
     ]);
 
     let mut driver = test_driver_with_tee(
-        factory,
+        Arc::clone(&factory),
         Arc::clone(&verifier),
         l2,
         zk,
@@ -942,15 +946,12 @@ async fn test_step_tee_submission_failure_falls_back_to_zk() {
         state.proof_status = ProofStatus::Succeeded;
     }
 
-    // Simulate the on-chain effect of a successful challenge: game is
-    // resolved. This prevents the scanner from re-discovering the game
-    // after the pending proof is submitted in step 2.
-    verifier.update_game(
-        addr(0),
-        MockGameState { status: GameStatus::ChallengerWins, ..game_state(20) },
-    );
+    // Keep the game in-progress so the pending fallback proof reaches
+    // submit_dispute(), but remove it from the scan batch so the same tick
+    // cannot re-discover it after the successful fallback submission.
+    factory.games.lock().unwrap().clear();
 
-    // Step 3: ZK proof polled → Succeeded → entry cleaned up.
+    // Step 3: ZK proof polled → Succeeded → challenge tx submitted → entry cleaned up.
     driver.step().await.unwrap();
     assert!(
         !driver.pending_proofs.contains_key(&addr(0)),

@@ -338,7 +338,7 @@ where
                 // Persistent submit failures intentionally keep the proof request
                 // so transient RPC/L1 issues can retry the same completed proof.
                 // Operators should alert on base_proposer_errors_total if this
-                // repeats; submit failures do not count against max_retries.
+                // repeats.
                 Metrics::errors_total(error.metric_label()).increment(1);
                 warn!(target_block, error = %error, "Submission failed");
             }

@@ -220,7 +220,6 @@ impl ProposerService {
 
         let driver_config = DriverConfig {
             poll_interval: config.poll_interval,
-            max_retries: 8,
             recovery_scan_concurrency: config.recovery_scan_concurrency,
             submit_timeout,
             tee_prover_registry_address: config.tee_prover_registry_address,
@@ -234,15 +233,10 @@ impl ProposerService {
         };
         let proof_dispatcher = ProofDispatcher::new(
             Arc::clone(&proof_requester),
-            Arc::clone(&l1_client),
-            Arc::clone(&l2_client),
-            Arc::clone(&rollup_client),
-            ProofDispatcherConfig {
-                proposer_address: driver_config.proposer_address,
-                allow_non_finalized: driver_config.allow_non_finalized,
-                intermediate_block_interval: driver_config.intermediate_block_interval,
-                tee_image_hash: driver_config.tee_image_hash,
-            },
+            Arc::<L1Client>::clone(&l1_client),
+            Arc::<L2Client>::clone(&l2_client),
+            Arc::<RollupClient>::clone(&rollup_client),
+            ProofDispatcherConfig::from(&driver_config),
         );
         let proof_submitter = ProofSubmitter::new(
             output_proposer,
@@ -269,7 +263,7 @@ impl ProposerService {
                 anchor_state_registry_address: driver_config.anchor_state_registry_address,
                 scan_concurrency: driver_config.recovery_scan_concurrency,
             },
-            Arc::clone(&rollup_client),
+            Arc::<RollupClient>::clone(&rollup_client),
             anchor_registry,
             factory_client,
         ));

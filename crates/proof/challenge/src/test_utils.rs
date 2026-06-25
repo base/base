@@ -754,7 +754,11 @@ impl ProofRequesterProvider for MockZkProofProvider {
             } else {
                 state.result.or_else(|| {
                     Some(ApiProofResult::SnarkGroth16(SnarkGroth16ProofResult {
-                        proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: state.proof.into() },
+                        proof: ZkProofResult {
+                            zk_vm: ZkVm::Sp1,
+                            proof: state.proof.into(),
+                            execution_stats: None,
+                        },
                     }))
                 })
             }

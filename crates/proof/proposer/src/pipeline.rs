@@ -8,7 +8,7 @@ use std::{
     },
 };
 
-use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
+use base_proof_rpc::{L1Provider, RollupProvider};
 use futures::FutureExt;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -17,7 +17,7 @@ use crate::{
     Metrics,
     driver::{DriverConfig, RecoveredState},
     proof_collector::ProofCollector,
-    proof_dispatcher::{ProofDispatcher, ProofDispatcherState},
+    proof_dispatcher::ProofDispatcher,
     proof_recovery::{ProofRecovery, ProofRecoveryCache},
 };
 
@@ -25,24 +25,21 @@ use crate::{
 ///
 /// Runs concurrent dispatcher and collector tasks per [`Self::run`] session.
 /// The collector chains ready proofs internally and restarts both tasks only
-/// when it needs fresh onchain state; dispatcher retry exhaustion clears
-/// dispatcher recovery state without interrupting collection.
-pub struct ProvingPipeline<L1, L2, R>
+/// when it needs fresh onchain state.
+pub struct ProvingPipeline<L1, R>
 where
     L1: L1Provider + 'static,
-    L2: L2Provider + 'static,
     R: RollupProvider + 'static,
 {
     config: DriverConfig,
-    proof_dispatcher: ProofDispatcher<L1, L2, R>,
-    proof_recovery: Arc<ProofRecovery<R>>,
+    proof_dispatcher: ProofDispatcher,
+    proof_recovery: Arc<ProofRecovery>,
     proof_collector: ProofCollector<L1, R>,
 }
 
-impl<L1, L2, R> std::fmt::Debug for ProvingPipeline<L1, L2, R>
+impl<L1, R> std::fmt::Debug for ProvingPipeline<L1, R>
 where
     L1: L1Provider + 'static,
-    L2: L2Provider + 'static,
     R: RollupProvider + 'static,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -50,17 +47,16 @@ where
     }
 }
 
-impl<L1, L2, R> ProvingPipeline<L1, L2, R>
+impl<L1, R> ProvingPipeline<L1, R>
 where
     L1: L1Provider + 'static,
-    L2: L2Provider + 'static,
     R: RollupProvider + 'static,
 {
     /// Creates a new proving pipeline.
     pub const fn new(
         config: DriverConfig,
-        proof_dispatcher: ProofDispatcher<L1, L2, R>,
-        proof_recovery: Arc<ProofRecovery<R>>,
+        proof_dispatcher: ProofDispatcher,
+        proof_recovery: Arc<ProofRecovery>,
         proof_collector: ProofCollector<L1, R>,
     ) -> Self {
         Self { config, proof_dispatcher, proof_recovery, proof_collector }
@@ -92,7 +88,7 @@ where
                 tokio::select! {
                     biased;
                     () = cancel.cancelled() => false,
-                    () = self.dispatcher_loop(&cancel, Arc::clone(&dispatched_through)) => true,
+                    () = self.dispatcher_loop(Arc::clone(&dispatched_through)) => true,
                     () = self.collector_loop(&cancel, Arc::clone(&dispatched_through)) => true,
                 }
             };
@@ -119,13 +115,10 @@ where
         info!("Proving pipeline stopped");
     }
 
-    async fn dispatcher_loop(
-        &self,
-        cancel: &CancellationToken,
-        dispatched_through: Arc<AtomicU64>,
-    ) {
+    async fn dispatcher_loop(&self, dispatched_through: Arc<AtomicU64>) {
         let mut cache: Option<ProofRecoveryCache> = None;
-        let mut state = ProofDispatcherState::new();
+        let mut cursor_source: Option<RecoveredState> = None;
+        let mut cursor: Option<RecoveredState> = None;
 
         loop {
             {
@@ -137,26 +130,20 @@ where
                     Metrics::safe_head().set(safe_head as f64);
                     Metrics::last_proposed_block().set(recovered.l2_block_number as f64);
 
-                    let drop_recovery_cache = self
-                        .proof_dispatcher
-                        .tick(
-                            &mut state,
-                            recovered,
-                            safe_head,
-                            self.config.block_interval,
-                            self.config.max_retries,
-                            cancel,
-                        )
-                        .await;
-
-                    if let Some(cursor) = state.cursor {
-                        dispatched_through.store(cursor.l2_block_number, Ordering::Relaxed);
+                    // Dispatch failures retry from the in-memory cursor. A fresh recovery walk is
+                    // only needed when onchain state changes; try_recover_and_plan returns that as
+                    // a different recovered state, which resets the cursor here.
+                    if cursor_source != Some(recovered) || cursor.is_none() {
+                        cursor_source = Some(recovered);
+                        cursor = Some(recovered);
                     }
 
-                    if drop_recovery_cache {
-                        cache = None;
-                        dispatched_through.store(0, Ordering::Relaxed);
-                    }
+                    let current = cursor
+                        .as_mut()
+                        .expect("dispatcher cursor initialized from recovered state");
+                    self.proof_dispatcher.tick(current, safe_head).await;
+
+                    dispatched_through.store(current.l2_block_number, Ordering::Relaxed);
                 }
             }
 
@@ -282,7 +269,7 @@ mod tests {
 
     fn test_pipeline(
         requester: Arc<RejectingProofRequester>,
-    ) -> ProvingPipeline<MockL1, MockL2, MockRollupClient> {
+    ) -> ProvingPipeline<MockL1, MockRollupClient> {
         let proof_requester: Arc<dyn ProofRequesterProvider> =
             Arc::<RejectingProofRequester>::clone(&requester);
         let l1 = Arc::new(MockL1::new(1000));
@@ -303,22 +290,16 @@ mod tests {
         let output_proposer: Arc<dyn OutputProposer> = Arc::new(MockOutputProposer::default());
         let config = DriverConfig {
             poll_interval: Duration::from_millis(10),
-            max_retries: 1,
             block_interval: 100,
             intermediate_block_interval: 100,
             ..Default::default()
         };
         let proof_dispatcher = ProofDispatcher::new(
             Arc::clone(&proof_requester),
-            Arc::clone(&l1),
-            Arc::clone(&l2),
-            Arc::clone(&rollup),
-            ProofDispatcherConfig {
-                proposer_address: config.proposer_address,
-                allow_non_finalized: config.allow_non_finalized,
-                intermediate_block_interval: config.intermediate_block_interval,
-                tee_image_hash: config.tee_image_hash,
-            },
+            Arc::<MockL1>::clone(&l1),
+            l2,
+            Arc::<MockRollupClient>::clone(&rollup),
+            ProofDispatcherConfig::from(&config),
         );
         let proof_recovery = Arc::new(ProofRecovery::new(
             ProofRecoveryConfig {
@@ -329,7 +310,7 @@ mod tests {
                 anchor_state_registry_address: config.anchor_state_registry_address,
                 scan_concurrency: config.recovery_scan_concurrency,
             },
-            Arc::clone(&rollup),
+            Arc::<MockRollupClient>::clone(&rollup),
             anchor_registry,
             factory,
         ));
@@ -360,23 +341,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dispatcher_retry_exhaustion_keeps_dispatcher_loop_running() {
+    async fn dispatcher_failure_keeps_dispatcher_loop_running() {
         let requester = Arc::new(RejectingProofRequester::default());
         let pipeline = test_pipeline(Arc::clone(&requester));
-        let cancel = CancellationToken::new();
 
         assert!(
             tokio::time::timeout(
                 Duration::from_millis(100),
-                pipeline.dispatcher_loop(&cancel, Arc::new(AtomicU64::new(0)))
+                pipeline.dispatcher_loop(Arc::new(AtomicU64::new(0)))
             )
             .await
             .is_err(),
-            "dispatcher retry exhaustion should not end the dispatcher loop"
+            "dispatcher failures should not end the dispatcher loop"
         );
         assert!(
             requester.prove_count.load(Ordering::SeqCst) > 1,
-            "dispatcher should keep recovering and retrying after exhaustion"
+            "dispatcher should keep retrying after failures"
         );
     }
 
