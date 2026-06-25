@@ -48,7 +48,7 @@ pub use apply::{
 };
 
 mod transaction;
-pub use transaction::{AuthorizedTransaction, TransactionAuthorizer};
+pub use transaction::{AppliedTransaction, TransactionAuthorizer};
 
 mod schedule;
 pub use schedule::Eip8130GasSchedule;
