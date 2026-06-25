@@ -6,7 +6,6 @@ use alloy_primitives::{Address, keccak256};
 use alloy_provider::RootProvider;
 use base_proof_contracts::ITEEProverRegistry;
 use base_proof_primitives::EnclaveApiClient;
-use base_proof_tee_registrar::SignerAttestationKind;
 use base_proof_tee_tdx_collateral::{TdxAttestationConfig, TdxCollateralProvider};
 use base_proof_tee_tdx_prover::TdxMeasurements;
 use base_proof_tee_tdx_verifier::{
@@ -19,6 +18,8 @@ use url::Url;
 use crate::{
     OnchainRegistryReport, QuoteVerificationReport, TdxImageHashReport, TdxMeasurementsReport,
 };
+
+const TDX_ATTESTATION_KIND: &str = "tdx";
 
 /// Optional on-chain registry comparison configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,10 +108,8 @@ impl TdxImageHashTool {
             .wrap_err_with(|| format!("failed to build JSON-RPC client for {}", config.endpoint))?;
 
         let kind = client.attestation_kind().await.wrap_err("failed to query attestation kind")?;
-        let kind = SignerAttestationKind::from_rpc_name(&kind)
-            .map_err(|error| eyre::eyre!("unsupported attestation kind: {error}"))?;
-        if kind != SignerAttestationKind::Tdx {
-            bail!("endpoint {} returned {kind:?} attestations, expected TDX", config.endpoint);
+        if kind != TDX_ATTESTATION_KIND {
+            bail!("endpoint {} returned {kind} attestations, expected TDX", config.endpoint);
         }
 
         let (public_keys, attestations) = tokio::try_join!(

@@ -1,9 +1,10 @@
-use base_proof_tee_attestation::{BoxError, TeeAttestationKind};
-use base_proof_tee_tdx_collateral::TdxCollateralError;
+use std::time::Duration;
+
+use alloy_primitives::{Address, B256};
+use base_proof_contracts::ContractError;
+use base_proof_tee_nitro_attestation_prover::ProverError;
 use base_tx_manager::TxManagerError;
 use thiserror::Error;
-
-use crate::SignerAttestationKind;
 
 /// Errors that can occur in the prover registrar.
 #[derive(Debug, Error)]
@@ -28,86 +29,59 @@ pub enum RegistrarError {
 
     /// ZK proof generation failed.
     #[error("proof generation failed")]
-    ProofGeneration(#[source] Box<dyn std::error::Error + Send + Sync>),
+    ProofGeneration(#[from] ProverError),
 
-    /// TDX attestation hydration failed before proof generation.
-    #[error("TDX attestation hydration failed")]
-    TdxAttestation(#[source] Box<dyn std::error::Error + Send + Sync>),
-
-    /// The generated proof kind did not match the prover's advertised endpoint kind.
-    #[error(
-        "attestation kind mismatch for instance {instance}: expected {expected:?}, got {actual:?}"
-    )]
-    AttestationKindMismatch {
-        /// The instance ID or IP whose proof kind did not match its RPC kind.
-        instance: String,
-        /// The attestation kind advertised by the prover endpoint.
-        expected: SignerAttestationKind,
-        /// The attestation kind produced by the proof provider.
-        actual: TeeAttestationKind,
-    },
-
-    /// The endpoint's advertised attestation kind did not match its configured fleet.
-    #[error(
-        "endpoint attestation kind mismatch for instance {instance}: expected {expected:?}, got {actual:?}"
-    )]
-    EndpointAttestationKindMismatch {
-        /// The instance ID or IP whose RPC kind did not match its configured fleet.
-        instance: String,
-        /// The attestation kind configured for the fleet.
-        expected: SignerAttestationKind,
-        /// The attestation kind advertised by the prover endpoint.
-        actual: SignerAttestationKind,
-    },
-
-    /// On-chain registry operation failed.
-    #[error("registry error")]
-    Registry(#[source] Box<dyn std::error::Error + Send + Sync>),
-
-    /// An on-chain registry contract call failed.
-    #[error("registry call failed: {context}")]
-    RegistryCall {
-        /// Description of the call that failed (e.g. `"isValidSigner(0x1234…)"`).
-        context: String,
-        /// The underlying contract call error.
-        #[source]
-        source: Box<dyn std::error::Error + Send + Sync>,
-    },
-
-    /// Transaction signing or submission failed.
-    #[error("signing error")]
-    Signing(#[source] Box<dyn std::error::Error + Send + Sync>),
+    /// Shared contract client call failed.
+    #[error(transparent)]
+    Contract(#[from] ContractError),
 
     /// Transaction submission or confirmation failed (RPC, nonce, fee, timeout).
     #[error("transaction error")]
-    Transaction(#[source] Box<dyn std::error::Error + Send + Sync>),
+    Transaction(#[from] TxManagerError),
+
+    /// Registration transaction was mined but reverted.
+    #[error("registration transaction {tx_hash} reverted")]
+    ReceiptReverted {
+        /// Hash of the reverted transaction.
+        tx_hash: B256,
+    },
+
+    /// Generated proof journal failed registrar-side validation.
+    #[error("invalid attestation proof: {0}")]
+    InvalidAttestationProof(String),
+
+    /// Generated proof journal could not be decoded before submission.
+    #[error("proof journal could not be decoded: {reason}")]
+    InvalidProofJournal {
+        /// Decode failure details.
+        reason: String,
+    },
+
+    /// Generated proof is too old for on-chain registration.
+    #[error(
+        "attestation proof for signer {signer} is too old: age {age:?} exceeds max {max_age:?}"
+    )]
+    StaleAttestationProof {
+        /// Signer whose registration proof was stale.
+        signer: Address,
+        /// Proof age at the final pre-submission check.
+        age: Duration,
+        /// Maximum age configured for registrar-side submission.
+        max_age: Duration,
+    },
 
     /// Configuration is invalid.
     #[error("config error: {0}")]
     Config(String),
+
+    /// Service lifecycle setup failed.
+    #[error("service error: {0}")]
+    Service(String),
 
     /// CRL (Certificate Revocation List) check failed.
     #[error("CRL error: {0}")]
     Crl(#[from] crate::crl::CrlError),
 }
 
-impl From<BoxError> for RegistrarError {
-    fn from(e: BoxError) -> Self {
-        Self::ProofGeneration(e)
-    }
-}
-
-impl From<TxManagerError> for RegistrarError {
-    fn from(e: TxManagerError) -> Self {
-        Self::Transaction(Box::new(e))
-    }
-}
-
-impl From<TdxCollateralError> for RegistrarError {
-    fn from(e: TdxCollateralError) -> Self {
-        Self::TdxAttestation(Box::new(e))
-    }
-}
-
 /// Convenience result alias for registrar operations.
-pub type Result<T, E = RegistrarError> = std::result::Result<T, E>;
+pub type Result<T> = std::result::Result<T, RegistrarError>;

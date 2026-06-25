@@ -171,7 +171,7 @@ where
     async fn signer_attestation(
         &self,
         user_data: Option<Vec<u8>>,
-        nonce: Option<Vec<u8>>,
+        nonces: Option<Vec<Vec<u8>>>,
     ) -> RpcResult<Vec<Vec<u8>>> {
         if user_data.is_some() {
             return Err(ProverRpcError::rpc_err(
@@ -179,7 +179,7 @@ where
                 "TDX signer attestations do not support user_data challenge binding",
             ));
         }
-        if nonce.is_some() {
+        if nonces.is_some() {
             return Err(ProverRpcError::rpc_err(
                 -32602,
                 "TDX signer attestations do not support nonce challenge binding",
@@ -281,7 +281,7 @@ mod tests {
     #[tokio::test]
     async fn signer_attestation_rejects_nonce() {
         let rpc = test_rpc();
-        let err = EnclaveApiServer::signer_attestation(&rpc, None, Some(vec![1, 2, 3]))
+        let err = EnclaveApiServer::signer_attestation(&rpc, None, Some(vec![vec![1, 2, 3]]))
             .await
             .unwrap_err();
 

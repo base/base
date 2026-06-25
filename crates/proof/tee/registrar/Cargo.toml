@@ -12,17 +12,17 @@ workspace = true
 
 [dependencies]
 # Alloy
+alloy-provider.workspace = true
 alloy-signer.workspace = true
 alloy-sol-types.workspace = true
-boundless-market.workspace = true
 alloy-primitives.workspace = true
 
 # AWS
+aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
 aws-sdk-ec2.workspace = true
 aws-sdk-elasticloadbalancingv2.workspace = true
 
 # Crypto
-rand.workspace = true
 k256 = { workspace = true, features = ["ecdsa"] }
 
 # X.509 / CRL
@@ -35,9 +35,8 @@ reqwest.workspace = true
 base-proof-contracts.workspace = true
 
 # Proving
-base-proof-tee-attestation.workspace = true
 base-proof-tee-nitro-verifier.workspace = true
-base-proof-tee-tdx-collateral.workspace = true
+base-proof-tee-nitro-attestation-prover = { workspace = true, features = ["prove"] }
 
 # Transaction management
 base-tx-manager.workspace = true
@@ -49,15 +48,24 @@ base-proof-primitives = { workspace = true, features = ["rpc-client"] }
 # Async
 futures.workspace = true
 tokio-util.workspace = true
-async-trait.workspace = true
-tokio = { workspace = true, features = ["net", "time", "macros"] }
+tokio = { workspace = true, features = ["rt", "sync", "net", "time", "macros"] }
 
 # Error
 thiserror.workspace = true
 
+# CLI
+base-cli-utils.workspace = true
+
 # Metrics
 base-metrics.workspace = true
+base-balance-monitor.workspace = true
 metrics = { workspace = true, optional = true }
+
+# TLS
+rustls = { workspace = true, features = ["ring"] }
+
+# Health
+base-health = { workspace = true, features = ["axum-server"] }
 
 # Tracing
 tracing.workspace = true
@@ -67,13 +75,10 @@ url.workspace = true
 hex.workspace = true
 
 [dev-dependencies]
-sha2.workspace = true
-rstest.workspace = true
 hex-literal.workspace = true
+async-trait.workspace = true
 alloy-consensus.workspace = true
 alloy-rpc-types-eth.workspace = true
-base-proof-tee-tdx-verifier.workspace = true
-base-proof-tee-tdx-attestation-prover.workspace = true
 tokio = { workspace = true, features = ["rt", "macros", "test-util"] }
 
 [features]
