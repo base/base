@@ -422,8 +422,7 @@ mod tests {
         let anchor_game = proxy_addr(0);
         let anchor_root = B256::repeat_byte(0xAA);
         let anchor_block = TEST_BLOCK_INTERVAL;
-        let mut factory = MockDisputeGameFactory::default();
-        factory.game_count = 1;
+        let factory = MockDisputeGameFactory { game_count: 1, ..Default::default() };
 
         let recovery = recovery_full(
             factory,
