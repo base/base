@@ -410,7 +410,7 @@ impl Eip8130Executor {
 
             // 5. Auto-delegate a code-less EOA sender to the default account so a
             // basic account can dispatch its calls. This is unconditional for
-            // code-less EOA senders: an explicit delegation applied in step 4 with
+            // code-less EOA senders: an explicit delegation installed in step 2 with
             // a non-zero target leaves non-empty code and is preserved here, but
             // clearing the sender's delegation in the same transaction leaves it
             // code-less and is intentionally re-delegated — a basic-account sender

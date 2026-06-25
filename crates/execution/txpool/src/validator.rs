@@ -849,7 +849,6 @@ where
             TxAuthError::AccountLocked => "account is locked",
             TxAuthError::ConfigChainId { .. } => "config change targets a foreign chain",
             TxAuthError::ConfigSequence { .. } => "config change sequence mismatch",
-            TxAuthError::ConfigSequenceOverflow => "config change sequence overflow",
             TxAuthError::Apply(_) => "account change apply failed",
         };
         Self::eip8130_error(reason)
