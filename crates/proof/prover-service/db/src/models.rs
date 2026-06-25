@@ -471,6 +471,9 @@ pub enum TeeKind {
     /// AWS Nitro Enclaves.
     #[sqlx(rename = "aws_nitro")]
     AwsNitro,
+    /// Intel Trust Domain Extensions.
+    #[sqlx(rename = "intel_tdx")]
+    IntelTdx,
 }
 
 impl TeeKind {
@@ -478,6 +481,7 @@ impl TeeKind {
     pub const fn as_str(&self) -> &'static str {
         match self {
             Self::AwsNitro => "aws_nitro",
+            Self::IntelTdx => "intel_tdx",
         }
     }
 }
@@ -494,6 +498,7 @@ impl TryFrom<&str> for TeeKind {
     fn try_from(s: &str) -> Result<Self, Self::Error> {
         match s {
             "aws_nitro" => Ok(Self::AwsNitro),
+            "intel_tdx" => Ok(Self::IntelTdx),
             other => Err(format!("Unknown TEE kind: {other}")),
         }
     }
@@ -923,6 +928,7 @@ const fn protocol_zk_vm(zk_vm: ProtocolZkVm) -> ZkVmKind {
 const fn protocol_tee_kind(tee_kind: ProtocolTeeKind) -> TeeKind {
     match tee_kind {
         ProtocolTeeKind::AwsNitro => TeeKind::AwsNitro,
+        ProtocolTeeKind::IntelTdx => TeeKind::IntelTdx,
     }
 }
 

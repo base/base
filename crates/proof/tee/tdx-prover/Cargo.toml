@@ -15,10 +15,13 @@ workspace = true
 # base
 base-health.workspace = true
 base-proof-host.workspace = true
+base-proof-worker.workspace = true
 base-common-evm.workspace = true
 base-common-chains.workspace = true
 base-proof-tee-tdx-runtime.workspace = true
+base-prover-service-client.workspace = true
 base-proof-tee-tdx-verifier.workspace = true
+base-prover-service-protocol.workspace = true
 base-proof = { workspace = true, features = ["std"] }
 base-proof-client = { workspace = true, features = ["std"] }
 base-proof-preimage = { workspace = true, features = ["serde"] }
@@ -32,6 +35,7 @@ alloy-primitives.workspace = true
 sha2.workspace = true
 
 # async
+tokio-util.workspace = true
 async-trait.workspace = true
 tokio = { workspace = true, features = ["rt", "time"] }
 
@@ -44,6 +48,7 @@ parking_lot.workspace = true
 jsonrpsee = { workspace = true, features = ["server", "macros"] }
 
 [dev-dependencies]
+chrono.workspace = true
 k256 = { workspace = true, features = ["ecdsa"] }
 tokio = { workspace = true, features = ["macros", "rt"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }

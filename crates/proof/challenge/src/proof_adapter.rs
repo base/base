@@ -25,6 +25,7 @@ impl ChallengerProofAdapter {
     pub const fn tee_session_label(tee_kind: TeeKind) -> &'static str {
         match tee_kind {
             TeeKind::AwsNitro => "tee/aws_nitro",
+            TeeKind::IntelTdx => "tee/intel_tdx",
         }
     }
 

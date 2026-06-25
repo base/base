@@ -16,6 +16,7 @@ use std::{
 use alloy_primitives::{Address, B256};
 use async_trait::async_trait;
 use base_proof_rpc::{L1Provider, RollupProvider};
+use base_prover_service_protocol::TeeKind;
 use eyre::Result;
 use tokio::{sync::Mutex as TokioMutex, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
@@ -56,6 +57,8 @@ pub struct DriverConfig {
     /// Passed to the prover in each proof request so multi-enclave provers
     /// can select the correct enclave.
     pub tee_image_hash: B256,
+    /// TEE implementation to request from prover-service.
+    pub tee_kind: TeeKind,
     /// Address of the `AnchorStateRegistry` contract on L1.
     /// Used as the "no parent" sentinel when creating the first game from anchor state.
     pub anchor_state_registry_address: Address,
@@ -74,6 +77,7 @@ impl Default for DriverConfig {
             allow_non_finalized: false,
             proposer_address: Address::ZERO,
             tee_image_hash: B256::ZERO,
+            tee_kind: TeeKind::AwsNitro,
             anchor_state_registry_address: Address::ZERO,
         }
     }
@@ -320,6 +324,7 @@ mod tests {
             Arc::clone(&rollup),
             proof_submitter,
             config.block_interval,
+            config.tee_kind,
             config.submit_timeout,
         );
         let pipeline =

@@ -8,6 +8,7 @@ use base_optimism_rpc::{L1BlockRef, SyncStatus};
 use base_proof_primitives::ProofRequest;
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
 use base_prover_service_client::ProofRequesterProvider;
+use base_prover_service_protocol::TeeKind;
 use tracing::{debug, info, warn};
 
 use crate::{
@@ -31,6 +32,8 @@ pub struct ProofDispatcherConfig {
     pub intermediate_block_interval: u64,
     /// Expected TEE enclave image hash.
     pub tee_image_hash: B256,
+    /// TEE implementation to request from prover-service.
+    pub tee_kind: TeeKind,
 }
 
 impl From<&DriverConfig> for ProofDispatcherConfig {
@@ -41,6 +44,7 @@ impl From<&DriverConfig> for ProofDispatcherConfig {
             proposer_address: config.proposer_address,
             intermediate_block_interval: config.intermediate_block_interval,
             tee_image_hash: config.tee_image_hash,
+            tee_kind: config.tee_kind,
         }
     }
 }
@@ -157,7 +161,8 @@ impl ProofDispatcher {
     }
 
     async fn dispatch_request(&self, request: ProofRequest) -> Result<String, ProposerError> {
-        let request = ProposerProofAdapter::tee_prove_block_range_request(request);
+        let request =
+            ProposerProofAdapter::tee_prove_block_range_request(request, self.config.tee_kind);
         let session_id = request.proof.session_id.clone();
         match self.proof_requester.prove_block_range(request).await {
             Ok(response) if response.session_id == session_id => Ok(response.session_id),
@@ -357,6 +362,7 @@ mod tests {
                 proposer_address: Address::repeat_byte(0x04),
                 intermediate_block_interval: 300,
                 tee_image_hash: B256::repeat_byte(0x05),
+                tee_kind: TeeKind::AwsNitro,
             },
         );
         let recovered = RecoveredState {

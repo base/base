@@ -6,7 +6,7 @@ use alloy_primitives::Address;
 use base_proof_primitives::ProofResult;
 use base_proof_rpc::{L1Provider, RollupProvider};
 use base_prover_service_client::ProofRequesterProvider;
-use base_prover_service_protocol::{DeleteProofRequest, GetProofRequest, ProofStatus};
+use base_prover_service_protocol::{DeleteProofRequest, GetProofRequest, ProofStatus, TeeKind};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
@@ -32,6 +32,7 @@ where
     rollup_client: Arc<R>,
     submitter: ProofSubmitter<L1, R>,
     block_interval: u64,
+    tee_kind: TeeKind,
     submit_timeout: Option<Duration>,
 }
 
@@ -43,6 +44,7 @@ where
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProofCollector")
             .field("block_interval", &self.block_interval)
+            .field("tee_kind", &self.tee_kind)
             .field("submit_timeout", &self.submit_timeout)
             .finish_non_exhaustive()
     }
@@ -59,9 +61,10 @@ where
         rollup_client: Arc<R>,
         submitter: ProofSubmitter<L1, R>,
         block_interval: u64,
+        tee_kind: TeeKind,
         submit_timeout: Option<Duration>,
     ) -> Self {
-        Self { proof_requester, rollup_client, submitter, block_interval, submit_timeout }
+        Self { proof_requester, rollup_client, submitter, block_interval, tee_kind, submit_timeout }
     }
 
     /// Runs one collector tick.
@@ -113,11 +116,15 @@ where
                 return false;
             };
 
-            let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_l2_output_root);
+            let session_id = ProposerProofAdapter::tee_session_id_for_root(
+                claimed_l2_output_root,
+                self.tee_kind,
+            );
             let proof = match Self::poll_proof(
                 self.proof_requester.as_ref(),
                 target_block,
                 &session_id,
+                self.tee_kind,
                 target_block <= dispatched_through,
             )
             .await
@@ -150,6 +157,7 @@ where
         proof_requester: &dyn ProofRequesterProvider,
         target_block: u64,
         session_id: &str,
+        tee_kind: TeeKind,
         request_dispatched: bool,
     ) -> Result<Option<ProofResult>, ProposerError> {
         let response = match proof_requester
@@ -240,7 +248,7 @@ where
                     return Err(error);
                 };
 
-                match ProposerProofAdapter::tee_proof_result(result) {
+                match ProposerProofAdapter::tee_proof_result(result, tee_kind) {
                     Ok(proof) => {
                         info!(target_block, session_id = %session_id, "Proof request succeeded");
                         Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_READY)
@@ -468,6 +476,7 @@ mod tests {
             rollup_client,
             submitter,
             BLOCK_INTERVAL,
+            TeeKind::AwsNitro,
             Some(std::time::Duration::from_secs(60)),
         )
     }
@@ -520,7 +529,10 @@ mod tests {
             ..Default::default()
         };
         requester
-            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(proof_request))
+            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(
+                proof_request,
+                TeeKind::AwsNitro,
+            ))
             .await
             .expect("test setup should dispatch root session");
         let collector = make_collector(
@@ -560,6 +572,7 @@ mod tests {
             requester
                 .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(
                     proof_request,
+                    TeeKind::AwsNitro,
                 ))
                 .await
                 .expect("test setup should dispatch root session");
@@ -603,7 +616,8 @@ mod tests {
         let requester = Arc::new(MockProofRequester::default());
         let target_block = 200;
         let claimed_root = B256::repeat_byte(target_block as u8);
-        let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_root);
+        let session_id =
+            ProposerProofAdapter::tee_session_id_for_root(claimed_root, TeeKind::AwsNitro);
         let proof_request = ProofRequest {
             claimed_l2_output_root: claimed_root,
             claimed_l2_block_number: target_block,
@@ -612,7 +626,10 @@ mod tests {
             ..Default::default()
         };
         requester
-            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(proof_request))
+            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(
+                proof_request,
+                TeeKind::AwsNitro,
+            ))
             .await
             .expect("test setup should dispatch root session");
         let collector = make_collector(
@@ -638,7 +655,8 @@ mod tests {
         requester.reject_delete.store(true, std::sync::atomic::Ordering::SeqCst);
         let target_block = 200;
         let claimed_root = B256::repeat_byte(target_block as u8);
-        let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_root);
+        let session_id =
+            ProposerProofAdapter::tee_session_id_for_root(claimed_root, TeeKind::AwsNitro);
         let proof_request = ProofRequest {
             claimed_l2_output_root: claimed_root,
             claimed_l2_block_number: target_block,
@@ -647,7 +665,10 @@ mod tests {
             ..Default::default()
         };
         requester
-            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(proof_request))
+            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(
+                proof_request,
+                TeeKind::AwsNitro,
+            ))
             .await
             .expect("test setup should dispatch root session");
         let collector = make_collector(
@@ -674,7 +695,8 @@ mod tests {
         let target_block = 200;
         let stale_root = B256::repeat_byte(0xaa);
         let fresh_root = B256::repeat_byte(0xbb);
-        let session_id = ProposerProofAdapter::tee_session_id_for_root(stale_root);
+        let session_id =
+            ProposerProofAdapter::tee_session_id_for_root(stale_root, TeeKind::AwsNitro);
         let proof_request = ProofRequest {
             claimed_l2_output_root: stale_root,
             claimed_l2_block_number: target_block,
@@ -683,7 +705,10 @@ mod tests {
             ..Default::default()
         };
         requester
-            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(proof_request))
+            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(
+                proof_request,
+                TeeKind::AwsNitro,
+            ))
             .await
             .expect("test setup should dispatch stale root session");
         let collector = make_collector(
@@ -715,7 +740,8 @@ mod tests {
         let requester = Arc::new(MockProofRequester::default());
         let target_block = 200;
         let claimed_root = B256::repeat_byte(0xaa);
-        let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_root);
+        let session_id =
+            ProposerProofAdapter::tee_session_id_for_root(claimed_root, TeeKind::AwsNitro);
         requester
             .failed_sessions
             .lock()

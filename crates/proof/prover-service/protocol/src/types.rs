@@ -39,6 +39,8 @@ pub enum ProofType {
 pub enum TeeKind {
     /// AWS Nitro Enclaves.
     AwsNitro,
+    /// Intel Trust Domain Extensions.
+    IntelTdx,
 }
 
 /// ZK virtual machine implementation.

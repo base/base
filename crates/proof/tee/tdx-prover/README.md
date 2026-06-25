@@ -1,10 +1,11 @@
 # TDX TEE Prover
 
-Host-side JSON-RPC prover server for Intel TDX TEE proof backends.
+Host-side worker support for Intel TDX TEE proof backends.
 
-The crate exposes the shared prover RPC namespace used by other TEE backends,
-collects TDX quotes for signer registration, and signs `ProofJournal` bytes
-with the TDX guest signer.
+The crate claims Intel TDX jobs through the prover-service worker API, collects
+TDX quotes for signer registration, and signs `ProofJournal` bytes with the TDX
+guest signer. Its HTTP server exposes only health and registrar-facing
+`enclave_*` methods.
 
 `enclave_signerAttestation` returns encoded `TdxSignerAttestation` payloads:
 each payload includes the signer public key, the raw TDX quote, and the quote

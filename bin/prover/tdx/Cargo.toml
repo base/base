@@ -19,10 +19,15 @@ workspace = true
 eyre.workspace = true
 serde.workspace = true
 tracing.workspace = true
+tokio-util.workspace = true
 base-cli-utils.workspace = true
+base-proof-worker.workspace = true
 base-common-chains.workspace = true
 base-proof-tee-tdx-prover.workspace = true
 base-proof-tee-tdx-runtime.workspace = true
+base-prover-service-client.workspace = true
+base-prover-service-protocol.workspace = true
+uuid = { workspace = true, features = ["v4"] }
 tokio = { workspace = true, features = ["full"] }
 clap = { workspace = true, features = ["derive", "env"] }
 base-proof-host = { workspace = true, features = ["metrics"] }

@@ -229,6 +229,7 @@ impl ProposerService {
             allow_non_finalized: config.allow_non_finalized,
             proposer_address: proposer_address.unwrap_or_default(),
             tee_image_hash: config.tee_image_hash,
+            tee_kind: config.tee_kind,
             anchor_state_registry_address: config.anchor_state_registry_addr,
         };
         let proof_dispatcher = ProofDispatcher::new(
@@ -272,6 +273,7 @@ impl ProposerService {
             Arc::clone(&rollup_client),
             proof_submitter,
             driver_config.block_interval,
+            driver_config.tee_kind,
             driver_config.submit_timeout,
         );
         let pipeline =

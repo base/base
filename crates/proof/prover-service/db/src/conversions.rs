@@ -80,6 +80,7 @@ impl From<ProtocolTeeKind> for TeeKind {
     fn from(tee_kind: ProtocolTeeKind) -> Self {
         match tee_kind {
             ProtocolTeeKind::AwsNitro => Self::AwsNitro,
+            ProtocolTeeKind::IntelTdx => Self::IntelTdx,
         }
     }
 }
@@ -88,6 +89,7 @@ impl From<TeeKind> for ProtocolTeeKind {
     fn from(tee_kind: TeeKind) -> Self {
         match tee_kind {
             TeeKind::AwsNitro => Self::AwsNitro,
+            TeeKind::IntelTdx => Self::IntelTdx,
         }
     }
 }

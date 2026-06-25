@@ -1,10 +1,8 @@
-use std::{fmt, net::SocketAddr, sync::Arc, time::Duration};
+use std::{fmt, net::SocketAddr, sync::Arc};
 
 use base_health::{HealthzApiServer, HealthzRpc};
-use base_proof_host::{
-    ProverConfig, ProverRequestHandler, ProverRpc, ProverRpcError, ProverService,
-};
-use base_proof_primitives::{EnclaveApiServer, ProofRequest, ProofResult, ProverApiServer};
+use base_proof_host::{ProverConfig, ProverService};
+use base_proof_primitives::EnclaveApiServer;
 use base_proof_tee_tdx_runtime::{TdxQuoteProvider, TdxRuntime};
 use jsonrpsee::{
     RpcModule,
@@ -51,47 +49,52 @@ impl<P> fmt::Debug for TdxEnclaveService<P> {
     }
 }
 
-/// Host-side TDX prover server exposing the shared JSON-RPC interface.
+/// Registrar-facing TDX prover server exposing health and signer JSON-RPC methods.
 pub struct TdxProverServer<P> {
-    enclave: TdxEnclaveService<P>,
-    proof_request_timeout: Duration,
+    runtimes: Vec<Arc<TdxRuntime<P>>>,
 }
 
 impl<P> TdxProverServer<P>
 where
     P: TdxQuoteProvider + fmt::Debug + 'static,
 {
-    /// Create a server with the given prover config, TDX runtime, and proof timeout.
-    pub fn new(
-        config: ProverConfig,
-        runtime: Arc<TdxRuntime<P>>,
-        proof_request_timeout: Duration,
-    ) -> Self {
-        Self { enclave: TdxEnclaveService::new(config, runtime), proof_request_timeout }
+    /// Convert an internal error into a JSON-RPC error object.
+    pub fn rpc_err(code: i32, err: impl std::fmt::Display) -> jsonrpsee::types::ErrorObjectOwned {
+        jsonrpsee::types::ErrorObjectOwned::owned(code, err.to_string(), None::<()>)
     }
 
-    /// Start the JSON-RPC HTTP server on the given address.
+    /// Create a registrar-facing server for one TDX runtime.
+    pub fn new(runtime: Arc<TdxRuntime<P>>) -> Self {
+        Self::new_multi(vec![runtime])
+    }
+
+    /// Create a registrar-facing server for multiple TDX runtimes.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `runtimes` is empty.
+    pub fn new_multi(runtimes: Vec<Arc<TdxRuntime<P>>>) -> Self {
+        assert!(!runtimes.is_empty(), "at least one runtime is required");
+        Self { runtimes }
+    }
+
+    /// Start the registrar-facing JSON-RPC HTTP server on the given address.
     pub async fn run(self, addr: SocketAddr) -> eyre::Result<ServerHandle> {
         let middleware = tower::ServiceBuilder::new()
             .layer(ProxyGetRequestLayer::new([("/healthz", "healthz")])?);
         let server = Server::builder().set_http_middleware(middleware).build(addr).await?;
         let addr = server.local_addr()?;
-        info!(addr = %addr, "tdx rpc server started");
+        info!(addr = %addr, "tdx registrar rpc server started");
 
         Ok(server.start(self.into_rpc_module()?))
     }
 
-    /// Build the JSON-RPC module served by this TDX prover.
+    /// Build the registrar-facing JSON-RPC module served by this TDX prover.
     pub fn into_rpc_module(self) -> eyre::Result<RpcModule<()>> {
         let mut module = RpcModule::new(());
-        let runtime = Arc::clone(self.enclave.runtime());
 
         module.merge(HealthzRpc::new(env!("CARGO_PKG_VERSION")).into_rpc())?;
-        module.merge(
-            ProverRpc::new(TdxProverHandler::new(self.enclave), self.proof_request_timeout)
-                .into_rpc(),
-        )?;
-        module.merge(TdxSignerRpc::new(vec![runtime]).into_rpc())?;
+        module.merge(TdxSignerRpc::new(self.runtimes).into_rpc())?;
 
         Ok(module)
     }
@@ -100,38 +103,6 @@ where
 impl<P> fmt::Debug for TdxProverServer<P> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TdxProverServer").finish_non_exhaustive()
-    }
-}
-
-/// Routes proof requests to a TDX enclave service.
-pub struct TdxProverHandler<P> {
-    enclave: TdxEnclaveService<P>,
-}
-
-impl<P> TdxProverHandler<P> {
-    /// Create a proof request handler over a TDX enclave service.
-    pub const fn new(enclave: TdxEnclaveService<P>) -> Self {
-        Self { enclave }
-    }
-}
-
-impl<P> fmt::Debug for TdxProverHandler<P> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("TdxProverHandler").finish_non_exhaustive()
-    }
-}
-
-#[async_trait]
-impl<P> ProverRequestHandler for TdxProverHandler<P>
-where
-    P: TdxQuoteProvider + fmt::Debug + 'static,
-{
-    async fn prove_block(&self, request: ProofRequest) -> Result<ProofResult, ProverRpcError> {
-        self.enclave
-            .service()
-            .prove_block(request)
-            .await
-            .map_err(|e| ProverRpcError::new(-32000, e))
     }
 }
 
@@ -174,13 +145,13 @@ where
         nonces: Option<Vec<Vec<u8>>>,
     ) -> RpcResult<Vec<Vec<u8>>> {
         if user_data.is_some() {
-            return Err(ProverRpcError::rpc_err(
+            return Err(TdxProverServer::<P>::rpc_err(
                 -32602,
                 "TDX signer attestations do not support user_data challenge binding",
             ));
         }
         if nonces.is_some() {
-            return Err(ProverRpcError::rpc_err(
+            return Err(TdxProverServer::<P>::rpc_err(
                 -32602,
                 "TDX signer attestations do not support nonce challenge binding",
             ));
@@ -189,8 +160,9 @@ where
         let mut attestations = Vec::with_capacity(self.runtimes.len());
         for runtime in &self.runtimes {
             let signer_public_key = runtime.signer_public_key();
-            let quote =
-                runtime.signer_quote().map_err(|error| ProverRpcError::rpc_err(-32001, error))?;
+            let quote = runtime
+                .signer_quote()
+                .map_err(|error| TdxProverServer::<P>::rpc_err(-32001, error))?;
             attestations.push(
                 TdxSignerAttestation::new(
                     signer_public_key.to_vec().into(),
@@ -210,23 +182,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
-    use base_proof_host::{ProverRequestHandler, ProverRpcError};
-    use base_proof_primitives::{EnclaveApiServer, ProofRequest, ProofResult, ProverApiServer};
+    use base_proof_primitives::{EnclaveApiServer, ProofRequest, ProofResult};
     use jsonrpsee::{core::client::ClientT, http_client::HttpClientBuilder, rpc_params};
 
     use super::*;
     use crate::MeasuredMockTdxQuoteProvider;
-
-    struct FailingProverHandler;
-
-    #[async_trait]
-    impl ProverRequestHandler for FailingProverHandler {
-        async fn prove_block(&self, _request: ProofRequest) -> Result<ProofResult, ProverRpcError> {
-            Err(ProverRpcError::new(-32042, "mock proof failure"))
-        }
-    }
 
     fn test_runtime() -> Arc<TdxRuntime<MeasuredMockTdxQuoteProvider>> {
         Arc::new(TdxRuntime::new(MeasuredMockTdxQuoteProvider::local_mock()))
@@ -325,24 +285,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn mock_prover_rpc_serves_prove_method() {
-        let rpc = ProverRpc::new(FailingProverHandler, Duration::from_secs(1));
-
-        let result = ProverApiServer::prove(&rpc, ProofRequest::default()).await;
-
-        let err = result.unwrap_err();
-        assert_eq!(err.code(), -32042);
-        assert!(err.message().contains("mock proof failure"));
-    }
-
-    #[tokio::test]
     async fn local_mock_server_serves_json_rpc_methods() {
         let signer_rpc = test_rpc();
         let mut module = RpcModule::new(());
         module.merge(HealthzRpc::new(env!("CARGO_PKG_VERSION")).into_rpc()).unwrap();
-        module
-            .merge(ProverRpc::new(FailingProverHandler, Duration::from_secs(1)).into_rpc())
-            .unwrap();
         module.merge(signer_rpc.into_rpc()).unwrap();
         let server =
             Server::builder().build("127.0.0.1:0".parse::<SocketAddr>().unwrap()).await.unwrap();
@@ -371,8 +317,7 @@ mod tests {
         assert_eq!(attestation.signer_public_key, public_keys[0]);
         assert!(base_proof_tee_tdx_verifier::TdxQuote::parse(&attestation.quote).is_ok());
         let err = proof_result.unwrap_err();
-        assert!(err.to_string().contains("mock proof failure"));
-        assert!(!err.to_string().contains("Method not found"));
+        assert!(err.to_string().contains("Method not found"));
     }
 
     #[tokio::test]

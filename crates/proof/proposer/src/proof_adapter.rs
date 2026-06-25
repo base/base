@@ -18,37 +18,47 @@ pub struct ProposerProofAdapter;
 impl ProposerProofAdapter {
     const SESSION_NAMESPACE: &'static [u8] = b"base/proposer/proof-session/v1";
 
-    const TEE_SESSION_LABEL: &'static str = "tee/aws_nitro";
+    /// Returns the session label for a TEE proof kind.
+    pub const fn tee_session_label(tee_kind: TeeKind) -> &'static str {
+        match tee_kind {
+            TeeKind::AwsNitro => "tee/aws_nitro",
+            TeeKind::IntelTdx => "tee/intel_tdx",
+        }
+    }
 
     /// Derives an idempotent TEE proof session ID from proof subtype and claimed root.
-    pub fn tee_session_id_for_root(root: B256) -> String {
-        ProofSessionId::derive(Self::SESSION_NAMESPACE, Self::TEE_SESSION_LABEL, root)
+    pub fn tee_session_id_for_root(root: B256, tee_kind: TeeKind) -> String {
+        ProofSessionId::derive(Self::SESSION_NAMESPACE, Self::tee_session_label(tee_kind), root)
     }
 
     /// Builds a prover-service request for a TEE proposal proof.
-    pub fn tee_prove_block_range_request(request: PrimitiveProofRequest) -> ProveBlockRangeRequest {
-        let session_id = Self::tee_session_id_for_root(request.claimed_l2_output_root);
-        Self::tee_prove_block_range_request_with_session_id(request, session_id)
+    pub fn tee_prove_block_range_request(
+        request: PrimitiveProofRequest,
+        tee_kind: TeeKind,
+    ) -> ProveBlockRangeRequest {
+        let session_id = Self::tee_session_id_for_root(request.claimed_l2_output_root, tee_kind);
+        Self::tee_prove_block_range_request_with_session_id(request, session_id, tee_kind)
     }
 
     /// Builds a prover-service request for a TEE proposal proof with a caller-supplied session id.
     pub const fn tee_prove_block_range_request_with_session_id(
         request: PrimitiveProofRequest,
         session_id: String,
+        tee_kind: TeeKind,
     ) -> ProveBlockRangeRequest {
         ProveBlockRangeRequest {
             proof: ProofRequest {
                 session_id,
-                request: ProofRequestKind::Tee(TeeProofRequest {
-                    proof: request,
-                    tee_kind: TeeKind::AwsNitro,
-                }),
+                request: ProofRequestKind::Tee(TeeProofRequest { proof: request, tee_kind }),
             },
         }
     }
 
     /// Converts a prover-service TEE proof result into the proposer proof result type.
-    pub fn tee_proof_result(result: ProofResult) -> Result<PrimitiveProofResult, ProposerError> {
+    pub fn tee_proof_result(
+        result: ProofResult,
+        tee_kind: TeeKind,
+    ) -> Result<PrimitiveProofResult, ProposerError> {
         let result = match result {
             ProofResult::Tee(result) => result,
             ProofResult::Compressed(_) => {
@@ -62,10 +72,10 @@ impl ProposerProofAdapter {
                 ));
             }
         };
-        if result.tee_kind != TeeKind::AwsNitro {
+        if result.tee_kind != tee_kind {
             return Err(ProposerError::Prover(format!(
-                "expected TEE proof result from AwsNitro, got {:?}",
-                result.tee_kind
+                "expected TEE proof result from {tee_kind:?}, got {:?}",
+                result.tee_kind,
             )));
         }
 
@@ -118,15 +128,17 @@ mod tests {
     fn tee_prove_block_range_request_wraps_primitive_request() {
         let root = B256::repeat_byte(0xaa);
         let request = test_request(root);
-        let expected_session_id = ProposerProofAdapter::tee_session_id_for_root(root);
+        let expected_session_id =
+            ProposerProofAdapter::tee_session_id_for_root(root, TeeKind::IntelTdx);
 
-        let wrapped = ProposerProofAdapter::tee_prove_block_range_request(request.clone());
+        let wrapped =
+            ProposerProofAdapter::tee_prove_block_range_request(request.clone(), TeeKind::IntelTdx);
 
         assert_eq!(wrapped.proof.session_id, expected_session_id);
         match wrapped.proof.request {
             ProofRequestKind::Tee(tee) => {
                 assert_eq!(tee.proof, request);
-                assert_eq!(tee.tee_kind, TeeKind::AwsNitro);
+                assert_eq!(tee.tee_kind, TeeKind::IntelTdx);
             }
             other => panic!("unexpected proof request kind: {other:?}"),
         }
@@ -142,7 +154,7 @@ mod tests {
             tee_kind: TeeKind::AwsNitro,
         });
 
-        let converted = ProposerProofAdapter::tee_proof_result(result).unwrap();
+        let converted = ProposerProofAdapter::tee_proof_result(result, TeeKind::AwsNitro).unwrap();
 
         assert_eq!(
             converted,
@@ -175,7 +187,8 @@ mod tests {
                 "expected TEE proof result, got SnarkGroth16",
             ),
         ] {
-            let err = ProposerProofAdapter::tee_proof_result(result).unwrap_err();
+            let err =
+                ProposerProofAdapter::tee_proof_result(result, TeeKind::AwsNitro).unwrap_err();
             let ProposerError::Prover(message) = err else {
                 panic!("unexpected error: {err:?}");
             };

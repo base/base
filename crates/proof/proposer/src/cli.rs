@@ -4,6 +4,7 @@ use std::{num::NonZeroUsize, time::Duration};
 
 use alloy_primitives::{Address, B256};
 use base_cli_utils::CliStyles;
+use base_prover_service_protocol::TeeKind;
 use clap::{Args, Parser};
 use url::Url;
 
@@ -92,6 +93,10 @@ pub struct ProposerArgs {
     #[arg(long = "tee-image-hash", env = cli_env!("TEE_IMAGE_HASH"))]
     pub tee_image_hash: B256,
 
+    /// TEE implementation to request from prover-service.
+    #[arg(long = "tee-kind", env = cli_env!("TEE_KIND"), default_value = "aws_nitro", value_parser = parse_tee_kind)]
+    pub tee_kind: TeeKind,
+
     /// Polling interval for new blocks (e.g., "12s", "1m").
     #[arg(
         long = "poll-interval",
@@ -164,6 +169,14 @@ pub struct ProposerArgs {
     /// Transaction manager configuration.
     #[command(flatten)]
     pub tx_manager: TxManagerCli,
+}
+
+fn parse_tee_kind(value: &str) -> Result<TeeKind, String> {
+    match value {
+        "aws_nitro" | "aws-nitro" => Ok(TeeKind::AwsNitro),
+        "intel_tdx" | "intel-tdx" => Ok(TeeKind::IntelTdx),
+        other => Err(format!("unknown TEE kind: {other}")),
+    }
 }
 
 /// Admin RPC server configuration arguments.

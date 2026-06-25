@@ -5967,6 +5967,10 @@ dependencies = [
  "base-proof-primitives",
  "base-proof-tee-tdx-runtime",
  "base-proof-tee-tdx-verifier",
+ "base-proof-worker",
+ "base-prover-service-client",
+ "base-prover-service-protocol",
+ "chrono",
  "eyre",
  "jsonrpsee",
  "k256",
@@ -5974,6 +5978,7 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "tower 0.5.3",
  "tracing",
 ]
@@ -6312,11 +6317,16 @@ dependencies = [
  "base-proof-host",
  "base-proof-tee-tdx-prover",
  "base-proof-tee-tdx-runtime",
+ "base-proof-worker",
+ "base-prover-service-client",
+ "base-prover-service-protocol",
  "clap",
  "eyre",
  "serde",
  "tokio",
+ "tokio-util",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

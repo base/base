@@ -335,6 +335,7 @@ mod tests {
             Arc::clone(&rollup),
             proof_submitter,
             config.block_interval,
+            config.tee_kind,
             config.submit_timeout,
         );
         ProvingPipeline::new(config, proof_dispatcher, proof_recovery, proof_collector)
