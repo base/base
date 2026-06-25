@@ -473,15 +473,19 @@ impl Eip8130Executor {
             });
         }
 
-        let feasible_pool =
-            match Self::search_estimate_pool(evm, &signed, &outcome, ceiling.call_gas_spent, ceiling_pool)
-            {
-                Ok(pool) => pool,
-                Err(err) => {
-                    Self::teardown_after_error(evm, checkpoint);
-                    return Err(err);
-                }
-            };
+        let feasible_pool = match Self::search_estimate_pool(
+            evm,
+            &signed,
+            &outcome,
+            ceiling.call_gas_spent,
+            ceiling_pool,
+        ) {
+            Ok(pool) => pool,
+            Err(err) => {
+                Self::teardown_after_error(evm, checkpoint);
+                return Err(err);
+            }
+        };
 
         // Final canonical run at the chosen pool (un-reverted) to capture the logs
         // and output at the returned gas limit, then discard all simulated state.
@@ -578,9 +582,7 @@ impl Eip8130Executor {
         // The calls consumed `ceiling_spent` at the full pool, so no smaller pool
         // can satisfy them; if `ceiling_spent` itself succeeds it is the answer.
         let spent = ceiling_spent.min(ceiling_pool);
-        if spent >= ceiling_pool
-            || !Self::probe_calls(evm, signed, outcome, spent)?.reverted
-        {
+        if spent >= ceiling_pool || !Self::probe_calls(evm, signed, outcome, spent)?.reverted {
             return Ok(spent);
         }
 
@@ -603,8 +605,8 @@ impl Eip8130Executor {
         while lowest + 1 < highest && iters < POOL_SEARCH_MAX_ITERS {
             // Stop once the window is within the tolerated fraction of `highest`,
             // returning `highest` (a verified-feasible pool).
-            if (highest - lowest).saturating_mul(1000) <=
-                highest.saturating_mul(POOL_SEARCH_TOLERANCE_PER_MILLE)
+            if (highest - lowest).saturating_mul(1000)
+                <= highest.saturating_mul(POOL_SEARCH_TOLERANCE_PER_MILLE)
             {
                 break;
             }
