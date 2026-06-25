@@ -386,8 +386,10 @@ impl PrecompileStorageProvider for OverlayPrecompileStorage<'_> {
         Address::ZERO
     }
 
-    fn replace_caller(&mut self, caller: Address) -> Address {
-        caller
+    fn replace_caller(&mut self, _caller: Address) -> Address {
+        // The overlay does not track caller state — admission never reads it.
+        // Return the fixed Address::ZERO to satisfy the "returns previous" contract.
+        Address::ZERO
     }
 
     // The overlay deliberately does not journal: `checkpoint`/`checkpoint_revert`
