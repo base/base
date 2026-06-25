@@ -1576,6 +1576,254 @@ mod tests {
         assert_eq!(after.state.get(&sender).expect("sender").info.nonce, 1);
     }
 
+    /// Builds an EVM with `balance` funded to `sender`, deploying `code` at
+    /// each contract address and pre-seeding the given `(address, slot, value)`
+    /// storage entries. Used by estimate tests that need known storage state.
+    fn evm_with_accounts_and_storage(
+        balance: U256,
+        sender: Address,
+        contracts: &[(Address, Bytes)],
+        storage: &[(Address, U256, U256)],
+    ) -> BaseEvm<InMemoryDB, NoOpInspector, PrecompilesMap> {
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(sender, AccountInfo { balance, ..Default::default() });
+        for (addr, code) in contracts {
+            db.insert_account_info(
+                *addr,
+                AccountInfo {
+                    code_hash: keccak256(code),
+                    code: Some(Bytecode::new_raw(code.clone())),
+                    ..Default::default()
+                },
+            );
+        }
+        for &(addr, slot, value) in storage {
+            db.insert_account_storage(addr, slot, value).unwrap();
+        }
+        Context::base()
+            .with_db(db)
+            .with_cfg(
+                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Isthmus))
+                    .with_chain_id(CHAIN_ID),
+            )
+            .with_block(BlockEnv {
+                number: U256::from(1u64),
+                timestamp: U256::from(NOW),
+                basefee: BASE_FEE,
+                beneficiary: BENEFICIARY,
+                ..Default::default()
+            })
+            .build_with_inspector(NoOpInspector)
+    }
+
+    #[test]
+    fn simulate_estimate_covers_gross_gas_when_sstore_refund_earned() {
+        // Proof that the estimate returns the GROSS call spend, not the net
+        // billable charge. The target contract clears storage slot 0 (pre-seeded
+        // to 1), earning an EIP-3529 SSTORE_CLEARS refund (~4800 gas). The old
+        // code returned `billable_gas` (call_gas_spent − capped_refund) as the
+        // estimate; using that as gas_limit leaves the call pool one refund-unit
+        // short, causing OOG. The fixed estimate returns the gross amount
+        // (intrinsic + call_gas_spent, no refund subtracted). Assertions:
+        //   - estimate_gas > charge_gas (gross > net when a refund is earned)
+        //   - executing at gas_limit = charge_gas reverts (pool too small)
+        //   - executing at gas_limit = estimate_gas succeeds
+        //
+        // Note: `charge_gas` here is `billable_gas` from a real execution run —
+        // the net consensus charge that the old code wrongly used as the estimate.
+        // The refund (~4800 gas) swamps any calldata-encoding variance between the
+        // two gas-limit values (~16 gas), so the `charge_gas` run reliably OOGs.
+        //
+        // Target bytecode: PUSH1 0, PUSH1 0, SSTORE (slot 0 ← 0), STOP.
+        let key = signing_key(0x7b);
+        let sender = eoa_address(&key);
+        let target = address!("0x00000000000000000000000000000000000000e1");
+        // PUSH1 0, PUSH1 0, SSTORE, STOP
+        let sstore_clears = bytes!("600060005500");
+        let initial = U256::from(10u64).pow(U256::from(18u64));
+        // Slot 0 starts non-zero so the SSTORE (slot 0 ← 0) earns a refund.
+        let storage = [(target, U256::ZERO, U256::from(1u64))];
+
+        // --- reference execution at a generous limit to obtain the net charge ---
+        let mut tx_ref = base_tx();
+        tx_ref.calls = vec![vec![Call { to: target, data: Bytes::new() }]];
+        let signed_ref = eoa_signed(tx_ref, &key);
+        let mut evm_ref =
+            evm_with_accounts_and_storage(initial, sender, &[(target, sstore_clears.clone())], &storage);
+        let charge_gas = evm_ref
+            .transact_raw(into_base_tx(&signed_ref))
+            .expect("tx should execute")
+            .result
+            .tx_gas_used();
+
+        // --- estimate (simulation never commits state) ---
+        let mut tx_sim = base_tx();
+        tx_sim.calls = vec![vec![Call { to: target, data: Bytes::new() }]];
+        let signed_sim = eoa_signed(tx_sim, &key);
+        let mut evm_sim = evm_with_accounts_and_storage(
+            initial,
+            sender,
+            &[(target, sstore_clears.clone())],
+            &storage,
+        );
+        evm_sim.ctx_mut().tx = into_base_tx(&signed_sim);
+        evm_sim.ctx_mut().tx.base.caller = sender;
+        let estimate_gas = Eip8130Executor::simulate(&mut evm_sim)
+            .expect("estimation should succeed")
+            .tx_gas_used();
+
+        // The gross estimate must strictly exceed the net charge because a
+        // refund was earned.
+        assert!(
+            estimate_gas > charge_gas,
+            "estimate_gas ({estimate_gas}) must exceed net charge ({charge_gas}): \
+             refund must not reduce the gas limit"
+        );
+
+        // --- execute at gas_limit = charge_gas → must revert (OOG: refund was
+        //     subtracted from pool but is not available during execution) ---
+        let mut tx_low = base_tx();
+        tx_low.gas_limit = charge_gas;
+        tx_low.calls = vec![vec![Call { to: target, data: Bytes::new() }]];
+        let signed_low = eoa_signed(tx_low, &key);
+        let mut evm_low =
+            evm_with_accounts_and_storage(initial, sender, &[(target, sstore_clears.clone())], &storage);
+        let result_low =
+            evm_low.transact_raw(into_base_tx(&signed_low)).expect("tx should not error");
+        assert!(
+            matches!(result_low.result, ExecutionResult::Revert { .. }),
+            "execution at gas_limit = charge_gas must revert: call pool too small \
+             because net charge subtracted the refund"
+        );
+
+        // --- execute at gas_limit = estimate_gas → must succeed ---
+        let mut tx_ok = base_tx();
+        tx_ok.gas_limit = estimate_gas;
+        tx_ok.calls = vec![vec![Call { to: target, data: Bytes::new() }]];
+        let signed_ok = eoa_signed(tx_ok, &key);
+        let mut evm_ok =
+            evm_with_accounts_and_storage(initial, sender, &[(target, sstore_clears)], &storage);
+        let result_ok =
+            evm_ok.transact_raw(into_base_tx(&signed_ok)).expect("tx should not error");
+        assert!(
+            result_ok.result.is_success(),
+            "execution at gas_limit = estimate_gas must succeed"
+        );
+    }
+
+    #[test]
+    fn simulate_estimate_covers_63_64_gas_retention_in_nested_calls() {
+        // Proof that the estimate accounts for EIP-150's 63/64 gas forwarding
+        // rule in nested calls. A forwarder contract calls a gas-sink contract
+        // using `GAS` (all remaining gas); the sink does 100 cold SLOADs of
+        // distinct slots (~210 000 gas). With a naive gas limit equal to the
+        // net billable charge, the 1/64 retained by the forwarder at each hop
+        // leaves the sink short; the binary search finds the minimum feasible
+        // pool and returns a strictly larger estimate. Assertions:
+        //   - estimate_gas > charge_gas (search exceeded raw charge)
+        //   - executing at gas_limit = charge_gas reverts (sink OOGs, forwarder
+        //     reverts because it checks the CALL return value)
+        //   - executing at gas_limit = estimate_gas succeeds
+        //
+        // Sink bytecode (0xe3): PUSH1 100 counter, loop: DUP1 (slot = counter),
+        //   SLOAD, POP, PUSH1 1, SWAP1, SUB, DUP1, PUSH1 2 (JUMPDEST), JUMPI,
+        //   POP, STOP.
+        // Forwarder bytecode (0xe2): 5×PUSH1 0, PUSH20 sink, GAS, CALL, ISZERO,
+        //   PUSH1 <revert_label>, JUMPI, STOP, JUMPDEST, PUSH1 0, PUSH1 0, REVERT.
+        //   Reverts when the inner CALL fails, propagating sink OOG to the phase.
+        let key = signing_key(0x7c);
+        let sender = eoa_address(&key);
+        let forwarder = address!("0x00000000000000000000000000000000000000e2");
+        let sink = address!("0x00000000000000000000000000000000000000e3");
+
+        // Sink: PUSH1 100, JUMPDEST@2, DUP1, SLOAD (cold per-slot), POP, PUSH1 1,
+        //       SWAP1, SUB, DUP1, PUSH1 2, JUMPI, POP, STOP
+        let sink_code = bytes!("60645b80545060019003806002575000");
+        // Forwarder: PUSH1 0 ×5, PUSH20 sink (0xe3), GAS, CALL, ISZERO,
+        //            PUSH1 0x26 (=38), JUMPI, STOP, JUMPDEST@38, PUSH1 0, PUSH1 0, REVERT
+        // Offset check: 5×2=10, PUSH20=1+20=21 → ends @31, GAS@31, CALL@32,
+        //               ISZERO@33, PUSH1 0x26 @34, JUMPI@36, STOP@37,
+        //               JUMPDEST@38 ← matches 0x26 ✓
+        let mut fwd_bytes = Vec::new();
+        fwd_bytes.extend_from_slice(bytes!("6000600060006000600073").as_ref());
+        fwd_bytes.extend_from_slice(sink.as_slice());
+        fwd_bytes.extend_from_slice(bytes!("5af115602657005b60006000fd").as_ref());
+        let fwd_code = Bytes::from(fwd_bytes);
+
+        let initial = U256::from(10u64).pow(U256::from(18u64));
+
+        // --- reference execution at a generous limit for the net charge ---
+        let mut tx_ref = base_tx();
+        tx_ref.calls = vec![vec![Call { to: forwarder, data: Bytes::new() }]];
+        let signed_ref = eoa_signed(tx_ref, &key);
+        let mut evm_ref = evm_with_accounts(
+            initial,
+            sender,
+            &[(forwarder, fwd_code.clone()), (sink, sink_code.clone())],
+        );
+        let charge_gas = evm_ref
+            .transact_raw(into_base_tx(&signed_ref))
+            .expect("reference execution should succeed")
+            .result
+            .tx_gas_used();
+
+        // --- estimate (binary search must go beyond ceiling_spent) ---
+        let mut tx_sim = base_tx();
+        tx_sim.calls = vec![vec![Call { to: forwarder, data: Bytes::new() }]];
+        let signed_sim = eoa_signed(tx_sim, &key);
+        let mut evm_sim = evm_with_accounts(
+            initial,
+            sender,
+            &[(forwarder, fwd_code.clone()), (sink, sink_code.clone())],
+        );
+        evm_sim.ctx_mut().tx = into_base_tx(&signed_sim);
+        evm_sim.ctx_mut().tx.base.caller = sender;
+        let estimate_gas = Eip8130Executor::simulate(&mut evm_sim)
+            .expect("estimation should succeed")
+            .tx_gas_used();
+
+        // The search must find a strictly larger limit to cover the 63/64 loss.
+        assert!(
+            estimate_gas > charge_gas,
+            "estimate_gas ({estimate_gas}) must exceed the net charge ({charge_gas}): \
+             the 63/64 retention requires a higher gas limit than the raw spend"
+        );
+
+        // --- execute at gas_limit = charge_gas → must revert (sink OOGs) ---
+        let mut tx_low = base_tx();
+        tx_low.gas_limit = charge_gas;
+        tx_low.calls = vec![vec![Call { to: forwarder, data: Bytes::new() }]];
+        let signed_low = eoa_signed(tx_low, &key);
+        let mut evm_low = evm_with_accounts(
+            initial,
+            sender,
+            &[(forwarder, fwd_code.clone()), (sink, sink_code.clone())],
+        );
+        let result_low =
+            evm_low.transact_raw(into_base_tx(&signed_low)).expect("tx should not error");
+        assert!(
+            matches!(result_low.result, ExecutionResult::Revert { .. }),
+            "execution at gas_limit = charge_gas must revert: sink OOGs under 63/64 forwarding"
+        );
+
+        // --- execute at gas_limit = estimate_gas → must succeed ---
+        let mut tx_ok = base_tx();
+        tx_ok.gas_limit = estimate_gas;
+        tx_ok.calls = vec![vec![Call { to: forwarder, data: Bytes::new() }]];
+        let signed_ok = eoa_signed(tx_ok, &key);
+        let mut evm_ok = evm_with_accounts(
+            initial,
+            sender,
+            &[(forwarder, fwd_code), (sink, sink_code)],
+        );
+        let result_ok =
+            evm_ok.transact_raw(into_base_tx(&signed_ok)).expect("tx should not error");
+        assert!(
+            result_ok.result.is_success(),
+            "execution at gas_limit = estimate_gas must succeed"
+        );
+    }
+
     #[test]
     fn simulate_supports_configured_account_path() {
         // The configured-sender path is estimable: simulation resolves the owner
