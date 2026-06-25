@@ -524,8 +524,9 @@ mod tests {
     // Counterfactual create path
     // ─────────────────────────────────────────────────────────────────────────
 
-    use crate::AccountChangeApplier;
     use base_common_consensus::InitialActor;
+
+    use crate::AccountChangeApplier;
 
     /// Builds a K1-signed `CreateEntry` whose derived address matches `signer`
     /// and a matching `TxEip8130` with `sender = derived` and the create as the
