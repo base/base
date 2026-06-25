@@ -381,6 +381,17 @@ impl PrecompileStorageProvider for OverlayPrecompileStorage<'_> {
         caller
     }
 
+    // The overlay deliberately does not journal: `checkpoint`/`checkpoint_revert`
+    // are no-ops. This is sound only because the admission flow
+    // (`TransactionAuthorizer::authorize_and_apply`, and the
+    // `ConfigChangeAuthorizer` / `AccountChangeApplier` steps it drives) never
+    // performs an internal checkpoint/revert cycle: it either succeeds and the
+    // overlay's buffered writes are read back as the evolving state, or it
+    // returns an error and the entire overlay is dropped by the caller. If a
+    // future change introduces an internal checkpoint/revert within that flow,
+    // partial writes would leak within the overlay — this storage would then
+    // need real journalling (snapshot the `storage`/`transient` maps on
+    // `checkpoint` and restore them on `checkpoint_revert`).
     fn checkpoint(&mut self) -> JournalCheckpoint {
         JournalCheckpoint::default()
     }
@@ -1023,15 +1034,15 @@ where
     /// authorize-and-apply admission flow beds in.
     const MAX_ACCOUNT_CHANGES_PER_TX: usize = 3;
 
-    /// Walks `account_changes` and enforces structural invariants:
-    /// at most [`Self::MAX_ACCOUNT_CHANGES_PER_TX`] entries total, at most one
-    /// `Create` (and only as the first entry), at most one `Delegation`,
-    /// `ConfigChange` count capped at
-    /// [`Eip8130Constants::MAX_CONFIG_CHANGES_PER_TX`], chain-binding on
-    /// config changes, and per-entry well-formedness. Authenticator-address bounds
-    /// and actor-id uniqueness are enforced on both `Create.initial_actors`
-    /// and `ConfigChange.actor_changes` via [`Self::validate_initial_actors`]
-    /// and [`Self::validate_actor_changes`] respectively.
+    /// Enforces the interim total-account-changes admission cap
+    /// ([`Self::MAX_ACCOUNT_CHANGES_PER_TX`]) and then the per-entry structural
+    /// invariants via [`Self::validate_account_change_entries`].
+    ///
+    /// The total cap is an interim pool-only throttle that currently sits below
+    /// the per-type [`Eip8130Constants::MAX_CONFIG_CHANGES_PER_TX`] cap, so the
+    /// per-type cap is exercised directly against
+    /// [`Self::validate_account_change_entries`] in tests rather than through
+    /// this gate.
     fn validate_account_changes(
         signed: &Eip8130Signed,
         local_chain_id: u64,
@@ -1043,6 +1054,25 @@ where
         if signed.tx().account_changes.len() > Self::MAX_ACCOUNT_CHANGES_PER_TX {
             return Err(InvalidTransactionError::TxTypeNotSupported.into());
         }
+        Self::validate_account_change_entries(signed, local_chain_id)
+    }
+
+    /// Walks `account_changes` and enforces the per-entry structural invariants:
+    /// at most one `Create` (and only as the first entry), at most one
+    /// `Delegation`, `ConfigChange` count capped at
+    /// [`Eip8130Constants::MAX_CONFIG_CHANGES_PER_TX`], chain-binding on
+    /// config changes, and per-entry well-formedness. Authenticator-address bounds
+    /// and actor-id uniqueness are enforced on both `Create.initial_actors`
+    /// and `ConfigChange.actor_changes` via [`Self::validate_initial_actors`]
+    /// and [`Self::validate_actor_changes`] respectively.
+    ///
+    /// This is the structural walk independent of the interim total cap applied
+    /// by [`Self::validate_account_changes`], so the per-type caps it enforces
+    /// remain meaningful (and testable) if that interim cap is later raised.
+    fn validate_account_change_entries(
+        signed: &Eip8130Signed,
+        local_chain_id: u64,
+    ) -> Result<(), InvalidPoolTransactionError> {
         let mut create_count = 0usize;
         let mut delegation_count = 0usize;
         let mut config_count = 0usize;
@@ -1907,14 +1937,33 @@ mod tests {
 
     #[test]
     fn rejects_eip8130_too_many_config_changes() {
+        // The interim total-account-changes cap currently sits below
+        // `MAX_CONFIG_CHANGES_PER_TX`, so exercise the per-type config cap
+        // directly against the structural entry walk (bypassing the total gate)
+        // to keep that invariant covered independently.
         let count = Eip8130Constants::MAX_CONFIG_CHANGES_PER_TX + 1;
         let account_changes =
             (0..count).map(|_| AccountChange::ConfigChange(make_valid_config_change())).collect();
         let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
-        assert_unsupported(TestValidator::validate_account_changes(
+        assert_unsupported(TestValidator::validate_account_change_entries(
             &sign_eoa_eip8130(tx),
             test_chain_id(),
         ));
+    }
+
+    #[test]
+    fn accepts_eip8130_exactly_max_config_changes_in_structural_walk() {
+        // Exactly `MAX_CONFIG_CHANGES_PER_TX` config changes pass the per-type
+        // cap in the structural walk (the interim total cap is applied
+        // separately by `validate_account_changes`).
+        let count = Eip8130Constants::MAX_CONFIG_CHANGES_PER_TX;
+        let account_changes =
+            (0..count).map(|_| AccountChange::ConfigChange(make_valid_config_change())).collect();
+        let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
+        assert!(
+            TestValidator::validate_account_change_entries(&sign_eoa_eip8130(tx), test_chain_id())
+                .is_ok()
+        );
     }
 
     #[test]
