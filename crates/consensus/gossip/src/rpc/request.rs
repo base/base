@@ -544,6 +544,7 @@ impl P2pRpcRequest {
         let table_info = disc.peer_count();
 
         let banned_peers = gossip.connection_gate.list_blocked_peers().len();
+        let max_peer_count = gossip.connection_limits_config.max_established;
 
         let topics = gossip.swarm.behaviour().gossipsub.topics().collect::<HashSet<_>>();
 
@@ -625,6 +626,7 @@ impl P2pRpcRequest {
                 blocks_topic_v4: block_topics[3],
                 banned: banned_peers as u32,
                 known,
+                max_peer_count: Some(max_peer_count),
             };
 
             if let Err(e) = sender.send(stats) {

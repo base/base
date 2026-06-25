@@ -215,6 +215,13 @@ pub struct PeerStats {
     pub banned: u32,
     /// The known count.
     pub known: u32,
+    /// Configured maximum number of established libp2p connections.
+    ///
+    /// This is an additive Base extension to `opp2p_peerStats`. Older nodes may
+    /// omit this field when they do not expose connection limits through that
+    /// RPC method.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_peer_count: Option<u32>,
 }
 
 /// Represents the connectivity state of a peer in a network, indicating the reachability and
@@ -424,5 +431,24 @@ mod tests {
             peer_info.peer_scores.req_resp.valid_responses,
             deserialized.peer_scores.req_resp.valid_responses
         );
+    }
+
+    #[test]
+    fn test_peer_stats_deserialize_legacy_payload_without_connection_limit() {
+        let stats: PeerStats = serde_json::from_value(serde_json::json!({
+            "connected": 7,
+            "table": 9,
+            "blocksTopic": 1,
+            "blocksTopicV2": 2,
+            "blocksTopicV3": 3,
+            "blocksTopicV4": 4,
+            "banned": 0,
+            "known": 11,
+        }))
+        .unwrap();
+
+        assert_eq!(stats.connected, 7);
+        assert_eq!(stats.known, 11);
+        assert_eq!(stats.max_peer_count, None);
     }
 }
