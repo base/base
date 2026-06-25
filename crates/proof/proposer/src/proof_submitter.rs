@@ -334,6 +334,7 @@ impl ProofSubmitter {
             Ok(()) => {
                 drop(attach_timer);
                 info!(target_block, game_address = %game_address, "TEE proof attached successfully");
+                Metrics::l2_output_proposals_total().increment(1);
             }
             Err(ProposerError::Submission(ProofSubmissionError::ProofAlreadyVerified)) => {
                 drop(attach_timer);
@@ -349,7 +350,6 @@ impl ProofSubmitter {
             }
         };
 
-        Metrics::l2_output_proposals_total().increment(1);
         Ok(RecoveredState {
             parent_address: game_address,
             output_root: aggregate_proposal.output_root,
@@ -418,6 +418,12 @@ impl ProofSubmitter {
 mod tests {
     use std::sync::Arc;
 
+    #[cfg(feature = "metrics")]
+    use metrics_util::{
+        MetricKind,
+        debugging::{DebugValue, DebuggingRecorder},
+    };
+
     use super::*;
     use crate::test_utils::{
         MockAggregateVerifier, MockDisputeGameFactory, MockOutputProposer, MockRollupClient,
@@ -475,6 +481,41 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(*output.created.lock().unwrap(), 0);
         assert_eq!(*output.verified.lock().unwrap(), vec![game_address]);
+    }
+
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn submit_does_not_count_already_verified_attach_as_submitted() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+
+        ::metrics::with_local_recorder(&recorder, || {
+            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            rt.block_on(async {
+                let game_address = Address::repeat_byte(0xAA);
+                let output = Arc::new(MockOutputProposer::default());
+                *output.verify_error.lock().unwrap() =
+                    Some(ProposerError::Submission(ProofSubmissionError::ProofAlreadyVerified));
+                let submitter = submitter(
+                    Arc::clone(&output),
+                    MockDisputeGameFactory::with_uuid_game_responses([game_address]),
+                    MockAggregateVerifier::default(),
+                );
+
+                let (aggregate_proposal, proposals) = proof_result(TEST_BLOCK_INTERVAL);
+                submitter
+                    .submit(&aggregate_proposal, &proposals, TEST_BLOCK_INTERVAL, Address::ZERO)
+                    .await
+                    .unwrap();
+            });
+        });
+
+        let snapshot = snapshotter.snapshot().into_vec();
+        assert!(snapshot.iter().all(|(ck, _, _, value)| {
+            ck.kind() != MetricKind::Counter
+                || ck.key().name() != "base_proposer.l2_output_proposals_total"
+                || !matches!(value, DebugValue::Counter(value) if *value > 0)
+        }));
     }
 
     #[tokio::test]
