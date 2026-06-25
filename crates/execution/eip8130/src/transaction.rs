@@ -374,10 +374,7 @@ mod tests {
         // the channel past u64::MAX, which must be rejected rather than wrapping
         // back to a duplicate-accepting state.
         let at_max = signed_change(account, K1, &k, 0, u64::MAX, vec![]);
-        let signed = eoa_signed(
-            tx_with(None, None, vec![AccountChange::ConfigChange(at_max)]),
-            &k,
-        );
+        let signed = eoa_signed(tx_with(None, None, vec![AccountChange::ConfigChange(at_max)]), &k);
         with_storage(|acc| {
             acc.account_state.at_mut(&account).write(pack_state(u64::MAX, 0, 0)).unwrap();
             assert_eq!(
@@ -402,8 +399,7 @@ mod tests {
             id[..20].copy_from_slice(signer_addr.as_slice());
             id
         });
-        let initial_actors =
-            vec![InitialActor { actor_id: actor_id_k, authenticator: K1 }];
+        let initial_actors = vec![InitialActor { actor_id: actor_id_k, authenticator: K1 }];
         let create_entry = CreateEntry {
             user_salt: B256::ZERO,
             code: Bytes::from_static(&[0x60, 0x00]),
@@ -528,8 +524,8 @@ mod tests {
     // Counterfactual create path
     // ─────────────────────────────────────────────────────────────────────────
 
-    use base_common_consensus::InitialActor;
     use crate::AccountChangeApplier;
+    use base_common_consensus::InitialActor;
 
     /// Builds a K1-signed `CreateEntry` whose derived address matches `signer`
     /// and a matching `TxEip8130` with `sender = derived` and the create as the
@@ -592,7 +588,10 @@ mod tests {
             let out = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW)
                 .expect("create tx on empty account must authorize");
             assert_eq!(out.actors.sender.account, derived);
-            assert!(out.actors.sender.resolved.is_unrestricted(), "create sender must be unrestricted");
+            assert!(
+                out.actors.sender.resolved.is_unrestricted(),
+                "create sender must be unrestricted"
+            );
             assert!(out.actors.payer.is_none());
             assert!(out.config_changes.is_empty());
         });
@@ -618,9 +617,12 @@ mod tests {
             code: Bytes::new(),
             initial_actors: initial_actors.clone(),
         };
-        let derived =
-            AccountChangeApplier::compute_address(create.user_salt, create.code.as_ref(), &initial_actors)
-                .expect("address derivation");
+        let derived = AccountChangeApplier::compute_address(
+            create.user_salt,
+            create.code.as_ref(),
+            &initial_actors,
+        )
+        .expect("address derivation");
 
         // Config change signed by the initial actor, bound to the derived account
         // at the multichain channel's first sequence.
@@ -634,10 +636,7 @@ mod tests {
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 5_000_000_000,
             gas_limit: 250_000,
-            account_changes: vec![
-                AccountChange::Create(create),
-                AccountChange::ConfigChange(cc),
-            ],
+            account_changes: vec![AccountChange::Create(create), AccountChange::ConfigChange(cc)],
             calls: vec![],
             metadata: Bytes::new(),
             payer: None,
@@ -723,11 +722,7 @@ mod tests {
             id
         });
         let initial_actors = vec![InitialActor { actor_id: actor_id_val, authenticator: K1 }];
-        let create = CreateEntry {
-            user_salt: B256::ZERO,
-            code: Bytes::new(),
-            initial_actors,
-        };
+        let create = CreateEntry { user_salt: B256::ZERO, code: Bytes::new(), initial_actors };
         let tx = TxEip8130 {
             chain_id: LOCAL,
             sender: None, // missing explicit sender
