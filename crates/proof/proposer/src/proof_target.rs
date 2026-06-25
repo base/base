@@ -50,7 +50,11 @@ mod tests {
         for (current_block, block_interval, expected) in
             [(100, 0, None), (100, 100, Some(200)), (150, 100, Some(250)), (u64::MAX, 1, None)]
         {
-            assert_eq!(ProofTarget::next_block(current_block, block_interval), expected);
+            assert_eq!(
+                ProofTarget::next_block(current_block, block_interval),
+                expected,
+                "next_block({current_block}, {block_interval})"
+            );
         }
     }
 }
