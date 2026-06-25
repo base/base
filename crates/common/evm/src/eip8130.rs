@@ -80,6 +80,23 @@ use crate::{
 /// Base is post-London, so this is constant across all live specs.
 const MAX_REFUND_QUOTIENT: u64 = 5;
 
+/// Multiplier (as a percentage) applied to the measured call gas in the
+/// [`Eip8130Executor::simulate`] estimate, to cover EIP-150's 63/64 gas
+/// retention across nested calls.
+///
+/// The simulation measures `call_gas_spent` with a large pool (the request's
+/// `gas_limit`, defaulting to the block gas limit), so each `CALL` forwards more
+/// gas than it would at a tight `gas_limit == estimate`. A contract that forwards
+/// "all but 1/64" at every level can therefore starve a deep callee that needs an
+/// absolute amount, OOG-ing at the lower limit even though the simulation
+/// succeeded. Standard `eth_estimateGas` binary-searches to avoid this; the
+/// deterministic EIP-8130 schedule lets us instead apply a fixed headroom factor.
+///
+/// Sized for a representative worst-case call depth of ~7 hops (e.g. dispatch →
+/// policy manager → account → pool → ERC-20 → account → account-config /
+/// authenticator): `(64/63)^7 ≈ 1.1165`, rounded up to `112%`.
+const CALL_GAS_BUFFER_PERCENT: u64 = 112;
+
 /// The resolved pre-call context of an EIP-8130 transaction: the authorized
 /// actors, the policy gate target, and the gas/fee parameters needed to dispatch
 /// `calls` and settle the fee.
@@ -385,16 +402,35 @@ impl Eip8130Executor {
             }
         };
 
-        // Gas used mirrors `settle_fees` exactly via the shared `billable_gas`
-        // helper: a real `execute` of the same transaction charges this amount.
-        let billable_gas = Self::billable_gas(&outcome, &calls);
+        // Return the gross gas limit, not the net billable charge. Refunds are
+        // credited to the payer *after* execution completes, so they are never
+        // available to the call pool during execution. If the estimate were
+        // `billable_gas` (intrinsic + call_gas_spent - capped_refund + payer_auth),
+        // a caller who sets gas_limit = estimate would find
+        // gas_limit - intrinsic - payer_auth = call_gas_spent - capped_refund,
+        // which is less than call_gas_spent, and the calls would OOG. The gross
+        // amount (no refund subtracted) matches standard eth_estimateGas semantics
+        // and guarantees execution succeeds.
+        //
+        // The call portion is then padded by `CALL_GAS_BUFFER_PERCENT` to cover
+        // EIP-150's 63/64 retention across nested calls (see the constant): the
+        // simulation measures call gas against a large pool, so a tighter
+        // `gas_limit == estimate` would forward less gas down the call tree.
+        // Intrinsic and payer-auth gas are fixed charges not subject to call
+        // forwarding, so the buffer applies only to `call_gas_spent`.
+        let buffered_call_gas =
+            calls.call_gas_spent.saturating_mul(CALL_GAS_BUFFER_PERCENT) / 100;
+        let estimate_gas = outcome
+            .sender_intrinsic
+            .saturating_add(buffered_call_gas)
+            .saturating_add(outcome.payer_auth);
 
         // Capture logs before reverting so `eth_call`-style consumers still see
         // them; estimation never commits, so discard all simulated state.
         let logs = evm.ctx_mut().journal_mut().take_logs();
         evm.ctx_mut().journal_mut().checkpoint_revert(checkpoint);
 
-        let result_gas = ResultGas::new_with_state_gas(billable_gas, 0, 0, 0);
+        let result_gas = ResultGas::new_with_state_gas(estimate_gas, 0, 0, 0);
         if calls.reverted {
             Ok(ExecutionResult::Revert { gas: result_gas, logs, output: calls.output })
         } else {
@@ -1059,9 +1095,11 @@ impl Eip8130Executor {
     /// ceiling. (Mainnet has no payer-auth concept, so this is an EIP-8130-specific
     /// choice rather than literal mainnet parity.)
     ///
-    /// Single source of truth for both the consensus charge ([`Self::settle_fees`])
-    /// and the read-only estimate ([`Self::simulate`]), so the gas a transaction
-    /// pays and the gas `eth_estimateGas` reports cannot drift.
+    /// This is the **net consensus charge** used by [`Self::settle_fees`]. The
+    /// read-only estimate ([`Self::simulate`]) uses the gross amount instead —
+    /// `sender_intrinsic + call_gas_spent + payer_auth` — because refunds are
+    /// credited after execution and are never available to the call pool during
+    /// execution, so the gas limit must cover the full gross spend.
     fn billable_gas(outcome: &Eip8130Outcome, calls: &CallsResult) -> u64 {
         let gross_used = outcome.sender_intrinsic.saturating_add(calls.call_gas_spent);
         let refund = Self::capped_refund(calls.refund, gross_used);
@@ -1296,7 +1334,7 @@ mod tests {
     }
 
     #[test]
-    fn simulate_matches_execution_gas_without_a_signature() {
+    fn simulate_estimate_covers_execution_gas_without_a_signature() {
         let key = signing_key(0x77);
         let sender = eoa_address(&key);
         let target = address!("0x00000000000000000000000000000000000000c5");
@@ -1326,7 +1364,17 @@ mod tests {
 
         assert!(sim_result.is_success(), "estimation should report success");
         assert!(sim_gas > 0, "estimated gas should be positive");
-        assert_eq!(sim_gas, exec_gas, "simulation gas must match execution gas");
+        // The estimate is a gas *limit*, not the net charge: it must cover at
+        // least what a real execution charges. This transaction calls a STOP
+        // contract (no SSTORE/SELFDESTRUCT), so there are no refunds and the only
+        // gap between the estimate and the charge is the `CALL_GAS_BUFFER_PERCENT`
+        // headroom applied to the call portion. Since call gas is a subset of the
+        // charge, the estimate stays within that buffer factor of `exec_gas`.
+        assert!(sim_gas >= exec_gas, "estimate must cover the execution charge");
+        assert!(
+            sim_gas <= exec_gas.saturating_mul(CALL_GAS_BUFFER_PERCENT) / 100,
+            "estimate should exceed the charge by at most the call-gas buffer",
+        );
 
         // Estimation never commits: a fresh execution after it still bumps the
         // nonce from zero, proving no nonce was consumed by the simulation.
