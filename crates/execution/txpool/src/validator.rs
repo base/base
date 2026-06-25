@@ -643,27 +643,26 @@ where
             local_chain_id,
             now,
         ));
-        let (sender, payer, sender_actor) = StorageCtx::enter(&mut storage, |ctx| {
-            let mut account_config = AccountConfigurationStorage::new(ctx);
-            TransactionAuthorizer::authorize_and_apply(
-                signed,
-                &mut account_config,
-                local_chain_id,
-                now,
-            )
-            .map(|applied| {
-                let sender = applied.actors.sender.account;
-                let payer = applied.actors.payer.map_or(sender, |actor| actor.account);
-                (sender, payer, applied.actors.sender.resolved)
-            })
-            .map_err(Self::map_tx_auth_error)
-        })?;
-
-        let is_create = signed
-            .tx()
-            .account_changes
-            .first()
-            .is_some_and(|change| matches!(change, AccountChange::Create(_)));
+        let (sender, payer, sender_actor, is_create, has_delegation) =
+            StorageCtx::enter(&mut storage, |ctx| {
+                let mut account_config = AccountConfigurationStorage::new(ctx);
+                TransactionAuthorizer::authorize_and_apply(
+                    signed,
+                    &mut account_config,
+                    local_chain_id,
+                    now,
+                )
+                .map(|applied| {
+                    let sender = applied.actors.sender.account;
+                    let payer = applied.actors.payer.map_or(sender, |actor| actor.account);
+                    // Thread the authoritative applied flags through rather than
+                    // re-scanning account_changes below.
+                    let is_create = applied.applied.created.is_some();
+                    let has_delegation = applied.applied.delegation.is_some();
+                    (sender, payer, applied.actors.sender.resolved, is_create, has_delegation)
+                })
+                .map_err(Self::map_tx_auth_error)
+            })?;
 
         let sender_account = state
             .basic_account(&sender)
@@ -674,16 +673,9 @@ where
             Self::validate_eip8130_create_freshness(&*state, sender, &sender_account)?;
         }
         // A standalone delegation (no create) keeps the existing self-actor /
-        // CONFIG-scope / code-shape pre-checks. A create+delegation is authorized
-        // by the create owner's signature (the shared apply records the effect),
-        // matching inclusion, so it is not subject to the self-actor pre-check.
-        if !is_create
-            && signed
-                .tx()
-                .account_changes
-                .iter()
-                .any(|change| matches!(change, AccountChange::Delegation(_)))
-        {
+        // CONFIG-scope / code-shape pre-checks. A create+delegation is rejected
+        // structurally before reaching here, so has_delegation implies no create.
+        if has_delegation {
             Self::validate_eip8130_delegation(&*state, sender, sender_actor)?;
         }
 
@@ -707,9 +699,8 @@ where
             self.eip8130_nonce_state(&*state, local_chain_id, now, signed, sender, protocol_nonce)?;
         let sender_auto_delegated = !Self::account_has_code(&*state, sender)
             .map_err(|error| Self::state_read_error(error, "sender code read failed"))?
-            && !signed.tx().account_changes.iter().any(|change| {
-                matches!(change, AccountChange::Create(_) | AccountChange::Delegation(_))
-            });
+            && !is_create
+            && !has_delegation;
         let intrinsic = IntrinsicGas::compute(
             signed,
             self.eip8130_encoded(signed).as_ref(),
