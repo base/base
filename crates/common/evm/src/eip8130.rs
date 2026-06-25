@@ -1648,8 +1648,12 @@ mod tests {
         let mut tx_ref = base_tx();
         tx_ref.calls = vec![vec![Call { to: target, data: Bytes::new() }]];
         let signed_ref = eoa_signed(tx_ref, &key);
-        let mut evm_ref =
-            evm_with_accounts_and_storage(initial, sender, &[(target, sstore_clears.clone())], &storage);
+        let mut evm_ref = evm_with_accounts_and_storage(
+            initial,
+            sender,
+            &[(target, sstore_clears.clone())],
+            &storage,
+        );
         let charge_gas = evm_ref
             .transact_raw(into_base_tx(&signed_ref))
             .expect("tx should execute")
@@ -1686,8 +1690,12 @@ mod tests {
         tx_low.gas_limit = charge_gas;
         tx_low.calls = vec![vec![Call { to: target, data: Bytes::new() }]];
         let signed_low = eoa_signed(tx_low, &key);
-        let mut evm_low =
-            evm_with_accounts_and_storage(initial, sender, &[(target, sstore_clears.clone())], &storage);
+        let mut evm_low = evm_with_accounts_and_storage(
+            initial,
+            sender,
+            &[(target, sstore_clears.clone())],
+            &storage,
+        );
         let result_low =
             evm_low.transact_raw(into_base_tx(&signed_low)).expect("tx should not error");
         assert!(
@@ -1703,8 +1711,7 @@ mod tests {
         let signed_ok = eoa_signed(tx_ok, &key);
         let mut evm_ok =
             evm_with_accounts_and_storage(initial, sender, &[(target, sstore_clears)], &storage);
-        let result_ok =
-            evm_ok.transact_raw(into_base_tx(&signed_ok)).expect("tx should not error");
+        let result_ok = evm_ok.transact_raw(into_base_tx(&signed_ok)).expect("tx should not error");
         assert!(
             result_ok.result.is_success(),
             "execution at gas_limit = estimate_gas must succeed"
@@ -1811,13 +1818,9 @@ mod tests {
         tx_ok.gas_limit = estimate_gas;
         tx_ok.calls = vec![vec![Call { to: forwarder, data: Bytes::new() }]];
         let signed_ok = eoa_signed(tx_ok, &key);
-        let mut evm_ok = evm_with_accounts(
-            initial,
-            sender,
-            &[(forwarder, fwd_code), (sink, sink_code)],
-        );
-        let result_ok =
-            evm_ok.transact_raw(into_base_tx(&signed_ok)).expect("tx should not error");
+        let mut evm_ok =
+            evm_with_accounts(initial, sender, &[(forwarder, fwd_code), (sink, sink_code)]);
+        let result_ok = evm_ok.transact_raw(into_base_tx(&signed_ok)).expect("tx should not error");
         assert!(
             result_ok.result.is_success(),
             "execution at gas_limit = estimate_gas must succeed"
