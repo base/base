@@ -889,15 +889,14 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
                         };
                         let has_zk_fallback = pending.kind.has_zk_fallback();
 
-                        if has_zk_fallback
-                            && pending.tee_submit_retry_count >= self.tee_submit_retry_limit
-                        {
+                        if pending.tee_submit_retry_count >= self.tee_submit_retry_limit {
                             warn!(
                                 error = %e,
                                 game = %game_address,
                                 retry_count = pending.tee_submit_retry_count,
                                 retry_limit = self.tee_submit_retry_limit,
-                                "TEE dispute tx retry limit reached, falling back to ZK"
+                                has_zk_fallback,
+                                "TEE dispute tx retry limit reached"
                             );
                             pending.phase = ProofPhase::NeedsRetry;
                             return self.handle_proof_retry(game_address).await;
@@ -1160,6 +1159,24 @@ mod tests {
         );
     }
 
+    fn insert_ready_tee_proof_without_fallback(
+        driver: &mut Driver<MockL2Provider, MockZkProofProvider, MockTxManager>,
+    ) {
+        let game_address = addr(0);
+        driver.pending_proofs.insert(
+            game_address,
+            PendingProof {
+                phase: ProofPhase::ReadyToSubmit { proof_bytes: Bytes::from(vec![0x00, 0xAA]) },
+                kind: ProofKind::Tee { zk_fallback_request: None, zk_fallback_intent: None },
+                invalid_index: 0,
+                expected_root: B256::repeat_byte(0x22),
+                retry_count: 0,
+                tee_submit_retry_count: 0,
+                intent: DisputeIntent::Nullify,
+            },
+        );
+    }
+
     fn candidate() -> CandidateGame {
         let state = mock_state(GameStatus::InProgress, Address::ZERO, 100);
         CandidateGame {
@@ -1288,6 +1305,27 @@ mod tests {
         driver.poll_or_submit(addr(0)).await.unwrap();
 
         assert_zk_fallback_requested(&driver, &proof_requester);
+    }
+
+    #[tokio::test]
+    async fn tee_submit_retry_limit_drops_proof_without_zk_fallback() {
+        let (mut driver, proof_requester) =
+            driver_with_tx_manager(MockTxManager::with_responses(vec![
+                Err(TxManagerError::NonceTooLow),
+                Err(TxManagerError::NonceTooLow),
+            ]));
+        driver.tee_submit_retry_limit = 1;
+        insert_ready_tee_proof_without_fallback(&mut driver);
+
+        driver.poll_or_submit(addr(0)).await.unwrap();
+
+        assert_ready_tee_proof(&driver);
+
+        driver.poll_or_submit(addr(0)).await.unwrap();
+
+        assert!(!driver.pending_proofs.contains_key(&addr(0)));
+        let state = proof_requester.state.lock().unwrap();
+        assert!(state.prove_block_range_log.is_empty());
     }
 
     #[tokio::test]
