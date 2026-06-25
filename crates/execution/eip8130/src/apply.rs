@@ -23,8 +23,7 @@
 use alloy_primitives::{Address, B256, Bytes, keccak256};
 use alloy_sol_types::{SolValue, sol};
 use base_common_consensus::{
-    AccountChange, ActorChange, ActorChangeType, CreateEntry, Delegation, Eip8130Constants,
-    Eip8130Contracts, Eip8130Signed, InitialActor,
+    ActorChange, ActorChangeType, CreateEntry, Eip8130Constants, Eip8130Contracts, InitialActor,
 };
 use base_precompile_storage::BasePrecompileError;
 
@@ -196,56 +195,6 @@ pub struct AppliedAccountChanges {
 pub struct AccountChangeApplier;
 
 impl AccountChangeApplier {
-    /// Applies the ordered `account_changes` of an authorized transaction against
-    /// `sender_account`, returning the deferred account-code effects.
-    ///
-    /// `sender_account` is the resolved transaction sender (from the
-    /// orchestrator). A create entry must derive exactly this address. Config
-    /// changes mutate this account; a delegation targets it.
-    pub fn apply(
-        signed: &Eip8130Signed,
-        storage: &mut AccountConfigurationStorage<'_>,
-        sender_account: Address,
-    ) -> Result<AppliedAccountChanges, ApplyError> {
-        let mut applied = AppliedAccountChanges::default();
-        for (index, change) in signed.tx().account_changes.iter().enumerate() {
-            match change {
-                AccountChange::Create(entry) => {
-                    // At most one create, and only at index 0 (where its actors
-                    // bootstrap the account every later change authenticates
-                    // against).
-                    if index != 0 || applied.created.is_some() {
-                        return Err(ApplyError::InvalidCreatePosition);
-                    }
-                    let created = Self::apply_create(storage, entry)?;
-                    if created.address != sender_account {
-                        return Err(ApplyError::CreateAddressMismatch {
-                            derived: created.address,
-                            sender: sender_account,
-                        });
-                    }
-                    applied.created = Some(created);
-                }
-                AccountChange::ConfigChange(cc) => {
-                    Self::apply_config_change(
-                        storage,
-                        sender_account,
-                        &cc.actor_changes,
-                        cc.chain_id,
-                    )?;
-                }
-                AccountChange::Delegation(Delegation { target }) => {
-                    if applied.delegation.is_some() {
-                        return Err(ApplyError::MultipleDelegations);
-                    }
-                    applied.delegation =
-                        Some(DelegationEffect { account: sender_account, target: *target });
-                }
-            }
-        }
-        Ok(applied)
-    }
-
     /// Applies one authorized config change's actor changes against `account`,
     /// advancing the change-sequence channel selected by `chain_id` (`0` =
     /// multichain, else local). Mirrors the mutation tail of

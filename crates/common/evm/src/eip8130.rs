@@ -48,8 +48,8 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 use base_common_consensus::{Eip8130Constants, Eip8130Contracts, Predeploys};
 use base_common_precompiles::{NonceManagerStorage, TxContextStorage};
 use base_execution_eip8130::{
-    AccountChangeApplier, AccountConfigurationStorage, FeeCheck, IntrinsicGas, IntrinsicGasInput,
-    NonceMode, NonceValidator, TransactionAuthorizer,
+    AccountConfigurationStorage, FeeCheck, IntrinsicGas, IntrinsicGasInput, NonceMode,
+    NonceValidator, TransactionAuthorizer,
 };
 use base_precompile_storage::{JournalStorageProvider, StorageCtx};
 use revm::{
@@ -579,17 +579,37 @@ impl Eip8130Executor {
         let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
 
         StorageCtx::enter(&mut provider, |sctx| {
-            let acc = AccountConfigurationStorage::new(sctx);
+            let mut acc = AccountConfigurationStorage::new(sctx);
+
+            // 1. Authorize and apply the account changes interleaved against the
+            //    evolving state, then authenticate sender/payer against the
+            //    resulting post-apply state. `AccountConfiguration` storage
+            //    transitions are written here; the deferred account-code effects
+            //    are installed in step 2.
+            let applied_tx =
+                TransactionAuthorizer::authorize_and_apply(signed, &mut acc, chain_id, now)
+                    .map_err(BaseTransactionError::eip8130)?;
+            let sender_actor = applied_tx.actors.sender.resolved;
+            let sender = applied_tx.actors.sender.account;
+            let payer = applied_tx.actors.payer.as_ref().map_or(sender, |p| p.account);
+
+            // 2. Install the deferred account-*code* effects (created-account
+            //    bytecode, delegation indicator) the apply step surfaced.
+            if let Some(created) = &applied_tx.applied.created {
+                sctx.set_code(created.address, Bytecode::new_raw(created.code.clone()))
+                    .map_err(BaseTransactionError::eip8130)?;
+            }
+            if let Some(delegation) = &applied_tx.applied.delegation {
+                let code = if delegation.target.is_zero() {
+                    Bytecode::default()
+                } else {
+                    Bytecode::new_eip7702(delegation.target)
+                };
+                sctx.set_code(delegation.account, code).map_err(BaseTransactionError::eip8130)?;
+            }
+
+            // 3. Resolve the nonce channel's first-use flag and validate the nonce.
             let mut nonce_mgr = NonceManagerStorage::new(sctx);
-
-            // 1. Authorize sender, payer, and config changes.
-            let authorized = TransactionAuthorizer::authorize(signed, &acc, chain_id, now)
-                .map_err(BaseTransactionError::eip8130)?;
-            let sender_actor = authorized.actors.sender.resolved;
-            let sender = authorized.actors.sender.account;
-            let payer = authorized.actors.payer.as_ref().map_or(sender, |p| p.account);
-
-            // 2. Resolve the nonce channel's first-use flag and validate the nonce.
             let protocol_nonce = sctx
                 .with_account_info(sender, |info| Ok(info.nonce))
                 .map_err(BaseTransactionError::eip8130)?;
@@ -611,7 +631,7 @@ impl Eip8130Executor {
             )
             .map_err(BaseTransactionError::eip8130)?;
 
-            // 3. Advance the nonce. The protocol (basic-account) nonce is bumped
+            // 4. Advance the nonce. The protocol (basic-account) nonce is bumped
             //    in `prepay`; channel and expiring nonces are journal storage.
             let bump_protocol_nonce = if nonce_key == Eip8130Constants::NONCE_KEY_MAX {
                 let replay = NonceValidator::replay_hash(sender, sender_sig_hash);
@@ -628,12 +648,9 @@ impl Eip8130Executor {
                 false
             };
 
-            // 4. Apply account changes and install the deferred code effects.
-            Self::apply_account_changes(signed, sctx, sender)?;
-
             // 5. Auto-delegate a code-less EOA sender to the default account so a
             // basic account can dispatch its calls. This is unconditional for
-            // code-less EOA senders: an explicit delegation applied in step 4 with
+            // code-less EOA senders: an explicit delegation installed in step 2 with
             // a non-zero target leaves non-empty code and is preserved here, but
             // clearing the sender's delegation in the same transaction leaves it
             // code-less and is intentionally re-delegated — a basic-account sender
