@@ -1,7 +1,7 @@
 //! Network upgrade activation countdown and history view.
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -1663,43 +1663,45 @@ where
         .ok_or_else(|| format!("block {block_number} not found"))
 }
 
-async fn fetch_admin_activity_for_block<P>(
+async fn fetch_admin_activity_for_range<P>(
     provider: &P,
-    block_number: u64,
-) -> Result<Vec<(AdminActivityEntry, Option<Address>)>, String>
+    start_block: u64,
+    end_block: u64,
+) -> Result<BTreeMap<u64, Vec<(AdminActivityEntry, Option<Address>)>>, String>
 where
     P: Provider + ?Sized,
 {
     let filter = Filter::new()
         .address(ActivationRegistryStorage::ADDRESS)
-        .from_block(block_number)
-        .to_block(block_number);
+        .from_block(start_block)
+        .to_block(end_block);
     let logs = provider.get_logs(&filter).await.map_err(|error| error.to_string())?;
     if logs.is_empty() {
-        return Ok(Vec::new());
+        return Ok(BTreeMap::new());
     }
 
-    let mut fallback_timestamp = None;
-    let mut entries = Vec::new();
+    let mut fallback_timestamps = HashMap::new();
+    let mut entries_by_block = BTreeMap::new();
     for log in logs.iter().filter(|log| !log.removed) {
+        let block_number = log.block_number.unwrap_or(start_block);
         let timestamp = if let Some(timestamp) = log.block_timestamp {
             timestamp
         } else {
-            match fallback_timestamp {
+            match fallback_timestamps.get(&block_number).copied() {
                 Some(timestamp) => timestamp,
                 None => {
                     let timestamp = fetch_block_timestamp(provider, block_number).await?;
-                    fallback_timestamp = Some(timestamp);
+                    fallback_timestamps.insert(block_number, timestamp);
                     timestamp
                 }
             }
         };
         if let Some(entry) = decode_admin_activity_log(log, block_number, timestamp) {
-            entries.push(entry);
+            entries_by_block.entry(block_number).or_insert_with(Vec::new).push(entry);
         }
     }
 
-    Ok(entries)
+    Ok(entries_by_block)
 }
 
 async fn run_admin_activity_streaming(
@@ -1827,23 +1829,28 @@ async fn run_admin_activity_streaming(
                 None => safe_number,
             };
             let scan_end = admin_activity_scan_end(next_block, safe_number);
-
-            while next_block <= scan_end {
-                let entries = match fetch_admin_activity_for_block(&provider, next_block).await {
-                    Ok(entries) => entries,
-                    Err(error) => {
-                        if tx
+            let mut entries_by_block = match fetch_admin_activity_for_range(
+                &provider, next_block, scan_end,
+            )
+            .await
+            {
+                Ok(entries_by_block) => entries_by_block,
+                Err(error) => {
+                    if tx
                             .send(AdminActivityUpdate::Status(format!(
-                                "Confirmed activity query failed for block {next_block}: {error}"
+                                "Confirmed activity query failed for blocks {next_block}-{scan_end}: {error}"
                             )))
                             .await
                             .is_err()
                         {
                             return;
                         }
-                        break 'watch;
-                    }
-                };
+                    break 'watch;
+                }
+            };
+
+            while next_block <= scan_end {
+                let entries = entries_by_block.remove(&next_block).unwrap_or_default();
 
                 let mut block_entries = Vec::with_capacity(entries.len());
                 let mut live_admin_update = None;
