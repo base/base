@@ -88,8 +88,16 @@ impl ProofRecovery {
         };
 
         if let Some(cached) = cache.as_ref() {
-            let next_proposal_block =
-                ProofTarget::next_block(cached.state.l2_block_number, self.config.block_interval)?;
+            let Some(next_proposal_block) =
+                ProofTarget::next_block(cached.state.l2_block_number, self.config.block_interval)
+            else {
+                warn!(
+                    cached_block = cached.state.l2_block_number,
+                    block_interval = self.config.block_interval,
+                    "Cannot compute next proposal block, skipping recovery"
+                );
+                return None;
+            };
 
             if safe_head < next_proposal_block {
                 debug!(
