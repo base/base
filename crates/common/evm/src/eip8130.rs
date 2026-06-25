@@ -757,7 +757,6 @@ impl Eip8130Executor {
             >,
     {
         let tx = signed.tx();
-        let sender_is_eoa = tx.sender.is_none();
         let nonce_key = tx.nonce_key;
         let gas_limit = tx.gas_limit;
         let max_fee = tx.max_fee_per_gas;
@@ -846,16 +845,14 @@ impl Eip8130Executor {
                 false
             };
 
-            // 5. Auto-delegate a code-less EOA sender to the default account so a
-            // basic account can dispatch its calls. This is unconditional for
-            // code-less EOA senders: an explicit delegation installed in step 2 with
-            // a non-zero target leaves non-empty code and is preserved here, but
-            // clearing the sender's delegation in the same transaction leaves it
-            // code-less and is intentionally re-delegated — a basic-account sender
-            // is always delegated to `DEFAULT_ACCOUNT`. The `&&` short-circuits so
-            // a configured (non-EOA) sender is never auto-delegated.
-            let sender_auto_delegated =
-                sender_is_eoa && Self::auto_delegate_codeless_sender(sctx, sender)?;
+            // 5. Auto-delegate any code-less sender to the default account so the
+            // account can dispatch its calls. An explicit delegation applied in
+            // step 4 with a non-zero target leaves non-empty code and is preserved
+            // here. Clearing the sender's delegation in the same transaction leaves
+            // it code-less and is intentionally re-delegated — any basic-account
+            // sender is always delegated to `DEFAULT_ACCOUNT` regardless of which
+            // signing key or authenticator was used.
+            let sender_auto_delegated = Self::auto_delegate_codeless_sender(sctx, sender)?;
 
             // 6. Intrinsic gas under the EIP-8130 schedule.
             let (sender_intrinsic, payer_auth, execution_gas_available) =
@@ -1396,11 +1393,12 @@ impl Eip8130Executor {
     }
 
     /// Auto-delegates a code-less sender to [`Eip8130Contracts::DEFAULT_ACCOUNT`]
-    /// so a basic account can dispatch its `calls`, returning whether the
-    /// delegation was installed (which feeds the intrinsic-gas schedule). The
-    /// caller decides *whether* to consider auto-delegation: the verifying path
-    /// only does so for an EOA sender, while estimation considers any code-less
-    /// sender (a configured account already has code, so the check is a no-op).
+    /// so the account can dispatch its `calls`, returning whether the delegation
+    /// was installed (which feeds the intrinsic-gas schedule). Both the verifying
+    /// and estimation paths call this unconditionally: a configured account
+    /// already has code so the check is a no-op for it, and any basic-account
+    /// sender — regardless of signing path or authenticator — is delegated to
+    /// `DEFAULT_ACCOUNT`.
     fn auto_delegate_codeless_sender(
         sctx: StorageCtx<'_>,
         sender: Address,
