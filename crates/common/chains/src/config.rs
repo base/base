@@ -7,6 +7,8 @@ use base_common_genesis::{
     BaseUpgradeConfig, ChainGenesis, FeeConfig, RollupConfig, SystemConfig, UpgradeConfig,
 };
 
+use crate::BaseUpgrade;
+
 /// Complete configuration for a Base chain
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChainConfig {
@@ -223,6 +225,27 @@ impl ChainConfig {
             763360 => Some(&ZERONET),
             _ => None,
         }
+    }
+
+    /// Returns the activation registry admin address seeded for a specific scheduled upgrade.
+    pub const fn activation_admin_address_for_upgrade_by_chain_id(
+        id: u64,
+        upgrade: BaseUpgrade,
+    ) -> Option<Address> {
+        match upgrade {
+            BaseUpgrade::Beryl | BaseUpgrade::Cobalt => {
+                Self::beryl_activation_admin_address_by_chain_id(id)
+            }
+            _ => None,
+        }
+    }
+
+    /// Returns the activation registry admin address seeded for a specific scheduled upgrade.
+    pub const fn activation_admin_address_for_upgrade(
+        &self,
+        upgrade: BaseUpgrade,
+    ) -> Option<Address> {
+        Self::activation_admin_address_for_upgrade_by_chain_id(self.chain_id, upgrade)
     }
 
     /// Returns the Beryl activation registry admin address for built-in chains that need one.
@@ -641,5 +664,24 @@ mod tests {
         assert_eq!(ChainConfig::zeronet().upgrade_config().base.beryl, Some(1_782_349_188));
         assert_eq!(ChainConfig::zeronet().cobalt_timestamp, None);
         assert_eq!(ChainConfig::zeronet().upgrade_config().base.cobalt, None);
+    }
+
+    #[test]
+    fn generic_upgrade_admin_seed_matches_beryl_mapping() {
+        assert_eq!(
+            ChainConfig::activation_admin_address_for_upgrade_by_chain_id(8453, BaseUpgrade::Beryl),
+            ChainConfig::beryl_activation_admin_address_by_chain_id(8453)
+        );
+        assert_eq!(
+            ChainConfig::activation_admin_address_for_upgrade_by_chain_id(
+                8453,
+                BaseUpgrade::Cobalt
+            ),
+            ChainConfig::beryl_activation_admin_address_by_chain_id(8453)
+        );
+        assert_eq!(
+            ChainConfig::activation_admin_address_for_upgrade_by_chain_id(84532, BaseUpgrade::Azul),
+            None
+        );
     }
 }
