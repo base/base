@@ -549,6 +549,24 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         Ok(self.state.el_sync_finished)
     }
 
+    /// Like [`Self::probe_el_sync`], but sends the FCU even when the proposed state matches the
+    /// current engine state.
+    ///
+    /// Use this for periodic EL-sync re-probes after [`Self::seed_state`] has published a
+    /// tentative unsafe head. Reth can return `Syncing` and later `Valid` for the same forkchoice,
+    /// so the optimization in [`SynchronizeTask`] that skips identical state updates is not valid
+    /// for this polling path.
+    pub async fn probe_el_sync_forced(
+        &mut self,
+        client: Arc<EngineClient_>,
+        config: Arc<RollupConfig>,
+        update: EngineSyncStateUpdate,
+    ) -> Result<bool, SynchronizeTaskError> {
+        SynchronizeTask::new(client, config, update).execute_forced(&mut self.state).await?;
+        self.state_sender.send_replace(self.state);
+        Ok(self.state.el_sync_finished)
+    }
+
     /// Clears the task queue.
     pub fn clear(&mut self) {
         self.tasks.clear();
@@ -883,6 +901,31 @@ mod tests {
             .expect("forced probe should not error");
 
         assert!(confirmed, "probe must re-check the same forkchoice");
+        assert!(engine.state().el_sync_finished);
+        assert_eq!(engine.state().sync_state.unsafe_head(), head);
+    }
+
+    #[tokio::test]
+    async fn forced_probe_el_sync_after_seed_state_rechecks_same_forkchoice() {
+        let head = test_block_info(100);
+
+        let (state_tx, _) = watch::channel(EngineState::default());
+        let (queue_tx, _) = watch::channel(0usize);
+        let client = Arc::new(
+            test_engine_client_builder().with_fork_choice_updated_v3_response(valid_fcu()).build(),
+        );
+
+        let update = EngineSyncStateUpdate { unsafe_head: Some(head), ..Default::default() };
+
+        let mut engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+        engine.seed_state(update);
+
+        let confirmed = engine
+            .probe_el_sync_forced(client, Arc::new(RollupConfig::default()), update)
+            .await
+            .expect("forced probe should not error");
+
+        assert!(confirmed, "forced probe must re-check the same forkchoice");
         assert!(engine.state().el_sync_finished);
         assert_eq!(engine.state().sync_state.unsafe_head(), head);
     }

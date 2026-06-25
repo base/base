@@ -133,14 +133,11 @@ impl<EngineClient_: EngineClient> SynchronizeTask<EngineClient_> {
             }
         }
     }
-}
-
-#[async_trait]
-impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient_> {
-    type Output = ();
-    type Error = SynchronizeTaskError;
-
-    async fn execute(&self, state: &mut EngineState) -> Result<Self::Output, SynchronizeTaskError> {
+    async fn execute_inner(
+        &self,
+        state: &mut EngineState,
+        force_forkchoice_update: bool,
+    ) -> Result<(), SynchronizeTaskError> {
         // Apply the sync state update to the engine state.
         let new_sync_state = state.sync_state.updated(self.state_update);
 
@@ -154,7 +151,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient
         // We shouldn't retry the synchronize task there. Since the `sync_state` is only updated
         // inside the `SynchronizeTask` (except inside the ConsolidateTask, when the block is not
         // the last in the batch) - the engine will get stuck retrying the `SynchronizeTask`
-        if !self.force
+        if !force_forkchoice_update
             && state.sync_state != Default::default()
             && state.sync_state == new_sync_state
         {
@@ -218,5 +215,27 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient
         );
 
         Ok(())
+    }
+
+    /// Executes the synchronization even if the proposed sync state matches the current state.
+    ///
+    /// EL-sync polling uses this after seeding a tentative unsafe head. A later probe may need to
+    /// ask reth about the same forkchoice again because `Syncing` can later become `Valid` without
+    /// the head changing.
+    pub async fn execute_forced(
+        &self,
+        state: &mut EngineState,
+    ) -> Result<(), SynchronizeTaskError> {
+        self.execute_inner(state, true).await
+    }
+}
+
+#[async_trait]
+impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient_> {
+    type Output = ();
+    type Error = SynchronizeTaskError;
+
+    async fn execute(&self, state: &mut EngineState) -> Result<Self::Output, SynchronizeTaskError> {
+        self.execute_inner(state, self.force).await
     }
 }

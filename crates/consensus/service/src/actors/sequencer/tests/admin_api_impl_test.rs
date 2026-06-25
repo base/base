@@ -110,6 +110,7 @@ async fn test_start_sequencer_no_conductor(
     // .returning() (not .return_once()) allows 0 or 1 calls: the already-started case
     // returns early before reaching the engine check.
     client.expect_get_unsafe_head().returning(move || Ok(engine_head));
+    client.expect_el_sync_finished().returning(|| Ok(true));
 
     let mut actor = test_actor();
     actor.engine_client = Arc::new(client);
@@ -151,6 +152,7 @@ async fn test_start_sequencer_conductor_is_leader(#[values(true, false)] via_cha
 
     let mut client = MockSequencerEngineClient::new();
     client.expect_get_unsafe_head().times(1).return_once(move || Ok(engine_head));
+    client.expect_el_sync_finished().times(1).return_once(|| Ok(true));
 
     let mut actor = test_actor();
     actor.conductor = Some(conductor);
@@ -339,6 +341,45 @@ async fn test_start_sequencer_unsafe_head_mismatch(#[values(true, false)] via_ch
                     .handle_admin_query(
                         &mut None,
                         SequencerAdminQuery::StartSequencer(requested_hash, tx),
+                    )
+                    .await;
+                rx.await.unwrap()
+            }
+        }
+    }
+    .await;
+
+    assert!(matches!(result.unwrap_err(), SequencerAdminAPIError::RequestError(_)));
+    assert!(!actor.is_active);
+}
+
+/// EL sync incomplete: sequencer refuses to activate even when leadership and hash checks pass.
+#[rstest]
+#[tokio::test]
+async fn test_start_sequencer_el_sync_incomplete(#[values(true, false)] via_channel: bool) {
+    let test_hash = B256::from([1u8; 32]);
+    let engine_head = L2BlockInfo {
+        block_info: BlockInfo { hash: test_hash, ..Default::default() },
+        ..Default::default()
+    };
+
+    let mut client = MockSequencerEngineClient::new();
+    client.expect_get_unsafe_head().times(1).return_once(move || Ok(engine_head));
+    client.expect_el_sync_finished().times(1).return_once(|| Ok(false));
+
+    let mut actor = test_actor();
+    actor.engine_client = Arc::new(client);
+    actor.is_active = false;
+
+    let result = async {
+        match via_channel {
+            false => actor.start_sequencer(test_hash).await,
+            true => {
+                let (tx, rx) = oneshot::channel();
+                actor
+                    .handle_admin_query(
+                        &mut None,
+                        SequencerAdminQuery::StartSequencer(test_hash, tx),
                     )
                     .await;
                 rx.await.unwrap()

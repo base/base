@@ -4,7 +4,7 @@ mod build;
 pub use build::{BuildOutcome, PayloadBuilder, UnsealedPayloadHandle};
 
 mod config;
-pub use config::SequencerConfig;
+pub use config::{SequencerConfig, SequencerSyncMode};
 
 mod l1_origin;
 #[cfg(test)]
