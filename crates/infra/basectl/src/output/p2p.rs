@@ -108,16 +108,18 @@ impl P2pInfoTable {
             format_discovery_flags(endpoint.discovery.v4_enabled, endpoint.discovery.v5_enabled)
                 .to_string()
         });
-        let (cl_peer_count, cl_max_peer_count) = match peer_stats.cl {
-            Some(stats) => (
-                stats.connected.to_string(),
-                stats
-                    .max_peer_count
-                    .map(|count| count.to_string())
-                    .unwrap_or_else(unavailable_cl_max_peer_count),
-            ),
-            None => (unavailable_cl_peer_stats(), unavailable_cl_max_peer_count_without_rpc()),
-        };
+        let (cl_peer_count, cl_max_peer_count) = peer_stats.cl.map_or_else(
+            || (unavailable_cl_peer_stats(), unavailable_cl_max_peer_count_without_rpc()),
+            |stats| {
+                (
+                    stats.connected.to_string(),
+                    stats
+                        .max_peer_count
+                        .map(|count| count.to_string())
+                        .unwrap_or_else(unavailable_cl_max_peer_count),
+                )
+            },
+        );
 
         table
             .row("network", network)
