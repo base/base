@@ -86,8 +86,6 @@ impl Metrics {
     pub const CONSOLIDATE_TASK_LABEL: &str = "consolidate";
     /// Delegated forkchoice task label.
     pub const DELEGATED_FORKCHOICE_TASK_LABEL: &str = "delegated-forkchoice";
-    /// Forkchoice task label.
-    pub const FORKCHOICE_TASK_LABEL: &str = "forkchoice-update";
     /// Build task label.
     pub const BUILD_TASK_LABEL: &str = "build";
     /// Get-payload task label.

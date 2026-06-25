@@ -281,9 +281,8 @@ impl Engine {
         let payload =
             Self::fetch_payload(config.as_ref(), client.as_ref(), payload_id, &attributes).await?;
 
-        let new_block_ref = L2BlockInfo::from_payload_and_genesis(
-            payload.execution_payload.clone(),
-            attributes.attributes().payload_attributes.parent_beacon_block_root,
+        let new_block_ref = L2BlockInfo::from_payload_header_and_genesis(
+            &payload.execution_payload,
             &config.genesis,
         )
         .map_err(SealTaskError::FromBlock)?;
