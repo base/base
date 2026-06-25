@@ -3410,7 +3410,6 @@ dependencies = [
  "base-observability-events",
  "clap",
  "eyre",
- "humantime",
  "rstest",
 ]
 

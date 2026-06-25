@@ -23,7 +23,6 @@ clap = { workspace = true, features = ["derive", "env"] }
 
 # misc
 eyre.workspace = true
-humantime.workspace = true
 
 [dev-dependencies]
 # workspace
