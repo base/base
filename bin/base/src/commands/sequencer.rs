@@ -205,6 +205,8 @@ mod tests {
             "--rollup.sequencer-headers",
             "Authorization: Bearer token",
             "--sequencer.stopped",
+            "--sequencer.sync-mode",
+            "el",
             "--conductor.rpc",
             "http://localhost:9090",
             "--p2p.sequencer.key",
@@ -228,6 +230,7 @@ mod tests {
             vec!["Authorization: Bearer token"]
         );
         assert!(sequencer.consensus.sequencer_flags.stopped);
+        assert_eq!(sequencer.consensus.sequencer_flags.sync_mode.to_string(), "el");
         assert_eq!(
             sequencer.consensus.sequencer_flags.conductor_rpc.as_ref().map(url::Url::as_str),
             Some("http://localhost:9090/")

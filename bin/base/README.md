@@ -57,6 +57,8 @@ Useful sequencer-specific flags include:
 
 - `--sequencer.stopped` starts the process with sequencing disabled until the admin API starts it.
 - `--sequencer.recover` enables recovery mode and forces empty block production.
+- `--sequencer.sync-mode` selects whether startup sync completes through CL gossip (`cl`, the
+  default) or the execution layer's canonical head (`el`).
 - `--conductor.rpc` enables conductor-backed leader checks.
 - `--conductor.binary-commit` uses the conductor binary commit endpoint.
 - `--flashblocks.port` selects the Flashblocks websocket port.

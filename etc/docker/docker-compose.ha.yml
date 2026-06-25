@@ -174,6 +174,8 @@ services:
       - "${L2_CL_BOOTNODE_ENR_PATH}"
       - --sequencer.l1-confs
       - "0"
+      - --sequencer.sync-mode
+      - "${BASE_NODE_SEQUENCER_SYNC_MODE}"
       - --sequencer.stopped
       - --conductor.rpc
       - http://op-conductor-1:${CONDUCTOR1_RPC_PORT}
@@ -285,6 +287,8 @@ services:
       - "${L2_CL_BOOTNODE_ENR_PATH}"
       - --sequencer.l1-confs
       - "0"
+      - --sequencer.sync-mode
+      - "${BASE_NODE_SEQUENCER_SYNC_MODE}"
       - --sequencer.stopped
       - --conductor.rpc
       - http://op-conductor-2:${CONDUCTOR2_RPC_PORT}

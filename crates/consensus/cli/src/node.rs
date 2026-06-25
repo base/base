@@ -1109,6 +1109,7 @@ mod tests {
             sequencer_flags: SequencerArgs {
                 stopped: true,
                 conductor_rpc: Some(conductor_rpc.clone()),
+                sync_mode: base_consensus_node::SequencerSyncMode::El,
                 ..SequencerArgs::default()
             },
             l1_rpc_args: L1ClientArgs::default(),
@@ -1125,6 +1126,7 @@ mod tests {
         assert_eq!(config.p2p_flags.signer.sequencer_key, Some(key));
         assert_eq!(config.rpc_flags.listen_port, 9546);
         assert!(config.sequencer_flags.stopped);
+        assert_eq!(config.sequencer_flags.sync_mode, base_consensus_node::SequencerSyncMode::El);
         assert_eq!(config.sequencer_flags.conductor_rpc, Some(conductor_rpc));
     }
 }

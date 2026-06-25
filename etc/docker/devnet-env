@@ -199,6 +199,10 @@ TRANSACTION_EVENTS_VECTOR_ADVERTISE_IP=172.30.0.32
 # Set to 0 to disable (default). Try 4 to test delayed safe head.
 BASE_NODE_VERIFIER_L1_CONFS=15
 
+# Local devnet opts sequencers into execution-layer sync. The runtime CLI default remains `cl`;
+# set this to `cl` to exercise the legacy gossip-driven sequencer sync path.
+BASE_NODE_SEQUENCER_SYNC_MODE=el
+
 # Chain Configuration
 L1_CHAIN_ID=1337
 L2_CHAIN_ID=84538453
