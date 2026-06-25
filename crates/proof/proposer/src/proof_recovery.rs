@@ -340,6 +340,7 @@ mod tests {
             games: Vec::new(),
             game_count_override: Some(n as u64),
             uuid_games,
+            uuid_game_responses: None,
             games_should_fail: false,
             game_count_calls: None,
         };
