@@ -20,7 +20,7 @@ use anyhow::{Context, Result, bail};
 use aws_sdk_s3::{
     Client as S3Client,
     primitives::ByteStream,
-    types::{CompletedMultipartUpload, CompletedPart},
+    types::{CompletedMultipartUpload, CompletedPart, Delete, ObjectIdentifier},
 };
 use futures::stream::{self, StreamExt, TryStreamExt};
 use tracing::{debug, info, warn};
@@ -39,6 +39,18 @@ const MULTIPART_THRESHOLD: u64 = 100 * 1024 * 1024;
 
 /// Part size for multipart uploads (100 `MiB`).
 const MULTIPART_PART_SIZE: u64 = 100 * 1024 * 1024;
+
+/// Maximum number of objects per S3-compatible delete batch.
+const DELETE_OBJECT_BATCH_SIZE: usize = 1000;
+
+/// Completed timestamped snapshot run discovered from a published manifest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnapshotRun {
+    /// Unix timestamp used as the run directory name.
+    pub timestamp: u64,
+    /// Full object key for the run's `manifest.json`.
+    pub manifest_key: String,
+}
 
 /// Determines whether a snapshot component is re-uploaded every run
 /// or can be skipped when the remote copy already matches.
@@ -98,11 +110,46 @@ impl SnapshotUploader {
     /// found manifest is logged and treated as no-previous (so we fall back to
     /// re-uploading everything rather than failing the run).
     pub async fn fetch_previous_manifest(&self) -> Result<Option<SnapshotManifest>> {
-        let manifest_suffix = "/manifest.json";
+        let runs = self.list_completed_runs().await?;
+        let best = runs.into_iter().max_by_key(|run| run.timestamp);
+
+        let Some(run) = best else {
+            debug!("no previous manifest found");
+            return Ok(None);
+        };
+
+        debug!(timestamp = run.timestamp, key = %run.manifest_key, "fetching previous manifest");
+        let resp = self
+            .client
+            .get_object()
+            .bucket(&self.bucket)
+            .key(&run.manifest_key)
+            .send()
+            .await
+            .with_context(|| format!("failed to fetch previous manifest {}", run.manifest_key))?;
+
+        let bytes = resp
+            .body
+            .collect()
+            .await
+            .with_context(|| format!("failed to read previous manifest body {}", run.manifest_key))?
+            .into_bytes();
+
+        match serde_json::from_slice::<SnapshotManifest>(&bytes) {
+            Ok(manifest) => Ok(Some(manifest)),
+            Err(e) => {
+                warn!(error = %e, key = %run.manifest_key, "failed to parse previous manifest, treating as missing");
+                Ok(None)
+            }
+        }
+    }
+
+    /// Lists completed timestamped run directories by looking for published manifests.
+    pub async fn list_completed_runs(&self) -> Result<Vec<SnapshotRun>> {
         let list_prefix =
             if self.prefix.is_empty() { String::new() } else { format!("{}/", self.prefix) };
 
-        let mut best: Option<(u64, String)> = None;
+        let mut runs = Vec::new();
         let mut continuation_token = None;
 
         loop {
@@ -121,14 +168,8 @@ impl SnapshotUploader {
 
             for obj in resp.contents() {
                 let Some(key) = obj.key() else { continue };
-                let Some(rest) = key.strip_prefix(list_prefix.as_str()) else { continue };
-                let Some(timestamp_str) = rest.strip_suffix(manifest_suffix) else { continue };
-                if timestamp_str.contains('/') {
-                    continue;
-                }
-                let Ok(timestamp) = timestamp_str.parse::<u64>() else { continue };
-                if best.as_ref().is_none_or(|(prev, _)| timestamp > *prev) {
-                    best = Some((timestamp, key.to_string()));
+                if let Some(run) = Self::parse_completed_run_manifest_key(key, &list_prefix) {
+                    runs.push(run);
                 }
             }
 
@@ -139,35 +180,46 @@ impl SnapshotUploader {
             }
         }
 
-        let Some((timestamp, key)) = best else {
-            debug!("no previous manifest found");
-            return Ok(None);
-        };
+        runs.sort_unstable_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        Ok(runs)
+    }
 
-        debug!(timestamp, key = %key, "fetching previous manifest");
-        let resp = self
-            .client
-            .get_object()
-            .bucket(&self.bucket)
-            .key(&key)
-            .send()
-            .await
-            .with_context(|| format!("failed to fetch previous manifest {key}"))?;
+    /// Prunes old completed timestamped run directories, retaining the newest `retain_runs`.
+    pub async fn prune_old_runs(&self, retain_runs: usize) -> Result<()> {
+        let runs = self.list_completed_runs().await?;
+        let expired = Self::expired_run_timestamps(&runs, retain_runs);
 
-        let bytes = resp
-            .body
-            .collect()
-            .await
-            .with_context(|| format!("failed to read previous manifest body {key}"))?
-            .into_bytes();
-
-        match serde_json::from_slice::<SnapshotManifest>(&bytes) {
-            Ok(manifest) => Ok(Some(manifest)),
-            Err(e) => {
-                warn!(error = %e, key = %key, "failed to parse previous manifest, treating as missing");
-                Ok(None)
-            }
+        if expired.is_empty() {
+            info!(retain_runs, total_runs = runs.len(), "no old snapshot runs to prune");
+            return Ok(());
         }
+
+        for timestamp in expired {
+            let run_prefix = self.run_prefix(timestamp);
+            let deleted_objects = self.delete_prefix(&run_prefix).await?;
+            info!(timestamp, run_prefix = %run_prefix, deleted_objects, "pruned old snapshot run");
+        }
+
+        Ok(())
+    }
+
+    /// Parses a run manifest key of the form `{list_prefix}{timestamp}/manifest.json`.
+    pub fn parse_completed_run_manifest_key(key: &str, list_prefix: &str) -> Option<SnapshotRun> {
+        let rest = key.strip_prefix(list_prefix)?;
+        let timestamp_str = rest.strip_suffix("/manifest.json")?;
+        if timestamp_str.contains('/') {
+            return None;
+        }
+        let timestamp = timestamp_str.parse::<u64>().ok()?;
+        Some(SnapshotRun { timestamp, manifest_key: key.to_string() })
+    }
+
+    /// Returns the completed run timestamps that exceed the retention window.
+    pub fn expired_run_timestamps(runs: &[SnapshotRun], retain_runs: usize) -> Vec<u64> {
+        let mut timestamps: Vec<u64> = runs.iter().map(|run| run.timestamp).collect();
+        timestamps.sort_unstable_by(|a, b| b.cmp(a));
+        timestamps.dedup();
+        timestamps.into_iter().skip(retain_runs).collect()
     }
 
     /// Uploads snapshot artifacts with diff-based optimization.
@@ -182,6 +234,7 @@ impl SnapshotUploader {
         output_dir: &Path,
         files: &[PathBuf],
         timestamp: u64,
+        retain_runs: usize,
         local_manifest: &SnapshotManifest,
         remote_manifest: Option<&SnapshotManifest>,
     ) -> Result<String> {
@@ -291,6 +344,10 @@ impl SnapshotUploader {
         progress_logger.abort();
         upload_result?;
 
+        if let Err(e) = self.prune_old_runs(retain_runs).await {
+            warn!(error = %e, retain_runs, "failed to prune old snapshot runs");
+        }
+
         info!(
             run_prefix = %run_prefix,
             manifest_key = %manifest_key,
@@ -364,6 +421,79 @@ impl SnapshotUploader {
 
         debug!(prefix = %prefix, count = remote.len(), "listed remote objects");
         Ok(remote)
+    }
+
+    /// Lists full object keys under a prefix.
+    async fn list_remote_keys(&self, prefix: &str) -> Result<Vec<String>> {
+        let prefix_with_slash = format!("{prefix}/");
+        let mut keys = Vec::new();
+        let mut continuation_token = None;
+
+        loop {
+            let mut req =
+                self.client.list_objects_v2().bucket(&self.bucket).prefix(&prefix_with_slash);
+
+            if let Some(token) = continuation_token.take() {
+                req = req.continuation_token(token);
+            }
+
+            let resp = req
+                .send()
+                .await
+                .with_context(|| format!("failed to list objects under {prefix_with_slash}"))?;
+
+            for obj in resp.contents() {
+                if let Some(key) = obj.key() {
+                    keys.push(key.to_string());
+                }
+            }
+
+            if resp.is_truncated() == Some(true) {
+                continuation_token = resp.next_continuation_token().map(String::from);
+            } else {
+                break;
+            }
+        }
+
+        Ok(keys)
+    }
+
+    /// Deletes all objects under a prefix and returns the number of deleted keys.
+    async fn delete_prefix(&self, prefix: &str) -> Result<usize> {
+        let keys = self.list_remote_keys(prefix).await?;
+        if keys.is_empty() {
+            return Ok(0);
+        }
+
+        for batch in keys.chunks(DELETE_OBJECT_BATCH_SIZE) {
+            let objects = batch
+                .iter()
+                .map(|key| ObjectIdentifier::builder().key(key).build())
+                .collect::<Result<Vec<_>, _>>()?;
+            let delete = Delete::builder().set_objects(Some(objects)).quiet(true).build()?;
+            let resp = self
+                .client
+                .delete_objects()
+                .bucket(&self.bucket)
+                .delete(delete)
+                .send()
+                .await
+                .with_context(|| format!("failed to delete objects under {prefix}"))?;
+
+            if !resp.errors().is_empty() {
+                for err in resp.errors() {
+                    warn!(
+                        key = %err.key().unwrap_or("<unknown>"),
+                        code = %err.code().unwrap_or("<unknown>"),
+                        message = %err.message().unwrap_or("<unknown>"),
+                        "failed to delete snapshot run object"
+                    );
+                }
+                bail!("failed to delete one or more objects under {prefix}");
+            }
+        }
+
+        Ok(keys.len())
     }
 
     /// Uploads a single file, using multipart upload for files above the threshold.
@@ -631,5 +761,66 @@ mod tests {
             UploadStrategy::classify("custom_component-100-200.tar.zst"),
             UploadStrategy::DiffByHash
         );
+    }
+
+    #[test]
+    fn parse_completed_run_manifest_key_accepts_timestamp_dirs() {
+        assert_eq!(
+            SnapshotUploader::parse_completed_run_manifest_key(
+                "mainnet/1710000002/manifest.json",
+                "mainnet/"
+            ),
+            Some(SnapshotRun {
+                timestamp: 1_710_000_002,
+                manifest_key: "mainnet/1710000002/manifest.json".to_string(),
+            })
+        );
+
+        assert_eq!(
+            SnapshotUploader::parse_completed_run_manifest_key("1710000002/manifest.json", ""),
+            Some(SnapshotRun {
+                timestamp: 1_710_000_002,
+                manifest_key: "1710000002/manifest.json".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn parse_completed_run_manifest_key_rejects_non_run_keys() {
+        assert_eq!(
+            SnapshotUploader::parse_completed_run_manifest_key(
+                "mainnet/static_files/manifest.json",
+                "mainnet/"
+            ),
+            None
+        );
+        assert_eq!(
+            SnapshotUploader::parse_completed_run_manifest_key(
+                "mainnet/1710000002/state.tar.zst",
+                "mainnet/"
+            ),
+            None
+        );
+        assert_eq!(
+            SnapshotUploader::parse_completed_run_manifest_key(
+                "other/1710000002/manifest.json",
+                "mainnet/"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn expired_run_timestamps_keeps_latest_n() {
+        let runs = vec![
+            SnapshotRun { timestamp: 10, manifest_key: "10/manifest.json".to_string() },
+            SnapshotRun { timestamp: 30, manifest_key: "30/manifest.json".to_string() },
+            SnapshotRun { timestamp: 20, manifest_key: "20/manifest.json".to_string() },
+            SnapshotRun { timestamp: 40, manifest_key: "40/manifest.json".to_string() },
+        ];
+
+        assert_eq!(SnapshotUploader::expired_run_timestamps(&runs, 3), vec![10]);
+        assert_eq!(SnapshotUploader::expired_run_timestamps(&runs, 2), vec![20, 10]);
+        assert!(SnapshotUploader::expired_run_timestamps(&runs, 4).is_empty());
     }
 }

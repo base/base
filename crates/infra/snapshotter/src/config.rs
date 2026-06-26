@@ -1,6 +1,6 @@
 //! CLI configuration for the snapshotter sidecar.
 
-use std::path::PathBuf;
+use std::{num::NonZeroUsize, path::PathBuf};
 
 use clap::{Parser, ValueEnum};
 
@@ -66,6 +66,13 @@ pub struct SnapshotterConfig {
     /// Defaults to half the available CPUs.
     #[arg(long)]
     pub snapshot_threads: Option<usize>,
+
+    /// Number of completed timestamped snapshot run directories to retain remotely.
+    ///
+    /// Older `{prefix}/{timestamp}/` directories are deleted after a successful
+    /// upload. The append-only `{prefix}/static_files/` directory is never pruned.
+    #[arg(long, env = "SNAPSHOTTER_RETAIN_RUNS", default_value = "3")]
+    pub retain_runs: NonZeroUsize,
 
     /// Docker socket path.
     #[arg(long, default_value = "/var/run/docker.sock")]

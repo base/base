@@ -149,6 +149,7 @@ impl<C: ContainerManager> Snapshotter<C> {
                 &run_output_dir,
                 &files,
                 run_timestamp,
+                self.config.retain_runs.get(),
                 &local_manifest,
                 remote_manifest.as_ref(),
             )

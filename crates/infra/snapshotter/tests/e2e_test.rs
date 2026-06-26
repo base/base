@@ -2,6 +2,7 @@
 
 use std::{
     collections::{BTreeMap, HashMap},
+    num::NonZeroUsize,
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
 };
@@ -260,7 +261,7 @@ async fn upload_artifacts_to_minio() -> Result<()> {
     let local_manifest = parse_local_manifest(&output_dir)?;
 
     let upload_prefix =
-        uploader.upload(&output_dir, &files, 1_700_000_000, &local_manifest, None).await?;
+        uploader.upload(&output_dir, &files, 1_700_000_000, 100, &local_manifest, None).await?;
     assert_eq!(upload_prefix, "mainnet/1700000000", "run prefix should be date-based");
 
     let s3 = &harness.storage_client;
@@ -326,7 +327,7 @@ async fn upload_with_empty_prefix() -> Result<()> {
     let local_manifest = parse_local_manifest(&output_dir)?;
 
     let upload_prefix =
-        uploader.upload(&output_dir, &files, 1_700_000_000, &local_manifest, None).await?;
+        uploader.upload(&output_dir, &files, 1_700_000_000, 100, &local_manifest, None).await?;
     assert_eq!(upload_prefix, "1700000000", "empty prefix should produce bare date");
 
     let s3 = &harness.storage_client;
@@ -454,7 +455,7 @@ async fn diff_upload_skips_chunks_when_blake3_matches() -> Result<()> {
     assert!(remote_manifest.is_some(), "should find the pre-seeded previous manifest");
 
     uploader
-        .upload(&output_dir, &files, 1_700_000_000, &local_manifest, remote_manifest.as_ref())
+        .upload(&output_dir, &files, 1_700_000_000, 100, &local_manifest, remote_manifest.as_ref())
         .await?;
 
     // Verify: pre-seeded chunks were NOT overwritten (skipped due to blake3 match).
@@ -549,7 +550,7 @@ async fn diff_upload_reuploads_on_blake3_mismatch_even_when_size_matches() -> Re
     let remote_manifest = uploader.fetch_previous_manifest().await?;
 
     uploader
-        .upload(&output_dir, &files, 1_700_000_000, &local_manifest, remote_manifest.as_ref())
+        .upload(&output_dir, &files, 1_700_000_000, 100, &local_manifest, remote_manifest.as_ref())
         .await?;
 
     // Verify every chunk was re-uploaded with the fresh bytes.
@@ -592,7 +593,7 @@ async fn diff_upload_uploads_everything_on_first_run() -> Result<()> {
     assert!(remote_manifest.is_none(), "fresh bucket should have no previous manifest");
 
     uploader
-        .upload(&output_dir, &files, 1_700_000_000, &local_manifest, remote_manifest.as_ref())
+        .upload(&output_dir, &files, 1_700_000_000, 100, &local_manifest, remote_manifest.as_ref())
         .await?;
 
     let body =
@@ -734,7 +735,7 @@ async fn always_upload_overwrites_existing_state_and_rocksdb() -> Result<()> {
     ];
 
     let upload_prefix = uploader
-        .upload(&output_dir, &files, 1_700_000_000, &empty_manifest(2_000_000), None)
+        .upload(&output_dir, &files, 1_700_000_000, 100, &empty_manifest(2_000_000), None)
         .await?;
     assert_eq!(upload_prefix, "overwrite-test/1700000000");
 
@@ -800,6 +801,7 @@ async fn orchestrator_always_restarts_on_failure() -> Result<()> {
         block: Some(100),
         blocks_per_file: Some(500_000),
         snapshot_threads: None,
+        retain_runs: NonZeroUsize::new(3).expect("retain runs should be non-zero"),
         docker_socket: "/var/run/docker.sock".to_string(),
         s3_config_type: base_snapshotter::S3ConfigType::Aws,
         s3_endpoint: None,
@@ -868,7 +870,7 @@ async fn e2e_stop_upload_restart_real_container() -> Result<()> {
         None,
     );
     let upload_prefix =
-        uploader.upload(&output_dir, &files, 1_700_000_000, &local_manifest, None).await?;
+        uploader.upload(&output_dir, &files, 1_700_000_000, 100, &local_manifest, None).await?;
 
     let manifest_body = get_object_bytes(
         &harness.storage_client,

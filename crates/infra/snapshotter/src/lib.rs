@@ -23,7 +23,7 @@ pub use snapshot::{
 };
 
 mod upload;
-pub use upload::{SnapshotUploader, UploadStrategy};
+pub use upload::{SnapshotRun, SnapshotUploader, UploadStrategy};
 
 mod orchestrator;
 pub use orchestrator::Snapshotter;
