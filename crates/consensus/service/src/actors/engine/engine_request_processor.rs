@@ -436,23 +436,28 @@ where
             })?
     }
 
-    /// Attempts to send the [`crate::DerivationActor`] the safe head if updated.
+    /// Attempts to send the [`crate::DerivationActor`] the current safe head.
     async fn send_derivation_actor_safe_head_if_updated(&mut self) -> Result<(), EngineError> {
         let engine_safe_head = self.engine.state().sync_state.safe_head();
-        if engine_safe_head == self.last_safe_head_sent {
-            info!(target: "engine", safe_head = engine_safe_head.block_info.number, "Safe head unchanged");
-            debug!(target: "engine", safe_head = ?engine_safe_head, "unchanged safe head");
-            // This was already sent, so do not send it.
+        if engine_safe_head == L2BlockInfo::default() {
+            debug!(target: "engine", "Skipping default safe head update");
             return Ok(());
         }
+
+        let is_retry = engine_safe_head == self.last_safe_head_sent;
 
         self.derivation_client.send_new_engine_safe_head(engine_safe_head).await.map_err(|e| {
             error!(target: "engine", ?e, "Failed to send new engine safe head");
             EngineError::ChannelClosed
         })?;
 
-        info!(target: "engine", safe_head = engine_safe_head.block_info.number, "Attempted L2 Safe Head Update");
-        debug!(target: "engine", safe_head = ?engine_safe_head, "Attempted L2 Safe Head Update");
+        info!(
+            target: "engine",
+            safe_head = engine_safe_head.block_info.number,
+            retry = is_retry,
+            "Attempted L2 Safe Head Update"
+        );
+        debug!(target: "engine", safe_head = ?engine_safe_head, retry = is_retry, "Attempted L2 Safe Head Update");
         self.last_safe_head_sent = engine_safe_head;
 
         Ok(())
@@ -1161,6 +1166,42 @@ mod tests {
         }
 
         assert_eq!(*queue_rx.borrow(), expected_queue_len);
+    }
+
+    #[tokio::test]
+    async fn safe_head_update_is_retried_when_head_is_unchanged() {
+        let safe_head = test_block_info(90);
+
+        let client = Arc::new(test_engine_client_builder().build());
+        let mut mock_derivation = MockEngineDerivationClient::new();
+        mock_derivation.expect_send_new_engine_safe_head().times(2).returning(|_| Ok(()));
+
+        let initial_state = TestEngineStateBuilder::new()
+            .with_safe_head(safe_head)
+            .with_unsafe_head(test_block_info(91))
+            .with_el_sync_finished(true)
+            .build();
+        let (state_tx, _state_rx) = watch::channel(initial_state);
+        let (queue_tx, _queue_rx) = watch::channel(0usize);
+        let engine = Engine::new(initial_state, state_tx, queue_tx);
+
+        let mut processor = EngineProcessor::new(
+            client,
+            Arc::new(RollupConfig::default()),
+            mock_derivation,
+            engine,
+            EngineProcessorOptions {
+                node_mode: NodeMode::Validator,
+                unsafe_head_tx: None,
+                conductor: None,
+                sequencer_stopped: false,
+            },
+        );
+
+        processor.send_derivation_actor_safe_head_if_updated().await.unwrap();
+        processor.send_derivation_actor_safe_head_if_updated().await.unwrap();
+
+        assert_eq!(processor.last_safe_head_sent, safe_head);
     }
 
     /// Verifies that when a standalone sequencer (no conductor) is beyond genesis and reth
