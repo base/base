@@ -93,6 +93,8 @@ pub struct MockEngineStorage {
     /// Storage for L2 blocks by stringified `BlockId`.
     /// L2 blocks use Base transactions.
     pub l2_blocks_by_id: HashMap<String, Block<BaseTransaction>>,
+    /// Errors returned for full L2 block requests by stringified `BlockId`.
+    pub l2_full_block_errors_by_id: HashMap<String, ErrorPayload>,
     /// Storage for proofs by (address, stringified `BlockId`) key.
     pub proofs_by_address: HashMap<(Address, String), EIP1186AccountProofResponse>,
 }
@@ -263,6 +265,13 @@ impl MockEngineClientBuilder {
         self
     }
 
+    /// Sets an error for full L2 block requests for a specific `BlockId`.
+    pub fn with_l2_full_block_error(mut self, block_id: BlockId, error: ErrorPayload) -> Self {
+        let key = block_id_to_key(&block_id);
+        self.storage.l2_full_block_errors_by_id.insert(key, error);
+        self
+    }
+
     /// Sets a proof response for a specific address and `BlockId`.
     pub fn with_proof(
         mut self,
@@ -418,6 +427,12 @@ impl MockEngineClient {
         self.storage.write().await.l2_blocks_by_id.insert(key, block);
     }
 
+    /// Sets an error for full L2 block requests for a specific `BlockId`.
+    pub async fn set_l2_full_block_error(&self, block_id: BlockId, error: ErrorPayload) {
+        let key = block_id_to_key(&block_id);
+        self.storage.write().await.l2_full_block_errors_by_id.insert(key, error);
+    }
+
     /// Sets a proof response for a specific address and `BlockId`.
     pub async fn set_proof(
         &self,
@@ -466,6 +481,12 @@ impl EngineClient for MockEngineClient {
 
                 ProviderCall::BoxedFuture(Box::pin(async move {
                     let storage_guard = storage.read().await;
+                    if _kind.is_full()
+                        && let Some(error) =
+                            storage_guard.l2_full_block_errors_by_id.get(&block_key)
+                    {
+                        return Err(TransportError::ErrorResp(error.clone()));
+                    }
                     Ok(storage_guard.l2_blocks_by_id.get(&block_key).cloned())
                 }))
             }),
