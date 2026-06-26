@@ -4,7 +4,6 @@
 use std::{
     collections::{HashMap, VecDeque},
     sync::{Arc, Mutex},
-    time::Duration,
 };
 
 use alloy_consensus::{
@@ -32,9 +31,6 @@ use base_prover_service_protocol::{
 use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager};
 
 use crate::L1HeadProvider;
-
-/// Discovery interval used in tests (5 minutes).
-pub const TEST_DISCOVERY_INTERVAL: Duration = Duration::from_secs(300);
 
 /// Per-game state for the mock verifier.
 #[derive(Debug, Clone)]
@@ -230,40 +226,27 @@ pub fn mock_anchor_registry(anchor_game: Address) -> Arc<dyn AnchorStateRegistry
 /// Mock aggregate verifier with configurable per-address game state.
 ///
 /// Uses interior mutability (`Mutex`) so that multi-step driver tests can
-/// update game state between steps to simulate on-chain effects (e.g.
+/// update game state between steps to simulate onchain effects (e.g.
 /// setting `status = 1` after a successful challenge transaction).
 #[derive(Debug)]
 pub struct MockAggregateVerifier {
     /// Per-address game state lookup, wrapped in a `Mutex` for interior
     /// mutability in multi-step tests.
     pub games: Mutex<HashMap<Address, MockGameState>>,
-    /// Addresses passed to `bond_recipient`, used by tests that assert polling
-    /// avoids redundant lifecycle reads.
-    pub bond_recipient_reads: Mutex<Vec<Address>>,
 }
 
 impl MockAggregateVerifier {
     /// Creates a new mock verifier from a pre-built game state map.
     pub const fn new(games: HashMap<Address, MockGameState>) -> Self {
-        Self { games: Mutex::new(games), bond_recipient_reads: Mutex::new(Vec::new()) }
+        Self { games: Mutex::new(games) }
     }
 
     /// Updates the state for a specific game address.
     ///
-    /// Multi-step driver tests call this between steps to simulate on-chain
+    /// Multi-step driver tests call this between steps to simulate onchain
     /// state changes (e.g. marking a game as resolved after proof submission).
     pub fn update_game(&self, address: Address, state: MockGameState) {
         self.games.lock().unwrap().insert(address, state);
-    }
-
-    /// Returns how many times `bond_recipient` was read for a game.
-    pub fn bond_recipient_read_count(&self, game_address: Address) -> usize {
-        self.bond_recipient_reads
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|&&read_address| read_address == game_address)
-            .count()
     }
 
     fn get<T>(
@@ -351,7 +334,6 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     }
 
     async fn bond_recipient(&self, game_address: Address) -> Result<Address, ContractError> {
-        self.bond_recipient_reads.lock().unwrap().push(game_address);
         self.get(game_address, |s| s.bond_recipient)
     }
 
@@ -834,26 +816,40 @@ impl L1HeadProvider for MockL1HeadProvider {
 }
 
 /// Mock transaction manager for testing the driver and submitter.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MockTxManager {
     /// Queue of responses returned by [`send`](TxManager::send).
-    pub responses: Mutex<VecDeque<SendResponse>>,
+    pub responses: Arc<Mutex<VecDeque<SendResponse>>>,
+    /// Recorded transaction candidates.
+    pub calls: Arc<Mutex<Vec<TxCandidate>>>,
 }
 
 impl MockTxManager {
     /// Creates a new mock with a single pre-configured response.
     pub fn new(response: SendResponse) -> Self {
-        Self { responses: Mutex::new(VecDeque::from([response])) }
+        Self {
+            responses: Arc::new(Mutex::new(VecDeque::from([response]))),
+            calls: Arc::new(Mutex::new(Vec::new())),
+        }
     }
 
     /// Creates a new mock with multiple responses returned in order.
     pub fn with_responses(responses: Vec<SendResponse>) -> Self {
-        Self { responses: Mutex::new(VecDeque::from(responses)) }
+        Self {
+            responses: Arc::new(Mutex::new(VecDeque::from(responses))),
+            calls: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    /// Returns submitted transaction candidates.
+    pub fn recorded_calls(&self) -> Vec<TxCandidate> {
+        self.calls.lock().unwrap().clone()
     }
 }
 
 impl TxManager for MockTxManager {
-    async fn send(&self, _candidate: TxCandidate) -> SendResponse {
+    async fn send(&self, candidate: TxCandidate) -> SendResponse {
+        self.calls.lock().unwrap().push(candidate);
         self.responses.lock().unwrap().pop_front().expect("MockTxManager has no more responses")
     }
 
@@ -942,51 +938,6 @@ pub fn build_test_header_and_account_for_address(
         storage_proof: vec![],
     };
     (header, account_result)
-}
-
-/// Mock bond transaction submitter for testing the [`BondManager`](crate::BondManager).
-///
-/// Records all submitted transactions and returns pre-configured responses.
-#[derive(Debug)]
-pub struct MockBondTransactionSubmitter {
-    /// Queue of results returned by [`send_bond_tx`](crate::BondTransactionSubmitter::send_bond_tx).
-    pub responses: Mutex<VecDeque<Result<B256, crate::ChallengeSubmitError>>>,
-    /// Recorded `(game_address, to, calldata)` tuples for each submitted transaction.
-    pub calls: Mutex<Vec<(Address, Address, Bytes)>>,
-}
-
-impl MockBondTransactionSubmitter {
-    /// Creates a mock that returns a single successful transaction hash.
-    pub fn success(tx_hash: B256) -> Self {
-        Self { responses: Mutex::new(VecDeque::from([Ok(tx_hash)])), calls: Mutex::new(Vec::new()) }
-    }
-
-    /// Creates a mock with multiple responses returned in order.
-    pub fn with_responses(responses: Vec<Result<B256, crate::ChallengeSubmitError>>) -> Self {
-        Self { responses: Mutex::new(VecDeque::from(responses)), calls: Mutex::new(Vec::new()) }
-    }
-
-    /// Returns the recorded calls as `(game_address, to, calldata)` tuples.
-    pub fn recorded_calls(&self) -> Vec<(Address, Address, Bytes)> {
-        self.calls.lock().unwrap().clone()
-    }
-}
-
-#[async_trait]
-impl crate::BondTransactionSubmitter for MockBondTransactionSubmitter {
-    async fn send_bond_tx(
-        &self,
-        game_address: Address,
-        to: Address,
-        calldata: Bytes,
-    ) -> Result<B256, crate::ChallengeSubmitError> {
-        self.calls.lock().unwrap().push((game_address, to, calldata));
-        self.responses
-            .lock()
-            .unwrap()
-            .pop_front()
-            .expect("MockBondTransactionSubmitter has no more responses")
-    }
 }
 
 #[cfg(test)]
@@ -1586,7 +1537,7 @@ mod tests {
 
     /// Fully nullified games (both provers zero) are dropped from the
     /// persistent tracking set even while they remain `IN_PROGRESS`,
-    /// because no on-chain transition can make them actionable again.
+    /// because no onchain transition can make them actionable again.
     #[tokio::test]
     async fn test_scan_drops_fully_nullified_games_from_tracking() {
         let tee_addr = Address::repeat_byte(0xEE);

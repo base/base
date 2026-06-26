@@ -111,7 +111,6 @@ base_metrics::define_metrics! {
     bonds_not_claimable_total: counter,
 
     #[describe("Total bond discovery scans performed")]
-    #[label(name = "scan_type", default = ["full", "incremental"])]
     bond_discovery_scans_total: counter,
 
     #[describe("Total claimable games found by bond discovery")]
@@ -125,21 +124,10 @@ base_metrics::define_metrics! {
     #[label(name = "status", default = ["success", "error", "skipped"])]
     anchor_update_tx_outcome_total: counter,
 
-    #[describe(
-        "Number of otherwise-removable games currently retained while awaiting anchor state update"
-    )]
-    anchor_update_retained_games: gauge,
+    #[describe("Number of games currently tracked for anchor updates")]
+    anchor_update_tracked_games: gauge,
 
-    #[describe(
-        "Total games retained past bond lifecycle completion while awaiting anchor state update"
-    )]
-    anchor_update_retained_games_total: counter,
-
-    #[describe(
-        "L2 block number of the most recent anchor state successfully advanced by this challenger. \
-         Monotonically increases as the challenger drives the anchor forward; absent until the \
-         first successful setAnchorState() observation."
-    )]
+    #[describe("L2 block number of the most recent successful anchor update")]
     #[no_zero]
     anchor_l2_block_number: gauge,
 
@@ -158,10 +146,10 @@ impl ChallengerMetrics {
     pub const STATUS_ERROR: &str = "error";
 
     /// Label value when a resolve was skipped because the game was already
-    /// resolved on-chain (e.g. by another actor).
+    /// resolved onchain (e.g. by another actor).
     pub const STATUS_ALREADY_RESOLVED: &str = "already_resolved";
 
-    /// Label value when an anchor update was skipped (game not eligible).
+    /// Label value when an anchor update was skipped because the game is not eligible.
     pub const STATUS_SKIPPED: &str = "skipped";
 
     /// Label value for a game fetch failure during bond evaluation.

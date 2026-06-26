@@ -22,8 +22,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::{
-    BondManager, ChallengeSubmitter, ChallengerConfig, ChallengerMetrics, Driver, DriverComponents,
-    DriverConfig, GameScanner, OutputValidator,
+    AnchorUpdater, BondManager, ChallengeSubmitter, ChallengerConfig, ChallengerMetrics, Driver,
+    DriverComponents, DriverConfig, GameScanner, OutputValidator,
 };
 
 /// Top-level challenger service.
@@ -154,18 +154,10 @@ impl ChallengerService {
                 l1_rpc_url,
                 Arc::clone(&factory_client) as Arc<dyn DisputeGameFactoryClient>,
                 config.bond_discovery_lookback_games,
-                config.bond_discovery_interval,
                 TokioRuntime::new(),
             );
-            bm.set_anchor_update_retention(config.anchor_update_retention);
-            info!("starting bond recovery scan");
-            if let Err(e) = bm.startup_scan(&*verifier_client).await {
-                // On failure `bond_scan_head` stays at 0, so
-                // `discover_claimable_games` will progressively scan the
-                // factory over multiple ticks (capped at `lookback` games
-                // per tick). This is intentional: progressive catch-up
-                // is preferable to disabling bond claiming entirely.
-                warn!(error = %e, "bond startup scan failed, continuing without recovery");
+            if let Err(e) = bm.discover_claimable_games(&*verifier_client).await {
+                warn!(error = %e, "bond discovery scan failed during startup");
             }
             info!(tracked = bm.tracked_count(), "bond manager ready");
             Some(bm)
@@ -173,6 +165,7 @@ impl ChallengerService {
             info!("bond claiming disabled (no --bond-claim-addresses)");
             None
         };
+        let anchor_updater = Some(AnchorUpdater::new(TokioRuntime::new()));
 
         // ── 7b. Assemble scanner, validator, and driver ─────────────────────
         let scanner =
@@ -206,6 +199,7 @@ impl ChallengerService {
                 tee,
                 verifier_client,
                 bond_manager,
+                anchor_updater,
             },
         );
 

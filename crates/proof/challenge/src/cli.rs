@@ -128,26 +128,6 @@ pub struct ChallengerArgs {
     )]
     pub bond_discovery_lookback_games: u64,
 
-    /// How often a full rescan of the bond lookback window is performed to
-    /// catch state transitions (games challenged or resolved by other actors).
-    #[arg(
-        long = "bond-discovery-interval",
-        env = cli_env!("BOND_DISCOVERY_INTERVAL"),
-        default_value = "300s",
-        value_parser = humantime::parse_duration
-    )]
-    pub bond_discovery_interval: Duration,
-
-    /// Maximum time to keep a completed bond game tracked while waiting for
-    /// its anchor update to complete.
-    #[arg(
-        long = "anchor-update-retention",
-        env = cli_env!("ANCHOR_UPDATE_RETENTION"),
-        default_value = "24h",
-        value_parser = humantime::parse_duration
-    )]
-    pub anchor_update_retention: Duration,
-
     /// Comma-separated list of addresses to claim bonds on behalf of.
     ///
     /// When set, the challenger will automatically resolve games and claim
