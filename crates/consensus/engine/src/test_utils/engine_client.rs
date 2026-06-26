@@ -31,6 +31,15 @@ pub fn test_engine_client_builder() -> MockEngineClientBuilder {
     MockEngineClientBuilder::new().with_config(Arc::new(RollupConfig::default()))
 }
 
+/// A configurable error for [`MockEngineClient::get_l2_block`].
+#[derive(Debug, Clone)]
+pub enum MockL2BlockError {
+    /// JSON-RPC error response with a structured [`ErrorPayload`].
+    ErrorResp(ErrorPayload),
+    /// Transport-layer custom error whose `to_string()` contains the given string.
+    Custom(String),
+}
+
 /// Mock storage for engine client responses.
 ///
 /// Each API method has version-specific storage to allow tests to verify
@@ -95,6 +104,8 @@ pub struct MockEngineStorage {
     pub l2_blocks_by_id: HashMap<String, Block<BaseTransaction>>,
     /// Storage for proofs by (address, stringified `BlockId`) key.
     pub proofs_by_address: HashMap<(Address, String), EIP1186AccountProofResponse>,
+    /// Error to return from `get_l2_block` instead of block data, if set.
+    pub l2_block_error: Option<MockL2BlockError>,
 }
 
 /// Builder for constructing a [`MockEngineClient`] with pre-configured responses.
@@ -275,6 +286,12 @@ impl MockEngineClientBuilder {
         self
     }
 
+    /// Sets an error to return for all `get_l2_block` calls.
+    pub fn with_l2_block_error(mut self, error: MockL2BlockError) -> Self {
+        self.storage.l2_block_error = Some(error);
+        self
+    }
+
     /// Builds the [`MockEngineClient`] with the configured values.
     ///
     /// # Panics
@@ -428,6 +445,11 @@ impl MockEngineClient {
         let key = block_id_to_key(&block_id);
         self.storage.write().await.proofs_by_address.insert((address, key), proof);
     }
+
+    /// Sets an error to return for all `get_l2_block` calls.
+    pub async fn set_l2_block_error(&self, error: MockL2BlockError) {
+        self.storage.write().await.l2_block_error = Some(error);
+    }
 }
 
 #[async_trait]
@@ -466,6 +488,16 @@ impl EngineClient for MockEngineClient {
 
                 ProviderCall::BoxedFuture(Box::pin(async move {
                     let storage_guard = storage.read().await;
+                    if let Some(err) = storage_guard.l2_block_error.clone() {
+                        return Err(match err {
+                            MockL2BlockError::ErrorResp(payload) => {
+                                TransportError::ErrorResp(payload)
+                            }
+                            MockL2BlockError::Custom(msg) => {
+                                TransportError::from(TransportErrorKind::custom_str(&msg))
+                            }
+                        });
+                    }
                     Ok(storage_guard.l2_blocks_by_id.get(&block_key).cloned())
                 }))
             }),
