@@ -465,11 +465,7 @@ impl AdminActivityChainState {
 #[derive(Debug)]
 enum AdminActivityUpdate {
     Reset(String),
-    ProcessedBlock {
-        block_number: u64,
-        entries: Vec<AdminActivityEntry>,
-        live_admin: Option<Address>,
-    },
+    ProcessedBlock { entries: Vec<AdminActivityEntry>, live_admin: Option<Address> },
     LiveAdmin(Option<Address>),
     LastScannedSafeBlock(u64),
     Status(String),
@@ -522,8 +518,9 @@ impl AdminActivityWatcher {
                     state.clear();
                     state.status = status;
                 }
-                Ok(AdminActivityUpdate::ProcessedBlock { block_number, entries, live_admin }) => {
+                Ok(AdminActivityUpdate::ProcessedBlock { entries, live_admin }) => {
                     let state = &mut states[chain_idx];
+                    let last_processed_block = entries.iter().map(|entry| entry.block_number).max();
                     for entry in entries.into_iter().rev() {
                         state.entries.push_front(entry);
                     }
@@ -533,7 +530,13 @@ impl AdminActivityWatcher {
                     if let Some(admin) = live_admin {
                         state.live_admin = Some(admin);
                     }
-                    state.last_scanned_safe_block = Some(block_number);
+                    if let Some(block_number) = last_processed_block {
+                        state.last_scanned_safe_block = Some(
+                            state
+                                .last_scanned_safe_block
+                                .map_or(block_number, |current| current.max(block_number)),
+                        );
+                    }
                 }
                 Ok(AdminActivityUpdate::LiveAdmin(admin)) => {
                     states[chain_idx].live_admin = admin;
@@ -1740,18 +1743,10 @@ async fn run_admin_activity_streaming(
             }
         };
 
-        let live_admin_client = match make_rpc_client(&rpc_url) {
-            Ok(client) => (Some(client), None),
-            Err(error) => (None, Some(format!("live-admin client build failed: {error}"))),
-        };
+        let live_admin_client = make_rpc_client(&rpc_url)
+            .map_err(|error| format!("live-admin client build failed: {error}"));
 
-        let live_admin_status = match send_safe_live_admin_update(
-            &tx,
-            live_admin_client.0.as_ref(),
-            live_admin_client.1.as_deref(),
-        )
-        .await
-        {
+        let live_admin_status = match send_safe_live_admin_update(&tx, &live_admin_client).await {
             Ok(status) => status,
             Err(()) => return,
         };
@@ -1813,12 +1808,7 @@ async fn run_admin_activity_streaming(
                 {
                     return;
                 }
-                let reset_status = match send_safe_live_admin_update(
-                    &tx,
-                    live_admin_client.0.as_ref(),
-                    live_admin_client.1.as_deref(),
-                )
-                .await
+                let reset_status = match send_safe_live_admin_update(&tx, &live_admin_client).await
                 {
                     Ok(Some(detail)) => {
                         format!(
@@ -1880,14 +1870,14 @@ async fn run_admin_activity_streaming(
                         live_admin_update = Some(admin);
                     }
                 }
-                if tx
-                    .send(AdminActivityUpdate::ProcessedBlock {
-                        block_number: next_block,
-                        entries: block_entries,
-                        live_admin: live_admin_update,
-                    })
-                    .await
-                    .is_err()
+                if !block_entries.is_empty()
+                    && tx
+                        .send(AdminActivityUpdate::ProcessedBlock {
+                            entries: block_entries,
+                            live_admin: live_admin_update,
+                        })
+                        .await
+                        .is_err()
                 {
                     return;
                 }
@@ -1896,8 +1886,7 @@ async fn run_admin_activity_streaming(
                 next_block += 1;
             }
 
-            let scanned = last_safe_block.unwrap_or(safe_number);
-            if tx.send(AdminActivityUpdate::LastScannedSafeBlock(scanned)).await.is_err() {
+            if tx.send(AdminActivityUpdate::LastScannedSafeBlock(scan_end)).await.is_err() {
                 return;
             }
         }
@@ -1959,12 +1948,11 @@ async fn fetch_safe_live_admin(client: &HttpClient) -> Result<Option<Address>, S
 
 async fn send_safe_live_admin_update(
     tx: &mpsc::Sender<AdminActivityUpdate>,
-    client: Option<&HttpClient>,
-    unavailable_reason: Option<&str>,
+    client: &Result<HttpClient, String>,
 ) -> Result<Option<String>, ()> {
-    let Some(client) = client else {
-        let detail = unavailable_reason.unwrap_or("live-admin client unavailable");
-        return Ok(Some(format!("Live admin unavailable: {detail}")));
+    let client = match client {
+        Ok(client) => client,
+        Err(error) => return Ok(Some(format!("Live admin unavailable: {error}"))),
     };
     match fetch_safe_live_admin(client).await {
         Ok(admin) => {
@@ -2700,10 +2688,9 @@ mod tests {
     }
 
     #[test]
-    fn processed_block_update_advances_progress_with_entries() {
+    fn processed_block_update_advances_progress_before_batch_end() {
         let (tx, rx) = mpsc::channel(1);
         tx.try_send(AdminActivityUpdate::ProcessedBlock {
-            block_number: 42,
             entries: vec![AdminActivityEntry {
                 block_number: 42,
                 timestamp: 1_725_000_000,
@@ -2727,6 +2714,19 @@ mod tests {
         watcher.poll(&mut states);
 
         assert_eq!(states[0].last_scanned_safe_block, Some(42));
+        assert_eq!(
+            states[0].live_admin,
+            Some(address!("2222222222222222222222222222222222222222"))
+        );
+        assert_eq!(states[0].entries.len(), 1);
+        assert_eq!(states[0].entries[0].block_number, 42);
+
+        tx.try_send(AdminActivityUpdate::LastScannedSafeBlock(45))
+            .expect("progress update fits in channel");
+
+        watcher.poll(&mut states);
+
+        assert_eq!(states[0].last_scanned_safe_block, Some(45));
         assert_eq!(
             states[0].live_admin,
             Some(address!("2222222222222222222222222222222222222222"))
