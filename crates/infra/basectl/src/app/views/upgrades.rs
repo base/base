@@ -81,11 +81,14 @@ struct ChainUpgrades {
 impl ChainUpgrades {
     fn set_timestamp(&mut self, upgrade: BaseUpgrade, timestamp: Option<u64>) {
         let Some(timestamp) = timestamp else { return };
-        let spec = self
-            .specs
-            .iter_mut()
-            .find(|spec| spec.upgrade == upgrade)
-            .unwrap_or_else(|| panic!("missing upgrade spec for {upgrade:?}"));
+        let Some(spec) = self.specs.iter_mut().find(|spec| spec.upgrade == upgrade) else {
+            tracing::warn!(
+                chain = self.display_name,
+                upgrade = ?upgrade,
+                "missing upgrade spec while applying upgrade timestamp"
+            );
+            return;
+        };
         spec.timestamp = Some(timestamp);
     }
 
@@ -1737,7 +1740,18 @@ async fn run_admin_activity_streaming(
             }
         };
 
-        let live_admin_status = match send_safe_live_admin_update(&tx, &rpc_url).await {
+        let live_admin_client = match make_rpc_client(&rpc_url) {
+            Ok(client) => (Some(client), None),
+            Err(error) => (None, Some(format!("live-admin client build failed: {error}"))),
+        };
+
+        let live_admin_status = match send_safe_live_admin_update(
+            &tx,
+            live_admin_client.0.as_ref(),
+            live_admin_client.1.as_deref(),
+        )
+        .await
+        {
             Ok(status) => status,
             Err(()) => return,
         };
@@ -1799,7 +1813,13 @@ async fn run_admin_activity_streaming(
                 {
                     return;
                 }
-                let reset_status = match send_safe_live_admin_update(&tx, &rpc_url).await {
+                let reset_status = match send_safe_live_admin_update(
+                    &tx,
+                    live_admin_client.0.as_ref(),
+                    live_admin_client.1.as_deref(),
+                )
+                .await
+                {
                     Ok(Some(detail)) => {
                         format!(
                             "Safe head moved backwards; resetting confirmed activity cache. {detail}"
@@ -1930,10 +1950,8 @@ async fn activation_admin(client: &HttpClient) -> Result<Address, String> {
     activation_admin_at_tag(client, "latest").await
 }
 
-async fn fetch_safe_live_admin(rpc_url: &str) -> Result<Option<Address>, String> {
-    let client = make_rpc_client(rpc_url)
-        .map_err(|error| format!("live-admin client build failed: {error}"))?;
-    activation_admin_at_tag(&client, "safe")
+async fn fetch_safe_live_admin(client: &HttpClient) -> Result<Option<Address>, String> {
+    activation_admin_at_tag(client, "safe")
         .await
         .map(|admin| (!admin.is_zero()).then_some(admin))
         .map_err(|error| format!("safe live-admin query failed: {error}"))
@@ -1941,9 +1959,14 @@ async fn fetch_safe_live_admin(rpc_url: &str) -> Result<Option<Address>, String>
 
 async fn send_safe_live_admin_update(
     tx: &mpsc::Sender<AdminActivityUpdate>,
-    rpc_url: &str,
+    client: Option<&HttpClient>,
+    unavailable_reason: Option<&str>,
 ) -> Result<Option<String>, ()> {
-    match fetch_safe_live_admin(rpc_url).await {
+    let Some(client) = client else {
+        let detail = unavailable_reason.unwrap_or("live-admin client unavailable");
+        return Ok(Some(format!("Live admin unavailable: {detail}")));
+    };
+    match fetch_safe_live_admin(client).await {
         Ok(admin) => {
             if tx.send(AdminActivityUpdate::LiveAdmin(admin)).await.is_err() {
                 return Err(());
@@ -2627,6 +2650,27 @@ mod tests {
                 .activation_admin_address_for_upgrade(BaseUpgrade::Cobalt)
                 .map(|admin| ("Cobalt", admin))
         );
+    }
+
+    #[test]
+    fn missing_upgrade_spec_does_not_panic_when_applying_timestamp() {
+        let mut chain = ChainUpgrades {
+            display_name: "Mainnet",
+            chain_id: ChainConfig::mainnet().chain_id,
+            rpc: None,
+            specs: vec![UpgradeSpec {
+                upgrade: BaseUpgrade::Azul,
+                name: "Azul",
+                timestamp: Some(10),
+            }],
+        };
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            chain.set_timestamp(BaseUpgrade::Beryl, Some(20));
+        }));
+
+        assert!(result.is_ok());
+        assert_eq!(chain.specs[0].timestamp, Some(10));
     }
 
     #[test]
