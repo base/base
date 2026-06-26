@@ -119,6 +119,43 @@ async fn syncing_response_preserves_safe_head_when_it_is_behind_unsafe() {
 }
 
 #[tokio::test]
+async fn syncing_response_does_not_preserve_safe_head_before_el_sync_finishes() {
+    let unsafe_head = test_block_info(100);
+    let safe_head = test_block_info(90);
+    let cfg = Arc::new(RollupConfig::default());
+    let client = Arc::new(
+        test_engine_client_builder().with_fork_choice_updated_v3_response(syncing_fcu()).build(),
+    );
+
+    let mut state = TestEngineStateBuilder::new()
+        .with_unsafe_head(unsafe_head)
+        .with_safe_head(test_block_info(89))
+        .with_el_sync_finished(false)
+        .build();
+    state.sync_state = state.sync_state.apply_update(EngineSyncStateUpdate {
+        local_safe_head: Some(test_block_info(89)),
+        ..Default::default()
+    });
+
+    let task = SynchronizeTask::new(
+        client,
+        cfg,
+        EngineSyncStateUpdate {
+            local_safe_head: Some(safe_head),
+            safe_head: Some(safe_head),
+            ..Default::default()
+        },
+    );
+
+    task.execute(&mut state).await.expect("should succeed");
+
+    assert_eq!(state.sync_state.unsafe_head(), unsafe_head);
+    assert_eq!(state.sync_state.local_safe_head().block_info.number, 89);
+    assert_eq!(state.sync_state.safe_head().block_info.number, 89);
+    assert!(!state.el_sync_finished);
+}
+
+#[tokio::test]
 async fn syncing_response_does_not_advance_safe_head_past_unsafe() {
     let unsafe_head = test_block_info(100);
     let safe_head = test_block_info(101);

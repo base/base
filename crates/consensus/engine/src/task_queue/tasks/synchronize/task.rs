@@ -48,6 +48,10 @@ pub struct SynchronizeTask<EngineClient_: EngineClient> {
 
 impl<EngineClient_: EngineClient> SynchronizeTask<EngineClient_> {
     fn safe_only_sync_state(&self, state: &EngineState) -> EngineState {
+        if !state.el_sync_finished {
+            return *state;
+        }
+
         let current_unsafe = state.sync_state.unsafe_head();
         let is_not_ahead_of_unsafe = |head: &L2BlockInfo| {
             head.block_info.number < current_unsafe.block_info.number
@@ -173,8 +177,9 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient
 
         // Only apply the full sync-state update when the EL confirmed the forkchoice
         // (`Valid`). When the EL returns `Syncing`, keep the already-consolidated
-        // safe/local-safe/finalized progress that is at or behind the current
-        // unsafe head, but never advance `unsafe_head` beyond what the EL can serve.
+        // safe/local-safe/finalized progress only after EL sync has already
+        // completed, and only when those heads are at or behind the current
+        // unsafe head. Never advance `unsafe_head` beyond what the EL can serve.
         if confirmed {
             state.sync_state = new_sync_state;
         } else {
