@@ -4,19 +4,22 @@ use clap::Subcommand;
 
 use crate::{
     commands::{
-        bootnode::BootnodeCommand, rpc::RpcCommand, sequencer::SequencerCommand,
-        update::UpdateCommand,
+        bootnode::BootnodeCommand, node::NodeCommand, rpc::RpcCommand,
+        sequencer::SequencerCommand, update::UpdateCommand,
     },
     config::ChainResolver,
 };
 
 /// Top-level commands for `base`.
-#[derive(Subcommand, Clone, Debug)]
+#[derive(Subcommand, Debug)]
 #[non_exhaustive]
 pub(crate) enum BaseCommand {
     /// Run consensus and execution discovery-only bootnodes.
     #[command(name = "bootnode")]
     Bootnode(Box<BootnodeCommand>),
+    /// Execution-layer node maintenance utilities (database, staging, proofs, etc.).
+    #[command(name = "node")]
+    Node(Box<NodeCommand>),
     /// Run the integrated node in RPC mode.
     #[command(name = "rpc")]
     Rpc(Box<RpcCommand>),
@@ -29,7 +32,6 @@ pub(crate) enum BaseCommand {
 }
 
 impl BaseCommand {
-    /// Runs the selected top-level command.
     pub(crate) fn run(
         self,
         chain_resolver: ChainResolver,
@@ -37,6 +39,7 @@ impl BaseCommand {
     ) -> eyre::Result<()> {
         match self {
             Self::Bootnode(bootnode) => (*bootnode).run(chain_resolver.resolve()?, metrics_enabled),
+            Self::Node(node) => (*node).run(),
             Self::Rpc(rpc) => (*rpc).run(chain_resolver.resolve()?, metrics_enabled),
             Self::Sequencer(sequencer) => {
                 (*sequencer).run(chain_resolver.resolve()?, metrics_enabled)

@@ -11,7 +11,7 @@ base_cli_utils::define_log_args!("BASE_NODE");
 base_cli_utils::define_metrics_args!("BASE_NODE", 9090);
 
 /// The `base` CLI.
-#[derive(Parser, Clone, Debug)]
+#[derive(Parser, Debug)]
 #[command(
     author,
     version = env!("CARGO_PKG_VERSION"),
