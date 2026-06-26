@@ -10,7 +10,8 @@ use derive_more::Constructor;
 use tokio::time::Instant;
 
 use crate::{
-    EngineClient, EngineState, EngineTaskExt, SynchronizeTaskError, state::EngineSyncStateUpdate,
+    EngineClient, EngineState, EngineTaskExt, SynchronizeTaskError,
+    state::{EngineSyncState, EngineSyncStateUpdate},
 };
 
 /// Internal task for execution layer forkchoice synchronization.
@@ -47,9 +48,15 @@ pub struct SynchronizeTask<EngineClient_: EngineClient> {
 }
 
 impl<EngineClient_: EngineClient> SynchronizeTask<EngineClient_> {
-    fn safe_only_sync_state(&self, state: &EngineState) -> EngineState {
+    /// Computes the sync state to apply when the EL responds with `Syncing`.
+    ///
+    /// Until the EL has finished syncing, the state is left untouched. Once EL sync is
+    /// complete, already-consolidated safe/local-safe/finalized progress is preserved,
+    /// but only for heads at or behind the current unsafe head. `unsafe_head` is never
+    /// advanced beyond what the EL can serve.
+    fn safe_only_sync_state(&self, state: &EngineState) -> EngineSyncState {
         if !state.el_sync_finished {
-            return *state;
+            return state.sync_state;
         }
 
         let current_unsafe = state.sync_state.unsafe_head();
@@ -65,7 +72,7 @@ impl<EngineClient_: EngineClient> SynchronizeTask<EngineClient_> {
             ..Default::default()
         };
 
-        EngineState { sync_state: state.sync_state.apply_update(safe_only_update), ..*state }
+        state.sync_state.apply_update(safe_only_update)
     }
 
     /// Checks the response of the `engine_forkchoiceUpdated` call, and updates the sync status if
@@ -119,7 +126,6 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient
     async fn execute(&self, state: &mut EngineState) -> Result<Self::Output, SynchronizeTaskError> {
         // Apply the sync state update to the engine state.
         let new_sync_state = state.sync_state.apply_update(self.state_update);
-        let safe_only_sync_state = self.safe_only_sync_state(state);
 
         // Check if a forkchoice update is not needed, return early.
         // A forkchoice update is not needed if...
@@ -175,16 +181,10 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient
         let confirmed =
             self.check_forkchoice_updated_status(state, &valid_response.payload_status.status)?;
 
-        // Only apply the full sync-state update when the EL confirmed the forkchoice
-        // (`Valid`). When the EL returns `Syncing`, keep the already-consolidated
-        // safe/local-safe/finalized progress only after EL sync has already
-        // completed, and only when those heads are at or behind the current
-        // unsafe head. Never advance `unsafe_head` beyond what the EL can serve.
-        if confirmed {
-            state.sync_state = new_sync_state;
-        } else {
-            state.sync_state = safe_only_sync_state.sync_state;
-        }
+        // On `Valid`, apply the full sync-state update. On `Syncing`, fall back to a
+        // state that never advances `unsafe_head` beyond what the EL can serve (see
+        // `safe_only_sync_state`).
+        state.sync_state = if confirmed { new_sync_state } else { self.safe_only_sync_state(state) };
 
         let fcu_duration = fcu_time_start.elapsed();
         debug!(
