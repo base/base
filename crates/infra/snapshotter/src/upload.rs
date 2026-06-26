@@ -214,17 +214,6 @@ impl SnapshotUploader {
         Ok(())
     }
 
-    /// Parses a run manifest key of the form `{list_prefix}{timestamp}/manifest.json`.
-    pub fn parse_completed_run_manifest_key(key: &str, list_prefix: &str) -> Option<SnapshotRun> {
-        let rest = key.strip_prefix(list_prefix)?;
-        let timestamp_str = rest.strip_suffix("/manifest.json")?;
-        if timestamp_str.contains('/') {
-            return None;
-        }
-        let timestamp = timestamp_str.parse::<u64>().ok()?;
-        Some(SnapshotRun { timestamp, manifest_key: key.to_string() })
-    }
-
     /// Parses a common prefix of the form `{list_prefix}{timestamp}/`.
     pub fn parse_run_prefix(prefix: &str, list_prefix: &str) -> Option<(u64, String)> {
         let rest = prefix.strip_prefix(list_prefix)?;
@@ -797,53 +786,6 @@ mod tests {
         assert_eq!(
             UploadStrategy::classify("custom_component-100-200.tar.zst"),
             UploadStrategy::DiffByHash
-        );
-    }
-
-    #[test]
-    fn parse_completed_run_manifest_key_accepts_timestamp_dirs() {
-        assert_eq!(
-            SnapshotUploader::parse_completed_run_manifest_key(
-                "mainnet/1710000002/manifest.json",
-                "mainnet/"
-            ),
-            Some(SnapshotRun {
-                timestamp: 1_710_000_002,
-                manifest_key: "mainnet/1710000002/manifest.json".to_string(),
-            })
-        );
-
-        assert_eq!(
-            SnapshotUploader::parse_completed_run_manifest_key("1710000002/manifest.json", ""),
-            Some(SnapshotRun {
-                timestamp: 1_710_000_002,
-                manifest_key: "1710000002/manifest.json".to_string(),
-            })
-        );
-    }
-
-    #[test]
-    fn parse_completed_run_manifest_key_rejects_non_run_keys() {
-        assert_eq!(
-            SnapshotUploader::parse_completed_run_manifest_key(
-                "mainnet/static_files/manifest.json",
-                "mainnet/"
-            ),
-            None
-        );
-        assert_eq!(
-            SnapshotUploader::parse_completed_run_manifest_key(
-                "mainnet/1710000002/state.tar.zst",
-                "mainnet/"
-            ),
-            None
-        );
-        assert_eq!(
-            SnapshotUploader::parse_completed_run_manifest_key(
-                "other/1710000002/manifest.json",
-                "mainnet/"
-            ),
-            None
         );
     }
 
