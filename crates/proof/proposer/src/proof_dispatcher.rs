@@ -260,7 +260,7 @@ mod tests {
         ProofDispatcher::new(
             requester,
             Arc::new(MockL1::new(sync_status.finalized_l1.number)),
-            Arc::new(MockL2 { block_not_found: false, canonical_hash: None }),
+            Arc::new(MockL2),
             Arc::new(MockRollupClient {
                 sync_status,
                 output_roots: Default::default(),
@@ -340,8 +340,11 @@ mod tests {
         );
         let dispatcher = ProofDispatcher::new(
             Arc::new(MockProofRequester::default()),
-            Arc::new(MockL1::with_headers(sync_status.finalized_l1.number, headers)),
-            Arc::new(MockL2 { block_not_found: false, canonical_hash: None }),
+            Arc::new(MockL1 {
+                latest_block_number: sync_status.finalized_l1.number,
+                headers_by_hash: headers,
+            }),
+            Arc::new(MockL2),
             Arc::new(MockRollupClient {
                 sync_status,
                 output_roots: Default::default(),
@@ -371,8 +374,8 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_request_rejects_mismatched_session_id() {
-        let requester = Arc::new(MockProofRequester::default());
-        *requester.accepted_session_id.lock().unwrap() = Some("wrong-session".to_owned());
+        let requester =
+            Arc::new(MockProofRequester { return_wrong_session_id: true, ..Default::default() });
         let dispatcher = dispatcher(requester);
 
         let request =
@@ -387,8 +390,8 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_request_accepts_existing_l1_head_conflict() {
-        let requester = Arc::new(MockProofRequester::default());
-        requester.reject_l1_head_conflict.store(true, std::sync::atomic::Ordering::SeqCst);
+        let requester =
+            Arc::new(MockProofRequester { reject_l1_head_conflict: true, ..Default::default() });
         let dispatcher = dispatcher(requester);
 
         let request =

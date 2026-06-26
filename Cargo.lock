@@ -5962,18 +5962,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-proof-zk-requester"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "async-trait",
- "base-prover-service-client",
- "base-prover-service-protocol",
- "thiserror 2.0.18",
- "tokio",
-]
-
-[[package]]
 name = "base-proofs-extension"
 version = "0.0.0"
 dependencies = [
