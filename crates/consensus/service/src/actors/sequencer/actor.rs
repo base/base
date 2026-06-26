@@ -1,8 +1,7 @@
 //! The [`SequencerActor`].
 
 use std::{
-    future::Future,
-    pin::Pin,
+    future,
     sync::Arc,
     time::{Duration, Instant, UNIX_EPOCH},
 };
@@ -12,6 +11,7 @@ use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::AttributesBuilder;
 use base_consensus_rpc::SequencerAdminAPIError;
+use futures::future::BoxFuture;
 use tokio::{
     select,
     sync::{mpsc, oneshot},
@@ -202,9 +202,7 @@ where
         &mut self,
         next_payload: &mut Option<UnsealedPayloadHandle>,
     ) -> Result<(), SequencerActorError> {
-        let mut resetting: Option<
-            Pin<Box<dyn Future<Output = Result<(), EngineClientError>> + Send + '_>>,
-        > = None;
+        let mut resetting: Option<BoxFuture<'_, Result<(), EngineClientError>>> = None;
 
         loop {
             if resetting.is_none() {
@@ -334,7 +332,7 @@ where
                             &self.unsafe_payload_gossip_client,
                             &self.engine_client,
                         ).await),
-                        None => std::future::pending().await,
+                        None => future::pending().await,
                     }
                 } => {
                     match result {
