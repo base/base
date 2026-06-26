@@ -191,7 +191,6 @@ impl SnapshotUploader {
             }
         }
 
-        runs.sort_unstable_by(|a, b| b.timestamp.cmp(&a.timestamp));
         Ok(runs)
     }
 
@@ -205,10 +204,22 @@ impl SnapshotUploader {
             return Ok(());
         }
 
+        let mut last_error = None;
         for timestamp in expired {
             let run_prefix = self.run_prefix(timestamp);
-            let deleted_objects = self.delete_prefix(&run_prefix).await?;
-            info!(timestamp, run_prefix = %run_prefix, deleted_objects, "pruned old snapshot run");
+            match self.delete_prefix(&run_prefix).await {
+                Ok(deleted_objects) => {
+                    info!(timestamp, run_prefix = %run_prefix, deleted_objects, "pruned old snapshot run");
+                }
+                Err(e) => {
+                    warn!(error = %e, timestamp, run_prefix = %run_prefix, "failed to prune old snapshot run, continuing");
+                    last_error = Some(e);
+                }
+            }
+        }
+
+        if let Some(e) = last_error {
+            return Err(e);
         }
 
         Ok(())
@@ -471,17 +482,11 @@ impl SnapshotUploader {
 
     /// Returns whether a full object key exists remotely.
     async fn remote_key_exists(&self, key: &str) -> Result<bool> {
-        let resp = self
-            .client
-            .list_objects_v2()
-            .bucket(&self.bucket)
-            .prefix(key)
-            .max_keys(1)
-            .send()
-            .await
-            .with_context(|| format!("failed to check object existence for {key}"))?;
-
-        Ok(resp.contents().iter().any(|obj| obj.key() == Some(key)))
+        match self.client.head_object().bucket(&self.bucket).key(key).send().await {
+            Ok(_) => Ok(true),
+            Err(err) if err.as_service_error().is_some_and(|e| e.is_not_found()) => Ok(false),
+            Err(err) => Err(anyhow::anyhow!("failed to check object existence for {key}: {err}")),
+        }
     }
 
     /// Deletes all objects under a prefix and returns the number of deleted keys.
