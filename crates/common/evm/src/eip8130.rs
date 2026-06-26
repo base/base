@@ -50,8 +50,8 @@ use base_common_consensus::{
 };
 use base_common_precompiles::{NonceManagerStorage, TxContextStorage};
 use base_execution_eip8130::{
-    AccountChangeApplier, AccountConfigurationStorage, FeeCheck, IntrinsicGas, IntrinsicGasInput,
-    NonceMode, NonceValidator, TransactionAuthorizer,
+    AccountChangeApplier, AccountConfigurationStorage, ApplyError, FeeCheck, IntrinsicGas,
+    IntrinsicGasInput, NonceMode, NonceValidator, TransactionAuthorizer,
 };
 use base_precompile_storage::{JournalStorageProvider, StorageCtx};
 use revm::{
@@ -1345,9 +1345,17 @@ impl Eip8130Executor {
         let mut acc_mut = AccountConfigurationStorage::new(sctx);
         let mut created_effect: Option<(Address, Bytes)> = None;
         let mut delegation_effect: Option<(Address, Address)> = None;
-        for change in &signed.tx().account_changes {
+        for (index, change) in signed.tx().account_changes.iter().enumerate() {
             match change {
                 AccountChange::Create(entry) => {
+                    if delegation_effect.is_some() {
+                        return Err(BaseTransactionError::eip8130(ApplyError::CreateAndDelegation));
+                    }
+                    if index != 0 || created_effect.is_some() {
+                        return Err(BaseTransactionError::eip8130(
+                            ApplyError::InvalidCreatePosition,
+                        ));
+                    }
                     let created = AccountChangeApplier::apply_create(&mut acc_mut, entry)
                         .map_err(BaseTransactionError::eip8130)?;
                     created_effect = Some((created.address, created.code));
@@ -1362,6 +1370,12 @@ impl Eip8130Executor {
                     .map_err(BaseTransactionError::eip8130)?;
                 }
                 AccountChange::Delegation(Delegation { target }) => {
+                    if delegation_effect.is_some() {
+                        return Err(BaseTransactionError::eip8130(ApplyError::MultipleDelegations));
+                    }
+                    if created_effect.is_some() {
+                        return Err(BaseTransactionError::eip8130(ApplyError::CreateAndDelegation));
+                    }
                     delegation_effect = Some((sender, *target));
                 }
             }
