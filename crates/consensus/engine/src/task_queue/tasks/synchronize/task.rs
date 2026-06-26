@@ -66,10 +66,11 @@ impl<EngineClient_: EngineClient> SynchronizeTask<EngineClient_> {
                     && head.block_info.hash == current_unsafe.block_info.hash)
         };
         let safe_only_update = EngineSyncStateUpdate {
+            // Never advance the unsafe head on a `Syncing` response.
+            unsafe_head: None,
             local_safe_head: self.state_update.local_safe_head.filter(is_not_ahead_of_unsafe),
             safe_head: self.state_update.safe_head.filter(is_not_ahead_of_unsafe),
             finalized_head: self.state_update.finalized_head.filter(is_not_ahead_of_unsafe),
-            ..Default::default()
         };
 
         state.sync_state.apply_update(safe_only_update)
