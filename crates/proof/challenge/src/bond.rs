@@ -27,8 +27,8 @@ use crate::{ChallengeSubmitError, ChallengeSubmitter, ChallengerMetrics};
 ///
 /// When bond claim addresses are configured, the manager also continuously
 /// discovers claimable games via [`discover_claimable_games`](Self::discover_claimable_games),
-/// rescanning the lookback window to catch games challenged or resolved by
-/// other actors.
+/// periodically rescanning the lookback window to catch games challenged or
+/// resolved by other actors.
 pub struct BondManager<C: Clock> {
     /// Games being tracked, keyed by proxy address.
     ///
@@ -51,6 +51,8 @@ pub struct BondManager<C: Clock> {
     factory_client: Arc<dyn DisputeGameFactoryClient>,
     /// Number of recent games to scan during bond discovery.
     lookback: u64,
+    /// Monotonic timestamp of the last discovery scan.
+    last_discovery: Option<Duration>,
 }
 
 impl<C: Clock> std::fmt::Debug for BondManager<C> {
@@ -72,6 +74,9 @@ impl<C: Clock> BondManager<C> {
     /// How long to wait before retrying a reverted withdraw attempt.
     const WITHDRAW_REVERT_RETRY_DELAY: Duration = Duration::from_secs(60);
 
+    /// How often to rescan the lookback window for externally claimable bonds.
+    const DISCOVERY_INTERVAL: Duration = Duration::from_secs(5 * 60);
+
     /// Creates a new bond manager for the given set of claim addresses.
     pub fn new(
         claim_addresses: Vec<Address>,
@@ -90,6 +95,7 @@ impl<C: Clock> BondManager<C> {
             clock,
             factory_client,
             lookback,
+            last_discovery: None,
         }
     }
 
@@ -226,6 +232,19 @@ impl<C: Clock> BondManager<C> {
         &mut self,
         verifier_client: &dyn AggregateVerifierClient,
     ) -> eyre::Result<()> {
+        let now = self.clock.now();
+        if let Some(last_discovery) = self.last_discovery {
+            let elapsed = now.saturating_sub(last_discovery);
+            if elapsed < Self::DISCOVERY_INTERVAL {
+                debug!(
+                    elapsed_secs = elapsed.as_secs(),
+                    remaining_secs = Self::DISCOVERY_INTERVAL.saturating_sub(elapsed).as_secs(),
+                    "skipping bond discovery scan"
+                );
+                return Ok(());
+            }
+        }
+
         let game_count = self.factory_client.game_count().await?;
         let scan_start = game_count.saturating_sub(self.lookback);
         debug!(
@@ -238,6 +257,7 @@ impl<C: Clock> BondManager<C> {
         );
 
         ChallengerMetrics::bond_discovery_scans_total().increment(1);
+        self.last_discovery = Some(now);
 
         let results: Vec<_> = stream::iter(scan_start..game_count)
             .map(|i| self.evaluate_game_for_bonds(i, verifier_client))
@@ -279,12 +299,15 @@ impl<C: Clock> BondManager<C> {
         }
 
         // Lazily resolve the DelayedWETH delay if not yet known.
-        if self.weth_delay.is_none()
-            && let Some(game_address) = self.tracked.keys().next().copied()
-        {
-            if let Err(e) = self.resolve_weth_delay(verifier_client, game_address).await {
-                warn!(error = %e, "failed to read DelayedWETH delay, will retry later");
-            }
+        let game_for_delay =
+            self.weth_delay.is_none().then(|| self.tracked.keys().next().copied()).flatten();
+        let delay_result = if let Some(game_address) = game_for_delay {
+            self.resolve_weth_delay(verifier_client, game_address).await
+        } else {
+            Ok(())
+        };
+        if let Err(e) = delay_result {
+            warn!(error = %e, "failed to read DelayedWETH delay, will retry later");
         }
 
         let addresses: Vec<Address> = self.tracked.keys().copied().collect();
@@ -787,6 +810,25 @@ mod tests {
 
         mgr.discover_claimable_games(&verifier).await.unwrap();
         assert_eq!(mgr.tracked_count(), 2);
+    }
+
+    #[tokio::test]
+    async fn discover_throttles_repeated_scans() {
+        let factory = Arc::new(MockDisputeGameFactory::new(vec![factory_game(0, 0)]));
+        let mut state = mock_state(GameStatus::InProgress, Address::ZERO, 100);
+        state.bond_recipient = CLAIM_ADDR;
+        let verifier = MockAggregateVerifier::new([(addr(0), state.clone())].into_iter().collect());
+        let factory_client = Arc::<MockDisputeGameFactory>::clone(&factory);
+        let mut mgr = make_manager_with_factory(CLAIM_ADDR, factory_client, 1000, fixed_clock(0));
+
+        mgr.discover_claimable_games(&verifier).await.unwrap();
+        assert_eq!(mgr.tracked_count(), 1);
+
+        factory.push(factory_game(1, 0));
+        verifier.update_game(addr(1), state);
+
+        mgr.discover_claimable_games(&verifier).await.unwrap();
+        assert_eq!(mgr.tracked_count(), 1);
     }
 
     #[tokio::test]
