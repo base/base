@@ -1,6 +1,8 @@
 //! The [`SequencerActor`].
 
 use std::{
+    future::Future,
+    pin::Pin,
     sync::Arc,
     time::{Duration, Instant, UNIX_EPOCH},
 };
@@ -193,29 +195,56 @@ where
     /// return [`EngineClientError::ELSyncing`]. In that case we wait one block time and retry,
     /// so we never send a `forkchoice_updated` that would abort reth's in-progress EL sync.
     ///
-    /// Admin API queries are serviced throughout — both during reset attempts and during the
-    /// backoff sleep — so that control can reach the sequencer while EL sync is in progress.
+    /// Admin API queries are serviced throughout so that control can reach the sequencer while EL
+    /// sync is in progress. The in-flight reset future is kept alive across admin queries so the
+    /// engine's reset response receiver is not dropped.
     async fn schedule_initial_reset(
         &mut self,
         next_payload: &mut Option<UnsealedPayloadHandle>,
     ) -> Result<(), SequencerActorError> {
+        let mut resetting: Option<
+            Pin<Box<dyn Future<Output = Result<(), EngineClientError>> + Send + '_>>,
+        > = None;
+
         loop {
-            select! {
-                biased;
-                _ = self.cancellation_token.cancelled() => return Ok(()),
-                Some(query) = self.admin_api_rx.recv() => {
-                    self.handle_admin_query(next_payload, query).await;
+            if resetting.is_none() {
+                let engine_client = Arc::clone(&self.engine_client);
+                resetting =
+                    Some(Box::pin(async move { engine_client.reset_engine_forkchoice().await }));
+            }
+
+            let reset_result = {
+                let reset = resetting.as_mut().expect("reset future initialized before polling");
+                let mut reset_result = None;
+
+                select! {
+                    biased;
+                    _ = self.cancellation_token.cancelled() => return Ok(()),
+                    result = reset => {
+                        reset_result = Some(result);
+                    }
+                    Some(query) = self.admin_api_rx.recv() => {
+                        self.handle_admin_query(next_payload, query).await;
+                    }
                 }
-                result = self.engine_client.reset_engine_forkchoice() => match result {
-                    Ok(()) => return Ok(()),
-                    Err(EngineClientError::ELSyncing) => {
-                        info!(target: "sequencer", "EL sync in progress; deferring initial engine reset");
-                    }
-                    Err(err) => {
-                        error!(target: "sequencer", error = ?err, "Failed to send reset request to engine");
-                        return Err(err.into());
-                    }
-                },
+
+                reset_result
+            };
+
+            let Some(result) = reset_result else {
+                continue;
+            };
+            resetting = None;
+
+            match result {
+                Ok(()) => return Ok(()),
+                Err(EngineClientError::ELSyncing) => {
+                    info!(target: "sequencer", "EL sync in progress; deferring initial engine reset");
+                }
+                Err(err) => {
+                    error!(target: "sequencer", error = ?err, "Failed to send reset request to engine");
+                    return Err(err.into());
+                }
             }
             // Wait one block time before retrying the reset, but service admin queries
             // and honour cancellation throughout the backoff window.
