@@ -10,8 +10,7 @@ use derive_more::Constructor;
 use tokio::time::Instant;
 
 use crate::{
-    EngineClient, EngineState, EngineTaskExt, SynchronizeTaskError,
-    state::EngineSyncStateUpdate,
+    EngineClient, EngineState, EngineTaskExt, SynchronizeTaskError, state::EngineSyncStateUpdate,
 };
 
 /// Internal task for execution layer forkchoice synchronization.
