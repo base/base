@@ -9,6 +9,7 @@
 //! `ProviderNodeStream` consumer.
 
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -40,6 +41,11 @@ const PRUNE_MARGIN: u64 = 64;
 /// Websocket ping interval for the Flashblocks subscription. Matches the
 /// cadence used elsewhere in the node's flashblocks tooling.
 const FLASHBLOCKS_PING_INTERVAL: Duration = Duration::from_secs(5);
+
+/// Explicit opt-in for ahead-of-committed preconf emission. `MEV_EMITTER_ENABLE`
+/// still gates the whole ExEx; this narrower switch keeps the committed-chain
+/// emitter behavior unchanged unless operators set `MEV_EMITTER_PRECONF=1`.
+const PRECONF_ENV: &str = "MEV_EMITTER_PRECONF";
 
 /// Builds a [`FlashblockIndex`] and, if `MEV_FLASHBLOCKS_URL` is set and
 /// non-empty, starts a Flashblocks websocket subscription that populates it.
@@ -80,6 +86,15 @@ fn start_flashblocks_index() -> FlashblockIndex {
         ),
     }
     index
+}
+
+/// Returns true only for the explicit `MEV_EMITTER_PRECONF=1` opt-in.
+pub fn preconf_emission_enabled() -> bool {
+    preconf_emission_enabled_from_value(std::env::var_os(PRECONF_ENV).as_deref())
+}
+
+fn preconf_emission_enabled_from_value(value: Option<&OsStr>) -> bool {
+    value.and_then(OsStr::to_str).is_some_and(|raw| raw.trim() == "1")
 }
 
 /// Issue #45: emit pool storage-slot diffs from one FLASHBLOCK PRECONFIRMATION.
@@ -132,60 +147,109 @@ fn emit_preconf_pool_slots(pb: &PendingBlocks, sink: &EventSink) {
     }
 }
 
-/// Issue #45 (critic HIGH, base#4): decide whether a newly-received preconf
-/// payload SUPERSEDES the previous one (same height, different `payload_id`),
-/// requiring a `Superseded` discard so the downstream aggregator drops the old
-/// payload's now-stale slots. Returns `None` for the first payload, an unchanged
-/// payload, or a height advance (the latter is reconciled by the committed loop's
-/// finalized `BlockBoundaryEvent`).
-fn superseded_discard(
-    last: Option<&(String, u64)>,
-    payload_id: &str,
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PreconfPayloadRef {
+    payload_id: String,
     block_number: u64,
-) -> Option<crate::DiscardPreconfEvent> {
-    match last {
-        Some((prev_id, prev_block)) if prev_id != payload_id && *prev_block == block_number => {
-            Some(crate::DiscardPreconfEvent {
-                protocol_version: crate::PROTOCOL_VERSION,
-                payload_id: prev_id.clone(),
-                block_number: Some(*prev_block),
-                reason: Some(crate::DiscardReason::Superseded),
-            })
+    parent_hash: B256,
+}
+
+impl PreconfPayloadRef {
+    fn from_pending(pending: &PendingBlocks) -> Self {
+        Self {
+            payload_id: format!("{}", pending.payload_id()),
+            block_number: pending.latest_block_number(),
+            parent_hash: pending.parent_hash(),
         }
-        _ => None,
     }
 }
 
+/// Issue #45 (critic HIGH, base#4): decide whether a newly-received preconf
+/// payload invalidates the previous one. Same-height payload replacement is a
+/// `Superseded` discard; same/lower-height parent changes are `Reorg` discards.
+/// Height advances do not discard here because the committed-chain boundary
+/// reconciles finalized payloads.
+fn preconf_discard(
+    last: Option<&PreconfPayloadRef>,
+    next: &PreconfPayloadRef,
+) -> Option<crate::DiscardPreconfEvent> {
+    let prev = last?;
+    let reason = if next.block_number < prev.block_number
+        || (next.block_number == prev.block_number && next.parent_hash != prev.parent_hash)
+    {
+        crate::DiscardReason::Reorg
+    } else if next.block_number == prev.block_number && next.payload_id != prev.payload_id {
+        crate::DiscardReason::Superseded
+    } else {
+        return None;
+    };
+    Some(crate::DiscardPreconfEvent {
+        protocol_version: crate::PROTOCOL_VERSION,
+        payload_id: prev.payload_id.clone(),
+        block_number: Some(prev.block_number),
+        reason: Some(reason),
+    })
+}
+
 #[cfg(test)]
-mod preconf_discard_tests {
-    use super::superseded_discard;
+mod preconf_tests {
+    use super::{PreconfPayloadRef, preconf_discard, preconf_emission_enabled_from_value};
     use crate::DiscardReason;
+    use alloy_primitives::B256;
+    use std::ffi::OsStr;
+
+    fn payload(payload_id: &str, block_number: u64, parent_byte: u8) -> PreconfPayloadRef {
+        PreconfPayloadRef {
+            payload_id: payload_id.to_string(),
+            block_number,
+            parent_hash: B256::from([parent_byte; 32]),
+        }
+    }
 
     #[test]
-    fn emits_superseded_discard_only_on_same_height_payload_change() {
-        // First payload — nothing to discard.
-        assert!(superseded_discard(None, "A", 100).is_none());
-        // Same payload re-emitted (v1 re-ticks the latest flashblock) — no discard.
-        assert!(superseded_discard(Some(&("A".to_string(), 100)), "A", 100).is_none());
-        // New payload B replaces A at the SAME height — discard A as Superseded.
-        let ev = superseded_discard(Some(&("A".to_string(), 100)), "B", 100)
+    fn preconf_env_requires_explicit_one() {
+        assert!(!preconf_emission_enabled_from_value(None));
+        assert!(!preconf_emission_enabled_from_value(Some(OsStr::new(""))));
+        assert!(!preconf_emission_enabled_from_value(Some(OsStr::new("true"))));
+        assert!(!preconf_emission_enabled_from_value(Some(OsStr::new("0"))));
+        assert!(preconf_emission_enabled_from_value(Some(OsStr::new("1"))));
+        assert!(preconf_emission_enabled_from_value(Some(OsStr::new(" 1 "))));
+    }
+
+    #[test]
+    fn emits_discard_for_superseded_and_reorged_preconf_payloads() {
+        let a = payload("A", 100, 1);
+        assert!(preconf_discard(None, &a).is_none());
+        assert!(preconf_discard(Some(&a), &payload("A", 100, 1)).is_none());
+
+        let superseded = preconf_discard(Some(&a), &payload("B", 100, 1))
             .expect("same-height payload change must emit a discard");
-        assert_eq!(ev.payload_id, "A");
-        assert_eq!(ev.block_number, Some(100));
-        assert_eq!(ev.reason, Some(DiscardReason::Superseded));
-        // Height advanced — NOT a supersede (the committed loop's finalized
-        // BlockBoundaryEvent reconciles the old payload instead).
-        assert!(superseded_discard(Some(&("A".to_string(), 100)), "C", 101).is_none());
+        assert_eq!(superseded.payload_id, "A");
+        assert_eq!(superseded.block_number, Some(100));
+        assert_eq!(superseded.reason, Some(DiscardReason::Superseded));
+
+        let same_height_reorg = preconf_discard(Some(&a), &payload("C", 100, 2))
+            .expect("same-height parent change must emit a reorg discard");
+        assert_eq!(same_height_reorg.payload_id, "A");
+        assert_eq!(same_height_reorg.block_number, Some(100));
+        assert_eq!(same_height_reorg.reason, Some(DiscardReason::Reorg));
+
+        let lower_height_reorg = preconf_discard(Some(&a), &payload("D", 99, 1))
+            .expect("height rollback must emit a reorg discard");
+        assert_eq!(lower_height_reorg.reason, Some(DiscardReason::Reorg));
+
+        assert!(preconf_discard(Some(&a), &payload("C", 101, 2)).is_none());
     }
 }
 
 /// `ExEx` run loop: drain canonical-chain notifications, report `FinishedHeight`.
 ///
-/// `fb_state` (issue #45): when present, a failure-isolated background task
-/// subscribes to flashblock preconfirmations and emits ahead-of-committed
-/// pool-slot diffs via [`emit_preconf_pool_slots`]. The committed-chain loop below
-/// is UNCHANGED and remains the finalizing/reconciling path (its
-/// `BlockBoundaryEvent { finalized: true }` reconciles the preconf stream).
+/// `fb_state` (issue #45): when present and `MEV_EMITTER_PRECONF=1`, a
+/// failure-isolated background task subscribes to flashblock preconfirmations and
+/// emits ahead-of-committed pool-slot diffs via [`emit_preconf_pool_slots`]. The
+/// committed-chain loop below is UNCHANGED and remains the finalizing/reconciling
+/// path (its `BlockBoundaryEvent { finalized: true }` reconciles the preconf
+/// stream).
 pub async fn run_mev_emitter_exex(
     mut ctx: ExExContext<BaseNodeAdapter>,
     fb_state: Option<Arc<FlashblocksState>>,
@@ -205,47 +269,56 @@ pub async fn run_mev_emitter_exex(
     let sink = crate::transport::start_event_server();
     // Issue #45: ahead-of-committed preconf pool-slot emission. Failure-isolated in
     // its own task — a lagged/closed receiver only ends the task, never the ExEx.
-    if let Some(state) = fb_state {
-        let task_sink = sink.clone();
-        let mut rx = state.subscribe_to_flashblocks();
-        tokio::spawn(async move {
-            // Tracks the previous preconf (payload_id, block_number) so a new
-            // payload that supersedes it at the same height can emit a discard.
-            let mut last_preconf: Option<(String, u64)> = None;
-            loop {
-                match rx.recv().await {
-                    Ok(pending) => {
-                        // Issue #45 (critic HIGH, base#4): when a NEW payload
-                        // supersedes the previous one at the SAME height, emit a
-                        // Superseded discard for the old payload so the downstream
-                        // MidBlockSlotAggregator drops its now-stale slots. A
-                        // FINALIZED payload is reconciled separately by the committed
-                        // loop's `BlockBoundaryEvent { finalized: true }`.
-                        let payload_id = format!("{}", pending.payload_id());
-                        let block_number = pending.latest_block_number();
-                        if let Some(ev) =
-                            superseded_discard(last_preconf.as_ref(), &payload_id, block_number)
-                        {
-                            task_sink.send_event(&crate::NodeEvent::DiscardPreconf(ev));
+    // This path is explicitly gated by MEV_EMITTER_PRECONF=1 so enabling the
+    // committed-chain emitter alone keeps zero preconf behavior.
+    if preconf_emission_enabled() {
+        if let Some(state) = fb_state {
+            let task_sink = sink.clone();
+            let mut rx = state.subscribe_to_flashblocks();
+            tokio::spawn(async move {
+                // Tracks the previous preconf so reorg/supersede signals can discard
+                // stale pending slots before they are committed/finalized.
+                let mut last_preconf: Option<PreconfPayloadRef> = None;
+                loop {
+                    match rx.recv().await {
+                        Ok(pending) => {
+                            // Issue #45 (critic HIGH, base#4): when a NEW payload
+                            // invalidates the previous one, emit discard_preconf so
+                            // downstream MidBlockSlotAggregator drops stale slots.
+                            let next_preconf = PreconfPayloadRef::from_pending(&pending);
+                            if let Some(ev) = preconf_discard(last_preconf.as_ref(), &next_preconf)
+                            {
+                                task_sink.send_event(&crate::NodeEvent::DiscardPreconf(ev));
+                            }
+                            emit_preconf_pool_slots(&pending, &task_sink);
+                            last_preconf = Some(next_preconf);
                         }
-                        last_preconf = Some((payload_id, block_number));
-                        emit_preconf_pool_slots(&pending, &task_sink);
+                        Err(broadcast::error::RecvError::Lagged(n)) => {
+                            warn!(
+                                target: "base::mev_emitter",
+                                skipped = n,
+                                "preconf flashblock receiver lagged",
+                            );
+                            continue;
+                        }
+                        Err(broadcast::error::RecvError::Closed) => break,
                     }
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        warn!(
-                            target: "base::mev_emitter",
-                            skipped = n,
-                            "preconf flashblock receiver lagged",
-                        );
-                        continue;
-                    }
-                    Err(broadcast::error::RecvError::Closed) => break,
                 }
-            }
-        });
+            });
+            info!(
+                target: "base::mev_emitter",
+                "preconf pool-slot emission enabled (MEV_EMITTER_PRECONF=1)",
+            );
+        } else {
+            warn!(
+                target: "base::mev_emitter",
+                "MEV_EMITTER_PRECONF=1 set but flashblocks state unavailable; preconf emission disabled",
+            );
+        }
+    } else {
         info!(
             target: "base::mev_emitter",
-            "preconf pool-slot emission enabled (flashblock state)",
+            "preconf pool-slot emission disabled (set MEV_EMITTER_PRECONF=1 to enable)",
         );
     }
     info!(target: "base::mev_emitter", "mev-emitter ExEx started");
@@ -502,7 +575,8 @@ pub async fn run_mev_emitter_exex(
 ///
 /// `fb_state` (issue #45): the shared [`FlashblocksState`] (cloned from the
 /// flashblocks extension's config) the ExEx subscribes to for ahead-of-committed
-/// preconf pool-slot emission. `None` disables that path (committed loop only).
+/// preconf pool-slot emission only when `MEV_EMITTER_PRECONF=1`. `None` or an
+/// unset preconf env keeps committed-loop behavior only.
 #[derive(Debug)]
 pub struct MevEmitterExtension {
     fb_state: Option<Arc<FlashblocksState>>,
