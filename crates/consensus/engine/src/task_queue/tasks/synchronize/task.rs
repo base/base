@@ -185,7 +185,8 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient
         // On `Valid`, apply the full sync-state update. On `Syncing`, fall back to a
         // state that never advances `unsafe_head` beyond what the EL can serve (see
         // `safe_only_sync_state`).
-        state.sync_state = if confirmed { new_sync_state } else { self.safe_only_sync_state(state) };
+        state.sync_state =
+            if confirmed { new_sync_state } else { self.safe_only_sync_state(state) };
 
         let fcu_duration = fcu_time_start.elapsed();
         debug!(
