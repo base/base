@@ -475,13 +475,13 @@ impl EngineClient for MockEngineClient {
 
         EthGetBlock::new_provider(
             block,
-            Box::new(move |_kind| {
+            Box::new(move |kind| {
                 let storage = Arc::clone(&storage);
                 let block_key = block_key.clone();
 
                 ProviderCall::BoxedFuture(Box::pin(async move {
                     let storage_guard = storage.read().await;
-                    if _kind.is_full()
+                    if kind.is_full()
                         && let Some(error) =
                             storage_guard.l2_full_block_errors_by_id.get(&block_key)
                     {

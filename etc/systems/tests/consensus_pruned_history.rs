@@ -21,7 +21,7 @@ use base_consensus_engine::{
 };
 use base_consensus_node::{
     DerivationClientResult, EngineActorRequest, EngineDerivationClient, EngineError,
-    EngineProcessor, EngineProcessorOptions, EngineRequestReceiver, NodeMode, NoopCheckpointWriter,
+    EngineProcessor, EngineProcessorOptions, NodeMode, NoopCheckpointWriter,
 };
 use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
 use tokio::{
@@ -32,7 +32,7 @@ use tokio::{
 const FINALIZED_BLOCK_NUMBER: u64 = 44_343_400;
 const LATEST_BLOCK_NUMBER: u64 = 44_343_433;
 const NEXT_UNSAFE_HASH_BYTE: u8 = 0x62;
-const ENGINE_SURVIVAL_TIMEOUT: Duration = Duration::from_millis(250);
+const ENGINE_RESET_TIMEOUT: Duration = Duration::from_secs(5);
 const PRUNED_HISTORY_UNAVAILABLE_CODE: i64 = 4444;
 const PRUNED_HISTORY_UNAVAILABLE_MESSAGE: &str = "pruned history unavailable";
 
@@ -90,7 +90,7 @@ async fn validator_initial_reset_survives_pruned_history_unavailable_from_reth()
 
     processor.wait_for_validator_bootstrap().await;
     processor.process_first_unsafe_payload().await;
-    processor.assert_survives_initial_reset().await;
+    processor.assert_completes_initial_reset().await;
     processor.shutdown().await;
 }
 
@@ -162,12 +162,13 @@ impl PrunedHistoryStartup {
             Arc::new(NoopCheckpointWriter),
         );
         let (request_tx, request_rx) = mpsc::channel(8);
-        let handle = processor.start(request_rx);
+        let handle = base_consensus_node::EngineRequestReceiver::start(processor, request_rx);
 
         RunningValidatorProcessor {
             state_rx,
             request_tx,
             handle,
+            checkpointed_finalized_head: self.checkpointed_finalized_head,
             reth_latest_head: self.reth_latest_head,
             next_unsafe_hash: self.next_unsafe_hash,
         }
@@ -178,6 +179,7 @@ struct RunningValidatorProcessor {
     state_rx: watch::Receiver<EngineState>,
     request_tx: mpsc::Sender<EngineActorRequest>,
     handle: JoinHandle<Result<(), EngineError>>,
+    checkpointed_finalized_head: L2BlockInfo,
     reth_latest_head: L2BlockInfo,
     next_unsafe_hash: B256,
 }
@@ -203,13 +205,47 @@ impl RunningValidatorProcessor {
             .expect("engine processor request channel closed");
     }
 
-    async fn assert_survives_initial_reset(&mut self) {
-        match tokio::time::timeout(ENGINE_SURVIVAL_TIMEOUT, &mut self.handle).await {
-            Err(_) => {}
-            Ok(result) => {
+    async fn assert_completes_initial_reset(&mut self) {
+        let wait_for_reset = self.state_rx.wait_for(|state| {
+            state.el_sync_finished
+                && state.sync_state.safe_head() == self.checkpointed_finalized_head
+                && state.sync_state.finalized_head() == self.checkpointed_finalized_head
+        });
+
+        tokio::select! {
+            result = &mut self.handle => {
                 panic!(
-                    "engine processor exited after reth returned pruned history unavailable: {result:?}"
+                    "engine processor exited before initial reset completed after pruned history unavailable: {result:?}"
                 );
+            }
+            result = tokio::time::timeout(ENGINE_RESET_TIMEOUT, wait_for_reset) => {
+                match result {
+                    Ok(Ok(_)) => {}
+                    Ok(Err(err)) => {
+                        if self.handle.is_finished() {
+                            let result = (&mut self.handle).await;
+                            panic!(
+                                "engine processor exited before initial reset completed after pruned history unavailable: {result:?}"
+                            );
+                        }
+
+                        panic!(
+                            "engine state channel closed before initial reset after pruned history unavailable: {err:?}"
+                        );
+                    }
+                    Err(_) => {
+                        if self.handle.is_finished() {
+                            let result = (&mut self.handle).await;
+                            panic!(
+                                "engine processor exited before initial reset completed after pruned history unavailable: {result:?}"
+                            );
+                        }
+
+                        panic!(
+                            "timed out waiting for initial reset after pruned history unavailable"
+                        );
+                    }
+                }
             }
         }
     }
@@ -265,7 +301,7 @@ fn pruned_history_unavailable_error() -> ErrorPayload {
     }
 }
 
-fn valid_fcu() -> alloy_rpc_types_engine::ForkchoiceUpdated {
+const fn valid_fcu() -> alloy_rpc_types_engine::ForkchoiceUpdated {
     alloy_rpc_types_engine::ForkchoiceUpdated {
         payload_status: PayloadStatus { status: PayloadStatusEnum::Valid, latest_valid_hash: None },
         payload_id: None,
