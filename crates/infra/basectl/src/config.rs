@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{cmp::Ordering, path::PathBuf};
 
 use alloy_primitives::Address;
 use alloy_provider::{Provider, ProviderBuilder};
@@ -129,6 +129,39 @@ pub struct ConductorNodeConfig {
     pub flashblocks_ws: Option<Url>,
 }
 
+impl ConductorNodeConfig {
+    /// Sorts conductor nodes by server id, then display name.
+    pub fn sort_by_server_id(nodes: &mut [Self]) {
+        nodes.sort_by(Self::cmp_by_server_id);
+    }
+
+    /// Compares conductor nodes by server id, then display name.
+    pub fn cmp_by_server_id(left: &Self, right: &Self) -> Ordering {
+        Self::cmp_server_id(&left.server_id, &right.server_id)
+            .then_with(|| left.name.cmp(&right.name))
+            .then_with(|| left.raft_addr.cmp(&right.raft_addr))
+    }
+
+    /// Compares server ids by numeric suffix when both ids share a dash-delimited prefix.
+    pub fn cmp_server_id(left: &str, right: &str) -> Ordering {
+        match (Self::server_id_suffix(left), Self::server_id_suffix(right)) {
+            (Some((left_prefix, left_number)), Some((right_prefix, right_number)))
+                if left_prefix == right_prefix =>
+            {
+                left_number.cmp(&right_number).then_with(|| left.cmp(right))
+            }
+            _ => left.cmp(right),
+        }
+    }
+
+    /// Returns the prefix and numeric suffix for ids like `sequencer-3`.
+    pub fn server_id_suffix(server_id: &str) -> Option<(&str, u64)> {
+        let (prefix, suffix) = server_id.rsplit_once('-')?;
+        let number = suffix.parse().ok()?;
+        Some((prefix, number))
+    }
+}
+
 /// Conductor cluster discovery configuration.
 ///
 /// When set, basectl can bootstrap a conductor cluster view from a single
@@ -256,7 +289,7 @@ impl ConductorSource {
         membership: &base_consensus_rpc::ClusterMembership,
     ) -> Option<Vec<ConductorNodeConfig>> {
         let Self::Discover { bootstrap, ports } = self else { return None };
-        let nodes = membership
+        let mut nodes = membership
             .servers
             .iter()
             .map(|srv| {
@@ -274,7 +307,8 @@ impl ConductorSource {
                     flashblocks_ws: None,
                 }
             })
-            .collect();
+            .collect::<Vec<_>>();
+        ConductorNodeConfig::sort_by_server_id(&mut nodes);
         Some(nodes)
     }
 }
@@ -732,7 +766,23 @@ impl MonitoringConfig {
 
 #[cfg(test)]
 mod tests {
+    use base_consensus_rpc::{ClusterMembership, ServerInfo, ServerSuffrage};
+
     use super::*;
+
+    fn membership(ids: &[&str]) -> ClusterMembership {
+        ClusterMembership {
+            version: 1,
+            servers: ids
+                .iter()
+                .map(|id| ServerInfo {
+                    id: (*id).to_string(),
+                    addr: format!("{id}:5050"),
+                    suffrage: ServerSuffrage::Voter,
+                })
+                .collect(),
+        }
+    }
 
     #[tokio::test]
     async fn test_builtin_configs() {
@@ -823,5 +873,36 @@ mod tests {
         };
 
         assert_eq!(resolved, bootstrap);
+    }
+
+    #[test]
+    fn discovered_conductor_nodes_use_natural_server_order() {
+        let source = ConductorSource::Discover {
+            bootstrap: Url::parse("http://127.0.0.1:5545").unwrap(),
+            ports: DiscoveryPorts::default(),
+        };
+        let membership = membership(&[
+            "sequencer-0",
+            "sequencer-2",
+            "sequencer-3",
+            "sequencer-1",
+            "sequencer-4",
+            "sequencer-10",
+        ]);
+
+        let nodes = source.synthesize_nodes(&membership).unwrap();
+        let names = nodes.iter().map(|node| node.name.as_str()).collect::<Vec<_>>();
+
+        assert_eq!(
+            names,
+            vec![
+                "sequencer-0",
+                "sequencer-1",
+                "sequencer-2",
+                "sequencer-3",
+                "sequencer-4",
+                "sequencer-10",
+            ]
+        );
     }
 }
