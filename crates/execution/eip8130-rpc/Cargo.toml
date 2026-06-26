@@ -1,6 +1,6 @@
 [package]
 name = "base-execution-eip8130-rpc"
-description = "RPC-layer helpers for EIP-8130 2D nonce reads"
+description = "RPC-layer helpers for EIP-8130: 2D nonce reads and gas estimation"
 
 version.workspace = true
 edition.workspace = true
@@ -19,8 +19,11 @@ base-common-network.workspace = true
 base-common-consensus.workspace = true
 base-common-precompiles.workspace = true
 base-common-chains.workspace = true
+base-common-evm.workspace = true
+base-common-rpc-types = { workspace = true, features = ["reth"] }
 
 # reth
+reth-evm.workspace = true
 reth-provider.workspace = true
 reth-chainspec.workspace = true
 reth-storage-api.workspace = true
@@ -28,10 +31,14 @@ reth-rpc-eth-api.workspace = true
 reth-rpc-eth-types.workspace = true
 
 # alloy
+alloy-evm.workspace = true
 alloy-eips.workspace = true
 alloy-rpc-types.workspace = true
 alloy-primitives.workspace = true
 alloy-consensus.workspace = true
+
+# revm
+revm.workspace = true
 
 # rpc
 jsonrpsee.workspace = true
