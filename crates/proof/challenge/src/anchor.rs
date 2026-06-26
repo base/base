@@ -78,7 +78,9 @@ impl<C: Clock> AnchorUpdater<C> {
 
     fn handle_retry(&mut self, game_address: Address) -> bool {
         let now = self.clock.now();
-        let game = self.tracked.get_mut(&game_address).expect("tracked game exists");
+        let Some(game) = self.tracked.get_mut(&game_address) else {
+            return false;
+        };
 
         let Some(retry_started_at) = *game else {
             *game = Some(now);
@@ -239,6 +241,7 @@ impl<C: Clock> AnchorUpdater<C> {
                     ChallengerMetrics::STATUS_SUCCESS,
                 )
                 .increment(1);
+                // Prometheus gauges are f64; this is telemetry, not protocol state.
                 ChallengerMetrics::anchor_l2_block_number().set(game_l2_block_number as f64);
                 AnchorUpdateOutcome::Complete
             }

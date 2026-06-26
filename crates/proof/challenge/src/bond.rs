@@ -246,16 +246,16 @@ impl<C: Clock> BondManager<C> {
             .collect()
             .await;
 
-        let tracked_before = self.tracked.len();
+        let mut discovered = 0u64;
 
         for game_address in results {
             if let Entry::Vacant(entry) = self.tracked.entry(game_address) {
                 info!(game = %game_address, "discovered claimable game");
                 entry.insert(None);
+                discovered += 1;
             }
         }
 
-        let discovered = (self.tracked.len() - tracked_before) as u64;
         if discovered > 0 {
             ChallengerMetrics::bond_discovery_games_found_total().increment(discovered);
             ChallengerMetrics::bonds_tracked().set(self.tracked.len() as f64);
@@ -280,19 +280,11 @@ impl<C: Clock> BondManager<C> {
 
         // Lazily resolve the DelayedWETH delay if not yet known.
         if self.weth_delay.is_none()
-            && let Some(&game_address) = self.tracked.keys().next()
-            && let Err(e) = async {
-                let weth_address = verifier_client.delayed_weth(game_address).await?;
-                let weth_client =
-                    DelayedWETHContractClient::new(weth_address, self.l1_rpc_url.clone())?;
-                let delay = weth_client.delay().await?;
-                info!(delay_secs = delay.as_secs(), "DelayedWETH delay configured");
-                self.weth_delay = Some(delay);
-                Ok::<(), eyre::Report>(())
-            }
-            .await
+            && let Some(game_address) = self.tracked.keys().next().copied()
         {
-            warn!(error = %e, "failed to read DelayedWETH delay, will retry later");
+            if let Err(e) = self.resolve_weth_delay(verifier_client, game_address).await {
+                warn!(error = %e, "failed to read DelayedWETH delay, will retry later");
+            }
         }
 
         let addresses: Vec<Address> = self.tracked.keys().copied().collect();
@@ -314,6 +306,19 @@ impl<C: Clock> BondManager<C> {
         }
 
         ChallengerMetrics::bonds_tracked().set(self.tracked.len() as f64);
+    }
+
+    async fn resolve_weth_delay(
+        &mut self,
+        verifier_client: &dyn AggregateVerifierClient,
+        game_address: Address,
+    ) -> eyre::Result<()> {
+        let weth_address = verifier_client.delayed_weth(game_address).await?;
+        let weth_client = DelayedWETHContractClient::new(weth_address, self.l1_rpc_url.clone())?;
+        let delay = weth_client.delay().await?;
+        info!(delay_secs = delay.as_secs(), "DelayedWETH delay configured");
+        self.weth_delay = Some(delay);
+        Ok(())
     }
 
     async fn advance_game<T: TxManager>(
