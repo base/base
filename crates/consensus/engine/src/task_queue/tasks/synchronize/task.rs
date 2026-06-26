@@ -73,7 +73,7 @@ impl<EngineClient_: EngineClient> SynchronizeTask<EngineClient_> {
             finalized_head: self.state_update.finalized_head.filter(is_not_ahead_of_unsafe),
         };
 
-        state.sync_state.apply_update(safe_only_update)
+        state.sync_state.updated(safe_only_update)
     }
 
     /// Checks the response of the `engine_forkchoiceUpdated` call, and updates the sync status if
@@ -126,7 +126,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient
 
     async fn execute(&self, state: &mut EngineState) -> Result<Self::Output, SynchronizeTaskError> {
         // Apply the sync state update to the engine state.
-        let new_sync_state = state.sync_state.apply_update(self.state_update);
+        let new_sync_state = state.sync_state.updated(self.state_update);
 
         // Check if a forkchoice update is not needed, return early.
         // A forkchoice update is not needed if...
@@ -182,11 +182,28 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient
         let confirmed =
             self.check_forkchoice_updated_status(state, &valid_response.payload_status.status)?;
 
-        // On `Valid`, apply the full sync-state update. On `Syncing`, fall back to a
-        // state that never advances `unsafe_head` beyond what the EL can serve (see
-        // `safe_only_sync_state`).
-        state.sync_state =
-            if confirmed { new_sync_state } else { self.safe_only_sync_state(state) };
+        // On `Valid`, commit the full sync-state update and emit metrics for it. On
+        // `Syncing`, fall back to a state that never advances `unsafe_head` beyond
+        // what the EL can serve (see `safe_only_sync_state`) and only emit metrics
+        // for the filtered update that is actually applied.
+        if confirmed {
+            state.sync_state = state.sync_state.apply_update(self.state_update);
+        } else {
+            let safe_only_sync_state = self.safe_only_sync_state(state);
+            let safe_only_update = EngineSyncStateUpdate {
+                unsafe_head: (safe_only_sync_state.unsafe_head() != state.sync_state.unsafe_head())
+                    .then_some(safe_only_sync_state.unsafe_head()),
+                local_safe_head: (safe_only_sync_state.local_safe_head()
+                    != state.sync_state.local_safe_head())
+                .then_some(safe_only_sync_state.local_safe_head()),
+                safe_head: (safe_only_sync_state.safe_head() != state.sync_state.safe_head())
+                    .then_some(safe_only_sync_state.safe_head()),
+                finalized_head: (safe_only_sync_state.finalized_head()
+                    != state.sync_state.finalized_head())
+                .then_some(safe_only_sync_state.finalized_head()),
+            };
+            state.sync_state = state.sync_state.apply_update(safe_only_update);
+        }
 
         let fcu_duration = fcu_time_start.elapsed();
         debug!(
