@@ -157,3 +157,18 @@ impl BaseCommand {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use crate::cli::BaseCli;
+
+    #[test]
+    fn rejects_legacy_node_rpc_path() {
+        let err = BaseCli::try_parse_from(["base", "node", "rpc"]).unwrap_err();
+
+        let rendered = err.to_string();
+        assert!(rendered.contains("node"));
+    }
+}
