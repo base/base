@@ -74,24 +74,12 @@ impl EngineSyncState {
 
     /// Computes the new sync state using the current state values when the update is not
     /// specified.
-    pub const fn updated(self, sync_state_update: EngineSyncStateUpdate) -> Self {
+    pub fn updated(self, sync_state_update: EngineSyncStateUpdate) -> Self {
         Self {
-            unsafe_head: match sync_state_update.unsafe_head {
-                Some(head) => head,
-                None => self.unsafe_head,
-            },
-            local_safe_head: match sync_state_update.local_safe_head {
-                Some(head) => head,
-                None => self.local_safe_head,
-            },
-            safe_head: match sync_state_update.safe_head {
-                Some(head) => head,
-                None => self.safe_head,
-            },
-            finalized_head: match sync_state_update.finalized_head {
-                Some(head) => head,
-                None => self.finalized_head,
-            },
+            unsafe_head: sync_state_update.unsafe_head.unwrap_or(self.unsafe_head),
+            local_safe_head: sync_state_update.local_safe_head.unwrap_or(self.local_safe_head),
+            safe_head: sync_state_update.safe_head.unwrap_or(self.safe_head),
+            finalized_head: sync_state_update.finalized_head.unwrap_or(self.finalized_head),
         }
     }
 
