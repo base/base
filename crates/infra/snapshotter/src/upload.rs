@@ -149,11 +149,11 @@ impl SnapshotUploader {
         let list_prefix =
             if self.prefix.is_empty() { String::new() } else { format!("{}/", self.prefix) };
 
-        let mut runs = Vec::new();
+        let mut run_prefixes = Vec::new();
         let mut continuation_token = None;
 
         loop {
-            let mut req = self.client.list_objects_v2().bucket(&self.bucket);
+            let mut req = self.client.list_objects_v2().bucket(&self.bucket).delimiter("/");
             if !list_prefix.is_empty() {
                 req = req.prefix(&list_prefix);
             }
@@ -166,10 +166,11 @@ impl SnapshotUploader {
                 .await
                 .with_context(|| format!("failed to list objects under {list_prefix}"))?;
 
-            for obj in resp.contents() {
-                let Some(key) = obj.key() else { continue };
-                if let Some(run) = Self::parse_completed_run_manifest_key(key, &list_prefix) {
-                    runs.push(run);
+            for common_prefix in resp.common_prefixes() {
+                let Some(prefix) = common_prefix.prefix() else { continue };
+                if let Some((timestamp, run_prefix)) = Self::parse_run_prefix(prefix, &list_prefix)
+                {
+                    run_prefixes.push((timestamp, run_prefix));
                 }
             }
 
@@ -177,6 +178,16 @@ impl SnapshotUploader {
                 continuation_token = resp.next_continuation_token().map(String::from);
             } else {
                 break;
+            }
+        }
+
+        run_prefixes.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+
+        let mut runs = Vec::new();
+        for (timestamp, run_prefix) in run_prefixes {
+            let manifest_key = format!("{run_prefix}/manifest.json");
+            if self.remote_key_exists(&manifest_key).await? {
+                runs.push(SnapshotRun { timestamp, manifest_key });
             }
         }
 
@@ -212,6 +223,17 @@ impl SnapshotUploader {
         }
         let timestamp = timestamp_str.parse::<u64>().ok()?;
         Some(SnapshotRun { timestamp, manifest_key: key.to_string() })
+    }
+
+    /// Parses a common prefix of the form `{list_prefix}{timestamp}/`.
+    pub fn parse_run_prefix(prefix: &str, list_prefix: &str) -> Option<(u64, String)> {
+        let rest = prefix.strip_prefix(list_prefix)?;
+        let timestamp_str = rest.strip_suffix('/')?;
+        if timestamp_str.contains('/') {
+            return None;
+        }
+        let timestamp = timestamp_str.parse::<u64>().ok()?;
+        Some((timestamp, prefix.trim_end_matches('/').to_string()))
     }
 
     /// Returns the completed run timestamps that exceed the retention window.
@@ -456,6 +478,21 @@ impl SnapshotUploader {
         }
 
         Ok(keys)
+    }
+
+    /// Returns whether a full object key exists remotely.
+    async fn remote_key_exists(&self, key: &str) -> Result<bool> {
+        let resp = self
+            .client
+            .list_objects_v2()
+            .bucket(&self.bucket)
+            .prefix(key)
+            .max_keys(1)
+            .send()
+            .await
+            .with_context(|| format!("failed to check object existence for {key}"))?;
+
+        Ok(resp.contents().iter().any(|obj| obj.key() == Some(key)))
     }
 
     /// Deletes all objects under a prefix and returns the number of deleted keys.
@@ -808,6 +845,28 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn parse_run_prefix_accepts_timestamp_prefixes() {
+        assert_eq!(
+            SnapshotUploader::parse_run_prefix("mainnet/1710000002/", "mainnet/"),
+            Some((1_710_000_002, "mainnet/1710000002".to_string()))
+        );
+        assert_eq!(
+            SnapshotUploader::parse_run_prefix("1710000002/", ""),
+            Some((1_710_000_002, "1710000002".to_string()))
+        );
+    }
+
+    #[test]
+    fn parse_run_prefix_rejects_non_run_prefixes() {
+        assert_eq!(SnapshotUploader::parse_run_prefix("mainnet/static_files/", "mainnet/"), None);
+        assert_eq!(
+            SnapshotUploader::parse_run_prefix("mainnet/1710000002/nested/", "mainnet/"),
+            None
+        );
+        assert_eq!(SnapshotUploader::parse_run_prefix("other/1710000002/", "mainnet/"), None);
     }
 
     #[test]
