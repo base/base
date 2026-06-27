@@ -227,7 +227,9 @@ impl<TM: TxManager> SubmissionQueue<TM> {
                 for id in &ids {
                     pipeline.confirm(*id, l1_block);
                 }
-                pipeline.advance_l1_head(l1_block);
+                if l1_block > 0 {
+                    pipeline.advance_l1_head(l1_block);
+                }
                 BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_CONFIRMED)
                     .increment(ids.len() as u64);
                 info!(submissions = %ids.len(), l1_block = %l1_block, "submission confirmed on L1");
