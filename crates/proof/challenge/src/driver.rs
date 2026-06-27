@@ -379,7 +379,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
 
         if result.is_valid {
             debug!(game = %game_address, "game output roots are valid");
-            self.anchor_updater.track_game(game_address);
+            self.anchor_updater.track_valid_game(game_address);
             return Ok(());
         }
 

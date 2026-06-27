@@ -244,6 +244,14 @@ pub struct MockAggregateVerifier {
     pub game_info_reads: Mutex<Vec<Address>>,
     /// Addresses passed to `status`, used by tests that assert cached reads.
     pub status_reads: Mutex<Vec<Address>>,
+    /// Addresses passed to `zk_prover`, used by tests that assert cheap pending polls.
+    pub zk_prover_reads: Mutex<Vec<Address>>,
+    /// Addresses passed to `tee_prover`, used by tests that assert cheap pending polls.
+    pub tee_prover_reads: Mutex<Vec<Address>>,
+    /// Addresses passed to `countered_index`, used by tests that assert cheap pending polls.
+    pub countered_index_reads: Mutex<Vec<Address>>,
+    /// Addresses passed to `game_over`, used by tests that assert cheap pending polls.
+    pub game_over_reads: Mutex<Vec<Address>>,
     /// Addresses passed to `anchor_state_registry`, used by tests that assert cached reads.
     pub anchor_state_registry_reads: Mutex<Vec<Address>>,
 }
@@ -256,6 +264,10 @@ impl MockAggregateVerifier {
             bond_recipient_reads: Mutex::new(Vec::new()),
             game_info_reads: Mutex::new(Vec::new()),
             status_reads: Mutex::new(Vec::new()),
+            zk_prover_reads: Mutex::new(Vec::new()),
+            tee_prover_reads: Mutex::new(Vec::new()),
+            countered_index_reads: Mutex::new(Vec::new()),
+            game_over_reads: Mutex::new(Vec::new()),
             anchor_state_registry_reads: Mutex::new(Vec::new()),
         }
     }
@@ -335,10 +347,12 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     }
 
     async fn zk_prover(&self, game_address: Address) -> Result<Address, ContractError> {
+        self.zk_prover_reads.lock().unwrap().push(game_address);
         self.get(game_address, |s| s.zk_prover)
     }
 
     async fn tee_prover(&self, game_address: Address) -> Result<Address, ContractError> {
+        self.tee_prover_reads.lock().unwrap().push(game_address);
         self.get(game_address, |s| s.tee_prover)
     }
 
@@ -383,10 +397,12 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     }
 
     async fn countered_index(&self, game_address: Address) -> Result<u64, ContractError> {
+        self.countered_index_reads.lock().unwrap().push(game_address);
         self.get(game_address, |s| s.countered_index)
     }
 
     async fn game_over(&self, game_address: Address) -> Result<bool, ContractError> {
+        self.game_over_reads.lock().unwrap().push(game_address);
         self.get(game_address, |s| s.game_over)
     }
 

@@ -1064,7 +1064,7 @@ pub trait BondTransactionSubmitter: Send + Sync {
 
 #[cfg(test)]
 mod tests {
-    use std::{future::Future, pin::Pin};
+    use std::{collections::HashMap, future::Future, pin::Pin};
 
     use alloy_primitives::B256;
     use futures::stream::BoxStream;
@@ -1148,6 +1148,25 @@ mod tests {
         assert!(!mgr.is_tracking(&game));
         mgr.track_game(game, addr);
         assert!(mgr.is_tracking(&game));
+    }
+
+    #[tokio::test]
+    async fn already_resolved_game_advances_to_unlock() {
+        let claim_addr = Address::repeat_byte(0x01);
+        let game = addr(0);
+        let mut mgr = make_manager(vec![claim_addr]);
+        mgr.track_game(game, claim_addr);
+
+        let mut state = mock_state(GameStatus::DefenderWins, Address::ZERO, 100);
+        state.bond_recipient = claim_addr;
+        let verifier = MockAggregateVerifier::new(HashMap::from([(game, state)]));
+        let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
+
+        let result = mgr.advance_game(game, &verifier, &submitter).await.unwrap();
+
+        assert!(result.is_none());
+        assert!(matches!(mgr.tracked.get(&game).unwrap().phase, BondPhase::NeedsUnlock));
+        assert!(submitter.recorded_calls().is_empty());
     }
 
     #[test]

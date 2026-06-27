@@ -453,7 +453,7 @@ impl GameScanner {
             factory_read_errors,
             status_read_errors,
             scan_start,
-            scan_head = game_count - 1,
+            scan_head = game_count.saturating_sub(1),
             "anchor recovery scan complete"
         );
         Ok(candidates)

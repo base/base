@@ -42,6 +42,8 @@ pub struct TrackedAnchorUpdate {
     pub l2_block_number: Option<u64>,
     /// Whether this updater already submitted `resolve()` for the game.
     pub resolve_submitted: bool,
+    /// Whether prover reads should wait until the dispute period has elapsed.
+    pub defer_prover_reads_until_game_over: bool,
 }
 
 impl<C: Clock> AnchorUpdater<C> {
@@ -53,13 +55,29 @@ impl<C: Clock> AnchorUpdater<C> {
 
     /// Registers a game for anchor root advancement.
     pub fn track_game(&mut self, game_address: Address) {
+        self.track_game_with_options(game_address, false);
+    }
+
+    /// Registers a valid in-progress game for anchor root advancement.
+    pub fn track_valid_game(&mut self, game_address: Address) {
+        self.track_game_with_options(game_address, true);
+    }
+
+    fn track_game_with_options(
+        &mut self,
+        game_address: Address,
+        defer_prover_reads_until_game_over: bool,
+    ) {
         let Entry::Vacant(entry) = self.tracked.entry(game_address) else {
             debug!(game = %game_address, "game already tracked for anchor update");
             return;
         };
 
         info!(game = %game_address, "tracking game for anchor update");
-        entry.insert(TrackedAnchorUpdate::default());
+        entry.insert(TrackedAnchorUpdate {
+            defer_prover_reads_until_game_over,
+            ..TrackedAnchorUpdate::default()
+        });
         ChallengerMetrics::anchor_update_tracked_games().set(self.tracked.len() as f64);
     }
 
@@ -89,12 +107,12 @@ impl<C: Clock> AnchorUpdater<C> {
             let should_remove = match outcome {
                 AnchorUpdateOutcome::Complete => true,
                 AnchorUpdateOutcome::Pending => {
-                    if let Some(game) = self.tracked.get_mut(&game_address) {
-                        game.retry_started_at = None;
-                    }
+                    game.retry_started_at = None;
                     false
                 }
-                AnchorUpdateOutcome::Retry => self.handle_retry(game_address),
+                AnchorUpdateOutcome::Retry => {
+                    Self::handle_retry(&self.clock, self.retention, game_address, game)
+                }
             };
 
             if should_remove {
@@ -105,26 +123,27 @@ impl<C: Clock> AnchorUpdater<C> {
         ChallengerMetrics::anchor_update_tracked_games().set(self.tracked.len() as f64);
     }
 
-    fn handle_retry(&mut self, game_address: Address) -> bool {
-        let now = self.clock.now();
-        let Some(game) = self.tracked.get_mut(&game_address) else {
-            return false;
-        };
-
+    fn handle_retry(
+        clock: &C,
+        retention: Duration,
+        game_address: Address,
+        game: &mut TrackedAnchorUpdate,
+    ) -> bool {
+        let now = clock.now();
         let Some(retry_started_at) = game.retry_started_at else {
             game.retry_started_at = Some(now);
             return false;
         };
 
         let elapsed = now.saturating_sub(retry_started_at);
-        if elapsed < self.retention {
+        if elapsed < retention {
             return false;
         }
 
         warn!(
             game = %game_address,
             retained_secs = elapsed.as_secs(),
-            retention_secs = self.retention.as_secs(),
+            retention_secs = retention.as_secs(),
             "dropping anchor update after retention timeout"
         );
         true
@@ -163,6 +182,28 @@ impl<C: Clock> AnchorUpdater<C> {
                 return AnchorUpdateOutcome::Pending;
             }
 
+            let mut game_over = None;
+            if game.defer_prover_reads_until_game_over {
+                let is_game_over = match verifier_client.game_over(game_address).await {
+                    Ok(game_over) => game_over,
+                    Err(e) => {
+                        debug!(
+                            game = %game_address,
+                            error = %e,
+                            "failed to read gameOver for anchor update, will retry"
+                        );
+                        return AnchorUpdateOutcome::Retry;
+                    }
+                };
+
+                if !is_game_over {
+                    return AnchorUpdateOutcome::Pending;
+                }
+
+                game.defer_prover_reads_until_game_over = false;
+                game_over = Some(is_game_over);
+            }
+
             let (zk_prover, tee_prover, countered_index) = match tokio::try_join!(
                 verifier_client.zk_prover(game_address),
                 verifier_client.tee_prover(game_address),
@@ -197,16 +238,19 @@ impl<C: Clock> AnchorUpdater<C> {
                 return AnchorUpdateOutcome::Pending;
             }
 
-            let game_over = match verifier_client.game_over(game_address).await {
-                Ok(game_over) => game_over,
-                Err(e) => {
-                    debug!(
-                        game = %game_address,
-                        error = %e,
-                        "failed to read gameOver for anchor update, will retry"
-                    );
-                    return AnchorUpdateOutcome::Retry;
-                }
+            let game_over = match game_over {
+                Some(game_over) => game_over,
+                None => match verifier_client.game_over(game_address).await {
+                    Ok(game_over) => game_over,
+                    Err(e) => {
+                        debug!(
+                            game = %game_address,
+                            error = %e,
+                            "failed to read gameOver for anchor update, will retry"
+                        );
+                        return AnchorUpdateOutcome::Retry;
+                    }
+                },
             };
 
             if !game_over {
@@ -583,6 +627,26 @@ mod tests {
         assert!(submitter.recorded_calls().is_empty());
         assert!(updater.tracked.contains_key(&game));
         assert_eq!(updater.tracked[&game].retry_started_at, None);
+    }
+
+    #[tokio::test]
+    async fn poll_does_not_read_prover_state_before_game_over() {
+        let game = addr(0);
+        let state = mock_state(GameStatus::InProgress, Address::ZERO, 100);
+        let verifier = MockAggregateVerifier::new(HashMap::from([(game, state)]));
+        let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
+
+        let mut updater = AnchorUpdater::new(TokioRuntime::new(), DEFAULT_RETENTION);
+        updater.track_valid_game(game);
+
+        updater.poll(&verifier, &submitter).await;
+
+        assert_eq!(verifier.game_over_reads.lock().unwrap().as_slice(), &[game]);
+        assert!(verifier.zk_prover_reads.lock().unwrap().is_empty());
+        assert!(verifier.tee_prover_reads.lock().unwrap().is_empty());
+        assert!(verifier.countered_index_reads.lock().unwrap().is_empty());
+        assert!(submitter.recorded_calls().is_empty());
+        assert!(updater.tracked.contains_key(&game));
     }
 
     #[tokio::test]
