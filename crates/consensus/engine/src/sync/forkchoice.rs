@@ -5,7 +5,7 @@ use std::fmt::Display;
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_provider::Network;
 use alloy_rpc_types_eth::Block as RpcBlock;
-use alloy_transport::TransportResult;
+use alloy_transport::{RpcError, TransportErrorKind, TransportResult};
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_common_rpc_types::Transaction;
@@ -69,39 +69,63 @@ impl L2ForkchoiceState {
         engine_client: &EngineClient_,
         checkpoint_reader: &CheckpointReader,
     ) -> Result<Self, SyncStartError> {
-        let finalized = {
-            let rpc_block =
-                match get_block_compat(engine_client, BlockNumberOrTag::Finalized.into()).await {
-                    Ok(Some(block)) => block,
-                    Ok(None) => engine_client
-                        .get_l2_block(cfg.genesis.l2.number.into())
-                        .full()
-                        .await?
-                        .ok_or(SyncStartError::BlockNotFound(cfg.genesis.l2.number.into()))?,
-                    Err(e) => return Err(e.into()),
-                };
-
-            let rpc_block_number = rpc_block.header.number;
-            match block_info_from_reth_or_checkpoint(
-                cfg,
-                ForkchoiceCheckpointLabel::Finalized,
-                rpc_block,
-                checkpoint_reader,
-            )
-            .await
-            {
-                Ok(info) => info,
-                Err(SyncStartError::FromBlock(FromBlockError::MissingL1InfoDeposit(hash))) => {
-                    warn!(
-                        target: "sync_start",
-                        block_hash = %hash,
-                        block_number = rpc_block_number,
-                        "finalized block body is pruned and no valid checkpoint exists, \
-                         recovering to earliest unpruned block"
-                    );
-                    find_earliest_unpruned_block(cfg, engine_client, rpc_block_number).await?
+        let finalized = match get_block_compat(
+            engine_client,
+            BlockNumberOrTag::Finalized.into(),
+        )
+        .await?
+        {
+            Some(rpc_block) => {
+                let rpc_block_number = rpc_block.header.number;
+                match block_info_from_reth_or_checkpoint(
+                    cfg,
+                    ForkchoiceCheckpointLabel::Finalized,
+                    rpc_block,
+                    checkpoint_reader,
+                )
+                .await
+                {
+                    Ok(info) => info,
+                    Err(SyncStartError::FromBlock(FromBlockError::MissingL1InfoDeposit(hash))) => {
+                        warn!(
+                            target: "sync_start",
+                            block_hash = %hash,
+                            block_number = rpc_block_number,
+                            "finalized block body is pruned and no valid checkpoint exists, \
+                             recovering to earliest unpruned block"
+                        );
+                        find_earliest_unpruned_block(cfg, engine_client, rpc_block_number).await?
+                    }
+                    Err(e) => return Err(e),
                 }
-                Err(e) => return Err(e),
+            }
+            None => {
+                // The finalized label is unavailable. Either the chain has no finalized block
+                // yet (fresh chain -> genesis) or this is a pruned node whose finalized pointer
+                // references a block below the history floor (reth returns 4444, which
+                // get_block_compat maps to None). On a fully pruned node even genesis is gone,
+                // so use genesis when reth still serves it and otherwise recover the earliest
+                // block whose body reth retains.
+                match get_block_compat(engine_client, cfg.genesis.l2.number.into()).await? {
+                    Some(genesis_block) => {
+                        block_info_from_reth_or_checkpoint(
+                            cfg,
+                            ForkchoiceCheckpointLabel::Finalized,
+                            genesis_block,
+                            checkpoint_reader,
+                        )
+                        .await?
+                    }
+                    None => {
+                        warn!(
+                            target: "sync_start",
+                            "finalized label and genesis both pruned; recovering to earliest \
+                             unpruned block"
+                        );
+                        find_earliest_unpruned_block(cfg, engine_client, cfg.genesis.l2.number)
+                            .await?
+                    }
+                }
             }
         };
         let safe = match get_block_compat(engine_client, BlockNumberOrTag::Safe.into()).await {
@@ -270,11 +294,21 @@ async fn find_earliest_unpruned_block<EngineClient_: EngineClient>(
 
     while lo < hi {
         let mid = lo + (hi - lo) / 2;
-        let block = engine_client
-            .get_l2_block(mid.into())
-            .full()
-            .await?
-            .ok_or(SyncStartError::BlockNotFound(mid.into()))?;
+        // A block below the history floor is reported by reth as 4444 "pruned history
+        // unavailable" (a hard RPC error) rather than a body-less block, so treat that the same
+        // as a pruned body and search higher.
+        let block = match engine_client.get_l2_block(mid.into()).full().await {
+            Ok(Some(block)) => block,
+            Ok(None) => {
+                lo = mid + 1;
+                continue;
+            }
+            Err(e) if is_pruned_history_error(&e) => {
+                lo = mid + 1;
+                continue;
+            }
+            Err(e) => return Err(e.into()),
+        };
         let consensus_block =
             block.into_consensus().map_transactions(|tx| tx.inner.inner.into_inner());
 
@@ -300,6 +334,13 @@ async fn find_earliest_unpruned_block<EngineClient_: EngineClient>(
     Ok(last_known_unpruned)
 }
 
+/// Returns true if `err` is reth's 4444 "pruned history unavailable" response, returned when a
+/// requested block is below the history floor on a pruned node. Such a block cannot be served at
+/// all (not even a body-less header), so callers treat it as an absent block.
+fn is_pruned_history_error(err: &RpcError<TransportErrorKind>) -> bool {
+    err.to_string().contains("pruned history unavailable")
+}
+
 /// Wrapper function around [`EngineClient::get_l2_block`] to handle compatibility issues with geth
 /// and erigon. When serving a block-by-number request, these clients will return non-standard
 /// errors for the safe and finalized heads when the chain has just started and nothing is marked as
@@ -311,12 +352,52 @@ async fn get_block_compat<EngineClient_: EngineClient>(
     match engine_client.get_l2_block(block_id).full().await {
         Err(e) => {
             let err_str = e.to_string();
-            if err_str.contains("block not found") || err_str.contains("Unknown block") {
+            // Treat reth's 4444 "pruned history unavailable" the same as an absent block. reth's
+            // persisted safe/finalized forkchoice pointers can reference a block below the history
+            // floor after restoring from a snapshot, hard-erroring this fetch before the
+            // MissingL1InfoDeposit recovery path (find_earliest_unpruned_block) can run. Mapping it
+            // to None lets the caller recover within the retained range instead of crashing.
+            if err_str.contains("block not found")
+                || err_str.contains("Unknown block")
+                || is_pruned_history_error(&e)
+            {
                 Ok(None)
             } else {
                 Err(e)
             }
         }
         r => r,
+    }
+}
+
+#[cfg(test)]
+mod pruned_history_tests {
+    use std::borrow::Cow;
+
+    use alloy_json_rpc::{ErrorPayload, RpcError};
+    use alloy_transport::TransportErrorKind;
+
+    use super::is_pruned_history_error;
+
+    fn rpc_error(code: i64, message: &str) -> RpcError<TransportErrorKind> {
+        RpcError::ErrorResp(ErrorPayload {
+            code,
+            message: Cow::Owned(message.to_string()),
+            data: None,
+        })
+    }
+
+    #[test]
+    fn detects_reth_pruned_history_response() {
+        // reth returns code 4444 with this message when a requested block is below the
+        // history floor on a pruned node.
+        assert!(is_pruned_history_error(&rpc_error(4444, "pruned history unavailable")));
+    }
+
+    #[test]
+    fn ignores_unrelated_rpc_errors() {
+        assert!(!is_pruned_history_error(&rpc_error(-32000, "execution reverted")));
+        assert!(!is_pruned_history_error(&rpc_error(-32601, "method not found")));
+        assert!(!is_pruned_history_error(&rpc_error(-32602, "invalid params")));
     }
 }
