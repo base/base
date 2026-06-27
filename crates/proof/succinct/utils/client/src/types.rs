@@ -72,6 +72,9 @@ impl AggregationOutputs {
         off += 8;
 
         let roots_len = data.len() - PREFIX - SUFFIX;
+        if roots_len % 32 != 0 {
+            return Err("intermediateRoots length is not a multiple of 32");
+        }
         let intermediate_roots = Bytes::copy_from_slice(&data[off..off + roots_len]);
         off += roots_len;
 
