@@ -240,12 +240,24 @@ pub struct MockAggregateVerifier {
     /// Addresses passed to `bond_recipient`, used by tests that assert polling
     /// avoids redundant lifecycle reads.
     pub bond_recipient_reads: Mutex<Vec<Address>>,
+    /// Addresses passed to `game_info`, used by tests that assert cached reads.
+    pub game_info_reads: Mutex<Vec<Address>>,
+    /// Addresses passed to `status`, used by tests that assert cached reads.
+    pub status_reads: Mutex<Vec<Address>>,
+    /// Addresses passed to `anchor_state_registry`, used by tests that assert cached reads.
+    pub anchor_state_registry_reads: Mutex<Vec<Address>>,
 }
 
 impl MockAggregateVerifier {
     /// Creates a new mock verifier from a pre-built game state map.
     pub const fn new(games: HashMap<Address, MockGameState>) -> Self {
-        Self { games: Mutex::new(games), bond_recipient_reads: Mutex::new(Vec::new()) }
+        Self {
+            games: Mutex::new(games),
+            bond_recipient_reads: Mutex::new(Vec::new()),
+            game_info_reads: Mutex::new(Vec::new()),
+            status_reads: Mutex::new(Vec::new()),
+            anchor_state_registry_reads: Mutex::new(Vec::new()),
+        }
     }
 
     /// Updates the state for a specific game address.
@@ -259,6 +271,36 @@ impl MockAggregateVerifier {
     /// Returns how many times `bond_recipient` was read for a game.
     pub fn bond_recipient_read_count(&self, game_address: Address) -> usize {
         self.bond_recipient_reads
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|&&read_address| read_address == game_address)
+            .count()
+    }
+
+    /// Returns how many times `game_info` was read for a game.
+    pub fn game_info_read_count(&self, game_address: Address) -> usize {
+        self.game_info_reads
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|&&read_address| read_address == game_address)
+            .count()
+    }
+
+    /// Returns how many times `status` was read for a game.
+    pub fn status_read_count(&self, game_address: Address) -> usize {
+        self.status_reads
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|&&read_address| read_address == game_address)
+            .count()
+    }
+
+    /// Returns how many times `anchor_state_registry` was read for a game.
+    pub fn anchor_state_registry_read_count(&self, game_address: Address) -> usize {
+        self.anchor_state_registry_reads
             .lock()
             .unwrap()
             .iter()
@@ -283,10 +325,12 @@ impl MockAggregateVerifier {
 #[async_trait]
 impl AggregateVerifierClient for MockAggregateVerifier {
     async fn game_info(&self, game_address: Address) -> Result<GameInfo, ContractError> {
+        self.game_info_reads.lock().unwrap().push(game_address);
         self.get(game_address, |s| s.game_info)
     }
 
     async fn status(&self, game_address: Address) -> Result<GameStatus, ContractError> {
+        self.status_reads.lock().unwrap().push(game_address);
         self.get(game_address, |s| s.status)
     }
 
@@ -380,6 +424,7 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     }
 
     async fn anchor_state_registry(&self, game_address: Address) -> Result<Address, ContractError> {
+        self.anchor_state_registry_reads.lock().unwrap().push(game_address);
         self.get(game_address, |s| s.anchor_state_registry)
     }
 
