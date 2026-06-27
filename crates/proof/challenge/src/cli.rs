@@ -138,8 +138,7 @@ pub struct ChallengerArgs {
     )]
     pub bond_discovery_interval: Duration,
 
-    /// Maximum time to keep a completed bond game tracked while waiting for
-    /// its anchor update to complete.
+    /// Maximum time to retry an eligible anchor state update after it starts failing.
     #[arg(
         long = "anchor-update-retention",
         env = cli_env!("ANCHOR_UPDATE_RETENTION"),

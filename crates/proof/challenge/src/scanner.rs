@@ -392,6 +392,64 @@ impl GameScanner {
         scan_start
     }
 
+    /// Scans post-anchor games for already-resolved defender wins that may
+    /// still need `setAnchorState()`.
+    pub async fn recover_anchor_candidates(&self) -> Result<Vec<Address>> {
+        let _scan_guard = self.scan_lock.lock().await;
+        let game_count = self.factory_client.game_count().await?;
+
+        if game_count == 0 {
+            debug!("factory has no games");
+            return Ok(vec![]);
+        }
+
+        let scan_start = self.scan_start_index(game_count).await;
+        let candidates: Vec<Address> = stream::iter(scan_start..game_count)
+            .map(|index| async move {
+                let game = match self.factory_client.game_at_index(index).await {
+                    Ok(game) => game,
+                    Err(e) => {
+                        warn!(index, error = %e, "failed to fetch game during anchor recovery");
+                        return None;
+                    }
+                };
+
+                match self.verifier_client.status(game.proxy).await {
+                    Ok(GameStatus::DefenderWins) => Some(game.proxy),
+                    Ok(status) => {
+                        debug!(
+                            index,
+                            game = %game.proxy,
+                            status = %status,
+                            "game is not an anchor recovery candidate"
+                        );
+                        None
+                    }
+                    Err(e) => {
+                        warn!(
+                            index,
+                            game = %game.proxy,
+                            error = %e,
+                            "failed to read game status during anchor recovery, tracking for retry"
+                        );
+                        Some(game.proxy)
+                    }
+                }
+            })
+            .buffer_unordered(Self::SCAN_CONCURRENCY)
+            .filter_map(|candidate| async move { candidate })
+            .collect()
+            .await;
+
+        info!(
+            recovered = candidates.len(),
+            scan_start,
+            scan_head = game_count - 1,
+            "anchor recovery scan complete"
+        );
+        Ok(candidates)
+    }
+
     /// Finds `target` in the half-open factory index range `[start, end)`,
     /// searching backward in batches and returning the match closest to `end`.
     ///
@@ -612,5 +670,55 @@ impl GameScanner {
         cache.insert(cache_key, interval);
 
         Ok(interval)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::HashMap, sync::Arc};
+
+    use super::*;
+    use crate::test_utils::{
+        MockAggregateVerifier, MockDisputeGameFactory, addr, factory_game, mock_anchor_registry,
+        mock_state,
+    };
+
+    #[tokio::test]
+    async fn recover_anchor_candidates_finds_resolved_defender_wins_after_anchor() {
+        let factory = Arc::new(MockDisputeGameFactory::new(vec![
+            factory_game(0, 1),
+            factory_game(1, 1),
+            factory_game(2, 1),
+            factory_game(3, 1),
+        ]));
+        let verifier = Arc::new(MockAggregateVerifier::new(HashMap::from([
+            (addr(0), mock_state(GameStatus::DefenderWins, Address::ZERO, 50)),
+            (addr(1), mock_state(GameStatus::DefenderWins, Address::ZERO, 100)),
+            (addr(2), mock_state(GameStatus::DefenderWins, Address::ZERO, 200)),
+            (addr(3), mock_state(GameStatus::InProgress, Address::ZERO, 300)),
+        ])));
+        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(addr(1)));
+
+        let recovered = scanner.recover_anchor_candidates().await.unwrap();
+
+        assert_eq!(recovered, vec![addr(2)]);
+    }
+
+    #[tokio::test]
+    async fn recover_anchor_candidates_tracks_status_errors_for_retry() {
+        let factory = Arc::new(MockDisputeGameFactory::new(vec![
+            factory_game(0, 1),
+            factory_game(1, 1),
+            factory_game(2, 1),
+        ]));
+        let verifier = Arc::new(MockAggregateVerifier::new(HashMap::from([
+            (addr(0), mock_state(GameStatus::DefenderWins, Address::ZERO, 50)),
+            (addr(1), mock_state(GameStatus::DefenderWins, Address::ZERO, 100)),
+        ])));
+        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(addr(1)));
+
+        let recovered = scanner.recover_anchor_candidates().await.unwrap();
+
+        assert_eq!(recovered, vec![addr(2)]);
     }
 }

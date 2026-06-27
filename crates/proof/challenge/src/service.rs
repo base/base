@@ -22,8 +22,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::{
-    BondManager, ChallengeSubmitter, ChallengerConfig, ChallengerMetrics, Driver, DriverComponents,
-    DriverConfig, GameScanner, OutputValidator,
+    AnchorUpdater, BondManager, ChallengeSubmitter, ChallengerConfig, ChallengerMetrics, Driver,
+    DriverComponents, DriverConfig, GameScanner, OutputValidator,
 };
 
 /// Top-level challenger service.
@@ -147,7 +147,26 @@ impl ChallengerService {
             .map_err(|e| eyre::eyre!("failed to create TEE L1 client: {e}"))?;
         let tee = Some(crate::TeeConfig { l1_head_provider: Arc::new(l1_client) });
 
-        // ── 7. Bond manager (optional) ─────────────────────────────────────
+        // ── 7. Scanner, anchor updater, and bond manager ──────────────────
+        let scanner = GameScanner::new(
+            Arc::clone(&factory_client) as Arc<dyn DisputeGameFactoryClient>,
+            Arc::clone(&verifier_client),
+            anchor_registry_client,
+        );
+
+        let mut anchor_updater =
+            AnchorUpdater::new(TokioRuntime::new(), config.anchor_update_retention);
+
+        info!("starting anchor recovery scan");
+        match scanner.recover_anchor_candidates().await {
+            Ok(games) => {
+                for game_address in games {
+                    anchor_updater.track_game(game_address);
+                }
+            }
+            Err(e) => warn!(error = %e, "anchor recovery scan failed, continuing without recovery"),
+        }
+
         let bond_manager = if !config.bond_claim_addresses.is_empty() {
             let mut bm = BondManager::new(
                 config.bond_claim_addresses,
@@ -157,15 +176,21 @@ impl ChallengerService {
                 config.bond_discovery_interval,
                 TokioRuntime::new(),
             );
-            bm.set_anchor_update_retention(config.anchor_update_retention);
             info!("starting bond recovery scan");
-            if let Err(e) = bm.startup_scan(&*verifier_client).await {
-                // On failure `bond_scan_head` stays at 0, so
-                // `discover_claimable_games` will progressively scan the
-                // factory over multiple ticks (capped at `lookback` games
-                // per tick). This is intentional: progressive catch-up
-                // is preferable to disabling bond claiming entirely.
-                warn!(error = %e, "bond startup scan failed, continuing without recovery");
+            match bm.startup_scan(&*verifier_client).await {
+                Ok(games) => {
+                    for game_address in games {
+                        anchor_updater.track_game(game_address);
+                    }
+                }
+                Err(e) => {
+                    // On failure `bond_scan_head` stays at 0, so
+                    // `discover_claimable_games` will progressively scan the
+                    // factory over multiple ticks (capped at `lookback` games
+                    // per tick). This is intentional: progressive catch-up
+                    // is preferable to disabling bond claiming entirely.
+                    warn!(error = %e, "bond startup scan failed, continuing without recovery");
+                }
             }
             info!(tracked = bm.tracked_count(), "bond manager ready");
             Some(bm)
@@ -174,10 +199,7 @@ impl ChallengerService {
             None
         };
 
-        // ── 7b. Assemble scanner, validator, and driver ─────────────────────
-        let scanner =
-            GameScanner::new(factory_client, Arc::clone(&verifier_client), anchor_registry_client);
-
+        // ── 7b. Assemble validator and driver ──────────────────────────────
         let validator = OutputValidator::new(l2_client);
 
         // ── 8. Start health HTTP server ──────────────────────────────────────
@@ -206,6 +228,7 @@ impl ChallengerService {
                 tee,
                 verifier_client,
                 bond_manager,
+                anchor_updater,
             },
         );
 

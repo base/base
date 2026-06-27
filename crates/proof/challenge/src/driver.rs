@@ -35,10 +35,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    BondManager, CandidateGame, ChallengeSubmitError, ChallengeSubmitter, ChallengerMetrics,
-    DisputeIntent, GameCategory, GameScanner, IntermediateValidationParams, L1HeadProvider,
-    OutputValidator, PendingProof, PendingProofs, ProofKind, ProofPhase, ProofUpdate,
-    ValidatorError,
+    AnchorUpdater, BondManager, CandidateGame, ChallengeSubmitError, ChallengeSubmitter,
+    ChallengerMetrics, DisputeIntent, GameCategory, GameScanner, IntermediateValidationParams,
+    L1HeadProvider, OutputValidator, PendingProof, PendingProofs, ProofKind, ProofPhase,
+    ProofUpdate, ValidatorError,
 };
 
 /// Configuration for the challenger [`Driver`].
@@ -82,6 +82,8 @@ pub struct DriverComponents<
     pub verifier_client: Arc<dyn AggregateVerifierClient>,
     /// Bond lifecycle manager (optional; enabled when claim addresses are configured).
     pub bond_manager: Option<BondManager<C>>,
+    /// Best-effort anchor state updater.
+    pub anchor_updater: AnchorUpdater<C>,
 }
 
 impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> std::fmt::Debug
@@ -121,6 +123,8 @@ where
     ignored_games: HashSet<Address>,
     /// Bond lifecycle manager (optional; enabled when claim addresses are configured).
     pub bond_manager: Option<BondManager<C>>,
+    /// Best-effort anchor state updater.
+    pub anchor_updater: AnchorUpdater<C>,
     /// Interval between polling cycles.
     pub poll_interval: Duration,
     /// Maximum wall-clock time to wait for a ZK proof session before treating it as failed.
@@ -159,6 +163,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
             pending_proofs: PendingProofs::new(),
             ignored_games: HashSet::new(),
             bond_manager: components.bond_manager,
+            anchor_updater: components.anchor_updater,
             poll_interval: config.poll_interval,
             max_proof_duration: config.max_proof_duration,
             tee_submit_retry_limit: config.tee_submit_retry_limit,
@@ -202,6 +207,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
         self.poll_pending_proofs().await;
         self.discover_claimable_bonds().await;
         self.poll_bond_claims().await;
+        self.anchor_updater.poll(&*self.verifier_client, &self.submitter).await;
 
         let candidates = self.scanner.scan().await?;
 
@@ -220,10 +226,17 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
     /// so that newly discovered games are immediately eligible for
     /// advancement in the same tick.
     async fn discover_claimable_bonds(&mut self) {
-        if let Some(ref mut bond_manager) = self.bond_manager
-            && let Err(e) = bond_manager.discover_claimable_games(&*self.verifier_client).await
-        {
-            warn!(error = %e, "bond discovery scan failed");
+        let Some(ref mut bond_manager) = self.bond_manager else {
+            return;
+        };
+
+        match bond_manager.discover_claimable_games(&*self.verifier_client).await {
+            Ok(games) => {
+                for game_address in games {
+                    self.anchor_updater.track_game(game_address);
+                }
+            }
+            Err(e) => warn!(error = %e, "bond discovery scan failed"),
         }
     }
 
@@ -319,7 +332,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
                     }
 
                     // Persistent configuration errors: these indicate a
-                    // mismatch between the cached interval and on-chain
+                    // mismatch between the cached interval and onchain
                     // state (e.g. after a governance `setImplementation`
                     // that changed `INTERMEDIATE_BLOCK_INTERVAL`).
                     // Propagate so the caller logs the error at game level
@@ -365,6 +378,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
 
         if result.is_valid {
             debug!(game = %game_address, "game output roots are valid");
+            self.anchor_updater.track_game(game_address);
             return Ok(());
         }
 
@@ -496,7 +510,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
 
     /// Attempts TEE-first proof sourcing with ZK fallback.
     ///
-    /// The `intent` determines the on-chain action for the ZK fallback path.
+    /// The `intent` determines the onchain action for the ZK fallback path.
     /// TEE proofs always use `nullify()` regardless of `intent`.
     ///
     /// When `try_tee_first` is `true` and the game has a non-zero TEE prover,
@@ -604,7 +618,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
             .ok_or_else(|| eyre::eyre!("claimed_l2_block_number overflow"))?;
 
         // Use the game's stored L1 head (from CWIA) so the enclave signs a
-        // journal whose `l1OriginHash` matches what the on-chain `nullify()`
+        // journal whose `l1OriginHash` matches what the onchain `nullify()`
         // will use for verification. Look up its block number concurrently
         // with the agreed L2 state computation.
         let l1_head = candidate.l1_head;
@@ -808,18 +822,21 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
                 self.pending_proofs.remove(&game_address);
 
                 // After a successful challenge(), register the game for bond
-                // tracking so the BondManager can resolve and claim the bond.
-                if intent == DisputeIntent::Challenge
-                    && let Some(ref mut bond_manager) = self.bond_manager
-                {
-                    let sender = self.submitter.sender_address();
-                    if !bond_manager.track_game(game_address, sender) {
-                        warn!(
-                            game = %game_address,
-                            sender = %sender,
-                            "bond will not be tracked — sender address is not \
-                             in --bond-claim-addresses; bond may go unclaimed"
-                        );
+                // tracking so the BondManager can resolve and claim the bond,
+                // and let the anchor updater advance it once resolved.
+                if intent == DisputeIntent::Challenge {
+                    self.anchor_updater.track_game(game_address);
+
+                    if let Some(ref mut bond_manager) = self.bond_manager {
+                        let sender = self.submitter.sender_address();
+                        if !bond_manager.track_game(game_address, sender) {
+                            warn!(
+                                game = %game_address,
+                                sender = %sender,
+                                "bond will not be tracked — sender address is not \
+                                 in --bond-claim-addresses; bond may go unclaimed"
+                            );
+                        }
                     }
                 }
             }
@@ -1110,6 +1127,10 @@ mod tests {
             tee: None,
             verifier_client: verifier,
             bond_manager: None,
+            anchor_updater: AnchorUpdater::new(
+                TokioRuntime::new(),
+                Duration::from_secs(24 * 60 * 60),
+            ),
         };
         let driver = Driver::new(
             DriverConfig {

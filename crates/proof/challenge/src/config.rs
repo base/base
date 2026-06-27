@@ -111,8 +111,7 @@ pub struct ChallengerConfig {
     pub bond_discovery_lookback_games: u64,
     /// How often a full rescan of the bond lookback window is performed.
     pub bond_discovery_interval: Duration,
-    /// Maximum time to keep a completed bond game tracked while waiting for
-    /// its anchor update to complete.
+    /// Maximum time to retry an eligible anchor state update after it starts failing.
     pub anchor_update_retention: Duration,
     /// Addresses to claim bonds on behalf of.
     pub bond_claim_addresses: Vec<Address>,
