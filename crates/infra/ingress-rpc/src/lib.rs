@@ -253,6 +253,30 @@ mod tests {
         }))
     }
 
+    /// Wait until wiremock has recorded at least `n` HTTP requests, or panic on timeout.
+    ///
+    /// Avoids fixed `sleep` durations under variable CI scheduling while preserving the same
+    /// observable as `Mock::expect` verification on drop.
+    async fn wait_for_at_least_n_requests(server: &MockServer, n: usize, max_wait: Duration) {
+        let deadline = tokio::time::Instant::now() + max_wait;
+        loop {
+            let count = server
+                .received_requests()
+                .await
+                .map(|requests| requests.len())
+                .unwrap_or(0);
+            if count >= n {
+                return;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                panic!(
+                    "timed out after {max_wait:?} waiting for at least {n} builder RPC POST(s); received {count}"
+                );
+            }
+            tokio::task::yield_now().await;
+        }
+    }
+
     #[tokio::test]
     async fn test_builder_connector_survives_lagged_receiver() {
         let mock_server = MockServer::start().await;
@@ -288,8 +312,7 @@ mod tests {
             "connector task died — receiver was dropped after Lagged error"
         );
 
-        // Wait for the RPC call to complete.
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        wait_for_at_least_n_requests(&mock_server, 1, Duration::from_secs(3)).await;
 
         // wiremock verifies expect(1..) — at least one call was made,
         // proving the connector survived the Lagged error.
@@ -306,7 +329,7 @@ mod tests {
 
         tx.send(response_with_results()).unwrap();
 
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        wait_for_at_least_n_requests(&mock_server, 1, Duration::from_secs(3)).await;
         // wiremock verifies exactly 1 call was made.
     }
 
@@ -331,8 +354,8 @@ mod tests {
         let mock_server = MockServer::start().await;
 
         // Each response takes 200ms. Sequential forwarding would need >=1000ms
-        // for 5 messages. Concurrent forwarding completes in ~200ms; we allow
-        // a generous 2s budget so CI load doesn't cause flaky failures.
+        // for 5 messages. Concurrent forwarding completes in ~200ms; we poll until
+        // wiremock records 5 POSTs with a generous timeout for CI scheduling.
         Mock::given(method("POST"))
             .respond_with(jsonrpc_ok().set_delay(Duration::from_millis(200)))
             .expect(5)
@@ -346,10 +369,9 @@ mod tests {
             tx.send(response_with_results()).unwrap();
         }
 
-        // 2s is generous for concurrent (~200ms) but well under sequential (>=1s).
-        tokio::time::sleep(Duration::from_millis(2000)).await;
+        wait_for_at_least_n_requests(&mock_server, 5, Duration::from_secs(3)).await;
 
-        // wiremock verifies exactly 5 calls were made within the time window.
+        // wiremock verifies exactly 5 calls were made.
     }
 
     #[tokio::test]
@@ -363,7 +385,7 @@ mod tests {
 
         // Send one message, then close the channel.
         tx.send(response_with_results()).unwrap();
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        wait_for_at_least_n_requests(&mock_server, 1, Duration::from_secs(3)).await;
         drop(tx);
 
         // The task should exit gracefully without panic.
