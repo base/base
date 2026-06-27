@@ -821,12 +821,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
             Ok(_) => {
                 self.pending_proofs.remove(&game_address);
 
-                // After a successful challenge(), register the game for bond
-                // tracking so the BondManager can resolve and claim the bond,
-                // and let the anchor updater advance it once resolved.
                 if intent == DisputeIntent::Challenge {
-                    self.anchor_updater.track_game(game_address);
-
                     if let Some(ref mut bond_manager) = self.bond_manager {
                         let sender = self.submitter.sender_address();
                         if !bond_manager.track_game(game_address, sender) {
@@ -1255,6 +1250,19 @@ mod tests {
         driver.poll_or_submit(addr(0)).await.unwrap();
 
         assert!(!driver.pending_proofs.contains_key(&addr(0)));
+    }
+
+    #[tokio::test]
+    async fn challenge_success_does_not_track_anchor_update() {
+        let tx_hash = B256::repeat_byte(0x44);
+        let (mut driver, _proof_requester) =
+            driver_with_tx_manager(MockTxManager::new(Ok(receipt_with_status(true, tx_hash))));
+        insert_ready_proof(&mut driver);
+
+        driver.poll_or_submit(addr(0)).await.unwrap();
+
+        assert!(!driver.pending_proofs.contains_key(&addr(0)));
+        assert!(!driver.anchor_updater.is_tracking(&addr(0)));
     }
 
     #[tokio::test]

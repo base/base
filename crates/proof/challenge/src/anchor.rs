@@ -311,7 +311,7 @@ impl<C: Clock> AnchorUpdater<C> {
                 asr = %asr_address,
                 "anchor update not ready because registry is paused"
             );
-            return AnchorUpdateOutcome::Retry;
+            return AnchorUpdateOutcome::Pending;
         }
 
         if !preflight.respected {
@@ -444,6 +444,37 @@ mod tests {
         assert!(submitter.recorded_calls().is_empty());
         assert!(updater.tracked.contains_key(&game));
         assert_eq!(updater.tracked[&game].retry_started_at, None);
+    }
+
+    #[tokio::test]
+    async fn poll_keeps_paused_registry_pending_until_unpaused() {
+        let game = addr(0);
+        let asr = Address::repeat_byte(0xAA);
+        let tx_hash = B256::repeat_byte(0xDD);
+        let mut state = mock_state(GameStatus::DefenderWins, Address::ZERO, 100);
+        state.anchor_state_registry = asr;
+        state.is_paused = true;
+
+        let verifier = MockAggregateVerifier::new(HashMap::from([(game, state.clone())]));
+        let submitter = MockBondTransactionSubmitter::with_responses(vec![Ok(tx_hash)]);
+
+        let mut updater = AnchorUpdater::new(TokioRuntime::new(), Duration::ZERO);
+        updater.track_game(game);
+
+        updater.poll(&verifier, &submitter).await;
+        updater.poll(&verifier, &submitter).await;
+
+        assert!(submitter.recorded_calls().is_empty());
+        assert!(updater.tracked.contains_key(&game));
+        assert_eq!(updater.tracked[&game].retry_started_at, None);
+
+        state.is_paused = false;
+        verifier.update_game(game, state);
+
+        updater.poll(&verifier, &submitter).await;
+
+        assert_eq!(submitter.recorded_calls().len(), 1);
+        assert!(updater.tracked.is_empty());
     }
 
     #[tokio::test]
