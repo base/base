@@ -785,7 +785,11 @@ impl BatchPipeline for BatchEncoder {
 
         let channel_timeout = self.confirmation_channel_timeout();
         let channel = &mut self.ready_channels[chan_idx];
-        channel.pending_confirmations = channel.pending_confirmations.saturating_sub(1);
+        if channel.pending_confirmations == 0 {
+            warn!(target: "batcher", chan_idx = %chan_idx, "pending_confirmations already 0 on confirm; possible double-confirm");
+        } else {
+            channel.pending_confirmations -= 1;
+        }
         channel.confirmed_count += pending_ref.frame_count;
         channel.first_confirmed_l1_block =
             Some(channel.first_confirmed_l1_block.map_or(l1_block, |first| first.min(l1_block)));
@@ -870,7 +874,11 @@ impl BatchPipeline for BatchEncoder {
         }
 
         let channel = &mut self.ready_channels[chan_idx];
-        channel.pending_confirmations = channel.pending_confirmations.saturating_sub(1);
+        if channel.pending_confirmations == 0 {
+            warn!(target: "batcher", chan_idx = %chan_idx, "pending_confirmations already 0 on requeue; possible double-requeue");
+        } else {
+            channel.pending_confirmations -= 1;
+        }
         // Rewind cursor to the first frame of the requeued submission so all frames
         // in the batch are retried together.
         if pending_ref.frame_start < channel.cursor {
