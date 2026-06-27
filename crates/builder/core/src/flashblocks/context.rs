@@ -635,8 +635,9 @@ impl BasePayloadBuilderCtx {
             .is_jovian_active_at_timestamp(self.attributes().timestamp())
             .then(|| {
                 L1BlockInfo::fetch_da_footprint_gas_scalar(evm.db_mut())
-                    .expect("DA footprint should always be available from the database post jovian")
-            });
+                    .map_err(|e| PayloadBuilderError::Other(e.into()))
+            })
+            .transpose()?;
 
         info.da_footprint_scalar = da_footprint_gas_scalar;
 
