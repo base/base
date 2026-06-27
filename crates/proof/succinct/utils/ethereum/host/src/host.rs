@@ -39,6 +39,7 @@ impl OPSuccinctHost for SingleChainOPSuccinctHost {
         l2_end_block: u64,
         l1_head_hash: Option<B256>,
         intermediate_block_interval: u64,
+        activation_schedule_hash: B256,
         safe_db_fallback: bool,
     ) -> Result<HostConfig> {
         // Calculate L1 head hash using simple logic if not provided.
@@ -51,7 +52,13 @@ impl OPSuccinctHost for SingleChainOPSuccinctHost {
 
         let host = self
             .fetcher
-            .get_host_args(l2_start_block, l2_end_block, l1_head_hash, intermediate_block_interval)
+            .get_host_args(
+                l2_start_block,
+                l2_end_block,
+                l1_head_hash,
+                intermediate_block_interval,
+                activation_schedule_hash,
+            )
             .await?;
         Ok(host)
     }

@@ -25,6 +25,7 @@ struct ProveBlockRequestParams {
     prover_address: Option<String>,
     l1_head: Option<String>,
     intermediate_root_interval: Option<u64>,
+    activation_schedule_hash: Option<String>,
 }
 
 impl ProveBlockRequestParams {
@@ -42,6 +43,7 @@ impl ProveBlockRequestParams {
             prover_address: self.prover_address,
             l1_head: self.l1_head,
             intermediate_root_interval: self.intermediate_root_interval,
+            activation_schedule_hash: self.activation_schedule_hash,
         };
 
         Ok((request, proof_type))

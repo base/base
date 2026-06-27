@@ -232,17 +232,23 @@ impl ProposerService {
             tee_image_hash: config.tee_image_hash,
             anchor_state_registry_address: config.anchor_state_registry_addr,
         };
-        let proof_collector =
-            ProofCollector::new(Arc::clone(&proof_requester), Arc::clone(&rollup_client));
+        let proof_collector = ProofCollector::new(
+            Arc::clone(&proof_requester),
+            Arc::clone(&rollup_client),
+            Arc::clone(&verifier_client),
+            impl_address,
+        );
         let proof_dispatcher = ProofDispatcher::new(
             Arc::clone(&proof_requester),
             Arc::clone(&l1_client),
             Arc::clone(&l2_client),
             Arc::clone(&rollup_client),
+            Arc::clone(&verifier_client),
             ProofDispatcherConfig {
                 proposer_address: driver_config.proposer_address,
                 intermediate_block_interval: driver_config.intermediate_block_interval,
                 tee_image_hash: driver_config.tee_image_hash,
+                aggregate_verifier_impl_address: impl_address,
             },
         );
         let proof_submitter = ProofSubmitter::new(

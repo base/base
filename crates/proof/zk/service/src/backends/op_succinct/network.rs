@@ -115,6 +115,13 @@ impl ProvingBackend for NetworkBackend {
 
         let intermediate_root_interval =
             request.intermediate_root_interval.unwrap_or(DEFAULT_INTERMEDIATE_ROOT_INTERVAL);
+        let activation_schedule_hash = request
+            .activation_schedule_hash
+            .as_ref()
+            .map(|hash| hash.parse::<B256>())
+            .transpose()
+            .map_err(|e| anyhow::anyhow!("invalid activation_schedule_hash: {e}"))?
+            .unwrap_or(B256::ZERO);
 
         info!(
             start_block = start_block,
@@ -123,6 +130,7 @@ impl ProvingBackend for NetworkBackend {
             sequence_window = sequence_window,
             intermediate_root_interval = intermediate_root_interval,
             l1_head = ?l1_head,
+            activation_schedule_hash = %activation_schedule_hash,
             "starting SP1 Network proof generation"
         );
 
@@ -138,6 +146,7 @@ impl ProvingBackend for NetworkBackend {
                 base_consensus_url,
                 l1_head,
                 intermediate_root_interval,
+                activation_schedule_hash,
             })
             .await
             .map_err(|e| {

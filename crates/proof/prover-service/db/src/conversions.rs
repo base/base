@@ -270,6 +270,7 @@ mod tests {
                 sequence_window: None,
                 l1_head: None,
                 intermediate_root_interval: None,
+                activation_schedule_hash: None,
                 zk_vm: ProtocolZkVm::Sp1,
             }),
         })

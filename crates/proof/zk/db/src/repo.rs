@@ -29,9 +29,9 @@ impl ProofRequestRepo {
             INSERT INTO proof_requests (
                 id, start_block_number, number_of_blocks_to_prove,
                 sequence_window, proof_type, status, prover_address, l1_head,
-                intermediate_root_interval
+                intermediate_root_interval, activation_schedule_hash
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             "#,
         )
         .bind(id)
@@ -65,6 +65,7 @@ impl ProofRequestRepo {
                 })
                 .transpose()?,
         )
+        .bind(&req.activation_schedule_hash)
         .execute(&self.pool)
         .await?;
 
@@ -115,6 +116,7 @@ impl ProofRequestRepo {
             req.prover_address.as_deref(),
             req.l1_head.as_deref(),
             intermediate_root_interval,
+            req.activation_schedule_hash.as_deref(),
         );
 
         let mut tx = self.pool.begin().await?;
@@ -124,9 +126,9 @@ impl ProofRequestRepo {
             INSERT INTO proof_requests (
                 id, start_block_number, number_of_blocks_to_prove,
                 sequence_window, proof_type, status, prover_address, l1_head,
-                intermediate_root_interval
+                intermediate_root_interval, activation_schedule_hash
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             ON CONFLICT (id) DO NOTHING
             "#,
         )
@@ -139,6 +141,7 @@ impl ProofRequestRepo {
         .bind(&req.prover_address)
         .bind(&req.l1_head)
         .bind(intermediate_root_interval)
+        .bind(&req.activation_schedule_hash)
         .execute(&mut *tx)
         .await?;
 
@@ -163,7 +166,7 @@ impl ProofRequestRepo {
             r#"
             SELECT start_block_number, number_of_blocks_to_prove, sequence_window,
                    proof_type, status, prover_address, l1_head,
-                   intermediate_root_interval, retry_count
+                   intermediate_root_interval, activation_schedule_hash, retry_count
             FROM proof_requests
             WHERE id = $1
             FOR UPDATE
@@ -186,6 +189,7 @@ impl ProofRequestRepo {
             prover_address: req.prover_address.as_deref(),
             l1_head: req.l1_head.as_deref(),
             intermediate_root_interval,
+            activation_schedule_hash: req.activation_schedule_hash.as_deref(),
         };
         if let Some(field) = params.first_mismatch(&row) {
             tx.rollback().await?;
@@ -275,7 +279,7 @@ impl ProofRequestRepo {
                 sequence_window, proof_type,
                 stark_receipt, snark_receipt,
                 status, error_message,
-                prover_address, l1_head, intermediate_root_interval,
+                prover_address, l1_head, intermediate_root_interval, activation_schedule_hash,
                 created_at, updated_at, completed_at, retry_count
             FROM proof_requests
             WHERE id = $1
@@ -499,7 +503,7 @@ impl ProofRequestRepo {
             r#"
             SELECT retry_count, status, start_block_number, number_of_blocks_to_prove,
                    sequence_window, proof_type, prover_address, l1_head,
-                   intermediate_root_interval
+                   intermediate_root_interval, activation_schedule_hash
             FROM proof_requests
             WHERE id = $1
             FOR UPDATE
@@ -602,6 +606,7 @@ impl ProofRequestRepo {
                 row.get::<Option<&str>, _>("prover_address"),
                 row.get::<Option<&str>, _>("l1_head"),
                 row.get::<Option<i64>, _>("intermediate_root_interval"),
+                row.get::<Option<&str>, _>("activation_schedule_hash"),
             );
 
             sqlx::query(
@@ -821,7 +826,7 @@ impl ProofRequestRepo {
             SELECT id, start_block_number, number_of_blocks_to_prove,
                    sequence_window, proof_type, stark_receipt, snark_receipt,
                    status, error_message, prover_address, l1_head,
-                   intermediate_root_interval,
+                   intermediate_root_interval, activation_schedule_hash,
                    created_at, updated_at, completed_at, retry_count
             FROM proof_requests
             WHERE status = $1
@@ -846,7 +851,7 @@ impl ProofRequestRepo {
                 pr.id, pr.start_block_number, pr.number_of_blocks_to_prove,
                 pr.sequence_window, pr.proof_type, pr.stark_receipt, pr.snark_receipt,
                 pr.status, pr.error_message, pr.prover_address, pr.l1_head,
-                pr.intermediate_root_interval,
+                pr.intermediate_root_interval, pr.activation_schedule_hash,
                 pr.created_at, pr.updated_at, pr.completed_at, pr.retry_count
             FROM proof_requests pr
             WHERE pr.status = 'PENDING'
@@ -1050,7 +1055,7 @@ impl ProofRequestRepo {
                     sequence_window, proof_type,
                     stark_receipt, snark_receipt,
                     status, error_message,
-                    prover_address, l1_head, intermediate_root_interval,
+                    prover_address, l1_head, intermediate_root_interval, activation_schedule_hash,
                     created_at, updated_at, completed_at, retry_count
                 FROM proof_requests
                 WHERE status = $1
@@ -1070,7 +1075,7 @@ impl ProofRequestRepo {
                     sequence_window, proof_type,
                     stark_receipt, snark_receipt,
                     status, error_message,
-                    prover_address, l1_head, intermediate_root_interval,
+                    prover_address, l1_head, intermediate_root_interval, activation_schedule_hash,
                     created_at, updated_at, completed_at, retry_count
                 FROM proof_requests
                 ORDER BY created_at DESC
@@ -1269,6 +1274,7 @@ fn row_to_proof_request(row: &sqlx::postgres::PgRow) -> Result<ProofRequest> {
         prover_address: row.get("prover_address"),
         l1_head: row.get("l1_head"),
         intermediate_root_interval: row.get("intermediate_root_interval"),
+        activation_schedule_hash: row.get("activation_schedule_hash"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
         completed_at: row.get("completed_at"),
@@ -1311,6 +1317,7 @@ struct CreateOutboxRequestParams<'a> {
     prover_address: Option<&'a str>,
     l1_head: Option<&'a str>,
     intermediate_root_interval: Option<i64>,
+    activation_schedule_hash: Option<&'a str>,
 }
 
 impl CreateOutboxRequestParams<'_> {
@@ -1339,6 +1346,11 @@ impl CreateOutboxRequestParams<'_> {
         {
             return Some("intermediate_root_interval");
         }
+        if row.get::<Option<&str>, _>("activation_schedule_hash")
+            != self.activation_schedule_hash
+        {
+            return Some("activation_schedule_hash");
+        }
         None
     }
 }
@@ -1356,6 +1368,7 @@ fn build_outbox_params(
     prover_address: Option<&str>,
     l1_head: Option<&str>,
     intermediate_root_interval: Option<i64>,
+    activation_schedule_hash: Option<&str>,
 ) -> serde_json::Value {
     serde_json::json!({
         "start_block_number": start_block_number,
@@ -1365,6 +1378,7 @@ fn build_outbox_params(
         "prover_address": prover_address,
         "l1_head": l1_head,
         "intermediate_root_interval": intermediate_root_interval,
+        "activation_schedule_hash": activation_schedule_hash,
     })
 }
 

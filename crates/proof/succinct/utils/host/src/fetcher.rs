@@ -727,6 +727,7 @@ impl OPSuccinctDataFetcher {
         l2_end_block: u64,
         l1_head_hash: B256,
         intermediate_block_interval: u64,
+        activation_schedule_hash: B256,
     ) -> Result<HostConfig> {
         let Some(rollup_config) = &self.rollup_config else {
             return Err(anyhow::anyhow!("Rollup config not loaded."));
@@ -812,6 +813,8 @@ impl OPSuccinctDataFetcher {
             // We don't need to set the proposer or image hash for the range proof zk program
             proposer: Address::ZERO,
             image_hash: B256::ZERO,
+            activation_schedule_hash,
+            protocol_versions_schedule: base_proof_primitives::ProtocolVersionsSchedule::default(),
         };
 
         let prover = base_proof_host::ProverConfig {
@@ -824,6 +827,9 @@ impl OPSuccinctDataFetcher {
             enable_experimental_witness_endpoint: true,
         };
 
-        Ok(HostConfig { request, prover, data_dir: None })
+        HostConfig { request, prover, data_dir: None }
+            .resolve_protocol_versions_schedule(self.l1_provider.as_ref())
+            .await
+            .map_err(|error| anyhow!("failed to resolve ProtocolVersions schedule: {error}"))
     }
 }

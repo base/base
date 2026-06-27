@@ -5,8 +5,11 @@ use alloy_provider::RootProvider;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
+use base_proof_contracts::ProtocolVersionsContractClient;
 use base_proof_primitives::ProofRequest;
 use serde::Serialize;
+
+use crate::{HostError, Result};
 
 /// The providers required for the host.
 #[derive(Debug, Clone)]
@@ -55,5 +58,56 @@ impl HostConfig {
     /// Returns `true` if the host is running in offline mode.
     pub const fn is_offline(&self) -> bool {
         self.data_dir.is_some()
+    }
+
+    /// Resolves the full `ProtocolVersions` schedule required by this proof request.
+    pub async fn resolve_protocol_versions_schedule(
+        mut self,
+        l1_provider: &RootProvider,
+    ) -> Result<Self> {
+        if self.request.activation_schedule_hash == alloy_primitives::B256::ZERO {
+            return Ok(self);
+        }
+
+        let computed_hash = self
+            .request
+            .protocol_versions_schedule
+            .compute_schedule_hash(&self.prover.rollup_config)
+            .map_err(|error| HostError::Custom(format!("invalid ProtocolVersions schedule: {error}")))?;
+        if computed_hash == self.request.activation_schedule_hash {
+            return Ok(self);
+        }
+
+        if !self.request.protocol_versions_schedule.is_empty() {
+            return Err(HostError::Custom(format!(
+                "ProtocolVersions schedule hash mismatch: expected {}, got {}",
+                self.request.activation_schedule_hash, computed_hash,
+            )));
+        }
+
+        let protocol_versions_client = ProtocolVersionsContractClient::from_provider(l1_provider.clone());
+        self.request.protocol_versions_schedule = protocol_versions_client
+            .schedule_for_hash(
+                self.prover.rollup_config.protocol_versions_address,
+                self.request.activation_schedule_hash,
+            )
+            .await
+            .map_err(|error| {
+                HostError::Custom(format!("failed to resolve ProtocolVersions schedule: {error}"))
+            })?;
+
+        let recomputed_hash = self
+            .request
+            .protocol_versions_schedule
+            .compute_schedule_hash(&self.prover.rollup_config)
+            .map_err(|error| HostError::Custom(format!("invalid ProtocolVersions schedule: {error}")))?;
+        if recomputed_hash != self.request.activation_schedule_hash {
+            return Err(HostError::Custom(format!(
+                "resolved ProtocolVersions schedule hash mismatch: expected {}, got {}",
+                self.request.activation_schedule_hash, recomputed_hash,
+            )));
+        }
+
+        Ok(self)
     }
 }

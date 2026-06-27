@@ -17,6 +17,7 @@ base-proof-mpt.workspace = true
 base-proof-driver.workspace = true
 base-proof-executor.workspace = true
 base-proof-preimage.workspace = true
+base-proof-primitives = { workspace = true, features = ["serde"] }
 base-common-chains.workspace = true
 base-consensus-derive.workspace = true
 base-common-genesis = { workspace = true, features = ["serde"] }
@@ -81,6 +82,7 @@ std = [
 	"base-common-rpc-types-engine/std",
 	"base-proof-driver/std",
 	"base-proof-executor/std",
+	"base-proof-primitives/std",
 	"base-proof-mpt/std",
 	"base-proof-preimage/std",
 	"base-protocol/std",

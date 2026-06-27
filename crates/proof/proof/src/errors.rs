@@ -6,6 +6,7 @@
 
 use alloc::string::{String, ToString};
 
+use alloy_primitives::B256;
 use base_consensus_derive::{PipelineError, PipelineErrorKind};
 use base_proof_mpt::{OrderedListWalkerError, TrieNodeError};
 use base_proof_preimage::errors::PreimageOracleError;
@@ -132,6 +133,19 @@ pub enum OracleProviderError {
     MissingActivationAdminAddress {
         /// The chain ID whose Beryl-enabled config lacks a trusted activation admin address.
         chain_id: u64,
+    },
+    /// The supplied ProtocolVersions schedule could not be decoded or applied.
+    #[error("Invalid ProtocolVersions schedule: {0}")]
+    InvalidProtocolVersionsSchedule(String),
+    /// The supplied ProtocolVersions schedule did not reproduce the committed schedule hash.
+    #[error(
+        "ProtocolVersions schedule hash mismatch: expected {expected}, computed {computed}"
+    )]
+    ActivationScheduleHashMismatch {
+        /// The schedule hash committed by the host.
+        expected: B256,
+        /// The schedule hash recomputed inside the guest.
+        computed: B256,
     },
     /// Blob KZG commitment verification failed.
     ///

@@ -39,6 +39,10 @@ pub fn main() {
         // The rollup config must be the same for all the boot infos, to ensure they're
         // from the same chain and span batch range.
         assert_eq!(prev_boot_info.rollupConfigHash, boot_info.rollupConfigHash);
+
+        // All ranges in this aggregate must have been produced under the same activation schedule,
+        // ensuring every proof in the batch was executed against the canonical upgrade timestamps.
+        assert_eq!(prev_boot_info.activationScheduleHash, boot_info.activationScheduleHash);
     });
 
     // Verify each range program proof.
@@ -94,6 +98,8 @@ pub fn main() {
         l1Head: agg_inputs.latest_l1_checkpoint_head,
         rollupConfigHash: last_boot_info.rollupConfigHash,
         intermediateRoots: intermediate_roots,
+        // All ranges were asserted to share the same activationScheduleHash above.
+        activationScheduleHash: last_boot_info.activationScheduleHash,
     };
 
     // Convert the range vkey to a B256.
@@ -109,6 +115,7 @@ pub fn main() {
         intermediateRoots: final_boot_info.intermediateRoots,
         rollupConfigHash: final_boot_info.rollupConfigHash,
         imageHash: multi_block_vkey_b256,
+        activationScheduleHash: final_boot_info.activationScheduleHash,
     };
 
     // Commit keccak256 of the packed encoding to match the on-chain verifier's

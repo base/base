@@ -290,17 +290,23 @@ mod tests {
             ..Default::default()
         };
 
-        let proof_collector =
-            ProofCollector::new(Arc::clone(&proof_requester), Arc::clone(&rollup));
+        let proof_collector = ProofCollector::new(
+            Arc::clone(&proof_requester),
+            Arc::clone(&rollup),
+            Arc::clone(&verifier),
+            Address::ZERO,
+        );
         let proof_dispatcher = ProofDispatcher::new(
             Arc::clone(&proof_requester),
             Arc::clone(&l1),
             Arc::clone(&l2),
             Arc::clone(&rollup),
+            Arc::clone(&verifier),
             ProofDispatcherConfig {
                 proposer_address: config.proposer_address,
                 intermediate_block_interval: config.intermediate_block_interval,
                 tee_image_hash: config.tee_image_hash,
+                aggregate_verifier_impl_address: Address::ZERO,
             },
         );
         let proof_submitter = ProofSubmitter::new(

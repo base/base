@@ -4,7 +4,8 @@ use std::{collections::HashMap, sync::Arc};
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256};
-use base_proof_primitives::ProofRequest;
+use base_proof_contracts::AggregateVerifierClient;
+use base_proof_primitives::{ProofRequest, ProtocolVersionsSchedule};
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
 use base_prover_service_client::ProofRequesterProvider;
 use base_prover_service_protocol::ProveBlockRangeRequest;
@@ -24,6 +25,8 @@ pub struct ProofDispatcherConfig {
     pub intermediate_block_interval: u64,
     /// Expected TEE enclave image hash.
     pub tee_image_hash: B256,
+    /// AggregateVerifier implementation address used to read the live activation schedule.
+    pub aggregate_verifier_impl_address: Address,
 }
 
 /// Mutable dispatcher-side orchestration state.
@@ -74,6 +77,7 @@ where
     l1_client: Arc<L1>,
     l2_client: Arc<L2>,
     rollup_client: Arc<R>,
+    verifier_client: Arc<dyn AggregateVerifierClient>,
     config: ProofDispatcherConfig,
 }
 
@@ -100,6 +104,7 @@ where
             l1_client: Arc::clone(&self.l1_client),
             l2_client: Arc::clone(&self.l2_client),
             rollup_client: Arc::clone(&self.rollup_client),
+            verifier_client: Arc::clone(&self.verifier_client),
             config: self.config,
         }
     }
@@ -117,9 +122,10 @@ where
         l1_client: Arc<L1>,
         l2_client: Arc<L2>,
         rollup_client: Arc<R>,
+        verifier_client: Arc<dyn AggregateVerifierClient>,
         config: ProofDispatcherConfig,
     ) -> Self {
-        Self { proof_requester, l1_client, l2_client, rollup_client, config }
+        Self { proof_requester, l1_client, l2_client, rollup_client, verifier_client, config }
     }
 
     /// Builds a proof request for `target_block` using `recovered` as the agreed parent.
@@ -128,6 +134,7 @@ where
         target_block: u64,
         recovered: &RecoveredState,
         claimed_l2_output_root: B256,
+        activation_schedule_hash_override: Option<B256>,
     ) -> Result<ProofRequest, ProposerError> {
         let (l1_head, agreed_l2_head) = tokio::try_join!(
             async {
@@ -143,6 +150,14 @@ where
                     .map_err(ProposerError::Rpc)
             },
         )?;
+        let activation_schedule_hash = match activation_schedule_hash_override {
+            Some(hash) => hash,
+            None => self
+                .verifier_client
+                .current_activation_schedule_hash(self.config.aggregate_verifier_impl_address)
+                .await
+                .map_err(|e| ProposerError::Contract(e.to_string()))?,
+        };
 
         let request = ProofRequest {
             l1_head: l1_head.hash,
@@ -154,6 +169,8 @@ where
             intermediate_block_interval: self.config.intermediate_block_interval,
             l1_head_number: l1_head.number,
             image_hash: self.config.tee_image_hash,
+            activation_schedule_hash,
+            protocol_versions_schedule: ProtocolVersionsSchedule::default(),
         };
 
         info!(
@@ -173,13 +190,18 @@ where
         recovered: &RecoveredState,
         claimed_l2_output_root: B256,
     ) -> ProofDispatchAttempt {
-        let expected_session_id =
-            ProposerProofAdapter::tee_session_id_for_root(claimed_l2_output_root);
         let request =
-            match self.build_request(target_block, recovered, claimed_l2_output_root).await {
+            match self
+                .build_request(target_block, recovered, claimed_l2_output_root, None)
+                .await
+            {
                 Ok(request) => request,
                 Err(error) => return ProofDispatchAttempt::BuildFailed(error),
             };
+        let expected_session_id = ProposerProofAdapter::tee_session_id_for_root(
+            request.claimed_l2_output_root,
+            request.activation_schedule_hash,
+        );
 
         match self.dispatch_tee(request).await {
             Ok(session_id) if session_id == expected_session_id => {
@@ -201,7 +223,10 @@ where
         attempt: u32,
     ) -> ProofDispatchAttempt {
         let request =
-            match self.build_request(target_block, recovered, claimed_l2_output_root).await {
+            match self
+                .build_request(target_block, recovered, claimed_l2_output_root, None)
+                .await
+            {
                 Ok(request) => request,
                 Err(error) => return ProofDispatchAttempt::BuildFailed(error),
             };
@@ -460,6 +485,7 @@ mod tests {
     use std::collections::HashMap;
 
     use async_trait::async_trait;
+    use base_proof_contracts::AggregateVerifierClient;
     use base_prover_service_client::ProverServiceClientError;
     use base_prover_service_protocol::{
         GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
@@ -469,8 +495,12 @@ mod tests {
 
     use super::*;
     use crate::test_utils::{
-        MockL1, MockL2, MockProofRequester, MockRollupClient, test_sync_status,
+        MockAggregateVerifier, MockL1, MockL2, MockProofRequester, MockRollupClient,
+        test_sync_status,
     };
+
+    const TEST_AGGREGATE_VERIFIER_IMPL_ADDRESS: Address = Address::ZERO;
+    const TEST_ACTIVATION_SCHEDULE_HASH: B256 = B256::ZERO;
 
     #[derive(Debug)]
     struct MismatchedProofRequester {
@@ -551,15 +581,19 @@ mod tests {
             output_roots: HashMap::new(),
             max_safe_block: None,
         });
+        let verifier_client: Arc<dyn AggregateVerifierClient> =
+            Arc::new(MockAggregateVerifier::default());
         ProofDispatcher::new(
             requester,
             l1,
             l2,
             rollup,
+            verifier_client,
             ProofDispatcherConfig {
                 proposer_address: Address::repeat_byte(0x04),
                 intermediate_block_interval: 300,
                 tee_image_hash: B256::repeat_byte(0x05),
+                aggregate_verifier_impl_address: TEST_AGGREGATE_VERIFIER_IMPL_ADDRESS,
             },
         )
     }
@@ -582,7 +616,13 @@ mod tests {
             panic!("expected accepted dispatch")
         };
 
-        assert_eq!(session_id, ProposerProofAdapter::tee_session_id_for_root(claimed_root));
+        assert_eq!(
+            session_id,
+            ProposerProofAdapter::tee_session_id_for_root(
+                claimed_root,
+                TEST_ACTIVATION_SCHEDULE_HASH,
+            )
+        );
         assert!(requester.requests.lock().unwrap().contains_key(&session_id));
     }
 
@@ -610,7 +650,13 @@ mod tests {
         let ProofDispatchAttempt::Accepted(session_id) = outcome else {
             panic!("expected accepted dispatch")
         };
-        assert_eq!(session_id, ProposerProofAdapter::tee_session_id_for_root(claimed_root));
+        assert_eq!(
+            session_id,
+            ProposerProofAdapter::tee_session_id_for_root(
+                claimed_root,
+                TEST_ACTIVATION_SCHEDULE_HASH,
+            )
+        );
     }
 
     #[tokio::test]
@@ -689,7 +735,13 @@ mod tests {
             panic!("expected accepted dispatch")
         };
 
-        assert_ne!(session_id, ProposerProofAdapter::tee_session_id_for_root(claimed_root));
+        assert_ne!(
+            session_id,
+            ProposerProofAdapter::tee_session_id_for_root(
+                claimed_root,
+                TEST_ACTIVATION_SCHEDULE_HASH,
+            )
+        );
     }
 
     #[test]
@@ -698,6 +750,7 @@ mod tests {
             proposer_address: Address::ZERO,
             intermediate_block_interval: 1,
             tee_image_hash: B256::ZERO,
+            aggregate_verifier_impl_address: TEST_AGGREGATE_VERIFIER_IMPL_ADDRESS,
         };
         let _copy = config;
     }

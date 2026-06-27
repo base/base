@@ -50,6 +50,8 @@ pub struct MockGameState {
     pub starting_block_number: u64,
     /// L1 head block hash stored at game creation time.
     pub l1_head: B256,
+    /// Activation schedule hash stored when the game was created.
+    pub activation_schedule_hash: B256,
     /// Intermediate output roots for this game.
     pub intermediate_output_roots: Vec<B256>,
     /// 1-based index of the challenged intermediate root (`0` = unchallenged).
@@ -101,6 +103,7 @@ impl Default for MockGameState {
             },
             starting_block_number: 0,
             l1_head: B256::ZERO,
+            activation_schedule_hash: B256::ZERO,
             intermediate_output_roots: vec![],
             countered_index: 0,
             game_over: false,
@@ -305,6 +308,17 @@ impl AggregateVerifierClient for MockAggregateVerifier {
         self.get(game_address, |s| s.l1_head)
     }
 
+    async fn current_activation_schedule_hash(
+        &self,
+        _impl_address: Address,
+    ) -> Result<B256, ContractError> {
+        Ok(B256::ZERO)
+    }
+
+    async fn activation_schedule_hash(&self, game_address: Address) -> Result<B256, ContractError> {
+        self.get(game_address, |s| s.activation_schedule_hash)
+    }
+
     async fn read_block_interval(&self, _impl_address: Address) -> Result<u64, ContractError> {
         Ok(10)
     }
@@ -482,6 +496,7 @@ pub const fn mock_state_with_tee(
         },
         starting_block_number: block_number.saturating_sub(10),
         l1_head: DEFAULT_L1_HEAD,
+        activation_schedule_hash: B256::ZERO,
         intermediate_output_roots: vec![],
         countered_index: 0,
         game_over: false,

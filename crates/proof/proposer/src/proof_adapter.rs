@@ -20,9 +20,13 @@ impl ProposerProofAdapter {
 
     const TEE_SESSION_LABEL: &'static str = "tee/aws_nitro";
 
-    /// Derives an idempotent TEE proof session ID from proof subtype and claimed root.
-    pub fn tee_session_id_for_root(root: B256) -> String {
-        ProofSessionId::derive(Self::SESSION_NAMESPACE, Self::TEE_SESSION_LABEL, root)
+    /// Derives an idempotent TEE proof session ID from the claimed root and activation schedule.
+    pub fn tee_session_id_for_root(root: B256, activation_schedule_hash: B256) -> String {
+        ProofSessionId::derive_from_components(
+            Self::SESSION_NAMESPACE,
+            Self::TEE_SESSION_LABEL,
+            &[root.as_slice(), activation_schedule_hash.as_slice()],
+        )
     }
 
     /// Derives a TEE proof retry session id for a discarded proof.
@@ -32,13 +36,19 @@ impl ProposerProofAdapter {
         ProofSessionId::derive_from_components(
             Self::SESSION_NAMESPACE,
             Self::TEE_SESSION_LABEL,
-            &[request.claimed_l2_output_root.as_slice(), &l1_head_number, &attempt],
+            &[
+                request.claimed_l2_output_root.as_slice(),
+                request.activation_schedule_hash.as_slice(),
+                &l1_head_number,
+                &attempt,
+            ],
         )
     }
 
     /// Builds a prover-service request for a TEE proposal proof.
     pub fn tee_prove_block_range_request(request: PrimitiveProofRequest) -> ProveBlockRangeRequest {
-        let session_id = Self::tee_session_id_for_root(request.claimed_l2_output_root);
+        let session_id =
+            Self::tee_session_id_for_root(request.claimed_l2_output_root, request.activation_schedule_hash);
         Self::tee_prove_block_range_request_with_session_id(request, session_id)
     }
 
@@ -110,6 +120,8 @@ mod tests {
             intermediate_block_interval: 300,
             l1_head_number: 1200,
             image_hash: B256::repeat_byte(0x05),
+            activation_schedule_hash: B256::repeat_byte(0x09),
+            protocol_versions_schedule: base_proof_primitives::ProtocolVersionsSchedule::default(),
         }
     }
 
@@ -134,7 +146,10 @@ mod tests {
 
         assert_ne!(
             retry_id,
-            ProposerProofAdapter::tee_session_id_for_root(first.claimed_l2_output_root),
+            ProposerProofAdapter::tee_session_id_for_root(
+                first.claimed_l2_output_root,
+                first.activation_schedule_hash,
+            ),
         );
         assert_ne!(retry_id, ProposerProofAdapter::tee_discard_retry_session_id(&first, 2),);
         assert_ne!(retry_id, ProposerProofAdapter::tee_discard_retry_session_id(&second, 1),);
@@ -144,7 +159,8 @@ mod tests {
     fn tee_prove_block_range_request_wraps_primitive_request() {
         let root = B256::repeat_byte(0xaa);
         let request = test_request(root);
-        let expected_session_id = ProposerProofAdapter::tee_session_id_for_root(root);
+        let expected_session_id =
+            ProposerProofAdapter::tee_session_id_for_root(root, request.activation_schedule_hash);
 
         let wrapped = ProposerProofAdapter::tee_prove_block_range_request(request.clone());
 

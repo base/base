@@ -29,6 +29,7 @@ sol! {
         uint64 l2BlockNumber;
         bytes32 rollupConfigHash;
         bytes intermediateRoots;
+        bytes32 activationScheduleHash;
     }
 }
 
@@ -61,6 +62,7 @@ impl BootInfoStruct {
                     .copied()
                     .collect::<Vec<u8>>(),
             ),
+            activationScheduleHash: boot_info.activation_schedule_hash,
         }
     }
 }
@@ -91,6 +93,7 @@ mod tests {
             proposer: Address::ZERO,
             intermediate_block_interval: 0,
             l1_head_number: 0,
+            activation_schedule_hash: B256::ZERO,
         }
     }
 

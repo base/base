@@ -254,6 +254,10 @@ pub struct MockAggregateVerifier {
     pub intermediate_roots_map: HashMap<Address, Vec<B256>>,
     /// Map of game address to L1 head returned by `l1_head()`.
     pub l1_head_map: HashMap<Address, B256>,
+    /// Map of game address to activation schedule hash returned by `activation_schedule_hash()`.
+    pub activation_schedule_hash_map: HashMap<Address, B256>,
+    /// Current activation schedule hash returned for implementation reads.
+    pub impl_activation_schedule_hash: B256,
 }
 
 impl MockAggregateVerifier {
@@ -297,6 +301,12 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     }
     async fn read_intermediate_block_interval(&self, _: Address) -> Result<u64, ContractError> {
         Ok(512)
+    }
+    async fn current_activation_schedule_hash(&self, _: Address) -> Result<B256, ContractError> {
+        Ok(self.impl_activation_schedule_hash)
+    }
+    async fn activation_schedule_hash(&self, addr: Address) -> Result<B256, ContractError> {
+        Ok(self.activation_schedule_hash_map.get(&addr).copied().unwrap_or(B256::ZERO))
     }
     async fn intermediate_output_roots(&self, addr: Address) -> Result<Vec<B256>, ContractError> {
         if let Some(roots) = self.intermediate_roots_map.get(&addr) {

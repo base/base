@@ -163,6 +163,13 @@ impl ProvingBackend for DryRunBackend {
             .map(|h| h.parse::<B256>())
             .transpose()
             .map_err(|e| anyhow::anyhow!("invalid l1_head hash: {e}"))?;
+        let activation_schedule_hash = request
+            .activation_schedule_hash
+            .as_ref()
+            .map(|hash| hash.parse::<B256>())
+            .transpose()
+            .map_err(|e| anyhow::anyhow!("invalid activation_schedule_hash: {e}"))?
+            .unwrap_or(B256::ZERO);
 
         info!(
             start_block = start_block,
@@ -171,6 +178,7 @@ impl ProvingBackend for DryRunBackend {
             sequence_window = sequence_window,
             intermediate_root_interval = intermediate_root_interval,
             l1_head = ?l1_head,
+            activation_schedule_hash = %activation_schedule_hash,
             "starting dry-run SP1 execution"
         );
 
@@ -185,6 +193,7 @@ impl ProvingBackend for DryRunBackend {
                 base_consensus_url: &self.base_consensus_url,
                 l1_head,
                 intermediate_root_interval,
+                activation_schedule_hash,
             })
             .await
             .map_err(|e| {

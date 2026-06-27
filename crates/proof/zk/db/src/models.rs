@@ -297,6 +297,8 @@ pub struct ProofRequest {
     pub l1_head: Option<String>,
     /// Intermediate root interval requested for ZK proof generation.
     pub intermediate_root_interval: Option<i64>,
+    /// Activation schedule hash committed into the proof journal.
+    pub activation_schedule_hash: Option<String>,
     /// Timestamp when the request was created.
     pub created_at: DateTime<Utc>,
     /// Timestamp of the last status update.
@@ -405,6 +407,8 @@ pub struct CreateProofRequest {
     pub l1_head: Option<String>,
     /// Intermediate root interval for ZK proof generation.
     pub intermediate_root_interval: Option<u64>,
+    /// Activation schedule hash committed into the proof journal.
+    pub activation_schedule_hash: Option<String>,
 }
 
 /// Parameters for creating a new proof session

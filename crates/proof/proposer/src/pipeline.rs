@@ -164,7 +164,9 @@ mod tests {
 
     use alloy_primitives::{Address, B256};
     use async_trait::async_trait;
-    use base_proof_contracts::{AnchorStateRegistryClient, DisputeGameFactoryClient};
+    use base_proof_contracts::{
+        AggregateVerifierClient, AnchorStateRegistryClient, DisputeGameFactoryClient,
+    };
     use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
     use base_prover_service_protocol::{
         GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
@@ -231,7 +233,7 @@ mod tests {
             });
         let factory: Arc<dyn DisputeGameFactoryClient> =
             Arc::new(MockDisputeGameFactory::with_games(vec![]));
-        let verifier = Arc::new(MockAggregateVerifier::default());
+        let verifier: Arc<dyn AggregateVerifierClient> = Arc::new(MockAggregateVerifier::default());
         let output_proposer: Arc<dyn OutputProposer> = Arc::new(MockOutputProposer);
         let config = DriverConfig {
             poll_interval: Duration::from_millis(10),
@@ -245,10 +247,12 @@ mod tests {
             Arc::clone(&l1),
             Arc::clone(&l2),
             Arc::clone(&rollup),
+            Arc::clone(&verifier),
             ProofDispatcherConfig {
                 proposer_address: config.proposer_address,
                 intermediate_block_interval: config.intermediate_block_interval,
                 tee_image_hash: config.tee_image_hash,
+                aggregate_verifier_impl_address: Address::ZERO,
             },
         );
         let proof_recovery = Arc::new(ProofRecovery::new(
@@ -269,7 +273,7 @@ mod tests {
             Arc::clone(&rollup),
             Arc::clone(&l1),
             Arc::new(MockDisputeGameFactory::with_games(vec![])),
-            verifier,
+            Arc::clone(&verifier),
             ProofSubmitterConfig {
                 proposer_address: config.proposer_address,
                 game_type: config.game_type,
@@ -280,8 +284,12 @@ mod tests {
                 output_fetch_concurrency: config.recovery_scan_concurrency,
             },
         );
-        let proof_collector =
-            ProofCollector::new(Arc::clone(&proof_requester), Arc::clone(&rollup));
+        let proof_collector = ProofCollector::new(
+            Arc::clone(&proof_requester),
+            Arc::clone(&rollup),
+            verifier,
+            Address::ZERO,
+        );
         let proof_collector_orchestrator = ProofCollectorOrchestrator::new(
             proof_collector,
             proof_dispatcher.clone(),

@@ -63,6 +63,7 @@ fn compressed_request_at(start_block_number: u64) -> CreateProofRequest {
             sequence_window: Some(50),
             l1_head: None,
             intermediate_root_interval: None,
+            activation_schedule_hash: None,
             zk_vm: ZkVm::Sp1,
         }),
     })
@@ -83,6 +84,7 @@ fn snark_request() -> CreateProofRequest {
                         .expect("valid hash"),
                 ),
                 intermediate_root_interval: None,
+                activation_schedule_hash: None,
                 zk_vm: ZkVm::Sp1,
             },
             prover_address: "0x1234567890abcdef1234567890abcdef12345678"

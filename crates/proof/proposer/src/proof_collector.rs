@@ -4,7 +4,8 @@
 //! the eligible block range either has, or will have, a `prove_block_range` request
 //! initiated against the prover service (whether by this proposer instance or a
 //! previous one). Given a target block, the collector fetches its canonical L2
-//! output root, derives the deterministic prover-service session ID via
+//! output root, reads the current activation schedule hash from the live
+//! `AggregateVerifier` implementation, derives the deterministic prover-service session ID via
 //! [`ProposerProofAdapter::tee_session_id_for_root`], calls `get_proof`, and
 //! returns a [`TargetPoll`] outcome that tells the caller exactly what to do
 //! next: submit the proof, dispatch a new request, wait, or treat as a transient
@@ -17,6 +18,7 @@
 use std::{collections::HashMap, ops::ControlFlow, sync::Arc, time::Duration};
 
 use alloy_primitives::B256;
+use base_proof_contracts::AggregateVerifierClient;
 use base_proof_primitives::ProofResult;
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
 use base_proof_submission::ProofSubmissionError;
@@ -59,8 +61,12 @@ pub struct ProofCollectorState {
     pub discard_retry_counts: HashMap<u64, u32>,
     /// Active retry-specific prover-service sessions by target block.
     pub retry_sessions: HashMap<u64, String>,
+    /// Activation schedule hash associated with each active retry-specific session.
+    pub retry_session_activation_schedule_hashes: HashMap<u64, B256>,
     /// Targets whose root-derived proof was discarded and need a retry-specific session.
     pub pending_discard_roots: HashMap<u64, B256>,
+    /// Optional activation schedule hash override to reuse while redispatching a pending discard.
+    pub pending_discard_activation_schedule_hash_overrides: HashMap<u64, B256>,
     /// Terminal failed sessions already counted while waiting for replacement dispatch.
     pub counted_failed_sessions: HashMap<u64, String>,
 }
@@ -79,6 +85,8 @@ pub enum ProofSubmitEffect {
     Redispatch {
         /// Claimed L2 output root for the discarded proof.
         claimed_l2_output_root: B256,
+        /// Optional activation schedule hash override for the replacement proof.
+        activation_schedule_hash_override: Option<B256>,
     },
 }
 
@@ -107,6 +115,8 @@ pub enum TargetPoll {
     Ready {
         /// Deterministic prover-service session identifier.
         session_id: String,
+        /// Activation schedule hash the proof request was pinned to.
+        activation_schedule_hash: B256,
         /// Decoded proof result ready for inline onchain submission.
         proof: ProofResult,
     },
@@ -160,6 +170,8 @@ pub enum TargetPoll {
 pub struct ProofCollector<R> {
     proof_requester: Arc<dyn ProofRequesterProvider>,
     rollup_client: Arc<R>,
+    verifier_client: Arc<dyn AggregateVerifierClient>,
+    aggregate_verifier_impl_address: alloy_primitives::Address,
 }
 
 impl<R> std::fmt::Debug for ProofCollector<R> {
@@ -173,17 +185,20 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
     pub const fn new(
         proof_requester: Arc<dyn ProofRequesterProvider>,
         rollup_client: Arc<R>,
+        verifier_client: Arc<dyn AggregateVerifierClient>,
+        aggregate_verifier_impl_address: alloy_primitives::Address,
     ) -> Self {
-        Self { proof_requester, rollup_client }
+        Self { proof_requester, rollup_client, verifier_client, aggregate_verifier_impl_address }
     }
 
     /// Polls the prover service for the proof of `target_block`.
     ///
     /// Returns a [`TargetPoll`] describing the next action the caller should
     /// take. The session ID is derived deterministically from the canonical
-    /// L2 output root at `target_block` and the AWS Nitro TEE label, so a
-    /// freshly constructed collector can rediscover an in-flight session
-    /// dispatched by a previous proposer instance.
+    /// L2 output root at `target_block`, the current activation schedule hash,
+    /// and the AWS Nitro TEE label, so a freshly constructed collector can
+    /// rediscover an in-flight session dispatched by a previous proposer
+    /// instance while automatically forcing a new session after schedule updates.
     pub async fn poll(&self, target_block: u64) -> TargetPoll {
         // 1. Fetch the canonical output root needed to derive the session id.
         let output = match self.rollup_client.output_at_block(target_block).await {
@@ -198,7 +213,29 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
             }
         };
 
-        let session_id = ProposerProofAdapter::tee_session_id_for_root(output.output_root);
+        let activation_schedule_hash = match self
+            .verifier_client
+            .current_activation_schedule_hash(self.aggregate_verifier_impl_address)
+            .await
+        {
+            Ok(hash) => hash,
+            Err(e) => {
+                debug!(
+                    target_block,
+                    error = %e,
+                    "Failed to fetch activation schedule hash for target",
+                );
+                return TargetPoll::Unknown {
+                    session_id: None,
+                    error: ProposerError::Contract(e.to_string()),
+                };
+            }
+        };
+
+        let session_id = ProposerProofAdapter::tee_session_id_for_root(
+            output.output_root,
+            activation_schedule_hash,
+        );
 
         let response = match self.get_proof(session_id.clone()).await {
             Ok(response) => response,
@@ -227,7 +264,13 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
             }
         };
 
-        self.response_to_poll(target_block, session_id, output.output_root, response)
+        self.response_to_poll(
+            target_block,
+            session_id,
+            output.output_root,
+            activation_schedule_hash,
+            response,
+        )
     }
 
     /// Polls a specific prover-service session for `target_block`.
@@ -236,7 +279,12 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
     /// id. The canonical root is fetched lazily only for outcomes that need it
     /// (`NotFound` and `Failed`) so pending retry sessions do not depend on an
     /// unrelated rollup RPC.
-    pub async fn poll_session(&self, target_block: u64, session_id: String) -> TargetPoll {
+    pub async fn poll_session(
+        &self,
+        target_block: u64,
+        session_id: String,
+        activation_schedule_hash: B256,
+    ) -> TargetPoll {
         let response = match self.get_proof(session_id.clone()).await {
             Ok(response) => response,
             Err(e) if e.is_not_found() => {
@@ -317,7 +365,7 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
                     }
                 };
                 match ProposerProofAdapter::tee_proof_result(result) {
-                    Ok(proof) => TargetPoll::Ready { session_id, proof },
+                    Ok(proof) => TargetPoll::Ready { session_id, activation_schedule_hash, proof },
                     Err(decode_error) => {
                         let claimed_l2_output_root =
                             match self.retry_session_output_root(target_block, &session_id).await {
@@ -371,6 +419,7 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
         target_block: u64,
         session_id: String,
         claimed_l2_output_root: B256,
+        activation_schedule_hash: B256,
         response: GetProofResponse,
     ) -> TargetPoll {
         Metrics::proof_status_received_total(Self::status_label(response.status)).increment(1);
@@ -405,7 +454,7 @@ impl<R: RollupProvider + 'static> ProofCollector<R> {
                     }
                 };
                 match ProposerProofAdapter::tee_proof_result(result) {
-                    Ok(proof) => TargetPoll::Ready { session_id, proof },
+                    Ok(proof) => TargetPoll::Ready { session_id, activation_schedule_hash, proof },
                     Err(error) => TargetPoll::Failed { session_id, claimed_l2_output_root, error },
                 }
             }
@@ -439,7 +488,10 @@ impl ProofCollectorState {
         self.retry_counts.retain(|&target, _| target > recovered_block);
         self.discard_retry_counts.retain(|&target, _| target > recovered_block);
         self.retry_sessions.retain(|&target, _| target > recovered_block);
+        self.retry_session_activation_schedule_hashes.retain(|&target, _| target > recovered_block);
         self.pending_discard_roots.retain(|&target, _| target > recovered_block);
+        self.pending_discard_activation_schedule_hash_overrides
+            .retain(|&target, _| target > recovered_block);
         self.counted_failed_sessions.retain(|&target, _| target > recovered_block);
     }
 
@@ -549,11 +601,16 @@ where
             if let Some(claimed_l2_output_root) =
                 state.pending_discard_roots.get(&target_block).copied()
             {
+                let activation_schedule_hash_override = state
+                    .pending_discard_activation_schedule_hash_overrides
+                    .get(&target_block)
+                    .copied();
                 if !self
                     .dispatch_discard_retry(
                         target_block,
                         &current,
                         claimed_l2_output_root,
+                        activation_schedule_hash_override,
                         state,
                         cache,
                         true,
@@ -568,24 +625,48 @@ where
             }
 
             let poll = if let Some(session_id) = state.retry_sessions.get(&target_block).cloned() {
-                self.collector.poll_session(target_block, session_id).await
+                let Some(activation_schedule_hash) =
+                    state.retry_session_activation_schedule_hashes.get(&target_block).copied()
+                else {
+                    warn!(
+                        target_block,
+                        session_id = %session_id,
+                        "Missing activation schedule hash for retry session, clearing retry state"
+                    );
+                    state.retry_sessions.remove(&target_block);
+                    state.retry_session_activation_schedule_hashes.remove(&target_block);
+                    break;
+                };
+                self.collector
+                    .poll_session(target_block, session_id, activation_schedule_hash)
+                    .await
             } else {
                 self.collector.poll(target_block).await
             };
 
             match poll {
-                TargetPoll::Ready { session_id, proof } => {
+                TargetPoll::Ready { session_id, activation_schedule_hash, proof } => {
                     info!(target_block, session_id = %session_id, "Proof ready, submitting inline");
                     Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_READY).increment(1);
                     Metrics::last_collected_block().set(target_block as f64);
                     match self
-                        .submit_inline(target_block, &current, proof, state, cache, cancel)
+                        .submit_inline(
+                            target_block,
+                            &current,
+                            proof,
+                            activation_schedule_hash,
+                            state,
+                            cache,
+                            cancel,
+                        )
                         .await
                     {
                         ProofSubmitEffect::Submitted { recovered } => {
                             state.retry_sessions.remove(&target_block);
+                            state.retry_session_activation_schedule_hashes.remove(&target_block);
                             state.discard_retry_counts.remove(&target_block);
                             state.pending_discard_roots.remove(&target_block);
+                            state.pending_discard_activation_schedule_hash_overrides.remove(&target_block);
                             state.counted_failed_sessions.remove(&target_block);
                             state.cursor = Some(recovered);
                             if recovered.l2_block_number > current.l2_block_number {
@@ -598,12 +679,16 @@ where
                                 .set(state.retry_counts.values().sum::<u32>() as f64);
                             return ControlFlow::Break(());
                         }
-                        ProofSubmitEffect::Redispatch { claimed_l2_output_root } => {
+                        ProofSubmitEffect::Redispatch {
+                            claimed_l2_output_root,
+                            activation_schedule_hash_override,
+                        } => {
                             if !self
                                 .dispatch_discard_retry(
                                     target_block,
                                     &current,
                                     claimed_l2_output_root,
+                                    activation_schedule_hash_override,
                                     state,
                                     cache,
                                     true,
@@ -639,6 +724,10 @@ where
                                 target_block,
                                 &current,
                                 claimed_l2_output_root,
+                                state
+                                    .retry_session_activation_schedule_hashes
+                                    .get(&target_block)
+                                    .copied(),
                                 state,
                                 cache,
                                 true,
@@ -691,6 +780,10 @@ where
                                     target_block,
                                     &current,
                                     claimed_l2_output_root,
+                                    state
+                                        .retry_session_activation_schedule_hashes
+                                        .get(&target_block)
+                                        .copied(),
                                     state,
                                     cache,
                                     false,
@@ -747,6 +840,7 @@ where
         target_block: u64,
         recovered: &RecoveredState,
         proof: ProofResult,
+        activation_schedule_hash: B256,
         state: &mut ProofCollectorState,
         cache: &mut Option<ProofRecoveryCache>,
         cancel: &CancellationToken,
@@ -773,10 +867,15 @@ where
                 match self.runtime.submit_timeout {
                     Some(timeout) => tokio::time::timeout(
                         timeout,
-                        self.submitter.submit(&proof, target_block, parent_address),
+                        self.submitter
+                            .submit(&proof, target_block, parent_address, activation_schedule_hash),
                     )
                     .await,
-                    None => Ok(self.submitter.submit(&proof, target_block, parent_address).await),
+                    None => Ok(
+                        self.submitter
+                            .submit(&proof, target_block, parent_address, activation_schedule_hash)
+                            .await,
+                    ),
                 }
             } => result,
         };
@@ -828,6 +927,18 @@ where
                     }
                 }
             }
+            Ok(Err(SubmitAction::RedispatchForExistingGame { activation_schedule_hash })) => {
+                submit_timer.disarm();
+                info!(
+                    target_block,
+                    activation_schedule_hash = %activation_schedule_hash,
+                    "Existing game requires proof under a different activation schedule, redispatching"
+                );
+                ProofSubmitEffect::Redispatch {
+                    claimed_l2_output_root,
+                    activation_schedule_hash_override: Some(activation_schedule_hash),
+                }
+            }
             Ok(Err(SubmitAction::Failed(error))) => {
                 submit_timer.disarm();
                 Metrics::errors_total(error.metric_label()).increment(1);
@@ -854,7 +965,10 @@ where
                     error = %error,
                     "Proof discarded by submitter, dispatching fresh retry proof"
                 );
-                ProofSubmitEffect::Redispatch { claimed_l2_output_root }
+                ProofSubmitEffect::Redispatch {
+                    claimed_l2_output_root,
+                    activation_schedule_hash_override: None,
+                }
             }
         }
     }
@@ -924,6 +1038,7 @@ where
         target_block: u64,
         recovered: &RecoveredState,
         claimed_l2_output_root: B256,
+        activation_schedule_hash_override: Option<B256>,
         state: &mut ProofCollectorState,
         cache: &mut Option<ProofRecoveryCache>,
         count_dispatch_failure: bool,
@@ -938,7 +1053,9 @@ where
             );
             state.discard_retry_counts.remove(&target_block);
             state.retry_sessions.remove(&target_block);
+            state.retry_session_activation_schedule_hashes.remove(&target_block);
             state.pending_discard_roots.remove(&target_block);
+            state.pending_discard_activation_schedule_hash_overrides.remove(&target_block);
             state.counted_failed_sessions.remove(&target_block);
             *cache = None;
             return false;
@@ -946,9 +1063,21 @@ where
 
         let attempt = current_attempt + 1;
         state.pending_discard_roots.insert(target_block, claimed_l2_output_root);
+        if let Some(activation_schedule_hash_override) = activation_schedule_hash_override {
+            state
+                .pending_discard_activation_schedule_hash_overrides
+                .insert(target_block, activation_schedule_hash_override);
+        } else {
+            state.pending_discard_activation_schedule_hash_overrides.remove(&target_block);
+        }
         let request = match self
             .dispatcher
-            .build_request(target_block, recovered, claimed_l2_output_root)
+            .build_request(
+                target_block,
+                recovered,
+                claimed_l2_output_root,
+                activation_schedule_hash_override,
+            )
             .await
         {
             Ok(request) => request,
@@ -956,9 +1085,11 @@ where
                 warn!(target_block, error = %error, "Failed to build discard retry proof request");
                 Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_BUILD_FAILED).increment(1);
                 state.retry_sessions.remove(&target_block);
+                state.retry_session_activation_schedule_hashes.remove(&target_block);
                 return false;
             }
         };
+        let request_activation_schedule_hash = request.activation_schedule_hash;
         let session_id = ProposerProofAdapter::tee_discard_retry_session_id(&request, attempt);
 
         let dispatch_error = match self
@@ -976,7 +1107,11 @@ where
                 Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_ACCEPTED).increment(1);
                 state.discard_retry_counts.insert(target_block, attempt);
                 state.retry_sessions.insert(target_block, accepted_session_id);
+                state
+                    .retry_session_activation_schedule_hashes
+                    .insert(target_block, request_activation_schedule_hash);
                 state.pending_discard_roots.remove(&target_block);
+                state.pending_discard_activation_schedule_hash_overrides.remove(&target_block);
                 state.counted_failed_sessions.remove(&target_block);
                 None
             }
@@ -997,12 +1132,15 @@ where
         if let Some(error) = dispatch_error {
             Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_FAILED).increment(1);
             state.retry_sessions.remove(&target_block);
+            state.retry_session_activation_schedule_hashes.remove(&target_block);
             if count_dispatch_failure {
                 if !state.handle_proof_failure(target_block, error, self.runtime.max_retries, cache)
                 {
                     state.discard_retry_counts.remove(&target_block);
                     state.retry_sessions.remove(&target_block);
+                    state.retry_session_activation_schedule_hashes.remove(&target_block);
                     state.pending_discard_roots.remove(&target_block);
+                    state.pending_discard_activation_schedule_hash_overrides.remove(&target_block);
                     state.counted_failed_sessions.remove(&target_block);
                     return false;
                 }
@@ -1046,6 +1184,7 @@ mod tests {
 
     use alloy_primitives::{Address, B256};
     use async_trait::async_trait;
+    use base_proof_contracts::AggregateVerifierClient;
     use base_proof_primitives::Proposal;
 
     use super::*;
@@ -1061,6 +1200,9 @@ mod tests {
             test_proposal, test_sync_status,
         },
     };
+
+    const TEST_AGGREGATE_VERIFIER_IMPL_ADDRESS: Address = Address::ZERO;
+    const TEST_ACTIVATION_SCHEDULE_HASH: B256 = B256::ZERO;
 
     #[derive(Debug)]
     struct FailingL1;
@@ -1210,6 +1352,19 @@ mod tests {
         }
     }
 
+    fn verifier_client() -> Arc<dyn AggregateVerifierClient> {
+        Arc::new(MockAggregateVerifier::default())
+    }
+
+    fn dispatcher_config(intermediate_block_interval: u64) -> ProofDispatcherConfig {
+        ProofDispatcherConfig {
+            proposer_address: Address::repeat_byte(0x04),
+            intermediate_block_interval,
+            tee_image_hash: B256::repeat_byte(0x05),
+            aggregate_verifier_impl_address: TEST_AGGREGATE_VERIFIER_IMPL_ADDRESS,
+        }
+    }
+
     fn make_submitter<L1>(
         output_proposer: Arc<dyn OutputProposer>,
         rollup_client: Arc<MockRollupClient>,
@@ -1283,18 +1438,20 @@ mod tests {
             output_roots: HashMap::new(),
             max_safe_block: None,
         });
-        let collector =
-            ProofCollector::new(Arc::clone(&proof_requester), Arc::clone(&rollup_client));
+        let verifier_client = verifier_client();
+        let collector = ProofCollector::new(
+            Arc::clone(&proof_requester),
+            Arc::clone(&rollup_client),
+            Arc::clone(&verifier_client),
+            TEST_AGGREGATE_VERIFIER_IMPL_ADDRESS,
+        );
         let dispatcher = ProofDispatcher::new(
             proof_requester,
             Arc::clone(&l1),
             l2,
             Arc::clone(&rollup_client),
-            ProofDispatcherConfig {
-                proposer_address: Address::repeat_byte(0x04),
-                intermediate_block_interval: 300,
-                tee_image_hash: B256::repeat_byte(0x05),
-            },
+            verifier_client,
+            dispatcher_config(300),
         );
         let recovery = make_recovery(
             Arc::clone(&rollup_client),
@@ -1352,18 +1509,20 @@ mod tests {
             output_roots: HashMap::new(),
             max_safe_block: None,
         });
-        let collector =
-            ProofCollector::new(Arc::clone(&proof_requester), Arc::clone(&rollup_client));
+        let verifier_client = verifier_client();
+        let collector = ProofCollector::new(
+            Arc::clone(&proof_requester),
+            Arc::clone(&rollup_client),
+            Arc::clone(&verifier_client),
+            TEST_AGGREGATE_VERIFIER_IMPL_ADDRESS,
+        );
         let dispatcher = ProofDispatcher::new(
             proof_requester,
             Arc::clone(&l1),
             l2,
             Arc::clone(&rollup_client),
-            ProofDispatcherConfig {
-                proposer_address: Address::repeat_byte(0x04),
-                intermediate_block_interval: 100,
-                tee_image_hash: B256::repeat_byte(0x05),
-            },
+            verifier_client,
+            dispatcher_config(100),
         );
         let mut factory = MockDisputeGameFactory::with_games(vec![]);
         factory.games_should_fail = true;
@@ -1388,7 +1547,15 @@ mod tests {
         let cancel = CancellationToken::new();
 
         let effect = orchestrator
-            .submit_inline(200, &recovered(100), proof, &mut state, &mut cache, &cancel)
+            .submit_inline(
+                200,
+                &recovered(100),
+                proof,
+                TEST_ACTIVATION_SCHEDULE_HASH,
+                &mut state,
+                &mut cache,
+                &cancel,
+            )
             .await;
 
         assert_eq!(effect, ProofSubmitEffect::Restart);
@@ -1408,6 +1575,7 @@ mod tests {
                 target_block,
                 &recovered(100),
                 B256::repeat_byte(0xaa),
+                None,
                 &mut state,
                 &mut cache,
                 true,
@@ -1435,17 +1603,20 @@ mod tests {
             max_safe_block: None,
         });
         let requester: Arc<dyn ProofRequesterProvider> = Arc::new(RejectingProofRequester);
-        let collector = ProofCollector::new(Arc::clone(&requester), Arc::clone(&rollup_client));
+        let verifier_client = verifier_client();
+        let collector = ProofCollector::new(
+            Arc::clone(&requester),
+            Arc::clone(&rollup_client),
+            Arc::clone(&verifier_client),
+            TEST_AGGREGATE_VERIFIER_IMPL_ADDRESS,
+        );
         let dispatcher = ProofDispatcher::new(
             requester,
             Arc::clone(&l1),
             l2,
             Arc::clone(&rollup_client),
-            ProofDispatcherConfig {
-                proposer_address: Address::repeat_byte(0x04),
-                intermediate_block_interval: 100,
-                tee_image_hash: B256::repeat_byte(0x05),
-            },
+            verifier_client,
+            dispatcher_config(100),
         );
         let recovery = make_recovery(
             Arc::clone(&rollup_client),
@@ -1475,6 +1646,7 @@ mod tests {
                 target_block,
                 &recovered(100),
                 claimed_root,
+                None,
                 &mut state,
                 &mut cache,
                 false,
@@ -1497,17 +1669,20 @@ mod tests {
             max_safe_block: None,
         });
         let requester: Arc<dyn ProofRequesterProvider> = Arc::new(MismatchedProofRequester);
-        let collector = ProofCollector::new(Arc::clone(&requester), Arc::clone(&rollup_client));
+        let verifier_client = verifier_client();
+        let collector = ProofCollector::new(
+            Arc::clone(&requester),
+            Arc::clone(&rollup_client),
+            Arc::clone(&verifier_client),
+            TEST_AGGREGATE_VERIFIER_IMPL_ADDRESS,
+        );
         let dispatcher = ProofDispatcher::new(
             requester,
             Arc::clone(&l1),
             l2,
             Arc::clone(&rollup_client),
-            ProofDispatcherConfig {
-                proposer_address: Address::repeat_byte(0x04),
-                intermediate_block_interval: 100,
-                tee_image_hash: B256::repeat_byte(0x05),
-            },
+            verifier_client,
+            dispatcher_config(100),
         );
         let recovery = make_recovery(
             Arc::clone(&rollup_client),
@@ -1538,6 +1713,7 @@ mod tests {
                 target_block,
                 &recovered(100),
                 claimed_root,
+                None,
                 &mut state,
                 &mut cache,
                 true,
@@ -1558,7 +1734,8 @@ mod tests {
         let l2 = Arc::new(MockL2 { block_not_found: false, canonical_hash: None });
         let target_block = 200;
         let claimed_root = B256::repeat_byte(target_block as u8);
-        let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_root);
+        let session_id =
+            ProposerProofAdapter::tee_session_id_for_root(claimed_root, TEST_ACTIVATION_SCHEDULE_HASH);
         proof_requester
             .failed_sessions
             .lock()
@@ -1569,20 +1746,20 @@ mod tests {
             output_roots: HashMap::new(),
             max_safe_block: None,
         });
+        let verifier_client = verifier_client();
         let collector = ProofCollector::new(
             Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>,
             Arc::clone(&rollup_client),
+            Arc::clone(&verifier_client),
+            TEST_AGGREGATE_VERIFIER_IMPL_ADDRESS,
         );
         let dispatcher = ProofDispatcher::new(
             Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>,
             l1,
             l2,
             Arc::clone(&rollup_client),
-            ProofDispatcherConfig {
-                proposer_address: Address::repeat_byte(0x04),
-                intermediate_block_interval: 100,
-                tee_image_hash: B256::repeat_byte(0x05),
-            },
+            verifier_client,
+            dispatcher_config(100),
         );
         let recovery = make_recovery(
             Arc::clone(&rollup_client),
@@ -1631,17 +1808,20 @@ mod tests {
             max_safe_block: None,
         });
         let requester: Arc<dyn ProofRequesterProvider> = Arc::new(RejectingProofRequester);
-        let collector = ProofCollector::new(Arc::clone(&requester), Arc::clone(&rollup_client));
+        let verifier_client = verifier_client();
+        let collector = ProofCollector::new(
+            Arc::clone(&requester),
+            Arc::clone(&rollup_client),
+            Arc::clone(&verifier_client),
+            TEST_AGGREGATE_VERIFIER_IMPL_ADDRESS,
+        );
         let dispatcher = ProofDispatcher::new(
             requester,
             Arc::clone(&l1),
             l2,
             Arc::clone(&rollup_client),
-            ProofDispatcherConfig {
-                proposer_address: Address::repeat_byte(0x04),
-                intermediate_block_interval: 100,
-                tee_image_hash: B256::repeat_byte(0x05),
-            },
+            verifier_client,
+            dispatcher_config(100),
         );
         let recovery = make_recovery(
             Arc::clone(&rollup_client),
@@ -1670,6 +1850,7 @@ mod tests {
                 target_block,
                 &recovered(100),
                 B256::repeat_byte(0xaa),
+                None,
                 &mut state,
                 &mut cache,
                 true,
@@ -1695,17 +1876,20 @@ mod tests {
             max_safe_block: None,
         });
         let requester: Arc<dyn ProofRequesterProvider> = Arc::new(RejectingProofRequester);
-        let collector = ProofCollector::new(Arc::clone(&requester), Arc::clone(&rollup_client));
+        let verifier_client = verifier_client();
+        let collector = ProofCollector::new(
+            Arc::clone(&requester),
+            Arc::clone(&rollup_client),
+            Arc::clone(&verifier_client),
+            TEST_AGGREGATE_VERIFIER_IMPL_ADDRESS,
+        );
         let dispatcher = ProofDispatcher::new(
             requester,
             Arc::clone(&l1),
             l2,
             Arc::clone(&rollup_client),
-            ProofDispatcherConfig {
-                proposer_address: Address::repeat_byte(0x04),
-                intermediate_block_interval: 100,
-                tee_image_hash: B256::repeat_byte(0x05),
-            },
+            verifier_client,
+            dispatcher_config(100),
         );
         let recovery = make_recovery(
             Arc::clone(&rollup_client),
@@ -1770,25 +1954,27 @@ mod tests {
             intermediate_block_interval: 100,
             l1_head_number: 1000,
             image_hash: B256::repeat_byte(0x05),
+            activation_schedule_hash: TEST_ACTIVATION_SCHEDULE_HASH,
+            protocol_versions_schedule: base_proof_primitives::ProtocolVersionsSchedule::default(),
         };
         proof_requester
             .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(request))
             .await
             .expect("test setup should dispatch root session");
+        let verifier_client = verifier_client();
         let collector = ProofCollector::new(
             Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>,
             Arc::clone(&rollup_client),
+            Arc::clone(&verifier_client),
+            TEST_AGGREGATE_VERIFIER_IMPL_ADDRESS,
         );
         let dispatcher = ProofDispatcher::new(
             Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>,
             Arc::clone(&l1),
             l2,
             Arc::clone(&rollup_client),
-            ProofDispatcherConfig {
-                proposer_address: Address::repeat_byte(0x04),
-                intermediate_block_interval: 100,
-                tee_image_hash: B256::repeat_byte(0x05),
-            },
+            verifier_client,
+            dispatcher_config(100),
         );
         let recovery = make_recovery(
             Arc::clone(&rollup_client),
@@ -1829,7 +2015,8 @@ mod tests {
         let l2 = Arc::new(MockL2 { block_not_found: false, canonical_hash: None });
         let target_block = 200;
         let claimed_root = B256::repeat_byte(target_block as u8);
-        let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_root);
+        let session_id =
+            ProposerProofAdapter::tee_session_id_for_root(claimed_root, TEST_ACTIVATION_SCHEDULE_HASH);
         proof_requester
             .failed_sessions
             .lock()
@@ -1840,20 +2027,20 @@ mod tests {
             output_roots: HashMap::new(),
             max_safe_block: None,
         });
+        let verifier_client = verifier_client();
         let collector = ProofCollector::new(
             Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>,
             Arc::clone(&rollup_client),
+            Arc::clone(&verifier_client),
+            TEST_AGGREGATE_VERIFIER_IMPL_ADDRESS,
         );
         let dispatcher = ProofDispatcher::new(
             Arc::clone(&proof_requester) as Arc<dyn ProofRequesterProvider>,
             Arc::clone(&l1),
             l2,
             Arc::clone(&rollup_client),
-            ProofDispatcherConfig {
-                proposer_address: Address::repeat_byte(0x04),
-                intermediate_block_interval: 100,
-                tee_image_hash: B256::repeat_byte(0x05),
-            },
+            verifier_client,
+            dispatcher_config(100),
         );
         let recovery = make_recovery(
             Arc::clone(&rollup_client),
@@ -1916,6 +2103,8 @@ mod tests {
             intermediate_block_interval: 300,
             l1_head_number: 1200,
             image_hash: B256::repeat_byte(0x05),
+            activation_schedule_hash: TEST_ACTIVATION_SCHEDULE_HASH,
+            protocol_versions_schedule: base_proof_primitives::ProtocolVersionsSchedule::default(),
         };
         let expected_session_id = proof_requester
             .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(proof_request))
@@ -1925,7 +2114,12 @@ mod tests {
         // "Restart": build a fresh collector with no in-memory dispatch state.
         // It must rederive the session id from the canonical chain root and
         // recover the in-flight session.
-        let collector = ProofCollector::new(Arc::clone(&proof_requester), rollup_client);
+        let collector = ProofCollector::new(
+            Arc::clone(&proof_requester),
+            rollup_client,
+            verifier_client(),
+            TEST_AGGREGATE_VERIFIER_IMPL_ADDRESS,
+        );
 
         match collector.poll(target_block).await {
             TargetPoll::Ready { session_id, .. } => {
@@ -1950,7 +2144,12 @@ mod tests {
             max_safe_block: None,
         });
 
-        let collector = ProofCollector::new(proof_requester, rollup_client);
+        let collector = ProofCollector::new(
+            proof_requester,
+            rollup_client,
+            verifier_client(),
+            TEST_AGGREGATE_VERIFIER_IMPL_ADDRESS,
+        );
         match collector.poll(target_block).await {
             TargetPoll::NotFound { session_id, claimed_l2_output_root } => {
                 assert!(!session_id.is_empty());

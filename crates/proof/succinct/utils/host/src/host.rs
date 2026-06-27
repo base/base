@@ -53,6 +53,7 @@ pub trait OPSuccinctHost: Send + Sync + 'static {
     /// - `l1_head_hash`: Optionally supplied L1 head block hash used as the L1 origin.
     /// - `intermediate_block_interval`: L2 blocks between intermediate output roots, must match
     ///   on-chain `INTERMEDIATE_BLOCK_INTERVAL` (same field committed into [`BootInfo`]).
+    /// - `activation_schedule_hash`: Schedule hash the proof must commit to.
     /// - `safe_db_fallback`: Flag to indicate whether to fallback to timestamp-based L1 head
     ///   estimation when `SafeDB` is not available.
     async fn fetch(
@@ -61,6 +62,7 @@ pub trait OPSuccinctHost: Send + Sync + 'static {
         l2_end_block: u64,
         l1_head_hash: Option<B256>,
         intermediate_block_interval: u64,
+        activation_schedule_hash: B256,
         safe_db_fallback: bool,
     ) -> Result<Self::Args>;
 

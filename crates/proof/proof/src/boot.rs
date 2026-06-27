@@ -1,10 +1,13 @@
 //! This module contains the prologue phase of the client program, pulling in the boot information
 //! through the `PreimageOracle` ABI as local keys.
 
+use alloc::string::ToString;
+
 use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B256, U256, uint};
 use base_common_genesis::RollupConfig;
 use base_proof_preimage::{PreimageKey, PreimageOracleClient};
+use base_proof_primitives::ProtocolVersionsSchedule;
 use serde::{Deserialize, Serialize};
 
 use crate::errors::OracleProviderError;
@@ -78,6 +81,22 @@ pub const INTERMEDIATE_BLOCK_INTERVAL_KEY: U256 = uint!(9_U256);
 /// This key retrieves the block number corresponding to `L1_HEAD_KEY`, allowing
 /// the enclave to reference the L1 head number without an extra lookup.
 pub const L1_HEAD_NUMBER_KEY: U256 = uint!(10_U256);
+
+/// The local key identifier for the activation schedule hash.
+///
+/// This key retrieves the `scheduleId` snapshotted from the `ProtocolVersions` contract at game
+/// initialization time. It is committed into the proof journal to bind each proof to the canonical
+/// upgrade schedule, preventing proofs produced under a non-canonical activation timestamp from
+/// being accepted on-chain. Defaults to `B256::ZERO` when not set (backwards compatibility).
+pub const ACTIVATION_SCHEDULE_HASH_KEY: U256 = uint!(11_U256);
+
+/// The local key identifier for the full `ProtocolVersions` schedule.
+///
+/// This key retrieves the registered upgrade schedule that must be applied to the local rollup
+/// config before execution. The guest recomputes `scheduleId` from this schedule and the rollup
+/// config's `(l2ChainId, protocol_versions_address)` identity before committing it into the proof
+/// journal.
+pub const PROTOCOL_VERSIONS_SCHEDULE_KEY: U256 = uint!(12_U256);
 
 /// The boot information for the client program.
 ///
@@ -181,6 +200,11 @@ pub struct BootInfo {
     /// block number without an extra lookup. Defaults to 0 when not set.
     #[serde(default)]
     pub l1_head_number: u64,
+    /// The activation schedule hash recomputed inside the guest from the supplied `ProtocolVersions`
+    /// schedule. Committed into the proof journal to bind this proof to the canonical upgrade
+    /// schedule. Defaults to `B256::ZERO` when no dynamic schedule binding is supplied.
+    #[serde(default)]
+    pub activation_schedule_hash: B256,
 }
 
 impl BootInfo {
@@ -250,7 +274,7 @@ impl BootInfo {
 
         // Attempt to load the rollup config from the chain ID. If there is no config for the chain,
         // fall back to loading the config from the preimage oracle.
-        let rollup_config = if let Some(config) = built_in_chain_config {
+        let mut rollup_config = if let Some(config) = built_in_chain_config {
             config.rollup_config()
         } else {
             warn!(
@@ -274,13 +298,6 @@ impl BootInfo {
                 rollup_config_chain_id,
             });
         }
-        // The activation registry is installed at Beryl. For built-in chains, the admin comes from
-        // `ChainConfig`; for oracle-provided rollup configs, do not infer an admin from untrusted
-        // fallback data until the admin has an explicit committed source.
-        if activation_admin_address.is_none() && rollup_config.upgrades.base.beryl.is_some() {
-            return Err(OracleProviderError::MissingActivationAdminAddress { chain_id });
-        }
-
         // Attempt to load the L1 config from the rollup config's L1 chain ID. If there is no config
         // for the chain, fall back to loading the config from the preimage oracle.
         let l1_config = if let Some(config) =
@@ -358,6 +375,68 @@ impl BootInfo {
             }
         };
 
+        // Load activation schedule hash (optional — defaults to B256::ZERO for backwards
+        // compatibility with games created before ProtocolVersions was wired in).
+        let committed_activation_schedule_hash =
+            match oracle.get(PreimageKey::new_local(ACTIVATION_SCHEDULE_HASH_KEY.to())).await {
+                Ok(bytes) => {
+                    let buf: [u8; 32] =
+                        bytes.as_slice().try_into().map_err(OracleProviderError::SliceConversion)?;
+                    B256::from(buf)
+                }
+                Err(e) => {
+                    debug!(
+                        target: "boot_loader",
+                        error = %e,
+                        "Activation schedule hash preimage not found, defaulting to B256::ZERO"
+                    );
+                    B256::ZERO
+                }
+            };
+
+        let protocol_versions_schedule =
+            match oracle.get(PreimageKey::new_local(PROTOCOL_VERSIONS_SCHEDULE_KEY.to())).await {
+                Ok(bytes) => serde_json::from_slice::<ProtocolVersionsSchedule>(&bytes)
+                    .map_err(OracleProviderError::Serde)?,
+                Err(e) => {
+                    debug!(
+                        target: "boot_loader",
+                        error = %e,
+                        "ProtocolVersions schedule preimage not found, defaulting to empty schedule"
+                    );
+                    ProtocolVersionsSchedule::default()
+                }
+            };
+
+        let activation_schedule_hash = if committed_activation_schedule_hash == B256::ZERO {
+            B256::ZERO
+        } else {
+            let computed_hash = protocol_versions_schedule
+                .compute_schedule_hash(&rollup_config)
+                .map_err(|error| {
+                    OracleProviderError::InvalidProtocolVersionsSchedule(error.to_string())
+                })?;
+            if computed_hash != committed_activation_schedule_hash {
+                return Err(OracleProviderError::ActivationScheduleHashMismatch {
+                    expected: committed_activation_schedule_hash,
+                    computed: computed_hash,
+                });
+            }
+            protocol_versions_schedule
+                .apply_to_rollup_config(&mut rollup_config)
+                .map_err(|error| {
+                    OracleProviderError::InvalidProtocolVersionsSchedule(error.to_string())
+                })?;
+            computed_hash
+        };
+
+        // The activation registry is installed at Beryl. For built-in chains, the admin comes from
+        // `ChainConfig`; for oracle-provided rollup configs, do not infer an admin from untrusted
+        // fallback data until the admin has an explicit committed source.
+        if activation_admin_address.is_none() && rollup_config.upgrades.base.beryl.is_some() {
+            return Err(OracleProviderError::MissingActivationAdminAddress { chain_id });
+        }
+
         Ok(Self {
             l1_head,
             agreed_l2_output_root: l2_output_root,
@@ -370,17 +449,19 @@ impl BootInfo {
             proposer,
             intermediate_block_interval,
             l1_head_number,
+            activation_schedule_hash,
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use alloc::{boxed::Box, vec::Vec};
+    use alloc::{boxed::Box, vec, vec::Vec};
 
     use alloy_primitives::B256;
     use async_trait::async_trait;
     use base_common_chains::ChainConfig as BaseChainConfig;
+    use base_proof_primitives::ProtocolVersionsScheduleEntry;
     use base_proof_preimage::{
         PreimageKey, PreimageOracleClient,
         errors::{PreimageOracleError, PreimageOracleResult},
@@ -518,6 +599,100 @@ mod tests {
         assert!(matches!(
             err,
             OracleProviderError::MissingActivationAdminAddress { chain_id: ORACLE_CHAIN_ID }
+        ));
+    }
+
+    #[tokio::test]
+    async fn loads_and_applies_protocol_versions_schedule() {
+        const ORACLE_CHAIN_ID: u64 = 999_999_999;
+        const CANYON_TIME: u64 = 1_234_567;
+
+        let rollup_config = base_common_chains::rollup_config!(BaseChainConfig::SEPOLIA);
+        let mut rollup_config_value =
+            serde_json::to_value(&rollup_config).expect("rollup config should convert to value");
+        rollup_config_value["l2_chain_id"] = serde_json::json!(ORACLE_CHAIN_ID);
+        rollup_config_value["base"]["beryl"] = serde_json::Value::Null;
+
+        let mut expected_rollup_config: RollupConfig = serde_json::from_value(rollup_config_value.clone())
+            .expect("rollup config value should deserialize");
+        let schedule = ProtocolVersionsSchedule {
+            upgrades: vec![ProtocolVersionsScheduleEntry {
+                name: "canyon".to_string(),
+                timestamp: Some(CANYON_TIME),
+            }],
+        };
+        let expected_hash =
+            schedule.compute_schedule_hash(&expected_rollup_config).expect("schedule hash should compute");
+        schedule
+            .apply_to_rollup_config(&mut expected_rollup_config)
+            .expect("schedule should apply");
+
+        let mut oracle = MockOracle::new();
+        oracle.insert(L1_HEAD_KEY, B256::repeat_byte(0x11).to_vec());
+        oracle.insert(L2_OUTPUT_ROOT_KEY, B256::repeat_byte(0x22).to_vec());
+        oracle.insert(L2_CLAIM_KEY, B256::repeat_byte(0x33).to_vec());
+        oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, 40_308_263u64.to_be_bytes().to_vec());
+        oracle.insert(L2_CHAIN_ID_KEY, ORACLE_CHAIN_ID.to_be_bytes().to_vec());
+        oracle.insert(
+            L2_ROLLUP_CONFIG_KEY,
+            serde_json::to_vec(&rollup_config_value).expect("rollup config should serialize"),
+        );
+        oracle.insert(ACTIVATION_SCHEDULE_HASH_KEY, expected_hash.to_vec());
+        oracle.insert(
+            PROTOCOL_VERSIONS_SCHEDULE_KEY,
+            serde_json::to_vec(&schedule).expect("schedule should serialize"),
+        );
+
+        let boot_info = BootInfo::load(&oracle).await.expect("boot info should load");
+
+        assert_eq!(boot_info.activation_schedule_hash, expected_hash);
+        assert_eq!(boot_info.rollup_config.upgrades.canyon_time, Some(CANYON_TIME));
+        assert_eq!(boot_info.rollup_config.upgrades, expected_rollup_config.upgrades);
+    }
+
+    #[tokio::test]
+    async fn rejects_protocol_versions_schedule_hash_mismatch() {
+        const ORACLE_CHAIN_ID: u64 = 999_999_999;
+
+        let rollup_config = base_common_chains::rollup_config!(BaseChainConfig::SEPOLIA);
+        let mut rollup_config_value =
+            serde_json::to_value(&rollup_config).expect("rollup config should convert to value");
+        rollup_config_value["l2_chain_id"] = serde_json::json!(ORACLE_CHAIN_ID);
+        rollup_config_value["base"]["beryl"] = serde_json::Value::Null;
+
+        let schedule = ProtocolVersionsSchedule {
+            upgrades: vec![ProtocolVersionsScheduleEntry {
+                name: "canyon".to_string(),
+                timestamp: Some(1_234_567),
+            }],
+        };
+
+        let mut oracle = MockOracle::new();
+        oracle.insert(L1_HEAD_KEY, B256::repeat_byte(0x11).to_vec());
+        oracle.insert(L2_OUTPUT_ROOT_KEY, B256::repeat_byte(0x22).to_vec());
+        oracle.insert(L2_CLAIM_KEY, B256::repeat_byte(0x33).to_vec());
+        oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, 40_308_263u64.to_be_bytes().to_vec());
+        oracle.insert(L2_CHAIN_ID_KEY, ORACLE_CHAIN_ID.to_be_bytes().to_vec());
+        oracle.insert(
+            L2_ROLLUP_CONFIG_KEY,
+            serde_json::to_vec(&rollup_config_value).expect("rollup config should serialize"),
+        );
+        oracle.insert(ACTIVATION_SCHEDULE_HASH_KEY, B256::repeat_byte(0x99).to_vec());
+        oracle.insert(
+            PROTOCOL_VERSIONS_SCHEDULE_KEY,
+            serde_json::to_vec(&schedule).expect("schedule should serialize"),
+        );
+
+        let err = BootInfo::load(&oracle)
+            .await
+            .expect_err("boot info should reject a mismatched schedule hash");
+
+        assert!(matches!(
+            err,
+            OracleProviderError::ActivationScheduleHashMismatch {
+                expected,
+                computed,
+            } if expected == B256::repeat_byte(0x99) && computed != expected
         ));
     }
 }

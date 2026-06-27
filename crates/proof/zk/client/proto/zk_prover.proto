@@ -32,6 +32,8 @@ message ProveBlockRequest {
   // When provided, bypasses SafeDB and sequence_window L1 head calculation.
   optional string l1_head = 7;
   optional uint64 intermediate_root_interval = 8;
+  // Optional: activation schedule hash (hex-encoded B256) committed into the proof journal.
+  optional string activation_schedule_hash = 9;
 }
 
 message ProveBlockResponse {

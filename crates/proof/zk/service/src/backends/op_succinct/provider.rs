@@ -15,7 +15,7 @@ use crate::backends::utils::L1HeadCalculator;
 
 /// Inputs to [`OpSuccinctProvider::generate_witness`].
 ///
-/// Grouped so the call site reads as named fields rather than 7 positional values of similar
+/// Grouped so the call site reads as named fields rather than 8 positional values of similar
 /// primitive types.
 #[derive(Debug, Clone, Copy)]
 pub struct WitnessParams<'a> {
@@ -34,6 +34,8 @@ pub struct WitnessParams<'a> {
     pub l1_head: Option<B256>,
     /// Number of L2 blocks between sampled intermediate output roots.
     pub intermediate_root_interval: u64,
+    /// Activation schedule hash that the proof must commit to.
+    pub activation_schedule_hash: B256,
 }
 
 /// Provider wrapping the Succinct host for witness generation and proving.
@@ -76,6 +78,7 @@ impl OpSuccinctProvider {
             base_consensus_url,
             l1_head,
             intermediate_root_interval,
+            activation_schedule_hash,
         } = params;
 
         info!(
@@ -83,6 +86,7 @@ impl OpSuccinctProvider {
             end_block = end_block,
             sequence_window = sequence_window,
             l1_head = ?l1_head,
+            activation_schedule_hash = %activation_schedule_hash,
             "starting witness generation"
         );
 
@@ -90,12 +94,26 @@ impl OpSuccinctProvider {
             Some(hash) => {
                 info!(hash = %hash, "using caller-provided l1_head");
                 self.host
-                    .fetch(start_block, end_block, Some(hash), intermediate_root_interval, false)
+                    .fetch(
+                        start_block,
+                        end_block,
+                        Some(hash),
+                        intermediate_root_interval,
+                        activation_schedule_hash,
+                        false,
+                    )
                     .await?
             }
             None => match self
                 .host
-                .fetch(start_block, end_block, None, intermediate_root_interval, false)
+                .fetch(
+                    start_block,
+                    end_block,
+                    None,
+                    intermediate_root_interval,
+                    activation_schedule_hash,
+                    false,
+                )
                 .await
             {
                 Ok(args) => {
@@ -125,6 +143,7 @@ impl OpSuccinctProvider {
                             end_block,
                             Some(l1_head_hash),
                             intermediate_root_interval,
+                            activation_schedule_hash,
                             false,
                         )
                         .await?

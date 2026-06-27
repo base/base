@@ -244,6 +244,7 @@ mod tests {
             prover_address: None,
             l1_head: None,
             intermediate_root_interval: None,
+            activation_schedule_hash: None,
             created_at: now,
             updated_at: now,
             completed_at: Some(now),

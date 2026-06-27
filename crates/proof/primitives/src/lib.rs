@@ -11,6 +11,11 @@ pub use per_chain_config::{
 mod proof;
 pub use proof::{ProofBundle, ProofRequest, ProofResult};
 
+mod protocol_versions_schedule;
+pub use protocol_versions_schedule::{
+    ProtocolVersionsSchedule, ProtocolVersionsScheduleEntry, ProtocolVersionsScheduleError,
+};
+
 mod proposal;
 pub use proposal::{ECDSA_SIGNATURE_LENGTH, PROOF_JOURNAL_BASE_LENGTH, ProofJournal, Proposal};
 

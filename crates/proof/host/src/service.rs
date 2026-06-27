@@ -1,5 +1,6 @@
 use std::{fmt, sync::OnceLock};
 
+use alloy_provider::RootProvider;
 use base_proof_primitives::{ProofRequest, ProofResult, ProverBackend};
 use tracing::{Instrument, info, info_span};
 
@@ -68,7 +69,14 @@ impl<B: ProverBackend> ProverService<B> {
     ) -> Result<ProofResult, ProverError<B>> {
         info!(l2_block = request.claimed_l2_block_number, "starting proof generation");
 
-        let host = Host::new(HostConfig { request, prover: self.config.clone(), data_dir: None });
+        let l1_provider = RootProvider::new_http(self.config.l1_eth_url.parse().map_err(|error| {
+            ProverError::Host(HostError::Custom(format!("invalid l1_eth_url: {error}")))
+        })?);
+        let host_config = HostConfig { request, prover: self.config.clone(), data_dir: None }
+            .resolve_protocol_versions_schedule(&l1_provider)
+            .await
+            .map_err(ProverError::Host)?;
+        let host = Host::new(host_config);
         let l1_header_cache = self.l1_header_cache.get_or_init(L1HeaderCache::new).clone();
         let oracle = self.backend.create_oracle();
 

@@ -18,6 +18,12 @@ use crate::{
 };
 
 sol! {
+    /// `ProtocolVersions` schedule commitment interface.
+    #[sol(rpc)]
+    interface IProtocolVersions {
+        function scheduleId() external view returns (bytes32);
+    }
+
     /// `AggregateVerifier` (dispute game) contract interface.
     ///
     /// Each game instance is a clone created by `DisputeGameFactory.create()`.
@@ -59,6 +65,12 @@ sol! {
 
         /// Returns the intermediate block interval for intermediate output root checkpoints.
         function INTERMEDIATE_BLOCK_INTERVAL() external view returns (uint256);
+
+        /// Returns the `ProtocolVersions` contract used for dynamic upgrade schedules.
+        function PROTOCOL_VERSIONS() external view returns (address);
+
+        /// Returns the activation schedule hash snapshotted when the game was created.
+        function activationScheduleHash() external view returns (bytes32);
 
         /// Returns the game type.
         function gameType() external view returns (uint32);
@@ -235,6 +247,15 @@ pub trait AggregateVerifierClient: Send + Sync {
         &self,
         impl_address: Address,
     ) -> Result<u64, ContractError>;
+
+    /// Reads the current activation schedule hash behind the implementation's `PROTOCOL_VERSIONS`.
+    async fn current_activation_schedule_hash(
+        &self,
+        impl_address: Address,
+    ) -> Result<B256, ContractError>;
+
+    /// Reads the activation schedule hash snapshotted on a live dispute game.
+    async fn activation_schedule_hash(&self, game_address: Address) -> Result<B256, ContractError>;
 
     /// Returns the intermediate output roots for the given game.
     ///
@@ -450,6 +471,35 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
         }
 
         Ok(interval)
+    }
+
+    async fn current_activation_schedule_hash(
+        &self,
+        impl_address: Address,
+    ) -> Result<B256, ContractError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(impl_address, &self.provider);
+        let protocol_versions = contract_call!(
+            contract.PROTOCOL_VERSIONS().call(),
+            "PROTOCOL_VERSIONS failed"
+        )?;
+        if protocol_versions == Address::ZERO {
+            return Err(ContractError::validation("PROTOCOL_VERSIONS returned address(0)"));
+        }
+
+        let protocol_versions =
+            IProtocolVersions::IProtocolVersionsInstance::new(protocol_versions, &self.provider);
+        contract_call!(protocol_versions.scheduleId().call(), "ProtocolVersions.scheduleId failed")
+    }
+
+    async fn activation_schedule_hash(&self, game_address: Address) -> Result<B256, ContractError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
+
+        contract_call!(
+            contract.activationScheduleHash().call(),
+            "activationScheduleHash failed"
+        )
     }
 
     async fn intermediate_output_roots(

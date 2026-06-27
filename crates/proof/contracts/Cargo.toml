@@ -15,9 +15,13 @@ workspace = true
 # Alloy
 alloy-provider.workspace = true
 alloy-contract.workspace = true
+alloy-rpc-types-eth.workspace = true
 alloy-transport.workspace = true
 alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
+
+# Base proof
+base-proof-primitives = { workspace = true, features = ["serde", "std"] }
 
 # Async
 futures.workspace = true

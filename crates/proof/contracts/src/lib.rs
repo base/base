@@ -17,6 +17,9 @@ pub use aggregate_verifier::{
     invalid_parent_game_selector, invalid_signer_selector, l1_origin_too_old_selector,
 };
 
+mod protocol_versions;
+pub use protocol_versions::ProtocolVersionsContractClient;
+
 mod delayed_weth;
 pub use delayed_weth::{DelayedWETHClient, DelayedWETHContractClient};
 

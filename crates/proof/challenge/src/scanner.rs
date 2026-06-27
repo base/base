@@ -104,6 +104,8 @@ pub struct CandidateGame {
     pub intermediate_block_interval: u64,
     /// The L1 head block hash stored at game creation time.
     pub l1_head: B256,
+    /// Activation schedule hash snapshotted by the game when it was created.
+    pub activation_schedule_hash: B256,
     /// Address of the TEE prover for this game (`Address::ZERO` if none registered).
     pub tee_prover: Address,
     /// Classification of this candidate and the action the driver should take.
@@ -481,12 +483,13 @@ impl GameScanner {
         };
 
         // Fetch remaining fields only for actionable games.
-        let ((info, starting_block_number, l1_head), intermediate_block_interval) = tokio::try_join!(
+        let ((info, starting_block_number, l1_head, activation_schedule_hash), intermediate_block_interval) = tokio::try_join!(
             async {
                 tokio::try_join!(
                     self.verifier_client.game_info(factory.proxy),
                     self.verifier_client.starting_block_number(factory.proxy),
                     self.verifier_client.l1_head(factory.proxy),
+                    self.verifier_client.activation_schedule_hash(factory.proxy),
                 )
                 .map_err(Into::into)
             },
@@ -500,6 +503,7 @@ impl GameScanner {
             starting_block_number,
             intermediate_block_interval,
             l1_head,
+            activation_schedule_hash,
             tee_prover,
             category,
         }))

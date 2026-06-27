@@ -140,6 +140,7 @@ impl NetworkZkProver {
             request.sequence_window.unwrap_or(self.config.default_sequence_window);
         let intermediate_root_interval =
             request.intermediate_root_interval.unwrap_or(DEFAULT_INTERMEDIATE_ROOT_INTERVAL);
+        let activation_schedule_hash = request.activation_schedule_hash.unwrap_or(B256::ZERO);
 
         info!(
             request_session_id = %request_session_id,
@@ -167,6 +168,7 @@ impl NetworkZkProver {
                     L1HeadSource::Pinned,
                 ),
                 intermediate_root_interval,
+                activation_schedule_hash,
             })
             .await
             .map_err(|e| {

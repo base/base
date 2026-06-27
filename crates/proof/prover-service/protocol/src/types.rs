@@ -128,6 +128,9 @@ pub struct ZkProofRequest {
     /// Optional intermediate output root interval.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub intermediate_root_interval: Option<u64>,
+    /// Optional activation schedule hash that the proof must commit to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub activation_schedule_hash: Option<B256>,
     /// ZK virtual machine implementation to use.
     pub zk_vm: ZkVm,
 }
@@ -450,6 +453,7 @@ mod tests {
                     sequence_window: None,
                     l1_head: Some(B256::repeat_byte(0xab)),
                     intermediate_root_interval: Some(128),
+                    activation_schedule_hash: Some(B256::repeat_byte(0xcd)),
                     zk_vm: ZkVm::Sp1,
                 }),
             },
@@ -469,6 +473,7 @@ mod tests {
                             "number_of_blocks_to_prove": 20,
                             "l1_head": format!("{:#x}", B256::repeat_byte(0xab)),
                             "intermediate_root_interval": 128,
+                            "activation_schedule_hash": format!("{:#x}", B256::repeat_byte(0xcd)),
                             "zk_vm": "sp1"
                         }
                     }
@@ -506,6 +511,7 @@ mod tests {
                 intermediate_block_interval: 7,
                 l1_head_number: 8,
                 image_hash: B256::repeat_byte(9),
+                activation_schedule_hash: B256::repeat_byte(10),
             },
             tee_kind: TeeKind::AwsNitro,
         };
@@ -525,6 +531,7 @@ mod tests {
                     "intermediate_block_interval": 7,
                     "l1_head_number": 8,
                     "image_hash": format!("{:#x}", B256::repeat_byte(9)),
+                    "activation_schedule_hash": format!("{:#x}", B256::repeat_byte(10)),
                 },
                 "tee_kind": "aws_nitro",
             })
@@ -544,6 +551,7 @@ mod tests {
                 "intermediate_block_interval": 7,
                 "l1_head_number": 8,
                 "image_hash": format!("{:#x}", B256::repeat_byte(9)),
+                "activation_schedule_hash": format!("{:#x}", B256::repeat_byte(10)),
             }
         }));
 
@@ -562,6 +570,7 @@ mod tests {
             "intermediate_block_interval": 7,
             "l1_head_number": 8,
             "image_hash": format!("{:#x}", B256::repeat_byte(9)),
+            "activation_schedule_hash": format!("{:#x}", B256::repeat_byte(10)),
             "tee_kind": "aws_nitro"
         }));
 
@@ -667,6 +676,7 @@ mod tests {
             intermediate_block_interval: 7,
             l1_head_number: 8,
             image_hash: B256::repeat_byte(9),
+            activation_schedule_hash: B256::repeat_byte(10),
         };
 
         let value = serde_json::to_value(request).expect("tee request payload should serialize");
@@ -683,6 +693,7 @@ mod tests {
                 "intermediate_block_interval": 7,
                 "l1_head_number": 8,
                 "image_hash": format!("{:#x}", B256::repeat_byte(9)),
+                "activation_schedule_hash": format!("{:#x}", B256::repeat_byte(10)),
             })
         );
     }
@@ -742,6 +753,7 @@ mod tests {
                 sequence_window: None,
                 l1_head: None,
                 intermediate_root_interval: None,
+                activation_schedule_hash: None,
                 zk_vm: ZkVm::Sp1,
             }
         );

@@ -48,6 +48,13 @@ pub enum SubmitAction {
     /// chain. The pipeline drops the cached recovery and re-proves on the
     /// next tick.
     RootMismatch,
+    /// The proof was generated under a different activation schedule than the
+    /// existing game it needs to attach to. The pipeline should redispatch a
+    /// new proof pinned to the game's schedule hash.
+    RedispatchForExistingGame {
+        /// Activation schedule hash snapshotted by the existing game.
+        activation_schedule_hash: B256,
+    },
     /// The dispute game already exists onchain by a previous attempt whose
     /// result was lost to an RPC propagation delay. The pipeline must
     /// invalidate its recovery cache so the next forward walk discovers the
@@ -64,6 +71,9 @@ impl std::fmt::Display for SubmitAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::RootMismatch => write!(f, "output root mismatch"),
+            Self::RedispatchForExistingGame { activation_schedule_hash } => {
+                write!(f, "existing game requires activation schedule {activation_schedule_hash}")
+            }
             Self::GameAlreadyExists => write!(f, "game already exists"),
             Self::Failed(e) | Self::Discard(e) => write!(f, "{e}"),
         }
@@ -166,6 +176,7 @@ where
         proof_result: &ProofResult,
         target_block: u64,
         parent_address: Address,
+        proof_activation_schedule_hash: B256,
     ) -> Result<(), SubmitAction> {
         let (aggregate_proposal, proposals) = match proof_result {
             ProofResult::Tee { aggregate_proposal, proposals } => (aggregate_proposal, proposals),
@@ -236,16 +247,79 @@ where
             }
         }
 
+        let extra_data = encode_extra_data(target_block, parent_address, &intermediate_roots);
+        let existing_game = self
+            .factory_client
+            .games(self.config.game_type, aggregate_proposal.output_root, extra_data.clone())
+            .await
+            .map_err(|e| {
+                SubmitAction::Failed(ProposerError::Contract(format!(
+                    "matching game lookup failed: {e}"
+                )))
+            })?;
+
+        let existing_game_activation_schedule_hash = if existing_game != Address::ZERO {
+            let activation_schedule_hash = self
+                .verifier_client
+                .activation_schedule_hash(existing_game)
+                .await
+                .map_err(|e| {
+                    SubmitAction::Failed(ProposerError::Contract(format!(
+                        "activationScheduleHash lookup failed for game {existing_game}: {e}"
+                    )))
+                })?;
+            if activation_schedule_hash != proof_activation_schedule_hash {
+                info!(
+                    target_block,
+                    game_address = %existing_game,
+                    proof_activation_schedule_hash = %proof_activation_schedule_hash,
+                    game_activation_schedule_hash = %activation_schedule_hash,
+                    "Existing dispute game is pinned to a different activation schedule, redispatching proof"
+                );
+                return Err(SubmitAction::RedispatchForExistingGame { activation_schedule_hash });
+            }
+            Some(activation_schedule_hash)
+        } else {
+            None
+        };
+
         // Pre-submission signer validation: if a TEE prover registry is
         // configured, recover the signer from the aggregate proposal signature
-        // and check `isValidSigner` onchain. If the signer is invalid, skip
-        // submission to avoid wasting gas on a transaction that will revert.
+        // and check `isValidSigner` onchain. Use the existing game's pinned
+        // activation schedule when attaching a proof, otherwise use the live
+        // implementation schedule that a freshly created game will snapshot.
         if let Some(registry_address) = self.config.tee_prover_registry_address {
+            let activation_schedule_hash = if let Some(activation_schedule_hash) =
+                existing_game_activation_schedule_hash
+            {
+                activation_schedule_hash
+            } else {
+                let impl_address = self.factory_client.game_impls(self.config.game_type).await.map_err(|e| {
+                    SubmitAction::Failed(ProposerError::Contract(format!(
+                        "AggregateVerifier implementation lookup failed: {e}"
+                    )))
+                })?;
+                if impl_address == Address::ZERO {
+                    return Err(SubmitAction::Failed(ProposerError::Contract(
+                        "no AggregateVerifier implementation registered in DisputeGameFactory".into(),
+                    )));
+                }
+                self.verifier_client
+                    .current_activation_schedule_hash(impl_address)
+                    .await
+                    .map_err(|e| {
+                        SubmitAction::Failed(ProposerError::Contract(format!(
+                            "ProtocolVersions.scheduleId lookup failed for implementation {impl_address}: {e}"
+                        )))
+                    })?
+            };
+
             match self
                 .check_signer_validity(
                     aggregate_proposal,
                     starting_block_number,
                     &intermediate_roots,
+                    activation_schedule_hash,
                     registry_address,
                 )
                 .await
@@ -273,17 +347,6 @@ where
                 }
             }
         }
-
-        let extra_data = encode_extra_data(target_block, parent_address, &intermediate_roots);
-        let existing_game = self
-            .factory_client
-            .games(self.config.game_type, aggregate_proposal.output_root, extra_data.clone())
-            .await
-            .map_err(|e| {
-                SubmitAction::Failed(ProposerError::Contract(format!(
-                    "matching game lookup failed: {e}"
-                )))
-            })?;
 
         if existing_game != Address::ZERO {
             return self
@@ -456,6 +519,7 @@ where
         aggregate_proposal: &Proposal,
         starting_block_number: u64,
         intermediate_roots: &[B256],
+        activation_schedule_hash: B256,
         registry_address: Address,
     ) -> Result<bool, ProposerError> {
         // Reconstruct the journal that the enclave signed over.
@@ -469,6 +533,7 @@ where
             intermediate_roots: intermediate_roots.to_vec(),
             config_hash: aggregate_proposal.config_hash,
             tee_image_hash: self.config.tee_image_hash,
+            activation_schedule_hash,
         };
         let digest = keccak256(journal.encode());
 
@@ -726,7 +791,12 @@ mod tests {
         );
 
         let result = submitter
-            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
+            .submit(
+                &proof_result(TEST_BLOCK_INTERVAL),
+                TEST_BLOCK_INTERVAL,
+                Address::ZERO,
+                B256::ZERO,
+            )
             .await;
 
         assert!(result.is_ok());
@@ -747,7 +817,12 @@ mod tests {
         );
 
         let result = submitter
-            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
+            .submit(
+                &proof_result(TEST_BLOCK_INTERVAL),
+                TEST_BLOCK_INTERVAL,
+                Address::ZERO,
+                B256::ZERO,
+            )
             .await;
 
         assert!(result.is_ok());
@@ -765,10 +840,47 @@ mod tests {
             submitter(Arc::clone(&output), existing_game_factory(game_address), verifier);
 
         let result = submitter
-            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
+            .submit(
+                &proof_result(TEST_BLOCK_INTERVAL),
+                TEST_BLOCK_INTERVAL,
+                Address::ZERO,
+                B256::ZERO,
+            )
             .await;
 
         assert!(matches!(result, Err(SubmitAction::GameAlreadyExists)));
+        assert_eq!(*output.created.lock().unwrap(), 0);
+        assert!(output.verified.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn submit_redispatches_when_existing_game_uses_different_schedule() {
+        let game_address = Address::repeat_byte(0xAA);
+        let game_activation_schedule_hash = B256::repeat_byte(0x11);
+        let proof_activation_schedule_hash = B256::repeat_byte(0x22);
+        let mut verifier = MockAggregateVerifier::default();
+        verifier
+            .activation_schedule_hash_map
+            .insert(game_address, game_activation_schedule_hash);
+        let output = Arc::new(RecordingOutputProposer::default());
+        let submitter =
+            submitter(Arc::clone(&output), existing_game_factory(game_address), verifier);
+
+        let result = submitter
+            .submit(
+                &proof_result(TEST_BLOCK_INTERVAL),
+                TEST_BLOCK_INTERVAL,
+                Address::ZERO,
+                proof_activation_schedule_hash,
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(SubmitAction::RedispatchForExistingGame {
+                activation_schedule_hash,
+            }) if activation_schedule_hash == game_activation_schedule_hash
+        ));
         assert_eq!(*output.created.lock().unwrap(), 0);
         assert!(output.verified.lock().unwrap().is_empty());
     }
@@ -807,7 +919,12 @@ mod tests {
         );
 
         let result = submitter
-            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
+            .submit(
+                &proof_result(TEST_BLOCK_INTERVAL),
+                TEST_BLOCK_INTERVAL,
+                Address::ZERO,
+                B256::ZERO,
+            )
             .await;
 
         match expected {
@@ -830,7 +947,12 @@ mod tests {
         );
 
         let result = submitter
-            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
+            .submit(
+                &proof_result(TEST_BLOCK_INTERVAL),
+                TEST_BLOCK_INTERVAL,
+                Address::ZERO,
+                B256::ZERO,
+            )
             .await;
 
         assert!(result.is_ok());

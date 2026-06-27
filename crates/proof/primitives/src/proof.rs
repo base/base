@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use alloy_primitives::{Address, B256};
 use base_proof_preimage::PreimageKey;
 
-use crate::Proposal;
+use crate::{Proposal, ProtocolVersionsSchedule};
 
 /// The result of a proof computation, parameterized by backend.
 ///
@@ -76,6 +76,20 @@ pub struct ProofRequest {
     /// accept and ignore this field.
     #[cfg_attr(feature = "serde", serde(default))]
     pub image_hash: B256,
+    /// Activation schedule hash that the proof must commit to.
+    ///
+    /// For proposer flows this is the current `ProtocolVersions.scheduleId()` behind the
+    /// `AggregateVerifier` implementation at dispatch time. For challenger flows it is the
+    /// per-game `activationScheduleHash()` snapshotted onchain when the game was created.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub activation_schedule_hash: B256,
+    /// Full `ProtocolVersions` schedule used to reproduce execution inside the guest.
+    ///
+    /// The host resolves this schedule from the activation hash and the rollup config's
+    /// `protocol_versions_address`, then the guest applies it locally and recomputes the hash
+    /// before committing to the proof journal.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub protocol_versions_schedule: ProtocolVersionsSchedule,
 }
 
 /// A proof request bundled with the witness data needed to fulfill it.

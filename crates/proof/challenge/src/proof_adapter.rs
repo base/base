@@ -137,6 +137,8 @@ mod tests {
             intermediate_block_interval: 300,
             l1_head_number: 1200,
             image_hash: B256::repeat_byte(0x05),
+            activation_schedule_hash: B256::repeat_byte(0x09),
+            protocol_versions_schedule: base_proof_primitives::ProtocolVersionsSchedule::default(),
         }
     }
 
@@ -197,6 +199,7 @@ mod tests {
             sequence_window: Some(10),
             l1_head: Some(l1_head),
             intermediate_root_interval: Some(150),
+            activation_schedule_hash: Some(B256::repeat_byte(0xcd)),
             zk_vm: ZkVm::Sp1,
         };
         let request = SnarkGroth16ProofRequest { proof, prover_address };
@@ -216,6 +219,7 @@ mod tests {
                 assert_eq!(snark.proof.sequence_window, Some(10));
                 assert_eq!(snark.proof.l1_head, Some(l1_head));
                 assert_eq!(snark.proof.intermediate_root_interval, Some(150));
+                assert_eq!(snark.proof.activation_schedule_hash, Some(B256::repeat_byte(0xcd)));
                 assert_eq!(snark.proof.zk_vm, ZkVm::Sp1);
             }
             other => panic!("unexpected proof request kind: {other:?}"),

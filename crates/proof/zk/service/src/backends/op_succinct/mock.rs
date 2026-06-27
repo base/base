@@ -49,6 +49,14 @@ impl MockBackend {
     fn build_mock_public_values(request: &ProveBlockRequest) -> SP1PublicValues {
         let start_block = request.start_block_number;
         let end_block = start_block + request.number_of_blocks_to_prove;
+        let activation_schedule_hash = request
+            .activation_schedule_hash
+            .as_ref()
+            .map(|hash| {
+                hash.parse::<B256>()
+                    .expect("activation_schedule_hash should already be validated as B256")
+            })
+            .unwrap_or(B256::ZERO);
 
         let boot_info = BootInfoStruct {
             l1Head: B256::repeat_byte(0x11),
@@ -58,6 +66,7 @@ impl MockBackend {
             l2BlockNumber: end_block,
             rollupConfigHash: B256::repeat_byte(0x44),
             intermediateRoots: Default::default(),
+            activationScheduleHash: activation_schedule_hash,
         };
 
         let mut pv = SP1PublicValues::new();
@@ -169,6 +178,7 @@ impl ProvingBackend for MockBackend {
                             intermediate_root_interval: proof_request
                                 .intermediate_root_interval
                                 .map(|v| v as u64),
+                            activation_schedule_hash: proof_request.activation_schedule_hash.clone(),
                         };
                         self.create_mock_stark_proof(&request)
                     }
@@ -318,6 +328,7 @@ mod tests {
             prover_address: None,
             l1_head: None,
             intermediate_root_interval: None,
+            activation_schedule_hash: Some(format!("{:#x}", B256::repeat_byte(0x55))),
         };
 
         let pv = MockBackend::build_mock_public_values(&request);
@@ -329,5 +340,6 @@ mod tests {
         assert_eq!(boot_info.l2PreBlockNumber, 100);
         assert_eq!(boot_info.l2BlockNumber, 105);
         assert_eq!(boot_info.l1Head, B256::repeat_byte(0x11));
+        assert_eq!(boot_info.activationScheduleHash, B256::repeat_byte(0x55));
     }
 }

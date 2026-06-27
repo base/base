@@ -5232,6 +5232,7 @@ dependencies = [
  "base-proof-executor",
  "base-proof-mpt",
  "base-proof-preimage",
+ "base-proof-primitives",
  "base-protocol",
  "c-kzg",
  "lru 0.16.4",
@@ -5276,9 +5277,11 @@ dependencies = [
  "alloy-contract 2.0.5",
  "alloy-primitives",
  "alloy-provider 2.0.5",
+ "alloy-rpc-types-eth 2.0.5",
  "alloy-sol-types",
  "alloy-transport 2.0.5",
  "async-trait",
+ "base-proof-primitives",
  "futures",
  "rstest",
  "thiserror 2.0.18",
@@ -5365,6 +5368,7 @@ dependencies = [
  "base-metrics",
  "base-proof",
  "base-proof-client",
+ "base-proof-contracts",
  "base-proof-mpt",
  "base-proof-preimage",
  "base-proof-primitives",
@@ -5379,6 +5383,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "url",
 ]
 
 [[package]]

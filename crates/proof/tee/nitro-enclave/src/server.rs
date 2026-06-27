@@ -185,6 +185,7 @@ impl Server {
                 intermediate_roots: vec![],
                 config_hash,
                 tee_image_hash: self.tee_image_hash,
+                activation_schedule_hash: boot_info.activation_schedule_hash,
             };
             let signing_data = journal.encode();
 
@@ -231,6 +232,7 @@ impl Server {
                 intermediate_roots,
                 config_hash,
                 tee_image_hash: self.tee_image_hash,
+                activation_schedule_hash: boot_info.activation_schedule_hash,
             };
             let signing_data = journal.encode();
 

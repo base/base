@@ -256,7 +256,7 @@ impl StandardBaseRethNode {
         let Some(config) = Self::upgrade_signal_config(rollup_args)? else {
             return Ok(builder);
         };
-        if !startup_mode.reads_and_applies() || !config.signal_config.mode.applies_at_startup() {
+        if !startup_mode.reads_and_applies() {
             return Ok(builder);
         }
 

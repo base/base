@@ -41,6 +41,7 @@ impl ProverServiceServer {
             proof_type = prove_block_request.proof_type,
             prover_address = ?prove_block_request.prover_address,
             l1_head = ?prove_block_request.l1_head,
+            activation_schedule_hash = ?prove_block_request.activation_schedule_hash,
             "Attempting to prove base block(s)",
         );
 
@@ -64,6 +65,14 @@ impl ProverServiceServer {
             l1_head_str.parse::<alloy_primitives::B256>().map_err(|e| {
                 Status::invalid_argument(format!(
                     "Invalid l1_head: must be a hex-encoded 32-byte hash (0x-prefixed): {e}"
+                ))
+            })?;
+        }
+
+        if let Some(ref activation_schedule_hash_str) = prove_block_request.activation_schedule_hash {
+            activation_schedule_hash_str.parse::<alloy_primitives::B256>().map_err(|e| {
+                Status::invalid_argument(format!(
+                    "Invalid activation_schedule_hash: must be a hex-encoded 32-byte hash (0x-prefixed): {e}"
                 ))
             })?;
         }
@@ -103,6 +112,7 @@ impl ProverServiceServer {
             prover_address: prove_block_request.prover_address,
             l1_head: prove_block_request.l1_head,
             intermediate_root_interval: prove_block_request.intermediate_root_interval,
+            activation_schedule_hash: prove_block_request.activation_schedule_hash,
         };
 
         let outcome =

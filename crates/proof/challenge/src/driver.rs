@@ -597,6 +597,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
             proposer: self.submitter.sender_address(),
             intermediate_block_interval: candidate.intermediate_block_interval,
             l1_head_number,
+            activation_schedule_hash: candidate.activation_schedule_hash,
             ..Default::default()
         })
     }
@@ -616,6 +617,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
                 sequence_window: None,
                 l1_head: Some(candidate.l1_head),
                 intermediate_root_interval: Some(candidate.intermediate_block_interval),
+                activation_schedule_hash: Some(candidate.activation_schedule_hash),
                 zk_vm: ZkVm::Sp1,
             },
             prover_address: self.submitter.sender_address(),

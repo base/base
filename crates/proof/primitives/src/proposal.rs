@@ -8,8 +8,8 @@ use crate::{CryptoError, ProofEncoder};
 pub const ECDSA_SIGNATURE_LENGTH: usize = 65;
 
 /// Base length of the proof journal without intermediate roots:
-/// address(20) + 5 × bytes32(32) + 2 × uint64(8) = 196 bytes.
-pub const PROOF_JOURNAL_BASE_LENGTH: usize = 196;
+/// address(20) + 6 × bytes32(32) + 2 × uint64(8) = 228 bytes.
+pub const PROOF_JOURNAL_BASE_LENGTH: usize = 228;
 
 /// The `AggregateVerifier` contract journal encoding.
 ///
@@ -19,6 +19,7 @@ pub const PROOF_JOURNAL_BASE_LENGTH: usize = 196;
 /// prover(20) || l1OriginHash(32) || prevOutputRoot(32)
 ///   || startingL2Block(8) || outputRoot(32) || endingL2Block(8)
 ///   || intermediateRoots(32*N) || configHash(32) || imageHash(32)
+///   || activationScheduleHash(32)
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProofJournal {
@@ -40,6 +41,10 @@ pub struct ProofJournal {
     pub config_hash: B256,
     /// The TEE image hash.
     pub tee_image_hash: B256,
+    /// The activation schedule hash snapshotted from the ProtocolVersions contract at game
+    /// initialization. Binds this proof to the canonical upgrade schedule, preventing proofs
+    /// produced under a non-canonical activation timestamp from being accepted.
+    pub activation_schedule_hash: B256,
 }
 
 impl ProofJournal {
@@ -60,6 +65,7 @@ impl ProofJournal {
         }
         data.extend_from_slice(self.config_hash.as_slice());
         data.extend_from_slice(self.tee_image_hash.as_slice());
+        data.extend_from_slice(self.activation_schedule_hash.as_slice());
 
         data
     }
@@ -219,6 +225,9 @@ mod tests {
             tee_image_hash: b256!(
                 "5555555555555555555555555555555555555555555555555555555555555555"
             ),
+            activation_schedule_hash: b256!(
+                "6666666666666666666666666666666666666666666666666666666666666666"
+            ),
         }
     }
 
@@ -226,7 +235,7 @@ mod tests {
     fn test_journal_encode_length() {
         let data = test_journal().encode();
         assert_eq!(data.len(), PROOF_JOURNAL_BASE_LENGTH);
-        assert_eq!(data.len(), 196);
+        assert_eq!(data.len(), 228);
     }
 
     #[test]
@@ -253,6 +262,8 @@ mod tests {
         assert_eq!(&data[off..off + 32], journal.config_hash.as_slice());
         off += 32;
         assert_eq!(&data[off..off + 32], journal.tee_image_hash.as_slice());
+        off += 32;
+        assert_eq!(&data[off..off + 32], journal.activation_schedule_hash.as_slice());
     }
 
     #[test]
@@ -270,6 +281,7 @@ mod tests {
             ],
             config_hash: B256::ZERO,
             tee_image_hash: B256::ZERO,
+            activation_schedule_hash: B256::ZERO,
         };
 
         let data = journal.encode();

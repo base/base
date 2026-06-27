@@ -311,6 +311,7 @@ impl ClusterZkProver {
             request.sequence_window.unwrap_or(self.config.default_sequence_window);
         let intermediate_root_interval =
             request.intermediate_root_interval.unwrap_or(DEFAULT_INTERMEDIATE_ROOT_INTERVAL);
+        let activation_schedule_hash = request.activation_schedule_hash.unwrap_or(B256::ZERO);
 
         info!(
             proof_id = %proof_id,
@@ -338,6 +339,7 @@ impl ClusterZkProver {
                     L1HeadSource::Pinned,
                 ),
                 intermediate_root_interval,
+                activation_schedule_hash,
             })
             .await
             .map_err(|e| {

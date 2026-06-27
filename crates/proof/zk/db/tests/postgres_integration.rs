@@ -56,6 +56,7 @@ const fn compressed_request() -> CreateProofRequest {
         prover_address: None,
         l1_head: None,
         intermediate_root_interval: None,
+        activation_schedule_hash: None,
     }
 }
 
@@ -71,6 +72,7 @@ fn snark_request() -> CreateProofRequest {
             "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890".to_string(),
         ),
         intermediate_root_interval: None,
+        activation_schedule_hash: None,
     }
 }
 

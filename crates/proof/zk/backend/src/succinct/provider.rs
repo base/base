@@ -23,6 +23,8 @@ pub struct WitnessParams<'a> {
     pub l1_head: L1HeadSource<'a>,
     /// Number of L2 blocks between sampled intermediate output roots.
     pub intermediate_root_interval: u64,
+    /// Activation schedule hash that the proof must commit to.
+    pub activation_schedule_hash: B256,
 }
 
 /// Source used to select the L1 head hash for witness generation.
@@ -133,7 +135,13 @@ impl OpSuccinctWitnessProvider {
         &self,
         params: WitnessParams<'_>,
     ) -> Result<SP1Stdin, WitnessError> {
-        let WitnessParams { start_block, end_block, l1_head, intermediate_root_interval } = params;
+        let WitnessParams {
+            start_block,
+            end_block,
+            l1_head,
+            intermediate_root_interval,
+            activation_schedule_hash,
+        } = params;
 
         info!(
             start_block = start_block,
@@ -146,7 +154,14 @@ impl OpSuccinctWitnessProvider {
             L1HeadSource::Pinned(hash) => {
                 info!(hash = %hash, "using caller-provided l1_head");
                 self.host
-                    .fetch(start_block, end_block, Some(hash), intermediate_root_interval, false)
+                    .fetch(
+                        start_block,
+                        end_block,
+                        Some(hash),
+                        intermediate_root_interval,
+                        activation_schedule_hash,
+                        false,
+                    )
                     .await
                     .map_err(|source| WitnessError::PinnedHostFetch {
                         source: source.into_boxed_dyn_error(),
@@ -173,6 +188,7 @@ impl OpSuccinctWitnessProvider {
                         end_block,
                         Some(l1_head_hash),
                         intermediate_root_interval,
+                        activation_schedule_hash,
                         false,
                     )
                     .await
