@@ -11,6 +11,7 @@ use base_consensus_derive::ChainProvider;
 use base_proof_mpt::{OrderedListWalker, TrieNode, TrieProvider};
 use base_proof_preimage::{CommsClient, PreimageKey, PreimageKeyType};
 use base_protocol::BlockInfo;
+use spin::Mutex;
 
 use crate::{HintType, errors::OracleProviderError};
 
@@ -21,12 +22,54 @@ pub struct OracleL1ChainProvider<T: CommsClient> {
     pub l1_head: B256,
     /// The preimage oracle client.
     pub oracle: Arc<T>,
+    l1_header_range_hint_coverage: Arc<Mutex<Option<(u64, u64)>>>,
 }
 
 impl<T: CommsClient> OracleL1ChainProvider<T> {
     /// Creates a new [`OracleL1ChainProvider`] with the given boot information and oracle client.
-    pub const fn new(l1_head: B256, oracle: Arc<T>) -> Self {
-        Self { l1_head, oracle }
+    pub fn new(l1_head: B256, oracle: Arc<T>) -> Self {
+        Self { l1_head, oracle, l1_header_range_hint_coverage: Arc::new(Mutex::new(None)) }
+    }
+
+    async fn send_l1_header_range_hint(
+        &self,
+        start_number: u64,
+        end_number: u64,
+    ) -> Result<(), OracleProviderError> {
+        if self.l1_header_range_hint_covers(start_number, end_number) {
+            return Ok(());
+        }
+
+        let start_number_bytes = start_number.to_be_bytes();
+        let end_number_bytes = end_number.to_be_bytes();
+        let result = HintType::L1BlockHeaderRange
+            .with_data(&[&start_number_bytes, &end_number_bytes, self.l1_head.as_ref()])
+            .send(self.oracle.as_ref())
+            .await;
+        if result.is_ok() {
+            self.record_l1_header_range_hint(start_number, end_number);
+        }
+
+        result
+    }
+
+    fn l1_header_range_hint_covers(&self, start_number: u64, end_number: u64) -> bool {
+        match *self.l1_header_range_hint_coverage.lock() {
+            Some((covered_start, covered_end)) => {
+                start_number >= covered_start && end_number <= covered_end
+            }
+            None => false,
+        }
+    }
+
+    fn record_l1_header_range_hint(&self, start_number: u64, end_number: u64) {
+        let mut coverage = self.l1_header_range_hint_coverage.lock();
+        *coverage = Some(match *coverage {
+            Some((covered_start, covered_end)) => {
+                (covered_start.min(start_number), covered_end.max(end_number))
+            }
+            None => (start_number, end_number),
+        });
     }
 }
 
@@ -50,6 +93,10 @@ impl<T: CommsClient + Sync + Send> ChainProvider for OracleL1ChainProvider<T> {
         // Check if the block number is in range. If not, we can fail early.
         if block_number > header.number {
             return Err(OracleProviderError::BlockNumberPastHead(block_number, header.number));
+        }
+
+        if block_number < header.number {
+            self.send_l1_header_range_hint(block_number, header.number).await?;
         }
 
         // Walk back the block headers to the desired block number.
@@ -139,5 +186,115 @@ impl<T: CommsClient> TrieProvider for OracleL1ChainProvider<T> {
             )
             .map_err(OracleProviderError::Rlp)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::{
+        string::{String, ToString},
+        sync::Arc,
+        vec::Vec,
+    };
+
+    use alloy_consensus::Header;
+    use alloy_rlp::Encodable;
+    use async_trait::async_trait;
+    use base_consensus_derive::ChainProvider;
+    use base_proof_preimage::{
+        HintWriterClient, PreimageKey, PreimageOracleClient,
+        errors::{PreimageOracleError, PreimageOracleResult},
+    };
+    use spin::Mutex;
+
+    use super::*;
+
+    #[derive(Clone, Default)]
+    struct MockOracle {
+        preimages: Arc<Mutex<Vec<(PreimageKey, Vec<u8>)>>>,
+        hints: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl MockOracle {
+        fn insert_header(&self, header: &Header) -> B256 {
+            let hash = header.hash_slow();
+            let mut encoded_header = Vec::new();
+            header.encode(&mut encoded_header);
+            self.preimages.lock().push((PreimageKey::new_keccak256(*hash), encoded_header));
+            hash
+        }
+
+        fn hints(&self) -> Vec<String> {
+            self.hints.lock().clone()
+        }
+    }
+
+    #[async_trait]
+    impl PreimageOracleClient for MockOracle {
+        async fn get(&self, key: PreimageKey) -> PreimageOracleResult<Vec<u8>> {
+            self.preimages
+                .lock()
+                .iter()
+                .find_map(|(entry_key, value)| (*entry_key == key).then(|| value.clone()))
+                .ok_or(PreimageOracleError::KeyNotFound)
+        }
+
+        async fn get_exact(&self, key: PreimageKey, buf: &mut [u8]) -> PreimageOracleResult<()> {
+            let value = self.get(key).await?;
+            if value.len() != buf.len() {
+                return Err(PreimageOracleError::BufferLengthMismatch(buf.len(), value.len()));
+            }
+
+            buf.copy_from_slice(&value);
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl HintWriterClient for MockOracle {
+        async fn write(&self, hint: &str) -> PreimageOracleResult<()> {
+            self.hints.lock().push(hint.to_string());
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_l1_header_range_hint_reuses_covered_range_across_clones() {
+        let oracle = MockOracle::default();
+        let block_1 = Header { number: 1, ..Default::default() };
+        let block_1_hash = oracle.insert_header(&block_1);
+        let block_2 = Header { number: 2, parent_hash: block_1_hash, ..Default::default() };
+        let block_2_hash = oracle.insert_header(&block_2);
+        let head = Header { number: 3, parent_hash: block_2_hash, ..Default::default() };
+        let l1_head = oracle.insert_header(&head);
+        let mut provider = OracleL1ChainProvider::new(l1_head, Arc::new(oracle.clone()));
+        let mut cloned_provider = provider.clone();
+
+        provider.block_info_by_number(1).await.unwrap();
+        cloned_provider.block_info_by_number(2).await.unwrap();
+
+        let range_hints =
+            oracle.hints().iter().filter(|hint| hint.starts_with("l1-block-header-range ")).count();
+        assert_eq!(range_hints, 1);
+    }
+
+    #[tokio::test]
+    async fn test_l1_header_range_hint_sends_wider_range_after_recent_lookup() {
+        let oracle = MockOracle::default();
+        let block_1 = Header { number: 1, ..Default::default() };
+        let block_1_hash = oracle.insert_header(&block_1);
+        let block_2 = Header { number: 2, parent_hash: block_1_hash, ..Default::default() };
+        let block_2_hash = oracle.insert_header(&block_2);
+        let head = Header { number: 3, parent_hash: block_2_hash, ..Default::default() };
+        let l1_head = oracle.insert_header(&head);
+        let mut provider = OracleL1ChainProvider::new(l1_head, Arc::new(oracle.clone()));
+        let mut cloned_provider = provider.clone();
+
+        provider.block_info_by_number(2).await.unwrap();
+        cloned_provider.block_info_by_number(1).await.unwrap();
+
+        let range_hints =
+            oracle.hints().iter().filter(|hint| hint.starts_with("l1-block-header-range ")).count();
+        assert_eq!(range_hints, 2);
     }
 }

@@ -1,4 +1,9 @@
-use std::{collections::HashSet, fmt, sync::Arc, time::Duration};
+use std::{
+    collections::HashSet,
+    fmt,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use base_proof::{Hint, HintType};
@@ -6,14 +11,16 @@ use base_proof_preimage::{
     HintRouter, PreimageFetcher, PreimageKey,
     errors::{PreimageOracleError, PreimageOracleResult},
 };
-use tokio::{sync::RwLock, time};
-use tracing::{debug, error, trace, warn};
+use tokio::{
+    sync::RwLock,
+    task::{self, JoinHandle},
+    time,
+};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::{
     HostConfig, HostProviders, Metrics, SharedKeyValueStore,
-    handler::{
-        L1HeaderCache, L1HeaderPrefetcher, PayloadWitnessPrefetcher, handle_hint_with_prefetchers,
-    },
+    handler::{L1HeaderPrefetcher, PayloadWitnessPrefetcher, handle_hint_with_prefetchers},
 };
 
 /// Cap on `handle_hint` attempts before [`OnlineHostBackend::get_preimage`] gives up; previously
@@ -36,6 +43,7 @@ pub struct OnlineHostBackend {
     last_hint: Arc<RwLock<Option<Hint<HintType>>>>,
     payload_witness_prefetcher: PayloadWitnessPrefetcher,
     l1_header_prefetcher: L1HeaderPrefetcher,
+    prefetch_tasks: Mutex<Vec<JoinHandle<()>>>,
 }
 
 impl fmt::Debug for OnlineHostBackend {
@@ -47,21 +55,11 @@ impl fmt::Debug for OnlineHostBackend {
 impl OnlineHostBackend {
     /// Creates a new [`OnlineHostBackend`].
     pub fn new(cfg: HostConfig, kv: SharedKeyValueStore, providers: HostProviders) -> Self {
-        Self::new_with_l1_header_cache(cfg, kv, providers, L1HeaderCache::new())
-    }
-
-    /// Creates a new [`OnlineHostBackend`] with a shared L1 header cache.
-    pub(crate) fn new_with_l1_header_cache(
-        cfg: HostConfig,
-        kv: SharedKeyValueStore,
-        providers: HostProviders,
-        l1_header_cache: L1HeaderCache,
-    ) -> Self {
         let cfg = Arc::new(cfg);
         let providers = Arc::new(providers);
         let payload_witness_prefetcher =
             PayloadWitnessPrefetcher::new(Arc::clone(&cfg), Arc::clone(&providers));
-        let l1_header_prefetcher = L1HeaderPrefetcher::new(Arc::clone(&providers), l1_header_cache);
+        let l1_header_prefetcher = L1HeaderPrefetcher::new(Arc::clone(&providers));
 
         Self {
             cfg,
@@ -71,6 +69,7 @@ impl OnlineHostBackend {
             last_hint: Arc::new(RwLock::new(None)),
             payload_witness_prefetcher,
             l1_header_prefetcher,
+            prefetch_tasks: Mutex::default(),
         }
     }
 
@@ -78,6 +77,57 @@ impl OnlineHostBackend {
     pub fn with_proactive_hint(mut self, hint_type: HintType) -> Self {
         self.proactive_hints.insert(hint_type);
         self
+    }
+
+    pub(crate) fn prefetch_witness_inputs(&self) {
+        let payload_witness_prefetcher = self.payload_witness_prefetcher.clone();
+        let kv = Arc::clone(&self.kv);
+        self.track_prefetch_task(task::spawn(async move {
+            payload_witness_prefetcher.prefetch_request_range(kv).await;
+        }));
+
+        let cfg = Arc::clone(&self.cfg);
+        let providers = Arc::clone(&self.providers);
+        let kv = Arc::clone(&self.kv);
+        self.track_prefetch_task(task::spawn(async move {
+            Self::prefetch_starting_l2_output(cfg, providers, kv).await;
+        }));
+    }
+
+    fn track_prefetch_task(&self, task: JoinHandle<()>) {
+        self.prefetch_tasks.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).push(task);
+    }
+
+    async fn prefetch_starting_l2_output(
+        cfg: Arc<HostConfig>,
+        providers: Arc<HostProviders>,
+        kv: SharedKeyValueStore,
+    ) {
+        info!(target: "host_backend", "starting L2 output prefetch started");
+
+        let hint =
+            HintType::StartingL2Output.with_data(&[cfg.request.agreed_l2_output_root.as_ref()]);
+
+        if let Err(err) = handle_hint_with_prefetchers(hint, &cfg, &providers, kv, None, None).await
+        {
+            warn!(
+                target: "host_backend",
+                error = %err,
+                "starting L2 output prefetch failed"
+            );
+        }
+
+        info!(target: "host_backend", "starting L2 output prefetch finished");
+    }
+}
+
+impl Drop for OnlineHostBackend {
+    fn drop(&mut self) {
+        for task in
+            self.prefetch_tasks.get_mut().unwrap_or_else(|poisoned| poisoned.into_inner()).drain(..)
+        {
+            task.abort();
+        }
     }
 }
 
@@ -211,7 +261,7 @@ mod tests {
         HintRouter, PreimageFetcher, PreimageKey, errors::PreimageOracleError,
     };
     use base_proof_primitives::ProofRequest;
-    use tokio::sync::RwLock;
+    use tokio::sync::{RwLock, Semaphore};
 
     use super::*;
     use crate::{
@@ -304,5 +354,24 @@ mod tests {
             }
             other => panic!("expected Other error after retries, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn drops_abort_prefetch_tasks() {
+        let semaphore = Arc::new(Semaphore::new(1));
+        let permit = Arc::clone(&semaphore).acquire_owned().await.unwrap();
+        let backend = OnlineHostBackend::new(test_cfg(), test_kv(), test_providers());
+
+        backend.track_prefetch_task(task::spawn(async move {
+            let _permit = permit;
+            std::future::pending::<()>().await;
+        }));
+
+        drop(backend);
+
+        let _permit = tokio::time::timeout(std::time::Duration::from_secs(1), semaphore.acquire())
+            .await
+            .expect("tracked prefetch task should be aborted when backend drops")
+            .unwrap();
     }
 }

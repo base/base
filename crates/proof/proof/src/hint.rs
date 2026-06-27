@@ -87,6 +87,8 @@ where
 pub enum HintType {
     /// A hint that specifies the block header of a layer 1 block.
     L1BlockHeader,
+    /// A hint that specifies a range of layer 1 block headers by number.
+    L1BlockHeaderRange,
     /// A hint that specifies the transactions of a layer 1 block.
     L1Transactions,
     /// A hint that specifies the state node of a layer 1 block.
@@ -134,6 +136,7 @@ impl FromStr for HintType {
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
             "l1-block-header" => Ok(Self::L1BlockHeader),
+            "l1-block-header-range" => Ok(Self::L1BlockHeaderRange),
             "l1-transactions" => Ok(Self::L1Transactions),
             "l1-receipts" => Ok(Self::L1Receipts),
             "l1-blob" => Ok(Self::L1Blob),
@@ -155,6 +158,7 @@ impl From<HintType> for &str {
     fn from(value: HintType) -> Self {
         match value {
             HintType::L1BlockHeader => "l1-block-header",
+            HintType::L1BlockHeaderRange => "l1-block-header-range",
             HintType::L1Transactions => "l1-transactions",
             HintType::L1Receipts => "l1-receipts",
             HintType::L1Blob => "l1-blob",

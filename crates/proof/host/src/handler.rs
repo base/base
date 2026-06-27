@@ -23,38 +23,26 @@ use base_proof::{Hint, HintType, ROOTS_OF_UNITY};
 use base_proof_preimage::{PreimageKey, PreimageKeyType};
 use base_protocol::{BlockInfo, OutputRoot};
 use futures::FutureExt;
-use tokio::sync::Semaphore;
-use tracing::{debug, warn};
+use tokio::{sync::Semaphore, task::JoinSet};
+use tracing::{debug, info, warn};
 
 use crate::{
     HostConfig, HostError, HostProviders, Metrics, Result, SharedKeyValueStore, store_ordered_trie,
 };
 
 const HOST_SERVER_TARGET: &str = "host_server";
-const PAYLOAD_WITNESS_PREFETCH_LOOKAHEAD_BLOCKS: u64 = 10;
 const PAYLOAD_WITNESS_PREFETCH_MAX_IN_FLIGHT: usize = 10;
-const PAYLOAD_WITNESS_PREFETCH_MAX_READY: usize = 16;
-const PAYLOAD_WITNESS_PREFETCH_MAX_SCHEDULED_BLOCKS: usize = 128;
-const PAYLOAD_WITNESS_PREFETCH_MAX_SCHEDULED_LOOKAHEADS: usize = 128;
+const PAYLOAD_WITNESS_PREFETCH_MAX_READY: usize = 1024;
 const PAYLOAD_WITNESS_PREFETCH_PREIMAGE_WRITE_BATCH_SIZE: usize = 1024;
-const L1_HEADER_PREFETCH_LOOKBEHIND_BLOCKS: u64 = 512;
-// Keep several lookbehind windows ready without retaining every header seen by a long proof. Raw
-// L1 headers are hundreds of bytes each, so this bounds cached header bytes to a few MiB.
-const L1_HEADER_PREFETCH_MAX_READY: usize = 4096;
+const _: () = {
+    assert!(PAYLOAD_WITNESS_PREFETCH_MAX_READY >= 600);
+};
 const L1_HEADER_PREFETCH_MAX_IN_FLIGHT: usize = 32;
-// Scheduled entries are just block numbers, but failed prefetches remove them while holding the
-// cache mutex. Keep the bound close to the active lookbehind window so failed RPC bursts do not scan
-// a long history of already-prefetched blocks.
-const L1_HEADER_PREFETCH_MAX_SCHEDULED_BLOCKS: usize = 4096;
 
 #[derive(Debug, Default)]
 struct PayloadWitnessPrefetchState {
     ready: HashMap<B256, B256>,
     ready_order: VecDeque<B256>,
-    scheduled_blocks: HashSet<u64>,
-    scheduled_block_order: VecDeque<u64>,
-    scheduled_lookaheads: HashSet<B256>,
-    scheduled_lookahead_order: VecDeque<B256>,
 }
 
 #[derive(Debug)]
@@ -100,167 +88,103 @@ impl PayloadWitnessPrefetcher {
         true
     }
 
-    pub(crate) async fn schedule_lookahead(
-        &self,
-        kv: SharedKeyValueStore,
-        parent_block_hash: B256,
-    ) {
+    pub(crate) async fn prefetch_request_range(&self, kv: SharedKeyValueStore) {
         if !self.inner.cfg.prover.enable_experimental_witness_endpoint {
             return;
         }
-        if !self.mark_lookahead_scheduled(parent_block_hash) {
+
+        let Some((first_block, last_block)) = self.request_range().await else {
             return;
+        };
+
+        info!(
+            target: HOST_SERVER_TARGET,
+            first_block,
+            last_block,
+            "payload witness range prefetch started"
+        );
+
+        let mut tasks = JoinSet::new();
+        for block_number in first_block..=last_block {
+            let prefetcher = self.clone();
+            let kv = Arc::clone(&kv);
+            tasks.spawn(async move {
+                let result = AssertUnwindSafe(prefetcher.prefetch_block_inner(kv, block_number))
+                    .catch_unwind()
+                    .await;
+
+                if let Err(panic) = result {
+                    warn!(
+                        target: HOST_SERVER_TARGET,
+                        block_number,
+                        panic = %panic_payload_message(panic.as_ref()),
+                        "payload witness range prefetch task panicked"
+                    );
+                }
+            });
         }
 
-        let prefetcher = self.clone();
-        std::mem::drop(tokio::spawn(async move {
-            let result = AssertUnwindSafe(async move {
-                let mut scheduled_guard =
-                    ScheduledLookaheadGuard::new(prefetcher.clone(), parent_block_hash);
-                if prefetcher.schedule_lookahead_inner(kv, parent_block_hash).await {
-                    scheduled_guard.keep_scheduled();
-                }
-            })
-            .catch_unwind()
-            .await;
-
-            if let Err(panic) = result {
+        while let Some(result) = tasks.join_next().await {
+            if let Err(error) = result {
                 warn!(
                     target: HOST_SERVER_TARGET,
-                    ?parent_block_hash,
-                    panic = %panic_payload_message(panic.as_ref()),
-                    "payload witness lookahead task panicked"
+                    error = %error,
+                    "payload witness range prefetch task join failed"
                 );
             }
-        }));
+        }
+
+        info!(
+            target: HOST_SERVER_TARGET,
+            first_block,
+            last_block,
+            "payload witness range prefetch finished"
+        );
     }
 
-    async fn schedule_lookahead_inner(
-        &self,
-        kv: SharedKeyValueStore,
-        parent_block_hash: B256,
-    ) -> bool {
-        let parent_block = match self.inner.providers.l2.get_block_by_hash(parent_block_hash).await
-        {
+    async fn request_range(&self) -> Option<(u64, u64)> {
+        let last_block = self.inner.cfg.request.claimed_l2_block_number;
+        let parent_hash = self.inner.cfg.request.agreed_l2_head_hash;
+        let parent_block = match self.inner.providers.l2.get_block_by_hash(parent_hash).await {
             Ok(Some(block)) => block,
             Ok(None) => {
                 debug!(
                     target: HOST_SERVER_TARGET,
-                    ?parent_block_hash,
-                    "payload witness prefetch skipped: parent block not found"
+                    ?parent_hash,
+                    "payload witness range prefetch skipped: agreed L2 head not found"
                 );
-                return false;
+                return None;
             }
             Err(err) => {
                 debug!(
                     target: HOST_SERVER_TARGET,
-                    ?parent_block_hash,
+                    ?parent_hash,
                     error = %err,
-                    "payload witness prefetch skipped: failed to fetch parent block"
+                    "payload witness range prefetch skipped: failed to fetch agreed L2 head"
                 );
-                return false;
+                return None;
             }
         };
 
-        // The witness hint identifies the current payload by parent hash plus payload
-        // attributes, so the current payload number is the parent block number plus one.
-        let parent_block_number = parent_block.header.inner.number;
-        let Some(current_block_number) = parent_block_number.checked_add(1) else {
+        let Some(first_block) = next_block_number(parent_block.header.inner.number) else {
             debug!(
                 target: HOST_SERVER_TARGET,
-                parent_block_number,
-                "payload witness prefetch skipped: block number overflow"
+                parent_block_number = parent_block.header.inner.number,
+                "payload witness range prefetch skipped: block number overflow"
             );
-            return false;
+            return None;
         };
-        let Some(first_prefetch_block) = current_block_number.checked_add(1) else {
-            debug!(
-                target: HOST_SERVER_TARGET,
-                current_block_number,
-                "payload witness prefetch skipped: no future block number available"
-            );
-            return false;
-        };
-        let last_prefetch_block =
-            current_block_number.saturating_add(PAYLOAD_WITNESS_PREFETCH_LOOKAHEAD_BLOCKS);
 
-        for block_number in first_prefetch_block..=last_prefetch_block {
-            self.spawn_prefetch_block(Arc::clone(&kv), block_number);
+        if first_block > last_block {
+            return None;
         }
 
-        true
+        Some((first_block, Self::request_prefetch_last_block(first_block, last_block)))
     }
 
-    fn spawn_prefetch_block(&self, kv: SharedKeyValueStore, block_number: u64) {
-        if !self.mark_block_scheduled(block_number) {
-            return;
-        }
-
-        let prefetcher = self.clone();
-        std::mem::drop(tokio::spawn(async move {
-            let result =
-                AssertUnwindSafe(prefetcher.prefetch_block(kv, block_number)).catch_unwind().await;
-
-            if let Err(panic) = result {
-                warn!(
-                    target: HOST_SERVER_TARGET,
-                    block_number,
-                    panic = %panic_payload_message(panic.as_ref()),
-                    "payload witness prefetch task panicked"
-                );
-            }
-        }));
-    }
-
-    fn mark_block_scheduled(&self, block_number: u64) -> bool {
-        let mut state = self.lock_state();
-        if state.scheduled_blocks.contains(&block_number) {
-            return false;
-        }
-
-        while state.scheduled_blocks.len() >= PAYLOAD_WITNESS_PREFETCH_MAX_SCHEDULED_BLOCKS {
-            let Some(oldest) = state.scheduled_block_order.pop_front() else {
-                break;
-            };
-            state.scheduled_blocks.remove(&oldest);
-        }
-
-        state.scheduled_blocks.insert(block_number);
-        state.scheduled_block_order.push_back(block_number);
-
-        true
-    }
-
-    fn unmark_block_scheduled(&self, block_number: u64) {
-        let mut state = self.lock_state();
-        state.scheduled_blocks.remove(&block_number);
-        state.scheduled_block_order.retain(|scheduled| scheduled != &block_number);
-    }
-
-    fn mark_lookahead_scheduled(&self, parent_block_hash: B256) -> bool {
-        let mut state = self.lock_state();
-        if state.scheduled_lookaheads.contains(&parent_block_hash) {
-            return false;
-        }
-
-        while state.scheduled_lookaheads.len() >= PAYLOAD_WITNESS_PREFETCH_MAX_SCHEDULED_LOOKAHEADS
-        {
-            let Some(oldest) = state.scheduled_lookahead_order.pop_front() else {
-                break;
-            };
-            state.scheduled_lookaheads.remove(&oldest);
-        }
-
-        state.scheduled_lookaheads.insert(parent_block_hash);
-        state.scheduled_lookahead_order.push_back(parent_block_hash);
-
-        true
-    }
-
-    fn unmark_lookahead_scheduled(&self, parent_block_hash: B256) {
-        let mut state = self.lock_state();
-        state.scheduled_lookaheads.remove(&parent_block_hash);
-        state.scheduled_lookahead_order.retain(|scheduled| scheduled != &parent_block_hash);
+    fn request_prefetch_last_block(first_block: u64, last_block: u64) -> u64 {
+        let max_blocks = PAYLOAD_WITNESS_PREFETCH_MAX_READY as u64;
+        first_block.saturating_add(max_blocks.saturating_sub(1)).min(last_block)
     }
 
     fn mark_ready(&self, parent_block_hash: B256, payload_attributes_digest: B256) {
@@ -287,16 +211,8 @@ impl PayloadWitnessPrefetcher {
         self.inner.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    async fn prefetch_block(&self, kv: SharedKeyValueStore, block_number: u64) {
-        let mut scheduled_guard = ScheduledBlockGuard::new(self.clone(), block_number);
-        if self.prefetch_block_inner(kv, block_number).await {
-            scheduled_guard.keep_scheduled();
-        }
-    }
-
     async fn prefetch_block_inner(&self, kv: SharedKeyValueStore, block_number: u64) -> bool {
-        // Scheduled tasks wait here, so the semaphore bounds concurrent prefetch RPC work rather
-        // than the number of detached tasks created by a lookahead.
+        // Range tasks wait here, so the semaphore bounds concurrent prefetch RPC work.
         let _permit = match self.inner.semaphore.acquire().await {
             Ok(permit) => permit,
             Err(_) => return false,
@@ -408,244 +324,130 @@ impl PayloadWitnessPrefetcher {
 }
 
 #[derive(Debug)]
-struct ScheduledLookaheadGuard {
-    prefetcher: PayloadWitnessPrefetcher,
-    parent_block_hash: B256,
-    keep_scheduled: bool,
-}
-
-impl ScheduledLookaheadGuard {
-    const fn new(prefetcher: PayloadWitnessPrefetcher, parent_block_hash: B256) -> Self {
-        Self { prefetcher, parent_block_hash, keep_scheduled: false }
-    }
-
-    const fn keep_scheduled(&mut self) {
-        self.keep_scheduled = true;
-    }
-}
-
-impl Drop for ScheduledLookaheadGuard {
-    fn drop(&mut self) {
-        if !self.keep_scheduled {
-            self.prefetcher.unmark_lookahead_scheduled(self.parent_block_hash);
-        }
-    }
-}
-
-#[derive(Debug)]
-struct ScheduledBlockGuard {
-    prefetcher: PayloadWitnessPrefetcher,
-    block_number: u64,
-    keep_scheduled: bool,
-}
-
-impl ScheduledBlockGuard {
-    const fn new(prefetcher: PayloadWitnessPrefetcher, block_number: u64) -> Self {
-        Self { prefetcher, block_number, keep_scheduled: false }
-    }
-
-    const fn keep_scheduled(&mut self) {
-        self.keep_scheduled = true;
-    }
-}
-
-impl Drop for ScheduledBlockGuard {
-    fn drop(&mut self) {
-        if !self.keep_scheduled {
-            self.prefetcher.unmark_block_scheduled(self.block_number);
-        }
-    }
-}
-
-#[derive(Debug, Default)]
-struct L1HeaderPrefetchState {
-    ready: HashMap<B256, Bytes>,
-    ready_order: VecDeque<B256>,
-    scheduled_blocks: HashSet<u64>,
-    scheduled_block_order: VecDeque<u64>,
-}
-
-#[derive(Debug)]
-struct L1HeaderCacheInner {
-    state: Mutex<L1HeaderPrefetchState>,
+struct L1HeaderPrefetchInner {
+    providers: Arc<HostProviders>,
+    scheduled_blocks: Mutex<HashSet<u64>>,
     semaphore: Semaphore,
 }
 
-/// Shared host-only cache for L1 header prefetch results.
-#[derive(Debug, Clone)]
-pub(crate) struct L1HeaderCache {
-    inner: Arc<L1HeaderCacheInner>,
-}
-
-impl L1HeaderCache {
-    pub(crate) fn new() -> Self {
-        Self {
-            inner: Arc::new(L1HeaderCacheInner {
-                state: Mutex::new(L1HeaderPrefetchState::default()),
-                semaphore: Semaphore::new(L1_HEADER_PREFETCH_MAX_IN_FLIGHT),
-            }),
-        }
-    }
-
-    fn get_ready(&self, hash: B256) -> Option<Bytes> {
-        self.lock_state().ready.get(&hash).cloned()
-    }
-
-    fn mark_ready(&self, hash: B256, raw_header: Bytes) {
-        let mut state = self.lock_state();
-        if state.ready.remove(&hash).is_some() {
-            state.ready_order.retain(|ready_hash| ready_hash != &hash);
-        }
-
-        while state.ready.len() >= L1_HEADER_PREFETCH_MAX_READY {
-            let Some(oldest) = state.ready_order.pop_front() else {
-                break;
-            };
-            state.ready.remove(&oldest);
-        }
-
-        state.ready.insert(hash, raw_header);
-        state.ready_order.push_back(hash);
-    }
-
-    fn mark_blocks_scheduled<I>(&self, block_numbers: I) -> Vec<u64>
-    where
-        I: IntoIterator<Item = u64>,
-    {
-        let mut newly_scheduled = Vec::new();
-        let mut state = self.lock_state();
-
-        // Schedule a bounded lookbehind batch while holding the mutex once. This can briefly block
-        // ready-cache access, but the batch is capped at `L1_HEADER_PREFETCH_LOOKBEHIND_BLOCKS` and
-        // each step is an amortized O(1) collection operation.
-        for block_number in block_numbers {
-            if state.scheduled_blocks.contains(&block_number) {
-                continue;
-            }
-
-            while state.scheduled_blocks.len() >= L1_HEADER_PREFETCH_MAX_SCHEDULED_BLOCKS {
-                let Some(oldest) = state.scheduled_block_order.pop_front() else {
-                    break;
-                };
-                state.scheduled_blocks.remove(&oldest);
-            }
-
-            state.scheduled_blocks.insert(block_number);
-            state.scheduled_block_order.push_back(block_number);
-            newly_scheduled.push(block_number);
-        }
-
-        newly_scheduled
-    }
-
-    fn unmark_block_scheduled(&self, block_number: u64) {
-        let mut state = self.lock_state();
-        state.scheduled_blocks.remove(&block_number);
-        state.scheduled_block_order.retain(|scheduled| scheduled != &block_number);
-    }
-
-    fn lock_state(&self) -> std::sync::MutexGuard<'_, L1HeaderPrefetchState> {
-        // The L1 header cache is best-effort. Entries are validated by hash-keyed preimage reads in
-        // the guest, so recovering from poisoning can at worst leave stale prefetch metadata.
-        self.inner.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-}
-
-impl Default for L1HeaderCache {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[derive(Debug)]
-struct L1HeaderPrefetchInner {
-    providers: Arc<HostProviders>,
-    cache: L1HeaderCache,
-}
-
-/// Best-effort host-only L1 header prefetcher.
+/// Best-effort host-only L1 header range prefetcher.
 ///
-/// The guest still requests headers by hash and validates the parent chain. Prefetch fetches
-/// nearby older blocks by number, then stores each header under its actual header hash so a reorged
-/// or otherwise non-ancestor block cannot satisfy a different guest request.
+/// The guest still requests headers by hash and validates the parent chain. Range prefetch fetches
+/// block numbers only after confirming the range end is the pinned L1 head, then stores each header
+/// under its actual hash so a reorged block cannot satisfy a different guest request.
 #[derive(Debug, Clone)]
 pub(crate) struct L1HeaderPrefetcher {
     inner: Arc<L1HeaderPrefetchInner>,
 }
 
 impl L1HeaderPrefetcher {
-    pub(crate) fn new(providers: Arc<HostProviders>, cache: L1HeaderCache) -> Self {
-        Self { inner: Arc::new(L1HeaderPrefetchInner { providers, cache }) }
-    }
-
-    fn get_ready(&self, hash: B256) -> Option<Bytes> {
-        self.inner.cache.get_ready(hash)
-    }
-
-    fn mark_ready(&self, hash: B256, raw_header: Bytes) {
-        self.inner.cache.mark_ready(hash, raw_header);
-    }
-
-    pub(crate) fn schedule_lookbehind(&self, kv: SharedKeyValueStore, header: &Header) {
-        let Some(first_prefetch_block) = header.number.checked_sub(1) else {
-            return;
-        };
-        let last_prefetch_block =
-            header.number.saturating_sub(L1_HEADER_PREFETCH_LOOKBEHIND_BLOCKS);
-
-        let block_numbers = self
-            .inner
-            .cache
-            .mark_blocks_scheduled((last_prefetch_block..=first_prefetch_block).rev());
-
-        for block_number in block_numbers {
-            self.spawn_scheduled_prefetch_block(Arc::clone(&kv), block_number);
+    pub(crate) fn new(providers: Arc<HostProviders>) -> Self {
+        Self {
+            inner: Arc::new(L1HeaderPrefetchInner {
+                providers,
+                scheduled_blocks: Mutex::new(HashSet::new()),
+                semaphore: Semaphore::new(L1_HEADER_PREFETCH_MAX_IN_FLIGHT),
+            }),
         }
     }
 
-    fn spawn_scheduled_prefetch_block(&self, kv: SharedKeyValueStore, block_number: u64) {
-        let prefetcher = self.clone();
-        std::mem::drop(tokio::spawn(async move {
-            let result =
-                AssertUnwindSafe(prefetcher.prefetch_block(kv, block_number)).catch_unwind().await;
+    pub(crate) async fn prefetch_range(
+        &self,
+        kv: SharedKeyValueStore,
+        start_number: u64,
+        end_number: u64,
+        end_hash: B256,
+    ) {
+        if start_number >= end_number {
+            return;
+        }
+        if !self.canonical_head_matches(end_number, end_hash).await {
+            return;
+        }
 
-            if let Err(panic) = result {
+        let mut tasks = JoinSet::new();
+        for block_number in start_number..end_number {
+            if self.mark_block_scheduled(block_number) {
+                let prefetcher = self.clone();
+                let kv = Arc::clone(&kv);
+                tasks.spawn(async move {
+                    let result =
+                        AssertUnwindSafe(prefetcher.prefetch_block_inner(kv, block_number))
+                            .catch_unwind()
+                            .await;
+                    prefetcher.unmark_block_scheduled(block_number);
+
+                    if let Err(panic) = result {
+                        warn!(
+                            target: HOST_SERVER_TARGET,
+                            block_number,
+                            panic = %panic_payload_message(panic.as_ref()),
+                            "l1 header prefetch task panicked"
+                        );
+                    }
+                });
+
+                if tasks.len() >= L1_HEADER_PREFETCH_MAX_IN_FLIGHT {
+                    Self::join_next_prefetch_task(&mut tasks).await;
+                }
+            }
+        }
+
+        while !tasks.is_empty() {
+            Self::join_next_prefetch_task(&mut tasks).await;
+        }
+    }
+
+    async fn join_next_prefetch_task(tasks: &mut JoinSet<()>) {
+        if let Some(result) = tasks.join_next().await {
+            if let Err(err) = result {
                 warn!(
                     target: HOST_SERVER_TARGET,
-                    block_number,
-                    panic = %panic_payload_message(panic.as_ref()),
-                    "l1 header prefetch task panicked"
+                    error = %err,
+                    "l1 header prefetch task join failed"
                 );
             }
-        }));
+        }
     }
 
-    fn unmark_block_scheduled(&self, block_number: u64) {
-        self.inner.cache.unmark_block_scheduled(block_number);
-    }
-
-    async fn prefetch_block(&self, kv: SharedKeyValueStore, block_number: u64) {
-        let mut scheduled_guard = ScheduledL1HeaderBlockGuard::new(self.clone(), block_number);
-        if self.prefetch_block_inner(kv, block_number).await {
-            scheduled_guard.keep_scheduled();
+    async fn canonical_head_matches(&self, end_number: u64, end_hash: B256) -> bool {
+        match self.fetch_raw_header_by_number(end_number).await {
+            Ok((raw_header, header)) if header.hash_slow() == end_hash => {
+                debug!(
+                    target: HOST_SERVER_TARGET,
+                    end_number,
+                    end_hash = %end_hash,
+                    raw_header_len = raw_header.len(),
+                    "l1 header range prefetch canonical head confirmed"
+                );
+                true
+            }
+            Ok((_raw_header, header)) => {
+                debug!(
+                    target: HOST_SERVER_TARGET,
+                    end_number,
+                    expected = %end_hash,
+                    actual = %header.hash_slow(),
+                    "l1 header range prefetch skipped: canonical head mismatch"
+                );
+                false
+            }
+            Err(err) => {
+                debug!(
+                    target: HOST_SERVER_TARGET,
+                    end_number,
+                    error = %err,
+                    "l1 header range prefetch skipped: failed to fetch canonical head"
+                );
+                false
+            }
         }
     }
 
     async fn prefetch_block_inner(&self, kv: SharedKeyValueStore, block_number: u64) -> bool {
-        let _permit = match self.inner.cache.inner.semaphore.acquire().await {
-            Ok(permit) => permit,
-            Err(_) => return false,
-        };
-
-        let raw_header: Bytes = match self
-            .inner
-            .providers
-            .l1
-            .client()
-            .request("debug_getRawHeader", (BlockId::number(block_number),))
-            .await
+        let (raw_header, decoded_header) = match self.fetch_raw_header_by_number(block_number).await
         {
-            Ok(raw_header) => raw_header,
+            Ok(header) => header,
             Err(err) => {
                 debug!(
                     target: HOST_SERVER_TARGET,
@@ -656,32 +458,10 @@ impl L1HeaderPrefetcher {
                 return false;
             }
         };
-        let decoded_header = match Header::decode(&mut raw_header.as_ref()) {
-            Ok(header) => header,
-            Err(err) => {
-                debug!(
-                    target: HOST_SERVER_TARGET,
-                    block_number,
-                    error = %err,
-                    "l1 header prefetch skipped: failed to decode raw header"
-                );
-                return false;
-            }
-        };
-        if decoded_header.number != block_number {
-            warn!(
-                target: HOST_SERVER_TARGET,
-                block_number,
-                decoded_block_number = decoded_header.number,
-                "l1 header prefetch skipped: raw header number mismatch"
-            );
-            return false;
-        }
 
         let hash = decoded_header.hash_slow();
 
-        if let Err(err) = insert_l1_header_preimage(Arc::clone(&kv), hash, raw_header.clone()).await
-        {
+        if let Err(err) = insert_l1_header_preimage(Arc::clone(&kv), hash, raw_header).await {
             warn!(
                 target: HOST_SERVER_TARGET,
                 block_number,
@@ -692,33 +472,50 @@ impl L1HeaderPrefetcher {
             return false;
         }
 
-        self.mark_ready(hash, raw_header);
         true
     }
-}
 
-#[derive(Debug)]
-struct ScheduledL1HeaderBlockGuard {
-    prefetcher: L1HeaderPrefetcher,
-    block_number: u64,
-    keep_scheduled: bool,
-}
+    async fn fetch_raw_header_by_number(&self, block_number: u64) -> Result<(Bytes, Header)> {
+        let _permit = self
+            .inner
+            .semaphore
+            .acquire()
+            .await
+            .map_err(|err| HostError::Custom(err.to_string()))?;
 
-impl ScheduledL1HeaderBlockGuard {
-    const fn new(prefetcher: L1HeaderPrefetcher, block_number: u64) -> Self {
-        Self { prefetcher, block_number, keep_scheduled: false }
-    }
-
-    const fn keep_scheduled(&mut self) {
-        self.keep_scheduled = true;
-    }
-}
-
-impl Drop for ScheduledL1HeaderBlockGuard {
-    fn drop(&mut self) {
-        if !self.keep_scheduled {
-            self.prefetcher.unmark_block_scheduled(self.block_number);
+        let raw_header: Bytes = self
+            .inner
+            .providers
+            .l1
+            .client()
+            .request("debug_getRawHeader", (BlockId::number(block_number),))
+            .await?;
+        let decoded_header = match Header::decode(&mut raw_header.as_ref()) {
+            Ok(header) => header,
+            Err(err) => {
+                return Err(HostError::Rlp(err));
+            }
+        };
+        if decoded_header.number != block_number {
+            return Err(HostError::Custom(format!(
+                "raw header number mismatch: requested {block_number}, decoded {}",
+                decoded_header.number
+            )));
         }
+
+        Ok((raw_header, decoded_header))
+    }
+
+    fn mark_block_scheduled(&self, block_number: u64) -> bool {
+        self.lock_scheduled_blocks().insert(block_number)
+    }
+
+    fn unmark_block_scheduled(&self, block_number: u64) {
+        self.lock_scheduled_blocks().remove(&block_number);
+    }
+
+    fn lock_scheduled_blocks(&self) -> std::sync::MutexGuard<'_, HashSet<u64>> {
+        self.inner.scheduled_blocks.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 
@@ -783,6 +580,10 @@ fn payload_attributes_digest(payload_attributes: &BasePayloadAttributes) -> Resu
     Ok(keccak256(serde_json::to_vec(payload_attributes)?))
 }
 
+const fn next_block_number(block_number: u64) -> Option<u64> {
+    block_number.checked_add(1)
+}
+
 fn payload_attributes_from_l2_block(
     cfg: &HostConfig,
     block: Block<<Base as Network>::TransactionResponse, <Base as Network>::HeaderResponse>,
@@ -838,6 +639,18 @@ async fn insert_l1_header_preimage(
     let mut kv_lock = kv.write().await;
     kv_lock.set(PreimageKey::new_keccak256(*hash).into(), raw_header.into())?;
     Ok(())
+}
+
+fn parse_l1_header_range_hint(hint_data: &[u8]) -> Result<(u64, u64, B256)> {
+    if hint_data.len() != 48 {
+        return Err(HostError::InvalidHintDataLength);
+    }
+
+    let start_number = u64::from_be_bytes(hint_data[..8].try_into()?);
+    let end_number = u64::from_be_bytes(hint_data[8..16].try_into()?);
+    let end_hash = B256::from_slice(&hint_data[16..48]);
+
+    Ok((start_number, end_number, end_hash))
 }
 
 /// Parses a blob hint, supporting both legacy (48-byte) and new (40-byte) formats.
@@ -930,21 +743,18 @@ async fn handle_hint_inner(
             }
 
             let hash: B256 = hint.data.as_ref().try_into()?;
-            let (raw_header, should_mark_ready) = if let Some(prefetcher) =
-                l1_header_prefetcher.as_ref()
-                && let Some(raw_header) = prefetcher.get_ready(hash)
-            {
+
+            if kv.read().await.get(PreimageKey::new_keccak256(*hash).into()).is_some() {
                 debug!(
                     target: HOST_SERVER_TARGET,
                     hash = %hash,
-                    "l1 header served from prefetch cache"
+                    "l1 header served from preimage kv"
                 );
-                (raw_header, false)
-            } else {
-                let raw_header: Bytes =
-                    providers.l1.client().request("debug_getRawHeader", [hash]).await?;
-                (raw_header, true)
-            };
+                return Ok(());
+            }
+
+            let raw_header: Bytes =
+                providers.l1.client().request("debug_getRawHeader", [hash]).await?;
             let header = Header::decode(&mut raw_header.as_ref())?;
             let decoded_hash = header.hash_slow();
             if decoded_hash != hash {
@@ -954,13 +764,14 @@ async fn handle_hint_inner(
                 });
             }
 
-            insert_l1_header_preimage(Arc::clone(&kv), hash, raw_header.clone()).await?;
-            if should_mark_ready && let Some(prefetcher) = l1_header_prefetcher.as_ref() {
-                prefetcher.mark_ready(hash, raw_header);
-            }
-
+            insert_l1_header_preimage(Arc::clone(&kv), hash, raw_header).await?;
+        }
+        HintType::L1BlockHeaderRange => {
+            let (start_number, end_number, end_hash) = parse_l1_header_range_hint(&hint.data)?;
             if let Some(prefetcher) = l1_header_prefetcher {
-                prefetcher.schedule_lookbehind(Arc::clone(&kv), &header);
+                prefetcher
+                    .prefetch_range(Arc::clone(&kv), start_number, end_number, end_hash)
+                    .await;
             }
         }
         HintType::L1Transactions => {
@@ -1267,7 +1078,6 @@ async fn handle_hint_inner(
                     ?parent_block_hash,
                     "payload witness served from prefetch cache"
                 );
-                prefetcher.schedule_lookahead(Arc::clone(&kv), parent_block_hash).await;
                 return Ok(());
             }
 
@@ -1291,10 +1101,6 @@ async fn handle_hint_inner(
             };
 
             insert_execution_witness_preimages(Arc::clone(&kv), execute_payload_response).await?;
-
-            if let Some(prefetcher) = payload_witness_prefetcher {
-                prefetcher.schedule_lookahead(Arc::clone(&kv), parent_block_hash).await;
-            }
         }
     }
 
@@ -1368,12 +1174,7 @@ mod tests {
 
     fn test_l1_header_prefetcher() -> L1HeaderPrefetcher {
         let l2 = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
-        L1HeaderPrefetcher::new(Arc::new(test_providers(l2)), L1HeaderCache::new())
-    }
-
-    fn test_l1_header_prefetcher_with_cache(cache: L1HeaderCache) -> L1HeaderPrefetcher {
-        let l2 = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
-        L1HeaderPrefetcher::new(Arc::new(test_providers(l2)), cache)
+        L1HeaderPrefetcher::new(Arc::new(test_providers(l2)))
     }
 
     #[test]
@@ -1400,34 +1201,49 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_l1_header_range_hint() {
+        let mut hint_data = Vec::new();
+        hint_data.extend_from_slice(&7u64.to_be_bytes());
+        hint_data.extend_from_slice(&11u64.to_be_bytes());
+        hint_data.extend_from_slice(TEST_HASH.as_slice());
+
+        let (start, end, hash) = parse_l1_header_range_hint(&hint_data).unwrap();
+
+        assert_eq!(start, 7);
+        assert_eq!(end, 11);
+        assert_eq!(hash, TEST_HASH);
+    }
+
+    #[test]
+    fn test_next_block_number_handles_successor_and_overflow() {
+        assert_eq!(next_block_number(41), Some(42));
+        assert_eq!(next_block_number(u64::MAX), None);
+    }
+
+    #[test]
+    fn test_payload_witness_request_range_prefetch_caps_to_cache_window() {
+        let last_block = PayloadWitnessPrefetcher::request_prefetch_last_block(42, u64::MAX);
+
+        assert_eq!(last_block, 41 + PAYLOAD_WITNESS_PREFETCH_MAX_READY as u64);
+    }
+
+    #[test]
     fn test_payload_witness_ready_cache_evicts_oldest_entry() {
         let prefetcher = test_prefetcher();
         let payload_attributes = BasePayloadAttributes::default();
         let digest = payload_attributes_digest(&payload_attributes).unwrap();
 
-        for i in 0..=PAYLOAD_WITNESS_PREFETCH_MAX_READY {
-            prefetcher.mark_ready(B256::new([i as u8; 32]), digest);
-        }
-
-        assert!(!prefetcher.take_ready(B256::new([0; 32]), digest));
-        assert!(prefetcher.take_ready(B256::new([1; 32]), digest));
-    }
-
-    #[test]
-    fn test_l1_header_ready_cache_evicts_oldest_entry() {
-        let cache = L1HeaderCache::new();
-
-        for i in 0..=L1_HEADER_PREFETCH_MAX_READY as u64 {
+        for i in 0..=PAYLOAD_WITNESS_PREFETCH_MAX_READY as u64 {
             let mut hash = [0; 32];
             hash[24..].copy_from_slice(&i.to_be_bytes());
-            cache.mark_ready(B256::new(hash), Bytes::from(vec![i as u8]));
+            prefetcher.mark_ready(B256::new(hash), digest);
         }
 
-        assert!(cache.get_ready(B256::ZERO).is_none());
+        assert!(!prefetcher.take_ready(B256::ZERO, digest));
 
         let mut second_hash = [0; 32];
         second_hash[24..].copy_from_slice(&1u64.to_be_bytes());
-        assert_eq!(cache.get_ready(B256::new(second_hash)), Some(Bytes::from(vec![1])));
+        assert!(prefetcher.take_ready(B256::new(second_hash), digest));
     }
 
     #[test]
@@ -1447,129 +1263,15 @@ mod tests {
     }
 
     #[test]
-    fn test_payload_witness_scheduled_cache_evicts_oldest_entry() {
-        let prefetcher = test_prefetcher();
-
-        for i in 0..=PAYLOAD_WITNESS_PREFETCH_MAX_SCHEDULED_BLOCKS {
-            assert!(prefetcher.mark_block_scheduled(i as u64));
-        }
-
-        assert!(!prefetcher.mark_block_scheduled(1));
-        assert!(prefetcher.mark_block_scheduled(0));
-    }
-
-    #[test]
-    fn test_payload_witness_lookahead_cache_dedupes_parent_hash() {
-        let prefetcher = test_prefetcher();
-        let parent_block_hash = B256::new([7; 32]);
-
-        assert!(prefetcher.mark_lookahead_scheduled(parent_block_hash));
-        assert!(!prefetcher.mark_lookahead_scheduled(parent_block_hash));
-
-        prefetcher.unmark_lookahead_scheduled(parent_block_hash);
-
-        assert!(prefetcher.mark_lookahead_scheduled(parent_block_hash));
-    }
-
-    #[test]
-    fn test_scheduled_lookahead_guard_unmarks_on_drop() {
-        let prefetcher = test_prefetcher();
-        let parent_block_hash = B256::new([7; 32]);
-        assert!(prefetcher.mark_lookahead_scheduled(parent_block_hash));
-
-        {
-            let _guard = ScheduledLookaheadGuard::new(prefetcher.clone(), parent_block_hash);
-        }
-
-        assert!(prefetcher.mark_lookahead_scheduled(parent_block_hash));
-    }
-
-    #[test]
-    fn test_scheduled_lookahead_guard_keeps_successful_lookahead_scheduled() {
-        let prefetcher = test_prefetcher();
-        let parent_block_hash = B256::new([7; 32]);
-        assert!(prefetcher.mark_lookahead_scheduled(parent_block_hash));
-
-        {
-            let mut guard = ScheduledLookaheadGuard::new(prefetcher.clone(), parent_block_hash);
-            guard.keep_scheduled();
-        }
-
-        assert!(!prefetcher.mark_lookahead_scheduled(parent_block_hash));
-    }
-
-    #[test]
-    fn test_scheduled_block_guard_unmarks_on_drop() {
-        let prefetcher = test_prefetcher();
-        assert!(prefetcher.mark_block_scheduled(7));
-
-        {
-            let _guard = ScheduledBlockGuard::new(prefetcher.clone(), 7);
-        }
-
-        assert!(prefetcher.mark_block_scheduled(7));
-    }
-
-    #[test]
-    fn test_scheduled_block_guard_keeps_successful_prefetch_scheduled() {
-        let prefetcher = test_prefetcher();
-        assert!(prefetcher.mark_block_scheduled(7));
-
-        {
-            let mut guard = ScheduledBlockGuard::new(prefetcher.clone(), 7);
-            guard.keep_scheduled();
-        }
-
-        assert!(!prefetcher.mark_block_scheduled(7));
-    }
-
-    #[test]
-    fn test_l1_header_scheduled_cache_dedupes_block_number() {
+    fn test_l1_header_prefetcher_dedupes_block_number() {
         let prefetcher = test_l1_header_prefetcher();
 
-        assert_eq!(prefetcher.inner.cache.mark_blocks_scheduled([7]), vec![7]);
-        assert!(prefetcher.inner.cache.mark_blocks_scheduled([7]).is_empty());
+        assert!(prefetcher.mark_block_scheduled(7));
+        assert!(!prefetcher.mark_block_scheduled(7));
 
         prefetcher.unmark_block_scheduled(7);
 
-        assert_eq!(prefetcher.inner.cache.mark_blocks_scheduled([7]), vec![7]);
-    }
-
-    #[test]
-    fn test_l1_header_cache_is_shared_between_prefetchers() {
-        let cache = L1HeaderCache::new();
-        let prefetcher_a = test_l1_header_prefetcher_with_cache(cache.clone());
-        let prefetcher_b = test_l1_header_prefetcher_with_cache(cache);
-        let raw_header = Bytes::from(vec![1, 2, 3]);
-
-        prefetcher_a.mark_ready(TEST_HASH, raw_header.clone());
-
-        assert_eq!(prefetcher_b.get_ready(TEST_HASH), Some(raw_header));
-    }
-
-    #[test]
-    fn test_scheduled_l1_header_block_guard_unmarks_on_drop() {
-        let prefetcher = test_l1_header_prefetcher();
-        assert_eq!(prefetcher.inner.cache.mark_blocks_scheduled([7]), vec![7]);
-
-        {
-            let _guard = ScheduledL1HeaderBlockGuard::new(prefetcher.clone(), 7);
-        }
-
-        assert_eq!(prefetcher.inner.cache.mark_blocks_scheduled([7]), vec![7]);
-    }
-
-    #[test]
-    fn test_scheduled_l1_header_block_guard_keeps_successful_prefetch_scheduled() {
-        let prefetcher = test_l1_header_prefetcher();
-        assert_eq!(prefetcher.inner.cache.mark_blocks_scheduled([7]), vec![7]);
-
-        {
-            let mut guard = ScheduledL1HeaderBlockGuard::new(prefetcher.clone(), 7);
-            guard.keep_scheduled();
-        }
-
-        assert!(prefetcher.inner.cache.mark_blocks_scheduled([7]).is_empty());
+        assert!(prefetcher.mark_block_scheduled(7));
     }
 
     #[tokio::test]
@@ -1589,6 +1291,110 @@ mod tests {
             .get(PreimageKey::new_keccak256(*hash).into())
             .expect("header preimage should be stored under its hash");
         assert_eq!(stored, raw_header);
+    }
+
+    #[tokio::test]
+    async fn test_l1_header_hint_uses_existing_kv_preimage() {
+        let header = Header { number: 7, parent_hash: TEST_HASH, ..Default::default() };
+        let hash = header.hash_slow();
+        let mut encoded_header = Vec::new();
+        header.encode(&mut encoded_header);
+        let raw_header = Bytes::from(encoded_header);
+        let l1 = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
+        let l2 = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
+        let providers = test_providers_with_l1(l1, l2);
+        let kv: SharedKeyValueStore = Arc::new(RwLock::new(MemoryKeyValueStore::new()));
+        kv.write()
+            .await
+            .set(PreimageKey::new_keccak256(*hash).into(), raw_header.clone().into())
+            .unwrap();
+        let hint = HintType::L1BlockHeader.with_data(&[hash.as_slice()]);
+
+        handle_hint(hint, &test_cfg(), &providers, Arc::clone(&kv)).await.unwrap();
+
+        let stored = kv.read().await.get(PreimageKey::new_keccak256(*hash).into()).unwrap();
+        assert_eq!(stored, raw_header);
+    }
+
+    #[tokio::test]
+    async fn test_l1_header_range_prefetches_missing_numbers() {
+        let head = Header { number: 11, parent_hash: TEST_HASH, ..Default::default() };
+        let head_hash = head.hash_slow();
+        let mut encoded_head = Vec::new();
+        head.encode(&mut encoded_head);
+
+        let block = Header { number: 10, parent_hash: B256::new([0x24; 32]), ..Default::default() };
+        let block_hash = block.hash_slow();
+        let mut encoded_block = Vec::new();
+        block.encode(&mut encoded_block);
+        let raw_block = Bytes::from(encoded_block);
+
+        let asserter = Asserter::new();
+        asserter.push_success(&Bytes::from(encoded_head));
+        asserter.push_success(&raw_block);
+        let l1 = provider_builder().connect_mocked_client(asserter);
+        let l2 = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
+        let providers = test_providers_with_l1(l1, l2);
+        let prefetcher = L1HeaderPrefetcher::new(Arc::new(providers));
+        let kv: SharedKeyValueStore = Arc::new(RwLock::new(MemoryKeyValueStore::new()));
+
+        prefetcher.prefetch_range(Arc::clone(&kv), 10, 11, head_hash).await;
+
+        let stored = kv.read().await.get(PreimageKey::new_keccak256(*block_hash).into()).unwrap();
+        assert_eq!(stored, raw_block);
+        assert!(prefetcher.lock_scheduled_blocks().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_l1_header_range_prefetches_full_requested_range() {
+        let head = Header { number: 33, parent_hash: TEST_HASH, ..Default::default() };
+        let head_hash = head.hash_slow();
+        let mut encoded_head = Vec::new();
+        head.encode(&mut encoded_head);
+
+        let block = Header { number: 0, parent_hash: B256::ZERO, ..Default::default() };
+        let block_hash = block.hash_slow();
+        let mut encoded_block = Vec::new();
+        block.encode(&mut encoded_block);
+        let raw_block = Bytes::from(encoded_block);
+
+        let asserter = Asserter::new();
+        asserter.push_success(&Bytes::from(encoded_head));
+        asserter.push_success(&raw_block);
+
+        let l1 = provider_builder().connect_mocked_client(asserter);
+        let l2 = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
+        let providers = test_providers_with_l1(l1, l2);
+        let prefetcher = L1HeaderPrefetcher::new(Arc::new(providers));
+        let kv: SharedKeyValueStore = Arc::new(RwLock::new(MemoryKeyValueStore::new()));
+        for number in 1..33 {
+            assert!(prefetcher.mark_block_scheduled(number));
+        }
+
+        prefetcher.prefetch_range(Arc::clone(&kv), 0, 33, head_hash).await;
+
+        let stored = kv.read().await.get(PreimageKey::new_keccak256(*block_hash).into()).unwrap();
+        assert_eq!(stored, raw_block);
+        assert!(!prefetcher.lock_scheduled_blocks().contains(&0));
+    }
+
+    #[tokio::test]
+    async fn test_l1_header_range_skips_when_head_number_is_not_pinned_head() {
+        let canonical_head = Header { number: 11, parent_hash: TEST_HASH, ..Default::default() };
+        let mut encoded_head = Vec::new();
+        canonical_head.encode(&mut encoded_head);
+
+        let asserter = Asserter::new();
+        asserter.push_success(&Bytes::from(encoded_head));
+        let l1 = provider_builder().connect_mocked_client(asserter);
+        let l2 = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
+        let providers = test_providers_with_l1(l1, l2);
+        let prefetcher = L1HeaderPrefetcher::new(Arc::new(providers));
+        let kv: SharedKeyValueStore = Arc::new(RwLock::new(MemoryKeyValueStore::new()));
+
+        prefetcher.prefetch_range(Arc::clone(&kv), 10, 11, B256::new([0x99; 32])).await;
+
+        assert!(kv.read().await.get(PreimageKey::new_keccak256([0x99; 32]).into()).is_none());
     }
 
     #[tokio::test]
