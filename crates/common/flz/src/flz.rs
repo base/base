@@ -134,9 +134,10 @@ const fn hash(v: u32) -> u16 {
 }
 
 fn u24(input: &[u8], idx: u32) -> u32 {
-    u32::from(input[idx as usize])
-        + (u32::from(input[(idx + 1) as usize]) << 8)
-        + (u32::from(input[(idx + 2) as usize]) << 16)
+    let idx = idx as usize;
+    input.get(idx..idx + 3)
+        .map(|slice| u32::from(slice[0]) | (u32::from(slice[1]) << 8) | (u32::from(slice[2]) << 16))
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
