@@ -404,47 +404,49 @@ impl GameScanner {
         }
 
         let scan_start = self.scan_start_index(game_count).await;
-        let results: Vec<(Option<Address>, bool, bool)> = stream::iter(scan_start..game_count)
-            .map(|index| async move {
-                let game = match self.factory_client.game_at_index(index).await {
-                    Ok(game) => game,
-                    Err(e) => {
-                        warn!(index, error = %e, "failed to fetch game during anchor recovery");
-                        return (None, true, false);
-                    }
-                };
+        let mut results: Vec<(u64, Option<Address>, bool, bool)> =
+            stream::iter(scan_start..game_count)
+                .map(|index| async move {
+                    let game = match self.factory_client.game_at_index(index).await {
+                        Ok(game) => game,
+                        Err(e) => {
+                            warn!(index, error = %e, "failed to fetch game during anchor recovery");
+                            return (index, None, true, false);
+                        }
+                    };
 
-                match self.verifier_client.status(game.proxy).await {
-                    Ok(GameStatus::DefenderWins) => (Some(game.proxy), false, false),
-                    Ok(status) => {
-                        debug!(
-                            index,
-                            game = %game.proxy,
-                            status = %status,
-                            "game is not an anchor recovery candidate"
-                        );
-                        (None, false, false)
+                    match self.verifier_client.status(game.proxy).await {
+                        Ok(GameStatus::DefenderWins) => (index, Some(game.proxy), false, false),
+                        Ok(status) => {
+                            debug!(
+                                index,
+                                game = %game.proxy,
+                                status = %status,
+                                "game is not an anchor recovery candidate"
+                            );
+                            (index, None, false, false)
+                        }
+                        Err(e) => {
+                            warn!(
+                                index,
+                                game = %game.proxy,
+                                error = %e,
+                                "failed to read game status during anchor recovery"
+                            );
+                            (index, None, false, true)
+                        }
                     }
-                    Err(e) => {
-                        warn!(
-                            index,
-                            game = %game.proxy,
-                            error = %e,
-                            "failed to read game status during anchor recovery"
-                        );
-                        (None, false, true)
-                    }
-                }
-            })
-            .buffer_unordered(Self::SCAN_CONCURRENCY)
-            .collect()
-            .await;
+                })
+                .buffer_unordered(Self::SCAN_CONCURRENCY)
+                .collect()
+                .await;
+        results.sort_unstable_by_key(|(index, _, _, _)| *index);
         let factory_read_errors =
-            results.iter().filter(|(_, factory_read_failed, _)| *factory_read_failed).count();
+            results.iter().filter(|(_, _, factory_read_failed, _)| *factory_read_failed).count();
         let status_read_errors =
-            results.iter().filter(|(_, _, status_read_failed)| *status_read_failed).count();
+            results.iter().filter(|(_, _, _, status_read_failed)| *status_read_failed).count();
         let candidates: Vec<Address> =
-            results.into_iter().filter_map(|(candidate, _, _)| candidate).collect();
+            results.into_iter().filter_map(|(_, candidate, _, _)| candidate).collect();
 
         info!(
             recovered = candidates.len(),
@@ -697,18 +699,20 @@ mod tests {
             factory_game(1, 1),
             factory_game(2, 1),
             factory_game(3, 1),
+            factory_game(4, 1),
         ]));
         let verifier = Arc::new(MockAggregateVerifier::new(HashMap::from([
             (addr(0), mock_state(GameStatus::DefenderWins, Address::ZERO, 50)),
             (addr(1), mock_state(GameStatus::DefenderWins, Address::ZERO, 100)),
             (addr(2), mock_state(GameStatus::DefenderWins, Address::ZERO, 200)),
-            (addr(3), mock_state(GameStatus::InProgress, Address::ZERO, 300)),
+            (addr(3), mock_state(GameStatus::DefenderWins, Address::ZERO, 300)),
+            (addr(4), mock_state(GameStatus::InProgress, Address::ZERO, 400)),
         ])));
         let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(addr(1)));
 
         let recovered = scanner.recover_anchor_candidates().await.unwrap();
 
-        assert_eq!(recovered, vec![addr(2)]);
+        assert_eq!(recovered, vec![addr(2), addr(3)]);
     }
 
     #[tokio::test]

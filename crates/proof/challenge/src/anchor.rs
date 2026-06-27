@@ -40,6 +40,8 @@ pub struct TrackedAnchorUpdate {
     pub asr_address: Option<Address>,
     /// Cached immutable game L2 block number.
     pub l2_block_number: Option<u64>,
+    /// Whether this updater already submitted `resolve()` for the game.
+    pub resolve_submitted: bool,
 }
 
 impl<C: Clock> AnchorUpdater<C> {
@@ -156,6 +158,11 @@ impl<C: Clock> AnchorUpdater<C> {
         };
 
         if status == GameStatus::InProgress {
+            if game.resolve_submitted {
+                debug!(game = %game_address, "waiting for submitted resolve transaction to be reflected");
+                return AnchorUpdateOutcome::Pending;
+            }
+
             let (zk_prover, tee_prover, countered_index) = match tokio::try_join!(
                 verifier_client.zk_prover(game_address),
                 verifier_client.tee_prover(game_address),
@@ -217,6 +224,7 @@ impl<C: Clock> AnchorUpdater<C> {
                     );
                     ChallengerMetrics::resolve_tx_outcome_total(ChallengerMetrics::STATUS_SUCCESS)
                         .increment(1);
+                    game.resolve_submitted = true;
                     return AnchorUpdateOutcome::Pending;
                 }
                 Err(e) => {
@@ -536,6 +544,27 @@ mod tests {
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[1].1, asr);
         assert!(updater.tracked.is_empty());
+    }
+
+    #[tokio::test]
+    async fn poll_does_not_resubmit_resolve_while_status_lags() {
+        let game = addr(0);
+        let resolve_tx_hash = B256::repeat_byte(0xCC);
+        let mut state = mock_state(GameStatus::InProgress, Address::ZERO, 100);
+        state.game_over = true;
+
+        let verifier = MockAggregateVerifier::new(HashMap::from([(game, state)]));
+        let submitter = MockBondTransactionSubmitter::with_responses(vec![Ok(resolve_tx_hash)]);
+
+        let mut updater = AnchorUpdater::new(TokioRuntime::new(), DEFAULT_RETENTION);
+        updater.track_game(game);
+
+        updater.poll(&verifier, &submitter).await;
+        updater.poll(&verifier, &submitter).await;
+
+        assert_eq!(submitter.recorded_calls().len(), 1);
+        assert!(updater.tracked.contains_key(&game));
+        assert!(updater.tracked[&game].resolve_submitted);
     }
 
     #[tokio::test]
