@@ -156,9 +156,10 @@ impl<C: Clock> AnchorUpdater<C> {
         };
 
         if status == GameStatus::InProgress {
-            let (zk_prover, tee_prover) = match tokio::try_join!(
+            let (zk_prover, tee_prover, countered_index) = match tokio::try_join!(
                 verifier_client.zk_prover(game_address),
                 verifier_client.tee_prover(game_address),
+                verifier_client.countered_index(game_address),
             ) {
                 Ok(provers) => provers,
                 Err(e) => {
@@ -178,6 +179,15 @@ impl<C: Clock> AnchorUpdater<C> {
                 )
                 .increment(1);
                 return AnchorUpdateOutcome::Complete;
+            }
+
+            if countered_index > 0 {
+                debug!(
+                    game = %game_address,
+                    countered_index,
+                    "anchor update waiting for active challenge"
+                );
+                return AnchorUpdateOutcome::Pending;
             }
 
             let game_over = match verifier_client.game_over(game_address).await {
@@ -501,6 +511,29 @@ mod tests {
     async fn poll_keeps_pre_game_over_game_pending() {
         let game = addr(0);
         let state = mock_state(GameStatus::InProgress, Address::ZERO, 100);
+        let verifier = MockAggregateVerifier::new(HashMap::from([(game, state)]));
+        let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
+
+        let mut updater = AnchorUpdater::new(TokioRuntime::new(), Duration::ZERO);
+        updater.track_game(game);
+
+        updater.poll(&verifier, &submitter).await;
+        updater.poll(&verifier, &submitter).await;
+
+        assert!(submitter.recorded_calls().is_empty());
+        assert!(updater.tracked.contains_key(&game));
+        assert_eq!(updater.tracked[&game].retry_started_at, None);
+    }
+
+    #[tokio::test]
+    async fn poll_waits_for_active_challenge() {
+        let game = addr(0);
+        let tee = Address::repeat_byte(0xEE);
+        let zk = Address::repeat_byte(0xCC);
+        let mut state = mock_state_with_tee(GameStatus::InProgress, zk, tee, 100);
+        state.countered_index = 1;
+        state.game_over = true;
+
         let verifier = MockAggregateVerifier::new(HashMap::from([(game, state)]));
         let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
 

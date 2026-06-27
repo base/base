@@ -404,18 +404,18 @@ impl GameScanner {
         }
 
         let scan_start = self.scan_start_index(game_count).await;
-        let candidates: Vec<(Address, bool)> = stream::iter(scan_start..game_count)
+        let results: Vec<(Option<Address>, bool)> = stream::iter(scan_start..game_count)
             .map(|index| async move {
                 let game = match self.factory_client.game_at_index(index).await {
                     Ok(game) => game,
                     Err(e) => {
                         warn!(index, error = %e, "failed to fetch game during anchor recovery");
-                        return None;
+                        return (None, false);
                     }
                 };
 
                 match self.verifier_client.status(game.proxy).await {
-                    Ok(GameStatus::DefenderWins) => Some((game.proxy, false)),
+                    Ok(GameStatus::DefenderWins) => (Some(game.proxy), false),
                     Ok(status) => {
                         debug!(
                             index,
@@ -423,26 +423,25 @@ impl GameScanner {
                             status = %status,
                             "game is not an anchor recovery candidate"
                         );
-                        None
+                        (None, false)
                     }
                     Err(e) => {
                         warn!(
                             index,
                             game = %game.proxy,
                             error = %e,
-                            "failed to read game status during anchor recovery, tracking for retry"
+                            "failed to read game status during anchor recovery"
                         );
-                        Some((game.proxy, true))
+                        (None, true)
                     }
                 }
             })
             .buffer_unordered(Self::SCAN_CONCURRENCY)
-            .filter_map(|candidate| async move { candidate })
             .collect()
             .await;
-        let status_read_errors = candidates.iter().filter(|(_, is_error)| *is_error).count();
+        let status_read_errors = results.iter().filter(|(_, is_error)| *is_error).count();
         let candidates: Vec<Address> =
-            candidates.into_iter().map(|(candidate, _)| candidate).collect();
+            results.into_iter().filter_map(|(candidate, _)| candidate).collect();
 
         info!(
             recovered = candidates.len(),
@@ -709,7 +708,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn recover_anchor_candidates_tracks_status_errors_for_retry() {
+    async fn recover_anchor_candidates_skips_status_errors() {
         let factory = Arc::new(MockDisputeGameFactory::new(vec![
             factory_game(0, 1),
             factory_game(1, 1),
@@ -723,6 +722,6 @@ mod tests {
 
         let recovered = scanner.recover_anchor_candidates().await.unwrap();
 
-        assert_eq!(recovered, vec![addr(2)]);
+        assert!(recovered.is_empty());
     }
 }
