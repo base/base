@@ -994,14 +994,6 @@ where
     DB: Database<Error = ProviderError> + AsRef<P> + revm::Database,
     P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
 {
-    // We use it to preserve state, so we run merge_transitions on transition state at most once
-    let untouched_transition_state = state.transition_state.clone();
-    let state_merge_start_time = Instant::now();
-    state.merge_transitions(BundleRetention::Reverts);
-    let state_transition_merge_time = state_merge_start_time.elapsed();
-    BuilderMetrics::state_transition_merge_duration().record(state_transition_merge_time);
-    BuilderMetrics::state_transition_merge_gauge().set(state_transition_merge_time);
-
     let block_number = ctx.block_number();
     let expected = ctx.parent().number + 1;
     if block_number != expected {
@@ -1014,6 +1006,14 @@ where
             .into(),
         ));
     }
+
+    // We use it to preserve state, so we run merge_transitions on transition state at most once
+    let untouched_transition_state = state.transition_state.clone();
+    let state_merge_start_time = Instant::now();
+    state.merge_transitions(BundleRetention::Reverts);
+    let state_transition_merge_time = state_merge_start_time.elapsed();
+    BuilderMetrics::state_transition_merge_duration().record(state_transition_merge_time);
+    BuilderMetrics::state_transition_merge_gauge().set(state_transition_merge_time);
 
     let receipts_root = calculate_receipt_root_no_memo(
         &info.receipts,
