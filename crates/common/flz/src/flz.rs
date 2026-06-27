@@ -105,12 +105,12 @@ const fn literals(r: u32, size: u32) -> u32 {
     if r != 0 { size + r + 1 } else { size }
 }
 
-const fn cmp(input: &[u8], p: u32, q: u32, r: u32) -> u32 {
+const fn cmp(input: &[u8], p: u32, q: u32, limit: u32) -> u32 {
     let mut l = 0;
-    let mut r = r - q;
-    while l < r {
+    let Some(mut remaining) = limit.checked_sub(q) else { return 0; };
+    while l < remaining {
         if input[(p + l) as usize] != input[(q + l) as usize] {
-            r = 0;
+            remaining = 0;
         }
         l += 1;
     }
