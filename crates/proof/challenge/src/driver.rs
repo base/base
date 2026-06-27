@@ -202,7 +202,8 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
     ///
     /// First polls any in-flight proof sessions that are not in the current
     /// scan batch, then discovers claimable bonds, advances bond lifecycle
-    /// claims, and finally scans for new candidates and processes them.
+    /// claims, polls anchor updates, and finally scans for new candidates and
+    /// processes them.
     pub async fn step(&mut self) -> eyre::Result<()> {
         self.poll_pending_proofs().await;
         self.discover_claimable_bonds().await;

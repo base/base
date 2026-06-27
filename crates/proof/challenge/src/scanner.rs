@@ -404,18 +404,18 @@ impl GameScanner {
         }
 
         let scan_start = self.scan_start_index(game_count).await;
-        let results: Vec<(Option<Address>, bool)> = stream::iter(scan_start..game_count)
+        let results: Vec<(Option<Address>, bool, bool)> = stream::iter(scan_start..game_count)
             .map(|index| async move {
                 let game = match self.factory_client.game_at_index(index).await {
                     Ok(game) => game,
                     Err(e) => {
                         warn!(index, error = %e, "failed to fetch game during anchor recovery");
-                        return (None, false);
+                        return (None, true, false);
                     }
                 };
 
                 match self.verifier_client.status(game.proxy).await {
-                    Ok(GameStatus::DefenderWins) => (Some(game.proxy), false),
+                    Ok(GameStatus::DefenderWins) => (Some(game.proxy), false, false),
                     Ok(status) => {
                         debug!(
                             index,
@@ -423,7 +423,7 @@ impl GameScanner {
                             status = %status,
                             "game is not an anchor recovery candidate"
                         );
-                        (None, false)
+                        (None, false, false)
                     }
                     Err(e) => {
                         warn!(
@@ -432,19 +432,23 @@ impl GameScanner {
                             error = %e,
                             "failed to read game status during anchor recovery"
                         );
-                        (None, true)
+                        (None, false, true)
                     }
                 }
             })
             .buffer_unordered(Self::SCAN_CONCURRENCY)
             .collect()
             .await;
-        let status_read_errors = results.iter().filter(|(_, is_error)| *is_error).count();
+        let factory_read_errors =
+            results.iter().filter(|(_, factory_read_failed, _)| *factory_read_failed).count();
+        let status_read_errors =
+            results.iter().filter(|(_, _, status_read_failed)| *status_read_failed).count();
         let candidates: Vec<Address> =
-            results.into_iter().filter_map(|(candidate, _)| candidate).collect();
+            results.into_iter().filter_map(|(candidate, _, _)| candidate).collect();
 
         info!(
             recovered = candidates.len(),
+            factory_read_errors,
             status_read_errors,
             scan_start,
             scan_head = game_count - 1,
