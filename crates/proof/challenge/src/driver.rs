@@ -821,17 +821,17 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
             Ok(_) => {
                 self.pending_proofs.remove(&game_address);
 
-                if intent == DisputeIntent::Challenge {
-                    if let Some(ref mut bond_manager) = self.bond_manager {
-                        let sender = self.submitter.sender_address();
-                        if !bond_manager.track_game(game_address, sender) {
-                            warn!(
-                                game = %game_address,
-                                sender = %sender,
-                                "bond will not be tracked — sender address is not \
-                                 in --bond-claim-addresses; bond may go unclaimed"
-                            );
-                        }
+                if intent == DisputeIntent::Challenge
+                    && let Some(ref mut bond_manager) = self.bond_manager
+                {
+                    let sender = self.submitter.sender_address();
+                    if !bond_manager.track_game(game_address, sender) {
+                        warn!(
+                            game = %game_address,
+                            sender = %sender,
+                            "bond will not be tracked — sender address is not \
+                             in --bond-claim-addresses; bond may go unclaimed"
+                        );
                     }
                 }
             }
