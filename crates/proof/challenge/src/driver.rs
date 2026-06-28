@@ -1263,6 +1263,7 @@ mod tests {
         driver.poll_or_submit(addr(0)).await.unwrap();
 
         assert!(!driver.pending_proofs.contains_key(&addr(0)));
+        assert!(!driver.anchor_updater.is_tracking(&addr(0)));
     }
 
     #[tokio::test]
