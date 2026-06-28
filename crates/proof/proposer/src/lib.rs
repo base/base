@@ -21,7 +21,7 @@ mod proof_adapter;
 pub use proof_adapter::ProposerProofAdapter;
 
 mod tee_proof;
-pub use tee_proof::{TeeImageHashes, TeeProof, TeeProofPair};
+pub use tee_proof::{TeeImageHashes, TeeProof, TeeProofMode, TeeProofPair};
 
 mod proposal_intervals;
 pub use proposal_intervals::ProposalIntervals;

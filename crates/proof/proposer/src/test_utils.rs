@@ -273,13 +273,7 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     async fn read_tee_tdx_image_hash(&self, _: Address) -> Result<B256, ContractError> {
         Ok(B256::repeat_byte(0x06))
     }
-    async fn intermediate_output_roots(&self, addr: Address) -> Result<Vec<B256>, ContractError> {
-        if let Some(roots) = self.intermediate_roots_map.get(&addr) {
-            return Ok(roots.clone());
-        }
-        if let Some(info) = self.game_info_map.get(&addr) {
-            return Ok(vec![info.root_claim]);
-        }
+    async fn intermediate_output_roots(&self, _: Address) -> Result<Vec<B256>, ContractError> {
         Ok(vec![B256::ZERO])
     }
     async fn intermediate_output_root(&self, _: Address, _: u64) -> Result<B256, ContractError> {

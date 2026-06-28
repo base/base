@@ -17,10 +17,8 @@ use crate::{
     error::ProposerError,
     proof_adapter::ProposerProofAdapter,
     proof_target::ProofTarget,
-    tee_proof::TeeImageHashes,
+    tee_proof::{TeeImageHashes, TeeProofMode},
 };
-
-const TEE_KINDS: [TeeKind; 2] = [TeeKind::AwsNitro, TeeKind::IntelTdx];
 
 /// Static parameters needed to build and dispatch proposer proof requests.
 #[derive(Debug, Clone, Copy)]
@@ -35,6 +33,8 @@ pub struct ProofDispatcherConfig {
     pub intermediate_block_interval: u64,
     /// Expected TEE enclave image hashes.
     pub tee_image_hashes: TeeImageHashes,
+    /// TEE proof requirement for proposer submissions.
+    pub tee_proof_mode: TeeProofMode,
 }
 
 impl From<&DriverConfig> for ProofDispatcherConfig {
@@ -45,6 +45,7 @@ impl From<&DriverConfig> for ProofDispatcherConfig {
             proposer_address: config.proposer_address,
             intermediate_block_interval: config.intermediate_block_interval,
             tee_image_hashes: config.tee_image_hashes,
+            tee_proof_mode: config.tee_proof_mode,
         }
     }
 }
@@ -225,7 +226,7 @@ impl ProofDispatcher {
                 };
 
             let mut accepted = true;
-            for tee_kind in TEE_KINDS {
+            for &tee_kind in self.config.tee_proof_mode.tee_kinds() {
                 match self.dispatch_request(request.clone(), tee_kind).await {
                     Ok(session_id) => {
                         info!(
@@ -385,6 +386,7 @@ mod tests {
                     nitro: B256::repeat_byte(0x05),
                     tdx: B256::repeat_byte(0x06),
                 },
+                tee_proof_mode: TeeProofMode::Nitro,
             },
         );
         let recovered = RecoveredState {
@@ -438,6 +440,48 @@ mod tests {
     async fn tick_dispatches_all_targets_up_to_safe_head() {
         let requester = Arc::new(MockProofRequester::default());
         let dispatcher = dispatcher(Arc::clone(&requester));
+        let mut current = RecoveredState {
+            parent_address: Address::ZERO,
+            output_root: B256::repeat_byte(0x03),
+            l2_block_number: 100,
+        };
+
+        dispatcher.tick(&mut current, 400).await;
+
+        assert_eq!(requester.requests.lock().unwrap().len(), 3);
+        assert_eq!(current.l2_block_number, 400);
+    }
+
+    #[tokio::test]
+    async fn tick_dispatches_tdx_only_when_configured() {
+        let requester = Arc::new(MockProofRequester::default());
+        let mut dispatcher = dispatcher(Arc::clone(&requester));
+        dispatcher.config.tee_proof_mode = TeeProofMode::Tdx;
+        let mut current = RecoveredState {
+            parent_address: Address::ZERO,
+            output_root: B256::repeat_byte(0x03),
+            l2_block_number: 100,
+        };
+
+        dispatcher.tick(&mut current, 400).await;
+
+        let requests = requester.requests.lock().unwrap();
+        assert_eq!(requests.len(), 3);
+        assert!(requests.values().all(|request| {
+            let base_prover_service_protocol::ProofRequestKind::Tee(tee) = &request.proof.request
+            else {
+                return false;
+            };
+            tee.tee_kind == TeeKind::IntelTdx
+        }));
+        assert_eq!(current.l2_block_number, 400);
+    }
+
+    #[tokio::test]
+    async fn tick_dispatches_both_when_configured() {
+        let requester = Arc::new(MockProofRequester::default());
+        let mut dispatcher = dispatcher(Arc::clone(&requester));
+        dispatcher.config.tee_proof_mode = TeeProofMode::Both;
         let mut current = RecoveredState {
             parent_address: Address::ZERO,
             output_root: B256::repeat_byte(0x03),

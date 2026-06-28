@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use alloy_provider::{Provider, ProviderBuilder};
 use base_balance_monitor::BalanceMonitorLayer;
 use base_cli_utils::RuntimeManager;
@@ -64,6 +64,7 @@ impl ProposerService {
             anchor_state_registry = %config.anchor_state_registry_addr,
             dispute_game_factory = %config.dispute_game_factory_addr,
             game_type = config.game_type,
+            tee_proof_mode = %config.tee_proof_mode,
             prover_timeout = ?config.prover_timeout,
             poll_interval = ?config.poll_interval,
             rpc_timeout = ?config.rpc_timeout,
@@ -136,8 +137,20 @@ impl ProposerService {
             verifier_client.read_block_interval(impl_address),
             verifier_client.read_intermediate_block_interval(impl_address),
             factory_client.init_bonds(config.game_type),
-            verifier_client.read_tee_nitro_image_hash(impl_address),
-            verifier_client.read_tee_tdx_image_hash(impl_address),
+            async {
+                if config.tee_proof_mode.requires_nitro() {
+                    verifier_client.read_tee_nitro_image_hash(impl_address).await
+                } else {
+                    Ok(B256::ZERO)
+                }
+            },
+            async {
+                if config.tee_proof_mode.requires_tdx() {
+                    verifier_client.read_tee_tdx_image_hash(impl_address).await
+                } else {
+                    Ok(B256::ZERO)
+                }
+            },
         )?;
         let tee_image_hashes = TeeImageHashes { nitro: nitro_image_hash, tdx: tdx_image_hash };
         if block_interval < 2 {
@@ -157,6 +170,7 @@ impl ProposerService {
             init_bond = %init_bond,
             impl_address = %impl_address,
             game_type = config.game_type,
+            tee_proof_mode = %config.tee_proof_mode,
             nitro_image_hash = %tee_image_hashes.nitro,
             tdx_image_hash = %tee_image_hashes.tdx,
             "Read onchain config from AggregateVerifier and DisputeGameFactory"
@@ -237,6 +251,7 @@ impl ProposerService {
             allow_non_finalized: config.allow_non_finalized,
             proposer_address: proposer_address.unwrap_or_default(),
             tee_image_hashes,
+            tee_proof_mode: config.tee_proof_mode,
             anchor_state_registry_address: config.anchor_state_registry_addr,
         };
         let proof_dispatcher = ProofDispatcher::new(
@@ -272,6 +287,7 @@ impl ProposerService {
             proof_submitter,
             driver_config.block_interval,
             driver_config.tee_image_hashes,
+            driver_config.tee_proof_mode,
             driver_config.submit_timeout,
         );
         let pipeline =

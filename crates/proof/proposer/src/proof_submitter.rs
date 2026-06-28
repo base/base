@@ -432,8 +432,15 @@ mod tests {
 
     fn proof_result(target_block: u64) -> TeeProofPair {
         let mut proof = test_tee_proof_pair(target_block);
-        proof.nitro.aggregate_proposal.l1_origin_hash = B256::ZERO;
-        proof.tdx.aggregate_proposal.l1_origin_hash = B256::ZERO;
+        match &mut proof {
+            TeeProofPair::Nitro(proof) | TeeProofPair::Tdx(proof) => {
+                proof.aggregate_proposal.l1_origin_hash = B256::ZERO;
+            }
+            TeeProofPair::Both { nitro, tdx } => {
+                nitro.aggregate_proposal.l1_origin_hash = B256::ZERO;
+                tdx.aggregate_proposal.l1_origin_hash = B256::ZERO;
+            }
+        }
         proof
     }
 

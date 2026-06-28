@@ -8,7 +8,7 @@ use base_retry::RetryConfig;
 use eyre::{Result, WrapErr};
 use url::Url;
 
-use crate::cli::Cli;
+use crate::{TeeProofMode, cli::Cli};
 
 /// Validated proposer configuration.
 #[derive(Debug)]
@@ -31,6 +31,8 @@ pub struct ProposerConfig {
     pub dispute_game_factory_addr: Address,
     /// Game type ID for `AggregateVerifier` dispute games.
     pub game_type: u32,
+    /// TEE proof requirement for proposer submissions.
+    pub tee_proof_mode: TeeProofMode,
     /// Polling interval for new blocks.
     pub poll_interval: Duration,
     /// RPC request timeout.
@@ -126,6 +128,7 @@ impl ProposerConfig {
             anchor_state_registry_addr: proposer.anchor_state_registry_addr,
             dispute_game_factory_addr: proposer.dispute_game_factory_addr,
             game_type: proposer.game_type,
+            tee_proof_mode: proposer.tee_proof_mode,
             poll_interval: proposer.poll_interval,
             rpc_timeout: proposer.rpc_timeout,
             rollup_rpc: proposer.rollup_rpc,
@@ -199,6 +202,7 @@ mod tests {
         assert!(!config.dry_run);
         assert!(config.allow_non_finalized);
         assert_eq!(config.game_type, 1);
+        assert_eq!(config.tee_proof_mode, TeeProofMode::Nitro);
         assert_eq!(config.retry.max_attempts, Some(7));
         assert_eq!(config.recovery_scan_concurrency, 4);
         assert_eq!(config.admin_addr.unwrap().port(), 8545);

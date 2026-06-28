@@ -8,6 +8,8 @@ use base_prover_service_protocol::TeeKind;
 use clap::{Args, Parser};
 use url::Url;
 
+use crate::TeeProofMode;
+
 base_cli_utils::define_cli_env!("BASE_PROPOSER");
 base_cli_utils::define_log_args!("BASE_PROPOSER");
 base_cli_utils::define_metrics_args!("BASE_PROPOSER", 7300);
@@ -93,9 +95,18 @@ pub struct ProposerArgs {
     #[arg(long = "tee-image-hash", env = cli_env!("TEE_IMAGE_HASH"), hide = true)]
     pub tee_image_hash: Option<B256>,
 
-    /// Deprecated: the proposer always requests both Nitro and TDX proofs.
+    /// Deprecated: use `tee-proof-mode` instead.
     #[arg(long = "tee-kind", env = cli_env!("TEE_KIND"), hide = true, value_parser = parse_tee_kind)]
     pub tee_kind: Option<TeeKind>,
+
+    /// TEE proof requirement: `nitro`, `tdx`, or `both`.
+    #[arg(
+        long = "tee-proof-mode",
+        env = cli_env!("TEE_PROOF_MODE"),
+        default_value_t = TeeProofMode::Nitro,
+        value_parser = parse_tee_proof_mode
+    )]
+    pub tee_proof_mode: TeeProofMode,
 
     /// Polling interval for new blocks (e.g., "12s", "1m").
     #[arg(
@@ -171,6 +182,15 @@ fn parse_tee_kind(value: &str) -> Result<TeeKind, String> {
     }
 }
 
+fn parse_tee_proof_mode(value: &str) -> Result<TeeProofMode, String> {
+    match value {
+        "nitro" | "aws_nitro" | "aws-nitro" => Ok(TeeProofMode::Nitro),
+        "tdx" | "intel_tdx" | "intel-tdx" => Ok(TeeProofMode::Tdx),
+        "both" | "dual" | "nitro+tdx" | "nitro,tdx" => Ok(TeeProofMode::Both),
+        other => Err(format!("unknown TEE proof mode: {other}")),
+    }
+}
+
 /// Admin RPC server configuration arguments.
 #[derive(Debug, Args)]
 #[command(next_help_heading = "Admin RPC")]
@@ -232,6 +252,33 @@ mod tests {
         assert_eq!(cli.proposer.rpc_max_retries, 5);
         assert_eq!(cli.proposer.rpc_retry_initial_delay, Duration::from_millis(100));
         assert_eq!(cli.proposer.rpc_retry_max_delay, Duration::from_secs(10));
+        assert_eq!(cli.proposer.tee_proof_mode, TeeProofMode::Nitro);
+    }
+
+    #[test]
+    fn test_tee_proof_mode_arg() {
+        let cli = Cli::try_parse_from([
+            "proposer",
+            "--prover-rpc",
+            "http://localhost:8080",
+            "--l1-eth-rpc",
+            "http://localhost:8545",
+            "--l2-eth-rpc",
+            "http://localhost:9545",
+            "--anchor-state-registry-addr",
+            "0x1234567890123456789012345678901234567890",
+            "--dispute-game-factory-addr",
+            "0x2234567890123456789012345678901234567890",
+            "--game-type",
+            "1",
+            "--rollup-rpc",
+            "http://localhost:7545",
+            "--tee-proof-mode",
+            "both",
+        ])
+        .unwrap();
+
+        assert_eq!(cli.proposer.tee_proof_mode, TeeProofMode::Both);
     }
 
     #[test]

@@ -21,8 +21,7 @@ use tokio::{sync::Mutex as TokioMutex, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
-use crate::TeeImageHashes;
-use crate::pipeline::ProvingPipeline;
+use crate::{TeeImageHashes, TeeProofMode, pipeline::ProvingPipeline};
 
 // ---------------------------------------------------------------------------
 // Core types
@@ -52,6 +51,8 @@ pub struct DriverConfig {
     pub proposer_address: Address,
     /// Keccak256 hashes of the expected enclave PCR0 measurements.
     pub tee_image_hashes: TeeImageHashes,
+    /// TEE proof requirement for proposer submissions.
+    pub tee_proof_mode: TeeProofMode,
     /// Address of the `AnchorStateRegistry` contract on L1.
     /// Used as the "no parent" sentinel when creating the first game from anchor state.
     pub anchor_state_registry_address: Address,
@@ -69,6 +70,7 @@ impl Default for DriverConfig {
             allow_non_finalized: false,
             proposer_address: Address::ZERO,
             tee_image_hashes: TeeImageHashes { nitro: B256::ZERO, tdx: B256::ZERO },
+            tee_proof_mode: TeeProofMode::default(),
             anchor_state_registry_address: Address::ZERO,
         }
     }
@@ -300,6 +302,7 @@ mod tests {
             proof_submitter,
             config.block_interval,
             config.tee_image_hashes,
+            config.tee_proof_mode,
             config.submit_timeout,
         );
         let pipeline =
