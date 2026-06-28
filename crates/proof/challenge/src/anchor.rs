@@ -1,6 +1,9 @@
 //! Anchor root update management.
 
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::{HashMap, hash_map::Entry},
+    time::Duration,
+};
 
 use alloy_primitives::Address;
 use base_proof_contracts::{
@@ -44,14 +47,19 @@ impl<C: Clock> AnchorUpdater<C> {
 
     /// Registers a game for anchor root advancement.
     pub fn track_game(&mut self, game_address: Address) {
-        if self.tracked.contains_key(&game_address) {
+        let Entry::Vacant(entry) = self.tracked.entry(game_address) else {
             debug!(game = %game_address, "game already tracked for anchor update");
             return;
-        }
+        };
 
         info!(game = %game_address, "tracking game for anchor update");
-        self.tracked.insert(game_address, TrackedAnchorUpdate::default());
+        entry.insert(TrackedAnchorUpdate::default());
         ChallengerMetrics::anchor_update_tracked_games().set(self.tracked.len() as f64);
+    }
+
+    /// Returns `true` if the given game is being tracked.
+    pub fn is_tracking(&self, game_address: &Address) -> bool {
+        self.tracked.contains_key(game_address)
     }
 
     /// Polls all tracked games and advances eligible anchor roots.

@@ -1096,7 +1096,10 @@ async fn test_successful_nullify_does_not_track_anchor_update() {
     driver.step().await.unwrap();
 
     assert!(!driver.pending_proofs.contains_key(&addr(0)));
-    driver.step().await.unwrap();
+    assert!(
+        !driver.anchor_updater.is_tracking(&addr(0)),
+        "nullify results should be rescanned before anchor update tracking"
+    );
 }
 
 #[tokio::test]
