@@ -369,6 +369,10 @@ struct LocalArgs {
     #[command(flatten)]
     worker: WorkerArgs,
 
+    /// Socket address for the registrar-facing signer JSON-RPC API.
+    #[arg(long, env = "LISTEN_ADDR", default_value = "0.0.0.0:8000")]
+    listen_addr: SocketAddr,
+
     /// Number of local enclave instances to run (minimum 1).
     #[arg(long, env = "LOCAL_ENCLAVE_COUNT", default_value = "1")]
     local_enclave_count: usize,
@@ -382,8 +386,15 @@ impl LocalArgs {
         }
 
         let transports = local_transports(self.local_enclave_count)?;
-        run_worker(self.runtime, self.worker, transports, WorkerTransportMode::Local, None, cancel)
-            .await
+        run_worker(
+            self.runtime,
+            self.worker,
+            transports,
+            WorkerTransportMode::Local,
+            Some(self.listen_addr),
+            cancel,
+        )
+        .await
     }
 }
 

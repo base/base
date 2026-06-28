@@ -16,3 +16,4 @@ crates/proof/succinct/elf/*.bin
 /etc/scripts/local/__pycache__/
 
 crates/infra/load-tests/examples/*.yaml
+.tdx-hoodi

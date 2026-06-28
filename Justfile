@@ -7,6 +7,7 @@
 _skip_kernels := if os() == "macos" { "RISC0_SKIP_BUILD_KERNELS=1" } else { "" }
 
 set positional-arguments := true
+set dotenv-load
 
 mod tee 'crates/proof/tee'
 mod actions 'actions'
@@ -170,3 +171,178 @@ basectl:
 # Inspect the zeronet TDX prover signer and contract-compatible image hash
 tdx-zeronet-image-hash *args="":
     just tee tdx-image-hash http://136.107.166.21:7310 {{ args }}
+
+# Run local Nitro+TDX proof workers, prover-service, and proposer against Hoodi.
+hoodi-zeronet-tdx-local-offchain:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    need() {
+        command -v "$1" >/dev/null 2>&1 || {
+            echo "Missing required command: $1" >&2
+            exit 1
+        }
+    }
+    need cargo
+    need cast
+    need docker
+    need jq
+    need python3
+
+    l1_rpc="${HOODI_L1_RPC_URL:-https://c3-chainproxy-eth-hoodi-full-dev.cbhq.net}"
+    l2_rpc="${HOODI_L2_RPC_URL:-https://base-zeronet-reth-proofs-donotuse.cbhq.net:8545}"
+    rollup_rpc="${HOODI_ROLLUP_RPC_URL:-https://base-zeronet-reth-rpc-donotuse.cbhq.net:7545}"
+    l1_beacon="${HOODI_L1_BEACON_URL:-https://c3-chainproxy-eth-hoodi-full-dev.cbhq.net:5052}"
+    l2_chain_id="${HOODI_L2_CHAIN_ID:-763360}"
+    postgres_port="${TDX_HOODI_POSTGRES_PORT:-5432}"
+    requester_rpc="${TDX_HOODI_PROVER_REQUESTER_RPC:-127.0.0.1:9000}"
+    worker_rpc="${TDX_HOODI_PROVER_WORKER_RPC:-127.0.0.1:9001}"
+    nitro_signer_rpc="${TDX_HOODI_NITRO_SIGNER_RPC:-127.0.0.1:8000}"
+    tdx_signer_rpc="${TDX_HOODI_TDX_SIGNER_RPC:-127.0.0.1:8010}"
+    proposer_private_key="${BASE_PROPOSER_PRIVATE_KEY:?BASE_PROPOSER_PRIVATE_KEY must be set in .env or the environment}"
+    forge_account="${TDX_HOODI_FORGE_ACCOUNT:-testnet-admin}"
+    contracts_dir="$(cd ../contracts && pwd)"
+    deployments="${TDX_HOODI_DEPLOYMENTS:-$contracts_dir/deployments/560048-dev-no-nitro.json}"
+    deploy_config="${TDX_HOODI_DEPLOY_CONFIG:-$contracts_dir/deploy-config/hoodi-zeronet-tdx-local.json}"
+    pg_container="${TDX_HOODI_POSTGRES_CONTAINER:-base-prover-service-tdx-hoodi}"
+    pg_data_dir="${TDX_HOODI_POSTGRES_DATA_DIR:-$PWD/.tdx-hoodi/postgres}"
+    pg_password="${TDX_HOODI_POSTGRES_PASSWORD:-postgres}"
+
+    registry="$(jq -r '.TEEProverRegistry // empty' "$deployments")"
+    anchor_state_registry="$(jq -r '.AnchorStateRegistry // empty' "$deployments")"
+    dispute_game_factory="$(jq -r '.DisputeGameFactory // empty' "$deployments")"
+    game_type="$(jq -r '.multiproofGameType // 621' "$deploy_config")"
+    nitro_image_hash="$(jq -r '.teeNitroImageHash // empty' "$deploy_config")"
+    tdx_image_hash="$(jq -r '.teeTdxImageHash // empty' "$deploy_config")"
+
+    for value in registry anchor_state_registry dispute_game_factory nitro_image_hash tdx_image_hash; do
+        if [[ -z "${!value}" || "${!value}" == "null" ]]; then
+            echo "Missing $value in $deployments or $deploy_config" >&2
+            exit 1
+        fi
+    done
+
+    wait_rpc() {
+        local url="$1" name="$2"
+        shift 2
+        for _ in {1..120}; do
+            "$@" --rpc-url "$url" >/dev/null 2>&1 && return 0
+            sleep 1
+        done
+        echo "Timed out waiting for $name at $url" >&2
+        exit 1
+    }
+
+    signer_from_rpc() {
+        local public_key_body public_key_hash
+        public_key_body="$(cast rpc enclave_signerPublicKey --rpc-url "$1" \
+            | python3 -c "import json, sys; data = json.load(sys.stdin)[0]; print('0x' + bytes(data[1:]).hex())")"
+        public_key_hash="$(cast keccak "$public_key_body")"
+        echo "0x${public_key_hash: -40}"
+    }
+
+    echo "Building local offchain binaries"
+    cargo build -p base-prover-service-bin -p base-prover-tdx -p base-proposer-bin
+    cargo build -p base-prover-nitro-host --features local,worker
+
+    pids=()
+    cleanup() {
+        for pid in "${pids[@]:-}"; do
+            kill "$pid" 2>/dev/null || true
+        done
+        wait 2>/dev/null || true
+    }
+    trap cleanup EXIT INT TERM
+
+    mkdir -p "$pg_data_dir"
+    # ponytail: initdb migrations run on first DB creation; delete the data dir to replay them.
+    if [[ -n "$(docker ps --filter "name=^/${pg_container}$" --filter status=running -q)" ]]; then
+        echo "Postgres already running: $pg_container"
+    elif [[ -n "$(docker ps -a --filter "name=^/${pg_container}$" -q)" ]]; then
+        docker start "$pg_container" >/dev/null
+    else
+        docker run -d \
+            --name "$pg_container" \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_PASSWORD="$pg_password" \
+            -e POSTGRES_DB=proverdb \
+            -p "127.0.0.1:$postgres_port:5432" \
+            -v "$pg_data_dir:/var/lib/postgresql/data" \
+            -v "$PWD/crates/proof/prover-service/db/migrations:/docker-entrypoint-initdb.d:ro" \
+            postgres:17-alpine >/dev/null
+    fi
+    until docker exec "$pg_container" pg_isready -U postgres -d proverdb >/dev/null 2>&1; do
+        sleep 1
+    done
+
+    echo "Starting prover-service"
+    POSTGRES_HOST=127.0.0.1 \
+    POSTGRES_PORT="$postgres_port" \
+    POSTGRES_DB=proverdb \
+    POSTGRES_USER=postgres \
+    POSTGRES_PASSWORD="$pg_password" \
+    POSTGRES_SSLMODE=disable \
+    RUST_LOG="${RUST_LOG:-info}" \
+        target/debug/base-prover-service \
+        --rpc-listen-addr "$requester_rpc" \
+        --worker-rpc-listen-addr "$worker_rpc" &
+    pids+=("$!")
+    wait_rpc "http://$requester_rpc" prover-service-requester \
+        cast rpc prover_listProofs '{"offset":0,"limit":1}'
+    wait_rpc "http://$worker_rpc" prover-service-worker \
+        cast rpc prover_getProofSession '{"session_id":"__ready__","session_type":"stark"}'
+
+    echo "Starting Nitro worker"
+    RUST_LOG="${RUST_LOG:-info}" \
+        target/debug/base-prover-nitro-host local \
+        --l1-eth-url "$l1_rpc" \
+        --l2-eth-url "$l2_rpc" \
+        --l1-beacon-url "$l1_beacon" \
+        --l2-chain-id "$l2_chain_id" \
+        --rollup-rpc-url "$rollup_rpc" \
+        --listen-addr "$nitro_signer_rpc" \
+        --prover-service-endpoint "http://$worker_rpc" \
+        --enable-experimental-witness-endpoint &
+    pids+=("$!")
+    wait_rpc "http://$nitro_signer_rpc" nitro-signer-rpc cast rpc enclave_signerPublicKey
+
+    echo "Starting TDX worker"
+    RUST_LOG="${RUST_LOG:-info}" \
+        target/debug/base-prover-tdx local \
+        --l1-eth-url "$l1_rpc" \
+        --l2-eth-url "$l2_rpc" \
+        --l1-beacon-url "$l1_beacon" \
+        --l2-chain-id "$l2_chain_id" \
+        --rollup-rpc-url "$rollup_rpc" \
+        --listen-addr "$tdx_signer_rpc" \
+        --prover-service-endpoint "http://$worker_rpc" \
+        --enable-experimental-witness-endpoint &
+    pids+=("$!")
+    wait_rpc "http://$tdx_signer_rpc" tdx-signer-rpc cast rpc enclave_signerPublicKey
+
+    nitro_signer="$(signer_from_rpc "http://$nitro_signer_rpc")"
+    tdx_signer="$(signer_from_rpc "http://$tdx_signer_rpc")"
+
+    echo "Registering local TEE signers in $registry"
+    owner="$(cast wallet address --account "$forge_account")"
+    cast send "$registry" "addDevSigner(address,bytes32)" "$nitro_signer" "$nitro_image_hash" \
+        --rpc-url "$l1_rpc" --account "$forge_account" --from "$owner"
+    cast send "$registry" "addDevTDXSigner(address,bytes32)" "$tdx_signer" "$tdx_image_hash" \
+        --rpc-url "$l1_rpc" --account "$forge_account" --from "$owner"
+
+    echo "Starting proposer"
+    echo "Proposer address: $(cast wallet address "$proposer_private_key")"
+    RUST_LOG="${RUST_LOG:-info}" \
+        target/debug/base-proposer \
+        --prover-rpc "http://$requester_rpc" \
+        --l1-eth-rpc "$l1_rpc" \
+        --l2-eth-rpc "$l2_rpc" \
+        --rollup-rpc "$rollup_rpc" \
+        --anchor-state-registry-addr "$anchor_state_registry" \
+        --dispute-game-factory-addr "$dispute_game_factory" \
+        --game-type "$game_type" \
+        --tee-proof-mode both \
+        --allow-non-finalized \
+        --private-key "$proposer_private_key" \
+        --poll-interval "${TDX_HOODI_PROPOSER_POLL_INTERVAL:-12s}"
+    cleanup
