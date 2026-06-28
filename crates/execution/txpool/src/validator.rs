@@ -1,6 +1,6 @@
 use std::{
     any::Any,
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -19,8 +19,7 @@ use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_common_genesis::DaFootprintGasScalarUpdate;
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_eip8130::{
-    AccountChangeApplier, AccountConfigurationStorage, ActorAuthorizer, AuthError,
-    AuthenticatorDispatch, AuthorizeError, DispatchOutcome, FeeCheck, IntrinsicGas,
+    AccountConfigurationStorage, ApplyError, AuthorizeError, FeeCheck, IntrinsicGas,
     IntrinsicGasInput, NonceError, NonceMode, NonceValidator, Operation, ResolvedActor,
     TransactionAuthorizer, TxAuthError,
 };
@@ -217,8 +216,11 @@ impl PrecompileStorageProvider for StateProviderPrecompileStorage<'_> {
         Address::ZERO
     }
 
-    fn replace_caller(&mut self, caller: Address) -> Address {
-        caller
+    // Per the trait contract, returns the *previous* caller. This provider does
+    // not track a mutable caller (`caller()` is always `Address::ZERO`), so the
+    // previous value is always `Address::ZERO` — not the `caller` argument.
+    fn replace_caller(&mut self, _caller: Address) -> Address {
+        Address::ZERO
     }
 
     fn checkpoint(&mut self) -> JournalCheckpoint {
@@ -228,6 +230,208 @@ impl PrecompileStorageProvider for StateProviderPrecompileStorage<'_> {
     fn checkpoint_commit(&mut self) {}
 
     fn checkpoint_revert(&mut self, _checkpoint: JournalCheckpoint) {}
+
+    fn metered_keccak256(&mut self, data: &[u8]) -> Result<B256, BasePrecompileError> {
+        Ok(alloy_primitives::keccak256(data))
+    }
+}
+
+/// Writable in-memory overlay over a read-only [`StateProviderPrecompileStorage`].
+///
+/// EIP-8130 admission authorizes a transaction's account changes by *applying*
+/// them against the evolving state — a create installs its initial actors before
+/// the next change authenticates against them, a config change advances the
+/// channel sequence the next same-channel entry reads, and the sender is
+/// authenticated against the resulting post-apply state. This mirrors block
+/// execution exactly (both run [`TransactionAuthorizer::authorize_and_apply`]),
+/// so the pool accepts exactly what the builder will include.
+///
+/// The pool's state snapshot is read-only, so this overlay buffers `SSTORE`s in
+/// memory and serves them back on `SLOAD`, falling through to the snapshot for
+/// unbuffered slots. The buffered writes are scoped to a single validation and
+/// dropped with the overlay: admission never mutates canonical state. The
+/// deferred account-*code* effects an apply surfaces are not needed for
+/// admission (no `SLOAD` reads account bytecode through this provider), so
+/// `set_code` is accepted and discarded.
+// `BTreeMap` (not `HashMap`) for deterministic iteration order. The overlay
+// only performs point reads/writes today so ordering is not observed, but
+// precompile storage feeds consensus-relevant state — a `BTreeMap` keeps a
+// future iteration-sensitive change from silently depending on
+// `HashMap`'s non-deterministic order.
+struct OverlayPrecompileStorage<'a> {
+    inner: StateProviderPrecompileStorage<'a>,
+    storage: BTreeMap<(Address, U256), U256>,
+    transient: BTreeMap<(Address, U256), U256>,
+}
+
+impl<'a> OverlayPrecompileStorage<'a> {
+    const fn new(inner: StateProviderPrecompileStorage<'a>) -> Self {
+        Self { inner, storage: BTreeMap::new(), transient: BTreeMap::new() }
+    }
+}
+
+impl PrecompileStorageProvider for OverlayPrecompileStorage<'_> {
+    fn chain_id(&self) -> u64 {
+        self.inner.chain_id()
+    }
+
+    fn timestamp(&self) -> U256 {
+        self.inner.timestamp()
+    }
+
+    fn beneficiary(&self) -> Address {
+        self.inner.beneficiary()
+    }
+
+    fn block_number(&self) -> u64 {
+        self.inner.block_number()
+    }
+
+    fn origin(&self) -> Address {
+        self.inner.origin()
+    }
+
+    fn set_code(&mut self, _address: Address, _code: Bytecode) -> Result<(), BasePrecompileError> {
+        // Deferred account-code effects are not read back during admission.
+        Ok(())
+    }
+
+    // NOTE: account *info* (nonce, balance, code hash) is intentionally not
+    // overlaid — it delegates to the read-only inner provider, so a
+    // counterfactual-create account reads back as empty/default here. This is
+    // sound only because the authorize-and-apply admission flow reads account
+    // state exclusively through `sload`/`sstore` (which the overlay buffers);
+    // the protocol nonce / balance / code checks run separately against the
+    // `state` snapshot. If a future change reads `AccountInfo` for the sender
+    // inside that flow, it would see stale data for created accounts and the
+    // overlay would need to buffer account info too.
+    fn with_account_info(
+        &mut self,
+        address: Address,
+        f: &mut dyn FnMut(&AccountInfo),
+    ) -> Result<(), BasePrecompileError> {
+        self.inner.with_account_info(address, f)
+    }
+
+    fn sload(&mut self, address: Address, key: U256) -> Result<U256, BasePrecompileError> {
+        if let Some(value) = self.storage.get(&(address, key)) {
+            return Ok(*value);
+        }
+        self.inner.sload(address, key)
+    }
+
+    fn tload(&mut self, address: Address, key: U256) -> Result<U256, BasePrecompileError> {
+        Ok(self.transient.get(&(address, key)).copied().unwrap_or_default())
+    }
+
+    fn sstore(
+        &mut self,
+        address: Address,
+        key: U256,
+        value: U256,
+    ) -> Result<(), BasePrecompileError> {
+        self.storage.insert((address, key), value);
+        Ok(())
+    }
+
+    fn tstore(
+        &mut self,
+        address: Address,
+        key: U256,
+        value: U256,
+    ) -> Result<(), BasePrecompileError> {
+        self.transient.insert((address, key), value);
+        Ok(())
+    }
+
+    fn emit_event(
+        &mut self,
+        _address: Address,
+        _event: LogData,
+    ) -> Result<(), BasePrecompileError> {
+        Ok(())
+    }
+
+    fn deduct_gas(&mut self, _gas: u64) -> Result<(), BasePrecompileError> {
+        Ok(())
+    }
+
+    fn deduct_state_gas(&mut self, _gas: u64) -> Result<(), BasePrecompileError> {
+        Ok(())
+    }
+
+    fn refund_gas(&mut self, _gas: i64) {}
+
+    fn gas_limit(&self) -> u64 {
+        u64::MAX
+    }
+
+    fn gas_used(&self) -> u64 {
+        0
+    }
+
+    fn state_gas_used(&self) -> u64 {
+        0
+    }
+
+    fn gas_refunded(&self) -> i64 {
+        0
+    }
+
+    fn reservoir(&self) -> u64 {
+        0
+    }
+
+    fn is_static(&self) -> bool {
+        false
+    }
+
+    fn call_value(&self) -> U256 {
+        U256::ZERO
+    }
+
+    fn caller(&self) -> Address {
+        Address::ZERO
+    }
+
+    // Per the trait contract, returns the *previous* caller. The overlay does
+    // not track a mutable caller (`caller()` is always `Address::ZERO`), so the
+    // previous value is always `Address::ZERO` — not the `caller` argument.
+    fn replace_caller(&mut self, _caller: Address) -> Address {
+        Address::ZERO
+    }
+
+    // The overlay deliberately does not journal: `checkpoint`/`checkpoint_revert`
+    // are no-ops. This is sound only because the admission flow
+    // (`TransactionAuthorizer::authorize_and_apply`, and the
+    // `ConfigChangeAuthorizer` / `AccountChangeApplier` steps it drives) never
+    // performs an internal checkpoint/revert cycle: it either succeeds and the
+    // overlay's buffered writes are read back as the evolving state, or it
+    // returns an error and the entire overlay is dropped by the caller. If a
+    // future change introduces an internal checkpoint/revert within that flow,
+    // partial writes would leak within the overlay — this storage would then
+    // need real journalling (snapshot the `storage`/`transient` maps on
+    // `checkpoint` and restore them on `checkpoint_revert`).
+    fn checkpoint(&mut self) -> JournalCheckpoint {
+        JournalCheckpoint::default()
+    }
+
+    fn checkpoint_commit(&mut self) {}
+
+    // A `checkpoint_revert` would silently leak partial writes (the overlay
+    // cannot roll back), so trip loudly in debug/test builds if the admission
+    // flow ever introduces an internal revert. In release this stays a no-op:
+    // the overlay relies on being dropped wholesale on error, never on
+    // fine-grained rollback.
+    fn checkpoint_revert(&mut self, _checkpoint: JournalCheckpoint) {
+        debug_assert!(
+            false,
+            "OverlayPrecompileStorage does not support checkpoint_revert; the admission \
+             authorize-and-apply flow must abort wholesale (drop the overlay), not revert \
+             internally. A nested revert here would silently leak partial writes — the overlay \
+             needs real journalling before this path is used."
+        );
+    }
 
     fn metered_keccak256(&mut self, data: &[u8]) -> Result<B256, BasePrecompileError> {
         Ok(alloy_primitives::keccak256(data))
@@ -439,58 +643,51 @@ where
         let local_chain_id = self.inner.chain_spec().chain().id();
         let now = self.block_timestamp();
         let state = self.client().latest().map_err(|error| Self::provider_unavailable(error))?;
-        let mut storage = StateProviderPrecompileStorage::new(&*state, local_chain_id, now);
 
-        let (sender, payer, sender_actor) = StorageCtx::enter(&mut storage, |ctx| {
-            signed
-                .tx()
-                .account_changes
-                .first()
-                .and_then(|change| match change {
-                    AccountChange::Create(create) => Some(create),
-                    _ => None,
-                })
-                .map_or_else(
-                    || {
-                        let account_config = AccountConfigurationStorage::new(ctx);
-                        TransactionAuthorizer::authorize(
-                            signed,
-                            &account_config,
-                            local_chain_id,
-                            now,
-                        )
-                        .map(|authorized| {
-                            let sender = authorized.actors.sender.account;
-                            let payer =
-                                authorized.actors.payer.map_or(sender, |actor| actor.account);
-                            (sender, payer, Some(authorized.actors.sender.resolved))
-                        })
-                        .map_err(Self::map_tx_auth_error)
-                    },
-                    |create| Self::validate_eip8130_create_sender(signed, create, ctx),
+        // Authorize *and apply* the account changes against a writable overlay so
+        // the sender/payer and every config change are validated against the same
+        // evolving state the builder sees at inclusion — both run
+        // `TransactionAuthorizer::authorize_and_apply`. The overlay's buffered
+        // writes are discarded with it; admission never mutates canonical state.
+        let mut storage = OverlayPrecompileStorage::new(StateProviderPrecompileStorage::new(
+            &*state,
+            local_chain_id,
+            now,
+        ));
+        let (sender, payer, sender_actor, is_create, has_delegation) =
+            StorageCtx::enter(&mut storage, |ctx| {
+                let mut account_config = AccountConfigurationStorage::new(ctx);
+                TransactionAuthorizer::authorize_and_apply(
+                    signed,
+                    &mut account_config,
+                    local_chain_id,
+                    now,
                 )
-        })?;
+                .map(|applied| {
+                    let sender = applied.actors.sender.account;
+                    let payer = applied.actors.payer.map_or(sender, |actor| actor.account);
+                    // Thread the authoritative applied flags through rather than
+                    // re-scanning account_changes below.
+                    let is_create = applied.applied.created.is_some();
+                    let has_delegation = applied.applied.delegation.is_some();
+                    (sender, payer, applied.actors.sender.resolved, is_create, has_delegation)
+                })
+                .map_err(Self::map_tx_auth_error)
+            })?;
 
         let sender_account = state
             .basic_account(&sender)
             .map_err(|error| Self::state_read_error(error, "sender account read failed"))?
             .unwrap_or_default();
         let protocol_nonce = sender_account.nonce;
-        if signed
-            .tx()
-            .account_changes
-            .first()
-            .is_some_and(|change| matches!(change, AccountChange::Create(_)))
-        {
+        if is_create {
             Self::validate_eip8130_create_freshness(&*state, sender, &sender_account)?;
         }
-        if signed
-            .tx()
-            .account_changes
-            .iter()
-            .any(|change| matches!(change, AccountChange::Delegation(_)))
-        {
-            Self::validate_eip8130_delegation(&*state, signed, sender, sender_actor)?;
+        // A standalone delegation (no create) keeps the existing self-actor /
+        // CONFIG-scope / code-shape pre-checks. A create+delegation is rejected
+        // structurally before reaching here, so has_delegation implies no create.
+        if has_delegation {
+            Self::validate_eip8130_delegation(&*state, sender, sender_actor)?;
         }
 
         let mut storage = StateProviderPrecompileStorage::new(&*state, local_chain_id, now);
@@ -513,9 +710,8 @@ where
             self.eip8130_nonce_state(&*state, local_chain_id, now, signed, sender, protocol_nonce)?;
         let sender_auto_delegated = !Self::account_has_code(&*state, sender)
             .map_err(|error| Self::state_read_error(error, "sender code read failed"))?
-            && !signed.tx().account_changes.iter().any(|change| {
-                matches!(change, AccountChange::Create(_) | AccountChange::Delegation(_))
-            });
+            && !is_create
+            && !has_delegation;
         let intrinsic = IntrinsicGas::compute(
             signed,
             self.eip8130_encoded(signed).as_ref(),
@@ -562,57 +758,6 @@ where
         })
     }
 
-    fn validate_eip8130_create_sender(
-        signed: &Eip8130Signed,
-        create: &base_common_consensus::CreateEntry,
-        ctx: StorageCtx<'_>,
-    ) -> Result<(Address, Address, Option<ResolvedActor>), InvalidPoolTransactionError> {
-        let sender = signed
-            .explicit_sender()
-            .ok_or_else(|| Self::eip8130_error("create entry requires explicit sender"))?;
-        if signed
-            .tx()
-            .account_changes
-            .iter()
-            .skip(1)
-            .any(|change| matches!(change, AccountChange::ConfigChange(_)))
-        {
-            return Err(Self::eip8130_error(
-                "create with config changes is not yet supported in txpool",
-            ));
-        }
-        let derived = AccountChangeApplier::compute_address(
-            create.user_salt,
-            create.code.as_ref(),
-            &create.initial_actors,
-        )
-        .map_err(|_| Self::eip8130_error("create address derivation failed"))?;
-        if derived != sender {
-            return Err(Self::eip8130_error("create address mismatch"));
-        }
-
-        Self::validate_create_sender_auth(signed, create)?;
-
-        let payer = if let Some(payer) = signed.tx().payer {
-            let account_config = AccountConfigurationStorage::new(ctx);
-            let resolved = ActorAuthorizer::authenticate_actor(
-                &account_config,
-                payer,
-                signed.tx().payer_signature_hash(sender),
-                signed.payer_auth(),
-                ctx.timestamp().to::<u64>(),
-            )
-            .map_err(|error| Self::map_create_payer_authorize_error(error))?;
-            if !Operation::Payer.is_granted(&resolved) {
-                return Err(Self::eip8130_error("payer scope missing"));
-            }
-            payer
-        } else {
-            sender
-        };
-        Ok((sender, payer, None))
-    }
-
     fn validate_eip8130_create_freshness(
         state: &dyn StateProvider,
         sender: Address,
@@ -629,24 +774,16 @@ where
         Ok(())
     }
 
+    /// Pre-checks a standalone delegation (no create in the same transaction):
+    /// the authorizing sender must be the account's self actor with CONFIG scope
+    /// and the account's code must be empty or an existing delegation indicator.
+    /// A create+delegation is authorized by the create owner's signature and the
+    /// shared apply records the effect, matching inclusion, so it skips this gate.
     fn validate_eip8130_delegation(
         state: &dyn StateProvider,
-        signed: &Eip8130Signed,
         sender: Address,
-        sender_actor: Option<ResolvedActor>,
+        sender_actor: ResolvedActor,
     ) -> Result<(), InvalidPoolTransactionError> {
-        if signed
-            .tx()
-            .account_changes
-            .first()
-            .is_some_and(|change| matches!(change, AccountChange::Create(_)))
-        {
-            return Err(Self::eip8130_error(
-                "create with delegation is not yet supported in txpool",
-            ));
-        }
-        let sender_actor = sender_actor
-            .ok_or_else(|| Self::eip8130_error("delegation sender actor unavailable"))?;
         if sender_actor.actor_id != AccountConfigurationStorage::self_actor_id(sender) {
             return Err(Self::eip8130_error("delegation requires self actor"));
         }
@@ -659,36 +796,6 @@ where
             return Err(Self::eip8130_error("delegation sender has non-delegation code"));
         }
         Ok(())
-    }
-
-    fn validate_create_sender_auth(
-        signed: &Eip8130Signed,
-        create: &base_common_consensus::CreateEntry,
-    ) -> Result<(), InvalidPoolTransactionError> {
-        let auth = signed.sender_auth();
-        if auth.len() < 20 {
-            return Err(Self::eip8130_error("create sender auth is malformed"));
-        }
-        let authenticator = Address::from_slice(&auth[..20]);
-        let outcome = AuthenticatorDispatch::authenticate(
-            signed.tx().sender_signature_hash(),
-            authenticator,
-            &auth[20..],
-        )
-        .map_err(|error| Self::map_create_sender_auth_error(error))?;
-        let actor_id = match outcome {
-            DispatchOutcome::Authenticated { actor_id }
-            | DispatchOutcome::Delegated { actor_id, .. } => actor_id,
-        };
-        if create
-            .initial_actors
-            .iter()
-            .any(|actor| actor.actor_id == actor_id && actor.authenticator == authenticator)
-        {
-            Ok(())
-        } else {
-            Err(Self::eip8130_error("create sender actor not in initial actors"))
-        }
     }
 
     fn eip8130_nonce_state(
@@ -773,37 +880,35 @@ where
             TxAuthError::AccountLocked => "account is locked",
             TxAuthError::ConfigChainId { .. } => "config change targets a foreign chain",
             TxAuthError::ConfigSequence { .. } => "config change sequence mismatch",
-            TxAuthError::ConfigSequenceOverflow => "config change sequence overflow",
+            TxAuthError::Apply(apply) => Self::map_apply_error(apply),
         };
         Self::eip8130_error(reason)
     }
 
-    fn map_create_payer_authorize_error(error: AuthorizeError) -> InvalidPoolTransactionError {
-        tracing::debug!(error = ?error, "EIP-8130 create payer authorization failed");
-        let reason = match error {
-            AuthorizeError::Authenticate(_) => "payer authentication failed",
-            AuthorizeError::Storage(_) => "payer account configuration read failed",
-            AuthorizeError::ZeroActor => "payer actor id is zero",
-            AuthorizeError::NotBound { .. } => "payer actor is not bound",
-            AuthorizeError::DefaultEoaRevoked { .. } => "payer default EOA actor is revoked",
-            AuthorizeError::Expired { .. } => "payer actor credential expired",
-            AuthorizeError::NestedSignatureScope { .. } => {
-                "payer delegate nested actor lacks SIGNATURE scope"
-            }
-        };
-        Self::eip8130_error(reason)
-    }
-
-    fn map_create_sender_auth_error(error: AuthError) -> InvalidPoolTransactionError {
-        tracing::debug!(error = ?error, "EIP-8130 create sender authentication failed");
-        let reason = match error {
-            AuthError::MalformedAuth => "create sender auth is malformed",
-            AuthError::NotCanonical(_) => "create sender authenticator is not canonical",
-            AuthError::InvalidSignature => "create sender signature verification failed",
-            AuthError::NestedDelegate => "create sender delegate auth is nested",
-            AuthError::InvalidPublicKey => "create sender public key is invalid",
-        };
-        Self::eip8130_error(reason)
+    /// Maps an [`ApplyError`] (surfaced via [`TxAuthError::Apply`] when an
+    /// account change fails to apply against the admission overlay) to a named
+    /// pool-rejection reason, so the create/config/delegation apply failures
+    /// keep a specific user-visible reason rather than collapsing into one
+    /// generic string. The structured error is still logged in
+    /// [`Self::map_tx_auth_error`].
+    fn map_apply_error(error: ApplyError) -> &'static str {
+        match error {
+            ApplyError::Storage(_) => "account configuration write failed",
+            ApplyError::MalformedAuthorizeData => "actor change authorize data is malformed",
+            ApplyError::InvalidAuthenticator => "actor authenticator is not canonical",
+            ApplyError::PolicyScope => "policy-bearing actor scope is invalid",
+            ApplyError::MalformedPolicyData => "actor policy data is malformed",
+            ApplyError::NotAnActor { .. } => "revoked actor is not authorized",
+            ApplyError::NoInitialActors => "create entry has no initial actors",
+            ApplyError::UnsortedInitialActors => "create initial actors are not strictly ascending",
+            ApplyError::BytecodeTooLarge => "create bytecode exceeds the size limit",
+            ApplyError::AlreadyCreated { .. } => "create account already exists",
+            ApplyError::CreateAddressMismatch { .. } => "create address does not match the sender",
+            ApplyError::InvalidCreatePosition => "create entry must be the only one, at index 0",
+            ApplyError::MultipleDelegations => "at most one delegation is allowed",
+            ApplyError::CreateAndDelegation => "create and delegation may not coexist",
+            ApplyError::SequenceOverflow => "config change sequence overflow",
+        }
     }
 
     fn map_nonce_error(error: NonceError) -> InvalidPoolTransactionError {
@@ -973,7 +1078,30 @@ where
         true
     }
 
-    /// Walks `account_changes` and enforces structural invariants:
+    /// Enforces the interim total-account-changes admission cap
+    /// ([`Eip8130Constants::MAX_ACCOUNT_CHANGES_PER_TX`]) and then the per-entry
+    /// structural invariants via [`Self::validate_account_change_entries`].
+    ///
+    /// The total cap is an interim pool-only throttle that currently sits below
+    /// the per-type [`Eip8130Constants::MAX_CONFIG_CHANGES_PER_TX`] cap, so the
+    /// per-type cap is exercised directly against
+    /// [`Self::validate_account_change_entries`] in tests rather than through
+    /// this gate.
+    fn validate_account_changes(
+        signed: &Eip8130Signed,
+        local_chain_id: u64,
+    ) -> Result<(), InvalidPoolTransactionError> {
+        // Conservative admission cap on the number of account changes a single
+        // transaction may carry while the interleaved authorize-and-apply flow
+        // beds in. Keeps the per-transaction admission work (and the overlay it
+        // applies against) small and bounded.
+        if signed.tx().account_changes.len() > Eip8130Constants::MAX_ACCOUNT_CHANGES_PER_TX {
+            return Err(InvalidTransactionError::TxTypeNotSupported.into());
+        }
+        Self::validate_account_change_entries(signed, local_chain_id)
+    }
+
+    /// Walks `account_changes` and enforces the per-entry structural invariants:
     /// at most one `Create` (and only as the first entry), at most one
     /// `Delegation`, `ConfigChange` count capped at
     /// [`Eip8130Constants::MAX_CONFIG_CHANGES_PER_TX`], chain-binding on
@@ -981,7 +1109,11 @@ where
     /// and actor-id uniqueness are enforced on both `Create.initial_actors`
     /// and `ConfigChange.actor_changes` via [`Self::validate_initial_actors`]
     /// and [`Self::validate_actor_changes`] respectively.
-    fn validate_account_changes(
+    ///
+    /// This is the structural walk independent of the interim total cap applied
+    /// by [`Self::validate_account_changes`], so the per-type caps it enforces
+    /// remain meaningful (and testable) if that interim cap is later raised.
+    fn validate_account_change_entries(
         signed: &Eip8130Signed,
         local_chain_id: u64,
     ) -> Result<(), InvalidPoolTransactionError> {
@@ -1030,6 +1162,9 @@ where
                     if delegation_count > 1 {
                         return Err(InvalidTransactionError::TxTypeNotSupported.into());
                     }
+                    if create_count > 0 {
+                        return Err(InvalidTransactionError::TxTypeNotSupported.into());
+                    }
                 }
             }
         }
@@ -1058,8 +1193,8 @@ where
         Ok(())
     }
 
-    /// Validates `ConfigChange.actor_changes`: the same length cap and
-    /// `actor_id`-uniqueness rules as [`Self::validate_initial_actors`], plus the
+    /// Validates `ConfigChange.actor_changes`: the slice is bounded by
+    /// [`Eip8130Constants::MAX_ACTOR_CHANGES_PER_CONFIG`], plus the
     /// reserved-window authenticator bound for the *new* actor of each
     /// `Authorize`. The authenticator lives in the ABI-encoded `data`
     /// (`abi.encode(ActorConfig, bytes)`), where `ActorConfig.authenticator` is
@@ -1067,7 +1202,7 @@ where
     /// `data[12..32]` without a full decode (the leading 12 padding bytes must be
     /// zero, matching ABI encoding); the remaining structure is validated where
     /// the change is applied. A `Revoke` carries empty `data` and names no
-    /// authenticator, so only the cap and uniqueness apply.
+    /// authenticator, so only the cap applies.
     ///
     /// Per EIP-8130 a config change MAY authorize a non-canonical authenticator
     /// (for in-EVM use such as recovery keys); only the reserved window
@@ -1076,7 +1211,7 @@ where
     /// names no authenticator and MUST carry empty `data`; a non-empty `data` is
     /// malformed and rejected at the gate.
     fn validate_actor_changes(changes: &[ActorChange]) -> Result<(), InvalidPoolTransactionError> {
-        if changes.len() > Eip8130Constants::MAX_ACTORS_PER_ENTRY {
+        if changes.len() > Eip8130Constants::MAX_ACTOR_CHANGES_PER_CONFIG {
             return Err(InvalidTransactionError::TxTypeNotSupported.into());
         }
         let mut seen = BTreeSet::new();
@@ -1242,6 +1377,7 @@ mod tests {
         InitialActor, TxDeposit, TxEip8130,
     };
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
+    use base_execution_eip8130::{AccountChangeApplier, ConfigChangeAuthorizer};
     use base_execution_evm::BaseEvmConfig;
     use base_test_utils::Account;
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
@@ -1754,8 +1890,23 @@ mod tests {
     }
 
     #[test]
+    fn accepts_eip8130_config_change_with_exactly_max_actor_changes() {
+        let actor_changes = (0..Eip8130Constants::MAX_ACTOR_CHANGES_PER_CONFIG)
+            .map(|i| make_authorize_change(B256::repeat_byte(i as u8), ok_authenticator()))
+            .collect();
+        let cfg = ConfigChange { actor_changes, ..make_valid_config_change() };
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::ConfigChange(cfg)],
+            ..minimal_valid_eoa_tx()
+        };
+        assert!(
+            TestValidator::validate_account_changes(&sign_eoa_eip8130(tx), test_chain_id()).is_ok()
+        );
+    }
+
+    #[test]
     fn rejects_eip8130_config_change_with_too_many_actor_changes() {
-        let actor_changes = (0..(Eip8130Constants::MAX_ACTORS_PER_ENTRY + 1))
+        let actor_changes = (0..(Eip8130Constants::MAX_ACTOR_CHANGES_PER_CONFIG + 1))
             .map(|i| make_authorize_change(B256::repeat_byte(i as u8), ok_authenticator()))
             .collect();
         let cfg = ConfigChange { actor_changes, ..make_valid_config_change() };
@@ -1849,19 +2000,38 @@ mod tests {
 
     #[test]
     fn rejects_eip8130_too_many_config_changes() {
+        // The interim total-account-changes cap currently sits below
+        // `MAX_CONFIG_CHANGES_PER_TX`, so exercise the per-type config cap
+        // directly against the structural entry walk (bypassing the total gate)
+        // to keep that invariant covered independently.
         let count = Eip8130Constants::MAX_CONFIG_CHANGES_PER_TX + 1;
         let account_changes =
             (0..count).map(|_| AccountChange::ConfigChange(make_valid_config_change())).collect();
         let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
-        assert_unsupported(TestValidator::validate_account_changes(
+        assert_unsupported(TestValidator::validate_account_change_entries(
             &sign_eoa_eip8130(tx),
             test_chain_id(),
         ));
     }
 
     #[test]
-    fn accepts_eip8130_with_exactly_max_config_changes() {
+    fn accepts_eip8130_exactly_max_config_changes_in_structural_walk() {
+        // Exactly `MAX_CONFIG_CHANGES_PER_TX` config changes pass the per-type
+        // cap in the structural walk (the interim total cap is applied
+        // separately by `validate_account_changes`).
         let count = Eip8130Constants::MAX_CONFIG_CHANGES_PER_TX;
+        let account_changes =
+            (0..count).map(|_| AccountChange::ConfigChange(make_valid_config_change())).collect();
+        let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
+        assert!(
+            TestValidator::validate_account_change_entries(&sign_eoa_eip8130(tx), test_chain_id())
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn accepts_eip8130_with_exactly_max_account_changes() {
+        let count = Eip8130Constants::MAX_ACCOUNT_CHANGES_PER_TX;
         let account_changes =
             (0..count).map(|_| AccountChange::ConfigChange(make_valid_config_change())).collect();
         let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
@@ -1869,6 +2039,18 @@ mod tests {
             TestValidator::validate_account_changes(&sign_eoa_eip8130(tx), test_chain_id(),)
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn rejects_eip8130_too_many_account_changes() {
+        let count = Eip8130Constants::MAX_ACCOUNT_CHANGES_PER_TX + 1;
+        let account_changes =
+            (0..count).map(|_| AccountChange::ConfigChange(make_valid_config_change())).collect();
+        let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
+        assert_unsupported(TestValidator::validate_account_changes(
+            &sign_eoa_eip8130(tx),
+            test_chain_id(),
+        ));
     }
 
     #[test]
@@ -1887,18 +2069,36 @@ mod tests {
     }
 
     #[test]
-    fn accepts_eip8130_with_create_followed_by_delegation_and_configs() {
-        let mut account_changes = vec![AccountChange::Create(make_valid_create_entry())];
-        for _ in 0..3 {
-            account_changes.push(AccountChange::ConfigChange(make_valid_config_change()));
-        }
-        account_changes
-            .push(AccountChange::Delegation(Delegation { target: Address::repeat_byte(0x55) }));
+    fn rejects_eip8130_create_and_delegation_coexistence() {
+        // A transaction must not contain both a Create and a Delegation entry.
+        // These are mutually exclusive: create establishes a fresh account
+        // (code installed by the protocol) while delegation modifies an
+        // existing account's code pointer.
+        let account_changes = vec![
+            AccountChange::Create(make_valid_create_entry()),
+            AccountChange::Delegation(Delegation { target: Address::repeat_byte(0x55) }),
+        ];
         let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
-        assert!(
-            TestValidator::validate_account_changes(&sign_eoa_eip8130(tx), test_chain_id(),)
-                .is_ok()
-        );
+        assert_unsupported(TestValidator::validate_account_changes(
+            &sign_eoa_eip8130(tx),
+            test_chain_id(),
+        ));
+    }
+
+    #[test]
+    fn rejects_eip8130_create_config_and_delegation_coexistence() {
+        // Same invariant with a config change interleaved between the create and
+        // the delegation — the delegation is still rejected.
+        let account_changes = vec![
+            AccountChange::Create(make_valid_create_entry()),
+            AccountChange::ConfigChange(make_valid_config_change()),
+            AccountChange::Delegation(Delegation { target: Address::repeat_byte(0x55) }),
+        ];
+        let tx = TxEip8130 { account_changes, ..minimal_valid_eoa_tx() };
+        assert_unsupported(TestValidator::validate_account_changes(
+            &sign_eoa_eip8130(tx),
+            test_chain_id(),
+        ));
     }
 
     /// L1 attribute deposit calldata that activates Isthmus and seeds a non-zero
@@ -2021,5 +2221,109 @@ mod tests {
                 "expected operator-fee-underfunded tx to be rejected at admission, got {other:?}"
             ),
         }
+    }
+
+    /// Builds a K1 authenticator-prefixed auth blob (`K1(20) || r || s || v`,
+    /// `v` in `{27, 28}`, low-s) over `hash` for the configured-actor wire form.
+    fn k1_auth_blob(signer: &PrivateKeySigner, hash: B256) -> Bytes {
+        let sig = signer.sign_hash_sync(&hash).unwrap();
+        let mut out = Vec::with_capacity(20 + 65);
+        out.extend_from_slice(Eip8130Constants::K1_AUTHENTICATOR.as_slice());
+        out.extend_from_slice(&sig.r().to_be_bytes::<32>());
+        out.extend_from_slice(&sig.s().to_be_bytes::<32>());
+        out.push(27 + u8::from(sig.v()));
+        Bytes::from(out)
+    }
+
+    /// Pool-side coverage for the [`OverlayPrecompileStorage`] admission path:
+    /// a counterfactual `Create` followed by a `ConfigChange` in the same
+    /// transaction must be admitted, which can only happen if the overlay
+    /// buffers the create's writes so the config change authorizes against the
+    /// freshly-created account's evolving state (the create installs an
+    /// unrestricted owner; the config change then advances the multichain
+    /// channel from sequence 0). If the overlay did not persist the create's
+    /// storage transitions, the config change would fail with `NotBound`.
+    #[test]
+    fn admits_eip8130_create_then_config_change_via_overlay() {
+        let signer = PrivateKeySigner::random();
+        let signer_addr = signer.address();
+        let actor_id = {
+            let mut id = [0u8; 32];
+            id[..20].copy_from_slice(signer_addr.as_slice());
+            B256::from_slice(&id)
+        };
+        let initial_actors =
+            vec![InitialActor { actor_id, authenticator: Eip8130Constants::K1_AUTHENTICATOR }];
+        let create = CreateEntry {
+            user_salt: B256::ZERO,
+            // Non-empty code: the structural gate rejects create.code.is_empty(),
+            // so empty code would never reach validate_eip8130_full in production.
+            // Using minimal valid bytecode (PUSH1 0x00) also affects the CREATE2
+            // address derivation, exercising a more realistic admitted scenario.
+            code: Bytes::from_static(&[0x60, 0x00]),
+            initial_actors: initial_actors.clone(),
+        };
+        let derived = AccountChangeApplier::compute_address(
+            create.user_salt,
+            create.code.as_ref(),
+            &initial_actors,
+        )
+        .expect("address derivation");
+
+        // Multichain (chain_id == 0) config change at the channel's first
+        // sequence, signed by the create's initial owner and bound to the
+        // counterfactual address.
+        let mut config = ConfigChange {
+            chain_id: 0,
+            sequence: 0,
+            actor_changes: Vec::new(),
+            auth: Bytes::new(),
+        };
+        let config_digest = ConfigChangeAuthorizer::signed_actor_changes_digest(derived, &config);
+        config.auth = k1_auth_blob(&signer, config_digest);
+
+        let tx = TxEip8130 {
+            chain_id: test_chain_id(),
+            sender: Some(derived),
+            nonce_key: U256::ZERO,
+            nonce_sequence: 0,
+            expiry: 0,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 100,
+            gas_limit: 1_000_000,
+            account_changes: vec![
+                AccountChange::Create(create),
+                AccountChange::ConfigChange(config),
+            ],
+            calls: Vec::new(),
+            metadata: Bytes::new(),
+            payer: None,
+        };
+        let sender_auth = k1_auth_blob(&signer, tx.sender_signature_hash());
+        let signed = Eip8130Signed::new(tx, sender_auth, Bytes::new());
+
+        // Fund the counterfactual address so the self-paid fee check passes; it
+        // is still "fresh" (nonce 0, no code) for the create freshness gate.
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().cobalt_activated().build());
+        let client = MockEthProvider::<BasePrimitives>::new()
+            .with_chain_spec(Arc::clone(&chain_spec))
+            .with_genesis_block();
+        client.add_account(
+            derived,
+            ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64)),
+        );
+        let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
+        let inner = EthTransactionValidatorBuilder::new(client, evm_config)
+            .no_shanghai()
+            .no_cancun()
+            .build(InMemoryBlobStore::default());
+        let validator: TestValidator =
+            BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default());
+
+        let state = validator
+            .validate_eip8130_full(&signed)
+            .expect("create + config change must be admitted via the overlay");
+        assert_eq!(state.sender, derived);
+        assert_eq!(state.payer, derived, "self-paid create");
     }
 }

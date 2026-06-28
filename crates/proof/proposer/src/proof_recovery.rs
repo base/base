@@ -336,14 +336,8 @@ mod tests {
             parent = proxy;
         }
 
-        let factory = MockDisputeGameFactory {
-            games: Vec::new(),
-            game_count_override: Some(n as u64),
-            uuid_games,
-            uuid_game_responses: None,
-            games_should_fail: false,
-            game_count_calls: None,
-        };
+        let factory =
+            MockDisputeGameFactory { game_count: n as u64, uuid_games, ..Default::default() };
 
         (factory, output_roots)
     }
@@ -413,7 +407,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_recovery_returns_anchor_when_no_games() {
-        let factory = MockDisputeGameFactory::with_games(vec![]);
+        let factory = MockDisputeGameFactory::default();
         let recovery = recovery(factory, HashMap::new());
 
         let (state, cache) = recover_uncached(&recovery).await;
@@ -428,8 +422,7 @@ mod tests {
         let anchor_game = proxy_addr(0);
         let anchor_root = B256::repeat_byte(0xAA);
         let anchor_block = TEST_BLOCK_INTERVAL;
-        let mut factory = MockDisputeGameFactory::with_games(vec![]);
-        factory.game_count_override = Some(1);
+        let factory = MockDisputeGameFactory { game_count: 1, ..Default::default() };
 
         let recovery = recovery_full(
             factory,
@@ -535,7 +528,7 @@ mod tests {
     async fn test_recovery_cache_incremental_unrelated_games() {
         let (factory, output_roots) = game_chain(1);
         let mut factory_with_extra_count = factory;
-        factory_with_extra_count.game_count_override = Some(2);
+        factory_with_extra_count.game_count = 2;
 
         let recovery = recovery(factory_with_extra_count, output_roots);
 

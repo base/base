@@ -492,7 +492,7 @@ mod tests {
             proof_requester,
             rollup_client,
             output_proposer,
-            Arc::new(MockDisputeGameFactory::with_games(vec![])),
+            Arc::new(MockDisputeGameFactory::default()),
             Arc::new(MockAggregateVerifier::default()),
         )
     }
@@ -624,7 +624,7 @@ mod tests {
             dispatch_pair(&requester, proof_request).await;
         }
 
-        let mut factory = MockDisputeGameFactory::with_games(vec![]);
+        let mut factory = MockDisputeGameFactory::default();
         factory.uuid_games.insert(
             (0, first_root, encode_extra_data(first_target, Address::ZERO, &[first_root])),
             first_game,
@@ -691,8 +691,7 @@ mod tests {
 
     #[tokio::test]
     async fn tick_waits_when_delete_after_discard_fails() {
-        let requester = Arc::new(MockProofRequester::default());
-        requester.reject_delete.store(true, std::sync::atomic::Ordering::SeqCst);
+        let requester = Arc::new(MockProofRequester { reject_delete: true, ..Default::default() });
         let target_block = 200;
         let claimed_root = B256::repeat_byte(target_block as u8);
         let session_id =
@@ -724,8 +723,7 @@ mod tests {
 
     #[tokio::test]
     async fn root_mismatch_restarts_even_when_delete_fails() {
-        let requester = Arc::new(MockProofRequester::default());
-        requester.reject_delete.store(true, std::sync::atomic::Ordering::SeqCst);
+        let requester = Arc::new(MockProofRequester { reject_delete: true, ..Default::default() });
         let target_block = 200;
         let stale_root = B256::repeat_byte(0xaa);
         let fresh_root = B256::repeat_byte(0xbb);

@@ -114,6 +114,30 @@ impl Eip8130Constants {
     /// here that downstream operators can revisit once the spec finalises.
     pub const MAX_CONFIG_CHANGES_PER_TX: usize = 10;
 
+    /// Maximum number of `account_changes` entries (of any kind: `Create`,
+    /// `ConfigChange`, `Delegation`) the mempool accepts in a single
+    /// transaction. This is an **interim** total-entry admission cap that keeps
+    /// per-transaction admission work (and the in-memory overlay it applies
+    /// against) small and bounded while the interleaved authorize-and-apply
+    /// admission flow beds in.
+    ///
+    /// Relationship to the per-type caps ([`Self::MAX_CONFIG_CHANGES_PER_TX`]
+    /// and the implicit ≤1 `Create` / ≤1 `Delegation` structural limits):
+    ///
+    /// - **While this cap is the smallest** (3 < 10 today), it is the *binding*
+    ///   admission constraint — a transaction can never reach
+    ///   `MAX_CONFIG_CHANGES_PER_TX` config changes because the total cap stops
+    ///   it first. The per-type caps are effectively dormant.
+    /// - **Once this is raised to or above `MAX_CONFIG_CHANGES_PER_TX`**, the
+    ///   per-type caps become the binding constraints: `MAX_CONFIG_CHANGES_PER_TX`
+    ///   bounds config changes, and the ≤1 `Create` / ≤1 `Delegation` structural
+    ///   rules bound the rest. Raising this cap therefore *relaxes* admission up
+    ///   to (but never beyond) the per-type ceilings.
+    ///
+    /// Keep this value `<= MAX_CONFIG_CHANGES_PER_TX + 2` (one create + one
+    /// delegation) if the intent is for the total cap to stay the binding limit.
+    pub const MAX_ACCOUNT_CHANGES_PER_TX: usize = 3;
+
     /// Maximum `expiry` window (in seconds beyond the current wall-clock time)
     /// the mempool accepts for nonce-free-mode transactions
     /// (`nonce_key == NONCE_KEY_MAX`). Per the spec ("Nodes SHOULD reject
@@ -122,13 +146,17 @@ impl Eip8130Constants {
     pub const NONCE_FREE_MAX_EXPIRY_WINDOW: u64 = 10;
 
     /// Maximum number of actor entries the mempool accepts in a single
-    /// `Create.initial_actors` or `ConfigChange.actor_changes` slice. Bounds
-    /// per-transaction memory and CPU spent on duplicate-actor_id detection
-    /// at admission time. Combined with [`Self::MAX_CONFIG_CHANGES_PER_TX`]
-    /// this caps total actor work per tx at
-    /// `MAX_CONFIG_CHANGES_PER_TX * MAX_ACTORS_PER_ENTRY + MAX_ACTORS_PER_ENTRY`
-    /// (config-change `actor_changes` + one `Create.initial_actors`).
+    /// `Create.initial_actors` slice. Bounds per-transaction memory and CPU
+    /// spent on duplicate-actor_id detection at admission time.
     pub const MAX_ACTORS_PER_ENTRY: usize = 32;
+
+    /// Maximum number of `actorChanges` the mempool accepts within a single
+    /// `ConfigChange` entry. An interim conservative cap that keeps the
+    /// per-config-change work (ABI decode, duplicate detection, authenticator
+    /// validation) small and bounded. Deliberately lower than
+    /// [`Self::MAX_ACTORS_PER_ENTRY`]; can be raised toward that value once
+    /// the interleaved admission flow is proven out.
+    pub const MAX_ACTOR_CHANGES_PER_CONFIG: usize = 5;
 
     /// Maximum runtime bytecode size for a create entry, matching EIP-170's
     /// `MAX_CODE_SIZE` limit. EIP-8130 places runtime code directly, so the
