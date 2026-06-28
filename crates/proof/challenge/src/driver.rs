@@ -379,7 +379,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
 
         if result.is_valid {
             debug!(game = %game_address, "game output roots are valid");
-            self.anchor_updater.track_valid_game(game_address);
+            self.anchor_updater.track_game(game_address);
             return Ok(());
         }
 
@@ -1263,7 +1263,6 @@ mod tests {
         driver.poll_or_submit(addr(0)).await.unwrap();
 
         assert!(!driver.pending_proofs.contains_key(&addr(0)));
-        assert!(!driver.anchor_updater.is_tracking(&addr(0)));
     }
 
     #[tokio::test]

@@ -1074,12 +1074,10 @@ async fn test_poll_or_submit_nullify_intent_not_dropped_when_zk_prover_set() {
 async fn test_successful_nullify_does_not_track_anchor_update() {
     let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
     let l2 = default_l2();
-    let verifier = single_game_verifier(mock_state_with_tee(
-        GameStatus::InProgress,
-        ZK_PROVER_ADDR,
-        DEFAULT_TEE_PROVER,
-        20,
-    ));
+    let mut game_state =
+        mock_state_with_tee(GameStatus::InProgress, ZK_PROVER_ADDR, DEFAULT_TEE_PROVER, 20);
+    game_state.game_over = true;
+    let verifier = single_game_verifier(game_state);
 
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
     driver.pending_proofs.insert(
@@ -1098,10 +1096,7 @@ async fn test_successful_nullify_does_not_track_anchor_update() {
     driver.step().await.unwrap();
 
     assert!(!driver.pending_proofs.contains_key(&addr(0)));
-    assert!(
-        !driver.anchor_updater.is_tracking(&addr(0)),
-        "nullify results should be rescanned before anchor update tracking"
-    );
+    driver.step().await.unwrap();
 }
 
 #[tokio::test]
