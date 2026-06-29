@@ -17,3 +17,4 @@ crates/proof/succinct/elf/*.bin
 
 crates/infra/load-tests/examples/*.yaml
 .tdx-hoodi
+.tdx-sepolia

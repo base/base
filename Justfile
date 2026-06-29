@@ -172,8 +172,8 @@ basectl:
 tdx-zeronet-image-hash *args="":
     just tee tdx-image-hash http://136.107.166.21:7310 {{ args }}
 
-# Run local Nitro+TDX proof workers, prover-service, and proposer against Hoodi.
-hoodi-zeronet-tdx-local-offchain:
+# Run local Nitro+TDX proof workers, prover-service, and proposer against Base Sepolia.
+sepolia-tdx-dev-offchain:
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -189,24 +189,24 @@ hoodi-zeronet-tdx-local-offchain:
     need jq
     need python3
 
-    l1_rpc="${HOODI_L1_RPC_URL:-https://c3-chainproxy-eth-hoodi-full-dev.cbhq.net}"
-    l2_rpc="${HOODI_L2_RPC_URL:-https://base-zeronet-reth-proofs-donotuse.cbhq.net:8545}"
-    rollup_rpc="${HOODI_ROLLUP_RPC_URL:-https://base-zeronet-reth-rpc-donotuse.cbhq.net:7545}"
-    l1_beacon="${HOODI_L1_BEACON_URL:-https://c3-chainproxy-eth-hoodi-full-dev.cbhq.net:5052}"
-    l2_chain_id="${HOODI_L2_CHAIN_ID:-763360}"
-    postgres_port="${TDX_HOODI_POSTGRES_PORT:-5432}"
-    requester_rpc="${TDX_HOODI_PROVER_REQUESTER_RPC:-127.0.0.1:9000}"
-    worker_rpc="${TDX_HOODI_PROVER_WORKER_RPC:-127.0.0.1:9001}"
-    nitro_signer_rpc="${TDX_HOODI_NITRO_SIGNER_RPC:-127.0.0.1:8000}"
-    tdx_signer_rpc="${TDX_HOODI_TDX_SIGNER_RPC:-127.0.0.1:8010}"
+    l1_rpc="${L1_RPC_URL:-https://ethereum-full-sepolia-k8s-dev.cbhq.net}"
+    l2_rpc="${L2_RPC_URL:-https://base-sepolia-reth-proofs-k8s-donotuse.cbhq.net:8545}"
+    rollup_rpc="${ROLLUP_RPC_URL:-${L2_OUTPUT_ROOT_RPC_URL:-https://base-sepolia-reth-internal-rpc-donotuse.cbhq.net:7545}}"
+    l1_beacon="${L1_BEACON_URL:-https://ethereum-full-sepolia-k8s-dev.cbhq.net:5052}"
+    l2_chain_id="${TDX_SEPOLIA_L2_CHAIN_ID:-84532}"
+    postgres_port="${TDX_SEPOLIA_POSTGRES_PORT:-5432}"
+    requester_rpc="${TDX_SEPOLIA_PROVER_REQUESTER_RPC:-127.0.0.1:9000}"
+    worker_rpc="${TDX_SEPOLIA_PROVER_WORKER_RPC:-127.0.0.1:9001}"
+    nitro_signer_rpc="${TDX_SEPOLIA_NITRO_SIGNER_RPC:-127.0.0.1:8000}"
+    tdx_signer_rpc="${TDX_SEPOLIA_TDX_SIGNER_RPC:-127.0.0.1:8010}"
     proposer_private_key="${BASE_PROPOSER_PRIVATE_KEY:?BASE_PROPOSER_PRIVATE_KEY must be set in .env or the environment}"
-    forge_account="${TDX_HOODI_FORGE_ACCOUNT:-testnet-admin}"
+    forge_account="${TDX_SEPOLIA_FORGE_ACCOUNT:-testnet-admin}"
     contracts_dir="$(cd ../contracts && pwd)"
-    deployments="${TDX_HOODI_DEPLOYMENTS:-$contracts_dir/deployments/560048-dev-no-nitro.json}"
-    deploy_config="${TDX_HOODI_DEPLOY_CONFIG:-$contracts_dir/deploy-config/hoodi-zeronet-tdx-local.json}"
-    pg_container="${TDX_HOODI_POSTGRES_CONTAINER:-base-prover-service-tdx-hoodi}"
-    pg_data_dir="${TDX_HOODI_POSTGRES_DATA_DIR:-$PWD/.tdx-hoodi/postgres}"
-    pg_password="${TDX_HOODI_POSTGRES_PASSWORD:-postgres}"
+    deployments="${TDX_SEPOLIA_DEPLOYMENTS:-$contracts_dir/deployments/11155111-dev-with-tdx.json}"
+    deploy_config="${TDX_SEPOLIA_DEPLOY_CONFIG:-$contracts_dir/deploy-config/zeronet-tdx.json}"
+    pg_container="${TDX_SEPOLIA_POSTGRES_CONTAINER:-base-prover-service-tdx-sepolia}"
+    pg_data_dir="${TDX_SEPOLIA_POSTGRES_DATA_DIR:-$PWD/.tdx-sepolia/postgres}"
+    pg_password="${TDX_SEPOLIA_POSTGRES_PASSWORD:-postgres}"
 
     registry="$(jq -r '.TEEProverRegistry // empty' "$deployments")"
     anchor_state_registry="$(jq -r '.AnchorStateRegistry // empty' "$deployments")"
@@ -254,13 +254,7 @@ hoodi-zeronet-tdx-local-offchain:
     }
     trap cleanup EXIT INT TERM
 
-    mkdir -p "$pg_data_dir"
-    # ponytail: initdb migrations run on first DB creation; delete the data dir to replay them.
-    if [[ -n "$(docker ps --filter "name=^/${pg_container}$" --filter status=running -q)" ]]; then
-        echo "Postgres already running: $pg_container"
-    elif [[ -n "$(docker ps -a --filter "name=^/${pg_container}$" -q)" ]]; then
-        docker start "$pg_container" >/dev/null
-    else
+    create_pg_container() {
         docker run -d \
             --name "$pg_container" \
             -e POSTGRES_USER=postgres \
@@ -270,6 +264,21 @@ hoodi-zeronet-tdx-local-offchain:
             -v "$pg_data_dir:/var/lib/postgresql/data" \
             -v "$PWD/crates/proof/prover-service/db/migrations:/docker-entrypoint-initdb.d:ro" \
             postgres:17-alpine >/dev/null
+    }
+
+    mkdir -p "$pg_data_dir"
+    # ponytail: initdb migrations run on first DB creation; delete the data dir to replay them.
+    if [[ -n "$(docker ps --filter "name=^/${pg_container}$" --filter status=running -q)" ]]; then
+        echo "Postgres already running: $pg_container"
+    elif [[ -n "$(docker ps -a --filter "name=^/${pg_container}$" -q)" ]]; then
+        docker start "$pg_container" >/dev/null
+    else
+        create_pg_container
+    fi
+    if ! docker port "$pg_container" 5432/tcp 2>/dev/null | grep -qx "127.0.0.1:$postgres_port"; then
+        echo "Recreating Postgres with localhost port $postgres_port published"
+        docker rm -f "$pg_container" >/dev/null
+        create_pg_container
     fi
     until docker exec "$pg_container" pg_isready -U postgres -d proverdb >/dev/null 2>&1; do
         sleep 1
@@ -299,7 +308,6 @@ hoodi-zeronet-tdx-local-offchain:
         --l2-eth-url "$l2_rpc" \
         --l1-beacon-url "$l1_beacon" \
         --l2-chain-id "$l2_chain_id" \
-        --rollup-rpc-url "$rollup_rpc" \
         --listen-addr "$nitro_signer_rpc" \
         --prover-service-endpoint "http://$worker_rpc" \
         --enable-experimental-witness-endpoint &
@@ -313,7 +321,6 @@ hoodi-zeronet-tdx-local-offchain:
         --l2-eth-url "$l2_rpc" \
         --l1-beacon-url "$l1_beacon" \
         --l2-chain-id "$l2_chain_id" \
-        --rollup-rpc-url "$rollup_rpc" \
         --listen-addr "$tdx_signer_rpc" \
         --prover-service-endpoint "http://$worker_rpc" \
         --enable-experimental-witness-endpoint &
@@ -344,5 +351,5 @@ hoodi-zeronet-tdx-local-offchain:
         --tee-proof-mode both \
         --allow-non-finalized \
         --private-key "$proposer_private_key" \
-        --poll-interval "${TDX_HOODI_PROPOSER_POLL_INTERVAL:-12s}"
+        --poll-interval "${TDX_SEPOLIA_PROPOSER_POLL_INTERVAL:-12s}"
     cleanup
