@@ -48,4 +48,15 @@ pub use wire::ValidatedTransaction;
 
 mod two_d_nonce_pool;
 
+mod invalidation;
+pub use invalidation::{InvalidationIndex, InvalidationKey, WatchSet};
+
+mod limits;
+pub use limits::{InflightCounters, PayerBook};
+
+mod guard;
+pub use guard::{
+    Admission, DEFAULT_PAYER_LIMIT, DEFAULT_SENDER_LIMIT, GuardLimits, LimitRejection, MempoolGuard,
+};
+
 pub mod estimated_da_size;

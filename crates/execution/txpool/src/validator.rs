@@ -9,7 +9,7 @@ use std::{
 
 use alloy_consensus::{BlockHeader, Transaction, constants::KECCAK_EMPTY};
 use alloy_eips::eip2718::Encodable2718;
-use alloy_primitives::{Address, B256, LogData, U256};
+use alloy_primitives::{Address, B256, LogData, U256, keccak256};
 use base_common_chains::Upgrades;
 use base_common_consensus::{
     AccountChange, ActorChange, ActorChangeType, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
@@ -45,7 +45,7 @@ use revm::{
     state::{AccountInfo, Bytecode},
 };
 
-use crate::BasePooledTx;
+use crate::{BasePooledTx, InvalidationKey, WatchSet};
 
 /// Base-specific transaction pool validation errors.
 #[derive(Debug, thiserror::Error)]
@@ -69,7 +69,7 @@ pub enum BaseTxPoolError {
 }
 
 /// Resolved EIP-8130 actors and state data required to build the pool outcome.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct Eip8130ValidationState {
     sender: Address,
     payer: Address,
@@ -81,6 +81,43 @@ struct Eip8130ValidationState {
     /// must do the same to avoid admitting operator-fee-underfunded sponsored
     /// transactions. Zero for self-pay transactions.
     payer_auth: u64,
+    /// The on-chain state surfaces whose change invalidates this transaction,
+    /// computed from the resolved actors, nonce mode, and any config changes.
+    watch_set: WatchSet,
+}
+
+/// Base storage slot of the `AccountConfiguration` `_actorConfig` mapping
+/// (`mapping(bytes32 actorId => mapping(address account => ActorConfig))`),
+/// first in the contract's sequential layout. Mirrors
+/// [`AccountConfigurationStorage`].
+const ACCOUNT_CONFIG_ACTOR_CONFIG_BASE_SLOT: u64 = 0;
+
+/// Base storage slot of the `AccountConfiguration` `_accountState` mapping
+/// (`mapping(address account => AccountState)`), fourth in the contract's
+/// sequential layout. Mirrors [`AccountConfigurationStorage`].
+const ACCOUNT_CONFIG_ACCOUNT_STATE_BASE_SLOT: u64 = 3;
+
+/// Computes a Solidity `mapping` slot for a 32-byte key:
+/// `keccak256(key ‖ base_slot)`.
+fn mapping_slot_b256(key: B256, base_slot: U256) -> U256 {
+    let mut buf = [0u8; 64];
+    buf[..32].copy_from_slice(key.as_slice());
+    buf[32..].copy_from_slice(&base_slot.to_be_bytes::<32>());
+    U256::from_be_bytes(keccak256(buf).0)
+}
+
+/// Computes a Solidity `mapping` slot for an address key, left-padded to 32
+/// bytes: `keccak256(pad32(key) ‖ base_slot)`.
+fn mapping_slot_address(key: Address, base_slot: U256) -> U256 {
+    let mut buf = [0u8; 64];
+    buf[12..32].copy_from_slice(key.as_slice());
+    buf[32..].copy_from_slice(&base_slot.to_be_bytes::<32>());
+    U256::from_be_bytes(keccak256(buf).0)
+}
+
+/// Converts a slot index to its big-endian 32-byte storage key.
+fn b256_from_u256(slot: U256) -> B256 {
+    B256::from(slot.to_be_bytes::<32>())
 }
 
 /// Read-only precompile storage adapter backed by a reth state provider.
@@ -632,6 +669,7 @@ where
             };
             let propagate =
                 matches!(origin, TransactionOrigin::External | TransactionOrigin::Local);
+            transaction.set_watch_set(state.watch_set.clone());
             let outcome = TransactionValidationOutcome::Valid {
                 balance: state.payer_balance_after_auth,
                 state_nonce: state.sender_nonce,
@@ -642,6 +680,15 @@ where
             };
             return self.apply_base_checks(outcome, state.payer_auth);
         }
+        // Standard transactions (Legacy/2930/1559/7702): the only invalidation
+        // surfaces are the sender's balance and protocol nonce. Recorded before
+        // validation since both are known from the signed transaction.
+        let sender = transaction.sender();
+        transaction.set_watch_set(
+            WatchSet::new()
+                .watch(InvalidationKey::Balance(sender))
+                .watch(InvalidationKey::ProtocolNonce(sender)),
+        );
         let outcome = self.inner.validate_one_with_state(origin, transaction, state);
         self.apply_base_checks(outcome, 0)
     }
@@ -673,7 +720,7 @@ where
             local_chain_id,
             now,
         ));
-        let (sender, payer, sender_actor, is_create, has_delegation) =
+        let (sender, payer, sender_actor, is_create, has_delegation, payer_actor_id, config_actor_ids) =
             StorageCtx::enter(&mut storage, |ctx| {
                 let mut account_config = AccountConfigurationStorage::new(ctx);
                 TransactionAuthorizer::authorize_and_apply(
@@ -689,7 +736,26 @@ where
                     // re-scanning account_changes below.
                     let is_create = applied.applied.created.is_some();
                     let has_delegation = applied.applied.delegation.is_some();
-                    (sender, payer, applied.actors.sender.resolved, is_create, has_delegation)
+                    // Capture the actor surfaces the transaction's authorization
+                    // depends on, for the invalidation watch set: the payer's
+                    // authorizing actor (when sponsored) and the authorizing
+                    // actor of every config change.
+                    let payer_actor_id =
+                        applied.actors.payer.map(|actor| actor.resolved.actor_id);
+                    let config_actor_ids = applied
+                        .config_changes
+                        .iter()
+                        .map(|actor| actor.actor_id)
+                        .collect::<Vec<_>>();
+                    (
+                        sender,
+                        payer,
+                        applied.actors.sender.resolved,
+                        is_create,
+                        has_delegation,
+                        payer_actor_id,
+                        config_actor_ids,
+                    )
                 })
                 .map_err(Self::map_tx_auth_error)
             })?;
@@ -772,6 +838,15 @@ where
         let payer_auth_charge = U256::from(intrinsic.payer_auth)
             .saturating_mul(U256::from(signed.tx().max_fee_per_gas));
 
+        let watch_set = Self::eip8130_watch_set(
+            sender,
+            payer,
+            signed.tx().nonce_key,
+            sender_actor.actor_id,
+            payer_actor_id,
+            &config_actor_ids,
+        );
+
         Ok(Eip8130ValidationState {
             sender,
             payer,
@@ -779,7 +854,85 @@ where
             sender_nonce,
             sender_bytecode_hash: sender_account.bytecode_hash,
             payer_auth: intrinsic.payer_auth,
+            watch_set,
         })
+    }
+
+    /// Builds the [`WatchSet`] for an EIP-8130 transaction from its resolved
+    /// actors, nonce mode, and config changes. Every key is known at validation
+    /// time, so this is a pure derivation with no extra state reads.
+    ///
+    /// Surfaces watched:
+    /// * the payer's balance (the account that funds gas),
+    /// * the nonce (protocol nonce for `nonce_key == 0`, channel nonce
+    ///   otherwise; nonce-free transactions replay-protect via expiry and watch
+    ///   no nonce slot),
+    /// * the sender's and payer's authorizing actor-config slots, and
+    /// * for config-changing transactions, the sender's account-state (lock and
+    ///   sequence) slot plus each config change's authorizing actor-config slot.
+    fn eip8130_watch_set(
+        sender: Address,
+        payer: Address,
+        nonce_key: U256,
+        sender_actor_id: B256,
+        payer_actor_id: Option<B256>,
+        config_actor_ids: &[B256],
+    ) -> WatchSet {
+        let account_config = AccountConfigurationStorage::ADDRESS;
+        let mut watch_set = WatchSet::new();
+        watch_set.push(InvalidationKey::Balance(payer));
+
+        if nonce_key == Eip8130Constants::NONCE_KEY_MAX {
+            // Nonce-free: replay protection is expiry-based, no nonce slot.
+        } else if nonce_key.is_zero() {
+            watch_set.push(InvalidationKey::ProtocolNonce(sender));
+        } else {
+            watch_set.push(InvalidationKey::ChannelNonce { account: sender, nonce_key });
+        }
+
+        watch_set.push(InvalidationKey::Slot {
+            address: account_config,
+            slot: Self::actor_config_slot(sender, sender_actor_id),
+        });
+        if let Some(payer_actor_id) = payer_actor_id {
+            watch_set.push(InvalidationKey::Slot {
+                address: account_config,
+                slot: Self::actor_config_slot(payer, payer_actor_id),
+            });
+        }
+
+        if !config_actor_ids.is_empty() {
+            watch_set.push(InvalidationKey::Slot {
+                address: account_config,
+                slot: Self::account_state_slot(sender),
+            });
+            for actor_id in config_actor_ids {
+                watch_set.push(InvalidationKey::Slot {
+                    address: account_config,
+                    slot: Self::actor_config_slot(sender, *actor_id),
+                });
+            }
+        }
+
+        watch_set
+    }
+
+    /// Storage slot of `actor_config[actor_id][account]` in the
+    /// `AccountConfiguration` contract (nested mapping at base slot
+    /// [`ACCOUNT_CONFIG_ACTOR_CONFIG_BASE_SLOT`]).
+    fn actor_config_slot(account: Address, actor_id: B256) -> B256 {
+        let inner = mapping_slot_b256(actor_id, U256::from(ACCOUNT_CONFIG_ACTOR_CONFIG_BASE_SLOT));
+        b256_from_u256(mapping_slot_address(account, inner))
+    }
+
+    /// Storage slot of `account_state[account]` in the `AccountConfiguration`
+    /// contract (mapping at base slot
+    /// [`ACCOUNT_CONFIG_ACCOUNT_STATE_BASE_SLOT`]).
+    fn account_state_slot(account: Address) -> B256 {
+        b256_from_u256(mapping_slot_address(
+            account,
+            U256::from(ACCOUNT_CONFIG_ACCOUNT_STATE_BASE_SLOT),
+        ))
     }
 
     fn validate_eip8130_create_freshness(
@@ -2426,5 +2579,114 @@ mod tests {
         assert!(!TestValidator::sender_auto_delegated(&[AccountChange::Create(
             make_valid_create_entry(),
         )]));
+    }
+
+    #[test]
+    fn actor_config_slot_matches_canonical_nested_mapping_slot() {
+        use base_precompile_storage::StorageKey;
+
+        let account = Address::repeat_byte(0xAB);
+        let actor_id = B256::repeat_byte(0xCD);
+
+        // actor_config[actor_id][account]: outer key actor_id at base slot 0,
+        // inner key account. Cross-checked against the canonical mapping-slot
+        // primitive the real storage handlers use.
+        let inner = actor_id.mapping_slot(U256::from(ACCOUNT_CONFIG_ACTOR_CONFIG_BASE_SLOT));
+        let expected = b256_from_u256(account.mapping_slot(inner));
+        assert_eq!(TestValidator::actor_config_slot(account, actor_id), expected);
+    }
+
+    #[test]
+    fn account_state_slot_matches_canonical_mapping_slot() {
+        use base_precompile_storage::StorageKey;
+
+        let account = Address::repeat_byte(0x11);
+        let expected = b256_from_u256(
+            account.mapping_slot(U256::from(ACCOUNT_CONFIG_ACCOUNT_STATE_BASE_SLOT)),
+        );
+        assert_eq!(TestValidator::account_state_slot(account), expected);
+    }
+
+    #[test]
+    fn eip8130_watch_set_sponsored_protocol_nonce_no_config() {
+        let sender = Address::repeat_byte(1);
+        let payer = Address::repeat_byte(2);
+        let sender_actor = B256::repeat_byte(3);
+        let payer_actor = B256::repeat_byte(4);
+        let cfg = AccountConfigurationStorage::ADDRESS;
+
+        let watch_set = TestValidator::eip8130_watch_set(
+            sender,
+            payer,
+            U256::ZERO,
+            sender_actor,
+            Some(payer_actor),
+            &[],
+        );
+
+        assert!(watch_set.contains(&InvalidationKey::Balance(payer)));
+        assert!(watch_set.contains(&InvalidationKey::ProtocolNonce(sender)));
+        assert!(watch_set.contains(&InvalidationKey::Slot {
+            address: cfg,
+            slot: TestValidator::actor_config_slot(sender, sender_actor),
+        }));
+        assert!(watch_set.contains(&InvalidationKey::Slot {
+            address: cfg,
+            slot: TestValidator::actor_config_slot(payer, payer_actor),
+        }));
+        // No account-state (lock) slot is watched without config changes.
+        assert!(!watch_set.contains(&InvalidationKey::Slot {
+            address: cfg,
+            slot: TestValidator::account_state_slot(sender),
+        }));
+    }
+
+    #[test]
+    fn eip8130_watch_set_channel_nonce_with_config_changes() {
+        let sender = Address::repeat_byte(1);
+        let nonce_key = U256::from(7u64);
+        let config_actor = B256::repeat_byte(9);
+        let cfg = AccountConfigurationStorage::ADDRESS;
+
+        let watch_set = TestValidator::eip8130_watch_set(
+            sender,
+            sender,
+            nonce_key,
+            B256::repeat_byte(3),
+            None,
+            &[config_actor],
+        );
+
+        assert!(watch_set.contains(&InvalidationKey::ChannelNonce { account: sender, nonce_key }));
+        assert!(!watch_set.contains(&InvalidationKey::ProtocolNonce(sender)));
+        assert!(watch_set.contains(&InvalidationKey::Balance(sender)));
+        // Config changes watch the sender's lock/sequence slot and the config
+        // change's authorizing actor slot.
+        assert!(watch_set.contains(&InvalidationKey::Slot {
+            address: cfg,
+            slot: TestValidator::account_state_slot(sender),
+        }));
+        assert!(watch_set.contains(&InvalidationKey::Slot {
+            address: cfg,
+            slot: TestValidator::actor_config_slot(sender, config_actor),
+        }));
+    }
+
+    #[test]
+    fn eip8130_watch_set_nonce_free_watches_no_nonce_slot() {
+        let sender = Address::repeat_byte(1);
+
+        let watch_set = TestValidator::eip8130_watch_set(
+            sender,
+            sender,
+            Eip8130Constants::NONCE_KEY_MAX,
+            B256::repeat_byte(3),
+            None,
+            &[],
+        );
+
+        assert!(!watch_set.contains(&InvalidationKey::ProtocolNonce(sender)));
+        assert!(watch_set.iter().all(|key| !matches!(key, InvalidationKey::ChannelNonce { .. })));
+        assert!(watch_set.contains(&InvalidationKey::Balance(sender)));
     }
 }

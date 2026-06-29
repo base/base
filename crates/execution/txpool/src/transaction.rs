@@ -73,6 +73,10 @@ pub struct BasePooledTransaction<
     /// Optional maximum timestamp (millis since Unix epoch) from bundle submission.
     /// The transaction should be evicted after this time.
     max_timestamp: Option<u64>,
+    /// The set of on-chain state surfaces whose change invalidates this
+    /// transaction, computed once during validation and consumed by the pool's
+    /// invalidation index. Empty until set; see [`crate::WatchSet`].
+    watch_set: OnceLock<crate::WatchSet>,
 }
 
 impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
@@ -87,6 +91,7 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             target_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            watch_set: OnceLock::new(),
         }
     }
 
@@ -107,6 +112,7 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             target_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            watch_set: OnceLock::new(),
         }
     }
 
@@ -352,6 +358,20 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
     fn eip8130_replay_id(&self) -> Option<B256> {
         None
     }
+
+    /// Returns the invalidation watch set computed during validation, if set.
+    ///
+    /// Defaults to `None` for implementers that do not track invalidation
+    /// surfaces.
+    fn watch_set(&self) -> Option<&crate::WatchSet> {
+        None
+    }
+
+    /// Records the invalidation watch set computed during validation.
+    ///
+    /// Defaults to a no-op for implementers that do not track invalidation
+    /// surfaces.
+    fn set_watch_set(&self, _watch_set: crate::WatchSet) {}
 }
 
 impl<Pooled> BasePooledTx for BasePooledTransaction<BaseTransactionSigned, Pooled>
@@ -386,6 +406,14 @@ where
             return None;
         }
         Some(signed.tx().replay_id(self.sender()))
+    }
+
+    fn watch_set(&self) -> Option<&crate::WatchSet> {
+        self.watch_set.get()
+    }
+
+    fn set_watch_set(&self, watch_set: crate::WatchSet) {
+        let _ = self.watch_set.set(watch_set);
     }
 }
 
