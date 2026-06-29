@@ -261,10 +261,10 @@ pub fn parse_l1_info_tx_jovian(data: &[u8]) -> Result<L1BlockInfo, BaseBlockExec
     // 36    uint256 _basefee,
     // 68    uint256 _blobBaseFee,
     // 100   bytes32 _hash,
-    // 132   bytes32 _batcherHash,
-    // 164   uint32 _operatorFeeScalar
-    // 168   uint64 _operatorFeeConstant
-    // 176   uint16 _daFootprintGasScalar
+    // 128   bytes32 _batcherHash,
+    // 160   uint32 _operatorFeeScalar
+    // 164   uint64 _operatorFeeConstant
+    // 172   uint16 _daFootprintGasScalar
 
     let l1_base_fee_scalar = U256::try_from_be_slice(&data[..4])
         .ok_or(BaseBlockExecutionError::L1BlockInfo(L1BlockInfoError::BaseFeeScalarConversion))?;
