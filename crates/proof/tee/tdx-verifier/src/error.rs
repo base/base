@@ -5,7 +5,7 @@ use thiserror::Error;
 use crate::TDXVerificationResult;
 
 /// Errors that can occur during TDX quote and collateral verification.
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Error)]
 pub enum TdxVerifierError {
     /// Raw TDX quote bytes were malformed or incomplete.
     #[error("invalid TDX quote: {0}")]

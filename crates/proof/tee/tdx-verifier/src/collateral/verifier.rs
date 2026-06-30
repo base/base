@@ -40,32 +40,29 @@ impl CollateralVerifier {
             .iter()
             .map(|crl| AuthenticatedTdxCrl::authenticated_from_der(crl))
             .collect::<Result<Vec<_>>>()?;
-        let mut crl_expiration = u64::MAX;
-
-        for (index, authenticated) in authenticated_chain.iter().enumerate() {
-            if verification_time < authenticated.not_before
-                || verification_time >= authenticated.not_after
+        let (root, issued_certificates) = authenticated_chain.split_first().ok_or_else(|| {
+            TdxVerifierError::PckCertChainInvalid("certificate chain is empty".into())
+        })?;
+        for certificate in &authenticated_chain {
+            if verification_time < certificate.not_before
+                || verification_time >= certificate.not_after
             {
                 return Err(TdxVerifierError::PckCertChainInvalid(
                     "certificate is not valid at verification time".into(),
                 ));
             }
-            if index == 0 {
-                Self::verify_certificate_signature(
-                    authenticated,
-                    &authenticated.subject_public_key,
-                )?;
-                continue;
-            }
+        }
+        Self::verify_certificate_signature(root, &root.subject_public_key)?;
 
-            let issuer = &authenticated_chain[index - 1];
+        let mut crl_expiration = u64::MAX;
+        for (issuer, certificate) in authenticated_chain.iter().zip(issued_certificates) {
             if !issuer.is_ca {
                 return Err(TdxVerifierError::PckCertChainInvalid(
                     "issuer certificate is not a CA".into(),
                 ));
             }
-            Self::verify_certificate_signature(authenticated, &issuer.subject_public_key)?;
-            if authenticated.issuer_name != issuer.subject_name {
+            Self::verify_certificate_signature(certificate, &issuer.subject_public_key)?;
+            if certificate.issuer_name != issuer.subject_name {
                 return Err(TdxVerifierError::PckCertChainInvalid(
                     "certificate issuer name does not match parent".into(),
                 ));
@@ -73,17 +70,14 @@ impl CollateralVerifier {
             crl_expiration = crl_expiration.min(
                 TdxRevocationEvidence::verify_certificate_not_revoked_with_crls(
                     &authenticated_crls,
-                    authenticated,
+                    certificate,
                     issuer,
                     verification_time,
                 )?,
             );
         }
 
-        Ok((
-            authenticated_chain.last().expect("chain is non-empty").subject_public_key.clone(),
-            crl_expiration,
-        ))
+        Ok((authenticated_chain.last().unwrap_or(root).subject_public_key.clone(), crl_expiration))
     }
 
     /// Verifies an authenticated certificate signature with an issuer P-256 public key.
@@ -203,11 +197,9 @@ impl CollateralVerifier {
         let verifying_key = VerifyingKey::from_sec1_bytes(public_key).map_err(|e| {
             TdxVerifierError::PckCertChainInvalid(format!("invalid P-256 public key: {e}"))
         })?;
-        let signature =
-            match Signature::from_slice(signature).or_else(|_| Signature::from_der(signature)) {
-                Ok(signature) => signature,
-                Err(e) => return Err(error.with_message(format!("{e}"))),
-            };
+        let signature = Signature::from_slice(signature)
+            .or_else(|_| Signature::from_der(signature))
+            .map_err(|e| error.clone().with_message(e.to_string()))?;
         verifying_key.verify(message, &signature).map_err(|_| error)?;
         Ok(())
     }
