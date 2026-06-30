@@ -40,9 +40,8 @@ impl CollateralVerifier {
             .iter()
             .map(|crl| AuthenticatedTdxCrl::authenticated_from_der(crl))
             .collect::<Result<Vec<_>>>()?;
-        let (root, issued_certificates) = authenticated_chain.split_first().ok_or_else(|| {
-            TdxVerifierError::PckCertChainInvalid("certificate chain is empty".into())
-        })?;
+        let (root, issued_certificates) =
+            authenticated_chain.split_first().expect("certificate chain is not empty");
         for certificate in &authenticated_chain {
             if verification_time < certificate.not_before
                 || verification_time >= certificate.not_after
@@ -98,15 +97,14 @@ impl CollateralVerifier {
         )
     }
 
-    /// Validates signed collateral and returns its leaf signing key plus CRL expiration.
+    /// Validates signed collateral and returns its CRL expiration.
     pub fn verify_signed_collateral(
         collateral: &TdxSignedCollateral,
         body_kind: TdxSignedCollateralBody,
         trusted_root_ca_hash: B256,
         verification_time: u64,
         revocation: &TdxRevocationEvidence,
-        error_mapper: fn(String) -> TdxVerifierError,
-    ) -> Result<(Bytes, u64)> {
+    ) -> Result<u64> {
         let (issue_time, next_update) = collateral.signed_validity(body_kind)?;
         if verification_time < issue_time || verification_time >= next_update {
             return Err(TdxVerifierError::CollateralExpired);
@@ -120,55 +118,56 @@ impl CollateralVerifier {
         )
         .map_err(|e| match e {
             TdxVerifierError::RootCaNotTrusted => TdxVerifierError::RootCaNotTrusted,
-            other => error_mapper(other.to_string()),
+            other => body_kind.invalid(other.to_string()),
         })?;
         let leaf = collateral
             .signing_chain
             .last()
-            .ok_or_else(|| error_mapper("collateral signing chain is empty".into()))?;
-        Self::verify_collateral_signing_certificate(leaf, error_mapper)?;
+            .ok_or_else(|| body_kind.invalid("collateral signing chain is empty".into()))?;
+        Self::verify_collateral_signing_certificate(leaf, body_kind)?;
 
         let signed_body = collateral.signed_body_bytes(body_kind)?;
         Self::verify_p256_signature(
             &leaf_key,
             &signed_body,
             &collateral.signature,
-            error_mapper("collateral signature failed".into()),
+            body_kind.invalid("collateral signature failed".into()),
         )?;
 
-        Ok((leaf_key, crl_expiration))
+        Ok(crl_expiration)
     }
 
     /// Verifies that a collateral leaf is the expected Intel PCS TCB signing certificate.
     pub fn verify_collateral_signing_certificate(
         certificate: &TdxCertificate,
-        error_mapper: fn(String) -> TdxVerifierError,
+        body_kind: TdxSignedCollateralBody,
     ) -> Result<()> {
         let (remaining, cert) = X509Certificate::from_der(&certificate.raw).map_err(|e| {
-            error_mapper(format!("collateral signing certificate parse failed: {e}"))
+            body_kind.invalid(format!("collateral signing certificate parse failed: {e}"))
         })?;
         if !remaining.is_empty() {
-            return Err(error_mapper(
-                "collateral signing certificate DER has trailing bytes".into(),
-            ));
+            return Err(
+                body_kind.invalid("collateral signing certificate DER has trailing bytes".into())
+            );
         }
 
         let mut common_names = cert.subject().iter_common_name();
         let common_name =
             common_names.next().and_then(|name| name.as_str().ok()).ok_or_else(|| {
-                error_mapper("collateral signing certificate is missing subject common name".into())
+                body_kind
+                    .invalid("collateral signing certificate is missing subject common name".into())
             })?;
         if common_names.next().is_some() || common_name != INTEL_TCB_SIGNING_CERT_COMMON_NAME {
-            return Err(error_mapper(
+            return Err(body_kind.invalid(
                 "collateral signing certificate subject is not Intel TCB Signing".into(),
             ));
         }
 
         let basic_constraints = cert.basic_constraints().map_err(|e| {
-            error_mapper(format!("collateral signing basicConstraints parse failed: {e}"))
+            body_kind.invalid(format!("collateral signing basicConstraints parse failed: {e}"))
         })?;
         if basic_constraints.map(|extension| extension.value.ca).unwrap_or(false) {
-            return Err(error_mapper("collateral signing certificate must not be a CA".into()));
+            return Err(body_kind.invalid("collateral signing certificate must not be a CA".into()));
         }
 
         let has_digital_signature_usage =
@@ -179,7 +178,7 @@ impl CollateralVerifier {
                 )
             });
         if !has_digital_signature_usage {
-            return Err(error_mapper(
+            return Err(body_kind.invalid(
                 "collateral signing certificate is missing digitalSignature key usage".into(),
             ));
         }

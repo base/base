@@ -37,7 +37,7 @@ impl TdxSignedCollateralBody {
     }
 
     /// Returns the verifier error for this collateral body.
-    pub fn invalid(self, message: String) -> TdxVerifierError {
+    pub const fn invalid(self, message: String) -> TdxVerifierError {
         match self {
             Self::TcbInfo => TdxVerifierError::TcbInfoInvalid(message),
             Self::QeIdentity => TdxVerifierError::QeIdentityInvalid(message),

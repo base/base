@@ -36,21 +36,19 @@ impl TdxVerifier {
         TdxQuote::verify_qe_report(&quote, &pck_leaf_key)?;
         TdxQuote::verify_signature(&quote)?;
 
-        let (_, tcb_crl_expiration) = CollateralVerifier::verify_signed_collateral(
+        let tcb_crl_expiration = CollateralVerifier::verify_signed_collateral(
             &input.collateral.tcb_info,
             TdxSignedCollateralBody::TcbInfo,
             input.trusted_root_ca_hash,
             input.verification_time,
             &input.revocation,
-            TdxVerifierError::TcbInfoInvalid,
         )?;
-        let (_, qe_crl_expiration) = CollateralVerifier::verify_signed_collateral(
+        let qe_crl_expiration = CollateralVerifier::verify_signed_collateral(
             &input.collateral.qe_identity,
             TdxSignedCollateralBody::QeIdentity,
             input.trusted_root_ca_hash,
             input.verification_time,
             &input.revocation,
-            TdxVerifierError::QeIdentityInvalid,
         )?;
 
         let pck_leaf = input.pck_certificate_chain.last().ok_or_else(|| {
