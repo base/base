@@ -3,8 +3,8 @@
 use alloy_primitives::Address;
 use alloy_sol_types::{SolValue, sol};
 use base_proof_tee_tdx_verifier::{
-    IntelTcbStatus, TDXTcbStatus, TdxCertificate, TdxCollateral, TdxRevocationEvidence,
-    TdxSignedCollateral, TdxVerifierInput,
+    TDXTcbStatus, TdxCertificate, TdxCollateral, TdxRevocationEvidence, TdxSignedCollateral,
+    TdxVerifier, TdxVerifierInput,
 };
 
 use crate::{ProverError, Result};
@@ -24,10 +24,6 @@ sol! {
         TdxCertificateInput[] signingChain;
         /// P-256 ECDSA signature over the signed collateral body.
         bytes signature;
-        /// Collateral issue time in seconds since Unix epoch.
-        uint64 issueTime;
-        /// Collateral expiration time in seconds since Unix epoch.
-        uint64 nextUpdate;
     }
 
     /// ABI mirror of `TdxCollateral`.
@@ -36,8 +32,6 @@ sol! {
         TdxSignedCollateralInput tcbInfo;
         /// QE identity collateral and signing chain.
         TdxSignedCollateralInput qeIdentity;
-        /// Intel TCB status hint retained for lossless host-side round trips.
-        uint8 tcbStatus;
     }
 
     /// ABI mirror of `TdxRevocationEvidence`.
@@ -60,8 +54,6 @@ sol! {
         bytes32 trustedRootCaHash;
         /// Expected uncompressed secp256k1 signer public key.
         bytes expectedPublicKey;
-        /// Expected Ethereum signer address.
-        address expectedSigner;
         /// Quote collection timestamp in milliseconds since Unix epoch.
         uint64 quoteTimestampMillis;
         /// Verification time in seconds since Unix epoch.
@@ -87,8 +79,9 @@ impl TdxAttestationProverInput {
     }
 
     /// Returns the signer committed by the verifier input.
-    pub const fn expected_signer(&self) -> Address {
-        self.verifier_input.expected_signer
+    pub fn expected_signer(&self) -> Result<Address> {
+        let hash = TdxVerifier::validate_public_key(&self.verifier_input.expected_public_key)?;
+        Ok(Address::from_slice(&hash.as_slice()[12..]))
     }
 
     /// Returns the quote timestamp committed by the verifier input.
@@ -116,7 +109,7 @@ impl TdxAttestationProverInput {
     /// ABI-decodes a prover input and verifies it targets `signer_address`.
     pub fn decode_for_signer(buf: &[u8], signer_address: Address) -> Result<Self> {
         let input = Self::decode(buf)?;
-        let actual = input.expected_signer();
+        let actual = input.expected_signer()?;
         if actual != signer_address {
             return Err(ProverError::SignerMismatch { expected: signer_address, actual });
         }
@@ -133,7 +126,6 @@ impl From<&TdxVerifierInput> for TdxVerifierInputAbi {
             revocation: (&input.revocation).into(),
             trustedRootCaHash: input.trusted_root_ca_hash,
             expectedPublicKey: input.expected_public_key.clone(),
-            expectedSigner: input.expected_signer,
             quoteTimestampMillis: input.quote_timestamp_millis,
             verificationTime: input.verification_time,
             maxQuoteAgeSeconds: input.max_quote_age_seconds,
@@ -161,7 +153,6 @@ impl TryFrom<TdxVerifierInputAbi> for TdxVerifierInput {
             revocation: TdxRevocationEvidence::from(input.revocation),
             trusted_root_ca_hash: input.trustedRootCaHash,
             expected_public_key: input.expectedPublicKey,
-            expected_signer: input.expectedSigner,
             quote_timestamp_millis: input.quoteTimestampMillis,
             verification_time: input.verificationTime,
             max_quote_age_seconds: input.maxQuoteAgeSeconds,
@@ -192,8 +183,6 @@ impl From<&TdxSignedCollateral> for TdxSignedCollateralInput {
             raw: collateral.raw.clone(),
             signingChain: collateral.signing_chain.iter().map(Into::into).collect(),
             signature: collateral.signature.clone(),
-            issueTime: collateral.issue_time,
-            nextUpdate: collateral.next_update,
         }
     }
 }
@@ -204,8 +193,6 @@ impl From<TdxSignedCollateralInput> for TdxSignedCollateral {
             raw: collateral.raw,
             signing_chain: collateral.signingChain.into_iter().map(TdxCertificate::from).collect(),
             signature: collateral.signature,
-            issue_time: collateral.issueTime,
-            next_update: collateral.nextUpdate,
         }
     }
 }
@@ -215,7 +202,6 @@ impl From<&TdxCollateral> for TdxCollateralInput {
         Self {
             tcbInfo: (&collateral.tcb_info).into(),
             qeIdentity: (&collateral.qe_identity).into(),
-            tcbStatus: intel_tcb_status_to_u8(collateral.tcb_status),
         }
     }
 }
@@ -224,11 +210,7 @@ impl TryFrom<TdxCollateralInput> for TdxCollateral {
     type Error = ProverError;
 
     fn try_from(collateral: TdxCollateralInput) -> Result<Self> {
-        Ok(Self {
-            tcb_info: collateral.tcbInfo.into(),
-            qe_identity: collateral.qeIdentity.into(),
-            tcb_status: intel_tcb_status_from_u8(collateral.tcbStatus)?,
-        })
+        Ok(Self { tcb_info: collateral.tcbInfo.into(), qe_identity: collateral.qeIdentity.into() })
     }
 }
 
@@ -247,37 +229,6 @@ impl From<TdxRevocationEvidenceInput> for TdxRevocationEvidence {
 /// Converts a contract TDX TCB status discriminant into a typed status.
 pub fn tdx_tcb_status_from_u8(status: u8) -> Result<TDXTcbStatus> {
     TDXTcbStatus::try_from(status).map_err(|e| ProverError::InputDecode(e.to_string()))
-}
-
-/// Converts an Intel TCB status into a stable input discriminant.
-pub const fn intel_tcb_status_to_u8(status: IntelTcbStatus) -> u8 {
-    match status {
-        IntelTcbStatus::UpToDate => 1,
-        IntelTcbStatus::SwHardeningNeeded => 2,
-        IntelTcbStatus::ConfigurationNeeded => 3,
-        IntelTcbStatus::ConfigurationAndSwHardeningNeeded => 4,
-        IntelTcbStatus::OutOfDate => 5,
-        IntelTcbStatus::OutOfDateConfigurationNeeded => 6,
-        IntelTcbStatus::Revoked => 7,
-        IntelTcbStatus::Unsupported => 255,
-    }
-}
-
-/// Converts an input discriminant into an Intel TCB status.
-pub fn intel_tcb_status_from_u8(status: u8) -> Result<IntelTcbStatus> {
-    match status {
-        1 => Ok(IntelTcbStatus::UpToDate),
-        2 => Ok(IntelTcbStatus::SwHardeningNeeded),
-        3 => Ok(IntelTcbStatus::ConfigurationNeeded),
-        4 => Ok(IntelTcbStatus::ConfigurationAndSwHardeningNeeded),
-        5 => Ok(IntelTcbStatus::OutOfDate),
-        6 => Ok(IntelTcbStatus::OutOfDateConfigurationNeeded),
-        7 => Ok(IntelTcbStatus::Revoked),
-        255 => Ok(IntelTcbStatus::Unsupported),
-        value => {
-            Err(ProverError::InputDecode(format!("invalid Intel TCB status discriminant: {value}")))
-        }
-    }
 }
 
 #[cfg(test)]
@@ -306,14 +257,5 @@ mod tests {
             TdxAttestationProverInput::decode(&encoded),
             Err(ProverError::InputDecode(_))
         ));
-    }
-
-    #[rstest]
-    #[case(IntelTcbStatus::UpToDate, 1)]
-    #[case(IntelTcbStatus::Revoked, 7)]
-    #[case(IntelTcbStatus::Unsupported, 255)]
-    fn intel_status_discriminants_round_trip(#[case] status: IntelTcbStatus, #[case] expected: u8) {
-        assert_eq!(intel_tcb_status_to_u8(status), expected);
-        assert_eq!(intel_tcb_status_from_u8(expected).unwrap(), status);
     }
 }

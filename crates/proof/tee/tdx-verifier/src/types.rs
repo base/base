@@ -5,8 +5,6 @@
 //!
 //! Enums put `Unknown` at discriminant 0 so uninitialized values fail closed.
 
-use std::fmt;
-
 use alloy_sol_types::sol;
 
 sol! {
@@ -136,16 +134,6 @@ sol! {
         function allowedTcbStatuses(TDXTcbStatus status) external view returns (bool);
     }
 
-}
-
-/// Debug wrapper that renders a `TDXTcbStatus` slice as its on-chain numeric
-/// discriminants for compact log output.
-pub struct TdxTcbStatusList<'a>(pub &'a [TDXTcbStatus]);
-
-impl fmt::Debug for TdxTcbStatusList<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_list().entries(self.0.iter().map(|s| *s as u8)).finish()
-    }
 }
 
 #[cfg(test)]

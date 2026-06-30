@@ -45,10 +45,6 @@ pub enum TdxVerifierError {
     #[error("expected secp256k1 public key is malformed")]
     MalformedPublicKey,
 
-    /// Expected signer address does not match the public key.
-    #[error("expected signer does not match public key")]
-    SignerMismatch,
-
     /// TD report data does not bind the expected public key.
     #[error("TD report data does not match expected public key binding")]
     ReportDataMismatch,

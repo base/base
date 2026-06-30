@@ -11,9 +11,10 @@ use std::{
 use alloy_primitives::{Address, B256, Bytes, hex};
 use base_proof_tee_tdx_attestation_prover::TdxAttestationProverInput;
 use base_proof_tee_tdx_verifier::{
-    AuthenticatedTdxCertificate, CollateralVerifier, ParsedTdxQuote, TdxCertificate, TdxCollateral,
-    TdxPckTcb, TdxPlatformIdentity, TdxQuote, TdxRevocationEvidence, TdxSignedCollateral,
-    TdxSignedCollateralBody, TdxSignerAttestation, TdxVerifierError, TdxVerifierInput,
+    AuthenticatedTdxCertificate, CollateralVerifier, IntelTcbStatus, ParsedTdxQuote,
+    TdxCertificate, TdxCollateral, TdxPckTcb, TdxPlatformIdentity, TdxQuote, TdxRevocationEvidence,
+    TdxSignedCollateral, TdxSignedCollateralBody, TdxSignerAttestation, TdxVerifier,
+    TdxVerifierError, TdxVerifierInput,
 };
 use reqwest::{
     StatusCode,
@@ -49,6 +50,8 @@ pub struct TdxCollateralFetch {
     pub pck_certificate_chain: Vec<TdxCertificate>,
     /// TCB info and QE identity collateral.
     pub collateral: TdxCollateral,
+    /// Intel TCB status selected for the quote.
+    pub tcb_status: IntelTcbStatus,
     /// CRLs covering non-root certificates in the verifier input.
     pub revocation: TdxRevocationEvidence,
     /// Trusted Intel root CA hash.
@@ -210,6 +213,14 @@ impl TdxAttestationHydrator {
     ) -> Result<Vec<u8>> {
         let attestation = Self::decode_attestation_payload(attestation_bytes)?;
         let collateral = self.fetch_collateral(&attestation.quote).await?;
+        let public_key_hash = TdxVerifier::validate_public_key(&attestation.signer_public_key)
+            .map_err(|e| TdxCollateralError::source(Box::new(e)))?;
+        let actual_signer = Address::from_slice(&public_key_hash.as_slice()[12..]);
+        if actual_signer != expected_signer {
+            return Err(TdxCollateralError::source(format!(
+                "signer mismatch: expected {expected_signer}, got {actual_signer}"
+            )));
+        }
         let verification_time = Self::quote_verification_time_seconds(
             attestation.quote_timestamp_millis,
             Self::now_seconds()?,
@@ -221,7 +232,6 @@ impl TdxAttestationHydrator {
             revocation: collateral.revocation,
             trusted_root_ca_hash: collateral.trusted_root_ca_hash,
             expected_public_key: attestation.signer_public_key,
-            expected_signer,
             quote_timestamp_millis: attestation.quote_timestamp_millis,
             verification_time,
             max_quote_age_seconds: self.config.max_quote_age.as_secs(),
@@ -299,7 +309,7 @@ impl TdxAttestationHydrator {
             .tcb_info
             .tcb_status_for_quote(&parsed_quote, &pck_tcb)
             .map_err(|e| TdxCollateralError::source(Box::new(e)))?;
-        let collateral = TdxCollateral { tcb_info, qe_identity, tcb_status };
+        let collateral = TdxCollateral { tcb_info, qe_identity };
         let revocation = self
             .fetch_revocation_evidence(&[
                 pck_certificate_chain.as_slice(),
@@ -310,6 +320,7 @@ impl TdxAttestationHydrator {
         let fetch = TdxCollateralFetch {
             pck_certificate_chain,
             collateral,
+            tcb_status,
             revocation,
             trusted_root_ca_hash: self.config.trusted_root_ca_hash,
         };
@@ -348,25 +359,16 @@ impl TdxAttestationHydrator {
             .map_err(|e| TdxCollateralError::source(Box::new(e)))?;
 
         let mut crl_expiration = pck_crl_expiration;
-        for (collateral, body_kind, error_mapper) in [
-            (
-                &fetch.collateral.tcb_info,
-                TdxSignedCollateralBody::TcbInfo,
-                TdxVerifierError::TcbInfoInvalid as fn(String) -> TdxVerifierError,
-            ),
-            (
-                &fetch.collateral.qe_identity,
-                TdxSignedCollateralBody::QeIdentity,
-                TdxVerifierError::QeIdentityInvalid,
-            ),
+        for (collateral, body_kind) in [
+            (&fetch.collateral.tcb_info, TdxSignedCollateralBody::TcbInfo),
+            (&fetch.collateral.qe_identity, TdxSignedCollateralBody::QeIdentity),
         ] {
-            let (_, chain_crl_expiration) = CollateralVerifier::verify_signed_collateral(
+            let chain_crl_expiration = CollateralVerifier::verify_signed_collateral(
                 collateral,
                 body_kind,
                 fetch.trusted_root_ca_hash,
                 verification_time,
                 &fetch.revocation,
-                error_mapper,
             )
             .map_err(|e| TdxCollateralError::source(Box::new(e)))?;
             crl_expiration = crl_expiration.min(chain_crl_expiration);
@@ -402,7 +404,7 @@ impl TdxAttestationHydrator {
             .tcb_info
             .tcb_status_for_quote(parsed_quote, &pck_tcb)
             .map_err(|e| TdxCollateralError::source(Box::new(e)))?;
-        if tcb_status != fetch.collateral.tcb_status {
+        if tcb_status != fetch.tcb_status {
             return Err(TdxCollateralError::source(Box::new(TdxVerifierError::TcbInfoInvalid(
                 "collateral TCB status does not match quote".into(),
             ))));
@@ -523,15 +525,9 @@ impl TdxAttestationHydrator {
         body_kind: TdxSignedCollateralBody,
         verification_time: u64,
     ) -> Result<u64> {
-        let validity = collateral
+        let (issue_time, next_update) = collateral
             .signed_validity(body_kind)
             .map_err(|e| TdxCollateralError::source(Box::new(e)))?;
-        let (issue_time, next_update) = validity;
-        if collateral.issue_time != issue_time || collateral.next_update != next_update {
-            return Err(TdxCollateralError::source(Box::new(
-                body_kind.invalid("explicit collateral validity does not match signed JSON".into()),
-            )));
-        }
         if verification_time < issue_time || verification_time >= next_update {
             return Err(TdxCollateralError::source(Box::new(TdxVerifierError::CollateralExpired)));
         }
@@ -569,7 +565,7 @@ impl TdxAttestationHydrator {
                 return Err(TdxCollateralError::source(Box::new(error)));
             }
         };
-        fetch.collateral.tcb_status = tcb_status;
+        fetch.tcb_status = tcb_status;
 
         match Self::verify_collateral_for_quote(&fetch, parsed_quote, verification_time) {
             Ok(expiration) => {
@@ -658,13 +654,11 @@ impl TdxAttestationHydrator {
             )?,
             None => Self::signature_from_json_field(&raw, QE_IDENTITY_SIGNATURE_FIELD)?,
         };
-        let collateral =
-            TdxSignedCollateral { raw, signing_chain, signature, issue_time: 0, next_update: 0 };
-        let validity = collateral
+        let collateral = TdxSignedCollateral { raw, signing_chain, signature };
+        collateral
             .signed_validity(body_kind)
             .map_err(|e| TdxCollateralError::source(Box::new(e)))?;
-        let (issue_time, next_update) = validity;
-        Ok(TdxSignedCollateral { issue_time, next_update, ..collateral })
+        Ok(collateral)
     }
 
     async fn fetch_revocation_evidence(
@@ -1088,17 +1082,23 @@ mod tests {
         issue_time: u64,
         next_update: u64,
     ) -> TdxSignedCollateral {
+        let issue_date = unix_seconds_rfc3339(issue_time);
+        let next_update_date = unix_seconds_rfc3339(next_update);
         let raw = Bytes::from(
-            format!(r#"{{"{body_key}":{{"issueDate":{issue_time},"nextUpdate":{next_update}}}}}"#)
-                .into_bytes(),
+            format!(
+                r#"{{"{body_key}":{{"issueDate":"{issue_date}","nextUpdate":"{next_update_date}"}}}}"#
+            )
+            .into_bytes(),
         );
         TdxSignedCollateral {
             raw,
             signing_chain: vec![certificate_with_validity(issue_time, next_update + 100)],
             signature: Bytes::new(),
-            issue_time,
-            next_update,
         }
+    }
+
+    fn unix_seconds_rfc3339(timestamp: u64) -> String {
+        format!("1970-01-01T00:{:02}:{:02}Z", timestamp / 60, timestamp % 60)
     }
 
     fn collateral_fetch(tcb_next_update: u64, qe_next_update: u64) -> TdxCollateralFetch {
@@ -1107,8 +1107,8 @@ mod tests {
             collateral: TdxCollateral {
                 tcb_info: signed_collateral("tcbInfo", 100, tcb_next_update),
                 qe_identity: signed_collateral("enclaveIdentity", 100, qe_next_update),
-                tcb_status: base_proof_tee_tdx_verifier::IntelTcbStatus::UpToDate,
             },
+            tcb_status: IntelTcbStatus::UpToDate,
             revocation: TdxRevocationEvidence { certificate_crls: Vec::new() },
             trusted_root_ca_hash: B256::repeat_byte(0x11),
         }
@@ -1149,8 +1149,6 @@ mod tests {
             raw: Bytes::from(raw),
             signing_chain: vec![certificate_with_validity(issue_time, next_update + 100)],
             signature: Bytes::new(),
-            issue_time,
-            next_update,
         }
     }
 

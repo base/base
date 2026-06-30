@@ -100,7 +100,7 @@ mod tests {
     use base_proof_tee_tdx_verifier::{TDXTcbStatus, TDXVerificationResult};
 
     use super::*;
-    use crate::test_utils::{SIGNER, verifier_input};
+    use crate::test_utils::verifier_input;
 
     struct StaticJournalVerifier {
         journal: TDXVerifierJournal,
@@ -124,7 +124,7 @@ mod tests {
             .expect("mock verifier must decode ABI journal output")
     }
 
-    fn journal() -> TDXVerifierJournal {
+    fn journal(signer: Address) -> TDXVerifierJournal {
         TDXVerifierJournal {
             result: TDXVerificationResult::Success,
             tcbStatus: TDXTcbStatus::UpToDate,
@@ -135,7 +135,7 @@ mod tests {
             tcbInfoHash: B256::repeat_byte(0x33),
             qeIdentityHash: B256::repeat_byte(0x44),
             publicKey: Bytes::from(vec![0x04; 65]),
-            signer: SIGNER,
+            signer,
             imageHash: B256::repeat_byte(0x55),
             mrTdHash: B256::repeat_byte(0x66),
             reportDataPrefix: B256::repeat_byte(0x77),
@@ -143,22 +143,20 @@ mod tests {
         }
     }
 
-    fn prover() -> DirectProver {
+    fn prover(signer: Address) -> DirectProver {
         DirectProver::with_verifier(
             Bytes::from_static(b"proof"),
-            Arc::new(StaticJournalVerifier { journal: journal() }),
+            Arc::new(StaticJournalVerifier { journal: journal(signer) }),
         )
     }
 
     #[tokio::test]
     async fn dev_mode_proving_returns_proof_and_abi_encoded_journal() {
         let input = TdxAttestationProverInput::new(verifier_input());
-        let prover = prover();
+        let signer = input.expected_signer().unwrap();
+        let prover = prover(signer);
 
-        let proof = prover
-            .generate_proof_for_signer(&input.encode(), input.expected_signer())
-            .await
-            .unwrap();
+        let proof = prover.generate_proof_for_signer(&input.encode(), signer).await.unwrap();
 
         assert_eq!(proof.kind, TeeAttestationKind::Tdx);
         assert_eq!(proof.proof_bytes, Bytes::from_static(b"proof"));
@@ -166,28 +164,26 @@ mod tests {
         let decoded = <TDXVerifierJournal as SolValue>::abi_decode_validate(&proof.output)
             .expect("direct prover output must be ABI-encoded journal");
         assert_eq!(decoded.result as u8, TDXVerificationResult::Success as u8);
-        assert_eq!(decoded.signer, input.expected_signer());
+        assert_eq!(decoded.signer, signer);
     }
 
     #[tokio::test]
     async fn mock_solidity_verifier_accepts_generated_tuple() {
         let input = TdxAttestationProverInput::new(verifier_input());
-        let prover = prover();
-        let proof = prover
-            .generate_proof_for_signer(&input.encode(), input.expected_signer())
-            .await
-            .unwrap();
+        let signer = input.expected_signer().unwrap();
+        let prover = prover(signer);
+        let proof = prover.generate_proof_for_signer(&input.encode(), signer).await.unwrap();
 
         assert_eq!(proof.kind, TeeAttestationKind::Tdx);
         let decoded = mock_verify(&proof.output, &proof.proof_bytes);
 
-        assert_eq!(decoded.signer, input.expected_signer());
+        assert_eq!(decoded.signer, signer);
     }
 
     #[tokio::test]
     async fn provider_rejects_mismatched_signer() {
         let input = TdxAttestationProverInput::new(verifier_input());
-        let prover = prover();
+        let prover = prover(input.expected_signer().unwrap());
 
         let error = prover
             .generate_proof_for_signer(&input.encode(), Address::repeat_byte(0x99))

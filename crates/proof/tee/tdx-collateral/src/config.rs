@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use alloy_primitives::{B256, b256};
-use base_proof_tee_tdx_verifier::{TDXTcbStatus, TdxTcbStatusList};
+use base_proof_tee_tdx_verifier::TDXTcbStatus;
 use url::Url;
 
 use crate::{Result, TdxCollateralError};
@@ -20,7 +20,7 @@ pub const DEFAULT_TDX_TRUSTED_ROOT_CA_HASH: B256 =
     b256!("a1acc73eb45794fa1734f14d882e91925b6006f79d3bb2460df9d01b333d7009");
 
 /// Intel PCS and verifier policy configuration for TDX attestation hydration.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TdxAttestationConfig {
     /// Intel TDX PCS API base URL.
     pub pcs_tdx_base_url: Url,
@@ -32,18 +32,6 @@ pub struct TdxAttestationConfig {
     pub allowed_tcb_statuses: Vec<TDXTcbStatus>,
     /// HTTP timeout for Intel PCS collateral and CRL fetches.
     pub fetch_timeout: Duration,
-}
-
-impl std::fmt::Debug for TdxAttestationConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TdxAttestationConfig")
-            .field("pcs_tdx_base_url", &self.pcs_tdx_base_url)
-            .field("trusted_root_ca_hash", &self.trusted_root_ca_hash)
-            .field("max_quote_age", &self.max_quote_age)
-            .field("allowed_tcb_statuses", &TdxTcbStatusList(&self.allowed_tcb_statuses))
-            .field("fetch_timeout", &self.fetch_timeout)
-            .finish()
-    }
 }
 
 impl TdxAttestationConfig {

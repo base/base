@@ -77,9 +77,6 @@ impl TdxVerifier {
 
         let public_key_hash = Self::validate_public_key(&input.expected_public_key)?;
         let signer = Address::from_slice(&public_key_hash.as_slice()[12..]);
-        if signer != input.expected_signer {
-            return Err(TdxVerifierError::SignerMismatch);
-        }
         Self::verify_report_data(&quote, public_key_hash, input.quote_timestamp_millis)?;
         let crl_expiration = pck_crl_expiration.min(tcb_crl_expiration).min(qe_crl_expiration);
 
@@ -264,6 +261,11 @@ mod tests {
         Bytes::copy_from_slice(key.verifying_key().to_encoded_point(false).as_bytes())
     }
 
+    fn signer_address(public_key: &[u8]) -> Address {
+        let public_key_hash = TdxVerifier::validate_public_key(public_key).unwrap();
+        Address::from_slice(&public_key_hash.as_slice()[12..])
+    }
+
     fn sign(key: &SigningKey, message: &[u8]) -> Bytes {
         let signature: Signature = key.sign(message);
         Bytes::copy_from_slice(&signature.to_bytes())
@@ -282,9 +284,9 @@ mod tests {
             TdxVerifierError::TcbStatusNotAllowed => TDXVerificationResult::TcbStatusNotAllowed,
             TdxVerifierError::CollateralExpired => TDXVerificationResult::CollateralExpired,
             TdxVerifierError::InvalidTimestamp => TDXVerificationResult::InvalidTimestamp,
-            TdxVerifierError::MalformedPublicKey
-            | TdxVerifierError::SignerMismatch
-            | TdxVerifierError::ReportDataMismatch => TDXVerificationResult::ReportDataMismatch,
+            TdxVerifierError::MalformedPublicKey | TdxVerifierError::ReportDataMismatch => {
+                TDXVerificationResult::ReportDataMismatch
+            }
         };
         assert_eq!(actual as u8, expected as u8, "{error:?}");
     }
@@ -944,8 +946,6 @@ mod tests {
             collateral_chain,
         );
         let public_key = signer_public_key();
-        let public_key_hash = TdxVerifier::validate_public_key(&public_key).unwrap();
-        let signer = Address::from_slice(&public_key_hash.as_slice()[12..]);
         let quote = build_quote(&attestation_key, &pck_key, &public_key, QUOTE_TIMESTAMP_MILLIS);
 
         Fixture {
@@ -959,7 +959,6 @@ mod tests {
                 revocation: revocation_evidence(&[], &[]),
                 trusted_root_ca_hash: root_hash,
                 expected_public_key: public_key,
-                expected_signer: signer,
                 quote_timestamp_millis: QUOTE_TIMESTAMP_MILLIS,
                 verification_time: VERIFICATION_TIME,
                 max_quote_age_seconds: MAX_QUOTE_AGE_SECONDS,
@@ -985,7 +984,7 @@ mod tests {
         assert_eq!(journal.tcbInfoHash, fixture.tcb_hash);
         assert_eq!(journal.qeIdentityHash, fixture.qe_hash);
         assert_eq!(journal.publicKey, fixture.input.expected_public_key);
-        assert_eq!(journal.signer, fixture.input.expected_signer);
+        assert_eq!(journal.signer, signer_address(&fixture.input.expected_public_key));
         assert_eq!(
             journal.reportDataSuffix,
             TdxVerifier::timestamp_report_data_suffix(QUOTE_TIMESTAMP_MILLIS)
@@ -1027,7 +1026,7 @@ mod tests {
         let decoded_journal = <TDXVerifierJournal as SolValue>::abi_decode_validate(&output)
             .expect("output must be an ABI-encoded TDX journal");
         assert_eq!(decoded_journal.result as u8, TDXVerificationResult::Success as u8);
-        assert_eq!(decoded_journal.signer, fixture.input.expected_signer);
+        assert_eq!(decoded_journal.signer, signer_address(&fixture.input.expected_public_key));
         assert_eq!(decoded_journal.imageHash, journal.imageHash);
     }
 
@@ -1284,13 +1283,8 @@ mod tests {
     #[case::malformed_public_key(TDXVerificationResult::ReportDataMismatch, |input: &mut TdxVerifierInput| {
         input.expected_public_key = Bytes::from(vec![0x04; 64]);
     })]
-    #[case::signer_mismatch(TDXVerificationResult::ReportDataMismatch, |input: &mut TdxVerifierInput| {
-        input.expected_signer = Address::repeat_byte(0xFF);
-    })]
     #[case::report_data_mismatch(TDXVerificationResult::ReportDataMismatch, |input: &mut TdxVerifierInput| {
         input.expected_public_key = Bytes::from(ALTERNATE_SECP256K1_PUBLIC_KEY.to_vec());
-        let public_key_hash = TdxVerifier::validate_public_key(&input.expected_public_key).unwrap();
-        input.expected_signer = Address::from_slice(&public_key_hash.as_slice()[12..]);
     })]
     fn failure_cases_return_contract_result(
         #[case] expected_result: TDXVerificationResult,

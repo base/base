@@ -23,8 +23,8 @@ pub use input::TdxVerifierInput;
 
 mod types;
 pub use types::{
-    ITDXVerifier, TDXTcbStatus, TDXVerificationResult, TDXVerifierJournal, TdxTcbStatusList,
-    ZkCoProcessorConfig, ZkCoProcessorType,
+    ITDXVerifier, TDXTcbStatus, TDXVerificationResult, TDXVerifierJournal, ZkCoProcessorConfig,
+    ZkCoProcessorType,
 };
 
 mod quote;

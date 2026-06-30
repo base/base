@@ -161,7 +161,6 @@ impl TdxImageHashTool {
             revocation: collateral.revocation,
             trusted_root_ca_hash: collateral.trusted_root_ca_hash,
             expected_public_key: attestation.signer_public_key.clone(),
-            expected_signer: signer_address,
             quote_timestamp_millis: attestation.quote_timestamp_millis,
             verification_time: Self::now_seconds()?,
             max_quote_age_seconds: attestation_config.max_quote_age.as_secs(),
@@ -169,6 +168,9 @@ impl TdxImageHashTool {
         };
         let journal =
             TdxVerifier::verify(&verifier_input).wrap_err("local TDX quote verification failed")?;
+        if journal.signer != signer_address {
+            bail!("TDX quote signer mismatch: expected {signer_address}, got {}", journal.signer);
+        }
 
         Ok(QuoteVerificationReport {
             journal_image_hash: journal.imageHash,
