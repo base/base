@@ -40,7 +40,6 @@ pub struct TdxQeIdentityBody {
     /// Expected QE product ID.
     pub isvprodid: u16,
     /// Ordered QE identity TCB levels.
-    #[serde(rename = "tcbLevels")]
     pub tcb_levels: Vec<TdxQeIdentityLevel>,
 }
 
@@ -65,12 +64,14 @@ impl TdxQeIdentityBody {
             &quote.qe_report,
             QE_REPORT_MRSIGNER_OFFSET,
         )?;
-        let isvprodid =
-            CollateralVerifier::read_u16_le_bytes(&quote.qe_report, QE_REPORT_ISV_PROD_ID_OFFSET)
-                .map_err(TdxVerifierError::InvalidQuote)?;
-        let isvsvn =
-            CollateralVerifier::read_u16_le_bytes(&quote.qe_report, QE_REPORT_ISV_SVN_OFFSET)
-                .map_err(TdxVerifierError::InvalidQuote)?;
+        let isvprodid = u16::from_le_bytes(TdxQuote::read_array::<2>(
+            &quote.qe_report,
+            QE_REPORT_ISV_PROD_ID_OFFSET,
+        )?);
+        let isvsvn = u16::from_le_bytes(TdxQuote::read_array::<2>(
+            &quote.qe_report,
+            QE_REPORT_ISV_SVN_OFFSET,
+        )?);
 
         for (actual, expected_hex, mask_hex, field_name) in [
             (miscselect.as_slice(), &self.miscselect, &self.miscselect_mask, "miscselect"),

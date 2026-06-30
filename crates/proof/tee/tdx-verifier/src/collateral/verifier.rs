@@ -279,11 +279,4 @@ impl CollateralVerifier {
         }
         Ok(())
     }
-
-    /// Reads a little-endian `u16` from a byte slice.
-    pub fn read_u16_le_bytes(bytes: &[u8], offset: usize) -> std::result::Result<u16, String> {
-        let slice =
-            bytes.get(offset..offset + 2).ok_or_else(|| "u16 read out of bounds".to_string())?;
-        Ok(u16::from_le_bytes([slice[0], slice[1]]))
-    }
 }
