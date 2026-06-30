@@ -548,6 +548,21 @@ where
     }
 }
 
+impl<Client, S, Evm, T, O> crate::StateDiffInvalidation
+    for BaseTransactionPool<Client, S, Evm, T, O>
+where
+    Client: Send + Sync + 'static,
+    Evm: Send + Sync + 'static,
+    BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
+    T: BasePooledTx + reth_transaction_pool::EthPoolTransaction + 'static,
+    O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
+    S: BlobStore + Clone,
+{
+    fn invalidate_from_state_diff(&self, diffs: &[AccountStateDiff]) -> usize {
+        self.apply_state_diff(diffs).len()
+    }
+}
+
 impl<Client, S, Evm, T, O> TransactionPool for BaseTransactionPool<Client, S, Evm, T, O>
 where
     Client: 'static,

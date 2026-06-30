@@ -49,6 +49,7 @@ base-execution-trie.workspace = true
 base-execution-eip8130-rpc-node.workspace = true
 base-bundle-extension.workspace = true
 base-proofs-extension.workspace = true
+base-mempool-invalidation.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-consensus.workspace = true
 base-upgrade-signal = { workspace = true, features = ["metrics"] }

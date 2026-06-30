@@ -31,6 +31,9 @@ pub use forwarder::{Forwarder, ForwarderConfig, ForwarderMetrics, SpawnedForward
 mod pool;
 pub use pool::{AccountStateDiff, BaseTransactionPool};
 
+mod state_diff_maintain;
+pub use state_diff_maintain::{StateDiffInvalidation, maintain_state_diff_invalidation};
+
 mod pool_error_label;
 pub use pool_error_label::PoolRejectionLabel;
 

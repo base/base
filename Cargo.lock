@@ -4431,6 +4431,7 @@ dependencies = [
  "base-execution-trie",
  "base-flashblocks",
  "base-flashblocks-node",
+ "base-mempool-invalidation",
  "base-metering",
  "base-node-core",
  "base-node-runner",
@@ -5058,6 +5059,17 @@ dependencies = [
  "tracing-indicatif",
  "tracing-subscriber 0.3.23",
  "url",
+]
+
+[[package]]
+name = "base-mempool-invalidation"
+version = "0.0.0"
+dependencies = [
+ "base-execution-txpool",
+ "base-node-runner",
+ "reth-chain-state",
+ "tokio-stream",
+ "tracing",
 ]
 
 [[package]]

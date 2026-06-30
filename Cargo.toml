@@ -207,6 +207,7 @@ base-execution-txpool = { path = "crates/execution/txpool" }
 base-bundle-extension = { path = "crates/execution/bundle" }
 base-proofs-extension = { path = "crates/execution/proofs" }
 base-tx-forwarding = { path = "crates/execution/tx-forwarding" }
+base-mempool-invalidation = { path = "crates/execution/mempool-invalidation" }
 base-execution-chainspec = { path = "crates/execution/chainspec" }
 base-execution-consensus = { path = "crates/execution/consensus" }
 base-txpool-tracing = { path = "crates/execution/txpool-tracing" }
