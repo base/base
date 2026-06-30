@@ -1,6 +1,6 @@
 //! Shared collateral validation helpers.
 
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::{B256, Bytes, hex};
 use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use x509_parser::{certificate::X509Certificate, extensions::ParsedExtension, prelude::FromDer};
