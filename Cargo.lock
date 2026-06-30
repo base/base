@@ -6020,6 +6020,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "hex",
  "k256",
  "p256",
  "rstest",

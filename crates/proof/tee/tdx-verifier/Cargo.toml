@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 # Parsing
+hex.workspace = true
 x509-parser.workspace = true
 serde = { workspace = true, features = ["derive"] }
 time = { workspace = true, features = ["parsing"] }
