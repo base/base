@@ -81,12 +81,16 @@ impl AccountStateDiff {
 
 /// Builds the guard admission for a validated EIP-8130 transaction (sidecar or
 /// reth-resident) from the watch set and limit classification derived during
-/// validation. Returns `None` when either is missing — i.e. the transaction is
-/// not EIP-8130 — so it is neither admission- nor invalidation-tracked.
+/// validation. Returns `None` for non-EIP-8130 transactions — standard
+/// 1559/legacy transactions also carry a `watch_set`/`limit_class`, but reth's
+/// own maintenance covers their (sender balance + nonce) invalidation and they
+/// must not be charged the 8130 admission caps, so they are neither guard-gated
+/// nor guard-tracked here.
 fn admission_for<T>(transaction: &T) -> Option<Admission>
 where
     T: BasePooledTx + reth_transaction_pool::EthPoolTransaction,
 {
+    transaction.as_eip8130()?;
     let watch_set = transaction.watch_set().cloned()?;
     let class = *transaction.limit_class()?;
     Some(Admission {
@@ -1652,15 +1656,25 @@ mod tests {
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
+    use alloy_consensus::{SignableTransaction, TxEip1559, transaction::SignerRecoverable};
+    use alloy_eips::eip2718::Encodable2718;
+    use alloy_primitives::TxKind;
     use base_common_consensus::{
-        BasePooledTransaction as ConsensusPooledTransaction, Eip8130Constants, Eip8130Signed,
-        TxEip8130,
+        BasePooledTransaction as ConsensusPooledTransaction, BasePrimitives, BaseTxEnvelope,
+        Eip8130Constants, Eip8130Signed, TxEip8130,
     };
+    use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
+    use base_execution_evm::BaseEvmConfig;
     use futures::StreamExt;
-    use reth_transaction_pool::{PriceBumpConfig, TransactionOrigin, identifier::TransactionId};
+    use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
+    use reth_tasks::Runtime;
+    use reth_transaction_pool::{
+        Pool, PoolConfig, PriceBumpConfig, TransactionOrigin, blobstore::InMemoryBlobStore,
+        identifier::TransactionId, validate::EthTransactionValidatorBuilder,
+    };
 
     use super::*;
-    use crate::{BasePooledTransaction, LimitClass, WatchSet};
+    use crate::{BaseL1BlockInfo, BaseOrdering, BasePooledTransaction, LimitClass, WatchSet};
 
     fn test_chain_id() -> u64 {
         ChainConfig::mainnet().chain_id
@@ -1937,5 +1951,125 @@ mod tests {
         expected.sort();
         assert_eq!(dropped, expected);
         assert!(guard.is_empty());
+    }
+
+    type IntegrationPool = BaseTransactionPool<
+        MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>,
+        InMemoryBlobStore,
+        BaseEvmConfig,
+    >;
+
+    /// Builds a fully-wired [`BaseTransactionPool`] (reth `Pool` + real
+    /// `BaseTransactionValidator`) over a `MockEthProvider`, so the `add_transaction`
+    /// path — validation, guard gating, and rollback — is exercised end to end.
+    /// L1-data-gas checks are disabled so funding is just the tx cost.
+    fn build_integration_pool() -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>)
+    {
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().cobalt_activated().build());
+        let client = MockEthProvider::<BasePrimitives>::new()
+            .with_chain_spec(Arc::clone(&chain_spec))
+            .with_genesis_block();
+        let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
+        let blob_store = InMemoryBlobStore::default();
+        let validator = EthTransactionValidatorBuilder::new(client.clone(), evm_config)
+            .no_shanghai()
+            .no_cancun()
+            .build_with_tasks(Runtime::test(), blob_store.clone())
+            .map(|inner| {
+                BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
+                    .require_l1_data_gas_fee(false)
+            });
+        let ordering = BaseOrdering::default();
+        let pool = Pool::new(validator, ordering.clone(), blob_store, PoolConfig::default());
+        (BaseTransactionPool::new(pool, ordering), client)
+    }
+
+    fn fund(client: &MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>, account: Address) {
+        client.add_account(
+            account,
+            ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64)),
+        );
+    }
+
+    fn signed_1559(signer: &PrivateKeySigner, nonce: u64) -> BasePooledTransaction {
+        let tx = TxEip1559 {
+            chain_id: test_chain_id(),
+            nonce,
+            gas_limit: 50_000,
+            max_fee_per_gas: 1_000,
+            max_priority_fee_per_gas: 0,
+            to: TxKind::Call(Address::repeat_byte(0xEE)),
+            value: U256::ZERO,
+            access_list: Default::default(),
+            input: Bytes::new(),
+        };
+        let signature = signer.sign_hash_sync(&tx.signature_hash()).unwrap();
+        let envelope = BaseTxEnvelope::Eip1559(tx.into_signed(signature));
+        let recovered = envelope.clone().try_into_recovered().unwrap();
+        BasePooledTransaction::new(recovered, envelope.encode_2718_len())
+    }
+
+    fn self_paid_eoa_8130(signer: &PrivateKeySigner, nonce_sequence: u64) -> BasePooledTransaction {
+        let tx = TxEip8130 {
+            chain_id: test_chain_id(),
+            sender: None,
+            nonce_key: U256::ZERO,
+            nonce_sequence,
+            expiry: 0,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 1_000,
+            gas_limit: 1_000_000,
+            account_changes: Vec::new(),
+            calls: Vec::new(),
+            metadata: Bytes::new(),
+            payer: None,
+        };
+        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let signed =
+            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+        let pooled = ConsensusPooledTransaction::Eip8130(signed);
+        BasePooledTransaction::from_pooled(Recovered::new_unchecked(pooled, signer.address()))
+    }
+
+    #[tokio::test]
+    async fn standard_1559_transactions_are_not_8130_gated() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+
+        // Submit well beyond the 8130 sender cap: standard transactions carry a
+        // limit class but must not be charged the 8130 caps (reth owns their
+        // sender/nonce gating), so every one is accepted.
+        let count = u64::from(GuardLimits::default().default_sender) + 3;
+        for nonce in 0..count {
+            let result = pool.add_transaction(TransactionOrigin::Local, signed_1559(&signer, nonce)).await;
+            assert!(result.is_ok(), "standard 1559 tx #{nonce} should not be 8130-gated: {result:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn self_paid_nonce_zero_8130_is_gated_by_sender_limit_end_to_end() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+
+        let cap = u64::from(GuardLimits::default().default_sender);
+        // The first `cap` self-paid nonce_key==0 transactions are admitted.
+        for seq in 0..cap {
+            let result =
+                pool.add_transaction(TransactionOrigin::Local, self_paid_eoa_8130(&signer, seq)).await;
+            assert!(result.is_ok(), "8130 tx #{seq} within the cap should admit: {result:?}");
+        }
+        // The next one trips the sender dimension and is rolled back out of reth.
+        let over = self_paid_eoa_8130(&signer, cap);
+        let over_hash = *over.hash();
+        let result = pool.add_transaction(TransactionOrigin::Local, over).await;
+        let err = result.expect_err("over-cap 8130 tx must be rejected by the guard");
+        assert!(
+            err.to_string().contains("sender EIP-8130 mempool limit"),
+            "unexpected rejection: {err}"
+        );
+        // Rollback leaves no trace: the rejected tx is not in the pool.
+        assert!(pool.get(&over_hash).is_none());
     }
 }
