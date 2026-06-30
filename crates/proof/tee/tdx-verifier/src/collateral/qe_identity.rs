@@ -110,7 +110,7 @@ impl TdxQeIdentityBody {
                     "no QE identity TCB level matches QE report".into(),
                 )
             })?;
-        if !status.is_accepted_qe_identity_status() {
+        if status != IntelTcbStatus::UpToDate {
             return Err(TdxVerifierError::QeIdentityInvalid(
                 "QE identity TCB status is not accepted".into(),
             ));

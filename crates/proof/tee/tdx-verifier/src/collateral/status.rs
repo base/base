@@ -26,22 +26,6 @@ pub enum IntelTcbStatus {
 }
 
 impl IntelTcbStatus {
-    /// Parses an Intel TCB status string.
-    pub fn from_intel_str(status: &str) -> Self {
-        match status {
-            "UpToDate" => Self::UpToDate,
-            "SWHardeningNeeded" | "SwHardeningNeeded" => Self::SwHardeningNeeded,
-            "ConfigurationNeeded" => Self::ConfigurationNeeded,
-            "ConfigurationAndSWHardeningNeeded" | "ConfigurationAndSwHardeningNeeded" => {
-                Self::ConfigurationAndSwHardeningNeeded
-            }
-            "OutOfDate" => Self::OutOfDate,
-            "OutOfDateConfigurationNeeded" => Self::OutOfDateConfigurationNeeded,
-            "Revoked" => Self::Revoked,
-            _ => Self::Unsupported,
-        }
-    }
-
     /// Maps an Intel TCB status into the contract's reduced `TDXTcbStatus`.
     pub const fn to_contract_status(self) -> TDXTcbStatus {
         match self {
@@ -77,11 +61,6 @@ impl IntelTcbStatus {
             | Self::Unsupported => Self::Unsupported,
         }
     }
-
-    /// Returns true when a QE identity TCB status is acceptable.
-    pub const fn is_accepted_qe_identity_status(self) -> bool {
-        matches!(self, Self::UpToDate)
-    }
 }
 
 impl<'de> Deserialize<'de> for IntelTcbStatus {
@@ -90,6 +69,17 @@ impl<'de> Deserialize<'de> for IntelTcbStatus {
         D: Deserializer<'de>,
     {
         let value = String::deserialize(deserializer)?;
-        Ok(Self::from_intel_str(&value))
+        Ok(match value.as_str() {
+            "UpToDate" => Self::UpToDate,
+            "SWHardeningNeeded" | "SwHardeningNeeded" => Self::SwHardeningNeeded,
+            "ConfigurationNeeded" => Self::ConfigurationNeeded,
+            "ConfigurationAndSWHardeningNeeded" | "ConfigurationAndSwHardeningNeeded" => {
+                Self::ConfigurationAndSwHardeningNeeded
+            }
+            "OutOfDate" => Self::OutOfDate,
+            "OutOfDateConfigurationNeeded" => Self::OutOfDateConfigurationNeeded,
+            "Revoked" => Self::Revoked,
+            _ => Self::Unsupported,
+        })
     }
 }
