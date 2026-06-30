@@ -9,7 +9,7 @@ use std::{
 
 use alloy_consensus::{BlockHeader, Transaction, constants::KECCAK_EMPTY};
 use alloy_eips::eip2718::Encodable2718;
-use alloy_primitives::{Address, B256, LogData, U256, keccak256};
+use alloy_primitives::{Address, B256, LogData, U256, keccak256, map::AddressSet};
 use base_common_chains::Upgrades;
 use base_common_consensus::{
     AccountChange, ActorChange, ActorChangeType, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
@@ -522,6 +522,11 @@ pub struct BaseTransactionValidator<Client, Tx, Evm> {
     /// derived from the tracked L1 block info that is extracted from the first transaction in the
     /// L2 block.
     require_l1_data_gas_fee: bool,
+    /// Delegation targets whose bytecode is trusted to bound a locked account to
+    /// gas-only ETH movement, qualifying it for the balance-bounded payer limit.
+    /// Seeded with [`Eip8130Contracts::DEFAULT_HIGH_RATE_ACCOUNT`]; operators may
+    /// extend it as new trusted wallet implementations ship.
+    trusted_delegation_targets: Arc<AddressSet>,
 }
 
 impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
@@ -573,6 +578,29 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
             AccountChange::ConfigChange(_) => false,
         })
     }
+
+    /// The default set of trusted delegation targets, containing only the
+    /// canonical high-rate account implementation.
+    #[must_use]
+    pub fn default_trusted_delegation_targets() -> AddressSet {
+        let mut set = AddressSet::default();
+        set.insert(Eip8130Contracts::DEFAULT_HIGH_RATE_ACCOUNT);
+        set
+    }
+
+    /// Adds `targets` to the set of trusted delegation targets used to classify a
+    /// locked payer as balance-bounded (trusted), on top of the canonical
+    /// high-rate account the validator is seeded with. Passing an empty set is a
+    /// no-op, preserving the default classification.
+    #[must_use]
+    pub fn with_additional_trusted_delegation_targets(self, targets: AddressSet) -> Self {
+        if targets.is_empty() {
+            return self;
+        }
+        let mut merged = (*self.trusted_delegation_targets).clone();
+        merged.extend(targets);
+        Self { trusted_delegation_targets: Arc::new(merged), ..self }
+    }
 }
 
 impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm>
@@ -608,6 +636,7 @@ where
             inner: Arc::new(inner),
             block_info: Arc::new(block_info),
             require_l1_data_gas_fee: true,
+            trusted_delegation_targets: Arc::new(Self::default_trusted_delegation_targets()),
         }
     }
 
@@ -881,7 +910,7 @@ where
         let sender_locked = Self::is_account_locked(&*state, local_chain_id, now, sender);
         let payer_trusted = (payer == sender && sender_locked
             || Self::is_account_locked(&*state, local_chain_id, now, payer))
-            && Self::is_high_rate_account(&*state, payer);
+            && self.is_high_rate_account(&*state, payer);
 
         let gas_charge = FeeCheck::max_fee_charge(
             signed.tx().gas_limit,
@@ -925,15 +954,15 @@ where
         })
     }
 
-    /// Returns whether `account`'s code delegates to the high-rate account
-    /// implementation ([`Eip8130Contracts::DEFAULT_HIGH_RATE_ACCOUNT`]), whose
+    /// Returns whether `account`'s code delegates to a trusted high-rate account
+    /// implementation (one of [`Self::trusted_delegation_targets`]), whose
     /// bytecode blocks ETH transfers while locked. Any read failure or a
     /// non-delegated / differently-delegated account returns `false`.
-    fn is_high_rate_account(state: &dyn StateProvider, account: Address) -> bool {
+    fn is_high_rate_account(&self, state: &dyn StateProvider, account: Address) -> bool {
         Self::delegation_target(state, account)
             .ok()
             .flatten()
-            .is_some_and(|target| target == Eip8130Contracts::DEFAULT_HIGH_RATE_ACCOUNT)
+            .is_some_and(|target| self.trusted_delegation_targets.contains(&target))
     }
 
     /// Reads the EIP-7702/8130 delegation target of `account`

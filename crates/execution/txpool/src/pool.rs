@@ -179,6 +179,16 @@ where
         }
     }
 
+    /// Sets the per-account admission caps enforced by the sidecar guard.
+    ///
+    /// Must be called at construction, before any transaction is admitted, so the
+    /// guard starts empty under the configured limits.
+    #[must_use]
+    pub fn with_guard_limits(self, limits: GuardLimits) -> Self {
+        *self.guard.write() = MempoolGuard::new(limits);
+        self
+    }
+
     /// Returns the wrapped reth pool.
     pub const fn protocol_pool(
         &self,

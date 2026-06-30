@@ -7,7 +7,9 @@ use std::{
     time::Duration,
 };
 
+use alloy_primitives::Address;
 use base_execution_trie::{MdbxProofsStorageOptions, RocksdbProofsStorageOptions};
+use base_execution_txpool::{DEFAULT_PAYER_LIMIT, DEFAULT_SENDER_LIMIT};
 use base_upgrade_signal::{UpgradeSignalArgs, UpgradeSignalL1RpcArgs};
 use clap::{ArgAction, ValueEnum, builder::ArgPredicate};
 
@@ -365,6 +367,23 @@ pub struct RollupArgs {
     #[arg(long = "rollup.txpool-max-inflight-delegated-slots", default_value_t = 1)]
     pub max_inflight_delegated_slots: usize,
 
+    /// Maximum inflight EIP-8130 transactions per (non-locked) sender account in the mempool,
+    /// across all of its nonce channels. Locked accounts have an unlimited sender dimension.
+    #[arg(long = "rollup.mempool-sender-limit", default_value_t = DEFAULT_SENDER_LIMIT)]
+    pub mempool_sender_limit: u32,
+
+    /// Maximum inflight EIP-8130 transactions per count-limited payer account in the mempool.
+    /// Balance-bounded (locked + trusted) payers are instead limited by their balance.
+    #[arg(long = "rollup.mempool-payer-limit", default_value_t = DEFAULT_PAYER_LIMIT)]
+    pub mempool_payer_limit: u32,
+
+    /// Additional EIP-7702 delegation target addresses whose bytecode is trusted to bound a locked
+    /// account to gas-only ETH movement, qualifying it for the balance-bounded payer limit. These
+    /// extend the built-in canonical high-rate account implementation. Repeat the flag or pass a
+    /// comma-separated list.
+    #[arg(long = "rollup.mempool-trusted-delegation-targets", value_delimiter = ',')]
+    pub mempool_trusted_delegation_targets: Vec<Address>,
+
     /// If true, initialize external-proofs exex to save and serve trie nodes to provide proofs
     /// faster.
     #[arg(
@@ -461,6 +480,9 @@ impl Default for RollupArgs {
             min_suggested_priority_fee: 1_000_000,
             txpool_ordering: TxpoolOrdering::default(),
             max_inflight_delegated_slots: 1,
+            mempool_sender_limit: DEFAULT_SENDER_LIMIT,
+            mempool_payer_limit: DEFAULT_PAYER_LIMIT,
+            mempool_trusted_delegation_targets: Vec::new(),
             proofs_history: false,
             proofs_history_storage_path: None,
             proofs_history_db: ProofsHistoryDbBackend::default(),
@@ -563,6 +585,35 @@ mod tests {
         ])
         .args;
         assert_eq!(args, expected_args);
+    }
+
+    #[test]
+    fn test_parse_mempool_limits_default() {
+        let args = CommandParser::<RollupArgs>::parse_from(["reth"]).args;
+        assert_eq!(args.mempool_sender_limit, DEFAULT_SENDER_LIMIT);
+        assert_eq!(args.mempool_payer_limit, DEFAULT_PAYER_LIMIT);
+        assert!(args.mempool_trusted_delegation_targets.is_empty());
+    }
+
+    #[test]
+    fn test_parse_mempool_limits() {
+        let args = CommandParser::<RollupArgs>::parse_from([
+            "reth",
+            "--rollup.mempool-sender-limit",
+            "8",
+            "--rollup.mempool-payer-limit",
+            "16",
+            "--rollup.mempool-trusted-delegation-targets",
+            "0x0000000000000000000000000000000000000001,0x0000000000000000000000000000000000000002",
+        ])
+        .args;
+        assert_eq!(args.mempool_sender_limit, 8);
+        assert_eq!(args.mempool_payer_limit, 16);
+        let target_one: Address =
+            "0x0000000000000000000000000000000000000001".parse().expect("valid address");
+        let target_two: Address =
+            "0x0000000000000000000000000000000000000002".parse().expect("valid address");
+        assert_eq!(args.mempool_trusted_delegation_targets, vec![target_one, target_two]);
     }
 
     #[test]
