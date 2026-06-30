@@ -169,9 +169,7 @@ impl TeeProofPair {
                 proposal.l1_origin_number,
             ),
             Self::Both { nitro, tdx } => ProofEncoder::encode_dual_tee_proof_bytes(
-                nitro.image_hash,
                 &nitro.aggregate_proposal.signature,
-                tdx.image_hash,
                 &tdx.aggregate_proposal.signature,
                 proposal.l1_origin_hash,
                 proposal.l1_origin_number,
@@ -187,9 +185,7 @@ impl TeeProofPair {
                 ProofEncoder::encode_dispute_proof_bytes(&proof.aggregate_proposal.signature)
             }
             Self::Both { nitro, tdx } => ProofEncoder::encode_dual_tee_dispute_proof_bytes(
-                nitro.image_hash,
                 &nitro.aggregate_proposal.signature,
-                tdx.image_hash,
                 &tdx.aggregate_proposal.signature,
             ),
         }
@@ -261,7 +257,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(proof.build_proof_data().unwrap().len(), 259);
-        assert_eq!(proof.build_dispute_proof_bytes().unwrap().len(), 195);
+        assert_eq!(proof.build_proof_data().unwrap().len(), 195);
+        assert_eq!(proof.build_dispute_proof_bytes().unwrap().len(), 131);
     }
 }

@@ -139,12 +139,8 @@ impl ProofEncoder {
 
     /// Encodes a dual-platform TEE proof for `AggregateVerifier.initializeWithInitData()`.
     ///
-    /// Format:
-    ///
-    /// ```text
-    /// proofType(1) + l1OriginHash(32) + l1OriginNumber(32) + nitroImageHash(32)
-    ///     + nitroSignature(65) + tdxImageHash(32) + tdxSignature(65)
-    /// ```
+    /// Format: `proofType(1) + l1OriginHash(32) + l1OriginNumber(32)
+    /// + nitroSignature(65) + tdxSignature(65)`.
     ///
     /// The v-value in each ECDSA signature is adjusted from 0/1 to 27/28 if needed.
     ///
@@ -152,19 +148,14 @@ impl ProofEncoder {
     ///
     /// Returns an error if either signature is not exactly 65 bytes or has an invalid v-value.
     pub fn encode_dual_tee_proof_bytes(
-        nitro_image_hash: B256,
         nitro_signature: &[u8],
-        tdx_image_hash: B256,
         tdx_signature: &[u8],
         l1_origin_hash: B256,
         l1_origin_number: u64,
     ) -> Result<Bytes, CryptoError> {
-        Self::encode_dual_tee(
+        Self::encode(
             Some(L1Origin { hash: l1_origin_hash, number: l1_origin_number }),
-            nitro_image_hash,
-            nitro_signature,
-            tdx_image_hash,
-            tdx_signature,
+            &[nitro_signature, tdx_signature],
         )
     }
 
@@ -187,58 +178,16 @@ impl ProofEncoder {
 
     /// Encodes a compact dual-platform TEE proof for dispute-game entry points.
     ///
-    /// Format:
-    ///
-    /// ```text
-    /// proofType(1) + nitroImageHash(32) + nitroSignature(65)
-    ///     + tdxImageHash(32) + tdxSignature(65)
-    /// ```
+    /// Format: `proofType(1) + nitroSignature(65) + tdxSignature(65)`.
     ///
     /// # Errors
     ///
     /// Returns an error if either signature is not exactly 65 bytes or has an invalid v-value.
     pub fn encode_dual_tee_dispute_proof_bytes(
-        nitro_image_hash: B256,
         nitro_signature: &[u8],
-        tdx_image_hash: B256,
         tdx_signature: &[u8],
     ) -> Result<Bytes, CryptoError> {
-        Self::encode_dual_tee(
-            None,
-            nitro_image_hash,
-            nitro_signature,
-            tdx_image_hash,
-            tdx_signature,
-        )
-    }
-
-    fn encode_dual_tee(
-        l1_origin: Option<L1Origin>,
-        nitro_image_hash: B256,
-        nitro_signature: &[u8],
-        tdx_image_hash: B256,
-        tdx_signature: &[u8],
-    ) -> Result<Bytes, CryptoError> {
-        let header_len = if l1_origin.is_some() { L1_ORIGIN_HEADER_LEN } else { 0 };
-        let total_len = PROOF_TYPE_LEN + header_len + 2 * 32 + DUAL_TEE_SIGNATURE_LENGTH;
-
-        let mut buf = Vec::with_capacity(total_len);
-        buf.push(PROOF_TYPE_TEE);
-
-        if let Some(L1Origin { hash, number }) = l1_origin {
-            buf.extend_from_slice(hash.as_slice());
-            let mut padded = [0u8; L1_ORIGIN_NUMBER_LEN];
-            padded[L1_ORIGIN_NUMBER_LEN - core::mem::size_of::<u64>()..]
-                .copy_from_slice(&number.to_be_bytes());
-            buf.extend_from_slice(&padded);
-        }
-
-        buf.extend_from_slice(nitro_image_hash.as_slice());
-        buf.extend_from_slice(&Self::normalize_signature(nitro_signature)?);
-        buf.extend_from_slice(tdx_image_hash.as_slice());
-        buf.extend_from_slice(&Self::normalize_signature(tdx_signature)?);
-
-        Ok(Bytes::from(buf))
+        Self::encode(None, &[nitro_signature, tdx_signature])
     }
 
     /// Encodes raw ZK proof bytes into the compact format expected by dispute game entry points.
@@ -324,23 +273,19 @@ mod tests {
         let nitro_sig = test_signature(0);
         let tdx_sig = test_signature(1);
         let proof = ProofEncoder::encode_dual_tee_proof_bytes(
-            B256::repeat_byte(0xA1),
             &nitro_sig,
-            B256::repeat_byte(0xB2),
             &tdx_sig,
             B256::repeat_byte(0xCC),
             500,
         )
         .unwrap();
 
-        assert_eq!(proof.len(), 259);
+        assert_eq!(proof.len(), 195);
         assert_eq!(proof[0], PROOF_TYPE_TEE);
         assert_eq!(&proof[1..33], B256::repeat_byte(0xCC).as_slice());
         assert_eq!(&proof[33..65], &U256::from(500u64).to_be_bytes::<32>());
-        assert_eq!(&proof[65..97], B256::repeat_byte(0xA1).as_slice());
-        assert_eq!(proof[161], 27);
-        assert_eq!(&proof[162..194], B256::repeat_byte(0xB2).as_slice());
-        assert_eq!(proof[258], 28);
+        assert_eq!(proof[129], 27);
+        assert_eq!(proof[194], 28);
     }
 
     #[test]
@@ -350,22 +295,11 @@ mod tests {
         let mut tdx_sig = vec![0xBB; 65];
         tdx_sig[64] = 28;
 
-        let nitro_hash = B256::repeat_byte(0x11);
-        let tdx_hash = B256::repeat_byte(0x22);
-        let proof = ProofEncoder::encode_dual_tee_proof_bytes(
-            nitro_hash,
-            &nitro_sig,
-            tdx_hash,
-            &tdx_sig,
-            B256::ZERO,
-            0,
-        )
-        .unwrap();
+        let proof =
+            ProofEncoder::encode_dual_tee_proof_bytes(&nitro_sig, &tdx_sig, B256::ZERO, 0).unwrap();
 
-        assert_eq!(&proof[65..97], nitro_hash.as_slice());
-        assert_eq!(&proof[97..162], &nitro_sig);
-        assert_eq!(&proof[162..194], tdx_hash.as_slice());
-        assert_eq!(&proof[194..259], &tdx_sig);
+        assert_eq!(&proof[65..130], &nitro_sig);
+        assert_eq!(&proof[130..195], &tdx_sig);
     }
 
     #[test]
@@ -410,20 +344,13 @@ mod tests {
     fn test_encode_dual_tee_dispute_proof_bytes_format() {
         let nitro_sig = test_signature(0);
         let tdx_sig = test_signature(1);
-        let proof = ProofEncoder::encode_dual_tee_dispute_proof_bytes(
-            B256::repeat_byte(0xA1),
-            &nitro_sig,
-            B256::repeat_byte(0xB2),
-            &tdx_sig,
-        )
-        .unwrap();
+        let proof =
+            ProofEncoder::encode_dual_tee_dispute_proof_bytes(&nitro_sig, &tdx_sig).unwrap();
 
-        assert_eq!(proof.len(), 195);
+        assert_eq!(proof.len(), 131);
         assert_eq!(proof[0], PROOF_TYPE_TEE);
-        assert_eq!(&proof[1..33], B256::repeat_byte(0xA1).as_slice());
-        assert_eq!(proof[97], 27);
-        assert_eq!(&proof[98..130], B256::repeat_byte(0xB2).as_slice());
-        assert_eq!(proof[194], 28);
+        assert_eq!(proof[65], 27);
+        assert_eq!(proof[130], 28);
     }
 
     #[test]

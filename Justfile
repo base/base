@@ -332,9 +332,9 @@ sepolia-tdx-dev-offchain:
 
     echo "Registering local TEE signers in $registry"
     owner="$(cast wallet address --account "$forge_account")"
-    cast send "$registry" "addDevSigner(address,bytes32)" "$nitro_signer" "$nitro_image_hash" \
+    cast send "$registry" "addDevSigner(address,bytes32,uint8)" "$nitro_signer" "$nitro_image_hash" 1 \
         --rpc-url "$l1_rpc" --account "$forge_account" --from "$owner"
-    cast send "$registry" "addDevTDXSigner(address,bytes32)" "$tdx_signer" "$tdx_image_hash" \
+    cast send "$registry" "addDevSigner(address,bytes32,uint8)" "$tdx_signer" "$tdx_image_hash" 2 \
         --rpc-url "$l1_rpc" --account "$forge_account" --from "$owner"
 
     echo "Starting proposer"
