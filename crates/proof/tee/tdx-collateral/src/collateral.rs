@@ -521,24 +521,19 @@ impl TdxAttestationHydrator {
         body_kind: TdxSignedCollateralBody,
         verification_time: u64,
     ) -> Result<u64> {
-        let error_mapper = match body_kind {
-            TdxSignedCollateralBody::TcbInfo => TdxVerifierError::TcbInfoInvalid,
-            TdxSignedCollateralBody::QeIdentity => TdxVerifierError::QeIdentityInvalid,
-        };
         let validity = collateral
-            .signed_validity(body_kind, error_mapper)
+            .signed_validity(body_kind)
             .map_err(|e| TdxCollateralError::source(Box::new(e)))?;
-        if collateral.issue_time != validity.issue_time
-            || collateral.next_update != validity.next_update
-        {
-            return Err(TdxCollateralError::source(Box::new(error_mapper(
-                "explicit collateral validity does not match signed JSON".into(),
-            ))));
+        let (issue_time, next_update) = validity;
+        if collateral.issue_time != issue_time || collateral.next_update != next_update {
+            return Err(TdxCollateralError::source(Box::new(
+                body_kind.invalid("explicit collateral validity does not match signed JSON".into()),
+            )));
         }
-        if verification_time < validity.issue_time || verification_time >= validity.next_update {
+        if verification_time < issue_time || verification_time >= next_update {
             return Err(TdxCollateralError::source(Box::new(TdxVerifierError::CollateralExpired)));
         }
-        Ok(validity.next_update)
+        Ok(next_update)
     }
 
     /// Returns cached collateral for the given lookup, or `None` if absent.
@@ -660,20 +655,11 @@ impl TdxAttestationHydrator {
         };
         let collateral =
             TdxSignedCollateral { raw, signing_chain, signature, issue_time: 0, next_update: 0 };
-        let error_mapper = match body_kind {
-            TdxSignedCollateralBody::TcbInfo => {
-                TdxVerifierError::TcbInfoInvalid as fn(String) -> TdxVerifierError
-            }
-            TdxSignedCollateralBody::QeIdentity => TdxVerifierError::QeIdentityInvalid,
-        };
         let validity = collateral
-            .signed_validity(body_kind, error_mapper)
+            .signed_validity(body_kind)
             .map_err(|e| TdxCollateralError::source(Box::new(e)))?;
-        Ok(TdxSignedCollateral {
-            issue_time: validity.issue_time,
-            next_update: validity.next_update,
-            ..collateral
-        })
+        let (issue_time, next_update) = validity;
+        Ok(TdxSignedCollateral { issue_time, next_update, ..collateral })
     }
 
     async fn fetch_revocation_evidence(

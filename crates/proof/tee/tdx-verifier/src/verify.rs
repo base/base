@@ -191,19 +191,11 @@ impl TdxVerifier {
                 TdxCertificate::authenticated_from_der(&cert.raw)
                     .map(|cert| expiration.min(cert.not_after))
             })?;
-        let tcb_validity = input
-            .collateral
-            .tcb_info
-            .signed_validity(TdxSignedCollateralBody::TcbInfo, TdxVerifierError::TcbInfoInvalid)?;
-        let qe_validity = input.collateral.qe_identity.signed_validity(
-            TdxSignedCollateralBody::QeIdentity,
-            TdxVerifierError::QeIdentityInvalid,
-        )?;
-        Ok(tcb_validity
-            .next_update
-            .min(qe_validity.next_update)
-            .min(certificate_expiration)
-            .min(crl_expiration))
+        let (_, tcb_next_update) =
+            input.collateral.tcb_info.signed_validity(TdxSignedCollateralBody::TcbInfo)?;
+        let (_, qe_next_update) =
+            input.collateral.qe_identity.signed_validity(TdxSignedCollateralBody::QeIdentity)?;
+        Ok(tcb_next_update.min(qe_next_update).min(certificate_expiration).min(crl_expiration))
     }
 }
 
@@ -657,18 +649,25 @@ mod tests {
         }
     }
 
+    fn signed_body_bytes(raw: &[u8], body_kind: TdxSignedCollateralBody) -> Vec<u8> {
+        TdxSignedCollateral {
+            raw: Bytes::copy_from_slice(raw),
+            signing_chain: Vec::new(),
+            signature: Bytes::new(),
+            issue_time: 0,
+            next_update: 0,
+        }
+        .signed_body_bytes(body_kind)
+        .expect("fixture collateral body must serialize")
+    }
+
     fn collateral(
         raw: &[u8],
         body_kind: TdxSignedCollateralBody,
         signing_key: &SigningKey,
         signing_chain: Vec<TdxCertificate>,
     ) -> TdxSignedCollateral {
-        let signed_body = TdxSignedCollateral::signed_body_bytes_from_raw(
-            raw,
-            body_kind,
-            TdxVerifierError::TcbInfoInvalid,
-        )
-        .expect("fixture collateral body must serialize");
+        let signed_body = signed_body_bytes(raw, body_kind);
         TdxSignedCollateral {
             raw: Bytes::copy_from_slice(raw),
             signing_chain,
@@ -682,10 +681,9 @@ mod tests {
         collateral: &mut TdxSignedCollateral,
         body_kind: TdxSignedCollateralBody,
         signing_key: &SigningKey,
-        error_mapper: fn(String) -> TdxVerifierError,
     ) {
         let signed_body = collateral
-            .signed_body_bytes(body_kind, error_mapper)
+            .signed_body_bytes(body_kind)
             .expect("fixture collateral body must serialize");
         collateral.signature = sign(signing_key, &signed_body);
     }
@@ -695,7 +693,6 @@ mod tests {
             &mut input.collateral.tcb_info,
             TdxSignedCollateralBody::TcbInfo,
             &signing_key(4),
-            TdxVerifierError::TcbInfoInvalid,
         );
     }
 
@@ -704,7 +701,6 @@ mod tests {
             &mut input.collateral.qe_identity,
             TdxSignedCollateralBody::QeIdentity,
             &signing_key(4),
-            TdxVerifierError::QeIdentityInvalid,
         );
     }
 
@@ -1054,12 +1050,8 @@ mod tests {
         input.collateral.qe_identity.raw =
             Bytes::from(serde_json::to_vec(&combined_document).unwrap());
 
-        let signed_tcb_body = TdxSignedCollateral::signed_body_bytes_from_raw(
-            &input.collateral.tcb_info.raw,
-            TdxSignedCollateralBody::TcbInfo,
-            TdxVerifierError::TcbInfoInvalid,
-        )
-        .expect("fixture TCB info body must serialize");
+        let signed_tcb_body =
+            signed_body_bytes(&input.collateral.tcb_info.raw, TdxSignedCollateralBody::TcbInfo);
         input.collateral.qe_identity.signature = sign(&signing_key(4), &signed_tcb_body);
 
         let error = TdxVerifier::verify(&input)

@@ -113,17 +113,13 @@ impl CollateralVerifier {
         revocation: &TdxRevocationEvidence,
         error_mapper: fn(String) -> TdxVerifierError,
     ) -> Result<(Bytes, u64)> {
-        let signed_validity = collateral.signed_validity(body_kind, error_mapper)?;
-        if collateral.issue_time != signed_validity.issue_time
-            || collateral.next_update != signed_validity.next_update
-        {
+        let (issue_time, next_update) = collateral.signed_validity(body_kind)?;
+        if collateral.issue_time != issue_time || collateral.next_update != next_update {
             return Err(error_mapper(
                 "explicit collateral validity does not match signed JSON".into(),
             ));
         }
-        if verification_time < signed_validity.issue_time
-            || verification_time >= signed_validity.next_update
-        {
+        if verification_time < issue_time || verification_time >= next_update {
             return Err(TdxVerifierError::CollateralExpired);
         }
 
@@ -143,7 +139,7 @@ impl CollateralVerifier {
             .ok_or_else(|| error_mapper("collateral signing chain is empty".into()))?;
         Self::verify_collateral_signing_certificate(leaf, error_mapper)?;
 
-        let signed_body = collateral.signed_body_bytes(body_kind, error_mapper)?;
+        let signed_body = collateral.signed_body_bytes(body_kind)?;
         Self::verify_p256_signature(
             &leaf_key,
             &signed_body,

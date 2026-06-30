@@ -15,9 +15,7 @@ mod revocation;
 pub use revocation::{AuthenticatedTdxCrl, TdxRevocationEvidence};
 
 mod signed;
-pub use signed::{
-    TdxCollateral, TdxSignedCollateral, TdxSignedCollateralBody, TdxSignedCollateralValidity,
-};
+pub use signed::{TdxCollateral, TdxSignedCollateral, TdxSignedCollateralBody};
 
 mod status;
 pub use status::IntelTcbStatus;

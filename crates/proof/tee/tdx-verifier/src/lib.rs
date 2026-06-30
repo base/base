@@ -11,9 +11,8 @@ pub use collateral::{
     TDX_QE_IDENTITY_VERSION, TDX_TCB_INFO_ID, TdxCertificate, TdxCollateral, TdxModule,
     TdxModuleIdentity, TdxModuleTcb, TdxModuleTcbLevel, TdxPckTcb, TdxPlatformIdentity,
     TdxQeIdentityBody, TdxQeIdentityDocument, TdxQeIdentityLevel, TdxQeIdentityTcb,
-    TdxRevocationEvidence, TdxSignedCollateral, TdxSignedCollateralBody,
-    TdxSignedCollateralValidity, TdxTcbComponent, TdxTcbComponents, TdxTcbInfoBody,
-    TdxTcbInfoDocument, TdxTcbLevel, TdxTeeType,
+    TdxRevocationEvidence, TdxSignedCollateral, TdxSignedCollateralBody, TdxTcbComponent,
+    TdxTcbComponents, TdxTcbInfoBody, TdxTcbInfoDocument, TdxTcbLevel, TdxTeeType,
 };
 
 mod error;
