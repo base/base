@@ -1,14 +1,41 @@
 //! End-to-end TDX quote, collateral, policy, and journal verification.
 
-use alloy_primitives::{Address, keccak256};
+use alloy_primitives::{Address, B256, Bytes, keccak256};
 use alloy_sol_types::SolValue;
 use k256::PublicKey;
 
 use crate::{
-    Result, TDXTcbStatus, TDXVerificationResult, TDXVerifierJournal, TdxCertificate,
-    TdxPlatformIdentity, TdxQuote, TdxSignedCollateralBody, TdxVerifierError, TdxVerifierInput,
-    collateral::CollateralVerifier,
+    Result, TDXTcbStatus, TDXVerificationResult, TDXVerifierJournal, TdxCertificate, TdxCollateral,
+    TdxPlatformIdentity, TdxQuote, TdxRevocationEvidence, TdxSignedCollateralBody,
+    TdxVerifierError, collateral::CollateralVerifier,
 };
+
+/// Complete explicit input to the pure TDX verifier.
+#[derive(Debug)]
+pub struct TdxVerifierInput {
+    /// Raw Intel TDX quote bytes.
+    pub quote: Bytes,
+    /// Root-to-leaf PCK certificate chain for the quote attestation key.
+    pub pck_certificate_chain: Vec<TdxCertificate>,
+    /// TCB info collateral and QE identity collateral.
+    pub collateral: TdxCollateral,
+    /// CRLs or equivalent revocation evidence.
+    pub revocation: TdxRevocationEvidence,
+    /// Trusted Intel root CA hash expected by the onchain verifier.
+    pub trusted_root_ca_hash: B256,
+    /// Expected uncompressed secp256k1 signer public key: `0x04 || x || y`.
+    pub expected_public_key: Bytes,
+    /// Quote collection timestamp in milliseconds since Unix epoch.
+    ///
+    /// This value must match the timestamp commitment in `TDREPORT.REPORTDATA`.
+    pub quote_timestamp_millis: u64,
+    /// Verification time in seconds since Unix epoch.
+    pub verification_time: u64,
+    /// Maximum accepted quote age in seconds.
+    pub max_quote_age_seconds: u64,
+    /// Contract TCB statuses accepted by verifier policy.
+    pub allowed_tcb_statuses: Vec<TDXTcbStatus>,
+}
 
 /// Stateless TDX attestation verifier.
 #[derive(Debug)]

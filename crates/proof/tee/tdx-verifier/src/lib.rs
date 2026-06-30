@@ -18,9 +18,6 @@ pub use collateral::{
 mod error;
 pub use error::{Result, TdxVerifierError};
 
-mod input;
-pub use input::TdxVerifierInput;
-
 mod types;
 pub use types::{
     ITDXVerifier, TDXTcbStatus, TDXVerificationResult, TDXVerifierJournal, ZkCoProcessorConfig,
@@ -41,4 +38,4 @@ pub use quote::{
 };
 
 mod verify;
-pub use verify::TdxVerifier;
+pub use verify::{TdxVerifier, TdxVerifierInput};
