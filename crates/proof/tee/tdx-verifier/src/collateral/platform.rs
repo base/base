@@ -58,14 +58,14 @@ impl TdxPlatformIdentity {
                 "Intel SGX extension parse failed: {e:?}"
             ))
         })?;
-        let DerObjectContent::Sequence(entries) = sgx_extension.content else {
-            return Err(TdxVerifierError::PckCertChainInvalid(
+        let entries = sgx_extension.as_sequence().map_err(|_| {
+            TdxVerifierError::PckCertChainInvalid(
                 "Intel SGX extension is not a DER SEQUENCE".into(),
-            ));
-        };
+            )
+        })?;
 
         for entry in entries {
-            let DerObjectContent::Sequence(fields) = entry.content else {
+            let Ok(fields) = entry.as_sequence() else {
                 continue;
             };
             let [oid_object, value_object] = fields.as_slice() else {
@@ -124,7 +124,7 @@ impl TdxPlatformIdentity {
             }
         }
 
-        if !sgx_tcb_seen.iter().all(|seen| *seen) {
+        if sgx_tcb_seen.contains(&false) {
             return Err(TdxVerifierError::PckCertChainInvalid(
                 "PCK certificate is missing SGX TCB components".into(),
             ));
