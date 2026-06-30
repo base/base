@@ -8,52 +8,36 @@ use crate::{ParsedTdxQuote, Result, TDX_TEE_TYPE, TdxVerifierError};
 use super::{CollateralVerifier, IntelTcbStatus, TDX_TCB_INFO_ID, TdxPckTcb, TdxPlatformIdentity};
 
 /// Signed Intel TCB info JSON document body.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TdxTcbInfoDocument {
     /// TCB info payload.
-    #[serde(rename = "tcbInfo")]
     pub tcb_info: TdxTcbInfoBody,
 }
 
 /// Intel TCB info payload fields used by this verifier.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TdxTcbInfoBody {
     /// Intel collateral class identifier.
     pub id: String,
     /// Intel TEE type for TDX, when supplied by the PCS response.
-    #[serde(
-        default,
-        rename = "teeType",
-        deserialize_with = "TdxTcbInfoBody::deserialize_tee_type"
-    )]
+    #[serde(default, deserialize_with = "TdxTcbInfoBody::deserialize_tee_type")]
     pub tee_type: Option<u32>,
     /// Platform FMSPC as Intel hex text.
     pub fmspc: String,
     /// Platform PCE ID as Intel hex text.
-    #[serde(rename = "pceId", alias = "pceid")]
+    #[serde(alias = "pceid")]
     pub pce_id: String,
     /// Default TDX module identity authenticated in this TCB info document.
-    #[serde(rename = "tdxModule")]
     pub tdx_module: TdxModule,
     /// Versioned TDX module identities authenticated in this TCB info document.
-    #[serde(rename = "tdxModuleIdentities")]
     pub tdx_module_identities: Vec<TdxModuleIdentity>,
     /// Ordered TCB levels from the signed TCB info document.
-    #[serde(rename = "tcbLevels")]
     pub tcb_levels: Vec<TdxTcbLevel>,
 }
 
 impl TdxTcbInfoBody {
-    /// Verifies that this signed TCB info document is TDX collateral.
-    pub fn verify_tdx_collateral(&self) -> Result<()> {
-        if self.id != TDX_TCB_INFO_ID
-            || self.tee_type.is_some_and(|tee_type| tee_type != TDX_TEE_TYPE)
-        {
-            return Err(TdxVerifierError::TcbInfoInvalid("TCB info is not TDX collateral".into()));
-        }
-        Ok(())
-    }
-
     /// Parses an optional Intel TEE type value from numeric or hexadecimal JSON.
     pub fn deserialize_tee_type<'de, D>(
         deserializer: D,
@@ -100,7 +84,11 @@ impl TdxTcbInfoBody {
         quote: &ParsedTdxQuote,
         pck_tcb: &TdxPckTcb,
     ) -> Result<IntelTcbStatus> {
-        self.verify_tdx_collateral()?;
+        if self.id != TDX_TCB_INFO_ID
+            || self.tee_type.is_some_and(|tee_type| tee_type != TDX_TEE_TYPE)
+        {
+            return Err(TdxVerifierError::TcbInfoInvalid("TCB info is not TDX collateral".into()));
+        }
         let platform_status = self
             .tcb_levels
             .iter()
@@ -160,25 +148,25 @@ impl TdxTcbInfoBody {
 }
 
 /// One TCB level from the signed TCB info document.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TdxTcbLevel {
     /// Component SVN requirements for this level.
     pub tcb: TdxTcbComponents,
     /// Intel status for this level.
-    #[serde(rename = "tcbStatus")]
     pub tcb_status: IntelTcbStatus,
 }
 
 /// Component SVN requirements from one TCB level.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Deserialize)]
 pub struct TdxTcbComponents {
     /// Minimum PCE SVN for this level.
     pub pcesvn: u16,
     /// TDX TCB component SVNs for this level.
-    #[serde(default, rename = "tdxtcbcomponents", alias = "tdxTcbComponents")]
+    #[serde(default, alias = "tdxTcbComponents")]
     pub tdxtcbcomponents: Vec<TdxTcbComponent>,
     /// SGX TCB component SVNs used by some collateral encodings.
-    #[serde(default, rename = "sgxtcbcomponents", alias = "sgxTcbComponents")]
+    #[serde(default, alias = "sgxTcbComponents")]
     pub sgxtcbcomponents: Vec<TdxTcbComponent>,
 }
 
@@ -208,26 +196,27 @@ impl TdxTcbComponents {
 }
 
 /// One TCB component SVN.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Deserialize)]
 pub struct TdxTcbComponent {
     /// Security version number for this component.
     pub svn: u16,
 }
 
 /// Signed default TDX module identity fields from TCB info collateral.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TdxModule {
     /// Expected TDX module signer measurement as hex text.
     pub mrsigner: String,
     /// Expected TDX module SEAM attributes as hex text.
     pub attributes: String,
     /// Mask applied when comparing TDX module SEAM attributes.
-    #[serde(rename = "attributesMask")]
     pub attributes_mask: String,
 }
 
 /// Signed versioned TDX module identity from TCB info collateral.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TdxModuleIdentity {
     /// Versioned module identity ID, such as `TDX_03`.
     pub id: String,
@@ -236,25 +225,23 @@ pub struct TdxModuleIdentity {
     /// Expected TDX module SEAM attributes as hex text.
     pub attributes: String,
     /// Mask applied when comparing TDX module SEAM attributes.
-    #[serde(rename = "attributesMask")]
     pub attributes_mask: String,
     /// Ordered TCB levels for this module identity.
-    #[serde(rename = "tcbLevels")]
     pub tcb_levels: Vec<TdxModuleTcbLevel>,
 }
 
 /// One TDX module identity TCB level.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TdxModuleTcbLevel {
     /// Module identity TCB requirement.
     pub tcb: TdxModuleTcb,
     /// Intel status for this module identity level.
-    #[serde(rename = "tcbStatus")]
     pub tcb_status: IntelTcbStatus,
 }
 
 /// TDX module identity TCB requirement.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Deserialize)]
 pub struct TdxModuleTcb {
     /// Minimum module ISV SVN for this level.
     pub isvsvn: u32,
