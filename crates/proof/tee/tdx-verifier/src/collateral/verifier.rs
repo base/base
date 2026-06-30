@@ -24,25 +24,29 @@ impl CollateralVerifier {
         verification_time: u64,
         revocation: &TdxRevocationEvidence,
     ) -> Result<(Bytes, u64)> {
-        let root = chain.first().ok_or_else(|| {
+        let (root, issued_certificates) = chain.split_first().ok_or_else(|| {
             TdxVerifierError::PckCertChainInvalid("certificate chain is empty".into())
         })?;
         if root.hash() != trusted_root_ca_hash {
             return Err(TdxVerifierError::RootCaNotTrusted);
         }
 
-        let authenticated_chain = chain
-            .iter()
-            .map(|cert| TdxCertificate::authenticated_from_der(&cert.raw))
-            .collect::<Result<Vec<_>>>()?;
         let authenticated_crls = revocation
             .certificate_crls
             .iter()
             .map(|crl| AuthenticatedTdxCrl::authenticated_from_der(crl))
             .collect::<Result<Vec<_>>>()?;
-        let (root, issued_certificates) =
-            authenticated_chain.split_first().expect("certificate chain is not empty");
-        for certificate in &authenticated_chain {
+        let mut issuer = TdxCertificate::authenticated_from_der(&root.raw)?;
+        if verification_time < issuer.not_before || verification_time >= issuer.not_after {
+            return Err(TdxVerifierError::PckCertChainInvalid(
+                "certificate is not valid at verification time".into(),
+            ));
+        }
+        Self::verify_certificate_signature(&issuer, &issuer.subject_public_key)?;
+
+        let mut crl_expiration = u64::MAX;
+        for certificate in issued_certificates {
+            let certificate = TdxCertificate::authenticated_from_der(&certificate.raw)?;
             if verification_time < certificate.not_before
                 || verification_time >= certificate.not_after
             {
@@ -50,17 +54,12 @@ impl CollateralVerifier {
                     "certificate is not valid at verification time".into(),
                 ));
             }
-        }
-        Self::verify_certificate_signature(root, &root.subject_public_key)?;
-
-        let mut crl_expiration = u64::MAX;
-        for (issuer, certificate) in authenticated_chain.iter().zip(issued_certificates) {
             if !issuer.is_ca {
                 return Err(TdxVerifierError::PckCertChainInvalid(
                     "issuer certificate is not a CA".into(),
                 ));
             }
-            Self::verify_certificate_signature(certificate, &issuer.subject_public_key)?;
+            Self::verify_certificate_signature(&certificate, &issuer.subject_public_key)?;
             if certificate.issuer_name != issuer.subject_name {
                 return Err(TdxVerifierError::PckCertChainInvalid(
                     "certificate issuer name does not match parent".into(),
@@ -69,14 +68,15 @@ impl CollateralVerifier {
             crl_expiration = crl_expiration.min(
                 TdxRevocationEvidence::verify_certificate_not_revoked_with_crls(
                     &authenticated_crls,
-                    certificate,
-                    issuer,
+                    &certificate,
+                    &issuer,
                     verification_time,
                 )?,
             );
+            issuer = certificate;
         }
 
-        Ok((authenticated_chain.last().unwrap_or(root).subject_public_key.clone(), crl_expiration))
+        Ok((issuer.subject_public_key.clone(), crl_expiration))
     }
 
     /// Verifies an authenticated certificate signature with an issuer P-256 public key.
@@ -110,6 +110,10 @@ impl CollateralVerifier {
             return Err(TdxVerifierError::CollateralExpired);
         }
 
+        let leaf = collateral
+            .signing_chain
+            .last()
+            .ok_or_else(|| body_kind.invalid("collateral signing chain is empty".into()))?;
         let (leaf_key, crl_expiration) = Self::verify_certificate_chain(
             &collateral.signing_chain,
             trusted_root_ca_hash,
@@ -120,10 +124,6 @@ impl CollateralVerifier {
             TdxVerifierError::RootCaNotTrusted => TdxVerifierError::RootCaNotTrusted,
             other => body_kind.invalid(other.to_string()),
         })?;
-        let leaf = collateral
-            .signing_chain
-            .last()
-            .ok_or_else(|| body_kind.invalid("collateral signing chain is empty".into()))?;
         Self::verify_collateral_signing_certificate(leaf, body_kind)?;
 
         let signed_body = collateral.signed_body_bytes(body_kind)?;
