@@ -72,7 +72,7 @@ impl TdxVerifier {
         Self::verify_quote_timestamp(
             input.quote_timestamp_millis,
             input.verification_time,
-            input.policy.max_quote_age_seconds,
+            input.max_quote_age_seconds,
         )?;
 
         let public_key_hash = Self::validate_public_key(&input.expected_public_key)?;
@@ -207,8 +207,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        TdxCertificate, TdxCollateral, TdxPckTcb, TdxPlatformIdentity, TdxQuotePolicy,
-        TdxRevocationEvidence, TdxSignedCollateral,
+        TdxCertificate, TdxCollateral, TdxPckTcb, TdxPlatformIdentity, TdxRevocationEvidence,
+        TdxSignedCollateral,
         collateral::{
             INTEL_TCB_SIGNING_CERT_COMMON_NAME, TDX_QE_IDENTITY_ID, TDX_QE_IDENTITY_VERSION,
         },
@@ -962,7 +962,7 @@ mod tests {
                 expected_signer: signer,
                 quote_timestamp_millis: QUOTE_TIMESTAMP_MILLIS,
                 verification_time: VERIFICATION_TIME,
-                policy: TdxQuotePolicy { max_quote_age_seconds: MAX_QUOTE_AGE_SECONDS },
+                max_quote_age_seconds: MAX_QUOTE_AGE_SECONDS,
                 allowed_tcb_statuses: vec![TDXTcbStatus::UpToDate],
             },
             root_hash,

@@ -12,9 +12,8 @@ use alloy_primitives::{Address, B256, Bytes, hex};
 use base_proof_tee_tdx_attestation_prover::TdxAttestationProverInput;
 use base_proof_tee_tdx_verifier::{
     AuthenticatedTdxCertificate, CollateralVerifier, ParsedTdxQuote, TdxCertificate, TdxCollateral,
-    TdxPckTcb, TdxPlatformIdentity, TdxQuote, TdxQuotePolicy, TdxRevocationEvidence,
-    TdxSignedCollateral, TdxSignedCollateralBody, TdxSignerAttestation, TdxVerifierError,
-    TdxVerifierInput,
+    TdxPckTcb, TdxPlatformIdentity, TdxQuote, TdxRevocationEvidence, TdxSignedCollateral,
+    TdxSignedCollateralBody, TdxSignerAttestation, TdxVerifierError, TdxVerifierInput,
 };
 use reqwest::{
     StatusCode,
@@ -225,7 +224,7 @@ impl TdxAttestationHydrator {
             expected_signer,
             quote_timestamp_millis: attestation.quote_timestamp_millis,
             verification_time,
-            policy: TdxQuotePolicy { max_quote_age_seconds: self.config.max_quote_age.as_secs() },
+            max_quote_age_seconds: self.config.max_quote_age.as_secs(),
             allowed_tcb_statuses: self.config.allowed_tcb_statuses.clone(),
         };
         Ok(TdxAttestationProverInput::new(verifier_input).encode())

@@ -3,8 +3,8 @@
 use alloy_primitives::Address;
 use alloy_sol_types::{SolValue, sol};
 use base_proof_tee_tdx_verifier::{
-    IntelTcbStatus, TDXTcbStatus, TdxCertificate, TdxCollateral, TdxQuotePolicy,
-    TdxRevocationEvidence, TdxSignedCollateral, TdxVerifierInput,
+    IntelTcbStatus, TDXTcbStatus, TdxCertificate, TdxCollateral, TdxRevocationEvidence,
+    TdxSignedCollateral, TdxVerifierInput,
 };
 
 use crate::{ProverError, Result};
@@ -46,12 +46,6 @@ sol! {
         bytes[] certificateCrls;
     }
 
-    /// ABI mirror of `TdxQuotePolicy`.
-    struct TdxQuotePolicyInput {
-        /// Maximum accepted quote age in seconds.
-        uint64 maxQuoteAgeSeconds;
-    }
-
     /// Complete explicit TDX verifier input encoded for a RISC Zero guest.
     struct TdxVerifierInputAbi {
         /// Raw Intel TDX quote bytes.
@@ -72,8 +66,8 @@ sol! {
         uint64 quoteTimestampMillis;
         /// Verification time in seconds since Unix epoch.
         uint64 verificationTime;
-        /// Quote timestamp policy.
-        TdxQuotePolicyInput policy;
+        /// Maximum accepted quote age in seconds.
+        uint64 maxQuoteAgeSeconds;
         /// Contract TCB statuses accepted by verifier policy.
         uint8[] allowedTcbStatuses;
     }
@@ -142,7 +136,7 @@ impl From<&TdxVerifierInput> for TdxVerifierInputAbi {
             expectedSigner: input.expected_signer,
             quoteTimestampMillis: input.quote_timestamp_millis,
             verificationTime: input.verification_time,
-            policy: (&input.policy).into(),
+            maxQuoteAgeSeconds: input.max_quote_age_seconds,
             allowedTcbStatuses: input
                 .allowed_tcb_statuses
                 .iter()
@@ -170,7 +164,7 @@ impl TryFrom<TdxVerifierInputAbi> for TdxVerifierInput {
             expected_signer: input.expectedSigner,
             quote_timestamp_millis: input.quoteTimestampMillis,
             verification_time: input.verificationTime,
-            policy: TdxQuotePolicy::from(input.policy),
+            max_quote_age_seconds: input.maxQuoteAgeSeconds,
             allowed_tcb_statuses: input
                 .allowedTcbStatuses
                 .into_iter()
@@ -247,18 +241,6 @@ impl From<&TdxRevocationEvidence> for TdxRevocationEvidenceInput {
 impl From<TdxRevocationEvidenceInput> for TdxRevocationEvidence {
     fn from(evidence: TdxRevocationEvidenceInput) -> Self {
         Self { certificate_crls: evidence.certificateCrls }
-    }
-}
-
-impl From<&TdxQuotePolicy> for TdxQuotePolicyInput {
-    fn from(policy: &TdxQuotePolicy) -> Self {
-        Self { maxQuoteAgeSeconds: policy.max_quote_age_seconds }
-    }
-}
-
-impl From<TdxQuotePolicyInput> for TdxQuotePolicy {
-    fn from(policy: TdxQuotePolicyInput) -> Self {
-        Self { max_quote_age_seconds: policy.maxQuoteAgeSeconds }
     }
 }
 

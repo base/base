@@ -1,17 +1,10 @@
-//! Top-level TDX verifier input and quote timestamp policy types.
+//! Top-level TDX verifier input types.
 
 use std::fmt;
 
 use alloy_primitives::{Address, B256, Bytes};
 
 use crate::{TDXTcbStatus, TdxCertificate, TdxCollateral, TdxRevocationEvidence, TdxTcbStatusList};
-
-/// Quote timestamp policy enforced inside the verifier guest.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TdxQuotePolicy {
-    /// Maximum accepted quote age in seconds.
-    pub max_quote_age_seconds: u64,
-}
 
 /// Complete explicit input to the pure TDX verifier.
 #[derive(Clone)]
@@ -36,8 +29,8 @@ pub struct TdxVerifierInput {
     pub quote_timestamp_millis: u64,
     /// Verification time in seconds since Unix epoch.
     pub verification_time: u64,
-    /// Quote timestamp policy.
-    pub policy: TdxQuotePolicy,
+    /// Maximum accepted quote age in seconds.
+    pub max_quote_age_seconds: u64,
     /// Contract TCB statuses accepted by verifier policy.
     pub allowed_tcb_statuses: Vec<TDXTcbStatus>,
 }
@@ -54,7 +47,7 @@ impl fmt::Debug for TdxVerifierInput {
             .field("expected_signer", &self.expected_signer)
             .field("quote_timestamp_millis", &self.quote_timestamp_millis)
             .field("verification_time", &self.verification_time)
-            .field("policy", &self.policy)
+            .field("max_quote_age_seconds", &self.max_quote_age_seconds)
             .field("allowed_tcb_statuses", &TdxTcbStatusList(&self.allowed_tcb_statuses))
             .finish()
     }

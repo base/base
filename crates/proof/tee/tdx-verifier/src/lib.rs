@@ -19,7 +19,7 @@ mod error;
 pub use error::{Result, TdxVerifierError};
 
 mod input;
-pub use input::{TdxQuotePolicy, TdxVerifierInput};
+pub use input::TdxVerifierInput;
 
 mod types;
 pub use types::{

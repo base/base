@@ -2,8 +2,8 @@
 
 use alloy_primitives::{Address, B256, Bytes};
 use base_proof_tee_tdx_verifier::{
-    IntelTcbStatus, TDXTcbStatus, TdxCertificate, TdxCollateral, TdxQuotePolicy,
-    TdxRevocationEvidence, TdxSignedCollateral, TdxVerifierInput,
+    IntelTcbStatus, TDXTcbStatus, TdxCertificate, TdxCollateral, TdxRevocationEvidence,
+    TdxSignedCollateral, TdxVerifierInput,
 };
 
 /// Signer address used across test fixtures.
@@ -41,7 +41,7 @@ pub fn verifier_input() -> TdxVerifierInput {
         expected_signer: SIGNER,
         quote_timestamp_millis: 1_711_111_111_000,
         verification_time: 1_711_111_222,
-        policy: TdxQuotePolicy { max_quote_age_seconds: 300 },
+        max_quote_age_seconds: 300,
         allowed_tcb_statuses: vec![TDXTcbStatus::UpToDate, TDXTcbStatus::SwHardeningNeeded],
     }
 }

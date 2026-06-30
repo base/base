@@ -8,9 +8,7 @@ use base_proof_contracts::ITEEProverRegistry;
 use base_proof_primitives::EnclaveApiClient;
 use base_proof_tee_tdx_collateral::{TdxAttestationConfig, TdxCollateralProvider};
 use base_proof_tee_tdx_prover::TdxMeasurements;
-use base_proof_tee_tdx_verifier::{
-    TdxQuote, TdxQuotePolicy, TdxSignerAttestation, TdxVerifier, TdxVerifierInput,
-};
+use base_proof_tee_tdx_verifier::{TdxQuote, TdxSignerAttestation, TdxVerifier, TdxVerifierInput};
 use eyre::{Context, Result, bail};
 use jsonrpsee::http_client::HttpClientBuilder;
 use url::Url;
@@ -166,9 +164,7 @@ impl TdxImageHashTool {
             expected_signer: signer_address,
             quote_timestamp_millis: attestation.quote_timestamp_millis,
             verification_time: Self::now_seconds()?,
-            policy: TdxQuotePolicy {
-                max_quote_age_seconds: attestation_config.max_quote_age.as_secs(),
-            },
+            max_quote_age_seconds: attestation_config.max_quote_age.as_secs(),
             allowed_tcb_statuses: attestation_config.allowed_tcb_statuses.clone(),
         };
         let journal =
