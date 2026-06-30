@@ -13,34 +13,27 @@ use super::{CollateralVerifier, IntelTcbStatus, TDX_QE_IDENTITY_ID, TDX_QE_IDENT
 
 /// Signed Intel QE identity JSON document.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct TdxQeIdentityDocument {
     /// QE identity payload.
-    #[serde(rename = "enclaveIdentity")]
     pub enclave_identity: TdxQeIdentityBody,
 }
 
 /// Intel QE identity fields used to authenticate the quote's QE report.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct TdxQeIdentityBody {
     /// Intel collateral class identifier.
     pub id: String,
     /// Intel collateral schema version.
     pub version: u16,
-    /// Collateral issue date authenticated inside signed JSON.
-    #[serde(rename = "issueDate")]
-    pub issue_date: String,
-    /// Collateral expiration authenticated inside signed JSON.
-    #[serde(rename = "nextUpdate")]
-    pub next_update: String,
     /// Expected QE `MISCSELECT` as hex text.
     pub miscselect: String,
     /// QE `MISCSELECT` mask as hex text.
-    #[serde(rename = "miscselectMask")]
     pub miscselect_mask: String,
     /// Expected QE attributes as hex text.
     pub attributes: String,
     /// QE attributes mask as hex text.
-    #[serde(rename = "attributesMask")]
     pub attributes_mask: String,
     /// Expected QE signer measurement as hex text.
     pub mrsigner: String,
@@ -128,11 +121,11 @@ impl TdxQeIdentityBody {
 
 /// One QE identity TCB level.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct TdxQeIdentityLevel {
     /// QE identity TCB threshold.
     pub tcb: TdxQeIdentityTcb,
     /// Intel status for this QE identity level.
-    #[serde(rename = "tcbStatus")]
     pub tcb_status: IntelTcbStatus,
 }
 
