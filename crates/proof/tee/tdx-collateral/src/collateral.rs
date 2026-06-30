@@ -272,10 +272,9 @@ impl TdxAttestationHydrator {
         let pck_leaf = pck_certificate_chain
             .last()
             .ok_or_else(|| TdxCollateralError::source("PCK certificate chain is empty"))?;
-        let platform = TdxPlatformIdentity::from_pck_certificate_der(&pck_leaf.raw)
-            .map_err(|e| TdxCollateralError::source(Box::new(e)))?;
-        let pck_tcb = TdxPckTcb::from_pck_certificate_der(&pck_leaf.raw)
-            .map_err(|e| TdxCollateralError::source(Box::new(e)))?;
+        let (platform, pck_tcb) =
+            TdxPlatformIdentity::platform_and_tcb_from_pck_certificate_der(&pck_leaf.raw)
+                .map_err(|e| TdxCollateralError::source(Box::new(e)))?;
 
         let verification_time = Self::now_seconds()?;
         let lookup = Self::collateral_cache_lookup(
@@ -374,10 +373,9 @@ impl TdxAttestationHydrator {
                 "certificate chain is empty".into(),
             )))
         })?;
-        let pck_platform = TdxPlatformIdentity::from_pck_certificate_der(&pck_leaf.raw)
-            .map_err(|e| TdxCollateralError::source(Box::new(e)))?;
-        let pck_tcb = TdxPckTcb::from_pck_certificate_der(&pck_leaf.raw)
-            .map_err(|e| TdxCollateralError::source(Box::new(e)))?;
+        let (pck_platform, pck_tcb) =
+            TdxPlatformIdentity::platform_and_tcb_from_pck_certificate_der(&pck_leaf.raw)
+                .map_err(|e| TdxCollateralError::source(Box::new(e)))?;
         let tcb_info_document = fetch
             .collateral
             .tcb_info

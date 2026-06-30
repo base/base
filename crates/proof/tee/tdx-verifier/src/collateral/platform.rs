@@ -3,7 +3,11 @@
 use alloy_primitives::Bytes;
 use x509_parser::{
     certificate::X509Certificate,
-    der_parser::der::{DerObject, DerObjectContent, parse_der},
+    der_parser::{
+        Oid,
+        der::{DerObjectContent, parse_der},
+        oid,
+    },
     prelude::FromDer,
 };
 
@@ -11,7 +15,11 @@ use crate::{Result, TdxVerifierError};
 
 use super::CollateralVerifier;
 
-const INTEL_SGX_EXTENSION_OID: &str = "1.2.840.113741.1.13.1";
+const INTEL_SGX_EXTENSION_OID: Oid<'static> = oid!(1.2.840.113741.1.13.1);
+const INTEL_TCB_COMPONENT_PREFIX_OID: Oid<'static> = oid!(1.2.840.113741.1.13.1.2);
+const INTEL_PCE_SVN_OID: Oid<'static> = oid!(1.2.840.113741.1.13.1.2.17);
+const INTEL_PCE_ID_OID: Oid<'static> = oid!(1.2.840.113741.1.13.1.3);
+const INTEL_FMSPC_OID: Oid<'static> = oid!(1.2.840.113741.1.13.1.4);
 
 /// Platform identity fields authenticated by the PCK certificate.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,106 +31,99 @@ pub struct TdxPlatformIdentity {
 }
 
 impl TdxPlatformIdentity {
-    /// Extracts Intel platform identity extensions from an authenticated PCK certificate.
-    pub fn from_pck_certificate_der(raw: &[u8]) -> Result<Self> {
-        Self::platform_and_tcb_from_pck_certificate_der(raw).map(|(platform, _)| platform)
-    }
-
     /// Extracts Intel platform identity and SGX/PCE TCB extensions from one PCK parse.
     pub fn platform_and_tcb_from_pck_certificate_der(raw: &[u8]) -> Result<(Self, TdxPckTcb)> {
         let (_, cert) = X509Certificate::from_der(raw).map_err(|e| {
             TdxVerifierError::PckCertChainInvalid(format!("X.509 parse failed: {e}"))
         })?;
-        Self::platform_and_tcb_from_pck_certificate(&cert)
-    }
-
-    /// Extracts Intel platform identity and SGX/PCE TCB extensions from an authenticated PCK cert.
-    pub fn platform_and_tcb_from_pck_certificate(
-        cert: &X509Certificate<'_>,
-    ) -> Result<(Self, TdxPckTcb)> {
         let mut fmspc = None;
         let mut pce_id = None;
         let mut sgx_tcb_svn = [0u8; 16];
         let mut sgx_tcb_seen = [false; 16];
         let mut pce_svn = None;
 
-        for extension in cert.tbs_certificate.extensions() {
-            if fmspc.is_some()
-                && pce_id.is_some()
-                && sgx_tcb_seen.iter().all(|seen| *seen)
-                && pce_svn.is_some()
-            {
-                break;
-            }
-
-            if extension.oid.to_id_string() != INTEL_SGX_EXTENSION_OID {
-                continue;
-            }
-
-            let (_, sgx_extension) = parse_der(extension.value).map_err(|e| {
+        let extension = cert
+            .tbs_certificate
+            .get_extension_unique(&INTEL_SGX_EXTENSION_OID)
+            .map_err(|e| {
                 TdxVerifierError::PckCertChainInvalid(format!(
-                    "Intel SGX extension parse failed: {e:?}"
+                    "Intel SGX extension lookup failed: {e}"
                 ))
+            })?
+            .ok_or_else(|| {
+                TdxVerifierError::PckCertChainInvalid(
+                    "PCK certificate is missing Intel SGX extension".into(),
+                )
             })?;
-            let DerObjectContent::Sequence(entries) = sgx_extension.content else {
-                return Err(TdxVerifierError::PckCertChainInvalid(
-                    "Intel SGX extension is not a DER SEQUENCE".into(),
-                ));
+        let (_, sgx_extension) = parse_der(extension.value).map_err(|e| {
+            TdxVerifierError::PckCertChainInvalid(format!(
+                "Intel SGX extension parse failed: {e:?}"
+            ))
+        })?;
+        let DerObjectContent::Sequence(entries) = sgx_extension.content else {
+            return Err(TdxVerifierError::PckCertChainInvalid(
+                "Intel SGX extension is not a DER SEQUENCE".into(),
+            ));
+        };
+
+        for entry in entries {
+            let DerObjectContent::Sequence(fields) = entry.content else {
+                continue;
             };
+            let [oid_object, value_object] = fields.as_slice() else {
+                continue;
+            };
+            let Ok(oid) = oid_object.as_oid() else {
+                continue;
+            };
+            let oid = oid.as_bytes();
 
-            for entry in entries {
-                let DerObjectContent::Sequence(fields) = entry.content else {
+            if oid == INTEL_PCE_ID_OID.as_bytes() {
+                let DerObjectContent::OctetString(content) = value_object.content else {
+                    return Err(TdxVerifierError::PckCertChainInvalid(
+                        "PCE ID is not encoded as DER OCTET STRING".into(),
+                    ));
+                };
+                pce_id = Some(Bytes::copy_from_slice(content));
+            } else if oid == INTEL_FMSPC_OID.as_bytes() {
+                let DerObjectContent::OctetString(content) = value_object.content else {
+                    return Err(TdxVerifierError::PckCertChainInvalid(
+                        "FMSPC is not encoded as DER OCTET STRING".into(),
+                    ));
+                };
+                fmspc = Some(Bytes::copy_from_slice(content));
+            } else if oid == INTEL_PCE_SVN_OID.as_bytes() {
+                let value = value_object.as_u64().map_err(|e| {
+                    TdxVerifierError::PckCertChainInvalid(format!(
+                        "PCE SVN is not an unsigned DER INTEGER: {e:?}"
+                    ))
+                })?;
+                pce_svn = Some(u16::try_from(value).map_err(|_| {
+                    TdxVerifierError::PckCertChainInvalid(
+                        "PCK certificate PCE SVN exceeds u16".into(),
+                    )
+                })?);
+            } else if let Some(suffix) = oid.strip_prefix(INTEL_TCB_COMPONENT_PREFIX_OID.as_bytes())
+            {
+                let [component] = suffix else {
                     continue;
                 };
-                let [oid_object, value_object] = fields.as_slice() else {
+                if !(1..=16).contains(component) {
                     continue;
-                };
-                let Ok(oid) = oid_object.as_oid() else {
-                    continue;
-                };
-                let Some(arcs) = oid.iter().map(|iter| iter.collect::<Vec<_>>()) else {
-                    continue;
-                };
-
-                match arcs.as_slice() {
-                    [1, 2, 840, 113741, 1, 13, 1, 3] => {
-                        pce_id = Some(
-                            Self::octets_from_der_object(value_object, "PCE ID")
-                                .map_err(TdxVerifierError::PckCertChainInvalid)?,
-                        );
-                    }
-                    [1, 2, 840, 113741, 1, 13, 1, 4] => {
-                        fmspc = Some(
-                            Self::octets_from_der_object(value_object, "FMSPC")
-                                .map_err(TdxVerifierError::PckCertChainInvalid)?,
-                        );
-                    }
-                    [1, 2, 840, 113741, 1, 13, 1, 2, component] if (1..=16).contains(component) => {
-                        let component_index = (*component as usize) - 1;
-                        let value = Self::unsigned_integer_from_der_object(
-                            value_object,
-                            "SGX TCB component",
-                        )
-                        .map_err(TdxVerifierError::PckCertChainInvalid)?;
-                        sgx_tcb_svn[component_index] = u8::try_from(value).map_err(|_| {
-                            TdxVerifierError::PckCertChainInvalid(format!(
-                                "PCK certificate SGX TCB component {} exceeds u8",
-                                component_index + 1
-                            ))
-                        })?;
-                        sgx_tcb_seen[component_index] = true;
-                    }
-                    [1, 2, 840, 113741, 1, 13, 1, 2, 17] => {
-                        let value = Self::unsigned_integer_from_der_object(value_object, "PCE SVN")
-                            .map_err(TdxVerifierError::PckCertChainInvalid)?;
-                        pce_svn = Some(u16::try_from(value).map_err(|_| {
-                            TdxVerifierError::PckCertChainInvalid(
-                                "PCK certificate PCE SVN exceeds u16".into(),
-                            )
-                        })?);
-                    }
-                    _ => {}
                 }
+                let component_index = usize::from(*component) - 1;
+                let value = value_object.as_u64().map_err(|e| {
+                    TdxVerifierError::PckCertChainInvalid(format!(
+                        "SGX TCB component is not an unsigned DER INTEGER: {e:?}"
+                    ))
+                })?;
+                sgx_tcb_svn[component_index] = u8::try_from(value).map_err(|_| {
+                    TdxVerifierError::PckCertChainInvalid(format!(
+                        "PCK certificate SGX TCB component {} exceeds u8",
+                        component_index + 1
+                    ))
+                })?;
+                sgx_tcb_seen[component_index] = true;
             }
         }
 
@@ -159,25 +160,6 @@ impl TdxPlatformIdentity {
                 .map_err(TdxVerifierError::TcbInfoInvalid)?,
         })
     }
-
-    /// Reads an OCTET STRING value from a parsed DER object.
-    pub fn octets_from_der_object(
-        object: &DerObject<'_>,
-        name: &str,
-    ) -> std::result::Result<Bytes, String> {
-        if let DerObjectContent::OctetString(content) = object.content {
-            return Ok(Bytes::copy_from_slice(content));
-        }
-        Err(format!("{name} is not encoded as DER OCTET STRING"))
-    }
-
-    /// Reads an unsigned INTEGER value from a parsed DER object.
-    pub fn unsigned_integer_from_der_object(
-        object: &DerObject<'_>,
-        name: &str,
-    ) -> std::result::Result<u64, String> {
-        object.as_u64().map_err(|e| format!("{name} is not an unsigned DER INTEGER: {e:?}"))
-    }
 }
 
 /// SGX/PCE TCB values authenticated by the PCK certificate.
@@ -187,11 +169,4 @@ pub struct TdxPckTcb {
     pub sgx_tcb_svn: [u8; 16],
     /// PCE SVN authenticated by the PCK certificate.
     pub pce_svn: u16,
-}
-
-impl TdxPckTcb {
-    /// Extracts Intel SGX/PCE TCB extensions from an authenticated PCK certificate.
-    pub fn from_pck_certificate_der(raw: &[u8]) -> Result<Self> {
-        TdxPlatformIdentity::platform_and_tcb_from_pck_certificate_der(raw).map(|(_, tcb)| tcb)
-    }
 }
