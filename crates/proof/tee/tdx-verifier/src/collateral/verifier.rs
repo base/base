@@ -8,8 +8,8 @@ use x509_parser::{certificate::X509Certificate, extensions::ParsedExtension, pre
 use crate::{ParsedTdxQuote, Result, TdxVerifierError};
 
 use super::{
-    AuthenticatedTdxCertificate, INTEL_TCB_SIGNING_CERT_COMMON_NAME, TdxCertificate,
-    TdxRevocationEvidence, TdxSignedCollateral, TdxSignedCollateralBody,
+    AuthenticatedTdxCertificate, AuthenticatedTdxCrl, INTEL_TCB_SIGNING_CERT_COMMON_NAME,
+    TdxCertificate, TdxRevocationEvidence, TdxSignedCollateral, TdxSignedCollateralBody,
 };
 
 /// Stateless helper for collateral validation.
@@ -35,7 +35,11 @@ impl CollateralVerifier {
             .iter()
             .map(|cert| TdxCertificate::authenticated_from_der(&cert.raw))
             .collect::<Result<Vec<_>>>()?;
-        let authenticated_crls = revocation.authenticate_crls()?;
+        let authenticated_crls = revocation
+            .certificate_crls
+            .iter()
+            .map(|crl| AuthenticatedTdxCrl::authenticated_from_der(crl))
+            .collect::<Result<Vec<_>>>()?;
         let mut crl_expiration = u64::MAX;
 
         for (index, authenticated) in authenticated_chain.iter().enumerate() {

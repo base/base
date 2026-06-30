@@ -69,14 +69,6 @@ pub struct TdxRevocationEvidence {
 }
 
 impl TdxRevocationEvidence {
-    /// Pre-parses all supplied CRLs into authenticated form for repeated lookups.
-    pub fn authenticate_crls(&self) -> Result<Vec<AuthenticatedTdxCrl>> {
-        self.certificate_crls
-            .iter()
-            .map(|crl| AuthenticatedTdxCrl::authenticated_from_der(crl))
-            .collect()
-    }
-
     /// Verifies a certificate against pre-authenticated CRLs.
     pub fn verify_certificate_not_revoked_with_crls(
         authenticated_crls: &[AuthenticatedTdxCrl],
@@ -103,9 +95,7 @@ impl TdxRevocationEvidence {
                 ));
             }
             earliest_next_update =
-                Some(earliest_next_update.map_or(authenticated.next_update, |earliest| {
-                    earliest.min(authenticated.next_update)
-                }));
+                Some(earliest_next_update.unwrap_or(u64::MAX).min(authenticated.next_update));
             if authenticated.revoked_serials.iter().any(|serial| serial == &certificate.serial) {
                 return Err(TdxVerifierError::PckCertChainInvalid("certificate is revoked".into()));
             }
