@@ -47,21 +47,15 @@ impl IntelTcbStatus {
 
     /// Combines the platform TCB status with the TDX module identity TCB status.
     pub const fn converge_with_tdx_module_status(self, module_status: Self) -> Self {
-        match module_status {
-            Self::OutOfDate => match self {
-                Self::UpToDate | Self::SwHardeningNeeded => Self::OutOfDate,
-                Self::ConfigurationNeeded | Self::ConfigurationAndSwHardeningNeeded => {
-                    Self::OutOfDateConfigurationNeeded
-                }
-                status => status,
-            },
-            Self::Revoked => Self::Revoked,
-            Self::UpToDate => self,
-            Self::SwHardeningNeeded
-            | Self::ConfigurationNeeded
-            | Self::ConfigurationAndSwHardeningNeeded
-            | Self::OutOfDateConfigurationNeeded
-            | Self::Unsupported => Self::Unsupported,
+        match (self, module_status) {
+            (_, Self::Revoked) => Self::Revoked,
+            (Self::UpToDate | Self::SwHardeningNeeded, Self::OutOfDate) => Self::OutOfDate,
+            (
+                Self::ConfigurationNeeded | Self::ConfigurationAndSwHardeningNeeded,
+                Self::OutOfDate,
+            ) => Self::OutOfDateConfigurationNeeded,
+            (status, Self::UpToDate | Self::OutOfDate) => status,
+            _ => Self::Unsupported,
         }
     }
 }
