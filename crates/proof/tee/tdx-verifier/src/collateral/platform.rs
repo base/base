@@ -36,8 +36,7 @@ impl TdxPlatformIdentity {
         })?;
         let mut fmspc = None;
         let mut pce_id = None;
-        let mut sgx_tcb_svn = [0u8; 16];
-        let mut sgx_tcb_seen = [false; 16];
+        let mut sgx_tcb_svn = [None; 16];
         let mut pce_svn = None;
 
         let extension = cert
@@ -100,35 +99,30 @@ impl TdxPlatformIdentity {
                         "PCK certificate PCE SVN exceeds u16".into(),
                     )
                 })?);
-            } else if let Some(suffix) = oid.strip_prefix(INTEL_TCB_COMPONENT_PREFIX_OID.as_bytes())
+            } else if let Some(&[component @ 1..=16]) =
+                oid.strip_prefix(INTEL_TCB_COMPONENT_PREFIX_OID.as_bytes())
             {
-                let [component] = suffix else {
-                    continue;
-                };
-                if !(1..=16).contains(component) {
-                    continue;
-                }
-                let component_index = usize::from(*component) - 1;
+                let component_index = usize::from(component) - 1;
                 let value = value_object.as_u64().map_err(|e| {
                     TdxVerifierError::PckCertChainInvalid(format!(
                         "SGX TCB component is not an unsigned DER INTEGER: {e:?}"
                     ))
                 })?;
-                sgx_tcb_svn[component_index] = u8::try_from(value).map_err(|_| {
+                sgx_tcb_svn[component_index] = Some(u8::try_from(value).map_err(|_| {
                     TdxVerifierError::PckCertChainInvalid(format!(
                         "PCK certificate SGX TCB component {} exceeds u8",
                         component_index + 1
                     ))
-                })?;
-                sgx_tcb_seen[component_index] = true;
+                })?);
             }
         }
 
-        if sgx_tcb_seen.contains(&false) {
+        if sgx_tcb_svn.contains(&None) {
             return Err(TdxVerifierError::PckCertChainInvalid(
                 "PCK certificate is missing SGX TCB components".into(),
             ));
         }
+        let sgx_tcb_svn = sgx_tcb_svn.map(|component| component.unwrap_or_default());
 
         let platform = Self {
             fmspc: fmspc.ok_or_else(|| {

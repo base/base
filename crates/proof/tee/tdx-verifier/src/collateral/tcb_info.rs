@@ -56,20 +56,13 @@ impl TdxTcbInfoBody {
         Ok(())
     }
 
-    /// Returns the signed platform identity for this TCB info document.
-    pub fn platform_identity(&self) -> Result<TdxPlatformIdentity> {
-        Ok(TdxPlatformIdentity {
-            fmspc: CollateralVerifier::decode_hex(&self.fmspc)
-                .map_err(TdxVerifierError::TcbInfoInvalid)?,
-            pce_id: CollateralVerifier::decode_hex(&self.pce_id)
-                .map_err(TdxVerifierError::TcbInfoInvalid)?,
-        })
-    }
-
     /// Verifies that this signed TCB info applies to the PCK certificate platform.
     pub fn verify_platform(&self, pck_platform: &TdxPlatformIdentity) -> Result<()> {
-        let tcb_platform = self.platform_identity()?;
-        if tcb_platform != *pck_platform {
+        let fmspc = CollateralVerifier::decode_hex(&self.fmspc)
+            .map_err(TdxVerifierError::TcbInfoInvalid)?;
+        let pce_id = CollateralVerifier::decode_hex(&self.pce_id)
+            .map_err(TdxVerifierError::TcbInfoInvalid)?;
+        if fmspc != pck_platform.fmspc || pce_id != pck_platform.pce_id {
             return Err(TdxVerifierError::TcbInfoInvalid(
                 "TCB info FMSPC/PCE ID does not match PCK certificate".into(),
             ));
