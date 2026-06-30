@@ -12,7 +12,7 @@ pub use collateral::{
     TdxModuleIdentity, TdxModuleTcb, TdxModuleTcbLevel, TdxPckTcb, TdxPlatformIdentity,
     TdxQeIdentityBody, TdxQeIdentityDocument, TdxQeIdentityLevel, TdxQeIdentityTcb,
     TdxRevocationEvidence, TdxSignedCollateral, TdxSignedCollateralBody, TdxTcbComponent,
-    TdxTcbComponents, TdxTcbInfoBody, TdxTcbInfoDocument, TdxTcbLevel, TdxTeeType,
+    TdxTcbComponents, TdxTcbInfoBody, TdxTcbInfoDocument, TdxTcbLevel,
 };
 
 mod error;

@@ -21,14 +21,12 @@ pub struct TdxTcbInfoBody {
     /// Intel collateral class identifier.
     pub id: String,
     /// Intel TEE type for TDX, when supplied by the PCS response.
-    #[serde(default, rename = "teeType")]
-    pub tee_type: Option<TdxTeeType>,
-    /// Collateral issue date authenticated inside signed JSON.
-    #[serde(rename = "issueDate")]
-    pub issue_date: String,
-    /// Collateral expiration authenticated inside signed JSON.
-    #[serde(rename = "nextUpdate")]
-    pub next_update: String,
+    #[serde(
+        default,
+        rename = "teeType",
+        deserialize_with = "TdxTcbInfoBody::deserialize_tee_type"
+    )]
+    pub tee_type: Option<u32>,
     /// Platform FMSPC as Intel hex text.
     pub fmspc: String,
     /// Platform PCE ID as Intel hex text.
@@ -49,11 +47,37 @@ impl TdxTcbInfoBody {
     /// Verifies that this signed TCB info document is TDX collateral.
     pub fn verify_tdx_collateral(&self) -> Result<()> {
         if self.id != TDX_TCB_INFO_ID
-            || self.tee_type.is_some_and(|tee_type| tee_type.value != TDX_TEE_TYPE)
+            || self.tee_type.is_some_and(|tee_type| tee_type != TDX_TEE_TYPE)
         {
             return Err(TdxVerifierError::TcbInfoInvalid("TCB info is not TDX collateral".into()));
         }
         Ok(())
+    }
+
+    /// Parses an optional Intel TEE type value from numeric or hexadecimal JSON.
+    pub fn deserialize_tee_type<'de, D>(
+        deserializer: D,
+    ) -> std::result::Result<Option<u32>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match Value::deserialize(deserializer)? {
+            Value::Null => Ok(None),
+            Value::Number(number) => {
+                let value = number
+                    .as_u64()
+                    .ok_or_else(|| de::Error::custom("teeType is not an unsigned integer"))?;
+                u32::try_from(value).map(Some).map_err(|_| de::Error::custom("teeType exceeds u32"))
+            }
+            Value::String(value) => {
+                let value =
+                    value.strip_prefix("0x").or_else(|| value.strip_prefix("0X")).unwrap_or(&value);
+                u32::from_str_radix(value, 16)
+                    .map(Some)
+                    .map_err(|e| de::Error::custom(format!("teeType parse failed: {e}")))
+            }
+            _ => Err(de::Error::custom("teeType has unsupported type")),
+        }
     }
 
     /// Verifies that this signed TCB info applies to the PCK certificate platform.
@@ -80,7 +104,9 @@ impl TdxTcbInfoBody {
         let platform_status = self
             .tcb_levels
             .iter()
-            .find(|level| level.tcb.matches_quote_and_pck(quote, pck_tcb))
+            .find(|level| {
+                level.tcb.matches_pck_tcb(pck_tcb) && level.tcb.matches_quote_tdx_tcb(quote)
+            })
             .map(|level| level.tcb_status)
             .ok_or_else(|| {
                 TdxVerifierError::TcbInfoInvalid("no TCB info level matches quote TCB".into())
@@ -93,7 +119,12 @@ impl TdxTcbInfoBody {
     pub fn tdx_module_status_for_quote(&self, quote: &ParsedTdxQuote) -> Result<IntelTcbStatus> {
         let module_version = quote.tee_tcb_svn[1];
         if module_version == 0 {
-            self.tdx_module.verify_quote(quote)?;
+            CollateralVerifier::verify_module_identity_fields(
+                quote,
+                &self.tdx_module.mrsigner,
+                &self.tdx_module.attributes,
+                &self.tdx_module.attributes_mask,
+            )?;
             return Ok(IntelTcbStatus::UpToDate);
         }
 
@@ -107,7 +138,12 @@ impl TdxTcbInfoBody {
                     "no TDX module identity matches quote module version {module_version}"
                 ))
             })?;
-        module.verify_quote(quote)?;
+        CollateralVerifier::verify_module_identity_fields(
+            quote,
+            &module.mrsigner,
+            &module.attributes,
+            &module.attributes_mask,
+        )?;
 
         let module_isvsvn = u32::from(quote.tee_tcb_svn[0]);
         module
@@ -120,44 +156,6 @@ impl TdxTcbInfoBody {
                     "no TDX module identity TCB level matches quote".into(),
                 )
             })
-    }
-}
-
-/// Intel TEE type parsed from a signed TCB info document.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TdxTeeType {
-    /// Numeric TEE type value.
-    pub value: u32,
-}
-
-impl TdxTeeType {
-    /// Parses Intel TEE type text as hexadecimal, accepting an optional `0x` prefix.
-    pub fn parse_hex(value: &str) -> std::result::Result<Self, String> {
-        let value = value.strip_prefix("0x").or_else(|| value.strip_prefix("0X")).unwrap_or(value);
-        u32::from_str_radix(value, 16)
-            .map(|value| Self { value })
-            .map_err(|e| format!("teeType parse failed: {e}"))
-    }
-}
-
-impl<'de> Deserialize<'de> for TdxTeeType {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = Value::deserialize(deserializer)?;
-        match value {
-            Value::Number(number) => {
-                let value = number
-                    .as_u64()
-                    .ok_or_else(|| de::Error::custom("teeType is not an unsigned integer"))?;
-                let value =
-                    u32::try_from(value).map_err(|_| de::Error::custom("teeType exceeds u32"))?;
-                Ok(Self { value })
-            }
-            Value::String(value) => Self::parse_hex(&value).map_err(de::Error::custom),
-            _ => Err(de::Error::custom("teeType has unsupported type")),
-        }
     }
 }
 
@@ -185,11 +183,6 @@ pub struct TdxTcbComponents {
 }
 
 impl TdxTcbComponents {
-    /// Returns true when this TCB level applies to the PCK certificate and quote.
-    pub fn matches_quote_and_pck(&self, quote: &ParsedTdxQuote, pck_tcb: &TdxPckTcb) -> bool {
-        self.matches_pck_tcb(pck_tcb) && self.matches_quote_tdx_tcb(quote)
-    }
-
     /// Returns true when this level's SGX/PCE requirements match the PCK certificate.
     pub fn matches_pck_tcb(&self, pck_tcb: &TdxPckTcb) -> bool {
         self.pcesvn <= pck_tcb.pce_svn
@@ -233,18 +226,6 @@ pub struct TdxModule {
     pub attributes_mask: String,
 }
 
-impl TdxModule {
-    /// Verifies this module identity against the quote report body.
-    pub fn verify_quote(&self, quote: &ParsedTdxQuote) -> Result<()> {
-        CollateralVerifier::verify_module_identity_fields(
-            quote,
-            &self.mrsigner,
-            &self.attributes,
-            &self.attributes_mask,
-        )
-    }
-}
-
 /// Signed versioned TDX module identity from TCB info collateral.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct TdxModuleIdentity {
@@ -260,18 +241,6 @@ pub struct TdxModuleIdentity {
     /// Ordered TCB levels for this module identity.
     #[serde(rename = "tcbLevels")]
     pub tcb_levels: Vec<TdxModuleTcbLevel>,
-}
-
-impl TdxModuleIdentity {
-    /// Verifies this module identity against the quote report body.
-    pub fn verify_quote(&self, quote: &ParsedTdxQuote) -> Result<()> {
-        CollateralVerifier::verify_module_identity_fields(
-            quote,
-            &self.mrsigner,
-            &self.attributes,
-            &self.attributes_mask,
-        )
-    }
 }
 
 /// One TDX module identity TCB level.

@@ -23,7 +23,7 @@ pub use status::IntelTcbStatus;
 mod tcb_info;
 pub use tcb_info::{
     TdxModule, TdxModuleIdentity, TdxModuleTcb, TdxModuleTcbLevel, TdxTcbComponent,
-    TdxTcbComponents, TdxTcbInfoBody, TdxTcbInfoDocument, TdxTcbLevel, TdxTeeType,
+    TdxTcbComponents, TdxTcbInfoBody, TdxTcbInfoDocument, TdxTcbLevel,
 };
 
 mod verifier;
