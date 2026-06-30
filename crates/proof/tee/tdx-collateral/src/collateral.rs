@@ -251,11 +251,11 @@ impl TdxAttestationHydrator {
                     },
                 )?;
                 let verifier_input = prover_input.verifier_input;
-                Ok(TdxSignerAttestation::new(
-                    verifier_input.expected_public_key,
-                    verifier_input.quote,
-                    verifier_input.quote_timestamp_millis,
-                ))
+                Ok(TdxSignerAttestation {
+                    signer_public_key: verifier_input.expected_public_key,
+                    quote: verifier_input.quote,
+                    quote_timestamp_millis: verifier_input.quote_timestamp_millis,
+                })
             }
         }
     }

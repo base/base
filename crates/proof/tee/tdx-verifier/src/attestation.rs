@@ -4,10 +4,10 @@ use alloy_primitives::Bytes;
 use thiserror::Error;
 
 /// Magic prefix for encoded TDX signer attestations returned by JSON-RPC.
-pub const TDX_SIGNER_ATTESTATION_MAGIC: &[u8; 8] = b"BASETDX2";
+const TDX_SIGNER_ATTESTATION_MAGIC: &[u8; 8] = b"BASETDX2";
 
 /// Encoded TDX signer attestation header length: magic + timestamp + 2 lengths.
-pub const TDX_SIGNER_ATTESTATION_HEADER_LEN: usize = TDX_SIGNER_ATTESTATION_MAGIC.len() + 8 + 8 + 8;
+const TDX_SIGNER_ATTESTATION_HEADER_LEN: usize = TDX_SIGNER_ATTESTATION_MAGIC.len() + 8 + 8 + 8;
 
 /// Self-contained TDX signer attestation returned by `enclave_signerAttestation`.
 ///
@@ -32,11 +32,6 @@ pub struct TdxSignerAttestation {
 }
 
 impl TdxSignerAttestation {
-    /// Creates a TDX signer attestation payload from signer key, quote bytes, and timestamp metadata.
-    pub const fn new(signer_public_key: Bytes, quote: Bytes, quote_timestamp_millis: u64) -> Self {
-        Self { signer_public_key, quote, quote_timestamp_millis }
-    }
-
     /// Encodes this attestation into the JSON-RPC byte payload format.
     pub fn encode(&self) -> Vec<u8> {
         let mut encoded = Vec::with_capacity(
@@ -56,7 +51,7 @@ impl TdxSignerAttestation {
         if encoded.len() < TDX_SIGNER_ATTESTATION_HEADER_LEN {
             return Err(TdxSignerAttestationDecodeError::HeaderTooShort { len: encoded.len() });
         }
-        if &encoded[..TDX_SIGNER_ATTESTATION_MAGIC.len()] != TDX_SIGNER_ATTESTATION_MAGIC {
+        if !encoded.starts_with(TDX_SIGNER_ATTESTATION_MAGIC) {
             return Err(TdxSignerAttestationDecodeError::InvalidMagic);
         }
 
@@ -140,13 +135,17 @@ mod tests {
 
     use super::*;
 
+    fn fixture_attestation() -> TdxSignerAttestation {
+        TdxSignerAttestation {
+            signer_public_key: Bytes::from_static(b"fixture-public-key"),
+            quote: Bytes::from_static(b"fixture-quote"),
+            quote_timestamp_millis: 1_711_111_111_000,
+        }
+    }
+
     #[test]
     fn signer_attestation_round_trips() {
-        let attestation = TdxSignerAttestation::new(
-            Bytes::from_static(b"fixture-public-key"),
-            Bytes::from_static(b"fixture-quote"),
-            1_711_111_111_000,
-        );
+        let attestation = fixture_attestation();
         let encoded = attestation.encode();
 
         assert_eq!(TdxSignerAttestation::decode(&encoded).unwrap(), attestation);
@@ -154,11 +153,7 @@ mod tests {
 
     #[test]
     fn signer_attestation_decode_rejects_invalid_magic() {
-        let attestation = TdxSignerAttestation::new(
-            Bytes::from_static(b"fixture-public-key"),
-            Bytes::from_static(b"fixture-quote"),
-            1_711_111_111_000,
-        );
+        let attestation = fixture_attestation();
         let mut encoded = attestation.encode();
         encoded[0] = b'X';
 
@@ -170,25 +165,14 @@ mod tests {
 
     #[test]
     fn signer_attestation_decode_rejects_length_mismatch() {
-        let attestation = TdxSignerAttestation::new(
-            Bytes::from_static(b"fixture-public-key"),
-            Bytes::from_static(b"fixture-quote"),
-            1_711_111_111_000,
-        );
+        let attestation = fixture_attestation();
         let mut encoded = attestation.encode();
+        let expected = encoded.len();
         encoded.pop();
 
         assert_eq!(
             TdxSignerAttestation::decode(&encoded).unwrap_err(),
-            TdxSignerAttestationDecodeError::LengthMismatch {
-                expected: TDX_SIGNER_ATTESTATION_HEADER_LEN
-                    + b"fixture-public-key".len()
-                    + b"fixture-quote".len(),
-                actual: TDX_SIGNER_ATTESTATION_HEADER_LEN
-                    + b"fixture-public-key".len()
-                    + b"fixture-quote".len()
-                    - 1,
-            }
+            TdxSignerAttestationDecodeError::LengthMismatch { expected, actual: encoded.len() }
         );
     }
 }

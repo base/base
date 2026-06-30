@@ -164,11 +164,11 @@ where
                 .signer_quote()
                 .map_err(|error| TdxProverServer::<P>::rpc_err(-32001, error))?;
             attestations.push(
-                TdxSignerAttestation::new(
-                    signer_public_key.to_vec().into(),
-                    quote.quote,
-                    quote.quote_timestamp_millis,
-                )
+                TdxSignerAttestation {
+                    signer_public_key: signer_public_key.to_vec().into(),
+                    quote: quote.quote,
+                    quote_timestamp_millis: quote.quote_timestamp_millis,
+                }
                 .encode(),
             );
         }

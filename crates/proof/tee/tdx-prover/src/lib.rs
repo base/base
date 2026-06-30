@@ -1,9 +1,6 @@
 #![doc = include_str!("../README.md")]
 
-pub use base_proof_tee_tdx_verifier::{
-    TDX_SIGNER_ATTESTATION_HEADER_LEN, TDX_SIGNER_ATTESTATION_MAGIC, TdxSignerAttestation,
-    TdxSignerAttestationDecodeError,
-};
+pub use base_proof_tee_tdx_verifier::{TdxSignerAttestation, TdxSignerAttestationDecodeError};
 
 mod backend;
 pub use backend::{AggregateProposalInput, CONFIG_HASHES, TdxBackend};
