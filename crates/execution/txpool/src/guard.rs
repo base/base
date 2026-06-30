@@ -54,6 +54,31 @@ pub enum LimitRejection {
     PayerBalance,
 }
 
+/// Per-transaction admission classification resolved during validation and
+/// carried on the pooled transaction. The pool combines this with the
+/// transaction's [`WatchSet`] to build an [`Admission`] without re-reading chain
+/// state.
+///
+/// All fields default to the strictest interpretation when classification can't
+/// be established (not locked, not trusted), so a failed or skipped read can
+/// never grant elevated mempool access.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LimitClass {
+    /// Resolved sender account (the account whose sender dimension is charged).
+    pub sender: Address,
+    /// Resolved payer account (equals `sender` for self-paying transactions).
+    pub payer: Address,
+    /// Whether the sender's owner config is locked (stable auth surface).
+    pub sender_locked: bool,
+    /// Whether the payer is balance-bounded (locked + trusted bytecode).
+    pub payer_trusted: bool,
+    /// The payer's balance after authorization charges, used to seed a
+    /// balance-bounded payer book.
+    pub payer_balance: U256,
+    /// The maximum cost this transaction can charge the payer.
+    pub max_cost: U256,
+}
+
 /// A validated transaction presented for admission, carrying the classification
 /// resolved during validation.
 #[derive(Debug, Clone)]
@@ -102,6 +127,15 @@ pub struct MempoolGuard {
 }
 
 impl MempoolGuard {
+    /// Creates a guard that never rejects on count limits (caps set to
+    /// [`u32::MAX`]). Used while admission-limit enforcement is staged: the
+    /// index and balance/exact invalidation are fully active, but no transaction
+    /// is rejected for exceeding a per-account count.
+    #[must_use]
+    pub fn unlimited() -> Self {
+        Self::new(GuardLimits { default_sender: u32::MAX, default_payer: u32::MAX })
+    }
+
     /// Creates a guard with the given limits.
     #[must_use]
     pub fn new(limits: GuardLimits) -> Self {
@@ -189,6 +223,40 @@ impl MempoolGuard {
         );
         self.index.insert(admission.hash, admission.watch_set);
         Ok(())
+    }
+
+    /// Registers a transaction unconditionally, bypassing the count caps. Used
+    /// for replacements: the replaced transaction is released first, so the swap
+    /// is net-neutral on the count dimensions and must never be rejected (you can
+    /// always fee-bump your own pooled transaction).
+    ///
+    /// A balance-bounded (trusted) payer still goes through the book; if the
+    /// fee-bumped reservation no longer fits the cached balance it is left
+    /// out of the book (but still recorded), and the next balance update
+    /// re-evaluates it — the swap itself is never rejected.
+    pub fn insert_forced(&mut self, admission: Admission) {
+        if self.records.contains_key(&admission.hash) {
+            return;
+        }
+        self.sender_counts.try_increment(admission.sender, u32::MAX);
+        if admission.payer_trusted {
+            self.payer_books
+                .entry(admission.payer)
+                .or_insert_with(|| PayerBook::new(admission.payer_balance))
+                .try_reserve(admission.hash, admission.max_cost, admission.priority);
+        } else {
+            self.payer_counts.try_increment(admission.payer, u32::MAX);
+        }
+        self.records.insert(
+            admission.hash,
+            AdmissionRecord {
+                sender: admission.sender,
+                payer: admission.payer,
+                payer_trusted: admission.payer_trusted,
+                max_cost: admission.max_cost,
+            },
+        );
+        self.index.insert(admission.hash, admission.watch_set);
     }
 
     /// Releases all bookkeeping for `hash` (limits and index). Returns `true` if
@@ -447,6 +515,71 @@ mod tests {
         // Balance drops below cost: dropped.
         let dropped = guard.on_balance_changed(account, U256::from(499u64));
         assert_eq!(dropped, vec![hash(1)]);
+        assert!(guard.is_empty());
+    }
+
+    #[test]
+    fn insert_forced_bypasses_caps_for_replacement() {
+        let mut guard = MempoolGuard::new(GuardLimits::default());
+        let sender = addr(1);
+
+        // Fill the sender dimension to its default cap with distinct payers.
+        for i in 0..DEFAULT_SENDER_LIMIT as u8 {
+            let adm = Admission { payer: addr(100 + i), ..self_pay(i, sender, 10) };
+            assert!(guard.try_admit(adm).is_ok());
+        }
+        // A genuinely new tx is rejected at the cap.
+        let new = Admission { payer: addr(200), ..self_pay(50, sender, 10) };
+        assert_eq!(guard.try_admit(new), Err(LimitRejection::SenderLimit));
+
+        // A replacement (pool releases the old hash first, then force-inserts the
+        // new one) stays at the cap and is never rejected.
+        assert!(guard.release(&hash(0)));
+        let replacement = Admission { payer: addr(250), ..self_pay(60, sender, 10) };
+        guard.insert_forced(replacement);
+        assert_eq!(guard.len(), DEFAULT_SENDER_LIMIT as usize);
+        assert!(guard.contains(&hash(60)));
+        assert!(!guard.contains(&hash(0)));
+    }
+
+    #[test]
+    fn insert_forced_is_idempotent_and_releasable() {
+        let mut guard = MempoolGuard::new(GuardLimits::default());
+        let account = addr(1);
+
+        let adm = self_pay(1, account, 10);
+        guard.insert_forced(adm.clone());
+        // Re-forcing the same hash is a no-op (no double counting).
+        guard.insert_forced(adm);
+        assert_eq!(guard.len(), 1);
+
+        // A forced insert is released through the normal path and frees the slot.
+        assert!(guard.release(&hash(1)));
+        assert!(guard.is_empty());
+    }
+
+    #[test]
+    fn insert_forced_trusted_replacement_tracks_in_book() {
+        let mut guard = MempoolGuard::new(GuardLimits::default());
+        let payer = addr(9);
+        let make = |h: u8, cost: u64| Admission {
+            payer,
+            payer_trusted: true,
+            payer_balance: U256::from(100u64),
+            max_cost: U256::from(cost),
+            watch_set: WatchSet::new().watch(InvalidationKey::Balance(payer)),
+            ..self_pay(h, addr(h + 1), cost)
+        };
+
+        assert!(guard.try_admit(make(1, 60)).is_ok());
+        // Swap: release the old reservation, then force the fee-bumped one. The
+        // new reservation fits the freed balance and is tracked for eviction.
+        assert!(guard.release(&hash(1)));
+        guard.insert_forced(make(2, 70));
+        assert!(guard.contains(&hash(2)));
+        // A balance drop below the reservation still evicts it (book-tracked).
+        let dropped = guard.on_balance_changed(payer, U256::from(50u64));
+        assert_eq!(dropped, vec![hash(2)]);
         assert!(guard.is_empty());
     }
 

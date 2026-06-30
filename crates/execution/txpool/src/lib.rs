@@ -29,7 +29,7 @@ mod forwarder;
 pub use forwarder::{Forwarder, ForwarderConfig, ForwarderMetrics, SpawnedForwarder};
 
 mod pool;
-pub use pool::BaseTransactionPool;
+pub use pool::{AccountStateDiff, BaseTransactionPool};
 
 mod pool_error_label;
 pub use pool_error_label::PoolRejectionLabel;
@@ -56,7 +56,8 @@ pub use limits::{InflightCounters, PayerBook};
 
 mod guard;
 pub use guard::{
-    Admission, DEFAULT_PAYER_LIMIT, DEFAULT_SENDER_LIMIT, GuardLimits, LimitRejection, MempoolGuard,
+    Admission, DEFAULT_PAYER_LIMIT, DEFAULT_SENDER_LIMIT, GuardLimits, LimitClass, LimitRejection,
+    MempoolGuard,
 };
 
 pub mod estimated_da_size;

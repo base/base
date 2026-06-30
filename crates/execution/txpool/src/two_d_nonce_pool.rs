@@ -7,7 +7,6 @@ use std::{
 };
 
 use alloy_primitives::{Address, TxHash, U256};
-use reth_execution_types::ChangedAccount;
 use reth_primitives_traits::transaction::error::InvalidTransactionError;
 use reth_transaction_pool::{
     AddedTransactionOutcome, BestTransactions, PoolResult, PriceBumpConfig, Priority,
@@ -360,28 +359,6 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
         PruneMinedOutcome { removed }
     }
 
-    /// Removes sidecar transactions that can no longer afford the updated account balance.
-    pub(crate) fn remove_unaffordable(
-        &mut self,
-        accounts: &[ChangedAccount],
-    ) -> Vec<Arc<ValidPoolTransaction<T>>> {
-        let mut hashes = Vec::new();
-        for account in accounts {
-            hashes.extend(
-                self.hashes
-                    .values()
-                    .filter(|transaction| {
-                        transaction.sender() == account.address
-                            && transaction.transaction.cost() > &account.balance
-                    })
-                    .map(|transaction| *transaction.hash()),
-            );
-        }
-        hashes.sort_unstable();
-        hashes.dedup();
-        self.remove_transactions(&hashes)
-    }
-
     /// Removes all transactions for the given sender.
     pub(crate) fn remove_transactions_by_sender(
         &mut self,
@@ -552,7 +529,6 @@ mod tests {
     use base_common_consensus::{
         BasePooledTransaction as ConsensusPooledTransaction, Eip8130Signed, TxEip8130,
     };
-    use reth_execution_types::ChangedAccount;
     use reth_transaction_pool::{PoolTransaction, PriceBumpConfig, TransactionOrigin};
 
     use super::*;
@@ -695,34 +671,6 @@ mod tests {
             pool.pending_transactions().into_iter().map(|tx| *tx.hash()).collect::<Vec<_>>(),
             vec![queued_hash]
         );
-    }
-
-    #[test]
-    fn remove_unaffordable_prunes_sidecar_transactions_for_changed_account() {
-        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
-        let signer = signer();
-
-        let affordable = valid_pool_transaction(signed_channel_tx(&signer, U256::from(3), 0, 1));
-        let affordable_hash = *affordable.hash();
-        let unaffordable =
-            valid_pool_transaction(signed_channel_tx(&signer, U256::from(4), 0, 1_000_000_000_000));
-        let unaffordable_hash = *unaffordable.hash();
-
-        pool.insert_validated(affordable, 0).unwrap();
-        pool.insert_validated(unaffordable, 0).unwrap();
-
-        let removed = pool.remove_unaffordable(&[ChangedAccount {
-            address: signer.address(),
-            nonce: 0,
-            balance: U256::from(100_000u64),
-        }]);
-
-        assert_eq!(
-            removed.iter().map(|tx| *tx.hash()).collect::<Vec<_>>(),
-            vec![unaffordable_hash]
-        );
-        assert!(pool.get(&unaffordable_hash).is_none());
-        assert!(pool.get(&affordable_hash).is_some());
     }
 
     #[test]

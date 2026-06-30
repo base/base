@@ -10,9 +10,9 @@
 //! Keys carry one of two invalidation semantics:
 //!
 //! * **Exact-match** ([`InvalidationKey::ProtocolNonce`],
-//!   [`InvalidationKey::ChannelNonce`], [`InvalidationKey::Slot`]): the
-//!   transaction validated against a specific value; the instant that value
-//!   changes the transaction is dead and is dropped unconditionally.
+//!   [`InvalidationKey::Slot`]): the transaction validated against a specific
+//!   value; the instant that value changes the transaction is dead and is
+//!   dropped unconditionally.
 //! * **Threshold** ([`InvalidationKey::Balance`]): balance moves every block, so
 //!   a change triggers a re-evaluation against a running reservation rather than
 //!   an automatic drop. The threshold policy itself lives in the payer
@@ -24,7 +24,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use alloy_primitives::{Address, B256, TxHash, U256};
+use alloy_primitives::{Address, B256, TxHash};
 
 /// A single piece of on-chain state a pooled transaction depends on.
 ///
@@ -38,16 +38,9 @@ pub enum InvalidationKey {
     Balance(Address),
     /// Protocol (EOA) nonce of an account. Exact-match semantics.
     ProtocolNonce(Address),
-    /// A 2D nonce-manager channel `(account, nonce_key)`. Exact-match semantics.
-    ChannelNonce {
-        /// Account that owns the channel.
-        account: Address,
-        /// High-bits nonce key identifying the channel.
-        nonce_key: U256,
-    },
     /// A raw storage slot `(contract address, slot)` — e.g. an actor-config or
-    /// account-state/lock slot in the EIP-8130 `AccountConfiguration` contract.
-    /// Exact-match semantics.
+    /// account-state/lock slot in the EIP-8130 `AccountConfiguration` contract,
+    /// or a 2D nonce-manager channel slot. Exact-match semantics.
     Slot {
         /// Contract whose storage slot is watched.
         address: Address,
@@ -281,8 +274,6 @@ mod tests {
         assert!(!InvalidationKey::Balance(addr(1)).is_exact());
 
         assert!(InvalidationKey::ProtocolNonce(addr(1)).is_exact());
-        assert!(InvalidationKey::ChannelNonce { account: addr(1), nonce_key: U256::from(2) }
-            .is_exact());
         assert!(InvalidationKey::Slot { address: addr(1), slot: B256::repeat_byte(2) }.is_exact());
     }
 

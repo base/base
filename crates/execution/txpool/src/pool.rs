@@ -10,7 +10,7 @@ use alloy_eips::{
     eip4844::{BlobAndProofV1, BlobAndProofV2, BlobCellsAndProofsV1},
     eip7594::BlobTransactionSidecarVariant,
 };
-use alloy_primitives::{Address, B128, B256, TxHash, map::AddressSet};
+use alloy_primitives::{Address, B128, B256, TxHash, U256, map::AddressSet};
 use futures::StreamExt;
 use parking_lot::RwLock;
 use reth_eth_wire_types::HandleMempoolData;
@@ -28,12 +28,56 @@ use reth_transaction_pool::{
 use tokio::{spawn, sync::mpsc};
 
 use crate::{
-    BasePooledTx, BaseTransactionValidator,
+    Admission, BasePooledTx, BaseTransactionValidator, GuardLimits, InvalidationKey, LimitRejection,
+    MempoolGuard,
     best::MergeBestTransactions,
     two_d_nonce_pool::{InsertOutcome, TwoDNoncePool},
 };
 
 const SIDE_CAR_EVENT_CHANNEL_SIZE: usize = 1024;
+
+/// A per-account state delta from a committed block, used to drive sidecar
+/// mempool invalidation.
+///
+/// Produced by the canonical-state feeder from the block's `BundleState`: each
+/// changed account contributes its balance/nonce change and the set of its
+/// contract storage slots that changed. Fed to
+/// [`BaseTransactionPool::apply_state_diff`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AccountStateDiff {
+    /// The account whose state changed (also the contract address for any
+    /// [`Self::changed_slots`]).
+    pub address: Address,
+    /// The new balance, when it changed this block. Drives threshold
+    /// re-evaluation of payer reservations.
+    pub balance: Option<U256>,
+    /// Whether the account's protocol (EOA) nonce changed this block. An
+    /// exact-match drop for transactions watching it.
+    pub nonce_changed: bool,
+    /// Storage slots in this account's contract whose value changed this block
+    /// (e.g. actor-config, account-lock, or channel-nonce slots). Each is an
+    /// exact-match drop for transactions watching it.
+    pub changed_slots: Vec<B256>,
+}
+
+impl AccountStateDiff {
+    /// Creates an empty diff for `address`.
+    #[must_use]
+    pub fn new(address: Address) -> Self {
+        Self { address, ..Default::default() }
+    }
+
+    /// Appends this account's exact-match invalidation keys (changed protocol
+    /// nonce and changed storage slots) to `out`.
+    fn push_exact_keys(&self, out: &mut Vec<InvalidationKey>) {
+        if self.nonce_changed {
+            out.push(InvalidationKey::ProtocolNonce(self.address));
+        }
+        for slot in &self.changed_slots {
+            out.push(InvalidationKey::Slot { address: self.address, slot: *slot });
+        }
+    }
+}
 
 /// Wrapper around reth's transaction pool that adds a 2D nonce sidecar for EIP-8130 channels.
 pub struct BaseTransactionPool<
@@ -54,6 +98,10 @@ pub struct BaseTransactionPool<
     nonce_pool: Arc<RwLock<TwoDNoncePool<T>>>,
     eip8130_replays: Arc<RwLock<HashMap<B256, TxHash>>>,
     listeners: Arc<RwLock<SidecarListeners<T>>>,
+    /// State-keyed invalidation ledger for sidecar transactions. Tracks the on-chain
+    /// dependencies (`WatchSet`) of each channelized transaction so balance/state changes
+    /// can invalidate affected transactions without scanning the whole pool.
+    guard: Arc<RwLock<MempoolGuard>>,
 }
 
 impl<Client, S, Evm, T, O> fmt::Debug for BaseTransactionPool<Client, S, Evm, T, O>
@@ -86,6 +134,7 @@ where
             nonce_pool: Arc::clone(&self.nonce_pool),
             eip8130_replays: Arc::clone(&self.eip8130_replays),
             listeners: Arc::clone(&self.listeners),
+            guard: Arc::clone(&self.guard),
         }
     }
 }
@@ -126,6 +175,7 @@ where
             nonce_pool: Arc::new(RwLock::new(TwoDNoncePool::new(price_bump_config))),
             eip8130_replays: Arc::new(RwLock::new(HashMap::new())),
             listeners: Arc::new(RwLock::new(SidecarListeners::default())),
+            guard: Arc::new(RwLock::new(MempoolGuard::new(GuardLimits::default()))),
         }
     }
 
@@ -146,6 +196,97 @@ where
 
     fn is_sidecar_transaction(&self, transaction: &T) -> bool {
         transaction.eip8130_nonce_channel_key().is_some()
+    }
+
+    /// Builds the guard admission for a validated sidecar transaction from the
+    /// watch set and limit classification derived during validation. Returns
+    /// `None` when either is missing (the transaction is then not admission- or
+    /// invalidation-tracked).
+    fn sidecar_admission(transaction: &T) -> Option<Admission> {
+        let watch_set = transaction.watch_set().cloned()?;
+        let class = *transaction.limit_class()?;
+        Some(Admission {
+            hash: *transaction.hash(),
+            sender: class.sender,
+            payer: class.payer,
+            sender_locked: class.sender_locked,
+            payer_trusted: class.payer_trusted,
+            payer_balance: class.payer_balance,
+            max_cost: class.max_cost,
+            priority: transaction.priority_fee_or_price(),
+            watch_set,
+        })
+    }
+
+    /// Maps a guard admission-limit rejection to a pool error returned to the
+    /// submitter.
+    fn limit_rejection_error(
+        hash: TxHash,
+        rejection: LimitRejection,
+    ) -> reth_transaction_pool::error::PoolError {
+        let reason = match rejection {
+            LimitRejection::SenderLimit => "sender EIP-8130 mempool limit reached",
+            LimitRejection::PayerLimit => "payer EIP-8130 mempool limit reached",
+            LimitRejection::PayerBalance => {
+                "payer balance cannot fund another sponsored EIP-8130 transaction"
+            }
+        };
+        reth_transaction_pool::error::PoolError::other(hash, reason)
+    }
+
+    /// Applies a committed block's state diff to the sidecar invalidation guard
+    /// and removes every newly-invalid channelized transaction from the sidecar.
+    ///
+    /// Exact-match surfaces (changed protocol nonces, actor-config / account-lock
+    /// / channel-nonce storage slots) drop their watchers unconditionally;
+    /// changed payer balances re-evaluate balance-bounded reservations
+    /// (threshold). Returns the removed transactions (already broadcast as
+    /// discarded to listeners).
+    ///
+    /// This is the M6 feeder entry point: a canonical-state task extracts the
+    /// per-account `BundleState` deltas of each committed block and calls this
+    /// once per block, invalidating ahead of the builder via the O(watchers)
+    /// reverse index rather than an O(pool) rescan.
+    ///
+    /// Lock order: the guard is taken alone (computing the drop set), released,
+    /// then the nonce pool and listeners — matching `update_accounts` so the
+    /// global order stays acyclic.
+    pub fn apply_state_diff(&self, diffs: &[AccountStateDiff]) -> Vec<Arc<ValidPoolTransaction<T>>> {
+        let dropped = {
+            let mut guard = self.guard.write();
+            let mut exact = Vec::new();
+            for diff in diffs {
+                diff.push_exact_keys(&mut exact);
+            }
+            let mut dropped = guard.invalidate_exact(exact);
+            for diff in diffs {
+                if let Some(balance) = diff.balance {
+                    dropped.extend(guard.on_balance_changed(diff.address, balance));
+                }
+            }
+            dropped
+        };
+        if dropped.is_empty() {
+            return Vec::new();
+        }
+        let removed = self.nonce_pool.write().remove_transactions(&dropped);
+        if !removed.is_empty() {
+            self.listeners.write().on_discarded(&removed);
+        }
+        removed
+    }
+
+    /// Releases the guard bookkeeping for a batch of removed sidecar
+    /// transactions. Acquired on its own (never nested under the nonce pool or
+    /// listener locks) so the lock order stays acyclic.
+    fn release_from_guard(&self, removed: &[Arc<ValidPoolTransaction<T>>]) {
+        if removed.is_empty() {
+            return;
+        }
+        let mut guard = self.guard.write();
+        for transaction in removed {
+            guard.release(transaction.hash());
+        }
     }
 
     /// Best-effort replay-id dedup lookup for the mempool admission path.
@@ -280,7 +421,37 @@ where
                     authorities,
                     &mut nonce_pool,
                 );
+                let admission = Self::sidecar_admission(&validated.transaction);
                 let outcome = nonce_pool.insert_validated(validated, state_nonce)?;
+                // Apply admission limits while still holding the nonce-pool lock
+                // (which serializes every guard-touching pool path), then drop the
+                // guard before notifying listeners to keep the lock order acyclic.
+                {
+                    let mut guard = self.guard.write();
+                    match (&outcome.replaced, admission) {
+                        // A replacement (fee-bump of an existing channel nonce) is
+                        // net-neutral on the count dimensions: release the old and
+                        // force the new in, never rejecting.
+                        (Some(replaced), admission) => {
+                            guard.release(replaced.hash());
+                            if let Some(admission) = admission {
+                                guard.insert_forced(admission);
+                            }
+                        }
+                        // A genuinely new transaction is gated by the limits.
+                        (None, Some(admission)) => {
+                            if let Err(rejection) = guard.try_admit(admission) {
+                                drop(guard);
+                                // Roll the insert back before any listener observes
+                                // it, so a limit rejection leaves no trace.
+                                let hash = outcome.outcome.hash;
+                                nonce_pool.remove_transactions(&[hash]);
+                                return Err(Self::limit_rejection_error(hash, rejection));
+                            }
+                        }
+                        (None, None) => {}
+                    }
+                }
                 listeners.on_inserted(&nonce_pool, &outcome);
                 Ok(outcome.outcome)
             }
@@ -741,6 +912,7 @@ where
             self.untrack_eip8130_replays(&sidecar_removed);
             self.listeners.write().on_discarded(&sidecar_removed);
         }
+        self.release_from_guard(&sidecar_removed);
         removed.extend(sidecar_removed);
         removed
     }
@@ -758,6 +930,7 @@ where
             self.untrack_eip8130_replays(&sidecar_removed);
             self.listeners.write().on_discarded(&sidecar_removed);
         }
+        self.release_from_guard(&sidecar_removed);
         removed.extend(sidecar_removed);
         removed
     }
@@ -773,6 +946,7 @@ where
             self.untrack_eip8130_replays(&sidecar_removed);
             self.listeners.write().on_discarded(&sidecar_removed);
         }
+        self.release_from_guard(&sidecar_removed);
         removed.extend(sidecar_removed);
         removed
     }
@@ -786,6 +960,7 @@ where
         self.untrack_eip8130_replays(&removed);
         let pruned = self.nonce_pool.write().prune_mined(&sidecar_hashes);
         self.untrack_eip8130_replays(&pruned.removed);
+        self.release_from_guard(&pruned.removed);
         removed.extend(pruned.removed);
         removed
     }
@@ -1021,13 +1196,33 @@ where
         if !pruned.removed.is_empty() {
             listeners.on_mined(&pruned.removed, block_hash);
         }
+        // Lock order: nonce_pool -> listeners -> guard (acquired last).
+        let mut guard = self.guard.write();
+        for transaction in &pruned.removed {
+            guard.release(transaction.hash());
+        }
     }
 
     fn update_accounts(&self, accounts: Vec<ChangedAccount>) {
-        let removed = self.nonce_pool.write().remove_unaffordable(&accounts);
-        if !removed.is_empty() {
-            self.untrack_eip8130_replays(&removed);
-            self.listeners.write().on_discarded(&removed);
+        // Drive sidecar balance invalidation through the state-keyed guard: each
+        // changed account is an O(1) reverse-index lookup keyed on the *payer*
+        // (correct for sponsored EIP-8130 transactions), replacing the previous
+        // O(pool) sender-keyed affordability scan. The guard lock is taken on its
+        // own and dropped before touching the nonce pool to keep the order
+        // acyclic.
+        let dropped = {
+            let mut guard = self.guard.write();
+            let mut dropped = Vec::new();
+            for account in &accounts {
+                dropped.extend(guard.on_balance_changed(account.address, account.balance));
+            }
+            dropped
+        };
+        if !dropped.is_empty() {
+            let removed = self.nonce_pool.write().remove_transactions(&dropped);
+            if !removed.is_empty() {
+                self.listeners.write().on_discarded(&removed);
+            }
         }
         self.protocol_pool.update_accounts(accounts)
     }
@@ -1316,6 +1511,42 @@ mod tests {
             origin: TransactionOrigin::External,
             authority_ids: None,
         }
+    }
+
+    #[test]
+    fn account_state_diff_emits_exact_keys_for_nonce_and_slots() {
+        let address = Address::repeat_byte(7);
+        let slot_a = B256::repeat_byte(1);
+        let slot_b = B256::repeat_byte(2);
+
+        let diff = AccountStateDiff {
+            address,
+            balance: Some(U256::from(5u64)),
+            nonce_changed: true,
+            changed_slots: vec![slot_a, slot_b],
+        };
+
+        let mut keys = Vec::new();
+        diff.push_exact_keys(&mut keys);
+
+        // Balance is a threshold surface, so it is NOT an exact-match key here;
+        // the nonce change and both storage slots are.
+        assert_eq!(
+            keys,
+            vec![
+                InvalidationKey::ProtocolNonce(address),
+                InvalidationKey::Slot { address, slot: slot_a },
+                InvalidationKey::Slot { address, slot: slot_b },
+            ]
+        );
+    }
+
+    #[test]
+    fn account_state_diff_without_changes_emits_no_exact_keys() {
+        let diff = AccountStateDiff::new(Address::repeat_byte(3));
+        let mut keys = Vec::new();
+        diff.push_exact_keys(&mut keys);
+        assert!(keys.is_empty());
     }
 
     #[tokio::test]

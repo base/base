@@ -45,7 +45,7 @@ use revm::{
     state::{AccountInfo, Bytecode},
 };
 
-use crate::{BasePooledTx, InvalidationKey, WatchSet};
+use crate::{BasePooledTx, InvalidationKey, LimitClass, WatchSet};
 
 /// Base-specific transaction pool validation errors.
 #[derive(Debug, thiserror::Error)]
@@ -84,6 +84,16 @@ struct Eip8130ValidationState {
     /// The on-chain state surfaces whose change invalidates this transaction,
     /// computed from the resolved actors, nonce mode, and any config changes.
     watch_set: WatchSet,
+    /// Whether the sender's owner config is locked (`now < unlocks_at`), giving
+    /// a stable auth surface and an unlimited sender admission dimension.
+    sender_locked: bool,
+    /// Whether the payer is balance-bounded ("trusted"): locked **and**
+    /// delegated to the high-rate account implementation, which blocks ETH
+    /// transfers while locked so `Σ max_cost ≤ balance` is a true drain bound.
+    payer_trusted: bool,
+    /// The maximum gas (and, for self-pay, value) cost this transaction can
+    /// charge the payer, used for payer-balance accounting.
+    payer_max_cost: U256,
 }
 
 /// Base storage slot of the `AccountConfiguration` `_actorConfig` mapping
@@ -670,6 +680,14 @@ where
             let propagate =
                 matches!(origin, TransactionOrigin::External | TransactionOrigin::Local);
             transaction.set_watch_set(state.watch_set.clone());
+            transaction.set_limit_class(LimitClass {
+                sender: state.sender,
+                payer: state.payer,
+                sender_locked: state.sender_locked,
+                payer_trusted: state.payer_trusted,
+                payer_balance: state.payer_balance_after_auth,
+                max_cost: state.payer_max_cost,
+            });
             let outcome = TransactionValidationOutcome::Valid {
                 balance: state.payer_balance_after_auth,
                 state_nonce: state.sender_nonce,
@@ -689,6 +707,16 @@ where
                 .watch(InvalidationKey::Balance(sender))
                 .watch(InvalidationKey::ProtocolNonce(sender)),
         );
+        // Standard transactions self-pay and are never owner-locked or trusted,
+        // so they always take the default count-limited dimensions.
+        transaction.set_limit_class(LimitClass {
+            sender,
+            payer: sender,
+            sender_locked: false,
+            payer_trusted: false,
+            payer_balance: U256::ZERO,
+            max_cost: *transaction.cost(),
+        });
         let outcome = self.inner.validate_one_with_state(origin, transaction, state);
         self.apply_base_checks(outcome, 0)
     }
@@ -847,6 +875,27 @@ where
             &config_actor_ids,
         );
 
+        // Admission-limit classification. Both reads degrade to the strictest
+        // interpretation on failure (not locked / not trusted) so a flaky read
+        // can never *grant* elevated mempool access.
+        let sender_locked = Self::is_account_locked(&*state, local_chain_id, now, sender);
+        let payer_trusted = (payer == sender && sender_locked
+            || Self::is_account_locked(&*state, local_chain_id, now, payer))
+            && Self::is_high_rate_account(&*state, payer);
+
+        let gas_charge = FeeCheck::max_fee_charge(
+            signed.tx().gas_limit,
+            intrinsic.payer_auth,
+            signed.tx().max_fee_per_gas,
+        );
+        // A self-paying payer is also charged the transaction's value; a distinct
+        // sponsor pays gas only (the sender funds value).
+        let payer_max_cost = if payer == sender {
+            gas_charge.saturating_add(signed.tx().value())
+        } else {
+            gas_charge
+        };
+
         Ok(Eip8130ValidationState {
             sender,
             payer,
@@ -855,7 +904,63 @@ where
             sender_bytecode_hash: sender_account.bytecode_hash,
             payer_auth: intrinsic.payer_auth,
             watch_set,
+            sender_locked,
+            payer_trusted,
+            payer_max_cost,
         })
+    }
+
+    /// Returns whether `account` is owner-locked in the `AccountConfiguration`
+    /// system contract (`now < unlocks_at`). Any read failure is treated as
+    /// **not locked** (the strict default for admission limits).
+    fn is_account_locked(
+        state: &dyn StateProvider,
+        local_chain_id: u64,
+        now: u64,
+        account: Address,
+    ) -> bool {
+        let mut storage = StateProviderPrecompileStorage::new(state, local_chain_id, now);
+        StorageCtx::enter(&mut storage, |ctx| {
+            AccountConfigurationStorage::new(ctx).is_locked(account, now).unwrap_or(false)
+        })
+    }
+
+    /// Returns whether `account`'s code delegates to the high-rate account
+    /// implementation ([`Eip8130Contracts::DEFAULT_HIGH_RATE_ACCOUNT`]), whose
+    /// bytecode blocks ETH transfers while locked. Any read failure or a
+    /// non-delegated / differently-delegated account returns `false`.
+    fn is_high_rate_account(state: &dyn StateProvider, account: Address) -> bool {
+        Self::delegation_target(state, account)
+            .ok()
+            .flatten()
+            .is_some_and(|target| target == Eip8130Contracts::DEFAULT_HIGH_RATE_ACCOUNT)
+    }
+
+    /// Reads the EIP-7702/8130 delegation target of `account`
+    /// (`DELEGATION_INDICATOR_PREFIX || target`), or `None` if the account is
+    /// undelegated or has non-delegation code.
+    fn delegation_target(
+        state: &dyn StateProvider,
+        account: Address,
+    ) -> Result<Option<Address>, reth_storage_api::errors::ProviderError> {
+        let Some(code_hash) =
+            state.basic_account(&account)?.and_then(|account| account.bytecode_hash)
+        else {
+            return Ok(None);
+        };
+        if code_hash == KECCAK_EMPTY {
+            return Ok(None);
+        }
+        let Some(code) = state.bytecode_by_hash(&code_hash)? else {
+            return Ok(None);
+        };
+        let bytes = code.original_bytes();
+        let prefix = &Eip8130Constants::DELEGATION_INDICATOR_PREFIX;
+        if bytes.len() == prefix.len() + 20 && bytes.starts_with(prefix) {
+            Ok(Some(Address::from_slice(&bytes[prefix.len()..])))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Builds the [`WatchSet`] for an EIP-8130 transaction from its resolved
@@ -886,8 +991,14 @@ where
             // Nonce-free: replay protection is expiry-based, no nonce slot.
         } else if nonce_key.is_zero() {
             watch_set.push(InvalidationKey::ProtocolNonce(sender));
-        } else {
-            watch_set.push(InvalidationKey::ChannelNonce { account: sender, nonce_key });
+        } else if let Ok(slot) = NonceManagerStorage::nonce_slot(sender, nonce_key) {
+            // The channel nonce lives in the NonceManager contract's storage.
+            // Watch the concrete slot so a committed channel-nonce increment
+            // (surfaced as a storage diff) matches this transaction directly.
+            watch_set.push(InvalidationKey::Slot {
+                address: NonceManagerStorage::ADDRESS,
+                slot: b256_from_u256(slot),
+            });
         }
 
         watch_set.push(InvalidationKey::Slot {
@@ -2657,7 +2768,13 @@ mod tests {
             &[config_actor],
         );
 
-        assert!(watch_set.contains(&InvalidationKey::ChannelNonce { account: sender, nonce_key }));
+        // The channel nonce is watched as the concrete NonceManager storage slot.
+        let channel_slot = NonceManagerStorage::nonce_slot(sender, nonce_key)
+            .expect("non-zero nonce key has a channel slot");
+        assert!(watch_set.contains(&InvalidationKey::Slot {
+            address: NonceManagerStorage::ADDRESS,
+            slot: b256_from_u256(channel_slot),
+        }));
         assert!(!watch_set.contains(&InvalidationKey::ProtocolNonce(sender)));
         assert!(watch_set.contains(&InvalidationKey::Balance(sender)));
         // Config changes watch the sender's lock/sequence slot and the config
@@ -2686,7 +2803,12 @@ mod tests {
         );
 
         assert!(!watch_set.contains(&InvalidationKey::ProtocolNonce(sender)));
-        assert!(watch_set.iter().all(|key| !matches!(key, InvalidationKey::ChannelNonce { .. })));
+        // Nonce-free transactions watch no nonce slot at all (only balance and
+        // the actor-config slot).
+        assert!(!watch_set.iter().any(|key| matches!(
+            key,
+            InvalidationKey::Slot { address, .. } if *address == NonceManagerStorage::ADDRESS
+        )));
         assert!(watch_set.contains(&InvalidationKey::Balance(sender)));
     }
 }
