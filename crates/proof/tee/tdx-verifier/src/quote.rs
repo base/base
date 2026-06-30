@@ -350,6 +350,7 @@ impl TdxQuote {
             &parsed.attestation_public_key,
             &parsed.signed_message(),
             &parsed.quote_signature,
+            TdxVerifierError::QuoteSignatureInvalid,
             TdxVerifierError::QuoteSignatureInvalid("quote signature verification failed".into()),
         )
         .map_err(|e| match e {
@@ -366,6 +367,7 @@ impl TdxQuote {
             pck_public_key,
             &parsed.qe_report,
             &parsed.qe_report_signature,
+            TdxVerifierError::PckCertChainInvalid,
             TdxVerifierError::PckCertChainInvalid("QE report signature verification failed".into()),
         )?;
 

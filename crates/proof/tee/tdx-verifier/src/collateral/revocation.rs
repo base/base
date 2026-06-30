@@ -85,6 +85,7 @@ impl TdxRevocationEvidence {
                 &issuer.subject_public_key,
                 &authenticated.tbs_cert_list,
                 &authenticated.signature,
+                TdxVerifierError::PckCertChainInvalid,
                 TdxVerifierError::PckCertChainInvalid("CRL signature failed".into()),
             )?;
             if verification_time < authenticated.this_update

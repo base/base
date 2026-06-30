@@ -46,6 +46,7 @@ impl CollateralVerifier {
                     issuer_public_key,
                     &certificate.tbs_certificate,
                     &certificate.signature,
+                    TdxVerifierError::PckCertChainInvalid,
                     TdxVerifierError::PckCertChainInvalid("certificate signature failed".into()),
                 )
             };
@@ -127,6 +128,7 @@ impl CollateralVerifier {
             &leaf_key,
             &signed_body,
             &collateral.signature,
+            |message| body_kind.invalid(message),
             body_kind.invalid("collateral signature failed".into()),
         )?;
 
@@ -185,15 +187,16 @@ impl CollateralVerifier {
         public_key: &[u8],
         message: &[u8],
         signature: &[u8],
-        error: TdxVerifierError,
+        signature_parse_error: impl FnOnce(String) -> TdxVerifierError,
+        verification_error: TdxVerifierError,
     ) -> Result<()> {
         let verifying_key = VerifyingKey::from_sec1_bytes(public_key).map_err(|e| {
             TdxVerifierError::PckCertChainInvalid(format!("invalid P-256 public key: {e}"))
         })?;
         let signature = Signature::from_slice(signature)
             .or_else(|_| Signature::from_der(signature))
-            .map_err(|e| error.clone().with_message(e.to_string()))?;
-        verifying_key.verify(message, &signature).map_err(|_| error)
+            .map_err(|e| signature_parse_error(e.to_string()))?;
+        verifying_key.verify(message, &signature).map_err(|_| verification_error)
     }
 
     /// Decodes hex text, accepting an optional `0x` prefix.

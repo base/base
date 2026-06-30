@@ -2,10 +2,8 @@
 
 use thiserror::Error;
 
-use crate::TDXVerificationResult;
-
 /// Errors that can occur during TDX quote and collateral verification.
-#[derive(Debug, Clone, Error)]
+#[derive(Debug, Error)]
 pub enum TdxVerifierError {
     /// Raw TDX quote bytes were malformed or incomplete.
     #[error("invalid TDX quote: {0}")]
@@ -54,38 +52,6 @@ pub enum TdxVerifierError {
     /// TD report data does not bind the expected public key.
     #[error("TD report data does not match expected public key binding")]
     ReportDataMismatch,
-}
-
-impl TdxVerifierError {
-    /// Returns the same error class with a replaced diagnostic message when supported.
-    pub fn with_message(self, message: String) -> Self {
-        match self {
-            Self::InvalidQuote(_) => Self::InvalidQuote(message),
-            Self::QuoteSignatureInvalid(_) => Self::QuoteSignatureInvalid(message),
-            Self::PckCertChainInvalid(_) => Self::PckCertChainInvalid(message),
-            Self::TcbInfoInvalid(_) => Self::TcbInfoInvalid(message),
-            Self::QeIdentityInvalid(_) => Self::QeIdentityInvalid(message),
-            other => other,
-        }
-    }
-
-    /// Returns the contract result enum corresponding to this error.
-    pub const fn result(&self) -> TDXVerificationResult {
-        match self {
-            Self::InvalidQuote(_) => TDXVerificationResult::InvalidQuote,
-            Self::QuoteSignatureInvalid(_) => TDXVerificationResult::QuoteSignatureInvalid,
-            Self::RootCaNotTrusted => TDXVerificationResult::RootCaNotTrusted,
-            Self::PckCertChainInvalid(_) => TDXVerificationResult::PckCertChainInvalid,
-            Self::TcbInfoInvalid(_) => TDXVerificationResult::TcbInfoInvalid,
-            Self::QeIdentityInvalid(_) => TDXVerificationResult::QeIdentityInvalid,
-            Self::TcbStatusNotAllowed => TDXVerificationResult::TcbStatusNotAllowed,
-            Self::CollateralExpired => TDXVerificationResult::CollateralExpired,
-            Self::InvalidTimestamp => TDXVerificationResult::InvalidTimestamp,
-            Self::MalformedPublicKey | Self::SignerMismatch | Self::ReportDataMismatch => {
-                TDXVerificationResult::ReportDataMismatch
-            }
-        }
-    }
 }
 
 /// Convenience result alias for TDX verifier operations.

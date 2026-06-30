@@ -269,6 +269,26 @@ mod tests {
         Bytes::copy_from_slice(&signature.to_bytes())
     }
 
+    fn assert_error_result(error: &TdxVerifierError, expected: TDXVerificationResult) {
+        let actual = match error {
+            TdxVerifierError::InvalidQuote(_) => TDXVerificationResult::InvalidQuote,
+            TdxVerifierError::QuoteSignatureInvalid(_) => {
+                TDXVerificationResult::QuoteSignatureInvalid
+            }
+            TdxVerifierError::RootCaNotTrusted => TDXVerificationResult::RootCaNotTrusted,
+            TdxVerifierError::PckCertChainInvalid(_) => TDXVerificationResult::PckCertChainInvalid,
+            TdxVerifierError::TcbInfoInvalid(_) => TDXVerificationResult::TcbInfoInvalid,
+            TdxVerifierError::QeIdentityInvalid(_) => TDXVerificationResult::QeIdentityInvalid,
+            TdxVerifierError::TcbStatusNotAllowed => TDXVerificationResult::TcbStatusNotAllowed,
+            TdxVerifierError::CollateralExpired => TDXVerificationResult::CollateralExpired,
+            TdxVerifierError::InvalidTimestamp => TDXVerificationResult::InvalidTimestamp,
+            TdxVerifierError::MalformedPublicKey
+            | TdxVerifierError::SignerMismatch
+            | TdxVerifierError::ReportDataMismatch => TDXVerificationResult::ReportDataMismatch,
+        };
+        assert_eq!(actual as u8, expected as u8, "{error:?}");
+    }
+
     fn der_len(len: usize) -> Vec<u8> {
         if len < 128 {
             return vec![len as u8];
@@ -1025,7 +1045,7 @@ mod tests {
         input.collateral.tcb_info.signature = sign(&signing_key(4), &input.collateral.tcb_info.raw);
         let error =
             TdxVerifier::verify(&input).expect_err("top-level collateral signature must fail");
-        assert_eq!(error.result() as u8, TDXVerificationResult::TcbInfoInvalid as u8);
+        assert_error_result(&error, TDXVerificationResult::TcbInfoInvalid);
     }
 
     #[test]
@@ -1047,7 +1067,7 @@ mod tests {
 
         let error = TdxVerifier::verify(&input)
             .expect_err("QE identity collateral with multiple signed bodies must fail");
-        assert_eq!(error.result() as u8, TDXVerificationResult::QeIdentityInvalid as u8);
+        assert_error_result(&error, TDXVerificationResult::QeIdentityInvalid);
     }
 
     #[test]
@@ -1079,7 +1099,7 @@ mod tests {
 
         let error =
             TdxVerifier::validate_public_key(&public_key).expect_err("off-curve key must fail");
-        assert_eq!(error.result() as u8, TDXVerificationResult::ReportDataMismatch as u8);
+        assert_error_result(&error, TDXVerificationResult::ReportDataMismatch);
         assert!(matches!(error, TdxVerifierError::MalformedPublicKey));
     }
 
@@ -1280,7 +1300,7 @@ mod tests {
         mutate(&mut input);
 
         let error = TdxVerifier::verify(&input).expect_err("fixture mutation must fail");
-        assert_eq!(error.result() as u8, expected_result as u8);
+        assert_error_result(&error, expected_result);
     }
 
     #[test]
@@ -1289,7 +1309,7 @@ mod tests {
         input.revocation = revocation_evidence(&[], &[vec![0x03]]);
 
         let error = TdxVerifier::verify(&input).expect_err("revoked PCK leaf must fail");
-        assert_eq!(error.result() as u8, TDXVerificationResult::PckCertChainInvalid as u8);
+        assert_error_result(&error, TDXVerificationResult::PckCertChainInvalid);
     }
 
     #[test]
@@ -1312,7 +1332,7 @@ mod tests {
 
         let error = TdxVerifier::verify(&input)
             .expect_err("downgraded PCK certificate TCB must not select UpToDate");
-        assert_eq!(error.result() as u8, TDXVerificationResult::TcbStatusNotAllowed as u8);
+        assert_error_result(&error, TDXVerificationResult::TcbStatusNotAllowed);
     }
 
     #[test]
@@ -1328,7 +1348,7 @@ mod tests {
 
         let error = TdxVerifier::verify(&input)
             .expect_err("out-of-date TDX module identity must affect TCB status");
-        assert_eq!(error.result() as u8, TDXVerificationResult::TcbStatusNotAllowed as u8);
+        assert_error_result(&error, TDXVerificationResult::TcbStatusNotAllowed);
     }
 
     #[test]
@@ -1340,7 +1360,7 @@ mod tests {
 
         let error =
             TdxVerifier::verify(&input).expect_err("TDX module identity mismatch must fail");
-        assert_eq!(error.result() as u8, TDXVerificationResult::TcbInfoInvalid as u8);
+        assert_error_result(&error, TDXVerificationResult::TcbInfoInvalid);
     }
 
     #[test]
@@ -1354,7 +1374,7 @@ mod tests {
         resign_tcb_info(&mut input);
 
         let error = TdxVerifier::verify(&input).expect_err("TDX module signer mismatch must fail");
-        assert_eq!(error.result() as u8, TDXVerificationResult::TcbInfoInvalid as u8);
+        assert_error_result(&error, TDXVerificationResult::TcbInfoInvalid);
     }
 
     #[test]
@@ -1374,7 +1394,7 @@ mod tests {
         input.revocation = revocation_evidence(&[], &[vec![0x80]]);
 
         let error = TdxVerifier::verify(&input).expect_err("padded serial revocation must fail");
-        assert_eq!(error.result() as u8, TDXVerificationResult::PckCertChainInvalid as u8);
+        assert_error_result(&error, TDXVerificationResult::PckCertChainInvalid);
     }
 
     #[test]
@@ -1391,7 +1411,7 @@ mod tests {
         input.collateral.tcb_info.signing_chain[2] = wrong_leaf;
 
         let error = TdxVerifier::verify(&input).expect_err("wrong collateral signer must fail");
-        assert_eq!(error.result() as u8, TDXVerificationResult::TcbInfoInvalid as u8);
+        assert_error_result(&error, TDXVerificationResult::TcbInfoInvalid);
     }
 
     #[test]
@@ -1400,7 +1420,7 @@ mod tests {
         input.collateral.tcb_info.signing_chain[2] = collateral_cert_with_key_usage(0x20);
 
         let error = TdxVerifier::verify(&input).expect_err("wrong collateral key usage must fail");
-        assert_eq!(error.result() as u8, TDXVerificationResult::TcbInfoInvalid as u8);
+        assert_error_result(&error, TDXVerificationResult::TcbInfoInvalid);
     }
 
     #[test]
@@ -1409,7 +1429,7 @@ mod tests {
         input.revocation = TdxRevocationEvidence::default();
 
         let error = TdxVerifier::verify(&input).expect_err("missing CRL evidence must fail");
-        assert_eq!(error.result() as u8, TDXVerificationResult::PckCertChainInvalid as u8);
+        assert_error_result(&error, TDXVerificationResult::PckCertChainInvalid);
     }
 
     #[test]
@@ -1421,7 +1441,7 @@ mod tests {
         resign_tcb_info(&mut input);
 
         let error = TdxVerifier::verify(&input).expect_err("TCB info platform mismatch must fail");
-        assert_eq!(error.result() as u8, TDXVerificationResult::TcbInfoInvalid as u8);
+        assert_error_result(&error, TDXVerificationResult::TcbInfoInvalid);
     }
 
     #[test]
@@ -1432,6 +1452,6 @@ mod tests {
         input.collateral.qe_identity.signature = Bytes::from(signature);
 
         let error = TdxVerifier::verify(&input).expect_err("bad QE identity signature must fail");
-        assert_eq!(error.result() as u8, TDXVerificationResult::QeIdentityInvalid as u8);
+        assert_error_result(&error, TDXVerificationResult::QeIdentityInvalid);
     }
 }
