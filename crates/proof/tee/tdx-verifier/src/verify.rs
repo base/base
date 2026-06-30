@@ -209,8 +209,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        IntelTcbStatus, TdxCertificate, TdxCollateral, TdxPckTcb, TdxPlatformIdentity,
-        TdxQuotePolicy, TdxRevocationEvidence, TdxSignedCollateral,
+        TdxCertificate, TdxCollateral, TdxPckTcb, TdxPlatformIdentity, TdxQuotePolicy,
+        TdxRevocationEvidence, TdxSignedCollateral,
         collateral::{
             INTEL_TCB_SIGNING_CERT_COMMON_NAME, TDX_QE_IDENTITY_ID, TDX_QE_IDENTITY_VERSION,
         },
@@ -227,10 +227,8 @@ mod tests {
     const VERIFICATION_TIME: u64 = 1_711_111_111;
     const QUOTE_TIMESTAMP_MILLIS: u64 = 1_711_111_000_000;
     const MAX_QUOTE_AGE_SECONDS: u64 = 300;
-    const COLLATERAL_ISSUE_TIME: u64 = 1_704_067_200;
     const COLLATERAL_NEXT_UPDATE: u64 = 2_051_222_400;
     const EARLY_CRL_NEXT_UPDATE: u64 = 1_893_456_000;
-    const EXPIRED_COLLATERAL_NEXT_UPDATE: u64 = 1_709_251_200;
     const COLLATERAL_ISSUE_DATE: &str = "2024-01-01T00:00:00Z";
     const COLLATERAL_NEXT_UPDATE_DATE: &str = "2035-01-01T00:00:00Z";
     const EARLY_CRL_NEXT_UPDATE_DATE: &str = "300101000000Z";
@@ -654,8 +652,6 @@ mod tests {
             raw: Bytes::copy_from_slice(raw),
             signing_chain: Vec::new(),
             signature: Bytes::new(),
-            issue_time: 0,
-            next_update: 0,
         }
         .signed_body_bytes(body_kind)
         .expect("fixture collateral body must serialize")
@@ -672,8 +668,6 @@ mod tests {
             raw: Bytes::copy_from_slice(raw),
             signing_chain,
             signature: sign(signing_key, &signed_body),
-            issue_time: COLLATERAL_ISSUE_TIME,
-            next_update: COLLATERAL_NEXT_UPDATE,
         }
     }
 
@@ -943,7 +937,6 @@ mod tests {
                 collateral: TdxCollateral {
                     tcb_info: tcb_info.clone(),
                     qe_identity: qe_identity.clone(),
-                    tcb_status: IntelTcbStatus::UpToDate,
                 },
                 revocation: revocation_evidence(&[], &[]),
                 trusted_root_ca_hash: root_hash,
@@ -1233,7 +1226,6 @@ mod tests {
             EXPIRED_COLLATERAL_NEXT_UPDATE_DATE,
         ));
         resign_tcb_info(input);
-        input.collateral.tcb_info.next_update = EXPIRED_COLLATERAL_NEXT_UPDATE;
     })]
     #[case::revoked_collateral_signer(TDXVerificationResult::TcbInfoInvalid, |input: &mut TdxVerifierInput| {
         input.revocation = revocation_evidence(&[], &[vec![0x04]]);

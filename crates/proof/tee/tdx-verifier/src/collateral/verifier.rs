@@ -114,11 +114,6 @@ impl CollateralVerifier {
         error_mapper: fn(String) -> TdxVerifierError,
     ) -> Result<(Bytes, u64)> {
         let (issue_time, next_update) = collateral.signed_validity(body_kind)?;
-        if collateral.issue_time != issue_time || collateral.next_update != next_update {
-            return Err(error_mapper(
-                "explicit collateral validity does not match signed JSON".into(),
-            ));
-        }
         if verification_time < issue_time || verification_time >= next_update {
             return Err(TdxVerifierError::CollateralExpired);
         }

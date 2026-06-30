@@ -5,9 +5,7 @@ use serde_json::Value;
 
 use crate::{Result, TdxVerifierError};
 
-use super::{
-    CollateralVerifier, IntelTcbStatus, TdxCertificate, TdxQeIdentityDocument, TdxTcbInfoDocument,
-};
+use super::{CollateralVerifier, TdxCertificate, TdxQeIdentityDocument, TdxTcbInfoDocument};
 
 /// Signed collateral document with its signing chain.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,10 +16,6 @@ pub struct TdxSignedCollateral {
     pub signing_chain: Vec<TdxCertificate>,
     /// P-256 ECDSA signature over the selected signed JSON body.
     pub signature: Bytes,
-    /// Collateral issue time in seconds since Unix epoch.
-    pub issue_time: u64,
-    /// Collateral expiration time in seconds since Unix epoch.
-    pub next_update: u64,
 }
 
 /// JSON body kind covered by an Intel PCS collateral signature.
@@ -78,9 +72,6 @@ impl TdxSignedCollateral {
         let body = Self::signed_body_value(&document, body_kind)?;
         let signed_time_field = |field: &str| -> Result<u64> {
             match body.get(field) {
-                Some(Value::Number(number)) => number.as_u64().ok_or_else(|| {
-                    body_kind.invalid(format!("{field} is not an unsigned timestamp"))
-                }),
                 Some(Value::String(value)) => CollateralVerifier::parse_rfc3339_seconds(value)
                     .map_err(|message| body_kind.invalid(format!("{field} is invalid: {message}"))),
                 Some(_) => Err(body_kind.invalid(format!("{field} has unsupported type"))),
@@ -126,6 +117,4 @@ pub struct TdxCollateral {
     pub tcb_info: TdxSignedCollateral,
     /// QE identity collateral and signing chain.
     pub qe_identity: TdxSignedCollateral,
-    /// Intel TCB status selected from the TCB info levels.
-    pub tcb_status: IntelTcbStatus,
 }
