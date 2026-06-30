@@ -5,7 +5,7 @@ use alloy_sol_types::SolValue;
 use k256::PublicKey;
 
 use crate::{
-    Result, TDXTcbStatus, TDXVerificationResult, TDXVerifierJournal, TdxCertificate, TdxPckTcb,
+    Result, TDXTcbStatus, TDXVerificationResult, TDXVerifierJournal, TdxCertificate,
     TdxPlatformIdentity, TdxQuote, TdxSignedCollateralBody, TdxVerifierError, TdxVerifierInput,
     collateral::CollateralVerifier,
 };
@@ -56,8 +56,8 @@ impl TdxVerifier {
         let pck_leaf = input.pck_certificate_chain.last().ok_or_else(|| {
             TdxVerifierError::PckCertChainInvalid("certificate chain is empty".into())
         })?;
-        let pck_platform = TdxPlatformIdentity::from_pck_certificate_der(&pck_leaf.raw)?;
-        let pck_tcb = TdxPckTcb::from_pck_certificate_der(&pck_leaf.raw)?;
+        let (pck_platform, pck_tcb) =
+            TdxPlatformIdentity::platform_and_tcb_from_pck_certificate_der(&pck_leaf.raw)?;
         let tcb_info_document = input.collateral.tcb_info.tcb_info_document()?;
         tcb_info_document.tcb_info.verify_platform(&pck_platform)?;
         let qe_identity_document = input.collateral.qe_identity.qe_identity_document()?;

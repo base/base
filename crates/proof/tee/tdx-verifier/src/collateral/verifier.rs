@@ -286,46 +286,4 @@ impl CollateralVerifier {
             bytes.get(offset..offset + 2).ok_or_else(|| "u16 read out of bounds".to_string())?;
         Ok(u16::from_le_bytes([slice[0], slice[1]]))
     }
-
-    /// Reads one DER TLV element from `bytes` at `offset`.
-    pub fn read_der_tlv(bytes: &[u8], offset: usize) -> Option<(u8, &[u8], usize)> {
-        let tag = *bytes.get(offset)?;
-        let first_len = *bytes.get(offset + 1)?;
-        let mut cursor = offset + 2;
-        let len = if first_len & 0x80 == 0 {
-            usize::from(first_len)
-        } else {
-            let len_len = usize::from(first_len & 0x7f);
-            if len_len == 0 || len_len > std::mem::size_of::<usize>() {
-                return None;
-            }
-            let mut len = 0usize;
-            for byte in bytes.get(cursor..cursor + len_len)? {
-                len = (len << 8) | usize::from(*byte);
-            }
-            cursor += len_len;
-            len
-        };
-        let end = cursor.checked_add(len)?;
-        let content = bytes.get(cursor..end)?;
-        Some((tag, content, end))
-    }
-
-    /// Decodes a DER OBJECT IDENTIFIER body into dotted text.
-    pub fn decode_der_oid(content: &[u8]) -> Option<String> {
-        let first = *content.first()?;
-        let mut parts = vec![u32::from(first / 40), u32::from(first % 40)];
-        let mut value = 0u32;
-        for byte in &content[1..] {
-            value = value.checked_mul(128)?.checked_add(u32::from(byte & 0x7f))?;
-            if byte & 0x80 == 0 {
-                parts.push(value);
-                value = 0;
-            }
-        }
-        if content.len() > 1 && content.last().is_some_and(|byte| byte & 0x80 != 0) {
-            return None;
-        }
-        Some(parts.iter().map(u32::to_string).collect::<Vec<_>>().join("."))
-    }
 }
