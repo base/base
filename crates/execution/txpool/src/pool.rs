@@ -79,6 +79,29 @@ impl AccountStateDiff {
     }
 }
 
+/// Builds the guard admission for a validated EIP-8130 transaction (sidecar or
+/// reth-resident) from the watch set and limit classification derived during
+/// validation. Returns `None` when either is missing — i.e. the transaction is
+/// not EIP-8130 — so it is neither admission- nor invalidation-tracked.
+fn admission_for<T>(transaction: &T) -> Option<Admission>
+where
+    T: BasePooledTx + reth_transaction_pool::EthPoolTransaction,
+{
+    let watch_set = transaction.watch_set().cloned()?;
+    let class = *transaction.limit_class()?;
+    Some(Admission {
+        hash: *transaction.hash(),
+        sender: class.sender,
+        payer: class.payer,
+        sender_locked: class.sender_locked,
+        payer_trusted: class.payer_trusted,
+        payer_balance: class.payer_balance,
+        max_cost: class.max_cost,
+        priority: transaction.priority_fee_or_price(),
+        watch_set,
+    })
+}
+
 /// Wrapper around reth's transaction pool that adds a 2D nonce sidecar for EIP-8130 channels.
 pub struct BaseTransactionPool<
     Client,
@@ -98,10 +121,20 @@ pub struct BaseTransactionPool<
     nonce_pool: Arc<RwLock<TwoDNoncePool<T>>>,
     eip8130_replays: Arc<RwLock<HashMap<B256, TxHash>>>,
     listeners: Arc<RwLock<SidecarListeners<T>>>,
-    /// State-keyed invalidation ledger for sidecar transactions. Tracks the on-chain
-    /// dependencies (`WatchSet`) of each channelized transaction so balance/state changes
-    /// can invalidate affected transactions without scanning the whole pool.
+    /// State-keyed admission and invalidation ledger covering both the 2D-nonce
+    /// sidecar and every reth-resident EIP-8130 transaction (sponsored `nonce_key
+    /// == 0` and nonce-free `NONCE_KEY_MAX`). It is the single authority for the
+    /// dual sender/payer admission limits and for state-keyed invalidation
+    /// (exact-match slot/nonce drops, payer-balance thresholds, expiry buckets),
+    /// so the two pools can never make divergent eviction decisions for the same
+    /// transaction. Dropped hashes are partitioned back to whichever pool holds
+    /// them. Count drift from reth-internal evictions/replacements is bounded by
+    /// the per-block reconcile in [`Self::reconcile_guard`].
     guard: Arc<RwLock<MempoolGuard>>,
+    /// Highest expiry bucket already fired (`None` until the first canonical
+    /// update). Each block fires only the newly-due bucket(s) — typically one —
+    /// in `(last + 1 ..= horizon)`, so expiry eviction never rescans the index.
+    last_fired_expiry_bucket: Arc<RwLock<Option<u64>>>,
 }
 
 impl<Client, S, Evm, T, O> fmt::Debug for BaseTransactionPool<Client, S, Evm, T, O>
@@ -135,6 +168,7 @@ where
             eip8130_replays: Arc::clone(&self.eip8130_replays),
             listeners: Arc::clone(&self.listeners),
             guard: Arc::clone(&self.guard),
+            last_fired_expiry_bucket: Arc::clone(&self.last_fired_expiry_bucket),
         }
     }
 }
@@ -176,6 +210,7 @@ where
             eip8130_replays: Arc::new(RwLock::new(HashMap::new())),
             listeners: Arc::new(RwLock::new(SidecarListeners::default())),
             guard: Arc::new(RwLock::new(MempoolGuard::new(GuardLimits::default()))),
+            last_fired_expiry_bucket: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -206,26 +241,6 @@ where
 
     fn is_sidecar_transaction(&self, transaction: &T) -> bool {
         transaction.eip8130_nonce_channel_key().is_some()
-    }
-
-    /// Builds the guard admission for a validated sidecar transaction from the
-    /// watch set and limit classification derived during validation. Returns
-    /// `None` when either is missing (the transaction is then not admission- or
-    /// invalidation-tracked).
-    fn sidecar_admission(transaction: &T) -> Option<Admission> {
-        let watch_set = transaction.watch_set().cloned()?;
-        let class = *transaction.limit_class()?;
-        Some(Admission {
-            hash: *transaction.hash(),
-            sender: class.sender,
-            payer: class.payer,
-            sender_locked: class.sender_locked,
-            payer_trusted: class.payer_trusted,
-            payer_balance: class.payer_balance,
-            max_cost: class.max_cost,
-            priority: transaction.priority_fee_or_price(),
-            watch_set,
-        })
     }
 
     /// Maps a guard admission-limit rejection to a pool error returned to the
@@ -262,12 +277,18 @@ where
     /// then the nonce pool and listeners — matching `update_accounts` so the
     /// global order stays acyclic.
     pub fn apply_state_diff(&self, diffs: &[AccountStateDiff]) -> Vec<Arc<ValidPoolTransaction<T>>> {
+        let mut exact = Vec::new();
+        for diff in diffs {
+            diff.push_exact_keys(&mut exact);
+        }
+
+        // Single-authority invalidation through the guard, which tracks both the
+        // 2D-nonce sidecar and every reth-resident EIP-8130 transaction. Exact
+        // surfaces drop unconditionally; changed balances re-evaluate payer
+        // reservations (threshold/aggregate). The dropped set is then routed back
+        // to whichever pool holds each hash.
         let dropped = {
             let mut guard = self.guard.write();
-            let mut exact = Vec::new();
-            for diff in diffs {
-                diff.push_exact_keys(&mut exact);
-            }
             let mut dropped = guard.invalidate_exact(exact);
             for diff in diffs {
                 if let Some(balance) = diff.balance {
@@ -276,14 +297,65 @@ where
             }
             dropped
         };
+        self.remove_dropped_across_pools(dropped)
+    }
+
+    /// Removes a guard-dropped set of hashes from whichever pool holds each one,
+    /// broadcasting sidecar discards and untracking nonce-free replay ids. The
+    /// guard bookkeeping was already released when the hashes were produced
+    /// (`invalidate_exact` / `on_balance_changed` release as they drop), so this
+    /// only touches the pools.
+    fn remove_dropped_across_pools(
+        &self,
+        dropped: Vec<TxHash>,
+    ) -> Vec<Arc<ValidPoolTransaction<T>>> {
         if dropped.is_empty() {
             return Vec::new();
         }
-        let removed = self.nonce_pool.write().remove_transactions(&dropped);
-        if !removed.is_empty() {
-            self.listeners.write().on_discarded(&removed);
+        let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(dropped);
+        let mut removed = if protocol_hashes.is_empty() {
+            Vec::new()
+        } else {
+            let protocol_removed = self.protocol_pool.remove_transactions(protocol_hashes);
+            self.untrack_eip8130_replays(&protocol_removed);
+            protocol_removed
+        };
+        if !sidecar_hashes.is_empty() {
+            let sidecar_removed = self.nonce_pool.write().remove_transactions(&sidecar_hashes);
+            if !sidecar_removed.is_empty() {
+                self.listeners.write().on_discarded(&sidecar_removed);
+            }
+            removed.extend(sidecar_removed);
         }
         removed
+    }
+
+    /// Fires the expiry bucket(s) that have come due as of `now`, dropping every
+    /// transaction whose effective expiry falls in them from both the sidecar
+    /// (guard-owned) and the protocol pool.
+    ///
+    /// Uses a one-block lookahead (`now + EXPIRY_BUCKET_SECS`) so transactions
+    /// that cannot survive into the next block are evicted while the current
+    /// block is built. Only the newly-due bucket(s) — typically one — are fired,
+    /// tracked by `last_fired_expiry_bucket`, so this never rescans the index.
+    fn expire_due_buckets(&self, now: u64) {
+        let horizon_bucket = now.saturating_add(InvalidationKey::EXPIRY_BUCKET_SECS)
+            / InvalidationKey::EXPIRY_BUCKET_SECS;
+        let keys: Vec<InvalidationKey> = {
+            let mut last = self.last_fired_expiry_bucket.write();
+            let start = last.map_or(horizon_bucket, |prev| prev.saturating_add(1));
+            *last = Some(last.map_or(horizon_bucket, |prev| prev.max(horizon_bucket)));
+            if start > horizon_bucket {
+                return;
+            }
+            (start..=horizon_bucket).map(InvalidationKey::ExpiryBucket).collect()
+        };
+
+        // Both sidecar and reth-resident members are tracked by the guard, so a
+        // single invalidate_exact yields every expired hash; route each back to
+        // the pool that holds it.
+        let dropped = self.guard.write().invalidate_exact(keys);
+        self.remove_dropped_across_pools(dropped);
     }
 
     /// Releases the guard bookkeeping for a batch of removed sidecar
@@ -383,6 +455,80 @@ where
         index.retain(|_, indexed_hash| !hashes.contains(indexed_hash));
     }
 
+    /// Gates a freshly-added reth-resident EIP-8130 transaction (sponsored
+    /// `nonce_key == 0` or nonce-free) through the guard's dual sender/payer
+    /// admission limits and, on success, registers its watch set so committed
+    /// actor-config slot changes, payer-balance drops and expiry buckets
+    /// invalidate it ahead of the builder — surfaces reth's own maintenance does
+    /// not track for these transactions.
+    ///
+    /// The transaction was already validated and inserted into the protocol pool,
+    /// so a limit rejection removes it again (leaving no trace) and returns the
+    /// limit error to the submitter. Non-EIP-8130 transactions are not tracked.
+    ///
+    /// A fee-bump that *replaces* an existing tracked transaction while its
+    /// sender/payer dimension is already at the cap can be rejected here (and the
+    /// replacement removed) even though reth accepted the swap; the stale record
+    /// of the replaced transaction is reclaimed by the per-block
+    /// [`Self::reconcile_guard`], after which a resubmission succeeds. This is the
+    /// accepted over-rejection direction of the add-gate + reconcile model.
+    fn gate_protocol_admission(
+        &self,
+        hash: TxHash,
+    ) -> Result<(), reth_transaction_pool::error::PoolError> {
+        let Some(validated) = self.protocol_pool.get(&hash) else {
+            return Ok(());
+        };
+        let Some(admission) = admission_for(&validated.transaction) else {
+            return Ok(());
+        };
+        if let Err(rejection) = self.guard.write().try_admit(admission) {
+            let removed = self.protocol_pool.remove_transactions(vec![hash]);
+            self.untrack_eip8130_replays(&removed);
+            return Err(Self::limit_rejection_error(hash, rejection));
+        }
+        Ok(())
+    }
+
+    /// Releases the guard bookkeeping for a batch of removed reth-resident
+    /// transactions (the protocol-pool counterpart of [`Self::release_from_guard`]).
+    /// Non-tracked (non-EIP-8130) hashes are a no-op.
+    fn release_protocol_from_guard(&self, removed: &[Arc<ValidPoolTransaction<T>>]) {
+        if removed.is_empty() {
+            return;
+        }
+        let mut guard = self.guard.write();
+        for transaction in removed {
+            guard.release(transaction.hash());
+        }
+    }
+
+    /// Reclaims guard bookkeeping for any tracked transaction no longer resident
+    /// in either pool. reth can evict or replace protocol-pool transactions
+    /// without routing through our removal paths, which leaves stale admission
+    /// reservations; this per-block sweep releases them so counts cannot drift
+    /// upward over time. It is O(tracked) and only ever *frees* capacity, so it
+    /// never rejects a valid transaction.
+    fn reconcile_guard(&self) {
+        let tracked = self.guard.read().tracked_hashes();
+        if tracked.is_empty() {
+            return;
+        }
+        let nonce_pool = self.nonce_pool.read();
+        let stale: Vec<TxHash> = tracked
+            .into_iter()
+            .filter(|hash| self.protocol_pool.get(hash).is_none() && !nonce_pool.contains(hash))
+            .collect();
+        drop(nonce_pool);
+        if stale.is_empty() {
+            return;
+        }
+        let mut guard = self.guard.write();
+        for hash in &stale {
+            guard.release(hash);
+        }
+    }
+
     fn partition_hashes_by_pool(&self, hashes: Vec<TxHash>) -> (Vec<TxHash>, Vec<TxHash>) {
         let nonce_pool = self.nonce_pool.read();
         let mut protocol_hashes = Vec::with_capacity(hashes.len());
@@ -431,7 +577,7 @@ where
                     authorities,
                     &mut nonce_pool,
                 );
-                let admission = Self::sidecar_admission(&validated.transaction);
+                let admission = admission_for(&validated.transaction);
                 let outcome = nonce_pool.insert_validated(validated, state_nonce)?;
                 // Apply admission limits while still holding the nonce-pool lock
                 // (which serializes every guard-touching pool path), then drop the
@@ -622,6 +768,7 @@ where
             let hash = *transaction.hash();
             let events =
                 self.protocol_pool.add_transaction_and_subscribe(origin, transaction).await?;
+            self.gate_protocol_admission(hash)?;
             if let Some(replay_id) = replay_id {
                 self.track_eip8130_replay_id(replay_id, hash);
             }
@@ -656,6 +803,7 @@ where
             let replay_id = transaction.eip8130_replay_id();
             let hash = *transaction.hash();
             let outcome = self.protocol_pool.add_transaction(origin, transaction).await?;
+            self.gate_protocol_admission(hash)?;
             if let Some(replay_id) = replay_id {
                 self.track_eip8130_replay_id(replay_id, hash);
             }
@@ -932,6 +1080,7 @@ where
         let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(hashes);
         let mut removed = self.protocol_pool.remove_transactions(protocol_hashes);
         self.untrack_eip8130_replays(&removed);
+        self.release_protocol_from_guard(&removed);
         let sidecar_removed = self.nonce_pool.write().remove_transactions(&sidecar_hashes);
         if !sidecar_removed.is_empty() {
             self.untrack_eip8130_replays(&sidecar_removed);
@@ -949,6 +1098,7 @@ where
         let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(hashes);
         let mut removed = self.protocol_pool.remove_transactions_and_descendants(protocol_hashes);
         self.untrack_eip8130_replays(&removed);
+        self.release_protocol_from_guard(&removed);
         let sidecar_removed =
             self.nonce_pool.write().remove_transactions_and_descendants(&sidecar_hashes);
         if !sidecar_removed.is_empty() {
@@ -966,6 +1116,7 @@ where
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let mut removed = self.protocol_pool.remove_transactions_by_sender(sender);
         self.untrack_eip8130_replays(&removed);
+        self.release_protocol_from_guard(&removed);
         let sidecar_removed = self.nonce_pool.write().remove_transactions_by_sender(sender);
         if !sidecar_removed.is_empty() {
             self.untrack_eip8130_replays(&sidecar_removed);
@@ -983,6 +1134,7 @@ where
         let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(hashes);
         let mut removed = self.protocol_pool.prune_transactions(protocol_hashes);
         self.untrack_eip8130_replays(&removed);
+        self.release_protocol_from_guard(&removed);
         let pruned = self.nonce_pool.write().prune_mined(&sidecar_hashes);
         self.untrack_eip8130_replays(&pruned.removed);
         self.release_from_guard(&pruned.removed);
@@ -1212,20 +1364,38 @@ where
         update: reth_transaction_pool::CanonicalStateUpdate<'_, Self::Block>,
     ) {
         let block_hash = update.hash();
+        let now = update.timestamp();
         let mined_transactions = update.mined_transactions.clone();
         self.untrack_eip8130_hashes(&mined_transactions);
         self.protocol_pool.on_canonical_state_change(update);
-        let mut nonce_pool = self.nonce_pool.write();
-        let pruned = nonce_pool.prune_mined(&mined_transactions);
-        let mut listeners = self.listeners.write();
-        if !pruned.removed.is_empty() {
-            listeners.on_mined(&pruned.removed, block_hash);
+        {
+            let mut nonce_pool = self.nonce_pool.write();
+            let pruned = nonce_pool.prune_mined(&mined_transactions);
+            let mut listeners = self.listeners.write();
+            if !pruned.removed.is_empty() {
+                listeners.on_mined(&pruned.removed, block_hash);
+            }
+            // Lock order: nonce_pool -> listeners -> guard (acquired last).
+            // Release the guard bookkeeping for every mined transaction: the
+            // sidecar set precisely (`pruned.removed`) and the reth-resident set
+            // by hash (`mined_transactions`); releases are idempotent and no-op
+            // for untracked (non-EIP-8130) hashes.
+            let mut guard = self.guard.write();
+            for transaction in &pruned.removed {
+                guard.release(transaction.hash());
+            }
+            for hash in &mined_transactions {
+                guard.release(hash);
+            }
         }
-        // Lock order: nonce_pool -> listeners -> guard (acquired last).
-        let mut guard = self.guard.write();
-        for transaction in &pruned.removed {
-            guard.release(transaction.hash());
-        }
+        // After the mined-state locks are released, fire any expiry buckets that
+        // have come due (one-block lookahead) to evict transactions that cannot
+        // survive into the next block.
+        self.expire_due_buckets(now);
+        // Reclaim any guard reservations whose transaction left a pool without
+        // routing through our removal paths (reth-internal evictions, fee-bump
+        // replacements), bounding admission-count drift to a single block.
+        self.reconcile_guard();
     }
 
     fn update_accounts(&self, accounts: Vec<ChangedAccount>) {
@@ -1235,6 +1405,11 @@ where
         // O(pool) sender-keyed affordability scan. The guard lock is taken on its
         // own and dropped before touching the nonce pool to keep the order
         // acyclic.
+        // The guard is keyed on the *payer* (correct for sponsored EIP-8130
+        // transactions, where the payer — not the sender — funds the gas), so a
+        // single balance sweep covers both the sidecar and reth-resident members
+        // that reth's own sender-keyed update_accounts would miss. Dropped hashes
+        // are routed back to whichever pool holds them.
         let dropped = {
             let mut guard = self.guard.write();
             let mut dropped = Vec::new();
@@ -1243,12 +1418,8 @@ where
             }
             dropped
         };
-        if !dropped.is_empty() {
-            let removed = self.nonce_pool.write().remove_transactions(&dropped);
-            if !removed.is_empty() {
-                self.listeners.write().on_discarded(&removed);
-            }
-        }
+        self.remove_dropped_across_pools(dropped);
+
         self.protocol_pool.update_accounts(accounts)
     }
 
@@ -1482,13 +1653,14 @@ mod tests {
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
-        BasePooledTransaction as ConsensusPooledTransaction, Eip8130Signed, TxEip8130,
+        BasePooledTransaction as ConsensusPooledTransaction, Eip8130Constants, Eip8130Signed,
+        TxEip8130,
     };
     use futures::StreamExt;
     use reth_transaction_pool::{PriceBumpConfig, TransactionOrigin, identifier::TransactionId};
 
     use super::*;
-    use crate::BasePooledTransaction;
+    use crate::{BasePooledTransaction, LimitClass, WatchSet};
 
     fn test_chain_id() -> u64 {
         ChainConfig::mainnet().chain_id
@@ -1634,5 +1806,136 @@ mod tests {
         assert!(
             matches!(all_events.next().await, Some(FullTransactionEvent::Discarded(event_hash)) if event_hash == hash)
         );
+    }
+
+    /// Builds a reth-resident (non-channelized) EIP-8130 transaction — a
+    /// sponsored `nonce_key == 0` or nonce-free (`NONCE_KEY_MAX`) — and attaches
+    /// the `LimitClass`/`WatchSet` the validator would derive, so the admission
+    /// it produces via [`admission_for`] is exactly what the add path gates with.
+    /// A fresh random signer per call yields a distinct hash.
+    fn classified_eip8130(
+        nonce_key: U256,
+        nonce_sequence: u64,
+        sender: Address,
+        payer: Address,
+        payer_trusted: bool,
+        expiry: Option<u64>,
+    ) -> BasePooledTransaction {
+        let signer = signer();
+        let tx = TxEip8130 {
+            chain_id: test_chain_id(),
+            sender: None,
+            nonce_key,
+            nonce_sequence,
+            expiry: expiry.unwrap_or(0),
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 1_000,
+            gas_limit: 50_000,
+            account_changes: Vec::new(),
+            calls: Vec::new(),
+            metadata: Bytes::new(),
+            payer: None,
+        };
+        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let signed =
+            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+        let pooled = ConsensusPooledTransaction::Eip8130(signed);
+        let transaction =
+            BasePooledTransaction::from_pooled(Recovered::new_unchecked(pooled, signer.address()));
+
+        let mut watch_set = WatchSet::new().watch(InvalidationKey::Balance(payer));
+        if let Some(expiry) = expiry {
+            watch_set = watch_set.watch(InvalidationKey::expiry_bucket(expiry));
+        }
+        transaction.set_watch_set(watch_set);
+        transaction.set_limit_class(LimitClass {
+            sender,
+            payer,
+            sender_locked: false,
+            payer_trusted,
+            payer_balance: U256::from(1_000_000u64),
+            max_cost: U256::from(1_000u64),
+        });
+        transaction
+    }
+
+    #[test]
+    fn nonce_zero_admission_is_gated_by_sender_limit() {
+        let mut guard = MempoolGuard::new(GuardLimits::default());
+        let sender = Address::repeat_byte(0x11);
+        let cap = GuardLimits::default().default_sender;
+
+        // Self-paying `nonce_key == 0` transactions each charge the sender
+        // dimension; the cap-th+1 is rejected exactly like a channelized tx.
+        for seq in 0..u64::from(cap) {
+            let tx = classified_eip8130(U256::ZERO, seq, sender, sender, false, None);
+            let admission = admission_for(&tx).expect("classified 8130 tx yields an admission");
+            assert!(guard.try_admit(admission).is_ok());
+        }
+        let over = classified_eip8130(U256::ZERO, u64::from(cap), sender, sender, false, None);
+        let admission = admission_for(&over).unwrap();
+        assert_eq!(guard.try_admit(admission), Err(LimitRejection::SenderLimit));
+    }
+
+    #[test]
+    fn nonce_zero_sponsored_admission_is_gated_by_payer_limit() {
+        let mut guard = MempoolGuard::new(GuardLimits::default());
+        let payer = Address::repeat_byte(0x22);
+        let cap = GuardLimits::default().default_payer;
+
+        // Distinct senders sponsored by one (count-limited) payer: the sender
+        // dimension never binds, so the payer dimension is what gates a sponsored
+        // `nonce_key == 0` transaction — the surface reth's sender-keyed limits
+        // would miss.
+        for i in 0..u64::from(cap) {
+            let sender = Address::repeat_byte(0x30 + i as u8);
+            let tx = classified_eip8130(U256::ZERO, i, sender, payer, false, None);
+            assert!(guard.try_admit(admission_for(&tx).unwrap()).is_ok());
+        }
+        let sender = Address::repeat_byte(0x90);
+        let over = classified_eip8130(U256::ZERO, u64::from(cap), sender, payer, false, None);
+        assert_eq!(guard.try_admit(admission_for(&over).unwrap()), Err(LimitRejection::PayerLimit));
+    }
+
+    #[test]
+    fn expiry_bucket_invalidates_nonce_zero_and_nonce_free() {
+        let mut guard = MempoolGuard::new(GuardLimits::default());
+        let expiry = 1_000u64;
+
+        let nonce_zero = classified_eip8130(
+            U256::ZERO,
+            0,
+            Address::repeat_byte(1),
+            Address::repeat_byte(1),
+            false,
+            Some(expiry),
+        );
+        let nonce_free = classified_eip8130(
+            Eip8130Constants::NONCE_KEY_MAX,
+            0,
+            Address::repeat_byte(2),
+            Address::repeat_byte(2),
+            false,
+            Some(expiry),
+        );
+        let zero_hash = *nonce_zero.hash();
+        let free_hash = *nonce_free.hash();
+        guard.try_admit(admission_for(&nonce_zero).unwrap()).unwrap();
+        guard.try_admit(admission_for(&nonce_free).unwrap()).unwrap();
+
+        // A bucket that has not yet come due leaves both in place.
+        assert!(
+            guard.invalidate_exact([InvalidationKey::expiry_bucket(expiry + 10_000)]).is_empty()
+        );
+        assert_eq!(guard.len(), 2);
+
+        // Firing their bucket evicts both, regardless of nonce kind — the one
+        // expiry surface shared by sponsored nonce_key==0 and nonce-free txns.
+        let mut dropped = guard.invalidate_exact([InvalidationKey::expiry_bucket(expiry)]);
+        dropped.sort();
+        let mut expected = vec![zero_hash, free_hash];
+        expected.sort();
+        assert_eq!(dropped, expected);
+        assert!(guard.is_empty());
     }
 }

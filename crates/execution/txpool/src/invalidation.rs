@@ -47,9 +47,31 @@ pub enum InvalidationKey {
         /// Storage slot key within `address`.
         slot: B256,
     },
+    /// A coarse wall-clock expiry bucket (`effective_expiry / EXPIRY_BUCKET_SECS`).
+    ///
+    /// A transaction's effective expiry is the minimum of its own `expiry` and
+    /// the expiries of the sender/payer key authorizations it relies on. Expiry
+    /// is a time surface, not a state surface: no storage diff reports it, so the
+    /// pool fires the due bucket(s) each block. Bucketing avoids an ordered
+    /// structure — insertion is O(1) and each block fires only the newly-due
+    /// bucket(s). Exact-match semantics (a fired bucket drops every member).
+    ExpiryBucket(u64),
 }
 
 impl InvalidationKey {
+    /// Width, in seconds, of an [`InvalidationKey::ExpiryBucket`] chunk —
+    /// approximately one block-time. Coarse enough that each block fires only the
+    /// newly-due bucket(s); fine enough that eviction is at most ~one chunk early
+    /// under the proactive (one-block-ahead) firing policy.
+    pub const EXPIRY_BUCKET_SECS: u64 = 2;
+
+    /// Returns the [`InvalidationKey::ExpiryBucket`] for an absolute Unix-seconds
+    /// expiry timestamp.
+    #[must_use]
+    pub const fn expiry_bucket(expiry_secs: u64) -> Self {
+        Self::ExpiryBucket(expiry_secs / Self::EXPIRY_BUCKET_SECS)
+    }
+
     /// Returns `true` for keys with threshold semantics (currently only
     /// [`InvalidationKey::Balance`]), where a change must be re-evaluated rather
     /// than triggering an unconditional drop.
@@ -275,6 +297,20 @@ mod tests {
 
         assert!(InvalidationKey::ProtocolNonce(addr(1)).is_exact());
         assert!(InvalidationKey::Slot { address: addr(1), slot: B256::repeat_byte(2) }.is_exact());
+        assert!(InvalidationKey::ExpiryBucket(5).is_exact());
+    }
+
+    #[test]
+    fn expiry_bucket_quantizes_by_chunk() {
+        let chunk = InvalidationKey::EXPIRY_BUCKET_SECS;
+        // Expiries within the same chunk share a bucket; the next chunk differs.
+        assert_eq!(InvalidationKey::expiry_bucket(0), InvalidationKey::ExpiryBucket(0));
+        assert_eq!(
+            InvalidationKey::expiry_bucket(chunk - 1),
+            InvalidationKey::expiry_bucket(0)
+        );
+        assert_eq!(InvalidationKey::expiry_bucket(chunk), InvalidationKey::ExpiryBucket(1));
+        assert_ne!(InvalidationKey::expiry_bucket(0), InvalidationKey::expiry_bucket(chunk));
     }
 
     #[test]
@@ -397,4 +433,5 @@ mod tests {
         let mut index = InvalidationIndex::new();
         assert!(index.remove(&hash(1)).is_none());
     }
+
 }

@@ -167,6 +167,14 @@ impl MempoolGuard {
         self.records.contains_key(hash)
     }
 
+    /// Returns the hashes of every currently tracked transaction. Used by the
+    /// pool's per-block reconcile to find and release records whose transaction
+    /// has left both pools through a path the guard did not observe.
+    #[must_use]
+    pub fn tracked_hashes(&self) -> Vec<TxHash> {
+        self.records.keys().copied().collect()
+    }
+
     /// Applies the dual sender/payer admission check and, on success, registers
     /// the transaction's watch set and charges both limit dimensions. A
     /// transaction already tracked is accepted idempotently.

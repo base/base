@@ -163,6 +163,7 @@ impl ActorAuthorizer {
                 actor_id: recovered,
                 scope: state.default_eoa_scope,
                 policy_target,
+                expiry: state.default_eoa_expiry,
             });
         }
         Self::resolve_bound(storage, account, recovered, Eip8130Constants::K1_AUTHENTICATOR, now)
@@ -199,7 +200,12 @@ impl ActorAuthorizer {
         } else {
             storage.get_policy_manager(account, actor_id)?
         };
-        Ok(ResolvedActor { actor_id, scope: config.scope, policy_target })
+        Ok(ResolvedActor {
+            actor_id,
+            scope: config.scope,
+            policy_target,
+            expiry: config.expiry,
+        })
     }
 }
 
@@ -409,7 +415,12 @@ mod tests {
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW).unwrap();
             assert_eq!(
                 resolved,
-                ResolvedActor { actor_id: id, scope: 0x04, policy_target: Address::ZERO }
+                ResolvedActor {
+                    actor_id: id,
+                    scope: 0x04,
+                    policy_target: Address::ZERO,
+                    expiry: 0
+                }
             );
         });
     }
@@ -486,7 +497,12 @@ mod tests {
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW).unwrap();
             assert_eq!(
                 resolved,
-                ResolvedActor { actor_id: id, scope: 0x02, policy_target: Address::ZERO }
+                ResolvedActor {
+                    actor_id: id,
+                    scope: 0x02,
+                    policy_target: Address::ZERO,
+                    expiry: 0
+                }
             );
         });
     }
@@ -524,7 +540,12 @@ mod tests {
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW).unwrap();
             assert_eq!(
                 resolved,
-                ResolvedActor { actor_id: outer_id, scope: 0x08, policy_target: Address::ZERO }
+                ResolvedActor {
+                    actor_id: outer_id,
+                    scope: 0x08,
+                    policy_target: Address::ZERO,
+                    expiry: 0
+                }
             );
         });
     }

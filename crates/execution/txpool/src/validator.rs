@@ -777,15 +777,18 @@ where
             local_chain_id,
             now,
         ));
-        let (sender, payer, sender_actor, is_create, has_delegation, payer_actor_id, config_actor_ids) =
-            StorageCtx::enter(&mut storage, |ctx| {
-                let mut account_config = AccountConfigurationStorage::new(ctx);
-                TransactionAuthorizer::authorize_and_apply(
-                    signed,
-                    &mut account_config,
-                    local_chain_id,
-                    now,
-                )
+        let (
+            sender,
+            payer,
+            sender_actor,
+            is_create,
+            has_delegation,
+            payer_actor_id,
+            payer_actor_expiry,
+            config_actor_ids,
+        ) = StorageCtx::enter(&mut storage, |ctx| {
+            let mut account_config = AccountConfigurationStorage::new(ctx);
+            TransactionAuthorizer::authorize_and_apply(signed, &mut account_config, local_chain_id, now)
                 .map(|applied| {
                     let sender = applied.actors.sender.account;
                     let payer = applied.actors.payer.map_or(sender, |actor| actor.account);
@@ -797,8 +800,10 @@ where
                     // depends on, for the invalidation watch set: the payer's
                     // authorizing actor (when sponsored) and the authorizing
                     // actor of every config change.
-                    let payer_actor_id =
-                        applied.actors.payer.map(|actor| actor.resolved.actor_id);
+                    let payer_actor_id = applied.actors.payer.map(|actor| actor.resolved.actor_id);
+                    // The payer key's authorization expiry feeds the effective
+                    // expiry (a wall-clock eviction surface).
+                    let payer_actor_expiry = applied.actors.payer.map(|actor| actor.resolved.expiry);
                     let config_actor_ids = applied
                         .config_changes
                         .iter()
@@ -811,11 +816,12 @@ where
                         is_create,
                         has_delegation,
                         payer_actor_id,
+                        payer_actor_expiry,
                         config_actor_ids,
                     )
                 })
                 .map_err(Self::map_tx_auth_error)
-            })?;
+        })?;
 
         let sender_account = state
             .basic_account(&sender)
@@ -895,6 +901,19 @@ where
         let payer_auth_charge = U256::from(intrinsic.payer_auth)
             .saturating_mul(U256::from(signed.tx().max_fee_per_gas));
 
+        // Effective expiry = min of the transaction's own expiry and the sender /
+        // payer key-authorization expiries (`0`/absent ⇒ no bound ⇒ `u64::MAX`).
+        // Time passing this deadline invalidates the transaction without any
+        // storage diff, so it is watched as a coarse expiry bucket.
+        let effective_expiry = [
+            Self::expiry_or_unbounded(signed.tx().expiry),
+            Self::expiry_or_unbounded(sender_actor.expiry),
+            Self::expiry_or_unbounded(payer_actor_expiry.unwrap_or(0)),
+        ]
+        .into_iter()
+        .min()
+        .unwrap_or(u64::MAX);
+
         let watch_set = Self::eip8130_watch_set(
             sender,
             payer,
@@ -902,6 +921,7 @@ where
             sender_actor.actor_id,
             payer_actor_id,
             &config_actor_ids,
+            effective_expiry,
         );
 
         // Admission-limit classification. Both reads degrade to the strictest
@@ -992,6 +1012,12 @@ where
         }
     }
 
+    /// Maps an EIP-8130 expiry field to an absolute deadline, where a zero field
+    /// means "no expiry" and becomes `u64::MAX` so it drops out of a `min`.
+    const fn expiry_or_unbounded(expiry: u64) -> u64 {
+        if expiry == 0 { u64::MAX } else { expiry }
+    }
+
     /// Builds the [`WatchSet`] for an EIP-8130 transaction from its resolved
     /// actors, nonce mode, and config changes. Every key is known at validation
     /// time, so this is a pure derivation with no extra state reads.
@@ -1011,10 +1037,14 @@ where
         sender_actor_id: B256,
         payer_actor_id: Option<B256>,
         config_actor_ids: &[B256],
+        effective_expiry: u64,
     ) -> WatchSet {
         let account_config = AccountConfigurationStorage::ADDRESS;
         let mut watch_set = WatchSet::new();
         watch_set.push(InvalidationKey::Balance(payer));
+        if effective_expiry != u64::MAX {
+            watch_set.push(InvalidationKey::expiry_bucket(effective_expiry));
+        }
 
         if nonce_key == Eip8130Constants::NONCE_KEY_MAX {
             // Nonce-free: replay protection is expiry-based, no nonce slot.
@@ -2762,6 +2792,7 @@ mod tests {
             sender_actor,
             Some(payer_actor),
             &[],
+            u64::MAX,
         );
 
         assert!(watch_set.contains(&InvalidationKey::Balance(payer)));
@@ -2795,6 +2826,7 @@ mod tests {
             B256::repeat_byte(3),
             None,
             &[config_actor],
+            u64::MAX,
         );
 
         // The channel nonce is watched as the concrete NonceManager storage slot.
@@ -2829,6 +2861,7 @@ mod tests {
             B256::repeat_byte(3),
             None,
             &[],
+            1000,
         );
 
         assert!(!watch_set.contains(&InvalidationKey::ProtocolNonce(sender)));
@@ -2839,5 +2872,45 @@ mod tests {
             InvalidationKey::Slot { address, .. } if *address == NonceManagerStorage::ADDRESS
         )));
         assert!(watch_set.contains(&InvalidationKey::Balance(sender)));
+        // The effective expiry is watched as a coarse bucket.
+        assert!(watch_set.contains(&InvalidationKey::expiry_bucket(1000)));
+    }
+
+    #[test]
+    fn eip8130_watch_set_unbounded_expiry_has_no_bucket() {
+        let sender = Address::repeat_byte(1);
+        let watch_set = TestValidator::eip8130_watch_set(
+            sender,
+            sender,
+            U256::ZERO,
+            B256::repeat_byte(3),
+            None,
+            &[],
+            u64::MAX,
+        );
+        assert!(!watch_set.iter().any(|key| matches!(key, InvalidationKey::ExpiryBucket(_))));
+    }
+
+    #[test]
+    fn eip8130_watch_set_nonce_zero_with_expiry_has_bucket() {
+        let sender = Address::repeat_byte(1);
+        let payer = Address::repeat_byte(2);
+
+        let watch_set = TestValidator::eip8130_watch_set(
+            sender,
+            payer,
+            U256::ZERO,
+            B256::repeat_byte(3),
+            Some(B256::repeat_byte(4)),
+            &[],
+            1_000,
+        );
+
+        // A sponsored `nonce_key == 0` transaction is sequenced by the sender's
+        // protocol nonce *and* — like every expiring EIP-8130 transaction — is
+        // watched on a coarse expiry bucket so it is evicted one block ahead of
+        // expiry, exactly as a nonce-free transaction is.
+        assert!(watch_set.contains(&InvalidationKey::ProtocolNonce(sender)));
+        assert!(watch_set.contains(&InvalidationKey::expiry_bucket(1_000)));
     }
 }
