@@ -488,6 +488,8 @@ impl TdxAttestationHydrator {
             .chain(fetch.collateral.tcb_info.signing_chain.iter())
             .chain(fetch.collateral.qe_identity.signing_chain.iter())
         {
+            let certificate = TdxCertificate::authenticated_from_der(&certificate.raw)
+                .map_err(|e| TdxCollateralError::source(Box::new(e)))?;
             if verification_time < certificate.not_before
                 || verification_time >= certificate.not_after
             {
@@ -839,17 +841,8 @@ impl TdxAttestationHydrator {
             .map_err(|e| TdxCollateralError::source(Box::new(e)))?;
         let ordered_indexes = Self::root_to_leaf_indexes(&authenticated)?;
         let mut ordered = Vec::with_capacity(ordered_indexes.len());
-        for (position, index) in ordered_indexes.iter().copied().enumerate() {
-            let issuer_public_key = if position == 0 {
-                authenticated[index].subject_public_key.clone()
-            } else {
-                let issuer_index = ordered_indexes[position - 1];
-                authenticated[issuer_index].subject_public_key.clone()
-            };
-            ordered.push(
-                TdxCertificate::from_der(certs[index].clone(), issuer_public_key)
-                    .map_err(|e| TdxCollateralError::source(Box::new(e)))?,
-            );
+        for index in ordered_indexes {
+            ordered.push(TdxCertificate { raw: certs[index].clone() });
         }
         Ok(ordered)
     }
@@ -1030,31 +1023,88 @@ mod tests {
     use super::*;
 
     fn certificate_with_raw(raw: &'static [u8]) -> TdxCertificate {
-        TdxCertificate {
-            raw: Bytes::from_static(raw),
-            serial: Bytes::new(),
-            subject_public_key: Bytes::new(),
-            issuer_public_key: Bytes::new(),
-            not_before: 0,
-            not_after: 0,
-            is_ca: false,
-            tbs_certificate: Bytes::new(),
-            signature: Bytes::new(),
-        }
+        TdxCertificate { raw: Bytes::from_static(raw) }
     }
 
-    fn certificate_with_validity(not_before: u64, not_after: u64) -> TdxCertificate {
-        TdxCertificate {
-            raw: Bytes::from_static(b"cert"),
-            serial: Bytes::new(),
-            subject_public_key: Bytes::new(),
-            issuer_public_key: Bytes::new(),
-            not_before,
-            not_after,
-            is_ca: false,
-            tbs_certificate: Bytes::new(),
-            signature: Bytes::new(),
+    fn certificate_with_validity(_not_before: u64, _not_after: u64) -> TdxCertificate {
+        TdxCertificate { raw: Bytes::from(minimal_certificate_der()) }
+    }
+
+    fn minimal_certificate_der() -> Vec<u8> {
+        let key = [1; 65];
+        let tbs = der_sequence(&[
+            der_tag(0xa0, &der_integer(&[2])),
+            der_integer(&[1]),
+            x509_algorithm_identifier(),
+            x509_name(),
+            der_sequence(&[der_utc_time("700101000100Z"), der_utc_time("700101001000Z")]),
+            x509_name(),
+            x509_subject_public_key_info(&key),
+        ]);
+        der_sequence(&[tbs, x509_algorithm_identifier(), der_bit_string(&[1; 64])])
+    }
+
+    fn der_len(len: usize) -> Vec<u8> {
+        if len < 128 {
+            return vec![len as u8];
         }
+
+        let bytes = len.to_be_bytes();
+        let first_non_zero = bytes.iter().position(|byte| *byte != 0).unwrap_or(bytes.len() - 1);
+        let significant = &bytes[first_non_zero..];
+        let mut out = vec![0x80 | significant.len() as u8];
+        out.extend_from_slice(significant);
+        out
+    }
+
+    fn der_tag(tag: u8, content: &[u8]) -> Vec<u8> {
+        let mut out = vec![tag];
+        out.extend_from_slice(&der_len(content.len()));
+        out.extend_from_slice(content);
+        out
+    }
+
+    fn der_sequence(parts: &[Vec<u8>]) -> Vec<u8> {
+        der_tag(0x30, &parts.concat())
+    }
+
+    fn der_set(parts: &[Vec<u8>]) -> Vec<u8> {
+        der_tag(0x31, &parts.concat())
+    }
+
+    fn der_integer(bytes: &[u8]) -> Vec<u8> {
+        der_tag(0x02, bytes)
+    }
+
+    fn der_bit_string(bytes: &[u8]) -> Vec<u8> {
+        let mut value = vec![0];
+        value.extend_from_slice(bytes);
+        der_tag(0x03, &value)
+    }
+
+    fn der_utc_time(value: &str) -> Vec<u8> {
+        der_tag(0x17, value.as_bytes())
+    }
+
+    fn x509_name() -> Vec<u8> {
+        der_sequence(&[der_set(&[der_sequence(&[
+            vec![0x06, 0x03, 0x55, 0x04, 0x03],
+            der_tag(0x0c, b"fixture"),
+        ])])])
+    }
+
+    fn x509_algorithm_identifier() -> Vec<u8> {
+        der_sequence(&[vec![0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02]])
+    }
+
+    fn x509_subject_public_key_info(key: &[u8]) -> Vec<u8> {
+        der_sequence(&[
+            der_sequence(&[
+                vec![0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01],
+                vec![0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07],
+            ]),
+            der_bit_string(key),
+        ])
     }
 
     fn signed_collateral(

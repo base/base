@@ -8,8 +8,8 @@ use x509_parser::{certificate::X509Certificate, extensions::ParsedExtension, pre
 use crate::{ParsedTdxQuote, Result, TdxVerifierError};
 
 use super::{
-    INTEL_TCB_SIGNING_CERT_COMMON_NAME, TdxCertificate, TdxRevocationEvidence, TdxSignedCollateral,
-    TdxSignedCollateralBody,
+    AuthenticatedTdxCertificate, INTEL_TCB_SIGNING_CERT_COMMON_NAME, TdxCertificate,
+    TdxRevocationEvidence, TdxSignedCollateral, TdxSignedCollateralBody,
 };
 
 /// Stateless helper for collateral validation.
@@ -37,9 +37,7 @@ impl CollateralVerifier {
             .collect::<Result<Vec<_>>>()?;
         let authenticated_crls = revocation.authenticate_crls()?;
 
-        for (index, cert) in chain.iter().enumerate() {
-            let authenticated = &authenticated_chain[index];
-            cert.verify_authenticated_fields(authenticated)?;
+        for (index, authenticated) in authenticated_chain.iter().enumerate() {
             if verification_time < authenticated.not_before
                 || verification_time >= authenticated.not_after
             {
@@ -48,7 +46,10 @@ impl CollateralVerifier {
                 ));
             }
             if index == 0 {
-                cert.verify_signature(&authenticated.subject_public_key)?;
+                Self::verify_certificate_signature(
+                    authenticated,
+                    &authenticated.subject_public_key,
+                )?;
                 continue;
             }
 
@@ -58,12 +59,7 @@ impl CollateralVerifier {
                     "issuer certificate is not a CA".into(),
                 ));
             }
-            if cert.issuer_public_key != issuer.subject_public_key {
-                return Err(TdxVerifierError::PckCertChainInvalid(
-                    "certificate issuer key does not match parent".into(),
-                ));
-            }
-            cert.verify_signature(&issuer.subject_public_key)?;
+            Self::verify_certificate_signature(authenticated, &issuer.subject_public_key)?;
             if authenticated.issuer_name != issuer.subject_name {
                 return Err(TdxVerifierError::PckCertChainInvalid(
                     "certificate issuer name does not match parent".into(),
@@ -78,6 +74,24 @@ impl CollateralVerifier {
         }
 
         Ok(authenticated_chain.last().expect("chain is non-empty").subject_public_key.clone())
+    }
+
+    /// Verifies an authenticated certificate signature with an issuer P-256 public key.
+    pub fn verify_certificate_signature(
+        certificate: &AuthenticatedTdxCertificate,
+        issuer_public_key: &[u8],
+    ) -> Result<()> {
+        if certificate.tbs_certificate.is_empty() {
+            return Err(TdxVerifierError::PckCertChainInvalid(
+                "certificate TBS bytes are empty".into(),
+            ));
+        }
+        Self::verify_p256_signature(
+            issuer_public_key,
+            &certificate.tbs_certificate,
+            &certificate.signature,
+            TdxVerifierError::PckCertChainInvalid("certificate signature failed".into()),
+        )
     }
 
     /// Validates signed collateral and returns its leaf signing key.

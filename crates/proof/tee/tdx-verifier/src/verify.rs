@@ -5,7 +5,7 @@ use alloy_sol_types::SolValue;
 use k256::PublicKey;
 
 use crate::{
-    Result, TDXTcbStatus, TDXVerificationResult, TDXVerifierJournal, TdxPckTcb,
+    Result, TDXTcbStatus, TDXVerificationResult, TDXVerifierJournal, TdxCertificate, TdxPckTcb,
     TdxPlatformIdentity, TdxQuote, TdxSignedCollateralBody, TdxVerifierError, TdxVerifierInput,
     collateral::CollateralVerifier,
 };
@@ -186,9 +186,10 @@ impl TdxVerifier {
             .iter()
             .chain(input.collateral.tcb_info.signing_chain.iter())
             .chain(input.collateral.qe_identity.signing_chain.iter())
-            .map(|cert| cert.not_after)
-            .min()
-            .unwrap_or(u64::MAX);
+            .try_fold(u64::MAX, |expiration, cert| {
+                TdxCertificate::authenticated_from_der(&cert.raw)
+                    .map(|cert| expiration.min(cert.not_after))
+            })?;
         let tcb_validity = input
             .collateral
             .tcb_info
@@ -526,8 +527,7 @@ mod tests {
             is_ca,
             None,
         );
-        TdxCertificate::from_der(Bytes::from(der), public_key_bytes(issuer_key))
-            .expect("fixture certificate DER must parse")
+        TdxCertificate { raw: Bytes::from(der) }
     }
 
     fn default_pck_tcb() -> TdxPckTcb {
@@ -571,8 +571,7 @@ mod tests {
             false,
             Some((platform, pck_tcb)),
         );
-        TdxCertificate::from_der(Bytes::from(der), public_key_bytes(issuer_key))
-            .expect("fixture PCK certificate DER must parse")
+        TdxCertificate { raw: Bytes::from(der) }
     }
 
     fn collateral_cert_with_key_usage(key_usage_byte: u8) -> TdxCertificate {
@@ -594,8 +593,7 @@ mod tests {
             x509_algorithm_identifier(),
             der_bit_string(signature.to_der().as_bytes()),
         ]);
-        TdxCertificate::from_der(Bytes::from(der), public_key_bytes(&issuer_key))
-            .expect("fixture certificate DER must parse")
+        TdxCertificate { raw: Bytes::from(der) }
     }
 
     fn der_crl_with_next_update(

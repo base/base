@@ -14,22 +14,6 @@ sol! {
     struct TdxCertificateInput {
         /// Raw DER certificate bytes.
         bytes raw;
-        /// DER certificate serial bytes.
-        bytes serial;
-        /// Uncompressed P-256 subject public key.
-        bytes subjectPublicKey;
-        /// Uncompressed P-256 issuer public key.
-        bytes issuerPublicKey;
-        /// Certificate validity start time in seconds since Unix epoch.
-        uint64 notBefore;
-        /// Certificate validity end time in seconds since Unix epoch.
-        uint64 notAfter;
-        /// Whether this certificate can issue child certificates.
-        bool isCa;
-        /// DER-encoded `TBSCertificate` bytes.
-        bytes tbsCertificate;
-        /// P-256 ECDSA signature over the TBS certificate bytes.
-        bytes signature;
     }
 
     /// ABI mirror of `TdxSignedCollateral`.
@@ -204,33 +188,13 @@ impl TryFrom<TdxVerifierInputAbi> for TdxVerifierInput {
 
 impl From<&TdxCertificate> for TdxCertificateInput {
     fn from(certificate: &TdxCertificate) -> Self {
-        Self {
-            raw: certificate.raw.clone(),
-            serial: certificate.serial.clone(),
-            subjectPublicKey: certificate.subject_public_key.clone(),
-            issuerPublicKey: certificate.issuer_public_key.clone(),
-            notBefore: certificate.not_before,
-            notAfter: certificate.not_after,
-            isCa: certificate.is_ca,
-            tbsCertificate: certificate.tbs_certificate.clone(),
-            signature: certificate.signature.clone(),
-        }
+        Self { raw: certificate.raw.clone() }
     }
 }
 
 impl From<TdxCertificateInput> for TdxCertificate {
     fn from(certificate: TdxCertificateInput) -> Self {
-        Self {
-            raw: certificate.raw,
-            serial: certificate.serial,
-            subject_public_key: certificate.subjectPublicKey,
-            issuer_public_key: certificate.issuerPublicKey,
-            not_before: certificate.notBefore,
-            not_after: certificate.notAfter,
-            is_ca: certificate.isCa,
-            tbs_certificate: certificate.tbsCertificate,
-            signature: certificate.signature,
-        }
+        Self { raw: certificate.raw }
     }
 }
 

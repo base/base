@@ -11,17 +11,7 @@ pub const SIGNER: Address = Address::repeat_byte(0x44);
 
 /// Builds a minimal [`TdxCertificate`] filled with repeated `byte` values.
 pub fn certificate(byte: u8) -> TdxCertificate {
-    TdxCertificate {
-        raw: Bytes::from(vec![byte; 3]),
-        serial: Bytes::from(vec![byte; 2]),
-        subject_public_key: Bytes::from(vec![0x04, byte]),
-        issuer_public_key: Bytes::from(vec![0x04, byte.wrapping_add(1)]),
-        not_before: 1_700_000_000,
-        not_after: 1_800_000_000,
-        is_ca: true,
-        tbs_certificate: Bytes::from(vec![byte; 4]),
-        signature: Bytes::from(vec![byte; 64]),
-    }
+    TdxCertificate { raw: Bytes::from(vec![byte; 3]) }
 }
 
 /// Builds a minimal [`TdxSignedCollateral`] filled with repeated `byte` values.
