@@ -2,7 +2,6 @@
 
 use alloy_primitives::{B256, Bytes, hex};
 use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
-use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use x509_parser::{certificate::X509Certificate, extensions::ParsedExtension, prelude::FromDer};
 
 use crate::{ParsedTdxQuote, Result, TdxVerifierError};
@@ -36,13 +35,28 @@ impl CollateralVerifier {
             .iter()
             .map(|crl| AuthenticatedTdxCrl::authenticated_from_der(crl))
             .collect::<Result<Vec<_>>>()?;
+        let verify_signature =
+            |certificate: &AuthenticatedTdxCertificate, issuer_public_key: &[u8]| -> Result<()> {
+                if certificate.tbs_certificate.is_empty() {
+                    return Err(TdxVerifierError::PckCertChainInvalid(
+                        "certificate TBS bytes are empty".into(),
+                    ));
+                }
+                Self::verify_p256_signature(
+                    issuer_public_key,
+                    &certificate.tbs_certificate,
+                    &certificate.signature,
+                    TdxVerifierError::PckCertChainInvalid("certificate signature failed".into()),
+                )
+            };
+
         let mut issuer = TdxCertificate::authenticated_from_der(&root.raw)?;
         if verification_time < issuer.not_before || verification_time >= issuer.not_after {
             return Err(TdxVerifierError::PckCertChainInvalid(
                 "certificate is not valid at verification time".into(),
             ));
         }
-        Self::verify_certificate_signature(&issuer, &issuer.subject_public_key)?;
+        verify_signature(&issuer, &issuer.subject_public_key)?;
 
         let mut crl_expiration = u64::MAX;
         for certificate in issued_certificates {
@@ -59,7 +73,7 @@ impl CollateralVerifier {
                     "issuer certificate is not a CA".into(),
                 ));
             }
-            Self::verify_certificate_signature(&certificate, &issuer.subject_public_key)?;
+            verify_signature(&certificate, &issuer.subject_public_key)?;
             if certificate.issuer_name != issuer.subject_name {
                 return Err(TdxVerifierError::PckCertChainInvalid(
                     "certificate issuer name does not match parent".into(),
@@ -77,24 +91,6 @@ impl CollateralVerifier {
         }
 
         Ok((issuer.subject_public_key.clone(), crl_expiration))
-    }
-
-    /// Verifies an authenticated certificate signature with an issuer P-256 public key.
-    pub fn verify_certificate_signature(
-        certificate: &AuthenticatedTdxCertificate,
-        issuer_public_key: &[u8],
-    ) -> Result<()> {
-        if certificate.tbs_certificate.is_empty() {
-            return Err(TdxVerifierError::PckCertChainInvalid(
-                "certificate TBS bytes are empty".into(),
-            ));
-        }
-        Self::verify_p256_signature(
-            issuer_public_key,
-            &certificate.tbs_certificate,
-            &certificate.signature,
-            TdxVerifierError::PckCertChainInvalid("certificate signature failed".into()),
-        )
     }
 
     /// Validates signed collateral and returns its CRL expiration.
@@ -198,14 +194,6 @@ impl CollateralVerifier {
             .or_else(|_| Signature::from_der(signature))
             .map_err(|e| error.clone().with_message(e.to_string()))?;
         verifying_key.verify(message, &signature).map_err(|_| error)
-    }
-
-    /// Parses an RFC3339 timestamp into Unix seconds.
-    pub fn parse_rfc3339_seconds(value: &str) -> std::result::Result<u64, String> {
-        let timestamp = OffsetDateTime::parse(value, &Rfc3339)
-            .map_err(|e| format!("RFC3339 parse failed: {e}"))?
-            .unix_timestamp();
-        u64::try_from(timestamp).map_err(|_| "timestamp is negative".into())
     }
 
     /// Decodes hex text, accepting an optional `0x` prefix.

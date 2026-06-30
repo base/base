@@ -2,10 +2,11 @@
 
 use alloy_primitives::{B256, Bytes, keccak256};
 use serde_json::Value;
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::{Result, TdxVerifierError};
 
-use super::{CollateralVerifier, TdxCertificate, TdxQeIdentityDocument, TdxTcbInfoDocument};
+use super::{TdxCertificate, TdxQeIdentityDocument, TdxTcbInfoDocument};
 
 /// Signed collateral document with its signing chain.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,8 +73,17 @@ impl TdxSignedCollateral {
         let body = Self::signed_body_value(&document, body_kind)?;
         let signed_time_field = |field: &str| -> Result<u64> {
             match body.get(field) {
-                Some(Value::String(value)) => CollateralVerifier::parse_rfc3339_seconds(value)
-                    .map_err(|message| body_kind.invalid(format!("{field} is invalid: {message}"))),
+                Some(Value::String(value)) => {
+                    let timestamp = OffsetDateTime::parse(value, &Rfc3339)
+                        .map_err(|e| {
+                            body_kind
+                                .invalid(format!("{field} is invalid: RFC3339 parse failed: {e}"))
+                        })?
+                        .unix_timestamp();
+                    u64::try_from(timestamp).map_err(|_| {
+                        body_kind.invalid(format!("{field} is invalid: timestamp is negative"))
+                    })
+                }
                 Some(_) => Err(body_kind.invalid(format!("{field} has unsupported type"))),
                 None => Err(body_kind.invalid(format!("{field} is missing"))),
             }
