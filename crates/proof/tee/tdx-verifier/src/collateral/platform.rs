@@ -13,8 +13,6 @@ use x509_parser::{
 
 use crate::{Result, TdxVerifierError};
 
-use super::CollateralVerifier;
-
 const INTEL_SGX_EXTENSION_OID: Oid<'static> = oid!(1.2.840.113741.1.13.1);
 const INTEL_TCB_COMPONENT_PREFIX_OID: Oid<'static> = oid!(1.2.840.113741.1.13.1.2);
 const INTEL_PCE_SVN_OID: Oid<'static> = oid!(1.2.840.113741.1.13.1.2.17);
@@ -78,20 +76,19 @@ impl TdxPlatformIdentity {
             };
             let oid = oid.as_bytes();
 
-            if oid == INTEL_PCE_ID_OID.as_bytes() {
-                let DerObjectContent::OctetString(content) = value_object.content else {
-                    return Err(TdxVerifierError::PckCertChainInvalid(
-                        "PCE ID is not encoded as DER OCTET STRING".into(),
-                    ));
-                };
-                pce_id = Some(Bytes::copy_from_slice(content));
+            if let Some((slot, field)) = if oid == INTEL_PCE_ID_OID.as_bytes() {
+                Some((&mut pce_id, "PCE ID"))
             } else if oid == INTEL_FMSPC_OID.as_bytes() {
+                Some((&mut fmspc, "FMSPC"))
+            } else {
+                None
+            } {
                 let DerObjectContent::OctetString(content) = value_object.content else {
-                    return Err(TdxVerifierError::PckCertChainInvalid(
-                        "FMSPC is not encoded as DER OCTET STRING".into(),
-                    ));
+                    return Err(TdxVerifierError::PckCertChainInvalid(format!(
+                        "{field} is not encoded as DER OCTET STRING"
+                    )));
                 };
-                fmspc = Some(Bytes::copy_from_slice(content));
+                *slot = Some(Bytes::copy_from_slice(content));
             } else if oid == INTEL_PCE_SVN_OID.as_bytes() {
                 let value = value_object.as_u64().map_err(|e| {
                     TdxVerifierError::PckCertChainInvalid(format!(
@@ -127,7 +124,7 @@ impl TdxPlatformIdentity {
             }
         }
 
-        if sgx_tcb_seen.iter().any(|seen| !seen) {
+        if !sgx_tcb_seen.iter().all(|seen| *seen) {
             return Err(TdxVerifierError::PckCertChainInvalid(
                 "PCK certificate is missing SGX TCB components".into(),
             ));
@@ -149,16 +146,6 @@ impl TdxPlatformIdentity {
         };
 
         Ok((platform, tcb))
-    }
-
-    /// Builds a platform identity from signed TCB info JSON hex fields.
-    pub fn from_tcb_info(fmspc: &str, pce_id: &str) -> Result<Self> {
-        Ok(Self {
-            fmspc: CollateralVerifier::decode_hex(fmspc)
-                .map_err(TdxVerifierError::TcbInfoInvalid)?,
-            pce_id: CollateralVerifier::decode_hex(pce_id)
-                .map_err(TdxVerifierError::TcbInfoInvalid)?,
-        })
     }
 }
 

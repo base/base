@@ -58,7 +58,12 @@ impl TdxTcbInfoBody {
 
     /// Returns the signed platform identity for this TCB info document.
     pub fn platform_identity(&self) -> Result<TdxPlatformIdentity> {
-        TdxPlatformIdentity::from_tcb_info(&self.fmspc, &self.pce_id)
+        Ok(TdxPlatformIdentity {
+            fmspc: CollateralVerifier::decode_hex(&self.fmspc)
+                .map_err(TdxVerifierError::TcbInfoInvalid)?,
+            pce_id: CollateralVerifier::decode_hex(&self.pce_id)
+                .map_err(TdxVerifierError::TcbInfoInvalid)?,
+        })
     }
 
     /// Verifies that this signed TCB info applies to the PCK certificate platform.
