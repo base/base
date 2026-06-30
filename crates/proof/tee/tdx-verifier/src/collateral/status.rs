@@ -1,19 +1,21 @@
 //! Intel TCB status parsing and contract-status mapping.
 
-use serde::{Deserialize, Deserializer};
+use serde::Deserialize;
 
 use crate::TDXTcbStatus;
 
 /// Intel TCB status values reported by TDX TCB collateral.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 pub enum IntelTcbStatus {
     /// Platform TCB is up to date.
     UpToDate,
     /// Platform needs software hardening.
+    #[serde(alias = "SWHardeningNeeded")]
     SwHardeningNeeded,
     /// Platform needs configuration hardening.
     ConfigurationNeeded,
     /// Platform needs configuration and software hardening.
+    #[serde(alias = "ConfigurationAndSWHardeningNeeded")]
     ConfigurationAndSwHardeningNeeded,
     /// Platform TCB is out of date.
     OutOfDate,
@@ -22,6 +24,7 @@ pub enum IntelTcbStatus {
     /// Platform TCB has been revoked.
     Revoked,
     /// Status is not understood by this verifier.
+    #[serde(other)]
     Unsupported,
 }
 
@@ -60,26 +63,5 @@ impl IntelTcbStatus {
             | Self::OutOfDateConfigurationNeeded
             | Self::Unsupported => Self::Unsupported,
         }
-    }
-}
-
-impl<'de> Deserialize<'de> for IntelTcbStatus {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        Ok(match value.as_str() {
-            "UpToDate" => Self::UpToDate,
-            "SWHardeningNeeded" | "SwHardeningNeeded" => Self::SwHardeningNeeded,
-            "ConfigurationNeeded" => Self::ConfigurationNeeded,
-            "ConfigurationAndSWHardeningNeeded" | "ConfigurationAndSwHardeningNeeded" => {
-                Self::ConfigurationAndSwHardeningNeeded
-            }
-            "OutOfDate" => Self::OutOfDate,
-            "OutOfDateConfigurationNeeded" => Self::OutOfDateConfigurationNeeded,
-            "Revoked" => Self::Revoked,
-            _ => Self::Unsupported,
-        })
     }
 }
