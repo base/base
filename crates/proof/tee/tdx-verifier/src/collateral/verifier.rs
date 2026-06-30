@@ -166,18 +166,16 @@ impl CollateralVerifier {
         let basic_constraints = cert.basic_constraints().map_err(|e| {
             body_kind.invalid(format!("collateral signing basicConstraints parse failed: {e}"))
         })?;
-        if basic_constraints.map(|extension| extension.value.ca).unwrap_or(false) {
+        if basic_constraints.is_some_and(|extension| extension.value.ca) {
             return Err(body_kind.invalid("collateral signing certificate must not be a CA".into()));
         }
 
-        let has_digital_signature_usage =
-            cert.tbs_certificate.extensions().iter().any(|extension| {
-                matches!(
-                    extension.parsed_extension(),
-                    ParsedExtension::KeyUsage(key_usage) if key_usage.digital_signature()
-                )
-            });
-        if !has_digital_signature_usage {
+        if !cert.tbs_certificate.extensions().iter().any(|extension| {
+            matches!(
+                extension.parsed_extension(),
+                ParsedExtension::KeyUsage(key_usage) if key_usage.digital_signature()
+            )
+        }) {
             return Err(body_kind.invalid(
                 "collateral signing certificate is missing digitalSignature key usage".into(),
             ));
@@ -199,8 +197,7 @@ impl CollateralVerifier {
         let signature = Signature::from_slice(signature)
             .or_else(|_| Signature::from_der(signature))
             .map_err(|e| error.clone().with_message(e.to_string()))?;
-        verifying_key.verify(message, &signature).map_err(|_| error)?;
-        Ok(())
+        verifying_key.verify(message, &signature).map_err(|_| error)
     }
 
     /// Parses an RFC3339 timestamp into Unix seconds.
@@ -261,10 +258,9 @@ impl CollateralVerifier {
                 "TDX module signer does not match quote MRSIGNERSEAM".into(),
             ));
         }
-        let attributes_match =
-            Self::masked_bytes_match(&quote.seam_attributes, attributes, attributes_mask)
-                .map_err(TdxVerifierError::TcbInfoInvalid)?;
-        if !attributes_match {
+        if !Self::masked_bytes_match(&quote.seam_attributes, attributes, attributes_mask)
+            .map_err(TdxVerifierError::TcbInfoInvalid)?
+        {
             return Err(TdxVerifierError::TcbInfoInvalid(
                 "TDX module attributes do not match quote SEAM attributes".into(),
             ));
