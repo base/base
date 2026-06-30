@@ -68,7 +68,7 @@ impl TdxSignedCollateral {
     /// Extracts issue and next-update times from the signed collateral JSON body.
     pub fn signed_validity(&self, body_kind: TdxSignedCollateralBody) -> Result<(u64, u64)> {
         let document: Value =
-            serde_json::from_slice(&self.raw).map_err(|e| body_kind.invalid(format!("{e}")))?;
+            serde_json::from_slice(&self.raw).map_err(|e| body_kind.invalid(e.to_string()))?;
         let body = Self::signed_body_value(&document, body_kind)?;
         let signed_time_field = |field: &str| -> Result<u64> {
             match body.get(field) {
@@ -78,15 +78,13 @@ impl TdxSignedCollateral {
                 None => Err(body_kind.invalid(format!("{field} is missing"))),
             }
         };
-        let issue_time = signed_time_field("issueDate")?;
-        let next_update = signed_time_field("nextUpdate")?;
-        Ok((issue_time, next_update))
+        Ok((signed_time_field("issueDate")?, signed_time_field("nextUpdate")?))
     }
 
     /// Serializes the JSON value covered by the PCS collateral signature.
     pub fn signed_body_bytes(&self, body_kind: TdxSignedCollateralBody) -> Result<Vec<u8>> {
         let document: Value =
-            serde_json::from_slice(&self.raw).map_err(|e| body_kind.invalid(format!("{e}")))?;
+            serde_json::from_slice(&self.raw).map_err(|e| body_kind.invalid(e.to_string()))?;
         let body = Self::signed_body_value(&document, body_kind)?;
         serde_json::to_vec(body).map_err(|e| {
             body_kind.invalid(format!("collateral signed body serialization failed: {e}"))
