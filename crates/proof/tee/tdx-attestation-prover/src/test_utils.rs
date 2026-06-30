@@ -2,8 +2,8 @@
 
 use alloy_primitives::{Address, B256, Bytes};
 use base_proof_tee_tdx_verifier::{
-    IntelTcbStatus, TDXTcbStatus, TdxCertificate, TdxCertificateRevocationList, TdxCollateral,
-    TdxQuotePolicy, TdxRevocationEvidence, TdxSignedCollateral, TdxVerifierInput,
+    IntelTcbStatus, TDXTcbStatus, TdxCertificate, TdxCollateral, TdxQuotePolicy,
+    TdxRevocationEvidence, TdxSignedCollateral, TdxVerifierInput,
 };
 
 /// Signer address used across test fixtures.
@@ -35,11 +35,7 @@ pub fn verifier_input() -> TdxVerifierInput {
             qe_identity: signed_collateral(0x44),
             tcb_status: IntelTcbStatus::UpToDate,
         },
-        revocation: TdxRevocationEvidence {
-            certificate_crls: vec![TdxCertificateRevocationList {
-                raw: Bytes::from_static(b"crl"),
-            }],
-        },
+        revocation: TdxRevocationEvidence { certificate_crls: vec![Bytes::from_static(b"crl")] },
         trusted_root_ca_hash: B256::repeat_byte(0x55),
         expected_public_key: Bytes::from(vec![0x04; 65]),
         expected_signer: SIGNER,

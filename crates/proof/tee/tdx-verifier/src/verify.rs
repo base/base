@@ -19,7 +19,7 @@ impl TdxVerifier {
     pub fn verify(input: &TdxVerifierInput) -> Result<TDXVerifierJournal> {
         let quote = TdxQuote::parse(&input.quote)?;
 
-        let pck_leaf_key = CollateralVerifier::verify_certificate_chain(
+        let (pck_leaf_key, pck_crl_expiration) = CollateralVerifier::verify_certificate_chain(
             &input.pck_certificate_chain,
             input.trusted_root_ca_hash,
             input.verification_time,
@@ -36,7 +36,7 @@ impl TdxVerifier {
         TdxQuote::verify_qe_report(&quote, &pck_leaf_key)?;
         TdxQuote::verify_signature(&quote)?;
 
-        CollateralVerifier::verify_signed_collateral(
+        let (_, tcb_crl_expiration) = CollateralVerifier::verify_signed_collateral(
             &input.collateral.tcb_info,
             TdxSignedCollateralBody::TcbInfo,
             input.trusted_root_ca_hash,
@@ -44,7 +44,7 @@ impl TdxVerifier {
             &input.revocation,
             TdxVerifierError::TcbInfoInvalid,
         )?;
-        CollateralVerifier::verify_signed_collateral(
+        let (_, qe_crl_expiration) = CollateralVerifier::verify_signed_collateral(
             &input.collateral.qe_identity,
             TdxSignedCollateralBody::QeIdentity,
             input.trusted_root_ca_hash,
@@ -83,12 +83,13 @@ impl TdxVerifier {
             return Err(TdxVerifierError::SignerMismatch);
         }
         Self::verify_report_data(&quote, public_key_hash, input.quote_timestamp_millis)?;
+        let crl_expiration = pck_crl_expiration.min(tcb_crl_expiration).min(qe_crl_expiration);
 
         Ok(TDXVerifierJournal {
             result: TDXVerificationResult::Success,
             tcbStatus: tcb_status,
             timestamp: input.quote_timestamp_millis,
-            collateralExpiration: Self::collateral_expiration(input)?,
+            collateralExpiration: Self::collateral_expiration(input, crl_expiration)?,
             rootCaHash: input.trusted_root_ca_hash,
             pckCertHash: pck_leaf.hash(),
             tcbInfoHash: input.collateral.tcb_info.hash(),
@@ -180,7 +181,7 @@ impl TdxVerifier {
     }
 
     /// Returns the earliest collateral expiration accepted into the journal.
-    pub fn collateral_expiration(input: &TdxVerifierInput) -> Result<u64> {
+    pub fn collateral_expiration(input: &TdxVerifierInput, crl_expiration: u64) -> Result<u64> {
         let certificate_expiration = input
             .pck_certificate_chain
             .iter()
@@ -198,28 +199,11 @@ impl TdxVerifier {
             TdxSignedCollateralBody::QeIdentity,
             TdxVerifierError::QeIdentityInvalid,
         )?;
-        let crl_expiration = Self::crl_expiration(input)?;
-
         Ok(tcb_validity
             .next_update
             .min(qe_validity.next_update)
             .min(certificate_expiration)
             .min(crl_expiration))
-    }
-
-    /// Returns the earliest CRL expiration used by certificate-chain validation.
-    pub fn crl_expiration(input: &TdxVerifierInput) -> Result<u64> {
-        let mut expiration = u64::MAX;
-        for chain in [
-            input.pck_certificate_chain.as_slice(),
-            input.collateral.tcb_info.signing_chain.as_slice(),
-            input.collateral.qe_identity.signing_chain.as_slice(),
-        ] {
-            expiration = expiration.min(
-                input.revocation.certificate_chain_next_update(chain, input.verification_time)?,
-            );
-        }
-        Ok(expiration)
     }
 }
 
@@ -233,8 +217,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        IntelTcbStatus, TdxCertificate, TdxCertificateRevocationList, TdxCollateral, TdxPckTcb,
-        TdxPlatformIdentity, TdxQuotePolicy, TdxRevocationEvidence, TdxSignedCollateral,
+        IntelTcbStatus, TdxCertificate, TdxCollateral, TdxPckTcb, TdxPlatformIdentity,
+        TdxQuotePolicy, TdxRevocationEvidence, TdxSignedCollateral,
         collateral::{
             INTEL_TCB_SIGNING_CERT_COMMON_NAME, TDX_QE_IDENTITY_ID, TDX_QE_IDENTITY_VERSION,
         },
@@ -642,20 +626,12 @@ mod tests {
         let intermediate_key = signing_key(2);
         TdxRevocationEvidence {
             certificate_crls: vec![
-                TdxCertificateRevocationList {
-                    raw: Bytes::from(der_crl(
-                        "Intel TDX Root CA fixture",
-                        &root_key,
-                        root_revoked_serials,
-                    )),
-                },
-                TdxCertificateRevocationList {
-                    raw: Bytes::from(der_crl(
-                        "Intel TDX intermediate fixture",
-                        &intermediate_key,
-                        intermediate_revoked_serials,
-                    )),
-                },
+                Bytes::from(der_crl("Intel TDX Root CA fixture", &root_key, root_revoked_serials)),
+                Bytes::from(der_crl(
+                    "Intel TDX intermediate fixture",
+                    &intermediate_key,
+                    intermediate_revoked_serials,
+                )),
             ],
         }
     }
@@ -665,22 +641,18 @@ mod tests {
         let intermediate_key = signing_key(2);
         TdxRevocationEvidence {
             certificate_crls: vec![
-                TdxCertificateRevocationList {
-                    raw: Bytes::from(der_crl_with_next_update(
-                        "Intel TDX Root CA fixture",
-                        &root_key,
-                        &[],
-                        next_update,
-                    )),
-                },
-                TdxCertificateRevocationList {
-                    raw: Bytes::from(der_crl_with_next_update(
-                        "Intel TDX intermediate fixture",
-                        &intermediate_key,
-                        &[],
-                        next_update,
-                    )),
-                },
+                Bytes::from(der_crl_with_next_update(
+                    "Intel TDX Root CA fixture",
+                    &root_key,
+                    &[],
+                    next_update,
+                )),
+                Bytes::from(der_crl_with_next_update(
+                    "Intel TDX intermediate fixture",
+                    &intermediate_key,
+                    &[],
+                    next_update,
+                )),
             ],
         }
     }

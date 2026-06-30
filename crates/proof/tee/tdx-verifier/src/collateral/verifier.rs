@@ -17,13 +17,13 @@ use super::{
 pub struct CollateralVerifier;
 
 impl CollateralVerifier {
-    /// Validates a root-to-leaf certificate chain and returns the leaf key.
+    /// Validates a root-to-leaf certificate chain and returns the leaf key plus CRL expiration.
     pub fn verify_certificate_chain(
         chain: &[TdxCertificate],
         trusted_root_ca_hash: B256,
         verification_time: u64,
         revocation: &TdxRevocationEvidence,
-    ) -> Result<Bytes> {
+    ) -> Result<(Bytes, u64)> {
         let root = chain.first().ok_or_else(|| {
             TdxVerifierError::PckCertChainInvalid("certificate chain is empty".into())
         })?;
@@ -36,6 +36,7 @@ impl CollateralVerifier {
             .map(|cert| TdxCertificate::authenticated_from_der(&cert.raw))
             .collect::<Result<Vec<_>>>()?;
         let authenticated_crls = revocation.authenticate_crls()?;
+        let mut crl_expiration = u64::MAX;
 
         for (index, authenticated) in authenticated_chain.iter().enumerate() {
             if verification_time < authenticated.not_before
@@ -65,15 +66,20 @@ impl CollateralVerifier {
                     "certificate issuer name does not match parent".into(),
                 ));
             }
-            TdxRevocationEvidence::verify_certificate_not_revoked_with_crls(
-                &authenticated_crls,
-                authenticated,
-                issuer,
-                verification_time,
-            )?;
+            crl_expiration = crl_expiration.min(
+                TdxRevocationEvidence::verify_certificate_not_revoked_with_crls(
+                    &authenticated_crls,
+                    authenticated,
+                    issuer,
+                    verification_time,
+                )?,
+            );
         }
 
-        Ok(authenticated_chain.last().expect("chain is non-empty").subject_public_key.clone())
+        Ok((
+            authenticated_chain.last().expect("chain is non-empty").subject_public_key.clone(),
+            crl_expiration,
+        ))
     }
 
     /// Verifies an authenticated certificate signature with an issuer P-256 public key.
@@ -94,7 +100,7 @@ impl CollateralVerifier {
         )
     }
 
-    /// Validates signed collateral and returns its leaf signing key.
+    /// Validates signed collateral and returns its leaf signing key plus CRL expiration.
     pub fn verify_signed_collateral(
         collateral: &TdxSignedCollateral,
         body_kind: TdxSignedCollateralBody,
@@ -102,7 +108,7 @@ impl CollateralVerifier {
         verification_time: u64,
         revocation: &TdxRevocationEvidence,
         error_mapper: fn(String) -> TdxVerifierError,
-    ) -> Result<Bytes> {
+    ) -> Result<(Bytes, u64)> {
         let signed_validity = collateral.signed_validity(body_kind, error_mapper)?;
         if collateral.issue_time != signed_validity.issue_time
             || collateral.next_update != signed_validity.next_update
@@ -117,7 +123,7 @@ impl CollateralVerifier {
             return Err(TdxVerifierError::CollateralExpired);
         }
 
-        let leaf_key = Self::verify_certificate_chain(
+        let (leaf_key, crl_expiration) = Self::verify_certificate_chain(
             &collateral.signing_chain,
             trusted_root_ca_hash,
             verification_time,
@@ -141,7 +147,7 @@ impl CollateralVerifier {
             error_mapper("collateral signature failed".into()),
         )?;
 
-        Ok(leaf_key)
+        Ok((leaf_key, crl_expiration))
     }
 
     /// Verifies that a collateral leaf is the expected Intel PCS TCB signing certificate.

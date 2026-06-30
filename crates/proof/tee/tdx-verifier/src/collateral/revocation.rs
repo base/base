@@ -5,18 +5,28 @@ use x509_parser::prelude::{CertificateRevocationList, FromDer};
 
 use crate::{Result, TdxVerifierError};
 
-use super::{AuthenticatedTdxCertificate, CollateralVerifier, TdxCertificate};
+use super::{AuthenticatedTdxCertificate, CollateralVerifier};
 
-/// DER X.509 CRL supplied as revocation evidence.
+/// Authenticated CRL fields parsed from DER.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TdxCertificateRevocationList {
-    /// Raw DER-encoded X.509 certificate revocation list.
-    pub raw: Bytes,
+pub struct AuthenticatedTdxCrl {
+    /// DER-encoded issuer name.
+    pub issuer_name: Bytes,
+    /// CRL issue time in seconds since Unix epoch.
+    pub this_update: u64,
+    /// CRL expiration time in seconds since Unix epoch.
+    pub next_update: u64,
+    /// Certificate serials revoked by this CRL.
+    pub revoked_serials: Vec<Bytes>,
+    /// DER-encoded `TBSCertList` bytes covered by the CRL signature.
+    pub tbs_cert_list: Bytes,
+    /// P-256 ECDSA signature over `tbs_cert_list`.
+    pub signature: Bytes,
 }
 
-impl TdxCertificateRevocationList {
+impl AuthenticatedTdxCrl {
     /// Parses authenticated CRL fields from DER bytes.
-    pub fn authenticated_from_der(raw: &[u8]) -> Result<AuthenticatedTdxCrl> {
+    pub fn authenticated_from_der(raw: &[u8]) -> Result<Self> {
         let (remaining, crl) = CertificateRevocationList::from_der(raw)
             .map_err(|e| TdxVerifierError::PckCertChainInvalid(format!("CRL parse failed: {e}")))?;
         if !remaining.is_empty() {
@@ -37,7 +47,7 @@ impl TdxCertificateRevocationList {
                 })
             })?;
 
-        Ok(AuthenticatedTdxCrl {
+        Ok(Self {
             issuer_name: Bytes::copy_from_slice(crl.issuer().as_raw()),
             this_update,
             next_update,
@@ -51,55 +61,11 @@ impl TdxCertificateRevocationList {
     }
 }
 
-/// Authenticated CRL fields parsed from DER.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AuthenticatedTdxCrl {
-    /// DER-encoded issuer name.
-    pub issuer_name: Bytes,
-    /// CRL issue time in seconds since Unix epoch.
-    pub this_update: u64,
-    /// CRL expiration time in seconds since Unix epoch.
-    pub next_update: u64,
-    /// Certificate serials revoked by this CRL.
-    pub revoked_serials: Vec<Bytes>,
-    /// DER-encoded `TBSCertList` bytes covered by the CRL signature.
-    pub tbs_cert_list: Bytes,
-    /// P-256 ECDSA signature over `tbs_cert_list`.
-    pub signature: Bytes,
-}
-
-impl AuthenticatedTdxCrl {
-    /// Verifies the CRL signature with the issuer's P-256 public key.
-    pub fn verify_signature(&self, issuer_public_key: &[u8]) -> Result<()> {
-        CollateralVerifier::verify_p256_signature(
-            issuer_public_key,
-            &self.tbs_cert_list,
-            &self.signature,
-            TdxVerifierError::PckCertChainInvalid("CRL signature failed".into()),
-        )
-    }
-
-    /// Validates this CRL's time window at `verification_time`.
-    pub fn verify_validity(&self, verification_time: u64) -> Result<()> {
-        if verification_time < self.this_update || verification_time >= self.next_update {
-            return Err(TdxVerifierError::PckCertChainInvalid(
-                "CRL is not valid at verification time".into(),
-            ));
-        }
-        Ok(())
-    }
-
-    /// Returns true when this CRL revokes `certificate`.
-    pub fn revokes_certificate(&self, certificate: &AuthenticatedTdxCertificate) -> bool {
-        self.revoked_serials.iter().any(|serial| serial == &certificate.serial)
-    }
-}
-
 /// Explicit signed revocation evidence supplied to the verifier.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TdxRevocationEvidence {
     /// DER X.509 CRLs for all non-root certificate issuers used by verification.
-    pub certificate_crls: Vec<TdxCertificateRevocationList>,
+    pub certificate_crls: Vec<Bytes>,
 }
 
 impl TdxRevocationEvidence {
@@ -107,7 +73,7 @@ impl TdxRevocationEvidence {
     pub fn authenticate_crls(&self) -> Result<Vec<AuthenticatedTdxCrl>> {
         self.certificate_crls
             .iter()
-            .map(|crl| TdxCertificateRevocationList::authenticated_from_der(&crl.raw))
+            .map(|crl| AuthenticatedTdxCrl::authenticated_from_der(crl))
             .collect()
     }
 
@@ -118,50 +84,35 @@ impl TdxRevocationEvidence {
         issuer: &AuthenticatedTdxCertificate,
         verification_time: u64,
     ) -> Result<u64> {
-        let mut found_issuer_crl = false;
-        let mut earliest_next_update = u64::MAX;
+        let mut earliest_next_update: Option<u64> = None;
         for authenticated in authenticated_crls {
             if authenticated.issuer_name != issuer.subject_name {
                 continue;
             }
-            found_issuer_crl = true;
-            authenticated.verify_signature(&issuer.subject_public_key)?;
-            authenticated.verify_validity(verification_time)?;
-            earliest_next_update = earliest_next_update.min(authenticated.next_update);
-            if authenticated.revokes_certificate(certificate) {
+            CollateralVerifier::verify_p256_signature(
+                &issuer.subject_public_key,
+                &authenticated.tbs_cert_list,
+                &authenticated.signature,
+                TdxVerifierError::PckCertChainInvalid("CRL signature failed".into()),
+            )?;
+            if verification_time < authenticated.this_update
+                || verification_time >= authenticated.next_update
+            {
+                return Err(TdxVerifierError::PckCertChainInvalid(
+                    "CRL is not valid at verification time".into(),
+                ));
+            }
+            earliest_next_update =
+                Some(earliest_next_update.map_or(authenticated.next_update, |earliest| {
+                    earliest.min(authenticated.next_update)
+                }));
+            if authenticated.revoked_serials.iter().any(|serial| serial == &certificate.serial) {
                 return Err(TdxVerifierError::PckCertChainInvalid("certificate is revoked".into()));
             }
         }
 
-        if !found_issuer_crl {
-            return Err(TdxVerifierError::PckCertChainInvalid(
-                "missing issuer CRL for certificate".into(),
-            ));
-        }
-        Ok(earliest_next_update)
-    }
-
-    /// Returns the earliest nextUpdate among CRLs used to validate a certificate chain.
-    pub fn certificate_chain_next_update(
-        &self,
-        chain: &[TdxCertificate],
-        verification_time: u64,
-    ) -> Result<u64> {
-        let authenticated_chain = chain
-            .iter()
-            .map(|cert| TdxCertificate::authenticated_from_der(&cert.raw))
-            .collect::<Result<Vec<_>>>()?;
-        let authenticated_crls = self.authenticate_crls()?;
-        let mut earliest_next_update = u64::MAX;
-        for index in 1..authenticated_chain.len() {
-            earliest_next_update =
-                earliest_next_update.min(Self::verify_certificate_not_revoked_with_crls(
-                    &authenticated_crls,
-                    &authenticated_chain[index],
-                    &authenticated_chain[index - 1],
-                    verification_time,
-                )?);
-        }
-        Ok(earliest_next_update)
+        earliest_next_update.ok_or_else(|| {
+            TdxVerifierError::PckCertChainInvalid("missing issuer CRL for certificate".into())
+        })
     }
 }

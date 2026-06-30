@@ -11,10 +11,10 @@ use std::{
 use alloy_primitives::{Address, B256, Bytes, hex};
 use base_proof_tee_tdx_attestation_prover::TdxAttestationProverInput;
 use base_proof_tee_tdx_verifier::{
-    AuthenticatedTdxCertificate, CollateralVerifier, ParsedTdxQuote, TdxCertificate,
-    TdxCertificateRevocationList, TdxCollateral, TdxPckTcb, TdxPlatformIdentity, TdxQuote,
-    TdxQuotePolicy, TdxRevocationEvidence, TdxSignedCollateral, TdxSignedCollateralBody,
-    TdxSignerAttestation, TdxVerifierError, TdxVerifierInput,
+    AuthenticatedTdxCertificate, CollateralVerifier, ParsedTdxQuote, TdxCertificate, TdxCollateral,
+    TdxPckTcb, TdxPlatformIdentity, TdxQuote, TdxQuotePolicy, TdxRevocationEvidence,
+    TdxSignedCollateral, TdxSignedCollateralBody, TdxSignerAttestation, TdxVerifierError,
+    TdxVerifierInput,
 };
 use reqwest::{
     StatusCode,
@@ -333,7 +333,7 @@ impl TdxAttestationHydrator {
         parsed_quote: &ParsedTdxQuote,
         verification_time: u64,
     ) -> Result<u64> {
-        let pck_leaf_key = CollateralVerifier::verify_certificate_chain(
+        let (pck_leaf_key, pck_crl_expiration) = CollateralVerifier::verify_certificate_chain(
             &fetch.pck_certificate_chain,
             fetch.trusted_root_ca_hash,
             verification_time,
@@ -345,6 +345,7 @@ impl TdxAttestationHydrator {
         TdxQuote::verify_signature(parsed_quote)
             .map_err(|e| TdxCollateralError::source(Box::new(e)))?;
 
+        let mut crl_expiration = pck_crl_expiration;
         for (collateral, body_kind, error_mapper) in [
             (
                 &fetch.collateral.tcb_info,
@@ -357,7 +358,7 @@ impl TdxAttestationHydrator {
                 TdxVerifierError::QeIdentityInvalid,
             ),
         ] {
-            CollateralVerifier::verify_signed_collateral(
+            let (_, chain_crl_expiration) = CollateralVerifier::verify_signed_collateral(
                 collateral,
                 body_kind,
                 fetch.trusted_root_ca_hash,
@@ -366,6 +367,7 @@ impl TdxAttestationHydrator {
                 error_mapper,
             )
             .map_err(|e| TdxCollateralError::source(Box::new(e)))?;
+            crl_expiration = crl_expiration.min(chain_crl_expiration);
         }
 
         let pck_leaf = fetch.pck_certificate_chain.last().ok_or_else(|| {
@@ -404,7 +406,7 @@ impl TdxAttestationHydrator {
             ))));
         }
 
-        Self::validate_collateral_freshness(fetch, verification_time)
+        Self::validate_collateral_freshness(fetch, verification_time, crl_expiration)
     }
 
     fn now_seconds() -> Result<u64> {
@@ -478,6 +480,7 @@ impl TdxAttestationHydrator {
     pub fn validate_collateral_freshness(
         fetch: &TdxCollateralFetch,
         verification_time: u64,
+        crl_expiration: u64,
     ) -> Result<u64> {
         let mut expiration = u64::MAX;
         for certificate in fetch
@@ -509,22 +512,7 @@ impl TdxAttestationHydrator {
             )?);
         }
 
-        for chain in [
-            fetch.pck_certificate_chain.as_slice(),
-            fetch.collateral.tcb_info.signing_chain.as_slice(),
-            fetch.collateral.qe_identity.signing_chain.as_slice(),
-        ] {
-            if chain.len() <= 1 {
-                continue;
-            }
-            let crl_expiration = fetch
-                .revocation
-                .certificate_chain_next_update(chain, verification_time)
-                .map_err(|e| TdxCollateralError::source(Box::new(e)))?;
-            expiration = expiration.min(crl_expiration);
-        }
-
-        Ok(expiration)
+        Ok(expiration.min(crl_expiration))
     }
 
     /// Validates one signed collateral document's freshness.
@@ -712,8 +700,7 @@ impl TdxAttestationHydrator {
         }
         let certificate_crls = futures::future::try_join_all(urls.into_iter().map(|url| async {
             let response = self.get(url).await?;
-            let raw = Self::limited_body(response).await?;
-            Ok::<_, TdxCollateralError>(TdxCertificateRevocationList { raw })
+            Self::limited_body(response).await
         }))
         .await?;
         Ok(TdxRevocationEvidence { certificate_crls })
@@ -1503,7 +1490,7 @@ mod tests {
         let fetch = collateral_fetch(300, 250);
 
         let expiration =
-            TdxAttestationHydrator::validate_collateral_freshness(&fetch, 150).unwrap();
+            TdxAttestationHydrator::validate_collateral_freshness(&fetch, 150, u64::MAX).unwrap();
 
         assert_eq!(expiration, 250);
     }
@@ -1512,7 +1499,8 @@ mod tests {
     fn collateral_freshness_rejects_expired_collateral() {
         let fetch = collateral_fetch(150, 250);
 
-        let error = TdxAttestationHydrator::validate_collateral_freshness(&fetch, 150).unwrap_err();
+        let error = TdxAttestationHydrator::validate_collateral_freshness(&fetch, 150, u64::MAX)
+            .unwrap_err();
 
         assert!(
             error
@@ -1528,7 +1516,8 @@ mod tests {
         let mut fetch = collateral_fetch(300, 400);
         fetch.collateral.tcb_info.raw = Bytes::from_static(b"not-json");
 
-        let error = TdxAttestationHydrator::validate_collateral_freshness(&fetch, 150).unwrap_err();
+        let error = TdxAttestationHydrator::validate_collateral_freshness(&fetch, 150, u64::MAX)
+            .unwrap_err();
 
         assert!(
             error

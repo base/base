@@ -14,9 +14,9 @@ pub use error::{ProverError, Result};
 
 mod input;
 pub use input::{
-    TdxAttestationProverInput, TdxCertificateInput, TdxCertificateRevocationListInput,
-    TdxCollateralInput, TdxQuotePolicyInput, TdxRevocationEvidenceInput, TdxSignedCollateralInput,
-    TdxVerifierInputAbi, intel_tcb_status_from_u8, intel_tcb_status_to_u8, tdx_tcb_status_from_u8,
+    TdxAttestationProverInput, TdxCertificateInput, TdxCollateralInput, TdxQuotePolicyInput,
+    TdxRevocationEvidenceInput, TdxSignedCollateralInput, TdxVerifierInputAbi,
+    intel_tcb_status_from_u8, intel_tcb_status_to_u8, tdx_tcb_status_from_u8,
 };
 
 mod recovery;

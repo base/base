@@ -12,7 +12,7 @@ pub use qe_identity::{
 };
 
 mod revocation;
-pub use revocation::{AuthenticatedTdxCrl, TdxCertificateRevocationList, TdxRevocationEvidence};
+pub use revocation::{AuthenticatedTdxCrl, TdxRevocationEvidence};
 
 mod signed;
 pub use signed::{

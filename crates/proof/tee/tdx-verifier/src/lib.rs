@@ -8,10 +8,10 @@ mod collateral;
 pub use collateral::{
     AuthenticatedTdxCertificate, AuthenticatedTdxCrl, CollateralVerifier,
     INTEL_TCB_SIGNING_CERT_COMMON_NAME, IntelTcbStatus, TDX_QE_IDENTITY_ID,
-    TDX_QE_IDENTITY_VERSION, TDX_TCB_INFO_ID, TdxCertificate, TdxCertificateRevocationList,
-    TdxCollateral, TdxModule, TdxModuleIdentity, TdxModuleTcb, TdxModuleTcbLevel, TdxPckTcb,
-    TdxPlatformIdentity, TdxQeIdentityBody, TdxQeIdentityDocument, TdxQeIdentityLevel,
-    TdxQeIdentityTcb, TdxRevocationEvidence, TdxSignedCollateral, TdxSignedCollateralBody,
+    TDX_QE_IDENTITY_VERSION, TDX_TCB_INFO_ID, TdxCertificate, TdxCollateral, TdxModule,
+    TdxModuleIdentity, TdxModuleTcb, TdxModuleTcbLevel, TdxPckTcb, TdxPlatformIdentity,
+    TdxQeIdentityBody, TdxQeIdentityDocument, TdxQeIdentityLevel, TdxQeIdentityTcb,
+    TdxRevocationEvidence, TdxSignedCollateral, TdxSignedCollateralBody,
     TdxSignedCollateralValidity, TdxTcbComponent, TdxTcbComponents, TdxTcbInfoBody,
     TdxTcbInfoDocument, TdxTcbLevel, TdxTeeType,
 };

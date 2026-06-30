@@ -3,8 +3,8 @@
 use alloy_primitives::Address;
 use alloy_sol_types::{SolValue, sol};
 use base_proof_tee_tdx_verifier::{
-    IntelTcbStatus, TDXTcbStatus, TdxCertificate, TdxCertificateRevocationList, TdxCollateral,
-    TdxQuotePolicy, TdxRevocationEvidence, TdxSignedCollateral, TdxVerifierInput,
+    IntelTcbStatus, TDXTcbStatus, TdxCertificate, TdxCollateral, TdxQuotePolicy,
+    TdxRevocationEvidence, TdxSignedCollateral, TdxVerifierInput,
 };
 
 use crate::{ProverError, Result};
@@ -40,16 +40,10 @@ sol! {
         uint8 tcbStatus;
     }
 
-    /// ABI mirror of `TdxCertificateRevocationList`.
-    struct TdxCertificateRevocationListInput {
-        /// Raw DER CRL bytes.
-        bytes raw;
-    }
-
     /// ABI mirror of `TdxRevocationEvidence`.
     struct TdxRevocationEvidenceInput {
         /// DER X.509 CRLs for all non-root certificate issuers.
-        TdxCertificateRevocationListInput[] certificateCrls;
+        bytes[] certificateCrls;
     }
 
     /// ABI mirror of `TdxQuotePolicy`.
@@ -244,33 +238,15 @@ impl TryFrom<TdxCollateralInput> for TdxCollateral {
     }
 }
 
-impl From<&TdxCertificateRevocationList> for TdxCertificateRevocationListInput {
-    fn from(crl: &TdxCertificateRevocationList) -> Self {
-        Self { raw: crl.raw.clone() }
-    }
-}
-
-impl From<TdxCertificateRevocationListInput> for TdxCertificateRevocationList {
-    fn from(crl: TdxCertificateRevocationListInput) -> Self {
-        Self { raw: crl.raw }
-    }
-}
-
 impl From<&TdxRevocationEvidence> for TdxRevocationEvidenceInput {
     fn from(evidence: &TdxRevocationEvidence) -> Self {
-        Self { certificateCrls: evidence.certificate_crls.iter().map(Into::into).collect() }
+        Self { certificateCrls: evidence.certificate_crls.clone() }
     }
 }
 
 impl From<TdxRevocationEvidenceInput> for TdxRevocationEvidence {
     fn from(evidence: TdxRevocationEvidenceInput) -> Self {
-        Self {
-            certificate_crls: evidence
-                .certificateCrls
-                .into_iter()
-                .map(TdxCertificateRevocationList::from)
-                .collect(),
-        }
+        Self { certificate_crls: evidence.certificateCrls }
     }
 }
 
