@@ -6,7 +6,7 @@ use crate::{
     ParsedTdxQuote, QE_REPORT_ATTRIBUTES_LEN, QE_REPORT_ATTRIBUTES_OFFSET,
     QE_REPORT_ISV_PROD_ID_OFFSET, QE_REPORT_ISV_SVN_OFFSET, QE_REPORT_MISCSELECT_LEN,
     QE_REPORT_MISCSELECT_OFFSET, QE_REPORT_MRSIGNER_LEN, QE_REPORT_MRSIGNER_OFFSET, Result,
-    TdxVerifierError,
+    TdxQuote, TdxVerifierError,
 };
 
 use super::{CollateralVerifier, IntelTcbStatus, TDX_QE_IDENTITY_ID, TDX_QE_IDENTITY_VERSION};
@@ -54,30 +54,24 @@ pub struct TdxQeIdentityBody {
 impl TdxQeIdentityBody {
     /// Verifies this signed QE identity against the PCK-signed QE report.
     pub fn verify_qe_report(&self, quote: &ParsedTdxQuote) -> Result<()> {
-        self.verify_tdx_identity()?;
+        if self.id != TDX_QE_IDENTITY_ID || self.version != TDX_QE_IDENTITY_VERSION {
+            return Err(TdxVerifierError::QeIdentityInvalid(
+                "QE identity is not TDX TD_QE v2 collateral".into(),
+            ));
+        }
 
-        let miscselect = quote
-            .qe_report
-            .get(
-                QE_REPORT_MISCSELECT_OFFSET..QE_REPORT_MISCSELECT_OFFSET + QE_REPORT_MISCSELECT_LEN,
-            )
-            .ok_or_else(|| {
-                TdxVerifierError::InvalidQuote("QE report miscselect read out of bounds".into())
-            })?;
-        let attributes = quote
-            .qe_report
-            .get(
-                QE_REPORT_ATTRIBUTES_OFFSET..QE_REPORT_ATTRIBUTES_OFFSET + QE_REPORT_ATTRIBUTES_LEN,
-            )
-            .ok_or_else(|| {
-                TdxVerifierError::InvalidQuote("QE report attributes read out of bounds".into())
-            })?;
-        let mrsigner = quote
-            .qe_report
-            .get(QE_REPORT_MRSIGNER_OFFSET..QE_REPORT_MRSIGNER_OFFSET + QE_REPORT_MRSIGNER_LEN)
-            .ok_or_else(|| {
-                TdxVerifierError::InvalidQuote("QE report mrsigner read out of bounds".into())
-            })?;
+        let miscselect = TdxQuote::read_array::<QE_REPORT_MISCSELECT_LEN>(
+            &quote.qe_report,
+            QE_REPORT_MISCSELECT_OFFSET,
+        )?;
+        let attributes = TdxQuote::read_array::<QE_REPORT_ATTRIBUTES_LEN>(
+            &quote.qe_report,
+            QE_REPORT_ATTRIBUTES_OFFSET,
+        )?;
+        let mrsigner = TdxQuote::read_array::<QE_REPORT_MRSIGNER_LEN>(
+            &quote.qe_report,
+            QE_REPORT_MRSIGNER_OFFSET,
+        )?;
         let isvprodid =
             CollateralVerifier::read_u16_le_bytes(&quote.qe_report, QE_REPORT_ISV_PROD_ID_OFFSET)
                 .map_err(TdxVerifierError::InvalidQuote)?;
@@ -85,19 +79,19 @@ impl TdxQeIdentityBody {
             CollateralVerifier::read_u16_le_bytes(&quote.qe_report, QE_REPORT_ISV_SVN_OFFSET)
                 .map_err(TdxVerifierError::InvalidQuote)?;
 
-        Self::verify_masked_field(
-            miscselect,
-            &self.miscselect,
-            &self.miscselect_mask,
-            "miscselect",
-        )?;
-        Self::verify_masked_field(
-            attributes,
-            &self.attributes,
-            &self.attributes_mask,
-            "attributes",
-        )?;
-        if mrsigner
+        for (actual, expected_hex, mask_hex, field_name) in [
+            (miscselect.as_slice(), &self.miscselect, &self.miscselect_mask, "miscselect"),
+            (attributes.as_slice(), &self.attributes, &self.attributes_mask, "attributes"),
+        ] {
+            let matches = CollateralVerifier::masked_bytes_match(actual, expected_hex, mask_hex)
+                .map_err(TdxVerifierError::QeIdentityInvalid)?;
+            if !matches {
+                return Err(TdxVerifierError::QeIdentityInvalid(format!(
+                    "QE report {field_name} does not match QE identity"
+                )));
+            }
+        }
+        if mrsigner.as_slice()
             != CollateralVerifier::decode_hex_exact(&self.mrsigner, QE_REPORT_MRSIGNER_LEN)
                 .map_err(TdxVerifierError::QeIdentityInvalid)?
                 .as_ref()
@@ -128,33 +122,6 @@ impl TdxQeIdentityBody {
             ));
         }
 
-        Ok(())
-    }
-
-    /// Verifies a QE report field matches the signed QE identity under a hex mask.
-    pub fn verify_masked_field(
-        actual: &[u8],
-        expected_hex: &str,
-        mask_hex: &str,
-        field_name: &str,
-    ) -> Result<()> {
-        let matches = CollateralVerifier::masked_bytes_match(actual, expected_hex, mask_hex)
-            .map_err(TdxVerifierError::QeIdentityInvalid)?;
-        if !matches {
-            return Err(TdxVerifierError::QeIdentityInvalid(format!(
-                "QE report {field_name} does not match QE identity"
-            )));
-        }
-        Ok(())
-    }
-
-    /// Verifies the signed QE identity is the TDX identity type and schema version.
-    pub fn verify_tdx_identity(&self) -> Result<()> {
-        if self.id != TDX_QE_IDENTITY_ID || self.version != TDX_QE_IDENTITY_VERSION {
-            return Err(TdxVerifierError::QeIdentityInvalid(
-                "QE identity is not TDX TD_QE v2 collateral".into(),
-            ));
-        }
         Ok(())
     }
 }
