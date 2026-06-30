@@ -294,7 +294,10 @@ impl TdxAttestationHydrator {
 
         let (tcb_info, qe_identity) =
             tokio::try_join!(self.fetch_tcb_info(&platform), self.fetch_qe_identity())?;
-        let tcb_status = tcb_info
+        let tcb_info_document =
+            tcb_info.tcb_info_document().map_err(|e| TdxCollateralError::source(Box::new(e)))?;
+        let tcb_status = tcb_info_document
+            .tcb_info
             .tcb_status_for_quote(&parsed_quote, &pck_tcb)
             .map_err(|e| TdxCollateralError::source(Box::new(e)))?;
         let collateral = TdxCollateral { tcb_info, qe_identity, tcb_status };
@@ -557,7 +560,10 @@ impl TdxAttestationHydrator {
         let mut fetch = entry.fetch;
         fetch.pck_certificate_chain = pck_certificate_chain.to_vec();
         let cached_tcb_info = &fetch.collateral.tcb_info;
-        let tcb_status = match cached_tcb_info.tcb_status_for_quote(parsed_quote, pck_tcb) {
+        let tcb_status = match cached_tcb_info
+            .tcb_info_document()
+            .and_then(|document| document.tcb_info.tcb_status_for_quote(parsed_quote, pck_tcb))
+        {
             Ok(tcb_status) => tcb_status,
             Err(error) => {
                 debug!(error = %error, "cached TDX collateral failed quote TCB matching");

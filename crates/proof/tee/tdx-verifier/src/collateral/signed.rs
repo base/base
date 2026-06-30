@@ -3,11 +3,10 @@
 use alloy_primitives::{B256, Bytes, keccak256};
 use serde_json::Value;
 
-use crate::{ParsedTdxQuote, Result, TdxVerifierError};
+use crate::{Result, TdxVerifierError};
 
 use super::{
-    CollateralVerifier, IntelTcbStatus, TdxCertificate, TdxPckTcb, TdxQeIdentityDocument,
-    TdxTcbInfoDocument,
+    CollateralVerifier, IntelTcbStatus, TdxCertificate, TdxQeIdentityDocument, TdxTcbInfoDocument,
 };
 
 /// Signed collateral document with its signing chain.
@@ -58,16 +57,6 @@ impl TdxSignedCollateral {
         keccak256(&self.raw)
     }
 
-    /// Derives the matching TCB status from the signed TCB info document.
-    pub fn tcb_status_for_quote(
-        &self,
-        quote: &ParsedTdxQuote,
-        pck_tcb: &TdxPckTcb,
-    ) -> Result<IntelTcbStatus> {
-        let document = self.tcb_info_document()?;
-        document.tcb_info.tcb_status_for_quote(quote, pck_tcb)
-    }
-
     /// Parses this signed collateral as an Intel TCB info JSON document.
     pub fn tcb_info_document(&self) -> Result<TdxTcbInfoDocument> {
         serde_json::from_slice(&self.raw).map_err(|e| {
@@ -87,8 +76,19 @@ impl TdxSignedCollateral {
         let document: Value =
             serde_json::from_slice(&self.raw).map_err(|e| body_kind.invalid(format!("{e}")))?;
         let body = Self::signed_body_value(&document, body_kind)?;
-        let issue_time = Self::signed_time_field(body, "issueDate", body_kind)?;
-        let next_update = Self::signed_time_field(body, "nextUpdate", body_kind)?;
+        let signed_time_field = |field: &str| -> Result<u64> {
+            match body.get(field) {
+                Some(Value::Number(number)) => number.as_u64().ok_or_else(|| {
+                    body_kind.invalid(format!("{field} is not an unsigned timestamp"))
+                }),
+                Some(Value::String(value)) => CollateralVerifier::parse_rfc3339_seconds(value)
+                    .map_err(|message| body_kind.invalid(format!("{field} is invalid: {message}"))),
+                Some(_) => Err(body_kind.invalid(format!("{field} has unsupported type"))),
+                None => Err(body_kind.invalid(format!("{field} is missing"))),
+            }
+        };
+        let issue_time = signed_time_field("issueDate")?;
+        let next_update = signed_time_field("nextUpdate")?;
         Ok((issue_time, next_update))
     }
 
@@ -107,33 +107,15 @@ impl TdxSignedCollateral {
         document: &Value,
         body_kind: TdxSignedCollateralBody,
     ) -> Result<&Value> {
-        let has_tcb_info = document.get(TdxSignedCollateralBody::TcbInfo.json_key()).is_some();
-        let has_qe_identity =
-            document.get(TdxSignedCollateralBody::QeIdentity.json_key()).is_some();
-        if has_tcb_info && has_qe_identity {
+        if document.get(TdxSignedCollateralBody::TcbInfo.json_key()).is_some()
+            && document.get(TdxSignedCollateralBody::QeIdentity.json_key()).is_some()
+        {
             return Err(body_kind.invalid("collateral JSON contains multiple signed bodies".into()));
         }
 
         document
             .get(body_kind.json_key())
             .ok_or_else(|| body_kind.invalid(format!("{} body is missing", body_kind.json_key())))
-    }
-
-    /// Extracts a signed timestamp field from a collateral JSON body.
-    pub fn signed_time_field(
-        body: &Value,
-        field: &str,
-        body_kind: TdxSignedCollateralBody,
-    ) -> Result<u64> {
-        match body.get(field) {
-            Some(Value::Number(number)) => number
-                .as_u64()
-                .ok_or_else(|| body_kind.invalid(format!("{field} is not an unsigned timestamp"))),
-            Some(Value::String(value)) => CollateralVerifier::parse_rfc3339_seconds(value)
-                .map_err(|message| body_kind.invalid(format!("{field} is invalid: {message}"))),
-            Some(_) => Err(body_kind.invalid(format!("{field} has unsupported type"))),
-            None => Err(body_kind.invalid(format!("{field} is missing"))),
-        }
     }
 }
 
