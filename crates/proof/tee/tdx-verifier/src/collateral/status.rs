@@ -5,44 +5,34 @@ use serde::Deserialize;
 use crate::TDXTcbStatus;
 
 /// Intel TCB status values reported by TDX TCB collateral.
+#[repr(u8)]
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 pub enum IntelTcbStatus {
     /// Platform TCB is up to date.
-    UpToDate,
+    UpToDate = 1,
     /// Platform needs software hardening.
     #[serde(alias = "SWHardeningNeeded")]
-    SwHardeningNeeded,
+    SwHardeningNeeded = 2,
     /// Platform needs configuration hardening.
-    ConfigurationNeeded,
+    ConfigurationNeeded = 3,
     /// Platform needs configuration and software hardening.
     #[serde(alias = "ConfigurationAndSWHardeningNeeded")]
-    ConfigurationAndSwHardeningNeeded,
+    ConfigurationAndSwHardeningNeeded = 4,
     /// Platform TCB is out of date.
-    OutOfDate,
+    OutOfDate = 5,
     /// Platform TCB is out of date and needs configuration hardening.
-    OutOfDateConfigurationNeeded,
+    OutOfDateConfigurationNeeded = 6,
     /// Platform TCB has been revoked.
-    Revoked,
+    Revoked = 7,
     /// Status is not understood by this verifier.
     #[serde(other)]
-    Unsupported,
+    Unsupported = 0,
 }
 
 impl IntelTcbStatus {
     /// Maps an Intel TCB status into the contract's reduced `TDXTcbStatus`.
-    pub const fn to_contract_status(self) -> TDXTcbStatus {
-        match self {
-            Self::UpToDate => TDXTcbStatus::UpToDate,
-            Self::SwHardeningNeeded => TDXTcbStatus::SwHardeningNeeded,
-            Self::ConfigurationNeeded => TDXTcbStatus::ConfigurationNeeded,
-            Self::ConfigurationAndSwHardeningNeeded => {
-                TDXTcbStatus::ConfigurationAndSwHardeningNeeded
-            }
-            Self::OutOfDate => TDXTcbStatus::OutOfDate,
-            Self::OutOfDateConfigurationNeeded => TDXTcbStatus::OutOfDateConfigurationNeeded,
-            Self::Revoked => TDXTcbStatus::Revoked,
-            Self::Unsupported => TDXTcbStatus::Unknown,
-        }
+    pub fn to_contract_status(self) -> TDXTcbStatus {
+        TDXTcbStatus::try_from(self as u8).unwrap_or(TDXTcbStatus::Unknown)
     }
 
     /// Combines the platform TCB status with the TDX module identity TCB status.
