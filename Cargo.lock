@@ -5349,6 +5349,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-consensus 2.0.5",
  "alloy-evm",
+ "alloy-genesis 2.0.5",
  "alloy-primitives",
  "base-common-consensus",
  "base-common-evm",
@@ -5358,6 +5359,7 @@ dependencies = [
  "base-proof-driver",
  "base-proof-executor",
  "base-proof-preimage",
+ "base-proof-primitives",
  "base-protocol",
  "rstest",
  "spin 0.10.0",
