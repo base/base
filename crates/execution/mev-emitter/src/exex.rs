@@ -126,7 +126,7 @@ fn arb_dryrun_config_from_env() -> crate::arb_dryrun::DryRunConfig {
     if let Some(value) = parse_env_u128(ARB_DRYRUN_AMOUNT_IN_WEI_ENV) {
         config.amount_in_wei = value;
     }
-    config
+    config.clamped()
 }
 
 fn parse_env_usize(name: &str) -> Option<usize> {
@@ -152,13 +152,9 @@ fn emit_arb_dryrun_frame(
     if dirty_pools.is_empty() {
         return;
     }
-    let frame = crate::arb_dryrun::run_frame(
-        &[],
-        &dirty_pools,
-        config,
-        crate::arb_dryrun::NoActionGuard,
-    );
-    if frame.candidates.is_empty() {
+    let frame =
+        crate::arb_dryrun::run_frame(&[], &dirty_pools, config, crate::arb_dryrun::NoActionGuard);
+    if frame.candidates.is_empty() || frame.truncated {
         sink.send_event(&crate::NodeEvent::ArbDryRunObservation(
             crate::ArbDryRunObservationEvent {
                 protocol_version: crate::arb_dryrun::ARB_DRYRUN_PROTOCOL_VERSION,
@@ -394,8 +390,7 @@ pub async fn run_mev_emitter_exex(
     let sink = crate::transport::start_event_server();
     let arb_dryrun = if arb_dryrun_enabled() {
         let config = arb_dryrun_config_from_env();
-        let time_budget_micros =
-            u64::try_from(config.time_budget.as_micros()).unwrap_or(u64::MAX);
+        let time_budget_micros = u64::try_from(config.time_budget.as_micros()).unwrap_or(u64::MAX);
         info!(
             target: "base::mev_emitter",
             max_pools = config.max_pools_per_frame,

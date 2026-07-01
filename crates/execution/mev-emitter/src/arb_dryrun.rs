@@ -21,6 +21,12 @@ pub const DEFAULT_MAX_POOLS_PER_FRAME: usize = 64;
 pub const DEFAULT_MAX_CANDIDATES_PER_FRAME: usize = 8;
 /// Default wall-clock budget per frame.
 pub const DEFAULT_TIME_BUDGET_MICROS: u64 = 2_000;
+/// Hard ceiling for env-provided pool caps.
+pub const HARD_MAX_POOLS_PER_FRAME: usize = 512;
+/// Hard ceiling for env-provided candidate caps.
+pub const HARD_MAX_CANDIDATES_PER_FRAME: usize = 64;
+/// Hard ceiling for env-provided per-frame wall-clock budgets.
+pub const HARD_MAX_TIME_BUDGET_MICROS: u64 = 20_000;
 
 const Q96: u128 = 79_228_162_514_264_337_593_543_950_336u128;
 const MIN_SQRT_RATIO: u128 = 4_295_128_739u128;
@@ -40,9 +46,7 @@ impl NoActionGuard {
 
 /// Returns true only for an explicit `1` opt-in.
 pub fn enabled_from_value(value: Option<&std::ffi::OsStr>) -> bool {
-    value
-        .and_then(std::ffi::OsStr::to_str)
-        .is_some_and(|raw| raw.trim() == "1")
+    value.and_then(std::ffi::OsStr::to_str).is_some_and(|raw| raw.trim() == "1")
 }
 
 /// Runtime config for bounded frame evaluation.
@@ -66,6 +70,18 @@ impl Default for DryRunConfig {
             time_budget: Duration::from_micros(DEFAULT_TIME_BUDGET_MICROS),
             amount_in_wei: 1_000_000_000_000_000_000u128,
         }
+    }
+}
+
+impl DryRunConfig {
+    /// Clamp operator-provided env overrides to bounded ExEx-safe ceilings.
+    pub fn clamped(mut self) -> Self {
+        self.max_pools_per_frame = self.max_pools_per_frame.clamp(1, HARD_MAX_POOLS_PER_FRAME);
+        self.max_candidates_per_frame =
+            self.max_candidates_per_frame.clamp(1, HARD_MAX_CANDIDATES_PER_FRAME);
+        let micros = u64::try_from(self.time_budget.as_micros()).unwrap_or(u64::MAX);
+        self.time_budget = Duration::from_micros(micros.clamp(1, HARD_MAX_TIME_BUDGET_MICROS));
+        self
     }
 }
 
@@ -338,7 +354,11 @@ pub fn quote_aero_stable_exact_in(
 }
 
 /// Quotes one pool in the requested direction.
-pub fn quote_pool_exact_in(pool: &PoolState, token_in: Address, amount_in: u128) -> Option<QuoteResult> {
+pub fn quote_pool_exact_in(
+    pool: &PoolState,
+    token_in: Address,
+    amount_in: u128,
+) -> Option<QuoteResult> {
     let zero_for_one = token_in == pool.token0;
     if !zero_for_one && token_in != pool.token1 {
         return None;
@@ -411,7 +431,8 @@ pub fn quote_v3_exact_in(
     amount_in: u128,
     ticks: &[V3Tick],
 ) -> Option<V3QuoteResult> {
-    if sqrt_price_x96 <= MIN_SQRT_RATIO || liquidity == 0 || amount_in == 0 || fee_pips >= 1_000_000 {
+    if sqrt_price_x96 <= MIN_SQRT_RATIO || liquidity == 0 || amount_in == 0 || fee_pips >= 1_000_000
+    {
         return None;
     }
 
@@ -438,16 +459,28 @@ pub fn quote_v3_exact_in(
         } else {
             initialized.iter().find(|t| t.tick > current_tick).map(|t| t.tick)
         };
-        let target_sqrt = next_tick
-            .and_then(get_sqrt_ratio_at_tick)
-            .unwrap_or_else(|| BigUint::from(if zero_for_one { MIN_SQRT_RATIO + 1 } else { u128::MAX }));
-        let step = compute_swap_step(&current_sqrt, &target_sqrt, &liquidity_u, &amount_remaining, fee_pips, zero_for_one)?;
+        let target_sqrt = next_tick.and_then(get_sqrt_ratio_at_tick).unwrap_or_else(|| {
+            if zero_for_one {
+                BigUint::from(MIN_SQRT_RATIO + 1)
+            } else {
+                max_sqrt_ratio().unwrap_or_else(|| BigUint::from(u128::MAX)) - BigUint::one()
+            }
+        });
+        let step = compute_swap_step(
+            &current_sqrt,
+            &target_sqrt,
+            &liquidity_u,
+            &amount_remaining,
+            fee_pips,
+            zero_for_one,
+        )?;
         amount_remaining -= &step.amount_in + &step.fee_amount;
         amount_out += &step.amount_out;
         current_sqrt = step.sqrt_next;
         if let Some(nt) = next_tick {
             if current_sqrt == target_sqrt {
-                let delta = initialized.iter().find(|t| t.tick == nt).map_or(0, |t| t.liquidity_net);
+                let delta =
+                    initialized.iter().find(|t| t.tick == nt).map_or(0, |t| t.liquidity_net);
                 current_liquidity = if zero_for_one {
                     current_liquidity - BigInt::from(delta)
                 } else {
@@ -492,7 +525,8 @@ fn compute_swap_step(
     zero_for_one: bool,
 ) -> Option<SwapStep> {
     let fee_complement = BigUint::from(FEE_DENOMINATOR - u128::from(fee_pips));
-    let amount_remaining_less_fee = amount_remaining * &fee_complement / BigUint::from(FEE_DENOMINATOR);
+    let amount_remaining_less_fee =
+        amount_remaining * &fee_complement / BigUint::from(FEE_DENOMINATOR);
     let amount_in_to_target = if zero_for_one {
         get_amount0_delta(sqrt_target, sqrt_current, liquidity, true)
     } else {
@@ -502,9 +536,17 @@ fn compute_swap_step(
     let sqrt_next = if max {
         sqrt_target.clone()
     } else if zero_for_one {
-        get_next_sqrt_price_from_amount0_rounding_up(sqrt_current, liquidity, &amount_remaining_less_fee)?
+        get_next_sqrt_price_from_amount0_rounding_up(
+            sqrt_current,
+            liquidity,
+            &amount_remaining_less_fee,
+        )?
     } else {
-        get_next_sqrt_price_from_amount1_rounding_down(sqrt_current, liquidity, &amount_remaining_less_fee)
+        get_next_sqrt_price_from_amount1_rounding_down(
+            sqrt_current,
+            liquidity,
+            &amount_remaining_less_fee,
+        )
     };
     let amount_in_used = if zero_for_one {
         get_amount0_delta(&sqrt_next, sqrt_current, liquidity, true)
@@ -521,12 +563,7 @@ fn compute_swap_step(
     } else {
         amount_remaining - &amount_in_used
     };
-    Some(SwapStep {
-        sqrt_next,
-        amount_in: amount_in_used,
-        amount_out,
-        fee_amount,
-    })
+    Some(SwapStep { sqrt_next, amount_in: amount_in_used, amount_out, fee_amount })
 }
 
 fn get_amount0_delta(a: &BigUint, b: &BigUint, liquidity: &BigUint, round_up: bool) -> BigUint {
@@ -575,47 +612,87 @@ fn mul_div_rounding_up(a: &BigUint, b: &BigUint, denominator: &BigUint) -> BigUi
 
 fn div_rounding_up(numerator: &BigUint, denominator: &BigUint) -> BigUint {
     let q = numerator / denominator;
-    if numerator % denominator == BigUint::zero() {
-        q
-    } else {
-        q + BigUint::one()
-    }
+    if numerator % denominator == BigUint::zero() { q } else { q + BigUint::one() }
 }
+
+const MIN_TICK: i32 = -887_272;
+const MAX_TICK: i32 = 887_272;
 
 fn get_sqrt_ratio_at_tick(tick: i32) -> Option<BigUint> {
-    match tick {
-        0 => Some(BigUint::from(Q96)),
-        1 => Some(BigUint::parse_bytes(b"79232123823359799118286999568", 10)?),
-        -1 => Some(BigUint::parse_bytes(b"79224201403219477170569942574", 10)?),
-        60 => Some(BigUint::parse_bytes(b"79466191966197645195421774833", 10)?),
-        -60 => Some(BigUint::parse_bytes(b"78990846045029531151608375686", 10)?),
-        1000 => Some(BigUint::parse_bytes(b"83290069058676223003182343270", 10)?),
-        -887220 => Some(BigUint::parse_bytes(b"4295128739", 10)?),
-        887220 => Some(BigUint::parse_bytes(b"1461446703485210103287273052203988822378723970341", 10)?),
-        _ => sqrt_ratio_float(tick),
+    if !(MIN_TICK..=MAX_TICK).contains(&tick) {
+        return None;
     }
-}
-
-fn sqrt_ratio_float(tick: i32) -> Option<BigUint> {
-    let ratio = 1.0001_f64.powi(tick);
-    let sqrt = ratio.sqrt() * Q96 as f64;
-    if !sqrt.is_finite() || sqrt <= 0.0 {
-        None
+    let abs_tick = tick.unsigned_abs();
+    let mut ratio = if abs_tick & 0x1 != 0 {
+        hex_biguint("fffcb933bd6fad37aa2d162d1a594001")?
     } else {
-        Some(BigUint::from(sqrt.floor() as u128))
+        BigUint::one() << 128usize
+    };
+    for (bit, factor) in [
+        (0x2, "fff97272373d413259a46990580e213a"),
+        (0x4, "fff2e50f5f656932ef12357cf3c7fdcc"),
+        (0x8, "ffe5caca7e10e4e61c3624eaa0941cd0"),
+        (0x10, "ffcb9843d60f6159c9db58835c926644"),
+        (0x20, "ff973b41fa98c081472e6896dfb254c0"),
+        (0x40, "ff2ea16466c96a3843ec78b326b52861"),
+        (0x80, "fe5dee046a99a2a811c461f1969c3053"),
+        (0x100, "fcbe86c7900a88aedcffc83b479aa3a4"),
+        (0x200, "f987a7253ac413176f2b074cf7815e54"),
+        (0x400, "f3392b0822b70005940c7a398e4b70f3"),
+        (0x800, "e7159475a2c29b7443b29c7fa6e889d9"),
+        (0x1000, "d097f3bdfd2022b8845ad8f792aa5825"),
+        (0x2000, "a9f746462d870fdf8a65dc1f90e061e5"),
+        (0x4000, "70d869a156d2a1b890bb3df62baf32f7"),
+        (0x8000, "31be135f97d08fd981231505542fcfa6"),
+        (0x10000, "9aa508b5b7a84e1c677de54f3e99bc9"),
+        (0x20000, "5d6af8dedb81196699c329225ee604"),
+        (0x40000, "2216e584f5fa1ea926041bedfe98"),
+        (0x80000, "48a170391f7dc42444e8fa2"),
+    ] {
+        if abs_tick & bit != 0 {
+            ratio = (ratio * hex_biguint(factor)?) >> 128usize;
+        }
     }
+    if tick > 0 {
+        ratio = max_uint256() / ratio;
+    }
+    let q32 = BigUint::one() << 32usize;
+    let mut sqrt_price_x96 = &ratio >> 32usize;
+    if ratio % &q32 != BigUint::zero() {
+        sqrt_price_x96 += BigUint::one();
+    }
+    Some(sqrt_price_x96)
 }
 
 fn get_tick_at_sqrt_ratio(sqrt_price: &BigUint) -> Option<i32> {
-    let s = sqrt_price.to_string();
-    if s == "79149250711305166342700278159" {
-        return Some(-20);
+    let min = get_sqrt_ratio_at_tick(MIN_TICK)?;
+    let max = get_sqrt_ratio_at_tick(MAX_TICK)?;
+    if sqrt_price < &min || sqrt_price >= &max {
+        return None;
     }
-    if s == "72242616087487392683269770548" {
-        return Some(-1847);
+    let mut lo = MIN_TICK;
+    let mut hi = MAX_TICK;
+    while lo < hi {
+        let mid = lo + (hi - lo + 1) / 2;
+        if get_sqrt_ratio_at_tick(mid)? <= *sqrt_price {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
     }
-    let x = sqrt_price.to_f64()? / Q96 as f64;
-    Some((x.ln() * 2.0 / 1.0001_f64.ln()).floor() as i32)
+    Some(lo)
+}
+
+fn max_uint256() -> BigUint {
+    (BigUint::one() << 256usize) - BigUint::one()
+}
+
+fn max_sqrt_ratio() -> Option<BigUint> {
+    get_sqrt_ratio_at_tick(MAX_TICK)
+}
+
+fn hex_biguint(hex: &str) -> Option<BigUint> {
+    BigUint::parse_bytes(hex.as_bytes(), 16)
 }
 
 fn stable_k(x: &BigUint, y: &BigUint) -> BigUint {
@@ -671,15 +748,31 @@ pub fn run_frame(
         truncated = true;
     }
     let owned: Vec<PoolState> = selected.into_iter().cloned().collect();
-    let mut candidates = find_negative_cycle_candidates(&owned, config.amount_in_wei);
+    let (mut candidates, timed_out) = find_negative_cycle_candidates_bounded(
+        &owned,
+        config.amount_in_wei,
+        started,
+        config.time_budget,
+        config.max_candidates_per_frame + 1,
+    );
     if candidates.len() > config.max_candidates_per_frame {
         candidates.truncate(config.max_candidates_per_frame);
+        truncated = true;
+    }
+    if timed_out {
         truncated = true;
     }
     if started.elapsed() > config.time_budget {
         truncated = true;
     }
-    let health = if guard.mode() == "dry-run-only" { "ok" } else { "guard-failed" }.to_string();
+    let health = if guard.mode() != "dry-run-only" {
+        "error"
+    } else if truncated {
+        "truncated"
+    } else {
+        "ok"
+    }
+    .to_string();
     DryRunFrame {
         candidates,
         dirty_pool_count: dirty_pools.len(),
@@ -692,17 +785,42 @@ pub fn run_frame(
 
 /// Builds graph and returns canonical negative-cycle candidates.
 pub fn find_negative_cycle_candidates(pools: &[PoolState], amount_in: u128) -> Vec<CycleCandidate> {
+    find_negative_cycle_candidates_bounded(
+        pools,
+        amount_in,
+        Instant::now(),
+        Duration::from_secs(u64::MAX / 2),
+        usize::MAX,
+    )
+    .0
+}
+
+fn find_negative_cycle_candidates_bounded(
+    pools: &[PoolState],
+    amount_in: u128,
+    started: Instant,
+    budget: Duration,
+    max_candidates: usize,
+) -> (Vec<CycleCandidate>, bool) {
     let graph = build_graph(pools);
+    let (cycles, mut timed_out) = find_negative_cycles(&graph, started, budget, max_candidates);
     let mut out = Vec::new();
-    for cycle in find_negative_cycles(&graph) {
+    for cycle in cycles {
+        if started.elapsed() >= budget {
+            timed_out = true;
+            break;
+        }
         if let Some(candidate) = cycle_to_candidate(&cycle, amount_in, pools) {
             if !out.iter().any(|c: &CycleCandidate| c.fingerprint == candidate.fingerprint) {
                 out.push(candidate);
+                if out.len() >= max_candidates {
+                    break;
+                }
             }
         }
     }
     out.sort_by(|a, b| a.fingerprint.cmp(&b.fingerprint));
-    out
+    (out, timed_out)
 }
 
 fn build_graph(pools: &[PoolState]) -> Graph {
@@ -718,7 +836,10 @@ fn build_graph(pools: &[PoolState]) -> Graph {
                 pool: pool.pool,
                 protocol: pool.protocol,
                 rate,
-                approximation: matches!(pool.protocol, Protocol::UniswapV3 | Protocol::AerodromeStable),
+                approximation: matches!(
+                    pool.protocol,
+                    Protocol::UniswapV3 | Protocol::AerodromeStable
+                ),
             });
         }
         if let Some(rate) = marginal_rate(pool, false) {
@@ -728,14 +849,14 @@ fn build_graph(pools: &[PoolState]) -> Graph {
                 pool: pool.pool,
                 protocol: pool.protocol,
                 rate,
-                approximation: matches!(pool.protocol, Protocol::UniswapV3 | Protocol::AerodromeStable),
+                approximation: matches!(
+                    pool.protocol,
+                    Protocol::UniswapV3 | Protocol::AerodromeStable
+                ),
             });
         }
     }
-    Graph {
-        tokens: token_set.into_iter().collect(),
-        edges,
-    }
+    Graph { tokens: token_set.into_iter().collect(), edges }
 }
 
 fn marginal_rate(pool: &PoolState, zero_for_one: bool) -> Option<f64> {
@@ -760,12 +881,36 @@ fn marginal_rate(pool: &PoolState, zero_for_one: bool) -> Option<f64> {
     }
 }
 
-fn find_negative_cycles(graph: &Graph) -> Vec<Vec<Edge>> {
+fn find_negative_cycles(
+    graph: &Graph,
+    started: Instant,
+    budget: Duration,
+    max_cycles: usize,
+) -> (Vec<Vec<Edge>>, bool) {
     let mut cycles = Vec::new();
+    let mut timed_out = false;
     for start in &graph.tokens {
-        dfs_cycles(graph, *start, *start, &mut Vec::new(), &mut HashSet::new(), &mut cycles, 4);
+        if started.elapsed() >= budget || cycles.len() >= max_cycles {
+            timed_out = started.elapsed() >= budget;
+            break;
+        }
+        if dfs_cycles(
+            graph,
+            *start,
+            *start,
+            &mut Vec::new(),
+            &mut HashSet::new(),
+            &mut cycles,
+            4,
+            started,
+            budget,
+            max_cycles,
+        ) {
+            timed_out = true;
+            break;
+        }
     }
-    cycles
+    (cycles, timed_out)
 }
 
 fn dfs_cycles(
@@ -776,26 +921,46 @@ fn dfs_cycles(
     seen: &mut HashSet<Address>,
     cycles: &mut Vec<Vec<Edge>>,
     max_hops: usize,
-) {
-    if path.len() >= max_hops {
-        return;
+    started: Instant,
+    budget: Duration,
+    max_cycles: usize,
+) -> bool {
+    if started.elapsed() >= budget {
+        return true;
+    }
+    if path.len() >= max_hops || cycles.len() >= max_cycles {
+        return false;
     }
     seen.insert(current);
     for edge in graph.edges.iter().filter(|e| e.from == current) {
+        if started.elapsed() >= budget {
+            seen.remove(&current);
+            return true;
+        }
         if edge.to == start && !path.is_empty() {
             let mut closed = path.clone();
             closed.push(edge.clone());
             let product = closed.iter().fold(1.0, |acc, e| acc * e.rate);
             if product > 1.0000001 {
                 cycles.push(canonicalize_cycle(&closed));
+                if cycles.len() >= max_cycles {
+                    break;
+                }
             }
         } else if !seen.contains(&edge.to) {
             path.push(edge.clone());
-            dfs_cycles(graph, start, edge.to, path, seen, cycles, max_hops);
+            let timed_out = dfs_cycles(
+                graph, start, edge.to, path, seen, cycles, max_hops, started, budget, max_cycles,
+            );
             path.pop();
+            if timed_out {
+                seen.remove(&current);
+                return true;
+            }
         }
     }
     seen.remove(&current);
+    false
 }
 
 fn canonicalize_cycle(edges: &[Edge]) -> Vec<Edge> {
@@ -820,7 +985,11 @@ fn edge_fingerprint(edges: &[Edge]) -> String {
         .join("|")
 }
 
-fn cycle_to_candidate(edges: &[Edge], amount_in: u128, pools: &[PoolState]) -> Option<CycleCandidate> {
+fn cycle_to_candidate(
+    edges: &[Edge],
+    amount_in: u128,
+    pools: &[PoolState],
+) -> Option<CycleCandidate> {
     let mut amount = amount_in;
     let mut approximation = false;
     let mut caveats = Vec::new();
@@ -866,18 +1035,28 @@ mod tests {
     fn v2_quote_matches_constant_product_literal() {
         let out = quote_v2_exact_in(10, 1_000, 1_100, 1).unwrap();
         assert_eq!(out, 10);
-        let out_large = quote_v2_exact_in(10u128.pow(18), 1_000u128 * 10u128.pow(18), 1_100u128 * 10u128.pow(18), 1).unwrap();
+        let out_large = quote_v2_exact_in(
+            10u128.pow(18),
+            1_000u128 * 10u128.pow(18),
+            1_100u128 * 10u128.pow(18),
+            1,
+        )
+        .unwrap();
         assert_eq!(out_large, 1_098_791_318_560_571_284);
     }
 
     #[test]
     fn aero_volatile_reuses_v2_math() {
-        assert_eq!(quote_aero_volatile_exact_in(1_000, 10_000, 20_000, 30), quote_v2_exact_in(1_000, 10_000, 20_000, 30));
+        assert_eq!(
+            quote_aero_volatile_exact_in(1_000, 10_000, 20_000, 30),
+            quote_v2_exact_in(1_000, 10_000, 20_000, 30)
+        );
     }
 
     #[test]
     fn aero_stable_preserves_low_slippage_near_parity() {
-        let out = quote_aero_stable_exact_in(1_000_000, 1_000_000_000_000, 1_000_000_000_000, 4).unwrap();
+        let out =
+            quote_aero_stable_exact_in(1_000_000, 1_000_000_000_000, 1_000_000_000_000, 4).unwrap();
         assert!(out > 998_000);
         assert!(out <= 1_000_000);
     }
@@ -932,8 +1111,24 @@ mod tests {
 
     #[test]
     fn canonicalization_orientation_is_stable() {
-        let p1 = PoolState::v2_like(addr(0xb1), Protocol::UniswapV2, addr(0xa1), addr(0xa2), 1, 1_000, 1_100);
-        let p2 = PoolState::v2_like(addr(0xb2), Protocol::UniswapV2, addr(0xa1), addr(0xa2), 1, 1_100, 1_000);
+        let p1 = PoolState::v2_like(
+            addr(0xb1),
+            Protocol::UniswapV2,
+            addr(0xa1),
+            addr(0xa2),
+            1,
+            1_000,
+            1_100,
+        );
+        let p2 = PoolState::v2_like(
+            addr(0xb2),
+            Protocol::UniswapV2,
+            addr(0xa1),
+            addr(0xa2),
+            1,
+            1_100,
+            1_000,
+        );
         let c1 = find_negative_cycle_candidates(&[p1.clone(), p2.clone()], 10u128.pow(18));
         let c2 = find_negative_cycle_candidates(&[p2, p1], 10u128.pow(18));
         assert!(!c1.is_empty());
@@ -959,13 +1154,34 @@ mod tests {
     #[test]
     fn frame_bounds_and_backpressure_truncate() {
         let pools = vec![
-            PoolState::v2_like(addr(0xb1), Protocol::UniswapV2, addr(0xa1), addr(0xa2), 1, 1_000, 1_100),
-            PoolState::v2_like(addr(0xb2), Protocol::UniswapV2, addr(0xa1), addr(0xa2), 1, 1_100, 1_000),
+            PoolState::v2_like(
+                addr(0xb1),
+                Protocol::UniswapV2,
+                addr(0xa1),
+                addr(0xa2),
+                1,
+                1_000,
+                1_100,
+            ),
+            PoolState::v2_like(
+                addr(0xb2),
+                Protocol::UniswapV2,
+                addr(0xa1),
+                addr(0xa2),
+                1,
+                1_100,
+                1_000,
+            ),
         ];
-        let config = DryRunConfig { max_pools_per_frame: 1, max_candidates_per_frame: 1, time_budget: Duration::from_micros(1), amount_in_wei: 1_000 };
+        let config = DryRunConfig {
+            max_pools_per_frame: 1,
+            max_candidates_per_frame: 1,
+            time_budget: Duration::from_micros(1),
+            amount_in_wei: 1_000,
+        };
         let frame = run_frame(&pools, &BTreeSet::new(), &config, NoActionGuard);
         assert!(frame.truncated);
-        assert_eq!(frame.health, "ok");
+        assert_eq!(frame.health, "truncated");
     }
 
     #[test]
@@ -975,5 +1191,4 @@ mod tests {
         assert!(enabled_from_value(Some(std::ffi::OsStr::new("1"))));
         assert_eq!(NoActionGuard.mode(), "dry-run-only");
     }
-
 }

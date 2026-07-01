@@ -40,11 +40,11 @@ pub type Selector = FixedBytes<4>;
 /// Pure logic (no revm), unit-tested directly.
 pub mod state_diff;
 
+/// DRY-RUN arb math and bounded observation helpers. Pure measurement lane only.
+pub mod arb_dryrun;
 /// C-2 execution loop (part): ERC-20 Transfer-log → candidate-holder extraction.
 /// Pure logic, unit-tested directly.
 pub mod candidates;
-/// DRY-RUN arb math and bounded observation helpers. Pure measurement lane only.
-pub mod arb_dryrun;
 
 /// C-2 wiring: bridge revm per-tx `EvmState` to [`StateDiffEvent`]s. Behind the
 /// `node` feature (pulls revm).
@@ -538,11 +538,12 @@ mod tests {
             flashblock_index: 2,
             payload_id: "0x033ff020c315fa4a".to_string(),
             dirty_pool_count: 2,
-            candidate_fingerprint: "fp".to_string(),
-            candidate_key: "ck".to_string(),
+            candidate_fingerprint:
+                "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff".to_string(),
+            candidate_key: "weth>usdc>weth|pool-a>pool-b".to_string(),
             tokens: vec![addr(0x11), addr(0x22)],
-            pools: vec![addr(0x33)],
-            protocols: vec!["uniswap_v2".to_string()],
+            pools: vec![addr(0x33), addr(0x44)],
+            protocols: vec!["uniswap_v2".to_string(), "aerodrome_volatile".to_string()],
             amount_in_wei: 1_000_000_000_000_000_000,
             estimated_gross_wei: 1_010_000_000_000_000_000,
             estimated_net_wei: 1_010_000_000_000_000_000,
