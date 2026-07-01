@@ -30,9 +30,6 @@ base-proof-primitives = { workspace = true, features = ["std", "serde", "rpc-ser
 # alloy
 alloy-primitives.workspace = true
 
-# crypto
-sha2.workspace = true
-
 # async
 tokio-util.workspace = true
 async-trait.workspace = true
@@ -43,7 +40,6 @@ eyre.workspace = true
 tower.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
-parking_lot.workspace = true
 jsonrpsee = { workspace = true, features = ["server", "macros"] }
 
 [dev-dependencies]
