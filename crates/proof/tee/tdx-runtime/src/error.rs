@@ -32,7 +32,7 @@ pub enum TdxRuntimeError {
     QuoteGeneration(String),
     /// System clock is before the Unix epoch.
     #[error("system clock error: {0}")]
-    SystemTime(String),
+    SystemTime(#[from] SystemTimeError),
     /// Filesystem I/O failed while collecting a quote.
     #[error("filesystem error at {path}: {source}")]
     Filesystem {
@@ -44,20 +44,9 @@ pub enum TdxRuntimeError {
 }
 
 impl TdxRuntimeError {
-    /// Creates a filesystem error without exposing secret material in logs.
-    pub fn filesystem(path: impl Into<String>, source: io::Error) -> Self {
-        Self::Filesystem { path: path.into(), source }
-    }
-
     /// Creates a filesystem error from a `Path`.
     pub fn filesystem_at(path: &Path, source: io::Error) -> Self {
         Self::Filesystem { path: path.display().to_string(), source }
-    }
-}
-
-impl From<SystemTimeError> for TdxRuntimeError {
-    fn from(error: SystemTimeError) -> Self {
-        Self::SystemTime(error.to_string())
     }
 }
 
