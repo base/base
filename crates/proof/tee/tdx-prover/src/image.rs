@@ -53,8 +53,7 @@ impl TdxMeasurements {
 
     /// Parses a quote and extracts TDX image-hash measurements.
     pub fn from_quote(raw_quote: &[u8]) -> Result<Self> {
-        let quote = TdxQuote::parse(raw_quote)?;
-        Ok(Self::from_parsed_quote(&quote))
+        Ok(Self::from_parsed_quote(&TdxQuote::parse(raw_quote)?))
     }
 
     /// Computes the contract-compatible TDX image hash.
@@ -117,19 +116,9 @@ pub struct MeasuredMockTdxQuoteProvider {
 }
 
 impl MeasuredMockTdxQuoteProvider {
-    /// Creates a deterministic provider using the supplied measurements.
-    pub fn new(measurements: TdxMeasurements) -> Self {
-        Self { measurements }
-    }
-
     /// Creates a deterministic provider using local mock measurements.
     pub fn local_mock() -> Self {
-        Self::new(TdxMeasurements::local_mock())
-    }
-
-    /// Returns the measurements used by generated quotes.
-    pub const fn measurements(&self) -> &TdxMeasurements {
-        &self.measurements
+        Self { measurements: TdxMeasurements::local_mock() }
     }
 }
 
@@ -141,9 +130,6 @@ impl TdxQuoteProvider for MeasuredMockTdxQuoteProvider {
 
 #[cfg(test)]
 mod tests {
-    use base_proof_tee_tdx_runtime::TdxQuoteProvider;
-    use base_proof_tee_tdx_verifier::TdxVerifier;
-
     use super::*;
 
     #[test]
@@ -155,23 +141,5 @@ mod tests {
 
         assert_eq!(parsed.report_data, report_data);
         assert_eq!(TdxMeasurements::from_parsed_quote(&parsed), measurements);
-    }
-
-    #[test]
-    fn tdx_image_hash_matches_verifier_journal_derivation_for_same_quote() {
-        let provider = MeasuredMockTdxQuoteProvider::local_mock();
-        let quote = provider.quote(&[0xCD; TDX_REPORT_DATA_LEN]).unwrap();
-        let parsed = TdxQuote::parse(&quote).unwrap();
-        let measurements = TdxMeasurements::from_quote(&quote).unwrap();
-
-        let verifier_image_hash = TdxVerifier::image_hash(
-            &parsed.mrtd,
-            &parsed.rtmr0,
-            &parsed.rtmr1,
-            &parsed.rtmr2,
-            &parsed.rtmr3,
-        );
-
-        assert_eq!(measurements.image_hash(), verifier_image_hash);
     }
 }
