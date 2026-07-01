@@ -8,7 +8,9 @@ pub use backend::TdxBackend;
 mod error;
 pub use error::{Result, TdxProverError};
 
+#[cfg(any(test, feature = "test-utils"))]
 mod image;
+#[cfg(any(test, feature = "test-utils"))]
 pub use image::TdxMeasurements;
 
 mod oracle;

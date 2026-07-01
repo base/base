@@ -36,8 +36,8 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [dev-dependencies]
 # Base
-base-proof-tee-tdx-prover.workspace = true
 base-proof-tee-tdx-runtime.workspace = true
+base-proof-tee-tdx-prover = { workspace = true, features = ["test-utils"] }
 base-proof-primitives = { workspace = true, features = ["rpc-client", "rpc-server"] }
 
 # RPC
