@@ -8,14 +8,14 @@
 //! C-3 folds in Flashblocks, and C-4 streams the encoded events to the TS
 //! `ProviderNodeStream` consumer.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::ffi::OsStr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use alloy_evm::Evm;
 use alloy_network_primitives::TransactionResponse;
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256};
 use base_execution_evm::BaseEvmConfig;
 use base_flashblocks::{FlashblocksAPI, FlashblocksState, FlashblocksSubscriber, PendingBlocks};
 use base_node_runner::{BaseNodeAdapter, BaseNodeExtension, FromExtensionConfig, NodeHooks};
@@ -46,6 +46,16 @@ const FLASHBLOCKS_PING_INTERVAL: Duration = Duration::from_secs(5);
 /// still gates the whole ExEx; this narrower switch keeps the committed-chain
 /// emitter behavior unchanged unless operators set `MEV_EMITTER_PRECONF=1`.
 const PRECONF_ENV: &str = "MEV_EMITTER_PRECONF";
+/// Explicit opt-in for in-node arbitrage dry-run observations.
+const ARB_DRYRUN_ENV: &str = crate::arb_dryrun::ARB_DRYRUN_ENV;
+/// Optional per-frame dirty pool cap for dry-run work.
+const ARB_DRYRUN_MAX_POOLS_ENV: &str = "MEV_EMITTER_ARB_DRYRUN_MAX_POOLS";
+/// Optional per-frame candidate cap for dry-run work.
+const ARB_DRYRUN_MAX_CANDIDATES_ENV: &str = "MEV_EMITTER_ARB_DRYRUN_MAX_CANDIDATES";
+/// Optional per-frame wall-clock budget in microseconds.
+const ARB_DRYRUN_TIME_BUDGET_MICROS_ENV: &str = "MEV_EMITTER_ARB_DRYRUN_TIME_BUDGET_MICROS";
+/// Optional exact-input amount used for dry-run estimates.
+const ARB_DRYRUN_AMOUNT_IN_WEI_ENV: &str = "MEV_EMITTER_ARB_DRYRUN_AMOUNT_IN_WEI";
 
 /// Builds a [`FlashblockIndex`] and, if `MEV_FLASHBLOCKS_URL` is set and
 /// non-empty, starts a Flashblocks websocket subscription that populates it.
@@ -97,6 +107,112 @@ fn preconf_emission_enabled_from_value(value: Option<&OsStr>) -> bool {
     value.and_then(OsStr::to_str).is_some_and(|raw| raw.trim() == "1")
 }
 
+/// Returns true only for the explicit `MEV_EMITTER_ARB_DRYRUN=1` opt-in.
+pub fn arb_dryrun_enabled() -> bool {
+    crate::arb_dryrun::enabled_from_value(std::env::var_os(ARB_DRYRUN_ENV).as_deref())
+}
+
+fn arb_dryrun_config_from_env() -> crate::arb_dryrun::DryRunConfig {
+    let mut config = crate::arb_dryrun::DryRunConfig::default();
+    if let Some(value) = parse_env_usize(ARB_DRYRUN_MAX_POOLS_ENV) {
+        config.max_pools_per_frame = value;
+    }
+    if let Some(value) = parse_env_usize(ARB_DRYRUN_MAX_CANDIDATES_ENV) {
+        config.max_candidates_per_frame = value;
+    }
+    if let Some(value) = parse_env_u64(ARB_DRYRUN_TIME_BUDGET_MICROS_ENV) {
+        config.time_budget = Duration::from_micros(value);
+    }
+    if let Some(value) = parse_env_u128(ARB_DRYRUN_AMOUNT_IN_WEI_ENV) {
+        config.amount_in_wei = value;
+    }
+    config
+}
+
+fn parse_env_usize(name: &str) -> Option<usize> {
+    std::env::var(name).ok()?.trim().parse().ok()
+}
+
+fn parse_env_u64(name: &str) -> Option<u64> {
+    std::env::var(name).ok()?.trim().parse().ok()
+}
+
+fn parse_env_u128(name: &str) -> Option<u128> {
+    std::env::var(name).ok()?.trim().parse().ok()
+}
+
+fn emit_arb_dryrun_frame(
+    sink: &EventSink,
+    block_number: u64,
+    flashblock_index: u32,
+    payload_id: String,
+    dirty_pools: BTreeSet<Address>,
+    config: &crate::arb_dryrun::DryRunConfig,
+) {
+    if dirty_pools.is_empty() {
+        return;
+    }
+    let frame = crate::arb_dryrun::run_frame(
+        &[],
+        &dirty_pools,
+        config,
+        crate::arb_dryrun::NoActionGuard,
+    );
+    if frame.candidates.is_empty() {
+        sink.send_event(&crate::NodeEvent::ArbDryRunObservation(
+            crate::ArbDryRunObservationEvent {
+                protocol_version: crate::arb_dryrun::ARB_DRYRUN_PROTOCOL_VERSION,
+                block_number,
+                flashblock_index,
+                payload_id,
+                dirty_pool_count: u32::try_from(frame.dirty_pool_count).unwrap_or(u32::MAX),
+                candidate_fingerprint: "health".to_string(),
+                candidate_key: "health".to_string(),
+                tokens: Vec::new(),
+                pools: dirty_pools.into_iter().collect(),
+                protocols: Vec::new(),
+                amount_in_wei: config.amount_in_wei,
+                estimated_gross_wei: 0,
+                estimated_net_wei: 0,
+                approximation: false,
+                caveat: Some(
+                    frame
+                        .caveat
+                        .unwrap_or_else(|| "pool-baseline-unavailable-in-rust-phase1".to_string()),
+                ),
+                latency_micros: frame.latency_micros,
+                truncated: frame.truncated,
+                health: frame.health,
+            },
+        ));
+        return;
+    }
+    for candidate in frame.candidates {
+        sink.send_event(&crate::NodeEvent::ArbDryRunObservation(
+            crate::ArbDryRunObservationEvent {
+                protocol_version: crate::arb_dryrun::ARB_DRYRUN_PROTOCOL_VERSION,
+                block_number,
+                flashblock_index,
+                payload_id: payload_id.clone(),
+                dirty_pool_count: u32::try_from(frame.dirty_pool_count).unwrap_or(u32::MAX),
+                candidate_fingerprint: candidate.fingerprint,
+                candidate_key: candidate.candidate_id,
+                tokens: candidate.tokens,
+                pools: candidate.pools,
+                protocols: candidate.protocols.iter().map(|p| p.as_str().to_string()).collect(),
+                amount_in_wei: config.amount_in_wei,
+                estimated_gross_wei: candidate.estimated_gross_wei,
+                estimated_net_wei: candidate.estimated_net_wei,
+                approximation: candidate.approximation,
+                caveat: candidate.caveat.or_else(|| frame.caveat.clone()),
+                latency_micros: frame.latency_micros,
+                truncated: frame.truncated,
+                health: frame.health.clone(),
+            },
+        ));
+    }
+}
+
 /// Issue #45: emit pool storage-slot diffs from one FLASHBLOCK PRECONFIRMATION.
 ///
 /// This is the genuinely AHEAD-OF-COMMITTED price source. The `base-flashblocks`
@@ -115,10 +231,15 @@ fn preconf_emission_enabled_from_value(value: Option<&OsStr>) -> bool {
 /// (idempotent per `payload_id`+pool+slot, so the downstream aggregator dedups).
 /// Reserve-pool (Aerodrome / UniV2) slot SEMANTIC decoding remains a downstream TS
 /// concern — this path emits raw `(slot, post-value)` words like the committed loop.
-fn emit_preconf_pool_slots(pb: &PendingBlocks, sink: &EventSink) {
+fn emit_preconf_pool_slots(
+    pb: &PendingBlocks,
+    sink: &EventSink,
+    arb_dryrun: Option<&crate::arb_dryrun::DryRunConfig>,
+) {
     let block_number = pb.latest_block_number();
     let payload_id = format!("{}", pb.payload_id());
     let fb_index = pb.latest_flashblock_index() as u32;
+    let mut dirty_pools = BTreeSet::new();
     for twl in pb.get_latest_flashblock_transactions_with_logs() {
         let tx_hash = twl.transaction.tx_hash();
         // Pool addresses (Swap-log emitters) — mirrors the committed loop's
@@ -142,8 +263,12 @@ fn emit_preconf_pool_slots(pb: &PendingBlocks, sink: &EventSink) {
             payload_id.clone(),
         );
         for ev in events {
+            dirty_pools.insert(ev.pool);
             sink.send_event(&crate::NodeEvent::PoolSlotDiff(ev));
         }
+    }
+    if let Some(config) = arb_dryrun {
+        emit_arb_dryrun_frame(sink, block_number, fb_index, payload_id, dirty_pools, config);
     }
 }
 
@@ -267,6 +392,26 @@ pub async fn run_mev_emitter_exex(
     // the sink valid (events go nowhere) and never affects the ExEx. `info!` is
     // emitted inside once the listener is up.
     let sink = crate::transport::start_event_server();
+    let arb_dryrun = if arb_dryrun_enabled() {
+        let config = arb_dryrun_config_from_env();
+        let time_budget_micros =
+            u64::try_from(config.time_budget.as_micros()).unwrap_or(u64::MAX);
+        info!(
+            target: "base::mev_emitter",
+            max_pools = config.max_pools_per_frame,
+            max_candidates = config.max_candidates_per_frame,
+            time_budget_micros,
+            amount_in_wei = %config.amount_in_wei,
+            "arb dry-run observations enabled (MEV_EMITTER_ARB_DRYRUN=1)",
+        );
+        Some(config)
+    } else {
+        info!(
+            target: "base::mev_emitter",
+            "arb dry-run observations disabled (set MEV_EMITTER_ARB_DRYRUN=1 to enable)",
+        );
+        None
+    };
     // Issue #45: ahead-of-committed preconf pool-slot emission. Failure-isolated in
     // its own task — a lagged/closed receiver only ends the task, never the ExEx.
     // This path is explicitly gated by MEV_EMITTER_PRECONF=1 so enabling the
@@ -275,6 +420,7 @@ pub async fn run_mev_emitter_exex(
         if let Some(state) = fb_state {
             let task_sink = sink.clone();
             let mut rx = state.subscribe_to_flashblocks();
+            let task_arb_dryrun = arb_dryrun.clone();
             tokio::spawn(async move {
                 // Tracks the previous preconf so reorg/supersede signals can discard
                 // stale pending slots before they are committed/finalized.
@@ -290,7 +436,7 @@ pub async fn run_mev_emitter_exex(
                             {
                                 task_sink.send_event(&crate::NodeEvent::DiscardPreconf(ev));
                             }
-                            emit_preconf_pool_slots(&pending, &task_sink);
+                            emit_preconf_pool_slots(&pending, &task_sink, task_arb_dryrun.as_ref());
                             last_preconf = Some(next_preconf);
                         }
                         Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -371,6 +517,8 @@ pub async fn run_mev_emitter_exex(
                     // its slot for O(1) accumulation.
                     let mut flashblocks: Vec<(String, (Vec<B256>, u32))> = Vec::new();
                     let mut fb_order: HashMap<String, usize> = HashMap::new();
+                    let mut arb_dirty_by_payload: HashMap<String, (u32, BTreeSet<Address>)> =
+                        HashMap::new();
                     for tx in block.transactions_recovered() {
                         let out = evm.transact(evm_config.tx_env(tx))?;
                         // Diagnostics: did this tx's EvmState touch a trusted token
@@ -441,6 +589,13 @@ pub async fn run_mev_emitter_exex(
                             fb_index,
                             payload_id.clone(),
                         );
+                        if arb_dryrun.is_some() && !pool_slot_events.is_empty() {
+                            let entry = arb_dirty_by_payload
+                                .entry(payload_id.clone())
+                                .or_insert_with(|| (fb_index, BTreeSet::new()));
+                            entry.0 = entry.0.max(fb_index);
+                            entry.1.extend(pool_slot_events.iter().map(|ev| ev.pool));
+                        }
                         let events = crate::revm_bridge::state_diffs_from_evm_state(
                             &out.state,
                             &registry,
@@ -470,6 +625,18 @@ pub async fn run_mev_emitter_exex(
                         // COMMIT (precondition anchor): advances db to POST-tx state.
                         // Native baseline read above relies on this happening AFTER.
                         evm.db_mut().commit(out.state);
+                    }
+                    if let Some(config) = arb_dryrun.as_ref() {
+                        for (payload_id, (fb_index, dirty_pools)) in arb_dirty_by_payload {
+                            emit_arb_dryrun_frame(
+                                &sink,
+                                block_number,
+                                fb_index,
+                                payload_id,
+                                dirty_pools,
+                                config,
+                            );
+                        }
                     }
                     // C-5: the tx loop completed successfully — emit, per payloadId
                     // in insertion order, a synthetic flashblock frame followed by

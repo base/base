@@ -43,6 +43,8 @@ pub mod state_diff;
 /// C-2 execution loop (part): ERC-20 Transfer-log → candidate-holder extraction.
 /// Pure logic, unit-tested directly.
 pub mod candidates;
+/// DRY-RUN arb math and bounded observation helpers. Pure measurement lane only.
+pub mod arb_dryrun;
 
 /// C-2 wiring: bridge revm per-tx `EvmState` to [`StateDiffEvent`]s. Behind the
 /// `node` feature (pulls revm).
@@ -75,6 +77,20 @@ mod dec_u64 {
     }
 
     pub(crate) fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
+        let s = String::deserialize(d)?;
+        s.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+/// `bigint` <-> decimal-string codec for unsigned 128-bit fields.
+mod dec_u128 {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub(crate) fn serialize<S: Serializer>(v: &u128, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&v.to_string())
+    }
+
+    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<u128, D::Error> {
         let s = String::deserialize(d)?;
         s.parse().map_err(serde::de::Error::custom)
     }
@@ -276,6 +292,57 @@ pub struct DiscardPreconfEvent {
     pub reason: Option<DiscardReason>,
 }
 
+/// Measurement-only in-node arb dry-run observation.
+///
+/// This additive event is emitted only when `MEV_EMITTER_ARB_DRYRUN=1`. It carries
+/// measurement fields only; downstream TS ingestion maps it into the dry-run
+/// spool/health ledger.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArbDryRunObservationEvent {
+    /// Dry-run observation protocol version.
+    pub protocol_version: u32,
+    /// L2 block number (decimal string on the wire).
+    #[serde(with = "dec_u64")]
+    pub block_number: u64,
+    /// Flashblock index within the block (no upper bound).
+    pub flashblock_index: u32,
+    /// Owning flashblock payload.
+    pub payload_id: String,
+    /// Number of dirty pools considered for this frame.
+    pub dirty_pool_count: u32,
+    /// Stable candidate fingerprint.
+    pub candidate_fingerprint: String,
+    /// Stable candidate key for TS ingestion.
+    pub candidate_key: String,
+    /// Token path.
+    pub tokens: Vec<Address>,
+    /// Pool path.
+    pub pools: Vec<Address>,
+    /// Protocol path.
+    pub protocols: Vec<String>,
+    /// Input amount (decimal string on the wire).
+    #[serde(with = "dec_u128")]
+    pub amount_in_wei: u128,
+    /// Estimated gross output (decimal string on the wire).
+    #[serde(with = "dec_u128")]
+    pub estimated_gross_wei: u128,
+    /// Estimated net output (decimal string on the wire).
+    #[serde(with = "dec_u128")]
+    pub estimated_net_wei: u128,
+    /// Whether the observation used lower-confidence math.
+    pub approximation: bool,
+    /// Optional caveat/skip reason.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub caveat: Option<String>,
+    /// Runtime spent producing the frame.
+    pub latency_micros: u64,
+    /// True when bounded per-frame work dropped remaining candidates/pools.
+    pub truncated: bool,
+    /// Health label for the dry-run lane.
+    pub health: String,
+}
+
 /// Discriminated union of every event the node emits over the stream. The `kind`
 /// tag is emitted first, matching the TS discriminant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -291,6 +358,9 @@ pub enum NodeEvent {
     BlockBoundary(BlockBoundaryEvent),
     /// A discarded preconfirmation.
     DiscardPreconf(DiscardPreconfEvent),
+    /// An off-by-default measurement-only arbitrage dry-run observation.
+    #[serde(rename = "arb_dryrun_observation")]
+    ArbDryRunObservation(ArbDryRunObservationEvent),
 }
 
 /// Serialize a node event to a JSON line, byte-for-byte identical to the TS
@@ -456,6 +526,37 @@ mod tests {
             internal_calls: None,
         });
         let json = encode_event(&ev);
+        let back: NodeEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, ev);
+    }
+
+    #[test]
+    fn arb_dryrun_observation_encodes_additively() {
+        let ev = NodeEvent::ArbDryRunObservation(ArbDryRunObservationEvent {
+            protocol_version: crate::arb_dryrun::ARB_DRYRUN_PROTOCOL_VERSION,
+            block_number: 47_620_296,
+            flashblock_index: 2,
+            payload_id: "0x033ff020c315fa4a".to_string(),
+            dirty_pool_count: 2,
+            candidate_fingerprint: "fp".to_string(),
+            candidate_key: "ck".to_string(),
+            tokens: vec![addr(0x11), addr(0x22)],
+            pools: vec![addr(0x33)],
+            protocols: vec!["uniswap_v2".to_string()],
+            amount_in_wei: 1_000_000_000_000_000_000,
+            estimated_gross_wei: 1_010_000_000_000_000_000,
+            estimated_net_wei: 1_010_000_000_000_000_000,
+            approximation: false,
+            caveat: None,
+            latency_micros: 77,
+            truncated: false,
+            health: "ok".to_string(),
+        });
+        let json = encode_event(&ev);
+        assert!(json.starts_with(r#"{"kind":"arb_dryrun_observation","protocolVersion":1"#));
+        assert!(json.contains(r#""blockNumber":"47620296""#));
+        assert!(json.contains(r#""amountInWei":"1000000000000000000""#));
+        assert!(json.contains(r#""estimatedGrossWei":"1010000000000000000""#));
         let back: NodeEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(back, ev);
     }
