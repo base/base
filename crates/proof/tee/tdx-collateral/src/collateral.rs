@@ -346,7 +346,7 @@ impl TdxAttestationHydrator {
         parsed_quote: &ParsedTdxQuote,
         verification_time: u64,
     ) -> Result<u64> {
-        let (pck_leaf_key, pck_crl_expiration) = CollateralVerifier::verify_certificate_chain(
+        let (pck_leaf_key, pck_expiration) = CollateralVerifier::verify_certificate_chain(
             &fetch.pck_certificate_chain,
             fetch.trusted_root_ca_hash,
             verification_time,
@@ -358,12 +358,12 @@ impl TdxAttestationHydrator {
         TdxQuote::verify_signature(parsed_quote)
             .map_err(|e| TdxCollateralError::source(Box::new(e)))?;
 
-        let mut crl_expiration = pck_crl_expiration;
+        let mut expiration = pck_expiration;
         for (collateral, body_kind) in [
             (&fetch.collateral.tcb_info, TdxSignedCollateralBody::TcbInfo),
             (&fetch.collateral.qe_identity, TdxSignedCollateralBody::QeIdentity),
         ] {
-            let chain_crl_expiration = CollateralVerifier::verify_signed_collateral(
+            let collateral_expiration = CollateralVerifier::verify_signed_collateral(
                 collateral,
                 body_kind,
                 fetch.trusted_root_ca_hash,
@@ -371,7 +371,7 @@ impl TdxAttestationHydrator {
                 &fetch.revocation,
             )
             .map_err(|e| TdxCollateralError::source(Box::new(e)))?;
-            crl_expiration = crl_expiration.min(chain_crl_expiration);
+            expiration = expiration.min(collateral_expiration);
         }
 
         let pck_leaf = fetch.pck_certificate_chain.last().ok_or_else(|| {
@@ -410,7 +410,7 @@ impl TdxAttestationHydrator {
             ))));
         }
 
-        Self::validate_collateral_freshness(fetch, verification_time, crl_expiration)
+        Self::validate_collateral_freshness(fetch, verification_time, expiration)
     }
 
     fn now_seconds() -> Result<u64> {
@@ -484,7 +484,7 @@ impl TdxAttestationHydrator {
     pub fn validate_collateral_freshness(
         fetch: &TdxCollateralFetch,
         verification_time: u64,
-        crl_expiration: u64,
+        verified_expiration: u64,
     ) -> Result<u64> {
         let mut expiration = u64::MAX;
         for certificate in fetch
@@ -516,7 +516,7 @@ impl TdxAttestationHydrator {
             )?);
         }
 
-        Ok(expiration.min(crl_expiration))
+        Ok(expiration.min(verified_expiration))
     }
 
     /// Validates one signed collateral document's freshness.

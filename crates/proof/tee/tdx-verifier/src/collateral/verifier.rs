@@ -16,7 +16,7 @@ use super::{
 pub struct CollateralVerifier;
 
 impl CollateralVerifier {
-    /// Validates a root-to-leaf certificate chain and returns the leaf key plus CRL expiration.
+    /// Validates a root-to-leaf certificate chain and returns the leaf key plus expiration.
     pub fn verify_certificate_chain(
         chain: &[TdxCertificate],
         trusted_root_ca_hash: B256,
@@ -59,7 +59,7 @@ impl CollateralVerifier {
         }
         verify_signature(&issuer, &issuer.subject_public_key)?;
 
-        let mut crl_expiration = u64::MAX;
+        let mut expiration = issuer.not_after;
         for certificate in issued_certificates {
             let certificate = TdxCertificate::authenticated_from_der(&certificate.raw)?;
             if verification_time < certificate.not_before
@@ -80,7 +80,7 @@ impl CollateralVerifier {
                     "certificate issuer name does not match parent".into(),
                 ));
             }
-            crl_expiration = crl_expiration.min(
+            expiration = expiration.min(certificate.not_after).min(
                 TdxRevocationEvidence::verify_certificate_not_revoked_with_crls(
                     &authenticated_crls,
                     &certificate,
@@ -91,10 +91,10 @@ impl CollateralVerifier {
             issuer = certificate;
         }
 
-        Ok((issuer.subject_public_key.clone(), crl_expiration))
+        Ok((issuer.subject_public_key.clone(), expiration))
     }
 
-    /// Validates signed collateral and returns its CRL expiration.
+    /// Validates signed collateral and returns its expiration.
     pub fn verify_signed_collateral(
         collateral: &TdxSignedCollateral,
         body_kind: TdxSignedCollateralBody,
@@ -111,7 +111,7 @@ impl CollateralVerifier {
             .signing_chain
             .last()
             .ok_or_else(|| body_kind.invalid("collateral signing chain is empty".into()))?;
-        let (leaf_key, crl_expiration) = Self::verify_certificate_chain(
+        let (leaf_key, expiration) = Self::verify_certificate_chain(
             &collateral.signing_chain,
             trusted_root_ca_hash,
             verification_time,
@@ -132,7 +132,7 @@ impl CollateralVerifier {
             body_kind.invalid("collateral signature failed".into()),
         )?;
 
-        Ok(crl_expiration)
+        Ok(expiration.min(next_update))
     }
 
     /// Verifies that a collateral leaf is the expected Intel PCS TCB signing certificate.
