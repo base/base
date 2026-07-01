@@ -249,6 +249,10 @@ impl TdxQuote {
             ));
         }
 
+        let mut attestation_public_key = [0u8; 1 + ECDSA_P256_PUBLIC_KEY_BODY_LEN];
+        attestation_public_key[0] = 0x04;
+        attestation_public_key[1..].copy_from_slice(attestation_key);
+
         Ok(ParsedTdxQuote {
             signed_message: Bytes::copy_from_slice(&raw_quote[..report_end]),
             tee_tcb_svn: Self::read_array(report_body, 0)?,
@@ -261,12 +265,7 @@ impl TdxQuote {
             rtmr3: Self::read_array(report_body, RTMR_OFFSET + (TDX_MEASUREMENT_LEN * 3))?,
             report_data: Self::read_array(report_body, REPORT_DATA_OFFSET)?,
             quote_signature: Bytes::copy_from_slice(quote_signature),
-            attestation_public_key: {
-                let mut key = Vec::with_capacity(1 + attestation_key.len());
-                key.push(0x04);
-                key.extend_from_slice(attestation_key);
-                Bytes::from(key)
-            },
+            attestation_public_key: Bytes::copy_from_slice(&attestation_public_key),
             qe_report: Bytes::copy_from_slice(qe_report),
             qe_report_signature: Bytes::copy_from_slice(qe_report_signature),
             qe_authentication_data: Bytes::copy_from_slice(qe_authentication_data),
