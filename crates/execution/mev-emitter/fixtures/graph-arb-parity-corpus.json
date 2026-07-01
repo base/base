@@ -1,0 +1,597 @@
+{
+  "version": 1,
+  "authority": {
+    "package": "@base-mev/graph-arb",
+    "dirtyPoolOracle": "findDirtyPoolCycleCandidates/poolToCandidateIndexes",
+    "issue76EngineQuotePinned": "1229736",
+    "issue76RealEvmOutPinned": "1216314",
+    "numericalPolicy": "Exact bigint equality. Approximation/caveat allowed only where TS marks single_tick_v3, v3_lower_bound, or fot_unmodeled."
+  },
+  "quoteCases": [
+    {
+      "name": "v2-weth-usdc",
+      "protocol": "uniswap_v2",
+      "tokenIn": "0x4200000000000000000000000000000000000006",
+      "amountIn": "1000000000000000000",
+      "pool": {
+        "pool": "0x1000000000000000000000000000000000000001",
+        "protocol": "uniswap_v2",
+        "token0": "0x4200000000000000000000000000000000000006",
+        "token1": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+        "decimals0": 18,
+        "decimals1": 6,
+        "feeBps": 30,
+        "reserve0": "100000000000000000000",
+        "reserve1": "220000000000"
+      },
+      "expected": {
+        "amountOut": "2171747675"
+      }
+    },
+    {
+      "name": "aerodrome-volatile-usdc-weth",
+      "protocol": "aerodrome_volatile",
+      "tokenIn": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "amountIn": "2000000000",
+      "pool": {
+        "pool": "0x1000000000000000000000000000000000000002",
+        "protocol": "aerodrome_volatile",
+        "token0": "0x4200000000000000000000000000000000000006",
+        "token1": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+        "decimals0": 18,
+        "decimals1": 6,
+        "feeBps": 5,
+        "reserve0": "100000000000000000000",
+        "reserve1": "180000000000"
+      },
+      "expected": {
+        "amountOut": "1098357683283974087"
+      }
+    },
+    {
+      "name": "aerodrome-stable-dai-eurc",
+      "protocol": "aerodrome_stable",
+      "tokenIn": "0x1111111111111111111111111111111111111111",
+      "amountIn": "100000000000000000000",
+      "pool": {
+        "pool": "0x1000000000000000000000000000000000000003",
+        "protocol": "aerodrome_stable",
+        "token0": "0x1111111111111111111111111111111111111111",
+        "token1": "0x2222222222222222222222222222222222222222",
+        "decimals0": 18,
+        "decimals1": 6,
+        "feeBps": 4,
+        "reserve0": "1000000000000000000000000",
+        "reserve1": "999000000000",
+        "stable": true
+      },
+      "expected": {
+        "amountOut": "99959999"
+      }
+    },
+    {
+      "name": "v3-q64-single-tick",
+      "protocol": "uniswap_v3",
+      "tokenIn": "0x4200000000000000000000000000000000000006",
+      "amountIn": "1000000000000000",
+      "pool": {
+        "pool": "0x1000000000000000000000000000000000000004",
+        "protocol": "uniswap_v3",
+        "token0": "0x4200000000000000000000000000000000000006",
+        "token1": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+        "decimals0": 18,
+        "decimals1": 6,
+        "feeBps": 30,
+        "sqrtPriceX96": "79228162514264337593543950336",
+        "liquidity": "1000000000000000000",
+        "tick": 0,
+        "tickSpacing": 60,
+        "ticks": [
+          {
+            "tick": -887220,
+            "liquidityNet": "1000000000000000000"
+          },
+          {
+            "tick": 887220,
+            "liquidityNet": "-1000000000000000000"
+          }
+        ]
+      },
+      "expected": {
+        "amountOut": "996006981039903",
+        "confidence": 1
+      }
+    },
+    {
+      "name": "v3-q64-multi-tick-crossing",
+      "protocol": "uniswap_v3",
+      "tokenIn": "0x4200000000000000000000000000000000000006",
+      "amountIn": "50000000000000000",
+      "pool": {
+        "pool": "0x1000000000000000000000000000000000000005",
+        "protocol": "uniswap_v3",
+        "token0": "0x4200000000000000000000000000000000000006",
+        "token1": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+        "decimals0": 18,
+        "decimals1": 6,
+        "feeBps": 30,
+        "sqrtPriceX96": "79228162514264337593543950336",
+        "liquidity": "1000000000000000000",
+        "tick": 0,
+        "tickSpacing": 60,
+        "ticks": [
+          {
+            "tick": -60,
+            "liquidityNet": "500000000000000000"
+          },
+          {
+            "tick": 60,
+            "liquidityNet": "-500000000000000000"
+          },
+          {
+            "tick": -887220,
+            "liquidityNet": "1000000000000000000"
+          },
+          {
+            "tick": 887220,
+            "liquidityNet": "-1000000000000000000"
+          }
+        ]
+      },
+      "expected": {
+        "amountOut": "45582673299480711",
+        "confidence": 1
+      }
+    },
+    {
+      "name": "fot-marker-preserves-amount-downgrades-confidence",
+      "protocol": "uniswap_v3",
+      "tokenIn": "0xcb00000000000000000000000000000000000000",
+      "amountIn": "1000000",
+      "pool": {
+        "pool": "0x1000000000000000000000000000000000000006",
+        "protocol": "uniswap_v3",
+        "token0": "0xcb00000000000000000000000000000000000000",
+        "token1": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+        "decimals0": 8,
+        "decimals1": 6,
+        "feeBps": 100,
+        "sqrtPriceX96": "79228162514264337593543950336",
+        "liquidity": "1000000000000000000",
+        "tick": 0,
+        "tickSpacing": 200,
+        "ticks": [
+          {
+            "tick": -887200,
+            "liquidityNet": "1000000000000000000"
+          },
+          {
+            "tick": 887200,
+            "liquidityNet": "-1000000000000000000"
+          }
+        ]
+      },
+      "expected": {
+        "amountOut": "989999",
+        "confidence": 0.5,
+        "approximation": "fot_unmodeled",
+        "caveat": "unmarkedAmountOut=989999"
+      }
+    },
+    {
+      "name": "issue76-v3-bitcoin-usdc-engine-golden",
+      "protocol": "uniswap_v3",
+      "tokenIn": "0x2a06a17cbc6d0032cac2c6696da90f29d39a1a29",
+      "amountIn": "8753544975",
+      "pool": {
+        "pool": "0xe966fbc4694f91d7798139775e319c0592169466",
+        "protocol": "uniswap_v3",
+        "token0": "0x2a06a17cbc6d0032cac2c6696da90f29d39a1a29",
+        "token1": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+        "decimals0": 8,
+        "decimals1": 6,
+        "feeBps": 100,
+        "sqrtPriceX96": "943813745190153014431461982",
+        "liquidity": "2175831642771",
+        "tick": -88608,
+        "tickSpacing": 200,
+        "ticks": [
+          {
+            "tick": -93200,
+            "liquidityNet": "4153717093"
+          },
+          {
+            "tick": -90800,
+            "liquidityNet": "2175831642771"
+          },
+          {
+            "tick": -89400,
+            "liquidityNet": "-2278700913"
+          },
+          {
+            "tick": -89200,
+            "liquidityNet": "-1875016180"
+          },
+          {
+            "tick": -77200,
+            "liquidityNet": "-2175831642771"
+          },
+          {
+            "tick": -74800,
+            "liquidityNet": "7364645012"
+          },
+          {
+            "tick": -72600,
+            "liquidityNet": "-7364645012"
+          }
+        ]
+      },
+      "expected": {
+        "amountOut": "1229736",
+        "confidence": 1,
+        "caveat": "realEvmOut=1216314;gapWei=13422"
+      }
+    }
+  ],
+  "candidateCases": [
+    {
+      "name": "canonical-negative-cycle-candidates",
+      "options": {
+        "maxCycles": 16,
+        "maxHops": 3,
+        "startTokens": [
+          "0x4200000000000000000000000000000000000006",
+          "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+        ],
+        "startAmount": "1000000000000000000",
+        "maxPoolRealizations": 8
+      },
+      "pools": [
+        {
+          "pool": "0x1000000000000000000000000000000000000001",
+          "protocol": "uniswap_v2",
+          "token0": "0x4200000000000000000000000000000000000006",
+          "token1": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+          "decimals0": 18,
+          "decimals1": 6,
+          "feeBps": 30,
+          "reserve0": "100000000000000000000",
+          "reserve1": "220000000000"
+        },
+        {
+          "pool": "0x1000000000000000000000000000000000000002",
+          "protocol": "aerodrome_volatile",
+          "token0": "0x4200000000000000000000000000000000000006",
+          "token1": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+          "decimals0": 18,
+          "decimals1": 6,
+          "feeBps": 5,
+          "reserve0": "100000000000000000000",
+          "reserve1": "180000000000"
+        },
+        {
+          "pool": "0x1000000000000000000000000000000000000004",
+          "protocol": "uniswap_v3",
+          "token0": "0x4200000000000000000000000000000000000006",
+          "token1": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+          "decimals0": 18,
+          "decimals1": 6,
+          "feeBps": 30,
+          "sqrtPriceX96": "79228162514264337593543950336",
+          "liquidity": "1000000000000000000",
+          "tick": 0,
+          "tickSpacing": 60,
+          "ticks": [
+            {
+              "tick": -887220,
+              "liquidityNet": "1000000000000000000"
+            },
+            {
+              "tick": 887220,
+              "liquidityNet": "-1000000000000000000"
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "count": 3,
+        "fingerprints": [
+          "6bfd6ac93d75158834332f53ef1e98ab8ebf053c793fc98e5b8ab78823413b24",
+          "005437f07800d2b6d2e7b71123bfa907d100620e10b57e0e718141097eac46bc",
+          "1a17bb2fc868a6adecf5e86ac3200daa0cd832528c7c19a2e5de8232dc7f1bd1"
+        ],
+        "candidates": [
+          {
+            "cycleId": "0x4200000000000000000000000000000000000006>0x833589fcd6edb6e08f4c7c32d4f71b54bda02913>0x4200000000000000000000000000000000000006",
+            "tokens": [
+              "0x4200000000000000000000000000000000000006",
+              "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+            ],
+            "pools": [
+              "0x1000000000000000000000000000000000000001",
+              "0x1000000000000000000000000000000000000002"
+            ],
+            "protocols": [
+              "uniswap_v2",
+              "aerodrome_volatile"
+            ],
+            "estimatedProfitToken": "0x4200000000000000000000000000000000000006",
+            "estimatedProfitRaw": "191553996511115592",
+            "status": "candidate",
+            "hops": 2,
+            "approximation": false,
+            "fingerprint": "6bfd6ac93d75158834332f53ef1e98ab8ebf053c793fc98e5b8ab78823413b24"
+          },
+          {
+            "cycleId": "0x4200000000000000000000000000000000000006>0x833589fcd6edb6e08f4c7c32d4f71b54bda02913>0x4200000000000000000000000000000000000006",
+            "tokens": [
+              "0x4200000000000000000000000000000000000006",
+              "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+            ],
+            "pools": [
+              "0x1000000000000000000000000000000000000004",
+              "0x1000000000000000000000000000000000000001"
+            ],
+            "protocols": [
+              "uniswap_v3",
+              "uniswap_v2"
+            ],
+            "estimatedProfitToken": "0x4200000000000000000000000000000000000006",
+            "estimatedProfitRaw": "98999955801224554596",
+            "status": "candidate",
+            "hops": 2,
+            "approximation": true,
+            "fingerprint": "005437f07800d2b6d2e7b71123bfa907d100620e10b57e0e718141097eac46bc"
+          },
+          {
+            "cycleId": "0x4200000000000000000000000000000000000006>0x833589fcd6edb6e08f4c7c32d4f71b54bda02913>0x4200000000000000000000000000000000000006",
+            "tokens": [
+              "0x4200000000000000000000000000000000000006",
+              "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+            ],
+            "pools": [
+              "0x1000000000000000000000000000000000000004",
+              "0x1000000000000000000000000000000000000002"
+            ],
+            "protocols": [
+              "uniswap_v3",
+              "aerodrome_volatile"
+            ],
+            "estimatedProfitToken": "0x4200000000000000000000000000000000000006",
+            "estimatedProfitRaw": "98999963927814425274",
+            "status": "candidate",
+            "hops": 2,
+            "approximation": true,
+            "fingerprint": "1a17bb2fc868a6adecf5e86ac3200daa0cd832528c7c19a2e5de8232dc7f1bd1"
+          }
+        ],
+        "poolToCandidateIndexes": {
+          "0x1000000000000000000000000000000000000001": [
+            0,
+            1
+          ],
+          "0x1000000000000000000000000000000000000002": [
+            0,
+            2
+          ],
+          "0x1000000000000000000000000000000000000004": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "all-pools-dirty-equals-baseline",
+      "options": {
+        "maxCycles": 16,
+        "maxHops": 3,
+        "startTokens": [
+          "0x4200000000000000000000000000000000000006",
+          "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+        ],
+        "startAmount": "1000000000000000000",
+        "maxPoolRealizations": 8
+      },
+      "pools": [
+        {
+          "pool": "0x1000000000000000000000000000000000000001",
+          "protocol": "uniswap_v2",
+          "token0": "0x4200000000000000000000000000000000000006",
+          "token1": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+          "decimals0": 18,
+          "decimals1": 6,
+          "feeBps": 30,
+          "reserve0": "100000000000000000000",
+          "reserve1": "220000000000"
+        },
+        {
+          "pool": "0x1000000000000000000000000000000000000002",
+          "protocol": "aerodrome_volatile",
+          "token0": "0x4200000000000000000000000000000000000006",
+          "token1": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+          "decimals0": 18,
+          "decimals1": 6,
+          "feeBps": 5,
+          "reserve0": "100000000000000000000",
+          "reserve1": "180000000000"
+        },
+        {
+          "pool": "0x1000000000000000000000000000000000000004",
+          "protocol": "uniswap_v3",
+          "token0": "0x4200000000000000000000000000000000000006",
+          "token1": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+          "decimals0": 18,
+          "decimals1": 6,
+          "feeBps": 30,
+          "sqrtPriceX96": "79228162514264337593543950336",
+          "liquidity": "1000000000000000000",
+          "tick": 0,
+          "tickSpacing": 60,
+          "ticks": [
+            {
+              "tick": -887220,
+              "liquidityNet": "1000000000000000000"
+            },
+            {
+              "tick": 887220,
+              "liquidityNet": "-1000000000000000000"
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "count": 3,
+        "fingerprints": [
+          "6bfd6ac93d75158834332f53ef1e98ab8ebf053c793fc98e5b8ab78823413b24",
+          "005437f07800d2b6d2e7b71123bfa907d100620e10b57e0e718141097eac46bc",
+          "1a17bb2fc868a6adecf5e86ac3200daa0cd832528c7c19a2e5de8232dc7f1bd1"
+        ],
+        "candidates": [
+          {
+            "cycleId": "0x4200000000000000000000000000000000000006>0x833589fcd6edb6e08f4c7c32d4f71b54bda02913>0x4200000000000000000000000000000000000006",
+            "tokens": [
+              "0x4200000000000000000000000000000000000006",
+              "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+            ],
+            "pools": [
+              "0x1000000000000000000000000000000000000001",
+              "0x1000000000000000000000000000000000000002"
+            ],
+            "protocols": [
+              "uniswap_v2",
+              "aerodrome_volatile"
+            ],
+            "estimatedProfitToken": "0x4200000000000000000000000000000000000006",
+            "estimatedProfitRaw": "191553996511115592",
+            "status": "candidate",
+            "hops": 2,
+            "approximation": false,
+            "fingerprint": "6bfd6ac93d75158834332f53ef1e98ab8ebf053c793fc98e5b8ab78823413b24"
+          },
+          {
+            "cycleId": "0x4200000000000000000000000000000000000006>0x833589fcd6edb6e08f4c7c32d4f71b54bda02913>0x4200000000000000000000000000000000000006",
+            "tokens": [
+              "0x4200000000000000000000000000000000000006",
+              "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+            ],
+            "pools": [
+              "0x1000000000000000000000000000000000000004",
+              "0x1000000000000000000000000000000000000001"
+            ],
+            "protocols": [
+              "uniswap_v3",
+              "uniswap_v2"
+            ],
+            "estimatedProfitToken": "0x4200000000000000000000000000000000000006",
+            "estimatedProfitRaw": "98999955801224554596",
+            "status": "candidate",
+            "hops": 2,
+            "approximation": true,
+            "fingerprint": "005437f07800d2b6d2e7b71123bfa907d100620e10b57e0e718141097eac46bc"
+          },
+          {
+            "cycleId": "0x4200000000000000000000000000000000000006>0x833589fcd6edb6e08f4c7c32d4f71b54bda02913>0x4200000000000000000000000000000000000006",
+            "tokens": [
+              "0x4200000000000000000000000000000000000006",
+              "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+            ],
+            "pools": [
+              "0x1000000000000000000000000000000000000004",
+              "0x1000000000000000000000000000000000000002"
+            ],
+            "protocols": [
+              "uniswap_v3",
+              "aerodrome_volatile"
+            ],
+            "estimatedProfitToken": "0x4200000000000000000000000000000000000006",
+            "estimatedProfitRaw": "98999963927814425274",
+            "status": "candidate",
+            "hops": 2,
+            "approximation": true,
+            "fingerprint": "1a17bb2fc868a6adecf5e86ac3200daa0cd832528c7c19a2e5de8232dc7f1bd1"
+          }
+        ],
+        "poolToCandidateIndexes": {
+          "0x1000000000000000000000000000000000000001": [
+            0,
+            1
+          ],
+          "0x1000000000000000000000000000000000000002": [
+            0,
+            2
+          ],
+          "0x1000000000000000000000000000000000000004": [
+            1,
+            2
+          ]
+        }
+      }
+    }
+  ],
+  "dirtyPoolCases": [
+    {
+      "name": "partial-dirty-pool-subset-preserves-ts-order",
+      "dirtyPools": [
+        "0x1000000000000000000000000000000000000001",
+        "0x1000000000000000000000000000000000000002"
+      ],
+      "options": {
+        "maxCycles": 16,
+        "maxHops": 3,
+        "startTokens": [
+          "0x4200000000000000000000000000000000000006",
+          "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+        ],
+        "startAmount": "1000000000000000000",
+        "maxPoolRealizations": 8
+      },
+      "expected": {
+        "fingerprints": [
+          "6bfd6ac93d75158834332f53ef1e98ab8ebf053c793fc98e5b8ab78823413b24",
+          "005437f07800d2b6d2e7b71123bfa907d100620e10b57e0e718141097eac46bc",
+          "1a17bb2fc868a6adecf5e86ac3200daa0cd832528c7c19a2e5de8232dc7f1bd1"
+        ],
+        "candidateIndexes": [
+          0,
+          1,
+          2
+        ],
+        "poolToCandidateIndexes": {
+          "0x1000000000000000000000000000000000000001": [
+            0,
+            1
+          ],
+          "0x1000000000000000000000000000000000000002": [
+            0,
+            2
+          ],
+          "0x1000000000000000000000000000000000000004": [
+            1,
+            2
+          ]
+        }
+      }
+    }
+  ],
+  "sizingCases": [
+    {
+      "name": "sizing-6bfd6ac93d751588",
+      "candidateFingerprint": "6bfd6ac93d75158834332f53ef1e98ab8ebf053c793fc98e5b8ab78823413b24",
+      "amountIn": "1000000000000000000",
+      "estimatedProfitRaw": "191553996511115592"
+    },
+    {
+      "name": "sizing-005437f07800d2b6",
+      "candidateFingerprint": "005437f07800d2b6d2e7b71123bfa907d100620e10b57e0e718141097eac46bc",
+      "amountIn": "1000000000000000000",
+      "estimatedProfitRaw": "98999955801224554596"
+    },
+    {
+      "name": "sizing-1a17bb2fc868a6ad",
+      "candidateFingerprint": "1a17bb2fc868a6adecf5e86ac3200daa0cd832528c7c19a2e5de8232dc7f1bd1",
+      "amountIn": "1000000000000000000",
+      "estimatedProfitRaw": "98999963927814425274"
+    }
+  ]
+}

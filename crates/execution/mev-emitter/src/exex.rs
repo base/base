@@ -201,7 +201,7 @@ fn emit_arb_dryrun_frame(
                 protocols: Vec::new(),
                 amount_in_wei: runtime.config.amount_in_wei,
                 estimated_gross_wei: 0,
-                estimated_net_wei: 0,
+                estimated_net_wei: None,
                 approximation: false,
                 caveat: Some(
                     frame

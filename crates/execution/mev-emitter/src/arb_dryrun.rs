@@ -215,7 +215,7 @@ impl PoolState {
 }
 
 /// Quote result shared by all protocols.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct QuoteResult {
     /// Output amount.
     pub amount_out: u128,
@@ -225,6 +225,15 @@ pub struct QuoteResult {
     pub approximation: bool,
     /// Optional caveat for health reporting.
     pub caveat: Option<&'static str>,
+    /// Confidence in [0, 1].
+    pub confidence: f64,
+}
+
+/// Quote options matching the TS graph-arb executable quote guards.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct QuoteOptions {
+    /// True when token-in is known fee-on-transfer / non-standard.
+    pub token_in_fee_on_transfer: bool,
 }
 
 /// V3 quote result for golden parity checks.
@@ -259,8 +268,8 @@ pub struct CycleCandidate {
     pub candidate_id: String,
     /// Gross estimated output.
     pub estimated_gross_wei: u128,
-    /// Net estimated output after conservative zero-cost Phase 1 accounting.
-    pub estimated_net_wei: u128,
+    /// Net estimate when a cost model exists; `None` prevents fabricated net=gross.
+    pub estimated_net_wei: Option<u128>,
     /// Whether any hop is approximate.
     pub approximation: bool,
     /// Optional caveat.
@@ -362,11 +371,21 @@ pub fn quote_pool_exact_in(
     token_in: Address,
     amount_in: u128,
 ) -> Option<QuoteResult> {
+    quote_pool_exact_in_with_options(pool, token_in, amount_in, QuoteOptions::default())
+}
+
+/// Quotes one pool with explicit parity guard options.
+pub fn quote_pool_exact_in_with_options(
+    pool: &PoolState,
+    token_in: Address,
+    amount_in: u128,
+    options: QuoteOptions,
+) -> Option<QuoteResult> {
     let zero_for_one = token_in == pool.token0;
     if !zero_for_one && token_in != pool.token1 {
         return None;
     }
-    match pool.protocol {
+    let quote = match pool.protocol {
         Protocol::UniswapV2 => quote_v2_exact_in(
             amount_in,
             if zero_for_one { pool.reserve0 } else { pool.reserve1 },
@@ -378,6 +397,7 @@ pub fn quote_pool_exact_in(
             amount_in_consumed: amount_in,
             approximation: false,
             caveat: None,
+            confidence: 1.0,
         }),
         Protocol::AerodromeVolatile => quote_aero_volatile_exact_in(
             amount_in,
@@ -390,6 +410,7 @@ pub fn quote_pool_exact_in(
             amount_in_consumed: amount_in,
             approximation: false,
             caveat: None,
+            confidence: 1.0,
         }),
         Protocol::AerodromeStable => quote_aero_stable_exact_in(
             amount_in,
@@ -402,6 +423,7 @@ pub fn quote_pool_exact_in(
             amount_in_consumed: amount_in,
             approximation: true,
             caveat: Some("stable-invariant-binary-search"),
+            confidence: 0.5,
         }),
         Protocol::UniswapV3 => quote_v3_exact_in(
             pool.sqrt_price_x96?,
@@ -416,10 +438,21 @@ pub fn quote_pool_exact_in(
         .map(|r| QuoteResult {
             amount_out: r.amount_out,
             amount_in_consumed: r.amount_in_consumed,
-            approximation: false,
+            approximation: r.crossed_all_ticks,
             caveat: r.crossed_all_ticks.then_some("v3-price-limit"),
+            confidence: r.confidence,
         }),
+    }?;
+    Some(apply_quote_options(quote, options))
+}
+
+fn apply_quote_options(mut quote: QuoteResult, options: QuoteOptions) -> QuoteResult {
+    if options.token_in_fee_on_transfer {
+        quote.approximation = true;
+        quote.confidence = quote.confidence.min(0.5);
+        quote.caveat = Some("fot_unmodeled");
     }
+    quote
 }
 
 /// V3 Q64.96 exact-input quote for Phase 1 golden cases.
@@ -903,25 +936,58 @@ fn build_graph(pools: &[PoolState]) -> Graph {
 }
 
 fn marginal_rate(pool: &PoolState, zero_for_one: bool) -> Option<f64> {
-    match pool.protocol {
-        Protocol::UniswapV2 | Protocol::AerodromeVolatile | Protocol::AerodromeStable => {
-            let (reserve_in, reserve_out) = if zero_for_one {
-                (pool.reserve0, pool.reserve1)
-            } else {
-                (pool.reserve1, pool.reserve0)
-            };
-            if reserve_in == 0 || reserve_out == 0 || pool.fee >= 10_000 {
+    let fee = match pool.protocol {
+        Protocol::UniswapV3 => {
+            if pool.fee >= FEE_DENOMINATOR as u32 {
                 return None;
             }
-            Some((reserve_out as f64 / reserve_in as f64) * (10_000 - pool.fee) as f64 / 10_000.0)
+            (FEE_DENOMINATOR - u128::from(pool.fee)) as f64 / FEE_DENOMINATOR as f64
+        }
+        Protocol::UniswapV2 | Protocol::AerodromeVolatile | Protocol::AerodromeStable => {
+            if pool.fee >= 10_000 {
+                return None;
+            }
+            (10_000 - pool.fee) as f64 / 10_000.0
+        }
+    };
+
+    match pool.protocol {
+        Protocol::UniswapV2 | Protocol::AerodromeVolatile | Protocol::AerodromeStable => {
+            let (reserve_in, reserve_out, decimals_in, decimals_out) = if zero_for_one {
+                (pool.reserve0, pool.reserve1, pool.decimals0, pool.decimals1)
+            } else {
+                (pool.reserve1, pool.reserve0, pool.decimals1, pool.decimals0)
+            };
+            if reserve_in == 0 || reserve_out == 0 {
+                return None;
+            }
+            let human_in = human_amount(reserve_in, decimals_in);
+            let human_out = human_amount(reserve_out, decimals_out);
+            if !(human_in > 0.0 && human_out > 0.0) {
+                return None;
+            }
+            let spot = if pool.protocol == Protocol::AerodromeStable {
+                (human_out * (3.0 * human_in * human_in + human_out * human_out))
+                    / (human_in * (human_in * human_in + 3.0 * human_out * human_out))
+            } else {
+                human_out / human_in
+            };
+            (spot > 0.0 && spot.is_finite()).then_some(spot * fee)
         }
         Protocol::UniswapV3 => {
             let sqrt = pool.sqrt_price_x96? as f64 / Q96 as f64;
-            let price = sqrt * sqrt;
-            let fee = (FEE_DENOMINATOR - u128::from(pool.fee)) as f64 / FEE_DENOMINATOR as f64;
+            let mut price = sqrt * sqrt;
+            price *= 10f64.powi(i32::from(pool.decimals0) - i32::from(pool.decimals1));
+            if !(price > 0.0 && price.is_finite()) {
+                return None;
+            }
             Some(if zero_for_one { price * fee } else { (1.0 / price) * fee })
         }
     }
+}
+
+fn human_amount(raw: u128, decimals: u8) -> f64 {
+    raw as f64 / 10f64.powi(i32::from(decimals))
 }
 
 fn find_negative_cycles(
@@ -1056,7 +1122,7 @@ fn cycle_to_candidate(
         pools: pool_ids,
         protocols,
         estimated_gross_wei: amount,
-        estimated_net_wei: amount,
+        estimated_net_wei: None,
         approximation,
         caveat: (!caveats.is_empty()).then(|| caveats.join(",")),
     })
@@ -1069,9 +1135,120 @@ fn big_to_u128(value: &BigUint) -> Option<u128> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Deserialize;
+    use std::path::PathBuf;
 
     fn addr(b: u8) -> Address {
         Address::from([b; 20])
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct ParityCorpus {
+        #[serde(rename = "quoteCases")]
+        quote_cases: Vec<CorpusQuoteCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct CorpusQuoteCase {
+        name: String,
+        #[serde(rename = "tokenIn")]
+        token_in: Address,
+        #[serde(rename = "amountIn")]
+        amount_in: String,
+        pool: CorpusPool,
+        expected: CorpusExpected,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct CorpusExpected {
+        #[serde(rename = "amountOut")]
+        amount_out: String,
+        confidence: Option<f64>,
+        approximation: Option<String>,
+    }
+
+    #[derive(Debug, Clone, Deserialize)]
+    struct CorpusPool {
+        pool: Address,
+        protocol: Protocol,
+        token0: Address,
+        token1: Address,
+        decimals0: u8,
+        decimals1: u8,
+        #[serde(rename = "feeBps")]
+        fee_bps: u32,
+        reserve0: Option<String>,
+        reserve1: Option<String>,
+        #[serde(rename = "sqrtPriceX96")]
+        sqrt_price_x96: Option<String>,
+        liquidity: Option<String>,
+        tick: Option<i32>,
+        #[serde(rename = "tickSpacing")]
+        tick_spacing: Option<i32>,
+        #[serde(default)]
+        ticks: Vec<CorpusTick>,
+    }
+
+    #[derive(Debug, Clone, Deserialize)]
+    struct CorpusTick {
+        tick: i32,
+        #[serde(rename = "liquidityNet")]
+        liquidity_net: String,
+    }
+
+    impl CorpusPool {
+        fn into_pool_state(self) -> PoolState {
+            let protocol = self.protocol;
+            PoolState {
+                pool: self.pool,
+                protocol,
+                token0: self.token0,
+                token1: self.token1,
+                decimals0: self.decimals0,
+                decimals1: self.decimals1,
+                fee: if protocol == Protocol::UniswapV3 {
+                    self.fee_bps * 100
+                } else {
+                    self.fee_bps
+                },
+                reserve0: parse_u128_opt(self.reserve0.as_deref()).unwrap_or(0),
+                reserve1: parse_u128_opt(self.reserve1.as_deref()).unwrap_or(0),
+                sqrt_price_x96: parse_u128_opt(self.sqrt_price_x96.as_deref()),
+                liquidity: parse_u128_opt(self.liquidity.as_deref()),
+                tick: self.tick,
+                tick_spacing: self.tick_spacing,
+                ticks: self
+                    .ticks
+                    .into_iter()
+                    .map(|tick| V3Tick {
+                        tick: tick.tick,
+                        liquidity_net: tick.liquidity_net.parse::<i128>().unwrap(),
+                    })
+                    .collect(),
+            }
+        }
+    }
+
+    fn parse_u128_opt(raw: Option<&str>) -> Option<u128> {
+        raw.map(|value| value.parse::<u128>().unwrap())
+    }
+
+    fn load_parity_corpus() -> ParityCorpus {
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mut candidates = Vec::new();
+        if let Some(path) = std::env::var_os("BASE_MEV_GRAPH_ARB_PARITY_CORPUS") {
+            candidates.push(PathBuf::from(path));
+        }
+        candidates.push(PathBuf::from(
+            "/home/ubuntu/src/base-mev/wt/in-node-arb-dryrun-p1/fixtures/graph-arb-parity-corpus.json",
+        ));
+        candidates.push(manifest.join("fixtures/graph-arb-parity-corpus.json"));
+        let path = candidates
+            .into_iter()
+            .find(|path| path.exists())
+            .expect("graph-arb parity corpus fixture not found");
+        let raw = std::fs::read_to_string(path).unwrap();
+        serde_json::from_str(&raw).unwrap()
     }
 
     #[test]
@@ -1086,6 +1263,32 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out_large, 1_098_791_318_560_571_284);
+    }
+
+    #[test]
+    fn cross_decimal_marginal_rate_uses_human_units() {
+        let mut pool = PoolState::v2_like(
+            addr(0xa1),
+            Protocol::UniswapV2,
+            addr(0x11),
+            addr(0x22),
+            0,
+            100 * 10u128.pow(18),
+            220_000 * 10u128.pow(6),
+        );
+        pool.decimals0 = 18;
+        pool.decimals1 = 6;
+
+        let weth_to_usdc = marginal_rate(&pool, true).unwrap();
+        let usdc_to_weth = marginal_rate(&pool, false).unwrap();
+        assert!((weth_to_usdc - 2_200.0).abs() < 1e-9);
+        assert!((usdc_to_weth - (1.0 / 2_200.0)).abs() < 1e-15);
+
+        let mut cheaper = pool.clone();
+        cheaper.pool = addr(0xa2);
+        cheaper.reserve1 = 200_000 * 10u128.pow(6);
+        let candidates = find_negative_cycle_candidates(&[pool, cheaper], 10u128.pow(18));
+        assert!(!candidates.is_empty());
     }
 
     #[test]
@@ -1150,6 +1353,48 @@ mod tests {
         assert_eq!(r.sqrt_price_x96_after, 72_242_616_087_487_392_683_269_770_548);
         assert_eq!(r.tick_after, -1847);
         assert!(!r.crossed_all_ticks);
+    }
+
+    #[test]
+    fn loads_ts_issue76_and_fot_parity_corpus() {
+        let corpus = load_parity_corpus();
+
+        let issue76 = corpus
+            .quote_cases
+            .iter()
+            .find(|case| case.name == "issue76-v3-bitcoin-usdc-engine-golden")
+            .expect("issue76 quote case");
+        let issue76_pool = issue76.pool.clone().into_pool_state();
+        let issue76_amount = issue76.amount_in.parse::<u128>().unwrap();
+        let issue76_quote =
+            quote_pool_exact_in(&issue76_pool, issue76.token_in, issue76_amount).unwrap();
+        assert_eq!(issue76_quote.amount_out.to_string(), issue76.expected.amount_out);
+        assert_eq!(issue76_quote.confidence, issue76.expected.confidence.unwrap());
+        assert!(!issue76_quote.approximation);
+
+        let fot = corpus
+            .quote_cases
+            .iter()
+            .find(|case| case.name == "fot-marker-preserves-amount-downgrades-confidence")
+            .expect("fot quote case");
+        let fot_pool = fot.pool.clone().into_pool_state();
+        let fot_amount = fot.amount_in.parse::<u128>().unwrap();
+        let clean_quote = quote_pool_exact_in(&fot_pool, fot.token_in, fot_amount).unwrap();
+        let flagged_quote = quote_pool_exact_in_with_options(
+            &fot_pool,
+            fot.token_in,
+            fot_amount,
+            QuoteOptions { token_in_fee_on_transfer: true },
+        )
+        .unwrap();
+
+        assert_eq!(flagged_quote.amount_out.to_string(), fot.expected.amount_out);
+        assert_eq!(flagged_quote.amount_out, clean_quote.amount_out);
+        assert!(flagged_quote.approximation);
+        assert!(flagged_quote.confidence <= 0.5);
+        assert_eq!(flagged_quote.confidence, fot.expected.confidence.unwrap());
+        assert_eq!(fot.expected.approximation.as_deref(), Some("fot_unmodeled"));
+        assert_eq!(flagged_quote.caveat, Some("fot_unmodeled"));
     }
 
     #[test]
