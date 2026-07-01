@@ -364,7 +364,13 @@ pub struct RollupArgs {
     /// Maximum number of inflight EIP-7702 delegated account transactions per sender in the
     /// txpool. Reth defaults to 1, which prevents delegated accounts from submitting multiple
     /// transactions within a block (e.g. buy + approve in a single Flashblock).
-    #[arg(long = "rollup.txpool-max-inflight-delegated-slots", default_value_t = 1)]
+    ///
+    /// We raise the default to 4 (matching the EIP-8130 sender cap). Delegated code can move the
+    /// account's balance mid-block, so a queued tx can become insolvent before the next canonical
+    /// update; but that case fails fast — revm rejects on the pre-execution balance check before
+    /// running any delegated code — so the only cost of a small cap is bounded (linear in the cap)
+    /// mempool memory and cheap wasted pre-checks per account per block.
+    #[arg(long = "rollup.txpool-max-inflight-delegated-slots", default_value_t = 4)]
     pub max_inflight_delegated_slots: usize,
 
     /// Maximum inflight EIP-8130 transactions per (non-locked) sender account in the mempool,
@@ -479,7 +485,7 @@ impl Default for RollupArgs {
             sequencer_headers: Vec::new(),
             min_suggested_priority_fee: 1_000_000,
             txpool_ordering: TxpoolOrdering::default(),
-            max_inflight_delegated_slots: 1,
+            max_inflight_delegated_slots: 4,
             mempool_sender_limit: DEFAULT_SENDER_LIMIT,
             mempool_payer_limit: DEFAULT_PAYER_LIMIT,
             mempool_trusted_delegation_targets: Vec::new(),
