@@ -1,4 +1,4 @@
-//! Solidity-aligned types for the `ITDXVerifier` on-chain interface.
+//! Solidity-aligned types for the TDX verifier onchain interface.
 //!
 //! Mirrors the TDX ABI surface staged in the contracts branch so offchain
 //! verification code can encode and decode TDX attestation verifier journals.
@@ -9,29 +9,6 @@ use alloy_sol_types::sol;
 
 sol! {
     #![sol(all_derives)]
-
-    /// Supported zero-knowledge proof coprocessor types.
-    ///
-    /// Shared by the Nitro and TDX verifier contracts; ordering must match
-    /// `INitroEnclaveVerifier.sol`.
-    enum ZkCoProcessorType {
-        /// Unknown / unset.
-        Unknown,
-        /// RISC Zero zkVM proving system.
-        RiscZero,
-        /// Succinct SP1 proving system.
-        Succinct,
-    }
-
-    /// Configuration for a specific zero-knowledge coprocessor.
-    struct ZkCoProcessorConfig {
-        /// Latest program ID for single attestation verification.
-        bytes32 verifierId;
-        /// Latest program ID for batch/aggregated verification.
-        bytes32 aggregatorId;
-        /// Default ZK verifier contract address.
-        address zkVerifier;
-    }
 
     /// Statuses emitted by the TDX quote/collateral verifier.
     enum TDXVerificationResult {
@@ -81,7 +58,7 @@ sol! {
         Revoked,
     }
 
-    /// Public journal emitted by the off-chain/ZK TDX DCAP verifier.
+    /// Public journal emitted by the offchain/ZK TDX DCAP verifier.
     struct TDXVerifierJournal {
         /// Overall verification result after quote and collateral validation.
         TDXVerificationResult result;
@@ -113,27 +90,6 @@ sol! {
         bytes32 reportDataSuffix;
     }
 
-    /// `TDXVerifier` contract interface.
-    interface ITDXVerifier {
-        /// Verifies a ZK proof of Intel TDX DCAP quote verification.
-        function verify(
-            bytes calldata output,
-            ZkCoProcessorType zkCoprocessor,
-            bytes calldata proofBytes
-        )
-            external
-            returns (TDXVerifierJournal memory journal);
-
-        /// Retrieves the configuration for a specific coprocessor.
-        function getZkConfig(ZkCoProcessorType zkCoprocessor)
-            external
-            view
-            returns (ZkCoProcessorConfig memory);
-
-        /// Returns whether a TCB status is accepted by verifier policy.
-        function allowedTcbStatuses(TDXTcbStatus status) external view returns (bool);
-    }
-
 }
 
 #[cfg(test)]
@@ -143,9 +99,6 @@ mod tests {
     #[test]
     fn discriminants_match_solidity() {
         for (actual, expected) in [
-            (ZkCoProcessorType::Unknown as u8, 0),
-            (ZkCoProcessorType::RiscZero as u8, 1),
-            (ZkCoProcessorType::Succinct as u8, 2),
             (TDXVerificationResult::Unknown as u8, 0),
             (TDXVerificationResult::Success as u8, 1),
             (TDXVerificationResult::InvalidQuote as u8, 2),

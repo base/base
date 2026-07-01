@@ -19,10 +19,7 @@ mod error;
 pub use error::{Result, TdxVerifierError};
 
 mod types;
-pub use types::{
-    ITDXVerifier, TDXTcbStatus, TDXVerificationResult, TDXVerifierJournal, ZkCoProcessorConfig,
-    ZkCoProcessorType,
-};
+pub use types::{TDXTcbStatus, TDXVerificationResult, TDXVerifierJournal};
 
 mod quote;
 pub use quote::{
