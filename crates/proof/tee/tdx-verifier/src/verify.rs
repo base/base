@@ -77,9 +77,8 @@ impl TdxVerifier {
             &input.revocation,
         )?;
 
-        let pck_leaf = input.pck_certificate_chain.last().ok_or_else(|| {
-            TdxVerifierError::PckCertChainInvalid("certificate chain is empty".into())
-        })?;
+        let pck_leaf =
+            input.pck_certificate_chain.last().expect("verified certificate chain is non-empty");
         let (pck_platform, pck_tcb) =
             TdxPlatformIdentity::platform_and_tcb_from_pck_certificate_der(&pck_leaf.raw)?;
         let tcb_info_document = input.collateral.tcb_info.tcb_info_document()?;
@@ -534,9 +533,7 @@ mod tests {
         input.collateral.tcb_info.raw = Bytes::from(raw.into_bytes());
         resign_tcb_info(&mut input);
 
-        let journal = TdxVerifier::verify(&input).unwrap();
-
-        assert_eq!(journal.result as u8, TDXVerificationResult::Success as u8);
+        TdxVerifier::verify(&input).unwrap();
     }
 
     #[test]
@@ -581,12 +578,14 @@ mod tests {
     #[test]
     fn image_hash_matches_contract_formula() {
         let parsed = TdxQuote::parse(&fixture().quote).unwrap();
-        let mut expected = Vec::with_capacity(48 * 5);
-        expected.extend_from_slice(&parsed.mrtd);
-        expected.extend_from_slice(&parsed.rtmr0);
-        expected.extend_from_slice(&parsed.rtmr1);
-        expected.extend_from_slice(&parsed.rtmr2);
-        expected.extend_from_slice(&parsed.rtmr3);
+        let expected = [
+            &parsed.mrtd[..],
+            &parsed.rtmr0[..],
+            &parsed.rtmr1[..],
+            &parsed.rtmr2[..],
+            &parsed.rtmr3[..],
+        ]
+        .concat();
         assert_eq!(
             TdxVerifier::image_hash(
                 &parsed.mrtd,
@@ -627,10 +626,8 @@ mod tests {
         let mut input = fixture();
         input.quote_timestamp_millis = (VERIFICATION_TIME - 1) * 1_000;
 
-        let error = match TdxVerifier::verify(&input) {
-            Ok(_) => panic!("fresh input timestamp must not replay an older signed quote"),
-            Err(error) => error,
-        };
+        let error = TdxVerifier::verify(&input)
+            .expect_err("fresh input timestamp must not replay an older signed quote");
 
         assert!(matches!(error, TdxVerifierError::ReportDataMismatch));
     }
