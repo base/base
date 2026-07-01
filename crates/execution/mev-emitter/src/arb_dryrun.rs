@@ -756,11 +756,28 @@ pub fn run_frame(
 ) -> DryRunFrame {
     let started = Instant::now();
     let reverse = candidate_index_reverse_map(pools);
-    let (mut selected, _) = dirty_pool_subset(pools, dirty_pools, &reverse);
     let mut truncated = false;
-    if selected.is_empty() {
-        selected = pools.iter().collect();
+    if pools.is_empty() {
+        return DryRunFrame {
+            candidates: Vec::new(),
+            dirty_pool_count: dirty_pools.len(),
+            truncated: false,
+            health: "unsupported".to_string(),
+            latency_micros: u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
+            caveat: Some("pool-baseline-unavailable-in-rust-phase1".to_string()),
+        };
     }
+    if !dirty_pools.is_empty() && !dirty_pools.iter().any(|pool| reverse.contains_key(pool)) {
+        return DryRunFrame {
+            candidates: Vec::new(),
+            dirty_pool_count: dirty_pools.len(),
+            truncated: false,
+            health: "skipped".to_string(),
+            latency_micros: u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
+            caveat: Some("dirty-pool-not-in-baseline".to_string()),
+        };
+    }
+    let mut selected: Vec<&PoolState> = pools.iter().collect();
     if selected.len() > config.max_pools_per_frame {
         selected.truncate(config.max_pools_per_frame);
         truncated = true;
@@ -773,6 +790,10 @@ pub fn run_frame(
         config.time_budget,
         config.max_candidates_per_frame + 1,
     );
+    if !dirty_pools.is_empty() {
+        candidates
+            .retain(|candidate| candidate.pools.iter().any(|pool| dirty_pools.contains(pool)));
+    }
     if candidates.len() > config.max_candidates_per_frame {
         candidates.truncate(config.max_candidates_per_frame);
         truncated = true;
@@ -782,6 +803,10 @@ pub fn run_frame(
     }
     if started.elapsed() > config.time_budget {
         truncated = true;
+    }
+    let mut caveat = truncated.then(|| "bounded-frame-truncated".to_string());
+    if caveat.is_none() && candidates.is_empty() && !dirty_pools.is_empty() {
+        caveat = Some("no-candidates-for-dirty-pools".to_string());
     }
     let health = if guard.mode() != "dry-run-only" {
         "error"
@@ -797,7 +822,7 @@ pub fn run_frame(
         truncated,
         health,
         latency_micros: u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
-        caveat: truncated.then(|| "bounded-frame-truncated".to_string()),
+        caveat,
     }
 }
 
@@ -1169,6 +1194,41 @@ mod tests {
         assert_eq!(subset[0].pool, addr(2));
     }
 
+    #[test]
+    fn run_frame_expands_dirty_pool_to_full_baseline_cycle() {
+        let dirty_pool = addr(0xa1);
+        let clean_pool = addr(0xb2);
+        let pools = vec![
+            PoolState::v2_like(dirty_pool, Protocol::UniswapV2, addr(1), addr(2), 1, 1_000, 1_100),
+            PoolState::v2_like(clean_pool, Protocol::UniswapV2, addr(1), addr(2), 1, 1_100, 1_000),
+        ];
+        let mut dirty = BTreeSet::new();
+        dirty.insert(dirty_pool);
+        let frame = run_frame(&pools, &dirty, &DryRunConfig::default(), NoActionGuard);
+        assert_eq!(frame.health, "ok");
+        assert!(frame.candidates.iter().any(|candidate| {
+            candidate.pools.contains(&dirty_pool) && candidate.pools.contains(&clean_pool)
+        }));
+    }
+
+    #[test]
+    fn run_frame_skips_unknown_dirty_pool_without_full_baseline_search() {
+        let pools = vec![PoolState::v2_like(
+            addr(0xa1),
+            Protocol::UniswapV2,
+            addr(1),
+            addr(2),
+            1,
+            1_000,
+            1_100,
+        )];
+        let mut dirty = BTreeSet::new();
+        dirty.insert(addr(0xff));
+        let frame = run_frame(&pools, &dirty, &DryRunConfig::default(), NoActionGuard);
+        assert_eq!(frame.health, "skipped");
+        assert!(frame.candidates.is_empty());
+        assert_eq!(frame.caveat.as_deref(), Some("dirty-pool-not-in-baseline"));
+    }
     #[test]
     fn frame_bounds_and_backpressure_truncate() {
         let pools = vec![
