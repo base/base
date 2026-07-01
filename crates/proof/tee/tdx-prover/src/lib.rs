@@ -18,8 +18,7 @@ pub use oracle::Oracle;
 
 mod proof_generator;
 pub use proof_generator::{
-    DEFAULT_TDX_WORKER_ID, ProofGenerator, ProofGeneratorBoxError, ProofGeneratorError,
-    ProofGeneratorRequest, TdxProofSubmitterRequest,
+    DEFAULT_TDX_WORKER_ID, ProofGenerator, ProofGeneratorError, ProofGeneratorRequest,
 };
 
 mod server;

@@ -3,6 +3,7 @@
 use std::future::Future;
 
 use async_trait::async_trait;
+use base_proof_host::ProverError;
 use base_proof_primitives::ProofResult as PrimitiveProofResult;
 use base_proof_worker::{
     ClaimedProofJobHandler, ClaimedProofJobMetadata, ClaimedProofJobMetadataError,
@@ -17,10 +18,7 @@ use base_prover_service_protocol::{
 use thiserror::Error;
 use tracing::{info, warn};
 
-use crate::TdxEnclaveService;
-
-/// Boxed error returned by the TDX proof service.
-pub type ProofGeneratorBoxError = Box<dyn std::error::Error + Send + Sync>;
+use crate::{TdxBackend, TdxEnclaveService};
 
 /// Default worker identifier prefix used by TDX worker configs.
 pub const DEFAULT_TDX_WORKER_ID: &str = "tdx-prover";
@@ -56,35 +54,6 @@ impl TryFrom<ProofJob> for ProofGeneratorRequest {
     }
 }
 
-/// Helper for building prover-service worker proof submission requests.
-#[derive(Debug)]
-pub struct TdxProofSubmitterRequest;
-
-impl TdxProofSubmitterRequest {
-    /// Builds a worker proof submission request from a generated TDX TEE proof.
-    pub fn from_tee_proof(
-        session_id: String,
-        lock_id: String,
-        worker_id: String,
-        proof: PrimitiveProofResult,
-    ) -> Result<WorkerSubmitProofRequest, ProofSubmitterError> {
-        let PrimitiveProofResult::Tee { aggregate_proposal, proposals } = proof else {
-            return Err(ProofSubmitterError::UnsupportedProofResult);
-        };
-
-        Ok(WorkerSubmitProofRequest {
-            session_id,
-            lock_id,
-            worker_id,
-            result: ServiceProofResult::Tee(TeeProofResult {
-                aggregate_proposal,
-                proposals,
-                tee_kind: TeeKind::IntelTdx,
-            }),
-        })
-    }
-}
-
 /// Orchestrates TDX proof generation, claim heartbeats, and async proof submission.
 #[derive(Debug)]
 pub struct ProofGenerator<Client> {
@@ -102,16 +71,6 @@ impl<Client> ProofGenerator<Client> {
         heartbeat: WorkerHeartbeatConfig,
     ) -> Self {
         Self { enclave, submitter, tasks: ProofTaskController::new(), heartbeat }
-    }
-
-    /// Returns the proof submitter.
-    pub const fn submitter(&self) -> &ProofSubmitter<Client> {
-        &self.submitter
-    }
-
-    /// Returns the heartbeat settings used while proofs are generated.
-    pub const fn heartbeat_config(&self) -> WorkerHeartbeatConfig {
-        self.heartbeat
     }
 }
 
@@ -134,54 +93,26 @@ where
             "starting tdx proof generation"
         );
 
-        let proof = match self
+        let proof = self
             .with_heartbeat_while_generating(&request, self.prove(request.proof.clone()))
-            .await
-        {
-            Ok(proof) => proof,
-            Err(error @ ProofGeneratorError::Generate { .. }) => {
-                warn!(
-                    session_id = %request.claim.session_id,
-                    lock_id = %request.claim.lock_id,
-                    worker_id = %request.claim.worker_id,
-                    error = %error,
-                    "tdx proof generation failed"
-                );
-                return Err(error);
-            }
-            Err(error @ ProofGeneratorError::Heartbeat { .. }) => {
-                warn!(
-                    session_id = %request.claim.session_id,
-                    lock_id = %request.claim.lock_id,
-                    worker_id = %request.claim.worker_id,
-                    error = %error,
-                    "aborting tdx proof generation due to heartbeat failure"
-                );
-                return Err(error);
-            }
-            Err(
-                source @ (ProofGeneratorError::MissingLockId { .. }
-                | ProofGeneratorError::MissingWorkerId { .. }
-                | ProofGeneratorError::UnsupportedProofRequest { .. }
-                | ProofGeneratorError::UnsupportedTeeKind { .. }
-                | ProofGeneratorError::BuildSubmission { .. }),
-            ) => {
-                unreachable!(
-                    "with_heartbeat_while_generating returned an impossible error: {source}"
-                );
-            }
-        };
+            .await?;
 
-        let submit_request = TdxProofSubmitterRequest::from_tee_proof(
-            request.claim.session_id.clone(),
-            request.claim.lock_id.clone(),
-            request.claim.worker_id.clone(),
-            proof,
-        )
-        .map_err(|source| ProofGeneratorError::BuildSubmission {
+        let PrimitiveProofResult::Tee { aggregate_proposal, proposals } = proof else {
+            return Err(ProofGeneratorError::BuildSubmission {
+                session_id: request.claim.session_id.clone(),
+                source: ProofSubmitterError::UnsupportedProofResult,
+            });
+        };
+        let submit_request = WorkerSubmitProofRequest {
             session_id: request.claim.session_id.clone(),
-            source,
-        })?;
+            lock_id: request.claim.lock_id.clone(),
+            worker_id: request.claim.worker_id.clone(),
+            result: ServiceProofResult::Tee(TeeProofResult {
+                aggregate_proposal,
+                proposals,
+                tee_kind: TeeKind::IntelTdx,
+            }),
+        };
         let submit_handle = self.tasks.spawn_submission(&self.submitter, submit_request);
 
         info!(
@@ -197,8 +128,8 @@ where
     async fn prove(
         &self,
         request: base_proof_primitives::ProofRequest,
-    ) -> Result<PrimitiveProofResult, ProofGeneratorBoxError> {
-        self.enclave.service().prove_block(request).await.map_err(|error| Box::new(error).into())
+    ) -> Result<PrimitiveProofResult, ProverError<TdxBackend>> {
+        self.enclave.service().prove_block(request).await
     }
 
     async fn with_heartbeat_while_generating<Output, Generate>(
@@ -207,7 +138,7 @@ where
         generate: Generate,
     ) -> Result<Output, ProofGeneratorError>
     where
-        Generate: Future<Output = Result<Output, ProofGeneratorBoxError>>,
+        Generate: Future<Output = Result<Output, ProverError<TdxBackend>>>,
     {
         let heartbeat =
             WorkerHeartbeat::until_failure(&self.submitter, &request.claim, self.heartbeat);
@@ -216,10 +147,23 @@ where
 
         tokio::select! {
             biased;
-            result = &mut generate => result.map_err(|source| ProofGeneratorError::Generate {
-                session_id: request.claim.session_id.clone(),
-                source,
-            }),
+            result = &mut generate => match result {
+                Ok(result) => Ok(result),
+                Err(source) => {
+                    warn!(
+                        session_id = %request.claim.session_id,
+                        lock_id = %request.claim.lock_id,
+                        worker_id = %request.claim.worker_id,
+                        error = %source,
+                        "tdx proof generation failed"
+                    );
+
+                    Err(ProofGeneratorError::Generate {
+                        session_id: request.claim.session_id.clone(),
+                        source,
+                    })
+                }
+            },
             source = &mut heartbeat => {
                 match generate.await {
                     Ok(_) => {
@@ -241,6 +185,14 @@ where
                         );
                     }
                 }
+
+                warn!(
+                    session_id = %request.claim.session_id,
+                    lock_id = %request.claim.lock_id,
+                    worker_id = %request.claim.worker_id,
+                    error = %source,
+                    "aborting tdx proof generation due to heartbeat failure"
+                );
 
                 Err(ProofGeneratorError::Heartbeat {
                     session_id: request.claim.session_id.clone(),
@@ -303,7 +255,7 @@ pub enum ProofGeneratorError {
         session_id: String,
         /// Underlying proof generation error.
         #[source]
-        source: ProofGeneratorBoxError,
+        source: ProverError<TdxBackend>,
     },
     /// Worker API heartbeat failed while the proof was being generated.
     #[error("heartbeat failed while generating proof for job {session_id}: {source}")]
@@ -340,11 +292,7 @@ impl From<ClaimedProofJobMetadataError> for ProofGeneratorError {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{B256, Bytes};
-    use base_proof_primitives::Proposal;
-    use base_prover_service_protocol::{
-        ProofJobStatus, ProofRequest, TeeProofRequest, WorkerSubmitProofRequest,
-    };
+    use base_prover_service_protocol::{ProofJobStatus, ProofRequest, TeeProofRequest};
     use chrono::Utc;
 
     use super::*;
@@ -372,18 +320,6 @@ mod tests {
         }
     }
 
-    fn proposal(block: u64) -> Proposal {
-        Proposal {
-            output_root: B256::repeat_byte(1),
-            signature: Bytes::from(vec![0xab; 65]),
-            l1_origin_hash: B256::repeat_byte(2),
-            l1_origin_number: block.saturating_sub(1),
-            l2_block_number: block,
-            prev_output_root: B256::repeat_byte(3),
-            config_hash: B256::repeat_byte(4),
-        }
-    }
-
     #[test]
     fn request_accepts_intel_tdx_jobs() {
         let request = ProofGeneratorRequest::try_from(proof_job(TeeKind::IntelTdx)).unwrap();
@@ -396,25 +332,5 @@ mod tests {
         let err = ProofGeneratorRequest::try_from(proof_job(TeeKind::AwsNitro)).unwrap_err();
 
         assert!(matches!(err, ProofGeneratorError::UnsupportedTeeKind { .. }));
-    }
-
-    #[test]
-    fn submit_request_marks_result_as_intel_tdx() {
-        let submit = TdxProofSubmitterRequest::from_tee_proof(
-            "session-1".to_owned(),
-            "lock-1".to_owned(),
-            "worker-1".to_owned(),
-            PrimitiveProofResult::Tee {
-                aggregate_proposal: proposal(10),
-                proposals: vec![proposal(10)],
-            },
-        )
-        .unwrap();
-
-        let WorkerSubmitProofRequest { result: ServiceProofResult::Tee(result), .. } = submit
-        else {
-            panic!("expected TEE result");
-        };
-        assert_eq!(result.tee_kind, TeeKind::IntelTdx);
     }
 }
