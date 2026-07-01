@@ -57,7 +57,6 @@ mod tests {
     use super::*;
     use crate::{ConfigfsTdxQuoteProvider, TDX_REPORT_DATA_LEN};
 
-    #[derive(Debug)]
     struct TestQuoteProvider(Bytes);
 
     impl TdxQuoteProvider for TestQuoteProvider {
@@ -66,13 +65,9 @@ mod tests {
         }
     }
 
-    fn test_runtime() -> TdxRuntime<TestQuoteProvider> {
-        TdxRuntime::new(TestQuoteProvider(Bytes::from_static(b"fixture-tdx-quote")))
-    }
-
     #[test]
     fn runtime_returns_quote_and_timestamp() {
-        let runtime = test_runtime();
+        let runtime = TdxRuntime::new(TestQuoteProvider(Bytes::from_static(b"fixture-tdx-quote")));
         let signer_quote = runtime.signer_quote().unwrap();
 
         assert_eq!(signer_quote.quote, Bytes::from_static(b"fixture-tdx-quote"));
