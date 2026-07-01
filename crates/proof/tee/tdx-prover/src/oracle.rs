@@ -60,16 +60,6 @@ impl Oracle {
         }
         Ok(())
     }
-
-    /// Consume the oracle and return all captured preimages.
-    ///
-    /// Returns an error if other references to the internal preimage map still exist;
-    /// callers must drop all clones of the oracle before calling this.
-    pub fn into_preimages(self) -> Result<HashMap<PreimageKey, Vec<u8>>> {
-        Arc::try_unwrap(self.preimages)
-            .map(RwLock::into_inner)
-            .map_err(|_| TdxProverError::Internal("oracle still has outstanding references".into()))
-    }
 }
 
 impl fmt::Debug for Oracle {

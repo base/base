@@ -120,6 +120,14 @@ impl Default for PerChainConfig {
 }
 
 impl PerChainConfig {
+    /// Compute the canonical config hash for a rollup config.
+    #[must_use]
+    pub fn hash_from_rollup_config(cfg: &RollupConfig) -> Option<B256> {
+        let mut per_chain = Self::from_rollup_config(cfg)?;
+        per_chain.force_defaults();
+        Some(per_chain.hash())
+    }
+
     /// Create a [`PerChainConfig`] from a [`RollupConfig`].
     ///
     /// Returns `None` if the rollup config is missing `genesis.system_config`.
@@ -345,6 +353,28 @@ mod tests {
     #[test]
     fn test_hash_deterministic() {
         assert_eq!(sample_config().hash(), sample_config().hash());
+    }
+
+    #[test]
+    fn test_hash_from_rollup_config_forces_defaults() {
+        let config = PerChainConfig {
+            block_time: 10,
+            genesis: Genesis {
+                l2: BlockId { hash: B256::repeat_byte(0x22), number: 100 },
+                system_config: GenesisSystemConfig {
+                    overhead: B256::repeat_byte(0xff),
+                    ..sample_config().genesis.system_config
+                },
+                ..sample_config().genesis
+            },
+            ..sample_config()
+        };
+        let rollup_config = config.to_rollup_config();
+
+        let mut expected = PerChainConfig::from_rollup_config(&rollup_config).unwrap();
+        expected.force_defaults();
+
+        assert_eq!(PerChainConfig::hash_from_rollup_config(&rollup_config), Some(expected.hash()));
     }
 
     #[test]

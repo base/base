@@ -24,9 +24,6 @@ pub enum TdxProverError {
     /// A preimage's content does not match its hash-based key.
     #[error("preimage hash mismatch for key {0}")]
     InvalidPreimage(PreimageKey),
-    /// Internal TDX prover invariant failed.
-    #[error("internal error: {0}")]
-    Internal(String),
 }
 
 /// A specialized result type for TDX prover operations.

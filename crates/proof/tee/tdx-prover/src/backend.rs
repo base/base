@@ -12,8 +12,6 @@ use base_proof_tee_tdx_runtime::TdxRuntime;
 
 use crate::{Oracle, Result, TdxMeasurements, TdxProverError};
 
-const ZERO_L2_BLOCK_ERR: &str = "l2_block_number is 0";
-
 fn pipeline_err(err: impl ToString) -> TdxProverError {
     TdxProverError::ProofPipeline(err.to_string())
 }
@@ -30,35 +28,33 @@ impl TdxBackend {
         Self { runtime }
     }
 
-    /// Look up the config hash for a supported chain.
-    pub fn config_hash_for_chain(chain_id: u64) -> Result<B256> {
-        let cfg =
-            ChainConfig::by_chain_id(chain_id).ok_or(TdxProverError::UnsupportedChain(chain_id))?;
-        let rollup = RollupConfig::from(cfg);
-        let mut per_chain = PerChainConfig::from_rollup_config(&rollup)
-            .ok_or(TdxProverError::UnsupportedChain(chain_id))?;
-        per_chain.force_defaults();
-        Ok(per_chain.hash())
-    }
-
     /// Collects a fresh quote and returns its contract-compatible image hash.
     pub fn current_image_hash(&self) -> Result<B256> {
         let quote = self.runtime.signer_quote()?;
         Ok(TdxMeasurements::from_quote(&quote.quote)?.image_hash())
     }
+}
 
-    /// Runs the proof-client pipeline over preimages with an explicit TDX image hash.
-    pub async fn prove_with_image_hash(
-        &self,
-        preimages: impl IntoIterator<Item = (base_proof_preimage::PreimageKey, Vec<u8>)>,
-        tee_image_hash: B256,
-    ) -> Result<ProofResult> {
-        let oracle = Oracle::new(preimages)?;
-        let boot_info = BootInfo::load(&oracle).await.map_err(pipeline_err)?;
-        let config_hash = Self::config_hash_for_chain(boot_info.chain_id)?;
+#[async_trait]
+impl ProverBackend for TdxBackend {
+    type Oracle = Oracle;
+    type Error = TdxProverError;
+
+    fn create_oracle(&self) -> Oracle {
+        Oracle::empty()
+    }
+
+    async fn prove(&self, witness: Oracle) -> Result<ProofResult> {
+        let tee_image_hash = self.current_image_hash()?;
+        let boot_info = BootInfo::load(&witness).await.map_err(pipeline_err)?;
+        let cfg = ChainConfig::by_chain_id(boot_info.chain_id)
+            .ok_or(TdxProverError::UnsupportedChain(boot_info.chain_id))?;
+        let rollup = RollupConfig::from(cfg);
+        let config_hash = PerChainConfig::hash_from_rollup_config(&rollup)
+            .ok_or(TdxProverError::UnsupportedChain(boot_info.chain_id))?;
         let agreed_l2_output_root = boot_info.agreed_l2_output_root;
 
-        let prologue = Prologue::new(oracle.clone(), oracle, BaseEvmFactory::default());
+        let prologue = Prologue::new(witness.clone(), witness, BaseEvmFactory::default());
         let driver = prologue.load().await.map_err(pipeline_err)?;
         let (epilogue, block_results) =
             driver.execute_with_intermediates().await.map_err(pipeline_err)?;
@@ -82,7 +78,7 @@ impl TdxBackend {
                 prev_output_root,
                 starting_l2_block: l2_block_number
                     .checked_sub(1)
-                    .ok_or_else(|| TdxProverError::ProofPipeline(ZERO_L2_BLOCK_ERR.into()))?,
+                    .ok_or_else(|| TdxProverError::ProofPipeline("l2_block_number is 0".into()))?,
                 output_root: *output_root,
                 ending_l2_block: l2_block_number,
                 intermediate_roots: vec![],
@@ -116,9 +112,10 @@ impl TdxBackend {
                 ));
             }
             let interval = interval as usize;
-            let count = proposals.len() / interval;
-            let intermediate_roots: Vec<B256> =
-                (1..=count).map(|i| proposals[i * interval - 1].output_root).collect();
+            let intermediate_roots: Vec<B256> = proposals
+                .chunks_exact(interval)
+                .map(|chunk| chunk[interval - 1].output_root)
+                .collect();
 
             let journal = ProofJournal {
                 proposer: boot_info.proposer,
@@ -127,7 +124,7 @@ impl TdxBackend {
                 starting_l2_block: first
                     .l2_block_number
                     .checked_sub(1)
-                    .ok_or_else(|| TdxProverError::ProofPipeline(ZERO_L2_BLOCK_ERR.into()))?,
+                    .ok_or_else(|| TdxProverError::ProofPipeline("l2_block_number is 0".into()))?,
                 output_root: last.output_root,
                 ending_l2_block: last.l2_block_number,
                 intermediate_roots,
@@ -147,22 +144,6 @@ impl TdxBackend {
         };
 
         Ok(ProofResult::Tee { aggregate_proposal, proposals })
-    }
-}
-
-#[async_trait]
-impl ProverBackend for TdxBackend {
-    type Oracle = Oracle;
-    type Error = TdxProverError;
-
-    fn create_oracle(&self) -> Oracle {
-        Oracle::empty()
-    }
-
-    async fn prove(&self, witness: Oracle) -> Result<ProofResult> {
-        let image_hash = self.current_image_hash()?;
-        let preimages = witness.into_preimages()?;
-        self.prove_with_image_hash(preimages, image_hash).await
     }
 }
 

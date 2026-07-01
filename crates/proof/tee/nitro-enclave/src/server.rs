@@ -31,9 +31,8 @@ static CONFIG_HASHES: LazyLock<HashMap<u64, B256>> = LazyLock::new(|| {
     let mut map = HashMap::default();
     for cfg in ChainConfig::all() {
         let rollup = RollupConfig::from(cfg);
-        if let Some(mut per_chain) = PerChainConfig::from_rollup_config(&rollup) {
-            per_chain.force_defaults();
-            map.insert(cfg.chain_id, per_chain.hash());
+        if let Some(hash) = PerChainConfig::hash_from_rollup_config(&rollup) {
+            map.insert(cfg.chain_id, hash);
         }
     }
     map
@@ -214,9 +213,10 @@ impl Server {
                 return Err(ProposalError::InvalidInterval.into());
             }
             let interval = interval as usize;
-            let count = proposals.len() / interval;
-            let intermediate_roots: Vec<B256> =
-                (1..=count).map(|i| proposals[i * interval - 1].output_root).collect();
+            let intermediate_roots: Vec<B256> = proposals
+                .chunks_exact(interval)
+                .map(|chunk| chunk[interval - 1].output_root)
+                .collect();
 
             let journal = ProofJournal {
                 proposer: boot_info.proposer,
