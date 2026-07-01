@@ -205,7 +205,7 @@ impl BootInfo {
     /// - **Missing data**: Required boot parameters not available in oracle
     pub async fn load<O>(oracle: &O) -> Result<Self, OracleProviderError>
     where
-        O: PreimageOracleClient + Send,
+        O: PreimageOracleClient + Send + Sync,
     {
         let mut l1_head: B256 = B256::ZERO;
         oracle

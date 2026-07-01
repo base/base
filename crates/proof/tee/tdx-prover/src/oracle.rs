@@ -27,15 +27,6 @@ impl PreimageOracleClient for Oracle {
             .cloned()
             .ok_or(PreimageOracleError::KeyNotFound)
     }
-
-    async fn get_exact(&self, key: PreimageKey, buf: &mut [u8]) -> PreimageOracleResult<()> {
-        let value = self.get(key).await?;
-        if value.len() != buf.len() {
-            return Err(PreimageOracleError::BufferLengthMismatch(buf.len(), value.len()));
-        }
-        buf.copy_from_slice(&value);
-        Ok(())
-    }
 }
 
 #[async_trait]
@@ -50,11 +41,6 @@ impl WitnessOracle for Oracle {
         self.preimages.write().expect("oracle lock poisoned").insert(key, value.to_vec());
         Ok(())
     }
-
-    fn finalize(&self) -> WitnessOracleResult<()> {
-        Ok(())
-    }
-
     fn preimage_count(&self) -> WitnessOracleResult<usize> {
         Ok(self.preimages.read().expect("oracle lock poisoned").len())
     }
