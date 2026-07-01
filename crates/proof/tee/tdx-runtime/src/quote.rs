@@ -79,8 +79,7 @@ impl TdxQuoteProvider for ConfigfsTdxQuoteProvider {
             })
         };
 
-        let expected_generation = read_generation()?;
-        let expected_generation = expected_generation.checked_add(1).ok_or_else(|| {
+        let expected_generation = read_generation()?.checked_add(1).ok_or_else(|| {
             TdxRuntimeError::QuoteGeneration(
                 "configfs generation counter overflowed while collecting a quote".into(),
             )
@@ -113,12 +112,12 @@ impl TdxQuoteProvider for ConfigfsTdxQuoteProvider {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        io::Write,
-        path::{Path, PathBuf},
-        process::Command,
-        thread::{self, JoinHandle},
-    };
+        use std::{
+            io::Write,
+            path::Path,
+            process::Command,
+            thread::{self, JoinHandle},
+        };
 
     use alloy_primitives::Bytes;
     use tempfile::TempDir;
@@ -126,19 +125,10 @@ mod tests {
     use super::*;
     use crate::TDX_REPORT_DATA_LEN;
 
-    fn create_generation_fifo(report_dir: &Path) -> PathBuf {
+    fn spawn_generation_writer(report_dir: &Path, generations: [u64; 2]) -> JoinHandle<()> {
         let generation_path = report_dir.join("generation");
         let status = Command::new("mkfifo").arg(&generation_path).status().unwrap();
         assert!(status.success());
-        generation_path
-    }
-
-    fn spawn_generation_writer(
-        generation_path: &Path,
-        generations: impl IntoIterator<Item = u64>,
-    ) -> JoinHandle<()> {
-        let generation_path = generation_path.to_path_buf();
-        let generations = generations.into_iter().collect::<Vec<_>>();
 
         thread::spawn(move || {
             for generation in generations {
@@ -165,8 +155,7 @@ mod tests {
         fs::create_dir_all(&report_dir).unwrap();
         fs::write(report_dir.join("provider"), TDX_CONFIGFS_PROVIDER_NAME).unwrap();
         fs::write(report_dir.join("outblob"), b"fixture-quote").unwrap();
-        let generation_path = create_generation_fifo(&report_dir);
-        let generation_writer = spawn_generation_writer(&generation_path, [7, 8]);
+        let generation_writer = spawn_generation_writer(&report_dir, [7, 8]);
 
         let provider = ConfigfsTdxQuoteProvider::with_report_dir(&report_dir);
         let quote = provider.quote(&[0x11; TDX_REPORT_DATA_LEN]).unwrap();
@@ -183,8 +172,7 @@ mod tests {
         fs::create_dir_all(&report_dir).unwrap();
         fs::write(report_dir.join("provider"), TDX_CONFIGFS_PROVIDER_NAME).unwrap();
         fs::write(report_dir.join("outblob"), b"fixture-quote").unwrap();
-        let generation_path = create_generation_fifo(&report_dir);
-        let generation_writer = spawn_generation_writer(&generation_path, [7, 9]);
+        let generation_writer = spawn_generation_writer(&report_dir, [7, 9]);
 
         let provider = ConfigfsTdxQuoteProvider::with_report_dir(&report_dir);
         assert!(matches!(
