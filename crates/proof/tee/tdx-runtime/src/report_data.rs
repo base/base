@@ -6,7 +6,7 @@ use crate::{Result, TdxRuntimeError};
 pub const TDX_REPORT_DATA_LEN: usize = 64;
 
 /// Domain separator used in the app-specific report-data suffix.
-pub const TDX_REPORT_DATA_SUFFIX_CONTEXT: &[u8] = b"base-tdx-tee-prover-v1";
+const TDX_REPORT_DATA_SUFFIX_CONTEXT: &[u8] = b"base-tdx-tee-prover-v1";
 
 /// Helper for constructing TDX `TDREPORT.REPORTDATA`.
 #[derive(Debug)]
@@ -35,19 +35,7 @@ impl TdxReportData {
 
     /// Computes the timestamp-bound app-specific suffix.
     pub fn timestamped_app_binding(quote_timestamp_millis: u64) -> B256 {
-        const CONTEXT_LEN: usize = TDX_REPORT_DATA_SUFFIX_CONTEXT.len();
-        let mut buf = [0u8; CONTEXT_LEN + 8];
-        buf[..CONTEXT_LEN].copy_from_slice(TDX_REPORT_DATA_SUFFIX_CONTEXT);
-        buf[CONTEXT_LEN..].copy_from_slice(&quote_timestamp_millis.to_le_bytes());
-        keccak256(buf)
-    }
-
-    /// Validates a runtime-supplied report-data buffer.
-    pub const fn validate(report_data: &[u8]) -> Result<()> {
-        if report_data.len() != TDX_REPORT_DATA_LEN {
-            return Err(TdxRuntimeError::InvalidReportDataLength(report_data.len()));
-        }
-        Ok(())
+        keccak256([TDX_REPORT_DATA_SUFFIX_CONTEXT, &quote_timestamp_millis.to_le_bytes()].concat())
     }
 }
 
@@ -71,18 +59,6 @@ mod tests {
             &report_data[32..],
             TdxReportData::timestamped_app_binding(TIMESTAMP_MILLIS).as_slice()
         );
-    }
-
-    #[test]
-    fn report_data_rejects_invalid_lengths() {
-        assert!(matches!(
-            TdxReportData::validate(&[0u8; 63]),
-            Err(TdxRuntimeError::InvalidReportDataLength(63))
-        ));
-        assert!(matches!(
-            TdxReportData::validate(&[0u8; 65]),
-            Err(TdxRuntimeError::InvalidReportDataLength(65))
-        ));
     }
 
     #[test]

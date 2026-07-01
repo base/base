@@ -11,9 +11,6 @@ pub enum TdxRuntimeError {
     /// Failed to sign a proof journal.
     #[error("TDX signer failed to sign data: {0}")]
     Signing(String),
-    /// TDX report data must be exactly 64 bytes.
-    #[error("TDX report data must be exactly 64 bytes, got {0}")]
-    InvalidReportDataLength(usize),
     /// The TSM/configfs provider reported a non-TDX backend.
     #[error("TSM/configfs provider is not a TDX guest provider: {0}")]
     UnexpectedConfigfsProvider(String),
