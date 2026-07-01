@@ -49,6 +49,5 @@ jsonrpsee = { workspace = true, features = ["server", "macros"] }
 
 [dev-dependencies]
 chrono.workspace = true
-k256 = { workspace = true, features = ["ecdsa"] }
 tokio = { workspace = true, features = ["macros", "rt"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }

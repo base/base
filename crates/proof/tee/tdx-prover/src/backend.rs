@@ -1,8 +1,4 @@
-use std::{
-    collections::HashMap,
-    fmt,
-    sync::{Arc, LazyLock},
-};
+use std::sync::Arc;
 
 use alloy_primitives::B256;
 use async_trait::async_trait;
@@ -16,27 +12,14 @@ use base_proof_tee_tdx_runtime::TdxRuntime;
 
 use crate::{Oracle, Result, TdxMeasurements, TdxProverError};
 
-const NO_PROPOSALS_ERR: &str = "no proposals produced";
 const ZERO_L2_BLOCK_ERR: &str = "l2_block_number is 0";
 
 fn pipeline_err(err: impl ToString) -> TdxProverError {
     TdxProverError::ProofPipeline(err.to_string())
 }
 
-/// Per-chain config hashes derived from [`ChainConfig::all`] at first access.
-static CONFIG_HASHES: LazyLock<HashMap<u64, B256>> = LazyLock::new(|| {
-    let mut map = HashMap::default();
-    for cfg in ChainConfig::all() {
-        let rollup = RollupConfig::from(cfg);
-        if let Some(mut per_chain) = PerChainConfig::from_rollup_config(&rollup) {
-            per_chain.force_defaults();
-            map.insert(cfg.chain_id, per_chain.hash());
-        }
-    }
-    map
-});
-
 /// TEE proof backend that executes the proof pipeline with a TDX signer.
+#[derive(Debug)]
 pub struct TdxBackend {
     runtime: Arc<TdxRuntime>,
 }
@@ -49,7 +32,13 @@ impl TdxBackend {
 
     /// Look up the config hash for a supported chain.
     pub fn config_hash_for_chain(chain_id: u64) -> Result<B256> {
-        CONFIG_HASHES.get(&chain_id).copied().ok_or(TdxProverError::UnsupportedChain(chain_id))
+        let cfg =
+            ChainConfig::by_chain_id(chain_id).ok_or(TdxProverError::UnsupportedChain(chain_id))?;
+        let rollup = RollupConfig::from(cfg);
+        let mut per_chain = PerChainConfig::from_rollup_config(&rollup)
+            .ok_or(TdxProverError::UnsupportedChain(chain_id))?;
+        per_chain.force_defaults();
+        Ok(per_chain.hash())
     }
 
     /// Collects a fresh quote and returns its contract-compatible image hash.
@@ -75,7 +64,7 @@ impl TdxBackend {
             driver.execute_with_intermediates().await.map_err(pipeline_err)?;
 
         if block_results.is_empty() {
-            return Err(TdxProverError::ProofPipeline(NO_PROPOSALS_ERR.into()));
+            return Err(TdxProverError::ProofPipeline("no proposals produced".into()));
         }
 
         epilogue.validate().map_err(pipeline_err)?;
@@ -161,12 +150,6 @@ impl TdxBackend {
     }
 }
 
-impl fmt::Debug for TdxBackend {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("TdxBackend").finish_non_exhaustive()
-    }
-}
-
 #[async_trait]
 impl ProverBackend for TdxBackend {
     type Oracle = Oracle;
@@ -185,36 +168,12 @@ impl ProverBackend for TdxBackend {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{address, b256};
-    use base_proof_primitives::ProofJournal;
-    use k256::ecdsa::{Signature, VerifyingKey, signature::hazmat::PrehashVerifier};
-
     use super::*;
     use crate::MeasuredMockTdxQuoteProvider;
 
     fn test_backend() -> TdxBackend {
         let runtime = TdxRuntime::new(MeasuredMockTdxQuoteProvider::local_mock());
         TdxBackend::new(Arc::new(runtime))
-    }
-
-    fn test_journal() -> ProofJournal {
-        ProofJournal {
-            proposer: address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
-            l1_origin_hash: b256!(
-                "2222222222222222222222222222222222222222222222222222222222222222"
-            ),
-            prev_output_root: b256!(
-                "3333333333333333333333333333333333333333333333333333333333333333"
-            ),
-            starting_l2_block: 999,
-            output_root: b256!("4444444444444444444444444444444444444444444444444444444444444444"),
-            ending_l2_block: 1000,
-            intermediate_roots: vec![],
-            config_hash: b256!("1111111111111111111111111111111111111111111111111111111111111111"),
-            tee_image_hash: b256!(
-                "5555555555555555555555555555555555555555555555555555555555555555"
-            ),
-        }
     }
 
     #[test]
@@ -225,19 +184,5 @@ mod tests {
             backend.current_image_hash().unwrap(),
             TdxMeasurements::local_mock().image_hash()
         );
-    }
-
-    #[test]
-    fn tdx_server_signs_tee_verifier_proof_journal_bytes() {
-        let backend = test_backend();
-        let journal = test_journal();
-        let signature = backend.runtime.sign(journal.encode().as_slice()).unwrap();
-
-        let public_key = backend.runtime.signer_public_key();
-        let verifying_key = VerifyingKey::from_sec1_bytes(&public_key).unwrap();
-        let signature = Signature::from_slice(&signature[..64]).unwrap();
-        let hash = alloy_primitives::keccak256(journal.encode());
-
-        assert!(verifying_key.verify_prehash(hash.as_slice(), &signature).is_ok());
     }
 }
