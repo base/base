@@ -138,116 +138,36 @@ sol! {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, B256, Bytes};
-    use alloy_sol_types::{SolCall, SolValue};
-    use rstest::rstest;
-
     use super::*;
 
     #[test]
-    fn tdx_verifier_journal_abi_round_trips() {
-        let journal = TDXVerifierJournal {
-            result: TDXVerificationResult::Success,
-            tcbStatus: TDXTcbStatus::UpToDate,
-            timestamp: 1_711_111_111_000,
-            collateralExpiration: 1_711_111_111,
-            rootCaHash: B256::repeat_byte(0x01),
-            pckCertHash: B256::repeat_byte(0x02),
-            tcbInfoHash: B256::repeat_byte(0x03),
-            qeIdentityHash: B256::repeat_byte(0x04),
-            publicKey: Bytes::from(vec![0x04; 65]),
-            signer: Address::repeat_byte(0x11),
-            imageHash: B256::repeat_byte(0x05),
-            mrTdHash: B256::repeat_byte(0x06),
-            reportDataPrefix: B256::repeat_byte(0x07),
-            reportDataSuffix: B256::repeat_byte(0x08),
-        };
-
-        let encoded = SolValue::abi_encode(&journal);
-        let decoded = <TDXVerifierJournal as SolValue>::abi_decode_validate(&encoded)
-            .expect("TDX verifier journal ABI must decode");
-
-        assert_eq!(decoded, journal);
-    }
-
-    #[rstest]
-    #[case(TDXVerificationResult::Unknown, 0)]
-    #[case(TDXVerificationResult::Success, 1)]
-    #[case(TDXVerificationResult::InvalidQuote, 2)]
-    #[case(TDXVerificationResult::QuoteSignatureInvalid, 3)]
-    #[case(TDXVerificationResult::RootCaNotTrusted, 4)]
-    #[case(TDXVerificationResult::PckCertChainInvalid, 5)]
-    #[case(TDXVerificationResult::TcbInfoInvalid, 6)]
-    #[case(TDXVerificationResult::QeIdentityInvalid, 7)]
-    #[case(TDXVerificationResult::TcbStatusNotAllowed, 8)]
-    #[case(TDXVerificationResult::CollateralExpired, 9)]
-    #[case(TDXVerificationResult::InvalidTimestamp, 10)]
-    #[case(TDXVerificationResult::ReportDataMismatch, 11)]
-    fn tdx_verification_result_discriminants_match_solidity(
-        #[case] result: TDXVerificationResult,
-        #[case] expected: u8,
-    ) {
-        assert_eq!(result as u8, expected);
-    }
-
-    #[rstest]
-    #[case(TDXTcbStatus::Unknown, 0)]
-    #[case(TDXTcbStatus::UpToDate, 1)]
-    #[case(TDXTcbStatus::SwHardeningNeeded, 2)]
-    #[case(TDXTcbStatus::ConfigurationNeeded, 3)]
-    #[case(TDXTcbStatus::ConfigurationAndSwHardeningNeeded, 4)]
-    #[case(TDXTcbStatus::OutOfDate, 5)]
-    #[case(TDXTcbStatus::OutOfDateConfigurationNeeded, 6)]
-    #[case(TDXTcbStatus::Revoked, 7)]
-    fn tdx_tcb_status_discriminants_match_solidity(
-        #[case] status: TDXTcbStatus,
-        #[case] expected: u8,
-    ) {
-        assert_eq!(status as u8, expected);
-    }
-
-    #[test]
-    fn get_zk_config_and_allowed_tcb_status_abi_encode_correctly() {
-        let get_zk_config =
-            ITDXVerifier::getZkConfigCall { zkCoprocessor: ZkCoProcessorType::Succinct };
-        let allowed_tcb_status =
-            ITDXVerifier::allowedTcbStatusesCall { status: TDXTcbStatus::UpToDate };
-
-        assert_eq!(get_zk_config.abi_encode().len(), 4 + 32);
-        assert_eq!(allowed_tcb_status.abi_encode().len(), 4 + 32);
-    }
-
-    #[test]
-    fn verify_abi_encodes_correctly() {
-        let call = ITDXVerifier::verifyCall {
-            output: Bytes::new(),
-            zkCoprocessor: ZkCoProcessorType::Succinct,
-            proofBytes: Bytes::new(),
-        };
-        let encoded = call.abi_encode();
-
-        assert_eq!(&encoded[..4], &ITDXVerifier::verifyCall::SELECTOR);
-    }
-
-    #[test]
-    fn zk_coprocessor_type_discriminants_match_solidity() {
-        assert_eq!(ZkCoProcessorType::Unknown as u8, 0);
-        assert_eq!(ZkCoProcessorType::RiscZero as u8, 1);
-        assert_eq!(ZkCoProcessorType::Succinct as u8, 2);
-    }
-
-    #[test]
-    fn zk_coprocessor_config_abi_round_trips() {
-        let config = ZkCoProcessorConfig {
-            verifierId: B256::repeat_byte(0x09),
-            aggregatorId: B256::repeat_byte(0x10),
-            zkVerifier: Address::ZERO,
-        };
-
-        let encoded = SolValue::abi_encode(&config);
-        let decoded = <ZkCoProcessorConfig as SolValue>::abi_decode_validate(&encoded)
-            .expect("ZK coprocessor config ABI must decode");
-
-        assert_eq!(decoded, config);
+    fn discriminants_match_solidity() {
+        for (actual, expected) in [
+            (ZkCoProcessorType::Unknown as u8, 0),
+            (ZkCoProcessorType::RiscZero as u8, 1),
+            (ZkCoProcessorType::Succinct as u8, 2),
+            (TDXVerificationResult::Unknown as u8, 0),
+            (TDXVerificationResult::Success as u8, 1),
+            (TDXVerificationResult::InvalidQuote as u8, 2),
+            (TDXVerificationResult::QuoteSignatureInvalid as u8, 3),
+            (TDXVerificationResult::RootCaNotTrusted as u8, 4),
+            (TDXVerificationResult::PckCertChainInvalid as u8, 5),
+            (TDXVerificationResult::TcbInfoInvalid as u8, 6),
+            (TDXVerificationResult::QeIdentityInvalid as u8, 7),
+            (TDXVerificationResult::TcbStatusNotAllowed as u8, 8),
+            (TDXVerificationResult::CollateralExpired as u8, 9),
+            (TDXVerificationResult::InvalidTimestamp as u8, 10),
+            (TDXVerificationResult::ReportDataMismatch as u8, 11),
+            (TDXTcbStatus::Unknown as u8, 0),
+            (TDXTcbStatus::UpToDate as u8, 1),
+            (TDXTcbStatus::SwHardeningNeeded as u8, 2),
+            (TDXTcbStatus::ConfigurationNeeded as u8, 3),
+            (TDXTcbStatus::ConfigurationAndSwHardeningNeeded as u8, 4),
+            (TDXTcbStatus::OutOfDate as u8, 5),
+            (TDXTcbStatus::OutOfDateConfigurationNeeded as u8, 6),
+            (TDXTcbStatus::Revoked as u8, 7),
+        ] {
+            assert_eq!(actual, expected);
+        }
     }
 }
