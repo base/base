@@ -8,7 +8,7 @@
 use alloy_sol_types::sol;
 
 sol! {
-    #![sol(all_derives)]
+    #![sol(extra_derives(Debug))]
 
     /// Statuses emitted by the TDX quote/collateral verifier.
     enum TDXVerificationResult {
