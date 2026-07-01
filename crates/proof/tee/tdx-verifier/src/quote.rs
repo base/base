@@ -5,104 +5,78 @@ use sha2::{Digest, Sha256};
 
 use crate::{Result, TdxVerifierError, collateral::CollateralVerifier};
 
-/// Length of a TDX quote v4/v5 header.
-pub const TDX_QUOTE_HEADER_LEN: usize = 48;
+pub(crate) const TDX_QUOTE_HEADER_LEN: usize = 48;
 
-/// Quote header TEE type for Intel TDX quotes.
-pub const TDX_TEE_TYPE: u32 = 0x81;
+pub(crate) const TDX_TEE_TYPE: u32 = 0x81;
 
-/// Quote header attestation key type for ECDSA-P256 quotes.
-pub const ECDSA_P256_ATTESTATION_KEY_TYPE: u16 = 2;
+pub(crate) const ECDSA_P256_ATTESTATION_KEY_TYPE: u16 = 2;
 
-/// Length of a TDX `TDREPORT` report body in quote v4/v5.
-pub const TDX_REPORT_BODY_LEN: usize = 584;
+pub(crate) const TDX_REPORT_BODY_LEN: usize = 584;
 
-/// Offset of MRTD in the TDX report body.
-pub const MRTD_OFFSET: usize = 136;
+pub(crate) const MRTD_OFFSET: usize = 136;
 
-/// Offset of MRSIGNERSEAM in the TDX report body.
-pub const MRSIGNERSEAM_OFFSET: usize = 64;
+pub(crate) const MRSIGNERSEAM_OFFSET: usize = 64;
 
-/// Offset of SEAMATTRIBUTES in the TDX report body.
-pub const SEAM_ATTRIBUTES_OFFSET: usize = 112;
+pub(crate) const SEAM_ATTRIBUTES_OFFSET: usize = 112;
 
-/// Offset of RTMR0 in the TDX report body.
-pub const RTMR_OFFSET: usize = 328;
+pub(crate) const RTMR_OFFSET: usize = 328;
 
-/// Offset of report data in the TDX report body.
-pub const REPORT_DATA_OFFSET: usize = 520;
+pub(crate) const REPORT_DATA_OFFSET: usize = 520;
 
 /// Length of TDX MRTD and RTMR measurements.
 pub const TDX_MEASUREMENT_LEN: usize = 48;
 
-/// Length of `TDREPORT.SEAMATTRIBUTES`.
-pub const TDX_SEAM_ATTRIBUTES_LEN: usize = 8;
+pub(crate) const TDX_SEAM_ATTRIBUTES_LEN: usize = 8;
 
 /// Length of `TDREPORT.REPORTDATA`.
 pub const TDX_REPORT_DATA_LEN: usize = 64;
 
-/// Length of `TDREPORT.TEE_TCB_SVN`.
-pub const TDX_TEE_TCB_SVN_LEN: usize = 16;
+pub(crate) const TDX_TEE_TCB_SVN_LEN: usize = 16;
 
-/// Length of an ECDSA P-256 signature in `r || s` form.
-pub const ECDSA_P256_SIGNATURE_LEN: usize = 64;
+pub(crate) const ECDSA_P256_SIGNATURE_LEN: usize = 64;
 
-/// Length of an ECDSA P-256 public key in `x || y` form.
-pub const ECDSA_P256_PUBLIC_KEY_BODY_LEN: usize = 64;
+pub(crate) const ECDSA_P256_PUBLIC_KEY_BODY_LEN: usize = 64;
 
-/// Length of the QE report embedded in ECDSA quote authentication data.
-pub const QE_REPORT_LEN: usize = 384;
+pub(crate) const QE_REPORT_LEN: usize = 384;
 
-/// Offset of QE report `MISCSELECT`.
-pub const QE_REPORT_MISCSELECT_OFFSET: usize = 16;
+pub(crate) const QE_REPORT_MISCSELECT_OFFSET: usize = 16;
 
-/// Length of QE report `MISCSELECT`.
-pub const QE_REPORT_MISCSELECT_LEN: usize = 4;
+pub(crate) const QE_REPORT_MISCSELECT_LEN: usize = 4;
 
-/// Offset of QE report `ATTRIBUTES`.
-pub const QE_REPORT_ATTRIBUTES_OFFSET: usize = 48;
+pub(crate) const QE_REPORT_ATTRIBUTES_OFFSET: usize = 48;
 
-/// Length of QE report `ATTRIBUTES`.
-pub const QE_REPORT_ATTRIBUTES_LEN: usize = 16;
+pub(crate) const QE_REPORT_ATTRIBUTES_LEN: usize = 16;
 
-/// Offset of QE report `MRSIGNER`.
-pub const QE_REPORT_MRSIGNER_OFFSET: usize = 128;
+pub(crate) const QE_REPORT_MRSIGNER_OFFSET: usize = 128;
 
-/// Length of QE report `MRSIGNER`.
-pub const QE_REPORT_MRSIGNER_LEN: usize = 32;
+pub(crate) const QE_REPORT_MRSIGNER_LEN: usize = 32;
 
-/// Offset of QE report `ISVPRODID`.
-pub const QE_REPORT_ISV_PROD_ID_OFFSET: usize = 256;
+pub(crate) const QE_REPORT_ISV_PROD_ID_OFFSET: usize = 256;
 
-/// Offset of QE report `ISVSVN`.
-pub const QE_REPORT_ISV_SVN_OFFSET: usize = 258;
+pub(crate) const QE_REPORT_ISV_SVN_OFFSET: usize = 258;
 
-/// Offset of QE report data inside the QE report body.
-pub const QE_REPORT_DATA_OFFSET: usize = 320;
+pub(crate) const QE_REPORT_DATA_OFFSET: usize = 320;
 
-/// Length of the SHA-256 hash stored in QE report data.
-pub const QE_REPORT_DATA_HASH_LEN: usize = 32;
+pub(crate) const QE_REPORT_DATA_HASH_LEN: usize = 32;
 
-/// Length of the QE authentication data size prefix.
-pub const QE_AUTHENTICATION_DATA_SIZE_LEN: usize = 2;
+pub(crate) const QE_AUTHENTICATION_DATA_SIZE_LEN: usize = 2;
 
-/// Length of the quote certification data header.
-pub const CERTIFICATION_DATA_HEADER_LEN: usize = 6;
+pub(crate) const CERTIFICATION_DATA_HEADER_LEN: usize = 6;
 
-/// Certification data type carrying ECDSA signature auxiliary data.
-pub const ECDSA_SIG_AUX_DATA_CERTIFICATION_DATA_TYPE: u16 = 6;
+pub(crate) const ECDSA_SIG_AUX_DATA_CERTIFICATION_DATA_TYPE: u16 = 6;
 
-/// Minimum signature-data bytes consumed by this verifier.
-pub const MIN_SIGNATURE_DATA_LEN: usize = ECDSA_P256_SIGNATURE_LEN
-    + ECDSA_P256_PUBLIC_KEY_BODY_LEN
-    + CERTIFICATION_DATA_HEADER_LEN
-    + QE_REPORT_LEN
+const SIGNATURE_DATA_LEN_PREFIX_LEN: usize = 4;
+const MIN_AUX_DATA_LEN: usize = QE_REPORT_LEN
     + ECDSA_P256_SIGNATURE_LEN
     + QE_AUTHENTICATION_DATA_SIZE_LEN
     + CERTIFICATION_DATA_HEADER_LEN;
+pub(crate) const MIN_SIGNATURE_DATA_LEN: usize = ECDSA_P256_SIGNATURE_LEN
+    + ECDSA_P256_PUBLIC_KEY_BODY_LEN
+    + CERTIFICATION_DATA_HEADER_LEN
+    + MIN_AUX_DATA_LEN;
 
 /// Parsed TDX quote fields required by the contract journal.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct ParsedTdxQuote {
     /// Raw bytes signed by the quote attestation key.
     pub signed_message: Bytes,
@@ -134,6 +108,10 @@ pub struct ParsedTdxQuote {
     pub qe_report_signature: Bytes,
     /// QE authentication data bound into the QE report data hash.
     pub qe_authentication_data: Bytes,
+    /// Certification data type embedded after QE authentication data.
+    pub certification_data_type: u16,
+    /// Quote certification data embedded after QE authentication data.
+    pub certification_data: Bytes,
 }
 
 impl ParsedTdxQuote {
@@ -155,7 +133,8 @@ pub struct TdxQuote;
 impl TdxQuote {
     /// Parses the TDX quote bytes needed by the offchain verifier.
     pub fn parse(raw_quote: &[u8]) -> Result<ParsedTdxQuote> {
-        let minimum_len = TDX_QUOTE_HEADER_LEN + TDX_REPORT_BODY_LEN + 4;
+        let minimum_len =
+            TDX_QUOTE_HEADER_LEN + TDX_REPORT_BODY_LEN + SIGNATURE_DATA_LEN_PREFIX_LEN;
         if raw_quote.len() < minimum_len {
             return Err(TdxVerifierError::InvalidQuote(format!(
                 "quote length {} is shorter than minimum {minimum_len}",
@@ -186,7 +165,7 @@ impl TdxQuote {
 
         let sig_len_offset = report_end;
         let sig_len = u32::from_le_bytes(Self::read_array(raw_quote, sig_len_offset)?) as usize;
-        let sig_data_start = sig_len_offset + 4;
+        let sig_data_start = sig_len_offset + SIGNATURE_DATA_LEN_PREFIX_LEN;
         let sig_data_end = sig_data_start.checked_add(sig_len).ok_or_else(|| {
             TdxVerifierError::InvalidQuote("signature data length overflows".into())
         })?;
@@ -204,59 +183,68 @@ impl TdxQuote {
             )));
         }
 
-        let attestation_key_start = ECDSA_P256_SIGNATURE_LEN;
-        let attestation_key_end = attestation_key_start + ECDSA_P256_PUBLIC_KEY_BODY_LEN;
-        let aux_data_type_offset = attestation_key_end;
-        let aux_data_size_offset = aux_data_type_offset + 2;
-        let aux_data_start = aux_data_type_offset + CERTIFICATION_DATA_HEADER_LEN;
-        let aux_data_type = u16::from_le_bytes(Self::read_array(sig_data, aux_data_type_offset)?);
+        let (quote_signature, sig_data) =
+            sig_data.split_at_checked(ECDSA_P256_SIGNATURE_LEN).ok_or_else(|| {
+                TdxVerifierError::InvalidQuote("signature data is missing quote signature".into())
+            })?;
+        let (attestation_key, sig_data) =
+            sig_data.split_at_checked(ECDSA_P256_PUBLIC_KEY_BODY_LEN).ok_or_else(|| {
+                TdxVerifierError::InvalidQuote("signature data is missing attestation key".into())
+            })?;
+        let (aux_header, aux_data) =
+            sig_data.split_at_checked(CERTIFICATION_DATA_HEADER_LEN).ok_or_else(|| {
+                TdxVerifierError::InvalidQuote(
+                    "signature data is missing auxiliary data header".into(),
+                )
+            })?;
+        let aux_data_type = u16::from_le_bytes(Self::read_array(aux_header, 0)?);
         if aux_data_type != ECDSA_SIG_AUX_DATA_CERTIFICATION_DATA_TYPE {
             return Err(TdxVerifierError::InvalidQuote(format!(
                 "unsupported ECDSA signature auxiliary data type {aux_data_type}"
             )));
         }
-        let aux_data_len =
-            u32::from_le_bytes(Self::read_array(sig_data, aux_data_size_offset)?) as usize;
-        let aux_data_end = aux_data_start.checked_add(aux_data_len).ok_or_else(|| {
-            TdxVerifierError::InvalidQuote("ECDSA signature auxiliary data length overflows".into())
-        })?;
-        if aux_data_end != sig_data.len() {
+        let aux_data_len = u32::from_le_bytes(Self::read_array(aux_header, 2)?) as usize;
+        if aux_data.len() != aux_data_len {
             return Err(TdxVerifierError::InvalidQuote(
                 "ECDSA signature auxiliary data length does not match signature data length".into(),
             ));
         }
-        let aux_data = &sig_data[aux_data_start..aux_data_end];
 
-        let qe_report_end = QE_REPORT_LEN;
-        let qe_report_signature_start = qe_report_end;
-        let qe_report_signature_end = qe_report_signature_start + ECDSA_P256_SIGNATURE_LEN;
-        let qe_authentication_data_size_offset = qe_report_signature_end;
-        let qe_authentication_data_len =
-            u16::from_le_bytes(Self::read_array(aux_data, qe_authentication_data_size_offset)?)
-                as usize;
-        let qe_authentication_data_start =
-            qe_authentication_data_size_offset + QE_AUTHENTICATION_DATA_SIZE_LEN;
-        let qe_authentication_data_end =
-            qe_authentication_data_start.checked_add(qe_authentication_data_len).ok_or_else(
-                || TdxVerifierError::InvalidQuote("QE authentication data length overflows".into()),
-            )?;
-        let certification_data_type_offset = qe_authentication_data_end;
-        let certification_data_size_offset = certification_data_type_offset + 2;
-        let certification_data_start =
-            certification_data_type_offset + CERTIFICATION_DATA_HEADER_LEN;
-        if certification_data_start > aux_data.len() {
+        let (qe_report, aux_data) = aux_data.split_at_checked(QE_REPORT_LEN).ok_or_else(|| {
+            TdxVerifierError::InvalidQuote("signature data is missing QE report".into())
+        })?;
+        let Some((qe_report_signature, aux_data)) =
+            aux_data.split_at_checked(ECDSA_P256_SIGNATURE_LEN)
+        else {
             return Err(TdxVerifierError::InvalidQuote(
-                "signature data is missing certification data header".into(),
+                "signature data is missing QE report signature".into(),
             ));
-        }
-        let certification_data_len =
-            u32::from_le_bytes(Self::read_array(aux_data, certification_data_size_offset)?)
-                as usize;
-        let certification_data_end =
-            certification_data_start.checked_add(certification_data_len).ok_or_else(|| {
-                TdxVerifierError::InvalidQuote("certification data length overflows".into())
+        };
+        let (qe_authentication_data_len, aux_data) =
+            aux_data.split_at_checked(QE_AUTHENTICATION_DATA_SIZE_LEN).ok_or_else(|| {
+                TdxVerifierError::InvalidQuote(
+                    "signature data is missing QE authentication data length".into(),
+                )
             })?;
-        if certification_data_end != aux_data.len() {
+        let qe_authentication_data_len =
+            u16::from_le_bytes(Self::read_array(qe_authentication_data_len, 0)?) as usize;
+        let (qe_authentication_data, aux_data) =
+            aux_data.split_at_checked(qe_authentication_data_len).ok_or_else(|| {
+                TdxVerifierError::InvalidQuote(
+                    "signature data is missing QE authentication data".into(),
+                )
+            })?;
+        let (certification_data_header, certification_data) =
+            aux_data.split_at_checked(CERTIFICATION_DATA_HEADER_LEN).ok_or_else(|| {
+                TdxVerifierError::InvalidQuote(
+                    "signature data is missing certification data header".into(),
+                )
+            })?;
+        let certification_data_type =
+            u16::from_le_bytes(Self::read_array(certification_data_header, 0)?);
+        let certification_data_len =
+            u32::from_le_bytes(Self::read_array(certification_data_header, 2)?) as usize;
+        if certification_data.len() != certification_data_len {
             return Err(TdxVerifierError::InvalidQuote(
                 "certification data length does not match ECDSA signature auxiliary data length"
                     .into(),
@@ -274,18 +262,66 @@ impl TdxQuote {
             rtmr2: Self::read_array(report_body, RTMR_OFFSET + (TDX_MEASUREMENT_LEN * 2))?,
             rtmr3: Self::read_array(report_body, RTMR_OFFSET + (TDX_MEASUREMENT_LEN * 3))?,
             report_data: Self::read_array(report_body, REPORT_DATA_OFFSET)?,
-            quote_signature: Bytes::copy_from_slice(&sig_data[..ECDSA_P256_SIGNATURE_LEN]),
-            attestation_public_key: Bytes::from(
-                [&[0x04][..], &sig_data[attestation_key_start..attestation_key_end]].concat(),
-            ),
-            qe_report: Bytes::copy_from_slice(&aux_data[..qe_report_end]),
-            qe_report_signature: Bytes::copy_from_slice(
-                &aux_data[qe_report_signature_start..qe_report_signature_end],
-            ),
-            qe_authentication_data: Bytes::copy_from_slice(
-                &aux_data[qe_authentication_data_start..qe_authentication_data_end],
-            ),
+            quote_signature: Bytes::copy_from_slice(quote_signature),
+            attestation_public_key: Bytes::from([&[0x04][..], attestation_key].concat()),
+            qe_report: Bytes::copy_from_slice(qe_report),
+            qe_report_signature: Bytes::copy_from_slice(qe_report_signature),
+            qe_authentication_data: Bytes::copy_from_slice(qe_authentication_data),
+            certification_data_type,
+            certification_data: Bytes::copy_from_slice(certification_data),
         })
+    }
+
+    /// Builds a minimal parseable quote for local mock providers.
+    pub fn build_mock_quote(
+        mrtd: &[u8; TDX_MEASUREMENT_LEN],
+        rtmrs: &[[u8; TDX_MEASUREMENT_LEN]; 4],
+        report_data: &[u8; TDX_REPORT_DATA_LEN],
+    ) -> Bytes {
+        let mut quote = vec![
+            0u8;
+            TDX_QUOTE_HEADER_LEN
+                + TDX_REPORT_BODY_LEN
+                + SIGNATURE_DATA_LEN_PREFIX_LEN
+                + MIN_SIGNATURE_DATA_LEN
+        ];
+
+        quote[0..2].copy_from_slice(&4u16.to_le_bytes());
+        quote[2..4].copy_from_slice(&ECDSA_P256_ATTESTATION_KEY_TYPE.to_le_bytes());
+        quote[4..8].copy_from_slice(&TDX_TEE_TYPE.to_le_bytes());
+
+        let report_start = TDX_QUOTE_HEADER_LEN;
+        let report = &mut quote[report_start..report_start + TDX_REPORT_BODY_LEN];
+        report[MRTD_OFFSET..MRTD_OFFSET + TDX_MEASUREMENT_LEN].copy_from_slice(mrtd);
+        for (i, rtmr) in rtmrs.iter().enumerate() {
+            let offset = RTMR_OFFSET + i * TDX_MEASUREMENT_LEN;
+            report[offset..offset + TDX_MEASUREMENT_LEN].copy_from_slice(rtmr);
+        }
+        report[REPORT_DATA_OFFSET..REPORT_DATA_OFFSET + TDX_REPORT_DATA_LEN]
+            .copy_from_slice(report_data);
+
+        let signature_data_start =
+            TDX_QUOTE_HEADER_LEN + TDX_REPORT_BODY_LEN + SIGNATURE_DATA_LEN_PREFIX_LEN;
+        quote[TDX_QUOTE_HEADER_LEN + TDX_REPORT_BODY_LEN..signature_data_start]
+            .copy_from_slice(&(MIN_SIGNATURE_DATA_LEN as u32).to_le_bytes());
+
+        let signature_data =
+            &mut quote[signature_data_start..signature_data_start + MIN_SIGNATURE_DATA_LEN];
+        let aux_header_offset = ECDSA_P256_SIGNATURE_LEN + ECDSA_P256_PUBLIC_KEY_BODY_LEN;
+        signature_data[aux_header_offset..aux_header_offset + 2]
+            .copy_from_slice(&ECDSA_SIG_AUX_DATA_CERTIFICATION_DATA_TYPE.to_le_bytes());
+        signature_data[aux_header_offset + 2..aux_header_offset + CERTIFICATION_DATA_HEADER_LEN]
+            .copy_from_slice(&(MIN_AUX_DATA_LEN as u32).to_le_bytes());
+        let certification_header_offset = aux_header_offset
+            + CERTIFICATION_DATA_HEADER_LEN
+            + QE_REPORT_LEN
+            + ECDSA_P256_SIGNATURE_LEN
+            + QE_AUTHENTICATION_DATA_SIZE_LEN;
+        signature_data[certification_header_offset + 2
+            ..certification_header_offset + CERTIFICATION_DATA_HEADER_LEN]
+            .copy_from_slice(&0u32.to_le_bytes());
+
+        Bytes::from(quote)
     }
 
     /// Verifies the quote signature over `header || report_body`.
@@ -327,8 +363,8 @@ impl TdxQuote {
     /// Reads a fixed-size array from `bytes`.
     pub fn read_array<const N: usize>(bytes: &[u8], offset: usize) -> Result<[u8; N]> {
         bytes
-            .get(offset..offset + N)
-            .and_then(|slice| slice.try_into().ok())
+            .get(offset..)
+            .and_then(|bytes| bytes.first_chunk::<N>().copied())
             .ok_or_else(|| TdxVerifierError::InvalidQuote("array read out of bounds".into()))
     }
 }

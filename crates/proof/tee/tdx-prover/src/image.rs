@@ -6,32 +6,10 @@ use base_proof_tee_tdx_runtime::{
     TdxReportData,
 };
 use base_proof_tee_tdx_verifier::{
-    CERTIFICATION_DATA_HEADER_LEN, ECDSA_P256_ATTESTATION_KEY_TYPE, ECDSA_P256_PUBLIC_KEY_BODY_LEN,
-    ECDSA_P256_SIGNATURE_LEN, ECDSA_SIG_AUX_DATA_CERTIFICATION_DATA_TYPE, MIN_SIGNATURE_DATA_LEN,
-    MRTD_OFFSET, ParsedTdxQuote, QE_AUTHENTICATION_DATA_SIZE_LEN, QE_REPORT_LEN,
-    REPORT_DATA_OFFSET, RTMR_OFFSET, TDX_MEASUREMENT_LEN, TDX_QUOTE_HEADER_LEN,
-    TDX_REPORT_BODY_LEN, TDX_REPORT_DATA_LEN, TDX_TEE_TYPE, TdxQuote, TdxVerifier,
+    ParsedTdxQuote, TDX_MEASUREMENT_LEN, TDX_REPORT_DATA_LEN, TdxQuote, TdxVerifier,
 };
 
 use crate::Result;
-
-/// Width of the `u32` length prefix preceding the quote signature data.
-const SIGNATURE_DATA_LEN_PREFIX_LEN: usize = 4;
-
-const AUX_DATA_LEN: usize = QE_REPORT_LEN
-    + ECDSA_P256_SIGNATURE_LEN
-    + QE_AUTHENTICATION_DATA_SIZE_LEN
-    + CERTIFICATION_DATA_HEADER_LEN;
-
-const SIGNATURE_DATA_LEN: usize = ECDSA_P256_SIGNATURE_LEN
-    + ECDSA_P256_PUBLIC_KEY_BODY_LEN
-    + CERTIFICATION_DATA_HEADER_LEN
-    + AUX_DATA_LEN;
-
-const _: () = assert!(SIGNATURE_DATA_LEN == MIN_SIGNATURE_DATA_LEN);
-
-const QUOTE_LEN: usize =
-    TDX_QUOTE_HEADER_LEN + TDX_REPORT_BODY_LEN + SIGNATURE_DATA_LEN_PREFIX_LEN + SIGNATURE_DATA_LEN;
 
 /// TDX measurements that feed the contract-compatible image hash.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -84,46 +62,11 @@ impl TdxMeasurements {
 
     /// Builds a parseable TDX quote carrying these measurements and the supplied report data.
     pub fn build_mock_quote(&self, report_data: &[u8; TDX_REPORT_DATA_LEN]) -> Bytes {
-        let mut quote = vec![0u8; QUOTE_LEN];
-
-        quote[0..2].copy_from_slice(&4u16.to_le_bytes());
-        quote[2..4].copy_from_slice(&ECDSA_P256_ATTESTATION_KEY_TYPE.to_le_bytes());
-        quote[4..8].copy_from_slice(&TDX_TEE_TYPE.to_le_bytes());
-
-        let report_start = TDX_QUOTE_HEADER_LEN;
-        let report = &mut quote[report_start..report_start + TDX_REPORT_BODY_LEN];
-        report[MRTD_OFFSET..MRTD_OFFSET + TDX_MEASUREMENT_LEN].copy_from_slice(&self.mrtd);
-        for (i, rtmr) in [&self.rtmr0, &self.rtmr1, &self.rtmr2, &self.rtmr3].iter().enumerate() {
-            let off = RTMR_OFFSET + i * TDX_MEASUREMENT_LEN;
-            report[off..off + TDX_MEASUREMENT_LEN].copy_from_slice(*rtmr);
-        }
-        report[REPORT_DATA_OFFSET..REPORT_DATA_OFFSET + TDX_REPORT_DATA_LEN]
-            .copy_from_slice(report_data);
-
-        let sig_len_prefix_start = TDX_QUOTE_HEADER_LEN + TDX_REPORT_BODY_LEN;
-        quote[sig_len_prefix_start..sig_len_prefix_start + SIGNATURE_DATA_LEN_PREFIX_LEN]
-            .copy_from_slice(&(SIGNATURE_DATA_LEN as u32).to_le_bytes());
-
-        let signature_data_start = sig_len_prefix_start + SIGNATURE_DATA_LEN_PREFIX_LEN;
-        let signature_data =
-            &mut quote[signature_data_start..signature_data_start + SIGNATURE_DATA_LEN];
-        let aux_header_offset = ECDSA_P256_SIGNATURE_LEN + ECDSA_P256_PUBLIC_KEY_BODY_LEN;
-        signature_data[aux_header_offset..aux_header_offset + 2]
-            .copy_from_slice(&ECDSA_SIG_AUX_DATA_CERTIFICATION_DATA_TYPE.to_le_bytes());
-        signature_data[aux_header_offset + 2..aux_header_offset + CERTIFICATION_DATA_HEADER_LEN]
-            .copy_from_slice(&(AUX_DATA_LEN as u32).to_le_bytes());
-
-        let aux_data_start = aux_header_offset + CERTIFICATION_DATA_HEADER_LEN;
-        let cert_header_offset = aux_data_start
-            + QE_REPORT_LEN
-            + ECDSA_P256_SIGNATURE_LEN
-            + QE_AUTHENTICATION_DATA_SIZE_LEN;
-        signature_data[cert_header_offset..cert_header_offset + 2]
-            .copy_from_slice(&0u16.to_le_bytes());
-        signature_data[cert_header_offset + 2..cert_header_offset + CERTIFICATION_DATA_HEADER_LEN]
-            .copy_from_slice(&0u32.to_le_bytes());
-
-        Bytes::from(quote)
+        TdxQuote::build_mock_quote(
+            &self.mrtd,
+            &[self.rtmr0, self.rtmr1, self.rtmr2, self.rtmr3],
+            report_data,
+        )
     }
 }
 
