@@ -33,7 +33,7 @@ impl ProverBackend for TdxBackend {
     type Error = TdxProverError;
 
     fn create_oracle(&self) -> Oracle {
-        Oracle::empty()
+        Oracle::default()
     }
 
     async fn prove(&self, witness: Oracle) -> Result<ProofResult> {
