@@ -11,31 +11,20 @@ use base_proof_tee_tdx_verifier::{
     TDX_TEE_TYPE,
 };
 
-/// TDX measurements used to build local quote fixtures.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TdxMeasurements {
-    /// MRTD measurement.
-    pub mrtd: [u8; TDX_MEASUREMENT_LEN],
-    /// RTMR0 measurement.
-    pub rtmr0: [u8; TDX_MEASUREMENT_LEN],
-    /// RTMR1 measurement.
-    pub rtmr1: [u8; TDX_MEASUREMENT_LEN],
-    /// RTMR2 measurement.
-    pub rtmr2: [u8; TDX_MEASUREMENT_LEN],
-    /// RTMR3 measurement.
-    pub rtmr3: [u8; TDX_MEASUREMENT_LEN],
-}
+const LOCAL_MRTD: [u8; TDX_MEASUREMENT_LEN] = [0x11; TDX_MEASUREMENT_LEN];
+const LOCAL_RTMR0: [u8; TDX_MEASUREMENT_LEN] = [0x22; TDX_MEASUREMENT_LEN];
+const LOCAL_RTMR1: [u8; TDX_MEASUREMENT_LEN] = [0x33; TDX_MEASUREMENT_LEN];
+const LOCAL_RTMR2: [u8; TDX_MEASUREMENT_LEN] = [0x44; TDX_MEASUREMENT_LEN];
+const LOCAL_RTMR3: [u8; TDX_MEASUREMENT_LEN] = [0x55; TDX_MEASUREMENT_LEN];
+
+/// TDX quote provider for deterministic local quote fixtures.
+#[derive(Clone, Copy, Debug)]
+pub struct TdxMeasurements;
 
 impl TdxMeasurements {
     /// Builds deterministic non-zero measurements for local mock mode.
     pub const fn local_mock() -> Self {
-        Self {
-            mrtd: [0x11; TDX_MEASUREMENT_LEN],
-            rtmr0: [0x22; TDX_MEASUREMENT_LEN],
-            rtmr1: [0x33; TDX_MEASUREMENT_LEN],
-            rtmr2: [0x44; TDX_MEASUREMENT_LEN],
-            rtmr3: [0x55; TDX_MEASUREMENT_LEN],
-        }
+        Self
     }
 }
 
@@ -55,8 +44,9 @@ impl TdxQuoteProvider for TdxMeasurements {
         quote[4..8].copy_from_slice(&TDX_TEE_TYPE.to_le_bytes());
 
         let report = &mut quote[TDX_QUOTE_HEADER_LEN..TDX_QUOTE_HEADER_LEN + TDX_REPORT_BODY_LEN];
-        report[MRTD_OFFSET..MRTD_OFFSET + TDX_MEASUREMENT_LEN].copy_from_slice(&self.mrtd);
-        for (i, rtmr) in [&self.rtmr0, &self.rtmr1, &self.rtmr2, &self.rtmr3].iter().enumerate() {
+        report[MRTD_OFFSET..MRTD_OFFSET + TDX_MEASUREMENT_LEN].copy_from_slice(&LOCAL_MRTD);
+        for (i, rtmr) in [&LOCAL_RTMR0, &LOCAL_RTMR1, &LOCAL_RTMR2, &LOCAL_RTMR3].iter().enumerate()
+        {
             let offset = RTMR_OFFSET + i * TDX_MEASUREMENT_LEN;
             report[offset..offset + TDX_MEASUREMENT_LEN].copy_from_slice(*rtmr);
         }
@@ -102,10 +92,10 @@ mod tests {
         let parsed = TdxQuote::parse(&quote).unwrap();
 
         assert_eq!(parsed.report_data, report_data);
-        assert_eq!(parsed.mrtd, measurements.mrtd);
-        assert_eq!(parsed.rtmr0, measurements.rtmr0);
-        assert_eq!(parsed.rtmr1, measurements.rtmr1);
-        assert_eq!(parsed.rtmr2, measurements.rtmr2);
-        assert_eq!(parsed.rtmr3, measurements.rtmr3);
+        assert_eq!(parsed.mrtd, LOCAL_MRTD);
+        assert_eq!(parsed.rtmr0, LOCAL_RTMR0);
+        assert_eq!(parsed.rtmr1, LOCAL_RTMR1);
+        assert_eq!(parsed.rtmr2, LOCAL_RTMR2);
+        assert_eq!(parsed.rtmr3, LOCAL_RTMR3);
     }
 }
