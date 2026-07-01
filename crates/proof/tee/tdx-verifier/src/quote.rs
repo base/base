@@ -204,20 +204,9 @@ impl TdxQuote {
             )));
         }
 
-        let (quote_signature, sig_data) =
-            sig_data.split_at_checked(ECDSA_P256_SIGNATURE_LEN).ok_or_else(|| {
-                TdxVerifierError::InvalidQuote("signature data is missing quote signature".into())
-            })?;
-        let (attestation_key, sig_data) =
-            sig_data.split_at_checked(ECDSA_P256_PUBLIC_KEY_BODY_LEN).ok_or_else(|| {
-                TdxVerifierError::InvalidQuote("signature data is missing attestation key".into())
-            })?;
-        let (aux_header, aux_data) =
-            sig_data.split_at_checked(CERTIFICATION_DATA_HEADER_LEN).ok_or_else(|| {
-                TdxVerifierError::InvalidQuote(
-                    "signature data is missing auxiliary data header".into(),
-                )
-            })?;
+        let (quote_signature, sig_data) = sig_data.split_at(ECDSA_P256_SIGNATURE_LEN);
+        let (attestation_key, sig_data) = sig_data.split_at(ECDSA_P256_PUBLIC_KEY_BODY_LEN);
+        let (aux_header, aux_data) = sig_data.split_at(CERTIFICATION_DATA_HEADER_LEN);
         let aux_data_type = u16::from_le_bytes(Self::read_array(aux_header, 0)?);
         if aux_data_type != ECDSA_SIG_AUX_DATA_CERTIFICATION_DATA_TYPE {
             return Err(TdxVerifierError::InvalidQuote(format!(
@@ -231,22 +220,10 @@ impl TdxQuote {
             ));
         }
 
-        let (qe_report, aux_data) = aux_data.split_at_checked(QE_REPORT_LEN).ok_or_else(|| {
-            TdxVerifierError::InvalidQuote("signature data is missing QE report".into())
-        })?;
-        let Some((qe_report_signature, aux_data)) =
-            aux_data.split_at_checked(ECDSA_P256_SIGNATURE_LEN)
-        else {
-            return Err(TdxVerifierError::InvalidQuote(
-                "signature data is missing QE report signature".into(),
-            ));
-        };
+        let (qe_report, aux_data) = aux_data.split_at(QE_REPORT_LEN);
+        let (qe_report_signature, aux_data) = aux_data.split_at(ECDSA_P256_SIGNATURE_LEN);
         let (qe_authentication_data_len, aux_data) =
-            aux_data.split_at_checked(QE_AUTHENTICATION_DATA_SIZE_LEN).ok_or_else(|| {
-                TdxVerifierError::InvalidQuote(
-                    "signature data is missing QE authentication data length".into(),
-                )
-            })?;
+            aux_data.split_at(QE_AUTHENTICATION_DATA_SIZE_LEN);
         let qe_authentication_data_len =
             u16::from_le_bytes(Self::read_array(qe_authentication_data_len, 0)?) as usize;
         let (qe_authentication_data, aux_data) =
