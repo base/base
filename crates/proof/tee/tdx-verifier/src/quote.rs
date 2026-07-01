@@ -101,28 +101,11 @@ pub const MIN_SIGNATURE_DATA_LEN: usize = ECDSA_P256_SIGNATURE_LEN
     + QE_AUTHENTICATION_DATA_SIZE_LEN
     + CERTIFICATION_DATA_HEADER_LEN;
 
-/// Parsed TDX quote header fields.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TdxQuoteHeader {
-    /// Quote version.
-    pub version: u16,
-    /// Attestation key type.
-    pub attestation_key_type: u16,
-    /// TEE type value.
-    pub tee_type: u32,
-    /// Reserved bytes in the v4 quote header.
-    pub reserved: [u8; 4],
-}
-
 /// Parsed TDX quote fields required by the contract journal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedTdxQuote {
-    /// Parsed quote header.
-    pub header: TdxQuoteHeader,
-    /// Raw quote header bytes.
-    pub header_bytes: Bytes,
-    /// Raw report body bytes.
-    pub report_body: Bytes,
+    /// Raw bytes signed by the quote attestation key.
+    pub signed_message: Bytes,
     /// TEE TCB SVN used to select the matching signed TCB info level.
     pub tee_tcb_svn: [u8; TDX_TEE_TCB_SVN_LEN],
     /// MRSIGNERSEAM measurement for the TDX module signer.
@@ -167,14 +150,6 @@ impl ParsedTdxQuote {
     pub fn report_data_suffix(&self) -> B256 {
         B256::from_slice(&self.report_data[32..])
     }
-
-    /// Returns quote bytes signed by the attestation key.
-    pub fn signed_message(&self) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(self.header_bytes.len() + self.report_body.len());
-        buf.extend_from_slice(&self.header_bytes);
-        buf.extend_from_slice(&self.report_body);
-        buf
-    }
 }
 
 /// Stateless TDX quote parser and signature verifier.
@@ -192,30 +167,21 @@ impl TdxQuote {
             )));
         }
 
-        let header_bytes = &raw_quote[..TDX_QUOTE_HEADER_LEN];
-        let header = TdxQuoteHeader {
-            version: u16::from_le_bytes(Self::read_array(header_bytes, 0)?),
-            attestation_key_type: u16::from_le_bytes(Self::read_array(header_bytes, 2)?),
-            tee_type: u32::from_le_bytes(Self::read_array(header_bytes, 4)?),
-            reserved: Self::read_array(header_bytes, 8)?,
-        };
-        if header.version != 4 {
+        let version = u16::from_le_bytes(Self::read_array(raw_quote, 0)?);
+        if version != 4 {
             return Err(TdxVerifierError::InvalidQuote(format!(
-                "unsupported quote version {}",
-                header.version
+                "unsupported quote version {version}"
             )));
         }
-        if header.attestation_key_type != ECDSA_P256_ATTESTATION_KEY_TYPE {
+        let attestation_key_type = u16::from_le_bytes(Self::read_array(raw_quote, 2)?);
+        if attestation_key_type != ECDSA_P256_ATTESTATION_KEY_TYPE {
             return Err(TdxVerifierError::InvalidQuote(format!(
-                "unsupported attestation key type {}",
-                header.attestation_key_type
+                "unsupported attestation key type {attestation_key_type}"
             )));
         }
-        if header.tee_type != TDX_TEE_TYPE {
-            return Err(TdxVerifierError::InvalidQuote(format!(
-                "unsupported TEE type {}",
-                header.tee_type
-            )));
+        let tee_type = u32::from_le_bytes(Self::read_array(raw_quote, 4)?);
+        if tee_type != TDX_TEE_TYPE {
+            return Err(TdxVerifierError::InvalidQuote(format!("unsupported TEE type {tee_type}")));
         }
 
         let report_start = TDX_QUOTE_HEADER_LEN;
@@ -316,9 +282,7 @@ impl TdxQuote {
         let report_data = Self::read_array(report_body, REPORT_DATA_OFFSET)?;
 
         Ok(ParsedTdxQuote {
-            header,
-            header_bytes: Bytes::copy_from_slice(header_bytes),
-            report_body: Bytes::copy_from_slice(report_body),
+            signed_message: Bytes::copy_from_slice(&raw_quote[..report_end]),
             tee_tcb_svn: Self::read_array(report_body, 0)?,
             mrsigner_seam: Self::read_array(report_body, MRSIGNERSEAM_OFFSET)?,
             seam_attributes: Self::read_array(report_body, SEAM_ATTRIBUTES_OFFSET)?,
@@ -348,7 +312,7 @@ impl TdxQuote {
     pub fn verify_signature(parsed: &ParsedTdxQuote) -> Result<()> {
         CollateralVerifier::verify_p256_signature(
             &parsed.attestation_public_key,
-            &parsed.signed_message(),
+            &parsed.signed_message,
             &parsed.quote_signature,
             TdxVerifierError::QuoteSignatureInvalid,
             TdxVerifierError::QuoteSignatureInvalid("quote signature verification failed".into()),

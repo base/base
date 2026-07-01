@@ -1164,14 +1164,7 @@ mod tests {
 
     fn parsed_quote() -> ParsedTdxQuote {
         ParsedTdxQuote {
-            header: base_proof_tee_tdx_verifier::TdxQuoteHeader {
-                version: 4,
-                attestation_key_type: 2,
-                tee_type: 0x81,
-                reserved: [0; 4],
-            },
-            header_bytes: Bytes::new(),
-            report_body: Bytes::new(),
+            signed_message: Bytes::new(),
             tee_tcb_svn: [0; 16],
             mrsigner_seam: [0; 48],
             seam_attributes: [0; 8],

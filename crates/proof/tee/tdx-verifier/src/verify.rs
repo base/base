@@ -1142,13 +1142,6 @@ mod tests {
     }
 
     #[test]
-    fn quote_v4_header_exposes_reserved_bytes() {
-        let quote = TdxQuote::parse(&fixture().input.quote).unwrap();
-
-        assert_eq!(quote.header.reserved, [7, 0, 9, 0]);
-    }
-
-    #[test]
     fn quote_timestamp_must_match_signed_report_data() {
         let mut input = fixture().input;
         input.quote_timestamp_millis = (VERIFICATION_TIME - 1) * 1_000;
