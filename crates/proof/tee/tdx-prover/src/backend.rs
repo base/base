@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_common_chains::ChainConfig;
 use base_common_evm::BaseEvmFactory;
@@ -106,7 +105,7 @@ impl ProverBackend for TdxBackend {
                 ));
             }
             let interval = interval as usize;
-            let intermediate_roots: Vec<B256> = proposals
+            let intermediate_roots = proposals
                 .chunks_exact(interval)
                 .map(|chunk| chunk[interval - 1].output_root)
                 .collect();
