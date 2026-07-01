@@ -1,4 +1,4 @@
-use alloy_primitives::{B256, keccak256};
+use alloy_primitives::keccak256;
 
 use crate::{Result, TdxRuntimeError};
 
@@ -24,14 +24,13 @@ impl TdxReportData {
 
         let mut report_data = [0u8; TDX_REPORT_DATA_LEN];
         report_data[..32].copy_from_slice(keccak256(&public_key[1..]).as_slice());
-        report_data[32..]
-            .copy_from_slice(Self::timestamped_app_binding(quote_timestamp_millis).as_slice());
+        report_data[32..].copy_from_slice(
+            keccak256(
+                [&b"base-tdx-tee-prover-v1"[..], &quote_timestamp_millis.to_le_bytes()].concat(),
+            )
+            .as_slice(),
+        );
         Ok(report_data)
-    }
-
-    /// Computes the timestamp-bound app-specific suffix.
-    pub fn timestamped_app_binding(quote_timestamp_millis: u64) -> B256 {
-        keccak256([&b"base-tdx-tee-prover-v1"[..], &quote_timestamp_millis.to_le_bytes()].concat())
     }
 }
 
@@ -51,7 +50,8 @@ mod tests {
         assert_eq!(&report_data[..32], keccak256(&public_key[1..]).as_slice());
         assert_eq!(
             &report_data[32..],
-            TdxReportData::timestamped_app_binding(TIMESTAMP_MILLIS).as_slice()
+            keccak256([&b"base-tdx-tee-prover-v1"[..], &TIMESTAMP_MILLIS.to_le_bytes()].concat())
+                .as_slice()
         );
     }
 

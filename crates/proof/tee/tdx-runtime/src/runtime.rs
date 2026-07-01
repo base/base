@@ -101,7 +101,7 @@ mod tests {
     use alloy_primitives::{Bytes, keccak256};
 
     use super::*;
-    use crate::{ConfigfsTdxQuoteProvider, TDX_REPORT_DATA_LEN, TdxReportData};
+    use crate::{ConfigfsTdxQuoteProvider, TDX_REPORT_DATA_LEN};
 
     const TIMESTAMP_MILLIS: u64 = 1_711_111_111_000;
 
@@ -140,7 +140,8 @@ mod tests {
         );
         assert_eq!(
             &signer_quote.report_data[32..],
-            TdxReportData::timestamped_app_binding(TIMESTAMP_MILLIS).as_slice()
+            keccak256([&b"base-tdx-tee-prover-v1"[..], &TIMESTAMP_MILLIS.to_le_bytes()].concat())
+                .as_slice()
         );
     }
 
