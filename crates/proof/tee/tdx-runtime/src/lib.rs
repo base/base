@@ -11,8 +11,7 @@ pub use report_data::{TDX_REPORT_DATA_LEN, TDX_REPORT_DATA_SUFFIX_CONTEXT, TdxRe
 
 mod quote;
 pub use quote::{
-    ConfigfsTdxQuoteProvider, DEFAULT_TSM_REPORT_ROOT, MockTdxQuoteProvider,
-    TDX_CONFIGFS_PROVIDER_NAME, TdxCollectedQuote, TdxLocalQuoteMetadata, TdxQuoteProvider,
+    ConfigfsTdxQuoteProvider, DEFAULT_TSM_REPORT_ROOT, TDX_CONFIGFS_PROVIDER_NAME, TdxQuoteProvider,
 };
 
 mod runtime;

@@ -1,10 +1,7 @@
 //! TDX quote measurement extraction and deterministic local quote fixtures.
 
 use alloy_primitives::{B256, Bytes};
-use base_proof_tee_tdx_runtime::{
-    Result as TdxRuntimeResult, TdxCollectedQuote, TdxLocalQuoteMetadata, TdxQuoteProvider,
-    TdxReportData,
-};
+use base_proof_tee_tdx_runtime::{Result as TdxRuntimeResult, TdxQuoteProvider, TdxReportData};
 use base_proof_tee_tdx_verifier::{
     CERTIFICATION_DATA_HEADER_LEN, ECDSA_P256_ATTESTATION_KEY_TYPE, ECDSA_P256_PUBLIC_KEY_BODY_LEN,
     ECDSA_P256_SIGNATURE_LEN, ECDSA_SIG_AUX_DATA_CERTIFICATION_DATA_TYPE, MIN_AUX_DATA_LEN,
@@ -117,16 +114,12 @@ impl TdxMeasurements {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MeasuredMockTdxQuoteProvider {
     measurements: TdxMeasurements,
-    metadata: TdxLocalQuoteMetadata,
 }
 
 impl MeasuredMockTdxQuoteProvider {
     /// Creates a deterministic provider using the supplied measurements.
     pub fn new(measurements: TdxMeasurements) -> Self {
-        Self {
-            measurements,
-            metadata: TdxLocalQuoteMetadata { provider: "mock-tdx".to_owned(), aux_blob: None },
-        }
+        Self { measurements }
     }
 
     /// Creates a deterministic provider using local mock measurements.
@@ -141,13 +134,12 @@ impl MeasuredMockTdxQuoteProvider {
 }
 
 impl TdxQuoteProvider for MeasuredMockTdxQuoteProvider {
-    fn quote(&self, report_data: &[u8]) -> TdxRuntimeResult<TdxCollectedQuote> {
+    fn quote(&self, report_data: &[u8]) -> TdxRuntimeResult<Bytes> {
         TdxReportData::validate(report_data)?;
         let mut report_data_array = [0u8; TDX_REPORT_DATA_LEN];
         report_data_array.copy_from_slice(report_data);
-        let quote = self.measurements.build_mock_quote(&report_data_array);
 
-        Ok(TdxCollectedQuote { quote, metadata: self.metadata.clone() })
+        Ok(self.measurements.build_mock_quote(&report_data_array))
     }
 }
 
@@ -172,7 +164,7 @@ mod tests {
     #[test]
     fn tdx_image_hash_matches_verifier_journal_derivation_for_same_quote() {
         let provider = MeasuredMockTdxQuoteProvider::local_mock();
-        let quote = provider.quote(&[0xCD; TDX_REPORT_DATA_LEN]).unwrap().quote;
+        let quote = provider.quote(&[0xCD; TDX_REPORT_DATA_LEN]).unwrap();
         let parsed = TdxQuote::parse(&quote).unwrap();
         let measurements = TdxMeasurements::from_quote(&quote).unwrap();
 

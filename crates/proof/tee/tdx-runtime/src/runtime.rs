@@ -5,10 +5,7 @@ use std::{
 
 use alloy_primitives::{Address, Bytes};
 
-use crate::{
-    Result, SignerIdentity, TdxCollectedQuote, TdxLocalQuoteMetadata, TdxQuoteProvider,
-    TdxReportData, TdxSigner,
-};
+use crate::{Result, SignerIdentity, TdxQuoteProvider, TdxReportData, TdxSigner};
 
 /// TDX signer quote response.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -23,8 +20,6 @@ pub struct TdxSignerQuote {
     pub report_data: [u8; 64],
     /// Quote collection timestamp in milliseconds.
     pub quote_timestamp_millis: u64,
-    /// Provider-local quote metadata.
-    pub local_metadata: TdxLocalQuoteMetadata,
 }
 
 /// TDX runtime owning signer identity and quote collection.
@@ -80,7 +75,7 @@ impl<P: TdxQuoteProvider> TdxRuntime<P> {
     pub fn signer_quote_at(&self, quote_timestamp_millis: u64) -> Result<TdxSignerQuote> {
         let public_key = self.signer.public_key();
         let report_data = TdxReportData::for_public_key(&public_key, quote_timestamp_millis)?;
-        let TdxCollectedQuote { quote, metadata } = self.quote_provider.quote(&report_data)?;
+        let quote = self.quote_provider.quote(&report_data)?;
 
         Ok(TdxSignerQuote {
             signer_public_key: public_key,
@@ -88,7 +83,6 @@ impl<P: TdxQuoteProvider> TdxRuntime<P> {
             quote,
             report_data,
             quote_timestamp_millis,
-            local_metadata: metadata,
         })
     }
 }
@@ -107,17 +101,26 @@ mod tests {
     use alloy_primitives::{Bytes, keccak256};
 
     use super::*;
-    use crate::{ConfigfsTdxQuoteProvider, MockTdxQuoteProvider, TdxReportData};
+    use crate::{ConfigfsTdxQuoteProvider, TdxReportData};
 
     const TIMESTAMP_MILLIS: u64 = 1_711_111_111_000;
 
-    fn test_runtime() -> TdxRuntime<MockTdxQuoteProvider> {
-        let quote_provider = MockTdxQuoteProvider::new(Bytes::from_static(b"fixture-tdx-quote"));
-        TdxRuntime::new(quote_provider)
+    #[derive(Debug)]
+    struct TestQuoteProvider(Bytes);
+
+    impl TdxQuoteProvider for TestQuoteProvider {
+        fn quote(&self, report_data: &[u8]) -> Result<Bytes> {
+            TdxReportData::validate(report_data)?;
+            Ok(self.0.clone())
+        }
+    }
+
+    fn test_runtime() -> TdxRuntime<TestQuoteProvider> {
+        TdxRuntime::new(TestQuoteProvider(Bytes::from_static(b"fixture-tdx-quote")))
     }
 
     #[test]
-    fn runtime_returns_signer_identity_quote_and_timestamp_metadata() {
+    fn runtime_returns_signer_identity_quote_and_timestamp() {
         let runtime = test_runtime();
         let signer_quote = runtime.signer_quote_at(TIMESTAMP_MILLIS).unwrap();
 
@@ -125,7 +128,6 @@ mod tests {
         assert_eq!(signer_quote.signer_address, runtime.signer_address());
         assert_eq!(signer_quote.quote, Bytes::from_static(b"fixture-tdx-quote"));
         assert_eq!(signer_quote.quote_timestamp_millis, TIMESTAMP_MILLIS);
-        assert_eq!(signer_quote.local_metadata.provider, "mock");
     }
 
     #[test]
