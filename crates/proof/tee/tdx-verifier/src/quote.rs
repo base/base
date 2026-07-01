@@ -5,23 +5,33 @@ use sha2::{Digest, Sha256};
 
 use crate::{Result, TdxVerifierError, collateral::CollateralVerifier};
 
-pub(crate) const TDX_QUOTE_HEADER_LEN: usize = 48;
+/// Length of a TDX quote header.
+pub const TDX_QUOTE_HEADER_LEN: usize = 48;
 
-pub(crate) const TDX_TEE_TYPE: u32 = 0x81;
+/// Supported TDX quote version.
+pub const TDX_QUOTE_VERSION: u16 = 4;
 
-pub(crate) const ECDSA_P256_ATTESTATION_KEY_TYPE: u16 = 2;
+/// TEE type value for Intel TDX quotes.
+pub const TDX_TEE_TYPE: u32 = 0x81;
 
-pub(crate) const TDX_REPORT_BODY_LEN: usize = 584;
+/// Attestation key type value for ECDSA P-256 quotes.
+pub const ECDSA_P256_ATTESTATION_KEY_TYPE: u16 = 2;
 
-pub(crate) const MRTD_OFFSET: usize = 136;
+/// Length of the TDX report body embedded in a quote.
+pub const TDX_REPORT_BODY_LEN: usize = 584;
+
+/// Offset of MRTD inside the TDX report body.
+pub const MRTD_OFFSET: usize = 136;
 
 pub(crate) const MRSIGNERSEAM_OFFSET: usize = 64;
 
 pub(crate) const SEAM_ATTRIBUTES_OFFSET: usize = 112;
 
-pub(crate) const RTMR_OFFSET: usize = 328;
+/// Offset of RTMR measurements inside the TDX report body.
+pub const RTMR_OFFSET: usize = 328;
 
-pub(crate) const REPORT_DATA_OFFSET: usize = 520;
+/// Offset of TDREPORT.REPORTDATA inside the TDX report body.
+pub const REPORT_DATA_OFFSET: usize = 520;
 
 /// Length of TDX MRTD and RTMR measurements.
 pub const TDX_MEASUREMENT_LEN: usize = 48;
@@ -33,11 +43,14 @@ pub const TDX_REPORT_DATA_LEN: usize = 64;
 
 pub(crate) const TDX_TEE_TCB_SVN_LEN: usize = 16;
 
-pub(crate) const ECDSA_P256_SIGNATURE_LEN: usize = 64;
+/// Length of an ECDSA P-256 signature in quote data.
+pub const ECDSA_P256_SIGNATURE_LEN: usize = 64;
 
-pub(crate) const ECDSA_P256_PUBLIC_KEY_BODY_LEN: usize = 64;
+/// Length of an ECDSA P-256 public key body without the uncompressed prefix.
+pub const ECDSA_P256_PUBLIC_KEY_BODY_LEN: usize = 64;
 
-pub(crate) const QE_REPORT_LEN: usize = 384;
+/// Length of a QE report embedded in TDX quote signature data.
+pub const QE_REPORT_LEN: usize = 384;
 
 pub(crate) const QE_REPORT_MISCSELECT_OFFSET: usize = 16;
 
@@ -59,18 +72,26 @@ pub(crate) const QE_REPORT_DATA_OFFSET: usize = 320;
 
 pub(crate) const QE_REPORT_DATA_HASH_LEN: usize = 32;
 
-pub(crate) const QE_AUTHENTICATION_DATA_SIZE_LEN: usize = 2;
+/// Length of the QE authentication data length field.
+pub const QE_AUTHENTICATION_DATA_SIZE_LEN: usize = 2;
 
-pub(crate) const CERTIFICATION_DATA_HEADER_LEN: usize = 6;
+/// Length of a quote certification data header.
+pub const CERTIFICATION_DATA_HEADER_LEN: usize = 6;
 
-pub(crate) const ECDSA_SIG_AUX_DATA_CERTIFICATION_DATA_TYPE: u16 = 6;
+/// Certification data type for ECDSA signature auxiliary data.
+pub const ECDSA_SIG_AUX_DATA_CERTIFICATION_DATA_TYPE: u16 = 6;
 
-const SIGNATURE_DATA_LEN_PREFIX_LEN: usize = 4;
-const MIN_AUX_DATA_LEN: usize = QE_REPORT_LEN
+/// Length of the quote signature data length prefix.
+pub const SIGNATURE_DATA_LEN_PREFIX_LEN: usize = 4;
+
+/// Minimum ECDSA signature auxiliary data length.
+pub const MIN_AUX_DATA_LEN: usize = QE_REPORT_LEN
     + ECDSA_P256_SIGNATURE_LEN
     + QE_AUTHENTICATION_DATA_SIZE_LEN
     + CERTIFICATION_DATA_HEADER_LEN;
-pub(crate) const MIN_SIGNATURE_DATA_LEN: usize = ECDSA_P256_SIGNATURE_LEN
+
+/// Minimum quote signature data length accepted by the parser.
+pub const MIN_SIGNATURE_DATA_LEN: usize = ECDSA_P256_SIGNATURE_LEN
     + ECDSA_P256_PUBLIC_KEY_BODY_LEN
     + CERTIFICATION_DATA_HEADER_LEN
     + MIN_AUX_DATA_LEN;
@@ -143,7 +164,7 @@ impl TdxQuote {
         }
 
         let version = u16::from_le_bytes(Self::read_array(raw_quote, 0)?);
-        if version != 4 {
+        if version != TDX_QUOTE_VERSION {
             return Err(TdxVerifierError::InvalidQuote(format!(
                 "unsupported quote version {version}"
             )));
@@ -263,65 +284,18 @@ impl TdxQuote {
             rtmr3: Self::read_array(report_body, RTMR_OFFSET + (TDX_MEASUREMENT_LEN * 3))?,
             report_data: Self::read_array(report_body, REPORT_DATA_OFFSET)?,
             quote_signature: Bytes::copy_from_slice(quote_signature),
-            attestation_public_key: Bytes::from([&[0x04][..], attestation_key].concat()),
+            attestation_public_key: {
+                let mut key = Vec::with_capacity(1 + attestation_key.len());
+                key.push(0x04);
+                key.extend_from_slice(attestation_key);
+                Bytes::from(key)
+            },
             qe_report: Bytes::copy_from_slice(qe_report),
             qe_report_signature: Bytes::copy_from_slice(qe_report_signature),
             qe_authentication_data: Bytes::copy_from_slice(qe_authentication_data),
             certification_data_type,
             certification_data: Bytes::copy_from_slice(certification_data),
         })
-    }
-
-    /// Builds a minimal parseable quote for local mock providers.
-    pub fn build_mock_quote(
-        mrtd: &[u8; TDX_MEASUREMENT_LEN],
-        rtmrs: &[[u8; TDX_MEASUREMENT_LEN]; 4],
-        report_data: &[u8; TDX_REPORT_DATA_LEN],
-    ) -> Bytes {
-        let mut quote = vec![
-            0u8;
-            TDX_QUOTE_HEADER_LEN
-                + TDX_REPORT_BODY_LEN
-                + SIGNATURE_DATA_LEN_PREFIX_LEN
-                + MIN_SIGNATURE_DATA_LEN
-        ];
-
-        quote[0..2].copy_from_slice(&4u16.to_le_bytes());
-        quote[2..4].copy_from_slice(&ECDSA_P256_ATTESTATION_KEY_TYPE.to_le_bytes());
-        quote[4..8].copy_from_slice(&TDX_TEE_TYPE.to_le_bytes());
-
-        let report_start = TDX_QUOTE_HEADER_LEN;
-        let report = &mut quote[report_start..report_start + TDX_REPORT_BODY_LEN];
-        report[MRTD_OFFSET..MRTD_OFFSET + TDX_MEASUREMENT_LEN].copy_from_slice(mrtd);
-        for (i, rtmr) in rtmrs.iter().enumerate() {
-            let offset = RTMR_OFFSET + i * TDX_MEASUREMENT_LEN;
-            report[offset..offset + TDX_MEASUREMENT_LEN].copy_from_slice(rtmr);
-        }
-        report[REPORT_DATA_OFFSET..REPORT_DATA_OFFSET + TDX_REPORT_DATA_LEN]
-            .copy_from_slice(report_data);
-
-        let signature_data_start =
-            TDX_QUOTE_HEADER_LEN + TDX_REPORT_BODY_LEN + SIGNATURE_DATA_LEN_PREFIX_LEN;
-        quote[TDX_QUOTE_HEADER_LEN + TDX_REPORT_BODY_LEN..signature_data_start]
-            .copy_from_slice(&(MIN_SIGNATURE_DATA_LEN as u32).to_le_bytes());
-
-        let signature_data =
-            &mut quote[signature_data_start..signature_data_start + MIN_SIGNATURE_DATA_LEN];
-        let aux_header_offset = ECDSA_P256_SIGNATURE_LEN + ECDSA_P256_PUBLIC_KEY_BODY_LEN;
-        signature_data[aux_header_offset..aux_header_offset + 2]
-            .copy_from_slice(&ECDSA_SIG_AUX_DATA_CERTIFICATION_DATA_TYPE.to_le_bytes());
-        signature_data[aux_header_offset + 2..aux_header_offset + CERTIFICATION_DATA_HEADER_LEN]
-            .copy_from_slice(&(MIN_AUX_DATA_LEN as u32).to_le_bytes());
-        let certification_header_offset = aux_header_offset
-            + CERTIFICATION_DATA_HEADER_LEN
-            + QE_REPORT_LEN
-            + ECDSA_P256_SIGNATURE_LEN
-            + QE_AUTHENTICATION_DATA_SIZE_LEN;
-        signature_data[certification_header_offset + 2
-            ..certification_header_offset + CERTIFICATION_DATA_HEADER_LEN]
-            .copy_from_slice(&0u32.to_le_bytes());
-
-        Bytes::from(quote)
     }
 
     /// Verifies the quote signature over `header || report_body`.
