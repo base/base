@@ -29,6 +29,3 @@ alloy-primitives = { workspace = true, default-features = false }
 
 # Error
 thiserror.workspace = true
-
-[dev-dependencies]
-rstest.workspace = true

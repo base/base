@@ -90,8 +90,7 @@ impl TdxVerifier {
 
         let tcb_status =
             tcb_info_document.tcb_info.tcb_status_for_quote(&quote, &pck_tcb)?.to_contract_status();
-        if tcb_status as u8 == TDXTcbStatus::Unknown as u8
-            || !input.allowed_tcb_statuses.iter().any(|allowed| *allowed as u8 == tcb_status as u8)
+        if tcb_status == TDXTcbStatus::Unknown || !input.allowed_tcb_statuses.contains(&tcb_status)
         {
             return Err(TdxVerifierError::TcbStatusNotAllowed);
         }
@@ -223,26 +222,19 @@ impl TdxVerifier {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, B256, Bytes, keccak256};
+    use alloy_primitives::{Address, B256, Bytes, hex, keccak256};
     use alloy_sol_types::SolValue;
     use p256::ecdsa::{Signature, SigningKey, signature::Signer};
-    use rstest::rstest;
-    use sha2::{Digest, Sha256};
+    use serde_json::json;
 
     use super::*;
     use crate::{
-        TdxCertificate, TdxCollateral, TdxPckTcb, TdxPlatformIdentity, TdxRevocationEvidence,
-        TdxSignedCollateral,
-        collateral::{
-            INTEL_TCB_SIGNING_CERT_COMMON_NAME, TDX_QE_IDENTITY_ID, TDX_QE_IDENTITY_VERSION,
-        },
+        TdxCertificate, TdxCollateral, TdxRevocationEvidence, TdxSignedCollateral,
+        collateral::{TDX_QE_IDENTITY_ID, TDX_QE_IDENTITY_VERSION},
         quote::{
-            CERTIFICATION_DATA_HEADER_LEN, ECDSA_P256_ATTESTATION_KEY_TYPE,
-            ECDSA_P256_PUBLIC_KEY_BODY_LEN, ECDSA_P256_SIGNATURE_LEN,
-            ECDSA_SIG_AUX_DATA_CERTIFICATION_DATA_TYPE, MRTD_OFFSET, QE_REPORT_DATA_HASH_LEN,
-            QE_REPORT_DATA_OFFSET, QE_REPORT_LEN, REPORT_DATA_OFFSET, RTMR_OFFSET,
-            TDX_MEASUREMENT_LEN, TDX_QUOTE_HEADER_LEN, TDX_REPORT_BODY_LEN,
-            TDX_SEAM_ATTRIBUTES_LEN, TDX_TEE_TCB_SVN_LEN, TDX_TEE_TYPE,
+            CERTIFICATION_DATA_HEADER_LEN, ECDSA_P256_PUBLIC_KEY_BODY_LEN,
+            ECDSA_P256_SIGNATURE_LEN, QE_REPORT_LEN, TDX_MEASUREMENT_LEN, TDX_QUOTE_HEADER_LEN,
+            TDX_REPORT_BODY_LEN, TDX_SEAM_ATTRIBUTES_LEN, TDX_TEE_TCB_SVN_LEN, TDX_TEE_TYPE,
         },
     };
 
@@ -253,10 +245,10 @@ mod tests {
     const EARLY_CRL_NEXT_UPDATE: u64 = 1_893_456_000;
     const COLLATERAL_ISSUE_DATE: &str = "2024-01-01T00:00:00Z";
     const COLLATERAL_NEXT_UPDATE_DATE: &str = "2035-01-01T00:00:00Z";
-    const EARLY_CRL_NEXT_UPDATE_DATE: &str = "300101000000Z";
     const EXPIRED_COLLATERAL_NEXT_UPDATE_DATE: &str = "2024-03-01T00:00:00Z";
     const FMSPC_HEX: &str = "010203040506";
     const PCE_ID_HEX: &str = "0009";
+    const FIXTURE_HEX: &str = include_str!("testdata/verify_fixture.hex");
     const VALID_SECP256K1_PUBLIC_KEY: [u8; 65] = [
         0x04, 0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac, 0x55, 0xa0, 0x62, 0x95, 0xce, 0x87,
         0x0b, 0x07, 0x02, 0x9b, 0xfc, 0xdb, 0x2d, 0xce, 0x28, 0xd9, 0x59, 0xf2, 0x81, 0x5b, 0x16,
@@ -272,20 +264,8 @@ mod tests {
         0x6f, 0x04, 0xef, 0x27, 0x77,
     ];
 
-    struct Fixture {
-        input: TdxVerifierInput,
-        root_hash: B256,
-        pck_leaf_hash: B256,
-        tcb_hash: B256,
-        qe_hash: B256,
-    }
-
     fn signing_key(byte: u8) -> SigningKey {
         SigningKey::from_slice(&[byte; 32]).expect("fixture signing key must be valid")
-    }
-
-    fn public_key_bytes(key: &SigningKey) -> Bytes {
-        Bytes::copy_from_slice(key.verifying_key().to_encoded_point(false).as_bytes())
     }
 
     fn signer_address(public_key: &[u8]) -> Address {
@@ -318,378 +298,33 @@ mod tests {
         assert_eq!(actual as u8, expected as u8, "{error:?}");
     }
 
-    fn der_len(len: usize) -> Vec<u8> {
-        if len < 128 {
-            return vec![len as u8];
-        }
-
-        let bytes = len.to_be_bytes();
-        let first_non_zero = bytes.iter().position(|byte| *byte != 0).unwrap_or(bytes.len() - 1);
-        let significant = &bytes[first_non_zero..];
-        let mut out = vec![0x80 | significant.len() as u8];
-        out.extend_from_slice(significant);
-        out
-    }
-
-    fn der_tag(tag: u8, content: &[u8]) -> Vec<u8> {
-        let mut out = vec![tag];
-        out.extend_from_slice(&der_len(content.len()));
-        out.extend_from_slice(content);
-        out
-    }
-
-    fn der_sequence(parts: &[Vec<u8>]) -> Vec<u8> {
-        der_tag(0x30, &parts.concat())
-    }
-
-    fn der_set(parts: &[Vec<u8>]) -> Vec<u8> {
-        der_tag(0x31, &parts.concat())
-    }
-
-    fn der_integer(bytes: &[u8]) -> Vec<u8> {
-        let mut value = bytes.to_vec();
-        while value.len() > 1
-            && value.first() == Some(&0)
-            && value.get(1).is_some_and(|b| b < &0x80)
-        {
-            value.remove(0);
-        }
-        if value.first().is_some_and(|byte| byte & 0x80 != 0) {
-            value.insert(0, 0);
-        }
-        der_tag(0x02, &value)
-    }
-
-    fn der_bit_string(bytes: &[u8]) -> Vec<u8> {
-        let mut value = vec![0];
-        value.extend_from_slice(bytes);
-        der_tag(0x03, &value)
-    }
-
-    fn der_octet_string(bytes: &[u8]) -> Vec<u8> {
-        der_tag(0x04, bytes)
-    }
-
-    fn der_bool(value: bool) -> Vec<u8> {
-        der_tag(0x01, &[if value { 0xff } else { 0 }])
-    }
-
-    fn der_utf8(value: &str) -> Vec<u8> {
-        der_tag(0x0c, value.as_bytes())
-    }
-
-    fn der_utc_time(value: &str) -> Vec<u8> {
-        der_tag(0x17, value.as_bytes())
-    }
-
-    fn der_oid(nodes: &[u32]) -> Vec<u8> {
-        assert!(nodes.len() >= 2);
-        let mut body = vec![(nodes[0] * 40 + nodes[1]) as u8];
-        for node in &nodes[2..] {
-            let mut stack = vec![(node & 0x7f) as u8];
-            let mut value = node >> 7;
-            while value > 0 {
-                stack.push(((value & 0x7f) as u8) | 0x80);
-                value >>= 7;
+    fn fixture_bytes(name: &str) -> Bytes {
+        for line in FIXTURE_HEX.lines() {
+            let Some((key, value)) = line.split_once(':') else {
+                continue;
+            };
+            if key == name {
+                return Bytes::from(hex::decode(value).expect("static hex fixture decodes"));
             }
-            body.extend(stack.iter().rev());
         }
-        der_tag(0x06, &body)
+        panic!("missing static hex fixture {name}");
     }
 
-    fn oid_ecdsa_with_sha256() -> Vec<u8> {
-        vec![0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02]
+    fn fixture_cert(name: &str) -> TdxCertificate {
+        TdxCertificate { raw: fixture_bytes(name) }
     }
 
-    fn oid_ec_public_key() -> Vec<u8> {
-        vec![0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01]
-    }
-
-    fn oid_prime256v1() -> Vec<u8> {
-        vec![0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07]
-    }
-
-    fn oid_common_name() -> Vec<u8> {
-        vec![0x06, 0x03, 0x55, 0x04, 0x03]
-    }
-
-    fn oid_basic_constraints() -> Vec<u8> {
-        vec![0x06, 0x03, 0x55, 0x1d, 0x13]
-    }
-
-    fn oid_key_usage() -> Vec<u8> {
-        vec![0x06, 0x03, 0x55, 0x1d, 0x0f]
-    }
-
-    fn oid_intel_sgx_extension() -> Vec<u8> {
-        der_oid(&[1, 2, 840, 113741, 1, 13, 1])
-    }
-
-    fn oid_intel_tcb_component(component_index: usize) -> Vec<u8> {
-        der_oid(&[1, 2, 840, 113741, 1, 13, 1, 2, component_index as u32])
-    }
-
-    fn oid_intel_pce_svn() -> Vec<u8> {
-        der_oid(&[1, 2, 840, 113741, 1, 13, 1, 2, 17])
-    }
-
-    fn oid_intel_pce_id() -> Vec<u8> {
-        der_oid(&[1, 2, 840, 113741, 1, 13, 1, 3])
-    }
-
-    fn oid_intel_fmspc() -> Vec<u8> {
-        der_oid(&[1, 2, 840, 113741, 1, 13, 1, 4])
-    }
-
-    fn x509_name(common_name: &str) -> Vec<u8> {
-        der_sequence(&[der_set(&[der_sequence(&[oid_common_name(), der_utf8(common_name)])])])
-    }
-
-    fn x509_algorithm_identifier() -> Vec<u8> {
-        der_sequence(&[oid_ecdsa_with_sha256()])
-    }
-
-    fn x509_subject_public_key_info(key: &SigningKey) -> Vec<u8> {
-        der_sequence(&[
-            der_sequence(&[oid_ec_public_key(), oid_prime256v1()]),
-            der_bit_string(key.verifying_key().to_encoded_point(false).as_bytes()),
-        ])
-    }
-
-    fn x509_extension(oid: Vec<u8>, critical: bool, value: Vec<u8>) -> Vec<u8> {
-        der_sequence(&[oid, der_bool(critical), der_octet_string(&value)])
-    }
-
-    fn intel_sgx_extension_value(platform: &TdxPlatformIdentity, pck_tcb: &TdxPckTcb) -> Vec<u8> {
-        let mut values = pck_tcb
-            .sgx_tcb_svn
-            .iter()
-            .enumerate()
-            .map(|(index, svn)| {
-                der_sequence(&[oid_intel_tcb_component(index + 1), der_integer(&[*svn])])
-            })
-            .collect::<Vec<_>>();
-        values.push(der_sequence(&[
-            oid_intel_pce_svn(),
-            der_integer(&pck_tcb.pce_svn.to_be_bytes()),
-        ]));
-        values.push(der_sequence(&[oid_intel_fmspc(), der_octet_string(&platform.fmspc)]));
-        values.push(der_sequence(&[oid_intel_pce_id(), der_octet_string(&platform.pce_id)]));
-        der_sequence(&values)
-    }
-
-    fn x509_extensions(
-        is_ca: bool,
-        platform: Option<&TdxPlatformIdentity>,
-        pck_tcb: Option<&TdxPckTcb>,
-        key_usage_byte: u8,
-    ) -> Vec<u8> {
-        let basic_constraints_value =
-            if is_ca { der_sequence(&[der_bool(true)]) } else { der_sequence(&[]) };
-        let key_usage_value = der_bit_string(&[key_usage_byte]);
-        let mut extensions = vec![
-            x509_extension(oid_basic_constraints(), true, basic_constraints_value),
-            x509_extension(oid_key_usage(), true, key_usage_value),
-        ];
-        if let (Some(platform), Some(pck_tcb)) = (platform, pck_tcb) {
-            extensions.push(x509_extension(
-                oid_intel_sgx_extension(),
-                false,
-                intel_sgx_extension_value(platform, pck_tcb),
-            ));
+    fn revocation_evidence(intermediate_crl: &str) -> TdxRevocationEvidence {
+        TdxRevocationEvidence {
+            certificate_crls: vec![fixture_bytes("root_crl"), fixture_bytes(intermediate_crl)],
         }
-        der_tag(0xa3, &der_sequence(&extensions))
     }
 
-    fn der_certificate(
-        serial: &[u8],
-        subject_name: &str,
-        subject_key: &SigningKey,
-        issuer_name: &str,
-        issuer_key: &SigningKey,
-        is_ca: bool,
-        pck_platform: Option<(&TdxPlatformIdentity, &TdxPckTcb)>,
-    ) -> Vec<u8> {
-        let key_usage_byte = if is_ca { 0x04 } else { 0x80 };
-        let platform = pck_platform.map(|(platform, _)| platform);
-        let pck_tcb = pck_platform.map(|(_, pck_tcb)| pck_tcb);
-        let tbs = der_sequence(&[
-            der_tag(0xa0, &der_integer(&[2])),
-            der_integer(serial),
-            x509_algorithm_identifier(),
-            x509_name(issuer_name),
-            der_sequence(&[der_utc_time("240101000000Z"), der_utc_time("350101000000Z")]),
-            x509_name(subject_name),
-            x509_subject_public_key_info(subject_key),
-            x509_extensions(is_ca, platform, pck_tcb, key_usage_byte),
-        ]);
-        let signature: Signature = issuer_key.sign(&tbs);
-        der_sequence(&[
-            tbs,
-            x509_algorithm_identifier(),
-            der_bit_string(signature.to_der().as_bytes()),
-        ])
-    }
-
-    fn cert(
-        serial: &[u8],
-        subject_name: &str,
-        subject_key: &SigningKey,
-        issuer_name: &str,
-        issuer_key: &SigningKey,
-        is_ca: bool,
-    ) -> TdxCertificate {
-        let der = der_certificate(
-            serial,
-            subject_name,
-            subject_key,
-            issuer_name,
-            issuer_key,
-            is_ca,
-            None,
-        );
-        TdxCertificate { raw: Bytes::from(der) }
-    }
-
-    fn default_pck_tcb() -> TdxPckTcb {
-        TdxPckTcb { sgx_tcb_svn: [3; 16], pce_svn: 9 }
-    }
-
-    fn pck_cert(
-        serial: &[u8],
-        subject_name: &str,
-        subject_key: &SigningKey,
-        issuer_name: &str,
-        issuer_key: &SigningKey,
-        platform: &TdxPlatformIdentity,
-    ) -> TdxCertificate {
-        pck_cert_with_tcb(
-            serial,
-            subject_name,
-            subject_key,
-            issuer_name,
-            issuer_key,
-            platform,
-            &default_pck_tcb(),
-        )
-    }
-
-    fn pck_cert_with_tcb(
-        serial: &[u8],
-        subject_name: &str,
-        subject_key: &SigningKey,
-        issuer_name: &str,
-        issuer_key: &SigningKey,
-        platform: &TdxPlatformIdentity,
-        pck_tcb: &TdxPckTcb,
-    ) -> TdxCertificate {
-        let der = der_certificate(
-            serial,
-            subject_name,
-            subject_key,
-            issuer_name,
-            issuer_key,
-            false,
-            Some((platform, pck_tcb)),
-        );
-        TdxCertificate { raw: Bytes::from(der) }
-    }
-
-    fn collateral_cert_with_key_usage(key_usage_byte: u8) -> TdxCertificate {
-        let subject_key = signing_key(4);
-        let issuer_key = signing_key(2);
-        let tbs = der_sequence(&[
-            der_tag(0xa0, &der_integer(&[2])),
-            der_integer(b"\x07"),
-            x509_algorithm_identifier(),
-            x509_name("Intel TDX intermediate fixture"),
-            der_sequence(&[der_utc_time("240101000000Z"), der_utc_time("350101000000Z")]),
-            x509_name(INTEL_TCB_SIGNING_CERT_COMMON_NAME),
-            x509_subject_public_key_info(&subject_key),
-            x509_extensions(false, None, None, key_usage_byte),
-        ]);
-        let signature: Signature = issuer_key.sign(&tbs);
-        let der = der_sequence(&[
-            tbs,
-            x509_algorithm_identifier(),
-            der_bit_string(signature.to_der().as_bytes()),
-        ]);
-        TdxCertificate { raw: Bytes::from(der) }
-    }
-
-    fn der_crl_with_next_update(
-        issuer_name: &str,
-        issuer_key: &SigningKey,
-        revoked_serials: &[Vec<u8>],
-        next_update: &str,
-    ) -> Vec<u8> {
-        let revoked_certificates = if revoked_serials.is_empty() {
-            Vec::new()
-        } else {
-            let entries = revoked_serials
-                .iter()
-                .map(|serial| der_sequence(&[der_integer(serial), der_utc_time("240201000000Z")]))
-                .collect::<Vec<_>>();
-            der_sequence(&entries)
-        };
-        let mut tbs_parts = vec![
-            der_integer(&[1]),
-            x509_algorithm_identifier(),
-            x509_name(issuer_name),
-            der_utc_time("240101000000Z"),
-            der_utc_time(next_update),
-        ];
-        if !revoked_certificates.is_empty() {
-            tbs_parts.push(revoked_certificates);
-        }
-        let tbs = der_sequence(&tbs_parts);
-        let signature: Signature = issuer_key.sign(&tbs);
-        der_sequence(&[
-            tbs,
-            x509_algorithm_identifier(),
-            der_bit_string(signature.to_der().as_bytes()),
-        ])
-    }
-
-    fn der_crl(issuer_name: &str, issuer_key: &SigningKey, revoked_serials: &[Vec<u8>]) -> Vec<u8> {
-        der_crl_with_next_update(issuer_name, issuer_key, revoked_serials, "350101000000Z")
-    }
-
-    fn revocation_evidence(
-        root_revoked_serials: &[Vec<u8>],
-        intermediate_revoked_serials: &[Vec<u8>],
-    ) -> TdxRevocationEvidence {
-        let root_key = signing_key(1);
-        let intermediate_key = signing_key(2);
+    fn early_revocation_evidence() -> TdxRevocationEvidence {
         TdxRevocationEvidence {
             certificate_crls: vec![
-                Bytes::from(der_crl("Intel TDX Root CA fixture", &root_key, root_revoked_serials)),
-                Bytes::from(der_crl(
-                    "Intel TDX intermediate fixture",
-                    &intermediate_key,
-                    intermediate_revoked_serials,
-                )),
-            ],
-        }
-    }
-
-    fn revocation_evidence_with_crl_next_update(next_update: &str) -> TdxRevocationEvidence {
-        let root_key = signing_key(1);
-        let intermediate_key = signing_key(2);
-        TdxRevocationEvidence {
-            certificate_crls: vec![
-                Bytes::from(der_crl_with_next_update(
-                    "Intel TDX Root CA fixture",
-                    &root_key,
-                    &[],
-                    next_update,
-                )),
-                Bytes::from(der_crl_with_next_update(
-                    "Intel TDX intermediate fixture",
-                    &intermediate_key,
-                    &[],
-                    next_update,
-                )),
+                fixture_bytes("root_crl_early"),
+                fixture_bytes("intermediate_crl_early"),
             ],
         }
     }
@@ -749,129 +384,71 @@ mod tests {
         Bytes::from(VALID_SECP256K1_PUBLIC_KEY.to_vec())
     }
 
-    fn build_quote(
-        attestation_key: &SigningKey,
-        pck_key: &SigningKey,
-        public_key: &[u8],
-        timestamp_millis: u64,
-    ) -> Bytes {
-        let mut header = vec![0u8; TDX_QUOTE_HEADER_LEN];
-        header[0..2].copy_from_slice(&4u16.to_le_bytes());
-        header[2..4].copy_from_slice(&ECDSA_P256_ATTESTATION_KEY_TYPE.to_le_bytes());
-        header[4..8].copy_from_slice(&TDX_TEE_TYPE.to_le_bytes());
-        header[8..10].copy_from_slice(&7u16.to_le_bytes());
-        header[10..12].copy_from_slice(&9u16.to_le_bytes());
-
-        let mut report = vec![0u8; TDX_REPORT_BODY_LEN];
-        report[..TDX_TEE_TCB_SVN_LEN].copy_from_slice(&[3; TDX_TEE_TCB_SVN_LEN]);
-        report[MRTD_OFFSET..MRTD_OFFSET + TDX_MEASUREMENT_LEN].copy_from_slice(&[0xA0; 48]);
-        report[RTMR_OFFSET..RTMR_OFFSET + TDX_MEASUREMENT_LEN].copy_from_slice(&[0xB0; 48]);
-        report[RTMR_OFFSET + TDX_MEASUREMENT_LEN..RTMR_OFFSET + (TDX_MEASUREMENT_LEN * 2)]
-            .copy_from_slice(&[0xB1; 48]);
-        report[RTMR_OFFSET + (TDX_MEASUREMENT_LEN * 2)..RTMR_OFFSET + (TDX_MEASUREMENT_LEN * 3)]
-            .copy_from_slice(&[0xB2; 48]);
-        report[RTMR_OFFSET + (TDX_MEASUREMENT_LEN * 3)..RTMR_OFFSET + (TDX_MEASUREMENT_LEN * 4)]
-            .copy_from_slice(&[0xB3; 48]);
-        let public_key_hash = TdxVerifier::validate_public_key(public_key).unwrap();
-        report[REPORT_DATA_OFFSET..REPORT_DATA_OFFSET + 32]
-            .copy_from_slice(public_key_hash.as_slice());
-        report[REPORT_DATA_OFFSET + 32..REPORT_DATA_OFFSET + 64].copy_from_slice(
-            TdxVerifier::timestamp_report_data_suffix(timestamp_millis).as_slice(),
-        );
-
-        let mut signed_message = Vec::new();
-        signed_message.extend_from_slice(&header);
-        signed_message.extend_from_slice(&report);
-
-        let quote_signature = sign(attestation_key, &signed_message);
-        let attestation_public_key = public_key_bytes(attestation_key);
-        let qe_authentication_data = b"fixture-qe-authentication-data";
-        let mut qe_report = vec![0u8; QE_REPORT_LEN];
-        let mut hasher = Sha256::new();
-        hasher.update(&attestation_public_key[1..65]);
-        hasher.update(qe_authentication_data);
-        let qe_report_data_hash = hasher.finalize();
-        qe_report[QE_REPORT_DATA_OFFSET..QE_REPORT_DATA_OFFSET + QE_REPORT_DATA_HASH_LEN]
-            .copy_from_slice(&qe_report_data_hash);
-        let qe_report_signature = sign(pck_key, &qe_report);
-        let certification_data = b"fixture-certification-data";
-        let mut aux_data = Vec::new();
-        aux_data.extend_from_slice(&qe_report);
-        aux_data.extend_from_slice(&qe_report_signature);
-        aux_data.extend_from_slice(&(qe_authentication_data.len() as u16).to_le_bytes());
-        aux_data.extend_from_slice(qe_authentication_data);
-        aux_data.extend_from_slice(&5u16.to_le_bytes());
-        aux_data.extend_from_slice(&(certification_data.len() as u32).to_le_bytes());
-        aux_data.extend_from_slice(certification_data);
-
-        let mut sig_data = Vec::new();
-        sig_data.extend_from_slice(&quote_signature);
-        sig_data.extend_from_slice(&attestation_public_key[1..65]);
-        sig_data.extend_from_slice(&ECDSA_SIG_AUX_DATA_CERTIFICATION_DATA_TYPE.to_le_bytes());
-        sig_data.extend_from_slice(&(aux_data.len() as u32).to_le_bytes());
-        sig_data.extend_from_slice(&aux_data);
-
-        assert!(sig_data.len() >= ECDSA_P256_SIGNATURE_LEN);
-
-        let mut quote = signed_message;
-        quote.extend_from_slice(&(sig_data.len() as u32).to_le_bytes());
-        quote.extend_from_slice(&sig_data);
-        Bytes::from(quote)
+    fn json_bytes(value: serde_json::Value) -> Vec<u8> {
+        serde_json::to_vec(&value).expect("fixture JSON must serialize")
     }
 
-    fn tcb_components(svn: u16) -> String {
-        (0..TDX_TEE_TCB_SVN_LEN)
-            .map(|_| format!(r#"{{"svn":{svn}}}"#))
-            .collect::<Vec<_>>()
-            .join(",")
+    fn tcb_components(svn: u16) -> Vec<serde_json::Value> {
+        (0..TDX_TEE_TCB_SVN_LEN).map(|_| json!({ "svn": svn })).collect()
     }
 
-    fn tcb_level(status: &str, sgx_svn: u16, tdx_svn: u16, pce_svn: u16) -> String {
+    fn tcb_level(status: &str, sgx_svn: u16, tdx_svn: u16, pce_svn: u16) -> serde_json::Value {
         let sgx_components = tcb_components(sgx_svn);
         let tdx_components = tcb_components(tdx_svn);
-        format!(
-            r#"{{"tcb":{{"pcesvn":{pce_svn},"sgxtcbcomponents":[{sgx_components}],"tdxtcbcomponents":[{tdx_components}]}},"tcbStatus":"{status}"}}"#
-        )
+        json!({
+            "tcb": {
+                "pcesvn": pce_svn,
+                "sgxtcbcomponents": sgx_components,
+                "tdxtcbcomponents": tdx_components,
+            },
+            "tcbStatus": status,
+        })
     }
 
     fn repeated_hex(byte: &str, byte_len: usize) -> String {
         byte.repeat(byte_len)
     }
 
-    fn tdx_module_json() -> String {
-        let mrsigner = repeated_hex("00", TDX_MEASUREMENT_LEN);
-        let attributes = repeated_hex("00", TDX_SEAM_ATTRIBUTES_LEN);
-        let attributes_mask = repeated_hex("ff", TDX_SEAM_ATTRIBUTES_LEN);
-        format!(
-            r#""tdxModule":{{"mrsigner":"{mrsigner}","attributes":"{attributes}","attributesMask":"{attributes_mask}"}}"#
-        )
+    fn tdx_module_json() -> serde_json::Value {
+        json!({
+            "mrsigner": repeated_hex("00", TDX_MEASUREMENT_LEN),
+            "attributes": repeated_hex("00", TDX_SEAM_ATTRIBUTES_LEN),
+            "attributesMask": repeated_hex("ff", TDX_SEAM_ATTRIBUTES_LEN),
+        })
     }
 
-    fn tdx_module_identity_json(status: &str, isvsvn: u16) -> String {
-        let mrsigner = repeated_hex("00", TDX_MEASUREMENT_LEN);
-        let attributes = repeated_hex("00", TDX_SEAM_ATTRIBUTES_LEN);
-        let attributes_mask = repeated_hex("ff", TDX_SEAM_ATTRIBUTES_LEN);
-        format!(
-            r#"{{"id":"TDX_03","mrsigner":"{mrsigner}","attributes":"{attributes}","attributesMask":"{attributes_mask}","tcbLevels":[{{"tcb":{{"isvsvn":{isvsvn}}},"tcbStatus":"{status}"}}]}}"#
-        )
+    fn tdx_module_identity_json(status: &str, isvsvn: u16) -> serde_json::Value {
+        json!({
+            "id": "TDX_03",
+            "mrsigner": repeated_hex("00", TDX_MEASUREMENT_LEN),
+            "attributes": repeated_hex("00", TDX_SEAM_ATTRIBUTES_LEN),
+            "attributesMask": repeated_hex("ff", TDX_SEAM_ATTRIBUTES_LEN),
+            "tcbLevels": [{ "tcb": { "isvsvn": isvsvn }, "tcbStatus": status }],
+        })
     }
 
     fn tcb_info_raw_with_levels_and_module_status(
-        levels: &[String],
+        levels: &[serde_json::Value],
         next_update: &str,
         module_status: &str,
         module_isvsvn: u16,
     ) -> Vec<u8> {
-        let levels = levels.join(",");
-        let tdx_module = tdx_module_json();
-        let tdx_module_identity = tdx_module_identity_json(module_status, module_isvsvn);
-        format!(
-            r#"{{"tcbInfo":{{"id":"TDX","teeType":"{TDX_TEE_TYPE:08x}","issueDate":"{COLLATERAL_ISSUE_DATE}","nextUpdate":"{next_update}","fmspc":"{FMSPC_HEX}","pceId":"{PCE_ID_HEX}",{tdx_module},"tdxModuleIdentities":[{tdx_module_identity}],"tcbLevels":[{levels}]}}}}"#
-        )
-        .into_bytes()
+        json_bytes(json!({
+            "tcbInfo": {
+                "id": "TDX",
+                "teeType": format!("{TDX_TEE_TYPE:08x}"),
+                "issueDate": COLLATERAL_ISSUE_DATE,
+                "nextUpdate": next_update,
+                "fmspc": FMSPC_HEX,
+                "pceId": PCE_ID_HEX,
+                "tdxModule": tdx_module_json(),
+                "tdxModuleIdentities": [tdx_module_identity_json(module_status, module_isvsvn)],
+                "tcbLevels": levels,
+            }
+        }))
     }
 
-    fn tcb_info_raw_with_levels(levels: &[String], next_update: &str) -> Vec<u8> {
+    fn tcb_info_raw_with_levels(levels: &[serde_json::Value], next_update: &str) -> Vec<u8> {
         tcb_info_raw_with_levels_and_module_status(levels, next_update, "UpToDate", 3)
     }
 
@@ -892,17 +469,35 @@ mod tests {
 
     fn sgx_tcb_info_raw(status: &str) -> Vec<u8> {
         let components = tcb_components(3);
-        format!(
-            r#"{{"tcbInfo":{{"id":"SGX","teeType":"00000000","issueDate":"{COLLATERAL_ISSUE_DATE}","nextUpdate":"{COLLATERAL_NEXT_UPDATE_DATE}","fmspc":"{FMSPC_HEX}","pceId":"{PCE_ID_HEX}","tcbLevels":[{{"tcb":{{"pcesvn":9,"sgxtcbcomponents":[{components}]}},"tcbStatus":"{status}"}}]}}}}"#
-        )
-        .into_bytes()
+        json_bytes(json!({
+            "tcbInfo": {
+                "id": "SGX",
+                "teeType": "00000000",
+                "issueDate": COLLATERAL_ISSUE_DATE,
+                "nextUpdate": COLLATERAL_NEXT_UPDATE_DATE,
+                "fmspc": FMSPC_HEX,
+                "pceId": PCE_ID_HEX,
+                "tcbLevels": [{ "tcb": { "pcesvn": 9, "sgxtcbcomponents": components }, "tcbStatus": status }],
+            }
+        }))
     }
 
     fn qe_identity_raw_with_identity(id: &str, version: u16, status: &str) -> Vec<u8> {
-        format!(
-            r#"{{"enclaveIdentity":{{"id":"{id}","version":{version},"issueDate":"{COLLATERAL_ISSUE_DATE}","nextUpdate":"{COLLATERAL_NEXT_UPDATE_DATE}","miscselect":"00000000","miscselectMask":"ffffffff","attributes":"00000000000000000000000000000000","attributesMask":"ffffffffffffffffffffffffffffffff","mrsigner":"0000000000000000000000000000000000000000000000000000000000000000","isvprodid":0,"tcbLevels":[{{"tcb":{{"isvsvn":0}},"tcbStatus":"{status}"}}]}}}}"#
-        )
-        .into_bytes()
+        json_bytes(json!({
+            "enclaveIdentity": {
+                "id": id,
+                "version": version,
+                "issueDate": COLLATERAL_ISSUE_DATE,
+                "nextUpdate": COLLATERAL_NEXT_UPDATE_DATE,
+                "miscselect": "00000000",
+                "miscselectMask": "ffffffff",
+                "attributes": "00000000000000000000000000000000",
+                "attributesMask": "ffffffffffffffffffffffffffffffff",
+                "mrsigner": "0000000000000000000000000000000000000000000000000000000000000000",
+                "isvprodid": 0,
+                "tcbLevels": [{ "tcb": { "isvsvn": 0 }, "tcbStatus": status }],
+            }
+        }))
     }
 
     fn qe_identity_raw_with_status(status: &str) -> Vec<u8> {
@@ -913,49 +508,12 @@ mod tests {
         qe_identity_raw_with_status("UpToDate")
     }
 
-    fn fixture() -> Fixture {
-        let root_key = signing_key(1);
-        let intermediate_key = signing_key(2);
-        let attestation_key = signing_key(3);
+    fn fixture() -> TdxVerifierInput {
         let collateral_key = signing_key(4);
-        let pck_key = signing_key(5);
-        let platform = TdxPlatformIdentity {
-            fmspc: Bytes::from(vec![1, 2, 3, 4, 5, 6]),
-            pce_id: Bytes::from(vec![0, 9]),
-        };
-
-        let root = cert(
-            b"\x01",
-            "Intel TDX Root CA fixture",
-            &root_key,
-            "Intel TDX Root CA fixture",
-            &root_key,
-            true,
-        );
-        let intermediate = cert(
-            b"\x02",
-            "Intel TDX intermediate fixture",
-            &intermediate_key,
-            "Intel TDX Root CA fixture",
-            &root_key,
-            true,
-        );
-        let pck_leaf = pck_cert(
-            b"\x03",
-            "Intel TDX PCK fixture",
-            &pck_key,
-            "Intel TDX intermediate fixture",
-            &intermediate_key,
-            &platform,
-        );
-        let collateral_leaf = cert(
-            b"\x04",
-            INTEL_TCB_SIGNING_CERT_COMMON_NAME,
-            &collateral_key,
-            "Intel TDX intermediate fixture",
-            &intermediate_key,
-            false,
-        );
+        let root = fixture_cert("root");
+        let intermediate = fixture_cert("intermediate");
+        let pck_leaf = fixture_cert("pck_leaf");
+        let collateral_leaf = fixture_cert("collateral_leaf");
 
         let root_hash = root.hash();
         let pck_chain = vec![root.clone(), intermediate.clone(), pck_leaf.clone()];
@@ -973,45 +531,35 @@ mod tests {
             collateral_chain,
         );
         let public_key = signer_public_key();
-        let quote = build_quote(&attestation_key, &pck_key, &public_key, QUOTE_TIMESTAMP_MILLIS);
 
-        Fixture {
-            input: TdxVerifierInput {
-                quote,
-                pck_certificate_chain: pck_chain,
-                collateral: TdxCollateral {
-                    tcb_info: tcb_info.clone(),
-                    qe_identity: qe_identity.clone(),
-                },
-                revocation: revocation_evidence(&[], &[]),
-                trusted_root_ca_hash: root_hash,
-                expected_public_key: public_key,
-                quote_timestamp_millis: QUOTE_TIMESTAMP_MILLIS,
-                verification_time: VERIFICATION_TIME,
-                max_quote_age_seconds: MAX_QUOTE_AGE_SECONDS,
-                allowed_tcb_statuses: vec![TDXTcbStatus::UpToDate],
-            },
-            root_hash,
-            pck_leaf_hash: pck_leaf.hash(),
-            tcb_hash: tcb_info.hash(),
-            qe_hash: qe_identity.hash(),
+        TdxVerifierInput {
+            quote: fixture_bytes("quote"),
+            pck_certificate_chain: pck_chain,
+            collateral: TdxCollateral { tcb_info, qe_identity },
+            revocation: revocation_evidence("intermediate_crl"),
+            trusted_root_ca_hash: root_hash,
+            expected_public_key: public_key,
+            quote_timestamp_millis: QUOTE_TIMESTAMP_MILLIS,
+            verification_time: VERIFICATION_TIME,
+            max_quote_age_seconds: MAX_QUOTE_AGE_SECONDS,
+            allowed_tcb_statuses: vec![TDXTcbStatus::UpToDate],
         }
     }
 
     #[test]
     fn verifies_known_good_tdx_quote_fixture_and_emits_solidity_journal() {
-        let fixture = fixture();
-        let journal = TdxVerifier::verify(&fixture.input).unwrap();
+        let input = fixture();
+        let journal = TdxVerifier::verify(&input).unwrap();
 
         assert_eq!(journal.result as u8, TDXVerificationResult::Success as u8);
         assert_eq!(journal.tcbStatus as u8, TDXTcbStatus::UpToDate as u8);
         assert_eq!(journal.timestamp, QUOTE_TIMESTAMP_MILLIS);
-        assert_eq!(journal.rootCaHash, fixture.root_hash);
-        assert_eq!(journal.pckCertHash, fixture.pck_leaf_hash);
-        assert_eq!(journal.tcbInfoHash, fixture.tcb_hash);
-        assert_eq!(journal.qeIdentityHash, fixture.qe_hash);
-        assert_eq!(journal.publicKey, fixture.input.expected_public_key);
-        assert_eq!(journal.signer, signer_address(&fixture.input.expected_public_key));
+        assert_eq!(journal.rootCaHash, input.trusted_root_ca_hash);
+        assert_eq!(journal.pckCertHash, input.pck_certificate_chain[2].hash());
+        assert_eq!(journal.tcbInfoHash, input.collateral.tcb_info.hash());
+        assert_eq!(journal.qeIdentityHash, input.collateral.qe_identity.hash());
+        assert_eq!(journal.publicKey, input.expected_public_key);
+        assert_eq!(journal.signer, signer_address(&input.expected_public_key));
         assert_eq!(
             journal.reportDataSuffix,
             TdxVerifier::timestamp_report_data_suffix(QUOTE_TIMESTAMP_MILLIS)
@@ -1024,6 +572,8 @@ mod tests {
         let encoded = TdxVerifier::encode_journal(&journal);
         let decoded = <TDXVerifierJournal as SolValue>::abi_decode_validate(&encoded)
             .expect("journal must decode with Solidity ABI type");
+        assert_eq!(decoded.result as u8, TDXVerificationResult::Success as u8);
+        assert_eq!(decoded.signer, signer_address(&input.expected_public_key));
         assert_eq!(decoded.imageHash, journal.imageHash);
         assert_eq!(decoded.mrTdHash, journal.mrTdHash);
         assert_eq!(decoded.reportDataPrefix, journal.reportDataPrefix);
@@ -1032,7 +582,7 @@ mod tests {
 
     #[test]
     fn verifies_tdx_tcb_info_without_tee_type() {
-        let mut input = fixture().input;
+        let mut input = fixture();
         let raw = String::from_utf8(tcb_info_raw("UpToDate"))
             .unwrap()
             .replace(r#""teeType":"00000081","#, "");
@@ -1045,21 +595,8 @@ mod tests {
     }
 
     #[test]
-    fn fixture_quote_collateral_and_journal_abi_round_trips() {
-        let fixture = fixture();
-        let journal = TdxVerifier::verify(&fixture.input).unwrap();
-        let output = Bytes::from(TdxVerifier::encode_journal(&journal));
-
-        let decoded_journal = <TDXVerifierJournal as SolValue>::abi_decode_validate(&output)
-            .expect("output must be an ABI-encoded TDX journal");
-        assert_eq!(decoded_journal.result as u8, TDXVerificationResult::Success as u8);
-        assert_eq!(decoded_journal.signer, signer_address(&fixture.input.expected_public_key));
-        assert_eq!(decoded_journal.imageHash, journal.imageHash);
-    }
-
-    #[test]
     fn collateral_signature_covers_signed_json_body() {
-        let mut input = fixture().input;
+        let mut input = fixture();
         let document: serde_json::Value =
             serde_json::from_slice(&input.collateral.tcb_info.raw).unwrap();
         input.collateral.tcb_info.raw =
@@ -1076,7 +613,7 @@ mod tests {
 
     #[test]
     fn qe_identity_signature_must_not_be_bound_to_tcb_info_body() {
-        let mut input = fixture().input;
+        let mut input = fixture();
         let tcb_document: serde_json::Value =
             serde_json::from_slice(&input.collateral.tcb_info.raw).unwrap();
         let qe_document: serde_json::Value =
@@ -1098,7 +635,7 @@ mod tests {
 
     #[test]
     fn image_hash_matches_contract_formula() {
-        let parsed = TdxQuote::parse(&fixture().input.quote).unwrap();
+        let parsed = TdxQuote::parse(&fixture().quote).unwrap();
         let mut expected = Vec::with_capacity(48 * 5);
         expected.extend_from_slice(&parsed.mrtd);
         expected.extend_from_slice(&parsed.rtmr0);
@@ -1115,7 +652,7 @@ mod tests {
             ),
             keccak256(expected),
         );
-        assert_eq!(keccak256(parsed.mrtd), TdxVerifier::verify(&fixture().input).unwrap().mrTdHash);
+        assert_eq!(keccak256(parsed.mrtd), TdxVerifier::verify(&fixture()).unwrap().mrTdHash);
     }
 
     #[test]
@@ -1131,7 +668,7 @@ mod tests {
 
     #[test]
     fn quote_v5_is_rejected_until_body_layout_is_supported() {
-        let mut quote = fixture().input.quote.to_vec();
+        let mut quote = fixture().quote.to_vec();
         quote[0..2].copy_from_slice(&5u16.to_le_bytes());
 
         let error = TdxQuote::parse(&quote).expect_err("quote v5 must not use v4 body offsets");
@@ -1143,7 +680,7 @@ mod tests {
 
     #[test]
     fn quote_timestamp_must_match_signed_report_data() {
-        let mut input = fixture().input;
+        let mut input = fixture();
         input.quote_timestamp_millis = (VERIFICATION_TIME - 1) * 1_000;
 
         let error = match TdxVerifier::verify(&input) {
@@ -1156,171 +693,158 @@ mod tests {
 
     #[test]
     fn quote_timestamp_allows_strictly_past_and_inside_max_age() {
-        let previous_second_timestamp_millis = (VERIFICATION_TIME - 1) * 1_000;
-        TdxVerifier::verify_quote_timestamp(
-            previous_second_timestamp_millis,
-            VERIFICATION_TIME,
-            MAX_QUOTE_AGE_SECONDS,
-        )
-        .expect("quote generated during previous second must be accepted");
-
-        let inside_max_age_timestamp_millis =
-            (VERIFICATION_TIME - MAX_QUOTE_AGE_SECONDS + 1) * 1_000;
-        TdxVerifier::verify_quote_timestamp(
-            inside_max_age_timestamp_millis,
-            VERIFICATION_TIME,
-            MAX_QUOTE_AGE_SECONDS,
-        )
-        .expect("quote inside max age must be accepted");
+        for timestamp_millis in [
+            (VERIFICATION_TIME - 1) * 1_000,
+            (VERIFICATION_TIME - MAX_QUOTE_AGE_SECONDS + 1) * 1_000,
+        ] {
+            TdxVerifier::verify_quote_timestamp(
+                timestamp_millis,
+                VERIFICATION_TIME,
+                MAX_QUOTE_AGE_SECONDS,
+            )
+            .expect("quote inside timestamp policy must be accepted");
+        }
     }
 
     #[test]
     fn quote_timestamp_rejects_contract_boundaries_future_second_and_over_age() {
-        let current_timestamp_millis = VERIFICATION_TIME * 1_000;
-        let current_error = TdxVerifier::verify_quote_timestamp(
-            current_timestamp_millis,
-            VERIFICATION_TIME,
-            MAX_QUOTE_AGE_SECONDS,
-        )
-        .expect_err("quote generated at verification second must fail");
-
-        let exact_max_age_timestamp_millis = (VERIFICATION_TIME - MAX_QUOTE_AGE_SECONDS) * 1_000;
-        let exact_max_age_error = TdxVerifier::verify_quote_timestamp(
-            exact_max_age_timestamp_millis,
-            VERIFICATION_TIME,
-            MAX_QUOTE_AGE_SECONDS,
-        )
-        .expect_err("quote exactly at max age must fail");
-
-        let future_timestamp_millis = (VERIFICATION_TIME + 1) * 1_000;
-        let future_error = TdxVerifier::verify_quote_timestamp(
-            future_timestamp_millis,
-            VERIFICATION_TIME,
-            MAX_QUOTE_AGE_SECONDS,
-        )
-        .expect_err("quote generated after verification second must fail");
-
-        let over_age_timestamp_millis = (VERIFICATION_TIME - MAX_QUOTE_AGE_SECONDS - 1) * 1_000;
-        let over_age_error = TdxVerifier::verify_quote_timestamp(
-            over_age_timestamp_millis,
-            VERIFICATION_TIME,
-            MAX_QUOTE_AGE_SECONDS,
-        )
-        .expect_err("quote older than max age must fail");
-
-        assert!(matches!(current_error, TdxVerifierError::InvalidTimestamp));
-        assert!(matches!(exact_max_age_error, TdxVerifierError::InvalidTimestamp));
-        assert!(matches!(future_error, TdxVerifierError::InvalidTimestamp));
-        assert!(matches!(over_age_error, TdxVerifierError::InvalidTimestamp));
+        for timestamp_millis in [
+            VERIFICATION_TIME * 1_000,
+            (VERIFICATION_TIME - MAX_QUOTE_AGE_SECONDS) * 1_000,
+            (VERIFICATION_TIME + 1) * 1_000,
+            (VERIFICATION_TIME - MAX_QUOTE_AGE_SECONDS - 1) * 1_000,
+        ] {
+            let error = TdxVerifier::verify_quote_timestamp(
+                timestamp_millis,
+                VERIFICATION_TIME,
+                MAX_QUOTE_AGE_SECONDS,
+            )
+            .expect_err("quote outside timestamp policy must fail");
+            assert!(matches!(error, TdxVerifierError::InvalidTimestamp));
+        }
     }
 
     #[test]
     fn collateral_expiration_includes_earliest_crl_next_update() {
-        let mut fixture = fixture();
-        fixture.input.revocation =
-            revocation_evidence_with_crl_next_update(EARLY_CRL_NEXT_UPDATE_DATE);
+        let mut input = fixture();
+        input.revocation = early_revocation_evidence();
 
-        let journal = TdxVerifier::verify(&fixture.input).unwrap();
+        let journal = TdxVerifier::verify(&input).unwrap();
 
         assert_eq!(journal.collateralExpiration, EARLY_CRL_NEXT_UPDATE);
     }
 
-    #[rstest]
-    #[case::bad_quote_signature(TDXVerificationResult::QuoteSignatureInvalid, |input: &mut TdxVerifierInput| {
-        let mut quote = input.quote.to_vec();
-        let signature_offset = TDX_QUOTE_HEADER_LEN + TDX_REPORT_BODY_LEN + 4;
-        quote[signature_offset] ^= 0x01;
-        input.quote = Bytes::from(quote);
-    })]
-    #[case::non_tdx_quote_header(TDXVerificationResult::InvalidQuote, |input: &mut TdxVerifierInput| {
-        let mut quote = input.quote.to_vec();
-        quote[4..8].copy_from_slice(&0u32.to_le_bytes());
-        input.quote = Bytes::from(quote);
-    })]
-    #[case::unsupported_attestation_key_type(TDXVerificationResult::InvalidQuote, |input: &mut TdxVerifierInput| {
-        let mut quote = input.quote.to_vec();
-        quote[2..4].copy_from_slice(&1u16.to_le_bytes());
-        input.quote = Bytes::from(quote);
-    })]
-    #[case::bad_qe_report_signature(TDXVerificationResult::PckCertChainInvalid, |input: &mut TdxVerifierInput| {
-        let mut quote = input.quote.to_vec();
-        let signature_data_offset = TDX_QUOTE_HEADER_LEN + TDX_REPORT_BODY_LEN + 4;
-        let qe_report_signature_offset =
-            signature_data_offset
-                + ECDSA_P256_SIGNATURE_LEN
-                + ECDSA_P256_PUBLIC_KEY_BODY_LEN
-                + CERTIFICATION_DATA_HEADER_LEN
-                + QE_REPORT_LEN;
-        quote[qe_report_signature_offset] ^= 0x01;
-        input.quote = Bytes::from(quote);
-    })]
-    #[case::wrong_root_ca_hash(TDXVerificationResult::RootCaNotTrusted, |input: &mut TdxVerifierInput| {
-        input.trusted_root_ca_hash = B256::repeat_byte(0xEF);
-    })]
-    #[case::expired_collateral(TDXVerificationResult::CollateralExpired, |input: &mut TdxVerifierInput| {
-        input.collateral.tcb_info.raw = Bytes::from(tcb_info_raw_with_dates(
-            "UpToDate",
-            EXPIRED_COLLATERAL_NEXT_UPDATE_DATE,
-        ));
-        resign_tcb_info(input);
-    })]
-    #[case::revoked_collateral_signer(TDXVerificationResult::TcbInfoInvalid, |input: &mut TdxVerifierInput| {
-        input.revocation = revocation_evidence(&[], &[vec![0x04]]);
-    })]
-    #[case::timestamp_outside_policy(TDXVerificationResult::InvalidTimestamp, |input: &mut TdxVerifierInput| {
-        input.verification_time = VERIFICATION_TIME + MAX_QUOTE_AGE_SECONDS + 1;
-    })]
-    #[case::unsupported_tcb_status(TDXVerificationResult::TcbStatusNotAllowed, |input: &mut TdxVerifierInput| {
-        input.collateral.tcb_info.raw = Bytes::from(tcb_info_raw("Revoked"));
-        resign_tcb_info(input);
-    })]
-    #[case::sgx_tcb_info_for_tdx_quote(TDXVerificationResult::TcbInfoInvalid, |input: &mut TdxVerifierInput| {
-        input.collateral.tcb_info.raw = Bytes::from(sgx_tcb_info_raw("UpToDate"));
-        resign_tcb_info(input);
-    })]
-    #[case::malformed_tcb_info_signature(TDXVerificationResult::TcbInfoInvalid, |input: &mut TdxVerifierInput| {
-        input.collateral.tcb_info.signature = Bytes::from(vec![0]);
-    })]
-    #[case::malformed_qe_identity_signature(TDXVerificationResult::QeIdentityInvalid, |input: &mut TdxVerifierInput| {
-        input.collateral.qe_identity.signature = Bytes::from(vec![0]);
-    })]
-    #[case::stale_qe_identity(TDXVerificationResult::QeIdentityInvalid, |input: &mut TdxVerifierInput| {
-        input.collateral.qe_identity.raw = Bytes::from(qe_identity_raw_with_status("Revoked"));
-        resign_qe_identity(input);
-    })]
-    #[case::sgx_qe_identity_for_tdx_quote(TDXVerificationResult::QeIdentityInvalid, |input: &mut TdxVerifierInput| {
-        input.collateral.qe_identity.raw = Bytes::from(qe_identity_raw_with_identity("QE", TDX_QE_IDENTITY_VERSION, "UpToDate"));
-        resign_qe_identity(input);
-    })]
-    #[case::qve_identity_for_tdx_quote(TDXVerificationResult::QeIdentityInvalid, |input: &mut TdxVerifierInput| {
-        input.collateral.qe_identity.raw = Bytes::from(qe_identity_raw_with_identity("QVE", TDX_QE_IDENTITY_VERSION, "UpToDate"));
-        resign_qe_identity(input);
-    })]
-    #[case::v1_qe_identity_for_tdx_quote(TDXVerificationResult::QeIdentityInvalid, |input: &mut TdxVerifierInput| {
-        input.collateral.qe_identity.raw = Bytes::from(qe_identity_raw_with_identity(TDX_QE_IDENTITY_ID, 1, "UpToDate"));
-        resign_qe_identity(input);
-    })]
-    #[case::malformed_public_key(TDXVerificationResult::ReportDataMismatch, |input: &mut TdxVerifierInput| {
-        input.expected_public_key = Bytes::from(vec![0x04; 64]);
-    })]
-    #[case::report_data_mismatch(TDXVerificationResult::ReportDataMismatch, |input: &mut TdxVerifierInput| {
-        input.expected_public_key = Bytes::from(ALTERNATE_SECP256K1_PUBLIC_KEY.to_vec());
-    })]
-    fn failure_cases_return_contract_result(
-        #[case] expected_result: TDXVerificationResult,
-        #[case] mutate: fn(&mut TdxVerifierInput),
-    ) {
-        let mut input = fixture().input;
-        mutate(&mut input);
+    #[test]
+    fn failure_cases_return_contract_result() {
+        let cases: &[(&str, TDXVerificationResult, fn(&mut TdxVerifierInput))] = &[
+            ("bad quote signature", TDXVerificationResult::QuoteSignatureInvalid, |input| {
+                let mut quote = input.quote.to_vec();
+                let signature_offset = TDX_QUOTE_HEADER_LEN + TDX_REPORT_BODY_LEN + 4;
+                quote[signature_offset] ^= 0x01;
+                input.quote = Bytes::from(quote);
+            }),
+            ("non-TDX quote header", TDXVerificationResult::InvalidQuote, |input| {
+                let mut quote = input.quote.to_vec();
+                quote[4..8].copy_from_slice(&0u32.to_le_bytes());
+                input.quote = Bytes::from(quote);
+            }),
+            ("unsupported attestation key type", TDXVerificationResult::InvalidQuote, |input| {
+                let mut quote = input.quote.to_vec();
+                quote[2..4].copy_from_slice(&1u16.to_le_bytes());
+                input.quote = Bytes::from(quote);
+            }),
+            ("bad QE report signature", TDXVerificationResult::PckCertChainInvalid, |input| {
+                let mut quote = input.quote.to_vec();
+                let signature_data_offset = TDX_QUOTE_HEADER_LEN + TDX_REPORT_BODY_LEN + 4;
+                let qe_report_signature_offset = signature_data_offset
+                    + ECDSA_P256_SIGNATURE_LEN
+                    + ECDSA_P256_PUBLIC_KEY_BODY_LEN
+                    + CERTIFICATION_DATA_HEADER_LEN
+                    + QE_REPORT_LEN;
+                quote[qe_report_signature_offset] ^= 0x01;
+                input.quote = Bytes::from(quote);
+            }),
+            ("wrong root CA hash", TDXVerificationResult::RootCaNotTrusted, |input| {
+                input.trusted_root_ca_hash = B256::repeat_byte(0xEF);
+            }),
+            ("expired collateral", TDXVerificationResult::CollateralExpired, |input| {
+                input.collateral.tcb_info.raw = Bytes::from(tcb_info_raw_with_dates(
+                    "UpToDate",
+                    EXPIRED_COLLATERAL_NEXT_UPDATE_DATE,
+                ));
+                resign_tcb_info(input);
+            }),
+            ("revoked collateral signer", TDXVerificationResult::TcbInfoInvalid, |input| {
+                input.revocation = revocation_evidence("intermediate_crl_revoked_04");
+            }),
+            ("timestamp outside policy", TDXVerificationResult::InvalidTimestamp, |input| {
+                input.verification_time = VERIFICATION_TIME + MAX_QUOTE_AGE_SECONDS + 1;
+            }),
+            ("unsupported TCB status", TDXVerificationResult::TcbStatusNotAllowed, |input| {
+                input.collateral.tcb_info.raw = Bytes::from(tcb_info_raw("Revoked"));
+                resign_tcb_info(input);
+            }),
+            ("SGX TCB info", TDXVerificationResult::TcbInfoInvalid, |input| {
+                input.collateral.tcb_info.raw = Bytes::from(sgx_tcb_info_raw("UpToDate"));
+                resign_tcb_info(input);
+            }),
+            ("malformed TCB info signature", TDXVerificationResult::TcbInfoInvalid, |input| {
+                input.collateral.tcb_info.signature = Bytes::from(vec![0]);
+            }),
+            (
+                "malformed QE identity signature",
+                TDXVerificationResult::QeIdentityInvalid,
+                |input| {
+                    input.collateral.qe_identity.signature = Bytes::from(vec![0]);
+                },
+            ),
+            ("stale QE identity", TDXVerificationResult::QeIdentityInvalid, |input| {
+                input.collateral.qe_identity.raw =
+                    Bytes::from(qe_identity_raw_with_status("Revoked"));
+                resign_qe_identity(input);
+            }),
+            ("SGX QE identity", TDXVerificationResult::QeIdentityInvalid, |input| {
+                input.collateral.qe_identity.raw = Bytes::from(qe_identity_raw_with_identity(
+                    "QE",
+                    TDX_QE_IDENTITY_VERSION,
+                    "UpToDate",
+                ));
+                resign_qe_identity(input);
+            }),
+            ("QVE identity", TDXVerificationResult::QeIdentityInvalid, |input| {
+                input.collateral.qe_identity.raw = Bytes::from(qe_identity_raw_with_identity(
+                    "QVE",
+                    TDX_QE_IDENTITY_VERSION,
+                    "UpToDate",
+                ));
+                resign_qe_identity(input);
+            }),
+            ("v1 QE identity", TDXVerificationResult::QeIdentityInvalid, |input| {
+                input.collateral.qe_identity.raw =
+                    Bytes::from(qe_identity_raw_with_identity(TDX_QE_IDENTITY_ID, 1, "UpToDate"));
+                resign_qe_identity(input);
+            }),
+            ("malformed public key", TDXVerificationResult::ReportDataMismatch, |input| {
+                input.expected_public_key = Bytes::from(vec![0x04; 64]);
+            }),
+            ("report data mismatch", TDXVerificationResult::ReportDataMismatch, |input| {
+                input.expected_public_key = Bytes::from(ALTERNATE_SECP256K1_PUBLIC_KEY.to_vec());
+            }),
+        ];
 
-        let error = TdxVerifier::verify(&input).expect_err("fixture mutation must fail");
-        assert_error_result(&error, expected_result);
+        for (name, expected_result, mutate) in cases {
+            let mut input = fixture();
+            mutate(&mut input);
+
+            let error = TdxVerifier::verify(&input).expect_err(name);
+            assert_error_result(&error, *expected_result);
+        }
     }
 
     #[test]
     fn pck_revocation_fails_chain_validation() {
-        let mut input = fixture().input;
-        input.revocation = revocation_evidence(&[], &[vec![0x03]]);
+        let mut input = fixture();
+        input.revocation = revocation_evidence("intermediate_crl_revoked_03");
 
         let error = TdxVerifier::verify(&input).expect_err("revoked PCK leaf must fail");
         assert_error_result(&error, TDXVerificationResult::PckCertChainInvalid);
@@ -1328,19 +852,8 @@ mod tests {
 
     #[test]
     fn tcb_status_uses_pck_certificate_tcb_components() {
-        let mut input = fixture().input;
-        input.pck_certificate_chain[2] = pck_cert_with_tcb(
-            b"\x03",
-            "Intel TDX PCK fixture",
-            &signing_key(5),
-            "Intel TDX intermediate fixture",
-            &signing_key(2),
-            &TdxPlatformIdentity {
-                fmspc: Bytes::from(vec![1, 2, 3, 4, 5, 6]),
-                pce_id: Bytes::from(vec![0, 9]),
-            },
-            &TdxPckTcb { sgx_tcb_svn: [2; 16], pce_svn: 8 },
-        );
+        let mut input = fixture();
+        input.pck_certificate_chain[2] = fixture_cert("pck_leaf_downgraded_tcb");
         input.collateral.tcb_info.raw = Bytes::from(tcb_info_raw_for_pck_downgrade());
         resign_tcb_info(&mut input);
 
@@ -1351,7 +864,7 @@ mod tests {
 
     #[test]
     fn tcb_status_uses_tdx_module_identity_status() {
-        let mut input = fixture().input;
+        let mut input = fixture();
         input.collateral.tcb_info.raw = Bytes::from(tcb_info_raw_with_levels_and_module_status(
             &[tcb_level("UpToDate", 3, 3, 9)],
             COLLATERAL_NEXT_UPDATE_DATE,
@@ -1367,7 +880,7 @@ mod tests {
 
     #[test]
     fn tcb_info_must_match_tdx_module_identity_version() {
-        let mut input = fixture().input;
+        let mut input = fixture();
         let raw = String::from_utf8(tcb_info_raw("UpToDate")).unwrap().replace("TDX_03", "TDX_04");
         input.collateral.tcb_info.raw = Bytes::from(raw.into_bytes());
         resign_tcb_info(&mut input);
@@ -1379,7 +892,7 @@ mod tests {
 
     #[test]
     fn tcb_info_must_match_tdx_module_signer() {
-        let mut input = fixture().input;
+        let mut input = fixture();
         let mut document: serde_json::Value =
             serde_json::from_slice(&input.collateral.tcb_info.raw).unwrap();
         document["tcbInfo"]["tdxModuleIdentities"][0]["mrsigner"] =
@@ -1393,19 +906,9 @@ mod tests {
 
     #[test]
     fn revocation_matches_der_serial_with_positive_padding() {
-        let mut input = fixture().input;
-        input.pck_certificate_chain[2] = pck_cert(
-            b"\x80",
-            "Intel TDX PCK fixture",
-            &signing_key(5),
-            "Intel TDX intermediate fixture",
-            &signing_key(2),
-            &TdxPlatformIdentity {
-                fmspc: Bytes::from(vec![1, 2, 3, 4, 5, 6]),
-                pce_id: Bytes::from(vec![0, 9]),
-            },
-        );
-        input.revocation = revocation_evidence(&[], &[vec![0x80]]);
+        let mut input = fixture();
+        input.pck_certificate_chain[2] = fixture_cert("pck_leaf_serial_80");
+        input.revocation = revocation_evidence("intermediate_crl_revoked_80");
 
         let error = TdxVerifier::verify(&input).expect_err("padded serial revocation must fail");
         assert_error_result(&error, TDXVerificationResult::PckCertChainInvalid);
@@ -1413,16 +916,8 @@ mod tests {
 
     #[test]
     fn collateral_signer_must_have_expected_subject() {
-        let mut input = fixture().input;
-        let wrong_leaf = cert(
-            b"\x06",
-            "Intel TDX unrelated leaf fixture",
-            &signing_key(4),
-            "Intel TDX intermediate fixture",
-            &signing_key(2),
-            false,
-        );
-        input.collateral.tcb_info.signing_chain[2] = wrong_leaf;
+        let mut input = fixture();
+        input.collateral.tcb_info.signing_chain[2] = fixture_cert("collateral_leaf_wrong_subject");
 
         let error = TdxVerifier::verify(&input).expect_err("wrong collateral signer must fail");
         assert_error_result(&error, TDXVerificationResult::TcbInfoInvalid);
@@ -1430,8 +925,8 @@ mod tests {
 
     #[test]
     fn collateral_signer_must_allow_digital_signatures() {
-        let mut input = fixture().input;
-        input.collateral.tcb_info.signing_chain[2] = collateral_cert_with_key_usage(0x20);
+        let mut input = fixture();
+        input.collateral.tcb_info.signing_chain[2] = fixture_cert("collateral_leaf_key_usage_20");
 
         let error = TdxVerifier::verify(&input).expect_err("wrong collateral key usage must fail");
         assert_error_result(&error, TDXVerificationResult::TcbInfoInvalid);
@@ -1439,7 +934,7 @@ mod tests {
 
     #[test]
     fn missing_signed_crl_evidence_fails_chain_validation() {
-        let mut input = fixture().input;
+        let mut input = fixture();
         input.revocation = TdxRevocationEvidence::default();
 
         let error = TdxVerifier::verify(&input).expect_err("missing CRL evidence must fail");
@@ -1448,7 +943,7 @@ mod tests {
 
     #[test]
     fn tcb_info_must_match_pck_platform_identity() {
-        let mut input = fixture().input;
+        let mut input = fixture();
         let raw =
             String::from_utf8(tcb_info_raw("UpToDate")).unwrap().replace(FMSPC_HEX, "060504030201");
         input.collateral.tcb_info.raw = Bytes::from(raw.into_bytes());
@@ -1460,7 +955,7 @@ mod tests {
 
     #[test]
     fn qe_identity_signature_failure_is_reported() {
-        let mut input = fixture().input;
+        let mut input = fixture();
         let mut signature = input.collateral.qe_identity.signature.to_vec();
         signature[0] ^= 0x01;
         input.collateral.qe_identity.signature = Bytes::from(signature);

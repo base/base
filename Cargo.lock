@@ -6022,7 +6022,6 @@ dependencies = [
  "alloy-sol-types",
  "k256",
  "p256",
- "rstest",
  "serde",
  "serde_json",
  "sha2 0.10.9",
