@@ -8,11 +8,9 @@ use alloy_primitives::Bytes;
 
 use crate::{Result, TDX_REPORT_DATA_LEN, TdxRuntimeError};
 
-/// Default Linux TSM/configfs report root.
-pub const DEFAULT_TSM_REPORT_ROOT: &str = "/sys/kernel/config/tsm/report";
+const DEFAULT_TSM_REPORT_ROOT: &str = "/sys/kernel/config/tsm/report";
 
-/// Provider name exposed by the Linux TDX guest TSM backend.
-pub const TDX_CONFIGFS_PROVIDER_NAME: &str = "tdx_guest";
+const TDX_CONFIGFS_PROVIDER_NAME: &str = "tdx_guest";
 
 /// Narrow provider trait for TDX quote generation.
 pub trait TdxQuoteProvider: Send + Sync {
