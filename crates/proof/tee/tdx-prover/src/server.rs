@@ -176,10 +176,10 @@ mod tests {
     use jsonrpsee::{core::client::ClientT, http_client::HttpClientBuilder, rpc_params};
 
     use super::*;
-    use crate::MeasuredMockTdxQuoteProvider;
+    use crate::TdxMeasurements;
 
     fn test_runtime() -> Arc<TdxRuntime> {
-        Arc::new(TdxRuntime::new(MeasuredMockTdxQuoteProvider::local_mock()))
+        Arc::new(TdxRuntime::new(TdxMeasurements::local_mock()))
     }
 
     fn test_rpc() -> TdxSignerRpc {

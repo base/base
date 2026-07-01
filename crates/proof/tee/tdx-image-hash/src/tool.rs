@@ -240,14 +240,14 @@ mod tests {
 
     use base_proof_primitives::EnclaveApiServer;
     use base_proof_tee_tdx_collateral::TdxAttestationConfig;
-    use base_proof_tee_tdx_prover::{MeasuredMockTdxQuoteProvider, TdxSignerRpc};
+    use base_proof_tee_tdx_prover::{TdxMeasurements, TdxSignerRpc};
     use base_proof_tee_tdx_runtime::TdxRuntime;
     use jsonrpsee::{RpcModule, server::Server};
 
     use super::*;
 
     async fn spawn_tdx_rpc() -> (url::Url, jsonrpsee::server::ServerHandle) {
-        let runtime = Arc::new(TdxRuntime::new(MeasuredMockTdxQuoteProvider::local_mock()));
+        let runtime = Arc::new(TdxRuntime::new(TdxMeasurements::local_mock()));
         let mut module = RpcModule::new(());
         module.merge(TdxSignerRpc::new(vec![runtime]).into_rpc()).unwrap();
         let server =

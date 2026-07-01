@@ -109,22 +109,9 @@ impl TdxMeasurements {
     }
 }
 
-/// TDX quote provider that builds deterministic parseable quotes for local mode.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MeasuredMockTdxQuoteProvider {
-    measurements: TdxMeasurements,
-}
-
-impl MeasuredMockTdxQuoteProvider {
-    /// Creates a deterministic provider using local mock measurements.
-    pub fn local_mock() -> Self {
-        Self { measurements: TdxMeasurements::local_mock() }
-    }
-}
-
-impl TdxQuoteProvider for MeasuredMockTdxQuoteProvider {
+impl TdxQuoteProvider for TdxMeasurements {
     fn quote(&self, report_data: &[u8; TDX_REPORT_DATA_LEN]) -> TdxRuntimeResult<Bytes> {
-        Ok(self.measurements.build_mock_quote(report_data))
+        Ok(self.build_mock_quote(report_data))
     }
 }
 
