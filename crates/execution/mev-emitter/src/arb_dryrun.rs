@@ -5,11 +5,13 @@
 //! transaction. Runtime wiring gates every call behind `MEV_EMITTER_ARB_DRYRUN=1`.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use alloy_primitives::Address;
 use num_bigint::{BigInt, BigUint};
 use num_traits::{One, ToPrimitive, Zero};
+use serde::{Deserialize, Serialize};
 
 /// Environment switch for the in-node dry-run lane.
 pub const ARB_DRYRUN_ENV: &str = "MEV_EMITTER_ARB_DRYRUN";
@@ -86,7 +88,8 @@ impl DryRunConfig {
 }
 
 /// Protocol family supported by the dry-run graph.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Protocol {
     /// Constant-product pool.
     UniswapV2,
@@ -111,7 +114,7 @@ impl Protocol {
 }
 
 /// Initialized V3 tick delta.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct V3Tick {
     /// Tick index.
     pub tick: i32,
@@ -120,7 +123,7 @@ pub struct V3Tick {
 }
 
 /// Snapshot of a pool used by the dry-run graph.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PoolState {
     /// Pool address.
     pub pool: Address,
@@ -720,6 +723,21 @@ pub fn dirty_pool_subset<'a>(
     (subset, false)
 }
 
+/// Load an operator-supplied decoded pool baseline from JSON.
+///
+/// This keeps Rust free of Node.js/Postgres dependencies: base-mev or another
+/// offline process owns registry construction, while the ExEx consumes only a
+/// static file of `PoolState` rows when operators explicitly provide one.
+pub fn load_pool_baseline_from_path(path: impl AsRef<Path>) -> Result<Vec<PoolState>, String> {
+    let path = path.as_ref();
+    let raw = std::fs::read_to_string(path).map_err(|err| {
+        format!("failed to read arb dry-run pool baseline {}: {err}", path.display())
+    })?;
+    serde_json::from_str::<Vec<PoolState>>(&raw).map_err(|err| {
+        format!("failed to parse arb dry-run pool baseline {}: {err}", path.display())
+    })
+}
+
 /// Creates a reverse map from pool address to candidate index positions.
 pub fn candidate_index_reverse_map(pools: &[PoolState]) -> HashMap<Address, Vec<usize>> {
     let mut reverse: HashMap<Address, Vec<usize>> = HashMap::new();
@@ -1190,5 +1208,22 @@ mod tests {
         assert!(!enabled_from_value(Some(std::ffi::OsStr::new("true"))));
         assert!(enabled_from_value(Some(std::ffi::OsStr::new("1"))));
         assert_eq!(NoActionGuard.mode(), "dry-run-only");
+    }
+    #[test]
+    fn loads_operator_pool_baseline_json() {
+        let path = std::env::temp_dir()
+            .join(format!("arb-dryrun-pools-{}-baseline.json", std::process::id()));
+        let json = format!(
+            r#"[{{"pool":"{pool}","protocol":"uniswap_v2","token0":"{token0}","token1":"{token1}","decimals0":18,"decimals1":6,"fee":30,"reserve0":1000,"reserve1":2000,"sqrt_price_x96":null,"liquidity":null,"tick":null,"tick_spacing":null,"ticks":[]}}]"#,
+            pool = addr(0x55),
+            token0 = addr(0x11),
+            token1 = addr(0x22),
+        );
+        std::fs::write(&path, json).unwrap();
+        let pools = load_pool_baseline_from_path(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+        assert_eq!(pools.len(), 1);
+        assert_eq!(pools[0].protocol, Protocol::UniswapV2);
+        assert_eq!(pools[0].decimals1, 6);
     }
 }

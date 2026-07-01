@@ -56,7 +56,14 @@ const ARB_DRYRUN_MAX_CANDIDATES_ENV: &str = "MEV_EMITTER_ARB_DRYRUN_MAX_CANDIDAT
 const ARB_DRYRUN_TIME_BUDGET_MICROS_ENV: &str = "MEV_EMITTER_ARB_DRYRUN_TIME_BUDGET_MICROS";
 /// Optional exact-input amount used for dry-run estimates.
 const ARB_DRYRUN_AMOUNT_IN_WEI_ENV: &str = "MEV_EMITTER_ARB_DRYRUN_AMOUNT_IN_WEI";
+/// Optional decoded pool baseline JSON file for runtime candidate evaluation.
+const ARB_DRYRUN_POOL_BASELINE_ENV: &str = "MEV_EMITTER_ARB_DRYRUN_POOL_BASELINE";
 
+#[derive(Clone)]
+struct ArbDryRunRuntime {
+    config: crate::arb_dryrun::DryRunConfig,
+    pools: Arc<Vec<crate::arb_dryrun::PoolState>>,
+}
 /// Builds a [`FlashblockIndex`] and, if `MEV_FLASHBLOCKS_URL` is set and
 /// non-empty, starts a Flashblocks websocket subscription that populates it.
 ///
@@ -129,6 +136,27 @@ fn arb_dryrun_config_from_env() -> crate::arb_dryrun::DryRunConfig {
     config.clamped()
 }
 
+fn arb_dryrun_runtime_from_env() -> ArbDryRunRuntime {
+    let config = arb_dryrun_config_from_env();
+    let pools = match std::env::var(ARB_DRYRUN_POOL_BASELINE_ENV) {
+        Ok(path) if !path.trim().is_empty() => {
+            match crate::arb_dryrun::load_pool_baseline_from_path(path.trim()) {
+                Ok(pools) => pools,
+                Err(err) => {
+                    warn!(
+                        target: "base::mev_emitter",
+                        error = %err,
+                        "arb dry-run pool baseline unavailable; emitting health-only observations",
+                    );
+                    Vec::new()
+                }
+            }
+        }
+        _ => Vec::new(),
+    };
+    ArbDryRunRuntime { config, pools: Arc::new(pools) }
+}
+
 fn parse_env_usize(name: &str) -> Option<usize> {
     std::env::var(name).ok()?.trim().parse().ok()
 }
@@ -147,13 +175,17 @@ fn emit_arb_dryrun_frame(
     flashblock_index: u32,
     payload_id: String,
     dirty_pools: BTreeSet<Address>,
-    config: &crate::arb_dryrun::DryRunConfig,
+    runtime: &ArbDryRunRuntime,
 ) {
     if dirty_pools.is_empty() {
         return;
     }
-    let frame =
-        crate::arb_dryrun::run_frame(&[], &dirty_pools, config, crate::arb_dryrun::NoActionGuard);
+    let frame = crate::arb_dryrun::run_frame(
+        runtime.pools.as_slice(),
+        &dirty_pools,
+        &runtime.config,
+        crate::arb_dryrun::NoActionGuard,
+    );
     if frame.candidates.is_empty() || frame.truncated {
         sink.send_event(&crate::NodeEvent::ArbDryRunObservation(
             crate::ArbDryRunObservationEvent {
@@ -167,7 +199,7 @@ fn emit_arb_dryrun_frame(
                 tokens: Vec::new(),
                 pools: dirty_pools.into_iter().collect(),
                 protocols: Vec::new(),
-                amount_in_wei: config.amount_in_wei,
+                amount_in_wei: runtime.config.amount_in_wei,
                 estimated_gross_wei: 0,
                 estimated_net_wei: 0,
                 approximation: false,
@@ -196,7 +228,7 @@ fn emit_arb_dryrun_frame(
                 tokens: candidate.tokens,
                 pools: candidate.pools,
                 protocols: candidate.protocols.iter().map(|p| p.as_str().to_string()).collect(),
-                amount_in_wei: config.amount_in_wei,
+                amount_in_wei: runtime.config.amount_in_wei,
                 estimated_gross_wei: candidate.estimated_gross_wei,
                 estimated_net_wei: candidate.estimated_net_wei,
                 approximation: candidate.approximation,
@@ -230,7 +262,7 @@ fn emit_arb_dryrun_frame(
 fn emit_preconf_pool_slots(
     pb: &PendingBlocks,
     sink: &EventSink,
-    arb_dryrun: Option<&crate::arb_dryrun::DryRunConfig>,
+    arb_dryrun: Option<&ArbDryRunRuntime>,
 ) {
     let block_number = pb.latest_block_number();
     let payload_id = format!("{}", pb.payload_id());
@@ -263,8 +295,8 @@ fn emit_preconf_pool_slots(
             sink.send_event(&crate::NodeEvent::PoolSlotDiff(ev));
         }
     }
-    if let Some(config) = arb_dryrun {
-        emit_arb_dryrun_frame(sink, block_number, fb_index, payload_id, dirty_pools, config);
+    if let Some(runtime) = arb_dryrun {
+        emit_arb_dryrun_frame(sink, block_number, fb_index, payload_id, dirty_pools, runtime);
     }
 }
 
@@ -389,17 +421,19 @@ pub async fn run_mev_emitter_exex(
     // emitted inside once the listener is up.
     let sink = crate::transport::start_event_server();
     let arb_dryrun = if arb_dryrun_enabled() {
-        let config = arb_dryrun_config_from_env();
-        let time_budget_micros = u64::try_from(config.time_budget.as_micros()).unwrap_or(u64::MAX);
+        let runtime = arb_dryrun_runtime_from_env();
+        let time_budget_micros =
+            u64::try_from(runtime.config.time_budget.as_micros()).unwrap_or(u64::MAX);
         info!(
             target: "base::mev_emitter",
-            max_pools = config.max_pools_per_frame,
-            max_candidates = config.max_candidates_per_frame,
+            max_pools = runtime.config.max_pools_per_frame,
+            max_candidates = runtime.config.max_candidates_per_frame,
             time_budget_micros,
-            amount_in_wei = %config.amount_in_wei,
+            amount_in_wei = %runtime.config.amount_in_wei,
+            baseline_pools = runtime.pools.len(),
             "arb dry-run observations enabled (MEV_EMITTER_ARB_DRYRUN=1)",
         );
-        Some(config)
+        Some(runtime)
     } else {
         info!(
             target: "base::mev_emitter",
@@ -621,7 +655,7 @@ pub async fn run_mev_emitter_exex(
                         // Native baseline read above relies on this happening AFTER.
                         evm.db_mut().commit(out.state);
                     }
-                    if let Some(config) = arb_dryrun.as_ref() {
+                    if let Some(runtime) = arb_dryrun.as_ref() {
                         for (payload_id, (fb_index, dirty_pools)) in arb_dirty_by_payload {
                             emit_arb_dryrun_frame(
                                 &sink,
@@ -629,7 +663,7 @@ pub async fn run_mev_emitter_exex(
                                 fb_index,
                                 payload_id,
                                 dirty_pools,
-                                config,
+                                runtime,
                             );
                         }
                     }
