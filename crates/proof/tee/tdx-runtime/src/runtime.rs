@@ -101,7 +101,7 @@ mod tests {
     use alloy_primitives::{Bytes, keccak256};
 
     use super::*;
-    use crate::{ConfigfsTdxQuoteProvider, TdxReportData};
+    use crate::{ConfigfsTdxQuoteProvider, TDX_REPORT_DATA_LEN, TdxReportData};
 
     const TIMESTAMP_MILLIS: u64 = 1_711_111_111_000;
 
@@ -109,8 +109,7 @@ mod tests {
     struct TestQuoteProvider(Bytes);
 
     impl TdxQuoteProvider for TestQuoteProvider {
-        fn quote(&self, report_data: &[u8]) -> Result<Bytes> {
-            TdxReportData::validate(report_data)?;
+        fn quote(&self, _report_data: &[u8; TDX_REPORT_DATA_LEN]) -> Result<Bytes> {
             Ok(self.0.clone())
         }
     }

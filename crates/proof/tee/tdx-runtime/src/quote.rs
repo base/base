@@ -6,7 +6,7 @@ use std::{
 
 use alloy_primitives::Bytes;
 
-use crate::{Result, TdxReportData, TdxRuntimeError};
+use crate::{Result, TDX_REPORT_DATA_LEN, TdxRuntimeError};
 
 /// Default Linux TSM/configfs report root.
 pub const DEFAULT_TSM_REPORT_ROOT: &str = "/sys/kernel/config/tsm/report";
@@ -14,15 +14,10 @@ pub const DEFAULT_TSM_REPORT_ROOT: &str = "/sys/kernel/config/tsm/report";
 /// Provider name exposed by the Linux TDX guest TSM backend.
 pub const TDX_CONFIGFS_PROVIDER_NAME: &str = "tdx_guest";
 
-const INBLOB_FILE: &str = "inblob";
-const OUTBLOB_FILE: &str = "outblob";
-const GENERATION_FILE: &str = "generation";
-const PROVIDER_FILE: &str = "provider";
-
 /// Narrow provider trait for TDX quote generation.
 pub trait TdxQuoteProvider: Send + Sync {
     /// Generates a quote over exactly 64 report-data bytes.
-    fn quote(&self, report_data: &[u8]) -> Result<Bytes>;
+    fn quote(&self, report_data: &[u8; TDX_REPORT_DATA_LEN]) -> Result<Bytes>;
 }
 
 /// TDX quote provider backed by Linux TSM/configfs.
@@ -46,8 +41,7 @@ impl ConfigfsTdxQuoteProvider {
 }
 
 impl TdxQuoteProvider for ConfigfsTdxQuoteProvider {
-    fn quote(&self, report_data: &[u8]) -> Result<Bytes> {
-        TdxReportData::validate(report_data)?;
+    fn quote(&self, report_data: &[u8; TDX_REPORT_DATA_LEN]) -> Result<Bytes> {
         let _quote_guard = self.quote_lock.lock().map_err(|_| {
             TdxRuntimeError::QuoteGeneration("configfs quote lock is poisoned".into())
         })?;
@@ -55,7 +49,7 @@ impl TdxQuoteProvider for ConfigfsTdxQuoteProvider {
         fs::create_dir_all(&self.report_dir)
             .map_err(|error| TdxRuntimeError::filesystem_at(&self.report_dir, error))?;
 
-        let provider_path = self.report_dir.join(PROVIDER_FILE);
+        let provider_path = self.report_dir.join("provider");
         match fs::read_to_string(&provider_path) {
             Ok(provider) if provider.trim() == TDX_CONFIGFS_PROVIDER_NAME => {}
             Ok(provider) => {
@@ -67,7 +61,7 @@ impl TdxQuoteProvider for ConfigfsTdxQuoteProvider {
             Err(error) => return Err(TdxRuntimeError::filesystem_at(&provider_path, error)),
         }
 
-        let generation_path = self.report_dir.join(GENERATION_FILE);
+        let generation_path = self.report_dir.join("generation");
         let read_generation = || {
             let generation = fs::read_to_string(&generation_path)
                 .map_err(|error| TdxRuntimeError::filesystem_at(&generation_path, error))?;
@@ -85,11 +79,11 @@ impl TdxQuoteProvider for ConfigfsTdxQuoteProvider {
             )
         })?;
 
-        let inblob_path = self.report_dir.join(INBLOB_FILE);
+        let inblob_path = self.report_dir.join("inblob");
         fs::write(&inblob_path, report_data)
             .map_err(|error| TdxRuntimeError::filesystem_at(&inblob_path, error))?;
 
-        let outblob_path = self.report_dir.join(OUTBLOB_FILE);
+        let outblob_path = self.report_dir.join("outblob");
         let quote = fs::read(&outblob_path)
             .map_err(|error| TdxRuntimeError::filesystem_at(&outblob_path, error))?;
         if quote.is_empty() {
@@ -112,12 +106,12 @@ impl TdxQuoteProvider for ConfigfsTdxQuoteProvider {
 
 #[cfg(test)]
 mod tests {
-        use std::{
-            io::Write,
-            path::Path,
-            process::Command,
-            thread::{self, JoinHandle},
-        };
+    use std::{
+        io::Write,
+        path::Path,
+        process::Command,
+        thread::{self, JoinHandle},
+    };
 
     use alloy_primitives::Bytes;
     use tempfile::TempDir;
@@ -136,16 +130,6 @@ mod tests {
                 writeln!(file, "{generation}").unwrap();
             }
         })
-    }
-
-    #[test]
-    fn providers_reject_non_64_byte_report_data_before_hardware_access() {
-        let configfs = ConfigfsTdxQuoteProvider::with_report_dir("/path/that/does/not/exist");
-
-        assert!(matches!(
-            configfs.quote(&[0u8; 65]),
-            Err(TdxRuntimeError::InvalidReportDataLength(65))
-        ));
     }
 
     #[test]

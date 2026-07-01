@@ -1,7 +1,7 @@
 //! TDX quote measurement extraction and deterministic local quote fixtures.
 
 use alloy_primitives::{B256, Bytes};
-use base_proof_tee_tdx_runtime::{Result as TdxRuntimeResult, TdxQuoteProvider, TdxReportData};
+use base_proof_tee_tdx_runtime::{Result as TdxRuntimeResult, TdxQuoteProvider};
 use base_proof_tee_tdx_verifier::{
     CERTIFICATION_DATA_HEADER_LEN, ECDSA_P256_ATTESTATION_KEY_TYPE, ECDSA_P256_PUBLIC_KEY_BODY_LEN,
     ECDSA_P256_SIGNATURE_LEN, ECDSA_SIG_AUX_DATA_CERTIFICATION_DATA_TYPE, MIN_AUX_DATA_LEN,
@@ -134,12 +134,8 @@ impl MeasuredMockTdxQuoteProvider {
 }
 
 impl TdxQuoteProvider for MeasuredMockTdxQuoteProvider {
-    fn quote(&self, report_data: &[u8]) -> TdxRuntimeResult<Bytes> {
-        TdxReportData::validate(report_data)?;
-        let mut report_data_array = [0u8; TDX_REPORT_DATA_LEN];
-        report_data_array.copy_from_slice(report_data);
-
-        Ok(self.measurements.build_mock_quote(&report_data_array))
+    fn quote(&self, report_data: &[u8; TDX_REPORT_DATA_LEN]) -> TdxRuntimeResult<Bytes> {
+        Ok(self.measurements.build_mock_quote(report_data))
     }
 }
 
