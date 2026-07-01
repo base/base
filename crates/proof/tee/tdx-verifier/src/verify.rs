@@ -207,6 +207,7 @@ impl TdxVerifier {
 mod tests {
     use alloy_primitives::{Address, B256, Bytes, hex, keccak256};
     use alloy_sol_types::SolValue;
+    use k256::{SecretKey, elliptic_curve::sec1::ToEncodedPoint};
     use p256::ecdsa::{Signature, SigningKey, signature::Signer};
     use serde_json::json;
 
@@ -232,23 +233,16 @@ mod tests {
     const FMSPC_HEX: &str = "010203040506";
     const PCE_ID_HEX: &str = "0009";
     const FIXTURE_HEX: &str = include_str!("testdata/verify_fixture.hex");
-    const VALID_SECP256K1_PUBLIC_KEY: [u8; 65] = [
-        0x04, 0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac, 0x55, 0xa0, 0x62, 0x95, 0xce, 0x87,
-        0x0b, 0x07, 0x02, 0x9b, 0xfc, 0xdb, 0x2d, 0xce, 0x28, 0xd9, 0x59, 0xf2, 0x81, 0x5b, 0x16,
-        0xf8, 0x17, 0x98, 0x48, 0x3a, 0xda, 0x77, 0x26, 0xa3, 0xc4, 0x65, 0x5d, 0xa4, 0xfb, 0xfc,
-        0x0e, 0x11, 0x08, 0xa8, 0xfd, 0x17, 0xb4, 0x48, 0xa6, 0x85, 0x54, 0x19, 0x9c, 0x47, 0xd0,
-        0x8f, 0xfb, 0x10, 0xd4, 0xb8,
-    ];
-    const ALTERNATE_SECP256K1_PUBLIC_KEY: [u8; 65] = [
-        0x04, 0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac, 0x55, 0xa0, 0x62, 0x95, 0xce, 0x87,
-        0x0b, 0x07, 0x02, 0x9b, 0xfc, 0xdb, 0x2d, 0xce, 0x28, 0xd9, 0x59, 0xf2, 0x81, 0x5b, 0x16,
-        0xf8, 0x17, 0x98, 0xb7, 0xc5, 0x25, 0x88, 0xd9, 0x5c, 0x3b, 0x9a, 0xa2, 0x5b, 0x04, 0x03,
-        0xf1, 0xee, 0xf7, 0x57, 0x02, 0xe8, 0x4b, 0xb7, 0x59, 0x7a, 0xab, 0xe6, 0x63, 0xb8, 0x2f,
-        0x6f, 0x04, 0xef, 0x27, 0x77,
-    ];
 
     fn signing_key(byte: u8) -> SigningKey {
         SigningKey::from_slice(&[byte; 32]).expect("fixture signing key must be valid")
+    }
+
+    fn secp256k1_public_key(scalar: u8) -> Bytes {
+        let mut bytes = [0; 32];
+        bytes[31] = scalar;
+        let secret_key = SecretKey::from_slice(&bytes).expect("fixture secret key must be valid");
+        Bytes::copy_from_slice(secret_key.public_key().to_encoded_point(false).as_bytes())
     }
 
     fn signer_address(public_key: &[u8]) -> Address {
@@ -402,13 +396,6 @@ mod tests {
         tcb_info_raw_with_levels(&[tcb_level(status, 3, 3, 9)], next_update)
     }
 
-    fn tcb_info_raw_for_pck_downgrade() -> Vec<u8> {
-        tcb_info_raw_with_levels(
-            &[tcb_level("UpToDate", 3, 3, 9), tcb_level("OutOfDate", 2, 3, 8)],
-            COLLATERAL_NEXT_UPDATE_DATE,
-        )
-    }
-
     fn tcb_info_raw(status: &str) -> Vec<u8> {
         tcb_info_raw_with_dates(status, COLLATERAL_NEXT_UPDATE_DATE)
     }
@@ -450,10 +437,6 @@ mod tests {
         qe_identity_raw_with_identity(TDX_QE_IDENTITY_ID, TDX_QE_IDENTITY_VERSION, status)
     }
 
-    fn qe_identity_raw() -> Vec<u8> {
-        qe_identity_raw_with_status("UpToDate")
-    }
-
     fn fixture() -> TdxVerifierInput {
         let collateral_key = signing_key(4);
         let root = fixture_cert("root");
@@ -471,7 +454,7 @@ mod tests {
             collateral_chain.clone(),
         );
         let qe_identity = collateral(
-            &qe_identity_raw(),
+            &qe_identity_raw_with_status("UpToDate"),
             TdxSignedCollateralBody::QeIdentity,
             &collateral_key,
             collateral_chain,
@@ -482,7 +465,7 @@ mod tests {
             collateral: TdxCollateral { tcb_info, qe_identity },
             revocation: revocation_evidence("intermediate_crl"),
             trusted_root_ca_hash: root_hash,
-            expected_public_key: Bytes::from(VALID_SECP256K1_PUBLIC_KEY.to_vec()),
+            expected_public_key: secp256k1_public_key(1),
             quote_timestamp_millis: QUOTE_TIMESTAMP_MILLIS,
             verification_time: VERIFICATION_TIME,
             max_quote_age_seconds: MAX_QUOTE_AGE_SECONDS,
@@ -794,7 +777,7 @@ mod tests {
                 input.expected_public_key = Bytes::from(vec![0x04; 64]);
             }),
             ("report data mismatch", TdxVerifierError::ReportDataMismatch, |input| {
-                input.expected_public_key = Bytes::from(ALTERNATE_SECP256K1_PUBLIC_KEY.to_vec());
+                input.expected_public_key = secp256k1_public_key(2);
             }),
         ];
 
@@ -824,7 +807,10 @@ mod tests {
     fn tcb_status_uses_pck_certificate_tcb_components() {
         let mut input = fixture();
         input.pck_certificate_chain[2] = fixture_cert("pck_leaf_downgraded_tcb");
-        input.collateral.tcb_info.raw = Bytes::from(tcb_info_raw_for_pck_downgrade());
+        input.collateral.tcb_info.raw = Bytes::from(tcb_info_raw_with_levels(
+            &[tcb_level("UpToDate", 3, 3, 9), tcb_level("OutOfDate", 2, 3, 8)],
+            COLLATERAL_NEXT_UPDATE_DATE,
+        ));
         resign_tcb_info(&mut input);
 
         let error = TdxVerifier::verify(&input)
