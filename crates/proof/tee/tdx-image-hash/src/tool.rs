@@ -245,7 +245,7 @@ mod tests {
     use super::*;
 
     async fn spawn_tdx_rpc() -> (url::Url, jsonrpsee::server::ServerHandle) {
-        let runtime = Arc::new(TdxRuntime::new(TdxMeasurements::local_mock()));
+        let runtime = Arc::new(TdxRuntime::new(TdxMeasurements));
         let mut module = RpcModule::new(());
         module.merge(TdxSignerRpc::new(vec![runtime]).into_rpc()).unwrap();
         let server =
@@ -286,7 +286,7 @@ mod tests {
         .unwrap();
 
         handle.stop().unwrap();
-        let measurements = TdxMeasurements::local_mock();
+        let measurements = TdxMeasurements;
         let quote = TdxQuote::parse(&measurements.quote(&[0; 64]).unwrap()).unwrap();
         assert_eq!(report.measurements.image_hash, quote.image_hash());
         assert_eq!(

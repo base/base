@@ -18,15 +18,8 @@ const LOCAL_RTMR2: [u8; TDX_MEASUREMENT_LEN] = [0x44; TDX_MEASUREMENT_LEN];
 const LOCAL_RTMR3: [u8; TDX_MEASUREMENT_LEN] = [0x55; TDX_MEASUREMENT_LEN];
 
 /// TDX quote provider for deterministic local quote fixtures.
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 pub struct TdxMeasurements;
-
-impl TdxMeasurements {
-    /// Builds deterministic non-zero measurements for local mock mode.
-    pub const fn local_mock() -> Self {
-        Self
-    }
-}
 
 impl TdxQuoteProvider for TdxMeasurements {
     /// Builds a parseable TDX quote carrying these measurements and the supplied report data.
@@ -86,7 +79,7 @@ mod tests {
 
     #[test]
     fn quote_emits_parseable_quote_with_measurements() {
-        let measurements = TdxMeasurements::local_mock();
+        let measurements = TdxMeasurements;
         let report_data = [0xAB; TDX_REPORT_DATA_LEN];
         let quote = measurements.quote(&report_data).unwrap();
         let parsed = TdxQuote::parse(&quote).unwrap();

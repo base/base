@@ -179,7 +179,7 @@ mod tests {
     use crate::TdxMeasurements;
 
     fn test_runtime() -> Arc<TdxRuntime> {
-        Arc::new(TdxRuntime::new(TdxMeasurements::local_mock()))
+        Arc::new(TdxRuntime::new(TdxMeasurements))
     }
 
     fn test_rpc() -> TdxSignerRpc {
