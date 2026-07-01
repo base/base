@@ -112,7 +112,6 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::TDX_REPORT_DATA_LEN;
 
     fn test_provider(provider: &str) -> (TempDir, PathBuf, ConfigfsTdxQuoteProvider) {
         let temp = TempDir::new().unwrap();
