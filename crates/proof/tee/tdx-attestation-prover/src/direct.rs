@@ -3,6 +3,7 @@
 use std::{fmt, sync::Arc};
 
 use alloy_primitives::{Address, Bytes};
+use alloy_sol_types::SolValue;
 use async_trait::async_trait;
 use base_proof_tee_attestation::{
     TeeAttestationKind, TeeAttestationProof, TeeAttestationProofProvider,
@@ -59,7 +60,7 @@ impl DirectProver {
         let journal = self.verifier.verify(input)?;
         Ok(TeeAttestationProof {
             kind: TeeAttestationKind::Tdx,
-            output: Bytes::from(TdxVerifier::encode_journal(&journal)),
+            output: Bytes::from(SolValue::abi_encode(&journal)),
             proof_bytes: self.proof_bytes.clone(),
         })
     }

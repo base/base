@@ -7,6 +7,7 @@ edition = "2024"
 
 [dependencies]
 base-proof-tee-tdx-verifier = { path = "../../tdx-verifier" }
+alloy-sol-types = { version = "1.6.0", default-features = false }
 base-proof-tee-tdx-attestation-prover = { path = "..", default-features = false }
 risc0-zkvm = { version = "=3.0.5", default-features = false, features = ["std"] }
 

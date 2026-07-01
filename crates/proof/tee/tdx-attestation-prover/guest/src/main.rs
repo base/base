@@ -4,12 +4,13 @@
 //
 // The host supplies an ABI-encoded `TdxAttestationProverInput`. The guest
 // verifies the quote and collateral, then commits the ABI-encoded
-// `TDXVerifierJournal` expected by the on-chain TDX verifier.
+// `TDXVerifierJournal` expected by the onchain TDX verifier.
 
 mod atomic_shims;
 
 use std::io::Read;
 
+use alloy_sol_types::SolValue;
 use base_proof_tee_tdx_attestation_prover::TdxAttestationProverInput;
 use base_proof_tee_tdx_verifier::TdxVerifier;
 use risc0_zkvm::guest::env;
@@ -23,5 +24,5 @@ fn main() {
     let journal =
         TdxVerifier::verify(input.verifier_input()).expect("TDX attestation verification failed");
 
-    env::commit_slice(&TdxVerifier::encode_journal(&journal));
+    env::commit_slice(&SolValue::abi_encode(&journal));
 }

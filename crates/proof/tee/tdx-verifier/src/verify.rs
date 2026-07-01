@@ -1,7 +1,6 @@
 //! End-to-end TDX quote, collateral, policy, and journal verification.
 
 use alloy_primitives::{Address, B256, Bytes, keccak256};
-use alloy_sol_types::SolValue;
 use k256::PublicKey;
 
 use crate::{
@@ -130,11 +129,6 @@ impl TdxVerifier {
         })
     }
 
-    /// ABI-encodes a verified journal for `TDXVerifier.verify` public output.
-    pub fn encode_journal(journal: &TDXVerifierJournal) -> Vec<u8> {
-        SolValue::abi_encode(journal)
-    }
-
     /// Computes the contract-compatible TDX image hash.
     pub fn image_hash(
         mrtd: &[u8; 48],
@@ -143,13 +137,7 @@ impl TdxVerifier {
         rtmr2: &[u8; 48],
         rtmr3: &[u8; 48],
     ) -> alloy_primitives::B256 {
-        let mut buf = Vec::with_capacity(48 * 5);
-        buf.extend_from_slice(mrtd);
-        buf.extend_from_slice(rtmr0);
-        buf.extend_from_slice(rtmr1);
-        buf.extend_from_slice(rtmr2);
-        buf.extend_from_slice(rtmr3);
-        keccak256(buf)
+        keccak256([&mrtd[..], &rtmr0[..], &rtmr1[..], &rtmr2[..], &rtmr3[..]].concat())
     }
 
     /// Validates and hashes an uncompressed secp256k1 signer public key.
@@ -163,11 +151,7 @@ impl TdxVerifier {
 
     /// Computes the expected signed `TDREPORT.REPORTDATA` suffix for a quote timestamp.
     pub fn timestamp_report_data_suffix(timestamp_millis: u64) -> alloy_primitives::B256 {
-        let context = b"base-tdx-tee-prover-v1";
-        let mut buf = Vec::with_capacity(context.len() + 8);
-        buf.extend_from_slice(context);
-        buf.extend_from_slice(&timestamp_millis.to_le_bytes());
-        keccak256(buf)
+        keccak256([&b"base-tdx-tee-prover-v1"[..], &timestamp_millis.to_le_bytes()[..]].concat())
     }
 
     /// Verifies that `TDREPORT.REPORTDATA` binds both the signer key and quote timestamp.
@@ -278,26 +262,6 @@ mod tests {
         Bytes::copy_from_slice(&signature.to_bytes())
     }
 
-    fn assert_error_result(error: &TdxVerifierError, expected: TDXVerificationResult) {
-        let actual = match error {
-            TdxVerifierError::InvalidQuote(_) => TDXVerificationResult::InvalidQuote,
-            TdxVerifierError::QuoteSignatureInvalid(_) => {
-                TDXVerificationResult::QuoteSignatureInvalid
-            }
-            TdxVerifierError::RootCaNotTrusted => TDXVerificationResult::RootCaNotTrusted,
-            TdxVerifierError::PckCertChainInvalid(_) => TDXVerificationResult::PckCertChainInvalid,
-            TdxVerifierError::TcbInfoInvalid(_) => TDXVerificationResult::TcbInfoInvalid,
-            TdxVerifierError::QeIdentityInvalid(_) => TDXVerificationResult::QeIdentityInvalid,
-            TdxVerifierError::TcbStatusNotAllowed => TDXVerificationResult::TcbStatusNotAllowed,
-            TdxVerifierError::CollateralExpired => TDXVerificationResult::CollateralExpired,
-            TdxVerifierError::InvalidTimestamp => TDXVerificationResult::InvalidTimestamp,
-            TdxVerifierError::MalformedPublicKey | TdxVerifierError::ReportDataMismatch => {
-                TDXVerificationResult::ReportDataMismatch
-            }
-        };
-        assert_eq!(actual as u8, expected as u8, "{error:?}");
-    }
-
     fn fixture_bytes(name: &str) -> Bytes {
         for line in FIXTURE_HEX.lines() {
             let Some((key, value)) = line.split_once(':') else {
@@ -317,15 +281,6 @@ mod tests {
     fn revocation_evidence(intermediate_crl: &str) -> TdxRevocationEvidence {
         TdxRevocationEvidence {
             certificate_crls: vec![fixture_bytes("root_crl"), fixture_bytes(intermediate_crl)],
-        }
-    }
-
-    fn early_revocation_evidence() -> TdxRevocationEvidence {
-        TdxRevocationEvidence {
-            certificate_crls: vec![
-                fixture_bytes("root_crl_early"),
-                fixture_bytes("intermediate_crl_early"),
-            ],
         }
     }
 
@@ -380,10 +335,6 @@ mod tests {
         );
     }
 
-    fn signer_public_key() -> Bytes {
-        Bytes::from(VALID_SECP256K1_PUBLIC_KEY.to_vec())
-    }
-
     fn json_bytes(value: serde_json::Value) -> Vec<u8> {
         serde_json::to_vec(&value).expect("fixture JSON must serialize")
     }
@@ -405,24 +356,20 @@ mod tests {
         })
     }
 
-    fn repeated_hex(byte: &str, byte_len: usize) -> String {
-        byte.repeat(byte_len)
-    }
-
     fn tdx_module_json() -> serde_json::Value {
         json!({
-            "mrsigner": repeated_hex("00", TDX_MEASUREMENT_LEN),
-            "attributes": repeated_hex("00", TDX_SEAM_ATTRIBUTES_LEN),
-            "attributesMask": repeated_hex("ff", TDX_SEAM_ATTRIBUTES_LEN),
+            "mrsigner": "00".repeat(TDX_MEASUREMENT_LEN),
+            "attributes": "00".repeat(TDX_SEAM_ATTRIBUTES_LEN),
+            "attributesMask": "ff".repeat(TDX_SEAM_ATTRIBUTES_LEN),
         })
     }
 
     fn tdx_module_identity_json(status: &str, isvsvn: u16) -> serde_json::Value {
         json!({
             "id": "TDX_03",
-            "mrsigner": repeated_hex("00", TDX_MEASUREMENT_LEN),
-            "attributes": repeated_hex("00", TDX_SEAM_ATTRIBUTES_LEN),
-            "attributesMask": repeated_hex("ff", TDX_SEAM_ATTRIBUTES_LEN),
+            "mrsigner": "00".repeat(TDX_MEASUREMENT_LEN),
+            "attributes": "00".repeat(TDX_SEAM_ATTRIBUTES_LEN),
+            "attributesMask": "ff".repeat(TDX_SEAM_ATTRIBUTES_LEN),
             "tcbLevels": [{ "tcb": { "isvsvn": isvsvn }, "tcbStatus": status }],
         })
     }
@@ -530,15 +477,13 @@ mod tests {
             &collateral_key,
             collateral_chain,
         );
-        let public_key = signer_public_key();
-
         TdxVerifierInput {
             quote: fixture_bytes("quote"),
             pck_certificate_chain: pck_chain,
             collateral: TdxCollateral { tcb_info, qe_identity },
             revocation: revocation_evidence("intermediate_crl"),
             trusted_root_ca_hash: root_hash,
-            expected_public_key: public_key,
+            expected_public_key: Bytes::from(VALID_SECP256K1_PUBLIC_KEY.to_vec()),
             quote_timestamp_millis: QUOTE_TIMESTAMP_MILLIS,
             verification_time: VERIFICATION_TIME,
             max_quote_age_seconds: MAX_QUOTE_AGE_SECONDS,
@@ -569,7 +514,7 @@ mod tests {
             "earliest collateral/cert expiration must be journaled",
         );
 
-        let encoded = TdxVerifier::encode_journal(&journal);
+        let encoded = SolValue::abi_encode(&journal);
         let decoded = <TDXVerifierJournal as SolValue>::abi_decode_validate(&encoded)
             .expect("journal must decode with Solidity ABI type");
         assert_eq!(decoded.result as u8, TDXVerificationResult::Success as u8);
@@ -608,7 +553,7 @@ mod tests {
         input.collateral.tcb_info.signature = sign(&signing_key(4), &input.collateral.tcb_info.raw);
         let error =
             TdxVerifier::verify(&input).expect_err("top-level collateral signature must fail");
-        assert_error_result(&error, TDXVerificationResult::TcbInfoInvalid);
+        assert!(matches!(error, TdxVerifierError::TcbInfoInvalid(_)), "{error:?}");
     }
 
     #[test]
@@ -630,7 +575,7 @@ mod tests {
 
         let error = TdxVerifier::verify(&input)
             .expect_err("QE identity collateral with multiple signed bodies must fail");
-        assert_error_result(&error, TDXVerificationResult::QeIdentityInvalid);
+        assert!(matches!(error, TdxVerifierError::QeIdentityInvalid(_)), "{error:?}");
     }
 
     #[test]
@@ -662,7 +607,6 @@ mod tests {
 
         let error =
             TdxVerifier::validate_public_key(&public_key).expect_err("off-curve key must fail");
-        assert_error_result(&error, TDXVerificationResult::ReportDataMismatch);
         assert!(matches!(error, TdxVerifierError::MalformedPublicKey));
     }
 
@@ -727,7 +671,12 @@ mod tests {
     #[test]
     fn collateral_expiration_includes_earliest_crl_next_update() {
         let mut input = fixture();
-        input.revocation = early_revocation_evidence();
+        input.revocation = TdxRevocationEvidence {
+            certificate_crls: vec![
+                fixture_bytes("root_crl_early"),
+                fixture_bytes("intermediate_crl_early"),
+            ],
+        };
 
         let journal = TdxVerifier::verify(&input).unwrap();
 
@@ -735,75 +684,95 @@ mod tests {
     }
 
     #[test]
-    fn failure_cases_return_contract_result() {
-        let cases: &[(&str, TDXVerificationResult, fn(&mut TdxVerifierInput))] = &[
-            ("bad quote signature", TDXVerificationResult::QuoteSignatureInvalid, |input| {
-                let mut quote = input.quote.to_vec();
-                let signature_offset = TDX_QUOTE_HEADER_LEN + TDX_REPORT_BODY_LEN + 4;
-                quote[signature_offset] ^= 0x01;
-                input.quote = Bytes::from(quote);
-            }),
-            ("non-TDX quote header", TDXVerificationResult::InvalidQuote, |input| {
+    fn failure_cases_return_expected_error() {
+        let cases: &[(&str, TdxVerifierError, fn(&mut TdxVerifierInput))] = &[
+            (
+                "bad quote signature",
+                TdxVerifierError::QuoteSignatureInvalid(String::new()),
+                |input| {
+                    let mut quote = input.quote.to_vec();
+                    let signature_offset = TDX_QUOTE_HEADER_LEN + TDX_REPORT_BODY_LEN + 4;
+                    quote[signature_offset] ^= 0x01;
+                    input.quote = Bytes::from(quote);
+                },
+            ),
+            ("non-TDX quote header", TdxVerifierError::InvalidQuote(String::new()), |input| {
                 let mut quote = input.quote.to_vec();
                 quote[4..8].copy_from_slice(&0u32.to_le_bytes());
                 input.quote = Bytes::from(quote);
             }),
-            ("unsupported attestation key type", TDXVerificationResult::InvalidQuote, |input| {
-                let mut quote = input.quote.to_vec();
-                quote[2..4].copy_from_slice(&1u16.to_le_bytes());
-                input.quote = Bytes::from(quote);
-            }),
-            ("bad QE report signature", TDXVerificationResult::PckCertChainInvalid, |input| {
-                let mut quote = input.quote.to_vec();
-                let signature_data_offset = TDX_QUOTE_HEADER_LEN + TDX_REPORT_BODY_LEN + 4;
-                let qe_report_signature_offset = signature_data_offset
-                    + ECDSA_P256_SIGNATURE_LEN
-                    + ECDSA_P256_PUBLIC_KEY_BODY_LEN
-                    + CERTIFICATION_DATA_HEADER_LEN
-                    + QE_REPORT_LEN;
-                quote[qe_report_signature_offset] ^= 0x01;
-                input.quote = Bytes::from(quote);
-            }),
-            ("wrong root CA hash", TDXVerificationResult::RootCaNotTrusted, |input| {
+            (
+                "unsupported attestation key type",
+                TdxVerifierError::InvalidQuote(String::new()),
+                |input| {
+                    let mut quote = input.quote.to_vec();
+                    quote[2..4].copy_from_slice(&1u16.to_le_bytes());
+                    input.quote = Bytes::from(quote);
+                },
+            ),
+            (
+                "bad QE report signature",
+                TdxVerifierError::PckCertChainInvalid(String::new()),
+                |input| {
+                    let mut quote = input.quote.to_vec();
+                    let signature_data_offset = TDX_QUOTE_HEADER_LEN + TDX_REPORT_BODY_LEN + 4;
+                    let qe_report_signature_offset = signature_data_offset
+                        + ECDSA_P256_SIGNATURE_LEN
+                        + ECDSA_P256_PUBLIC_KEY_BODY_LEN
+                        + CERTIFICATION_DATA_HEADER_LEN
+                        + QE_REPORT_LEN;
+                    quote[qe_report_signature_offset] ^= 0x01;
+                    input.quote = Bytes::from(quote);
+                },
+            ),
+            ("wrong root CA hash", TdxVerifierError::RootCaNotTrusted, |input| {
                 input.trusted_root_ca_hash = B256::repeat_byte(0xEF);
             }),
-            ("expired collateral", TDXVerificationResult::CollateralExpired, |input| {
+            ("expired collateral", TdxVerifierError::CollateralExpired, |input| {
                 input.collateral.tcb_info.raw = Bytes::from(tcb_info_raw_with_dates(
                     "UpToDate",
                     EXPIRED_COLLATERAL_NEXT_UPDATE_DATE,
                 ));
                 resign_tcb_info(input);
             }),
-            ("revoked collateral signer", TDXVerificationResult::TcbInfoInvalid, |input| {
-                input.revocation = revocation_evidence("intermediate_crl_revoked_04");
-            }),
-            ("timestamp outside policy", TDXVerificationResult::InvalidTimestamp, |input| {
+            (
+                "revoked collateral signer",
+                TdxVerifierError::TcbInfoInvalid(String::new()),
+                |input| {
+                    input.revocation = revocation_evidence("intermediate_crl_revoked_04");
+                },
+            ),
+            ("timestamp outside policy", TdxVerifierError::InvalidTimestamp, |input| {
                 input.verification_time = VERIFICATION_TIME + MAX_QUOTE_AGE_SECONDS + 1;
             }),
-            ("unsupported TCB status", TDXVerificationResult::TcbStatusNotAllowed, |input| {
+            ("unsupported TCB status", TdxVerifierError::TcbStatusNotAllowed, |input| {
                 input.collateral.tcb_info.raw = Bytes::from(tcb_info_raw("Revoked"));
                 resign_tcb_info(input);
             }),
-            ("SGX TCB info", TDXVerificationResult::TcbInfoInvalid, |input| {
+            ("SGX TCB info", TdxVerifierError::TcbInfoInvalid(String::new()), |input| {
                 input.collateral.tcb_info.raw = Bytes::from(sgx_tcb_info_raw("UpToDate"));
                 resign_tcb_info(input);
             }),
-            ("malformed TCB info signature", TDXVerificationResult::TcbInfoInvalid, |input| {
-                input.collateral.tcb_info.signature = Bytes::from(vec![0]);
-            }),
+            (
+                "malformed TCB info signature",
+                TdxVerifierError::TcbInfoInvalid(String::new()),
+                |input| {
+                    input.collateral.tcb_info.signature = Bytes::from(vec![0]);
+                },
+            ),
             (
                 "malformed QE identity signature",
-                TDXVerificationResult::QeIdentityInvalid,
+                TdxVerifierError::QeIdentityInvalid(String::new()),
                 |input| {
                     input.collateral.qe_identity.signature = Bytes::from(vec![0]);
                 },
             ),
-            ("stale QE identity", TDXVerificationResult::QeIdentityInvalid, |input| {
+            ("stale QE identity", TdxVerifierError::QeIdentityInvalid(String::new()), |input| {
                 input.collateral.qe_identity.raw =
                     Bytes::from(qe_identity_raw_with_status("Revoked"));
                 resign_qe_identity(input);
             }),
-            ("SGX QE identity", TDXVerificationResult::QeIdentityInvalid, |input| {
+            ("SGX QE identity", TdxVerifierError::QeIdentityInvalid(String::new()), |input| {
                 input.collateral.qe_identity.raw = Bytes::from(qe_identity_raw_with_identity(
                     "QE",
                     TDX_QE_IDENTITY_VERSION,
@@ -811,7 +780,7 @@ mod tests {
                 ));
                 resign_qe_identity(input);
             }),
-            ("QVE identity", TDXVerificationResult::QeIdentityInvalid, |input| {
+            ("QVE identity", TdxVerifierError::QeIdentityInvalid(String::new()), |input| {
                 input.collateral.qe_identity.raw = Bytes::from(qe_identity_raw_with_identity(
                     "QVE",
                     TDX_QE_IDENTITY_VERSION,
@@ -819,25 +788,29 @@ mod tests {
                 ));
                 resign_qe_identity(input);
             }),
-            ("v1 QE identity", TDXVerificationResult::QeIdentityInvalid, |input| {
+            ("v1 QE identity", TdxVerifierError::QeIdentityInvalid(String::new()), |input| {
                 input.collateral.qe_identity.raw =
                     Bytes::from(qe_identity_raw_with_identity(TDX_QE_IDENTITY_ID, 1, "UpToDate"));
                 resign_qe_identity(input);
             }),
-            ("malformed public key", TDXVerificationResult::ReportDataMismatch, |input| {
+            ("malformed public key", TdxVerifierError::MalformedPublicKey, |input| {
                 input.expected_public_key = Bytes::from(vec![0x04; 64]);
             }),
-            ("report data mismatch", TDXVerificationResult::ReportDataMismatch, |input| {
+            ("report data mismatch", TdxVerifierError::ReportDataMismatch, |input| {
                 input.expected_public_key = Bytes::from(ALTERNATE_SECP256K1_PUBLIC_KEY.to_vec());
             }),
         ];
 
-        for (name, expected_result, mutate) in cases {
+        for (name, expected_error, mutate) in cases {
             let mut input = fixture();
             mutate(&mut input);
 
             let error = TdxVerifier::verify(&input).expect_err(name);
-            assert_error_result(&error, *expected_result);
+            assert_eq!(
+                std::mem::discriminant(&error),
+                std::mem::discriminant(expected_error),
+                "{error:?}",
+            );
         }
     }
 
@@ -847,7 +820,7 @@ mod tests {
         input.revocation = revocation_evidence("intermediate_crl_revoked_03");
 
         let error = TdxVerifier::verify(&input).expect_err("revoked PCK leaf must fail");
-        assert_error_result(&error, TDXVerificationResult::PckCertChainInvalid);
+        assert!(matches!(error, TdxVerifierError::PckCertChainInvalid(_)), "{error:?}");
     }
 
     #[test]
@@ -859,7 +832,7 @@ mod tests {
 
         let error = TdxVerifier::verify(&input)
             .expect_err("downgraded PCK certificate TCB must not select UpToDate");
-        assert_error_result(&error, TDXVerificationResult::TcbStatusNotAllowed);
+        assert!(matches!(error, TdxVerifierError::TcbStatusNotAllowed), "{error:?}");
     }
 
     #[test]
@@ -875,7 +848,7 @@ mod tests {
 
         let error = TdxVerifier::verify(&input)
             .expect_err("out-of-date TDX module identity must affect TCB status");
-        assert_error_result(&error, TDXVerificationResult::TcbStatusNotAllowed);
+        assert!(matches!(error, TdxVerifierError::TcbStatusNotAllowed), "{error:?}");
     }
 
     #[test]
@@ -887,7 +860,7 @@ mod tests {
 
         let error =
             TdxVerifier::verify(&input).expect_err("TDX module identity mismatch must fail");
-        assert_error_result(&error, TDXVerificationResult::TcbInfoInvalid);
+        assert!(matches!(error, TdxVerifierError::TcbInfoInvalid(_)), "{error:?}");
     }
 
     #[test]
@@ -896,12 +869,12 @@ mod tests {
         let mut document: serde_json::Value =
             serde_json::from_slice(&input.collateral.tcb_info.raw).unwrap();
         document["tcbInfo"]["tdxModuleIdentities"][0]["mrsigner"] =
-            serde_json::Value::String(repeated_hex("11", TDX_MEASUREMENT_LEN));
+            serde_json::Value::String("11".repeat(TDX_MEASUREMENT_LEN));
         input.collateral.tcb_info.raw = Bytes::from(serde_json::to_vec(&document).unwrap());
         resign_tcb_info(&mut input);
 
         let error = TdxVerifier::verify(&input).expect_err("TDX module signer mismatch must fail");
-        assert_error_result(&error, TDXVerificationResult::TcbInfoInvalid);
+        assert!(matches!(error, TdxVerifierError::TcbInfoInvalid(_)), "{error:?}");
     }
 
     #[test]
@@ -911,7 +884,7 @@ mod tests {
         input.revocation = revocation_evidence("intermediate_crl_revoked_80");
 
         let error = TdxVerifier::verify(&input).expect_err("padded serial revocation must fail");
-        assert_error_result(&error, TDXVerificationResult::PckCertChainInvalid);
+        assert!(matches!(error, TdxVerifierError::PckCertChainInvalid(_)), "{error:?}");
     }
 
     #[test]
@@ -920,7 +893,7 @@ mod tests {
         input.collateral.tcb_info.signing_chain[2] = fixture_cert("collateral_leaf_wrong_subject");
 
         let error = TdxVerifier::verify(&input).expect_err("wrong collateral signer must fail");
-        assert_error_result(&error, TDXVerificationResult::TcbInfoInvalid);
+        assert!(matches!(error, TdxVerifierError::TcbInfoInvalid(_)), "{error:?}");
     }
 
     #[test]
@@ -929,7 +902,7 @@ mod tests {
         input.collateral.tcb_info.signing_chain[2] = fixture_cert("collateral_leaf_key_usage_20");
 
         let error = TdxVerifier::verify(&input).expect_err("wrong collateral key usage must fail");
-        assert_error_result(&error, TDXVerificationResult::TcbInfoInvalid);
+        assert!(matches!(error, TdxVerifierError::TcbInfoInvalid(_)), "{error:?}");
     }
 
     #[test]
@@ -938,7 +911,7 @@ mod tests {
         input.revocation = TdxRevocationEvidence::default();
 
         let error = TdxVerifier::verify(&input).expect_err("missing CRL evidence must fail");
-        assert_error_result(&error, TDXVerificationResult::PckCertChainInvalid);
+        assert!(matches!(error, TdxVerifierError::PckCertChainInvalid(_)), "{error:?}");
     }
 
     #[test]
@@ -950,7 +923,7 @@ mod tests {
         resign_tcb_info(&mut input);
 
         let error = TdxVerifier::verify(&input).expect_err("TCB info platform mismatch must fail");
-        assert_error_result(&error, TDXVerificationResult::TcbInfoInvalid);
+        assert!(matches!(error, TdxVerifierError::TcbInfoInvalid(_)), "{error:?}");
     }
 
     #[test]
@@ -961,6 +934,6 @@ mod tests {
         input.collateral.qe_identity.signature = Bytes::from(signature);
 
         let error = TdxVerifier::verify(&input).expect_err("bad QE identity signature must fail");
-        assert_error_result(&error, TDXVerificationResult::QeIdentityInvalid);
+        assert!(matches!(error, TdxVerifierError::QeIdentityInvalid(_)), "{error:?}");
     }
 }
