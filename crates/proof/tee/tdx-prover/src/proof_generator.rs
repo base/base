@@ -1,10 +1,9 @@
 //! Proof generation orchestration for claimed TDX worker jobs.
 
-use std::{fmt, future::Future};
+use std::future::Future;
 
 use async_trait::async_trait;
 use base_proof_primitives::ProofResult as PrimitiveProofResult;
-use base_proof_tee_tdx_runtime::TdxQuoteProvider;
 use base_proof_worker::{
     ClaimedProofJobHandler, ClaimedProofJobMetadata, ClaimedProofJobMetadataError,
     ProofSubmissionTask, ProofSubmitter, ProofSubmitterError, ProofTaskController, WorkerHeartbeat,
@@ -88,17 +87,17 @@ impl TdxProofSubmitterRequest {
 
 /// Orchestrates TDX proof generation, claim heartbeats, and async proof submission.
 #[derive(Debug)]
-pub struct ProofGenerator<Client, P> {
-    enclave: TdxEnclaveService<P>,
+pub struct ProofGenerator<Client> {
+    enclave: TdxEnclaveService,
     submitter: ProofSubmitter<Client>,
     tasks: ProofTaskController,
     heartbeat: WorkerHeartbeatConfig,
 }
 
-impl<Client, P> ProofGenerator<Client, P> {
+impl<Client> ProofGenerator<Client> {
     /// Create a proof generator with its own submission cancellation token.
     pub fn new(
-        enclave: TdxEnclaveService<P>,
+        enclave: TdxEnclaveService,
         submitter: ProofSubmitter<Client>,
         heartbeat: WorkerHeartbeatConfig,
     ) -> Self {
@@ -116,10 +115,9 @@ impl<Client, P> ProofGenerator<Client, P> {
     }
 }
 
-impl<Client, P> ProofGenerator<Client, P>
+impl<Client> ProofGenerator<Client>
 where
     Client: Clone + ProverWorkerProvider + 'static,
-    P: TdxQuoteProvider + fmt::Debug + 'static,
 {
     /// Generate a proof for a claimed worker job and spawn proof submission.
     pub async fn generate_and_submit(
@@ -254,10 +252,9 @@ where
 }
 
 #[async_trait]
-impl<Client, P> ClaimedProofJobHandler for ProofGenerator<Client, P>
+impl<Client> ClaimedProofJobHandler for ProofGenerator<Client>
 where
     Client: Clone + ProverWorkerProvider + 'static,
-    P: TdxQuoteProvider + fmt::Debug + Send + Sync + 'static,
 {
     type Error = ProofGeneratorError;
 

@@ -1,6 +1,6 @@
 //! CLI definition for the Intel TDX TEE prover binary.
 
-use std::{fmt, net::SocketAddr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_chains::rollup_config;
@@ -209,15 +209,12 @@ impl LocalArgs {
     }
 }
 
-async fn run_worker<P>(
+async fn run_worker(
     runtime_args: ProverRuntimeArgs,
     worker: WorkerArgs,
-    provider: P,
+    provider: impl TdxQuoteProvider + 'static,
     cancel: CancellationToken,
-) -> eyre::Result<()>
-where
-    P: TdxQuoteProvider + fmt::Debug + Send + Sync + 'static,
-{
+) -> eyre::Result<()> {
     let listen_addr = runtime_args.listen_addr;
     let config = runtime_args.into_prover_config()?;
     let runtime = Arc::new(TdxRuntime::new(provider));

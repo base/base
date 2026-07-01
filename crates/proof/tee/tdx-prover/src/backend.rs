@@ -11,7 +11,7 @@ use base_common_genesis::RollupConfig;
 use base_proof::BootInfo;
 use base_proof_client::Prologue;
 use base_proof_primitives::{PerChainConfig, ProofJournal, ProofResult, Proposal, ProverBackend};
-use base_proof_tee_tdx_runtime::{TdxQuoteProvider, TdxRuntime};
+use base_proof_tee_tdx_runtime::TdxRuntime;
 
 use crate::{Oracle, Result, TdxMeasurements, TdxProverError};
 
@@ -51,18 +51,18 @@ pub static CONFIG_HASHES: LazyLock<HashMap<u64, B256>> = LazyLock::new(|| {
 });
 
 /// TEE proof backend that executes the proof pipeline with a TDX signer.
-pub struct TdxBackend<P> {
-    runtime: Arc<TdxRuntime<P>>,
+pub struct TdxBackend {
+    runtime: Arc<TdxRuntime>,
 }
 
-impl<P> TdxBackend<P> {
+impl TdxBackend {
     /// Create a new backend using the given TDX runtime.
-    pub const fn new(runtime: Arc<TdxRuntime<P>>) -> Self {
+    pub const fn new(runtime: Arc<TdxRuntime>) -> Self {
         Self { runtime }
     }
 
     /// Returns the TDX runtime used by this backend.
-    pub const fn runtime(&self) -> &Arc<TdxRuntime<P>> {
+    pub const fn runtime(&self) -> &Arc<TdxRuntime> {
         &self.runtime
     }
 
@@ -75,9 +75,7 @@ impl<P> TdxBackend<P> {
     pub fn config_hash_for_chain(chain_id: u64) -> Result<B256> {
         CONFIG_HASHES.get(&chain_id).copied().ok_or(TdxProverError::UnsupportedChain(chain_id))
     }
-}
 
-impl<P: TdxQuoteProvider> TdxBackend<P> {
     /// Collects a fresh quote and returns its contract-compatible image hash.
     pub fn current_image_hash(&self) -> Result<B256> {
         let quote = self.runtime.signer_quote()?;
@@ -207,17 +205,14 @@ impl<P: TdxQuoteProvider> TdxBackend<P> {
     }
 }
 
-impl<P> fmt::Debug for TdxBackend<P> {
+impl fmt::Debug for TdxBackend {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TdxBackend").finish_non_exhaustive()
     }
 }
 
 #[async_trait]
-impl<P> ProverBackend for TdxBackend<P>
-where
-    P: TdxQuoteProvider + fmt::Debug + 'static,
-{
+impl ProverBackend for TdxBackend {
     type Oracle = Oracle;
     type Error = TdxProverError;
 
@@ -241,7 +236,7 @@ mod tests {
     use super::*;
     use crate::MeasuredMockTdxQuoteProvider;
 
-    fn test_backend() -> TdxBackend<MeasuredMockTdxQuoteProvider> {
+    fn test_backend() -> TdxBackend {
         let runtime = TdxRuntime::new(MeasuredMockTdxQuoteProvider::local_mock());
         TdxBackend::new(Arc::new(runtime))
     }

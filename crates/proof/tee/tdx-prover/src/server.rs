@@ -3,7 +3,7 @@ use std::{fmt, net::SocketAddr, sync::Arc};
 use base_health::{HealthzApiServer, HealthzRpc};
 use base_proof_host::{ProverConfig, ProverService};
 use base_proof_primitives::EnclaveApiServer;
-use base_proof_tee_tdx_runtime::{TdxQuoteProvider, TdxRuntime};
+use base_proof_tee_tdx_runtime::TdxRuntime;
 use jsonrpsee::{
     RpcModule,
     core::{RpcResult, async_trait},
@@ -17,54 +17,48 @@ use crate::{TdxBackend, TdxSignerAttestation};
 pub const TDX_ATTESTATION_KIND: &str = "tdx";
 
 /// One TDX enclave runtime and its proving service.
-pub struct TdxEnclaveService<P> {
-    runtime: Arc<TdxRuntime<P>>,
-    service: ProverService<TdxBackend<P>>,
+pub struct TdxEnclaveService {
+    runtime: Arc<TdxRuntime>,
+    service: ProverService<TdxBackend>,
 }
 
-impl<P> TdxEnclaveService<P>
-where
-    P: TdxQuoteProvider + fmt::Debug + 'static,
-{
+impl TdxEnclaveService {
     /// Create a service wrapper for one TDX runtime.
-    pub fn new(config: ProverConfig, runtime: Arc<TdxRuntime<P>>) -> Self {
+    pub fn new(config: ProverConfig, runtime: Arc<TdxRuntime>) -> Self {
         let backend = TdxBackend::new(Arc::clone(&runtime));
         Self { runtime, service: ProverService::new(config, backend) }
     }
 
     /// Returns the runtime used for signer and quote collection calls.
-    pub const fn runtime(&self) -> &Arc<TdxRuntime<P>> {
+    pub const fn runtime(&self) -> &Arc<TdxRuntime> {
         &self.runtime
     }
 
     /// Returns the prover service for this enclave.
-    pub const fn service(&self) -> &ProverService<TdxBackend<P>> {
+    pub const fn service(&self) -> &ProverService<TdxBackend> {
         &self.service
     }
 }
 
-impl<P> fmt::Debug for TdxEnclaveService<P> {
+impl fmt::Debug for TdxEnclaveService {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TdxEnclaveService").finish_non_exhaustive()
     }
 }
 
 /// Registrar-facing TDX prover server exposing health and signer JSON-RPC methods.
-pub struct TdxProverServer<P> {
-    runtimes: Vec<Arc<TdxRuntime<P>>>,
+pub struct TdxProverServer {
+    runtimes: Vec<Arc<TdxRuntime>>,
 }
 
-impl<P> TdxProverServer<P>
-where
-    P: TdxQuoteProvider + fmt::Debug + 'static,
-{
+impl TdxProverServer {
     /// Convert an internal error into a JSON-RPC error object.
     pub fn rpc_err(code: i32, err: impl std::fmt::Display) -> jsonrpsee::types::ErrorObjectOwned {
         jsonrpsee::types::ErrorObjectOwned::owned(code, err.to_string(), None::<()>)
     }
 
     /// Create a registrar-facing server for one TDX runtime.
-    pub fn new(runtime: Arc<TdxRuntime<P>>) -> Self {
+    pub fn new(runtime: Arc<TdxRuntime>) -> Self {
         Self::new_multi(vec![runtime])
     }
 
@@ -73,7 +67,7 @@ where
     /// # Panics
     ///
     /// Panics if `runtimes` is empty.
-    pub fn new_multi(runtimes: Vec<Arc<TdxRuntime<P>>>) -> Self {
+    pub fn new_multi(runtimes: Vec<Arc<TdxRuntime>>) -> Self {
         assert!(!runtimes.is_empty(), "at least one runtime is required");
         Self { runtimes }
     }
@@ -100,41 +94,38 @@ where
     }
 }
 
-impl<P> fmt::Debug for TdxProverServer<P> {
+impl fmt::Debug for TdxProverServer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TdxProverServer").finish_non_exhaustive()
     }
 }
 
 /// Inner RPC handler for `enclave_*` methods.
-pub struct TdxSignerRpc<P> {
+pub struct TdxSignerRpc {
     /// TDX runtimes used for signer and quote collection calls.
-    pub runtimes: Vec<Arc<TdxRuntime<P>>>,
+    pub runtimes: Vec<Arc<TdxRuntime>>,
 }
 
-impl<P> fmt::Debug for TdxSignerRpc<P> {
+impl fmt::Debug for TdxSignerRpc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TdxSignerRpc").field("runtime_count", &self.runtimes.len()).finish()
     }
 }
 
-impl<P> TdxSignerRpc<P> {
+impl TdxSignerRpc {
     /// Create signer RPC over all available TDX runtimes.
     ///
     /// # Panics
     ///
     /// Panics if `runtimes` is empty.
-    pub fn new(runtimes: Vec<Arc<TdxRuntime<P>>>) -> Self {
+    pub fn new(runtimes: Vec<Arc<TdxRuntime>>) -> Self {
         assert!(!runtimes.is_empty(), "at least one runtime is required");
         Self { runtimes }
     }
 }
 
 #[async_trait]
-impl<P> EnclaveApiServer for TdxSignerRpc<P>
-where
-    P: TdxQuoteProvider + fmt::Debug + 'static,
-{
+impl EnclaveApiServer for TdxSignerRpc {
     async fn signer_public_key(&self) -> RpcResult<Vec<Vec<u8>>> {
         Ok(self.runtimes.iter().map(|runtime| runtime.signer_public_key().to_vec()).collect())
     }
@@ -145,13 +136,13 @@ where
         nonces: Option<Vec<Vec<u8>>>,
     ) -> RpcResult<Vec<Vec<u8>>> {
         if user_data.is_some() {
-            return Err(TdxProverServer::<P>::rpc_err(
+            return Err(TdxProverServer::rpc_err(
                 -32602,
                 "TDX signer attestations do not support user_data challenge binding",
             ));
         }
         if nonces.is_some() {
-            return Err(TdxProverServer::<P>::rpc_err(
+            return Err(TdxProverServer::rpc_err(
                 -32602,
                 "TDX signer attestations do not support nonce challenge binding",
             ));
@@ -160,9 +151,8 @@ where
         let mut attestations = Vec::with_capacity(self.runtimes.len());
         for runtime in &self.runtimes {
             let signer_public_key = runtime.signer_public_key();
-            let quote = runtime
-                .signer_quote()
-                .map_err(|error| TdxProverServer::<P>::rpc_err(-32001, error))?;
+            let quote =
+                runtime.signer_quote().map_err(|error| TdxProverServer::rpc_err(-32001, error))?;
             attestations.push(
                 TdxSignerAttestation {
                     signer_public_key: signer_public_key.to_vec().into(),
@@ -188,15 +178,15 @@ mod tests {
     use super::*;
     use crate::MeasuredMockTdxQuoteProvider;
 
-    fn test_runtime() -> Arc<TdxRuntime<MeasuredMockTdxQuoteProvider>> {
+    fn test_runtime() -> Arc<TdxRuntime> {
         Arc::new(TdxRuntime::new(MeasuredMockTdxQuoteProvider::local_mock()))
     }
 
-    fn test_rpc() -> TdxSignerRpc<MeasuredMockTdxQuoteProvider> {
+    fn test_rpc() -> TdxSignerRpc {
         TdxSignerRpc::new(vec![test_runtime()])
     }
 
-    fn multi_test_rpc() -> TdxSignerRpc<MeasuredMockTdxQuoteProvider> {
+    fn multi_test_rpc() -> TdxSignerRpc {
         TdxSignerRpc::new(vec![test_runtime(), test_runtime()])
     }
 
