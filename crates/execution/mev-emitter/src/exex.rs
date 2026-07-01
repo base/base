@@ -8,13 +8,14 @@
 //! C-3 folds in Flashblocks, and C-4 streams the encoded events to the TS
 //! `ProviderNodeStream` consumer.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
+use std::ffi::OsStr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use alloy_evm::Evm;
 use alloy_network_primitives::TransactionResponse;
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256};
 use base_execution_evm::BaseEvmConfig;
 use base_flashblocks::{FlashblocksAPI, FlashblocksState, FlashblocksSubscriber, PendingBlocks};
 use base_node_runner::{BaseNodeAdapter, BaseNodeExtension, FromExtensionConfig, NodeHooks};
@@ -41,6 +42,28 @@ const PRUNE_MARGIN: u64 = 64;
 /// cadence used elsewhere in the node's flashblocks tooling.
 const FLASHBLOCKS_PING_INTERVAL: Duration = Duration::from_secs(5);
 
+/// Explicit opt-in for ahead-of-committed preconf emission. `MEV_EMITTER_ENABLE`
+/// still gates the whole ExEx; this narrower switch keeps the committed-chain
+/// emitter behavior unchanged unless operators set `MEV_EMITTER_PRECONF=1`.
+const PRECONF_ENV: &str = "MEV_EMITTER_PRECONF";
+/// Explicit opt-in for in-node arbitrage dry-run observations.
+const ARB_DRYRUN_ENV: &str = crate::arb_dryrun::ARB_DRYRUN_ENV;
+/// Optional per-frame dirty pool cap for dry-run work.
+const ARB_DRYRUN_MAX_POOLS_ENV: &str = "MEV_EMITTER_ARB_DRYRUN_MAX_POOLS";
+/// Optional per-frame candidate cap for dry-run work.
+const ARB_DRYRUN_MAX_CANDIDATES_ENV: &str = "MEV_EMITTER_ARB_DRYRUN_MAX_CANDIDATES";
+/// Optional per-frame wall-clock budget in microseconds.
+const ARB_DRYRUN_TIME_BUDGET_MICROS_ENV: &str = "MEV_EMITTER_ARB_DRYRUN_TIME_BUDGET_MICROS";
+/// Optional exact-input amount used for dry-run estimates.
+const ARB_DRYRUN_AMOUNT_IN_WEI_ENV: &str = "MEV_EMITTER_ARB_DRYRUN_AMOUNT_IN_WEI";
+/// Optional decoded pool baseline JSON file for runtime candidate evaluation.
+const ARB_DRYRUN_POOL_BASELINE_ENV: &str = "MEV_EMITTER_ARB_DRYRUN_POOL_BASELINE";
+
+#[derive(Clone)]
+struct ArbDryRunRuntime {
+    config: crate::arb_dryrun::DryRunConfig,
+    pools: Arc<Vec<crate::arb_dryrun::PoolState>>,
+}
 /// Builds a [`FlashblockIndex`] and, if `MEV_FLASHBLOCKS_URL` is set and
 /// non-empty, starts a Flashblocks websocket subscription that populates it.
 ///
@@ -82,6 +105,142 @@ fn start_flashblocks_index() -> FlashblockIndex {
     index
 }
 
+/// Returns true only for the explicit `MEV_EMITTER_PRECONF=1` opt-in.
+pub fn preconf_emission_enabled() -> bool {
+    preconf_emission_enabled_from_value(std::env::var_os(PRECONF_ENV).as_deref())
+}
+
+fn preconf_emission_enabled_from_value(value: Option<&OsStr>) -> bool {
+    value.and_then(OsStr::to_str).is_some_and(|raw| raw.trim() == "1")
+}
+
+/// Returns true only for the explicit `MEV_EMITTER_ARB_DRYRUN=1` opt-in.
+pub fn arb_dryrun_enabled() -> bool {
+    crate::arb_dryrun::enabled_from_value(std::env::var_os(ARB_DRYRUN_ENV).as_deref())
+}
+
+fn arb_dryrun_config_from_env() -> crate::arb_dryrun::DryRunConfig {
+    let mut config = crate::arb_dryrun::DryRunConfig::default();
+    if let Some(value) = parse_env_usize(ARB_DRYRUN_MAX_POOLS_ENV) {
+        config.max_pools_per_frame = value;
+    }
+    if let Some(value) = parse_env_usize(ARB_DRYRUN_MAX_CANDIDATES_ENV) {
+        config.max_candidates_per_frame = value;
+    }
+    if let Some(value) = parse_env_u64(ARB_DRYRUN_TIME_BUDGET_MICROS_ENV) {
+        config.time_budget = Duration::from_micros(value);
+    }
+    if let Some(value) = parse_env_u128(ARB_DRYRUN_AMOUNT_IN_WEI_ENV) {
+        config.amount_in_wei = value;
+    }
+    config.clamped()
+}
+
+fn arb_dryrun_runtime_from_env() -> ArbDryRunRuntime {
+    let config = arb_dryrun_config_from_env();
+    let pools = match std::env::var(ARB_DRYRUN_POOL_BASELINE_ENV) {
+        Ok(path) if !path.trim().is_empty() => {
+            match crate::arb_dryrun::load_pool_baseline_from_path(path.trim()) {
+                Ok(pools) => pools,
+                Err(err) => {
+                    warn!(
+                        target: "base::mev_emitter",
+                        error = %err,
+                        "arb dry-run pool baseline unavailable; emitting health-only observations",
+                    );
+                    Vec::new()
+                }
+            }
+        }
+        _ => Vec::new(),
+    };
+    ArbDryRunRuntime { config, pools: Arc::new(pools) }
+}
+
+fn parse_env_usize(name: &str) -> Option<usize> {
+    std::env::var(name).ok()?.trim().parse().ok()
+}
+
+fn parse_env_u64(name: &str) -> Option<u64> {
+    std::env::var(name).ok()?.trim().parse().ok()
+}
+
+fn parse_env_u128(name: &str) -> Option<u128> {
+    std::env::var(name).ok()?.trim().parse().ok()
+}
+
+fn emit_arb_dryrun_frame(
+    sink: &EventSink,
+    block_number: u64,
+    flashblock_index: u32,
+    payload_id: String,
+    dirty_pools: BTreeSet<Address>,
+    runtime: &ArbDryRunRuntime,
+) {
+    if dirty_pools.is_empty() {
+        return;
+    }
+    let frame = crate::arb_dryrun::run_frame(
+        runtime.pools.as_slice(),
+        &dirty_pools,
+        &runtime.config,
+        crate::arb_dryrun::NoActionGuard,
+    );
+    if frame.candidates.is_empty() || frame.truncated {
+        sink.send_event(&crate::NodeEvent::ArbDryRunObservation(
+            crate::ArbDryRunObservationEvent {
+                protocol_version: crate::arb_dryrun::ARB_DRYRUN_PROTOCOL_VERSION,
+                block_number,
+                flashblock_index,
+                payload_id,
+                dirty_pool_count: u32::try_from(frame.dirty_pool_count).unwrap_or(u32::MAX),
+                candidate_fingerprint: "health".to_string(),
+                candidate_key: "health".to_string(),
+                tokens: Vec::new(),
+                pools: Vec::new(),
+                protocols: Vec::new(),
+                amount_in_wei: runtime.config.amount_in_wei,
+                estimated_gross_wei: 0,
+                estimated_net_wei: None,
+                approximation: false,
+                caveat: Some(
+                    frame
+                        .caveat
+                        .unwrap_or_else(|| "pool-baseline-unavailable-in-rust-phase1".to_string()),
+                ),
+                latency_micros: frame.latency_micros,
+                truncated: frame.truncated,
+                health: frame.health,
+            },
+        ));
+        return;
+    }
+    for candidate in frame.candidates {
+        sink.send_event(&crate::NodeEvent::ArbDryRunObservation(
+            crate::ArbDryRunObservationEvent {
+                protocol_version: crate::arb_dryrun::ARB_DRYRUN_PROTOCOL_VERSION,
+                block_number,
+                flashblock_index,
+                payload_id: payload_id.clone(),
+                dirty_pool_count: u32::try_from(frame.dirty_pool_count).unwrap_or(u32::MAX),
+                candidate_fingerprint: candidate.fingerprint,
+                candidate_key: candidate.candidate_id,
+                tokens: candidate.tokens,
+                pools: candidate.pools,
+                protocols: candidate.protocols.iter().map(|p| p.as_str().to_string()).collect(),
+                amount_in_wei: runtime.config.amount_in_wei,
+                estimated_gross_wei: candidate.estimated_gross_wei,
+                estimated_net_wei: candidate.estimated_net_wei,
+                approximation: candidate.approximation,
+                caveat: candidate.caveat.or_else(|| frame.caveat.clone()),
+                latency_micros: frame.latency_micros,
+                truncated: frame.truncated,
+                health: frame.health.clone(),
+            },
+        ));
+    }
+}
+
 /// Issue #45: emit pool storage-slot diffs from one FLASHBLOCK PRECONFIRMATION.
 ///
 /// This is the genuinely AHEAD-OF-COMMITTED price source. The `base-flashblocks`
@@ -100,10 +259,15 @@ fn start_flashblocks_index() -> FlashblockIndex {
 /// (idempotent per `payload_id`+pool+slot, so the downstream aggregator dedups).
 /// Reserve-pool (Aerodrome / UniV2) slot SEMANTIC decoding remains a downstream TS
 /// concern — this path emits raw `(slot, post-value)` words like the committed loop.
-fn emit_preconf_pool_slots(pb: &PendingBlocks, sink: &EventSink) {
+fn emit_preconf_pool_slots(
+    pb: &PendingBlocks,
+    sink: &EventSink,
+    arb_dryrun: Option<&ArbDryRunRuntime>,
+) {
     let block_number = pb.latest_block_number();
     let payload_id = format!("{}", pb.payload_id());
     let fb_index = pb.latest_flashblock_index() as u32;
+    let mut dirty_pools = BTreeSet::new();
     for twl in pb.get_latest_flashblock_transactions_with_logs() {
         let tx_hash = twl.transaction.tx_hash();
         // Pool addresses (Swap-log emitters) — mirrors the committed loop's
@@ -127,65 +291,118 @@ fn emit_preconf_pool_slots(pb: &PendingBlocks, sink: &EventSink) {
             payload_id.clone(),
         );
         for ev in events {
+            dirty_pools.insert(ev.pool);
             sink.send_event(&crate::NodeEvent::PoolSlotDiff(ev));
+        }
+    }
+    if let Some(runtime) = arb_dryrun {
+        emit_arb_dryrun_frame(sink, block_number, fb_index, payload_id, dirty_pools, runtime);
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PreconfPayloadRef {
+    payload_id: String,
+    block_number: u64,
+    parent_hash: B256,
+}
+
+impl PreconfPayloadRef {
+    fn from_pending(pending: &PendingBlocks) -> Self {
+        Self {
+            payload_id: format!("{}", pending.payload_id()),
+            block_number: pending.latest_block_number(),
+            parent_hash: pending.parent_hash(),
         }
     }
 }
 
 /// Issue #45 (critic HIGH, base#4): decide whether a newly-received preconf
-/// payload SUPERSEDES the previous one (same height, different `payload_id`),
-/// requiring a `Superseded` discard so the downstream aggregator drops the old
-/// payload's now-stale slots. Returns `None` for the first payload, an unchanged
-/// payload, or a height advance (the latter is reconciled by the committed loop's
-/// finalized `BlockBoundaryEvent`).
-fn superseded_discard(
-    last: Option<&(String, u64)>,
-    payload_id: &str,
-    block_number: u64,
+/// payload invalidates the previous one. Same-height payload replacement is a
+/// `Superseded` discard; same/lower-height parent changes are `Reorg` discards.
+/// Height advances do not discard here because the committed-chain boundary
+/// reconciles finalized payloads.
+fn preconf_discard(
+    last: Option<&PreconfPayloadRef>,
+    next: &PreconfPayloadRef,
 ) -> Option<crate::DiscardPreconfEvent> {
-    match last {
-        Some((prev_id, prev_block)) if prev_id != payload_id && *prev_block == block_number => {
-            Some(crate::DiscardPreconfEvent {
-                protocol_version: crate::PROTOCOL_VERSION,
-                payload_id: prev_id.clone(),
-                block_number: Some(*prev_block),
-                reason: Some(crate::DiscardReason::Superseded),
-            })
-        }
-        _ => None,
-    }
+    let prev = last?;
+    let reason = if next.block_number < prev.block_number
+        || (next.block_number == prev.block_number && next.parent_hash != prev.parent_hash)
+    {
+        crate::DiscardReason::Reorg
+    } else if next.block_number == prev.block_number && next.payload_id != prev.payload_id {
+        crate::DiscardReason::Superseded
+    } else {
+        return None;
+    };
+    Some(crate::DiscardPreconfEvent {
+        protocol_version: crate::PROTOCOL_VERSION,
+        payload_id: prev.payload_id.clone(),
+        block_number: Some(prev.block_number),
+        reason: Some(reason),
+    })
 }
 
 #[cfg(test)]
-mod preconf_discard_tests {
-    use super::superseded_discard;
+mod preconf_tests {
+    use super::{PreconfPayloadRef, preconf_discard, preconf_emission_enabled_from_value};
     use crate::DiscardReason;
+    use alloy_primitives::B256;
+    use std::ffi::OsStr;
+
+    fn payload(payload_id: &str, block_number: u64, parent_byte: u8) -> PreconfPayloadRef {
+        PreconfPayloadRef {
+            payload_id: payload_id.to_string(),
+            block_number,
+            parent_hash: B256::from([parent_byte; 32]),
+        }
+    }
 
     #[test]
-    fn emits_superseded_discard_only_on_same_height_payload_change() {
-        // First payload — nothing to discard.
-        assert!(superseded_discard(None, "A", 100).is_none());
-        // Same payload re-emitted (v1 re-ticks the latest flashblock) — no discard.
-        assert!(superseded_discard(Some(&("A".to_string(), 100)), "A", 100).is_none());
-        // New payload B replaces A at the SAME height — discard A as Superseded.
-        let ev = superseded_discard(Some(&("A".to_string(), 100)), "B", 100)
+    fn preconf_env_requires_explicit_one() {
+        assert!(!preconf_emission_enabled_from_value(None));
+        assert!(!preconf_emission_enabled_from_value(Some(OsStr::new(""))));
+        assert!(!preconf_emission_enabled_from_value(Some(OsStr::new("true"))));
+        assert!(!preconf_emission_enabled_from_value(Some(OsStr::new("0"))));
+        assert!(preconf_emission_enabled_from_value(Some(OsStr::new("1"))));
+        assert!(preconf_emission_enabled_from_value(Some(OsStr::new(" 1 "))));
+    }
+
+    #[test]
+    fn emits_discard_for_superseded_and_reorged_preconf_payloads() {
+        let a = payload("A", 100, 1);
+        assert!(preconf_discard(None, &a).is_none());
+        assert!(preconf_discard(Some(&a), &payload("A", 100, 1)).is_none());
+
+        let superseded = preconf_discard(Some(&a), &payload("B", 100, 1))
             .expect("same-height payload change must emit a discard");
-        assert_eq!(ev.payload_id, "A");
-        assert_eq!(ev.block_number, Some(100));
-        assert_eq!(ev.reason, Some(DiscardReason::Superseded));
-        // Height advanced — NOT a supersede (the committed loop's finalized
-        // BlockBoundaryEvent reconciles the old payload instead).
-        assert!(superseded_discard(Some(&("A".to_string(), 100)), "C", 101).is_none());
+        assert_eq!(superseded.payload_id, "A");
+        assert_eq!(superseded.block_number, Some(100));
+        assert_eq!(superseded.reason, Some(DiscardReason::Superseded));
+
+        let same_height_reorg = preconf_discard(Some(&a), &payload("C", 100, 2))
+            .expect("same-height parent change must emit a reorg discard");
+        assert_eq!(same_height_reorg.payload_id, "A");
+        assert_eq!(same_height_reorg.block_number, Some(100));
+        assert_eq!(same_height_reorg.reason, Some(DiscardReason::Reorg));
+
+        let lower_height_reorg = preconf_discard(Some(&a), &payload("D", 99, 1))
+            .expect("height rollback must emit a reorg discard");
+        assert_eq!(lower_height_reorg.reason, Some(DiscardReason::Reorg));
+
+        assert!(preconf_discard(Some(&a), &payload("C", 101, 2)).is_none());
     }
 }
 
 /// `ExEx` run loop: drain canonical-chain notifications, report `FinishedHeight`.
 ///
-/// `fb_state` (issue #45): when present, a failure-isolated background task
-/// subscribes to flashblock preconfirmations and emits ahead-of-committed
-/// pool-slot diffs via [`emit_preconf_pool_slots`]. The committed-chain loop below
-/// is UNCHANGED and remains the finalizing/reconciling path (its
-/// `BlockBoundaryEvent { finalized: true }` reconciles the preconf stream).
+/// `fb_state` (issue #45): when present and `MEV_EMITTER_PRECONF=1`, a
+/// failure-isolated background task subscribes to flashblock preconfirmations and
+/// emits ahead-of-committed pool-slot diffs via [`emit_preconf_pool_slots`]. The
+/// committed-chain loop below is UNCHANGED and remains the finalizing/reconciling
+/// path (its `BlockBoundaryEvent { finalized: true }` reconciles the preconf
+/// stream).
 pub async fn run_mev_emitter_exex(
     mut ctx: ExExContext<BaseNodeAdapter>,
     fb_state: Option<Arc<FlashblocksState>>,
@@ -203,49 +420,80 @@ pub async fn run_mev_emitter_exex(
     // the sink valid (events go nowhere) and never affects the ExEx. `info!` is
     // emitted inside once the listener is up.
     let sink = crate::transport::start_event_server();
-    // Issue #45: ahead-of-committed preconf pool-slot emission. Failure-isolated in
-    // its own task — a lagged/closed receiver only ends the task, never the ExEx.
-    if let Some(state) = fb_state {
-        let task_sink = sink.clone();
-        let mut rx = state.subscribe_to_flashblocks();
-        tokio::spawn(async move {
-            // Tracks the previous preconf (payload_id, block_number) so a new
-            // payload that supersedes it at the same height can emit a discard.
-            let mut last_preconf: Option<(String, u64)> = None;
-            loop {
-                match rx.recv().await {
-                    Ok(pending) => {
-                        // Issue #45 (critic HIGH, base#4): when a NEW payload
-                        // supersedes the previous one at the SAME height, emit a
-                        // Superseded discard for the old payload so the downstream
-                        // MidBlockSlotAggregator drops its now-stale slots. A
-                        // FINALIZED payload is reconciled separately by the committed
-                        // loop's `BlockBoundaryEvent { finalized: true }`.
-                        let payload_id = format!("{}", pending.payload_id());
-                        let block_number = pending.latest_block_number();
-                        if let Some(ev) =
-                            superseded_discard(last_preconf.as_ref(), &payload_id, block_number)
-                        {
-                            task_sink.send_event(&crate::NodeEvent::DiscardPreconf(ev));
-                        }
-                        last_preconf = Some((payload_id, block_number));
-                        emit_preconf_pool_slots(&pending, &task_sink);
-                    }
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        warn!(
-                            target: "base::mev_emitter",
-                            skipped = n,
-                            "preconf flashblock receiver lagged",
-                        );
-                        continue;
-                    }
-                    Err(broadcast::error::RecvError::Closed) => break,
-                }
-            }
-        });
+    let arb_dryrun = if arb_dryrun_enabled() {
+        let runtime = arb_dryrun_runtime_from_env();
+        let time_budget_micros =
+            u64::try_from(runtime.config.time_budget.as_micros()).unwrap_or(u64::MAX);
         info!(
             target: "base::mev_emitter",
-            "preconf pool-slot emission enabled (flashblock state)",
+            max_pools = runtime.config.max_pools_per_frame,
+            max_candidates = runtime.config.max_candidates_per_frame,
+            time_budget_micros,
+            amount_in_wei = %runtime.config.amount_in_wei,
+            baseline_pools = runtime.pools.len(),
+            "arb dry-run observations enabled (MEV_EMITTER_ARB_DRYRUN=1)",
+        );
+        Some(runtime)
+    } else {
+        info!(
+            target: "base::mev_emitter",
+            "arb dry-run observations disabled (set MEV_EMITTER_ARB_DRYRUN=1 to enable)",
+        );
+        None
+    };
+    // Issue #45: ahead-of-committed preconf pool-slot emission. Failure-isolated in
+    // its own task — a lagged/closed receiver only ends the task, never the ExEx.
+    // This path is explicitly gated by MEV_EMITTER_PRECONF=1 so enabling the
+    // committed-chain emitter alone keeps zero preconf behavior.
+    if preconf_emission_enabled() {
+        if let Some(state) = fb_state {
+            let task_sink = sink.clone();
+            let mut rx = state.subscribe_to_flashblocks();
+            let task_arb_dryrun = arb_dryrun.clone();
+            tokio::spawn(async move {
+                // Tracks the previous preconf so reorg/supersede signals can discard
+                // stale pending slots before they are committed/finalized.
+                let mut last_preconf: Option<PreconfPayloadRef> = None;
+                loop {
+                    match rx.recv().await {
+                        Ok(pending) => {
+                            // Issue #45 (critic HIGH, base#4): when a NEW payload
+                            // invalidates the previous one, emit discard_preconf so
+                            // downstream MidBlockSlotAggregator drops stale slots.
+                            let next_preconf = PreconfPayloadRef::from_pending(&pending);
+                            if let Some(ev) = preconf_discard(last_preconf.as_ref(), &next_preconf)
+                            {
+                                task_sink.send_event(&crate::NodeEvent::DiscardPreconf(ev));
+                            }
+                            emit_preconf_pool_slots(&pending, &task_sink, task_arb_dryrun.as_ref());
+                            last_preconf = Some(next_preconf);
+                        }
+                        Err(broadcast::error::RecvError::Lagged(n)) => {
+                            warn!(
+                                target: "base::mev_emitter",
+                                skipped = n,
+                                "preconf flashblock receiver lagged",
+                            );
+                            continue;
+                        }
+                        Err(broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+            });
+            info!(
+                target: "base::mev_emitter",
+                "preconf pool-slot emission enabled (MEV_EMITTER_PRECONF=1)",
+            );
+        } else {
+            warn!(
+                target: "base::mev_emitter",
+                "MEV_EMITTER_PRECONF=1 set but flashblocks state unavailable; preconf emission disabled",
+            );
+        }
+    } else {
+        info!(
+            target: "base::mev_emitter",
+            "preconf pool-slot emission disabled (set MEV_EMITTER_PRECONF=1 to enable)",
         );
     }
     info!(target: "base::mev_emitter", "mev-emitter ExEx started");
@@ -298,6 +546,8 @@ pub async fn run_mev_emitter_exex(
                     // its slot for O(1) accumulation.
                     let mut flashblocks: Vec<(String, (Vec<B256>, u32))> = Vec::new();
                     let mut fb_order: HashMap<String, usize> = HashMap::new();
+                    let mut arb_dirty_by_payload: HashMap<String, (u32, BTreeSet<Address>)> =
+                        HashMap::new();
                     for tx in block.transactions_recovered() {
                         let out = evm.transact(evm_config.tx_env(tx))?;
                         // Diagnostics: did this tx's EvmState touch a trusted token
@@ -368,6 +618,13 @@ pub async fn run_mev_emitter_exex(
                             fb_index,
                             payload_id.clone(),
                         );
+                        if arb_dryrun.is_some() && !pool_slot_events.is_empty() {
+                            let entry = arb_dirty_by_payload
+                                .entry(payload_id.clone())
+                                .or_insert_with(|| (fb_index, BTreeSet::new()));
+                            entry.0 = entry.0.max(fb_index);
+                            entry.1.extend(pool_slot_events.iter().map(|ev| ev.pool));
+                        }
                         let events = crate::revm_bridge::state_diffs_from_evm_state(
                             &out.state,
                             &registry,
@@ -397,6 +654,18 @@ pub async fn run_mev_emitter_exex(
                         // COMMIT (precondition anchor): advances db to POST-tx state.
                         // Native baseline read above relies on this happening AFTER.
                         evm.db_mut().commit(out.state);
+                    }
+                    if let Some(runtime) = arb_dryrun.as_ref() {
+                        for (payload_id, (fb_index, dirty_pools)) in arb_dirty_by_payload {
+                            emit_arb_dryrun_frame(
+                                &sink,
+                                block_number,
+                                fb_index,
+                                payload_id,
+                                dirty_pools,
+                                runtime,
+                            );
+                        }
                     }
                     // C-5: the tx loop completed successfully — emit, per payloadId
                     // in insertion order, a synthetic flashblock frame followed by
@@ -502,7 +771,8 @@ pub async fn run_mev_emitter_exex(
 ///
 /// `fb_state` (issue #45): the shared [`FlashblocksState`] (cloned from the
 /// flashblocks extension's config) the ExEx subscribes to for ahead-of-committed
-/// preconf pool-slot emission. `None` disables that path (committed loop only).
+/// preconf pool-slot emission only when `MEV_EMITTER_PRECONF=1`. `None` or an
+/// unset preconf env keeps committed-loop behavior only.
 #[derive(Debug)]
 pub struct MevEmitterExtension {
     fb_state: Option<Arc<FlashblocksState>>,

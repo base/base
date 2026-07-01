@@ -87,6 +87,9 @@ rstest.workspace = true
 alloy-eips.workspace = true
 serde_json.workspace = true
 base-execution-chainspec.workspace = true
+# Enables `#[tokio::test(flavor = "multi_thread")]` for the block_in_place
+# runtime-flavor contract tests in processor.rs.
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [features]
 default = [ "metrics" ]
