@@ -208,8 +208,7 @@ impl TdxQuote {
             )));
         }
 
-        let quote_signature_end = ECDSA_P256_SIGNATURE_LEN;
-        let attestation_key_start = quote_signature_end;
+        let attestation_key_start = ECDSA_P256_SIGNATURE_LEN;
         let attestation_key_end = attestation_key_start + ECDSA_P256_PUBLIC_KEY_BODY_LEN;
         let aux_data_type_offset = attestation_key_end;
         let aux_data_size_offset = aux_data_type_offset + 2;
@@ -275,12 +274,6 @@ impl TdxQuote {
             ));
         }
 
-        let mut attestation_public_key = Vec::with_capacity(65);
-        attestation_public_key.push(0x04);
-        attestation_public_key
-            .extend_from_slice(&sig_data[attestation_key_start..attestation_key_end]);
-        let report_data = Self::read_array(report_body, REPORT_DATA_OFFSET)?;
-
         Ok(ParsedTdxQuote {
             signed_message: Bytes::copy_from_slice(&raw_quote[..report_end]),
             tee_tcb_svn: Self::read_array(report_body, 0)?,
@@ -291,9 +284,11 @@ impl TdxQuote {
             rtmr1: Self::read_array(report_body, RTMR_OFFSET + TDX_MEASUREMENT_LEN)?,
             rtmr2: Self::read_array(report_body, RTMR_OFFSET + (TDX_MEASUREMENT_LEN * 2))?,
             rtmr3: Self::read_array(report_body, RTMR_OFFSET + (TDX_MEASUREMENT_LEN * 3))?,
-            report_data,
-            quote_signature: Bytes::copy_from_slice(&sig_data[..quote_signature_end]),
-            attestation_public_key: Bytes::from(attestation_public_key),
+            report_data: Self::read_array(report_body, REPORT_DATA_OFFSET)?,
+            quote_signature: Bytes::copy_from_slice(&sig_data[..ECDSA_P256_SIGNATURE_LEN]),
+            attestation_public_key: Bytes::from(
+                [&[0x04][..], &sig_data[attestation_key_start..attestation_key_end]].concat(),
+            ),
             qe_report: Bytes::copy_from_slice(&aux_data[..qe_report_end]),
             qe_report_signature: Bytes::copy_from_slice(
                 &aux_data[qe_report_signature_start..qe_report_signature_end],
@@ -339,13 +334,9 @@ impl TdxQuote {
         hasher.update(&parsed.attestation_public_key[1..]);
         hasher.update(&parsed.qe_authentication_data);
         let expected_report_data = hasher.finalize();
-        let report_data_hash = parsed
-            .qe_report
-            .get(QE_REPORT_DATA_OFFSET..QE_REPORT_DATA_OFFSET + QE_REPORT_DATA_HASH_LEN)
-            .ok_or_else(|| {
-                TdxVerifierError::InvalidQuote("QE report data hash read out of bounds".into())
-            })?;
-        if report_data_hash != &expected_report_data[..] {
+        let report_data_hash =
+            Self::read_array::<QE_REPORT_DATA_HASH_LEN>(&parsed.qe_report, QE_REPORT_DATA_OFFSET)?;
+        if report_data_hash.as_slice() != &expected_report_data[..] {
             return Err(TdxVerifierError::PckCertChainInvalid(
                 "QE report data does not bind quote attestation key".into(),
             ));
