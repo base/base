@@ -3,21 +3,15 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::Bytes;
 
-use crate::{Result, SignerIdentity, TdxQuoteProvider, TdxReportData, TdxSigner};
+use crate::{Result, TdxQuoteProvider, TdxReportData, TdxSigner};
 
 /// TDX signer quote response.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TdxSignerQuote {
-    /// Uncompressed 65-byte secp256k1 signer public key.
-    pub signer_public_key: Bytes,
-    /// Ethereum signer address derived from the public key.
-    pub signer_address: Address,
     /// Raw TDX quote bytes.
     pub quote: Bytes,
-    /// Exact report data supplied to quote generation.
-    pub report_data: [u8; 64],
     /// Quote collection timestamp in milliseconds.
     pub quote_timestamp_millis: u64,
 }
@@ -34,11 +28,6 @@ impl<P> TdxRuntime<P> {
         Self { signer: TdxSigner::generate(), quote_provider }
     }
 
-    /// Returns the public signer identity.
-    pub fn signer_identity(&self) -> SignerIdentity {
-        self.signer.identity()
-    }
-
     /// Returns the signer's public key.
     pub fn signer_public_key(&self) -> Bytes {
         self.signer.public_key()
@@ -47,16 +36,6 @@ impl<P> TdxRuntime<P> {
     /// Signs arbitrary bytes using the TDX signer.
     pub fn sign(&self, data: &[u8]) -> Result<Bytes> {
         self.signer.sign(data)
-    }
-
-    /// Returns the signer's Ethereum address.
-    pub const fn signer_address(&self) -> Address {
-        self.signer.address()
-    }
-
-    /// Returns the quote provider.
-    pub const fn quote_provider(&self) -> &P {
-        &self.quote_provider
     }
 
     /// Returns the current Unix timestamp in milliseconds.
@@ -68,22 +47,12 @@ impl<P> TdxRuntime<P> {
 impl<P: TdxQuoteProvider> TdxRuntime<P> {
     /// Collects a fresh quote using the current system time.
     pub fn signer_quote(&self) -> Result<TdxSignerQuote> {
-        self.signer_quote_at(Self::now_millis()?)
-    }
-
-    /// Collects a quote using an explicit timestamp.
-    pub fn signer_quote_at(&self, quote_timestamp_millis: u64) -> Result<TdxSignerQuote> {
+        let quote_timestamp_millis = Self::now_millis()?;
         let public_key = self.signer.public_key();
         let report_data = TdxReportData::for_public_key(&public_key, quote_timestamp_millis)?;
         let quote = self.quote_provider.quote(&report_data)?;
 
-        Ok(TdxSignerQuote {
-            signer_public_key: public_key,
-            signer_address: self.signer.address(),
-            quote,
-            report_data,
-            quote_timestamp_millis,
-        })
+        Ok(TdxSignerQuote { quote, quote_timestamp_millis })
     }
 }
 
@@ -98,12 +67,10 @@ impl<P: fmt::Debug> fmt::Debug for TdxRuntime<P> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Bytes, keccak256};
+    use alloy_primitives::Bytes;
 
     use super::*;
     use crate::{ConfigfsTdxQuoteProvider, TDX_REPORT_DATA_LEN};
-
-    const TIMESTAMP_MILLIS: u64 = 1_711_111_111_000;
 
     #[derive(Debug)]
     struct TestQuoteProvider(Bytes);
@@ -119,30 +86,12 @@ mod tests {
     }
 
     #[test]
-    fn runtime_returns_signer_identity_quote_and_timestamp() {
+    fn runtime_returns_quote_and_timestamp() {
         let runtime = test_runtime();
-        let signer_quote = runtime.signer_quote_at(TIMESTAMP_MILLIS).unwrap();
+        let signer_quote = runtime.signer_quote().unwrap();
 
-        assert_eq!(signer_quote.signer_public_key.len(), 65);
-        assert_eq!(signer_quote.signer_address, runtime.signer_address());
         assert_eq!(signer_quote.quote, Bytes::from_static(b"fixture-tdx-quote"));
-        assert_eq!(signer_quote.quote_timestamp_millis, TIMESTAMP_MILLIS);
-    }
-
-    #[test]
-    fn quote_report_data_prefix_matches_public_key_hash() {
-        let runtime = test_runtime();
-        let signer_quote = runtime.signer_quote_at(TIMESTAMP_MILLIS).unwrap();
-
-        assert_eq!(
-            &signer_quote.report_data[..32],
-            keccak256(&signer_quote.signer_public_key[1..65]).as_slice()
-        );
-        assert_eq!(
-            &signer_quote.report_data[32..],
-            keccak256([&b"base-tdx-tee-prover-v1"[..], &TIMESTAMP_MILLIS.to_le_bytes()].concat())
-                .as_slice()
-        );
+        assert!(signer_quote.quote_timestamp_millis > 0);
     }
 
     #[test]
@@ -164,9 +113,5 @@ mod tests {
         let signer_quote = runtime.signer_quote().unwrap();
 
         assert!(!signer_quote.quote.is_empty());
-        assert_eq!(
-            &signer_quote.report_data[..32],
-            keccak256(&signer_quote.signer_public_key[1..65]).as_slice()
-        );
     }
 }
