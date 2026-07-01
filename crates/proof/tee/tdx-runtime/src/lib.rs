@@ -4,7 +4,7 @@ mod error;
 pub use error::{Result, TdxRuntimeError};
 
 mod signer;
-pub use signer::{SignerIdentity, TdxSigner};
+pub use signer::TdxSigner;
 
 mod report_data;
 pub use report_data::{TDX_REPORT_DATA_LEN, TdxReportData};

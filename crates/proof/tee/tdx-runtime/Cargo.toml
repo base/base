@@ -12,10 +12,6 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# Crypto
-rand_08.workspace = true
-k256 = { workspace = true, features = ["ecdsa", "arithmetic"] }
-
 # Types
 alloy-signer.workspace = true
 alloy-signer-local.workspace = true

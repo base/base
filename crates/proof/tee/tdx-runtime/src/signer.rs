@@ -3,19 +3,8 @@ use std::fmt;
 use alloy_primitives::{Address, Bytes, keccak256};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use k256::ecdsa::SigningKey;
-use rand_08::rngs::OsRng;
 
 use crate::{Result, TdxRuntimeError};
-
-/// Public signer identity exposed by a TDX runtime.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SignerIdentity {
-    /// Uncompressed 65-byte secp256k1 public key (`0x04 || x || y`).
-    pub public_key: Bytes,
-    /// Ethereum address derived from `keccak256(public_key[1..65])[12..]`.
-    pub address: Address,
-}
 
 /// TDX guest secp256k1 signer.
 pub struct TdxSigner {
@@ -25,13 +14,7 @@ pub struct TdxSigner {
 impl TdxSigner {
     /// Generates a fresh signer key using OS randomness inside the TDX guest.
     pub fn generate() -> Self {
-        let signing_key = SigningKey::random(&mut OsRng);
-        Self { signer: PrivateKeySigner::from_signing_key(signing_key) }
-    }
-
-    /// Returns the signer's public identity.
-    pub fn identity(&self) -> SignerIdentity {
-        SignerIdentity { public_key: self.public_key(), address: self.address() }
+        Self { signer: PrivateKeySigner::random() }
     }
 
     /// Returns the uncompressed 65-byte public key (`0x04 || x || y`).
@@ -56,16 +39,6 @@ impl TdxSigner {
 
         Ok(Bytes::from(signature.as_rsy().to_vec()))
     }
-
-    /// Derives the Ethereum address from an uncompressed public key.
-    pub fn address_from_public_key(public_key: &[u8]) -> Result<Address> {
-        if public_key.len() != 65 || public_key.first() != Some(&0x04) {
-            return Err(TdxRuntimeError::InvalidPublicKey);
-        }
-
-        let hash = keccak256(&public_key[1..]);
-        Ok(Address::from_slice(&hash[12..]))
-    }
 }
 
 impl fmt::Debug for TdxSigner {
@@ -85,18 +58,6 @@ mod tests {
 
         assert_eq!(public_key.len(), 65);
         assert_eq!(public_key[0], 0x04);
-    }
-
-    #[test]
-    fn generated_signer_derives_nitro_compatible_identity() {
-        let signer = TdxSigner::generate();
-        let identity = signer.identity();
-
-        assert_eq!(identity.public_key.len(), 65);
-        assert_eq!(
-            TdxSigner::address_from_public_key(&identity.public_key).unwrap(),
-            identity.address
-        );
     }
 
     #[test]

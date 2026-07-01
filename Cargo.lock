@@ -6008,8 +6008,6 @@ dependencies = [
  "alloy-signer 2.0.5",
  "alloy-signer-local 2.0.5",
  "hex",
- "k256",
- "rand 0.8.6",
  "tempfile",
  "thiserror 2.0.18",
 ]
