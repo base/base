@@ -197,7 +197,7 @@ fn emit_arb_dryrun_frame(
                 candidate_fingerprint: "health".to_string(),
                 candidate_key: "health".to_string(),
                 tokens: Vec::new(),
-                pools: dirty_pools.into_iter().collect(),
+                pools: Vec::new(),
                 protocols: Vec::new(),
                 amount_in_wei: runtime.config.amount_in_wei,
                 estimated_gross_wei: 0,
