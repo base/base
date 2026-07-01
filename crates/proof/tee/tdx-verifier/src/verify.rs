@@ -135,12 +135,12 @@ impl TdxVerifier {
         rtmr1: &[u8; 48],
         rtmr2: &[u8; 48],
         rtmr3: &[u8; 48],
-    ) -> alloy_primitives::B256 {
+    ) -> B256 {
         keccak256([&mrtd[..], &rtmr0[..], &rtmr1[..], &rtmr2[..], &rtmr3[..]].concat())
     }
 
     /// Validates and hashes an uncompressed secp256k1 signer public key.
-    pub fn validate_public_key(public_key: &[u8]) -> Result<alloy_primitives::B256> {
+    pub fn validate_public_key(public_key: &[u8]) -> Result<B256> {
         if public_key.len() != 65 || public_key.first() != Some(&0x04) {
             return Err(TdxVerifierError::MalformedPublicKey);
         }
@@ -149,14 +149,14 @@ impl TdxVerifier {
     }
 
     /// Computes the expected signed `TDREPORT.REPORTDATA` suffix for a quote timestamp.
-    pub fn timestamp_report_data_suffix(timestamp_millis: u64) -> alloy_primitives::B256 {
+    pub fn timestamp_report_data_suffix(timestamp_millis: u64) -> B256 {
         keccak256([&b"base-tdx-tee-prover-v1"[..], &timestamp_millis.to_le_bytes()[..]].concat())
     }
 
     /// Verifies that `TDREPORT.REPORTDATA` binds both the signer key and quote timestamp.
     pub fn verify_report_data(
         quote: &crate::ParsedTdxQuote,
-        public_key_hash: alloy_primitives::B256,
+        public_key_hash: B256,
         timestamp_millis: u64,
     ) -> Result<()> {
         if quote.report_data_prefix() != public_key_hash
@@ -349,24 +349,6 @@ mod tests {
         })
     }
 
-    fn tdx_module_json() -> serde_json::Value {
-        json!({
-            "mrsigner": "00".repeat(TDX_MEASUREMENT_LEN),
-            "attributes": "00".repeat(TDX_SEAM_ATTRIBUTES_LEN),
-            "attributesMask": "ff".repeat(TDX_SEAM_ATTRIBUTES_LEN),
-        })
-    }
-
-    fn tdx_module_identity_json(status: &str, isvsvn: u16) -> serde_json::Value {
-        json!({
-            "id": "TDX_03",
-            "mrsigner": "00".repeat(TDX_MEASUREMENT_LEN),
-            "attributes": "00".repeat(TDX_SEAM_ATTRIBUTES_LEN),
-            "attributesMask": "ff".repeat(TDX_SEAM_ATTRIBUTES_LEN),
-            "tcbLevels": [{ "tcb": { "isvsvn": isvsvn }, "tcbStatus": status }],
-        })
-    }
-
     fn tcb_info_raw_with_levels_and_module_status(
         levels: &[serde_json::Value],
         next_update: &str,
@@ -381,8 +363,18 @@ mod tests {
                 "nextUpdate": next_update,
                 "fmspc": FMSPC_HEX,
                 "pceId": PCE_ID_HEX,
-                "tdxModule": tdx_module_json(),
-                "tdxModuleIdentities": [tdx_module_identity_json(module_status, module_isvsvn)],
+                "tdxModule": {
+                    "mrsigner": "00".repeat(TDX_MEASUREMENT_LEN),
+                    "attributes": "00".repeat(TDX_SEAM_ATTRIBUTES_LEN),
+                    "attributesMask": "ff".repeat(TDX_SEAM_ATTRIBUTES_LEN),
+                },
+                "tdxModuleIdentities": [{
+                    "id": "TDX_03",
+                    "mrsigner": "00".repeat(TDX_MEASUREMENT_LEN),
+                    "attributes": "00".repeat(TDX_SEAM_ATTRIBUTES_LEN),
+                    "attributesMask": "ff".repeat(TDX_SEAM_ATTRIBUTES_LEN),
+                    "tcbLevels": [{ "tcb": { "isvsvn": module_isvsvn }, "tcbStatus": module_status }],
+                }],
                 "tcbLevels": levels,
             }
         }))
