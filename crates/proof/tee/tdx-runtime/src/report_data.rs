@@ -17,20 +17,19 @@ impl TdxReportData {
     ///
     /// The first 32 bytes are `keccak256(public_key[1..65])`. The last 32
     /// bytes bind the app context and quote collection timestamp.
-    pub fn for_public_key(public_key: &[u8], quote_timestamp_millis: u64) -> Result<[u8; 64]> {
-        let mut report_data = [0u8; TDX_REPORT_DATA_LEN];
-        report_data[..32].copy_from_slice(Self::public_key_prefix(public_key)?.as_slice());
-        report_data[32..]
-            .copy_from_slice(Self::timestamped_app_binding(quote_timestamp_millis).as_slice());
-        Ok(report_data)
-    }
-
-    /// Computes `keccak256(public_key[1..65])`.
-    pub fn public_key_prefix(public_key: &[u8]) -> Result<B256> {
+    pub fn for_public_key(
+        public_key: &[u8],
+        quote_timestamp_millis: u64,
+    ) -> Result<[u8; TDX_REPORT_DATA_LEN]> {
         if public_key.len() != 65 || public_key.first() != Some(&0x04) {
             return Err(TdxRuntimeError::InvalidPublicKey);
         }
-        Ok(keccak256(&public_key[1..65]))
+
+        let mut report_data = [0u8; TDX_REPORT_DATA_LEN];
+        report_data[..32].copy_from_slice(keccak256(&public_key[1..65]).as_slice());
+        report_data[32..]
+            .copy_from_slice(Self::timestamped_app_binding(quote_timestamp_millis).as_slice());
+        Ok(report_data)
     }
 
     /// Computes the timestamp-bound app-specific suffix.
@@ -64,7 +63,7 @@ mod tests {
     #[test]
     fn public_key_prefix_rejects_malformed_keys() {
         assert!(matches!(
-            TdxReportData::public_key_prefix(&[0u8; 64]),
+            TdxReportData::for_public_key(&[0u8; 64], TIMESTAMP_MILLIS),
             Err(TdxRuntimeError::InvalidPublicKey)
         ));
     }
