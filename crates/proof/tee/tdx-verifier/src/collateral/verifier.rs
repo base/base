@@ -187,12 +187,11 @@ impl CollateralVerifier {
         public_key: &[u8],
         message: &[u8],
         signature: &[u8],
-        signature_parse_error: impl FnOnce(String) -> TdxVerifierError,
+        signature_parse_error: impl Fn(String) -> TdxVerifierError,
         verification_error: TdxVerifierError,
     ) -> Result<()> {
-        let verifying_key = VerifyingKey::from_sec1_bytes(public_key).map_err(|e| {
-            TdxVerifierError::PckCertChainInvalid(format!("invalid P-256 public key: {e}"))
-        })?;
+        let verifying_key = VerifyingKey::from_sec1_bytes(public_key)
+            .map_err(|e| signature_parse_error(format!("invalid P-256 public key: {e}")))?;
         let signature = Signature::from_slice(signature)
             .or_else(|_| Signature::from_der(signature))
             .map_err(|e| signature_parse_error(e.to_string()))?;

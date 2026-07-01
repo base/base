@@ -134,10 +134,6 @@ pub struct ParsedTdxQuote {
     pub qe_report_signature: Bytes,
     /// QE authentication data bound into the QE report data hash.
     pub qe_authentication_data: Bytes,
-    /// Quote certification data type.
-    pub certification_data_type: u16,
-    /// Quote certification data carried by the quote auth section.
-    pub certification_data: Bytes,
 }
 
 impl ParsedTdxQuote {
@@ -213,11 +209,6 @@ impl TdxQuote {
         let aux_data_type_offset = attestation_key_end;
         let aux_data_size_offset = aux_data_type_offset + 2;
         let aux_data_start = aux_data_type_offset + CERTIFICATION_DATA_HEADER_LEN;
-        if aux_data_start > sig_data.len() {
-            return Err(TdxVerifierError::InvalidQuote(
-                "signature data is missing ECDSA signature auxiliary data header".into(),
-            ));
-        }
         let aux_data_type = u16::from_le_bytes(Self::read_array(sig_data, aux_data_type_offset)?);
         if aux_data_type != ECDSA_SIG_AUX_DATA_CERTIFICATION_DATA_TYPE {
             return Err(TdxVerifierError::InvalidQuote(format!(
@@ -252,14 +243,12 @@ impl TdxQuote {
         let certification_data_type_offset = qe_authentication_data_end;
         let certification_data_size_offset = certification_data_type_offset + 2;
         let certification_data_start =
-            certification_data_size_offset + (CERTIFICATION_DATA_HEADER_LEN - 2);
+            certification_data_type_offset + CERTIFICATION_DATA_HEADER_LEN;
         if certification_data_start > aux_data.len() {
             return Err(TdxVerifierError::InvalidQuote(
                 "signature data is missing certification data header".into(),
             ));
         }
-        let certification_data_type =
-            u16::from_le_bytes(Self::read_array(aux_data, certification_data_type_offset)?);
         let certification_data_len =
             u32::from_le_bytes(Self::read_array(aux_data, certification_data_size_offset)?)
                 as usize;
@@ -296,10 +285,6 @@ impl TdxQuote {
             qe_authentication_data: Bytes::copy_from_slice(
                 &aux_data[qe_authentication_data_start..qe_authentication_data_end],
             ),
-            certification_data_type,
-            certification_data: Bytes::copy_from_slice(
-                &aux_data[certification_data_start..certification_data_end],
-            ),
         })
     }
 
@@ -312,12 +297,6 @@ impl TdxQuote {
             TdxVerifierError::QuoteSignatureInvalid,
             TdxVerifierError::QuoteSignatureInvalid("quote signature verification failed".into()),
         )
-        .map_err(|e| match e {
-            TdxVerifierError::PckCertChainInvalid(message) => {
-                TdxVerifierError::QuoteSignatureInvalid(message)
-            }
-            other => other,
-        })
     }
 
     /// Verifies that the PCK certificate key signed the QE report and certified the attestation key.
