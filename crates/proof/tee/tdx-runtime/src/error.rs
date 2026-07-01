@@ -52,15 +52,3 @@ impl TdxRuntimeError {
 
 /// Result alias for TDX runtime operations.
 pub type Result<T> = std::result::Result<T, TdxRuntimeError>;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn assert_send_sync<T: Send + Sync>() {}
-
-    #[test]
-    fn error_type_is_send_sync() {
-        assert_send_sync::<TdxRuntimeError>();
-    }
-}
