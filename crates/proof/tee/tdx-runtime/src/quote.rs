@@ -1,7 +1,7 @@
 use std::{
     fs, io,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::Mutex,
 };
 
 use alloy_primitives::Bytes;
@@ -26,11 +26,11 @@ pub trait TdxQuoteProvider: Send + Sync {
 }
 
 /// TDX quote provider backed by Linux TSM/configfs.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct ConfigfsTdxQuoteProvider {
     report_dir: PathBuf,
     // ponytail: per-provider lock; add a path registry if multiple providers share one report dir.
-    quote_lock: Arc<Mutex<()>>,
+    quote_lock: Mutex<()>,
 }
 
 impl ConfigfsTdxQuoteProvider {
@@ -41,7 +41,7 @@ impl ConfigfsTdxQuoteProvider {
 
     /// Creates a provider from a concrete report directory.
     pub fn with_report_dir(report_dir: impl Into<PathBuf>) -> Self {
-        Self { report_dir: report_dir.into(), quote_lock: Arc::new(Mutex::new(())) }
+        Self { report_dir: report_dir.into(), quote_lock: Mutex::new(()) }
     }
 }
 
@@ -68,14 +68,18 @@ impl TdxQuoteProvider for ConfigfsTdxQuoteProvider {
         }
 
         let generation_path = self.report_dir.join(GENERATION_FILE);
-        let generation = fs::read_to_string(&generation_path)
-            .map_err(|error| TdxRuntimeError::filesystem_at(&generation_path, error))?;
-        let expected_generation = generation.trim().parse::<u64>().map_err(|error| {
-            TdxRuntimeError::QuoteGeneration(format!(
-                "invalid configfs generation at {}: {error}",
-                generation_path.display()
-            ))
-        })?;
+        let read_generation = || {
+            let generation = fs::read_to_string(&generation_path)
+                .map_err(|error| TdxRuntimeError::filesystem_at(&generation_path, error))?;
+            generation.trim().parse::<u64>().map_err(|error| {
+                TdxRuntimeError::QuoteGeneration(format!(
+                    "invalid configfs generation at {}: {error}",
+                    generation_path.display()
+                ))
+            })
+        };
+
+        let expected_generation = read_generation()?;
         let expected_generation = expected_generation.checked_add(1).ok_or_else(|| {
             TdxRuntimeError::QuoteGeneration(
                 "configfs generation counter overflowed while collecting a quote".into(),
@@ -95,14 +99,7 @@ impl TdxQuoteProvider for ConfigfsTdxQuoteProvider {
             ));
         }
 
-        let generation = fs::read_to_string(&generation_path)
-            .map_err(|error| TdxRuntimeError::filesystem_at(&generation_path, error))?;
-        let actual_generation = generation.trim().parse::<u64>().map_err(|error| {
-            TdxRuntimeError::QuoteGeneration(format!(
-                "invalid configfs generation at {}: {error}",
-                generation_path.display()
-            ))
-        })?;
+        let actual_generation = read_generation()?;
         if actual_generation != expected_generation {
             return Err(TdxRuntimeError::ConfigfsGenerationMismatch {
                 expected: expected_generation,
