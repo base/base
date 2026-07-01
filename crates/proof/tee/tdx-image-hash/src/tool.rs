@@ -7,7 +7,6 @@ use alloy_provider::RootProvider;
 use base_proof_contracts::ITEEProverRegistry;
 use base_proof_primitives::EnclaveApiClient;
 use base_proof_tee_tdx_collateral::{TdxAttestationConfig, TdxCollateralProvider};
-use base_proof_tee_tdx_prover::TdxMeasurements;
 use base_proof_tee_tdx_verifier::{TdxQuote, TdxSignerAttestation, TdxVerifier, TdxVerifierInput};
 use eyre::{Context, Result, bail};
 use jsonrpsee::http_client::HttpClientBuilder;
@@ -63,14 +62,13 @@ impl TdxImageHashTool {
         )
         .wrap_err("TDX quote report data does not bind the signer and quote timestamp")?;
 
-        let measurements = TdxMeasurements::from_parsed_quote(&parsed_quote);
         let measurement_report = TdxMeasurementsReport {
             mr_td_hash: keccak256(parsed_quote.mrtd),
-            rtmr0: measurements.rtmr0,
-            rtmr1: measurements.rtmr1,
-            rtmr2: measurements.rtmr2,
-            rtmr3: measurements.rtmr3,
-            image_hash: measurements.image_hash(),
+            rtmr0: parsed_quote.rtmr0,
+            rtmr1: parsed_quote.rtmr1,
+            rtmr2: parsed_quote.rtmr2,
+            rtmr3: parsed_quote.rtmr3,
+            image_hash: parsed_quote.image_hash(),
             report_data_suffix: parsed_quote.report_data_suffix(),
             quote_timestamp_millis: attestation.quote_timestamp_millis,
         };
@@ -241,7 +239,7 @@ mod tests {
     use base_proof_primitives::EnclaveApiServer;
     use base_proof_tee_tdx_collateral::TdxAttestationConfig;
     use base_proof_tee_tdx_prover::{TdxMeasurements, TdxSignerRpc};
-    use base_proof_tee_tdx_runtime::TdxRuntime;
+    use base_proof_tee_tdx_runtime::{TdxQuoteProvider, TdxRuntime};
     use jsonrpsee::{RpcModule, server::Server};
 
     use super::*;
@@ -288,7 +286,9 @@ mod tests {
         .unwrap();
 
         handle.stop().unwrap();
-        assert_eq!(report.measurements.image_hash, TdxMeasurements::local_mock().image_hash());
+        let measurements = TdxMeasurements::local_mock();
+        let quote = TdxQuote::parse(&measurements.quote(&[0; 64]).unwrap()).unwrap();
+        assert_eq!(report.measurements.image_hash, quote.image_hash());
         assert_eq!(
             report.measurements.report_data_suffix,
             TdxVerifier::timestamp_report_data_suffix(report.measurements.quote_timestamp_millis)

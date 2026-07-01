@@ -1,6 +1,6 @@
 //! TDX quote parsing and signature verification.
 
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::{B256, Bytes, keccak256};
 use sha2::{Digest, Sha256};
 
 use crate::{Result, TdxVerifierError, collateral::CollateralVerifier};
@@ -144,6 +144,14 @@ impl ParsedTdxQuote {
     /// Returns the last 32 bytes of `TDREPORT.REPORTDATA`.
     pub fn report_data_suffix(&self) -> B256 {
         B256::from_slice(&self.report_data[32..])
+    }
+
+    /// Computes the contract-compatible TDX image hash.
+    pub fn image_hash(&self) -> B256 {
+        keccak256(
+            [&self.mrtd[..], &self.rtmr0[..], &self.rtmr1[..], &self.rtmr2[..], &self.rtmr3[..]]
+                .concat(),
+        )
     }
 }
 

@@ -1,17 +1,17 @@
-//! TDX quote measurement extraction and deterministic local quote fixtures.
+//! Deterministic local TDX quote fixtures.
 
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::Bytes;
 use base_proof_tee_tdx_runtime::{Result as TdxRuntimeResult, TdxQuoteProvider};
 use base_proof_tee_tdx_verifier::{
     CERTIFICATION_DATA_HEADER_LEN, ECDSA_P256_ATTESTATION_KEY_TYPE, ECDSA_P256_PUBLIC_KEY_BODY_LEN,
     ECDSA_P256_SIGNATURE_LEN, ECDSA_SIG_AUX_DATA_CERTIFICATION_DATA_TYPE, MIN_AUX_DATA_LEN,
-    MIN_SIGNATURE_DATA_LEN, MRTD_OFFSET, ParsedTdxQuote, QE_AUTHENTICATION_DATA_SIZE_LEN,
-    QE_REPORT_LEN, REPORT_DATA_OFFSET, RTMR_OFFSET, SIGNATURE_DATA_LEN_PREFIX_LEN,
-    TDX_MEASUREMENT_LEN, TDX_QUOTE_HEADER_LEN, TDX_QUOTE_VERSION, TDX_REPORT_BODY_LEN,
-    TDX_REPORT_DATA_LEN, TDX_TEE_TYPE, TdxVerifier,
+    MIN_SIGNATURE_DATA_LEN, MRTD_OFFSET, QE_AUTHENTICATION_DATA_SIZE_LEN, QE_REPORT_LEN,
+    REPORT_DATA_OFFSET, RTMR_OFFSET, SIGNATURE_DATA_LEN_PREFIX_LEN, TDX_MEASUREMENT_LEN,
+    TDX_QUOTE_HEADER_LEN, TDX_QUOTE_VERSION, TDX_REPORT_BODY_LEN, TDX_REPORT_DATA_LEN,
+    TDX_TEE_TYPE,
 };
 
-/// TDX measurements that feed the contract-compatible image hash.
+/// TDX measurements used to build local quote fixtures.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TdxMeasurements {
     /// MRTD measurement.
@@ -36,22 +36,6 @@ impl TdxMeasurements {
             rtmr2: [0x44; TDX_MEASUREMENT_LEN],
             rtmr3: [0x55; TDX_MEASUREMENT_LEN],
         }
-    }
-
-    /// Extracts TDX image-hash measurements from a parsed quote.
-    pub const fn from_parsed_quote(quote: &ParsedTdxQuote) -> Self {
-        Self {
-            mrtd: quote.mrtd,
-            rtmr0: quote.rtmr0,
-            rtmr1: quote.rtmr1,
-            rtmr2: quote.rtmr2,
-            rtmr3: quote.rtmr3,
-        }
-    }
-
-    /// Computes the contract-compatible TDX image hash.
-    pub fn image_hash(&self) -> B256 {
-        TdxVerifier::image_hash(&self.mrtd, &self.rtmr0, &self.rtmr1, &self.rtmr2, &self.rtmr3)
     }
 }
 
@@ -118,6 +102,10 @@ mod tests {
         let parsed = TdxQuote::parse(&quote).unwrap();
 
         assert_eq!(parsed.report_data, report_data);
-        assert_eq!(TdxMeasurements::from_parsed_quote(&parsed), measurements);
+        assert_eq!(parsed.mrtd, measurements.mrtd);
+        assert_eq!(parsed.rtmr0, measurements.rtmr0);
+        assert_eq!(parsed.rtmr1, measurements.rtmr1);
+        assert_eq!(parsed.rtmr2, measurements.rtmr2);
+        assert_eq!(parsed.rtmr3, measurements.rtmr3);
     }
 }

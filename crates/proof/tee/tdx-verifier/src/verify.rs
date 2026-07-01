@@ -115,28 +115,11 @@ impl TdxVerifier {
             qeIdentityHash: input.collateral.qe_identity.hash(),
             publicKey: input.expected_public_key.clone(),
             signer,
-            imageHash: Self::image_hash(
-                &quote.mrtd,
-                &quote.rtmr0,
-                &quote.rtmr1,
-                &quote.rtmr2,
-                &quote.rtmr3,
-            ),
+            imageHash: quote.image_hash(),
             mrTdHash: keccak256(quote.mrtd),
             reportDataPrefix: quote.report_data_prefix(),
             reportDataSuffix: quote.report_data_suffix(),
         })
-    }
-
-    /// Computes the contract-compatible TDX image hash.
-    pub fn image_hash(
-        mrtd: &[u8; 48],
-        rtmr0: &[u8; 48],
-        rtmr1: &[u8; 48],
-        rtmr2: &[u8; 48],
-        rtmr3: &[u8; 48],
-    ) -> B256 {
-        keccak256([&mrtd[..], &rtmr0[..], &rtmr1[..], &rtmr2[..], &rtmr3[..]].concat())
     }
 
     /// Validates and hashes an uncompressed secp256k1 signer public key.
@@ -540,16 +523,7 @@ mod tests {
             &parsed.rtmr3[..],
         ]
         .concat();
-        assert_eq!(
-            TdxVerifier::image_hash(
-                &parsed.mrtd,
-                &parsed.rtmr0,
-                &parsed.rtmr1,
-                &parsed.rtmr2,
-                &parsed.rtmr3
-            ),
-            keccak256(expected),
-        );
+        assert_eq!(parsed.image_hash(), keccak256(expected));
         assert_eq!(keccak256(parsed.mrtd), TdxVerifier::verify(&fixture()).unwrap().mrTdHash);
     }
 

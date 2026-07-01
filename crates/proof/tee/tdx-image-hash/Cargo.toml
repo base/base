@@ -18,7 +18,6 @@ workspace = true
 [dependencies]
 # Base
 base-proof-contracts.workspace = true
-base-proof-tee-tdx-prover.workspace = true
 base-proof-tee-tdx-verifier.workspace = true
 base-proof-tee-tdx-collateral.workspace = true
 base-proof-primitives = { workspace = true, features = ["rpc-client"] }
@@ -36,6 +35,10 @@ jsonrpsee = { workspace = true, features = ["http-client"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [dev-dependencies]
+# Base
+base-proof-tee-tdx-prover.workspace = true
 base-proof-tee-tdx-runtime.workspace = true
-jsonrpsee = { workspace = true, features = ["server"] }
 base-proof-primitives = { workspace = true, features = ["rpc-client", "rpc-server"] }
+
+# RPC
+jsonrpsee = { workspace = true, features = ["server"] }
