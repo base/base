@@ -8,10 +8,8 @@ use base_proof_tee_tdx_verifier::{
     MIN_SIGNATURE_DATA_LEN, MRTD_OFFSET, ParsedTdxQuote, QE_AUTHENTICATION_DATA_SIZE_LEN,
     QE_REPORT_LEN, REPORT_DATA_OFFSET, RTMR_OFFSET, SIGNATURE_DATA_LEN_PREFIX_LEN,
     TDX_MEASUREMENT_LEN, TDX_QUOTE_HEADER_LEN, TDX_QUOTE_VERSION, TDX_REPORT_BODY_LEN,
-    TDX_REPORT_DATA_LEN, TDX_TEE_TYPE, TdxQuote, TdxVerifier,
+    TDX_REPORT_DATA_LEN, TDX_TEE_TYPE, TdxVerifier,
 };
-
-use crate::Result;
 
 /// TDX measurements that feed the contract-compatible image hash.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -51,18 +49,15 @@ impl TdxMeasurements {
         }
     }
 
-    /// Parses a quote and extracts TDX image-hash measurements.
-    pub fn from_quote(raw_quote: &[u8]) -> Result<Self> {
-        Ok(Self::from_parsed_quote(&TdxQuote::parse(raw_quote)?))
-    }
-
     /// Computes the contract-compatible TDX image hash.
     pub fn image_hash(&self) -> B256 {
         TdxVerifier::image_hash(&self.mrtd, &self.rtmr0, &self.rtmr1, &self.rtmr2, &self.rtmr3)
     }
+}
 
+impl TdxQuoteProvider for TdxMeasurements {
     /// Builds a parseable TDX quote carrying these measurements and the supplied report data.
-    pub fn build_mock_quote(&self, report_data: &[u8; TDX_REPORT_DATA_LEN]) -> Bytes {
+    fn quote(&self, report_data: &[u8; TDX_REPORT_DATA_LEN]) -> TdxRuntimeResult<Bytes> {
         let mut quote = vec![
             0u8;
             TDX_QUOTE_HEADER_LEN
@@ -105,25 +100,21 @@ impl TdxMeasurements {
             ..certification_header_offset + CERTIFICATION_DATA_HEADER_LEN]
             .copy_from_slice(&0u32.to_le_bytes());
 
-        Bytes::from(quote)
-    }
-}
-
-impl TdxQuoteProvider for TdxMeasurements {
-    fn quote(&self, report_data: &[u8; TDX_REPORT_DATA_LEN]) -> TdxRuntimeResult<Bytes> {
-        Ok(self.build_mock_quote(report_data))
+        Ok(Bytes::from(quote))
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use base_proof_tee_tdx_verifier::TdxQuote;
+
     use super::*;
 
     #[test]
-    fn build_mock_quote_emits_parseable_quote_with_measurements() {
+    fn quote_emits_parseable_quote_with_measurements() {
         let measurements = TdxMeasurements::local_mock();
         let report_data = [0xAB; TDX_REPORT_DATA_LEN];
-        let quote = measurements.build_mock_quote(&report_data);
+        let quote = measurements.quote(&report_data).unwrap();
         let parsed = TdxQuote::parse(&quote).unwrap();
 
         assert_eq!(parsed.report_data, report_data);
