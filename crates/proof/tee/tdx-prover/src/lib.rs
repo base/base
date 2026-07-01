@@ -3,7 +3,7 @@
 pub use base_proof_tee_tdx_verifier::{TdxSignerAttestation, TdxSignerAttestationDecodeError};
 
 mod backend;
-pub use backend::{AggregateProposalInput, CONFIG_HASHES, TdxBackend};
+pub use backend::TdxBackend;
 
 mod error;
 pub use error::{Result, TdxProverError};

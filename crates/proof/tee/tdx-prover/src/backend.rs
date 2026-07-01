@@ -1,9 +1,10 @@
 use std::{
+    collections::HashMap,
     fmt,
     sync::{Arc, LazyLock},
 };
 
-use alloy_primitives::{B256, Bytes, map::HashMap};
+use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_common_chains::ChainConfig;
 use base_common_evm::BaseEvmFactory;
@@ -15,21 +16,6 @@ use base_proof_tee_tdx_runtime::TdxRuntime;
 
 use crate::{Oracle, Result, TdxMeasurements, TdxProverError};
 
-/// Inputs needed to build a signed aggregate proposal.
-#[derive(Debug)]
-pub struct AggregateProposalInput<'a> {
-    /// Boot info that supplied proposer, L1 origin, and interval values.
-    pub boot_info: &'a BootInfo,
-    /// Per-block proposals being aggregated.
-    pub proposals: &'a [Proposal],
-    /// Agreed output root preceding the aggregate range.
-    pub agreed_l2_output_root: B256,
-    /// Per-chain config hash.
-    pub config_hash: B256,
-    /// TDX image hash used in the signed proof journal.
-    pub tee_image_hash: B256,
-}
-
 const NO_PROPOSALS_ERR: &str = "no proposals produced";
 const ZERO_L2_BLOCK_ERR: &str = "l2_block_number is 0";
 
@@ -38,7 +24,7 @@ fn pipeline_err(err: impl ToString) -> TdxProverError {
 }
 
 /// Per-chain config hashes derived from [`ChainConfig::all`] at first access.
-pub static CONFIG_HASHES: LazyLock<HashMap<u64, B256>> = LazyLock::new(|| {
+static CONFIG_HASHES: LazyLock<HashMap<u64, B256>> = LazyLock::new(|| {
     let mut map = HashMap::default();
     for cfg in ChainConfig::all() {
         let rollup = RollupConfig::from(cfg);
@@ -59,16 +45,6 @@ impl TdxBackend {
     /// Create a new backend using the given TDX runtime.
     pub const fn new(runtime: Arc<TdxRuntime>) -> Self {
         Self { runtime }
-    }
-
-    /// Returns the TDX runtime used by this backend.
-    pub const fn runtime(&self) -> &Arc<TdxRuntime> {
-        &self.runtime
-    }
-
-    /// Signs the exact `ProofJournal` bytes expected by the onchain TEE verifier.
-    pub fn sign_proof_journal(&self, journal: &ProofJournal) -> Result<Bytes> {
-        self.runtime.sign(journal.encode().as_slice()).map_err(Into::into)
     }
 
     /// Look up the config hash for a supported chain.
@@ -127,7 +103,7 @@ impl TdxBackend {
 
             proposals.push(Proposal {
                 output_root: *output_root,
-                signature: self.sign_proof_journal(&journal)?,
+                signature: self.runtime.sign(journal.encode().as_slice())?,
                 l1_origin_hash,
                 l1_origin_number,
                 l2_block_number,
@@ -141,67 +117,47 @@ impl TdxBackend {
         let aggregate_proposal = if proposals.len() == 1 {
             proposals[0].clone()
         } else {
-            self.aggregate_proposal(AggregateProposalInput {
-                boot_info: &boot_info,
-                proposals: &proposals,
-                agreed_l2_output_root,
+            let first = &proposals[0];
+            let last = proposals.last().expect("non-empty proposals");
+
+            let interval = boot_info.intermediate_block_interval;
+            if interval == 0 {
+                return Err(TdxProverError::ProofPipeline(
+                    "intermediate_block_interval must not be zero".into(),
+                ));
+            }
+            let interval = interval as usize;
+            let count = proposals.len() / interval;
+            let intermediate_roots: Vec<B256> =
+                (1..=count).map(|i| proposals[i * interval - 1].output_root).collect();
+
+            let journal = ProofJournal {
+                proposer: boot_info.proposer,
+                l1_origin_hash,
+                prev_output_root: agreed_l2_output_root,
+                starting_l2_block: first
+                    .l2_block_number
+                    .checked_sub(1)
+                    .ok_or_else(|| TdxProverError::ProofPipeline(ZERO_L2_BLOCK_ERR.into()))?,
+                output_root: last.output_root,
+                ending_l2_block: last.l2_block_number,
+                intermediate_roots,
                 config_hash,
                 tee_image_hash,
-            })?
+            };
+
+            Proposal {
+                output_root: last.output_root,
+                signature: self.runtime.sign(journal.encode().as_slice())?,
+                l1_origin_hash,
+                l1_origin_number,
+                l2_block_number: last.l2_block_number,
+                prev_output_root: agreed_l2_output_root,
+                config_hash,
+            }
         };
 
         Ok(ProofResult::Tee { aggregate_proposal, proposals })
-    }
-
-    /// Builds and signs an aggregate proposal for a multi-block proof result.
-    pub fn aggregate_proposal(&self, input: AggregateProposalInput<'_>) -> Result<Proposal> {
-        let first = input
-            .proposals
-            .first()
-            .ok_or_else(|| TdxProverError::ProofPipeline(NO_PROPOSALS_ERR.into()))?;
-        let last = input
-            .proposals
-            .last()
-            .ok_or_else(|| TdxProverError::ProofPipeline(NO_PROPOSALS_ERR.into()))?;
-
-        let interval = input.boot_info.intermediate_block_interval;
-        if interval == 0 {
-            return Err(TdxProverError::ProofPipeline(
-                "intermediate_block_interval must not be zero".into(),
-            ));
-        }
-        let interval = interval as usize;
-        let count = input.proposals.len() / interval;
-        let intermediate_roots: Vec<B256> =
-            (1..=count).map(|i| input.proposals[i * interval - 1].output_root).collect();
-
-        let l1_origin_hash = input.boot_info.l1_head;
-        let l1_origin_number = input.boot_info.l1_head_number;
-
-        let journal = ProofJournal {
-            proposer: input.boot_info.proposer,
-            l1_origin_hash,
-            prev_output_root: input.agreed_l2_output_root,
-            starting_l2_block: first
-                .l2_block_number
-                .checked_sub(1)
-                .ok_or_else(|| TdxProverError::ProofPipeline(ZERO_L2_BLOCK_ERR.into()))?,
-            output_root: last.output_root,
-            ending_l2_block: last.l2_block_number,
-            intermediate_roots,
-            config_hash: input.config_hash,
-            tee_image_hash: input.tee_image_hash,
-        };
-
-        Ok(Proposal {
-            output_root: last.output_root,
-            signature: self.sign_proof_journal(&journal)?,
-            l1_origin_hash,
-            l1_origin_number,
-            l2_block_number: last.l2_block_number,
-            prev_output_root: input.agreed_l2_output_root,
-            config_hash: input.config_hash,
-        })
     }
 }
 
@@ -275,9 +231,9 @@ mod tests {
     fn tdx_server_signs_tee_verifier_proof_journal_bytes() {
         let backend = test_backend();
         let journal = test_journal();
-        let signature = backend.sign_proof_journal(&journal).unwrap();
+        let signature = backend.runtime.sign(journal.encode().as_slice()).unwrap();
 
-        let public_key = backend.runtime().signer_public_key();
+        let public_key = backend.runtime.signer_public_key();
         let verifying_key = VerifyingKey::from_sec1_bytes(&public_key).unwrap();
         let signature = Signature::from_slice(&signature[..64]).unwrap();
         let hash = alloy_primitives::keccak256(journal.encode());
