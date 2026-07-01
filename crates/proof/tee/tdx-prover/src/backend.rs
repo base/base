@@ -27,12 +27,6 @@ impl TdxBackend {
     pub const fn new(runtime: Arc<TdxRuntime>) -> Self {
         Self { runtime }
     }
-
-    /// Collects a fresh quote and returns its contract-compatible image hash.
-    pub fn current_image_hash(&self) -> Result<B256> {
-        let quote = self.runtime.signer_quote()?;
-        Ok(TdxMeasurements::from_quote(&quote.quote)?.image_hash())
-    }
 }
 
 #[async_trait]
@@ -45,12 +39,12 @@ impl ProverBackend for TdxBackend {
     }
 
     async fn prove(&self, witness: Oracle) -> Result<ProofResult> {
-        let tee_image_hash = self.current_image_hash()?;
+        let quote = self.runtime.signer_quote()?;
+        let tee_image_hash = TdxMeasurements::from_quote(&quote.quote)?.image_hash();
         let boot_info = BootInfo::load(&witness).await.map_err(pipeline_err)?;
         let cfg = ChainConfig::by_chain_id(boot_info.chain_id)
             .ok_or(TdxProverError::UnsupportedChain(boot_info.chain_id))?;
-        let rollup = RollupConfig::from(cfg);
-        let config_hash = PerChainConfig::hash_from_rollup_config(&rollup)
+        let config_hash = PerChainConfig::hash_from_rollup_config(&RollupConfig::from(cfg))
             .ok_or(TdxProverError::UnsupportedChain(boot_info.chain_id))?;
         let agreed_l2_output_root = boot_info.agreed_l2_output_root;
 
@@ -121,10 +115,7 @@ impl ProverBackend for TdxBackend {
                 proposer: boot_info.proposer,
                 l1_origin_hash,
                 prev_output_root: agreed_l2_output_root,
-                starting_l2_block: first
-                    .l2_block_number
-                    .checked_sub(1)
-                    .ok_or_else(|| TdxProverError::ProofPipeline("l2_block_number is 0".into()))?,
+                starting_l2_block: first.l2_block_number - 1,
                 output_root: last.output_root,
                 ending_l2_block: last.l2_block_number,
                 intermediate_roots,
@@ -144,26 +135,5 @@ impl ProverBackend for TdxBackend {
         };
 
         Ok(ProofResult::Tee { aggregate_proposal, proposals })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::MeasuredMockTdxQuoteProvider;
-
-    fn test_backend() -> TdxBackend {
-        let runtime = TdxRuntime::new(MeasuredMockTdxQuoteProvider::local_mock());
-        TdxBackend::new(Arc::new(runtime))
-    }
-
-    #[test]
-    fn current_image_hash_comes_from_current_quote_measurements() {
-        let backend = test_backend();
-
-        assert_eq!(
-            backend.current_image_hash().unwrap(),
-            TdxMeasurements::local_mock().image_hash()
-        );
     }
 }
