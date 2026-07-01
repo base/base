@@ -3,7 +3,6 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use base_common_chains::ChainConfig;
 use base_common_evm::BaseEvmFactory;
-use base_common_genesis::RollupConfig;
 use base_proof_client::{Prologue, TeeProposals};
 use base_proof_primitives::{PerChainConfig, ProofResult, ProverBackend};
 use base_proof_tee_tdx_runtime::TdxRuntime;
@@ -39,12 +38,11 @@ impl ProverBackend for TdxBackend {
     async fn prove(&self, witness: Oracle) -> Result<ProofResult> {
         let prologue = Prologue::new(witness.clone(), witness, BaseEvmFactory::default());
         let (boot_info, driver) = prologue.load().await.map_err(pipeline_err)?;
-        let cfg = ChainConfig::by_chain_id(boot_info.chain_id)
+        let config_hash = ChainConfig::rollup_config_by_chain_id(boot_info.chain_id)
+            .and_then(|cfg| PerChainConfig::hash_from_rollup_config(&cfg))
             .ok_or(TdxProverError::UnsupportedChain(boot_info.chain_id))?;
-        let config_hash = PerChainConfig::hash_from_rollup_config(&RollupConfig::from(cfg))
-            .ok_or(TdxProverError::UnsupportedChain(boot_info.chain_id))?;
-        let quote = self.runtime.signer_quote()?;
-        let tee_image_hash = TdxMeasurements::from_quote(&quote.quote)?.image_hash();
+        let tee_image_hash =
+            TdxMeasurements::from_quote(&self.runtime.signer_quote()?.quote)?.image_hash();
         let (epilogue, block_results) =
             driver.execute_with_intermediates().await.map_err(pipeline_err)?;
 

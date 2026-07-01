@@ -5977,7 +5977,6 @@ dependencies = [
  "async-trait",
  "base-common-chains",
  "base-common-evm",
- "base-common-genesis",
  "base-health",
  "base-proof",
  "base-proof-client",

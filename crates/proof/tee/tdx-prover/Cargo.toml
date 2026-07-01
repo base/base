@@ -25,7 +25,6 @@ base-prover-service-protocol.workspace = true
 base-proof = { workspace = true, features = ["std"] }
 base-proof-client = { workspace = true, features = ["std"] }
 base-proof-preimage = { workspace = true, features = ["serde"] }
-base-common-genesis = { workspace = true, features = ["serde"] }
 base-proof-primitives = { workspace = true, features = ["std", "serde", "rpc-server"] }
 
 # alloy

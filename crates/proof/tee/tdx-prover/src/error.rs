@@ -12,9 +12,6 @@ pub enum TdxProverError {
     /// TDX quote parsing or measurement extraction failed.
     #[error(transparent)]
     Verifier(#[from] TdxVerifierError),
-    /// Proposal signing failed.
-    #[error("signing failed: {0}")]
-    SigningFailed(String),
     /// The proof execution pipeline failed.
     #[error("proof pipeline error: {0}")]
     ProofPipeline(String),
