@@ -31,12 +31,10 @@ pub struct ConfigfsTdxQuoteProvider {
 impl ConfigfsTdxQuoteProvider {
     /// Creates a provider under the default TSM report root.
     pub fn new(report_name: impl AsRef<Path>) -> Self {
-        Self::with_report_dir(Path::new(DEFAULT_TSM_REPORT_ROOT).join(report_name))
-    }
-
-    /// Creates a provider from a concrete report directory.
-    pub fn with_report_dir(report_dir: impl Into<PathBuf>) -> Self {
-        Self { report_dir: report_dir.into(), quote_lock: Mutex::new(()) }
+        Self {
+            report_dir: Path::new(DEFAULT_TSM_REPORT_ROOT).join(report_name),
+            quote_lock: Mutex::new(()),
+        }
     }
 }
 
@@ -113,11 +111,22 @@ mod tests {
         thread::{self, JoinHandle},
     };
 
-    use alloy_primitives::Bytes;
     use tempfile::TempDir;
 
     use super::*;
     use crate::TDX_REPORT_DATA_LEN;
+
+    fn test_provider(provider: &str) -> (TempDir, PathBuf, ConfigfsTdxQuoteProvider) {
+        let temp = TempDir::new().unwrap();
+        let report_dir = temp.path().join("base-tdx-runtime-test");
+        fs::create_dir_all(&report_dir).unwrap();
+        fs::write(report_dir.join("provider"), provider).unwrap();
+        fs::write(report_dir.join("outblob"), b"fixture-quote").unwrap();
+        let quote_provider =
+            ConfigfsTdxQuoteProvider { report_dir: report_dir.clone(), quote_lock: Mutex::new(()) };
+
+        (temp, report_dir, quote_provider)
+    }
 
     fn spawn_generation_writer(report_dir: &Path, generations: [u64; 2]) -> JoinHandle<()> {
         let generation_path = report_dir.join("generation");
@@ -134,14 +143,9 @@ mod tests {
 
     #[test]
     fn configfs_provider_reads_quote_from_report_dir() {
-        let temp = TempDir::new().unwrap();
-        let report_dir = temp.path().join("base-tdx-runtime-test");
-        fs::create_dir_all(&report_dir).unwrap();
-        fs::write(report_dir.join("provider"), TDX_CONFIGFS_PROVIDER_NAME).unwrap();
-        fs::write(report_dir.join("outblob"), b"fixture-quote").unwrap();
+        let (_temp, report_dir, provider) = test_provider(TDX_CONFIGFS_PROVIDER_NAME);
         let generation_writer = spawn_generation_writer(&report_dir, [7, 8]);
 
-        let provider = ConfigfsTdxQuoteProvider::with_report_dir(&report_dir);
         let quote = provider.quote(&[0x11; TDX_REPORT_DATA_LEN]).unwrap();
         generation_writer.join().unwrap();
 
@@ -151,14 +155,9 @@ mod tests {
 
     #[test]
     fn configfs_provider_rejects_generation_counter_mismatch() {
-        let temp = TempDir::new().unwrap();
-        let report_dir = temp.path().join("base-tdx-runtime-test");
-        fs::create_dir_all(&report_dir).unwrap();
-        fs::write(report_dir.join("provider"), TDX_CONFIGFS_PROVIDER_NAME).unwrap();
-        fs::write(report_dir.join("outblob"), b"fixture-quote").unwrap();
+        let (_temp, report_dir, provider) = test_provider(TDX_CONFIGFS_PROVIDER_NAME);
         let generation_writer = spawn_generation_writer(&report_dir, [7, 9]);
 
-        let provider = ConfigfsTdxQuoteProvider::with_report_dir(&report_dir);
         assert!(matches!(
             provider.quote(&[0x11; TDX_REPORT_DATA_LEN]),
             Err(TdxRuntimeError::ConfigfsGenerationMismatch { expected: 8, actual: 9 })
@@ -168,12 +167,8 @@ mod tests {
 
     #[test]
     fn configfs_provider_rejects_non_tdx_provider_marker() {
-        let temp = TempDir::new().unwrap();
-        let report_dir = temp.path().join("base-tdx-runtime-test");
-        fs::create_dir_all(&report_dir).unwrap();
-        fs::write(report_dir.join("provider"), "sev_guest").unwrap();
+        let (_temp, _report_dir, provider) = test_provider("sev_guest");
 
-        let provider = ConfigfsTdxQuoteProvider::with_report_dir(&report_dir);
         assert!(matches!(
             provider.quote(&[0x11; TDX_REPORT_DATA_LEN]),
             Err(TdxRuntimeError::UnexpectedConfigfsProvider(provider)) if provider == "sev_guest"
