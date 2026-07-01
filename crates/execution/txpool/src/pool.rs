@@ -26,10 +26,11 @@ use reth_transaction_pool::{
     pool::{AddedTransactionState, TransactionEvent},
 };
 use tokio::{spawn, sync::mpsc};
+use tracing::debug;
 
 use crate::{
-    Admission, BasePooledTx, BaseTransactionValidator, GuardLimits, InvalidationKey, LimitRejection,
-    MempoolGuard,
+    Admission, BasePooledTx, BaseTransactionValidator, GuardLimits, GuardMetrics, InvalidationKey,
+    LimitRejection, MempoolGuard,
     best::MergeBestTransactions,
     two_d_nonce_pool::{InsertOutcome, TwoDNoncePool},
 };
@@ -253,6 +254,7 @@ where
         hash: TxHash,
         rejection: LimitRejection,
     ) -> reth_transaction_pool::error::PoolError {
+        GuardMetrics::admission_rejected(GuardMetrics::rejection_reason(rejection)).increment(1);
         let reason = match rejection {
             LimitRejection::SenderLimit => "sender EIP-8130 mempool limit reached",
             LimitRejection::PayerLimit => "payer EIP-8130 mempool limit reached",
@@ -260,6 +262,7 @@ where
                 "payer balance cannot fund another sponsored EIP-8130 transaction"
             }
         };
+        debug!(reason = GuardMetrics::rejection_reason(rejection), "EIP-8130 admission rejected");
         reth_transaction_pool::error::PoolError::other(hash, reason)
     }
 
@@ -301,7 +304,12 @@ where
             }
             dropped
         };
-        self.remove_dropped_across_pools(dropped)
+        let removed = self.remove_dropped_across_pools(dropped);
+        GuardMetrics::record_state_diff_invalidations(removed.len());
+        if !removed.is_empty() {
+            debug!(count = removed.len(), "EIP-8130 transactions invalidated by state diff");
+        }
+        removed
     }
 
     /// Removes a guard-dropped set of hashes from whichever pool holds each one,
@@ -355,11 +363,17 @@ where
             (start..=horizon_bucket).map(InvalidationKey::ExpiryBucket).collect()
         };
 
+        GuardMetrics::expiry_buckets_fired().increment(keys.len() as u64);
+
         // Both sidecar and reth-resident members are tracked by the guard, so a
         // single invalidate_exact yields every expired hash; route each back to
         // the pool that holds it.
         let dropped = self.guard.write().invalidate_exact(keys);
-        self.remove_dropped_across_pools(dropped);
+        let removed = self.remove_dropped_across_pools(dropped);
+        GuardMetrics::record_expiry_invalidations(removed.len());
+        if !removed.is_empty() {
+            debug!(count = removed.len(), "EIP-8130 transactions invalidated by expiry");
+        }
     }
 
     /// Releases the guard bookkeeping for a batch of removed sidecar
@@ -527,10 +541,13 @@ where
         if stale.is_empty() {
             return;
         }
-        let mut guard = self.guard.write();
-        for hash in &stale {
-            guard.release(hash);
+        {
+            let mut guard = self.guard.write();
+            for hash in &stale {
+                guard.release(hash);
+            }
         }
+        GuardMetrics::record_reconcile_releases(stale.len());
     }
 
     fn partition_hashes_by_pool(&self, hashes: Vec<TxHash>) -> (Vec<TxHash>, Vec<TxHash>) {
@@ -1400,6 +1417,7 @@ where
         // routing through our removal paths (reth-internal evictions, fee-bump
         // replacements), bounding admission-count drift to a single block.
         self.reconcile_guard();
+        GuardMetrics::tracked().set(self.guard.read().len() as f64);
     }
 
     fn update_accounts(&self, accounts: Vec<ChangedAccount>) {
@@ -1422,7 +1440,11 @@ where
             }
             dropped
         };
-        self.remove_dropped_across_pools(dropped);
+        let removed = self.remove_dropped_across_pools(dropped);
+        GuardMetrics::record_state_diff_invalidations(removed.len());
+        if !removed.is_empty() {
+            debug!(count = removed.len(), "EIP-8130 transactions invalidated by balance change");
+        }
 
         self.protocol_pool.update_accounts(accounts)
     }

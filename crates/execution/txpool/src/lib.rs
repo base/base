@@ -63,4 +63,7 @@ pub use guard::{
     MempoolGuard,
 };
 
+mod metrics;
+pub use metrics::GuardMetrics;
+
 pub mod estimated_da_size;
