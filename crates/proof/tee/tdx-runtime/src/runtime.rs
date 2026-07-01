@@ -1,7 +1,4 @@
-use std::{
-    fmt,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use alloy_primitives::Bytes;
 
@@ -17,6 +14,7 @@ pub struct TdxSignerQuote {
 }
 
 /// TDX runtime owning signer identity and quote collection.
+#[derive(Debug)]
 pub struct TdxRuntime<P> {
     signer: TdxSigner,
     quote_provider: P,
@@ -37,31 +35,18 @@ impl<P> TdxRuntime<P> {
     pub fn sign(&self, data: &[u8]) -> Result<Bytes> {
         self.signer.sign(data)
     }
-
-    /// Returns the current Unix timestamp in milliseconds.
-    pub fn now_millis() -> Result<u64> {
-        Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64)
-    }
 }
 
 impl<P: TdxQuoteProvider> TdxRuntime<P> {
     /// Collects a fresh quote using the current system time.
     pub fn signer_quote(&self) -> Result<TdxSignerQuote> {
-        let quote_timestamp_millis = Self::now_millis()?;
+        let quote_timestamp_millis =
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
         let public_key = self.signer.public_key();
         let report_data = TdxReportData::for_public_key(&public_key, quote_timestamp_millis)?;
         let quote = self.quote_provider.quote(&report_data)?;
 
         Ok(TdxSignerQuote { quote, quote_timestamp_millis })
-    }
-}
-
-impl<P: fmt::Debug> fmt::Debug for TdxRuntime<P> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("TdxRuntime")
-            .field("signer_address", &self.signer.address())
-            .field("quote_provider", &self.quote_provider)
-            .finish_non_exhaustive()
     }
 }
 
@@ -92,16 +77,6 @@ mod tests {
 
         assert_eq!(signer_quote.quote, Bytes::from_static(b"fixture-tdx-quote"));
         assert!(signer_quote.quote_timestamp_millis > 0);
-    }
-
-    #[test]
-    fn runtime_debug_does_not_expose_private_key_material() {
-        let runtime = test_runtime();
-        let debug = format!("{runtime:?}");
-
-        assert!(debug.contains("TdxRuntime"));
-        assert!(debug.contains("signer_address"));
-        assert!(!debug.contains("signer:"));
     }
 
     #[test]

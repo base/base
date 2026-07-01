@@ -207,9 +207,9 @@ impl<P: TdxQuoteProvider> TdxBackend<P> {
     }
 }
 
-impl<P: fmt::Debug> fmt::Debug for TdxBackend<P> {
+impl<P> fmt::Debug for TdxBackend<P> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("TdxBackend").field("runtime", &self.runtime).finish_non_exhaustive()
+        f.debug_struct("TdxBackend").finish_non_exhaustive()
     }
 }
 
