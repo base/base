@@ -1,7 +1,5 @@
 //! Proof generation orchestration for claimed TDX worker jobs.
 
-use std::future::Future;
-
 use async_trait::async_trait;
 use base_proof_host::ProverError;
 use base_proof_primitives::ProofResult as PrimitiveProofResult;
@@ -36,18 +34,16 @@ impl TryFrom<ProofJob> for ProofGeneratorRequest {
     type Error = ProofGeneratorError;
 
     fn try_from(job: ProofJob) -> Result<Self, Self::Error> {
-        let claim = ClaimedProofJobMetadata::from_job(&job)?;
+        let claim = ClaimedProofJobMetadata::try_from(&job)?;
 
-        let ProofRequestKind::Tee(tee) = job.request.request else {
-            return Err(ProofGeneratorError::UnsupportedProofRequest {
-                session_id: claim.session_id,
-            });
+        let tee = match job.request.request {
+            ProofRequestKind::Tee(tee) if tee.tee_kind == TeeKind::IntelTdx => tee,
+            _ => {
+                return Err(ProofGeneratorError::UnsupportedProofRequest {
+                    session_id: claim.session_id,
+                });
+            }
         };
-        if tee.tee_kind != TeeKind::IntelTdx {
-            return Err(ProofGeneratorError::UnsupportedProofRequest {
-                session_id: claim.session_id,
-            });
-        }
 
         Ok(Self { claim, proof: tee.proof })
     }
@@ -92,12 +88,7 @@ where
             "starting tdx proof generation"
         );
 
-        let proof = self
-            .with_heartbeat_while_generating(
-                &request,
-                self.enclave.service().prove_block(request.proof.clone()),
-            )
-            .await?;
+        let proof = self.with_heartbeat_while_generating(&request).await?;
 
         let PrimitiveProofResult::Tee { aggregate_proposal, proposals } = proof else {
             unreachable!("tdx backend returned non-tee proof");
@@ -127,10 +118,10 @@ where
     async fn with_heartbeat_while_generating(
         &self,
         request: &ProofGeneratorRequest,
-        generate: impl Future<Output = Result<PrimitiveProofResult, ProverError<TdxBackend>>>,
     ) -> Result<PrimitiveProofResult, ProofGeneratorError> {
         let heartbeat =
             WorkerHeartbeat::until_failure(&self.submitter, &request.claim, self.heartbeat);
+        let generate = self.enclave.service().prove_block(request.proof.clone());
         tokio::pin!(generate);
         tokio::pin!(heartbeat);
 
