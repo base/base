@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use alloy_primitives::{B256, b256};
 use base_proof_tee_tdx_verifier::TDXTcbStatus;
-use url::Url;
+use reqwest::Url;
 
 use crate::{Result, TdxCollateralError};
 

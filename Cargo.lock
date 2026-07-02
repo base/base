@@ -5943,7 +5943,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
- "url",
  "x509-parser",
 ]
 
