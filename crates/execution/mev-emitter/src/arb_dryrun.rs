@@ -8,7 +8,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, keccak256};
 use num_bigint::{BigInt, BigUint};
 use num_traits::{One, ToPrimitive, Zero};
 use serde::{Deserialize, Serialize};
@@ -262,7 +262,7 @@ pub struct CycleCandidate {
     pub pools: Vec<Address>,
     /// Protocol sequence aligned with token hops.
     pub protocols: Vec<Protocol>,
-    /// Stable string fingerprint.
+    /// Lowercase 64-hex hash fingerprint.
     pub fingerprint: String,
     /// Candidate identifier derived from oriented tokens and pools.
     pub candidate_id: String,
@@ -1094,6 +1094,17 @@ fn edge_fingerprint(edges: &[Edge]) -> String {
         .join("|")
 }
 
+fn edge_fingerprint_hash(edge_fingerprint: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let hash = keccak256(edge_fingerprint.as_bytes());
+    let mut out = String::with_capacity(64);
+    for byte in hash.0 {
+        out.push(char::from(HEX[usize::from(byte >> 4)]));
+        out.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    out
+}
+
 fn cycle_to_candidate(
     edges: &[Edge],
     amount_in: u128,
@@ -1114,9 +1125,10 @@ fn cycle_to_candidate(
     let tokens = edges.iter().map(|e| e.from).collect::<Vec<_>>();
     let pool_ids = edges.iter().map(|e| e.pool).collect::<Vec<_>>();
     let protocols = edges.iter().map(|e| e.protocol).collect::<Vec<_>>();
-    let fingerprint = edge_fingerprint(edges);
+    let candidate_id = edge_fingerprint(edges);
+    let fingerprint = edge_fingerprint_hash(&candidate_id);
     Some(CycleCandidate {
-        candidate_id: fingerprint.clone(),
+        candidate_id,
         fingerprint,
         tokens,
         pools: pool_ids,
@@ -1239,9 +1251,6 @@ mod tests {
         if let Some(path) = std::env::var_os("BASE_MEV_GRAPH_ARB_PARITY_CORPUS") {
             candidates.push(PathBuf::from(path));
         }
-        candidates.push(PathBuf::from(
-            "/home/ubuntu/src/base-mev/wt/in-node-arb-dryrun-p1/fixtures/graph-arb-parity-corpus.json",
-        ));
         candidates.push(manifest.join("fixtures/graph-arb-parity-corpus.json"));
         let path = candidates
             .into_iter()
@@ -1257,9 +1266,6 @@ mod tests {
         if let Some(path) = std::env::var_os("BASE_MEV_ARB_DRYRUN_BASELINE_SAMPLE") {
             candidates.push(PathBuf::from(path));
         }
-        candidates.push(PathBuf::from(
-            "/home/ubuntu/src/base-mev/wt/in-node-arb-dryrun-p1/fixtures/arb-dryrun/pool-baseline.sample.json",
-        ));
         candidates.push(manifest.join("fixtures/arb-dryrun/pool-baseline.sample.json"));
         candidates
             .into_iter()
@@ -1478,6 +1484,43 @@ mod tests {
         assert!(!c1.is_empty());
         assert_eq!(c1[0].fingerprint, c2[0].fingerprint);
         assert_eq!(c1[0].tokens[0], addr(0xa1));
+    }
+
+    #[test]
+    fn candidate_fingerprint_is_hash_while_id_remains_human_edge_string() {
+        let p1 = PoolState::v2_like(
+            addr(0xb1),
+            Protocol::UniswapV2,
+            addr(0xa1),
+            addr(0xa2),
+            1,
+            1_000,
+            1_100,
+        );
+        let p2 = PoolState::v2_like(
+            addr(0xb2),
+            Protocol::UniswapV2,
+            addr(0xa1),
+            addr(0xa2),
+            1,
+            1_100,
+            1_000,
+        );
+
+        let first = find_negative_cycle_candidates(&[p1.clone(), p2.clone()], 10u128.pow(18));
+        let second = find_negative_cycle_candidates(&[p1, p2], 10u128.pow(18));
+        let first_candidate = first.first().expect("candidate");
+        let second_candidate = second.first().expect("candidate");
+
+        assert_eq!(first_candidate.fingerprint.len(), 64);
+        assert!(first_candidate.fingerprint.chars().all(|c| c.is_ascii_hexdigit()));
+        assert!(!first_candidate.fingerprint.chars().any(|c| c.is_ascii_uppercase()));
+        assert!(first_candidate.candidate_id.contains("->"));
+        assert!(first_candidate.candidate_id.contains(':'));
+        assert!(first_candidate.candidate_id.contains('|'));
+        assert_ne!(first_candidate.fingerprint, first_candidate.candidate_id);
+        assert_eq!(first_candidate.fingerprint, second_candidate.fingerprint);
+        assert_eq!(first_candidate.candidate_id, second_candidate.candidate_id);
     }
 
     #[test]
