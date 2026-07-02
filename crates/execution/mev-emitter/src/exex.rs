@@ -58,6 +58,18 @@ const ARB_DRYRUN_TIME_BUDGET_MICROS_ENV: &str = "MEV_EMITTER_ARB_DRYRUN_TIME_BUD
 const ARB_DRYRUN_AMOUNT_IN_WEI_ENV: &str = "MEV_EMITTER_ARB_DRYRUN_AMOUNT_IN_WEI";
 /// Optional decoded pool baseline JSON file for runtime candidate evaluation.
 const ARB_DRYRUN_POOL_BASELINE_ENV: &str = "MEV_EMITTER_ARB_DRYRUN_POOL_BASELINE";
+/// Optional L2 gas cost for dry-run signed net metadata.
+const ARB_DRYRUN_L2_GAS_COST_WEI_ENV: &str = "MEV_EMITTER_ARB_DRYRUN_L2_GAS_COST_WEI";
+/// Optional L1 base fee for dry-run signed net metadata.
+const ARB_DRYRUN_L1_BASE_FEE_WEI_ENV: &str = "MEV_EMITTER_ARB_DRYRUN_L1_BASE_FEE_WEI";
+/// Optional blob base fee for dry-run signed net metadata.
+const ARB_DRYRUN_BLOB_BASE_FEE_WEI_ENV: &str = "MEV_EMITTER_ARB_DRYRUN_BLOB_BASE_FEE_WEI";
+/// Optional Ecotone base fee scalar for dry-run signed net metadata.
+const ARB_DRYRUN_BASE_FEE_SCALAR_ENV: &str = "MEV_EMITTER_ARB_DRYRUN_BASE_FEE_SCALAR";
+/// Optional Ecotone blob base fee scalar for dry-run signed net metadata.
+const ARB_DRYRUN_BLOB_BASE_FEE_SCALAR_ENV: &str = "MEV_EMITTER_ARB_DRYRUN_BLOB_BASE_FEE_SCALAR";
+/// Optional calldata hex for dry-run signed net metadata.
+const ARB_DRYRUN_CALLDATA_HEX_ENV: &str = "MEV_EMITTER_ARB_DRYRUN_CALLDATA_HEX";
 
 #[derive(Clone)]
 struct ArbDryRunRuntime {
@@ -159,7 +171,20 @@ fn arb_dryrun_config_from_env() -> crate::arb_dryrun::DryRunConfig {
     if let Some(value) = parse_env_u128(ARB_DRYRUN_AMOUNT_IN_WEI_ENV) {
         config.amount_in_wei = value;
     }
+    config.net_cost = arb_dryrun_net_cost_config_from_env();
     config.clamped()
+}
+fn arb_dryrun_net_cost_config_from_env() -> Option<crate::arb_dryrun::DryRunNetCostConfig> {
+    Some(crate::arb_dryrun::DryRunNetCostConfig {
+        l2_gas_cost_wei: parse_env_u128(ARB_DRYRUN_L2_GAS_COST_WEI_ENV)?,
+        l1_data_fee: crate::arb_dryrun::EcotoneL1DataFeeConfig {
+            calldata: parse_env_calldata(ARB_DRYRUN_CALLDATA_HEX_ENV)?,
+            l1_base_fee_wei: parse_env_u128(ARB_DRYRUN_L1_BASE_FEE_WEI_ENV)?,
+            blob_base_fee_wei: parse_env_u128(ARB_DRYRUN_BLOB_BASE_FEE_WEI_ENV)?,
+            base_fee_scalar: parse_env_u128(ARB_DRYRUN_BASE_FEE_SCALAR_ENV)?,
+            blob_base_fee_scalar: parse_env_u128(ARB_DRYRUN_BLOB_BASE_FEE_SCALAR_ENV)?,
+        },
+    })
 }
 
 fn arb_dryrun_runtime_from_env() -> ArbDryRunRuntime {
@@ -197,6 +222,32 @@ fn parse_env_u64(name: &str) -> Option<u64> {
 
 fn parse_env_u128(name: &str) -> Option<u128> {
     std::env::var(name).ok()?.trim().parse().ok()
+}
+fn parse_env_calldata(name: &str) -> Option<Vec<u8>> {
+    parse_hex_bytes(std::env::var(name).ok()?.trim())
+}
+
+fn parse_hex_bytes(raw: &str) -> Option<Vec<u8>> {
+    let hex = raw.strip_prefix("0x").unwrap_or(raw);
+    if hex.len() % 2 != 0 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(hex.len() / 2);
+    for chunk in hex.as_bytes().chunks_exact(2) {
+        let high = hex_nibble(chunk[0])?;
+        let low = hex_nibble(chunk[1])?;
+        out.push((high << 4) | low);
+    }
+    Some(out)
+}
+
+fn hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn baseline_pool<'a>(
@@ -393,6 +444,80 @@ fn supplement_committed_fallback<DB: Database>(
     dirty_state.fallback_elapsed = dirty_state.fallback_elapsed.saturating_add(started.elapsed());
 }
 
+fn arb_dryrun_observation_events(
+    block_number: u64,
+    flashblock_index: u32,
+    payload_id: &str,
+    amount_in_wei: u128,
+    frame: crate::arb_dryrun::DryRunFrame,
+) -> Vec<crate::NodeEvent> {
+    if frame.candidates.is_empty() {
+        return vec![crate::NodeEvent::ArbDryRunObservation(crate::ArbDryRunObservationEvent {
+            protocol_version: crate::arb_dryrun::ARB_DRYRUN_PROTOCOL_VERSION,
+            block_number,
+            flashblock_index,
+            payload_id: payload_id.to_string(),
+            dirty_pool_count: u32::try_from(frame.dirty_pool_count).unwrap_or(u32::MAX),
+            candidate_fingerprint: "health".to_string(),
+            candidate_key: "health".to_string(),
+            tokens: Vec::new(),
+            pools: Vec::new(),
+            protocols: Vec::new(),
+            amount_in_wei,
+            estimated_gross_wei: 0,
+            estimated_net_wei: None,
+            approximation: false,
+            caveat: Some(
+                frame
+                    .caveat
+                    .unwrap_or_else(|| "pool-baseline-unavailable-in-rust-phase1".to_string()),
+            ),
+            latency_micros: frame.latency_micros,
+            truncated: frame.truncated,
+            health: frame.health,
+        })];
+    }
+
+    let truncated_caveat = frame.truncated.then_some("partial-frame-truncated");
+    let frame_caveat = frame.caveat;
+    let dirty_pool_count = u32::try_from(frame.dirty_pool_count).unwrap_or(u32::MAX);
+    let latency_micros = frame.latency_micros;
+    let truncated = frame.truncated;
+    let health = frame.health;
+    frame
+        .candidates
+        .into_iter()
+        .map(|candidate| {
+            let protocols = candidate.protocols.iter().map(|p| p.as_str().to_string()).collect();
+            let caveat = crate::arb_dryrun::compose_caveat_parts(&[
+                frame_caveat.as_deref(),
+                candidate.caveat.as_deref(),
+                truncated_caveat,
+            ]);
+            crate::NodeEvent::ArbDryRunObservation(crate::ArbDryRunObservationEvent {
+                protocol_version: crate::arb_dryrun::ARB_DRYRUN_PROTOCOL_VERSION,
+                block_number,
+                flashblock_index,
+                payload_id: payload_id.to_string(),
+                dirty_pool_count,
+                candidate_fingerprint: candidate.fingerprint,
+                candidate_key: candidate.candidate_id,
+                tokens: candidate.tokens,
+                pools: candidate.pools,
+                protocols,
+                amount_in_wei,
+                estimated_gross_wei: candidate.estimated_gross_wei,
+                estimated_net_wei: candidate.estimated_net_wei,
+                approximation: candidate.approximation,
+                caveat,
+                latency_micros,
+                truncated,
+                health: health.clone(),
+            })
+        })
+        .collect()
+}
+
 fn emit_arb_dryrun_frame(
     sink: &EventSink,
     block_number: u64,
@@ -413,62 +538,14 @@ fn emit_arb_dryrun_frame(
         &frame_config,
         crate::arb_dryrun::NoActionGuard,
     );
-    if frame.candidates.is_empty() || frame.truncated {
-        sink.send_event(&crate::NodeEvent::ArbDryRunObservation(
-            crate::ArbDryRunObservationEvent {
-                protocol_version: crate::arb_dryrun::ARB_DRYRUN_PROTOCOL_VERSION,
-                block_number,
-                flashblock_index: dirty_state.flashblock_index,
-                payload_id,
-                dirty_pool_count: u32::try_from(frame.dirty_pool_count).unwrap_or(u32::MAX),
-                candidate_fingerprint: "health".to_string(),
-                candidate_key: "health".to_string(),
-                tokens: Vec::new(),
-                pools: Vec::new(),
-                protocols: Vec::new(),
-                amount_in_wei: runtime.config.amount_in_wei,
-                estimated_gross_wei: 0,
-                estimated_net_wei: None,
-                approximation: false,
-                caveat: Some(
-                    frame
-                        .caveat
-                        .unwrap_or_else(|| "pool-baseline-unavailable-in-rust-phase1".to_string()),
-                ),
-                latency_micros: frame.latency_micros,
-                truncated: frame.truncated,
-                health: frame.health,
-            },
-        ));
-        return;
-    }
-    for candidate in frame.candidates {
-        let caveat = crate::arb_dryrun::compose_caveat_parts(&[
-            frame.caveat.as_deref(),
-            candidate.caveat.as_deref(),
-        ]);
-        sink.send_event(&crate::NodeEvent::ArbDryRunObservation(
-            crate::ArbDryRunObservationEvent {
-                protocol_version: crate::arb_dryrun::ARB_DRYRUN_PROTOCOL_VERSION,
-                block_number,
-                flashblock_index: dirty_state.flashblock_index,
-                payload_id: payload_id.clone(),
-                dirty_pool_count: u32::try_from(frame.dirty_pool_count).unwrap_or(u32::MAX),
-                candidate_fingerprint: candidate.fingerprint,
-                candidate_key: candidate.candidate_id,
-                tokens: candidate.tokens,
-                pools: candidate.pools,
-                protocols: candidate.protocols.iter().map(|p| p.as_str().to_string()).collect(),
-                amount_in_wei: runtime.config.amount_in_wei,
-                estimated_gross_wei: candidate.estimated_gross_wei,
-                estimated_net_wei: candidate.estimated_net_wei,
-                approximation: candidate.approximation,
-                caveat,
-                latency_micros: frame.latency_micros,
-                truncated: frame.truncated,
-                health: frame.health.clone(),
-            },
-        ));
+    for event in arb_dryrun_observation_events(
+        block_number,
+        dirty_state.flashblock_index,
+        &payload_id,
+        runtime.config.amount_in_wei,
+        frame,
+    ) {
+        sink.send_event(&event);
     }
 }
 
@@ -1428,5 +1505,66 @@ mod arb_overlay_tests {
         assert_eq!(db.storage_calls, 0);
         let delta = dirty_state.deltas.get(&pool.pool).expect("unsupported caveat");
         assert!(delta.caveats.iter().any(|c| c == "fallback-unsupported-protocol"));
+    }
+    #[test]
+    fn truncated_non_empty_dryrun_frame_emits_candidate_observation() {
+        let candidate = crate::arb_dryrun::CycleCandidate {
+            tokens: vec![addr(1), addr(2)],
+            pools: vec![addr(0xa1), addr(0xa2)],
+            protocols: vec![Protocol::UniswapV2, Protocol::UniswapV2],
+            fingerprint: "f".repeat(64),
+            candidate_id: "candidate".to_string(),
+            estimated_gross_wei: 123,
+            estimated_net_wei: None,
+            approximation: false,
+            caveat: Some("candidate-caveat".to_string()),
+        };
+        let frame = crate::arb_dryrun::DryRunFrame {
+            candidates: vec![candidate],
+            dirty_pool_count: 1,
+            truncated: true,
+            health: "truncated".to_string(),
+            latency_micros: 7,
+            caveat: Some("bounded-frame-truncated".to_string()),
+        };
+
+        let events = arb_dryrun_observation_events(42, 3, "payload", 10, frame);
+
+        assert_eq!(events.len(), 1);
+        let crate::NodeEvent::ArbDryRunObservation(event) = &events[0] else {
+            panic!("expected arb dry-run observation");
+        };
+        assert_eq!(event.candidate_key, "candidate");
+        assert_eq!(event.health, "truncated");
+        assert!(event.truncated);
+        assert_eq!(event.estimated_gross_wei, 123);
+        assert!(event.caveat.as_deref().is_some_and(|caveat| {
+            caveat.contains("bounded-frame-truncated")
+                && caveat.contains("candidate-caveat")
+                && caveat.contains("partial-frame-truncated")
+        }));
+    }
+
+    #[test]
+    fn truncated_empty_dryrun_frame_emits_health_observation() {
+        let frame = crate::arb_dryrun::DryRunFrame {
+            candidates: Vec::new(),
+            dirty_pool_count: 1,
+            truncated: true,
+            health: "truncated".to_string(),
+            latency_micros: 7,
+            caveat: Some("bounded-frame-truncated".to_string()),
+        };
+
+        let events = arb_dryrun_observation_events(42, 3, "payload", 10, frame);
+
+        assert_eq!(events.len(), 1);
+        let crate::NodeEvent::ArbDryRunObservation(event) = &events[0] else {
+            panic!("expected arb dry-run observation");
+        };
+        assert_eq!(event.candidate_key, "health");
+        assert_eq!(event.health, "truncated");
+        assert!(event.truncated);
+        assert_eq!(event.caveat.as_deref(), Some("bounded-frame-truncated"));
     }
 }
