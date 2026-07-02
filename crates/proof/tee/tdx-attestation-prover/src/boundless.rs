@@ -82,7 +82,7 @@ impl BoundlessProver {
         buf[..20].copy_from_slice(signer_address.as_slice());
         buf[20..].copy_from_slice(&attempt.to_be_bytes());
         let hash = keccak256(buf);
-        u32::from_be_bytes([hash[0], hash[1], hash[2], hash[3]])
+        u32::from_be_bytes(hash[..4].try_into().expect("keccak hash has 4-byte prefix"))
     }
 
     /// Checks whether a Boundless error is the `RequestIsNotLocked` race.
@@ -317,11 +317,11 @@ impl TeeAttestationProofProvider for BoundlessProver {
             .contains(&signer_address);
 
         let loop_expiry = self.effective_expiry(None);
-        let mut first_unknown_attempt = None;
+        let mut first_unknown_request_id = None;
         for attempt in 0..self.max_recovery_attempts {
             let index = Self::derive_request_index(signer_address, attempt);
             let request_id = RequestId::new(self.signer.address(), index);
-            let request_id_u256: alloy_primitives::U256 = request_id.into();
+            let request_id_u256: alloy_primitives::U256 = request_id.clone().into();
 
             debug!(
                 attempt,
@@ -342,8 +342,8 @@ impl TeeAttestationProofProvider for BoundlessProver {
                     continue;
                 }
                 Ok(RequestStatus::Unknown) => {
-                    if first_unknown_attempt.is_none() {
-                        first_unknown_attempt = Some(attempt);
+                    if first_unknown_request_id.is_none() {
+                        first_unknown_request_id = Some(request_id);
                     }
                     continue;
                 }
@@ -372,12 +372,8 @@ impl TeeAttestationProofProvider for BoundlessProver {
             }
         }
 
-        let params = match first_unknown_attempt {
-            Some(attempt) => {
-                let index = Self::derive_request_index(signer_address, attempt);
-                let request_id = RequestId::new(self.signer.address(), index);
-                params.with_request_id(request_id)
-            }
+        let params = match first_unknown_request_id {
+            Some(request_id) => params.with_request_id(request_id),
             None => params,
         };
 
@@ -398,7 +394,6 @@ mod tests {
     };
 
     use base_proof_tee_tdx_verifier::{TDXTcbStatus, TDXVerificationResult};
-    use rstest::{fixture, rstest};
 
     use super::*;
 
@@ -408,7 +403,6 @@ mod tests {
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
     const TEST_IMAGE_ID: [u32; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 
-    #[fixture]
     fn prover() -> BoundlessProver {
         BoundlessProver {
             rpc_url: Url::parse(TEST_RPC_URL).unwrap(),
@@ -452,22 +446,24 @@ mod tests {
         }
     }
 
-    #[rstest]
+    #[test]
     fn derive_index_matches_manual_keccak() {
         let signer = Address::repeat_byte(0xAA);
 
         assert_eq!(BoundlessProver::derive_request_index(signer, 7), 0xF982_1D96);
     }
 
-    #[rstest]
-    fn recovered_proof_with_matching_signer_is_usable(prover: BoundlessProver) {
+    #[test]
+    fn recovered_proof_with_matching_signer_is_usable() {
+        let prover = prover();
         let signer = Address::repeat_byte(0x11);
 
         assert!(prover.recovered_proof_is_usable(&proof_for_signer(signer), signer));
     }
 
-    #[rstest]
-    fn recovered_proof_with_different_signer_is_skipped(prover: BoundlessProver) {
+    #[test]
+    fn recovered_proof_with_different_signer_is_skipped() {
+        let prover = prover();
         let target_signer = Address::repeat_byte(0x11);
         let journal_signer = Address::repeat_byte(0x22);
 
@@ -476,8 +472,9 @@ mod tests {
         );
     }
 
-    #[rstest]
-    fn debug_redacts_url_paths(prover: BoundlessProver) {
+    #[test]
+    fn debug_redacts_url_paths() {
+        let prover = prover();
         let debug = format!("{prover:?}");
 
         assert!(debug.contains("localhost"));
