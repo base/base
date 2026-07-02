@@ -20,11 +20,10 @@ use crate::{Result, TdxAttestationConfig, TdxCollateralError};
 const MAX_TDX_COLLATERAL_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
 
 const PCK_CERT_CHAIN_CERTIFICATION_DATA_TYPE: u16 = 5;
-const TCB_INFO_ISSUER_CHAIN_HEADER: &str = "tcb-info-issuer-chain";
-const LEGACY_TCB_INFO_ISSUER_CHAIN_HEADER: &str = "sgx-tcb-info-issuer-chain";
-const TCB_INFO_SIGNATURE_HEADER: &str = "tcb-info-signature";
-const LEGACY_TCB_INFO_SIGNATURE_HEADER: &str = "sgx-tcb-info-signature";
-const QE_IDENTITY_ISSUER_CHAIN_HEADER: &str = "sgx-enclave-identity-issuer-chain";
+const TCB_INFO_ISSUER_CHAIN_HEADERS: &[&str] =
+    &["tcb-info-issuer-chain", "sgx-tcb-info-issuer-chain"];
+const TCB_INFO_SIGNATURE_HEADERS: &[&str] = &["tcb-info-signature", "sgx-tcb-info-signature"];
+const QE_IDENTITY_ISSUER_CHAIN_HEADERS: &[&str] = &["sgx-enclave-identity-issuer-chain"];
 
 /// TDX collateral fetched from Intel PCS for one signer quote.
 #[derive(Debug, Clone)]
@@ -41,7 +40,7 @@ pub struct TdxCollateralFetch {
 #[derive(Debug)]
 pub struct TdxAttestationHydrator {
     /// Intel PCS and verifier policy configuration.
-    pub config: TdxAttestationConfig,
+    config: TdxAttestationConfig,
     client: reqwest::Client,
 }
 
@@ -63,15 +62,28 @@ impl TdxAttestationHydrator {
         }
         let pck_certificate_chain =
             Self::certificate_chain_from_pem(&parsed_quote.certification_data)?;
-        let pck_leaf = pck_certificate_chain
-            .last()
-            .ok_or_else(|| TdxCollateralError::source("PCK certificate chain is empty"))?;
+        let pck_leaf =
+            pck_certificate_chain.last().expect("certificate_chain_from_pem rejects empty chains");
         let (platform, _) =
             TdxPlatformIdentity::platform_and_tcb_from_pck_certificate_der(&pck_leaf.raw)
                 .map_err(|e| TdxCollateralError::source(e))?;
 
-        let (tcb_info, qe_identity) =
-            tokio::try_join!(self.fetch_tcb_info(&platform), self.fetch_qe_identity())?;
+        let mut tcb_info_url =
+            self.config.pcs_tdx_base_url.join("tcb").map_err(TdxCollateralError::source)?;
+        tcb_info_url
+            .query_pairs_mut()
+            .append_pair("fmspc", &hex::encode(&platform.fmspc))
+            .append_pair("pceid", &hex::encode(&platform.pce_id));
+        let qe_identity_url =
+            self.config.pcs_tdx_base_url.join("qe/identity").map_err(TdxCollateralError::source)?;
+        let (tcb_info, qe_identity) = tokio::try_join!(
+            self.fetch_signed_collateral(
+                tcb_info_url,
+                TCB_INFO_ISSUER_CHAIN_HEADERS,
+                Some(TCB_INFO_SIGNATURE_HEADERS),
+            ),
+            self.fetch_signed_collateral(qe_identity_url, QE_IDENTITY_ISSUER_CHAIN_HEADERS, None),
+        )?;
         let collateral = TdxCollateral { tcb_info, qe_identity };
         let revocation = self
             .fetch_revocation_evidence(&[
@@ -81,27 +93,6 @@ impl TdxAttestationHydrator {
             ])
             .await?;
         Ok(TdxCollateralFetch { pck_certificate_chain, collateral, revocation })
-    }
-
-    async fn fetch_tcb_info(&self, platform: &TdxPlatformIdentity) -> Result<TdxSignedCollateral> {
-        let mut url =
-            self.config.pcs_tdx_base_url.join("tcb").map_err(|e| TdxCollateralError::source(e))?;
-        url.query_pairs_mut()
-            .append_pair("fmspc", &hex::encode(&platform.fmspc))
-            .append_pair("pceid", &hex::encode(&platform.pce_id));
-        let chain_headers = [TCB_INFO_ISSUER_CHAIN_HEADER, LEGACY_TCB_INFO_ISSUER_CHAIN_HEADER];
-        let signature_headers = [TCB_INFO_SIGNATURE_HEADER, LEGACY_TCB_INFO_SIGNATURE_HEADER];
-        self.fetch_signed_collateral(url, &chain_headers, Some(&signature_headers)).await
-    }
-
-    async fn fetch_qe_identity(&self) -> Result<TdxSignedCollateral> {
-        let url = self
-            .config
-            .pcs_tdx_base_url
-            .join("qe/identity")
-            .map_err(|e| TdxCollateralError::source(e))?;
-        let chain_headers = [QE_IDENTITY_ISSUER_CHAIN_HEADER];
-        self.fetch_signed_collateral(url, &chain_headers, None).await
     }
 
     async fn fetch_signed_collateral(
@@ -132,10 +123,8 @@ impl TdxAttestationHydrator {
             .map_err(|e| TdxCollateralError::source(e))?;
         let decoded_chain = percent_decode_str(encoded_chain)
             .decode_utf8()
-            .map_err(|e| TdxCollateralError::source(e))?
-            .into_owned()
-            .into_bytes();
-        let signing_chain = Self::certificate_chain_from_pem(&decoded_chain)?;
+            .map_err(|e| TdxCollateralError::source(e))?;
+        let signing_chain = Self::certificate_chain_from_pem(decoded_chain.as_bytes())?;
         let signature = match signature_headers
             .and_then(|header_names| header_names.iter().find_map(|header| headers.get(*header)))
         {
