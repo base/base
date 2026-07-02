@@ -14,9 +14,9 @@ workspace = true
 [dependencies]
 # base
 base-health.workspace = true
+base-common-evm.workspace = true
 base-proof-host.workspace = true
 base-proof-worker.workspace = true
-base-common-evm.workspace = true
 base-common-chains.workspace = true
 base-proof-tee-tdx-runtime.workspace = true
 base-prover-service-client.workspace = true
