@@ -6,7 +6,7 @@ use alloy_primitives::{Address, keccak256};
 use alloy_provider::RootProvider;
 use base_proof_contracts::ITEEProverRegistry;
 use base_proof_primitives::EnclaveApiClient;
-use base_proof_tee_tdx_collateral::{TdxAttestationConfig, TdxCollateralProvider};
+use base_proof_tee_tdx_collateral::{TdxAttestationConfig, TdxAttestationHydrator};
 use base_proof_tee_tdx_verifier::{TdxQuote, TdxSignerAttestation, TdxVerifier, TdxVerifierInput};
 use eyre::{Context, Result, bail};
 use jsonrpsee::http_client::HttpClientBuilder;
@@ -129,9 +129,9 @@ impl TdxImageHashTool {
         signer_address: Address,
         attestation: &TdxSignerAttestation,
     ) -> Result<QuoteVerificationReport> {
-        let collateral_provider = TdxCollateralProvider::new(attestation_config.clone())
+        let hydrator = TdxAttestationHydrator::new(attestation_config.clone())
             .wrap_err("failed to initialize TDX collateral provider")?;
-        let collateral = collateral_provider
+        let collateral = hydrator
             .fetch_collateral(&attestation.quote)
             .await
             .wrap_err("failed to fetch or validate TDX collateral")?;

@@ -13,6 +13,5 @@ pub use error::{BoxError, Result, TdxCollateralError};
 mod collateral;
 pub use collateral::{
     MAX_TDX_COLLATERAL_RESPONSE_BYTES, TdxAttestationHydrator, TdxCollateralCache,
-    TdxCollateralCacheEntry, TdxCollateralCacheKey, TdxCollateralCacheLookup, TdxCollateralFetch,
-    TdxCollateralProvider,
+    TdxCollateralCacheLookup, TdxCollateralFetch,
 };

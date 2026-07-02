@@ -5940,7 +5940,6 @@ dependencies = [
  "base-proof-tee-tdx-verifier",
  "futures",
  "reqwest 0.13.4",
- "rstest",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
