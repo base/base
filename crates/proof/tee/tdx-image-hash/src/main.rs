@@ -5,7 +5,6 @@ use clap::Parser as _;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
-    let report = TdxImageHashTool::run(Cli::parse().config()).await?;
-    println!("{report}");
+    println!("{}", TdxImageHashTool::run(Cli::parse().config()).await?);
     Ok(())
 }
