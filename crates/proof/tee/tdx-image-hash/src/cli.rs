@@ -6,10 +6,9 @@ use alloy_primitives::{Address, B256};
 use base_proof_tee_tdx_collateral::TdxAttestationConfig;
 use base_proof_tee_tdx_verifier::TDXTcbStatus;
 use clap::{Args, Parser};
-use eyre::Result;
 use url::Url;
 
-use crate::{OnchainRegistryConfig, TdxImageHashTool};
+use crate::OnchainRegistryConfig;
 
 /// TDX image hash inspection command.
 #[derive(Debug, Parser)]
@@ -41,13 +40,6 @@ pub struct Cli {
 }
 
 impl Cli {
-    /// Runs the command and prints the inspection report.
-    pub async fn run(self) -> Result<()> {
-        let report = TdxImageHashTool::run(self.config()).await?;
-        println!("{report}");
-        Ok(())
-    }
-
     /// Converts parsed CLI arguments into the library configuration.
     pub fn config(&self) -> crate::TdxImageHashConfig {
         crate::TdxImageHashConfig {
@@ -55,16 +47,13 @@ impl Cli {
             signer_index: self.signer_index,
             verify_quote: self.verify_quote,
             attestation: self.collateral.config(),
-            registry: self.registry_config(),
+            registry: self.l1_rpc_url.clone().zip(self.registry_address).map(
+                |(l1_rpc_url, registry_address)| OnchainRegistryConfig {
+                    l1_rpc_url,
+                    registry_address,
+                },
+            ),
         }
-    }
-
-    /// Builds optional onchain registry comparison configuration.
-    pub fn registry_config(&self) -> Option<OnchainRegistryConfig> {
-        Some(OnchainRegistryConfig {
-            l1_rpc_url: self.l1_rpc_url.clone()?,
-            registry_address: self.registry_address?,
-        })
     }
 }
 
@@ -164,7 +153,7 @@ mod tests {
             "0x0000000000000000000000000000000000000001",
         ]);
 
-        let registry = cli.registry_config().unwrap();
+        let registry = cli.config().registry.unwrap();
 
         assert_eq!(registry.registry_address, Address::with_last_byte(1));
     }
