@@ -12,9 +12,8 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# TDX verification and proof input encoding
+# TDX verification
 base-proof-tee-tdx-verifier.workspace = true
-base-proof-tee-tdx-attestation-prover.workspace = true
 
 # Types
 alloy-primitives.workspace = true
@@ -30,9 +29,6 @@ tokio = { workspace = true, features = ["time", "macros"] }
 
 # Error
 thiserror.workspace = true
-
-# Tracing
-tracing.workspace = true
 
 # Misc
 serde_json.workspace = true

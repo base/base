@@ -5936,14 +5936,12 @@ name = "base-proof-tee-tdx-collateral"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
- "base-proof-tee-tdx-attestation-prover",
  "base-proof-tee-tdx-verifier",
  "percent-encoding",
  "reqwest 0.13.4",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
- "tracing",
  "x509-parser",
 ]
 
