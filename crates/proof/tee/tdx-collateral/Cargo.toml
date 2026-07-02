@@ -35,4 +35,5 @@ thiserror.workspace = true
 tracing.workspace = true
 
 # Misc
-serde_json = { workspace = true, features = ["preserve_order"] }
+serde_json.workspace = true
+percent-encoding.workspace = true

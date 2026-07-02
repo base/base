@@ -5938,6 +5938,7 @@ dependencies = [
  "alloy-primitives",
  "base-proof-tee-tdx-attestation-prover",
  "base-proof-tee-tdx-verifier",
+ "percent-encoding",
  "reqwest 0.13.4",
  "serde_json",
  "thiserror 2.0.18",

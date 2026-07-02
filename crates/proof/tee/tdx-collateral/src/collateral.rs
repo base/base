@@ -9,10 +9,11 @@ use std::{
 use alloy_primitives::{Address, B256, Bytes, hex};
 use base_proof_tee_tdx_attestation_prover::TdxAttestationProverInput;
 use base_proof_tee_tdx_verifier::{
-    AuthenticatedTdxCertificate, ParsedTdxQuote, TdxCertificate, TdxCollateral, TdxPckTcb,
+    AuthenticatedTdxCertificate, ParsedTdxQuote, TdxCertificate, TdxCollateral,
     TdxPlatformIdentity, TdxQuote, TdxRevocationEvidence, TdxSignedCollateral,
-    TdxSignedCollateralBody, TdxSignerAttestation, TdxVerifier, TdxVerifierInput,
+    TdxSignerAttestation, TdxVerifier, TdxVerifierInput,
 };
+use percent_encoding::percent_decode_str;
 use reqwest::{Url, header::HeaderMap};
 use tracing::debug;
 use x509_parser::{
@@ -148,7 +149,7 @@ impl TdxAttestationHydrator {
         let pck_leaf = pck_certificate_chain
             .last()
             .ok_or_else(|| TdxCollateralError::source("PCK certificate chain is empty"))?;
-        let (platform, pck_tcb) =
+        let (platform, _) =
             TdxPlatformIdentity::platform_and_tcb_from_pck_certificate_der(&pck_leaf.raw)
                 .map_err(|e| TdxCollateralError::source(e))?;
 
@@ -158,7 +159,6 @@ impl TdxAttestationHydrator {
             &lookup,
             &parsed_quote,
             &pck_certificate_chain,
-            &pck_tcb,
             verification_time,
         )? {
             return Ok(fetch);
@@ -259,7 +259,6 @@ impl TdxAttestationHydrator {
         lookup: &(B256, Vec<u8>, Vec<u8>),
         parsed_quote: &ParsedTdxQuote,
         pck_certificate_chain: &[TdxCertificate],
-        pck_tcb: &TdxPckTcb,
         verification_time: u64,
     ) -> Result<Option<TdxCollateralFetch>> {
         let Some(mut fetch) =
@@ -271,15 +270,6 @@ impl TdxAttestationHydrator {
         };
 
         fetch.pck_certificate_chain = pck_certificate_chain.to_vec();
-        let cached_tcb_info = &fetch.collateral.tcb_info;
-        if let Err(error) = cached_tcb_info
-            .tcb_info_document()
-            .and_then(|document| document.tcb_info.tcb_status_for_quote(parsed_quote, pck_tcb))
-        {
-            debug!(error = %error, "cached TDX collateral failed quote TCB matching");
-            return Err(TdxCollateralError::source(error));
-        }
-
         match Self::verify_collateral_for_quote(&fetch, parsed_quote, verification_time) {
             Ok(expiration) => {
                 debug!(expiration, "using cached TDX collateral");
@@ -300,13 +290,7 @@ impl TdxAttestationHydrator {
             .append_pair("pceid", &hex::encode(&platform.pce_id));
         let chain_headers = [TCB_INFO_ISSUER_CHAIN_HEADER, LEGACY_TCB_INFO_ISSUER_CHAIN_HEADER];
         let signature_headers = [TCB_INFO_SIGNATURE_HEADER, LEGACY_TCB_INFO_SIGNATURE_HEADER];
-        self.fetch_signed_collateral(
-            url,
-            &chain_headers,
-            Some(&signature_headers),
-            TdxSignedCollateralBody::TcbInfo,
-        )
-        .await
+        self.fetch_signed_collateral(url, &chain_headers, Some(&signature_headers)).await
     }
 
     async fn fetch_qe_identity(&self) -> Result<TdxSignedCollateral> {
@@ -316,8 +300,7 @@ impl TdxAttestationHydrator {
             .join("qe/identity")
             .map_err(|e| TdxCollateralError::source(e))?;
         let chain_headers = [QE_IDENTITY_ISSUER_CHAIN_HEADER];
-        self.fetch_signed_collateral(url, &chain_headers, None, TdxSignedCollateralBody::QeIdentity)
-            .await
+        self.fetch_signed_collateral(url, &chain_headers, None).await
     }
 
     async fn fetch_signed_collateral(
@@ -325,7 +308,6 @@ impl TdxAttestationHydrator {
         url: Url,
         chain_headers: &[&str],
         signature_headers: Option<&[&str]>,
-        body_kind: TdxSignedCollateralBody,
     ) -> Result<TdxSignedCollateral> {
         let response = self.get(url).await?;
         let headers = response.headers().clone();
@@ -343,7 +325,6 @@ impl TdxAttestationHydrator {
             None => Self::qe_identity_signature_from_json(&raw)?,
         };
         let collateral = TdxSignedCollateral { raw, signing_chain, signature };
-        collateral.signed_validity(body_kind).map_err(|e| TdxCollateralError::source(e))?;
         Ok(collateral)
     }
 
@@ -361,10 +342,9 @@ impl TdxAttestationHydrator {
                         "TDX certificate CRL URL is not an allowed Intel URL: {crl_url}"
                     )));
                 }
-                if urls.iter().any(|seen| seen == &url) {
-                    continue;
+                if !urls.contains(&url) {
+                    urls.push(url);
                 }
-                urls.push(url);
             }
         }
         let mut certificate_crls = Vec::with_capacity(urls.len());
@@ -535,26 +515,10 @@ impl TdxAttestationHydrator {
     }
 
     fn percent_decode(value: &str) -> Result<Vec<u8>> {
-        let bytes = value.as_bytes();
-        let mut decoded = Vec::with_capacity(bytes.len());
-        let mut index = 0;
-        while index < bytes.len() {
-            if bytes[index] != b'%' {
-                decoded.push(bytes[index]);
-                index += 1;
-                continue;
-            }
-            let Some(hex_bytes) = bytes.get(index + 1..index + 3) else {
-                return Err(TdxCollateralError::source("invalid percent-encoded Intel PCS header"));
-            };
-            let text = std::str::from_utf8(hex_bytes).map_err(|e| TdxCollateralError::source(e))?;
-            let value = u8::from_str_radix(text, 16).map_err(|_| {
-                TdxCollateralError::source("invalid percent-encoded Intel PCS header")
-            })?;
-            decoded.push(value);
-            index += 3;
-        }
-        Ok(decoded)
+        percent_decode_str(value)
+            .decode_utf8()
+            .map(|decoded| decoded.as_bytes().to_vec())
+            .map_err(|e| TdxCollateralError::source(e))
     }
 }
 
@@ -781,34 +745,6 @@ mod tests {
     }
 
     #[test]
-    fn cached_collateral_keeps_entry_when_tcb_info_misses_quote() {
-        let hydrator = TdxAttestationHydrator::new(TdxAttestationConfig::intel_pcs()).unwrap();
-        let lookup = cache_lookup();
-        let mut fetch = collateral_fetch(300, 400);
-        fetch.collateral.tcb_info = signed_tcb_info(1);
-        hydrator
-            .cache
-            .lock()
-            .expect("TDX collateral cache poisoned")
-            .insert(lookup.clone(), (300, fetch));
-
-        let error = hydrator
-            .cached_collateral(
-                &lookup,
-                &parsed_quote(),
-                &[minimal_certificate()],
-                &TdxPckTcb { sgx_tcb_svn: [0; 16], pce_svn: 0 },
-                150,
-            )
-            .unwrap_err();
-
-        assert_source_contains(error, "no TCB info level matches quote TCB");
-        let cache = hydrator.cache.lock().expect("TDX collateral cache poisoned");
-        assert!(cache.contains_key(&lookup));
-        assert_eq!(cache.len(), 1);
-    }
-
-    #[test]
     fn cached_collateral_keeps_entry_when_quote_verification_fails() {
         let hydrator = TdxAttestationHydrator::new(TdxAttestationConfig::intel_pcs()).unwrap();
         let lookup = cache_lookup();
@@ -823,13 +759,7 @@ mod tests {
             .insert(lookup.clone(), (300, fetch));
 
         let error = hydrator
-            .cached_collateral(
-                &lookup,
-                &parsed_quote(),
-                &pck_certificate_chain,
-                &TdxPckTcb { sgx_tcb_svn: [0; 16], pce_svn: 0 },
-                150,
-            )
+            .cached_collateral(&lookup, &parsed_quote(), &pck_certificate_chain, 150)
             .unwrap_err();
 
         assert_source_contains(error, "PCK certificate chain is invalid");

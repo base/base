@@ -608,6 +608,7 @@ opentelemetry-http = { version = "0.31", default-features = false }
 cargo_metadata = "0.18.1"
 tracing-indicatif = "0.3"
 tikv-jemallocator = "0.6"
+percent-encoding = "2.3.2"
 modular-bitfield = "0.13.1"
 crossbeam-channel = "0.5.13"
 tracing-opentelemetry = "0.32"
