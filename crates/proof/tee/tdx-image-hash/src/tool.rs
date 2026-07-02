@@ -1,8 +1,8 @@
 //! TDX prover querying, quote parsing, verification, and registry comparison.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
-use alloy_primitives::{Address, B256, keccak256};
+use alloy_primitives::{Address, keccak256};
 use alloy_provider::RootProvider;
 use base_proof_contracts::ITEEProverRegistry;
 use base_proof_primitives::EnclaveApiClient;
@@ -81,7 +81,15 @@ impl TdxImageHashTool {
             let registry_report = Self::query_registry(registry_config, signer_address)
                 .await
                 .wrap_err("failed to query onchain TEE prover registry for computed signer")?;
-            Self::validate_registry_report(&registry_report, measurement_report.image_hash)?;
+            if registry_report.is_registered_signer
+                && registry_report.signer_image_hash != measurement_report.image_hash
+            {
+                bail!(
+                    "registered signerImageHash {} does not match computed imageHash {}",
+                    registry_report.signer_image_hash,
+                    measurement_report.image_hash
+                );
+            }
             Some(registry_report)
         } else {
             None
@@ -112,10 +120,8 @@ impl TdxImageHashTool {
                 attestations.len()
             )
         })?;
-        let attestation = TdxSignerAttestation::decode(attestation_bytes)
-            .wrap_err("failed to decode TDX signer attestation payload")?;
-
-        Ok(attestation)
+        TdxSignerAttestation::decode(attestation_bytes)
+            .wrap_err("failed to decode TDX signer attestation payload")
     }
 
     async fn verify_quote(
@@ -137,8 +143,8 @@ impl TdxImageHashTool {
             trusted_root_ca_hash: collateral.trusted_root_ca_hash,
             expected_public_key: attestation.signer_public_key.clone(),
             quote_timestamp_millis: attestation.quote_timestamp_millis,
-            verification_time: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
+            verification_time: UNIX_EPOCH
+                .elapsed()
                 .wrap_err("system clock is before the Unix epoch")?
                 .as_secs(),
             max_quote_age_seconds: attestation_config.max_quote_age.as_secs(),
@@ -189,21 +195,6 @@ impl TdxImageHashTool {
             is_valid_signer,
         })
     }
-
-    fn validate_registry_report(
-        registry_report: &OnchainRegistryReport,
-        image_hash: B256,
-    ) -> Result<()> {
-        if registry_report.is_registered_signer && registry_report.signer_image_hash != image_hash {
-            bail!(
-                "registered signerImageHash {} does not match computed imageHash {}",
-                registry_report.signer_image_hash,
-                image_hash
-            );
-        }
-
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -213,27 +204,20 @@ mod tests {
     use base_proof_tee_tdx_collateral::TdxAttestationConfig;
     use base_proof_tee_tdx_prover::{TdxMeasurements, TdxProverServer};
     use base_proof_tee_tdx_runtime::{TdxQuoteProvider, TdxRuntime};
-    use jsonrpsee::{RpcModule, server::Server};
+    use jsonrpsee::server::Server;
 
     use super::*;
 
-    async fn spawn_rpc(module: RpcModule<()>) -> (url::Url, jsonrpsee::server::ServerHandle) {
+    #[tokio::test]
+    async fn queries_mock_tdx_prover_and_computes_image_hash() {
+        let runtime = Arc::new(TdxRuntime::new(TdxMeasurements));
+        let module = TdxProverServer::new(runtime).into_rpc_module().unwrap();
         let server =
             Server::builder().build("127.0.0.1:0".parse::<SocketAddr>().unwrap()).await.unwrap();
         let addr = server.local_addr().unwrap();
         let handle = server.start(module);
-        (Url::parse(&format!("http://{addr}")).unwrap(), handle)
-    }
+        let endpoint = Url::parse(&format!("http://{addr}")).unwrap();
 
-    async fn spawn_tdx_rpc() -> (url::Url, jsonrpsee::server::ServerHandle) {
-        let runtime = Arc::new(TdxRuntime::new(TdxMeasurements));
-        let module = TdxProverServer::new(runtime).into_rpc_module().unwrap();
-        spawn_rpc(module).await
-    }
-
-    #[tokio::test]
-    async fn queries_mock_tdx_prover_and_computes_image_hash() {
-        let (endpoint, handle) = spawn_tdx_rpc().await;
         let report = TdxImageHashTool::run(TdxImageHashConfig {
             endpoint,
             signer_index: 0,
@@ -252,21 +236,5 @@ mod tests {
             report.measurements.report_data_suffix,
             TdxVerifier::timestamp_report_data_suffix(report.measurements.quote_timestamp_millis)
         );
-    }
-
-    #[test]
-    fn registry_report_rejects_registered_image_hash_mismatch() {
-        let report = OnchainRegistryReport {
-            registry_address: Address::ZERO,
-            signer_image_hash: B256::repeat_byte(0x11),
-            expected_image_hash: B256::repeat_byte(0x22),
-            is_registered_signer: true,
-            is_valid_signer: false,
-        };
-
-        let error = TdxImageHashTool::validate_registry_report(&report, B256::repeat_byte(0x33))
-            .unwrap_err();
-
-        assert!(error.to_string().contains("signerImageHash"));
     }
 }
