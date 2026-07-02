@@ -6,29 +6,17 @@ use async_trait::async_trait;
 use base_proof_tee_attestation::{
     TeeAttestationKind, TeeAttestationProof, TeeAttestationProofProvider,
 };
-use base_proof_tee_tdx_verifier::{TdxVerifier, TdxVerifierInput};
+use base_proof_tee_tdx_verifier::TdxVerifier;
 
-use crate::{Result, TdxAttestationProverInput};
+use crate::TdxAttestationProverInput;
 
 /// Native direct prover for local development.
 ///
 /// This path runs the TDX verifier in-process and returns the ABI-encoded
 /// journal with deterministic development proof bytes. It is intended for
 /// local/mock verifier configurations and does not require TDX hardware.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct DirectProver;
-
-impl DirectProver {
-    /// Generates a TDX attestation proof from an explicit verifier input.
-    pub fn generate_proof(input: &TdxVerifierInput) -> Result<TeeAttestationProof> {
-        let journal = TdxVerifier::verify(input)?;
-        Ok(TeeAttestationProof {
-            kind: TeeAttestationKind::Tdx,
-            output: Bytes::from(SolValue::abi_encode(&journal)),
-            proof_bytes: Bytes::from_static(b"base-tdx-direct-dev-proof-v1"),
-        })
-    }
-}
 
 #[async_trait]
 impl TeeAttestationProofProvider for DirectProver {
@@ -39,6 +27,11 @@ impl TeeAttestationProofProvider for DirectProver {
     ) -> base_proof_tee_attestation::Result<TeeAttestationProof> {
         let input =
             TdxAttestationProverInput::decode_for_signer(attestation_bytes, signer_address)?;
-        Ok(Self::generate_proof(input.verifier_input())?)
+        let journal = TdxVerifier::verify(input.verifier_input())?;
+        Ok(TeeAttestationProof {
+            kind: TeeAttestationKind::Tdx,
+            output: Bytes::from(SolValue::abi_encode(&journal)),
+            proof_bytes: Bytes::from_static(b"base-tdx-direct-dev-proof-v1"),
+        })
     }
 }
