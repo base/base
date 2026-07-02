@@ -134,7 +134,7 @@ impl TdxImageHashTool {
         let collateral = hydrator
             .fetch_collateral(&attestation.quote)
             .await
-            .wrap_err("failed to fetch or validate TDX collateral")?;
+            .wrap_err("failed to fetch TDX collateral")?;
         let verifier_input = TdxVerifierInput {
             quote: attestation.quote.clone(),
             pck_certificate_chain: collateral.pck_certificate_chain,

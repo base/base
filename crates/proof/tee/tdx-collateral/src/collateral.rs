@@ -1,14 +1,12 @@
 //! TDX attestation collateral hydration for proof generation.
 
-use std::time::UNIX_EPOCH;
-
 use alloy_primitives::{Bytes, hex};
 use base_proof_tee_tdx_verifier::{
     CollateralVerifier, TdxCertificate, TdxCollateral, TdxPlatformIdentity, TdxQuote,
-    TdxRevocationEvidence, TdxSignedCollateral, TdxVerifier,
+    TdxRevocationEvidence, TdxSignedCollateral,
 };
 use percent_encoding::percent_decode_str;
-use reqwest::{Url, header::HeaderMap};
+use reqwest::Url;
 use x509_parser::{
     certificate::X509Certificate,
     extensions::{DistributionPointName, GeneralName, ParsedExtension},
@@ -72,8 +70,6 @@ impl TdxAttestationHydrator {
             TdxPlatformIdentity::platform_and_tcb_from_pck_certificate_der(&pck_leaf.raw)
                 .map_err(|e| TdxCollateralError::source(e))?;
 
-        let verification_time =
-            UNIX_EPOCH.elapsed().map_err(|e| TdxCollateralError::source(e))?.as_secs();
         let (tcb_info, qe_identity) =
             tokio::try_join!(self.fetch_tcb_info(&platform), self.fetch_qe_identity())?;
         let collateral = TdxCollateral { tcb_info, qe_identity };
@@ -84,17 +80,7 @@ impl TdxAttestationHydrator {
                 collateral.qe_identity.signing_chain.as_slice(),
             ])
             .await?;
-        let fetch = TdxCollateralFetch { pck_certificate_chain, collateral, revocation };
-        TdxVerifier::verify_quote_collateral(
-            &parsed_quote,
-            &fetch.pck_certificate_chain,
-            &fetch.collateral,
-            &fetch.revocation,
-            self.config.trusted_root_ca_hash,
-            verification_time,
-        )
-        .map_err(|e| TdxCollateralError::source(e))?;
-        Ok(fetch)
+        Ok(TdxCollateralFetch { pck_certificate_chain, collateral, revocation })
     }
 
     async fn fetch_tcb_info(&self, platform: &TdxPlatformIdentity) -> Result<TdxSignedCollateral> {
@@ -133,7 +119,17 @@ impl TdxAttestationHydrator {
             .map_err(|e| TdxCollateralError::source(e))?;
         let headers = response.headers().clone();
         let raw = Self::limited_body(response).await?;
-        let encoded_chain = Self::header_value(&headers, chain_headers)?;
+        let encoded_chain = chain_headers
+            .iter()
+            .find_map(|header| headers.get(*header))
+            .ok_or_else(|| {
+                TdxCollateralError::source(format!(
+                    "Intel PCS response missing {}",
+                    chain_headers.join(" or ")
+                ))
+            })?
+            .to_str()
+            .map_err(|e| TdxCollateralError::source(e))?;
         let decoded_chain = percent_decode_str(encoded_chain)
             .decode_utf8()
             .map_err(|e| TdxCollateralError::source(e))?
@@ -149,8 +145,7 @@ impl TdxAttestationHydrator {
             .map_err(TdxCollateralError::source)?,
             None => Self::qe_identity_signature_from_json(&raw)?,
         };
-        let collateral = TdxSignedCollateral { raw, signing_chain, signature };
-        Ok(collateral)
+        Ok(TdxSignedCollateral { raw, signing_chain, signature })
     }
 
     async fn fetch_revocation_evidence(
@@ -200,17 +195,6 @@ impl TdxAttestationHydrator {
         Ok(Bytes(bytes))
     }
 
-    fn header_value<'a>(headers: &'a HeaderMap, header_names: &[&str]) -> Result<&'a str> {
-        let value =
-            header_names.iter().find_map(|header| headers.get(*header)).ok_or_else(|| {
-                TdxCollateralError::source(format!(
-                    "Intel PCS response missing {}",
-                    header_names.join(" or ")
-                ))
-            })?;
-        value.to_str().map_err(|e| TdxCollateralError::source(e))
-    }
-
     fn qe_identity_signature_from_json(raw: &[u8]) -> Result<Bytes> {
         let document: serde_json::Value =
             serde_json::from_slice(raw).map_err(|e| TdxCollateralError::source(e))?;
@@ -229,49 +213,19 @@ impl TdxAttestationHydrator {
     }
 
     fn certificate_chain_from_pem(pem_bytes: &[u8]) -> Result<Vec<TdxCertificate>> {
-        let mut certs = Vec::new();
+        let mut chain = Vec::new();
         for pem in Pem::iter_from_buffer(pem_bytes) {
             let pem =
                 pem.map_err(|e| TdxCollateralError::source(format!("PEM parse failed: {e}")))?;
             if pem.label == "CERTIFICATE" {
-                certs.push(Bytes::from(pem.contents));
+                chain.push(TdxCertificate { raw: Bytes::from(pem.contents) });
             }
         }
-        Self::chain_from_der_certs(certs)
-    }
-
-    fn chain_from_der_certs(certs: Vec<Bytes>) -> Result<Vec<TdxCertificate>> {
-        if certs.is_empty() {
+        if chain.is_empty() {
             return Err(TdxCollateralError::source("certificate chain is empty"));
         }
-        let authenticated = certs
-            .iter()
-            .map(|cert| TdxCertificate::authenticated_from_der(cert))
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|e| TdxCollateralError::source(e))?;
-        let mut index = authenticated
-            .iter()
-            .position(|cert| cert.issuer_name == cert.subject_name)
-            .ok_or_else(|| TdxCollateralError::source("certificate chain root is missing"))?;
-        let mut visited = vec![false; certs.len()];
-        let mut ordered = Vec::with_capacity(certs.len());
-
-        while ordered.len() < certs.len() {
-            visited[index] = true;
-            ordered.push(TdxCertificate { raw: certs[index].clone() });
-            if ordered.len() == certs.len() {
-                break;
-            }
-
-            let parent = &authenticated[index];
-            let Some(child_index) = authenticated.iter().enumerate().find_map(|(index, cert)| {
-                (!visited[index] && cert.issuer_name == parent.subject_name).then_some(index)
-            }) else {
-                return Err(TdxCollateralError::source("certificate chain is not contiguous"));
-            };
-            index = child_index;
-        }
-        Ok(ordered)
+        chain.reverse();
+        Ok(chain)
     }
 
     fn crl_distribution_point(certificate_der: &[u8]) -> Result<String> {
@@ -310,30 +264,11 @@ impl TdxAttestationHydrator {
 mod tests {
     use std::error::Error;
 
-    use reqwest::header::HeaderValue;
-
     use super::*;
 
     fn assert_source_contains(error: TdxCollateralError, expected: &str) {
         let source = error.source().expect("error should retain source").to_string();
         assert!(source.contains(expected), "{source}");
-    }
-
-    #[test]
-    fn header_value_accepts_current_and_legacy_tdx_tcb_headers() {
-        let header_names = [TCB_INFO_ISSUER_CHAIN_HEADER, LEGACY_TCB_INFO_ISSUER_CHAIN_HEADER];
-
-        for (header, expected) in [
-            (TCB_INFO_ISSUER_CHAIN_HEADER, "current-chain"),
-            (LEGACY_TCB_INFO_ISSUER_CHAIN_HEADER, "legacy-chain"),
-        ] {
-            let mut headers = HeaderMap::new();
-            headers.insert(header, HeaderValue::from_static(expected));
-
-            let value = TdxAttestationHydrator::header_value(&headers, &header_names).unwrap();
-
-            assert_eq!(value, expected);
-        }
     }
 
     #[test]
