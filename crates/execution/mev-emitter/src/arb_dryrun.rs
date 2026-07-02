@@ -1251,6 +1251,22 @@ mod tests {
         serde_json::from_str(&raw).unwrap()
     }
 
+    fn load_pool_baseline_sample_fixture() -> PathBuf {
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mut candidates = Vec::new();
+        if let Some(path) = std::env::var_os("BASE_MEV_ARB_DRYRUN_BASELINE_SAMPLE") {
+            candidates.push(PathBuf::from(path));
+        }
+        candidates.push(PathBuf::from(
+            "/home/ubuntu/src/base-mev/wt/in-node-arb-dryrun-p1/fixtures/arb-dryrun/pool-baseline.sample.json",
+        ));
+        candidates.push(manifest.join("fixtures/arb-dryrun/pool-baseline.sample.json"));
+        candidates
+            .into_iter()
+            .find(|path| path.exists())
+            .expect("arb dry-run pool baseline sample fixture not found")
+    }
+
     #[test]
     fn v2_quote_matches_constant_product_literal() {
         let out = quote_v2_exact_in(10, 1_000, 1_100, 1).unwrap();
@@ -1395,6 +1411,46 @@ mod tests {
         assert_eq!(flagged_quote.confidence, fot.expected.confidence.unwrap());
         assert_eq!(fot.expected.approximation.as_deref(), Some("fot_unmodeled"));
         assert_eq!(flagged_quote.caveat, Some("fot_unmodeled"));
+    }
+
+    #[test]
+    fn loads_ts_exporter_pool_baseline_fixture() {
+        let pools = load_pool_baseline_from_path(load_pool_baseline_sample_fixture()).unwrap();
+        assert_eq!(pools.len(), 2);
+
+        let reserve = &pools[0];
+        assert_eq!(reserve.protocol, Protocol::AerodromeVolatile);
+        assert_eq!(
+            reserve.token0,
+            "0x4200000000000000000000000000000000000006".parse::<Address>().unwrap()
+        );
+        assert_eq!(reserve.decimals0, 18);
+        assert_eq!(reserve.decimals1, 6);
+        assert_eq!(reserve.fee, 5);
+        assert_eq!(reserve.reserve0, 20_908_917_650_113_583_555u128);
+        assert_eq!(reserve.reserve1, 32_916_653_549u128);
+        assert_eq!(reserve.sqrt_price_x96, None);
+        assert_eq!(reserve.liquidity, None);
+        assert_eq!(reserve.tick, None);
+        assert_eq!(reserve.tick_spacing, None);
+        assert!(reserve.ticks.is_empty());
+
+        let v3 = &pools[1];
+        assert_eq!(v3.protocol, Protocol::UniswapV3);
+        assert_eq!(v3.fee, 500);
+        assert_eq!(v3.reserve0, 0);
+        assert_eq!(v3.reserve1, 0);
+        assert_eq!(v3.sqrt_price_x96, Some(1_771_595_571_142_957_112_070_506_167u128));
+        assert_eq!(v3.liquidity, Some(123_456_789_012_345_678_901_234u128));
+        assert_eq!(v3.tick, Some(-76012));
+        assert_eq!(v3.tick_spacing, Some(10));
+        assert_eq!(
+            v3.ticks,
+            vec![
+                V3Tick { tick: -76020, liquidity_net: 123_456_789_012_345_678i128 },
+                V3Tick { tick: -76010, liquidity_net: -123_456_789_012_345_678i128 },
+            ]
+        );
     }
 
     #[test]

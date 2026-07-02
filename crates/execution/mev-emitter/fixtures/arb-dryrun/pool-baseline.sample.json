@@ -1,0 +1,43 @@
+[
+  {
+    "pool": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "protocol": "aerodrome_volatile",
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+    "decimals0": 18,
+    "decimals1": 6,
+    "fee": 5,
+    "reserve0": 20908917650113583555,
+    "reserve1": 32916653549,
+    "sqrt_price_x96": null,
+    "liquidity": null,
+    "tick": null,
+    "tick_spacing": null,
+    "ticks": []
+  },
+  {
+    "pool": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "protocol": "uniswap_v3",
+    "token0": "0x4200000000000000000000000000000000000006",
+    "token1": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+    "decimals0": 18,
+    "decimals1": 6,
+    "fee": 500,
+    "reserve0": 0,
+    "reserve1": 0,
+    "sqrt_price_x96": 1771595571142957112070506167,
+    "liquidity": 123456789012345678901234,
+    "tick": -76012,
+    "tick_spacing": 10,
+    "ticks": [
+      {
+        "tick": -76020,
+        "liquidity_net": 123456789012345678
+      },
+      {
+        "tick": -76010,
+        "liquidity_net": -123456789012345678
+      }
+    ]
+  }
+]
