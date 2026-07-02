@@ -5,7 +5,7 @@ use std::time::Duration;
 use alloy_primitives::{Address, B256};
 use base_proof_tee_tdx_collateral::TdxAttestationConfig;
 use base_proof_tee_tdx_verifier::TDXTcbStatus;
-use clap::{Args, Parser, builder::TypedValueParser as _};
+use clap::{Args, Parser};
 use eyre::Result;
 use url::Url;
 
@@ -84,31 +84,7 @@ pub struct CollateralArgs {
     pub max_quote_age_secs: Option<u64>,
 
     /// Allowed TDX TCB status. Repeat to allow multiple statuses.
-    #[arg(
-        long,
-        env = "TDX_ALLOWED_TCB_STATUS",
-        value_parser = clap::builder::PossibleValuesParser::new([
-            "up-to-date",
-            "sw-hardening-needed",
-            "configuration-needed",
-            "configuration-and-sw-hardening-needed",
-            "out-of-date",
-            "out-of-date-configuration-needed",
-            "revoked",
-        ])
-        .map(|status| match status.as_str() {
-            "up-to-date" => TDXTcbStatus::UpToDate,
-            "sw-hardening-needed" => TDXTcbStatus::SwHardeningNeeded,
-            "configuration-needed" => TDXTcbStatus::ConfigurationNeeded,
-            "configuration-and-sw-hardening-needed" => {
-                TDXTcbStatus::ConfigurationAndSwHardeningNeeded
-            }
-            "out-of-date" => TDXTcbStatus::OutOfDate,
-            "out-of-date-configuration-needed" => TDXTcbStatus::OutOfDateConfigurationNeeded,
-            "revoked" => TDXTcbStatus::Revoked,
-            _ => unreachable!("clap rejected invalid TDX TCB status"),
-        })
-    )]
+    #[arg(long, env = "TDX_ALLOWED_TCB_STATUS", value_parser = Self::parse_tcb_status)]
     pub allowed_tcb_status: Vec<TDXTcbStatus>,
 
     /// Intel PCS and CRL fetch timeout in seconds.
@@ -117,6 +93,22 @@ pub struct CollateralArgs {
 }
 
 impl CollateralArgs {
+    /// Parses an allowed TDX TCB status argument.
+    pub fn parse_tcb_status(status: &str) -> Result<TDXTcbStatus, String> {
+        match status {
+            "up-to-date" => Ok(TDXTcbStatus::UpToDate),
+            "sw-hardening-needed" => Ok(TDXTcbStatus::SwHardeningNeeded),
+            "configuration-needed" => Ok(TDXTcbStatus::ConfigurationNeeded),
+            "configuration-and-sw-hardening-needed" => {
+                Ok(TDXTcbStatus::ConfigurationAndSwHardeningNeeded)
+            }
+            "out-of-date" => Ok(TDXTcbStatus::OutOfDate),
+            "out-of-date-configuration-needed" => Ok(TDXTcbStatus::OutOfDateConfigurationNeeded),
+            "revoked" => Ok(TDXTcbStatus::Revoked),
+            _ => Err(format!("invalid TDX TCB status: {status}")),
+        }
+    }
+
     /// Builds the registrar-compatible TDX attestation configuration.
     pub fn config(&self) -> TdxAttestationConfig {
         let mut config = TdxAttestationConfig::intel_pcs();
