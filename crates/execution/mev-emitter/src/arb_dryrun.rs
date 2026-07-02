@@ -268,6 +268,8 @@ pub struct PoolStateDelta {
     pub source: PoolOverlaySource,
     /// Block/payload epoch this delta belongs to.
     pub epoch: Option<u64>,
+    /// True when all live fields required for this pool protocol were read and decoded.
+    pub live_read_complete: bool,
     /// Honest overlay caveats/status labels.
     pub caveats: Vec<String>,
 }
@@ -283,6 +285,7 @@ impl PoolStateDelta {
             tick: None,
             source,
             epoch,
+            live_read_complete: false,
             caveats: Vec::new(),
         }
     }
@@ -299,6 +302,11 @@ impl PoolStateDelta {
             || self.sqrt_price_x96.is_some()
             || self.liquidity.is_some()
             || self.tick.is_some()
+    }
+
+    /// True when the live read included every field needed to quote this pool protocol.
+    pub const fn is_live_read_complete(&self) -> bool {
+        self.live_read_complete
     }
 
     /// Decodes a dirty pool's raw storage words using the verified TS overlay contract.
@@ -321,18 +329,24 @@ impl PoolStateDelta {
             return delta;
         }
         let mut saw_relevant_slot = false;
+        let mut complete_live_read = false;
         match pool.protocol {
             Protocol::UniswapV3 => {
+                let mut slot0_ok = false;
+                let mut liquidity_ok = false;
                 if let Some(word) = slots.get(&slot_key(V3_SLOT0_SLOT)) {
                     saw_relevant_slot = true;
                     if let Some((sqrt_price_x96, tick)) = decode_slot0(*word) {
                         if sqrt_price_x96 == 0 {
                             delta.add_caveat("overlay-decode-failed");
-                        } else if pool.sqrt_price_x96 != Some(sqrt_price_x96)
-                            || pool.tick != Some(tick)
-                        {
-                            delta.sqrt_price_x96 = Some(sqrt_price_x96);
-                            delta.tick = Some(tick);
+                        } else {
+                            slot0_ok = true;
+                            if pool.sqrt_price_x96 != Some(sqrt_price_x96)
+                                || pool.tick != Some(tick)
+                            {
+                                delta.sqrt_price_x96 = Some(sqrt_price_x96);
+                                delta.tick = Some(tick);
+                            }
                         }
                     } else {
                         delta.add_caveat("overlay-decode-failed");
@@ -343,12 +357,19 @@ impl PoolStateDelta {
                     if let Some(liquidity) = u256_low_bits_to_u128(*word, MASK_128_BITS) {
                         if liquidity == 0 {
                             delta.add_caveat("overlay-decode-failed");
-                        } else if pool.liquidity != Some(liquidity) {
-                            delta.liquidity = Some(liquidity);
+                        } else {
+                            liquidity_ok = true;
+                            if pool.liquidity != Some(liquidity) {
+                                delta.liquidity = Some(liquidity);
+                            }
                         }
                     } else {
                         delta.add_caveat("overlay-decode-failed");
                     }
+                }
+                complete_live_read = slot0_ok && liquidity_ok;
+                if saw_relevant_slot && !complete_live_read && delta.caveats.is_empty() {
+                    delta.add_caveat("partial-live-overlay");
                 }
             }
             Protocol::UniswapV2 => {
@@ -357,9 +378,12 @@ impl PoolStateDelta {
                     if let Some((reserve0, reserve1)) = decode_univ2_reserves(*word) {
                         if reserve0 == 0 || reserve1 == 0 {
                             delta.add_caveat("overlay-decode-failed");
-                        } else if pool.reserve0 != reserve0 || pool.reserve1 != reserve1 {
-                            delta.reserve0 = Some(reserve0);
-                            delta.reserve1 = Some(reserve1);
+                        } else {
+                            complete_live_read = true;
+                            if pool.reserve0 != reserve0 || pool.reserve1 != reserve1 {
+                                delta.reserve0 = Some(reserve0);
+                                delta.reserve1 = Some(reserve1);
+                            }
                         }
                     } else {
                         delta.add_caveat("overlay-decode-failed");
@@ -378,6 +402,7 @@ impl PoolStateDelta {
                         let decoded1 = u256_to_u128_checked(*word1);
                         match (decoded0, decoded1) {
                             (Some(r0), Some(r1)) if r0 != 0 && r1 != 0 => {
+                                complete_live_read = true;
                                 if pool.reserve0 != r0 || pool.reserve1 != r1 {
                                     delta.reserve0 = Some(r0);
                                     delta.reserve1 = Some(r1);
@@ -397,10 +422,13 @@ impl PoolStateDelta {
                 }
             }
         }
-        if delta.has_state_update() {
-            delta.add_caveat("live-overlay-applied");
-        } else if saw_relevant_slot && delta.caveats.is_empty() {
-            delta.add_caveat("live-overlay-verified");
+        delta.live_read_complete = complete_live_read;
+        if delta.live_read_complete {
+            if delta.has_state_update() {
+                delta.add_caveat("live-overlay-applied");
+            } else if delta.caveats.is_empty() {
+                delta.add_caveat("live-overlay-verified");
+            }
         } else if !saw_relevant_slot && !slots.is_empty() && delta.caveats.is_empty() {
             delta.add_caveat("stale-baseline-fallback");
         }

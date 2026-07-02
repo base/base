@@ -74,6 +74,7 @@ struct ArbDirtyState {
     raw_slots: BTreeMap<Address, BTreeMap<U256, U256>>,
     fallback_elapsed: Duration,
     fallback_attempted: usize,
+    fallback_pools: BTreeSet<Address>,
 }
 
 impl ArbDirtyState {
@@ -85,6 +86,7 @@ impl ArbDirtyState {
             raw_slots: BTreeMap::new(),
             fallback_elapsed: Duration::ZERO,
             fallback_attempted: 0,
+            fallback_pools: BTreeSet::new(),
         }
     }
 }
@@ -204,6 +206,23 @@ fn baseline_pool<'a>(
     runtime.pool_index.get(pool).and_then(|&i| runtime.pools.get(i))
 }
 
+fn selected_dirty_pools_for_fallback(
+    runtime: &ArbDryRunRuntime,
+    dirty_state: &ArbDirtyState,
+) -> Vec<Address> {
+    let mut selected_indexes = BTreeSet::new();
+    for pool in &dirty_state.dirty_pools {
+        if let Some(index) = runtime.pool_index.get(pool) {
+            selected_indexes.insert(*index);
+        }
+    }
+    selected_indexes
+        .into_iter()
+        .take(runtime.config.max_pools_per_frame)
+        .filter_map(|index| runtime.pools.get(index).map(|pool| pool.pool))
+        .collect()
+}
+
 fn record_pool_slot_event(
     runtime: &ArbDryRunRuntime,
     dirty_state: &mut ArbDirtyState,
@@ -247,7 +266,7 @@ fn merge_fallback_delta(
     pool: Address,
     delta: crate::arb_dryrun::PoolStateDelta,
 ) {
-    if delta.has_state_update() {
+    if delta.has_state_update() || delta.is_live_read_complete() {
         dirty_state.deltas.insert(pool, delta);
         return;
     }
@@ -265,23 +284,28 @@ fn supplement_committed_fallback<DB: Database>(
 ) {
     let fallback_cap = runtime.config.max_pools_per_frame.min(8).min(32);
     let started = Instant::now();
-    let dirty_pools = dirty_state.dirty_pools.iter().copied().collect::<Vec<_>>();
+    let dirty_pools = selected_dirty_pools_for_fallback(runtime, dirty_state);
     for pool_addr in dirty_pools {
+        if dirty_state.fallback_pools.contains(&pool_addr) {
+            continue;
+        }
         if dirty_state
             .deltas
             .get(&pool_addr)
-            .is_some_and(crate::arb_dryrun::PoolStateDelta::has_state_update)
+            .is_some_and(crate::arb_dryrun::PoolStateDelta::is_live_read_complete)
         {
             continue;
         }
         if dirty_state.fallback_attempted >= fallback_cap {
             mark_fallback_caveat(dirty_state, pool_addr, block_number, "fallback-cap-exhausted");
+            dirty_state.fallback_pools.insert(pool_addr);
             continue;
         }
         if dirty_state.fallback_elapsed.saturating_add(started.elapsed())
             >= runtime.config.time_budget
         {
             mark_fallback_caveat(dirty_state, pool_addr, block_number, "fallback-timeout");
+            dirty_state.fallback_pools.insert(pool_addr);
             continue;
         }
         let Some(pool) = baseline_pool(runtime, &pool_addr) else {
@@ -295,10 +319,13 @@ fn supplement_committed_fallback<DB: Database>(
                 block_number,
                 "fallback-unsupported-protocol",
             );
+            dirty_state.fallback_pools.insert(pool_addr);
             continue;
         }
         let mut slots = BTreeMap::new();
         let mut failed = false;
+        dirty_state.fallback_attempted += 1;
+        dirty_state.fallback_pools.insert(pool_addr);
         for slot in slots_to_read {
             if dirty_state.fallback_elapsed.saturating_add(started.elapsed())
                 >= runtime.config.time_budget
@@ -334,7 +361,6 @@ fn supplement_committed_fallback<DB: Database>(
         if failed {
             continue;
         }
-        dirty_state.fallback_attempted += 1;
         let mut delta = crate::arb_dryrun::PoolStateDelta::from_slots(
             pool,
             &slots,
@@ -1032,6 +1058,15 @@ mod arb_overlay_tests {
         U256::from(reserve0) | (U256::from(reserve1) << 112usize)
     }
 
+    fn pack_slot0_word(sqrt_price_x96: u128, tick: i32) -> U256 {
+        let tick_u24 = if tick < 0 {
+            u32::try_from((1i64 << 24) + i64::from(tick)).unwrap()
+        } else {
+            u32::try_from(tick).unwrap()
+        };
+        U256::from(sqrt_price_x96) | (U256::from(tick_u24) << 160usize)
+    }
+
     #[derive(Debug)]
     struct StorageDbError;
 
@@ -1171,10 +1206,13 @@ mod arb_overlay_tests {
             StorageDb::default().with_slot(pool.pool, slot, pack_univ2_reserves(1_000, 2_000));
 
         supplement_committed_fallback(&mut db, &runtime, &mut dirty_state, 42);
+        supplement_committed_fallback(&mut db, &runtime, &mut dirty_state, 42);
 
         assert_eq!(dirty_state.fallback_attempted, 1);
+        assert_eq!(db.storage_calls, 1);
         let delta = dirty_state.deltas.get(&pool.pool).expect("fallback delta");
         assert!(!delta.has_state_update());
+        assert!(delta.is_live_read_complete());
         assert!(delta.caveats.iter().any(|c| c == "live-overlay-verified"));
         assert!(!delta.caveats.iter().any(|c| c == "stale-baseline-fallback"));
     }
@@ -1189,8 +1227,9 @@ mod arb_overlay_tests {
         let mut db = StorageDb::default().with_failed_slot(pool.pool, slot);
 
         supplement_committed_fallback(&mut db, &runtime, &mut dirty_state, 42);
+        supplement_committed_fallback(&mut db, &runtime, &mut dirty_state, 42);
 
-        assert_eq!(dirty_state.fallback_attempted, 0);
+        assert_eq!(dirty_state.fallback_attempted, 1);
         assert_eq!(db.storage_calls, 1);
         let delta = dirty_state.deltas.get(&pool.pool).expect("fallback caveat");
         assert!(delta.caveats.iter().any(|c| c == "fallback-provider-error"));
@@ -1198,20 +1237,53 @@ mod arb_overlay_tests {
 
     #[test]
     fn committed_fallback_cap_is_cumulative_per_payload() {
-        let pool_a = v2_pool(0xa5, 1_000, 2_000);
-        let pool_b = v2_pool(0xa6, 1_000, 2_000);
-        let mut runtime = runtime_with_pools(vec![pool_a.clone(), pool_b.clone()]);
+        let pools = (0u8..9).map(|i| v2_pool(0xb0 + i, 1_000, 2_000)).collect::<Vec<_>>();
+        let mut runtime = runtime_with_pools(pools.clone());
+        runtime.config.max_pools_per_frame = 9;
+        runtime.config.time_budget = Duration::from_secs(1);
+        let slot = slot_key(crate::arb_dryrun::UNIV2_RESERVES_SLOT);
+        let mut dirty_state = ArbDirtyState::new(0);
+        let mut db = StorageDb::default();
+        for (i, pool) in pools.iter().enumerate() {
+            dirty_state.dirty_pools.insert(pool.pool);
+            db = db.with_slot(
+                pool.pool,
+                slot,
+                pack_univ2_reserves(3_000 + i as u128, 4_000 + i as u128),
+            );
+        }
+
+        supplement_committed_fallback(&mut db, &runtime, &mut dirty_state, 42);
+        supplement_committed_fallback(&mut db, &runtime, &mut dirty_state, 42);
+
+        assert_eq!(dirty_state.fallback_attempted, 8);
+        assert_eq!(db.storage_calls, 8);
+        assert!(
+            dirty_state
+                .deltas
+                .get(&pools[0].pool)
+                .is_some_and(crate::arb_dryrun::PoolStateDelta::has_state_update)
+        );
+        let capped = dirty_state.deltas.get(&pools[8].pool).expect("cap caveat");
+        assert!(capped.caveats.iter().any(|c| c == "fallback-cap-exhausted"));
+    }
+
+    #[test]
+    fn committed_fallback_uses_frame_selected_baseline_order_not_address_order() {
+        let first_in_baseline = v2_pool(0xf0, 1_000, 2_000);
+        let first_by_address = v2_pool(0x01, 1_000, 2_000);
+        let mut runtime =
+            runtime_with_pools(vec![first_in_baseline.clone(), first_by_address.clone()]);
         runtime.config.max_pools_per_frame = 1;
         runtime.config.time_budget = Duration::from_secs(1);
         let slot = slot_key(crate::arb_dryrun::UNIV2_RESERVES_SLOT);
         let mut dirty_state = ArbDirtyState::new(0);
-        dirty_state.dirty_pools.insert(pool_a.pool);
-        dirty_state.dirty_pools.insert(pool_b.pool);
+        dirty_state.dirty_pools.insert(first_in_baseline.pool);
+        dirty_state.dirty_pools.insert(first_by_address.pool);
         let mut db = StorageDb::default()
-            .with_slot(pool_a.pool, slot, pack_univ2_reserves(3_000, 4_000))
-            .with_slot(pool_b.pool, slot, pack_univ2_reserves(5_000, 6_000));
+            .with_slot(first_in_baseline.pool, slot, pack_univ2_reserves(3_000, 4_000))
+            .with_slot(first_by_address.pool, slot, pack_univ2_reserves(5_000, 6_000));
 
-        supplement_committed_fallback(&mut db, &runtime, &mut dirty_state, 42);
         supplement_committed_fallback(&mut db, &runtime, &mut dirty_state, 42);
 
         assert_eq!(dirty_state.fallback_attempted, 1);
@@ -1219,11 +1291,61 @@ mod arb_overlay_tests {
         assert!(
             dirty_state
                 .deltas
-                .get(&pool_a.pool)
+                .get(&first_in_baseline.pool)
                 .is_some_and(crate::arb_dryrun::PoolStateDelta::has_state_update)
         );
-        let capped = dirty_state.deltas.get(&pool_b.pool).expect("cap caveat");
-        assert!(capped.caveats.iter().any(|c| c == "fallback-cap-exhausted"));
+        assert!(!dirty_state.deltas.contains_key(&first_by_address.pool));
+    }
+
+    #[test]
+    fn committed_fallback_completes_partial_v3_slotdiff() {
+        let pool = crate::arb_dryrun::PoolState::v3(
+            addr(0xa9),
+            addr(1),
+            addr(2),
+            500,
+            100,
+            10,
+            1,
+            Vec::new(),
+        );
+        let mut runtime = runtime_with_pool(pool.clone());
+        runtime.config.time_budget = Duration::from_secs(1);
+        let mut dirty_state = ArbDirtyState::new(0);
+        let slot0_key = slot_key(crate::arb_dryrun::V3_SLOT0_SLOT);
+        let liquidity_key = slot_key(crate::arb_dryrun::V3_LIQUIDITY_SLOT);
+        let slot0 = pack_slot0_word(200, 2);
+        let event = PoolSlotDiffEvent {
+            protocol_version: crate::PROTOCOL_VERSION,
+            tx_hash: B256::from([0x44; 32]),
+            block_number: 42,
+            flashblock_index: 3,
+            payload_id: "payload".to_string(),
+            pool: pool.pool,
+            slot: slot0_key,
+            value: slot0,
+        };
+        record_pool_slot_event(&runtime, &mut dirty_state, &event, 42);
+        let partial = dirty_state.deltas.get(&pool.pool).expect("partial delta");
+        assert!(!partial.is_live_read_complete());
+        assert!(partial.caveats.iter().any(|c| c == "partial-live-overlay"));
+
+        let mut db = StorageDb::default().with_slot(pool.pool, slot0_key, slot0).with_slot(
+            pool.pool,
+            liquidity_key,
+            U256::from(20u128),
+        );
+
+        supplement_committed_fallback(&mut db, &runtime, &mut dirty_state, 42);
+
+        assert_eq!(dirty_state.fallback_attempted, 1);
+        assert_eq!(db.storage_calls, 2);
+        let delta = dirty_state.deltas.get(&pool.pool).expect("complete fallback delta");
+        assert!(delta.is_live_read_complete());
+        assert_eq!(delta.sqrt_price_x96, Some(200));
+        assert_eq!(delta.tick, Some(2));
+        assert_eq!(delta.liquidity, Some(20));
+        assert!(delta.caveats.iter().any(|c| c == "live-overlay-applied"));
     }
 
     #[test]
