@@ -2,7 +2,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Arc, Mutex},
+    sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -22,14 +22,14 @@ use tracing::debug;
 use x509_parser::{
     certificate::X509Certificate,
     extensions::{DistributionPointName, GeneralName, ParsedExtension},
-    pem::parse_x509_pem,
+    pem::Pem,
     prelude::FromDer,
 };
 
 use crate::{Result, TdxAttestationConfig, TdxCollateralError};
 
 /// Maximum allowed Intel PCS response size.
-pub const MAX_TDX_COLLATERAL_RESPONSE_BYTES: u64 = 10 * 1024 * 1024;
+const MAX_TDX_COLLATERAL_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
 
 const PCK_CERT_CHAIN_CERTIFICATION_DATA_TYPE: u16 = 5;
 const TCB_INFO_ISSUER_CHAIN_HEADER: &str = "tcb-info-issuer-chain";
@@ -66,19 +66,19 @@ pub struct TdxCollateralCacheLookup {
 }
 
 /// Hydrates TDX signer RPC attestations into prover input bytes.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct TdxAttestationHydrator {
     /// Intel PCS and verifier policy configuration.
     pub config: TdxAttestationConfig,
     client: reqwest::Client,
-    cache: Arc<Mutex<HashMap<TdxCollateralCacheLookup, (u64, TdxCollateralFetch)>>>,
+    cache: Mutex<HashMap<TdxCollateralCacheLookup, (u64, TdxCollateralFetch)>>,
 }
 
 impl TdxAttestationHydrator {
     /// Creates a hydrator with a hardened HTTP client.
     pub fn new(config: TdxAttestationConfig) -> Result<Self> {
         let client = config.build_http_client()?;
-        Ok(Self { config, client, cache: Arc::new(Mutex::new(HashMap::new())) })
+        Ok(Self { config, client, cache: Mutex::new(HashMap::new()) })
     }
 
     /// Converts a TDX signer attestation into encoded prover input.
@@ -198,16 +198,14 @@ impl TdxAttestationHydrator {
         Ok(fetch)
     }
 
-    fn cache_poisoned_error(error: String) -> TdxCollateralError {
-        TdxCollateralError::source(TdxHydrationError::CachePoisoned { error })
-    }
-
     fn cache_lock(
         &self,
     ) -> Result<
         std::sync::MutexGuard<'_, HashMap<TdxCollateralCacheLookup, (u64, TdxCollateralFetch)>>,
     > {
-        self.cache.lock().map_err(|e| Self::cache_poisoned_error(e.to_string()))
+        self.cache.lock().map_err(|e| {
+            TdxCollateralError::source(TdxHydrationError::CachePoisoned { error: e.to_string() })
+        })
     }
 
     /// Verifies host-side collateral and returns the earliest accepted expiration.
@@ -430,11 +428,14 @@ impl TdxAttestationHydrator {
     }
 
     async fn limited_body(response: reqwest::Response) -> Result<Bytes> {
-        if response.content_length().is_some_and(|len| len > MAX_TDX_COLLATERAL_RESPONSE_BYTES) {
+        if response
+            .content_length()
+            .is_some_and(|len| len > MAX_TDX_COLLATERAL_RESPONSE_BYTES as u64)
+        {
             return Err(TdxCollateralError::source(TdxHydrationError::ResponseTooLarge));
         }
         let bytes = response.bytes().await.map_err(|e| TdxCollateralError::source(e))?;
-        if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_TDX_COLLATERAL_RESPONSE_BYTES {
+        if bytes.len() > MAX_TDX_COLLATERAL_RESPONSE_BYTES {
             return Err(TdxCollateralError::source(TdxHydrationError::ResponseTooLarge));
         }
         Ok(Bytes(bytes))
@@ -481,15 +482,13 @@ impl TdxAttestationHydrator {
     }
 
     fn certificate_chain_from_pem(pem_bytes: &[u8]) -> Result<Vec<TdxCertificate>> {
-        let mut remaining = pem_bytes;
         let mut certs = Vec::new();
-        while !remaining.iter().all(u8::is_ascii_whitespace) {
-            let (rest, pem) = parse_x509_pem(remaining)
-                .map_err(|e| TdxCollateralError::source(TdxHydrationError::Pem(e.to_string())))?;
+        for pem in Pem::iter_from_buffer(pem_bytes) {
+            let pem =
+                pem.map_err(|e| TdxCollateralError::source(TdxHydrationError::Pem(e.to_string())))?;
             if pem.label == CERTIFICATE_PEM_LABEL {
                 certs.push(Bytes::from(pem.contents));
             }
-            remaining = rest;
         }
         Self::chain_from_der_certs(certs)
     }
@@ -659,7 +658,7 @@ mod tests {
         TdxCertificate { raw: Bytes::from_static(raw) }
     }
 
-    fn certificate_with_validity(_not_before: u64, _not_after: u64) -> TdxCertificate {
+    fn minimal_certificate() -> TdxCertificate {
         TdxCertificate { raw: Bytes::from_static(MINIMAL_CERTIFICATE_DER) }
     }
 
@@ -678,7 +677,7 @@ mod tests {
         );
         TdxSignedCollateral {
             raw,
-            signing_chain: vec![certificate_with_validity(issue_time, next_update + 100)],
+            signing_chain: vec![minimal_certificate()],
             signature: Bytes::new(),
         }
     }
@@ -689,7 +688,7 @@ mod tests {
 
     fn collateral_fetch(tcb_next_update: u64, qe_next_update: u64) -> TdxCollateralFetch {
         TdxCollateralFetch {
-            pck_certificate_chain: vec![certificate_with_validity(100, 500)],
+            pck_certificate_chain: vec![minimal_certificate()],
             collateral: TdxCollateral {
                 tcb_info: signed_collateral("tcbInfo", 100, tcb_next_update),
                 qe_identity: signed_collateral("enclaveIdentity", 100, qe_next_update),
@@ -699,7 +698,7 @@ mod tests {
         }
     }
 
-    fn signed_tcb_info(tdx_svn: u64, issue_time: u64, next_update: u64) -> TdxSignedCollateral {
+    fn signed_tcb_info(tdx_svn: u64) -> TdxSignedCollateral {
         let tdx_components =
             (0..16).map(|_| serde_json::json!({ "svn": tdx_svn })).collect::<Vec<_>>();
         let sgx_components = (0..16).map(|_| serde_json::json!({ "svn": 0 })).collect::<Vec<_>>();
@@ -732,7 +731,7 @@ mod tests {
 
         TdxSignedCollateral {
             raw: Bytes::from(raw),
-            signing_chain: vec![certificate_with_validity(issue_time, next_update + 100)],
+            signing_chain: vec![minimal_certificate()],
             signature: Bytes::new(),
         }
     }
@@ -907,14 +906,14 @@ mod tests {
         let hydrator = TdxAttestationHydrator::new(TdxAttestationConfig::intel_pcs()).unwrap();
         let lookup = cache_lookup();
         let mut fetch = collateral_fetch(300, 400);
-        fetch.collateral.tcb_info = signed_tcb_info(1, 100, 300);
+        fetch.collateral.tcb_info = signed_tcb_info(1);
         hydrator.cache_lock().unwrap().insert(lookup.clone(), (300, fetch));
 
         let error = hydrator
             .cached_collateral(
                 &lookup,
                 &parsed_quote(),
-                &[certificate_with_validity(100, 500)],
+                &[minimal_certificate()],
                 &TdxPckTcb { sgx_tcb_svn: [0; 16], pce_svn: 0 },
                 150,
             )
@@ -935,9 +934,9 @@ mod tests {
     fn cached_collateral_keeps_entry_when_quote_verification_fails() {
         let hydrator = TdxAttestationHydrator::new(TdxAttestationConfig::intel_pcs()).unwrap();
         let lookup = cache_lookup();
-        let pck_certificate_chain = vec![certificate_with_validity(100, 500)];
+        let pck_certificate_chain = vec![minimal_certificate()];
         let mut fetch = collateral_fetch(300, 400);
-        fetch.collateral.tcb_info = signed_tcb_info(0, 100, 300);
+        fetch.collateral.tcb_info = signed_tcb_info(0);
         fetch.trusted_root_ca_hash = pck_certificate_chain[0].hash();
         hydrator.cache_lock().unwrap().insert(lookup.clone(), (300, fetch));
 
