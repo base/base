@@ -5,7 +5,7 @@
 use tokio as _;
 
 mod cli;
-pub use cli::{Cli, CollateralArgs};
+pub use cli::Cli;
 
 mod report;
 pub use report::{

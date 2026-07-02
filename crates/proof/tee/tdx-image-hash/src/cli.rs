@@ -5,10 +5,10 @@ use std::time::Duration;
 use alloy_primitives::{Address, B256};
 use base_proof_tee_tdx_collateral::TdxAttestationConfig;
 use base_proof_tee_tdx_verifier::TDXTcbStatus;
-use clap::{Args, Parser};
+use clap::Parser;
 use url::Url;
 
-use crate::OnchainRegistryConfig;
+use crate::{OnchainRegistryConfig, TdxImageHashConfig};
 
 /// TDX image hash inspection command.
 #[derive(Debug, Parser)]
@@ -26,40 +26,6 @@ pub struct Cli {
     #[arg(long, env = "TDX_VERIFY_QUOTE")]
     pub verify_quote: bool,
 
-    /// Collateral and verifier policy arguments.
-    #[command(flatten)]
-    pub collateral: CollateralArgs,
-
-    /// L1 RPC URL used to query `TEEProverRegistry`.
-    #[arg(long, env = "L1_RPC_URL", requires = "registry_address")]
-    pub l1_rpc_url: Option<Url>,
-
-    /// `TEEProverRegistry` contract address.
-    #[arg(long, env = "TEE_PROVER_REGISTRY_ADDRESS", requires = "l1_rpc_url")]
-    pub registry_address: Option<Address>,
-}
-
-impl Cli {
-    /// Converts parsed CLI arguments into the library configuration.
-    pub fn config(&self) -> crate::TdxImageHashConfig {
-        crate::TdxImageHashConfig {
-            endpoint: self.endpoint.clone(),
-            signer_index: self.signer_index,
-            verify_quote: self.verify_quote,
-            attestation: self.collateral.config(),
-            registry: self.l1_rpc_url.clone().zip(self.registry_address).map(
-                |(l1_rpc_url, registry_address)| OnchainRegistryConfig {
-                    l1_rpc_url,
-                    registry_address,
-                },
-            ),
-        }
-    }
-}
-
-/// Intel PCS collateral and verifier policy arguments.
-#[derive(Debug, Args)]
-pub struct CollateralArgs {
     /// Intel TDX PCS API base URL.
     #[arg(long, env = "TDX_PCS_TDX_BASE_URL")]
     pub pcs_tdx_base_url: Option<Url>,
@@ -79,9 +45,50 @@ pub struct CollateralArgs {
     /// Intel PCS and CRL fetch timeout in seconds.
     #[arg(long, env = "TDX_COLLATERAL_FETCH_TIMEOUT_SECS")]
     pub fetch_timeout_secs: Option<u64>,
+
+    /// L1 RPC URL used to query `TEEProverRegistry`.
+    #[arg(long, env = "L1_RPC_URL", requires = "registry_address")]
+    pub l1_rpc_url: Option<Url>,
+
+    /// `TEEProverRegistry` contract address.
+    #[arg(long, env = "TEE_PROVER_REGISTRY_ADDRESS", requires = "l1_rpc_url")]
+    pub registry_address: Option<Address>,
 }
 
-impl CollateralArgs {
+impl Cli {
+    /// Converts parsed CLI arguments into the library configuration.
+    pub fn config(self) -> TdxImageHashConfig {
+        let mut attestation = TdxAttestationConfig::intel_pcs();
+        if let Some(pcs_tdx_base_url) = self.pcs_tdx_base_url {
+            attestation.pcs_tdx_base_url = pcs_tdx_base_url;
+        }
+        if let Some(trusted_root_ca_hash) = self.trusted_root_ca_hash {
+            attestation.trusted_root_ca_hash = trusted_root_ca_hash;
+        }
+        if let Some(max_quote_age_secs) = self.max_quote_age_secs {
+            attestation.max_quote_age = Duration::from_secs(max_quote_age_secs);
+        }
+        if !self.allowed_tcb_status.is_empty() {
+            attestation.allowed_tcb_statuses = self.allowed_tcb_status;
+        }
+        if let Some(fetch_timeout_secs) = self.fetch_timeout_secs {
+            attestation.fetch_timeout = Duration::from_secs(fetch_timeout_secs);
+        }
+
+        TdxImageHashConfig {
+            endpoint: self.endpoint,
+            signer_index: self.signer_index,
+            verify_quote: self.verify_quote,
+            attestation,
+            registry: self.l1_rpc_url.zip(self.registry_address).map(
+                |(l1_rpc_url, registry_address)| OnchainRegistryConfig {
+                    l1_rpc_url,
+                    registry_address,
+                },
+            ),
+        }
+    }
+
     /// Parses an allowed TDX TCB status argument.
     pub fn parse_tcb_status(status: &str) -> Result<TDXTcbStatus, String> {
         match status {
@@ -96,27 +103,6 @@ impl CollateralArgs {
             "revoked" => Ok(TDXTcbStatus::Revoked),
             _ => Err(format!("invalid TDX TCB status: {status}")),
         }
-    }
-
-    /// Builds the registrar-compatible TDX attestation configuration.
-    pub fn config(&self) -> TdxAttestationConfig {
-        let mut config = TdxAttestationConfig::intel_pcs();
-        if let Some(pcs_tdx_base_url) = &self.pcs_tdx_base_url {
-            config.pcs_tdx_base_url = pcs_tdx_base_url.clone();
-        }
-        if let Some(trusted_root_ca_hash) = self.trusted_root_ca_hash {
-            config.trusted_root_ca_hash = trusted_root_ca_hash;
-        }
-        if let Some(max_quote_age_secs) = self.max_quote_age_secs {
-            config.max_quote_age = Duration::from_secs(max_quote_age_secs);
-        }
-        if !self.allowed_tcb_status.is_empty() {
-            config.allowed_tcb_statuses = self.allowed_tcb_status.clone();
-        }
-        if let Some(fetch_timeout_secs) = self.fetch_timeout_secs {
-            config.fetch_timeout = Duration::from_secs(fetch_timeout_secs);
-        }
-        config
     }
 }
 
@@ -135,7 +121,7 @@ mod tests {
             "http://127.0.0.1:7310",
         ]);
 
-        let config = cli.collateral.config();
+        let config = cli.config().attestation;
 
         assert_eq!(config.trusted_root_ca_hash, DEFAULT_TDX_TRUSTED_ROOT_CA_HASH);
         assert_eq!(config.allowed_tcb_statuses, vec![TDXTcbStatus::UpToDate]);
@@ -170,7 +156,7 @@ mod tests {
             "sw-hardening-needed",
         ]);
 
-        let config = cli.collateral.config();
+        let config = cli.config().attestation;
 
         assert_eq!(
             config.allowed_tcb_statuses,
