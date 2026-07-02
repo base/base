@@ -96,23 +96,6 @@ mod dec_u128 {
     }
 }
 
-/// Optional `bigint` <-> decimal-string codec for unsigned 128-bit fields.
-mod dec_u128_opt {
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    pub(crate) fn serialize<S: Serializer>(v: &Option<u128>, s: S) -> Result<S::Ok, S::Error> {
-        match v {
-            Some(n) => s.serialize_str(&n.to_string()),
-            None => s.serialize_none(),
-        }
-    }
-
-    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<u128>, D::Error> {
-        let opt = Option::<String>::deserialize(d)?;
-        opt.map(|s| s.parse().map_err(serde::de::Error::custom)).transpose()
-    }
-}
-
 /// Optional `bigint` <-> decimal-string codec (omitted when `None`).
 mod dec_u64_opt {
     use serde::{Deserialize, Deserializer, Serializer};
@@ -160,6 +143,23 @@ mod dec_i256 {
     pub(crate) fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<I256, D::Error> {
         let s = String::deserialize(d)?;
         I256::from_dec_str(&s).map_err(serde::de::Error::custom)
+    }
+}
+/// Optional signed `bigint` (int256) <-> decimal-string codec for nullable net metadata.
+mod dec_i256_opt {
+    use alloy_primitives::I256;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub(crate) fn serialize<S: Serializer>(v: &Option<I256>, s: S) -> Result<S::Ok, S::Error> {
+        match v {
+            Some(n) => s.serialize_str(&n.to_string()),
+            None => s.serialize_none(),
+        }
+    }
+
+    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<I256>, D::Error> {
+        let opt = Option::<String>::deserialize(d)?;
+        opt.map(|s| I256::from_dec_str(&s).map_err(serde::de::Error::custom)).transpose()
     }
 }
 
@@ -344,9 +344,9 @@ pub struct ArbDryRunObservationEvent {
     /// Estimated gross output (decimal string on the wire).
     #[serde(with = "dec_u128")]
     pub estimated_gross_wei: u128,
-    /// Estimated net output when a cost model exists; null until then.
-    #[serde(with = "dec_u128_opt")]
-    pub estimated_net_wei: Option<u128>,
+    /// Estimated signed net output when a cost model exists; null until then.
+    #[serde(with = "dec_i256_opt")]
+    pub estimated_net_wei: Option<I256>,
     /// Whether the observation used lower-confidence math.
     pub approximation: bool,
     /// Optional caveat/skip reason.
@@ -563,7 +563,7 @@ mod tests {
             protocols: vec!["uniswap_v2".to_string(), "aerodrome_volatile".to_string()],
             amount_in_wei: 1_000_000_000_000_000_000,
             estimated_gross_wei: 1_010_000_000_000_000_000,
-            estimated_net_wei: None,
+            estimated_net_wei: Some(I256::try_from(-25).unwrap()),
             approximation: false,
             caveat: None,
             latency_micros: 77,
@@ -575,8 +575,16 @@ mod tests {
         assert!(json.contains(r#""blockNumber":"47620296""#));
         assert!(json.contains(r#""amountInWei":"1000000000000000000""#));
         assert!(json.contains(r#""estimatedGrossWei":"1010000000000000000""#));
-        assert!(json.contains(r#""estimatedNetWei":null"#));
+        assert!(json.contains(r#""estimatedNetWei":"-25""#));
         let back: NodeEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(back, ev);
+        let null_ev = NodeEvent::ArbDryRunObservation(ArbDryRunObservationEvent {
+            estimated_net_wei: None,
+            ..match ev {
+                NodeEvent::ArbDryRunObservation(inner) => inner,
+                _ => unreachable!(),
+            }
+        });
+        assert!(encode_event(&null_ev).contains(r#""estimatedNetWei":null"#));
     }
 }
