@@ -1,7 +1,7 @@
 //! TDX attestation collateral hydration for proof generation.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -133,7 +133,14 @@ impl TdxAttestationHydrator {
     /// Fetches Intel PCS collateral and CRLs required to verify `quote`.
     pub async fn fetch_collateral(&self, quote: &[u8]) -> Result<TdxCollateralFetch> {
         let parsed_quote = TdxQuote::parse(quote).map_err(|e| TdxCollateralError::source(e))?;
-        let pck_certificate_chain = Self::pck_certificate_chain_from_quote(&parsed_quote)?;
+        if parsed_quote.certification_data_type != PCK_CERT_CHAIN_CERTIFICATION_DATA_TYPE {
+            return Err(TdxCollateralError::source(format!(
+                "unsupported TDX quote certification data type {}",
+                parsed_quote.certification_data_type,
+            )));
+        }
+        let pck_certificate_chain =
+            Self::certificate_chain_from_pem(&parsed_quote.certification_data)?;
         Self::verify_trusted_root_ca_hash(
             &pck_certificate_chain,
             self.config.trusted_root_ca_hash,
@@ -175,12 +182,10 @@ impl TdxAttestationHydrator {
         };
         let expiration =
             Self::verify_collateral_for_quote(&fetch, &parsed_quote, verification_time)?;
-        {
-            self.cache
-                .lock()
-                .expect("TDX collateral cache poisoned")
-                .insert(lookup, (expiration, fetch.clone()));
-        }
+        self.cache
+            .lock()
+            .expect("TDX collateral cache poisoned")
+            .insert(lookup, (expiration, fetch.clone()));
         Ok(fetch)
     }
 
@@ -287,18 +292,6 @@ impl TdxAttestationHydrator {
         }
     }
 
-    fn pck_certificate_chain_from_quote(
-        parsed_quote: &ParsedTdxQuote,
-    ) -> Result<Vec<TdxCertificate>> {
-        if parsed_quote.certification_data_type != PCK_CERT_CHAIN_CERTIFICATION_DATA_TYPE {
-            return Err(TdxCollateralError::source(format!(
-                "unsupported TDX quote certification data type {}",
-                parsed_quote.certification_data_type,
-            )));
-        }
-        Self::certificate_chain_from_pem(&parsed_quote.certification_data)
-    }
-
     async fn fetch_tcb_info(&self, platform: &TdxPlatformIdentity) -> Result<TdxSignedCollateral> {
         let mut url =
             self.config.pcs_tdx_base_url.join("tcb").map_err(|e| TdxCollateralError::source(e))?;
@@ -337,7 +330,9 @@ impl TdxAttestationHydrator {
         let response = self.get(url).await?;
         let headers = response.headers().clone();
         let raw = Self::limited_body(response).await?;
-        let signing_chain = Self::certificate_chain_from_header(&headers, chain_headers)?;
+        let encoded_chain = Self::header_value(&headers, chain_headers)?;
+        let decoded_chain = Self::percent_decode(encoded_chain)?;
+        let signing_chain = Self::certificate_chain_from_pem(&decoded_chain)?;
         Self::verify_trusted_root_ca_hash(&signing_chain, self.config.trusted_root_ca_hash)?;
         let signature = match signature_headers
             .and_then(|header_names| header_names.iter().find_map(|header| headers.get(*header)))
@@ -356,19 +351,18 @@ impl TdxAttestationHydrator {
         &self,
         chains: &[&[TdxCertificate]],
     ) -> Result<TdxRevocationEvidence> {
-        let mut seen = HashSet::new();
         let mut urls = Vec::new();
         for chain in chains {
             for certificate in chain.iter().skip(1) {
                 let crl_url = Self::crl_distribution_point(&certificate.raw)?;
-                if !seen.insert(crl_url.clone()) {
-                    continue;
-                }
                 let url = Url::parse(&crl_url).map_err(|e| TdxCollateralError::source(e))?;
                 if !Self::is_allowed_intel_url(&url) {
                     return Err(TdxCollateralError::source(format!(
                         "TDX certificate CRL URL is not an allowed Intel URL: {crl_url}"
                     )));
+                }
+                if urls.iter().any(|seen| seen == &url) {
+                    continue;
                 }
                 urls.push(url);
             }
@@ -405,15 +399,6 @@ impl TdxAttestationHydrator {
             return Err(TdxCollateralError::source("Intel PCS response exceeds size limit"));
         }
         Ok(Bytes(bytes))
-    }
-
-    fn certificate_chain_from_header(
-        headers: &HeaderMap,
-        header_names: &[&str],
-    ) -> Result<Vec<TdxCertificate>> {
-        let value = Self::header_value(headers, header_names)?;
-        let decoded = Self::percent_decode(value)?;
-        Self::certificate_chain_from_pem(&decoded)
     }
 
     fn header_value<'a>(headers: &'a HeaderMap, header_names: &[&str]) -> Result<&'a str> {
@@ -819,7 +804,7 @@ mod tests {
 
         assert_source_contains(error, "no TCB info level matches quote TCB");
         let cache = hydrator.cache.lock().expect("TDX collateral cache poisoned");
-        assert!(cache.get(&lookup).is_some());
+        assert!(cache.contains_key(&lookup));
         assert_eq!(cache.len(), 1);
     }
 
@@ -849,7 +834,7 @@ mod tests {
 
         assert_source_contains(error, "PCK certificate chain is invalid");
         let cache = hydrator.cache.lock().expect("TDX collateral cache poisoned");
-        assert!(cache.get(&lookup).is_some());
+        assert!(cache.contains_key(&lookup));
         assert_eq!(cache.len(), 1);
     }
 
