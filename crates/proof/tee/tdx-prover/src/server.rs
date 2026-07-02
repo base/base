@@ -12,29 +12,16 @@ use tracing::info;
 
 use crate::TdxSignerAttestation;
 
-/// JSON-RPC attestation kind returned by TDX prover servers.
-pub const TDX_ATTESTATION_KIND: &str = "tdx";
-
 /// Registrar-facing TDX prover server exposing health and signer JSON-RPC methods.
 #[derive(Debug)]
 pub struct TdxProverServer {
-    runtimes: Vec<Arc<TdxRuntime>>,
+    runtime: Arc<TdxRuntime>,
 }
 
 impl TdxProverServer {
     /// Create a registrar-facing server for one TDX runtime.
     pub fn new(runtime: Arc<TdxRuntime>) -> Self {
-        Self::new_multi(vec![runtime])
-    }
-
-    /// Create a registrar-facing server for multiple TDX runtimes.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `runtimes` is empty.
-    pub fn new_multi(runtimes: Vec<Arc<TdxRuntime>>) -> Self {
-        assert!(!runtimes.is_empty(), "at least one runtime is required");
-        Self { runtimes }
+        Self { runtime }
     }
 
     /// Start the registrar-facing JSON-RPC HTTP server on the given address.
@@ -53,23 +40,16 @@ impl TdxProverServer {
         let mut module = RpcModule::new(());
 
         module.merge(HealthzRpc::new(env!("CARGO_PKG_VERSION")).into_rpc())?;
-        module.merge(TdxSignerRpc { runtimes: self.runtimes }.into_rpc())?;
+        module.merge(self.into_rpc())?;
 
         Ok(module)
     }
 }
 
-/// Inner RPC handler for `enclave_*` methods.
-#[derive(Debug)]
-pub struct TdxSignerRpc {
-    /// TDX runtimes used for signer and quote collection calls.
-    pub runtimes: Vec<Arc<TdxRuntime>>,
-}
-
 #[async_trait]
-impl EnclaveApiServer for TdxSignerRpc {
+impl EnclaveApiServer for TdxProverServer {
     async fn signer_public_key(&self) -> RpcResult<Vec<Vec<u8>>> {
-        Ok(self.runtimes.iter().map(|runtime| runtime.signer_public_key().to_vec()).collect())
+        Ok(vec![self.runtime.signer_public_key().to_vec()])
     }
 
     async fn signer_attestation(
@@ -77,41 +57,30 @@ impl EnclaveApiServer for TdxSignerRpc {
         user_data: Option<Vec<u8>>,
         nonces: Option<Vec<Vec<u8>>>,
     ) -> RpcResult<Vec<Vec<u8>>> {
-        if user_data.is_some() {
+        if user_data.is_some() || nonces.is_some() {
             return Err(jsonrpsee::types::ErrorObjectOwned::owned(
                 -32602,
-                "TDX signer attestations do not support user_data challenge binding",
-                None::<()>,
-            ));
-        }
-        if nonces.is_some() {
-            return Err(jsonrpsee::types::ErrorObjectOwned::owned(
-                -32602,
-                "TDX signer attestations do not support nonce challenge binding",
+                "TDX signer attestations do not support user_data or nonce challenge binding",
                 None::<()>,
             ));
         }
 
-        let mut attestations = Vec::with_capacity(self.runtimes.len());
-        for runtime in &self.runtimes {
-            let signer_public_key = runtime.signer_public_key();
-            let quote = runtime.signer_quote().map_err(|error| {
-                jsonrpsee::types::ErrorObjectOwned::owned(-32001, error.to_string(), None::<()>)
-            })?;
-            attestations.push(
-                TdxSignerAttestation {
-                    signer_public_key: signer_public_key.to_vec().into(),
-                    quote: quote.quote,
-                    quote_timestamp_millis: quote.quote_timestamp_millis,
-                }
-                .encode(),
-            );
-        }
-        Ok(attestations)
+        let signer_public_key = self.runtime.signer_public_key();
+        let quote = self.runtime.signer_quote().map_err(|error| {
+            jsonrpsee::types::ErrorObjectOwned::owned(-32001, error.to_string(), None::<()>)
+        })?;
+        Ok(vec![
+            TdxSignerAttestation {
+                signer_public_key: signer_public_key.to_vec().into(),
+                quote: quote.quote,
+                quote_timestamp_millis: quote.quote_timestamp_millis,
+            }
+            .encode(),
+        ])
     }
 
     async fn attestation_kind(&self) -> RpcResult<String> {
-        Ok(TDX_ATTESTATION_KIND.to_owned())
+        Ok("tdx".to_owned())
     }
 }
 
@@ -127,22 +96,8 @@ mod tests {
         Arc::new(TdxRuntime::new(TdxMeasurements))
     }
 
-    fn test_rpc() -> TdxSignerRpc {
-        TdxSignerRpc { runtimes: vec![test_runtime()] }
-    }
-
-    fn multi_test_rpc() -> TdxSignerRpc {
-        TdxSignerRpc { runtimes: vec![test_runtime(), test_runtime()] }
-    }
-
-    #[tokio::test]
-    async fn signer_public_key_serves_tdx_signer_identity() {
-        let rpc = test_rpc();
-        let result = EnclaveApiServer::signer_public_key(&rpc).await.unwrap();
-
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].len(), 65);
-        assert_eq!(result[0][0], 0x04);
+    fn test_rpc() -> TdxProverServer {
+        TdxProverServer::new(test_runtime())
     }
 
     #[tokio::test]
@@ -153,7 +108,7 @@ mod tests {
         assert_eq!(result.len(), 1);
         let attestation = TdxSignerAttestation::decode(&result[0]).unwrap();
         let quote = base_proof_tee_tdx_verifier::TdxQuote::parse(&attestation.quote).unwrap();
-        assert_eq!(attestation.signer_public_key, rpc.runtimes[0].signer_public_key().to_vec());
+        assert_eq!(attestation.signer_public_key, rpc.runtime.signer_public_key().to_vec());
         assert_eq!(
             quote.report_data_suffix(),
             base_proof_tee_tdx_verifier::TdxVerifier::timestamp_report_data_suffix(
@@ -185,41 +140,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn attestation_kind_serves_tdx() {
-        let rpc = test_rpc();
-        let result = EnclaveApiServer::attestation_kind(&rpc).await.unwrap();
-
-        assert_eq!(result, TDX_ATTESTATION_KIND);
-    }
-
-    #[tokio::test]
-    async fn signer_public_key_serves_all_tdx_signer_identities() {
-        let rpc = multi_test_rpc();
-        let result = EnclaveApiServer::signer_public_key(&rpc).await.unwrap();
-
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0], rpc.runtimes[0].signer_public_key().to_vec());
-        assert_eq!(result[1], rpc.runtimes[1].signer_public_key().to_vec());
-        assert_ne!(result[0], result[1]);
-    }
-
-    #[tokio::test]
-    async fn signer_attestation_serves_all_tdx_payloads() {
-        let rpc = multi_test_rpc();
-        let result = EnclaveApiServer::signer_attestation(&rpc, None, None).await.unwrap();
-
-        assert_eq!(result.len(), 2);
-        for (index, payload) in result.iter().enumerate() {
-            let attestation = TdxSignerAttestation::decode(payload).unwrap();
-            assert_eq!(
-                attestation.signer_public_key,
-                rpc.runtimes[index].signer_public_key().to_vec()
-            );
-            assert!(base_proof_tee_tdx_verifier::TdxQuote::parse(&attestation.quote).is_ok());
-        }
-    }
-
-    #[tokio::test]
     async fn local_mock_server_serves_json_rpc_methods() {
         let module = TdxProverServer::new(test_runtime()).into_rpc_module().unwrap();
         let server =
@@ -241,7 +161,7 @@ mod tests {
 
         handle.stop().unwrap();
 
-        assert_eq!(kind, TDX_ATTESTATION_KIND);
+        assert_eq!(kind, "tdx");
         assert_eq!(public_keys.len(), 1);
         assert_eq!(public_keys[0].len(), 65);
         assert_eq!(attestations.len(), 1);

@@ -236,9 +236,8 @@ impl TdxImageHashTool {
 mod tests {
     use std::{net::SocketAddr, sync::Arc};
 
-    use base_proof_primitives::EnclaveApiServer;
     use base_proof_tee_tdx_collateral::TdxAttestationConfig;
-    use base_proof_tee_tdx_prover::{TdxMeasurements, TdxSignerRpc};
+    use base_proof_tee_tdx_prover::{TdxMeasurements, TdxProverServer};
     use base_proof_tee_tdx_runtime::{TdxQuoteProvider, TdxRuntime};
     use jsonrpsee::{RpcModule, server::Server};
 
@@ -246,8 +245,7 @@ mod tests {
 
     async fn spawn_tdx_rpc() -> (url::Url, jsonrpsee::server::ServerHandle) {
         let runtime = Arc::new(TdxRuntime::new(TdxMeasurements));
-        let mut module = RpcModule::new(());
-        module.merge(TdxSignerRpc { runtimes: vec![runtime] }.into_rpc()).unwrap();
+        let module = TdxProverServer::new(runtime).into_rpc_module().unwrap();
         let server =
             Server::builder().build("127.0.0.1:0".parse::<SocketAddr>().unwrap()).await.unwrap();
         let addr = server.local_addr().unwrap();

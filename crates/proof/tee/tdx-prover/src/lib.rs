@@ -20,4 +20,4 @@ mod proof_generator;
 pub use proof_generator::{ProofGenerator, ProofGeneratorError};
 
 mod server;
-pub use server::{TDX_ATTESTATION_KIND, TdxProverServer, TdxSignerRpc};
+pub use server::TdxProverServer;
