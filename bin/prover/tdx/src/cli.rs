@@ -6,8 +6,7 @@ use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_chains::rollup_config;
 use base_proof_host::ProverConfig;
 use base_proof_tee_tdx_prover::{
-    DEFAULT_TDX_WORKER_ID, MeasuredMockTdxQuoteProvider, ProofGenerator, TdxEnclaveService,
-    TdxProverServer,
+    ProofGenerator, TdxEnclaveService, TdxMeasurements, TdxProverServer,
 };
 use base_proof_tee_tdx_runtime::{ConfigfsTdxQuoteProvider, TdxQuoteProvider, TdxRuntime};
 use base_proof_worker::{
@@ -203,7 +202,7 @@ impl ServerArgs {
 
 impl LocalArgs {
     async fn run(self, cancel: CancellationToken) -> eyre::Result<()> {
-        let provider = MeasuredMockTdxQuoteProvider::local_mock();
+        let provider = TdxMeasurements;
         info!(addr = %self.runtime.listen_addr, "starting tdx prover worker (local mock mode)");
         run_worker(self.runtime, self.worker, provider, cancel).await
     }
@@ -230,7 +229,7 @@ async fn run_worker(
         worker.proof_generator_heartbeat_lock_duration_seconds,
     );
     let proof_generator = Arc::new(ProofGenerator::new(enclave, submitter, heartbeat));
-    let worker_id = format!("{DEFAULT_TDX_WORKER_ID}-{}", Uuid::new_v4());
+    let worker_id = format!("tdx-prover-{}", Uuid::new_v4());
     let discovery_config = JobDiscoveryConfig::tee(worker_id.clone(), vec![TeeKind::IntelTdx])
         .with_poll_interval(Duration::from_millis(worker.job_discovery_poll_interval_ms))
         .with_lock_duration_seconds(worker.job_discovery_lock_duration_seconds)

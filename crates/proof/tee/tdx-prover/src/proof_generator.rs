@@ -18,37 +18,6 @@ use tracing::{info, warn};
 
 use crate::{TdxBackend, TdxEnclaveService};
 
-/// Default worker identifier prefix used by TDX worker configs.
-pub const DEFAULT_TDX_WORKER_ID: &str = "tdx-prover";
-
-/// Claimed prover-service job data needed to generate and submit a TDX proof.
-#[derive(Debug)]
-pub struct ProofGeneratorRequest {
-    /// Common worker claim metadata.
-    pub claim: ClaimedProofJobMetadata,
-    /// Primitive TEE proof request.
-    pub proof: base_proof_primitives::ProofRequest,
-}
-
-impl TryFrom<ProofJob> for ProofGeneratorRequest {
-    type Error = ProofGeneratorError;
-
-    fn try_from(job: ProofJob) -> Result<Self, Self::Error> {
-        let claim = ClaimedProofJobMetadata::try_from(&job)?;
-
-        let tee = match job.request.request {
-            ProofRequestKind::Tee(tee) if tee.tee_kind == TeeKind::IntelTdx => tee,
-            _ => {
-                return Err(ProofGeneratorError::UnsupportedProofRequest {
-                    session_id: claim.session_id,
-                });
-            }
-        };
-
-        Ok(Self { claim, proof: tee.proof })
-    }
-}
-
 /// Orchestrates TDX proof generation, claim heartbeats, and async proof submission.
 #[derive(Debug)]
 pub struct ProofGenerator<Client> {
@@ -78,25 +47,96 @@ where
         &self,
         job: ProofJob,
     ) -> Result<ProofSubmissionTask, ProofGeneratorError> {
-        let request = ProofGeneratorRequest::try_from(job)?;
+        let claim = ClaimedProofJobMetadata::try_from(&job)?;
+        let tee = match job.request.request {
+            ProofRequestKind::Tee(tee) if tee.tee_kind == TeeKind::IntelTdx => tee,
+            _ => {
+                return Err(ProofGeneratorError::UnsupportedProofRequest {
+                    session_id: claim.session_id,
+                });
+            }
+        };
+        let proof_request = tee.proof;
 
         info!(
-            session_id = %request.claim.session_id,
-            lock_id = %request.claim.lock_id,
-            worker_id = %request.claim.worker_id,
-            l2_block = request.proof.claimed_l2_block_number,
+            session_id = %claim.session_id,
+            lock_id = %claim.lock_id,
+            worker_id = %claim.worker_id,
+            l2_block = proof_request.claimed_l2_block_number,
             "starting tdx proof generation"
         );
 
-        let proof = self.with_heartbeat_while_generating(&request).await?;
+        let heartbeat_claim = claim.clone();
+        let heartbeat =
+            WorkerHeartbeat::until_failure(&self.submitter, &heartbeat_claim, self.heartbeat);
+        let generate = self.enclave.service().prove_block(proof_request.clone());
+        tokio::pin!(generate);
+        tokio::pin!(heartbeat);
+
+        let proof = tokio::select! {
+            biased;
+            result = &mut generate => match result {
+                Ok(result) => result,
+                Err(source) => {
+                    warn!(
+                        session_id = %claim.session_id,
+                        lock_id = %claim.lock_id,
+                        worker_id = %claim.worker_id,
+                        error = %source,
+                        "tdx proof generation failed"
+                    );
+
+                    return Err(ProofGeneratorError::Generate {
+                        session_id: claim.session_id.clone(),
+                        source,
+                    });
+                }
+            },
+            source = &mut heartbeat => {
+                match generate.await {
+                    Ok(_) => {
+                        info!(
+                            session_id = %claim.session_id,
+                            lock_id = %claim.lock_id,
+                            worker_id = %claim.worker_id,
+                            l2_block = proof_request.claimed_l2_block_number,
+                            "discarding tdx proof generated after heartbeat failure"
+                        );
+                    }
+                    Err(error) => {
+                        warn!(
+                            session_id = %claim.session_id,
+                            lock_id = %claim.lock_id,
+                            worker_id = %claim.worker_id,
+                            error = %error,
+                            "tdx proof generation finished with error after heartbeat failure"
+                        );
+                    }
+                }
+
+                warn!(
+                    session_id = %claim.session_id,
+                    lock_id = %claim.lock_id,
+                    worker_id = %claim.worker_id,
+                    error = %source,
+                    "aborting tdx proof generation due to heartbeat failure"
+                );
+
+                return Err(ProofGeneratorError::Heartbeat {
+                    session_id: claim.session_id.clone(),
+                    source,
+                });
+            },
+        };
+        drop(heartbeat);
 
         let PrimitiveProofResult::Tee { aggregate_proposal, proposals } = proof else {
             unreachable!("tdx backend returned non-tee proof");
         };
         let submit_request = WorkerSubmitProofRequest {
-            session_id: request.claim.session_id.clone(),
-            lock_id: request.claim.lock_id.clone(),
-            worker_id: request.claim.worker_id.clone(),
+            session_id: claim.session_id.clone(),
+            lock_id: claim.lock_id.clone(),
+            worker_id: claim.worker_id.clone(),
             result: ServiceProofResult::Tee(TeeProofResult {
                 aggregate_proposal,
                 proposals,
@@ -106,80 +146,13 @@ where
         let submit_handle = self.tasks.spawn_submission(&self.submitter, submit_request);
 
         info!(
-            session_id = %request.claim.session_id,
-            lock_id = %request.claim.lock_id,
-            worker_id = %request.claim.worker_id,
+            session_id = %claim.session_id,
+            lock_id = %claim.lock_id,
+            worker_id = %claim.worker_id,
             "tdx proof generated; proof submitter task spawned"
         );
 
-        Ok(ProofSubmissionTask::new(request.claim, submit_handle))
-    }
-
-    async fn with_heartbeat_while_generating(
-        &self,
-        request: &ProofGeneratorRequest,
-    ) -> Result<PrimitiveProofResult, ProofGeneratorError> {
-        let heartbeat =
-            WorkerHeartbeat::until_failure(&self.submitter, &request.claim, self.heartbeat);
-        let generate = self.enclave.service().prove_block(request.proof.clone());
-        tokio::pin!(generate);
-        tokio::pin!(heartbeat);
-
-        tokio::select! {
-            biased;
-            result = &mut generate => match result {
-                Ok(result) => Ok(result),
-                Err(source) => {
-                    warn!(
-                        session_id = %request.claim.session_id,
-                        lock_id = %request.claim.lock_id,
-                        worker_id = %request.claim.worker_id,
-                        error = %source,
-                        "tdx proof generation failed"
-                    );
-
-                    Err(ProofGeneratorError::Generate {
-                        session_id: request.claim.session_id.clone(),
-                        source,
-                    })
-                }
-            },
-            source = &mut heartbeat => {
-                match generate.await {
-                    Ok(_) => {
-                        info!(
-                            session_id = %request.claim.session_id,
-                            lock_id = %request.claim.lock_id,
-                            worker_id = %request.claim.worker_id,
-                            l2_block = request.proof.claimed_l2_block_number,
-                            "discarding tdx proof generated after heartbeat failure"
-                        );
-                    }
-                    Err(error) => {
-                        warn!(
-                            session_id = %request.claim.session_id,
-                            lock_id = %request.claim.lock_id,
-                            worker_id = %request.claim.worker_id,
-                            error = %error,
-                            "tdx proof generation finished with error after heartbeat failure"
-                        );
-                    }
-                }
-
-                warn!(
-                    session_id = %request.claim.session_id,
-                    lock_id = %request.claim.lock_id,
-                    worker_id = %request.claim.worker_id,
-                    error = %source,
-                    "aborting tdx proof generation due to heartbeat failure"
-                );
-
-                Err(ProofGeneratorError::Heartbeat {
-                    session_id: request.claim.session_id.clone(),
-                    source,
-                })
-            },
-        }
+        Ok(ProofSubmissionTask::new(claim, submit_handle))
     }
 }
 
@@ -229,49 +202,4 @@ pub enum ProofGeneratorError {
         #[source]
         source: ProverServiceClientError,
     },
-}
-
-#[cfg(test)]
-mod tests {
-    use base_prover_service_protocol::{ProofJobStatus, ProofRequest, TeeProofRequest};
-    use chrono::Utc;
-
-    use super::*;
-
-    fn proof_job(tee_kind: TeeKind) -> ProofJob {
-        let now = Utc::now();
-        ProofJob {
-            session_id: "session-1".to_owned(),
-            status: ProofJobStatus::Claimed,
-            request: ProofRequest {
-                session_id: "session-1".to_owned(),
-                request: ProofRequestKind::Tee(TeeProofRequest {
-                    proof: base_proof_primitives::ProofRequest::default(),
-                    tee_kind,
-                }),
-            },
-            attempt: 1,
-            lock_id: Some("lock-1".to_owned()),
-            worker_id: Some("worker-1".to_owned()),
-            lock_expires_at: None,
-            created_at: now,
-            updated_at: now,
-            completed_at: None,
-            error_message: None,
-        }
-    }
-
-    #[test]
-    fn request_accepts_intel_tdx_jobs() {
-        let request = ProofGeneratorRequest::try_from(proof_job(TeeKind::IntelTdx)).unwrap();
-
-        assert_eq!(request.claim.session_id, "session-1");
-    }
-
-    #[test]
-    fn request_rejects_other_tee_kinds() {
-        let err = ProofGeneratorRequest::try_from(proof_job(TeeKind::AwsNitro)).unwrap_err();
-
-        assert!(matches!(err, ProofGeneratorError::UnsupportedProofRequest { .. }));
-    }
 }

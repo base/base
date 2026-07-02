@@ -43,7 +43,6 @@ thiserror.workspace = true
 jsonrpsee = { workspace = true, features = ["server", "macros"] }
 
 [dev-dependencies]
-chrono.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }
 
