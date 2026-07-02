@@ -5,7 +5,7 @@ use std::time::Duration;
 use alloy_primitives::{Address, B256};
 use base_proof_tee_tdx_collateral::TdxAttestationConfig;
 use base_proof_tee_tdx_verifier::TDXTcbStatus;
-use clap::{Parser, ValueEnum};
+use clap::{Args, Parser, ValueEnum};
 use eyre::Result;
 use url::Url;
 
@@ -57,7 +57,7 @@ impl Cli {
 }
 
 /// Intel PCS collateral and verifier policy arguments.
-#[derive(Debug, Clone, Parser)]
+#[derive(Debug, Args)]
 pub struct CollateralArgs {
     /// Intel TDX PCS API base URL.
     #[arg(long, env = "TDX_PCS_TDX_BASE_URL")]
@@ -105,7 +105,7 @@ impl CollateralArgs {
 }
 
 /// On-chain registry comparison arguments.
-#[derive(Debug, Clone, Parser)]
+#[derive(Debug, Args)]
 pub struct RegistryArgs {
     /// L1 RPC URL used to query `TEEProverRegistry`.
     #[arg(long, env = "L1_RPC_URL", requires = "registry_address")]
@@ -127,7 +127,7 @@ impl RegistryArgs {
 }
 
 /// CLI representation of contract TDX TCB statuses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum TdxTcbStatusArg {
     /// Platform TCB is up to date.
     UpToDate,
@@ -180,10 +180,7 @@ mod tests {
         let config = cli.collateral.config();
 
         assert_eq!(config.trusted_root_ca_hash, DEFAULT_TDX_TRUSTED_ROOT_CA_HASH);
-        assert_eq!(
-            config.allowed_tcb_statuses.iter().map(|status| *status as u8).collect::<Vec<_>>(),
-            vec![1]
-        );
+        assert_eq!(config.allowed_tcb_statuses, vec![TDXTcbStatus::UpToDate]);
     }
 
     #[test]
@@ -218,8 +215,8 @@ mod tests {
         let config = cli.collateral.config();
 
         assert_eq!(
-            config.allowed_tcb_statuses.iter().map(|status| *status as u8).collect::<Vec<_>>(),
-            vec![TDXTcbStatus::UpToDate as u8, TDXTcbStatus::SwHardeningNeeded as u8]
+            config.allowed_tcb_statuses,
+            vec![TDXTcbStatus::UpToDate, TDXTcbStatus::SwHardeningNeeded]
         );
     }
 }
