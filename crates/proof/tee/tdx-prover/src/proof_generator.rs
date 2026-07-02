@@ -4,9 +4,8 @@ use async_trait::async_trait;
 use base_proof_host::ProverError;
 use base_proof_primitives::ProofResult as PrimitiveProofResult;
 use base_proof_worker::{
-    ClaimedProofJobHandler, ClaimedProofJobMetadata, ClaimedProofJobMetadataError,
-    ProofSubmissionTask, ProofSubmitter, ProofTaskController, WorkerHeartbeat,
-    WorkerHeartbeatConfig,
+    ClaimedProofJobHandler, ClaimedProofJobMetadata, ClaimedProofJobMetadataError, ProofSubmitter,
+    ProofTaskController, WorkerHeartbeat, WorkerHeartbeatConfig,
 };
 use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
 use base_prover_service_protocol::{
@@ -38,15 +37,14 @@ impl<Client> ProofGenerator<Client> {
     }
 }
 
-impl<Client> ProofGenerator<Client>
+#[async_trait]
+impl<Client> ClaimedProofJobHandler for ProofGenerator<Client>
 where
     Client: Clone + ProverWorkerProvider + 'static,
 {
-    /// Generate a proof for a claimed worker job and spawn proof submission.
-    pub async fn generate_and_submit(
-        &self,
-        job: ProofJob,
-    ) -> Result<ProofSubmissionTask, ProofGeneratorError> {
+    type Error = ProofGeneratorError;
+
+    async fn handle_claimed_job(&self, job: ProofJob) -> Result<(), Self::Error> {
         let claim = ClaimedProofJobMetadata::try_from(&job)?;
         let tee = match job.request.request {
             ProofRequestKind::Tee(tee) if tee.tee_kind == TeeKind::IntelTdx => tee,
@@ -57,19 +55,18 @@ where
             }
         };
         let proof_request = tee.proof;
+        let l2_block = proof_request.claimed_l2_block_number;
 
         info!(
             session_id = %claim.session_id,
             lock_id = %claim.lock_id,
             worker_id = %claim.worker_id,
-            l2_block = proof_request.claimed_l2_block_number,
+            l2_block,
             "starting tdx proof generation"
         );
 
-        let heartbeat_claim = claim.clone();
-        let heartbeat =
-            WorkerHeartbeat::until_failure(&self.submitter, &heartbeat_claim, self.heartbeat);
-        let generate = self.enclave.service().prove_block(proof_request.clone());
+        let heartbeat = WorkerHeartbeat::until_failure(&self.submitter, &claim, self.heartbeat);
+        let generate = self.enclave.service().prove_block(proof_request);
         tokio::pin!(generate);
         tokio::pin!(heartbeat);
 
@@ -93,27 +90,6 @@ where
                 }
             },
             source = &mut heartbeat => {
-                match generate.await {
-                    Ok(_) => {
-                        info!(
-                            session_id = %claim.session_id,
-                            lock_id = %claim.lock_id,
-                            worker_id = %claim.worker_id,
-                            l2_block = proof_request.claimed_l2_block_number,
-                            "discarding tdx proof generated after heartbeat failure"
-                        );
-                    }
-                    Err(error) => {
-                        warn!(
-                            session_id = %claim.session_id,
-                            lock_id = %claim.lock_id,
-                            worker_id = %claim.worker_id,
-                            error = %error,
-                            "tdx proof generation finished with error after heartbeat failure"
-                        );
-                    }
-                }
-
                 warn!(
                     session_id = %claim.session_id,
                     lock_id = %claim.lock_id,
@@ -143,7 +119,7 @@ where
                 tee_kind: TeeKind::IntelTdx,
             }),
         };
-        let submit_handle = self.tasks.spawn_submission(&self.submitter, submit_request);
+        drop(self.tasks.spawn_submission(&self.submitter, submit_request));
 
         info!(
             session_id = %claim.session_id,
@@ -152,19 +128,7 @@ where
             "tdx proof generated; proof submitter task spawned"
         );
 
-        Ok(ProofSubmissionTask::new(claim, submit_handle))
-    }
-}
-
-#[async_trait]
-impl<Client> ClaimedProofJobHandler for ProofGenerator<Client>
-where
-    Client: Clone + ProverWorkerProvider + 'static,
-{
-    type Error = ProofGeneratorError;
-
-    async fn handle_claimed_job(&self, job: ProofJob) -> Result<(), Self::Error> {
-        Self::generate_and_submit(self, job).await.map(drop)
+        Ok(())
     }
 
     fn shutdown(&self) {
