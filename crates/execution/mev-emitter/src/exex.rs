@@ -236,13 +236,26 @@ fn record_pool_slot_event(
     let Some(pool) = baseline_pool(runtime, &event.pool) else {
         return;
     };
-    let delta = crate::arb_dryrun::PoolStateDelta::from_slots(
+    let mut delta = crate::arb_dryrun::PoolStateDelta::from_slots(
         pool,
         slots,
         crate::arb_dryrun::PoolOverlaySource::SlotDiff,
         Some(block_number),
         Some(block_number),
     );
+    if let Some(existing) = dirty_state.deltas.get(&event.pool) {
+        if existing.is_live_read_complete() && !delta.is_live_read_complete() {
+            let mut preserved = existing.clone();
+            for caveat in &delta.caveats {
+                preserved.add_caveat(caveat);
+            }
+            dirty_state.deltas.insert(event.pool, preserved);
+            return;
+        }
+        for caveat in &existing.caveats {
+            delta.add_caveat(caveat);
+        }
+    }
     dirty_state.deltas.insert(event.pool, delta);
 }
 
@@ -360,6 +373,10 @@ fn supplement_committed_fallback<DB: Database>(
         }
         if failed {
             continue;
+        }
+        let raw_slots = dirty_state.raw_slots.entry(pool_addr).or_default();
+        for (slot, value) in &slots {
+            raw_slots.insert(*slot, *value);
         }
         let mut delta = crate::arb_dryrun::PoolStateDelta::from_slots(
             pool,
@@ -1346,6 +1363,29 @@ mod arb_overlay_tests {
         assert_eq!(delta.tick, Some(2));
         assert_eq!(delta.liquidity, Some(20));
         assert!(delta.caveats.iter().any(|c| c == "live-overlay-applied"));
+
+        let next_slot0 = pack_slot0_word(300, 3);
+        let next_event = PoolSlotDiffEvent {
+            protocol_version: crate::PROTOCOL_VERSION,
+            tx_hash: B256::from([0x55; 32]),
+            block_number: 42,
+            flashblock_index: 4,
+            payload_id: "payload".to_string(),
+            pool: pool.pool,
+            slot: slot0_key,
+            value: next_slot0,
+        };
+        record_pool_slot_event(&runtime, &mut dirty_state, &next_event, 42);
+        supplement_committed_fallback(&mut db, &runtime, &mut dirty_state, 42);
+
+        assert_eq!(dirty_state.fallback_attempted, 1);
+        assert_eq!(db.storage_calls, 2);
+        let delta = dirty_state.deltas.get(&pool.pool).expect("preserved complete delta");
+        assert!(delta.is_live_read_complete());
+        assert_eq!(delta.sqrt_price_x96, Some(300));
+        assert_eq!(delta.tick, Some(3));
+        assert_eq!(delta.liquidity, Some(20));
+        assert!(!delta.caveats.iter().any(|c| c == "partial-live-overlay"));
     }
 
     #[test]
