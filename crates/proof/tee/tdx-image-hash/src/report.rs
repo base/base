@@ -28,10 +28,6 @@ pub struct TdxMeasurementsReport {
 /// Local quote verification result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QuoteVerificationReport {
-    /// Journal image hash emitted by local TDX verification.
-    pub journal_image_hash: B256,
-    /// Journal MRTD hash emitted by local TDX verification.
-    pub journal_mr_td_hash: B256,
     /// Earliest accepted collateral expiration in seconds since Unix epoch.
     pub collateral_expiration: u64,
 }
@@ -86,8 +82,6 @@ impl fmt::Display for TdxImageHashReport {
 
         if let Some(verification) = &self.quote_verification {
             writeln!(f, "Quote verification: success")?;
-            writeln!(f, "Journal imageHash: {}", verification.journal_image_hash)?;
-            writeln!(f, "Journal MRTD hash: {}", verification.journal_mr_td_hash)?;
             writeln!(f, "Collateral expiration: {}", verification.collateral_expiration)?;
         } else {
             writeln!(f, "Quote verification: not requested")?;

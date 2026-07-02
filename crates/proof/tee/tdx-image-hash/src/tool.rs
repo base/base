@@ -101,11 +101,6 @@ impl TdxImageHashTool {
             .build(config.endpoint.as_str())
             .wrap_err_with(|| format!("failed to build JSON-RPC client for {}", config.endpoint))?;
 
-        let kind = client.attestation_kind().await.wrap_err("failed to query attestation kind")?;
-        if kind != "tdx" {
-            bail!("endpoint {} returned {kind} attestations, expected TDX", config.endpoint);
-        }
-
         let attestations = client
             .signer_attestation(None, None)
             .await
@@ -155,11 +150,7 @@ impl TdxImageHashTool {
             bail!("TDX quote signer mismatch: expected {signer_address}, got {}", journal.signer);
         }
 
-        Ok(QuoteVerificationReport {
-            journal_image_hash: journal.imageHash,
-            journal_mr_td_hash: journal.mrTdHash,
-            collateral_expiration: journal.collateralExpiration,
-        })
+        Ok(QuoteVerificationReport { collateral_expiration: journal.collateralExpiration })
     }
 
     async fn query_registry(
@@ -211,16 +202,6 @@ impl TdxImageHashTool {
             );
         }
 
-        let expected_valid = registry_report.is_registered_signer
-            && registry_report.expected_image_hash == image_hash;
-        if registry_report.is_valid_signer != expected_valid {
-            bail!(
-                "isValidSigner returned {}, expected {} from registration and expected image hash state",
-                registry_report.is_valid_signer,
-                expected_valid
-            );
-        }
-
         Ok(())
     }
 }
@@ -250,19 +231,6 @@ mod tests {
         spawn_rpc(module).await
     }
 
-    async fn spawn_kind_rpc(kind: &'static str) -> (url::Url, jsonrpsee::server::ServerHandle) {
-        let mut module = RpcModule::new(());
-        module
-            .register_async_method(
-                "enclave_attestationKind",
-                move |_params, _ctx, _ext| async move {
-                    Ok::<_, jsonrpsee::types::ErrorObjectOwned>(kind)
-                },
-            )
-            .unwrap();
-        spawn_rpc(module).await
-    }
-
     #[tokio::test]
     async fn queries_mock_tdx_prover_and_computes_image_hash() {
         let (endpoint, handle) = spawn_tdx_rpc().await;
@@ -284,23 +252,6 @@ mod tests {
             report.measurements.report_data_suffix,
             TdxVerifier::timestamp_report_data_suffix(report.measurements.quote_timestamp_millis)
         );
-    }
-
-    #[tokio::test]
-    async fn rejects_non_tdx_attestation_kind() {
-        let (endpoint, handle) = spawn_kind_rpc("nitro").await;
-        let error = TdxImageHashTool::run(TdxImageHashConfig {
-            endpoint,
-            signer_index: 0,
-            verify_quote: false,
-            attestation: TdxAttestationConfig::intel_pcs(),
-            registry: None,
-        })
-        .await
-        .unwrap_err();
-
-        handle.stop().unwrap();
-        assert!(error.to_string().contains("expected TDX"));
     }
 
     #[test]
