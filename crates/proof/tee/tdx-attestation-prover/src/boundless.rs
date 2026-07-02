@@ -24,7 +24,7 @@ use url::Url;
 use crate::{ProverError, RecoveredProofPolicy, Result, TdxAttestationProverInput};
 
 /// Concrete Boundless client type used by the TDX prover.
-pub type BoundlessClient = Client<
+type BoundlessClient = Client<
     DynProvider,
     NotProvided,
     boundless_market::StandardDownloader,
@@ -86,18 +86,13 @@ impl BoundlessProver {
     }
 
     /// Checks whether a Boundless error is the `RequestIsNotLocked` race.
-    pub fn is_request_not_locked_error(error: &dyn std::error::Error) -> bool {
+    fn is_request_not_locked_error(error: &dyn std::error::Error) -> bool {
         const NEEDLE: &str = "requestisnotlocked";
-        let display = format!("{error}");
-        if display.to_ascii_lowercase().contains(NEEDLE) {
-            return true;
-        }
-        let debug = format!("{error:?}");
-        debug.to_ascii_lowercase().contains(NEEDLE)
+        format!("{error} {error:?}").to_ascii_lowercase().contains(NEEDLE)
     }
 
     /// Builds the Boundless client and request params for a TDX verifier input.
-    pub async fn build_client_and_params(
+    async fn build_client_and_params(
         &self,
         input: &TdxAttestationProverInput,
     ) -> Result<(BoundlessClient, RequestParams)> {
@@ -154,7 +149,7 @@ impl BoundlessProver {
     }
 
     /// Computes the proof fulfillment expiry used while polling Boundless.
-    pub fn effective_expiry(&self, on_chain_expiry: Option<u64>) -> u64 {
+    fn effective_expiry(&self, on_chain_expiry: Option<u64>) -> u64 {
         let timeout_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -164,7 +159,7 @@ impl BoundlessProver {
     }
 
     /// Fetches a fulfilled set-inclusion receipt and encodes it for `TDXVerifier`.
-    pub async fn fetch_and_encode_receipt(
+    async fn fetch_and_encode_receipt(
         &self,
         client: &BoundlessClient,
         request_id: alloy_primitives::U256,
@@ -203,7 +198,7 @@ impl BoundlessProver {
     }
 
     /// Waits for fulfillment and fetches the encoded receipt.
-    pub async fn wait_and_fetch(
+    async fn wait_and_fetch(
         &self,
         client: &BoundlessClient,
         request_id: alloy_primitives::U256,
@@ -246,7 +241,7 @@ impl BoundlessProver {
     }
 
     /// Submits a fresh proof request and waits for fulfillment.
-    pub async fn submit_and_wait(
+    async fn submit_and_wait(
         &self,
         client: &BoundlessClient,
         params: RequestParams,
@@ -269,17 +264,8 @@ impl BoundlessProver {
         self.wait_and_fetch(client, request_id, self.effective_expiry(Some(expires_at))).await
     }
 
-    /// Generates a TDX RISC Zero proof with a fresh Boundless request ID.
-    pub async fn generate_proof(
-        &self,
-        input: &TdxAttestationProverInput,
-    ) -> Result<TeeAttestationProof> {
-        let (client, params) = self.build_client_and_params(input).await?;
-        self.submit_and_wait(&client, params).await
-    }
-
     /// Returns true when a recovered proof targets the signer and is fresh enough.
-    pub fn recovered_proof_is_usable(
+    fn recovered_proof_is_usable(
         &self,
         proof: &TeeAttestationProof,
         signer_address: Address,
@@ -345,56 +331,44 @@ impl TeeAttestationProofProvider for BoundlessProver {
                 "probing deterministic TDX request-ID slot"
             );
 
-            let status = match client.boundless_market.get_status(request_id_u256, None).await {
-                Ok(status) => status,
-                Err(e) => {
-                    if Self::is_request_not_locked_error(&e) && !recovery_is_blocked {
-                        let proof =
-                            self.wait_and_fetch(&client, request_id_u256, loop_expiry).await;
-                        if let Ok(proof) = proof {
-                            if self.recovered_proof_is_usable(&proof, signer_address) {
-                                return Ok(proof);
-                            }
-                            continue;
-                        }
-                    }
-                    warn!(
-                        error = %e,
-                        error_debug = ?e,
-                        attempt,
-                        request_id = %request_id_u256,
-                        target_signer = %signer_address,
-                        "failed to query TDX request status during recovery"
-                    );
-                    break;
+            let proof = match client.boundless_market.get_status(request_id_u256, None).await {
+                Ok(RequestStatus::Locked) if !recovery_is_blocked => {
+                    self.wait_and_fetch(&client, request_id_u256, loop_expiry).await
                 }
-            };
-
-            match status {
-                status @ (RequestStatus::Locked | RequestStatus::Fulfilled) => {
-                    if recovery_is_blocked {
-                        continue;
-                    }
-                    let proof = match status {
-                        RequestStatus::Locked => {
-                            self.wait_and_fetch(&client, request_id_u256, loop_expiry).await
-                        }
-                        _ => self.fetch_and_encode_receipt(&client, request_id_u256).await,
-                    };
-                    if let Ok(proof) = proof {
-                        if self.recovered_proof_is_usable(&proof, signer_address) {
-                            return Ok(proof);
-                        }
-                        continue;
-                    }
-                    break;
+                Ok(RequestStatus::Fulfilled) if !recovery_is_blocked => {
+                    self.fetch_and_encode_receipt(&client, request_id_u256).await
                 }
-                RequestStatus::Expired => continue,
-                RequestStatus::Unknown => {
+                Ok(RequestStatus::Locked | RequestStatus::Fulfilled | RequestStatus::Expired) => {
+                    continue;
+                }
+                Ok(RequestStatus::Unknown) => {
                     if first_unknown_attempt.is_none() {
                         first_unknown_attempt = Some(attempt);
                     }
+                    continue;
                 }
+                Err(e) => {
+                    if Self::is_request_not_locked_error(&e) && !recovery_is_blocked {
+                        self.wait_and_fetch(&client, request_id_u256, loop_expiry).await
+                    } else {
+                        warn!(
+                            error = %e,
+                            error_debug = ?e,
+                            attempt,
+                            request_id = %request_id_u256,
+                            target_signer = %signer_address,
+                            "failed to query TDX request status during recovery"
+                        );
+                        break;
+                    }
+                }
+            };
+
+            let Ok(proof) = proof else {
+                break;
+            };
+            if self.recovered_proof_is_usable(&proof, signer_address) {
+                return Ok(proof);
             }
         }
 
@@ -481,14 +455,8 @@ mod tests {
     #[rstest]
     fn derive_index_matches_manual_keccak() {
         let signer = Address::repeat_byte(0xAA);
-        let attempt = 7_u32;
-        let mut buf = [0u8; 24];
-        buf[..20].copy_from_slice(signer.as_slice());
-        buf[20..].copy_from_slice(&attempt.to_be_bytes());
-        let hash = keccak256(buf);
-        let expected = u32::from_be_bytes([hash[0], hash[1], hash[2], hash[3]]);
 
-        assert_eq!(BoundlessProver::derive_request_index(signer, attempt), expected);
+        assert_eq!(BoundlessProver::derive_request_index(signer, 7), 0xF982_1D96);
     }
 
     #[rstest]

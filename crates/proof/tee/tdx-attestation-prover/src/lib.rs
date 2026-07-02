@@ -24,4 +24,4 @@ pub use recovery::RecoveredProofPolicy;
 #[cfg(feature = "prove")]
 mod boundless;
 #[cfg(feature = "prove")]
-pub use boundless::{BoundlessClient, BoundlessProver};
+pub use boundless::BoundlessProver;
