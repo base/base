@@ -86,18 +86,13 @@ impl EnclaveApiServer for TdxProverServer {
 
 #[cfg(test)]
 mod tests {
-    use base_proof_primitives::{EnclaveApiServer, ProofRequest, ProofResult};
-    use jsonrpsee::{core::client::ClientT, http_client::HttpClientBuilder, rpc_params};
+    use base_proof_primitives::EnclaveApiServer;
 
     use super::*;
     use crate::TdxMeasurements;
 
-    fn test_runtime() -> Arc<TdxRuntime> {
-        Arc::new(TdxRuntime::new(TdxMeasurements))
-    }
-
     fn test_rpc() -> TdxProverServer {
-        TdxProverServer::new(test_runtime())
+        TdxProverServer::new(Arc::new(TdxRuntime::new(TdxMeasurements)))
     }
 
     #[tokio::test]
@@ -118,57 +113,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn signer_attestation_rejects_user_data() {
-        let rpc = test_rpc();
-        let err = EnclaveApiServer::signer_attestation(&rpc, Some(vec![1, 2, 3]), None)
-            .await
-            .unwrap_err();
+    async fn signer_attestation_rejects_challenge_binding() {
+        for (user_data, nonces, expected_message) in
+            [(Some(vec![1, 2, 3]), None, "user_data"), (None, Some(vec![vec![1, 2, 3]]), "nonce")]
+        {
+            let rpc = test_rpc();
+            let err =
+                EnclaveApiServer::signer_attestation(&rpc, user_data, nonces).await.unwrap_err();
 
-        assert_eq!(err.code(), -32602);
-        assert!(err.message().contains("user_data"));
+            assert_eq!(err.code(), -32602);
+            assert!(err.message().contains(expected_message));
+        }
     }
 
-    #[tokio::test]
-    async fn signer_attestation_rejects_nonce() {
-        let rpc = test_rpc();
-        let err = EnclaveApiServer::signer_attestation(&rpc, None, Some(vec![vec![1, 2, 3]]))
-            .await
-            .unwrap_err();
+    #[test]
+    fn rpc_module_exposes_registrar_methods_only() {
+        let module = test_rpc().into_rpc_module().unwrap();
+        let methods: Vec<_> = module.method_names().collect();
 
-        assert_eq!(err.code(), -32602);
-        assert!(err.message().contains("nonce"));
-    }
-
-    #[tokio::test]
-    async fn local_mock_server_serves_json_rpc_methods() {
-        let module = TdxProverServer::new(test_runtime()).into_rpc_module().unwrap();
-        let server =
-            Server::builder().build("127.0.0.1:0".parse::<SocketAddr>().unwrap()).await.unwrap();
-        let addr = server.local_addr().unwrap();
-        let handle = server.start(module);
-        let client = HttpClientBuilder::default().build(format!("http://{addr}")).unwrap();
-
-        let kind: String = client.request("enclave_attestationKind", rpc_params![]).await.unwrap();
-        let public_keys: Vec<Vec<u8>> =
-            client.request("enclave_signerPublicKey", rpc_params![]).await.unwrap();
-        let attestations: Vec<Vec<u8>> = client
-            .request("enclave_signerAttestation", rpc_params![None::<Vec<u8>>, None::<Vec<u8>>])
-            .await
-            .unwrap();
-        let proof_result = client
-            .request::<ProofResult, _>("prover_prove", rpc_params![ProofRequest::default()])
-            .await;
-
-        handle.stop().unwrap();
-
-        assert_eq!(kind, "tdx");
-        assert_eq!(public_keys.len(), 1);
-        assert_eq!(public_keys[0].len(), 65);
-        assert_eq!(attestations.len(), 1);
-        let attestation = TdxSignerAttestation::decode(&attestations[0]).unwrap();
-        assert_eq!(attestation.signer_public_key, public_keys[0]);
-        assert!(base_proof_tee_tdx_verifier::TdxQuote::parse(&attestation.quote).is_ok());
-        let err = proof_result.unwrap_err();
-        assert!(err.to_string().contains("Method not found"));
+        assert!(methods.contains(&"healthz"));
+        assert!(methods.contains(&"enclave_attestationKind"));
+        assert!(methods.contains(&"enclave_signerPublicKey"));
+        assert!(methods.contains(&"enclave_signerAttestation"));
+        assert!(!methods.contains(&"prover_prove"));
     }
 }

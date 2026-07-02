@@ -44,7 +44,6 @@ jsonrpsee = { workspace = true, features = ["server", "macros"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
-jsonrpsee = { workspace = true, features = ["http-client"] }
 
 [features]
 test-utils = []
