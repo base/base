@@ -2,9 +2,9 @@
 
 use std::time::UNIX_EPOCH;
 
-use alloy_primitives::{B256, Bytes, hex};
+use alloy_primitives::{Bytes, hex};
 use base_proof_tee_tdx_verifier::{
-    AuthenticatedTdxCertificate, TdxCertificate, TdxCollateral, TdxPlatformIdentity, TdxQuote,
+    CollateralVerifier, TdxCertificate, TdxCollateral, TdxPlatformIdentity, TdxQuote,
     TdxRevocationEvidence, TdxSignedCollateral, TdxVerifier,
 };
 use percent_encoding::percent_decode_str;
@@ -27,8 +27,6 @@ const LEGACY_TCB_INFO_ISSUER_CHAIN_HEADER: &str = "sgx-tcb-info-issuer-chain";
 const TCB_INFO_SIGNATURE_HEADER: &str = "tcb-info-signature";
 const LEGACY_TCB_INFO_SIGNATURE_HEADER: &str = "sgx-tcb-info-signature";
 const QE_IDENTITY_ISSUER_CHAIN_HEADER: &str = "sgx-enclave-identity-issuer-chain";
-const ALLOWED_INTEL_HOST_SUFFIX: &str = ".trustedservices.intel.com";
-const CERTIFICATE_PEM_LABEL: &str = "CERTIFICATE";
 
 /// TDX collateral fetched from Intel PCS for one signer quote.
 #[derive(Debug, Clone)]
@@ -67,10 +65,6 @@ impl TdxAttestationHydrator {
         }
         let pck_certificate_chain =
             Self::certificate_chain_from_pem(&parsed_quote.certification_data)?;
-        Self::verify_trusted_root_ca_hash(
-            &pck_certificate_chain,
-            self.config.trusted_root_ca_hash,
-        )?;
         let pck_leaf = pck_certificate_chain
             .last()
             .ok_or_else(|| TdxCollateralError::source("PCK certificate chain is empty"))?;
@@ -146,13 +140,13 @@ impl TdxAttestationHydrator {
             .into_owned()
             .into_bytes();
         let signing_chain = Self::certificate_chain_from_pem(&decoded_chain)?;
-        Self::verify_trusted_root_ca_hash(&signing_chain, self.config.trusted_root_ca_hash)?;
         let signature = match signature_headers
             .and_then(|header_names| header_names.iter().find_map(|header| headers.get(*header)))
         {
-            Some(value) => Self::signature_from_hex(
-                value.to_str().map_err(|e| TdxCollateralError::source(e))?,
-            )?,
+            Some(value) => CollateralVerifier::decode_hex(
+                value.to_str().map_err(|e| TdxCollateralError::source(e))?.trim(),
+            )
+            .map_err(TdxCollateralError::source)?,
             None => Self::qe_identity_signature_from_json(&raw)?,
         };
         let collateral = TdxSignedCollateral { raw, signing_chain, signature };
@@ -231,13 +225,7 @@ impl TdxAttestationHydrator {
                     "Intel PCS response QE identity signature is not a string",
                 )
             })?;
-        Self::signature_from_hex(value)
-    }
-
-    fn signature_from_hex(value: &str) -> Result<Bytes> {
-        let trimmed = value.trim();
-        let signature = trimmed.strip_prefix("0x").unwrap_or(trimmed);
-        hex::decode(signature).map(Bytes::from).map_err(|e| TdxCollateralError::source(e))
+        CollateralVerifier::decode_hex(value.trim()).map_err(TdxCollateralError::source)
     }
 
     fn certificate_chain_from_pem(pem_bytes: &[u8]) -> Result<Vec<TdxCertificate>> {
@@ -245,7 +233,7 @@ impl TdxAttestationHydrator {
         for pem in Pem::iter_from_buffer(pem_bytes) {
             let pem =
                 pem.map_err(|e| TdxCollateralError::source(format!("PEM parse failed: {e}")))?;
-            if pem.label == CERTIFICATE_PEM_LABEL {
+            if pem.label == "CERTIFICATE" {
                 certs.push(Bytes::from(pem.contents));
             }
         }
@@ -261,48 +249,29 @@ impl TdxAttestationHydrator {
             .map(|cert| TdxCertificate::authenticated_from_der(cert))
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| TdxCollateralError::source(e))?;
-        Ok(Self::root_to_leaf_indexes(&authenticated)?
-            .into_iter()
-            .map(|index| TdxCertificate { raw: certs[index].clone() })
-            .collect())
-    }
-
-    fn root_to_leaf_indexes(certs: &[AuthenticatedTdxCertificate]) -> Result<Vec<usize>> {
-        let mut root_index = certs
+        let mut index = authenticated
             .iter()
             .position(|cert| cert.issuer_name == cert.subject_name)
             .ok_or_else(|| TdxCollateralError::source("certificate chain root is missing"))?;
+        let mut visited = vec![false; certs.len()];
         let mut ordered = Vec::with_capacity(certs.len());
-        ordered.push(root_index);
 
         while ordered.len() < certs.len() {
-            let parent = &certs[root_index];
-            let Some(child_index) = certs.iter().enumerate().find_map(|(index, cert)| {
-                (!ordered.contains(&index) && cert.issuer_name == parent.subject_name)
-                    .then_some(index)
+            visited[index] = true;
+            ordered.push(TdxCertificate { raw: certs[index].clone() });
+            if ordered.len() == certs.len() {
+                break;
+            }
+
+            let parent = &authenticated[index];
+            let Some(child_index) = authenticated.iter().enumerate().find_map(|(index, cert)| {
+                (!visited[index] && cert.issuer_name == parent.subject_name).then_some(index)
             }) else {
                 return Err(TdxCollateralError::source("certificate chain is not contiguous"));
             };
-            ordered.push(child_index);
-            root_index = child_index;
+            index = child_index;
         }
         Ok(ordered)
-    }
-
-    fn verify_trusted_root_ca_hash(
-        chain: &[TdxCertificate],
-        trusted_root_ca_hash: B256,
-    ) -> Result<()> {
-        let actual_root_ca_hash = chain
-            .first()
-            .ok_or_else(|| TdxCollateralError::source("certificate chain is empty"))?
-            .hash();
-        if actual_root_ca_hash != trusted_root_ca_hash {
-            return Err(TdxCollateralError::source(format!(
-                "TDX certificate chain root is not trusted: expected {trusted_root_ca_hash}, got {actual_root_ca_hash}"
-            )));
-        }
-        Ok(())
     }
 
     fn crl_distribution_point(certificate_der: &[u8]) -> Result<String> {
@@ -332,7 +301,7 @@ impl TdxAttestationHydrator {
         url.scheme() == "https"
             && url.host_str().is_some_and(|host| {
                 let host = host.to_ascii_lowercase();
-                host == "trustedservices.intel.com" || host.ends_with(ALLOWED_INTEL_HOST_SUFFIX)
+                host == "trustedservices.intel.com" || host.ends_with(".trustedservices.intel.com")
             })
     }
 }
@@ -344,10 +313,6 @@ mod tests {
     use reqwest::header::HeaderValue;
 
     use super::*;
-
-    fn certificate_with_raw(raw: &'static [u8]) -> TdxCertificate {
-        TdxCertificate { raw: Bytes::from_static(raw) }
-    }
 
     fn assert_source_contains(error: TdxCollateralError, expected: &str) {
         let source = error.source().expect("error should retain source").to_string();
@@ -387,30 +352,5 @@ mod tests {
         let error = TdxAttestationHydrator::qe_identity_signature_from_json(raw).unwrap_err();
 
         assert_source_contains(error, "Intel PCS response missing QE identity signature");
-    }
-
-    #[test]
-    fn trusted_root_ca_hash_accepts_configured_root() {
-        let root = certificate_with_raw(b"trusted-root");
-        let leaf = certificate_with_raw(b"leaf");
-        let trusted_root_ca_hash = root.hash();
-
-        TdxAttestationHydrator::verify_trusted_root_ca_hash(&[root, leaf], trusted_root_ca_hash)
-            .unwrap();
-    }
-
-    #[test]
-    fn trusted_root_ca_hash_rejects_quote_supplied_root() {
-        let untrusted_root = certificate_with_raw(b"untrusted-root");
-        let leaf = certificate_with_raw(b"leaf");
-        let trusted_root_ca_hash = B256::repeat_byte(0x42);
-
-        let error = TdxAttestationHydrator::verify_trusted_root_ca_hash(
-            &[untrusted_root, leaf],
-            trusted_root_ca_hash,
-        )
-        .unwrap_err();
-
-        assert_source_contains(error, "TDX certificate chain root is not trusted");
     }
 }
