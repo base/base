@@ -31,6 +31,9 @@ pub const HARD_MAX_CANDIDATES_PER_FRAME: usize = 64;
 pub const HARD_MAX_TIME_BUDGET_MICROS: u64 = 20_000;
 /// Maximum token-adjacency hops added around dirty pools before frame cap truncation.
 const DIRTY_CONNECTED_HOPS: usize = 3;
+const FRAME_CAP_EARLY_EXIT_CAVEAT: &str = "frame-cap-early-exit";
+const FRAME_ELAPSED_BUDGET_EXCEEDED_CAVEAT: &str = "frame-elapsed-budget-exceeded";
+const NET_L1_FEE_STATIC_CALLDATA_PROXY_CAVEAT: &str = "net-l1-fee-static-calldata-proxy";
 
 const Q96: u128 = 79_228_162_514_264_337_593_543_950_336u128;
 const MIN_SQRT_RATIO: u128 = 4_295_128_739u128;
@@ -93,6 +96,8 @@ pub struct EcotoneL1DataFeeConfig {
 
 impl EcotoneL1DataFeeConfig {
     /// Computes the Ecotone L1 data fee with checked integer arithmetic.
+    /// Checked `u128` overflow returns `None` intentionally, so callers degrade
+    /// conservatively instead of fabricating an L1 data fee.
     pub fn fee_wei(&self) -> Option<u128> {
         let calldata_gas = calldata_gas(&self.calldata)?;
         if calldata_gas == 0 {
@@ -1208,7 +1213,15 @@ fn run_frame_internal(
         };
     }
 
-    let (selected_indexes, dirty_indexes_len) = select_frame_indexes(pools, &all_dirty, &reverse);
+    let (selected_indexes, dirty_indexes_len, cap_early_exit, selection_budget_exceeded) =
+        select_frame_indexes(
+            pools,
+            &all_dirty,
+            &reverse,
+            config.max_pools_per_frame,
+            started,
+            config.time_budget,
+        );
     let mut bounded_indexes = selected_indexes;
     // Dropping clean rows is still reported as frame truncation: the dirty
     // rows remain prioritized, but candidate search no longer sees the full
@@ -1221,6 +1234,14 @@ fn run_frame_internal(
         }
         bounded_indexes.truncate(config.max_pools_per_frame);
         truncated = true;
+    }
+    if cap_early_exit {
+        truncated = true;
+        push_unique_caveat(&mut caveats, FRAME_CAP_EARLY_EXIT_CAVEAT);
+    }
+    if selection_budget_exceeded {
+        truncated = true;
+        push_unique_caveat(&mut caveats, FRAME_ELAPSED_BUDGET_EXCEEDED_CAVEAT);
     }
 
     let mut owned: Vec<PoolState> =
@@ -1252,13 +1273,9 @@ fn run_frame_internal(
         truncated = true;
         push_unique_caveat(&mut caveats, "bounded-frame-truncated");
     }
-    if timed_out {
+    if timed_out || started.elapsed() > config.time_budget {
         truncated = true;
-        push_unique_caveat(&mut caveats, "bounded-frame-truncated");
-    }
-    if started.elapsed() > config.time_budget {
-        truncated = true;
-        push_unique_caveat(&mut caveats, "bounded-frame-truncated");
+        push_unique_caveat(&mut caveats, FRAME_ELAPSED_BUDGET_EXCEEDED_CAVEAT);
     }
     if candidates.is_empty()
         && !all_dirty.is_empty()
@@ -1288,10 +1305,14 @@ fn select_frame_indexes(
     pools: &[PoolState],
     dirty_pools: &BTreeSet<Address>,
     reverse: &HashMap<Address, Vec<usize>>,
-) -> (Vec<usize>, usize) {
+    max_pools_per_frame: usize,
+    started: Instant,
+    time_budget: Duration,
+) -> (Vec<usize>, usize, bool, bool) {
     if dirty_pools.is_empty() {
-        return ((0..pools.len()).collect(), 0);
+        return ((0..pools.len()).collect(), 0, false, false);
     }
+    let max_pools_per_frame = max_pools_per_frame.max(1);
     let mut dirty_indexes = BTreeSet::new();
     for pool in dirty_pools {
         if let Some(values) = reverse.get(pool) {
@@ -1300,13 +1321,25 @@ fn select_frame_indexes(
     }
 
     let mut selected = dirty_indexes.iter().copied().collect::<Vec<_>>();
+    let mut selected_set = dirty_indexes.clone();
     let dirty_len = selected.len();
+    if dirty_len > max_pools_per_frame {
+        return (selected, dirty_len, true, false);
+    }
+    if started.elapsed() > time_budget {
+        return (selected, dirty_len, false, true);
+    }
+
     let mut distances = vec![None; pools.len()];
     let mut frontier = BTreeSet::new();
+    let mut dirty_pairs = BTreeSet::new();
     for index in &dirty_indexes {
         if *index < distances.len() {
             distances[*index] = Some(0usize);
             frontier.insert(*index);
+            if let Some(pool) = pools.get(*index) {
+                dirty_pairs.insert(token_pair_key(pool.token0, pool.token1));
+            }
         }
     }
 
@@ -1317,9 +1350,17 @@ fn select_frame_indexes(
     }
 
     while !frontier.is_empty() {
-        let mut next = BTreeSet::new();
+        let at_capacity = selected.len() >= max_pools_per_frame;
+        let mut direct_counterparties = BTreeSet::new();
+        let mut other_neighbors = BTreeSet::new();
         for index in &frontier {
-            if distances[*index].is_some_and(|distance| distance >= DIRTY_CONNECTED_HOPS) {
+            if started.elapsed() > time_budget {
+                return (selected, dirty_len, false, true);
+            }
+            let Some(distance) = distances.get(*index).and_then(|distance| *distance) else {
+                continue;
+            };
+            if distance >= DIRTY_CONNECTED_HOPS {
                 continue;
             }
             let Some(pool) = pools.get(*index) else {
@@ -1328,19 +1369,61 @@ fn select_frame_indexes(
             for token in [pool.token0, pool.token1] {
                 if let Some(neighbors) = token_indexes.get(&token) {
                     for neighbor in neighbors {
-                        if distances[*neighbor].is_none() {
-                            distances[*neighbor] = distances[*index].map(|distance| distance + 1);
-                            next.insert(*neighbor);
+                        if started.elapsed() > time_budget {
+                            return (selected, dirty_len, false, true);
+                        }
+                        if *neighbor >= pools.len()
+                            || selected_set.contains(neighbor)
+                            || distances[*neighbor].is_some()
+                        {
+                            continue;
+                        }
+                        if at_capacity {
+                            return (selected, dirty_len, true, false);
+                        }
+                        distances[*neighbor] = Some(distance + 1);
+                        if dirty_pairs.contains(&token_pair_key(
+                            pools[*neighbor].token0,
+                            pools[*neighbor].token1,
+                        )) {
+                            direct_counterparties.insert(*neighbor);
+                        } else {
+                            other_neighbors.insert(*neighbor);
                         }
                     }
                 }
             }
         }
-        selected.extend(next.iter().copied());
+
+        let prioritized = direct_counterparties
+            .into_iter()
+            .chain(other_neighbors.into_iter())
+            .collect::<Vec<_>>();
+        if prioritized.is_empty() {
+            break;
+        }
+        let prioritized_len = prioritized.len();
+        let mut next = BTreeSet::new();
+        for (position, neighbor) in prioritized.into_iter().enumerate() {
+            if started.elapsed() > time_budget {
+                return (selected, dirty_len, false, true);
+            }
+            if selected_set.insert(neighbor) {
+                selected.push(neighbor);
+                next.insert(neighbor);
+                if selected.len() >= max_pools_per_frame && position + 1 < prioritized_len {
+                    return (selected, dirty_len, true, false);
+                }
+            }
+        }
         frontier = next;
     }
 
-    (selected, dirty_len)
+    (selected, dirty_len, false, false)
+}
+
+fn token_pair_key(a: Address, b: Address) -> (Address, Address) {
+    if a <= b { (a, b) } else { (b, a) }
 }
 
 fn compose_owned_caveats(caveats: &[String]) -> Option<String> {
@@ -1619,8 +1702,11 @@ fn cycle_to_candidate(
         amount = quote.amount_out;
         approximation |= edge.approximation || quote.approximation;
         if let Some(c) = quote.caveat {
-            caveats.push(c.to_string());
+            push_unique_caveat(&mut caveats, c);
         }
+    }
+    if net_cost.is_some() {
+        push_unique_caveat(&mut caveats, NET_L1_FEE_STATIC_CALLDATA_PROXY_CAVEAT);
     }
     let tokens = edges.iter().map(|e| e.from).collect::<Vec<_>>();
     let pool_ids = edges.iter().map(|e| e.pool).collect::<Vec<_>>();
@@ -1636,7 +1722,7 @@ fn cycle_to_candidate(
         estimated_gross_wei: amount,
         estimated_net_wei: estimate_net_wei(amount, amount_in, net_cost),
         approximation,
-        caveat: (!caveats.is_empty()).then(|| caveats.join(",")),
+        caveat: compose_owned_caveats(&caveats),
     })
 }
 
@@ -2055,6 +2141,12 @@ mod tests {
         )
         .0;
         assert!(negative[0].estimated_net_wei.is_some_and(|net| net < I256::ZERO));
+        assert!(
+            negative[0]
+                .caveat
+                .as_deref()
+                .is_some_and(|c| c.contains(NET_L1_FEE_STATIC_CALLDATA_PROXY_CAVEAT))
+        );
 
         let mut overflowing = net_cost(0, vec![0xff]);
         overflowing.l1_data_fee.base_fee_scalar = u128::MAX;
@@ -2118,6 +2210,12 @@ mod tests {
                 .iter()
                 .any(|candidate| candidate.estimated_net_wei.is_some_and(|net| net < I256::ZERO))
         );
+        assert!(with_negative_net.candidates.iter().any(|candidate| {
+            candidate
+                .caveat
+                .as_deref()
+                .is_some_and(|c| c.contains(NET_L1_FEE_STATIC_CALLDATA_PROXY_CAVEAT))
+        }));
     }
     #[test]
     fn canonicalization_orientation_is_stable() {
@@ -2258,7 +2356,7 @@ mod tests {
         let config = DryRunConfig {
             max_pools_per_frame: 1,
             max_candidates_per_frame: 1,
-            time_budget: Duration::from_micros(1),
+            time_budget: Duration::from_secs(1),
             amount_in_wei: 1_000,
             net_cost: None,
         };
@@ -2266,6 +2364,48 @@ mod tests {
         assert!(frame.truncated);
         assert_eq!(frame.health, "truncated");
         assert_eq!(frame.caveat.as_deref(), Some("bounded-frame-truncated"));
+    }
+
+    #[test]
+    fn frame_elapsed_budget_caveat_is_explicit() {
+        let pools = vec![
+            PoolState::v2_like(
+                addr(0xb1),
+                Protocol::UniswapV2,
+                addr(0xa1),
+                addr(0xa2),
+                1,
+                1_000,
+                1_100,
+            ),
+            PoolState::v2_like(
+                addr(0xb2),
+                Protocol::UniswapV2,
+                addr(0xa1),
+                addr(0xa2),
+                1,
+                1_100,
+                1_000,
+            ),
+        ];
+        let config = DryRunConfig {
+            max_pools_per_frame: 2,
+            max_candidates_per_frame: 1,
+            time_budget: Duration::ZERO,
+            amount_in_wei: 1_000,
+            net_cost: None,
+        };
+
+        let frame = run_frame(&pools, &BTreeSet::new(), &config, NoActionGuard);
+
+        assert!(frame.truncated);
+        assert_eq!(frame.health, "truncated");
+        assert!(
+            frame
+                .caveat
+                .as_deref()
+                .is_some_and(|c| c.contains(FRAME_ELAPSED_BUDGET_EXCEEDED_CAVEAT))
+        );
     }
 
     fn pack_slot0_word(sqrt_price_x96: u128, tick: i32) -> U256 {
@@ -2466,53 +2606,81 @@ mod tests {
     }
 
     #[test]
-    fn run_frame_does_not_pad_large_unrelated_baseline_for_dirty_frame() {
+    fn run_frame_prioritizes_dirty_pair_counterparty_in_weth_hub_under_frame_cap() {
+        let dirty_token = addr(0x01);
+        let spoke_token = addr(0x02);
         let dirty_pool = addr(0xc1);
         let counterparty = addr(0xc2);
-        let mut pools = vec![
-            PoolState::v2_like(dirty_pool, Protocol::UniswapV2, addr(1), addr(2), 1, 1_000, 1_200),
-            PoolState::v2_like(
-                counterparty,
-                Protocol::UniswapV2,
-                addr(1),
-                addr(2),
-                1,
-                1_200,
-                1_000,
-            ),
-        ];
-        for i in 0..2_924usize {
+        let mut pools = vec![PoolState::v2_like(
+            dirty_pool,
+            Protocol::UniswapV2,
+            dirty_token,
+            spoke_token,
+            1,
+            1_000,
+            1_200,
+        )];
+        for i in 0..1_024usize {
             let mut pool_bytes = [0u8; 20];
             pool_bytes[16..].copy_from_slice(&u32::try_from(10_000 + i).unwrap().to_be_bytes());
-            let byte = u8::try_from(i % 200).unwrap();
+            let mut token_bytes = [0x80u8; 20];
+            token_bytes[18..].copy_from_slice(&u16::try_from(i).unwrap().to_be_bytes());
             pools.push(PoolState::v2_like(
                 Address::from(pool_bytes),
                 Protocol::UniswapV2,
-                addr(0x30 + byte % 50),
-                addr(0x80 + byte % 50),
+                dirty_token,
+                Address::from(token_bytes),
                 1,
                 1_000,
                 1_000,
             ));
         }
+        pools.push(PoolState::v2_like(
+            counterparty,
+            Protocol::UniswapV2,
+            dirty_token,
+            spoke_token,
+            1,
+            1_200,
+            1_000,
+        ));
         let config = DryRunConfig {
             max_pools_per_frame: 64,
             amount_in_wei: 10,
-            time_budget: Duration::from_secs(1),
+            time_budget: Duration::from_micros(HARD_MAX_TIME_BUDGET_MICROS),
             ..DryRunConfig::default()
         };
         let mut dirty = BTreeSet::new();
         dirty.insert(dirty_pool);
+        let reverse = candidate_index_reverse_map(&pools);
+        let (selected, dirty_len, cap_early_exit, elapsed) = select_frame_indexes(
+            &pools,
+            &dirty,
+            &reverse,
+            config.max_pools_per_frame,
+            Instant::now(),
+            config.time_budget,
+        );
+
+        assert_eq!(dirty_len, 1);
+        assert!(cap_early_exit);
+        assert!(!elapsed);
+        assert_eq!(selected.len(), config.max_pools_per_frame);
+        assert_eq!(pools[selected[0]].pool, dirty_pool);
+        assert_eq!(
+            pools[selected[1]].pool, counterparty,
+            "same-pair dirty counterparty must outrank WETH-like filler sharing only one token"
+        );
 
         let frame = run_frame(&pools, &dirty, &config, NoActionGuard);
 
-        assert!(!frame.truncated);
+        assert!(frame.truncated);
+        assert_eq!(frame.health, "truncated");
         assert!(
             frame.latency_micros < HARD_MAX_TIME_BUDGET_MICROS,
-            "2924-pool dirty-connected selection must stay under the hard per-frame budget"
+            "1024-pool shared-dirty-token hub selection must stay under the hard per-frame budget"
         );
-        assert_eq!(frame.health, "ok");
-        assert!(!frame.caveat.as_deref().unwrap_or_default().contains("bounded-frame-truncated"));
+        assert!(frame.caveat.as_deref().is_some_and(|c| c.contains(FRAME_CAP_EARLY_EXIT_CAVEAT)));
         assert!(frame.candidates.iter().any(|candidate| {
             candidate.pools.contains(&dirty_pool) && candidate.pools.contains(&counterparty)
         }));
@@ -2572,7 +2740,7 @@ mod tests {
 
         assert!(frame.truncated);
         assert_eq!(frame.health, "truncated");
-        assert!(frame.caveat.as_deref().is_some_and(|c| c.contains("bounded-frame-truncated")));
+        assert!(frame.caveat.as_deref().is_some_and(|c| c.contains(FRAME_CAP_EARLY_EXIT_CAVEAT)));
         assert!(
             frame.caveat.as_deref().is_some_and(|c| !c.contains("dirty-pool-outside-frame-cap"))
         );
