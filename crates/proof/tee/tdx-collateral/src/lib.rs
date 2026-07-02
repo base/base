@@ -11,4 +11,4 @@ mod error;
 pub use error::{BoxError, Result, TdxCollateralError};
 
 mod collateral;
-pub use collateral::{TdxAttestationHydrator, TdxCollateralCacheLookup, TdxCollateralFetch};
+pub use collateral::{TdxAttestationHydrator, TdxCollateralFetch};

@@ -37,7 +37,6 @@ const LEGACY_TCB_INFO_ISSUER_CHAIN_HEADER: &str = "sgx-tcb-info-issuer-chain";
 const TCB_INFO_SIGNATURE_HEADER: &str = "tcb-info-signature";
 const LEGACY_TCB_INFO_SIGNATURE_HEADER: &str = "sgx-tcb-info-signature";
 const QE_IDENTITY_ISSUER_CHAIN_HEADER: &str = "sgx-enclave-identity-issuer-chain";
-const QE_IDENTITY_SIGNATURE_FIELD: &str = "signature";
 const ALLOWED_INTEL_HOST_SUFFIX: &str = ".trustedservices.intel.com";
 const CERTIFICATE_PEM_LABEL: &str = "CERTIFICATE";
 
@@ -54,24 +53,13 @@ pub struct TdxCollateralFetch {
     pub trusted_root_ca_hash: B256,
 }
 
-/// Cache lookup fields available before collateral is fetched.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct TdxCollateralCacheLookup {
-    /// Hash of the PCK leaf issuer certificate whose CRL is required.
-    pub pck_issuer: B256,
-    /// Intel FMSPC bytes for the platform.
-    pub fmspc: Vec<u8>,
-    /// PCK CA/PCE selector bytes used for the collateral request.
-    pub ca: Vec<u8>,
-}
-
 /// Hydrates TDX signer RPC attestations into prover input bytes.
 #[derive(Debug)]
 pub struct TdxAttestationHydrator {
     /// Intel PCS and verifier policy configuration.
     pub config: TdxAttestationConfig,
     client: reqwest::Client,
-    cache: Mutex<HashMap<TdxCollateralCacheLookup, (u64, TdxCollateralFetch)>>,
+    cache: Mutex<HashMap<(B256, Vec<u8>, Vec<u8>), (u64, TdxCollateralFetch)>>,
 }
 
 impl TdxAttestationHydrator {
@@ -201,7 +189,7 @@ impl TdxAttestationHydrator {
     fn cache_lock(
         &self,
     ) -> Result<
-        std::sync::MutexGuard<'_, HashMap<TdxCollateralCacheLookup, (u64, TdxCollateralFetch)>>,
+        std::sync::MutexGuard<'_, HashMap<(B256, Vec<u8>, Vec<u8>), (u64, TdxCollateralFetch)>>,
     > {
         self.cache.lock().map_err(|e| {
             TdxCollateralError::source(TdxHydrationError::CachePoisoned { error: e.to_string() })
@@ -257,7 +245,7 @@ impl TdxAttestationHydrator {
     pub fn collateral_cache_lookup(
         pck_certificate_chain: &[TdxCertificate],
         platform: &TdxPlatformIdentity,
-    ) -> Result<TdxCollateralCacheLookup> {
+    ) -> Result<(B256, Vec<u8>, Vec<u8>)> {
         let pck_issuer = pck_certificate_chain
             .iter()
             .rev()
@@ -265,11 +253,7 @@ impl TdxAttestationHydrator {
             .or_else(|| pck_certificate_chain.first())
             .ok_or_else(|| TdxCollateralError::source("certificate chain is empty"))?
             .hash();
-        Ok(TdxCollateralCacheLookup {
-            pck_issuer,
-            fmspc: platform.fmspc.to_vec(),
-            ca: platform.pce_id.to_vec(),
-        })
+        Ok((pck_issuer, platform.fmspc.to_vec(), platform.pce_id.to_vec()))
     }
 
     /// Returns cached collateral for the given lookup, or `None` if absent.
@@ -280,7 +264,7 @@ impl TdxAttestationHydrator {
     /// itself is bad.
     fn cached_collateral(
         &self,
-        lookup: &TdxCollateralCacheLookup,
+        lookup: &(B256, Vec<u8>, Vec<u8>),
         parsed_quote: &ParsedTdxQuote,
         pck_certificate_chain: &[TdxCertificate],
         pck_tcb: &TdxPckTcb,
@@ -379,7 +363,7 @@ impl TdxAttestationHydrator {
             Some(value) => Self::signature_from_hex(
                 value.to_str().map_err(|e| TdxCollateralError::source(e))?,
             )?,
-            None => Self::signature_from_json_field(&raw, QE_IDENTITY_SIGNATURE_FIELD)?,
+            None => Self::qe_identity_signature_from_json(&raw)?,
         };
         let collateral = TdxSignedCollateral { raw, signing_chain, signature };
         collateral.signed_validity(body_kind).map_err(|e| TdxCollateralError::source(e))?;
@@ -460,17 +444,17 @@ impl TdxAttestationHydrator {
         Err(TdxCollateralError::source(TdxHydrationError::MissingHeader { header }))
     }
 
-    fn signature_from_json_field(raw: &[u8], field: &'static str) -> Result<Bytes> {
+    fn qe_identity_signature_from_json(raw: &[u8]) -> Result<Bytes> {
         let document: serde_json::Value =
             serde_json::from_slice(raw).map_err(|e| TdxCollateralError::source(e))?;
         let value = document
-            .get(field)
+            .get("signature")
             .ok_or_else(|| {
-                TdxCollateralError::source(TdxHydrationError::MissingJsonField { field })
+                TdxCollateralError::source(TdxHydrationError::MissingQeIdentitySignature)
             })?
             .as_str()
             .ok_or_else(|| {
-                TdxCollateralError::source(TdxHydrationError::InvalidJsonField { field })
+                TdxCollateralError::source(TdxHydrationError::InvalidQeIdentitySignature)
             })?;
         Self::signature_from_hex(value)
     }
@@ -516,19 +500,17 @@ impl TdxAttestationHydrator {
             .position(|cert| cert.issuer_name == cert.subject_name)
             .ok_or_else(|| TdxCollateralError::source("certificate chain root is missing"))?;
         let mut ordered = Vec::with_capacity(certs.len());
-        let mut used = HashSet::new();
         ordered.push(root_index);
-        used.insert(root_index);
 
         while ordered.len() < certs.len() {
             let parent = &certs[root_index];
             let Some(child_index) = certs.iter().enumerate().find_map(|(index, cert)| {
-                (!used.contains(&index) && cert.issuer_name == parent.subject_name).then_some(index)
+                (!ordered.contains(&index) && cert.issuer_name == parent.subject_name)
+                    .then_some(index)
             }) else {
                 return Err(TdxCollateralError::source("certificate chain is not contiguous"));
             };
             ordered.push(child_index);
-            used.insert(child_index);
             root_index = child_index;
         }
         Ok(ordered)
@@ -616,10 +598,10 @@ enum TdxHydrationError {
     UnsupportedCertificationData { actual: u16 },
     #[error("Intel PCS response missing {header}")]
     MissingHeader { header: String },
-    #[error("Intel PCS response missing JSON field {field}")]
-    MissingJsonField { field: &'static str },
-    #[error("Intel PCS response JSON field {field} is not a string")]
-    InvalidJsonField { field: &'static str },
+    #[error("Intel PCS response missing QE identity signature")]
+    MissingQeIdentitySignature,
+    #[error("Intel PCS response QE identity signature is not a string")]
+    InvalidQeIdentitySignature,
     #[error("Intel PCS request to {url} failed with status {status}")]
     HttpStatus { url: String, status: StatusCode },
     #[error("Intel PCS response exceeds size limit")]
@@ -736,12 +718,8 @@ mod tests {
         }
     }
 
-    fn cache_lookup() -> TdxCollateralCacheLookup {
-        TdxCollateralCacheLookup {
-            pck_issuer: B256::repeat_byte(0x02),
-            fmspc: vec![0x02; 6],
-            ca: vec![0x03; 2],
-        }
+    fn cache_lookup() -> (B256, Vec<u8>, Vec<u8>) {
+        (B256::repeat_byte(0x02), vec![0x02; 6], vec![0x03; 2])
     }
 
     fn parsed_quote() -> ParsedTdxQuote {
@@ -766,6 +744,11 @@ mod tests {
         }
     }
 
+    fn assert_source_contains(error: TdxCollateralError, expected: &str) {
+        let source = error.source().expect("error should retain source").to_string();
+        assert!(source.contains(expected), "{source}");
+    }
+
     #[test]
     fn percent_decode_preserves_plus_and_decodes_escapes() {
         let decoded = TdxAttestationHydrator::percent_decode("a+b%0Ac").unwrap();
@@ -774,46 +757,30 @@ mod tests {
     }
 
     #[test]
-    fn header_value_accepts_current_tdx_tcb_header() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            HeaderName::from_static(TCB_INFO_ISSUER_CHAIN_HEADER),
-            HeaderValue::from_static("current-chain"),
-        );
+    fn header_value_accepts_current_and_legacy_tdx_tcb_headers() {
         let header_names = [
             HeaderName::from_static(TCB_INFO_ISSUER_CHAIN_HEADER),
             HeaderName::from_static(LEGACY_TCB_INFO_ISSUER_CHAIN_HEADER),
         ];
 
-        let value = TdxAttestationHydrator::header_value(&headers, &header_names).unwrap();
+        for (header, expected) in [
+            (TCB_INFO_ISSUER_CHAIN_HEADER, "current-chain"),
+            (LEGACY_TCB_INFO_ISSUER_CHAIN_HEADER, "legacy-chain"),
+        ] {
+            let mut headers = HeaderMap::new();
+            headers.insert(HeaderName::from_static(header), HeaderValue::from_static(expected));
 
-        assert_eq!(value, "current-chain");
-    }
+            let value = TdxAttestationHydrator::header_value(&headers, &header_names).unwrap();
 
-    #[test]
-    fn header_value_accepts_legacy_sgx_tcb_header() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            HeaderName::from_static(LEGACY_TCB_INFO_ISSUER_CHAIN_HEADER),
-            HeaderValue::from_static("legacy-chain"),
-        );
-        let header_names = [
-            HeaderName::from_static(TCB_INFO_ISSUER_CHAIN_HEADER),
-            HeaderName::from_static(LEGACY_TCB_INFO_ISSUER_CHAIN_HEADER),
-        ];
-
-        let value = TdxAttestationHydrator::header_value(&headers, &header_names).unwrap();
-
-        assert_eq!(value, "legacy-chain");
+            assert_eq!(value, expected);
+        }
     }
 
     #[test]
     fn qe_identity_signature_from_json_body_decodes_top_level_signature() {
         let raw = br#"{"enclaveIdentity":{},"signature":"0x0102ff"}"#;
 
-        let signature =
-            TdxAttestationHydrator::signature_from_json_field(raw, QE_IDENTITY_SIGNATURE_FIELD)
-                .unwrap();
+        let signature = TdxAttestationHydrator::qe_identity_signature_from_json(raw).unwrap();
 
         assert_eq!(signature, Bytes::from_static(&[0x01, 0x02, 0xff]));
     }
@@ -822,17 +789,9 @@ mod tests {
     fn qe_identity_signature_from_json_body_requires_signature_field() {
         let raw = br#"{"enclaveIdentity":{}}"#;
 
-        let error =
-            TdxAttestationHydrator::signature_from_json_field(raw, QE_IDENTITY_SIGNATURE_FIELD)
-                .unwrap_err();
+        let error = TdxAttestationHydrator::qe_identity_signature_from_json(raw).unwrap_err();
 
-        assert!(
-            error
-                .source()
-                .expect("missing JSON field error should be retained as the source")
-                .to_string()
-                .contains("Intel PCS response missing JSON field signature")
-        );
+        assert_source_contains(error, "Intel PCS response missing QE identity signature");
     }
 
     #[test]
@@ -857,13 +816,7 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(
-            error
-                .source()
-                .expect("root CA error should be retained as the source")
-                .to_string()
-                .contains("TDX certificate chain root is not trusted")
-        );
+        assert_source_contains(error, "TDX certificate chain root is not trusted");
     }
 
     #[test]
@@ -892,13 +845,8 @@ mod tests {
         )
         .unwrap();
 
-        assert_ne!(lookup.pck_issuer, other_lookup.pck_issuer);
+        assert_ne!(lookup.0, other_lookup.0);
         assert_ne!(lookup, other_lookup);
-
-        let mut cache = HashMap::new();
-        cache.insert(lookup, (300, collateral_fetch(300, 400)));
-
-        assert!(cache.get(&other_lookup).is_none());
     }
 
     #[test]
@@ -919,13 +867,7 @@ mod tests {
             )
             .unwrap_err();
 
-        assert!(
-            error
-                .source()
-                .expect("TCB matching error should be retained as the source")
-                .to_string()
-                .contains("no TCB info level matches quote TCB")
-        );
+        assert_source_contains(error, "no TCB info level matches quote TCB");
         assert!(hydrator.cache_lock().unwrap().get(&lookup).is_some());
         assert_eq!(hydrator.cache_lock().unwrap().len(), 1);
     }
@@ -950,13 +892,7 @@ mod tests {
             )
             .unwrap_err();
 
-        assert!(
-            error
-                .source()
-                .expect("quote verification error should be retained as the source")
-                .to_string()
-                .contains("PCK certificate chain is invalid")
-        );
+        assert_source_contains(error, "PCK certificate chain is invalid");
         assert!(hydrator.cache_lock().unwrap().get(&lookup).is_some());
         assert_eq!(hydrator.cache_lock().unwrap().len(), 1);
     }
@@ -982,12 +918,6 @@ mod tests {
         let error =
             TdxAttestationHydrator::quote_verification_time_seconds(151_000, 150).unwrap_err();
 
-        assert!(
-            error
-                .source()
-                .expect("future timestamp error should be retained as the source")
-                .to_string()
-                .contains("in the future")
-        );
+        assert_source_contains(error, "in the future");
     }
 }
