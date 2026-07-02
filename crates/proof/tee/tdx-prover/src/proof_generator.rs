@@ -13,7 +13,7 @@ use base_prover_service_protocol::{
     WorkerSubmitProofRequest,
 };
 use thiserror::Error;
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::{TdxBackend, TdxEnclaveService};
 
@@ -55,13 +55,12 @@ where
             }
         };
         let proof_request = tee.proof;
-        let l2_block = proof_request.claimed_l2_block_number;
 
         info!(
             session_id = %claim.session_id,
             lock_id = %claim.lock_id,
             worker_id = %claim.worker_id,
-            l2_block,
+            l2_block = proof_request.claimed_l2_block_number,
             "starting tdx proof generation"
         );
 
@@ -74,35 +73,15 @@ where
             biased;
             result = &mut generate => match result {
                 Ok(result) => result,
-                Err(source) => {
-                    warn!(
-                        session_id = %claim.session_id,
-                        lock_id = %claim.lock_id,
-                        worker_id = %claim.worker_id,
-                        error = %source,
-                        "tdx proof generation failed"
-                    );
-
-                    return Err(ProofGeneratorError::Generate {
-                        session_id: claim.session_id.clone(),
-                        source,
-                    });
-                }
-            },
-            source = &mut heartbeat => {
-                warn!(
-                    session_id = %claim.session_id,
-                    lock_id = %claim.lock_id,
-                    worker_id = %claim.worker_id,
-                    error = %source,
-                    "aborting tdx proof generation due to heartbeat failure"
-                );
-
-                return Err(ProofGeneratorError::Heartbeat {
+                Err(source) => return Err(ProofGeneratorError::Generate {
                     session_id: claim.session_id.clone(),
                     source,
-                });
+                }),
             },
+            source = &mut heartbeat => return Err(ProofGeneratorError::Heartbeat {
+                session_id: claim.session_id.clone(),
+                source,
+            }),
         };
         drop(heartbeat);
 
