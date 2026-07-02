@@ -6,6 +6,7 @@
 // verifies the quote and collateral, then commits the ABI-encoded
 // `TDXVerifierJournal` expected by the onchain TDX verifier.
 
+#[path = "../../../atomic_shims.rs"]
 mod atomic_shims;
 
 use std::io::Read;

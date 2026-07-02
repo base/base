@@ -8,6 +8,7 @@
 //
 // The resulting ELF is loaded at runtime by DirectProver / BoundlessProver.
 
+#[path = "../../../atomic_shims.rs"]
 mod atomic_shims;
 
 use std::io::Read;
