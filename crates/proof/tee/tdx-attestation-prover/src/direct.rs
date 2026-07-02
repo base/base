@@ -2,7 +2,6 @@
 
 use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::SolValue;
-use async_trait::async_trait;
 use base_proof_tee_attestation::{
     TeeAttestationKind, TeeAttestationProof, TeeAttestationProofProvider,
 };
@@ -18,7 +17,7 @@ use crate::TdxAttestationProverInput;
 #[derive(Debug)]
 pub struct DirectProver;
 
-#[async_trait]
+#[async_trait::async_trait]
 impl TeeAttestationProofProvider for DirectProver {
     async fn generate_proof_for_signer(
         &self,
