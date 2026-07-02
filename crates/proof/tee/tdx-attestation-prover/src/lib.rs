@@ -10,12 +10,6 @@ pub use direct::DirectProver;
 mod error;
 pub use error::{ProverError, Result};
 
-mod input;
-pub use input::{
-    TdxAttestationProverInput, TdxCertificateInput, TdxCollateralInput, TdxRevocationEvidenceInput,
-    TdxSignedCollateralInput, TdxVerifierInputAbi,
-};
-
 #[cfg(feature = "prove")]
 mod boundless;
 #[cfg(feature = "prove")]

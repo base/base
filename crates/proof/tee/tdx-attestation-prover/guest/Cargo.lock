@@ -361,48 +361,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-trait"
-version = "0.1.89"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9035ad2d096bed7955a320ee7e2230574d28fd3c3a0f186cbea1ff3c7eed5dbb"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
-name = "base-proof-tee-attestation"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "async-trait",
-]
-
-[[package]]
-name = "base-proof-tee-tdx-attestation-prover"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "alloy-sol-types",
- "async-trait",
- "base-proof-tee-attestation",
- "base-proof-tee-tdx-verifier",
- "thiserror",
-]
-
-[[package]]
 name = "base-proof-tee-tdx-attestation-prover-guest"
 version = "0.0.0"
 dependencies = [
  "alloy-sol-types",
- "base-proof-tee-tdx-attestation-prover",
  "base-proof-tee-tdx-verifier",
  "risc0-zkvm",
 ]

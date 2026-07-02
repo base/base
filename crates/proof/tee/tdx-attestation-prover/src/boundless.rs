@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use base_proof_tee_attestation::{
     TeeAttestationKind, TeeAttestationProof, TeeAttestationProofProvider,
 };
-use base_proof_tee_tdx_verifier::TDXVerifierJournal;
+use base_proof_tee_tdx_verifier::{TDXVerifierJournal, TdxVerifierInput};
 use boundless_market::{
     Client, NotProvided,
     alloy::providers::DynProvider,
@@ -26,7 +26,7 @@ use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 use url::Url;
 
-use crate::{ProverError, Result, TdxAttestationProverInput};
+use crate::{ProverError, Result};
 
 /// Concrete Boundless client type used by the TDX prover.
 type BoundlessClient = Client<
@@ -99,7 +99,7 @@ impl BoundlessProver {
     /// Builds the Boundless client and request params for a TDX verifier input.
     async fn build_client_and_params(
         &self,
-        input: &TdxAttestationProverInput,
+        input: &TdxVerifierInput,
     ) -> Result<(BoundlessClient, RequestParams)> {
         let input_bytes = input.encode();
         let image_id = Digest::from(self.image_id);
@@ -107,7 +107,7 @@ impl BoundlessProver {
         info!(
             image_id = ?self.image_id,
             input_len = input_bytes.len(),
-            quote_timestamp_millis = input.verifier_input.quote_timestamp_millis,
+            quote_timestamp_millis = input.quote_timestamp_millis,
             rpc_url = %self.rpc_url.origin().unicode_serialization(),
             boundless_wallet = %self.signer.address(),
             program_url = %self.verifier_program_url.origin().unicode_serialization(),
@@ -320,8 +320,7 @@ impl TeeAttestationProofProvider for BoundlessProver {
         attestation_bytes: &[u8],
         signer_address: Address,
     ) -> base_proof_tee_attestation::Result<TeeAttestationProof> {
-        let input =
-            TdxAttestationProverInput::decode_for_signer(attestation_bytes, signer_address)?;
+        let input = TdxVerifierInput::decode_for_signer(attestation_bytes, signer_address)?;
 
         let (client, params) = self.build_client_and_params(&input).await?;
         if self
