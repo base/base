@@ -4,33 +4,31 @@
 //! single-threaded, so these builtins can be implemented as volatile memory
 //! operations.
 
-use core::ptr;
-
 #[unsafe(no_mangle)]
 unsafe extern "C" fn __atomic_load_1(src: *const u8, _ordering: i32) -> u8 {
-    unsafe { ptr::read_volatile(src) }
+    unsafe { src.read_volatile() }
 }
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn __atomic_load_4(src: *const u32, _ordering: i32) -> u32 {
-    unsafe { ptr::read_volatile(src) }
+    unsafe { src.read_volatile() }
 }
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn __atomic_store_1(dst: *mut u8, val: u8, _ordering: i32) {
-    unsafe { ptr::write_volatile(dst, val) }
+    unsafe { dst.write_volatile(val) }
 }
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn __atomic_store_4(dst: *mut u32, val: u32, _ordering: i32) {
-    unsafe { ptr::write_volatile(dst, val) }
+    unsafe { dst.write_volatile(val) }
 }
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn __atomic_fetch_add_4(dst: *mut u32, val: u32, _ordering: i32) -> u32 {
     unsafe {
-        let old = ptr::read_volatile(dst);
-        ptr::write_volatile(dst, old.wrapping_add(val));
+        let old = dst.read_volatile();
+        dst.write_volatile(old.wrapping_add(val));
         old
     }
 }
@@ -38,8 +36,8 @@ unsafe extern "C" fn __atomic_fetch_add_4(dst: *mut u32, val: u32, _ordering: i3
 #[unsafe(no_mangle)]
 unsafe extern "C" fn __atomic_fetch_sub_4(dst: *mut u32, val: u32, _ordering: i32) -> u32 {
     unsafe {
-        let old = ptr::read_volatile(dst);
-        ptr::write_volatile(dst, old.wrapping_sub(val));
+        let old = dst.read_volatile();
+        dst.write_volatile(old.wrapping_sub(val));
         old
     }
 }
@@ -54,12 +52,12 @@ unsafe extern "C" fn __atomic_compare_exchange_1(
     _failure_ordering: i32,
 ) -> bool {
     unsafe {
-        let old = ptr::read_volatile(dst);
-        if old == ptr::read(expected) {
-            ptr::write_volatile(dst, desired);
+        let old = dst.read_volatile();
+        if old == expected.read() {
+            dst.write_volatile(desired);
             true
         } else {
-            ptr::write(expected, old);
+            expected.write(old);
             false
         }
     }
@@ -75,12 +73,12 @@ unsafe extern "C" fn __atomic_compare_exchange_4(
     _failure_ordering: i32,
 ) -> bool {
     unsafe {
-        let old = ptr::read_volatile(dst);
-        if old == ptr::read(expected) {
-            ptr::write_volatile(dst, desired);
+        let old = dst.read_volatile();
+        if old == expected.read() {
+            dst.write_volatile(desired);
             true
         } else {
-            ptr::write(expected, old);
+            expected.write(old);
             false
         }
     }
