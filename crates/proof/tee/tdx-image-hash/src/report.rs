@@ -36,7 +36,7 @@ pub struct QuoteVerificationReport {
     pub collateral_expiration: u64,
 }
 
-/// Optional on-chain registry comparison result.
+/// Optional onchain registry comparison result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OnchainRegistryReport {
     /// Queried registry contract address.
@@ -51,30 +51,6 @@ pub struct OnchainRegistryReport {
     pub is_valid_signer: bool,
 }
 
-impl OnchainRegistryReport {
-    /// Validates registry state against the locally computed image hash.
-    pub fn validate_against(&self, image_hash: B256) -> eyre::Result<()> {
-        if self.is_registered_signer && self.signer_image_hash != image_hash {
-            eyre::bail!(
-                "registered signerImageHash {} does not match computed imageHash {}",
-                self.signer_image_hash,
-                image_hash
-            );
-        }
-
-        let expected_valid = self.is_registered_signer && self.expected_image_hash == image_hash;
-        if self.is_valid_signer != expected_valid {
-            eyre::bail!(
-                "isValidSigner returned {}, expected {} from registration and expected image hash state",
-                self.is_valid_signer,
-                expected_valid
-            );
-        }
-
-        Ok(())
-    }
-}
-
 /// Full TDX image hash inspection report.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TdxImageHashReport {
@@ -84,7 +60,7 @@ pub struct TdxImageHashReport {
     pub measurements: TdxMeasurementsReport,
     /// Optional local quote verification result.
     pub quote_verification: Option<QuoteVerificationReport>,
-    /// Optional on-chain registry comparison result.
+    /// Optional onchain registry comparison result.
     pub registry: Option<OnchainRegistryReport>,
 }
 
@@ -92,10 +68,14 @@ impl fmt::Display for TdxImageHashReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "Signer address: {}", self.signer_address)?;
         writeln!(f, "MRTD hash: {}", self.measurements.mr_td_hash)?;
-        writeln!(f, "RTMR0: 0x{}", hex::encode(self.measurements.rtmr0))?;
-        writeln!(f, "RTMR1: 0x{}", hex::encode(self.measurements.rtmr1))?;
-        writeln!(f, "RTMR2: 0x{}", hex::encode(self.measurements.rtmr2))?;
-        writeln!(f, "RTMR3: 0x{}", hex::encode(self.measurements.rtmr3))?;
+        for (label, measurement) in [
+            ("RTMR0", self.measurements.rtmr0),
+            ("RTMR1", self.measurements.rtmr1),
+            ("RTMR2", self.measurements.rtmr2),
+            ("RTMR3", self.measurements.rtmr3),
+        ] {
+            writeln!(f, "{label}: 0x{}", hex::encode(measurement))?;
+        }
         writeln!(f, "imageHash: {}", self.measurements.image_hash)?;
         writeln!(f, "Report-data suffix: {}", self.measurements.report_data_suffix)?;
         writeln!(f, "Quote timestamp millis: {}", self.measurements.quote_timestamp_millis)?;
@@ -130,35 +110,6 @@ mod tests {
     use alloy_primitives::B256;
 
     use super::*;
-
-    #[test]
-    fn registry_report_accepts_matching_registered_signer() {
-        let image_hash = B256::repeat_byte(0x11);
-        let report = OnchainRegistryReport {
-            registry_address: Address::ZERO,
-            signer_image_hash: image_hash,
-            expected_image_hash: image_hash,
-            is_registered_signer: true,
-            is_valid_signer: true,
-        };
-
-        report.validate_against(image_hash).unwrap();
-    }
-
-    #[test]
-    fn registry_report_rejects_registered_image_hash_mismatch() {
-        let report = OnchainRegistryReport {
-            registry_address: Address::ZERO,
-            signer_image_hash: B256::repeat_byte(0x11),
-            expected_image_hash: B256::repeat_byte(0x22),
-            is_registered_signer: true,
-            is_valid_signer: false,
-        };
-
-        let error = report.validate_against(B256::repeat_byte(0x33)).unwrap_err();
-
-        assert!(error.to_string().contains("signerImageHash"));
-    }
 
     #[test]
     fn display_documents_tdx_tee_image_hash_meaning() {

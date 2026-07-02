@@ -2,7 +2,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use alloy_primitives::{Address, keccak256};
+use alloy_primitives::{Address, B256, keccak256};
 use alloy_provider::RootProvider;
 use base_proof_contracts::ITEEProverRegistry;
 use base_proof_primitives::EnclaveApiClient;
@@ -18,7 +18,7 @@ use crate::{
 
 const TDX_ATTESTATION_KIND: &str = "tdx";
 
-/// Optional on-chain registry comparison configuration.
+/// Optional onchain registry comparison configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OnchainRegistryConfig {
     /// L1 RPC URL used to query the registry.
@@ -38,7 +38,7 @@ pub struct TdxImageHashConfig {
     pub verify_quote: bool,
     /// Registrar-compatible TDX attestation collateral configuration.
     pub attestation: TdxAttestationConfig,
-    /// Optional on-chain registry comparison.
+    /// Optional onchain registry comparison.
     pub registry: Option<OnchainRegistryConfig>,
 }
 
@@ -82,8 +82,8 @@ impl TdxImageHashTool {
         let registry = if let Some(registry_config) = &config.registry {
             let registry_report = Self::query_registry(registry_config, signer_address)
                 .await
-                .wrap_err("failed to query on-chain TEE prover registry for computed signer")?;
-            registry_report.validate_against(measurement_report.image_hash)?;
+                .wrap_err("failed to query onchain TEE prover registry for computed signer")?;
+            Self::validate_registry_report(&registry_report, measurement_report.image_hash)?;
             Some(registry_report)
         } else {
             None
@@ -224,6 +224,31 @@ impl TdxImageHashTool {
         })
     }
 
+    fn validate_registry_report(
+        registry_report: &OnchainRegistryReport,
+        image_hash: B256,
+    ) -> Result<()> {
+        if registry_report.is_registered_signer && registry_report.signer_image_hash != image_hash {
+            bail!(
+                "registered signerImageHash {} does not match computed imageHash {}",
+                registry_report.signer_image_hash,
+                image_hash
+            );
+        }
+
+        let expected_valid = registry_report.is_registered_signer
+            && registry_report.expected_image_hash == image_hash;
+        if registry_report.is_valid_signer != expected_valid {
+            bail!(
+                "isValidSigner returned {}, expected {} from registration and expected image hash state",
+                registry_report.is_valid_signer,
+                expected_valid
+            );
+        }
+
+        Ok(())
+    }
+
     fn now_seconds() -> Result<u64> {
         Ok(SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -308,5 +333,21 @@ mod tests {
 
         handle.stop().unwrap();
         assert!(error.to_string().contains("expected TDX"));
+    }
+
+    #[test]
+    fn registry_report_rejects_registered_image_hash_mismatch() {
+        let report = OnchainRegistryReport {
+            registry_address: Address::ZERO,
+            signer_image_hash: B256::repeat_byte(0x11),
+            expected_image_hash: B256::repeat_byte(0x22),
+            is_registered_signer: true,
+            is_valid_signer: false,
+        };
+
+        let error = TdxImageHashTool::validate_registry_report(&report, B256::repeat_byte(0x33))
+            .unwrap_err();
+
+        assert!(error.to_string().contains("signerImageHash"));
     }
 }
