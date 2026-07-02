@@ -26,7 +26,7 @@ impl TeeAttestationProofProvider for DirectProver {
     ) -> base_proof_tee_attestation::Result<TeeAttestationProof> {
         let input =
             TdxAttestationProverInput::decode_for_signer(attestation_bytes, signer_address)?;
-        let journal = TdxVerifier::verify(input.verifier_input())?;
+        let journal = TdxVerifier::verify(&input.verifier_input)?;
         Ok(TeeAttestationProof {
             kind: TeeAttestationKind::Tdx,
             output: Bytes::from(SolValue::abi_encode(&journal)),

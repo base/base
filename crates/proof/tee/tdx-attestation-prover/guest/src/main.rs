@@ -23,7 +23,7 @@ fn main() {
     let input =
         TdxAttestationProverInput::decode(&input_bytes).expect("failed to decode TDX input");
     let journal =
-        TdxVerifier::verify(input.verifier_input()).expect("TDX attestation verification failed");
+        TdxVerifier::verify(&input.verifier_input).expect("TDX attestation verification failed");
 
     env::commit_slice(&SolValue::abi_encode(&journal));
 }

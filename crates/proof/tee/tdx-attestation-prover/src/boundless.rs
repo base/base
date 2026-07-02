@@ -107,7 +107,7 @@ impl BoundlessProver {
         info!(
             image_id = ?self.image_id,
             input_len = input_bytes.len(),
-            quote_timestamp_millis = input.quote_timestamp_millis(),
+            quote_timestamp_millis = input.verifier_input.quote_timestamp_millis,
             rpc_url = %self.rpc_url.origin().unicode_serialization(),
             boundless_wallet = %self.signer.address(),
             program_url = %self.verifier_program_url.origin().unicode_serialization(),

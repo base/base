@@ -13,7 +13,7 @@ pub use error::{ProverError, Result};
 mod input;
 pub use input::{
     TdxAttestationProverInput, TdxCertificateInput, TdxCollateralInput, TdxRevocationEvidenceInput,
-    TdxSignedCollateralInput, TdxVerifierInputAbi, tdx_tcb_status_from_u8,
+    TdxSignedCollateralInput, TdxVerifierInputAbi,
 };
 
 #[cfg(feature = "prove")]

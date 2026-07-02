@@ -73,27 +73,6 @@ pub struct TdxAttestationProverInput {
 }
 
 impl TdxAttestationProverInput {
-    /// Creates a prover input from a verifier input.
-    pub const fn new(verifier_input: TdxVerifierInput) -> Self {
-        Self { verifier_input }
-    }
-
-    /// Returns the signer committed by the verifier input.
-    pub fn expected_signer(&self) -> Result<Address> {
-        let hash = TdxVerifier::validate_public_key(&self.verifier_input.expected_public_key)?;
-        Ok(Address::from_slice(&hash.as_slice()[12..]))
-    }
-
-    /// Returns the quote timestamp committed by the verifier input.
-    pub const fn quote_timestamp_millis(&self) -> u64 {
-        self.verifier_input.quote_timestamp_millis
-    }
-
-    /// Returns a shared reference to the verifier input.
-    pub const fn verifier_input(&self) -> &TdxVerifierInput {
-        &self.verifier_input
-    }
-
     /// ABI-encodes this input for host-to-guest transport.
     pub fn encode(&self) -> Vec<u8> {
         SolValue::abi_encode(&TdxVerifierInputAbi::from(&self.verifier_input))
@@ -109,7 +88,8 @@ impl TdxAttestationProverInput {
     /// ABI-decodes a prover input and verifies it targets `signer_address`.
     pub fn decode_for_signer(buf: &[u8], signer_address: Address) -> Result<Self> {
         let input = Self::decode(buf)?;
-        let actual = input.expected_signer()?;
+        let hash = TdxVerifier::validate_public_key(&input.verifier_input.expected_public_key)?;
+        let actual = Address::from_slice(&hash.as_slice()[12..]);
         if actual != signer_address {
             return Err(ProverError::SignerMismatch { expected: signer_address, actual });
         }
@@ -149,7 +129,7 @@ impl TryFrom<TdxVerifierInputAbi> for TdxVerifierInput {
                 .into_iter()
                 .map(TdxCertificate::from)
                 .collect(),
-            collateral: TdxCollateral::try_from(input.collateral)?,
+            collateral: input.collateral.into(),
             revocation: TdxRevocationEvidence::from(input.revocation),
             trusted_root_ca_hash: input.trustedRootCaHash,
             expected_public_key: input.expectedPublicKey,
@@ -159,7 +139,10 @@ impl TryFrom<TdxVerifierInputAbi> for TdxVerifierInput {
             allowed_tcb_statuses: input
                 .allowedTcbStatuses
                 .into_iter()
-                .map(tdx_tcb_status_from_u8)
+                .map(|status| {
+                    TDXTcbStatus::try_from(status)
+                        .map_err(|e| ProverError::InputDecode(e.to_string()))
+                })
                 .collect::<Result<Vec<_>>>()?,
         })
     }
@@ -206,11 +189,9 @@ impl From<&TdxCollateral> for TdxCollateralInput {
     }
 }
 
-impl TryFrom<TdxCollateralInput> for TdxCollateral {
-    type Error = ProverError;
-
-    fn try_from(collateral: TdxCollateralInput) -> Result<Self> {
-        Ok(Self { tcb_info: collateral.tcbInfo.into(), qe_identity: collateral.qeIdentity.into() })
+impl From<TdxCollateralInput> for TdxCollateral {
+    fn from(collateral: TdxCollateralInput) -> Self {
+        Self { tcb_info: collateral.tcbInfo.into(), qe_identity: collateral.qeIdentity.into() }
     }
 }
 
@@ -226,11 +207,6 @@ impl From<TdxRevocationEvidenceInput> for TdxRevocationEvidence {
     }
 }
 
-/// Converts a contract TDX TCB status discriminant into a typed status.
-pub fn tdx_tcb_status_from_u8(status: u8) -> Result<TDXTcbStatus> {
-    TDXTcbStatus::try_from(status).map_err(|e| ProverError::InputDecode(e.to_string()))
-}
-
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
@@ -240,7 +216,7 @@ mod tests {
 
     #[rstest]
     fn prover_input_abi_round_trips() {
-        let input = TdxAttestationProverInput::new(verifier_input());
+        let input = TdxAttestationProverInput { verifier_input: verifier_input() };
         let encoded = input.encode();
         let decoded = TdxAttestationProverInput::decode(&encoded).unwrap();
 
@@ -261,7 +237,7 @@ mod tests {
 
     #[rstest]
     fn decode_for_signer_rejects_mismatched_signer() {
-        let input = TdxAttestationProverInput::new(verifier_input());
+        let input = TdxAttestationProverInput { verifier_input: verifier_input() };
 
         assert!(matches!(
             TdxAttestationProverInput::decode_for_signer(
