@@ -63,31 +63,32 @@ where
             "starting tdx proof generation"
         );
 
-        let heartbeat = WorkerHeartbeat::until_failure(&self.submitter, &claim, self.heartbeat);
-        let generate = self.enclave.service().prove_block(proof_request);
-        tokio::pin!(generate);
-        tokio::pin!(heartbeat);
+        let proof = {
+            let heartbeat = WorkerHeartbeat::until_failure(&self.submitter, &claim, self.heartbeat);
+            let generate = self.enclave.service().prove_block(proof_request);
+            tokio::pin!(generate);
+            tokio::pin!(heartbeat);
 
-        let proof = tokio::select! {
-            biased;
-            result = &mut generate => result.map_err(|source| ProofGeneratorError::Generate {
+            tokio::select! {
+                biased;
+                result = &mut generate => result.map_err(|source| ProofGeneratorError::Generate {
+                        session_id: claim.session_id.clone(),
+                        source,
+                    })?,
+                source = &mut heartbeat => return Err(ProofGeneratorError::Heartbeat {
                     session_id: claim.session_id.clone(),
                     source,
-                })?,
-            source = &mut heartbeat => return Err(ProofGeneratorError::Heartbeat {
-                session_id: claim.session_id.clone(),
-                source,
-            }),
+                }),
+            }
         };
-        drop(heartbeat);
 
         let PrimitiveProofResult::Tee { aggregate_proposal, proposals } = proof else {
             unreachable!("tdx backend returned non-tee proof");
         };
         let submit_request = WorkerSubmitProofRequest {
-            session_id: claim.session_id.clone(),
-            lock_id: claim.lock_id.clone(),
-            worker_id: claim.worker_id.clone(),
+            session_id: claim.session_id,
+            lock_id: claim.lock_id,
+            worker_id: claim.worker_id,
             result: ServiceProofResult::Tee(TeeProofResult {
                 aggregate_proposal,
                 proposals,
@@ -95,13 +96,6 @@ where
             }),
         };
         drop(self.tasks.spawn_submission(&self.submitter, submit_request));
-
-        info!(
-            session_id = %claim.session_id,
-            lock_id = %claim.lock_id,
-            worker_id = %claim.worker_id,
-            "tdx proof generated; proof submitter task spawned"
-        );
 
         Ok(())
     }
