@@ -6,14 +6,6 @@ use alloy_primitives::{B256, b256};
 use base_proof_tee_tdx_verifier::TDXTcbStatus;
 use reqwest::Url;
 
-use crate::{Result, TdxCollateralError};
-
-/// Default maximum accepted age for TDX quotes in seconds.
-pub const DEFAULT_TDX_MAX_QUOTE_AGE_SECS: u64 = 300;
-
-/// Default HTTP timeout for Intel PCS collateral and CRL fetches.
-pub const DEFAULT_TDX_COLLATERAL_FETCH_TIMEOUT_SECS: u64 = 30;
-
 /// Keccak-256 hash of Intel's production SGX/TDX Provisioning Certification
 /// Root CA DER certificate for PCS API v4.
 pub const DEFAULT_TDX_TRUSTED_ROOT_CA_HASH: B256 =
@@ -43,18 +35,9 @@ impl TdxAttestationConfig {
             )
             .expect("default Intel PCS URL must be valid"),
             trusted_root_ca_hash: DEFAULT_TDX_TRUSTED_ROOT_CA_HASH,
-            max_quote_age: Duration::from_secs(DEFAULT_TDX_MAX_QUOTE_AGE_SECS),
+            max_quote_age: Duration::from_secs(300),
             allowed_tcb_statuses: vec![TDXTcbStatus::UpToDate],
-            fetch_timeout: Duration::from_secs(DEFAULT_TDX_COLLATERAL_FETCH_TIMEOUT_SECS),
+            fetch_timeout: Duration::from_secs(30),
         }
-    }
-
-    /// Builds an HTTP client configured for bounded TDX collateral fetching.
-    pub fn build_http_client(&self) -> Result<reqwest::Client> {
-        reqwest::Client::builder()
-            .timeout(self.fetch_timeout)
-            .redirect(reqwest::redirect::Policy::limited(3))
-            .build()
-            .map_err(|e| TdxCollateralError::source(Box::new(e)))
     }
 }

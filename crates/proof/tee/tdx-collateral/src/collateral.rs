@@ -47,7 +47,11 @@ pub struct TdxAttestationHydrator {
 impl TdxAttestationHydrator {
     /// Creates a hydrator with a hardened HTTP client.
     pub fn new(config: TdxAttestationConfig) -> Result<Self> {
-        let client = config.build_http_client()?;
+        let client = reqwest::Client::builder()
+            .timeout(config.fetch_timeout)
+            .redirect(reqwest::redirect::Policy::limited(3))
+            .build()
+            .map_err(TdxCollateralError::source)?;
         Ok(Self { config, client })
     }
 
