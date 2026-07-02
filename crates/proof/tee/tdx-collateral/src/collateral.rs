@@ -53,7 +53,7 @@ impl TdxAttestationHydrator {
 
     /// Fetches Intel PCS collateral and CRLs required to verify `quote`.
     pub async fn fetch_collateral(&self, quote: &[u8]) -> Result<TdxCollateralFetch> {
-        let parsed_quote = TdxQuote::parse(quote).map_err(|e| TdxCollateralError::source(e))?;
+        let parsed_quote = TdxQuote::parse(quote).map_err(TdxCollateralError::source)?;
         if parsed_quote.certification_data_type != PCK_CERT_CHAIN_CERTIFICATION_DATA_TYPE {
             return Err(TdxCollateralError::source(format!(
                 "unsupported TDX quote certification data type {}",
@@ -66,7 +66,7 @@ impl TdxAttestationHydrator {
             pck_certificate_chain.last().expect("certificate_chain_from_pem rejects empty chains");
         let (platform, _) =
             TdxPlatformIdentity::platform_and_tcb_from_pck_certificate_der(&pck_leaf.raw)
-                .map_err(|e| TdxCollateralError::source(e))?;
+                .map_err(TdxCollateralError::source)?;
 
         let mut tcb_info_url =
             self.config.pcs_tdx_base_url.join("tcb").map_err(TdxCollateralError::source)?;
@@ -101,13 +101,7 @@ impl TdxAttestationHydrator {
         chain_headers: &[&str],
         signature_headers: Option<&[&str]>,
     ) -> Result<TdxSignedCollateral> {
-        let response = self
-            .client
-            .get(url)
-            .send()
-            .await
-            .and_then(|response| response.error_for_status())
-            .map_err(|e| TdxCollateralError::source(e))?;
+        let response = self.send(url).await?;
         let headers = response.headers().clone();
         let raw = Self::limited_body(response).await?;
         let encoded_chain = chain_headers
@@ -120,16 +114,15 @@ impl TdxAttestationHydrator {
                 ))
             })?
             .to_str()
-            .map_err(|e| TdxCollateralError::source(e))?;
-        let decoded_chain = percent_decode_str(encoded_chain)
-            .decode_utf8()
-            .map_err(|e| TdxCollateralError::source(e))?;
+            .map_err(TdxCollateralError::source)?;
+        let decoded_chain =
+            percent_decode_str(encoded_chain).decode_utf8().map_err(TdxCollateralError::source)?;
         let signing_chain = Self::certificate_chain_from_pem(decoded_chain.as_bytes())?;
         let signature = match signature_headers
             .and_then(|header_names| header_names.iter().find_map(|header| headers.get(*header)))
         {
             Some(value) => CollateralVerifier::decode_hex(
-                value.to_str().map_err(|e| TdxCollateralError::source(e))?.trim(),
+                value.to_str().map_err(TdxCollateralError::source)?.trim(),
             )
             .map_err(TdxCollateralError::source)?,
             None => {
@@ -155,16 +148,19 @@ impl TdxAttestationHydrator {
         }
         let mut certificate_crls = Vec::with_capacity(urls.len());
         for url in urls {
-            let response = self
-                .client
-                .get(url)
-                .send()
-                .await
-                .and_then(|response| response.error_for_status())
-                .map_err(|e| TdxCollateralError::source(e))?;
+            let response = self.send(url).await?;
             certificate_crls.push(Self::limited_body(response).await?);
         }
         Ok(TdxRevocationEvidence { certificate_crls })
+    }
+
+    async fn send(&self, url: Url) -> Result<reqwest::Response> {
+        self.client
+            .get(url)
+            .send()
+            .await
+            .and_then(|response| response.error_for_status())
+            .map_err(TdxCollateralError::source)
     }
 
     async fn limited_body(response: reqwest::Response) -> Result<Bytes> {
@@ -174,7 +170,7 @@ impl TdxAttestationHydrator {
         {
             return Err(TdxCollateralError::source("Intel PCS response exceeds size limit"));
         }
-        let bytes = response.bytes().await.map_err(|e| TdxCollateralError::source(e))?;
+        let bytes = response.bytes().await.map_err(TdxCollateralError::source)?;
         if bytes.len() > MAX_TDX_COLLATERAL_RESPONSE_BYTES {
             return Err(TdxCollateralError::source("Intel PCS response exceeds size limit"));
         }
@@ -198,8 +194,8 @@ impl TdxAttestationHydrator {
     }
 
     fn crl_distribution_point(certificate_der: &[u8]) -> Result<Url> {
-        let (_, certificate) = X509Certificate::from_der(certificate_der)
-            .map_err(|e| TdxCollateralError::source(e))?;
+        let (_, certificate) =
+            X509Certificate::from_der(certificate_der).map_err(TdxCollateralError::source)?;
         for extension in certificate.extensions() {
             let ParsedExtension::CRLDistributionPoints(points) = extension.parsed_extension()
             else {
