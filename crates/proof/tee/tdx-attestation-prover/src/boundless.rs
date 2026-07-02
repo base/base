@@ -82,7 +82,7 @@ impl BoundlessProver {
         buf[..20].copy_from_slice(signer_address.as_slice());
         buf[20..].copy_from_slice(&attempt.to_be_bytes());
         let hash = keccak256(buf);
-        u32::from_be_bytes(hash[..4].try_into().expect("keccak hash has 4-byte prefix"))
+        u32::from_be_bytes([hash[0], hash[1], hash[2], hash[3]])
     }
 
     /// Checks whether a Boundless error is the `RequestIsNotLocked` race.
@@ -164,8 +164,7 @@ impl BoundlessProver {
         client: &BoundlessClient,
         request_id: alloy_primitives::U256,
     ) -> Result<TeeAttestationProof> {
-        let image_id_bytes: [u8; 32] = Digest::from(self.image_id).into();
-        let image_id_b256 = B256::from(image_id_bytes);
+        let image_id_b256 = B256::from(<[u8; 32]>::from(Digest::from(self.image_id)));
 
         let (journal, receipt) = client
             .fetch_set_inclusion_receipt(request_id, image_id_b256, None, None)
@@ -315,6 +314,9 @@ impl TeeAttestationProofProvider for BoundlessProver {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .contains(&signer_address);
+        if recovery_is_blocked {
+            return Ok(self.submit_and_wait(&client, params).await?);
+        }
 
         let loop_expiry = self.effective_expiry(None);
         let mut first_unknown_request_id = None;
@@ -332,23 +334,19 @@ impl TeeAttestationProofProvider for BoundlessProver {
             );
 
             let proof = match client.boundless_market.get_status(request_id_u256, None).await {
-                Ok(RequestStatus::Locked) if !recovery_is_blocked => {
+                Ok(RequestStatus::Locked) => {
                     self.wait_and_fetch(&client, request_id_u256, loop_expiry).await
                 }
-                Ok(RequestStatus::Fulfilled) if !recovery_is_blocked => {
+                Ok(RequestStatus::Fulfilled) => {
                     self.fetch_and_encode_receipt(&client, request_id_u256).await
                 }
-                Ok(RequestStatus::Locked | RequestStatus::Fulfilled | RequestStatus::Expired) => {
-                    continue;
-                }
+                Ok(RequestStatus::Expired) => continue,
                 Ok(RequestStatus::Unknown) => {
-                    if first_unknown_request_id.is_none() {
-                        first_unknown_request_id = Some(request_id);
-                    }
+                    first_unknown_request_id.get_or_insert(request_id);
                     continue;
                 }
                 Err(e) => {
-                    if Self::is_request_not_locked_error(&e) && !recovery_is_blocked {
+                    if Self::is_request_not_locked_error(&e) {
                         self.wait_and_fetch(&client, request_id_u256, loop_expiry).await
                     } else {
                         warn!(
