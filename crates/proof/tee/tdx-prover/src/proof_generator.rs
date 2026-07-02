@@ -7,7 +7,7 @@ use base_proof_host::ProverError;
 use base_proof_primitives::ProofResult as PrimitiveProofResult;
 use base_proof_worker::{
     ClaimedProofJobHandler, ClaimedProofJobMetadata, ClaimedProofJobMetadataError,
-    ProofSubmissionTask, ProofSubmitter, ProofSubmitterError, ProofTaskController, WorkerHeartbeat,
+    ProofSubmissionTask, ProofSubmitter, ProofTaskController, WorkerHeartbeat,
     WorkerHeartbeatConfig,
 };
 use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
@@ -44,9 +44,8 @@ impl TryFrom<ProofJob> for ProofGeneratorRequest {
             });
         };
         if tee.tee_kind != TeeKind::IntelTdx {
-            return Err(ProofGeneratorError::UnsupportedTeeKind {
+            return Err(ProofGeneratorError::UnsupportedProofRequest {
                 session_id: claim.session_id,
-                tee_kind: tee.tee_kind,
             });
         }
 
@@ -101,10 +100,7 @@ where
             .await?;
 
         let PrimitiveProofResult::Tee { aggregate_proposal, proposals } = proof else {
-            return Err(ProofGeneratorError::BuildSubmission {
-                session_id: request.claim.session_id.clone(),
-                source: ProofSubmitterError::UnsupportedProofResult,
-            });
+            unreachable!("tdx backend returned non-tee proof");
         };
         let submit_request = WorkerSubmitProofRequest {
             session_id: request.claim.session_id.clone(),
@@ -224,14 +220,6 @@ pub enum ProofGeneratorError {
         /// Proof session identifier.
         session_id: String,
     },
-    /// Claimed TEE proof job is not for Intel TDX.
-    #[error("proof job {session_id} is not an Intel TDX proof request: got {tee_kind:?}")]
-    UnsupportedTeeKind {
-        /// Proof session identifier.
-        session_id: String,
-        /// TEE kind from the claimed proof job.
-        tee_kind: TeeKind,
-    },
     /// TDX proof generation failed.
     #[error("proof generation failed for job {session_id}: {source}")]
     Generate {
@@ -249,15 +237,6 @@ pub enum ProofGeneratorError {
         /// Underlying worker API error.
         #[source]
         source: ProverServiceClientError,
-    },
-    /// The generated proof could not be converted into a worker submission request.
-    #[error("failed to build proof submission for job {session_id}: {source}")]
-    BuildSubmission {
-        /// Proof session identifier.
-        session_id: String,
-        /// Underlying proof submission request error.
-        #[source]
-        source: ProofSubmitterError,
     },
 }
 
@@ -302,6 +281,6 @@ mod tests {
     fn request_rejects_other_tee_kinds() {
         let err = ProofGeneratorRequest::try_from(proof_job(TeeKind::AwsNitro)).unwrap_err();
 
-        assert!(matches!(err, ProofGeneratorError::UnsupportedTeeKind { .. }));
+        assert!(matches!(err, ProofGeneratorError::UnsupportedProofRequest { .. }));
     }
 }
