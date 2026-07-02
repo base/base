@@ -4,11 +4,11 @@
 //! produces observation payloads, but contains no path that can create or send a
 //! transaction. Runtime wiring gates every call behind `MEV_EMITTER_ARB_DRYRUN=1`.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use alloy_primitives::{Address, keccak256};
+use alloy_primitives::{Address, U256, keccak256};
 use num_bigint::{BigInt, BigUint};
 use num_traits::{One, ToPrimitive, Zero};
 use serde::{Deserialize, Serialize};
@@ -212,6 +212,318 @@ impl PoolState {
             ticks,
         }
     }
+}
+
+/// Verified v3/Slipstream packed slot0 storage slot.
+pub const V3_SLOT0_SLOT: u64 = 0;
+/// Verified v3/Slipstream active-liquidity storage slot.
+pub const V3_LIQUIDITY_SLOT: u64 = 4;
+/// Verified `UniV2` packed reserve storage slot.
+pub const UNIV2_RESERVES_SLOT: u64 = 8;
+/// Verified Aerodrome volatile reserve0 storage slot.
+pub const AERO_VOLATILE_RESERVE0_SLOT: u64 = 20;
+/// Verified Aerodrome volatile reserve1 storage slot.
+pub const AERO_VOLATILE_RESERVE1_SLOT: u64 = 21;
+
+const MASK_160_BITS: usize = 160;
+const MASK_128_BITS: usize = 128;
+const MASK_112_BITS: usize = 112;
+const MASK_24_BITS: usize = 24;
+const TICK_SIGN_BIT: u32 = 1 << 23;
+const TICK_MODULUS: i32 = 1 << 24;
+
+/// Source of a live pool-state overlay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PoolOverlaySource {
+    /// Overlay came from raw pool storage-slot diffs already produced by revm.
+    SlotDiff,
+    /// Overlay came from a bounded exact-state fallback read.
+    StateProvider,
+}
+
+impl PoolOverlaySource {
+    /// Stable label for diagnostics.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SlotDiff => "slot-diff",
+            Self::StateProvider => "state-provider",
+        }
+    }
+}
+
+/// Semantic live-state delta for a dirty pool.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PoolStateDelta {
+    /// Updated reserve0 for reserve pools.
+    pub reserve0: Option<u128>,
+    /// Updated reserve1 for reserve pools.
+    pub reserve1: Option<u128>,
+    /// Updated V3 sqrt price.
+    pub sqrt_price_x96: Option<u128>,
+    /// Updated V3 active liquidity.
+    pub liquidity: Option<u128>,
+    /// Updated V3 active tick.
+    pub tick: Option<i32>,
+    /// Overlay source.
+    pub source: PoolOverlaySource,
+    /// Block/payload epoch this delta belongs to.
+    pub epoch: Option<u64>,
+    /// True when all live fields required for this pool protocol were read and decoded.
+    pub live_read_complete: bool,
+    /// Honest overlay caveats/status labels.
+    pub caveats: Vec<String>,
+}
+
+impl PoolStateDelta {
+    /// Creates an empty delta for a source and epoch.
+    pub const fn new(source: PoolOverlaySource, epoch: Option<u64>) -> Self {
+        Self {
+            reserve0: None,
+            reserve1: None,
+            sqrt_price_x96: None,
+            liquidity: None,
+            tick: None,
+            source,
+            epoch,
+            live_read_complete: false,
+            caveats: Vec::new(),
+        }
+    }
+
+    /// Adds a caveat once, preserving first-seen order.
+    pub fn add_caveat(&mut self, caveat: &str) {
+        push_unique_caveat(&mut self.caveats, caveat);
+    }
+
+    /// True when this delta carries at least one field update.
+    pub const fn has_state_update(&self) -> bool {
+        self.reserve0.is_some()
+            || self.reserve1.is_some()
+            || self.sqrt_price_x96.is_some()
+            || self.liquidity.is_some()
+            || self.tick.is_some()
+    }
+
+    /// True when the live read included every field needed to quote this pool protocol.
+    pub const fn is_live_read_complete(&self) -> bool {
+        self.live_read_complete
+    }
+
+    /// Decodes a dirty pool's raw storage words using the verified TS overlay contract.
+    pub fn from_slots(
+        pool: &PoolState,
+        slots: &BTreeMap<U256, U256>,
+        source: PoolOverlaySource,
+        epoch: Option<u64>,
+        target_epoch: Option<u64>,
+    ) -> Self {
+        let mut delta = Self::new(source, epoch);
+        if let (Some(actual), Some(target)) = (epoch, target_epoch)
+            && actual != target
+        {
+            delta.add_caveat("overlay-epoch-mismatch");
+            return delta;
+        }
+        if slots.is_empty() {
+            delta.add_caveat("stale-baseline-fallback");
+            return delta;
+        }
+        let mut saw_relevant_slot = false;
+        let mut complete_live_read = false;
+        match pool.protocol {
+            Protocol::UniswapV3 => {
+                let mut slot0_ok = false;
+                let mut liquidity_ok = false;
+                if let Some(word) = slots.get(&slot_key(V3_SLOT0_SLOT)) {
+                    saw_relevant_slot = true;
+                    if let Some((sqrt_price_x96, tick)) = decode_slot0(*word) {
+                        if sqrt_price_x96 == 0 {
+                            delta.add_caveat("overlay-decode-failed");
+                        } else {
+                            slot0_ok = true;
+                            if pool.sqrt_price_x96 != Some(sqrt_price_x96)
+                                || pool.tick != Some(tick)
+                            {
+                                delta.sqrt_price_x96 = Some(sqrt_price_x96);
+                                delta.tick = Some(tick);
+                            }
+                        }
+                    } else {
+                        delta.add_caveat("overlay-decode-failed");
+                    }
+                }
+                if let Some(word) = slots.get(&slot_key(V3_LIQUIDITY_SLOT)) {
+                    saw_relevant_slot = true;
+                    if let Some(liquidity) = u256_low_bits_to_u128(*word, MASK_128_BITS) {
+                        if liquidity == 0 {
+                            delta.add_caveat("overlay-decode-failed");
+                        } else {
+                            liquidity_ok = true;
+                            if pool.liquidity != Some(liquidity) {
+                                delta.liquidity = Some(liquidity);
+                            }
+                        }
+                    } else {
+                        delta.add_caveat("overlay-decode-failed");
+                    }
+                }
+                complete_live_read = slot0_ok && liquidity_ok;
+                if saw_relevant_slot && !complete_live_read && delta.caveats.is_empty() {
+                    delta.add_caveat("partial-live-overlay");
+                }
+            }
+            Protocol::UniswapV2 => {
+                if let Some(word) = slots.get(&slot_key(UNIV2_RESERVES_SLOT)) {
+                    saw_relevant_slot = true;
+                    if let Some((reserve0, reserve1)) = decode_univ2_reserves(*word) {
+                        if reserve0 == 0 || reserve1 == 0 {
+                            delta.add_caveat("overlay-decode-failed");
+                        } else {
+                            complete_live_read = true;
+                            if pool.reserve0 != reserve0 || pool.reserve1 != reserve1 {
+                                delta.reserve0 = Some(reserve0);
+                                delta.reserve1 = Some(reserve1);
+                            }
+                        }
+                    } else {
+                        delta.add_caveat("overlay-decode-failed");
+                    }
+                }
+            }
+            Protocol::AerodromeVolatile => {
+                let reserve0 = slots.get(&slot_key(AERO_VOLATILE_RESERVE0_SLOT));
+                let reserve1 = slots.get(&slot_key(AERO_VOLATILE_RESERVE1_SLOT));
+                if reserve0.is_some() || reserve1.is_some() {
+                    saw_relevant_slot = true;
+                }
+                match (reserve0, reserve1) {
+                    (Some(word0), Some(word1)) => {
+                        let decoded0 = u256_to_u128_checked(*word0);
+                        let decoded1 = u256_to_u128_checked(*word1);
+                        match (decoded0, decoded1) {
+                            (Some(r0), Some(r1)) if r0 != 0 && r1 != 0 => {
+                                complete_live_read = true;
+                                if pool.reserve0 != r0 || pool.reserve1 != r1 {
+                                    delta.reserve0 = Some(r0);
+                                    delta.reserve1 = Some(r1);
+                                }
+                            }
+                            _ => delta.add_caveat("overlay-decode-failed"),
+                        }
+                    }
+                    (Some(_), None) | (None, Some(_)) => delta.add_caveat("partial-live-overlay"),
+                    (None, None) => {}
+                }
+            }
+            Protocol::AerodromeStable => {
+                if !slots.is_empty() {
+                    saw_relevant_slot = true;
+                    delta.add_caveat("overlay-unsupported-protocol");
+                }
+            }
+        }
+        delta.live_read_complete = complete_live_read;
+        if delta.live_read_complete {
+            if delta.has_state_update() {
+                delta.add_caveat("live-overlay-applied");
+            } else if delta.caveats.is_empty() {
+                delta.add_caveat("live-overlay-verified");
+            }
+        } else if !saw_relevant_slot && !slots.is_empty() && delta.caveats.is_empty() {
+            delta.add_caveat("stale-baseline-fallback");
+        }
+        delta
+    }
+
+    /// Applies this delta to an owned pool copy. Returns true when a field changed.
+    pub fn apply_to(&self, pool: &mut PoolState) -> bool {
+        let mut changed = false;
+        if let Some(reserve0) = self.reserve0 {
+            changed |= pool.reserve0 != reserve0;
+            pool.reserve0 = reserve0;
+        }
+        if let Some(reserve1) = self.reserve1 {
+            changed |= pool.reserve1 != reserve1;
+            pool.reserve1 = reserve1;
+        }
+        if let Some(sqrt_price_x96) = self.sqrt_price_x96 {
+            changed |= pool.sqrt_price_x96 != Some(sqrt_price_x96);
+            pool.sqrt_price_x96 = Some(sqrt_price_x96);
+        }
+        if let Some(liquidity) = self.liquidity {
+            changed |= pool.liquidity != Some(liquidity);
+            pool.liquidity = Some(liquidity);
+        }
+        if let Some(tick) = self.tick {
+            changed |= pool.tick != Some(tick);
+            pool.tick = Some(tick);
+        }
+        changed
+    }
+}
+
+/// Returns the exact storage slots a fallback read should fetch for a pool.
+pub const fn fallback_overlay_slots(pool: &PoolState) -> &'static [u64] {
+    match pool.protocol {
+        Protocol::UniswapV3 => &[V3_SLOT0_SLOT, V3_LIQUIDITY_SLOT],
+        Protocol::UniswapV2 => &[UNIV2_RESERVES_SLOT],
+        Protocol::AerodromeVolatile => &[AERO_VOLATILE_RESERVE0_SLOT, AERO_VOLATILE_RESERVE1_SLOT],
+        Protocol::AerodromeStable => &[],
+    }
+}
+
+/// Builds a storage slot key.
+pub fn slot_key(slot: u64) -> U256 {
+    U256::from(slot)
+}
+
+/// Composes semicolon-separated caveats in first-seen order.
+pub fn compose_caveat_parts(parts: &[Option<&str>]) -> Option<String> {
+    let mut caveats = Vec::new();
+    for part in parts.iter().flatten() {
+        for piece in part.split(';') {
+            let trimmed = piece.trim();
+            if !trimmed.is_empty() {
+                push_unique_caveat(&mut caveats, trimmed);
+            }
+        }
+    }
+    (!caveats.is_empty()).then(|| caveats.join(";"))
+}
+
+fn push_unique_caveat(caveats: &mut Vec<String>, caveat: &str) {
+    if !caveats.iter().any(|existing| existing == caveat) {
+        caveats.push(caveat.to_string());
+    }
+}
+
+fn u256_mask(bits: usize) -> U256 {
+    (U256::from(1u64) << bits) - U256::from(1u64)
+}
+
+fn u256_low_bits_to_u128(value: U256, bits: usize) -> Option<u128> {
+    u256_to_u128_checked(value & u256_mask(bits))
+}
+
+fn u256_to_u128_checked(value: U256) -> Option<u128> {
+    if value > U256::from(u128::MAX) { None } else { Some(value.to::<u128>()) }
+}
+
+fn decode_slot0(word: U256) -> Option<(u128, i32)> {
+    let sqrt_price_x96 = u256_low_bits_to_u128(word, MASK_160_BITS)?;
+    let raw_tick = ((word >> MASK_160_BITS) & u256_mask(MASK_24_BITS)).to::<u32>();
+    let tick = if raw_tick & TICK_SIGN_BIT != 0 {
+        i32::try_from(raw_tick).ok()? - TICK_MODULUS
+    } else {
+        i32::try_from(raw_tick).ok()?
+    };
+    Some((sqrt_price_x96, tick))
+}
+
+fn decode_univ2_reserves(word: U256) -> Option<(u128, u128)> {
+    let reserve0 = u256_low_bits_to_u128(word, MASK_112_BITS)?;
+    let reserve1 = u256_low_bits_to_u128(word >> MASK_112_BITS, MASK_112_BITS)?;
+    Some((reserve0, reserve1))
 }
 
 /// Quote result shared by all protocols.
@@ -787,35 +1099,83 @@ pub fn run_frame(
     config: &DryRunConfig,
     guard: NoActionGuard,
 ) -> DryRunFrame {
+    run_frame_internal(pools, dirty_pools, &BTreeMap::new(), config, guard, false)
+}
+
+/// Runs a bounded per-frame dry-run with live dirty-pool state overlay.
+pub fn run_frame_with_overlay(
+    pools: &[PoolState],
+    dirty_pools: &BTreeSet<Address>,
+    dirty_state: &BTreeMap<Address, PoolStateDelta>,
+    config: &DryRunConfig,
+    guard: NoActionGuard,
+) -> DryRunFrame {
+    run_frame_internal(pools, dirty_pools, dirty_state, config, guard, true)
+}
+
+fn run_frame_internal(
+    pools: &[PoolState],
+    dirty_pools: &BTreeSet<Address>,
+    dirty_state: &BTreeMap<Address, PoolStateDelta>,
+    config: &DryRunConfig,
+    guard: NoActionGuard,
+    overlay_enabled: bool,
+) -> DryRunFrame {
     let started = Instant::now();
     let reverse = candidate_index_reverse_map(pools);
+    let mut all_dirty = dirty_pools.clone();
+    all_dirty.extend(dirty_state.keys().copied());
     let mut truncated = false;
+    let mut caveats = Vec::new();
     if pools.is_empty() {
         return DryRunFrame {
             candidates: Vec::new(),
-            dirty_pool_count: dirty_pools.len(),
+            dirty_pool_count: all_dirty.len(),
             truncated: false,
             health: "unsupported".to_string(),
             latency_micros: u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
             caveat: Some("pool-baseline-unavailable-in-rust-phase1".to_string()),
         };
     }
-    if !dirty_pools.is_empty() && !dirty_pools.iter().any(|pool| reverse.contains_key(pool)) {
+    if !all_dirty.is_empty() && !all_dirty.iter().any(|pool| reverse.contains_key(pool)) {
         return DryRunFrame {
             candidates: Vec::new(),
-            dirty_pool_count: dirty_pools.len(),
+            dirty_pool_count: all_dirty.len(),
             truncated: false,
             health: "skipped".to_string(),
             latency_micros: u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
             caveat: Some("dirty-pool-not-in-baseline".to_string()),
         };
     }
-    let mut selected: Vec<&PoolState> = pools.iter().collect();
-    if selected.len() > config.max_pools_per_frame {
-        selected.truncate(config.max_pools_per_frame);
+
+    let (selected_indexes, dirty_indexes_len) = select_frame_indexes(pools, &all_dirty, &reverse);
+    let mut bounded_indexes = selected_indexes;
+    // Dropping clean rows is still reported as frame truncation: the dirty
+    // rows remain prioritized, but candidate search no longer sees the full
+    // clean counterparty universe. Dirty-row over-cap gets its own caveat.
+    if bounded_indexes.len() > config.max_pools_per_frame {
+        if dirty_indexes_len > config.max_pools_per_frame {
+            push_unique_caveat(&mut caveats, "dirty-pool-outside-frame-cap");
+        } else {
+            push_unique_caveat(&mut caveats, "bounded-frame-truncated");
+        }
+        bounded_indexes.truncate(config.max_pools_per_frame);
         truncated = true;
     }
-    let owned: Vec<PoolState> = selected.into_iter().cloned().collect();
+
+    let mut owned: Vec<PoolState> =
+        bounded_indexes.into_iter().filter_map(|i| pools.get(i).cloned()).collect();
+    if overlay_enabled {
+        for pool in &mut owned {
+            if let Some(delta) = dirty_state.get(&pool.pool) {
+                for caveat in &delta.caveats {
+                    push_unique_caveat(&mut caveats, caveat);
+                }
+                delta.apply_to(pool);
+            }
+        }
+    }
+
     let (mut candidates, timed_out) = find_negative_cycle_candidates_bounded(
         &owned,
         config.amount_in_wei,
@@ -823,23 +1183,27 @@ pub fn run_frame(
         config.time_budget,
         config.max_candidates_per_frame + 1,
     );
-    if !dirty_pools.is_empty() {
-        candidates
-            .retain(|candidate| candidate.pools.iter().any(|pool| dirty_pools.contains(pool)));
+    if !all_dirty.is_empty() {
+        candidates.retain(|candidate| candidate.pools.iter().any(|pool| all_dirty.contains(pool)));
     }
     if candidates.len() > config.max_candidates_per_frame {
         candidates.truncate(config.max_candidates_per_frame);
         truncated = true;
+        push_unique_caveat(&mut caveats, "bounded-frame-truncated");
     }
     if timed_out {
         truncated = true;
+        push_unique_caveat(&mut caveats, "bounded-frame-truncated");
     }
     if started.elapsed() > config.time_budget {
         truncated = true;
+        push_unique_caveat(&mut caveats, "bounded-frame-truncated");
     }
-    let mut caveat = truncated.then(|| "bounded-frame-truncated".to_string());
-    if caveat.is_none() && candidates.is_empty() && !dirty_pools.is_empty() {
-        caveat = Some("no-candidates-for-dirty-pools".to_string());
+    if candidates.is_empty()
+        && !all_dirty.is_empty()
+        && !caveats.iter().any(|c| c == "dirty-pool-outside-frame-cap")
+    {
+        push_unique_caveat(&mut caveats, "no-candidates-for-dirty-pools");
     }
     let health = if guard.mode() != "dry-run-only" {
         "error"
@@ -851,12 +1215,45 @@ pub fn run_frame(
     .to_string();
     DryRunFrame {
         candidates,
-        dirty_pool_count: dirty_pools.len(),
+        dirty_pool_count: all_dirty.len(),
         truncated,
         health,
         latency_micros: u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
-        caveat,
+        caveat: compose_owned_caveats(&caveats),
     }
+}
+
+fn select_frame_indexes(
+    pools: &[PoolState],
+    dirty_pools: &BTreeSet<Address>,
+    reverse: &HashMap<Address, Vec<usize>>,
+) -> (Vec<usize>, usize) {
+    if dirty_pools.is_empty() {
+        return ((0..pools.len()).collect(), 0);
+    }
+    let mut dirty_indexes = BTreeSet::new();
+    for pool in dirty_pools {
+        if let Some(values) = reverse.get(pool) {
+            dirty_indexes.extend(values.iter().copied());
+        }
+    }
+    let mut selected = dirty_indexes.iter().copied().collect::<Vec<_>>();
+    let dirty_len = selected.len();
+    selected.extend((0..pools.len()).filter(|i| !dirty_indexes.contains(i)));
+    (selected, dirty_len)
+}
+
+fn compose_owned_caveats(caveats: &[String]) -> Option<String> {
+    let mut out = Vec::new();
+    for caveat in caveats {
+        for piece in caveat.split(';') {
+            let trimmed = piece.trim();
+            if !trimmed.is_empty() {
+                push_unique_caveat(&mut out, trimmed);
+            }
+        }
+    }
+    (!out.is_empty()).then(|| out.join(";"))
 }
 
 /// Builds graph and returns canonical negative-cycle candidates.
@@ -1604,6 +2001,230 @@ mod tests {
         let frame = run_frame(&pools, &BTreeSet::new(), &config, NoActionGuard);
         assert!(frame.truncated);
         assert_eq!(frame.health, "truncated");
+        assert_eq!(frame.caveat.as_deref(), Some("bounded-frame-truncated"));
+    }
+
+    fn pack_slot0_word(sqrt_price_x96: u128, tick: i32) -> U256 {
+        let tick_u24 = if tick < 0 {
+            u32::try_from((1i64 << 24) + i64::from(tick)).unwrap()
+        } else {
+            u32::try_from(tick).unwrap()
+        };
+        U256::from(sqrt_price_x96) | (U256::from(tick_u24) << 160usize)
+    }
+
+    fn pack_univ2_reserves(reserve0: u128, reserve1: u128) -> U256 {
+        U256::from(reserve0) | (U256::from(reserve1) << 112usize)
+    }
+
+    #[test]
+    fn overlay_decodes_v3_slot0_and_liquidity_words() {
+        let sqrt_price_x96 = 169_982_099_328_384_520_004_752u128;
+        let tick = -261_057;
+        let liquidity = 12_345_678_901_234_567_890u128;
+        let pool = PoolState::v3(addr(0xc0), addr(1), addr(2), 500, 1, 99, 12_345, Vec::new());
+        let slots = BTreeMap::from([
+            (slot_key(V3_SLOT0_SLOT), pack_slot0_word(sqrt_price_x96, tick)),
+            (slot_key(V3_LIQUIDITY_SLOT), U256::from(liquidity)),
+        ]);
+
+        let delta = PoolStateDelta::from_slots(
+            &pool,
+            &slots,
+            PoolOverlaySource::SlotDiff,
+            Some(10),
+            Some(10),
+        );
+
+        assert_eq!(delta.sqrt_price_x96, Some(sqrt_price_x96));
+        assert_eq!(delta.tick, Some(tick));
+        assert_eq!(delta.liquidity, Some(liquidity));
+        assert!(delta.caveats.iter().any(|c| c == "live-overlay-applied"));
+    }
+
+    #[test]
+    fn overlay_decodes_univ2_packed_reserves() {
+        let pool =
+            PoolState::v2_like(addr(0xc1), Protocol::UniswapV2, addr(1), addr(2), 30, 1_000, 2_000);
+        let slots =
+            BTreeMap::from([(slot_key(UNIV2_RESERVES_SLOT), pack_univ2_reserves(3_000, 4_000))]);
+
+        let delta = PoolStateDelta::from_slots(
+            &pool,
+            &slots,
+            PoolOverlaySource::SlotDiff,
+            Some(10),
+            Some(10),
+        );
+
+        assert_eq!(delta.reserve0, Some(3_000));
+        assert_eq!(delta.reserve1, Some(4_000));
+        assert!(delta.caveats.iter().any(|c| c == "live-overlay-applied"));
+    }
+
+    #[test]
+    fn overlay_caveats_equal_live_reserve_reads_as_verified() {
+        let pool =
+            PoolState::v2_like(addr(0xc4), Protocol::UniswapV2, addr(1), addr(2), 30, 1_000, 2_000);
+        let slots =
+            BTreeMap::from([(slot_key(UNIV2_RESERVES_SLOT), pack_univ2_reserves(1_000, 2_000))]);
+
+        let delta = PoolStateDelta::from_slots(
+            &pool,
+            &slots,
+            PoolOverlaySource::SlotDiff,
+            Some(10),
+            Some(10),
+        );
+
+        assert!(!delta.has_state_update());
+        assert!(delta.caveats.iter().any(|c| c == "live-overlay-verified"));
+        assert!(!delta.caveats.iter().any(|c| c == "stale-baseline-fallback"));
+    }
+
+    #[test]
+    fn overlay_fail_closes_aerodrome_volatile_partial_and_stable_layouts() {
+        let volatile = PoolState::v2_like(
+            addr(0xc2),
+            Protocol::AerodromeVolatile,
+            addr(1),
+            addr(2),
+            5,
+            1_000,
+            2_000,
+        );
+        let partial =
+            BTreeMap::from([(slot_key(AERO_VOLATILE_RESERVE0_SLOT), U256::from(3_000u128))]);
+        let partial_delta = PoolStateDelta::from_slots(
+            &volatile,
+            &partial,
+            PoolOverlaySource::SlotDiff,
+            Some(10),
+            Some(10),
+        );
+        assert!(!partial_delta.has_state_update());
+        assert!(partial_delta.caveats.iter().any(|c| c == "partial-live-overlay"));
+
+        let stable = PoolState::v2_like(
+            addr(0xc3),
+            Protocol::AerodromeStable,
+            addr(1),
+            addr(2),
+            5,
+            1_000,
+            2_000,
+        );
+        let stable_delta = PoolStateDelta::from_slots(
+            &stable,
+            &partial,
+            PoolOverlaySource::SlotDiff,
+            Some(10),
+            Some(10),
+        );
+        assert!(!stable_delta.has_state_update());
+        assert!(stable_delta.caveats.iter().any(|c| c == "overlay-unsupported-protocol"));
+    }
+
+    #[test]
+    fn run_frame_applies_live_reserve_overlay_before_quote() {
+        let dirty_pool = addr(0xa1);
+        let clean_pool = addr(0xb2);
+        let pools = vec![
+            PoolState::v2_like(dirty_pool, Protocol::UniswapV2, addr(1), addr(2), 1, 1_000, 1_000),
+            PoolState::v2_like(clean_pool, Protocol::UniswapV2, addr(1), addr(2), 1, 1_000, 1_000),
+        ];
+        let mut dirty = BTreeSet::new();
+        dirty.insert(dirty_pool);
+        let baseline = run_frame(&pools, &dirty, &DryRunConfig::default(), NoActionGuard);
+        assert!(baseline.candidates.is_empty());
+
+        let slots =
+            BTreeMap::from([(slot_key(UNIV2_RESERVES_SLOT), pack_univ2_reserves(1_000, 1_200))]);
+        let delta = PoolStateDelta::from_slots(
+            &pools[0],
+            &slots,
+            PoolOverlaySource::SlotDiff,
+            Some(10),
+            Some(10),
+        );
+        let overlay = BTreeMap::from([(dirty_pool, delta)]);
+        let frame = run_frame_with_overlay(
+            &pools,
+            &dirty,
+            &overlay,
+            &DryRunConfig::default(),
+            NoActionGuard,
+        );
+
+        assert_eq!(frame.health, "ok");
+        assert!(frame.caveat.as_deref().is_some_and(|c| c.contains("live-overlay-applied")));
+        assert!(frame.candidates.iter().any(|candidate| {
+            candidate.pools.contains(&dirty_pool) && candidate.pools.contains(&clean_pool)
+        }));
+    }
+
+    #[test]
+    fn run_frame_prioritizes_dirty_pools_under_frame_cap() {
+        let clean_counterparty = addr(0xb1);
+        let unrelated = addr(0xb2);
+        let dirty_pool = addr(0xb3);
+        let pools = vec![
+            PoolState::v2_like(
+                clean_counterparty,
+                Protocol::UniswapV2,
+                addr(1),
+                addr(2),
+                1,
+                1_000,
+                1_000,
+            ),
+            PoolState::v2_like(unrelated, Protocol::UniswapV2, addr(3), addr(4), 1, 1_000, 1_000),
+            PoolState::v2_like(dirty_pool, Protocol::UniswapV2, addr(1), addr(2), 1, 1_000, 1_200),
+        ];
+        let config =
+            DryRunConfig { max_pools_per_frame: 2, amount_in_wei: 10, ..DryRunConfig::default() };
+        let mut dirty = BTreeSet::new();
+        dirty.insert(dirty_pool);
+
+        let frame = run_frame(&pools, &dirty, &config, NoActionGuard);
+
+        assert!(frame.candidates.iter().any(|candidate| candidate.pools.contains(&dirty_pool)));
+        assert!(
+            !frame.caveat.as_deref().unwrap_or_default().contains("dirty-pool-outside-frame-cap")
+        );
+    }
+
+    #[test]
+    fn run_frame_caveats_dirty_pool_over_cap() {
+        let pools = vec![
+            PoolState::v2_like(addr(0xb1), Protocol::UniswapV2, addr(1), addr(2), 1, 1_000, 1_100),
+            PoolState::v2_like(addr(0xb2), Protocol::UniswapV2, addr(1), addr(2), 1, 1_100, 1_000),
+        ];
+        let config =
+            DryRunConfig { max_pools_per_frame: 1, amount_in_wei: 10, ..DryRunConfig::default() };
+        let mut dirty = BTreeSet::new();
+        dirty.insert(addr(0xb1));
+        dirty.insert(addr(0xb2));
+
+        let frame = run_frame(&pools, &dirty, &config, NoActionGuard);
+
+        assert!(frame.truncated);
+        assert!(
+            frame.caveat.as_deref().is_some_and(|c| c.contains("dirty-pool-outside-frame-cap"))
+        );
+    }
+
+    #[test]
+    fn compose_caveats_preserves_overlay_and_quote_status() {
+        let caveat = compose_caveat_parts(&[
+            Some("live-overlay-applied;bounded-frame-truncated"),
+            Some("v3-price-limit"),
+        ]);
+
+        assert_eq!(
+            caveat.as_deref(),
+            Some("live-overlay-applied;bounded-frame-truncated;v3-price-limit"),
+        );
     }
 
     #[test]
