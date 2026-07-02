@@ -33,7 +33,6 @@ tokio = { workspace = true, features = ["rt"], optional = true }
 
 [dev-dependencies]
 rstest.workspace = true
-tokio = { workspace = true, features = ["macros", "rt"] }
 
 [features]
 prove = [

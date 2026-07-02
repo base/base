@@ -258,4 +258,17 @@ mod tests {
             Err(ProverError::InputDecode(_))
         ));
     }
+
+    #[rstest]
+    fn decode_for_signer_rejects_mismatched_signer() {
+        let input = TdxAttestationProverInput::new(verifier_input());
+
+        assert!(matches!(
+            TdxAttestationProverInput::decode_for_signer(
+                &input.encode(),
+                Address::repeat_byte(0x99)
+            ),
+            Err(ProverError::SignerMismatch { .. })
+        ));
+    }
 }

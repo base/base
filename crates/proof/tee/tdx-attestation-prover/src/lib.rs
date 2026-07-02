@@ -5,7 +5,7 @@
 pub mod test_utils;
 
 mod direct;
-pub use direct::{DIRECT_DEV_PROOF_BYTES, DirectProver};
+pub use direct::DirectProver;
 
 mod error;
 pub use error::{ProverError, Result};
