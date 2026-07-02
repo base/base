@@ -5,9 +5,7 @@
 pub mod test_utils;
 
 mod direct;
-pub use direct::{
-    DIRECT_DEV_PROOF_BYTES, DirectProver, NativeTdxJournalVerifier, TdxJournalVerifier,
-};
+pub use direct::{DIRECT_DEV_PROOF_BYTES, DirectProver};
 
 mod error;
 pub use error::{ProverError, Result};
