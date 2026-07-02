@@ -31,5 +31,4 @@ tokio = { workspace = true, features = ["time", "macros"] }
 thiserror.workspace = true
 
 # Misc
-serde_json.workspace = true
 percent-encoding.workspace = true

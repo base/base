@@ -3,7 +3,7 @@
 use alloy_primitives::{Bytes, hex};
 use base_proof_tee_tdx_verifier::{
     CollateralVerifier, TdxCertificate, TdxCollateral, TdxPlatformIdentity, TdxQuote,
-    TdxRevocationEvidence, TdxSignedCollateral,
+    TdxRevocationEvidence, TdxSignedCollateral, TdxSignedCollateralBody,
 };
 use percent_encoding::percent_decode_str;
 use reqwest::Url;
@@ -143,7 +143,10 @@ impl TdxAttestationHydrator {
                 value.to_str().map_err(|e| TdxCollateralError::source(e))?.trim(),
             )
             .map_err(TdxCollateralError::source)?,
-            None => Self::qe_identity_signature_from_json(&raw)?,
+            None => {
+                TdxSignedCollateral::signature_from_json(&raw, TdxSignedCollateralBody::QeIdentity)
+                    .map_err(TdxCollateralError::source)?
+            }
         };
         Ok(TdxSignedCollateral { raw, signing_chain, signature })
     }
@@ -155,13 +158,7 @@ impl TdxAttestationHydrator {
         let mut urls = Vec::new();
         for chain in chains {
             for certificate in chain.iter().skip(1) {
-                let crl_url = Self::crl_distribution_point(&certificate.raw)?;
-                let url = Url::parse(&crl_url).map_err(|e| TdxCollateralError::source(e))?;
-                if !Self::is_allowed_intel_url(&url) {
-                    return Err(TdxCollateralError::source(format!(
-                        "TDX certificate CRL URL is not an allowed Intel URL: {crl_url}"
-                    )));
-                }
+                let url = Self::crl_distribution_point(&certificate.raw)?;
                 if !urls.contains(&url) {
                     urls.push(url);
                 }
@@ -195,23 +192,6 @@ impl TdxAttestationHydrator {
         Ok(Bytes(bytes))
     }
 
-    fn qe_identity_signature_from_json(raw: &[u8]) -> Result<Bytes> {
-        let document: serde_json::Value =
-            serde_json::from_slice(raw).map_err(|e| TdxCollateralError::source(e))?;
-        let value = document
-            .get("signature")
-            .ok_or_else(|| {
-                TdxCollateralError::source("Intel PCS response missing QE identity signature")
-            })?
-            .as_str()
-            .ok_or_else(|| {
-                TdxCollateralError::source(
-                    "Intel PCS response QE identity signature is not a string",
-                )
-            })?;
-        CollateralVerifier::decode_hex(value.trim()).map_err(TdxCollateralError::source)
-    }
-
     fn certificate_chain_from_pem(pem_bytes: &[u8]) -> Result<Vec<TdxCertificate>> {
         let mut chain = Vec::new();
         for pem in Pem::iter_from_buffer(pem_bytes) {
@@ -228,7 +208,7 @@ impl TdxAttestationHydrator {
         Ok(chain)
     }
 
-    fn crl_distribution_point(certificate_der: &[u8]) -> Result<String> {
+    fn crl_distribution_point(certificate_der: &[u8]) -> Result<Url> {
         let (_, certificate) = X509Certificate::from_der(certificate_der)
             .map_err(|e| TdxCollateralError::source(e))?;
         for extension in certificate.extensions() {
@@ -243,49 +223,21 @@ impl TdxAttestationHydrator {
                 for name in names {
                     let GeneralName::URI(uri) = name else { continue };
                     if uri.starts_with("https://") {
-                        return Ok(uri.to_string());
+                        let url = Url::parse(uri).map_err(TdxCollateralError::source)?;
+                        if !url.host_str().is_some_and(|host| {
+                            let host = host.to_ascii_lowercase();
+                            host == "trustedservices.intel.com"
+                                || host.ends_with(".trustedservices.intel.com")
+                        }) {
+                            return Err(TdxCollateralError::source(format!(
+                                "TDX certificate CRL URL is not an allowed Intel URL: {uri}"
+                            )));
+                        }
+                        return Ok(url);
                     }
                 }
             }
         }
         Err(TdxCollateralError::source("certificate is missing HTTPS CRL distribution point"))
-    }
-
-    fn is_allowed_intel_url(url: &Url) -> bool {
-        url.scheme() == "https"
-            && url.host_str().is_some_and(|host| {
-                let host = host.to_ascii_lowercase();
-                host == "trustedservices.intel.com" || host.ends_with(".trustedservices.intel.com")
-            })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::error::Error;
-
-    use super::*;
-
-    fn assert_source_contains(error: TdxCollateralError, expected: &str) {
-        let source = error.source().expect("error should retain source").to_string();
-        assert!(source.contains(expected), "{source}");
-    }
-
-    #[test]
-    fn qe_identity_signature_from_json_body_decodes_top_level_signature() {
-        let raw = br#"{"enclaveIdentity":{},"signature":"0x0102ff"}"#;
-
-        let signature = TdxAttestationHydrator::qe_identity_signature_from_json(raw).unwrap();
-
-        assert_eq!(signature, Bytes::from_static(&[0x01, 0x02, 0xff]));
-    }
-
-    #[test]
-    fn qe_identity_signature_from_json_body_requires_signature_field() {
-        let raw = br#"{"enclaveIdentity":{}}"#;
-
-        let error = TdxAttestationHydrator::qe_identity_signature_from_json(raw).unwrap_err();
-
-        assert_source_contains(error, "Intel PCS response missing QE identity signature");
     }
 }

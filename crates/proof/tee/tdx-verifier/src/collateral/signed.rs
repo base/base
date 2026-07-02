@@ -6,7 +6,7 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::{Result, TdxVerifierError};
 
-use super::{TdxCertificate, TdxQeIdentityDocument, TdxTcbInfoDocument};
+use super::{CollateralVerifier, TdxCertificate, TdxQeIdentityDocument, TdxTcbInfoDocument};
 
 /// Signed collateral document with its signing chain.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,6 +50,18 @@ impl TdxSignedCollateral {
     /// Returns the contract-compatible hash of the raw collateral bytes.
     pub fn hash(&self) -> B256 {
         keccak256(&self.raw)
+    }
+
+    /// Extracts the top-level Intel PCS signature from a collateral JSON response.
+    pub fn signature_from_json(raw: &[u8], body_kind: TdxSignedCollateralBody) -> Result<Bytes> {
+        let document: Value =
+            serde_json::from_slice(raw).map_err(|e| body_kind.invalid(e.to_string()))?;
+        let value = document
+            .get("signature")
+            .ok_or_else(|| body_kind.invalid("signature is missing".into()))?
+            .as_str()
+            .ok_or_else(|| body_kind.invalid("signature is not a string".into()))?;
+        CollateralVerifier::decode_hex(value.trim()).map_err(|e| body_kind.invalid(e))
     }
 
     /// Parses this signed collateral as an Intel TCB info JSON document.
@@ -125,4 +137,34 @@ pub struct TdxCollateral {
     pub tcb_info: TdxSignedCollateral,
     /// QE identity collateral and signing chain.
     pub qe_identity: TdxSignedCollateral,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn signature_from_json_decodes_top_level_signature() {
+        let raw = br#"{"enclaveIdentity":{},"signature":"0x0102ff"}"#;
+
+        let signature =
+            TdxSignedCollateral::signature_from_json(raw, TdxSignedCollateralBody::QeIdentity)
+                .unwrap();
+
+        assert_eq!(signature, Bytes::from_static(&[0x01, 0x02, 0xff]));
+    }
+
+    #[test]
+    fn signature_from_json_requires_signature_field() {
+        let raw = br#"{"enclaveIdentity":{}}"#;
+
+        let error =
+            TdxSignedCollateral::signature_from_json(raw, TdxSignedCollateralBody::QeIdentity)
+                .unwrap_err();
+
+        assert!(matches!(
+            error,
+            TdxVerifierError::QeIdentityInvalid(message) if message == "signature is missing"
+        ));
+    }
 }
