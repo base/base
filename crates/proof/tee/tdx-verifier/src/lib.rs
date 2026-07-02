@@ -19,10 +19,7 @@ mod error;
 pub use error::{Result, TdxVerifierError};
 
 mod input;
-pub use input::{
-    TdxCertificateInput, TdxCollateralInput, TdxRevocationEvidenceInput, TdxSignedCollateralInput,
-    TdxVerifierInputAbi,
-};
+pub use input::{TdxCollateralInput, TdxSignedCollateralInput, TdxVerifierInputAbi};
 
 mod types;
 pub use types::{TDXTcbStatus, TDXVerificationResult, TDXVerifierJournal};
