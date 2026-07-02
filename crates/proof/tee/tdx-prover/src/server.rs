@@ -18,20 +18,14 @@ pub const TDX_ATTESTATION_KIND: &str = "tdx";
 
 /// One TDX enclave runtime and its proving service.
 pub struct TdxEnclaveService {
-    runtime: Arc<TdxRuntime>,
     service: ProverService<TdxBackend>,
 }
 
 impl TdxEnclaveService {
     /// Create a service wrapper for one TDX runtime.
     pub fn new(config: ProverConfig, runtime: Arc<TdxRuntime>) -> Self {
-        let backend = TdxBackend::new(Arc::clone(&runtime));
-        Self { runtime, service: ProverService::new(config, backend) }
-    }
-
-    /// Returns the runtime used for signer and quote collection calls.
-    pub const fn runtime(&self) -> &Arc<TdxRuntime> {
-        &self.runtime
+        let backend = TdxBackend::new(runtime);
+        Self { service: ProverService::new(config, backend) }
     }
 
     /// Returns the prover service for this enclave.

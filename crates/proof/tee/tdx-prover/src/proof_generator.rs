@@ -46,15 +46,14 @@ where
 
     async fn handle_claimed_job(&self, job: ProofJob) -> Result<(), Self::Error> {
         let claim = ClaimedProofJobMetadata::try_from(&job)?;
-        let tee = match job.request.request {
-            ProofRequestKind::Tee(tee) if tee.tee_kind == TeeKind::IntelTdx => tee,
+        let proof_request = match job.request.request {
+            ProofRequestKind::Tee(tee) if tee.tee_kind == TeeKind::IntelTdx => tee.proof,
             _ => {
                 return Err(ProofGeneratorError::UnsupportedProofRequest {
                     session_id: claim.session_id,
                 });
             }
         };
-        let proof_request = tee.proof;
 
         info!(
             session_id = %claim.session_id,
@@ -71,13 +70,10 @@ where
 
         let proof = tokio::select! {
             biased;
-            result = &mut generate => match result {
-                Ok(result) => result,
-                Err(source) => return Err(ProofGeneratorError::Generate {
+            result = &mut generate => result.map_err(|source| ProofGeneratorError::Generate {
                     session_id: claim.session_id.clone(),
                     source,
-                }),
-            },
+                })?,
             source = &mut heartbeat => return Err(ProofGeneratorError::Heartbeat {
                 session_id: claim.session_id.clone(),
                 source,
