@@ -24,7 +24,7 @@ use crate::{TdxBackend, TdxEnclaveService};
 pub const DEFAULT_TDX_WORKER_ID: &str = "tdx-prover";
 
 /// Claimed prover-service job data needed to generate and submit a TDX proof.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct ProofGeneratorRequest {
     /// Common worker claim metadata.
     pub claim: ClaimedProofJobMetadata,
@@ -94,7 +94,10 @@ where
         );
 
         let proof = self
-            .with_heartbeat_while_generating(&request, self.prove(request.proof.clone()))
+            .with_heartbeat_while_generating(
+                &request,
+                self.enclave.service().prove_block(request.proof.clone()),
+            )
             .await?;
 
         let PrimitiveProofResult::Tee { aggregate_proposal, proposals } = proof else {
@@ -125,21 +128,11 @@ where
         Ok(ProofSubmissionTask::new(request.claim, submit_handle))
     }
 
-    async fn prove(
-        &self,
-        request: base_proof_primitives::ProofRequest,
-    ) -> Result<PrimitiveProofResult, ProverError<TdxBackend>> {
-        self.enclave.service().prove_block(request).await
-    }
-
-    async fn with_heartbeat_while_generating<Output, Generate>(
+    async fn with_heartbeat_while_generating(
         &self,
         request: &ProofGeneratorRequest,
-        generate: Generate,
-    ) -> Result<Output, ProofGeneratorError>
-    where
-        Generate: Future<Output = Result<Output, ProverError<TdxBackend>>>,
-    {
+        generate: impl Future<Output = Result<PrimitiveProofResult, ProverError<TdxBackend>>>,
+    ) -> Result<PrimitiveProofResult, ProofGeneratorError> {
         let heartbeat =
             WorkerHeartbeat::until_failure(&self.submitter, &request.claim, self.heartbeat);
         tokio::pin!(generate);
@@ -222,18 +215,9 @@ where
 /// Errors raised while generating and dispatching TDX proof submissions.
 #[derive(Debug, Error)]
 pub enum ProofGeneratorError {
-    /// Claimed proof job did not include a lock identifier.
-    #[error("proof job {session_id} is missing lock_id")]
-    MissingLockId {
-        /// Proof session identifier.
-        session_id: String,
-    },
-    /// Claimed proof job did not include a worker identifier.
-    #[error("proof job {session_id} is missing worker_id")]
-    MissingWorkerId {
-        /// Proof session identifier.
-        session_id: String,
-    },
+    /// Claimed proof job metadata is invalid.
+    #[error(transparent)]
+    ClaimMetadata(#[from] ClaimedProofJobMetadataError),
     /// Claimed proof job is not a TEE proof request.
     #[error("proof job {session_id} is not a TEE proof request")]
     UnsupportedProofRequest {
@@ -275,19 +259,6 @@ pub enum ProofGeneratorError {
         #[source]
         source: ProofSubmitterError,
     },
-}
-
-impl From<ClaimedProofJobMetadataError> for ProofGeneratorError {
-    fn from(error: ClaimedProofJobMetadataError) -> Self {
-        match error {
-            ClaimedProofJobMetadataError::MissingLockId { session_id } => {
-                Self::MissingLockId { session_id }
-            }
-            ClaimedProofJobMetadataError::MissingWorkerId { session_id } => {
-                Self::MissingWorkerId { session_id }
-            }
-        }
-    }
 }
 
 #[cfg(test)]
