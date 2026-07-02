@@ -9,9 +9,9 @@ use std::{
 use alloy_primitives::{Address, B256, Bytes, hex};
 use base_proof_tee_tdx_attestation_prover::TdxAttestationProverInput;
 use base_proof_tee_tdx_verifier::{
-    AuthenticatedTdxCertificate, CollateralVerifier, ParsedTdxQuote, TdxCertificate, TdxCollateral,
-    TdxPckTcb, TdxPlatformIdentity, TdxQuote, TdxRevocationEvidence, TdxSignedCollateral,
-    TdxSignedCollateralBody, TdxSignerAttestation, TdxVerifier, TdxVerifierError, TdxVerifierInput,
+    AuthenticatedTdxCertificate, ParsedTdxQuote, TdxCertificate, TdxCollateral, TdxPckTcb,
+    TdxPlatformIdentity, TdxQuote, TdxRevocationEvidence, TdxSignedCollateral,
+    TdxSignedCollateralBody, TdxSignerAttestation, TdxVerifier, TdxVerifierInput,
 };
 use reqwest::{
     StatusCode,
@@ -57,52 +57,12 @@ pub struct TdxCollateralFetch {
 /// Cache lookup fields available before collateral is fetched.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TdxCollateralCacheLookup {
-    /// Hash of the trusted issuer root certificate for this collateral family.
-    pub issuer: B256,
     /// Hash of the PCK leaf issuer certificate whose CRL is required.
     pub pck_issuer: B256,
     /// Intel FMSPC bytes for the platform.
     pub fmspc: Vec<u8>,
     /// PCK CA/PCE selector bytes used for the collateral request.
     pub ca: Vec<u8>,
-    /// PCS collateral API version, such as `v4`.
-    pub collateral_version: String,
-}
-
-/// In-memory cache for Intel PCS collateral bundles.
-#[derive(Debug, Default)]
-pub struct TdxCollateralCache {
-    entries: HashMap<TdxCollateralCacheLookup, (u64, TdxCollateralFetch)>,
-}
-
-impl TdxCollateralCache {
-    /// Returns a fresh cache entry for the lookup key, if present.
-    pub fn get(
-        &self,
-        lookup: &TdxCollateralCacheLookup,
-        now_seconds: u64,
-    ) -> Option<TdxCollateralFetch> {
-        let (expiration, fetch) = self.entries.get(lookup)?;
-        if *expiration <= now_seconds {
-            return None;
-        }
-        Some(fetch.clone())
-    }
-
-    /// Inserts a collateral bundle.
-    pub fn insert(
-        &mut self,
-        lookup: TdxCollateralCacheLookup,
-        expiration: u64,
-        fetch: TdxCollateralFetch,
-    ) {
-        self.entries.insert(lookup, (expiration, fetch));
-    }
-
-    /// Returns the number of cached collateral bundles.
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
 }
 
 /// Hydrates TDX signer RPC attestations into prover input bytes.
@@ -111,14 +71,14 @@ pub struct TdxAttestationHydrator {
     /// Intel PCS and verifier policy configuration.
     pub config: TdxAttestationConfig,
     client: reqwest::Client,
-    cache: Arc<Mutex<TdxCollateralCache>>,
+    cache: Arc<Mutex<HashMap<TdxCollateralCacheLookup, (u64, TdxCollateralFetch)>>>,
 }
 
 impl TdxAttestationHydrator {
     /// Creates a hydrator with a hardened HTTP client.
     pub fn new(config: TdxAttestationConfig) -> Result<Self> {
         let client = config.build_http_client()?;
-        Ok(Self { config, client, cache: Arc::new(Mutex::new(TdxCollateralCache::default())) })
+        Ok(Self { config, client, cache: Arc::new(Mutex::new(HashMap::new())) })
     }
 
     /// Converts a TDX signer attestation into encoded prover input.
@@ -203,11 +163,7 @@ impl TdxAttestationHydrator {
                 .map_err(|e| TdxCollateralError::source(e))?;
 
         let verification_time = Self::now_seconds()?;
-        let lookup = Self::collateral_cache_lookup(
-            &pck_certificate_chain,
-            &platform,
-            &self.config.pcs_tdx_base_url,
-        )?;
+        let lookup = Self::collateral_cache_lookup(&pck_certificate_chain, &platform)?;
         if let Some(fetch) = self.cached_collateral(
             &lookup,
             &parsed_quote,
@@ -237,7 +193,7 @@ impl TdxAttestationHydrator {
         let expiration =
             Self::verify_collateral_for_quote(&fetch, &parsed_quote, verification_time)?;
         {
-            self.cache_lock()?.insert(lookup, expiration, fetch.clone());
+            self.cache_lock()?.insert(lookup, (expiration, fetch.clone()));
         }
         Ok(fetch)
     }
@@ -246,7 +202,11 @@ impl TdxAttestationHydrator {
         TdxCollateralError::source(TdxHydrationError::CachePoisoned { error })
     }
 
-    fn cache_lock(&self) -> Result<std::sync::MutexGuard<'_, TdxCollateralCache>> {
+    fn cache_lock(
+        &self,
+    ) -> Result<
+        std::sync::MutexGuard<'_, HashMap<TdxCollateralCacheLookup, (u64, TdxCollateralFetch)>>,
+    > {
         self.cache.lock().map_err(|e| Self::cache_poisoned_error(e.to_string()))
     }
 
@@ -256,64 +216,15 @@ impl TdxAttestationHydrator {
         parsed_quote: &ParsedTdxQuote,
         verification_time: u64,
     ) -> Result<u64> {
-        let (pck_leaf_key, pck_expiration) = CollateralVerifier::verify_certificate_chain(
+        let (expiration, _) = TdxVerifier::verify_quote_collateral(
+            parsed_quote,
             &fetch.pck_certificate_chain,
+            &fetch.collateral,
+            &fetch.revocation,
             fetch.trusted_root_ca_hash,
             verification_time,
-            &fetch.revocation,
         )
         .map_err(|e| TdxCollateralError::source(e))?;
-        TdxQuote::verify_qe_report(parsed_quote, &pck_leaf_key)
-            .map_err(|e| TdxCollateralError::source(e))?;
-        TdxQuote::verify_signature(parsed_quote).map_err(|e| TdxCollateralError::source(e))?;
-
-        let mut expiration = pck_expiration;
-        for (collateral, body_kind) in [
-            (&fetch.collateral.tcb_info, TdxSignedCollateralBody::TcbInfo),
-            (&fetch.collateral.qe_identity, TdxSignedCollateralBody::QeIdentity),
-        ] {
-            let collateral_expiration = CollateralVerifier::verify_signed_collateral(
-                collateral,
-                body_kind,
-                fetch.trusted_root_ca_hash,
-                verification_time,
-                &fetch.revocation,
-            )
-            .map_err(|e| TdxCollateralError::source(e))?;
-            expiration = expiration.min(collateral_expiration);
-        }
-
-        let pck_leaf = fetch.pck_certificate_chain.last().ok_or_else(|| {
-            TdxCollateralError::source(TdxVerifierError::PckCertChainInvalid(
-                "certificate chain is empty".into(),
-            ))
-        })?;
-        let (pck_platform, pck_tcb) =
-            TdxPlatformIdentity::platform_and_tcb_from_pck_certificate_der(&pck_leaf.raw)
-                .map_err(|e| TdxCollateralError::source(e))?;
-        let tcb_info_document = fetch
-            .collateral
-            .tcb_info
-            .tcb_info_document()
-            .map_err(|e| TdxCollateralError::source(e))?;
-        tcb_info_document
-            .tcb_info
-            .verify_platform(&pck_platform)
-            .map_err(|e| TdxCollateralError::source(e))?;
-        let qe_identity_document = fetch
-            .collateral
-            .qe_identity
-            .qe_identity_document()
-            .map_err(|e| TdxCollateralError::source(e))?;
-        qe_identity_document
-            .enclave_identity
-            .verify_qe_report(parsed_quote)
-            .map_err(|e| TdxCollateralError::source(e))?;
-        tcb_info_document
-            .tcb_info
-            .tcb_status_for_quote(parsed_quote, &pck_tcb)
-            .map_err(|e| TdxCollateralError::source(e))?;
-
         Ok(expiration)
     }
 
@@ -348,41 +259,19 @@ impl TdxAttestationHydrator {
     pub fn collateral_cache_lookup(
         pck_certificate_chain: &[TdxCertificate],
         platform: &TdxPlatformIdentity,
-        pcs_tdx_base_url: &url::Url,
     ) -> Result<TdxCollateralCacheLookup> {
-        let issuer = pck_certificate_chain
-            .first()
-            .ok_or_else(|| TdxCollateralError::source("certificate chain is empty"))?
-            .hash();
         let pck_issuer = pck_certificate_chain
             .iter()
             .rev()
             .nth(1)
-            .unwrap_or_else(|| {
-                pck_certificate_chain
-                    .first()
-                    .expect("certificate chain is non-empty after issuer lookup")
-            })
+            .or_else(|| pck_certificate_chain.first())
+            .ok_or_else(|| TdxCollateralError::source("certificate chain is empty"))?
             .hash();
         Ok(TdxCollateralCacheLookup {
-            issuer,
             pck_issuer,
             fmspc: platform.fmspc.to_vec(),
             ca: platform.pce_id.to_vec(),
-            collateral_version: Self::collateral_version(pcs_tdx_base_url),
         })
-    }
-
-    /// Extracts the PCS collateral version from a base URL.
-    pub fn collateral_version(pcs_tdx_base_url: &url::Url) -> String {
-        pcs_tdx_base_url
-            .path_segments()
-            .into_iter()
-            .flatten()
-            .rev()
-            .find(|segment| segment.starts_with('v'))
-            .unwrap_or("unknown")
-            .to_string()
     }
 
     /// Returns cached collateral for the given lookup, or `None` if absent.
@@ -399,7 +288,9 @@ impl TdxAttestationHydrator {
         pck_tcb: &TdxPckTcb,
         verification_time: u64,
     ) -> Result<Option<TdxCollateralFetch>> {
-        let Some(mut fetch) = self.cache_lock()?.get(lookup, verification_time) else {
+        let Some(mut fetch) = self.cache_lock()?.get(lookup).and_then(|(expiration, fetch)| {
+            (*expiration > verification_time).then(|| fetch.clone())
+        }) else {
             return Ok(None);
         };
 
@@ -484,12 +375,11 @@ impl TdxAttestationHydrator {
         let raw = Self::limited_body(response).await?;
         let signing_chain = Self::certificate_chain_from_header(&headers, chain_headers)?;
         Self::verify_trusted_root_ca_hash(&signing_chain, self.config.trusted_root_ca_hash)?;
-        let signature = match signature_headers {
-            Some(signature_header_names) => Self::signature_from_header_or_json_field(
-                &headers,
-                signature_header_names,
-                &raw,
-                QE_IDENTITY_SIGNATURE_FIELD,
+        let signature = match signature_headers
+            .and_then(|header_names| header_names.iter().find_map(|header| headers.get(header)))
+        {
+            Some(value) => Self::signature_from_hex(
+                value.to_str().map_err(|e| TdxCollateralError::source(e))?,
             )?,
             None => Self::signature_from_json_field(&raw, QE_IDENTITY_SIGNATURE_FIELD)?,
         };
@@ -519,11 +409,11 @@ impl TdxAttestationHydrator {
                 urls.push(url);
             }
         }
-        let certificate_crls = futures::future::try_join_all(urls.into_iter().map(|url| async {
+        let mut certificate_crls = Vec::with_capacity(urls.len());
+        for url in urls {
             let response = self.get(url).await?;
-            Self::limited_body(response).await
-        }))
-        .await?;
+            certificate_crls.push(Self::limited_body(response).await?);
+        }
         Ok(TdxRevocationEvidence { certificate_crls })
     }
 
@@ -567,33 +457,6 @@ impl TdxAttestationHydrator {
         }
         let header = header_names.iter().map(HeaderName::as_str).collect::<Vec<_>>().join(" or ");
         Err(TdxCollateralError::source(TdxHydrationError::MissingHeader { header }))
-    }
-
-    fn signature_from_header(headers: &HeaderMap, header: &HeaderName) -> Result<Bytes> {
-        let value = headers
-            .get(header)
-            .ok_or_else(|| {
-                TdxCollateralError::source(TdxHydrationError::MissingHeader {
-                    header: header.as_str().to_string(),
-                })
-            })?
-            .to_str()
-            .map_err(|e| TdxCollateralError::source(e))?;
-        Self::signature_from_hex(value)
-    }
-
-    fn signature_from_header_or_json_field(
-        headers: &HeaderMap,
-        header_names: &[HeaderName],
-        raw: &[u8],
-        field: &'static str,
-    ) -> Result<Bytes> {
-        for header in header_names {
-            if headers.contains_key(header) {
-                return Self::signature_from_header(headers, header);
-            }
-        }
-        Self::signature_from_json_field(raw, field)
     }
 
     fn signature_from_json_field(raw: &[u8], field: &'static str) -> Result<Bytes> {
@@ -788,89 +651,16 @@ mod tests {
 
     use super::*;
 
+    const MINIMAL_CERTIFICATE_DER: &[u8] = &alloy_primitives::hex!(
+        "308201093081b7a003020102020101300a06082a8648ce3d04030230123110300e06035504030c0766697874757265301e170d3730303130313030303130305a170d3730303130313030313030305a30123110300e06035504030c07666978747572653059301306072a8648ce3d020106082a8648ce3d0301070342000101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101300a06082a8648ce3d04030203410001010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101"
+    );
+
     fn certificate_with_raw(raw: &'static [u8]) -> TdxCertificate {
         TdxCertificate { raw: Bytes::from_static(raw) }
     }
 
     fn certificate_with_validity(_not_before: u64, _not_after: u64) -> TdxCertificate {
-        TdxCertificate { raw: Bytes::from(minimal_certificate_der()) }
-    }
-
-    fn minimal_certificate_der() -> Vec<u8> {
-        let key = [1; 65];
-        let tbs = der_sequence(&[
-            der_tag(0xa0, &der_integer(&[2])),
-            der_integer(&[1]),
-            x509_algorithm_identifier(),
-            x509_name(),
-            der_sequence(&[der_utc_time("700101000100Z"), der_utc_time("700101001000Z")]),
-            x509_name(),
-            x509_subject_public_key_info(&key),
-        ]);
-        der_sequence(&[tbs, x509_algorithm_identifier(), der_bit_string(&[1; 64])])
-    }
-
-    fn der_len(len: usize) -> Vec<u8> {
-        if len < 128 {
-            return vec![len as u8];
-        }
-
-        let bytes = len.to_be_bytes();
-        let first_non_zero = bytes.iter().position(|byte| *byte != 0).unwrap_or(bytes.len() - 1);
-        let significant = &bytes[first_non_zero..];
-        let mut out = vec![0x80 | significant.len() as u8];
-        out.extend_from_slice(significant);
-        out
-    }
-
-    fn der_tag(tag: u8, content: &[u8]) -> Vec<u8> {
-        let mut out = vec![tag];
-        out.extend_from_slice(&der_len(content.len()));
-        out.extend_from_slice(content);
-        out
-    }
-
-    fn der_sequence(parts: &[Vec<u8>]) -> Vec<u8> {
-        der_tag(0x30, &parts.concat())
-    }
-
-    fn der_set(parts: &[Vec<u8>]) -> Vec<u8> {
-        der_tag(0x31, &parts.concat())
-    }
-
-    fn der_integer(bytes: &[u8]) -> Vec<u8> {
-        der_tag(0x02, bytes)
-    }
-
-    fn der_bit_string(bytes: &[u8]) -> Vec<u8> {
-        let mut value = vec![0];
-        value.extend_from_slice(bytes);
-        der_tag(0x03, &value)
-    }
-
-    fn der_utc_time(value: &str) -> Vec<u8> {
-        der_tag(0x17, value.as_bytes())
-    }
-
-    fn x509_name() -> Vec<u8> {
-        der_sequence(&[der_set(&[der_sequence(&[
-            vec![0x06, 0x03, 0x55, 0x04, 0x03],
-            der_tag(0x0c, b"fixture"),
-        ])])])
-    }
-
-    fn x509_algorithm_identifier() -> Vec<u8> {
-        der_sequence(&[vec![0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02]])
-    }
-
-    fn x509_subject_public_key_info(key: &[u8]) -> Vec<u8> {
-        der_sequence(&[
-            der_sequence(&[
-                vec![0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01],
-                vec![0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07],
-            ]),
-            der_bit_string(key),
-        ])
+        TdxCertificate { raw: Bytes::from_static(MINIMAL_CERTIFICATE_DER) }
     }
 
     fn signed_collateral(
@@ -949,11 +739,9 @@ mod tests {
 
     fn cache_lookup() -> TdxCollateralCacheLookup {
         TdxCollateralCacheLookup {
-            issuer: B256::repeat_byte(0x01),
             pck_issuer: B256::repeat_byte(0x02),
             fmspc: vec![0x02; 6],
             ca: vec![0x03; 2],
-            collateral_version: "v4".to_string(),
         }
     }
 
@@ -1032,50 +820,6 @@ mod tests {
     }
 
     #[test]
-    fn tcb_info_signature_from_json_body_decodes_top_level_signature() {
-        let headers = HeaderMap::new();
-        let header_names = [
-            HeaderName::from_static(TCB_INFO_SIGNATURE_HEADER),
-            HeaderName::from_static(LEGACY_TCB_INFO_SIGNATURE_HEADER),
-        ];
-        let raw = br#"{"tcbInfo":{},"signature":"0102ff"}"#;
-
-        let signature = TdxAttestationHydrator::signature_from_header_or_json_field(
-            &headers,
-            &header_names,
-            raw,
-            QE_IDENTITY_SIGNATURE_FIELD,
-        )
-        .unwrap();
-
-        assert_eq!(signature, Bytes::from_static(&[0x01, 0x02, 0xff]));
-    }
-
-    #[test]
-    fn tcb_info_signature_prefers_header_when_present() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            HeaderName::from_static(LEGACY_TCB_INFO_SIGNATURE_HEADER),
-            HeaderValue::from_static("0x03"),
-        );
-        let header_names = [
-            HeaderName::from_static(TCB_INFO_SIGNATURE_HEADER),
-            HeaderName::from_static(LEGACY_TCB_INFO_SIGNATURE_HEADER),
-        ];
-        let raw = br#"{"tcbInfo":{},"signature":"0102ff"}"#;
-
-        let signature = TdxAttestationHydrator::signature_from_header_or_json_field(
-            &headers,
-            &header_names,
-            raw,
-            QE_IDENTITY_SIGNATURE_FIELD,
-        )
-        .unwrap();
-
-        assert_eq!(signature, Bytes::from_static(&[0x03]));
-    }
-
-    #[test]
     fn qe_identity_signature_from_json_body_requires_signature_field() {
         let raw = br#"{"enclaveIdentity":{}}"#;
 
@@ -1124,67 +868,38 @@ mod tests {
     }
 
     #[test]
-    fn collateral_cache_returns_fresh_hits() {
-        let mut cache = TdxCollateralCache::default();
-        let lookup = cache_lookup();
-        let fetch = collateral_fetch(300, 400);
-
-        cache.insert(lookup.clone(), 300, fetch.clone());
-        let cached = cache.get(&lookup, 200).unwrap();
-
-        assert_eq!(cached, fetch);
-    }
-
-    #[test]
-    fn collateral_cache_misses_unknown_or_expired_entries() {
-        let mut cache = TdxCollateralCache::default();
-        let lookup = cache_lookup();
-        let missing_lookup =
-            TdxCollateralCacheLookup { issuer: B256::repeat_byte(0xff), ..lookup.clone() };
-        cache.insert(lookup.clone(), 300, collateral_fetch(300, 400));
-
-        assert!(cache.get(&missing_lookup, 200).is_none());
-        assert!(cache.get(&lookup, 300).is_none());
-    }
-
-    #[test]
     fn collateral_cache_lookup_includes_pck_issuer() {
-        let root = certificate_with_raw(b"root");
         let pck_certificate_chain = vec![
-            root.clone(),
+            certificate_with_raw(b"root-a"),
             certificate_with_raw(b"pck-issuer-a"),
             certificate_with_raw(b"pck-leaf"),
         ];
-        let other_pck_certificate_chain =
-            vec![root, certificate_with_raw(b"pck-issuer-b"), certificate_with_raw(b"pck-leaf")];
+        let other_pck_certificate_chain = vec![
+            certificate_with_raw(b"root-b"),
+            certificate_with_raw(b"pck-issuer-b"),
+            certificate_with_raw(b"pck-leaf"),
+        ];
         let platform = TdxPlatformIdentity {
             fmspc: Bytes::from(vec![0x02; 6]),
             pce_id: Bytes::from(vec![0x03; 2]),
         };
-        let pcs_tdx_base_url =
-            url::Url::parse("https://api.trustedservices.intel.com/tdx/certification/v4/").unwrap();
 
-        let lookup = TdxAttestationHydrator::collateral_cache_lookup(
-            &pck_certificate_chain,
-            &platform,
-            &pcs_tdx_base_url,
-        )
-        .unwrap();
+        let lookup =
+            TdxAttestationHydrator::collateral_cache_lookup(&pck_certificate_chain, &platform)
+                .unwrap();
         let other_lookup = TdxAttestationHydrator::collateral_cache_lookup(
             &other_pck_certificate_chain,
             &platform,
-            &pcs_tdx_base_url,
         )
         .unwrap();
 
-        assert_eq!(lookup.issuer, other_lookup.issuer);
         assert_ne!(lookup.pck_issuer, other_lookup.pck_issuer);
         assert_ne!(lookup, other_lookup);
 
-        let mut cache = TdxCollateralCache::default();
-        cache.insert(lookup, 300, collateral_fetch(300, 400));
+        let mut cache = HashMap::new();
+        cache.insert(lookup, (300, collateral_fetch(300, 400)));
 
-        assert!(cache.get(&other_lookup, 200).is_none());
+        assert!(cache.get(&other_lookup).is_none());
     }
 
     #[test]
@@ -1193,7 +908,7 @@ mod tests {
         let lookup = cache_lookup();
         let mut fetch = collateral_fetch(300, 400);
         fetch.collateral.tcb_info = signed_tcb_info(1, 100, 300);
-        hydrator.cache_lock().unwrap().insert(lookup.clone(), 300, fetch);
+        hydrator.cache_lock().unwrap().insert(lookup.clone(), (300, fetch));
 
         let error = hydrator
             .cached_collateral(
@@ -1212,7 +927,7 @@ mod tests {
                 .to_string()
                 .contains("no TCB info level matches quote TCB")
         );
-        assert!(hydrator.cache_lock().unwrap().get(&lookup, 150).is_some());
+        assert!(hydrator.cache_lock().unwrap().get(&lookup).is_some());
         assert_eq!(hydrator.cache_lock().unwrap().len(), 1);
     }
 
@@ -1224,7 +939,7 @@ mod tests {
         let mut fetch = collateral_fetch(300, 400);
         fetch.collateral.tcb_info = signed_tcb_info(0, 100, 300);
         fetch.trusted_root_ca_hash = pck_certificate_chain[0].hash();
-        hydrator.cache_lock().unwrap().insert(lookup.clone(), 300, fetch);
+        hydrator.cache_lock().unwrap().insert(lookup.clone(), (300, fetch));
 
         let error = hydrator
             .cached_collateral(
@@ -1243,7 +958,7 @@ mod tests {
                 .to_string()
                 .contains("PCK certificate chain is invalid")
         );
-        assert!(hydrator.cache_lock().unwrap().get(&lookup, 150).is_some());
+        assert!(hydrator.cache_lock().unwrap().get(&lookup).is_some());
         assert_eq!(hydrator.cache_lock().unwrap().len(), 1);
     }
 

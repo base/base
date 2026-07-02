@@ -4,9 +4,9 @@ use alloy_primitives::{Address, B256, Bytes, keccak256};
 use k256::PublicKey;
 
 use crate::{
-    Result, TDXTcbStatus, TDXVerificationResult, TDXVerifierJournal, TdxCertificate, TdxCollateral,
-    TdxPlatformIdentity, TdxQuote, TdxRevocationEvidence, TdxSignedCollateralBody,
-    TdxVerifierError, collateral::CollateralVerifier,
+    ParsedTdxQuote, Result, TDXTcbStatus, TDXVerificationResult, TDXVerifierJournal,
+    TdxCertificate, TdxCollateral, TdxPlatformIdentity, TdxQuote, TdxRevocationEvidence,
+    TdxSignedCollateralBody, TdxVerifierError, collateral::CollateralVerifier,
 };
 
 /// Complete explicit input to the pure TDX verifier.
@@ -45,49 +45,14 @@ impl TdxVerifier {
     pub fn verify(input: &TdxVerifierInput) -> Result<TDXVerifierJournal> {
         let quote = TdxQuote::parse(&input.quote)?;
 
-        let (pck_leaf_key, pck_expiration) = CollateralVerifier::verify_certificate_chain(
+        let (collateral_expiration, tcb_status) = Self::verify_quote_collateral(
+            &quote,
             &input.pck_certificate_chain,
+            &input.collateral,
+            &input.revocation,
             input.trusted_root_ca_hash,
             input.verification_time,
-            &input.revocation,
-        )
-        .map_err(|e| {
-            if matches!(e, TdxVerifierError::RootCaNotTrusted) {
-                e
-            } else {
-                TdxVerifierError::PckCertChainInvalid(e.to_string())
-            }
-        })?;
-
-        TdxQuote::verify_qe_report(&quote, &pck_leaf_key)?;
-        TdxQuote::verify_signature(&quote)?;
-
-        let tcb_expiration = CollateralVerifier::verify_signed_collateral(
-            &input.collateral.tcb_info,
-            TdxSignedCollateralBody::TcbInfo,
-            input.trusted_root_ca_hash,
-            input.verification_time,
-            &input.revocation,
         )?;
-        let qe_expiration = CollateralVerifier::verify_signed_collateral(
-            &input.collateral.qe_identity,
-            TdxSignedCollateralBody::QeIdentity,
-            input.trusted_root_ca_hash,
-            input.verification_time,
-            &input.revocation,
-        )?;
-
-        let pck_leaf =
-            input.pck_certificate_chain.last().expect("verified certificate chain is non-empty");
-        let (pck_platform, pck_tcb) =
-            TdxPlatformIdentity::platform_and_tcb_from_pck_certificate_der(&pck_leaf.raw)?;
-        let tcb_info_document = input.collateral.tcb_info.tcb_info_document()?;
-        tcb_info_document.tcb_info.verify_platform(&pck_platform)?;
-        let qe_identity_document = input.collateral.qe_identity.qe_identity_document()?;
-        qe_identity_document.enclave_identity.verify_qe_report(&quote)?;
-
-        let tcb_status =
-            tcb_info_document.tcb_info.tcb_status_for_quote(&quote, &pck_tcb)?.to_contract_status();
         if tcb_status == TDXTcbStatus::Unknown || !input.allowed_tcb_statuses.contains(&tcb_status)
         {
             return Err(TdxVerifierError::TcbStatusNotAllowed);
@@ -102,7 +67,8 @@ impl TdxVerifier {
         let public_key_hash = Self::validate_public_key(&input.expected_public_key)?;
         let signer = Address::from_slice(&public_key_hash.as_slice()[12..]);
         Self::verify_report_data(&quote, public_key_hash, input.quote_timestamp_millis)?;
-        let collateral_expiration = pck_expiration.min(tcb_expiration).min(qe_expiration);
+        let pck_leaf =
+            input.pck_certificate_chain.last().expect("verified certificate chain is non-empty");
 
         Ok(TDXVerifierJournal {
             result: TDXVerificationResult::Success,
@@ -120,6 +86,63 @@ impl TdxVerifier {
             reportDataPrefix: quote.report_data_prefix(),
             reportDataSuffix: quote.report_data_suffix(),
         })
+    }
+
+    /// Verifies quote-bound collateral and returns expiration plus contract TCB status.
+    pub fn verify_quote_collateral(
+        quote: &ParsedTdxQuote,
+        pck_certificate_chain: &[TdxCertificate],
+        collateral: &TdxCollateral,
+        revocation: &TdxRevocationEvidence,
+        trusted_root_ca_hash: B256,
+        verification_time: u64,
+    ) -> Result<(u64, TDXTcbStatus)> {
+        let (pck_leaf_key, pck_expiration) = CollateralVerifier::verify_certificate_chain(
+            pck_certificate_chain,
+            trusted_root_ca_hash,
+            verification_time,
+            revocation,
+        )
+        .map_err(|e| {
+            if matches!(e, TdxVerifierError::RootCaNotTrusted) {
+                e
+            } else {
+                TdxVerifierError::PckCertChainInvalid(e.to_string())
+            }
+        })?;
+
+        TdxQuote::verify_qe_report(quote, &pck_leaf_key)?;
+        TdxQuote::verify_signature(quote)?;
+
+        let tcb_expiration = CollateralVerifier::verify_signed_collateral(
+            &collateral.tcb_info,
+            TdxSignedCollateralBody::TcbInfo,
+            trusted_root_ca_hash,
+            verification_time,
+            revocation,
+        )?;
+        let qe_expiration = CollateralVerifier::verify_signed_collateral(
+            &collateral.qe_identity,
+            TdxSignedCollateralBody::QeIdentity,
+            trusted_root_ca_hash,
+            verification_time,
+            revocation,
+        )?;
+
+        let pck_leaf =
+            pck_certificate_chain.last().expect("verified certificate chain is non-empty");
+        let (pck_platform, pck_tcb) =
+            TdxPlatformIdentity::platform_and_tcb_from_pck_certificate_der(&pck_leaf.raw)?;
+        let tcb_info_document = collateral.tcb_info.tcb_info_document()?;
+        tcb_info_document.tcb_info.verify_platform(&pck_platform)?;
+        let qe_identity_document = collateral.qe_identity.qe_identity_document()?;
+        qe_identity_document.enclave_identity.verify_qe_report(quote)?;
+
+        let tcb_status =
+            tcb_info_document.tcb_info.tcb_status_for_quote(quote, &pck_tcb)?.to_contract_status();
+        let collateral_expiration = pck_expiration.min(tcb_expiration).min(qe_expiration);
+
+        Ok((collateral_expiration, tcb_status))
     }
 
     /// Validates and hashes an uncompressed secp256k1 signer public key.
