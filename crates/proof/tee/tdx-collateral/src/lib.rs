@@ -5,7 +5,7 @@ mod config;
 pub use config::TdxAttestationConfig;
 
 mod error;
-pub use error::{BoxError, Result, TdxCollateralError};
+pub use error::{Result, TdxCollateralError};
 
 mod collateral;
 pub use collateral::{TdxAttestationHydrator, TdxCollateralFetch};

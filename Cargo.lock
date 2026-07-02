@@ -5939,7 +5939,6 @@ dependencies = [
  "base-proof-tee-tdx-verifier",
  "percent-encoding",
  "reqwest 0.13.4",
- "thiserror 2.0.18",
  "tokio",
  "x509-parser",
 ]

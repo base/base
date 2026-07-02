@@ -51,15 +51,15 @@ impl TdxAttestationHydrator {
             .timeout(config.fetch_timeout)
             .redirect(reqwest::redirect::Policy::limited(3))
             .build()
-            .map_err(TdxCollateralError::source)?;
+            .map_err(TdxCollateralError::from)?;
         Ok(Self { config, client })
     }
 
     /// Fetches Intel PCS collateral and CRLs required to verify `quote`.
     pub async fn fetch_collateral(&self, quote: &[u8]) -> Result<TdxCollateralFetch> {
-        let parsed_quote = TdxQuote::parse(quote).map_err(TdxCollateralError::source)?;
+        let parsed_quote = TdxQuote::parse(quote).map_err(TdxCollateralError::from)?;
         if parsed_quote.certification_data_type != PCK_CERT_CHAIN_CERTIFICATION_DATA_TYPE {
-            return Err(TdxCollateralError::source(format!(
+            return Err(TdxCollateralError::from(format!(
                 "unsupported TDX quote certification data type {}",
                 parsed_quote.certification_data_type,
             )));
@@ -70,16 +70,16 @@ impl TdxAttestationHydrator {
             pck_certificate_chain.last().expect("certificate_chain_from_pem rejects empty chains");
         let (platform, _) =
             TdxPlatformIdentity::platform_and_tcb_from_pck_certificate_der(&pck_leaf.raw)
-                .map_err(TdxCollateralError::source)?;
+                .map_err(TdxCollateralError::from)?;
 
         let mut tcb_info_url =
-            self.config.pcs_tdx_base_url.join("tcb").map_err(TdxCollateralError::source)?;
+            self.config.pcs_tdx_base_url.join("tcb").map_err(TdxCollateralError::from)?;
         tcb_info_url
             .query_pairs_mut()
             .append_pair("fmspc", &hex::encode(&platform.fmspc))
             .append_pair("pceid", &hex::encode(&platform.pce_id));
         let qe_identity_url =
-            self.config.pcs_tdx_base_url.join("qe/identity").map_err(TdxCollateralError::source)?;
+            self.config.pcs_tdx_base_url.join("qe/identity").map_err(TdxCollateralError::from)?;
         let (tcb_info, qe_identity) = tokio::try_join!(
             self.fetch_signed_collateral(
                 tcb_info_url,
@@ -112,26 +112,26 @@ impl TdxAttestationHydrator {
             .iter()
             .find_map(|header| headers.get(*header))
             .ok_or_else(|| {
-                TdxCollateralError::source(format!(
+                TdxCollateralError::from(format!(
                     "Intel PCS response missing {}",
                     chain_headers.join(" or ")
                 ))
             })?
             .to_str()
-            .map_err(TdxCollateralError::source)?;
+            .map_err(TdxCollateralError::from)?;
         let decoded_chain =
-            percent_decode_str(encoded_chain).decode_utf8().map_err(TdxCollateralError::source)?;
+            percent_decode_str(encoded_chain).decode_utf8().map_err(TdxCollateralError::from)?;
         let signing_chain = Self::certificate_chain_from_pem(decoded_chain.as_bytes())?;
         let signature = match signature_headers
             .and_then(|header_names| header_names.iter().find_map(|header| headers.get(*header)))
         {
             Some(value) => CollateralVerifier::decode_hex(
-                value.to_str().map_err(TdxCollateralError::source)?.trim(),
+                value.to_str().map_err(TdxCollateralError::from)?.trim(),
             )
-            .map_err(TdxCollateralError::source)?,
+            .map_err(TdxCollateralError::from)?,
             None => {
                 TdxSignedCollateral::signature_from_json(&raw, TdxSignedCollateralBody::QeIdentity)
-                    .map_err(TdxCollateralError::source)?
+                    .map_err(TdxCollateralError::from)?
             }
         };
         Ok(TdxSignedCollateral { raw, signing_chain, signature })
@@ -164,7 +164,7 @@ impl TdxAttestationHydrator {
             .send()
             .await
             .and_then(|response| response.error_for_status())
-            .map_err(TdxCollateralError::source)
+            .map_err(TdxCollateralError::from)
     }
 
     async fn limited_body(response: reqwest::Response) -> Result<Bytes> {
@@ -172,11 +172,11 @@ impl TdxAttestationHydrator {
             .content_length()
             .is_some_and(|len| len > MAX_TDX_COLLATERAL_RESPONSE_BYTES as u64)
         {
-            return Err(TdxCollateralError::source("Intel PCS response exceeds size limit"));
+            return Err(TdxCollateralError::from("Intel PCS response exceeds size limit"));
         }
-        let bytes = response.bytes().await.map_err(TdxCollateralError::source)?;
+        let bytes = response.bytes().await.map_err(TdxCollateralError::from)?;
         if bytes.len() > MAX_TDX_COLLATERAL_RESPONSE_BYTES {
-            return Err(TdxCollateralError::source("Intel PCS response exceeds size limit"));
+            return Err(TdxCollateralError::from("Intel PCS response exceeds size limit"));
         }
         Ok(Bytes(bytes))
     }
@@ -185,13 +185,13 @@ impl TdxAttestationHydrator {
         let mut chain = Vec::new();
         for pem in Pem::iter_from_buffer(pem_bytes) {
             let pem =
-                pem.map_err(|e| TdxCollateralError::source(format!("PEM parse failed: {e}")))?;
+                pem.map_err(|e| TdxCollateralError::from(format!("PEM parse failed: {e}")))?;
             if pem.label == "CERTIFICATE" {
                 chain.push(TdxCertificate { raw: Bytes::from(pem.contents) });
             }
         }
         if chain.is_empty() {
-            return Err(TdxCollateralError::source("certificate chain is empty"));
+            return Err(TdxCollateralError::from("certificate chain is empty"));
         }
         chain.reverse();
         Ok(chain)
@@ -199,7 +199,7 @@ impl TdxAttestationHydrator {
 
     fn crl_distribution_point(certificate_der: &[u8]) -> Result<Url> {
         let (_, certificate) =
-            X509Certificate::from_der(certificate_der).map_err(TdxCollateralError::source)?;
+            X509Certificate::from_der(certificate_der).map_err(TdxCollateralError::from)?;
         for extension in certificate.extensions() {
             let ParsedExtension::CRLDistributionPoints(points) = extension.parsed_extension()
             else {
@@ -212,13 +212,13 @@ impl TdxAttestationHydrator {
                 for name in names {
                     let GeneralName::URI(uri) = name else { continue };
                     if uri.starts_with("https://") {
-                        let url = Url::parse(uri).map_err(TdxCollateralError::source)?;
+                        let url = Url::parse(uri).map_err(TdxCollateralError::from)?;
                         if !url.host_str().is_some_and(|host| {
                             let host = host.to_ascii_lowercase();
                             host == "trustedservices.intel.com"
                                 || host.ends_with(".trustedservices.intel.com")
                         }) {
-                            return Err(TdxCollateralError::source(format!(
+                            return Err(TdxCollateralError::from(format!(
                                 "TDX certificate CRL URL is not an allowed Intel URL: {uri}"
                             )));
                         }
@@ -227,6 +227,6 @@ impl TdxAttestationHydrator {
                 }
             }
         }
-        Err(TdxCollateralError::source("certificate is missing HTTPS CRL distribution point"))
+        Err(TdxCollateralError::from("certificate is missing HTTPS CRL distribution point"))
     }
 }

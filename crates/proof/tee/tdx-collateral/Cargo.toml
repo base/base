@@ -27,8 +27,5 @@ reqwest.workspace = true
 # Async
 tokio = { workspace = true, features = ["time", "macros"] }
 
-# Error
-thiserror.workspace = true
-
 # Misc
 percent-encoding.workspace = true
