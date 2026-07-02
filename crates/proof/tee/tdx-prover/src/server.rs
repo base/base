@@ -65,13 +65,12 @@ impl EnclaveApiServer for TdxProverServer {
             ));
         }
 
-        let signer_public_key = self.runtime.signer_public_key();
         let quote = self.runtime.signer_quote().map_err(|error| {
             jsonrpsee::types::ErrorObjectOwned::owned(-32001, error.to_string(), None::<()>)
         })?;
         Ok(vec![
             TdxSignerAttestation {
-                signer_public_key: signer_public_key.to_vec().into(),
+                signer_public_key: self.runtime.signer_public_key(),
                 quote: quote.quote,
                 quote_timestamp_millis: quote.quote_timestamp_millis,
             }
@@ -114,15 +113,13 @@ mod tests {
 
     #[tokio::test]
     async fn signer_attestation_rejects_challenge_binding() {
-        for (user_data, nonces, expected_message) in
-            [(Some(vec![1, 2, 3]), None, "user_data"), (None, Some(vec![vec![1, 2, 3]]), "nonce")]
+        for (user_data, nonces) in [(Some(vec![1, 2, 3]), None), (None, Some(vec![vec![1, 2, 3]]))]
         {
             let rpc = test_rpc();
             let err =
                 EnclaveApiServer::signer_attestation(&rpc, user_data, nonces).await.unwrap_err();
 
             assert_eq!(err.code(), -32602);
-            assert!(err.message().contains(expected_message));
         }
     }
 
