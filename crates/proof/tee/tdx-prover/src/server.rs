@@ -1,7 +1,6 @@
-use std::{fmt, net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, sync::Arc};
 
 use base_health::{HealthzApiServer, HealthzRpc};
-use base_proof_host::{ProverConfig, ProverService};
 use base_proof_primitives::EnclaveApiServer;
 use base_proof_tee_tdx_runtime::TdxRuntime;
 use jsonrpsee::{
@@ -11,46 +10,18 @@ use jsonrpsee::{
 };
 use tracing::info;
 
-use crate::{TdxBackend, TdxSignerAttestation};
+use crate::TdxSignerAttestation;
 
 /// JSON-RPC attestation kind returned by TDX prover servers.
 pub const TDX_ATTESTATION_KIND: &str = "tdx";
 
-/// One TDX enclave runtime and its proving service.
-pub struct TdxEnclaveService {
-    service: ProverService<TdxBackend>,
-}
-
-impl TdxEnclaveService {
-    /// Create a service wrapper for one TDX runtime.
-    pub fn new(config: ProverConfig, runtime: Arc<TdxRuntime>) -> Self {
-        let backend = TdxBackend::new(runtime);
-        Self { service: ProverService::new(config, backend) }
-    }
-
-    /// Returns the prover service for this enclave.
-    pub const fn service(&self) -> &ProverService<TdxBackend> {
-        &self.service
-    }
-}
-
-impl fmt::Debug for TdxEnclaveService {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("TdxEnclaveService").finish_non_exhaustive()
-    }
-}
-
 /// Registrar-facing TDX prover server exposing health and signer JSON-RPC methods.
+#[derive(Debug)]
 pub struct TdxProverServer {
     runtimes: Vec<Arc<TdxRuntime>>,
 }
 
 impl TdxProverServer {
-    /// Convert an internal error into a JSON-RPC error object.
-    pub fn rpc_err(code: i32, err: impl std::fmt::Display) -> jsonrpsee::types::ErrorObjectOwned {
-        jsonrpsee::types::ErrorObjectOwned::owned(code, err.to_string(), None::<()>)
-    }
-
     /// Create a registrar-facing server for one TDX runtime.
     pub fn new(runtime: Arc<TdxRuntime>) -> Self {
         Self::new_multi(vec![runtime])
@@ -82,40 +53,17 @@ impl TdxProverServer {
         let mut module = RpcModule::new(());
 
         module.merge(HealthzRpc::new(env!("CARGO_PKG_VERSION")).into_rpc())?;
-        module.merge(TdxSignerRpc::new(self.runtimes).into_rpc())?;
+        module.merge(TdxSignerRpc { runtimes: self.runtimes }.into_rpc())?;
 
         Ok(module)
     }
 }
 
-impl fmt::Debug for TdxProverServer {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("TdxProverServer").finish_non_exhaustive()
-    }
-}
-
 /// Inner RPC handler for `enclave_*` methods.
+#[derive(Debug)]
 pub struct TdxSignerRpc {
     /// TDX runtimes used for signer and quote collection calls.
     pub runtimes: Vec<Arc<TdxRuntime>>,
-}
-
-impl fmt::Debug for TdxSignerRpc {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("TdxSignerRpc").field("runtime_count", &self.runtimes.len()).finish()
-    }
-}
-
-impl TdxSignerRpc {
-    /// Create signer RPC over all available TDX runtimes.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `runtimes` is empty.
-    pub fn new(runtimes: Vec<Arc<TdxRuntime>>) -> Self {
-        assert!(!runtimes.is_empty(), "at least one runtime is required");
-        Self { runtimes }
-    }
 }
 
 #[async_trait]
@@ -130,23 +78,26 @@ impl EnclaveApiServer for TdxSignerRpc {
         nonces: Option<Vec<Vec<u8>>>,
     ) -> RpcResult<Vec<Vec<u8>>> {
         if user_data.is_some() {
-            return Err(TdxProverServer::rpc_err(
+            return Err(jsonrpsee::types::ErrorObjectOwned::owned(
                 -32602,
                 "TDX signer attestations do not support user_data challenge binding",
+                None::<()>,
             ));
         }
         if nonces.is_some() {
-            return Err(TdxProverServer::rpc_err(
+            return Err(jsonrpsee::types::ErrorObjectOwned::owned(
                 -32602,
                 "TDX signer attestations do not support nonce challenge binding",
+                None::<()>,
             ));
         }
 
         let mut attestations = Vec::with_capacity(self.runtimes.len());
         for runtime in &self.runtimes {
             let signer_public_key = runtime.signer_public_key();
-            let quote =
-                runtime.signer_quote().map_err(|error| TdxProverServer::rpc_err(-32001, error))?;
+            let quote = runtime.signer_quote().map_err(|error| {
+                jsonrpsee::types::ErrorObjectOwned::owned(-32001, error.to_string(), None::<()>)
+            })?;
             attestations.push(
                 TdxSignerAttestation {
                     signer_public_key: signer_public_key.to_vec().into(),
@@ -177,11 +128,11 @@ mod tests {
     }
 
     fn test_rpc() -> TdxSignerRpc {
-        TdxSignerRpc::new(vec![test_runtime()])
+        TdxSignerRpc { runtimes: vec![test_runtime()] }
     }
 
     fn multi_test_rpc() -> TdxSignerRpc {
-        TdxSignerRpc::new(vec![test_runtime(), test_runtime()])
+        TdxSignerRpc { runtimes: vec![test_runtime(), test_runtime()] }
     }
 
     #[tokio::test]
@@ -270,10 +221,7 @@ mod tests {
 
     #[tokio::test]
     async fn local_mock_server_serves_json_rpc_methods() {
-        let signer_rpc = test_rpc();
-        let mut module = RpcModule::new(());
-        module.merge(HealthzRpc::new(env!("CARGO_PKG_VERSION")).into_rpc()).unwrap();
-        module.merge(signer_rpc.into_rpc()).unwrap();
+        let module = TdxProverServer::new(test_runtime()).into_rpc_module().unwrap();
         let server =
             Server::builder().build("127.0.0.1:0".parse::<SocketAddr>().unwrap()).await.unwrap();
         let addr = server.local_addr().unwrap();
@@ -302,12 +250,5 @@ mod tests {
         assert!(base_proof_tee_tdx_verifier::TdxQuote::parse(&attestation.quote).is_ok());
         let err = proof_result.unwrap_err();
         assert!(err.to_string().contains("Method not found"));
-    }
-
-    #[tokio::test]
-    async fn healthz_returns_version() {
-        let rpc = HealthzRpc::new(env!("CARGO_PKG_VERSION"));
-        let result = HealthzApiServer::healthz(&rpc).await.unwrap();
-        assert_eq!(result.version, env!("CARGO_PKG_VERSION"));
     }
 }

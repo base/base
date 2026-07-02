@@ -1,7 +1,7 @@
 //! Proof generation orchestration for claimed TDX worker jobs.
 
 use async_trait::async_trait;
-use base_proof_host::ProverError;
+use base_proof_host::{ProverError, ProverService};
 use base_proof_primitives::ProofResult as PrimitiveProofResult;
 use base_proof_worker::{
     ClaimedProofJobHandler, ClaimedProofJobMetadata, ClaimedProofJobMetadataError, ProofSubmitter,
@@ -15,12 +15,12 @@ use base_prover_service_protocol::{
 use thiserror::Error;
 use tracing::info;
 
-use crate::{TdxBackend, TdxEnclaveService};
+use crate::TdxBackend;
 
 /// Orchestrates TDX proof generation, claim heartbeats, and async proof submission.
 #[derive(Debug)]
 pub struct ProofGenerator<Client> {
-    enclave: TdxEnclaveService,
+    prover: ProverService<TdxBackend>,
     submitter: ProofSubmitter<Client>,
     tasks: ProofTaskController,
     heartbeat: WorkerHeartbeatConfig,
@@ -29,11 +29,11 @@ pub struct ProofGenerator<Client> {
 impl<Client> ProofGenerator<Client> {
     /// Create a proof generator with its own submission cancellation token.
     pub fn new(
-        enclave: TdxEnclaveService,
+        prover: ProverService<TdxBackend>,
         submitter: ProofSubmitter<Client>,
         heartbeat: WorkerHeartbeatConfig,
     ) -> Self {
-        Self { enclave, submitter, tasks: ProofTaskController::new(), heartbeat }
+        Self { prover, submitter, tasks: ProofTaskController::new(), heartbeat }
     }
 }
 
@@ -65,7 +65,7 @@ where
 
         let proof = {
             let heartbeat = WorkerHeartbeat::until_failure(&self.submitter, &claim, self.heartbeat);
-            let generate = self.enclave.service().prove_block(proof_request);
+            let generate = self.prover.prove_block(proof_request);
             tokio::pin!(generate);
             tokio::pin!(heartbeat);
 

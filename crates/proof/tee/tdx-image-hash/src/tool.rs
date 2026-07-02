@@ -247,7 +247,7 @@ mod tests {
     async fn spawn_tdx_rpc() -> (url::Url, jsonrpsee::server::ServerHandle) {
         let runtime = Arc::new(TdxRuntime::new(TdxMeasurements));
         let mut module = RpcModule::new(());
-        module.merge(TdxSignerRpc::new(vec![runtime]).into_rpc()).unwrap();
+        module.merge(TdxSignerRpc { runtimes: vec![runtime] }.into_rpc()).unwrap();
         let server =
             Server::builder().build("127.0.0.1:0".parse::<SocketAddr>().unwrap()).await.unwrap();
         let addr = server.local_addr().unwrap();

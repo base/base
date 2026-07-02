@@ -4,10 +4,8 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_chains::rollup_config;
-use base_proof_host::ProverConfig;
-use base_proof_tee_tdx_prover::{
-    ProofGenerator, TdxEnclaveService, TdxMeasurements, TdxProverServer,
-};
+use base_proof_host::{ProverConfig, ProverService};
+use base_proof_tee_tdx_prover::{ProofGenerator, TdxBackend, TdxMeasurements, TdxProverServer};
 use base_proof_tee_tdx_runtime::{ConfigfsTdxQuoteProvider, TdxQuoteProvider, TdxRuntime};
 use base_proof_worker::{
     DEFAULT_JOB_DISCOVERY_LOCK_DURATION_SECONDS, DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS,
@@ -218,7 +216,7 @@ async fn run_worker(
     let config = runtime_args.into_prover_config()?;
     let runtime = Arc::new(TdxRuntime::new(provider));
     let registrar_handle = TdxProverServer::new(Arc::clone(&runtime)).run(listen_addr).await?;
-    let enclave = TdxEnclaveService::new(config, runtime);
+    let prover = ProverService::new(config, TdxBackend::new(runtime));
 
     let prover_service = ProverServiceClientConfig::new(worker.prover_service_endpoint.clone())
         .with_request_timeout(Duration::from_secs(worker.prover_service_request_timeout_secs));
@@ -228,7 +226,7 @@ async fn run_worker(
         Duration::from_secs(worker.proof_generator_heartbeat_interval_secs),
         worker.proof_generator_heartbeat_lock_duration_seconds,
     );
-    let proof_generator = Arc::new(ProofGenerator::new(enclave, submitter, heartbeat));
+    let proof_generator = Arc::new(ProofGenerator::new(prover, submitter, heartbeat));
     let worker_id = format!("tdx-prover-{}", Uuid::new_v4());
     let discovery_config = JobDiscoveryConfig::tee(worker_id.clone(), vec![TeeKind::IntelTdx])
         .with_poll_interval(Duration::from_millis(worker.job_discovery_poll_interval_ms))
