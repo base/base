@@ -108,7 +108,6 @@ impl Cli {
 
 #[cfg(test)]
 mod tests {
-    use base_proof_tee_tdx_collateral::DEFAULT_TDX_TRUSTED_ROOT_CA_HASH;
     use clap::Parser as _;
 
     use super::*;
@@ -122,9 +121,10 @@ mod tests {
         ]);
 
         let config = cli.config().attestation;
+        let default_config = TdxAttestationConfig::intel_pcs();
 
-        assert_eq!(config.trusted_root_ca_hash, DEFAULT_TDX_TRUSTED_ROOT_CA_HASH);
-        assert_eq!(config.allowed_tcb_statuses, vec![TDXTcbStatus::UpToDate]);
+        assert_eq!(config.trusted_root_ca_hash, default_config.trusted_root_ca_hash);
+        assert_eq!(config.allowed_tcb_statuses, default_config.allowed_tcb_statuses);
     }
 
     #[test]

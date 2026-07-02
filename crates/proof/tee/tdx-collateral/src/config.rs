@@ -6,11 +6,6 @@ use alloy_primitives::{B256, b256};
 use base_proof_tee_tdx_verifier::TDXTcbStatus;
 use reqwest::Url;
 
-/// Keccak-256 hash of Intel's production SGX/TDX Provisioning Certification
-/// Root CA DER certificate for PCS API v4.
-pub const DEFAULT_TDX_TRUSTED_ROOT_CA_HASH: B256 =
-    b256!("a1acc73eb45794fa1734f14d882e91925b6006f79d3bb2460df9d01b333d7009");
-
 /// Intel PCS and verifier policy configuration for TDX attestation hydration.
 #[derive(Clone, Debug)]
 pub struct TdxAttestationConfig {
@@ -34,7 +29,9 @@ impl TdxAttestationConfig {
                 "https://api.trustedservices.intel.com/tdx/certification/v4/",
             )
             .expect("default Intel PCS URL must be valid"),
-            trusted_root_ca_hash: DEFAULT_TDX_TRUSTED_ROOT_CA_HASH,
+            trusted_root_ca_hash: b256!(
+                "a1acc73eb45794fa1734f14d882e91925b6006f79d3bb2460df9d01b333d7009"
+            ),
             max_quote_age: Duration::from_secs(300),
             allowed_tcb_statuses: vec![TDXTcbStatus::UpToDate],
             fetch_timeout: Duration::from_secs(30),
