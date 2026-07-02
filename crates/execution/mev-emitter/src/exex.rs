@@ -8,14 +8,14 @@
 //! C-3 folds in Flashblocks, and C-4 streams the encoded events to the TS
 //! `ProviderNodeStream` consumer.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ffi::OsStr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use alloy_evm::Evm;
 use alloy_network_primitives::TransactionResponse;
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{Address, B256, U256};
 use base_execution_evm::BaseEvmConfig;
 use base_flashblocks::{FlashblocksAPI, FlashblocksState, FlashblocksSubscriber, PendingBlocks};
 use base_node_runner::{BaseNodeAdapter, BaseNodeExtension, FromExtensionConfig, NodeHooks};
@@ -25,8 +25,8 @@ use reth_evm::ConfigureEvm;
 use reth_exex::{ExExContext, ExExEvent, ExExNotificationsStream};
 use reth_provider::StateProviderFactory;
 use reth_revm::database::StateProviderDatabase;
-use revm::DatabaseCommit;
 use revm::database::State;
+use revm::{Database, DatabaseCommit};
 use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
 
@@ -63,6 +63,28 @@ const ARB_DRYRUN_POOL_BASELINE_ENV: &str = "MEV_EMITTER_ARB_DRYRUN_POOL_BASELINE
 struct ArbDryRunRuntime {
     config: crate::arb_dryrun::DryRunConfig,
     pools: Arc<Vec<crate::arb_dryrun::PoolState>>,
+    pool_index: Arc<HashMap<Address, usize>>,
+}
+
+#[derive(Debug, Clone)]
+struct ArbDirtyState {
+    flashblock_index: u32,
+    dirty_pools: BTreeSet<Address>,
+    deltas: BTreeMap<Address, crate::arb_dryrun::PoolStateDelta>,
+    raw_slots: BTreeMap<Address, BTreeMap<U256, U256>>,
+    fallback_elapsed: Duration,
+}
+
+impl ArbDirtyState {
+    const fn new(flashblock_index: u32) -> Self {
+        Self {
+            flashblock_index,
+            dirty_pools: BTreeSet::new(),
+            deltas: BTreeMap::new(),
+            raw_slots: BTreeMap::new(),
+            fallback_elapsed: Duration::ZERO,
+        }
+    }
 }
 /// Builds a [`FlashblockIndex`] and, if `MEV_FLASHBLOCKS_URL` is set and
 /// non-empty, starts a Flashblocks websocket subscription that populates it.
@@ -154,7 +176,11 @@ fn arb_dryrun_runtime_from_env() -> ArbDryRunRuntime {
         }
         _ => Vec::new(),
     };
-    ArbDryRunRuntime { config, pools: Arc::new(pools) }
+    let pool_index = pools.iter().enumerate().fold(HashMap::new(), |mut index, (i, pool)| {
+        index.entry(pool.pool).or_insert(i);
+        index
+    });
+    ArbDryRunRuntime { config, pools: Arc::new(pools), pool_index: Arc::new(pool_index) }
 }
 
 fn parse_env_usize(name: &str) -> Option<usize> {
@@ -169,21 +195,169 @@ fn parse_env_u128(name: &str) -> Option<u128> {
     std::env::var(name).ok()?.trim().parse().ok()
 }
 
+fn baseline_pool<'a>(
+    runtime: &'a ArbDryRunRuntime,
+    pool: &Address,
+) -> Option<&'a crate::arb_dryrun::PoolState> {
+    runtime.pool_index.get(pool).and_then(|&i| runtime.pools.get(i))
+}
+
+fn record_pool_slot_event(
+    runtime: &ArbDryRunRuntime,
+    dirty_state: &mut ArbDirtyState,
+    event: &crate::PoolSlotDiffEvent,
+    block_number: u64,
+) {
+    dirty_state.flashblock_index = dirty_state.flashblock_index.max(event.flashblock_index);
+    dirty_state.dirty_pools.insert(event.pool);
+    let slots = dirty_state.raw_slots.entry(event.pool).or_default();
+    slots.insert(event.slot, event.value);
+    let Some(pool) = baseline_pool(runtime, &event.pool) else {
+        return;
+    };
+    let delta = crate::arb_dryrun::PoolStateDelta::from_slots(
+        pool,
+        slots,
+        crate::arb_dryrun::PoolOverlaySource::SlotDiff,
+        Some(block_number),
+        Some(block_number),
+    );
+    dirty_state.deltas.insert(event.pool, delta);
+}
+
+fn mark_fallback_caveat(
+    dirty_state: &mut ArbDirtyState,
+    pool: Address,
+    block_number: u64,
+    caveat: &str,
+) {
+    let delta = dirty_state.deltas.entry(pool).or_insert_with(|| {
+        crate::arb_dryrun::PoolStateDelta::new(
+            crate::arb_dryrun::PoolOverlaySource::StateProvider,
+            Some(block_number),
+        )
+    });
+    delta.add_caveat(caveat);
+}
+
+fn merge_fallback_delta(
+    dirty_state: &mut ArbDirtyState,
+    pool: Address,
+    delta: crate::arb_dryrun::PoolStateDelta,
+) {
+    if delta.has_state_update() {
+        dirty_state.deltas.insert(pool, delta);
+        return;
+    }
+    let entry = dirty_state.deltas.entry(pool).or_insert_with(|| delta.clone());
+    for caveat in &delta.caveats {
+        entry.add_caveat(caveat);
+    }
+}
+
+fn supplement_committed_fallback<DB: Database>(
+    db: &mut DB,
+    runtime: &ArbDryRunRuntime,
+    dirty_state: &mut ArbDirtyState,
+    block_number: u64,
+) {
+    let fallback_cap = runtime.config.max_pools_per_frame.min(8).min(32);
+    let started = Instant::now();
+    let mut attempted = 0usize;
+    let dirty_pools = dirty_state.dirty_pools.iter().copied().collect::<Vec<_>>();
+    for pool_addr in dirty_pools {
+        if dirty_state
+            .deltas
+            .get(&pool_addr)
+            .is_some_and(crate::arb_dryrun::PoolStateDelta::has_state_update)
+        {
+            continue;
+        }
+        if attempted >= fallback_cap {
+            mark_fallback_caveat(dirty_state, pool_addr, block_number, "fallback-cap-exhausted");
+            continue;
+        }
+        if started.elapsed() >= runtime.config.time_budget {
+            mark_fallback_caveat(dirty_state, pool_addr, block_number, "fallback-timeout");
+            continue;
+        }
+        let Some(pool) = baseline_pool(runtime, &pool_addr) else {
+            continue;
+        };
+        let slots_to_read = crate::arb_dryrun::fallback_overlay_slots(pool);
+        if slots_to_read.is_empty() {
+            mark_fallback_caveat(
+                dirty_state,
+                pool_addr,
+                block_number,
+                "fallback-unsupported-protocol",
+            );
+            continue;
+        }
+        let mut slots = BTreeMap::new();
+        let mut failed = false;
+        for slot in slots_to_read {
+            let key = crate::arb_dryrun::slot_key(*slot);
+            match db.storage(pool_addr, key) {
+                Ok(value) => {
+                    slots.insert(key, value);
+                }
+                Err(error) => {
+                    warn!(
+                        target: "base::mev_emitter",
+                        pool = %pool_addr,
+                        slot = *slot,
+                        error = ?error,
+                        "arb dry-run fallback storage read failed",
+                    );
+                    mark_fallback_caveat(
+                        dirty_state,
+                        pool_addr,
+                        block_number,
+                        "fallback-provider-error",
+                    );
+                    failed = true;
+                    break;
+                }
+            }
+        }
+        if failed {
+            continue;
+        }
+        attempted += 1;
+        let mut delta = crate::arb_dryrun::PoolStateDelta::from_slots(
+            pool,
+            &slots,
+            crate::arb_dryrun::PoolOverlaySource::StateProvider,
+            Some(block_number),
+            Some(block_number),
+        );
+        if !delta.has_state_update() && delta.caveats.is_empty() {
+            delta.add_caveat("stale-baseline-fallback");
+        }
+        merge_fallback_delta(dirty_state, pool_addr, delta);
+    }
+    dirty_state.fallback_elapsed += started.elapsed();
+}
+
 fn emit_arb_dryrun_frame(
     sink: &EventSink,
     block_number: u64,
-    flashblock_index: u32,
     payload_id: String,
-    dirty_pools: BTreeSet<Address>,
+    dirty_state: ArbDirtyState,
     runtime: &ArbDryRunRuntime,
 ) {
-    if dirty_pools.is_empty() {
+    if dirty_state.dirty_pools.is_empty() {
         return;
     }
-    let frame = crate::arb_dryrun::run_frame(
+    let mut frame_config = runtime.config.clone();
+    frame_config.time_budget =
+        frame_config.time_budget.saturating_sub(dirty_state.fallback_elapsed);
+    let frame = crate::arb_dryrun::run_frame_with_overlay(
         runtime.pools.as_slice(),
-        &dirty_pools,
-        &runtime.config,
+        &dirty_state.dirty_pools,
+        &dirty_state.deltas,
+        &frame_config,
         crate::arb_dryrun::NoActionGuard,
     );
     if frame.candidates.is_empty() || frame.truncated {
@@ -191,7 +365,7 @@ fn emit_arb_dryrun_frame(
             crate::ArbDryRunObservationEvent {
                 protocol_version: crate::arb_dryrun::ARB_DRYRUN_PROTOCOL_VERSION,
                 block_number,
-                flashblock_index,
+                flashblock_index: dirty_state.flashblock_index,
                 payload_id,
                 dirty_pool_count: u32::try_from(frame.dirty_pool_count).unwrap_or(u32::MAX),
                 candidate_fingerprint: "health".to_string(),
@@ -216,11 +390,15 @@ fn emit_arb_dryrun_frame(
         return;
     }
     for candidate in frame.candidates {
+        let caveat = crate::arb_dryrun::compose_caveat_parts(&[
+            frame.caveat.as_deref(),
+            candidate.caveat.as_deref(),
+        ]);
         sink.send_event(&crate::NodeEvent::ArbDryRunObservation(
             crate::ArbDryRunObservationEvent {
                 protocol_version: crate::arb_dryrun::ARB_DRYRUN_PROTOCOL_VERSION,
                 block_number,
-                flashblock_index,
+                flashblock_index: dirty_state.flashblock_index,
                 payload_id: payload_id.clone(),
                 dirty_pool_count: u32::try_from(frame.dirty_pool_count).unwrap_or(u32::MAX),
                 candidate_fingerprint: candidate.fingerprint,
@@ -232,7 +410,7 @@ fn emit_arb_dryrun_frame(
                 estimated_gross_wei: candidate.estimated_gross_wei,
                 estimated_net_wei: candidate.estimated_net_wei,
                 approximation: candidate.approximation,
-                caveat: candidate.caveat.or_else(|| frame.caveat.clone()),
+                caveat,
                 latency_micros: frame.latency_micros,
                 truncated: frame.truncated,
                 health: frame.health.clone(),
@@ -257,8 +435,8 @@ fn emit_arb_dryrun_frame(
 ///
 /// v1 limitation: re-emits the latest pending flashblock each time it ticks
 /// (idempotent per `payload_id`+pool+slot, so the downstream aggregator dedups).
-/// Reserve-pool (Aerodrome / UniV2) slot SEMANTIC decoding remains a downstream TS
-/// concern — this path emits raw `(slot, post-value)` words like the committed loop.
+/// The raw `(slot, post-value)` stream remains unchanged; the optional arb
+/// dry-run lane also decodes those words into an in-node live-state overlay.
 fn emit_preconf_pool_slots(
     pb: &PendingBlocks,
     sink: &EventSink,
@@ -267,7 +445,7 @@ fn emit_preconf_pool_slots(
     let block_number = pb.latest_block_number();
     let payload_id = format!("{}", pb.payload_id());
     let fb_index = pb.latest_flashblock_index() as u32;
-    let mut dirty_pools = BTreeSet::new();
+    let mut dirty_state = ArbDirtyState::new(fb_index);
     for twl in pb.get_latest_flashblock_transactions_with_logs() {
         let tx_hash = twl.transaction.tx_hash();
         // Pool addresses (Swap-log emitters) — mirrors the committed loop's
@@ -291,12 +469,16 @@ fn emit_preconf_pool_slots(
             payload_id.clone(),
         );
         for ev in events {
-            dirty_pools.insert(ev.pool);
+            if let Some(runtime) = arb_dryrun {
+                record_pool_slot_event(runtime, &mut dirty_state, &ev, block_number);
+            } else {
+                dirty_state.dirty_pools.insert(ev.pool);
+            }
             sink.send_event(&crate::NodeEvent::PoolSlotDiff(ev));
         }
     }
     if let Some(runtime) = arb_dryrun {
-        emit_arb_dryrun_frame(sink, block_number, fb_index, payload_id, dirty_pools, runtime);
+        emit_arb_dryrun_frame(sink, block_number, payload_id, dirty_state, runtime);
     }
 }
 
@@ -546,8 +728,7 @@ pub async fn run_mev_emitter_exex(
                     // its slot for O(1) accumulation.
                     let mut flashblocks: Vec<(String, (Vec<B256>, u32))> = Vec::new();
                     let mut fb_order: HashMap<String, usize> = HashMap::new();
-                    let mut arb_dirty_by_payload: HashMap<String, (u32, BTreeSet<Address>)> =
-                        HashMap::new();
+                    let mut arb_dirty_by_payload: HashMap<String, ArbDirtyState> = HashMap::new();
                     for tx in block.transactions_recovered() {
                         let out = evm.transact(evm_config.tx_env(tx))?;
                         // Diagnostics: did this tx's EvmState touch a trusted token
@@ -574,6 +755,7 @@ pub async fn run_mev_emitter_exex(
                                     found
                                 },
                             );
+                        let payload_for_arb = payload_id.clone();
                         // C-5: record THIS tx under its payloadId (every tx, not
                         // just those with diffs) and track the max flashblock_index
                         // seen — insertion-ordered, so the post-loop emission is
@@ -618,12 +800,16 @@ pub async fn run_mev_emitter_exex(
                             fb_index,
                             payload_id.clone(),
                         );
-                        if arb_dryrun.is_some() && !pool_slot_events.is_empty() {
+                        if let Some(runtime) = arb_dryrun.as_ref()
+                            && !pool_slot_events.is_empty()
+                        {
                             let entry = arb_dirty_by_payload
-                                .entry(payload_id.clone())
-                                .or_insert_with(|| (fb_index, BTreeSet::new()));
-                            entry.0 = entry.0.max(fb_index);
-                            entry.1.extend(pool_slot_events.iter().map(|ev| ev.pool));
+                                .entry(payload_for_arb.clone())
+                                .or_insert_with(|| ArbDirtyState::new(fb_index));
+                            entry.flashblock_index = entry.flashblock_index.max(fb_index);
+                            for event in &pool_slot_events {
+                                record_pool_slot_event(runtime, entry, event, block_number);
+                            }
                         }
                         let events = crate::revm_bridge::state_diffs_from_evm_state(
                             &out.state,
@@ -647,22 +833,31 @@ pub async fn run_mev_emitter_exex(
                         // Stream the mid-block pool-slot price signals (distinct
                         // NodeEvent variant). Counted in events_sent via
                         // sent_this_block (telemetry below).
-                        for ev in pool_slot_events.iter() {
+                        for ev in &pool_slot_events {
                             sink.send_event(&crate::NodeEvent::PoolSlotDiff(ev.clone()));
                             sent_this_block += 1;
                         }
                         // COMMIT (precondition anchor): advances db to POST-tx state.
                         // Native baseline read above relies on this happening AFTER.
                         evm.db_mut().commit(out.state);
+                        if let Some(runtime) = arb_dryrun.as_ref()
+                            && let Some(entry) = arb_dirty_by_payload.get_mut(&payload_for_arb)
+                        {
+                            supplement_committed_fallback(
+                                evm.db_mut(),
+                                runtime,
+                                entry,
+                                block_number,
+                            );
+                        }
                     }
                     if let Some(runtime) = arb_dryrun.as_ref() {
-                        for (payload_id, (fb_index, dirty_pools)) in arb_dirty_by_payload {
+                        for (payload_id, dirty_state) in arb_dirty_by_payload {
                             emit_arb_dryrun_frame(
                                 &sink,
                                 block_number,
-                                fb_index,
                                 payload_id,
-                                dirty_pools,
+                                dirty_state,
                                 runtime,
                             );
                         }
@@ -793,5 +988,64 @@ impl BaseNodeExtension for MevEmitterExtension {
             let fb_state = fb_state.clone();
             async move { Ok(run_mev_emitter_exex(ctx, fb_state)) }
         })
+    }
+}
+
+#[cfg(test)]
+mod arb_overlay_tests {
+    use super::*;
+    use crate::PoolSlotDiffEvent;
+    use crate::arb_dryrun::{Protocol, slot_key};
+
+    fn addr(byte: u8) -> Address {
+        Address::from([byte; 20])
+    }
+
+    fn runtime_with_pool(pool: crate::arb_dryrun::PoolState) -> ArbDryRunRuntime {
+        let mut pool_index = HashMap::new();
+        pool_index.insert(pool.pool, 0);
+        ArbDryRunRuntime {
+            config: crate::arb_dryrun::DryRunConfig::default(),
+            pools: Arc::new(vec![pool]),
+            pool_index: Arc::new(pool_index),
+        }
+    }
+
+    fn pack_univ2_reserves(reserve0: u128, reserve1: u128) -> U256 {
+        U256::from(reserve0) | (U256::from(reserve1) << 112usize)
+    }
+
+    #[test]
+    fn pool_slot_event_records_semantic_overlay_delta() {
+        let pool = crate::arb_dryrun::PoolState::v2_like(
+            addr(0xa1),
+            Protocol::UniswapV2,
+            addr(1),
+            addr(2),
+            30,
+            1_000,
+            2_000,
+        );
+        let runtime = runtime_with_pool(pool.clone());
+        let mut dirty_state = ArbDirtyState::new(0);
+        let event = PoolSlotDiffEvent {
+            protocol_version: crate::PROTOCOL_VERSION,
+            tx_hash: B256::from([0x33; 32]),
+            block_number: 42,
+            flashblock_index: 3,
+            payload_id: "payload".to_string(),
+            pool: pool.pool,
+            slot: slot_key(crate::arb_dryrun::UNIV2_RESERVES_SLOT),
+            value: pack_univ2_reserves(3_000, 4_000),
+        };
+
+        record_pool_slot_event(&runtime, &mut dirty_state, &event, 42);
+
+        assert!(dirty_state.dirty_pools.contains(&pool.pool));
+        assert_eq!(dirty_state.flashblock_index, 3);
+        let delta = dirty_state.deltas.get(&pool.pool).expect("semantic delta");
+        assert_eq!(delta.reserve0, Some(3_000));
+        assert_eq!(delta.reserve1, Some(4_000));
+        assert!(delta.caveats.iter().any(|c| c == "live-overlay-applied"));
     }
 }
