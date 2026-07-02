@@ -1,6 +1,6 @@
 //! TDX attestation collateral hydration for proof generation.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 use alloy_primitives::{B256, Bytes, hex};
 use base_proof_tee_tdx_verifier::{
@@ -39,8 +39,6 @@ pub struct TdxCollateralFetch {
     pub collateral: TdxCollateral,
     /// CRLs covering non-root certificates in the verifier input.
     pub revocation: TdxRevocationEvidence,
-    /// Trusted Intel root CA hash.
-    pub trusted_root_ca_hash: B256,
 }
 
 /// Fetches Intel PCS collateral for TDX quote verification.
@@ -80,7 +78,8 @@ impl TdxAttestationHydrator {
             TdxPlatformIdentity::platform_and_tcb_from_pck_certificate_der(&pck_leaf.raw)
                 .map_err(|e| TdxCollateralError::source(e))?;
 
-        let verification_time = Self::now_seconds()?;
+        let verification_time =
+            UNIX_EPOCH.elapsed().map_err(|e| TdxCollateralError::source(e))?.as_secs();
         let (tcb_info, qe_identity) =
             tokio::try_join!(self.fetch_tcb_info(&platform), self.fetch_qe_identity())?;
         let collateral = TdxCollateral { tcb_info, qe_identity };
@@ -91,29 +90,17 @@ impl TdxAttestationHydrator {
                 collateral.qe_identity.signing_chain.as_slice(),
             ])
             .await?;
-        let fetch = TdxCollateralFetch {
-            pck_certificate_chain,
-            collateral,
-            revocation,
-            trusted_root_ca_hash: self.config.trusted_root_ca_hash,
-        };
+        let fetch = TdxCollateralFetch { pck_certificate_chain, collateral, revocation };
         TdxVerifier::verify_quote_collateral(
             &parsed_quote,
             &fetch.pck_certificate_chain,
             &fetch.collateral,
             &fetch.revocation,
-            fetch.trusted_root_ca_hash,
+            self.config.trusted_root_ca_hash,
             verification_time,
         )
         .map_err(|e| TdxCollateralError::source(e))?;
         Ok(fetch)
-    }
-
-    fn now_seconds() -> Result<u64> {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|e| TdxCollateralError::source(e))
-            .map(|duration| duration.as_secs())
     }
 
     async fn fetch_tcb_info(&self, platform: &TdxPlatformIdentity) -> Result<TdxSignedCollateral> {
@@ -220,15 +207,14 @@ impl TdxAttestationHydrator {
     }
 
     fn header_value<'a>(headers: &'a HeaderMap, header_names: &[&str]) -> Result<&'a str> {
-        for header in header_names {
-            if let Some(value) = headers.get(*header) {
-                return value.to_str().map_err(|e| TdxCollateralError::source(e));
-            }
-        }
-        Err(TdxCollateralError::source(format!(
-            "Intel PCS response missing {}",
-            header_names.join(" or ")
-        )))
+        let value =
+            header_names.iter().find_map(|header| headers.get(*header)).ok_or_else(|| {
+                TdxCollateralError::source(format!(
+                    "Intel PCS response missing {}",
+                    header_names.join(" or ")
+                ))
+            })?;
+        value.to_str().map_err(|e| TdxCollateralError::source(e))
     }
 
     fn qe_identity_signature_from_json(raw: &[u8]) -> Result<Bytes> {
@@ -275,12 +261,10 @@ impl TdxAttestationHydrator {
             .map(|cert| TdxCertificate::authenticated_from_der(cert))
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| TdxCollateralError::source(e))?;
-        let ordered_indexes = Self::root_to_leaf_indexes(&authenticated)?;
-        let mut ordered = Vec::with_capacity(ordered_indexes.len());
-        for index in ordered_indexes {
-            ordered.push(TdxCertificate { raw: certs[index].clone() });
-        }
-        Ok(ordered)
+        Ok(Self::root_to_leaf_indexes(&authenticated)?
+            .into_iter()
+            .map(|index| TdxCertificate { raw: certs[index].clone() })
+            .collect())
     }
 
     fn root_to_leaf_indexes(certs: &[AuthenticatedTdxCertificate]) -> Result<Vec<usize>> {

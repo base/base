@@ -140,7 +140,7 @@ impl TdxImageHashTool {
             pck_certificate_chain: collateral.pck_certificate_chain,
             collateral: collateral.collateral,
             revocation: collateral.revocation,
-            trusted_root_ca_hash: collateral.trusted_root_ca_hash,
+            trusted_root_ca_hash: attestation_config.trusted_root_ca_hash,
             expected_public_key: attestation.signer_public_key.clone(),
             quote_timestamp_millis: attestation.quote_timestamp_millis,
             verification_time: UNIX_EPOCH
