@@ -1,13 +1,16 @@
 //! CLI argument parsing and config construction for the prover registrar.
 
-use std::time::Duration;
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, hex::FromHex};
-use base_proof_tee_nitro_attestation_prover::{BoundlessProver, BoundlessProverConfig};
+use base_proof_tee_nitro_attestation_prover::BoundlessProver as NitroBoundlessProver;
 use base_proof_tee_registrar::{
     DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
-    DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, INSTANCE_CACHE_TTL_CYCLES, RegistrarConfig,
-    RegistrarError,
+    DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, INSTANCE_CACHE_TTL_CYCLES, PlatformProofProvider,
+    RegistrarConfig, RegistrarError,
+};
+use base_proof_tee_tdx_attestation_prover::{
+    BoundlessProver as TdxBoundlessProver, RecoveredProofPolicy,
 };
 use base_tx_manager::{SignerConfig, TxManagerConfig};
 use boundless_market::{
@@ -15,6 +18,7 @@ use boundless_market::{
     price_oracle::{Amount, Asset},
 };
 use clap::Parser;
+use tokio::sync::Mutex;
 use url::Url;
 
 // Generate env-var helper and CLI structs with the `BASE_REGISTRAR_` prefix.
@@ -24,6 +28,9 @@ base_cli_utils::define_metrics_args!("BASE_REGISTRAR", 7300);
 base_cli_utils::define_health_args!("BASE_REGISTRAR", 8080);
 base_tx_manager::define_signer_cli!("BASE_REGISTRAR");
 base_tx_manager::define_tx_manager_cli!("BASE_REGISTRAR");
+
+type CliRegistrarConfig =
+    RegistrarConfig<PlatformProofProvider<NitroBoundlessProver, TdxBoundlessProver>>;
 
 /// Prover Registrar — automated TEE signer registration service.
 #[derive(Parser)]
@@ -45,6 +52,26 @@ pub(crate) struct Cli {
     #[arg(long, env = cli_env!("AWS_REGION"))]
     aws_region: String,
 
+    /// GCP project ID containing the TDX prover GKE cluster.
+    #[arg(long, env = cli_env!("GCP_PROJECT"))]
+    gcp_project: String,
+
+    /// GCP location containing the TDX prover GKE cluster.
+    #[arg(long, env = cli_env!("GCP_LOCATION"))]
+    gcp_location: String,
+
+    /// GKE cluster name containing the TDX prover node pool.
+    #[arg(long, env = cli_env!("GCP_CLUSTER"))]
+    gcp_cluster: String,
+
+    /// GKE node pool name for TDX prover nodes.
+    #[arg(long, env = cli_env!("GCP_NODE_POOL"))]
+    gcp_node_pool: String,
+
+    /// Optional GCP OAuth access token. If unset, the GCP metadata server is used.
+    #[arg(long, env = cli_env!("GCP_ACCESS_TOKEN"))]
+    gcp_access_token: Option<String>,
+
     /// JSON-RPC port to poll on each prover instance.
     #[arg(long, env = cli_env!("PROVER_PORT"), default_value_t = 8000)]
     prover_port: u16,
@@ -57,9 +84,13 @@ pub(crate) struct Cli {
     #[command(flatten)]
     tx_manager: TxManagerCli,
 
-    /// Hex-encoded guest program image ID.
-    #[arg(long, env = cli_env!("IMAGE_ID"), value_parser = parse_image_id)]
-    image_id: [u32; 8],
+    /// Hex-encoded Nitro verifier guest program image ID.
+    #[arg(long = "nitro-image-id", alias = "image-id", env = cli_env!("IMAGE_ID"), value_parser = parse_image_id)]
+    nitro_image_id: [u32; 8],
+
+    /// Hex-encoded TDX verifier guest program image ID.
+    #[arg(long = "tdx-image-id", env = cli_env!("TDX_IMAGE_ID"), value_parser = parse_image_id)]
+    tdx_image_id: [u32; 8],
 
     /// Boundless Network RPC URL.
     #[arg(long, env = cli_env!("BOUNDLESS_RPC_URL"))]
@@ -69,9 +100,17 @@ pub(crate) struct Cli {
     #[arg(long = "boundless-private-key", env = cli_env!("BOUNDLESS_PRIVATE_KEY"))]
     boundless_fee_private_key: PrivateKeySigner,
 
-    /// HTTP(S) URL of the Nitro attestation verifier ELF (e.g. Pinata IPFS gateway URL).
-    #[arg(long, env = cli_env!("BOUNDLESS_VERIFIER_PROGRAM_URL"))]
-    boundless_verifier_program_url: Url,
+    /// HTTP(S) URL of the Nitro attestation verifier ELF.
+    #[arg(
+        long = "boundless-nitro-verifier-program-url",
+        alias = "boundless-verifier-program-url",
+        env = cli_env!("BOUNDLESS_VERIFIER_PROGRAM_URL")
+    )]
+    boundless_nitro_verifier_program_url: Url,
+
+    /// HTTP(S) URL of the TDX attestation verifier ELF.
+    #[arg(long = "boundless-tdx-verifier-program-url", env = cli_env!("BOUNDLESS_TDX_VERIFIER_PROGRAM_URL"))]
+    boundless_tdx_verifier_program_url: Url,
 
     /// Boundless fulfillment poll interval in seconds.
     #[arg(
@@ -104,7 +143,7 @@ pub(crate) struct Cli {
     /// Maximum Boundless offer price in ETH for each submitted proof request.
     ///
     /// Must be set together with `--boundless-min-price-eth` and be greater than or equal to it.
-    /// When set, the Boundless SDK uses this value verbatim as the on-chain `maxPrice` and does not
+    /// When set, the Boundless SDK uses this value verbatim as the onchain `maxPrice` and does not
     /// add the gas-cost buffer it applies to SDK-derived max prices. Include headroom for gas-price
     /// volatility between request submission and fulfillment.
     #[arg(
@@ -238,39 +277,66 @@ fn parse_boundless_eth_amount(s: &str) -> Result<Amount, String> {
 }
 
 impl Cli {
-    pub(crate) fn config(self) -> Result<RegistrarConfig, Box<RegistrarError>> {
+    pub(crate) fn config(self) -> Result<CliRegistrarConfig, Box<RegistrarError>> {
         validate_health_port(self.health.port)?;
         validate_boundless_offer_prices(
             &self.boundless_min_price_eth,
             &self.boundless_max_price_eth,
         )?;
 
+        let boundless_rpc_url = self.boundless_rpc_url;
+        let boundless_signer = self.boundless_fee_private_key;
+        let boundless_signer_address = boundless_signer.address();
+        let boundless_poll_interval = Duration::from_secs(self.boundless_fulfillment_poll_interval);
+        let boundless_timeout = Duration::from_secs(self.boundless_timeout);
+        let max_attestation_age = Duration::from_secs(self.max_attestation_age);
+        let submit_lock = Arc::new(Mutex::new(()));
+
         Ok(RegistrarConfig {
             l1_rpc_url: self.l1_rpc_url,
             tee_prover_registry_address: self.tee_prover_registry_address,
             target_group_arn: self.target_group_arn,
             aws_region: self.aws_region,
+            gcp_project: self.gcp_project,
+            gcp_location: self.gcp_location,
+            gcp_cluster: self.gcp_cluster,
+            gcp_node_pool: self.gcp_node_pool,
+            gcp_access_token: self.gcp_access_token,
             prover_port: self.prover_port,
             signing: SignerConfig::try_from(self.signer)
                 .map_err(|e| Box::new(RegistrarError::Config(format!("signer: {e}"))))?,
             tx_manager_config: TxManagerConfig::try_from(self.tx_manager)
                 .map_err(|e| Box::new(RegistrarError::Config(format!("tx-manager: {e}"))))?,
-            boundless_prover: BoundlessProver::new(BoundlessProverConfig {
-                rpc_url: self.boundless_rpc_url,
-                signer: self.boundless_fee_private_key,
-                verifier_program_url: self.boundless_verifier_program_url,
-                image_id: self.image_id,
-                poll_interval: Duration::from_secs(self.boundless_fulfillment_poll_interval),
-                timeout: Duration::from_secs(self.boundless_timeout),
-                max_recovery_attempts: self.boundless_max_recovery_attempts,
-                max_attestation_age: Duration::from_secs(self.max_attestation_age),
-                offer_min_price: self.boundless_min_price_eth,
-                offer_max_price: self.boundless_max_price_eth,
-                offer_ramp_up_period_secs: self.boundless_offer_ramp_up_period_secs,
-                offer_lock_timeout_secs: self.boundless_offer_lock_timeout_secs,
-                offer_bidding_start_delay_secs: self.boundless_offer_bidding_start_delay_secs,
-            })
-            .map_err(|e| Box::new(RegistrarError::Config(format!("boundless prover: {e}"))))?,
+            proof_provider: PlatformProofProvider::new(
+                NitroBoundlessProver {
+                    rpc_url: boundless_rpc_url.clone(),
+                    signer: boundless_signer.clone(),
+                    verifier_program_url: self.boundless_nitro_verifier_program_url,
+                    image_id: self.nitro_image_id,
+                    poll_interval: boundless_poll_interval,
+                    timeout: boundless_timeout,
+                    trusted_certs_prefix_len: 1,
+                    max_recovery_attempts: self.boundless_max_recovery_attempts,
+                    max_attestation_age,
+                    submit_lock: Arc::clone(&submit_lock),
+                    recovery_blocked: Arc::new(std::sync::Mutex::new(HashSet::new())),
+                },
+                TdxBoundlessProver {
+                    rpc_url: boundless_rpc_url.clone(),
+                    signer: boundless_signer,
+                    verifier_program_url: self.boundless_tdx_verifier_program_url,
+                    image_id: self.tdx_image_id,
+                    poll_interval: boundless_poll_interval,
+                    timeout: boundless_timeout,
+                    max_recovery_attempts: self.boundless_max_recovery_attempts,
+                    recovered_proof_policy: RecoveredProofPolicy::new(max_attestation_age),
+                    submit_lock,
+                    recovery_blocked: Arc::new(std::sync::Mutex::new(HashSet::new())),
+                },
+            ),
+            boundless_rpc_url,
+            boundless_signer_address,
+            max_attestation_age,
             poll_interval: Duration::from_secs(self.poll_interval),
             prover_timeout: Duration::from_secs(self.prover_timeout),
             max_concurrency: self.max_concurrency,
@@ -335,16 +401,28 @@ mod tests {
             "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/prover/abc123",
             "--aws-region",
             "us-east-1",
+            "--gcp-project",
+            "base-project",
+            "--gcp-location",
+            "us-central1",
+            "--gcp-cluster",
+            "tee-provers",
+            "--gcp-node-pool",
+            "tdx-provers",
             "--private-key",
             "0x0101010101010101010101010101010101010101010101010101010101010101",
-            "--image-id",
+            "--nitro-image-id",
+            TEST_IMAGE_ID,
+            "--tdx-image-id",
             TEST_IMAGE_ID,
             "--boundless-rpc-url",
             "http://localhost:9545",
             "--boundless-private-key",
             "0x0202020202020202020202020202020202020202020202020202020202020202",
-            "--boundless-verifier-program-url",
-            "https://gateway.pinata.cloud/ipfs/test",
+            "--boundless-nitro-verifier-program-url",
+            "https://gateway.pinata.cloud/ipfs/nitro-test",
+            "--boundless-tdx-verifier-program-url",
+            "https://gateway.pinata.cloud/ipfs/tdx-test",
         ]
     }
 

@@ -10,10 +10,11 @@ use std::{
 };
 
 use alloy_primitives::{Address, Bytes, keccak256};
-use alloy_sol_types::SolCall;
+use alloy_sol_types::{SolCall, SolValue};
 use base_proof_contracts::{ITEEProverRegistry, TEEProverRegistryClient};
-use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
+use base_proof_tee_attestation::{TeeAttestationKind, TeeAttestationProof};
 use base_proof_tee_nitro_verifier::VerifierJournal;
+use base_proof_tee_tdx_verifier::TDXVerifierJournal;
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use tokio::{
     sync::Semaphore,
@@ -22,7 +23,10 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::{DiscoveryResolution, RegistrarError, RegistrarMetrics, Result};
+use crate::{
+    AttestationKind, DiscoveryResolution, RegistrarError, RegistrarMetrics, RegistrarProofProvider,
+    Result,
+};
 
 /// Default maximum number of transaction submission retries for transient
 /// errors before giving up.
@@ -44,7 +48,7 @@ pub struct SignerManagerConfig {
     pub max_tx_retries: u32,
     /// Delay between transaction submission retries.
     pub tx_retry_delay: Duration,
-    /// Maximum proof attestation age accepted before on-chain submission.
+    /// Maximum proof attestation age accepted before onchain submission.
     pub max_attestation_age: Duration,
 }
 
@@ -207,7 +211,7 @@ impl ProofTaskSet {
 
 impl<P, R, T> SignerManager<P, R, T>
 where
-    P: AttestationProofProvider,
+    P: RegistrarProofProvider,
     R: TEEProverRegistryClient,
     T: TxManager,
 {
@@ -215,6 +219,7 @@ where
     pub async fn register_signer(
         &self,
         instance_id: &str,
+        attestation_kind: AttestationKind,
         signer_address: Address,
         attestation_bytes: &[u8],
         signer_cancel: &CancellationToken,
@@ -238,6 +243,7 @@ where
         info!(
             signer = %signer_address,
             instance = %instance_id,
+            attestation_kind = ?attestation_kind,
             "generating proof for unregistered signer"
         );
 
@@ -261,6 +267,7 @@ where
         // Boundless provider recovers via deterministic request IDs on retry.
         let Some(proof_result) = signer_cancel
             .run_until_cancelled(self.proof_provider.generate_proof_for_signer(
+                attestation_kind,
                 attestation_bytes,
                 signer_address,
                 signer_cancel,
@@ -274,20 +281,10 @@ where
             Err(_) if signer_cancel.is_cancelled() => {
                 return Ok(());
             }
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(RegistrarError::ProofGeneration(e)),
         };
-        let journal = VerifierJournal::decode(&proof.output)
-            .map_err(|e| RegistrarError::InvalidProofJournal { reason: e.to_string() })?;
-        let expected_nonce = self.attestation_nonce(signer_address);
-        if journal.nonce.as_ref() != expected_nonce.as_slice() {
-            self.proof_provider.block_recovery_for_signer(signer_address);
-            return Err(RegistrarError::InvalidAttestationProof(format!(
-                "nonce mismatch for signer {signer_address}: expected 0x{}, got 0x{}",
-                hex::encode(expected_nonce),
-                hex::encode(journal.nonce)
-            )));
-        }
-        let attestation_timestamp = journal.timestamp;
+        let attestation_timestamp =
+            self.validate_proof_journal(attestation_kind, &proof, signer_address)?;
         drop(proof_permit);
 
         let calldata = Bytes::from(
@@ -365,7 +362,8 @@ where
                                     reason = ?reason,
                                     "execution reverted, blocking proof recovery for signer"
                                 );
-                                self.proof_provider.block_recovery_for_signer(signer_address);
+                                self.proof_provider
+                                    .block_recovery_for_signer(attestation_kind, signer_address);
                             }
                             return Err(RegistrarError::from(e));
                         }
@@ -408,7 +406,7 @@ where
                 tx_hash = %receipt.transaction_hash,
                 "registration transaction reverted onchain",
             );
-            self.proof_provider.block_recovery_for_signer(signer_address);
+            self.proof_provider.block_recovery_for_signer(attestation_kind, signer_address);
             return Err(RegistrarError::ReceiptReverted { tx_hash: receipt.transaction_hash });
         }
 
@@ -420,6 +418,54 @@ where
         RegistrarMetrics::registrations_total().increment(1);
 
         Ok(())
+    }
+
+    fn validate_proof_journal(
+        &self,
+        attestation_kind: AttestationKind,
+        proof: &TeeAttestationProof,
+        signer_address: Address,
+    ) -> Result<u64> {
+        let expected_kind = match attestation_kind {
+            AttestationKind::Nitro => TeeAttestationKind::Nitro,
+            AttestationKind::Tdx => TeeAttestationKind::Tdx,
+        };
+        if proof.kind != expected_kind {
+            self.proof_provider.block_recovery_for_signer(attestation_kind, signer_address);
+            return Err(RegistrarError::InvalidAttestationProof(format!(
+                "proof kind mismatch for signer {signer_address}: expected {expected_kind:?}, got {:?}",
+                proof.kind
+            )));
+        }
+
+        match attestation_kind {
+            AttestationKind::Nitro => {
+                let journal = VerifierJournal::decode(&proof.output)
+                    .map_err(|e| RegistrarError::InvalidProofJournal { reason: e.to_string() })?;
+                let expected_nonce = self.attestation_nonce(signer_address);
+                if journal.nonce.as_ref() != expected_nonce.as_slice() {
+                    self.proof_provider.block_recovery_for_signer(attestation_kind, signer_address);
+                    return Err(RegistrarError::InvalidAttestationProof(format!(
+                        "nonce mismatch for signer {signer_address}: expected 0x{}, got 0x{}",
+                        hex::encode(expected_nonce),
+                        hex::encode(journal.nonce)
+                    )));
+                }
+                Ok(journal.timestamp)
+            }
+            AttestationKind::Tdx => {
+                let journal = <TDXVerifierJournal as SolValue>::abi_decode_validate(&proof.output)
+                    .map_err(|e| RegistrarError::InvalidProofJournal { reason: e.to_string() })?;
+                if journal.signer != signer_address {
+                    self.proof_provider.block_recovery_for_signer(attestation_kind, signer_address);
+                    return Err(RegistrarError::InvalidAttestationProof(format!(
+                        "TDX signer mismatch: expected {signer_address}, got {}",
+                        journal.signer
+                    )));
+                }
+                Ok(journal.timestamp)
+            }
+        }
     }
 
     fn ensure_attestation_fresh(&self, signer: Address, timestamp_ms: u64) -> Result<()> {
@@ -510,7 +556,7 @@ where
 
 impl<P, R, T> SignerManager<P, R, T>
 where
-    P: AttestationProofProvider + 'static,
+    P: RegistrarProofProvider + 'static,
     R: TEEProverRegistryClient + 'static,
     T: TxManager + 'static,
 {
@@ -555,12 +601,19 @@ where
             let instance_id = entry.instance.instance_id.clone();
             let task_instance_id = instance_id.clone();
             let attestation = entry.attestation.clone();
+            let attestation_kind = entry.attestation_kind;
             let task_cancel = signer_cancel.clone();
             let signer = entry.signer;
 
             let handle = proof_tasks.tasks.spawn(async move {
                 let result = manager
-                    .register_signer(&task_instance_id, signer, &attestation, &task_cancel)
+                    .register_signer(
+                        &task_instance_id,
+                        attestation_kind,
+                        signer,
+                        &attestation,
+                        &task_cancel,
+                    )
                     .await;
                 (signer, result)
             });
@@ -586,7 +639,6 @@ mod tests {
 
     use alloy_primitives::{Address, B256};
     use async_trait::async_trait;
-    use base_proof_tee_nitro_attestation_prover::AttestationProof;
     use base_proof_tee_nitro_verifier::VerificationResult;
     use base_tx_manager::{SendHandle, TxManagerError};
     use tokio::sync::Notify;
@@ -766,30 +818,24 @@ mod tests {
         )
     }
 
-    #[async_trait]
-    impl AttestationProofProvider for RecordingProofProvider {
-        async fn generate_proof(
-            &self,
-            _attestation_bytes: &[u8],
-            _cancel: &CancellationToken,
-        ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
-            unreachable!("signer manager tests call generate_proof_for_signer")
-        }
-
+    impl RegistrarProofProvider for RecordingProofProvider {
         async fn generate_proof_for_signer(
             &self,
+            kind: AttestationKind,
             attestation_bytes: &[u8],
             signer_address: Address,
             cancel: &CancellationToken,
-        ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
+        ) -> base_proof_tee_attestation::Result<TeeAttestationProof> {
             self.records.lock().unwrap().push((signer_address, attestation_bytes.to_vec()));
             if self.cancel_then_error {
                 cancel.cancel();
-                return Err(base_proof_tee_nitro_attestation_prover::ProverError::Boundless(
-                    "simulated cancel race".into(),
-                ));
+                return Err(std::io::Error::other("simulated cancel race").into());
             }
-            Ok(AttestationProof {
+            Ok(TeeAttestationProof {
+                kind: match kind {
+                    AttestationKind::Nitro => TeeAttestationKind::Nitro,
+                    AttestationKind::Tdx => TeeAttestationKind::Tdx,
+                },
                 output: self
                     .proof_output
                     .clone()
@@ -798,7 +844,7 @@ mod tests {
             })
         }
 
-        fn block_recovery_for_signer(&self, signer: Address) {
+        fn block_recovery_for_signer(&self, _kind: AttestationKind, signer: Address) {
             self.blocked_signers.lock().unwrap().push(signer);
         }
     }
@@ -852,7 +898,15 @@ mod tests {
         manager: &SignerManager<RecordingProofProvider, MockRegistry, RecordingTxManager>,
         cancel: &CancellationToken,
     ) -> Result<()> {
-        manager.register_signer(TEST_PENDING_INSTANCE_ID, SIGNER_A, ATTESTATION, cancel).await
+        manager
+            .register_signer(
+                TEST_PENDING_INSTANCE_ID,
+                AttestationKind::Nitro,
+                SIGNER_A,
+                ATTESTATION,
+                cancel,
+            )
+            .await
     }
 
     fn reconcile(
@@ -871,6 +925,7 @@ mod tests {
                 instance: healthy_prover_instance(ep),
                 signer: signer_from_private_key(key),
                 attestation: b"gated-attestation".to_vec(),
+                attestation_kind: AttestationKind::Nitro,
             })
             .collect();
         DiscoveryResolution {
@@ -1218,14 +1273,26 @@ mod tests {
         let first_cancel = cancel.clone();
         let first = tokio::spawn(async move {
             first_manager
-                .register_signer(TEST_PENDING_INSTANCE_ID, SIGNER_A, ATTESTATION, &first_cancel)
+                .register_signer(
+                    TEST_PENDING_INSTANCE_ID,
+                    AttestationKind::Nitro,
+                    SIGNER_A,
+                    ATTESTATION,
+                    &first_cancel,
+                )
                 .await
         });
         let second_manager = Arc::clone(&manager);
         let second_cancel = cancel.clone();
         let second = tokio::spawn(async move {
             second_manager
-                .register_signer("i-pending-test-2", SIGNER_B, ATTESTATION, &second_cancel)
+                .register_signer(
+                    "i-pending-test-2",
+                    AttestationKind::Nitro,
+                    SIGNER_B,
+                    ATTESTATION,
+                    &second_cancel,
+                )
                 .await
         });
 
@@ -1355,11 +1422,13 @@ mod tests {
                     instance: healthy_prover_instance(EP1),
                     signer,
                     attestation: b"attestation-from-instance-a".to_vec(),
+                    attestation_kind: AttestationKind::Nitro,
                 },
                 RegisterableSigner {
                     instance: healthy_prover_instance(EP2),
                     signer,
                     attestation: b"attestation-from-instance-b".to_vec(),
+                    attestation_kind: AttestationKind::Nitro,
                 },
             ],
             active_signers: HashSet::new(),
@@ -1392,11 +1461,13 @@ mod tests {
                     instance: healthy_prover_instance(EP1),
                     signer: signer_a,
                     attestation: att_a.clone(),
+                    attestation_kind: AttestationKind::Nitro,
                 },
                 RegisterableSigner {
                     instance: healthy_prover_instance(EP2),
                     signer: signer_b,
                     attestation: att_b.clone(),
+                    attestation_kind: AttestationKind::Nitro,
                 },
             ],
             active_signers: HashSet::new(),

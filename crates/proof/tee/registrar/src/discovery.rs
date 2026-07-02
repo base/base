@@ -1,4 +1,4 @@
-//! AWS ALB target group instance discovery.
+//! Infrastructure instance discovery for registrar-managed prover nodes.
 
 use std::{
     collections::HashMap,
@@ -7,10 +7,18 @@ use std::{
 
 use aws_sdk_ec2::{Client as Ec2Client, types::Reservation};
 use aws_sdk_elasticloadbalancingv2::Client as ElbClient;
+use reqwest::{Client as HttpClient, Url as ReqwestUrl};
+use serde::Deserialize;
 use tracing::{debug, warn};
 use url::Url;
 
-use crate::{InstanceDiscovery, InstanceHealthStatus, ProverInstance, RegistrarError, Result};
+use crate::{
+    AttestationKind, InstanceDiscovery, InstanceHealthStatus, ProverInstance, RegistrarError,
+    Result,
+};
+
+const GCP_METADATA_TOKEN_URL: &str =
+    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
 
 /// Discovers prover instances via AWS Elastic Load Balancing target groups.
 ///
@@ -68,6 +76,7 @@ impl AwsTargetGroupDiscovery {
             instances.push(ProverInstance {
                 instance_id: instance_id.to_string(),
                 endpoint,
+                attestation_kind: AttestationKind::Nitro,
                 health_status,
                 launch_time,
             });
@@ -145,6 +154,299 @@ impl InstanceDiscovery for AwsTargetGroupDiscovery {
     }
 }
 
+/// Discovers prover instances from both AWS and GCP.
+#[derive(Debug)]
+pub struct CombinedInstanceDiscovery<A, G> {
+    aws: A,
+    gcp: G,
+}
+
+impl<A, G> CombinedInstanceDiscovery<A, G> {
+    /// Creates a discovery implementation that monitors both providers.
+    pub const fn new(aws: A, gcp: G) -> Self {
+        Self { aws, gcp }
+    }
+}
+
+impl<A, G> InstanceDiscovery for CombinedInstanceDiscovery<A, G>
+where
+    A: InstanceDiscovery,
+    G: InstanceDiscovery,
+{
+    async fn discover_instances(&self) -> Result<Vec<ProverInstance>> {
+        let (mut aws, gcp) =
+            tokio::try_join!(self.aws.discover_instances(), self.gcp.discover_instances())?;
+        aws.extend(gcp);
+        Ok(aws)
+    }
+}
+
+/// Discovers TDX prover instances from a GKE node pool.
+#[derive(Debug, Clone)]
+pub struct GcpNodePoolDiscovery {
+    http_client: HttpClient,
+    project: String,
+    location: String,
+    cluster: String,
+    node_pool: String,
+    port: u16,
+    access_token: Option<String>,
+}
+
+impl GcpNodePoolDiscovery {
+    /// Creates a GCP node pool discovery client.
+    pub fn new(
+        project: String,
+        location: String,
+        cluster: String,
+        node_pool: String,
+        port: u16,
+        access_token: Option<String>,
+    ) -> Self {
+        Self {
+            http_client: HttpClient::new(),
+            project,
+            location,
+            cluster,
+            node_pool,
+            port,
+            access_token,
+        }
+    }
+
+    async fn bearer_token(&self) -> Result<String> {
+        if let Some(token) = &self.access_token {
+            return Ok(token.clone());
+        }
+
+        let response = self
+            .http_client
+            .get(GCP_METADATA_TOKEN_URL)
+            .header("Metadata-Flavor", "Google")
+            .send()
+            .await
+            .map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
+        if !response.status().is_success() {
+            return Err(RegistrarError::Discovery(Box::new(std::io::Error::other(format!(
+                "GCP metadata token request failed with status {}",
+                response.status()
+            )))));
+        }
+        let token: GcpMetadataToken =
+            response.json().await.map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
+        Ok(token.access_token)
+    }
+
+    async fn get<T>(&self, url: &str, token: &str) -> Result<T>
+    where
+        T: for<'de> Deserialize<'de>,
+    {
+        let response = self
+            .http_client
+            .get(url)
+            .bearer_auth(token)
+            .send()
+            .await
+            .map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
+        Self::decode_response(response).await
+    }
+
+    async fn post<T>(&self, url: &str, token: &str, body: &serde_json::Value) -> Result<T>
+    where
+        T: for<'de> Deserialize<'de>,
+    {
+        let response = self
+            .http_client
+            .post(url)
+            .bearer_auth(token)
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
+        Self::decode_response(response).await
+    }
+
+    async fn decode_response<T>(response: reqwest::Response) -> Result<T>
+    where
+        T: for<'de> Deserialize<'de>,
+    {
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(RegistrarError::Discovery(Box::new(std::io::Error::other(format!(
+                "GCP API request failed with status {status}: {body}"
+            )))));
+        }
+        response.json().await.map_err(|e| RegistrarError::Discovery(Box::new(e)))
+    }
+
+    fn node_pool_url(&self) -> String {
+        format!(
+            "https://container.googleapis.com/v1/projects/{}/locations/{}/clusters/{}/nodePools/{}",
+            self.project, self.location, self.cluster, self.node_pool
+        )
+    }
+
+    fn managed_instances_url(&self, instance_group_url: &str) -> Result<String> {
+        let (zone, name) = Self::parse_instance_group_manager_url(instance_group_url)?;
+        Ok(format!(
+            "https://compute.googleapis.com/compute/v1/projects/{}/zones/{zone}/instanceGroupManagers/{name}/listManagedInstances",
+            self.project
+        ))
+    }
+
+    /// Extracts `(zone, instance_group_manager)` from a GKE instance-group URL.
+    pub fn parse_instance_group_manager_url(instance_group_url: &str) -> Result<(String, String)> {
+        let url = ReqwestUrl::parse(instance_group_url)
+            .map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
+        let segments = url
+            .path_segments()
+            .ok_or_else(|| {
+                RegistrarError::Discovery(Box::new(std::io::Error::other(
+                    "GCP instance group URL has no path",
+                )))
+            })?
+            .collect::<Vec<_>>();
+        let Some(zone_index) = segments.iter().position(|segment| *segment == "zones") else {
+            return Err(RegistrarError::Discovery(Box::new(std::io::Error::other(
+                "GCP instance group URL is missing zones segment",
+            ))));
+        };
+        let Some(group_index) =
+            segments.iter().position(|segment| *segment == "instanceGroupManagers")
+        else {
+            return Err(RegistrarError::Discovery(Box::new(std::io::Error::other(
+                "GCP instance group URL is missing instanceGroupManagers segment",
+            ))));
+        };
+        let Some(zone) = segments.get(zone_index + 1) else {
+            return Err(RegistrarError::Discovery(Box::new(std::io::Error::other(
+                "GCP instance group URL is missing zone",
+            ))));
+        };
+        let Some(name) = segments.get(group_index + 1) else {
+            return Err(RegistrarError::Discovery(Box::new(std::io::Error::other(
+                "GCP instance group URL is missing instance group manager name",
+            ))));
+        };
+        Ok(((*zone).to_owned(), (*name).to_owned()))
+    }
+
+    async fn managed_instance_urls(
+        &self,
+        token: &str,
+        instance_group_url: &str,
+    ) -> Result<Vec<String>> {
+        let url = self.managed_instances_url(instance_group_url)?;
+        let mut page_token = None;
+        let mut instance_urls = Vec::new();
+
+        loop {
+            let body = match &page_token {
+                Some(token) => serde_json::json!({ "pageToken": token }),
+                None => serde_json::json!({}),
+            };
+            let page: GcpManagedInstancesPage = self.post(&url, token, &body).await?;
+            instance_urls.extend(page.managed_instances.into_iter().filter_map(|instance| {
+                matches!(instance.instance_status.as_deref(), Some("RUNNING"))
+                    .then_some(instance.instance)
+                    .flatten()
+            }));
+            if page.next_page_token.is_none() {
+                break;
+            }
+            page_token = page.next_page_token;
+        }
+
+        Ok(instance_urls)
+    }
+
+    fn instance_to_prover(&self, instance: GcpInstance) -> Result<Option<ProverInstance>> {
+        let Some(private_ip) = instance
+            .network_interfaces
+            .iter()
+            .find_map(|interface| interface.network_ip.as_deref())
+        else {
+            warn!(instance = %instance.name, "GCE instance missing private IP");
+            return Ok(None);
+        };
+        let endpoint = Url::parse(&format!("http://{private_ip}:{}", self.port))
+            .map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
+
+        debug!(
+            instance_id = %instance.name,
+            endpoint = %endpoint,
+            "discovered GCP TDX prover instance"
+        );
+        Ok(Some(ProverInstance {
+            instance_id: format!("gcp/{}", instance.name),
+            endpoint,
+            attestation_kind: AttestationKind::Tdx,
+            health_status: InstanceHealthStatus::Healthy,
+            launch_time: None,
+        }))
+    }
+}
+
+impl InstanceDiscovery for GcpNodePoolDiscovery {
+    async fn discover_instances(&self) -> Result<Vec<ProverInstance>> {
+        let token = self.bearer_token().await?;
+        let node_pool: GcpNodePool = self.get(&self.node_pool_url(), &token).await?;
+        let mut instance_urls = Vec::new();
+        for instance_group_url in &node_pool.instance_group_urls {
+            instance_urls.extend(self.managed_instance_urls(&token, instance_group_url).await?);
+        }
+
+        let mut instances = Vec::with_capacity(instance_urls.len());
+        for instance_url in instance_urls {
+            let instance = self.get::<GcpInstance>(&instance_url, &token).await?;
+            if let Some(prover) = self.instance_to_prover(instance)? {
+                instances.push(prover);
+            }
+        }
+        Ok(instances)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct GcpMetadataToken {
+    access_token: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GcpNodePool {
+    #[serde(default, rename = "instanceGroupUrls")]
+    instance_group_urls: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GcpManagedInstancesPage {
+    #[serde(default, rename = "managedInstances")]
+    managed_instances: Vec<GcpManagedInstance>,
+    #[serde(rename = "nextPageToken")]
+    next_page_token: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GcpManagedInstance {
+    instance: Option<String>,
+    #[serde(rename = "instanceStatus")]
+    instance_status: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GcpInstance {
+    name: String,
+    #[serde(default, rename = "networkInterfaces")]
+    network_interfaces: Vec<GcpNetworkInterface>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GcpNetworkInterface {
+    #[serde(rename = "networkIP")]
+    network_ip: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use aws_sdk_ec2::{
@@ -195,6 +497,7 @@ mod tests {
         assert_eq!(instances.len(), 4);
         assert_eq!(instances[0].instance_id, "i-001");
         assert_eq!(instances[0].endpoint, Url::parse("http://10.0.0.1:9000").unwrap());
+        assert_eq!(instances[0].attestation_kind, AttestationKind::Nitro);
         assert_eq!(instances[0].health_status, InstanceHealthStatus::Healthy);
         assert_eq!(instances[0].launch_time, Some(launch_time));
         assert_eq!(instances[1].instance_id, "i-002");
@@ -248,5 +551,16 @@ mod tests {
         assert_eq!(instances.len(), 1);
         assert_eq!(instances[0].instance_id, "i-001");
         assert_eq!(missing_ids, vec!["i-002", "i-003"]);
+    }
+
+    #[test]
+    fn parse_instance_group_manager_url_extracts_zone_and_name() {
+        let (zone, name) = GcpNodePoolDiscovery::parse_instance_group_manager_url(
+            "https://www.googleapis.com/compute/v1/projects/base/zones/us-central1-a/instanceGroupManagers/gke-provers-abc",
+        )
+        .unwrap();
+
+        assert_eq!(zone, "us-central1-a");
+        assert_eq!(name, "gke-provers-abc");
     }
 }

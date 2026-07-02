@@ -8,7 +8,7 @@ mod crl;
 pub use crl::{CertCrlInfo, CrlError, check_chain_against_crls};
 
 mod discovery;
-pub use discovery::AwsTargetGroupDiscovery;
+pub use discovery::{AwsTargetGroupDiscovery, CombinedInstanceDiscovery, GcpNodePoolDiscovery};
 
 mod driver;
 pub use driver::{
@@ -25,6 +25,9 @@ pub use metrics::RegistrarMetrics;
 mod prover;
 pub use prover::ProverClient;
 
+mod proof_provider;
+pub use proof_provider::{PlatformProofProvider, RegistrarProofProvider};
+
 mod signer_manager;
 pub use signer_manager::{
     DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS, PendingRegistration, ProofTaskSet,
@@ -38,7 +41,7 @@ mod traits;
 pub use traits::{EnclaveEndpointClient, InstanceDiscovery};
 
 mod types;
-pub use types::{InstanceHealthStatus, ProverInstance};
+pub use types::{AttestationKind, InstanceHealthStatus, ProverInstance};
 
 #[cfg(test)]
 pub mod test_utils;

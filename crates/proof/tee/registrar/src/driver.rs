@@ -13,15 +13,15 @@ use std::{
 
 use alloy_primitives::Address;
 use base_proof_contracts::TEEProverRegistryClient;
-use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
 use base_tx_manager::TxManager;
 use futures::stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, info, warn};
 
 use crate::{
-    CertManager, EnclaveEndpointClient, InstanceDiscovery, InstanceHealthStatus, ProofTaskSet,
-    ProverClient, ProverInstance, RegistrarMetrics, Result, SignerManager,
+    AttestationKind, CertManager, EnclaveEndpointClient, InstanceDiscovery, InstanceHealthStatus,
+    ProofTaskSet, ProverClient, ProverInstance, RegistrarMetrics, RegistrarProofProvider, Result,
+    SignerManager,
 };
 
 /// Default maximum number of instances processed concurrently.
@@ -83,6 +83,8 @@ pub struct RegisterableSigner {
     pub signer: Address,
     /// Pre-fetched attestation blob for the signer.
     pub attestation: Vec<u8>,
+    /// Attestation platform for this signer.
+    pub attestation_kind: AttestationKind,
 }
 
 /// Per-cycle discovery snapshot consumed by signer reconciliation.
@@ -138,7 +140,7 @@ where
     where
         D: 'static,
         S: 'static,
-        P: AttestationProofProvider + 'static,
+        P: RegistrarProofProvider + 'static,
         R: TEEProverRegistryClient + 'static,
         T: 'static,
     {
@@ -256,17 +258,25 @@ where
             return Ok(outcome);
         }
 
-        let nonces = addresses
-            .iter()
-            .map(|signer| self.signer_manager.attestation_nonce(*signer).to_vec())
-            .collect::<Vec<_>>();
+        let nonces = if instance.attestation_kind == AttestationKind::Nitro {
+            Some(
+                addresses
+                    .iter()
+                    .map(|signer| self.signer_manager.attestation_nonce(*signer).to_vec())
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            None
+        };
         info!(
             signer_count = addresses.len(),
             instance = %instance.instance_id,
-            "requesting attestations with deterministic nonces"
+            attestation_kind = ?instance.attestation_kind,
+            nonce_bound = nonces.is_some(),
+            "requesting signer attestations"
         );
         let all_attestations =
-            match self.signer_client.signer_attestation(&instance.endpoint, Some(nonces)).await {
+            match self.signer_client.signer_attestation(&instance.endpoint, nonces).await {
                 Ok(attestations) => attestations,
                 Err(e) => {
                     warn!(
@@ -295,7 +305,9 @@ where
         if self.config.cancel.is_cancelled() {
             return Ok(outcome);
         }
-        if let Some(cert_manager) = &self.cert_manager {
+        if instance.attestation_kind == AttestationKind::Nitro
+            && let Some(cert_manager) = &self.cert_manager
+        {
             let first_attestation = all_attestations
                 .first()
                 .expect("guarded by attestation count == signer count >= 1");
@@ -323,6 +335,7 @@ where
                 instance: instance.clone(),
                 signer,
                 attestation,
+                attestation_kind: instance.attestation_kind,
             },
         ));
         Ok(outcome)
@@ -345,6 +358,7 @@ where
                 "resolve_instance",
                 instance_id = %instance.instance_id,
                 endpoint = %instance.endpoint,
+                attestation_kind = ?instance.attestation_kind,
                 health = ?instance.health_status,
             );
             async move {
@@ -434,8 +448,8 @@ mod tests {
         InstanceHealthStatus, RegistrarError, Result, SignerManagerConfig,
         test_utils::{
             EP1, EP2, EP3, HARDHAT_KEY_0, HARDHAT_KEY_1, HARDHAT_KEY_2, NoopTxManager,
-            TEST_REGISTRY_ADDRESS, healthy_prover_instance, prover_instance,
-            public_key_from_private, signer_from_private_key,
+            TEST_REGISTRY_ADDRESS, healthy_prover_instance, healthy_tdx_prover_instance,
+            prover_instance, public_key_from_private, signer_from_private_key,
         },
     };
 
@@ -673,6 +687,24 @@ mod tests {
             )
             .to_vec();
         assert_eq!(*requested_nonces.lock().unwrap(), vec![Some(vec![nonce_a, nonce_b])]);
+    }
+
+    #[tokio::test]
+    async fn discover_and_resolve_requests_tdx_attestation_without_nonce() {
+        let signer_client = MockEnclaveEndpointClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
+        let requested_nonces = Arc::clone(&signer_client.requested_nonces);
+
+        let driver = cycle_driver(
+            vec![healthy_tdx_prover_instance(EP1)],
+            signer_client,
+            CancellationToken::new(),
+        );
+
+        let resolution = discover_once(&driver).await;
+
+        assert_eq!(resolution.registerable.len(), 1);
+        assert_eq!(resolution.registerable[0].attestation_kind, AttestationKind::Tdx);
+        assert_eq!(*requested_nonces.lock().unwrap(), vec![None]);
     }
 
     #[tokio::test]

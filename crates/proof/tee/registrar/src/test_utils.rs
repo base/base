@@ -9,7 +9,7 @@ use base_tx_manager::{SendHandle, TxCandidate, TxManager};
 use hex_literal::hex;
 use k256::ecdsa::SigningKey;
 
-use crate::{InstanceHealthStatus, ProverClient, ProverInstance};
+use crate::{AttestationKind, InstanceHealthStatus, ProverClient, ProverInstance};
 
 /// Well-known Hardhat / Anvil account #0 private key.
 pub const HARDHAT_KEY_0: [u8; 32] =
@@ -73,8 +73,20 @@ pub fn prover_instance(
     ProverInstance {
         instance_id: format!("i-{host_port}"),
         endpoint: url::Url::parse(&format!("http://{host_port}")).unwrap(),
+        attestation_kind: AttestationKind::Nitro,
         health_status,
         launch_time,
+    }
+}
+
+/// Builds a healthy TDX test [`ProverInstance`] with no launch time.
+pub fn healthy_tdx_prover_instance(host_port: &str) -> ProverInstance {
+    ProverInstance {
+        instance_id: format!("gcp/{host_port}"),
+        endpoint: url::Url::parse(&format!("http://{host_port}")).unwrap(),
+        attestation_kind: AttestationKind::Tdx,
+        health_status: InstanceHealthStatus::Healthy,
+        launch_time: None,
     }
 }
 

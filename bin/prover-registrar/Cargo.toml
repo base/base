@@ -20,6 +20,7 @@ workspace = true
 base-cli-utils.workspace = true
 base-tx-manager.workspace = true
 base-proof-tee-registrar = { workspace = true, features = ["metrics"] }
+base-proof-tee-tdx-attestation-prover = { workspace = true, features = ["prove"] }
 base-proof-tee-nitro-attestation-prover = { workspace = true, features = ["prove"] }
 
 # Alloy
@@ -33,4 +34,4 @@ eyre.workspace = true
 serde.workspace = true
 humantime.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync"] }
