@@ -16,8 +16,6 @@ use crate::{
     OnchainRegistryReport, QuoteVerificationReport, TdxImageHashReport, TdxMeasurementsReport,
 };
 
-const TDX_ATTESTATION_KIND: &str = "tdx";
-
 /// Optional onchain registry comparison configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OnchainRegistryConfig {
@@ -104,7 +102,7 @@ impl TdxImageHashTool {
             .wrap_err_with(|| format!("failed to build JSON-RPC client for {}", config.endpoint))?;
 
         let kind = client.attestation_kind().await.wrap_err("failed to query attestation kind")?;
-        if kind != TDX_ATTESTATION_KIND {
+        if kind != "tdx" {
             bail!("endpoint {} returned {kind} attestations, expected TDX", config.endpoint);
         }
 
@@ -171,36 +169,26 @@ impl TdxImageHashTool {
         let provider: RootProvider = RootProvider::new_http(config.l1_rpc_url.clone());
         let registry =
             ITEEProverRegistry::ITEEProverRegistryInstance::new(config.registry_address, provider);
-        let (signer_image_hash, expected_image_hash, is_registered_signer, is_valid_signer) = tokio::try_join!(
-            async {
-                registry
-                    .signerImageHash(signer_address)
-                    .call()
-                    .await
-                    .wrap_err("failed to read signerImageHash")
-            },
-            async {
-                registry
-                    .getExpectedTDXImageHash()
-                    .call()
-                    .await
-                    .wrap_err("failed to read getExpectedTDXImageHash")
-            },
-            async {
-                registry
-                    .isRegisteredSigner(signer_address)
-                    .call()
-                    .await
-                    .wrap_err("failed to read isRegisteredSigner")
-            },
-            async {
-                registry
-                    .isValidSigner(signer_address)
-                    .call()
-                    .await
-                    .wrap_err("failed to read isValidSigner")
-            },
-        )?;
+        let signer_image_hash = registry
+            .signerImageHash(signer_address)
+            .call()
+            .await
+            .wrap_err("failed to read signerImageHash")?;
+        let expected_image_hash = registry
+            .getExpectedTDXImageHash()
+            .call()
+            .await
+            .wrap_err("failed to read getExpectedTDXImageHash")?;
+        let is_registered_signer = registry
+            .isRegisteredSigner(signer_address)
+            .call()
+            .await
+            .wrap_err("failed to read isRegisteredSigner")?;
+        let is_valid_signer = registry
+            .isValidSigner(signer_address)
+            .call()
+            .await
+            .wrap_err("failed to read isValidSigner")?;
 
         Ok(OnchainRegistryReport {
             registry_address: config.registry_address,
@@ -248,14 +236,18 @@ mod tests {
 
     use super::*;
 
-    async fn spawn_tdx_rpc() -> (url::Url, jsonrpsee::server::ServerHandle) {
-        let runtime = Arc::new(TdxRuntime::new(TdxMeasurements));
-        let module = TdxProverServer::new(runtime).into_rpc_module().unwrap();
+    async fn spawn_rpc(module: RpcModule<()>) -> (url::Url, jsonrpsee::server::ServerHandle) {
         let server =
             Server::builder().build("127.0.0.1:0".parse::<SocketAddr>().unwrap()).await.unwrap();
         let addr = server.local_addr().unwrap();
         let handle = server.start(module);
         (Url::parse(&format!("http://{addr}")).unwrap(), handle)
+    }
+
+    async fn spawn_tdx_rpc() -> (url::Url, jsonrpsee::server::ServerHandle) {
+        let runtime = Arc::new(TdxRuntime::new(TdxMeasurements));
+        let module = TdxProverServer::new(runtime).into_rpc_module().unwrap();
+        spawn_rpc(module).await
     }
 
     async fn spawn_kind_rpc(kind: &'static str) -> (url::Url, jsonrpsee::server::ServerHandle) {
@@ -268,11 +260,7 @@ mod tests {
                 },
             )
             .unwrap();
-        let server =
-            Server::builder().build("127.0.0.1:0".parse::<SocketAddr>().unwrap()).await.unwrap();
-        let addr = server.local_addr().unwrap();
-        let handle = server.start(module);
-        (Url::parse(&format!("http://{addr}")).unwrap(), handle)
+        spawn_rpc(module).await
     }
 
     #[tokio::test]
