@@ -1,6 +1,11 @@
 //! Boundless marketplace TDX attestation proving backend.
 
-use std::{collections::HashSet, fmt, sync::Arc, time::Duration};
+use std::{
+    collections::HashSet,
+    fmt,
+    sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use alloy_primitives::{Address, B256, Bytes, keccak256};
 use alloy_sol_types::SolValue;
@@ -21,7 +26,7 @@ use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 use url::Url;
 
-use crate::{ProverError, RecoveredProofPolicy, Result, TdxAttestationProverInput};
+use crate::{ProverError, Result, TdxAttestationProverInput};
 
 /// Concrete Boundless client type used by the TDX prover.
 type BoundlessClient = Client<
@@ -49,11 +54,11 @@ pub struct BoundlessProver {
     pub timeout: Duration,
     /// Maximum number of deterministic request-ID slots to probe.
     pub max_recovery_attempts: u32,
-    /// Freshness policy for recovered proof journals.
-    pub recovered_proof_policy: RecoveredProofPolicy,
-    /// Serializes Boundless on-chain request submission by wallet nonce.
+    /// Maximum recovered quote age accepted before submitting onchain.
+    pub max_recovered_quote_age: Duration,
+    /// Serializes Boundless onchain request submission by wallet nonce.
     pub submit_lock: Arc<Mutex<()>>,
-    /// Signers whose recovered proofs have already been rejected on-chain.
+    /// Signers whose recovered proofs have already been rejected onchain.
     pub recovery_blocked: Arc<std::sync::Mutex<HashSet<Address>>>,
 }
 
@@ -70,7 +75,7 @@ impl fmt::Debug for BoundlessProver {
             .field("poll_interval", &self.poll_interval)
             .field("timeout", &self.timeout)
             .field("max_recovery_attempts", &self.max_recovery_attempts)
-            .field("recovered_proof_policy", &self.recovered_proof_policy)
+            .field("max_recovered_quote_age", &self.max_recovered_quote_age)
             .finish()
     }
 }
@@ -253,7 +258,7 @@ impl BoundlessProver {
                     error_debug = ?e,
                     image_id = ?self.image_id,
                     boundless_wallet = %self.signer.address(),
-                    "failed to submit Boundless proof request on-chain"
+                    "failed to submit Boundless proof request onchain"
                 );
                 ProverError::Boundless(format!("failed to submit request: {e}"))
             })?
@@ -284,12 +289,22 @@ impl BoundlessProver {
             return false;
         }
 
-        if self.recovered_proof_policy.journal_is_fresh(&journal) {
+        let Some(now_millis) = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .and_then(|duration| u64::try_from(duration.as_millis()).ok())
+        else {
+            info!("current time is before UNIX epoch, skipping recovered TDX proof");
+            return false;
+        };
+
+        if journal.timestamp <= now_millis
+            && Duration::from_millis(now_millis - journal.timestamp) <= self.max_recovered_quote_age
+        {
             return true;
         }
         info!(
-            max_recovered_quote_age_secs =
-                self.recovered_proof_policy.max_recovered_quote_age.as_secs(),
+            max_recovered_quote_age_secs = self.max_recovered_quote_age.as_secs(),
             quote_timestamp_millis = journal.timestamp,
             target_signer = %signer_address,
             "recovered TDX proof quote timestamp is too old, skipping"
@@ -309,12 +324,12 @@ impl TeeAttestationProofProvider for BoundlessProver {
             TdxAttestationProverInput::decode_for_signer(attestation_bytes, signer_address)?;
 
         let (client, params) = self.build_client_and_params(&input).await?;
-        let recovery_is_blocked = self
+        if self
             .recovery_blocked
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .contains(&signer_address);
-        if recovery_is_blocked {
+            .contains(&signer_address)
+        {
             return Ok(self.submit_and_wait(&client, params).await?);
         }
 
@@ -410,7 +425,7 @@ mod tests {
             poll_interval: Duration::from_secs(5),
             timeout: Duration::from_secs(300),
             max_recovery_attempts: 5,
-            recovered_proof_policy: RecoveredProofPolicy::new(Duration::from_secs(300)),
+            max_recovered_quote_age: Duration::from_secs(300),
             submit_lock: Arc::new(Mutex::new(())),
             recovery_blocked: Arc::new(std::sync::Mutex::new(HashSet::new())),
         }
@@ -468,6 +483,19 @@ mod tests {
         assert!(
             !prover.recovered_proof_is_usable(&proof_for_signer(journal_signer), target_signer)
         );
+    }
+
+    #[test]
+    fn recovered_proof_with_old_quote_is_skipped() {
+        let prover = prover();
+        let signer = Address::repeat_byte(0x11);
+        let mut proof = proof_for_signer(signer);
+        let mut journal =
+            <TDXVerifierJournal as SolValue>::abi_decode_validate(&proof.output).unwrap();
+        journal.timestamp = now_millis() - 301_000;
+        proof.output = Bytes::from(SolValue::abi_encode(&journal));
+
+        assert!(!prover.recovered_proof_is_usable(&proof, signer));
     }
 
     #[test]

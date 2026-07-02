@@ -9,9 +9,7 @@ use base_proof_tee_registrar::{
     DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, INSTANCE_CACHE_TTL_CYCLES, PlatformProofProvider,
     RegistrarConfig, RegistrarError,
 };
-use base_proof_tee_tdx_attestation_prover::{
-    BoundlessProver as TdxBoundlessProver, RecoveredProofPolicy,
-};
+use base_proof_tee_tdx_attestation_prover::BoundlessProver as TdxBoundlessProver;
 use base_tx_manager::{SignerConfig, TxManagerConfig};
 use boundless_market::{
     alloy::signers::local::PrivateKeySigner,
@@ -329,7 +327,7 @@ impl Cli {
                     poll_interval: boundless_poll_interval,
                     timeout: boundless_timeout,
                     max_recovery_attempts: self.boundless_max_recovery_attempts,
-                    recovered_proof_policy: RecoveredProofPolicy::new(max_attestation_age),
+                    max_recovered_quote_age: max_attestation_age,
                     submit_lock,
                     recovery_blocked: Arc::new(std::sync::Mutex::new(HashSet::new())),
                 },

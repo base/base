@@ -18,9 +18,6 @@ pub use input::{
     TdxSignedCollateralInput, TdxVerifierInputAbi, tdx_tcb_status_from_u8,
 };
 
-mod recovery;
-pub use recovery::RecoveredProofPolicy;
-
 #[cfg(feature = "prove")]
 mod boundless;
 #[cfg(feature = "prove")]
