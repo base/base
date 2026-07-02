@@ -108,35 +108,19 @@ impl TdxImageHashTool {
             bail!("endpoint {} returned {kind} attestations, expected TDX", config.endpoint);
         }
 
-        let (public_keys, attestations) = tokio::try_join!(
-            async {
-                client.signer_public_key().await.wrap_err("failed to query signer public keys")
-            },
-            async {
-                client
-                    .signer_attestation(None, None)
-                    .await
-                    .wrap_err("failed to query signer attestations")
-            }
-        )?;
-
-        let out_of_range = |len: usize, label: &str| {
-            eyre::eyre!("signer index {} is out of range for {len} {label}", config.signer_index)
-        };
-        let public_key = public_keys
-            .get(config.signer_index)
-            .ok_or_else(|| out_of_range(public_keys.len(), "public keys"))?;
-        let attestation_bytes = attestations
-            .get(config.signer_index)
-            .ok_or_else(|| out_of_range(attestations.len(), "attestations"))?;
+        let attestations = client
+            .signer_attestation(None, None)
+            .await
+            .wrap_err("failed to query signer attestations")?;
+        let attestation_bytes = attestations.get(config.signer_index).ok_or_else(|| {
+            eyre::eyre!(
+                "signer index {} is out of range for {} attestations",
+                config.signer_index,
+                attestations.len()
+            )
+        })?;
         let attestation = TdxSignerAttestation::decode(attestation_bytes)
             .wrap_err("failed to decode TDX signer attestation payload")?;
-        if attestation.signer_public_key.as_ref() != public_key.as_slice() {
-            bail!(
-                "signer public key at index {} does not match the TDX attestation payload",
-                config.signer_index
-            );
-        }
 
         Ok(attestation)
     }
@@ -160,7 +144,10 @@ impl TdxImageHashTool {
             trusted_root_ca_hash: collateral.trusted_root_ca_hash,
             expected_public_key: attestation.signer_public_key.clone(),
             quote_timestamp_millis: attestation.quote_timestamp_millis,
-            verification_time: Self::now_seconds()?,
+            verification_time: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .wrap_err("system clock is before the Unix epoch")?
+                .as_secs(),
             max_quote_age_seconds: attestation_config.max_quote_age.as_secs(),
             allowed_tcb_statuses: attestation_config.allowed_tcb_statuses.clone(),
         };
@@ -247,13 +234,6 @@ impl TdxImageHashTool {
         }
 
         Ok(())
-    }
-
-    fn now_seconds() -> Result<u64> {
-        Ok(SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .wrap_err("system clock is before the Unix epoch")?
-            .as_secs())
     }
 }
 
