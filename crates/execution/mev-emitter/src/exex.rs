@@ -295,7 +295,7 @@ fn supplement_committed_fallback<DB: Database>(
     dirty_state: &mut ArbDirtyState,
     block_number: u64,
 ) {
-    let fallback_cap = runtime.config.max_pools_per_frame.min(8).min(32);
+    let fallback_cap = runtime.config.max_pools_per_frame.min(8);
     let started = Instant::now();
     let dirty_pools = selected_dirty_pools_for_fallback(runtime, dirty_state);
     for pool_addr in dirty_pools {

@@ -1150,6 +1150,9 @@ fn run_frame_internal(
 
     let (selected_indexes, dirty_indexes_len) = select_frame_indexes(pools, &all_dirty, &reverse);
     let mut bounded_indexes = selected_indexes;
+    // Dropping clean rows is still reported as frame truncation: the dirty
+    // rows remain prioritized, but candidate search no longer sees the full
+    // clean counterparty universe. Dirty-row over-cap gets its own caveat.
     if bounded_indexes.len() > config.max_pools_per_frame {
         if dirty_indexes_len > config.max_pools_per_frame {
             push_unique_caveat(&mut caveats, "dirty-pool-outside-frame-cap");
@@ -1998,6 +2001,7 @@ mod tests {
         let frame = run_frame(&pools, &BTreeSet::new(), &config, NoActionGuard);
         assert!(frame.truncated);
         assert_eq!(frame.health, "truncated");
+        assert_eq!(frame.caveat.as_deref(), Some("bounded-frame-truncated"));
     }
 
     fn pack_slot0_word(sqrt_price_x96: u128, tick: i32) -> U256 {
