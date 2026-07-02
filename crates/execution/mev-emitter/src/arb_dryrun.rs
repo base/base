@@ -399,6 +399,8 @@ impl PoolStateDelta {
         }
         if delta.has_state_update() {
             delta.add_caveat("live-overlay-applied");
+        } else if saw_relevant_slot && delta.caveats.is_empty() {
+            delta.add_caveat("live-overlay-verified");
         } else if !saw_relevant_slot && !slots.is_empty() && delta.caveats.is_empty() {
             delta.add_caveat("stale-baseline-fallback");
         }
@@ -2026,6 +2028,26 @@ mod tests {
         assert_eq!(delta.reserve0, Some(3_000));
         assert_eq!(delta.reserve1, Some(4_000));
         assert!(delta.caveats.iter().any(|c| c == "live-overlay-applied"));
+    }
+
+    #[test]
+    fn overlay_caveats_equal_live_reserve_reads_as_verified() {
+        let pool =
+            PoolState::v2_like(addr(0xc4), Protocol::UniswapV2, addr(1), addr(2), 30, 1_000, 2_000);
+        let slots =
+            BTreeMap::from([(slot_key(UNIV2_RESERVES_SLOT), pack_univ2_reserves(1_000, 2_000))]);
+
+        let delta = PoolStateDelta::from_slots(
+            &pool,
+            &slots,
+            PoolOverlaySource::SlotDiff,
+            Some(10),
+            Some(10),
+        );
+
+        assert!(!delta.has_state_update());
+        assert!(delta.caveats.iter().any(|c| c == "live-overlay-verified"));
+        assert!(!delta.caveats.iter().any(|c| c == "stale-baseline-fallback"));
     }
 
     #[test]
