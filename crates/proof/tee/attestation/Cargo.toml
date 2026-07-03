@@ -15,7 +15,3 @@ workspace = true
 # Types / traits
 async-trait.workspace = true
 alloy-primitives.workspace = true
-
-[dev-dependencies]
-rstest.workspace = true
-tokio = { workspace = true, features = ["macros", "rt"] }

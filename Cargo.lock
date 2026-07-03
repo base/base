@@ -5751,8 +5751,6 @@ version = "0.0.0"
 dependencies = [
  "alloy-primitives",
  "async-trait",
- "rstest",
- "tokio",
 ]
 
 [[package]]
