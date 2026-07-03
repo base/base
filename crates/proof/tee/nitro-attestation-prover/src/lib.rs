@@ -22,4 +22,4 @@ pub use direct::DirectProver;
 #[cfg(feature = "prove")]
 mod boundless;
 #[cfg(feature = "prove")]
-pub use boundless::{BoundlessProver, BoundlessProverConfig};
+pub use boundless::BoundlessProver;

@@ -57,40 +57,6 @@ type BoundlessClient = Client<
     PrivateKeySigner,
 >;
 
-/// Default trusted certificate prefix length (root cert only).
-const DEFAULT_TRUSTED_CERTS_PREFIX: u8 = 1;
-
-/// Configuration for [`BoundlessProver`].
-#[derive(Debug)]
-pub struct BoundlessProverConfig {
-    /// Ethereum RPC URL for the Boundless settlement chain.
-    pub rpc_url: Url,
-    /// Signer for Boundless Network proving fees.
-    pub signer: PrivateKeySigner,
-    /// HTTP(S) URL where the guest ELF is hosted.
-    pub verifier_program_url: Url,
-    /// Expected image ID of the guest program.
-    pub image_id: [u32; 8],
-    /// Interval between fulfillment status checks.
-    pub poll_interval: Duration,
-    /// Maximum time to wait for proof fulfillment.
-    pub timeout: Duration,
-    /// Maximum number of deterministic request-ID slots to probe.
-    pub max_recovery_attempts: u32,
-    /// Maximum age of an attestation timestamp for recovered proofs.
-    pub max_attestation_age: Duration,
-    /// Optional minimum Boundless offer price.
-    pub offer_min_price: Option<boundless_market::price_oracle::Amount>,
-    /// Optional maximum Boundless offer price.
-    pub offer_max_price: Option<boundless_market::price_oracle::Amount>,
-    /// Optional duration for the Boundless offer price ramp.
-    pub offer_ramp_up_period_secs: Option<u32>,
-    /// Optional lock timeout for a prover that accepts the request.
-    pub offer_lock_timeout_secs: Option<u32>,
-    /// Delay before Boundless bidding starts.
-    pub offer_bidding_start_delay_secs: u64,
-}
-
 /// Attestation prover using the Boundless marketplace.
 ///
 /// Submits proof requests with a guest program URL (IPFS or HTTP) and
@@ -152,30 +118,6 @@ impl fmt::Debug for BoundlessProver {
 }
 
 impl BoundlessProver {
-    /// Creates a Boundless prover from registrar configuration.
-    pub fn new(config: BoundlessProverConfig) -> Result<Self> {
-        let _ = (
-            config.offer_min_price,
-            config.offer_max_price,
-            config.offer_ramp_up_period_secs,
-            config.offer_lock_timeout_secs,
-            config.offer_bidding_start_delay_secs,
-        );
-        Ok(Self {
-            rpc_url: config.rpc_url,
-            signer: config.signer,
-            verifier_program_url: config.verifier_program_url,
-            image_id: config.image_id,
-            poll_interval: config.poll_interval,
-            timeout: config.timeout,
-            trusted_certs_prefix_len: DEFAULT_TRUSTED_CERTS_PREFIX,
-            max_recovery_attempts: config.max_recovery_attempts,
-            max_attestation_age: config.max_attestation_age,
-            submit_lock: Arc::new(Mutex::new(())),
-            recovery_blocked: Arc::new(std::sync::Mutex::new(HashSet::new())),
-        })
-    }
-
     /// Derives a deterministic `u32` index for a Boundless request ID
     /// from the target signer address and an attempt counter.
     ///
