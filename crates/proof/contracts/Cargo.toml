@@ -34,4 +34,3 @@ url.workspace = true
 
 [dev-dependencies]
 rstest.workspace = true
-serde_json.workspace = true

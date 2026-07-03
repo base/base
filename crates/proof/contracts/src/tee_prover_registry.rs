@@ -126,33 +126,8 @@ impl TEEProverRegistryClient for TEEProverRegistryContractClient {
 mod tests {
     use alloy_primitives::{Address, Bytes, keccak256};
     use alloy_sol_types::SolCall;
-    use rstest::rstest;
-    use serde_json::Value;
 
     use super::*;
-
-    const TEE_PROVER_REGISTRY_TDX_ABI: &str = r#"
-[
-  {
-    "inputs": [
-      {
-        "internalType": "bytes",
-        "name": "output",
-        "type": "bytes"
-      },
-      {
-        "internalType": "bytes",
-        "name": "proofBytes",
-        "type": "bytes"
-      }
-    ],
-    "name": "registerTDXSigner",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  }
-]
-"#;
 
     #[test]
     fn register_signer_abi_encodes_correctly() {
@@ -166,31 +141,14 @@ mod tests {
         assert_eq!(&encoded[..4], &ITEEProverRegistry::registerSignerCall::SELECTOR);
     }
 
-    #[rstest]
+    #[test]
     fn register_tdx_signer_selector_matches_compiled_solidity_abi() {
-        let abi = serde_json::from_str::<Value>(TEE_PROVER_REGISTRY_TDX_ABI)
-            .expect("TEEProverRegistry ABI fixture must parse");
-        let function = abi
-            .as_array()
-            .expect("ABI fixture must be an array")
-            .iter()
-            .find(|entry| entry["name"] == "registerTDXSigner")
-            .expect("compiled ABI must contain registerTDXSigner");
+        let selector = &keccak256(b"registerTDXSigner(bytes,bytes)")[..4];
 
-        let inputs = function["inputs"].as_array().expect("function inputs must be an array");
-        let input_types = inputs
-            .iter()
-            .map(|input| input["type"].as_str().expect("input must have ABI type"))
-            .collect::<Vec<_>>();
-        let signature =
-            format!("{}({})", function["name"].as_str().unwrap(), input_types.join(","));
-        let selector = &keccak256(signature.as_bytes())[..4];
-
-        assert_eq!(signature, "registerTDXSigner(bytes,bytes)");
         assert_eq!(selector, ITEEProverRegistry::registerTDXSignerCall::SELECTOR);
     }
 
-    #[rstest]
+    #[test]
     fn register_tdx_signer_abi_encodes_correctly() {
         let call = ITEEProverRegistry::registerTDXSignerCall {
             output: Bytes::new(),
