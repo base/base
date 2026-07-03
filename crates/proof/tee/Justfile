@@ -287,16 +287,9 @@ describe-eif:
         ./nitro-cli describe-eif --eif-path eif.bin
 
 # Build the TDX verifier guest and print its RISC Zero image ID
+[working-directory("tdx-attestation-prover/guest")]
 tdx-verifier-image-id:
-    #!/usr/bin/env bash
-    set -euo pipefail
-
-    cd "$(dirname "{{ source_file() }}")/tdx-attestation-prover/guest"
-
-    echo "Building TDX verifier guest ELF..."
     cargo +risc0 build --release --target riscv32im-risc0-zkvm-elf --ignore-rust-version
-
-    echo "Bundling ELF into R0BF and computing image ID..."
     RISC0_SKIP_BUILD_KERNELS=1 cargo run --quiet \
         --manifest-path ../../nitro-attestation-prover/guest/tools/compute-image-id/Cargo.toml -- \
         target/riscv32im-risc0-zkvm-elf/release/base-proof-tee-tdx-attestation-prover-guest \
