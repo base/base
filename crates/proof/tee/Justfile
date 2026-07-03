@@ -292,26 +292,19 @@ tdx-verifier-image-id:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    tee_dir="$(cd "$(dirname "{{ source_file() }}")" && pwd)"
-    guest_dir="$tee_dir/tdx-attestation-prover/guest"
-    helper_manifest="$tee_dir/nitro-attestation-prover/guest/tools/compute-image-id/Cargo.toml"
-    elf_path="$guest_dir/target/riscv32im-risc0-zkvm-elf/release/{{ tdx_verifier_guest }}"
-    r0bf_path="$guest_dir/target/{{ tdx_verifier_guest }}.r0bf"
+    cd "$(dirname "{{ source_file() }}")/tdx-attestation-prover/guest"
 
     echo "Building TDX verifier guest ELF..."
-    (
-        cd "$guest_dir"
-        cargo +risc0 build --release --target riscv32im-risc0-zkvm-elf --ignore-rust-version
-    )
+    cargo +risc0 build --release --target riscv32im-risc0-zkvm-elf --ignore-rust-version
 
     echo "Bundling ELF into R0BF and computing image ID..."
     RISC0_SKIP_BUILD_KERNELS=1 cargo run --quiet \
-        --manifest-path "$helper_manifest" -- \
-        "$elf_path" \
-        --output "$r0bf_path"
+        --manifest-path ../../nitro-attestation-prover/guest/tools/compute-image-id/Cargo.toml -- \
+        target/riscv32im-risc0-zkvm-elf/release/{{ tdx_verifier_guest }} \
+        --output target/{{ tdx_verifier_guest }}.r0bf
 
 # Inspect a TDX prover's signer and contract-compatible image hash
-tdx-image-hash endpoint="http://136.107.166.21:7310" *args="":
+tdx-image-hash endpoint *args="":
     cargo run -q -p base-proof-tee-tdx-image-hash -- --endpoint "{{ endpoint }}" --verify-quote {{ args }}
 
 # Build twice and compare to verify reproducibility
