@@ -213,10 +213,8 @@ mod tests {
 
     #[test]
     fn test_encode_dual_tee_proof_bytes_format() {
-        let mut nitro_sig = vec![0xAA; 65];
-        nitro_sig[64] = 0;
-        let mut tdx_sig = vec![0xBB; 65];
-        tdx_sig[64] = 1;
+        let nitro_sig = test_signature(0);
+        let tdx_sig = test_signature(1);
         let proof = ProofEncoder::encode_dual_tee_proof_bytes(
             &nitro_sig,
             &tdx_sig,
@@ -229,10 +227,9 @@ mod tests {
         assert_eq!(proof[0], PROOF_TYPE_TEE);
         assert_eq!(&proof[1..33], B256::repeat_byte(0xCC).as_slice());
         assert_eq!(&proof[33..65], &U256::from(500u64).to_be_bytes::<32>());
-        nitro_sig[64] = 27;
-        tdx_sig[64] = 28;
-        assert_eq!(&proof[65..130], &nitro_sig);
-        assert_eq!(&proof[130..195], &tdx_sig);
+        assert_eq!(&proof[65..129], &nitro_sig[..64]);
+        assert_eq!(&proof[130..194], &tdx_sig[..64]);
+        assert_eq!((proof[129], proof[194]), (27, 28));
     }
 
     #[test]
