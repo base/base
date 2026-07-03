@@ -763,12 +763,6 @@ mod tests {
         records: ProofRecords,
     }
 
-    impl RecordingProofProvider {
-        fn platform_pair(&self) -> PlatformProofProvider {
-            PlatformProofProvider::new(self.clone(), self.clone())
-        }
-    }
-
     fn expected_nonce(signer: Address) -> [u8; 32] {
         SignerManager::<PlatformProofProvider, MockRegistry, RecordingTxManager>::attestation_nonce_for(
             TEST_REGISTRY_ADDRESS,
@@ -852,7 +846,7 @@ mod tests {
         max_attestation_age: Duration,
     ) -> SignerManager<PlatformProofProvider, MockRegistry, T> {
         SignerManager::new(
-            proof_provider.platform_pair(),
+            PlatformProofProvider::new(proof_provider.clone(), proof_provider),
             registry,
             tx_manager,
             SignerManagerConfig {
@@ -1215,7 +1209,7 @@ mod tests {
     async fn register_signer_releases_proof_permit_before_tx_submission_finishes() {
         let proof_provider = RecordingProofProvider::default();
         let manager = Arc::new(SignerManager::new(
-            proof_provider.platform_pair(),
+            PlatformProofProvider::new(proof_provider.clone(), proof_provider.clone()),
             MockRegistry::default(),
             RecordingTxManager::stalling(),
             SignerManagerConfig {
@@ -1227,33 +1221,24 @@ mod tests {
             },
         ));
         let cancel = CancellationToken::new();
+        let spawn_registration = |instance_id: &'static str, signer| {
+            let manager = Arc::clone(&manager);
+            let cancel = cancel.clone();
+            tokio::spawn(async move {
+                manager
+                    .register_signer(
+                        instance_id,
+                        AttestationKind::Nitro,
+                        signer,
+                        ATTESTATION,
+                        &cancel,
+                    )
+                    .await
+            })
+        };
 
-        let first_manager = Arc::clone(&manager);
-        let first_cancel = cancel.clone();
-        let first = tokio::spawn(async move {
-            first_manager
-                .register_signer(
-                    TEST_PENDING_INSTANCE_ID,
-                    AttestationKind::Nitro,
-                    SIGNER_A,
-                    ATTESTATION,
-                    &first_cancel,
-                )
-                .await
-        });
-        let second_manager = Arc::clone(&manager);
-        let second_cancel = cancel.clone();
-        let second = tokio::spawn(async move {
-            second_manager
-                .register_signer(
-                    "i-pending-test-2",
-                    AttestationKind::Nitro,
-                    SIGNER_B,
-                    ATTESTATION,
-                    &second_cancel,
-                )
-                .await
-        });
+        let first = spawn_registration(TEST_PENDING_INSTANCE_ID, SIGNER_A);
+        let second = spawn_registration("i-pending-test-2", SIGNER_B);
 
         tokio::time::timeout(GATED_WAIT_TIMEOUT, manager.tx_manager.send_started.notified())
             .await
