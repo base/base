@@ -163,11 +163,13 @@ impl ProofDispatcher {
 
     async fn dispatch_request(
         &self,
-        mut request: ProofRequest,
+        request: ProofRequest,
         tee_kind: TeeKind,
     ) -> Result<String, ProposerError> {
-        request.image_hash = self.config.tee_image_hashes.for_kind(tee_kind);
-        let request = ProposerProofAdapter::tee_prove_block_range_request(request, tee_kind);
+        let request = ProposerProofAdapter::tee_prove_block_range_request(
+            ProofRequest { image_hash: self.config.tee_image_hashes.for_kind(tee_kind), ..request },
+            tee_kind,
+        );
         let session_id = request.proof.session_id.clone();
         match self.proof_requester.prove_block_range(request).await {
             Ok(response) if response.session_id == session_id => Ok(response.session_id),
@@ -188,7 +190,7 @@ impl ProofDispatcher {
 
     /// Dispatches every target from the current dispatcher cursor up to `safe_head`.
     pub async fn tick(&self, current: &mut RecoveredState, safe_head: u64) {
-        'targets: loop {
+        loop {
             let Some(target_block) =
                 ProofTarget::next_block(current.l2_block_number, self.config.block_interval)
             else {
@@ -247,7 +249,7 @@ impl ProofDispatcher {
                             error = %error,
                             "Proof dispatch failed, stopping tick at current cursor"
                         );
-                        break 'targets;
+                        return;
                     }
                 }
             }
