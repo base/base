@@ -30,7 +30,7 @@ use crate::{
 const CRL_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Configuration needed to run the registrar service.
-pub struct RegistrarConfig<P> {
+pub struct RegistrarConfig {
     /// L1 Ethereum RPC endpoint.
     pub l1_rpc_url: Url,
     /// `TEEProverRegistry` contract address on L1.
@@ -56,7 +56,7 @@ pub struct RegistrarConfig<P> {
     /// Transaction manager configuration.
     pub tx_manager_config: TxManagerConfig,
     /// Platform-routed Boundless proof provider configuration.
-    pub proof_provider: P,
+    pub proof_provider: PlatformProofProvider,
     /// Boundless Network RPC URL used for fee-wallet balance monitoring.
     pub boundless_rpc_url: Url,
     /// Boundless fee wallet address used for balance monitoring.
@@ -87,7 +87,7 @@ pub struct RegistrarConfig<P> {
     pub metrics_config: base_cli_utils::MetricsConfig,
 }
 
-impl<P> fmt::Debug for RegistrarConfig<P> {
+impl fmt::Debug for RegistrarConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RegistrarConfig")
             .field("l1_rpc_url", &self.l1_rpc_url.origin().unicode_serialization())
@@ -120,7 +120,7 @@ impl<P> fmt::Debug for RegistrarConfig<P> {
     }
 }
 
-impl RegistrarConfig<PlatformProofProvider> {
+impl RegistrarConfig {
     /// Runs the full registrar service lifecycle.
     ///
     /// # Errors
