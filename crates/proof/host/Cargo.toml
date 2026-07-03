@@ -23,7 +23,7 @@ base-proof-client = { workspace = true, features = ["std"] }
 base-proof-preimage = { workspace = true, features = ["std"] }
 base-common-genesis = { workspace = true, features = ["serde", "std"] }
 base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
-base-proof-primitives = { workspace = true, features = ["serde", "std", "rpc-server"] }
+base-proof-primitives = { workspace = true, features = ["serde", "std"] }
 
 # alloy
 alloy-rlp.workspace = true
@@ -51,7 +51,6 @@ thiserror.workspace = true
 serde_json.workspace = true
 async-trait.workspace = true
 base-metrics.workspace = true
-jsonrpsee = { workspace = true, features = ["server", "macros"] }
 
 # `metrics` feature
 metrics = { workspace = true, optional = true }
