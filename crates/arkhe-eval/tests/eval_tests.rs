@@ -3,7 +3,7 @@ use arkhe_eval::{EvalConfig, EvalEngine};
 #[tokio::test]
 async fn test_engine_creation() {
     let config = EvalConfig::default();
-    let engine = EvalEngine::new(config);
+    let _engine = EvalEngine::new(config);
     // Just verify it creates
 }
 

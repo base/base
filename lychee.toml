@@ -4,7 +4,7 @@ exclude_all_private = false
 max_concurrency = 16
 max_retries = 3
 retry_wait_time = 5
-cache_exclude_status = ["429"    https://github.com/arkhe-research/safe-core,
+cache_exclude_status = ["429", "502", "503"]
     http://localhost:6333/healthz,
     http://localhost/,
     http://localhost:3000/,
