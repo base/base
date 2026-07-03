@@ -40,7 +40,6 @@ pub const EP3: &str = "10.0.0.3:8000";
 pub const TEST_REGISTRY_ADDRESS: Address = Address::repeat_byte(0x01);
 
 /// Proof provider stub for tests that never generate proofs.
-#[derive(Debug, Clone, Copy)]
 pub struct NoopProofProvider;
 
 #[async_trait]
