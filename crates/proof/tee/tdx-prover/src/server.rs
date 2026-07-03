@@ -77,10 +77,6 @@ impl EnclaveApiServer for TdxProverServer {
             .encode(),
         ])
     }
-
-    async fn attestation_kind(&self) -> RpcResult<String> {
-        Ok("tdx".to_owned())
-    }
 }
 
 #[cfg(test)]
@@ -129,7 +125,6 @@ mod tests {
         let methods: Vec<_> = module.method_names().collect();
 
         assert!(methods.contains(&"healthz"));
-        assert!(methods.contains(&"enclave_attestationKind"));
         assert!(methods.contains(&"enclave_signerPublicKey"));
         assert!(methods.contains(&"enclave_signerAttestation"));
         assert!(!methods.contains(&"prover_prove"));

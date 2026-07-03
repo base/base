@@ -37,33 +37,6 @@ pub trait ProverApi {
     async fn prove(&self, request: ProofRequest) -> RpcResult<ProofResult>;
 }
 
-/// Trait-object friendly proof client used by proposer pipelines.
-#[cfg(feature = "rpc-client")]
-#[async_trait::async_trait]
-pub trait ProverClient: core::fmt::Debug + Send + Sync {
-    /// Run the proof pipeline for a single request.
-    async fn prove(
-        &self,
-        request: ProofRequest,
-    ) -> Result<ProofResult, Box<dyn std::error::Error + Send + Sync>>;
-}
-
-#[cfg(feature = "rpc-client")]
-#[async_trait::async_trait]
-impl<T> ProverClient for T
-where
-    T: ProverApiClient + core::fmt::Debug + Send + Sync,
-{
-    async fn prove(
-        &self,
-        request: ProofRequest,
-    ) -> Result<ProofResult, Box<dyn std::error::Error + Send + Sync>> {
-        ProverApiClient::prove(self, request)
-            .await
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
-    }
-}
-
 /// JSON-RPC interface for querying enclave signer information.
 #[cfg_attr(
     all(feature = "rpc-server", feature = "rpc-client"),
@@ -80,12 +53,6 @@ where
 /// Exposed by the host-side prover server; the registrar calls these endpoints
 /// to obtain the signer public key and attestation for onchain registration.
 pub trait EnclaveApi {
-    /// Return the attestation platform kind exposed by this prover.
-    #[method(name = "attestationKind")]
-    async fn attestation_kind(&self) -> RpcResult<String> {
-        Ok("nitro".to_owned())
-    }
-
     /// Return the 65-byte uncompressed ECDSA public key for each enclave signer.
     #[method(name = "signerPublicKey")]
     async fn signer_public_key(&self) -> RpcResult<Vec<Vec<u8>>>;
