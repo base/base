@@ -154,11 +154,7 @@ impl InstanceDiscovery for AwsTargetGroupDiscovery {
     }
 }
 
-impl<A, G> InstanceDiscovery for (A, G)
-where
-    A: InstanceDiscovery,
-    G: InstanceDiscovery,
-{
+impl InstanceDiscovery for (AwsTargetGroupDiscovery, GcpNodePoolDiscovery) {
     async fn discover_instances(&self) -> Result<Vec<ProverInstance>> {
         let (mut aws, gcp) =
             tokio::try_join!(self.0.discover_instances(), self.1.discover_instances())?;
@@ -212,14 +208,7 @@ impl GcpNodePoolDiscovery {
             .send()
             .await
             .map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
-        if !response.status().is_success() {
-            return Err(RegistrarError::Discovery(Box::new(std::io::Error::other(format!(
-                "GCP metadata token request failed with status {}",
-                response.status()
-            )))));
-        }
-        let token: GcpMetadataToken =
-            response.json().await.map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
+        let token: GcpMetadataToken = Self::decode_response(response).await?;
         Ok(token.access_token)
     }
 
@@ -275,20 +264,16 @@ impl GcpNodePoolDiscovery {
         };
         let url =
             Url::parse(instance_group_url).map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
-        let mut segments = url.path_segments().ok_or_else(malformed_url)?;
-        let mut zone = None;
-        let mut name = None;
-        while let Some(segment) = segments.next() {
-            match segment {
-                "zones" => zone = segments.next(),
-                "instanceGroupManagers" => name = segments.next(),
-                _ => {}
-            }
-        }
-        let (Some(zone), Some(name)) = (zone, name) else {
+        let Some(segments) = url.path_segments() else {
             return Err(malformed_url());
         };
-        Ok((zone.to_owned(), name.to_owned()))
+        let segments: Vec<_> = segments.collect();
+        let ["compute", "v1", "projects", _, "zones", zone, "instanceGroupManagers", name] =
+            segments.as_slice()
+        else {
+            return Err(malformed_url());
+        };
+        Ok(((*zone).to_owned(), (*name).to_owned()))
     }
 
     async fn managed_instance_urls(
