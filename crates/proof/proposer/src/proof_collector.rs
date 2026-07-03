@@ -121,7 +121,6 @@ where
 
             let proof = match self
                 .poll_proofs(
-                    self.proof_requester.as_ref(),
                     target_block,
                     claimed_l2_output_root,
                     target_block <= dispatched_through,
@@ -159,7 +158,6 @@ where
 
     async fn poll_proofs(
         &self,
-        proof_requester: &dyn ProofRequesterProvider,
         target_block: u64,
         claimed_l2_output_root: B256,
         request_dispatched: bool,
@@ -168,7 +166,7 @@ where
         let mut tdx = None;
         for &tee_kind in self.tee_proof_mode.tee_kinds() {
             let proof = Self::poll_proof(
-                proof_requester,
+                self.proof_requester.as_ref(),
                 target_block,
                 claimed_l2_output_root,
                 tee_kind,
@@ -528,16 +526,14 @@ mod tests {
         )
     }
 
-    async fn dispatch_pair(requester: &MockProofRequester, proof_request: ProofRequest) {
-        for tee_kind in [TeeKind::AwsNitro, TeeKind::IntelTdx] {
-            requester
-                .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(
-                    proof_request.clone(),
-                    tee_kind,
-                ))
-                .await
-                .expect("test setup should dispatch root session");
-        }
+    async fn dispatch_nitro(requester: &MockProofRequester, proof_request: ProofRequest) {
+        requester
+            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(
+                proof_request,
+                TeeKind::AwsNitro,
+            ))
+            .await
+            .expect("test setup should dispatch root session");
     }
 
     #[tokio::test]
@@ -587,7 +583,7 @@ mod tests {
             l1_head_number: 1000,
             ..Default::default()
         };
-        dispatch_pair(&requester, proof_request).await;
+        dispatch_nitro(&requester, proof_request).await;
         let collector = make_collector(
             requester,
             rollup_client(target_block, Some(claimed_root)),
@@ -622,7 +618,7 @@ mod tests {
                 l1_head_number: 1000,
                 ..Default::default()
             };
-            dispatch_pair(&requester, proof_request).await;
+            dispatch_nitro(&requester, proof_request).await;
         }
 
         let mut factory = MockDisputeGameFactory::default();
@@ -672,7 +668,7 @@ mod tests {
             l1_head_number: 1000,
             ..Default::default()
         };
-        dispatch_pair(&requester, proof_request).await;
+        dispatch_nitro(&requester, proof_request).await;
         let collector = make_collector(
             Arc::clone(&requester) as Arc<dyn ProofRequesterProvider>,
             rollup_client(target_block, Some(claimed_root)),
@@ -704,7 +700,7 @@ mod tests {
             l1_head_number: 1000,
             ..Default::default()
         };
-        dispatch_pair(&requester, proof_request).await;
+        dispatch_nitro(&requester, proof_request).await;
         let collector = make_collector(
             Arc::clone(&requester) as Arc<dyn ProofRequesterProvider>,
             rollup_client(target_block, Some(claimed_root)),
@@ -750,16 +746,13 @@ mod tests {
             Arc::new(MockOutputProposer::default()),
         );
 
-        let mut proof = crate::test_utils::test_tee_proof_pair(target_block);
-        match &mut proof {
-            TeeProofPair::Nitro(proof) | TeeProofPair::Tdx(proof) => {
-                proof.aggregate_proposal.output_root = stale_root;
-            }
-            TeeProofPair::Both { nitro, tdx } => {
-                nitro.aggregate_proposal.output_root = stale_root;
-                tdx.aggregate_proposal.output_root = stale_root;
-            }
-        }
+        let mut aggregate_proposal = crate::test_utils::test_proposal(target_block);
+        aggregate_proposal.output_root = stale_root;
+        let proof = TeeProofPair::Nitro(TeeProof {
+            image_hash: B256::repeat_byte(0x05),
+            aggregate_proposal,
+            proposals: Vec::new(),
+        });
 
         let outcome = collector
             .submit_proof(target_block, stale_root, proof, Address::ZERO, &CancellationToken::new())
