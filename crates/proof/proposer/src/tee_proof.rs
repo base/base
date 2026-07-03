@@ -3,11 +3,12 @@
 use alloy_primitives::{B256, Bytes};
 use base_proof_primitives::{ProofEncoder, Proposal};
 use base_prover_service_protocol::TeeKind;
+use clap::ValueEnum;
 
 use crate::ProposerError;
 
 /// TEE platforms required before submitting a proposal.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum TeeProofMode {
     /// Require only an AWS Nitro proof.
     Nitro,

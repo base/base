@@ -4,7 +4,6 @@ use std::{num::NonZeroUsize, time::Duration};
 
 use alloy_primitives::{Address, B256};
 use base_cli_utils::CliStyles;
-use base_prover_service_protocol::TeeKind;
 use clap::{Args, Parser};
 use url::Url;
 
@@ -95,16 +94,12 @@ pub struct ProposerArgs {
     #[arg(long = "tee-image-hash", env = cli_env!("TEE_IMAGE_HASH"), hide = true)]
     pub tee_image_hash: Option<B256>,
 
-    /// Deprecated: use `tee-proof-mode` instead.
-    #[arg(long = "tee-kind", env = cli_env!("TEE_KIND"), hide = true, value_parser = parse_tee_kind)]
-    pub tee_kind: Option<TeeKind>,
-
     /// TEE proof requirement: `nitro`, `tdx`, or `both`.
     #[arg(
         long = "tee-proof-mode",
         env = cli_env!("TEE_PROOF_MODE"),
         default_value_t = TeeProofMode::Nitro,
-        value_parser = parse_tee_proof_mode
+        value_enum
     )]
     pub tee_proof_mode: TeeProofMode,
 
@@ -172,23 +167,6 @@ pub struct ProposerArgs {
     /// Transaction manager configuration.
     #[command(flatten)]
     pub tx_manager: TxManagerCli,
-}
-
-fn parse_tee_kind(value: &str) -> Result<TeeKind, String> {
-    match value {
-        "aws_nitro" | "aws-nitro" => Ok(TeeKind::AwsNitro),
-        "intel_tdx" | "intel-tdx" => Ok(TeeKind::IntelTdx),
-        other => Err(format!("unknown TEE kind: {other}")),
-    }
-}
-
-fn parse_tee_proof_mode(value: &str) -> Result<TeeProofMode, String> {
-    match value {
-        "nitro" | "aws_nitro" | "aws-nitro" => Ok(TeeProofMode::Nitro),
-        "tdx" | "intel_tdx" | "intel-tdx" => Ok(TeeProofMode::Tdx),
-        "both" | "dual" | "nitro+tdx" | "nitro,tdx" => Ok(TeeProofMode::Both),
-        other => Err(format!("unknown TEE proof mode: {other}")),
-    }
 }
 
 /// Admin RPC server configuration arguments.
