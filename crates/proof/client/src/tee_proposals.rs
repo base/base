@@ -13,12 +13,11 @@ impl TeeProposals {
     /// Error message used when the proof driver returns no block results.
     pub const EMPTY_PROPOSALS_ERROR: &'static str = "no proposals produced";
 
-    /// Error message used when an L2 block number cannot be decremented.
-    pub const L2_BLOCK_NUMBER_ZERO_ERROR: &'static str = "l2_block_number is 0";
-
     /// Error message used when aggregate checkpoint sampling has a zero interval.
     pub const INTERMEDIATE_BLOCK_INTERVAL_ZERO_ERROR: &'static str =
         "intermediate_block_interval must not be zero";
+
+    const L2_BLOCK_NUMBER_ZERO_ERROR: &'static str = "l2_block_number is 0";
 
     /// Build per-block TEE proposals and the aggregate proposal.
     ///
@@ -41,18 +40,15 @@ impl TeeProposals {
         let l1_origin_hash = boot_info.l1_head;
         let l1_origin_number = boot_info.l1_head_number;
 
-        let mut sign_proposal = |journal: ProofJournal,
-                                 output_root: B256,
-                                 l2_block_number: u64,
-                                 prev_output_root: B256|
-         -> Result<Proposal, E> {
+        let mut sign_proposal = |journal: ProofJournal| -> Result<Proposal, E> {
+            let signature = sign(journal.encode().as_slice())?;
             Ok(Proposal {
-                output_root,
-                signature: sign(journal.encode().as_slice())?,
+                output_root: journal.output_root,
+                signature,
                 l1_origin_hash,
                 l1_origin_number,
-                l2_block_number,
-                prev_output_root,
+                l2_block_number: journal.ending_l2_block,
+                prev_output_root: journal.prev_output_root,
                 config_hash,
             })
         };
@@ -77,12 +73,7 @@ impl TeeProposals {
                 tee_image_hash,
             };
 
-            proposals.push(sign_proposal(
-                journal,
-                *output_root,
-                l2_block_number,
-                prev_output_root,
-            )?);
+            proposals.push(sign_proposal(journal)?);
             prev_output_root = *output_root;
         }
 
@@ -118,7 +109,7 @@ impl TeeProposals {
                 tee_image_hash,
             };
 
-            sign_proposal(journal, last.output_root, last.l2_block_number, agreed_l2_output_root)?
+            sign_proposal(journal)?
         };
 
         Ok(ProofResult::Tee { aggregate_proposal, proposals })
@@ -130,7 +121,7 @@ mod tests {
     use alloc::vec;
 
     use alloy_genesis::ChainConfig;
-    use alloy_primitives::{Address, b256};
+    use alloy_primitives::Address;
     use base_common_genesis::RollupConfig;
     use base_protocol::BlockInfo;
 
@@ -138,13 +129,9 @@ mod tests {
 
     fn boot_info(interval: u64) -> BootInfo {
         BootInfo {
-            l1_head: b256!("0101010101010101010101010101010101010101010101010101010101010101"),
-            agreed_l2_output_root: b256!(
-                "0202020202020202020202020202020202020202020202020202020202020202"
-            ),
-            claimed_l2_output_root: b256!(
-                "0303030303030303030303030303030303030303030303030303030303030303"
-            ),
+            l1_head: B256::repeat_byte(1),
+            agreed_l2_output_root: B256::repeat_byte(2),
+            claimed_l2_output_root: B256::repeat_byte(3),
             claimed_l2_block_number: 3,
             chain_id: 8453,
             activation_admin_address: None,
@@ -165,18 +152,14 @@ mod tests {
 
     #[test]
     fn build_signs_per_block_and_aggregate_proposals() {
-        let roots = [
-            b256!("1111111111111111111111111111111111111111111111111111111111111111"),
-            b256!("2222222222222222222222222222222222222222222222222222222222222222"),
-            b256!("3333333333333333333333333333333333333333333333333333333333333333"),
-        ];
+        let roots = [B256::repeat_byte(0x11), B256::repeat_byte(0x22), B256::repeat_byte(0x33)];
         let block_results =
-            vec![(l2_info(1), roots[0]), (l2_info(2), roots[1]), (l2_info(3), roots[2])];
+            [(l2_info(1), roots[0]), (l2_info(2), roots[1]), (l2_info(3), roots[2])];
         let mut signing_calls = 0u8;
 
         let proof = TeeProposals::build(
             &boot_info(2),
-            &block_results,
+            block_results.as_slice(),
             B256::repeat_byte(5),
             B256::repeat_byte(6),
             |_| {
@@ -199,11 +182,11 @@ mod tests {
     #[test]
     fn build_rejects_zero_aggregate_interval() {
         let block_results =
-            vec![(l2_info(1), B256::repeat_byte(1)), (l2_info(2), B256::repeat_byte(2))];
+            [(l2_info(1), B256::repeat_byte(1)), (l2_info(2), B256::repeat_byte(2))];
 
         let err = TeeProposals::build(
             &boot_info(0),
-            &block_results,
+            block_results.as_slice(),
             B256::ZERO,
             B256::ZERO,
             |_| Ok(Bytes::new()),
