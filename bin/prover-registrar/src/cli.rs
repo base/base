@@ -1,6 +1,6 @@
 //! CLI argument parsing and config construction for the prover registrar.
 
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::time::Duration;
 
 use alloy_primitives::{Address, hex::FromHex};
 use base_proof_tee_nitro_attestation_prover::BoundlessProver as NitroBoundlessProver;
@@ -11,12 +11,8 @@ use base_proof_tee_registrar::{
 };
 use base_proof_tee_tdx_attestation_prover::BoundlessProver as TdxBoundlessProver;
 use base_tx_manager::{SignerConfig, TxManagerConfig};
-use boundless_market::{
-    alloy::signers::local::PrivateKeySigner,
-    price_oracle::{Amount, Asset},
-};
+use boundless_market::alloy::signers::local::PrivateKeySigner;
 use clap::Parser;
-use tokio::sync::Mutex;
 use url::Url;
 
 // Generate env-var helper and CLI structs with the `BASE_REGISTRAR_` prefix.
@@ -26,8 +22,6 @@ base_cli_utils::define_metrics_args!("BASE_REGISTRAR", 7300);
 base_cli_utils::define_health_args!("BASE_REGISTRAR", 8080);
 base_tx_manager::define_signer_cli!("BASE_REGISTRAR");
 base_tx_manager::define_tx_manager_cli!("BASE_REGISTRAR");
-
-type CliRegistrarConfig = RegistrarConfig<PlatformProofProvider>;
 
 /// Prover Registrar — automated TEE signer registration service.
 #[derive(Parser)]
@@ -127,49 +121,6 @@ pub(crate) struct Cli {
     )]
     boundless_timeout: u64,
 
-    /// Minimum Boundless offer price in ETH for each submitted proof request.
-    ///
-    /// Must be set together with `--boundless-max-price-eth`.
-    #[arg(
-        long,
-        env = cli_env!("BOUNDLESS_MIN_PRICE_ETH"),
-        value_parser = parse_boundless_eth_amount
-    )]
-    boundless_min_price_eth: Option<Amount>,
-
-    /// Maximum Boundless offer price in ETH for each submitted proof request.
-    ///
-    /// Must be set together with `--boundless-min-price-eth` and be greater than or equal to it.
-    /// When set, the Boundless SDK uses this value verbatim as the onchain `maxPrice` and does not
-    /// add the gas-cost buffer it applies to SDK-derived max prices. Include headroom for gas-price
-    /// volatility between request submission and fulfillment.
-    #[arg(
-        long,
-        env = cli_env!("BOUNDLESS_MAX_PRICE_ETH"),
-        value_parser = parse_boundless_eth_amount
-    )]
-    boundless_max_price_eth: Option<Amount>,
-
-    /// Boundless offer price ramp duration in seconds.
-    ///
-    /// May be set independently of explicit min/max prices. When min/max prices are unset, this
-    /// overrides only the ramp duration while the Boundless SDK still derives prices from cycle
-    /// count.
-    #[arg(long, env = cli_env!("BOUNDLESS_OFFER_RAMP_UP_PERIOD_SECS"))]
-    boundless_offer_ramp_up_period_secs: Option<u32>,
-
-    /// Boundless request lock timeout in seconds.
-    #[arg(long, env = cli_env!("BOUNDLESS_OFFER_LOCK_TIMEOUT_SECS"))]
-    boundless_offer_lock_timeout_secs: Option<u32>,
-
-    /// Delay before Boundless bidding starts.
-    #[arg(
-        long,
-        env = cli_env!("BOUNDLESS_OFFER_BIDDING_START_DELAY_SECS"),
-        default_value_t = 0
-    )]
-    boundless_offer_bidding_start_delay_secs: u64,
-
     /// Maximum request-ID slots to probe during proof recovery.
     #[arg(
         long,
@@ -267,27 +218,17 @@ fn parse_image_id(s: &str) -> Result<[u32; 8], String> {
     Ok(std::array::from_fn(|i| u32::from_le_bytes(bytes[i * 4..][..4].try_into().unwrap())))
 }
 
-/// Parse an ETH-denominated Boundless offer price.
-fn parse_boundless_eth_amount(s: &str) -> Result<Amount, String> {
-    Amount::parse_with_allowed(s, &[Asset::ETH], Some(Asset::ETH))
-        .map_err(|e| format!("Boundless ETH amount: {e}"))
-}
-
 impl Cli {
-    pub(crate) fn config(self) -> Result<CliRegistrarConfig, Box<RegistrarError>> {
+    pub(crate) fn config(self) -> Result<RegistrarConfig, Box<RegistrarError>> {
         validate_health_port(self.health.port)?;
-        validate_boundless_offer_prices(
-            &self.boundless_min_price_eth,
-            &self.boundless_max_price_eth,
-        )?;
 
         let boundless_rpc_url = self.boundless_rpc_url;
         let boundless_signer = self.boundless_fee_private_key;
         let boundless_signer_address = boundless_signer.address();
         let boundless_poll_interval = Duration::from_secs(self.boundless_fulfillment_poll_interval);
         let boundless_timeout = Duration::from_secs(self.boundless_timeout);
+        let boundless_timing = (boundless_poll_interval, boundless_timeout);
         let max_attestation_age = Duration::from_secs(self.max_attestation_age);
-        let submit_lock = Arc::new(Mutex::new(()));
 
         Ok(RegistrarConfig {
             l1_rpc_url: self.l1_rpc_url,
@@ -305,31 +246,24 @@ impl Cli {
             tx_manager_config: TxManagerConfig::try_from(self.tx_manager)
                 .map_err(|e| Box::new(RegistrarError::Config(format!("tx-manager: {e}"))))?,
             proof_provider: PlatformProofProvider::new(
-                NitroBoundlessProver {
-                    rpc_url: boundless_rpc_url.clone(),
-                    signer: boundless_signer.clone(),
-                    verifier_program_url: self.boundless_nitro_verifier_program_url,
-                    image_id: self.nitro_image_id,
-                    poll_interval: boundless_poll_interval,
-                    timeout: boundless_timeout,
-                    trusted_certs_prefix_len: 1,
-                    max_recovery_attempts: self.boundless_max_recovery_attempts,
+                NitroBoundlessProver::new(
+                    boundless_rpc_url.clone(),
+                    boundless_signer.clone(),
+                    self.boundless_nitro_verifier_program_url,
+                    self.nitro_image_id,
+                    boundless_timing,
+                    self.boundless_max_recovery_attempts,
                     max_attestation_age,
-                    submit_lock: Arc::clone(&submit_lock),
-                    recovery_blocked: Arc::new(std::sync::Mutex::new(HashSet::new())),
-                },
-                TdxBoundlessProver {
-                    rpc_url: boundless_rpc_url.clone(),
-                    signer: boundless_signer,
-                    verifier_program_url: self.boundless_tdx_verifier_program_url,
-                    image_id: self.tdx_image_id,
-                    poll_interval: boundless_poll_interval,
-                    timeout: boundless_timeout,
-                    max_recovery_attempts: self.boundless_max_recovery_attempts,
-                    max_recovered_quote_age: max_attestation_age,
-                    submit_lock,
-                    recovery_blocked: Arc::new(std::sync::Mutex::new(HashSet::new())),
-                },
+                ),
+                TdxBoundlessProver::new(
+                    boundless_rpc_url.clone(),
+                    boundless_signer,
+                    self.boundless_tdx_verifier_program_url,
+                    self.tdx_image_id,
+                    boundless_timing,
+                    self.boundless_max_recovery_attempts,
+                    max_attestation_age,
+                ),
             ),
             boundless_rpc_url,
             boundless_signer_address,
@@ -352,29 +286,6 @@ impl Cli {
 fn validate_health_port(port: u16) -> Result<(), Box<RegistrarError>> {
     if port == 0 {
         return Err(Box::new(RegistrarError::Config("health server port must be non-zero".into())));
-    }
-
-    Ok(())
-}
-
-fn validate_boundless_offer_prices(
-    min_price: &Option<Amount>,
-    max_price: &Option<Amount>,
-) -> Result<(), Box<RegistrarError>> {
-    match (min_price, max_price) {
-        (Some(min_price), Some(max_price)) if max_price.value < min_price.value => {
-            return Err(Box::new(RegistrarError::Config(
-                "--boundless-max-price-eth must be greater than or equal to --boundless-min-price-eth"
-                    .into(),
-            )));
-        }
-        (Some(_), None) | (None, Some(_)) => {
-            return Err(Box::new(RegistrarError::Config(
-                "--boundless-min-price-eth and --boundless-max-price-eth must be set together"
-                    .into(),
-            )));
-        }
-        _ => {}
     }
 
     Ok(())
@@ -421,24 +332,6 @@ mod tests {
             "--boundless-tdx-verifier-program-url",
             "https://gateway.pinata.cloud/ipfs/tdx-test",
         ]
-    }
-
-    #[test]
-    fn boundless_offer_max_price_must_cover_min_price() {
-        let result = validate_boundless_offer_prices(
-            &Some(parse_boundless_eth_amount("0.03").unwrap()),
-            &Some(parse_boundless_eth_amount("0.01").unwrap()),
-        );
-
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn boundless_offer_prices_must_be_set_together() {
-        let price = Some(parse_boundless_eth_amount("0.01").unwrap());
-
-        assert!(validate_boundless_offer_prices(&price, &None).is_err());
-        assert!(validate_boundless_offer_prices(&None, &price).is_err());
     }
 
     #[test]

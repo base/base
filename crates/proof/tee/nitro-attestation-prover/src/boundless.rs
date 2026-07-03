@@ -39,6 +39,8 @@ use url::Url;
 
 use crate::{ProverError, Result};
 
+const DEFAULT_TRUSTED_CERTS_PREFIX_LEN: u8 = 1;
+
 /// Concrete [`Client`] type produced by the builder chain used in
 /// [`BoundlessProver`]. The uploader is [`NotProvided`] because we
 /// use inline inputs (stdin) rather than uploading to external storage.
@@ -79,9 +81,9 @@ pub struct BoundlessProver {
     /// recovering in-flight proofs after an instance rotation.
     pub max_recovery_attempts: u32,
     /// Maximum age of an attestation timestamp for a recovered proof to
-    /// be considered fresh enough for on-chain submission. Proofs whose
+    /// be considered fresh enough for onchain submission. Proofs whose
     /// journal timestamp is older than this are skipped during recovery.
-    /// Should be set slightly below the on-chain `MAX_AGE` to account
+    /// Should be set slightly below the onchain `MAX_AGE` to account
     /// for clock skew and processing time.
     pub max_attestation_age: Duration,
     /// Serialises the `submit_onchain` call so that concurrent proof
@@ -89,7 +91,7 @@ pub struct BoundlessProver {
     /// released immediately after submission, allowing the long-running
     /// fulfillment poll to proceed concurrently.
     pub submit_lock: Arc<Mutex<()>>,
-    /// Signers whose recovered proofs have been rejected on-chain.
+    /// Signers whose recovered proofs have been rejected onchain.
     /// When a signer is in this set, recovery is skipped and a fresh
     /// proof is generated instead. Cleared on process restart, giving
     /// recovered proofs one new attempt after each restart.
@@ -116,6 +118,33 @@ impl fmt::Debug for BoundlessProver {
 }
 
 impl BoundlessProver {
+    /// Creates a Boundless prover with default process-local recovery state.
+    pub fn new(
+        rpc_url: Url,
+        signer: PrivateKeySigner,
+        verifier_program_url: Url,
+        image_id: [u32; 8],
+        timing: (Duration, Duration),
+        max_recovery_attempts: u32,
+        max_attestation_age: Duration,
+    ) -> Self {
+        let (poll_interval, timeout) = timing;
+
+        Self {
+            rpc_url,
+            signer,
+            verifier_program_url,
+            image_id,
+            poll_interval,
+            timeout,
+            trusted_certs_prefix_len: DEFAULT_TRUSTED_CERTS_PREFIX_LEN,
+            max_recovery_attempts,
+            max_attestation_age,
+            submit_lock: Arc::new(Mutex::new(())),
+            recovery_blocked: Arc::new(std::sync::Mutex::new(HashSet::new())),
+        }
+    }
+
     /// Derives a deterministic `u32` index for a Boundless request ID
     /// from the target signer address and an attempt counter.
     ///
@@ -333,22 +362,22 @@ impl BoundlessProver {
     }
 
     /// Computes the effective expiry timestamp from the current time and
-    /// the prover's timeout, taking the minimum with the on-chain expiry
+    /// the prover's timeout, taking the minimum with the onchain expiry
     /// if provided.
-    fn effective_expiry(&self, on_chain_expiry: Option<u64>) -> u64 {
+    fn effective_expiry(&self, onchain_expiry: Option<u64>) -> u64 {
         let timeout_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs()
             .saturating_add(self.timeout.as_secs());
-        on_chain_expiry.map_or(timeout_at, |e| e.min(timeout_at))
+        onchain_expiry.map_or(timeout_at, |e| e.min(timeout_at))
     }
 
     /// Returns `true` if the proof's attestation timestamp is within
     /// [`max_attestation_age`](Self::max_attestation_age) of the current
     /// wall-clock time. Returns `false` (stale) when the journal cannot
     /// be decoded, since an undecodable proof is unlikely to verify
-    /// on-chain.
+    /// onchain.
     fn is_journal_fresh(&self, proof: &TeeAttestationProof) -> bool {
         let journal = match VerifierJournal::decode(&proof.output) {
             Ok(j) => j,
@@ -377,7 +406,7 @@ impl BoundlessProver {
         true
     }
 
-    /// Acquires the submit lock, submits a proof request on-chain, then
+    /// Acquires the submit lock, submits a proof request onchain, then
     /// waits for fulfillment and fetches the set inclusion receipt.
     ///
     /// Shared between [`generate_proof`](Self::generate_proof) and the fresh-submission tail of
@@ -395,7 +424,7 @@ impl BoundlessProver {
                     error_debug = ?e,
                     image_id = ?self.image_id,
                     boundless_wallet = %self.signer.address(),
-                    "failed to submit Boundless proof request on-chain"
+                    "failed to submit Boundless proof request onchain"
                 );
                 ProverError::Boundless(format!("failed to submit request: {e}"))
             })?
@@ -688,7 +717,7 @@ impl TeeAttestationProofProvider for BoundlessProver {
     fn block_recovery_for_signer(&self, signer: Address) {
         info!(
             signer = %signer,
-            "blocking proof recovery for signer after on-chain rejection"
+            "blocking proof recovery for signer after onchain rejection"
         );
         self.recovery_blocked.lock().unwrap_or_else(|e| e.into_inner()).insert(signer);
     }
@@ -867,19 +896,19 @@ mod tests {
 
     // ── effective_expiry ────────────────────────────────────────────────
 
-    /// When an on-chain expiry is provided and is sooner than the
-    /// timeout, the effective expiry equals the on-chain value.
+    /// When an onchain expiry is provided and is sooner than the
+    /// timeout, the effective expiry equals the onchain value.
     #[rstest]
-    fn effective_expiry_picks_on_chain_when_sooner(prover: BoundlessProver) {
-        // Use a very near on-chain expiry (1 second from now).
+    fn effective_expiry_picks_onchain_when_sooner(prover: BoundlessProver) {
+        // Use a very near onchain expiry (1 second from now).
         let now =
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-        let on_chain = now + 1;
-        let result = prover.effective_expiry(Some(on_chain));
-        assert_eq!(result, on_chain, "should pick the nearer on-chain expiry");
+        let onchain = now + 1;
+        let result = prover.effective_expiry(Some(onchain));
+        assert_eq!(result, onchain, "should pick the nearer onchain expiry");
     }
 
-    /// When no on-chain expiry is provided, the effective expiry is
+    /// When no onchain expiry is provided, the effective expiry is
     /// `now + timeout`.
     #[rstest]
     fn effective_expiry_uses_timeout_when_none(prover: BoundlessProver) {
@@ -896,7 +925,7 @@ mod tests {
         );
     }
 
-    /// When the on-chain expiry is far in the future, the effective
+    /// When the onchain expiry is far in the future, the effective
     /// expiry is clamped to `now + timeout`.
     #[rstest]
     fn effective_expiry_clamps_to_timeout(prover: BoundlessProver) {

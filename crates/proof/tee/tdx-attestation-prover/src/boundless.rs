@@ -79,6 +79,32 @@ impl fmt::Debug for BoundlessProver {
 }
 
 impl BoundlessProver {
+    /// Creates a Boundless prover with default process-local recovery state.
+    pub fn new(
+        rpc_url: Url,
+        signer: PrivateKeySigner,
+        verifier_program_url: Url,
+        image_id: [u32; 8],
+        timing: (Duration, Duration),
+        max_recovery_attempts: u32,
+        max_recovered_quote_age: Duration,
+    ) -> Self {
+        let (poll_interval, timeout) = timing;
+
+        Self {
+            rpc_url,
+            signer,
+            verifier_program_url,
+            image_id,
+            poll_interval,
+            timeout,
+            max_recovery_attempts,
+            max_recovered_quote_age,
+            submit_lock: Arc::new(Mutex::new(())),
+            recovery_blocked: Arc::new(std::sync::Mutex::new(HashSet::new())),
+        }
+    }
+
     /// Derives a deterministic Boundless request index from signer and attempt.
     pub fn derive_request_index(signer_address: Address, attempt: u32) -> u32 {
         let mut buf = [0u8; 24];
@@ -152,13 +178,13 @@ impl BoundlessProver {
     }
 
     /// Computes the proof fulfillment expiry used while polling Boundless.
-    fn effective_expiry(&self, on_chain_expiry: Option<u64>) -> u64 {
+    fn effective_expiry(&self, onchain_expiry: Option<u64>) -> u64 {
         let timeout_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs()
             .saturating_add(self.timeout.as_secs());
-        on_chain_expiry.map_or(timeout_at, |expiry| expiry.min(timeout_at))
+        onchain_expiry.map_or(timeout_at, |expiry| expiry.min(timeout_at))
     }
 
     /// Fetches a fulfilled set-inclusion receipt and encodes it for `TDXVerifier`.
