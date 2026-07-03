@@ -1,5 +1,6 @@
 use std::time::SystemTime;
 
+pub use base_proof_tee_attestation::TeeAttestationKind as AttestationKind;
 use url::Url;
 
 /// A prover instance discovered from the infrastructure layer.
@@ -16,26 +17,6 @@ pub struct ProverInstance {
     /// Launch time of the instance. Used to determine if recently-launched
     /// unhealthy instances should still be eligible for registration.
     pub launch_time: Option<SystemTime>,
-}
-
-/// Supported registrar attestation platforms.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AttestationKind {
-    /// AWS Nitro Enclave attestation.
-    Nitro,
-    /// Intel TDX attestation.
-    Tdx,
-}
-
-impl AttestationKind {
-    /// Parses an attestation kind returned by an enclave JSON-RPC endpoint.
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "nitro" => Some(Self::Nitro),
-            "tdx" => Some(Self::Tdx),
-            _ => None,
-        }
-    }
 }
 
 /// Health status of a discovered prover instance.

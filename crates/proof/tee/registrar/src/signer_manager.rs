@@ -12,7 +12,7 @@ use std::{
 use alloy_primitives::{Address, Bytes, keccak256};
 use alloy_sol_types::{SolCall, SolValue};
 use base_proof_contracts::{ITEEProverRegistry, TEEProverRegistryClient};
-use base_proof_tee_attestation::{TeeAttestationKind, TeeAttestationProof};
+use base_proof_tee_attestation::TeeAttestationKind;
 use base_proof_tee_nitro_verifier::VerifierJournal;
 use base_proof_tee_tdx_verifier::TDXVerifierJournal;
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
@@ -620,7 +620,7 @@ mod tests {
 
     use alloy_primitives::{Address, B256};
     use async_trait::async_trait;
-    use base_proof_tee_attestation::TeeAttestationProofProvider;
+    use base_proof_tee_attestation::{TeeAttestationProof, TeeAttestationProofProvider};
     use base_proof_tee_nitro_verifier::VerificationResult;
     use base_tx_manager::{SendHandle, TxManagerError};
     use tokio::sync::Notify;
