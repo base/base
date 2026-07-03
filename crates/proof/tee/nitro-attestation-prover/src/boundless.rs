@@ -420,11 +420,6 @@ impl BoundlessProver {
         self.wait_and_fetch(client, request_id, effective_expiry).await
     }
 
-    /// Generates a Nitro attestation proof with a fresh Boundless request ID.
-    pub async fn generate_proof(&self, attestation_bytes: &[u8]) -> Result<TeeAttestationProof> {
-        let (client, params) = self.build_client_and_params(attestation_bytes).await?;
-        self.submit_and_wait(&client, params).await
-    }
 }
 
 #[async_trait::async_trait]
@@ -690,7 +685,7 @@ impl TeeAttestationProofProvider for BoundlessProver {
             }
         };
 
-        Ok(self.submit_and_wait(&client, params).await?)
+        self.submit_and_wait(&client, params).await.map_err(Into::into)
     }
 
     fn block_recovery_for_signer(&self, signer: Address) {
