@@ -171,10 +171,6 @@ struct ServerArgs {
     #[command(flatten)]
     worker: WorkerArgs,
 
-    /// Socket address for the registrar-facing signer JSON-RPC API.
-    #[arg(long, env = "LISTEN_ADDR", default_value = "0.0.0.0:8000")]
-    listen_addr: SocketAddr,
-
     /// Vsock CID(s) of the enclave(s), comma-separated for multi-enclave mode.
     #[arg(long, env = "VSOCK_CID", value_delimiter = ',')]
     vsock_cid: Vec<u32>,
@@ -184,6 +180,10 @@ struct ServerArgs {
 #[cfg(all(feature = "worker", any(target_os = "linux", feature = "local")))]
 #[derive(Parser)]
 struct WorkerArgs {
+    /// Socket address for the registrar-facing signer JSON-RPC API.
+    #[arg(long, env = "LISTEN_ADDR", default_value = "0.0.0.0:8000")]
+    listen_addr: SocketAddr,
+
     /// Prover-service JSON-RPC endpoint.
     #[arg(long, env = "PROVER_SERVICE_ENDPOINT")]
     prover_service_endpoint: String,
@@ -302,15 +302,7 @@ impl ServerArgs {
         let transports = vsock_transports(&self.vsock_cid);
 
         info!(cids = ?self.vsock_cid, "configured vsock CIDs");
-        run_worker(
-            self.runtime,
-            self.worker,
-            transports,
-            WorkerTransportMode::Vsock,
-            Some(self.listen_addr),
-            cancel,
-        )
-        .await
+        run_worker(self.runtime, self.worker, transports, WorkerTransportMode::Vsock, cancel).await
     }
 }
 
@@ -369,10 +361,6 @@ struct LocalArgs {
     #[command(flatten)]
     worker: WorkerArgs,
 
-    /// Socket address for the registrar-facing signer JSON-RPC API.
-    #[arg(long, env = "LISTEN_ADDR", default_value = "0.0.0.0:8000")]
-    listen_addr: SocketAddr,
-
     /// Number of local enclave instances to run (minimum 1).
     #[arg(long, env = "LOCAL_ENCLAVE_COUNT", default_value = "1")]
     local_enclave_count: usize,
@@ -386,15 +374,7 @@ impl LocalArgs {
         }
 
         let transports = local_transports(self.local_enclave_count)?;
-        run_worker(
-            self.runtime,
-            self.worker,
-            transports,
-            WorkerTransportMode::Local,
-            Some(self.listen_addr),
-            cancel,
-        )
-        .await
+        run_worker(self.runtime, self.worker, transports, WorkerTransportMode::Local, cancel).await
     }
 }
 
@@ -419,7 +399,6 @@ async fn run_worker(
     worker: WorkerArgs,
     transports: Vec<Arc<NitroTransport>>,
     transport_mode: WorkerTransportMode,
-    registrar_listen_addr: Option<SocketAddr>,
     cancel: CancellationToken,
 ) -> eyre::Result<()> {
     let registration_health = runtime.registration_health_config();
@@ -475,18 +454,12 @@ async fn run_worker(
         .with_lock_duration_seconds(worker.job_discovery_lock_duration_seconds)
         .with_max_concurrent_jobs(worker.job_discovery_max_concurrent_jobs);
     let discovery = JobDiscovery::new(client, proof_generator, discovery_config);
-    let registrar_handle = if let Some(addr) = registrar_listen_addr {
-        Some(
-            NitroProverServer::run_registrar_rpc_server(
-                addr,
-                registrar_transports,
-                registration_checker,
-            )
-            .await?,
-        )
-    } else {
-        None
-    };
+    let registrar_handle = NitroProverServer::run_registrar_rpc_server(
+        worker.listen_addr,
+        registrar_transports,
+        registration_checker,
+    )
+    .await?;
 
     match transport_mode {
         #[cfg(target_os = "linux")]
@@ -508,10 +481,8 @@ async fn run_worker(
         }
     }
     discovery.run_until_cancelled(cancel).await;
-    if let Some(handle) = registrar_handle {
-        let _ = handle.stop();
-        handle.stopped().await;
-    }
+    let _ = registrar_handle.stop();
+    registrar_handle.stopped().await;
     Ok(())
 }
 
