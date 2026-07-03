@@ -2,7 +2,6 @@ set positional-arguments
 
 eif_describe_image := "base-prover-nitro-enclave-describe"
 eif_output := "eif.bin"
-tdx_verifier_guest := "base-proof-tee-tdx-attestation-prover-guest"
 
 # Pinned upstream sources for reproducible enclave artifact builds. Bump in lockstep
 # with etc/docker/Dockerfile.nitro-enclave.
@@ -300,8 +299,8 @@ tdx-verifier-image-id:
     echo "Bundling ELF into R0BF and computing image ID..."
     RISC0_SKIP_BUILD_KERNELS=1 cargo run --quiet \
         --manifest-path ../../nitro-attestation-prover/guest/tools/compute-image-id/Cargo.toml -- \
-        target/riscv32im-risc0-zkvm-elf/release/{{ tdx_verifier_guest }} \
-        --output target/{{ tdx_verifier_guest }}.r0bf
+        target/riscv32im-risc0-zkvm-elf/release/base-proof-tee-tdx-attestation-prover-guest \
+        --output target/base-proof-tee-tdx-attestation-prover-guest.r0bf
 
 # Inspect a TDX prover's signer and contract-compatible image hash
 tdx-image-hash endpoint *args="":
