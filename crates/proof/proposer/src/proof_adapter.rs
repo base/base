@@ -1,7 +1,7 @@
 //! Adapters between proposer proof types and the shared prover-service protocol.
 
 use alloy_primitives::B256;
-use base_proof_primitives::{ProofRequest as PrimitiveProofRequest, Proposal};
+use base_proof_primitives::ProofRequest as PrimitiveProofRequest;
 use base_prover_service_protocol::{
     ProofRequest, ProofRequestKind, ProofResult, ProofSessionId, ProveBlockRangeRequest, TeeKind,
     TeeProofRequest,
@@ -17,17 +17,13 @@ pub struct ProposerProofAdapter;
 impl ProposerProofAdapter {
     const SESSION_NAMESPACE: &'static [u8] = b"base/proposer/proof-session/v1";
 
-    /// Returns the session label for a TEE proof kind.
-    pub const fn tee_session_label(tee_kind: TeeKind) -> &'static str {
-        match tee_kind {
-            TeeKind::AwsNitro => "tee/aws_nitro",
-            TeeKind::IntelTdx => "tee/intel_tdx",
-        }
-    }
-
     /// Derives an idempotent TEE proof session ID from proof subtype and claimed root.
     pub fn tee_session_id_for_root(root: B256, tee_kind: TeeKind) -> String {
-        ProofSessionId::derive(Self::SESSION_NAMESPACE, Self::tee_session_label(tee_kind), root)
+        let label = match tee_kind {
+            TeeKind::AwsNitro => "tee/aws_nitro",
+            TeeKind::IntelTdx => "tee/intel_tdx",
+        };
+        ProofSessionId::derive(Self::SESSION_NAMESPACE, label, root)
     }
 
     /// Builds a prover-service request for a TEE proposal proof.
@@ -36,30 +32,12 @@ impl ProposerProofAdapter {
         tee_kind: TeeKind,
     ) -> ProveBlockRangeRequest {
         let session_id = Self::tee_session_id_for_root(request.claimed_l2_output_root, tee_kind);
-        Self::tee_prove_block_range_request_with_session_id(request, session_id, tee_kind)
-    }
-
-    /// Builds a prover-service request for a TEE proposal proof with a caller-supplied session id.
-    pub const fn tee_prove_block_range_request_with_session_id(
-        request: PrimitiveProofRequest,
-        session_id: String,
-        tee_kind: TeeKind,
-    ) -> ProveBlockRangeRequest {
         ProveBlockRangeRequest {
             proof: ProofRequest {
                 session_id,
                 request: ProofRequestKind::Tee(TeeProofRequest { proof: request, tee_kind }),
             },
         }
-    }
-
-    /// Converts a prover-service TEE proof result into the proposer proof result type.
-    pub fn tee_proof_result(
-        result: ProofResult,
-        tee_kind: TeeKind,
-    ) -> Result<(Proposal, Vec<Proposal>), ProposerError> {
-        let proof = Self::tee_proof(result, tee_kind, B256::ZERO)?;
-        Ok((proof.aggregate_proposal, proof.proposals))
     }
 
     /// Converts a prover-service TEE proof result into a typed single-platform TEE proof.
@@ -142,22 +120,25 @@ mod tests {
     }
 
     #[test]
-    fn tee_proof_result_converts_to_proposal_parts() {
+    fn tee_proof_converts_to_typed_proof() {
         let aggregate = test_proposal(600);
         let proposal = test_proposal(300);
+        let image_hash = B256::repeat_byte(0x05);
         let result = ProofResult::Tee(TeeProofResult {
             aggregate_proposal: aggregate.clone(),
             proposals: vec![proposal.clone()],
             tee_kind: TeeKind::AwsNitro,
         });
 
-        let converted = ProposerProofAdapter::tee_proof_result(result, TeeKind::AwsNitro).unwrap();
+        let proof = ProposerProofAdapter::tee_proof(result, TeeKind::AwsNitro, image_hash).unwrap();
 
-        assert_eq!(converted, (aggregate, vec![proposal]));
+        assert_eq!(proof.image_hash, image_hash);
+        assert_eq!(proof.aggregate_proposal, aggregate);
+        assert_eq!(proof.proposals, vec![proposal]);
     }
 
     #[test]
-    fn tee_proof_result_reports_wrong_result_variant() {
+    fn tee_proof_reports_wrong_result_variant() {
         for (result, expected) in [
             (
                 ProofResult::Compressed(ZkProofResult {
@@ -179,7 +160,7 @@ mod tests {
             ),
         ] {
             let err =
-                ProposerProofAdapter::tee_proof_result(result, TeeKind::AwsNitro).unwrap_err();
+                ProposerProofAdapter::tee_proof(result, TeeKind::AwsNitro, B256::ZERO).unwrap_err();
             let ProposerError::Prover(message) = err else {
                 panic!("unexpected error: {err:?}");
             };
