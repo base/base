@@ -342,7 +342,7 @@ mod tests {
                     .unwrap(),
             ),
             tx_manager_config: TxManagerConfig::default(),
-            proof_provider: NoopProofProvider::platform_pair(),
+            proof_provider: PlatformProofProvider::new(NoopProofProvider, NoopProofProvider),
             boundless_rpc_url: Url::parse("https://boundless.example/v3/BOUNDLESS_SECRET").unwrap(),
             boundless_signer_address: Address::repeat_byte(0x02),
             max_attestation_age: Duration::from_secs(1),

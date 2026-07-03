@@ -446,8 +446,8 @@ mod tests {
         InstanceHealthStatus, RegistrarError, Result, SignerManagerConfig,
         test_utils::{
             EP1, EP2, EP3, HARDHAT_KEY_0, HARDHAT_KEY_1, HARDHAT_KEY_2, NoopTxManager,
-            TEST_REGISTRY_ADDRESS, healthy_prover_instance, healthy_tdx_prover_instance,
-            prover_instance, public_key_from_private, signer_from_private_key,
+            TEST_REGISTRY_ADDRESS, healthy_prover_instance, prover_instance,
+            public_key_from_private, signer_from_private_key,
         },
     };
 
@@ -702,12 +702,10 @@ mod tests {
     async fn discover_and_resolve_requests_tdx_attestation_without_nonce() {
         let signer_client = MockEnclaveEndpointClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
         let requested_nonces = Arc::clone(&signer_client.requested_nonces);
+        let mut instance = healthy_prover_instance(EP1);
+        instance.attestation_kind = AttestationKind::Tdx;
 
-        let driver = cycle_driver(
-            vec![healthy_tdx_prover_instance(EP1)],
-            signer_client,
-            CancellationToken::new(),
-        );
+        let driver = cycle_driver(vec![instance], signer_client, CancellationToken::new());
 
         let resolution = discover_once(&driver).await;
 
