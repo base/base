@@ -43,9 +43,6 @@ sol! {
         /// Registers a signer using a ZK-proven AWS Nitro attestation.
         function registerSigner(bytes calldata output, bytes calldata proofBytes) external;
 
-        /// Registers a signer using a ZK proof of Intel TDX DCAP quote verification.
-        function registerTDXSigner(bytes calldata output, bytes calldata proofBytes) external;
-
         /// Deregisters a signer.
         function deregisterSigner(address signer) external;
 
@@ -139,18 +136,6 @@ mod tests {
         // 4 (selector) + 2×32 (offsets) + 2×32 (lengths) + 0 (data) = 132
         assert_eq!(encoded.len(), 132);
         assert_eq!(&encoded[..4], &ITEEProverRegistry::registerSignerCall::SELECTOR);
-    }
-
-    #[test]
-    fn register_tdx_signer_abi_encodes_correctly() {
-        let call = ITEEProverRegistry::registerTDXSignerCall {
-            output: Bytes::new(),
-            proofBytes: Bytes::new(),
-        };
-        let encoded = call.abi_encode();
-
-        assert_eq!(encoded.len(), 132);
-        assert_eq!(&encoded[..4], &ITEEProverRegistry::registerTDXSignerCall::SELECTOR);
     }
 
     #[test]
