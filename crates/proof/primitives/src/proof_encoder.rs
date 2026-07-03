@@ -48,9 +48,6 @@ impl ProofEncoder {
         }
     }
 
-    /// Encodes a TEE proof with optional L1 origin header and one or more signatures.
-    ///
-    /// Format: `PROOF_TYPE_TEE(1) [+ l1OriginHash(32) + l1OriginNumber(32)] + signatures(65*N)`.
     fn encode(l1_origin: Option<(B256, u64)>, signatures: &[&[u8]]) -> Result<Bytes, CryptoError> {
         let header_len = if l1_origin.is_some() { 64 } else { 0 };
         let total_len = 1 + header_len + signatures.len() * ECDSA_SIGNATURE_LENGTH;
@@ -236,8 +233,6 @@ mod tests {
         tdx_sig[64] = 28;
         assert_eq!(&proof[65..130], &nitro_sig);
         assert_eq!(&proof[130..195], &tdx_sig);
-        assert_eq!(proof[129], 27);
-        assert_eq!(proof[194], 28);
     }
 
     #[test]
