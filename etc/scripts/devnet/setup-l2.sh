@@ -1,73 +1,118 @@
 #!/bin/bash
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/setup-l2-common.sh"
+
 L1_RPC_URL="${L1_RPC_URL:-http://l1-el:4545}"
 OUTPUT_DIR="${OUTPUT_DIR:-/output}"
 L2_CHAIN_ID="${L2_CHAIN_ID:-84538453}"
 L1_CHAIN_ID="${L1_CHAIN_ID:-1337}"
 L2_DATA_DIR="${L2_DATA_DIR:-/data}"
 TEMPLATE_DIR="${TEMPLATE_DIR:-/templates}"
-L2_BASE_AZUL_BLOCK="${L2_BASE_AZUL_BLOCK:-}"
-L2_BASE_BERYL_BLOCK="${L2_BASE_BERYL_BLOCK:-}"
-L2_ISTHMUS_BLOCK="${L2_ISTHMUS_BLOCK:-}"
-L2_BASE_COBALT_BLOCK="${L2_BASE_COBALT_BLOCK:-}"
-L2_ACTIVATION_ADMIN_ADDR="${L2_ACTIVATION_ADMIN_ADDR:-$SEQUENCER_ADDR}"
-L2_EL_BOOTNODE_P2P_KEY="${L2_EL_BOOTNODE_P2P_KEY:-1111111111111111111111111111111111111111111111111111111111111111}"
-L2_EL_BOOTNODE_ENODE_ID="${L2_EL_BOOTNODE_ENODE_ID:-4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1}"
-L2_EL_BOOTNODE_ENODE="${L2_EL_BOOTNODE_ENODE:-enode://4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1@172.30.0.10:9303}"
-L2_CL_BOOTNODE_P2P_KEY="${L2_CL_BOOTNODE_P2P_KEY:-2222222222222222222222222222222222222222222222222222222222222222}"
-L2_CL_BOOTNODE_ENR_PATH="${L2_CL_BOOTNODE_ENR_PATH:-/bootnodes/cl-bootnode.enr}"
+SETUP_L2_MODE="${SETUP_L2_MODE:-live}"
 
-replace_output_file() {
-  local source_file="$1"
-  local destination_file="$2"
+setup_l2_common_load_defaults
+setup_l2_common_validate_activations
 
-  chmod 0644 "$source_file"
-  mv "$source_file" "$destination_file"
-}
+case "$SETUP_L2_MODE" in
+  live|preallocated) ;;
+  *)
+    echo "ERROR: SETUP_L2_MODE must be 'live' or 'preallocated' (got '$SETUP_L2_MODE')"
+    exit 1
+    ;;
+esac
 
-if [ -n "$L2_BASE_AZUL_BLOCK" ] && ! [[ "$L2_BASE_AZUL_BLOCK" =~ ^[0-9]+$ ]]; then
-  echo "ERROR: L2_BASE_AZUL_BLOCK must be a non-negative integer when set, got: $L2_BASE_AZUL_BLOCK"
-  exit 1
-fi
-if [ -n "$L2_BASE_BERYL_BLOCK" ] && ! [[ "$L2_BASE_BERYL_BLOCK" =~ ^[0-9]+$ ]]; then
-  echo "ERROR: L2_BASE_BERYL_BLOCK must be a non-negative integer when set, got: $L2_BASE_BERYL_BLOCK"
-  exit 1
-fi
-if [ -n "$L2_BASE_COBALT_BLOCK" ] && ! [[ "$L2_BASE_COBALT_BLOCK" =~ ^[0-9]+$ ]]; then
-  echo "ERROR: L2_BASE_COBALT_BLOCK must be a non-negative integer when set, got: $L2_BASE_COBALT_BLOCK"
-  exit 1
-fi
-if [ -n "$L2_ISTHMUS_BLOCK" ] && ! [[ "$L2_ISTHMUS_BLOCK" =~ ^[0-9]+$ ]]; then
-  echo "ERROR: L2_ISTHMUS_BLOCK must be a non-negative integer when set, got: $L2_ISTHMUS_BLOCK"
-  exit 1
+if [ "$SETUP_L2_MODE" = "preallocated" ]; then
+  echo "=== L2 Genesis Finalizer (Preallocated L1) ==="
+  echo "L1 RPC URL: $L1_RPC_URL"
+  echo "L1 Chain ID: $L1_CHAIN_ID"
+  echo "L2 Chain ID: $L2_CHAIN_ID"
+  echo "Output directory: $OUTPUT_DIR"
+
+  echo ""
+  echo "=== Waiting for L1 RPC ==="
+  MAX_RETRIES=100
+  RETRY_COUNT=0
+  until curl -s --max-time 2 -X POST -H "Content-Type: application/json" \
+    --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
+    "$L1_RPC_URL" | jq -e '.result' >/dev/null 2>&1; do
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+    if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+      echo "ERROR: L1 RPC not ready after $MAX_RETRIES retries"
+      exit 1
+    fi
+    sleep 0.2
+  done
+  echo "L1 RPC is ready"
+
+  echo ""
+  echo "=== Getting L1 Genesis Info ==="
+  L1_GENESIS=$(curl -s -X POST -H "Content-Type: application/json" \
+    --data '{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["0x0", true],"id":1}' \
+    "$L1_RPC_URL" | jq '.result')
+  L1_HASH=$(echo "$L1_GENESIS" | jq -r '.hash')
+  L1_TIMESTAMP=$(echo "$L1_GENESIS" | jq -r '.timestamp')
+  echo "L1 genesis hash: $L1_HASH"
+  echo "L1 genesis timestamp: $L1_TIMESTAMP"
+
+  for artifact in genesis.json rollup.json l1-addresses.json builder-p2p-key.txt el-bootnode-p2p-key.txt cl-bootnode-p2p-key.txt; do
+    if [ ! -f "$OUTPUT_DIR/$artifact" ]; then
+      echo "ERROR: missing preallocated L2 artifact: $OUTPUT_DIR/$artifact"
+      exit 1
+    fi
+  done
+
+  ROLLUP_L1_HASH=$(jq -r '.genesis.l1.hash' "$OUTPUT_DIR/rollup.json")
+  echo ""
+  echo "=== Patching L1 Genesis Hash ==="
+  echo "Actual L1 genesis hash: $L1_HASH"
+  echo "Rollup.json L1 hash:    $ROLLUP_L1_HASH"
+
+  if [ "$L1_HASH" != "$ROLLUP_L1_HASH" ]; then
+    TMP_ROLLUP=$(mktemp)
+    jq \
+      --arg l1_hash "$L1_HASH" \
+      '.genesis.l1.hash = $l1_hash | .genesis.l1.number = 0' \
+      "$OUTPUT_DIR/rollup.json" \
+      >"$TMP_ROLLUP"
+    setup_l2_common_replace_output_file "$TMP_ROLLUP" "$OUTPUT_DIR/rollup.json"
+    echo "Patched rollup.json L1 genesis hash"
+  else
+    echo "L1 genesis hash already matches"
+  fi
+
+  setup_l2_common_write_rollup_conductor_config "$OUTPUT_DIR"
+
+  echo ""
+  echo "=== Verifying Preallocated L1 Contracts ==="
+  for contract_name in OptimismPortalProxy SystemConfigProxy L1StandardBridgeProxy; do
+    contract_address=$(jq -r ".$contract_name" "$OUTPUT_DIR/l1-addresses.json")
+    if [ -z "$contract_address" ] || [ "$contract_address" = "null" ]; then
+      echo "ERROR: $contract_name missing from $OUTPUT_DIR/l1-addresses.json"
+      exit 1
+    fi
+
+    contract_code=$(curl -s -X POST -H "Content-Type: application/json" \
+      --data "{\"jsonrpc\":\"2.0\",\"method\":\"eth_getCode\",\"params\":[\"$contract_address\",\"latest\"],\"id\":1}" \
+      "$L1_RPC_URL" | jq -r '.result // empty')
+    if [ -z "$contract_code" ] || [ "$contract_code" = "0x" ]; then
+      echo "ERROR: $contract_name has no code at $contract_address"
+      exit 1
+    fi
+    echo "$contract_name has code at $contract_address"
+  done
+
+  echo ""
+  echo "=== Preallocated L2 Genesis Finalization Complete ==="
+  exit 0
 fi
 
 echo "=== L2 Genesis Generator (Live Deployment) ==="
 echo "L1 RPC URL: $L1_RPC_URL"
 echo "L1 Chain ID: $L1_CHAIN_ID"
 echo "L2 Chain ID: $L2_CHAIN_ID"
-echo "Activation admin address: $L2_ACTIVATION_ADMIN_ADDR"
-if [ -n "$L2_BASE_AZUL_BLOCK" ]; then
-  echo "Base Azul activation block: $L2_BASE_AZUL_BLOCK"
-else
-  echo "Base Azul activation block: <unset>"
-fi
-if [ -n "$L2_BASE_BERYL_BLOCK" ]; then
-  echo "Base Beryl activation block: $L2_BASE_BERYL_BLOCK"
-else
-  echo "Base Beryl activation block: <unset>"
-fi
-if [ -n "$L2_BASE_COBALT_BLOCK" ]; then
-  echo "Base Cobalt activation block: $L2_BASE_COBALT_BLOCK"
-else
-  echo "Base Cobalt activation block: <unset>"
-fi
-if [ -n "$L2_ISTHMUS_BLOCK" ]; then
-  echo "Isthmus activation block: $L2_ISTHMUS_BLOCK"
-else
-  echo "Isthmus activation block: <unset>"
-fi
+setup_l2_common_print_activation_config
 echo "Output directory: $OUTPUT_DIR"
 
 # Wait for L1 RPC to be available
@@ -174,161 +219,8 @@ op-deployer inspect rollup \
   >"$OUTPUT_DIR/rollup.json"
 echo "Rollup config written to $OUTPUT_DIR/rollup.json"
 
-TMP_GENESIS=$(mktemp)
-jq \
-  --arg activation_admin "$L2_ACTIVATION_ADMIN_ADDR" \
-  '.config.activationAdminAddress = $activation_admin' \
-  "$OUTPUT_DIR/genesis.json" \
-  >"$TMP_GENESIS"
-replace_output_file "$TMP_GENESIS" "$OUTPUT_DIR/genesis.json"
-echo "Patched activation admin into genesis config"
-
-L2_BLOCK_TIME=$(jq -re '.block_time' "$OUTPUT_DIR/rollup.json")
-L2_GENESIS_TIME=$(jq -re '.genesis.l2_time' "$OUTPUT_DIR/rollup.json")
-if [ -n "$L2_ISTHMUS_BLOCK" ]; then
-  L2_ISTHMUS_TIME=$((L2_GENESIS_TIME + L2_BLOCK_TIME * L2_ISTHMUS_BLOCK))
-
-  echo ""
-  echo "=== Configuring Isthmus Activation ==="
-  echo "L2 genesis time: $L2_GENESIS_TIME"
-  echo "L2 block time: $L2_BLOCK_TIME"
-  echo "Isthmus activation block: $L2_ISTHMUS_BLOCK"
-  echo "Derived Isthmus activation timestamp: $L2_ISTHMUS_TIME"
-
-  TMP_ROLLUP=$(mktemp)
-  jq \
-    --argjson isthmus_time "$L2_ISTHMUS_TIME" \
-    '.isthmus_time = $isthmus_time' \
-    "$OUTPUT_DIR/rollup.json" \
-    >"$TMP_ROLLUP"
-  replace_output_file "$TMP_ROLLUP" "$OUTPUT_DIR/rollup.json"
-
-  TMP_GENESIS=$(mktemp)
-  jq \
-    --argjson isthmus_time "$L2_ISTHMUS_TIME" \
-    '.config.isthmusTime = $isthmus_time' \
-    "$OUTPUT_DIR/genesis.json" \
-    >"$TMP_GENESIS"
-  replace_output_file "$TMP_GENESIS" "$OUTPUT_DIR/genesis.json"
-
-  echo "Patched Isthmus activation into rollup and genesis configs"
-else
-  echo ""
-  echo "=== Configuring Isthmus Activation ==="
-  echo "L2 genesis time: $L2_GENESIS_TIME"
-  echo "L2 block time: $L2_BLOCK_TIME"
-  echo "Isthmus activation block is unset; leaving isthmus_time and isthmusTime unchanged"
-fi
-
-if [ -n "$L2_BASE_AZUL_BLOCK" ]; then
-  L2_BASE_AZUL_TIME=$((L2_GENESIS_TIME + L2_BLOCK_TIME * L2_BASE_AZUL_BLOCK))
-
-  echo ""
-  echo "=== Configuring Base Azul Activation ==="
-  echo "L2 genesis time: $L2_GENESIS_TIME"
-  echo "L2 block time: $L2_BLOCK_TIME"
-  echo "Base Azul activation block: $L2_BASE_AZUL_BLOCK"
-  echo "Derived Base Azul activation timestamp: $L2_BASE_AZUL_TIME"
-
-  TMP_ROLLUP=$(mktemp)
-  jq \
-    --argjson azul_time "$L2_BASE_AZUL_TIME" \
-    '.base = ((.base // {}) + {azul: $azul_time})' \
-    "$OUTPUT_DIR/rollup.json" \
-    >"$TMP_ROLLUP"
-  replace_output_file "$TMP_ROLLUP" "$OUTPUT_DIR/rollup.json"
-
-  TMP_GENESIS=$(mktemp)
-  jq \
-    --argjson azul_time "$L2_BASE_AZUL_TIME" \
-    '.config.osakaTime = $azul_time
-    | .config.base = ((.config.base // {}) + {azul: $azul_time})' \
-    "$OUTPUT_DIR/genesis.json" \
-    >"$TMP_GENESIS"
-  replace_output_file "$TMP_GENESIS" "$OUTPUT_DIR/genesis.json"
-
-  echo "Patched Base Azul activation into rollup and genesis configs"
-else
-  echo ""
-  echo "=== Configuring Base Azul Activation ==="
-  echo "L2 genesis time: $L2_GENESIS_TIME"
-  echo "L2 block time: $L2_BLOCK_TIME"
-  echo "Base Azul activation block is unset; leaving base.azul and osakaTime unchanged"
-fi
-
-if [ -n "$L2_BASE_BERYL_BLOCK" ]; then
-  L2_BASE_BERYL_TIME=$((L2_GENESIS_TIME + L2_BLOCK_TIME * L2_BASE_BERYL_BLOCK))
-
-  echo ""
-  echo "=== Configuring Base Beryl Activation ==="
-  echo "L2 genesis time: $L2_GENESIS_TIME"
-  echo "L2 block time: $L2_BLOCK_TIME"
-  echo "Base Beryl activation block: $L2_BASE_BERYL_BLOCK"
-  echo "Derived Base Beryl activation timestamp: $L2_BASE_BERYL_TIME"
-
-  TMP_ROLLUP=$(mktemp)
-  jq \
-    --argjson beryl_time "$L2_BASE_BERYL_TIME" \
-    '.base = ((.base // {}) + {beryl: $beryl_time})' \
-    "$OUTPUT_DIR/rollup.json" \
-    >"$TMP_ROLLUP"
-  replace_output_file "$TMP_ROLLUP" "$OUTPUT_DIR/rollup.json"
-
-  TMP_GENESIS=$(mktemp)
-  jq \
-    --argjson beryl_time "$L2_BASE_BERYL_TIME" \
-    '.config.base = ((.config.base // {}) + {beryl: $beryl_time})' \
-    "$OUTPUT_DIR/genesis.json" \
-    >"$TMP_GENESIS"
-  replace_output_file "$TMP_GENESIS" "$OUTPUT_DIR/genesis.json"
-
-  echo "Patched Base Beryl activation into rollup and genesis configs"
-else
-  echo ""
-  echo "=== Configuring Base Beryl Activation ==="
-  echo "L2 genesis time: $L2_GENESIS_TIME"
-  echo "L2 block time: $L2_BLOCK_TIME"
-  echo "Base Beryl activation block is unset; leaving base.beryl unchanged"
-fi
-
-if [ -n "$L2_BASE_COBALT_BLOCK" ]; then
-  L2_BASE_COBALT_TIME=$((L2_GENESIS_TIME + L2_BLOCK_TIME * L2_BASE_COBALT_BLOCK))
-
-  echo ""
-  echo "=== Configuring Base Cobalt Activation ==="
-  echo "L2 genesis time: $L2_GENESIS_TIME"
-  echo "L2 block time: $L2_BLOCK_TIME"
-  echo "Base Cobalt activation block: $L2_BASE_COBALT_BLOCK"
-  echo "Derived Base Cobalt activation timestamp: $L2_BASE_COBALT_TIME"
-
-  TMP_ROLLUP=$(mktemp)
-  jq \
-    --argjson cobalt_time "$L2_BASE_COBALT_TIME" \
-    '.base = ((.base // {}) + {cobalt: $cobalt_time})' \
-    "$OUTPUT_DIR/rollup.json" \
-    >"$TMP_ROLLUP"
-  replace_output_file "$TMP_ROLLUP" "$OUTPUT_DIR/rollup.json"
-
-  TMP_GENESIS=$(mktemp)
-  jq \
-    --argjson cobalt_time "$L2_BASE_COBALT_TIME" \
-    '.config.base = ((.config.base // {}) + {cobalt: $cobalt_time})' \
-    "$OUTPUT_DIR/genesis.json" \
-    >"$TMP_GENESIS"
-  replace_output_file "$TMP_GENESIS" "$OUTPUT_DIR/genesis.json"
-
-  echo "Patched Base Cobalt activation into rollup and genesis configs"
-else
-  echo ""
-  echo "=== Configuring Base Cobalt Activation ==="
-  echo "L2 genesis time: $L2_GENESIS_TIME"
-  echo "L2 block time: $L2_BLOCK_TIME"
-  echo "Base Cobalt activation block is unset; leaving base.cobalt unchanged"
-fi
-
-echo "Writing rollup-conductor.json (base fields stripped for op-conductor compatibility)..."
-jq 'del(.base)' "$OUTPUT_DIR/rollup.json" >"$OUTPUT_DIR/rollup-conductor.json"
-echo "rollup-conductor.json written to $OUTPUT_DIR/rollup-conductor.json"
+setup_l2_common_patch_artifacts "$OUTPUT_DIR"
+setup_l2_common_write_rollup_conductor_config "$OUTPUT_DIR"
 
 echo "Extracting L1 addresses..."
 op-deployer inspect l1 \
@@ -351,30 +243,7 @@ else
   echo "L1 genesis hash matches!"
 fi
 
-# =============================================================================
-# Generate P2P Keys for Builder
-# =============================================================================
-echo ""
-echo "=== Generating P2P Keys ==="
-
-echo "$BUILDER_P2P_KEY" >"$OUTPUT_DIR/builder-p2p-key.txt"
-echo "$BUILDER_ENODE_ID" >"$OUTPUT_DIR/builder-enode-id.txt"
-printf "%s" "$L2_EL_BOOTNODE_P2P_KEY" >"$OUTPUT_DIR/el-bootnode-p2p-key.txt"
-echo "$L2_EL_BOOTNODE_ENODE_ID" >"$OUTPUT_DIR/el-bootnode-enode-id.txt"
-echo "$L2_EL_BOOTNODE_ENODE" >"$OUTPUT_DIR/el-bootnode-enode.txt"
-printf "%s" "$L2_CL_BOOTNODE_P2P_KEY" >"$OUTPUT_DIR/cl-bootnode-p2p-key.txt"
-echo "$L2_CL_BOOTNODE_ENR_PATH" >"$OUTPUT_DIR/cl-bootnode-enr-path.txt"
-echo "$SEQ1_P2P_KEY" >"$OUTPUT_DIR/sequencer-1-p2p-key.txt"
-echo "$SEQ2_P2P_KEY" >"$OUTPUT_DIR/sequencer-2-p2p-key.txt"
-
-echo "Builder P2P key written to $OUTPUT_DIR/builder-p2p-key.txt"
-echo "Builder enode ID: $BUILDER_ENODE_ID"
-echo "EL bootnode P2P key written to $OUTPUT_DIR/el-bootnode-p2p-key.txt"
-echo "EL bootnode enode: $L2_EL_BOOTNODE_ENODE"
-echo "CL bootnode P2P key written to $OUTPUT_DIR/cl-bootnode-p2p-key.txt"
-echo "CL bootnode ENR path: $L2_CL_BOOTNODE_ENR_PATH"
-echo "Sequencer-1 P2P key written to $OUTPUT_DIR/sequencer-1-p2p-key.txt"
-echo "Sequencer-2 P2P key written to $OUTPUT_DIR/sequencer-2-p2p-key.txt"
+setup_l2_common_write_p2p_keys "$OUTPUT_DIR"
 
 # Cleanup
 rm -rf "$OP_DEPLOYER_WORKDIR"

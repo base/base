@@ -28,10 +28,22 @@ The easiest way to interact with Docker is through the Justfile recipes:
 
 ```bash
 just devnet up     # Start fresh devnet (stops existing, clears data, rebuilds)
+just devnet up-fast # Start fresh single-sequencer devnet with preallocated L1 rollup state and no ZK prover
 just devnet down   # Stop devnet and remove data
 just devnet logs   # Stream logs from all containers
 just devnet status # Check block numbers and sync status
 ```
+
+`up-fast` is optimized for local iteration. It uses `op-deployer` in genesis mode
+to preallocate the L1 rollup contracts into the L1 genesis state, instead of
+deploying those contracts through live L1 transactions after the chain starts.
+It also skips the ZK prover image and containers by default. To include the ZK
+prover, pass `zk=dry-run` or `zk=cluster`.
+
+Use `up-fast` when you need a quick devnet for node, RPC, batcher, transaction,
+or load-test iteration. Use `up` or `up-single` when you need to exercise the
+live L1 deployment path, deployment transaction behavior, the HA conductor
+setup, or the default ZK prover stack.
 
 To build a specific Rust service image directly:
 

@@ -49,6 +49,10 @@ group "devnet" {
   targets = ["base", "batcher", "prover-service", "zk-host"]
 }
 
+group "devnet-fast" {
+  targets = ["base", "batcher"]
+}
+
 group "ingress" {
   targets = [
     "base",

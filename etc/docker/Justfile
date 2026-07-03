@@ -3,6 +3,7 @@ set working-directory := '../..'
 
 _ha := "-f etc/docker/docker-compose.yml -f etc/docker/docker-compose.ha.yml"
 _base := "-f etc/docker/docker-compose.yml"
+_fast := "-f etc/docker/docker-compose.yml -f etc/docker/docker-compose.fast.yml"
 _env := "--env-file etc/docker/devnet-env"
 _yaml_to_env := "etc/scripts/yaml-to-compose-env.py"
 
@@ -17,6 +18,10 @@ up zk='dry-run':
 # Stops devnet, deletes data, and starts fresh with a single sequencer (no conductor)
 up-single zk='dry-run':
     just --justfile {{ source_file() }} _up-devnet "base" {{ quote(zk) }}
+
+# Stops devnet, deletes data, and starts fresh with a single sequencer and preallocated L1 rollup state
+up-fast zk='disabled':
+    just --justfile {{ source_file() }} _up-devnet "fast" {{ quote(zk) }}
 
 # Stops devnet, deletes data, and starts fresh with profiling (Pyroscope + optimized builds)
 profiling: down _build-setup-image (_build-rust-images "devnet" "profiling")
@@ -160,7 +165,7 @@ _build-rust-images group profile='dev':
     case "{{ profile }}" in
       dev|profiling)
         case "{{ group }}" in
-          devnet) elf_require=0 ;;
+          devnet|devnet-fast) elf_require=0 ;;
         esac
         ;;
     esac
@@ -177,13 +182,32 @@ _up-devnet compose_profile zk:
     case "$compose_profile" in
       ha) compose_files=({{ _ha }}) ;;
       base) compose_files=({{ _base }}) ;;
+      fast) compose_files=({{ _fast }}) ;;
       *)
-        echo "ERROR: compose profile must be 'ha' or 'base' (got '${compose_profile}')" >&2
+        echo "ERROR: compose profile must be 'ha', 'base', or 'fast' (got '${compose_profile}')" >&2
         exit 1
         ;;
     esac
 
+    rust_image_group="devnet"
+    compose_profile_args=""
+    if [ "$compose_profile" = "fast" ]; then
+      case "$zk_mode" in
+        disabled) rust_image_group="devnet-fast" ;;
+        dry-run|cluster) compose_profile_args="--profile zk" ;;
+      esac
+    elif [ "$zk_mode" = "disabled" ]; then
+      echo "ERROR: zk=disabled is only supported with just devnet up-fast" >&2
+      exit 1
+    fi
+
     case "$zk_mode" in
+      disabled)
+        just --justfile {{ source_file() }} down
+        just --justfile {{ source_file() }} _build-setup-image
+        just --justfile {{ source_file() }} _build-rust-images "$rust_image_group" "dev"
+        docker compose {{ _env }} "${compose_files[@]}" up -d --no-build
+        ;;
       dry-run)
         just --justfile {{ source_file() }} down
         just --justfile {{ source_file() }} _build-setup-image
@@ -241,7 +265,7 @@ _up-devnet compose_profile zk:
         docker compose {{ _env }} --env-file "$cluster_env" "${compose_files[@]}" up -d --no-build --remove-orphans
         ;;
       *)
-        echo "ERROR: zk must be 'dry-run' or 'cluster' (got '${zk_mode}')" >&2
+        echo "ERROR: zk must be 'disabled', 'dry-run', or 'cluster' (got '${zk_mode}')" >&2
         exit 1
         ;;
     esac

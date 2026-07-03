@@ -1,0 +1,59 @@
+services:
+  setup-l1:
+    volumes:
+      - ../../.devnet:/devnet
+    environment:
+      - PREALLOCATE_L2=true
+      - L2_OUTPUT_DIR=/devnet/l2/configs
+      - L1_CHAIN_ID=${L1_CHAIN_ID}
+      - L2_CHAIN_ID=${L2_CHAIN_ID}
+      - L2_ISTHMUS_BLOCK=${L2_ISTHMUS_BLOCK-}
+      - L2_BASE_AZUL_BLOCK=${L2_BASE_AZUL_BLOCK-}
+      - L2_BASE_BERYL_BLOCK=${L2_BASE_BERYL_BLOCK-}
+      - L2_BASE_COBALT_BLOCK=${L2_BASE_COBALT_BLOCK-}
+      - DEPLOYER_ADDR=${DEPLOYER_ADDR}
+      - DEPLOYER_KEY=${DEPLOYER_KEY}
+      - SEQUENCER_ADDR=${SEQUENCER_ADDR}
+      - BATCHER_ADDR=${BATCHER_ADDR}
+      - PROPOSER_ADDR=${PROPOSER_ADDR}
+      - CHALLENGER_ADDR=${CHALLENGER_ADDR}
+      - BUILDER_P2P_KEY=${BUILDER_P2P_KEY}
+      - BUILDER_ENODE_ID=${BUILDER_ENODE_ID}
+      - L2_EL_BOOTNODE_P2P_KEY=${L2_EL_BOOTNODE_P2P_KEY}
+      - L2_EL_BOOTNODE_ENODE_ID=${L2_EL_BOOTNODE_ENODE_ID}
+      - L2_EL_BOOTNODE_ENODE=${L2_EL_BOOTNODE_ENODE}
+      - L2_CL_BOOTNODE_P2P_KEY=${L2_CL_BOOTNODE_P2P_KEY}
+      - L2_CL_BOOTNODE_ENR_PATH=${L2_CL_BOOTNODE_ENR_PATH}
+      - SEQ1_P2P_KEY=${SEQ1_P2P_KEY}
+      - SEQ2_P2P_KEY=${SEQ2_P2P_KEY}
+
+  setup-l2:
+    environment:
+      - SETUP_L2_MODE=preallocated
+
+  base-builder:
+    depends_on:
+      l1-el:
+        condition: service_healthy
+      l1-cl:
+        condition: service_healthy
+
+  base-client:
+    depends_on:
+      l1-el:
+        condition: service_healthy
+      l1-cl:
+        condition: service_healthy
+
+  base-rpc:
+    depends_on:
+      l1-el:
+        condition: service_healthy
+      l1-cl:
+        condition: service_healthy
+
+  zk-prover-postgres:
+    profiles: ["zk"]
+
+  base-prover-zk:
+    profiles: ["zk"]
