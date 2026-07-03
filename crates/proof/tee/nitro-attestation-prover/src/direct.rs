@@ -52,9 +52,15 @@ impl DirectProver {
     pub const fn image_id(&self) -> &[u32; 8] {
         &self.image_id
     }
+}
 
-    /// Generates a Nitro attestation proof for the given raw attestation document bytes.
-    pub async fn generate_proof(&self, attestation_bytes: &[u8]) -> Result<TeeAttestationProof> {
+#[async_trait::async_trait]
+impl TeeAttestationProofProvider for DirectProver {
+    async fn generate_proof_for_signer(
+        &self,
+        attestation_bytes: &[u8],
+        _signer_address: Address,
+    ) -> base_proof_tee_attestation::Result<TeeAttestationProof> {
         let elf = Arc::clone(&self.elf);
         let trusted_certs_prefix_len = self.trusted_certs_prefix_len;
         let attestation_owned = attestation_bytes.to_vec();
@@ -93,17 +99,6 @@ impl DirectProver {
             output: Bytes::from(journal_bytes),
             proof_bytes: Bytes::from(seal),
         })
-    }
-}
-
-#[async_trait::async_trait]
-impl TeeAttestationProofProvider for DirectProver {
-    async fn generate_proof_for_signer(
-        &self,
-        attestation_bytes: &[u8],
-        _signer_address: Address,
-    ) -> base_proof_tee_attestation::Result<TeeAttestationProof> {
-        Ok(self.generate_proof(attestation_bytes).await?)
     }
 }
 
