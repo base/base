@@ -12,9 +12,7 @@ use std::{
 use alloy_primitives::{Address, Bytes, keccak256};
 use alloy_sol_types::{SolCall, SolValue};
 use base_proof_contracts::{ITEEProverRegistry, TEEProverRegistryClient};
-use base_proof_tee_attestation::{
-    TeeAttestationKind, TeeAttestationProof, TeeAttestationProofProvider,
-};
+use base_proof_tee_attestation::{TeeAttestationKind, TeeAttestationProof};
 use base_proof_tee_nitro_verifier::VerifierJournal;
 use base_proof_tee_tdx_verifier::TDXVerifierJournal;
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
@@ -211,10 +209,8 @@ impl ProofTaskSet {
     }
 }
 
-impl<N, D, R, T> SignerManager<PlatformProofProvider<N, D>, R, T>
+impl<R, T> SignerManager<PlatformProofProvider, R, T>
 where
-    N: TeeAttestationProofProvider,
-    D: TeeAttestationProofProvider,
     R: TEEProverRegistryClient,
     T: TxManager,
 {
@@ -556,10 +552,8 @@ where
     }
 }
 
-impl<N, D, R, T> SignerManager<PlatformProofProvider<N, D>, R, T>
+impl<R, T> SignerManager<PlatformProofProvider, R, T>
 where
-    N: TeeAttestationProofProvider + 'static,
-    D: TeeAttestationProofProvider + 'static,
     R: TEEProverRegistryClient + 'static,
     T: TxManager + 'static,
 {
@@ -642,6 +636,7 @@ mod tests {
 
     use alloy_primitives::{Address, B256};
     use async_trait::async_trait;
+    use base_proof_tee_attestation::TeeAttestationProofProvider;
     use base_proof_tee_nitro_verifier::VerificationResult;
     use base_tx_manager::{SendHandle, TxManagerError};
     use tokio::sync::Notify;
@@ -663,7 +658,7 @@ mod tests {
     const SIGNER_A: Address = Address::new([0xAA; 20]);
     const SIGNER_B: Address = Address::new([0xBB; 20]);
 
-    type TestProofProvider = PlatformProofProvider<RecordingProofProvider, RecordingProofProvider>;
+    type TestProofProvider = PlatformProofProvider;
     type TestSignerManager =
         Arc<SignerManager<TestProofProvider, MockRegistry, RecordingTxManager>>;
     type ProofRecords = Arc<Mutex<Vec<(Address, Vec<u8>)>>>;

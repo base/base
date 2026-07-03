@@ -323,11 +323,7 @@ impl TeeAttestationProofProvider for BoundlessProver {
         let input = TdxVerifierInput::decode_for_signer(attestation_bytes, signer_address)?;
 
         let (client, params) = self.build_client_and_params(&input).await?;
-        if self
-            .recovery_blocked
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .contains(&signer_address)
+        if self.recovery_blocked.lock().unwrap_or_else(|e| e.into_inner()).contains(&signer_address)
         {
             return Ok(self.submit_and_wait(&client, params).await?);
         }

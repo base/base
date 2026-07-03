@@ -16,7 +16,6 @@ use base_balance_monitor::BalanceMonitorLayer;
 use base_cli_utils::RuntimeManager;
 use base_health::HealthServer;
 use base_proof_contracts::{NitroEnclaveVerifierContractClient, TEEProverRegistryContractClient};
-use base_proof_tee_attestation::TeeAttestationProofProvider;
 use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -88,10 +87,7 @@ pub struct RegistrarConfig<P> {
     pub metrics_config: base_cli_utils::MetricsConfig,
 }
 
-impl<P> fmt::Debug for RegistrarConfig<P>
-where
-    P: fmt::Debug,
-{
+impl<P> fmt::Debug for RegistrarConfig<P> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RegistrarConfig")
             .field("l1_rpc_url", &self.l1_rpc_url.origin().unicode_serialization())
@@ -106,7 +102,6 @@ where
             .field("prover_port", &self.prover_port)
             .field("signing", &self.signing)
             .field("tx_manager_config", &self.tx_manager_config)
-            .field("proof_provider", &self.proof_provider)
             .field("boundless_rpc_url", &self.boundless_rpc_url.origin().unicode_serialization())
             .field("boundless_signer_address", &self.boundless_signer_address)
             .field("max_attestation_age", &self.max_attestation_age)
@@ -125,11 +120,7 @@ where
     }
 }
 
-impl<N, T> RegistrarConfig<PlatformProofProvider<N, T>>
-where
-    N: TeeAttestationProofProvider + fmt::Debug + 'static,
-    T: TeeAttestationProofProvider + fmt::Debug + 'static,
-{
+impl RegistrarConfig<PlatformProofProvider> {
     /// Runs the full registrar service lifecycle.
     ///
     /// # Errors

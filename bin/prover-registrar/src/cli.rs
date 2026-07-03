@@ -27,8 +27,7 @@ base_cli_utils::define_health_args!("BASE_REGISTRAR", 8080);
 base_tx_manager::define_signer_cli!("BASE_REGISTRAR");
 base_tx_manager::define_tx_manager_cli!("BASE_REGISTRAR");
 
-type CliRegistrarConfig =
-    RegistrarConfig<PlatformProofProvider<NitroBoundlessProver, TdxBoundlessProver>>;
+type CliRegistrarConfig = RegistrarConfig<PlatformProofProvider>;
 
 /// Prover Registrar — automated TEE signer registration service.
 #[derive(Parser)]

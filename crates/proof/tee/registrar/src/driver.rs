@@ -13,7 +13,6 @@ use std::{
 
 use alloy_primitives::Address;
 use base_proof_contracts::TEEProverRegistryClient;
-use base_proof_tee_attestation::TeeAttestationProofProvider;
 use base_tx_manager::TxManager;
 use futures::stream::StreamExt;
 use tokio_util::sync::CancellationToken;
@@ -128,12 +127,10 @@ impl<D, S, P, R, T> RegistrationDriver<D, S, P, R, T> {
     }
 }
 
-impl<D, S, N, P, R, T> RegistrationDriver<D, S, PlatformProofProvider<N, P>, R, T>
+impl<D, S, R, T> RegistrationDriver<D, S, PlatformProofProvider, R, T>
 where
     D: InstanceDiscovery + 'static,
     S: EnclaveEndpointClient + 'static,
-    N: TeeAttestationProofProvider + 'static,
-    P: TeeAttestationProofProvider + 'static,
     R: TEEProverRegistryClient + 'static,
     T: TxManager + 'static,
 {
@@ -436,6 +433,10 @@ mod tests {
         time::SystemTime,
     };
 
+    use async_trait::async_trait;
+    use base_proof_tee_attestation::{
+        Result as AttestationResult, TeeAttestationProof, TeeAttestationProofProvider,
+    };
     use tokio_util::sync::CancellationToken;
     use url::Url;
 
@@ -509,10 +510,21 @@ mod tests {
         }
     }
 
+    #[async_trait]
+    impl TeeAttestationProofProvider for MockEnclaveEndpointClient {
+        async fn generate_proof_for_signer(
+            &self,
+            _attestation_bytes: &[u8],
+            _signer_address: Address,
+        ) -> AttestationResult<TeeAttestationProof> {
+            unreachable!("driver tests do not generate proofs")
+        }
+    }
+
     type TestDriver = RegistrationDriver<
         Vec<ProverInstance>,
         MockEnclaveEndpointClient,
-        PlatformProofProvider<MockEnclaveEndpointClient, MockEnclaveEndpointClient>,
+        PlatformProofProvider,
         (),
         NoopTxManager,
     >;
