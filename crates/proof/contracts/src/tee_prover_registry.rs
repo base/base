@@ -124,7 +124,7 @@ impl TEEProverRegistryClient for TEEProverRegistryContractClient {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, Bytes, keccak256};
+    use alloy_primitives::{Address, Bytes};
     use alloy_sol_types::SolCall;
 
     use super::*;
@@ -139,13 +139,6 @@ mod tests {
         // 4 (selector) + 2×32 (offsets) + 2×32 (lengths) + 0 (data) = 132
         assert_eq!(encoded.len(), 132);
         assert_eq!(&encoded[..4], &ITEEProverRegistry::registerSignerCall::SELECTOR);
-    }
-
-    #[test]
-    fn register_tdx_signer_selector_matches_compiled_solidity_abi() {
-        let selector = &keccak256(b"registerTDXSigner(bytes,bytes)")[..4];
-
-        assert_eq!(selector, ITEEProverRegistry::registerTDXSignerCall::SELECTOR);
     }
 
     #[test]
@@ -172,13 +165,9 @@ mod tests {
     #[test]
     fn all_selectors_are_nonzero() {
         assert_ne!(ITEEProverRegistry::registerSignerCall::SELECTOR, [0u8; 4]);
-        assert_ne!(ITEEProverRegistry::registerTDXSignerCall::SELECTOR, [0u8; 4]);
         assert_ne!(ITEEProverRegistry::deregisterSignerCall::SELECTOR, [0u8; 4]);
         assert_ne!(ITEEProverRegistry::isValidSignerCall::SELECTOR, [0u8; 4]);
         assert_ne!(ITEEProverRegistry::isRegisteredSignerCall::SELECTOR, [0u8; 4]);
-        assert_ne!(ITEEProverRegistry::signerImageHashCall::SELECTOR, [0u8; 4]);
-        assert_ne!(ITEEProverRegistry::getExpectedNitroImageHashCall::SELECTOR, [0u8; 4]);
-        assert_ne!(ITEEProverRegistry::getExpectedTDXImageHashCall::SELECTOR, [0u8; 4]);
         assert_ne!(ITEEProverRegistry::getRegisteredSignersCall::SELECTOR, [0u8; 4]);
     }
 }
