@@ -3,6 +3,7 @@
 use std::fmt::Display;
 
 use alloy_eips::{BlockId, BlockNumberOrTag};
+use alloy_primitives::B256;
 use alloy_provider::Network;
 use alloy_rpc_types_eth::Block as RpcBlock;
 use alloy_transport::TransportResult;
@@ -69,40 +70,35 @@ impl L2ForkchoiceState {
         engine_client: &EngineClient_,
         checkpoint_reader: &CheckpointReader,
     ) -> Result<Self, SyncStartError> {
-        let finalized = {
-            let rpc_block =
-                match get_block_compat(engine_client, BlockNumberOrTag::Finalized.into()).await {
-                    Ok(Some(block)) => block,
-                    Ok(None) => engine_client
-                        .get_l2_block(cfg.genesis.l2.number.into())
-                        .full()
-                        .await?
-                        .ok_or(SyncStartError::BlockNotFound(cfg.genesis.l2.number.into()))?,
-                    Err(e) => return Err(e.into()),
-                };
-
-            let rpc_block_number = rpc_block.header.number;
-            match block_info_from_reth_or_checkpoint(
-                cfg,
-                ForkchoiceCheckpointLabel::Finalized,
-                rpc_block,
-                checkpoint_reader,
-            )
+        let finalized = match get_block_compat(engine_client, BlockNumberOrTag::Finalized.into())
             .await
-            {
-                Ok(info) => info,
-                Err(SyncStartError::FromBlock(FromBlockError::MissingL1InfoDeposit(hash))) => {
-                    warn!(
-                        target: "sync_start",
-                        block_hash = %hash,
-                        block_number = rpc_block_number,
-                        "finalized block body is pruned and no valid checkpoint exists, \
-                         recovering to earliest unpruned block"
-                    );
-                    find_earliest_unpruned_block(cfg, engine_client, rpc_block_number).await?
+        {
+            Ok(Some(rpc_block)) => {
+                let rpc_block_number = rpc_block.header.number;
+                match block_info_from_reth_or_checkpoint(
+                    cfg,
+                    ForkchoiceCheckpointLabel::Finalized,
+                    rpc_block,
+                    checkpoint_reader,
+                )
+                .await
+                {
+                    Ok(info) => info,
+                    Err(SyncStartError::FromBlock(FromBlockError::MissingL1InfoDeposit(hash))) => {
+                        warn!(
+                            target: "sync_start",
+                            block_hash = %hash,
+                            block_number = rpc_block_number,
+                            "finalized block body is pruned and no valid checkpoint exists, \
+                             recovering to earliest unpruned block"
+                        );
+                        find_earliest_unpruned_block(cfg, engine_client, rpc_block_number).await?
+                    }
+                    Err(e) => return Err(e),
                 }
-                Err(e) => return Err(e),
             }
+            Ok(None) => genesis_l2_block_info(cfg),
+            Err(e) => return Err(e.into()),
         };
         let safe = match get_block_compat(engine_client, BlockNumberOrTag::Safe.into()).await {
             Ok(Some(block)) => {
@@ -141,6 +137,19 @@ impl L2ForkchoiceState {
         };
 
         Ok(Self { un_safe, safe, finalized })
+    }
+}
+
+fn genesis_l2_block_info(cfg: &RollupConfig) -> L2BlockInfo {
+    L2BlockInfo {
+        block_info: BlockInfo {
+            hash: cfg.genesis.l2.hash,
+            number: cfg.genesis.l2.number,
+            parent_hash: B256::ZERO,
+            timestamp: cfg.genesis.l2_time,
+        },
+        l1_origin: cfg.genesis.l1,
+        seq_num: 0,
     }
 }
 
