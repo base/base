@@ -3,9 +3,9 @@
 use std::fmt;
 
 use alloy_primitives::Address;
-use base_proof_tee_attestation::{Result, TeeAttestationProof, TeeAttestationProofProvider};
-
-use crate::AttestationKind;
+use base_proof_tee_attestation::{
+    Result, TeeAttestationKind, TeeAttestationProof, TeeAttestationProofProvider,
+};
 
 /// Pair of proof providers used by the registrar for Nitro and TDX nodes.
 pub struct PlatformProofProvider {
@@ -23,17 +23,17 @@ impl PlatformProofProvider {
         Self { nitro: Box::new(nitro), tdx: Box::new(tdx) }
     }
 
-    fn provider(&self, kind: AttestationKind) -> &dyn TeeAttestationProofProvider {
+    fn provider(&self, kind: TeeAttestationKind) -> &dyn TeeAttestationProofProvider {
         match kind {
-            AttestationKind::Nitro => self.nitro.as_ref(),
-            AttestationKind::Tdx => self.tdx.as_ref(),
+            TeeAttestationKind::Nitro => self.nitro.as_ref(),
+            TeeAttestationKind::Tdx => self.tdx.as_ref(),
         }
     }
 
     /// Generates an attestation proof for `kind`.
     pub async fn generate_proof_for_signer(
         &self,
-        kind: AttestationKind,
+        kind: TeeAttestationKind,
         attestation_bytes: &[u8],
         signer_address: Address,
     ) -> Result<TeeAttestationProof> {
@@ -41,7 +41,7 @@ impl PlatformProofProvider {
     }
 
     /// Blocks recovered-proof reuse for one signer on the selected platform.
-    pub fn block_recovery_for_signer(&self, kind: AttestationKind, signer: Address) {
+    pub fn block_recovery_for_signer(&self, kind: TeeAttestationKind, signer: Address) {
         self.provider(kind).block_recovery_for_signer(signer);
     }
 }

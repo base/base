@@ -1,6 +1,6 @@
 use std::time::SystemTime;
 
-pub use base_proof_tee_attestation::TeeAttestationKind as AttestationKind;
+use base_proof_tee_attestation::TeeAttestationKind;
 use url::Url;
 
 /// A prover instance discovered from the infrastructure layer.
@@ -11,7 +11,7 @@ pub struct ProverInstance {
     /// HTTP endpoint URL for the prover (e.g. `http://10.0.1.5:8000/`).
     pub endpoint: Url,
     /// Attestation platform exposed by this prover.
-    pub attestation_kind: AttestationKind,
+    pub attestation_kind: TeeAttestationKind,
     /// Current health status of the instance.
     pub health_status: InstanceHealthStatus,
     /// Launch time of the instance. Used to determine if recently-launched

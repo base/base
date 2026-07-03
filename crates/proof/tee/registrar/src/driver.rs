@@ -13,13 +13,14 @@ use std::{
 
 use alloy_primitives::Address;
 use base_proof_contracts::TEEProverRegistryClient;
+use base_proof_tee_attestation::TeeAttestationKind;
 use base_tx_manager::TxManager;
 use futures::stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, info, warn};
 
 use crate::{
-    AttestationKind, CertManager, EnclaveEndpointClient, InstanceDiscovery, InstanceHealthStatus,
+    CertManager, EnclaveEndpointClient, InstanceDiscovery, InstanceHealthStatus,
     PlatformProofProvider, ProofTaskSet, ProverClient, ProverInstance, RegistrarMetrics, Result,
     SignerManager,
 };
@@ -258,7 +259,7 @@ where
             return Ok(outcome);
         }
 
-        let nonces = (instance.attestation_kind == AttestationKind::Nitro).then(|| {
+        let nonces = (instance.attestation_kind == TeeAttestationKind::Nitro).then(|| {
             addresses
                 .iter()
                 .map(|signer| self.signer_manager.attestation_nonce(*signer).to_vec())
@@ -300,7 +301,7 @@ where
         if self.config.cancel.is_cancelled() {
             return Ok(outcome);
         }
-        if instance.attestation_kind == AttestationKind::Nitro
+        if instance.attestation_kind == TeeAttestationKind::Nitro
             && let Some(cert_manager) = &self.cert_manager
         {
             let first_attestation = all_attestations
@@ -703,14 +704,14 @@ mod tests {
         let signer_client = MockEnclaveEndpointClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
         let requested_nonces = Arc::clone(&signer_client.requested_nonces);
         let mut instance = healthy_prover_instance(EP1);
-        instance.attestation_kind = AttestationKind::Tdx;
+        instance.attestation_kind = TeeAttestationKind::Tdx;
 
         let driver = cycle_driver(vec![instance], signer_client, CancellationToken::new());
 
         let resolution = discover_once(&driver).await;
 
         assert_eq!(resolution.registerable.len(), 1);
-        assert_eq!(resolution.registerable[0].instance.attestation_kind, AttestationKind::Tdx);
+        assert_eq!(resolution.registerable[0].instance.attestation_kind, TeeAttestationKind::Tdx);
         assert_eq!(*requested_nonces.lock().unwrap(), vec![None]);
     }
 

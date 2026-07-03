@@ -41,7 +41,7 @@ mod traits;
 pub use traits::{EnclaveEndpointClient, InstanceDiscovery};
 
 mod types;
-pub use types::{AttestationKind, InstanceHealthStatus, ProverInstance};
+pub use types::{InstanceHealthStatus, ProverInstance};
 
 #[cfg(test)]
 pub mod test_utils;

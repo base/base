@@ -7,15 +7,13 @@ use std::{
 
 use aws_sdk_ec2::{Client as Ec2Client, types::Reservation};
 use aws_sdk_elasticloadbalancingv2::Client as ElbClient;
+use base_proof_tee_attestation::TeeAttestationKind;
 use reqwest::Client as HttpClient;
 use serde::Deserialize;
 use tracing::{debug, warn};
 use url::Url;
 
-use crate::{
-    AttestationKind, InstanceDiscovery, InstanceHealthStatus, ProverInstance, RegistrarError,
-    Result,
-};
+use crate::{InstanceDiscovery, InstanceHealthStatus, ProverInstance, RegistrarError, Result};
 
 const GCP_METADATA_TOKEN_URL: &str =
     "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
@@ -76,7 +74,7 @@ impl AwsTargetGroupDiscovery {
             instances.push(ProverInstance {
                 instance_id: instance_id.to_string(),
                 endpoint,
-                attestation_kind: AttestationKind::Nitro,
+                attestation_kind: TeeAttestationKind::Nitro,
                 health_status,
                 launch_time,
             });
@@ -312,7 +310,7 @@ impl InstanceDiscovery for GcpNodePoolDiscovery {
             instances.push(ProverInstance {
                 instance_id: format!("gcp/{}", instance.name),
                 endpoint,
-                attestation_kind: AttestationKind::Tdx,
+                attestation_kind: TeeAttestationKind::Tdx,
                 health_status: InstanceHealthStatus::Healthy,
                 launch_time: None,
             });
@@ -410,7 +408,7 @@ mod tests {
         assert_eq!(instances.len(), 4);
         assert_eq!(instances[0].instance_id, "i-001");
         assert_eq!(instances[0].endpoint, Url::parse("http://10.0.0.1:9000").unwrap());
-        assert_eq!(instances[0].attestation_kind, AttestationKind::Nitro);
+        assert_eq!(instances[0].attestation_kind, TeeAttestationKind::Nitro);
         assert_eq!(instances[0].health_status, InstanceHealthStatus::Healthy);
         assert_eq!(instances[0].launch_time, Some(launch_time));
         assert_eq!(instances[1].instance_id, "i-002");

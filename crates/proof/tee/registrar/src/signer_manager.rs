@@ -23,10 +23,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::{
-    AttestationKind, DiscoveryResolution, PlatformProofProvider, RegistrarError, RegistrarMetrics,
-    Result,
-};
+use crate::{DiscoveryResolution, PlatformProofProvider, RegistrarError, RegistrarMetrics, Result};
 
 /// Default maximum number of transaction submission retries for transient
 /// errors before giving up.
@@ -218,7 +215,7 @@ where
     pub async fn register_signer(
         &self,
         instance_id: &str,
-        attestation_kind: AttestationKind,
+        attestation_kind: TeeAttestationKind,
         signer_address: Address,
         attestation_bytes: &[u8],
         signer_cancel: &CancellationToken,
@@ -282,7 +279,7 @@ where
             Err(e) => return Err(RegistrarError::ProofGeneration(e)),
         };
         let attestation_timestamp = match (attestation_kind, proof.kind) {
-            (AttestationKind::Nitro, TeeAttestationKind::Nitro) => {
+            (TeeAttestationKind::Nitro, TeeAttestationKind::Nitro) => {
                 let journal = VerifierJournal::decode(&proof.output)
                     .map_err(|e| RegistrarError::InvalidProofJournal { reason: e.to_string() })?;
                 let expected_nonce = self.attestation_nonce(signer_address);
@@ -296,7 +293,7 @@ where
                 }
                 journal.timestamp
             }
-            (AttestationKind::Tdx, TeeAttestationKind::Tdx) => {
+            (TeeAttestationKind::Tdx, TeeAttestationKind::Tdx) => {
                 let journal = <TDXVerifierJournal as SolValue>::abi_decode_validate(&proof.output)
                     .map_err(|e| RegistrarError::InvalidProofJournal { reason: e.to_string() })?;
                 if journal.signer != signer_address {
@@ -874,7 +871,7 @@ mod tests {
         manager
             .register_signer(
                 TEST_PENDING_INSTANCE_ID,
-                AttestationKind::Nitro,
+                TeeAttestationKind::Nitro,
                 SIGNER_A,
                 ATTESTATION,
                 cancel,
@@ -1228,7 +1225,7 @@ mod tests {
                 manager
                     .register_signer(
                         instance_id,
-                        AttestationKind::Nitro,
+                        TeeAttestationKind::Nitro,
                         signer,
                         ATTESTATION,
                         &cancel,
