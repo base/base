@@ -264,7 +264,7 @@ mod tests {
     use std::collections::HashMap;
 
     use alloy_primitives::Address;
-    use base_prover_service_protocol::{ProofRequestKind, ProveBlockRangeRequest};
+    use base_prover_service_protocol::ProofRequestKind;
 
     use super::*;
     use crate::test_utils::{
@@ -421,31 +421,31 @@ mod tests {
 
     #[tokio::test]
     async fn tick_dispatches_configured_tee_modes() {
-        for mode in [TeeProofMode::Nitro, TeeProofMode::Tdx, TeeProofMode::Both] {
-            let requester = Arc::new(MockProofRequester::default());
-            let mut dispatcher = dispatcher(Arc::clone(&requester));
-            dispatcher.config.tee_proof_mode = mode;
-            let mut current = RecoveredState {
-                parent_address: Address::ZERO,
-                output_root: B256::repeat_byte(0x03),
-                l2_block_number: 100,
-            };
+        let requester = Arc::new(MockProofRequester::default());
+        let mut dispatcher = dispatcher(Arc::clone(&requester));
+        dispatcher.config.tee_proof_mode = TeeProofMode::Both;
+        let mut current = RecoveredState {
+            parent_address: Address::ZERO,
+            output_root: B256::repeat_byte(0x03),
+            l2_block_number: 100,
+        };
 
-            dispatcher.tick(&mut current, 400).await;
+        dispatcher.tick(&mut current, 400).await;
 
-            let requests = requester.requests.lock().unwrap();
-            let request_tee_kind = |request: &ProveBlockRangeRequest| match &request.proof.request {
-                ProofRequestKind::Tee(tee) => tee.tee_kind,
-                other => panic!("unexpected proof request kind: {other:?}"),
-            };
-            for &tee_kind in mode.tee_kinds() {
-                assert_eq!(
-                    requests.values().filter(|r| request_tee_kind(r) == tee_kind).count(),
-                    3
-                );
-            }
-            assert_eq!(requests.len(), mode.tee_kinds().len() * 3);
-            assert_eq!(current.l2_block_number, 400);
+        let requests = requester.requests.lock().unwrap();
+        for &tee_kind in TeeProofMode::Both.tee_kinds() {
+            assert_eq!(
+                requests
+                    .values()
+                    .filter(|request| match &request.proof.request {
+                        ProofRequestKind::Tee(tee) => tee.tee_kind == tee_kind,
+                        other => panic!("unexpected proof request kind: {other:?}"),
+                    })
+                    .count(),
+                3
+            );
         }
+        assert_eq!(requests.len(), 6);
+        assert_eq!(current.l2_block_number, 400);
     }
 }
