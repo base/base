@@ -2,7 +2,8 @@
 
 use std::{
     collections::BTreeMap,
-    sync::{Arc, Mutex as StdMutex, MutexGuard as StdMutexGuard},
+    panic::{AssertUnwindSafe, catch_unwind},
+    sync::{Arc, Mutex as StdMutex, MutexGuard as StdMutexGuard, RwLock as StdRwLock},
     time::Instant,
 };
 
@@ -30,7 +31,8 @@ use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
 
 use crate::{
     AssembledBlock, BlockAssembler, ExecutionError, FlashblockCache, PendingBlocks,
-    PendingBlocksBuilder, PendingStateBuilder, ProviderError, Result, StateProcessorError,
+    PendingBlocksBuilder, PendingFrameObserver, PendingStateBuilder, ProviderError, Result,
+    StateProcessorError,
     metrics::Metrics,
     validation::{
         CanonicalBlockReconciler, FlashblockSequenceValidator, ReconciliationStrategy,
@@ -66,6 +68,51 @@ pub struct StateProcessor<Client> {
     sender: Sender<Arc<PendingBlocks>>,
     cache: Arc<Mutex<FlashblockCache>>,
     live_state: StdMutex<Option<LivePendingState>>,
+    pending_frame_observer: Arc<StdRwLock<Option<Arc<dyn PendingFrameObserver>>>>,
+}
+
+#[derive(Debug)]
+struct ProcessedFlashblock {
+    pending_blocks: Option<Arc<PendingBlocks>>,
+    advanced: bool,
+}
+
+impl ProcessedFlashblock {
+    fn advanced(pending_blocks: Option<Arc<PendingBlocks>>) -> Self {
+        Self { pending_blocks, advanced: true }
+    }
+
+    fn unchanged(pending_blocks: Option<Arc<PendingBlocks>>) -> Self {
+        Self { pending_blocks, advanced: false }
+    }
+}
+
+fn notify_pending_frame_observer(
+    observer: Option<Arc<dyn PendingFrameObserver>>,
+    pending_blocks: &PendingBlocks,
+) {
+    let Some(observer) = observer else {
+        Metrics::pending_frame_observer_skipped().increment(1);
+        return;
+    };
+
+    let start_time = Instant::now();
+    let result = catch_unwind(AssertUnwindSafe(|| observer.on_pending_frame(pending_blocks)));
+    Metrics::pending_frame_observer_duration().record(start_time.elapsed());
+    if result.is_err() {
+        Metrics::pending_frame_observer_panics().increment(1);
+        warn!(message = "pending-frame observer panicked; continuing flashblock processing");
+    }
+}
+fn notify_processed_pending_frame_observer(
+    observer: Option<Arc<dyn PendingFrameObserver>>,
+    processed: &ProcessedFlashblock,
+) {
+    if processed.advanced
+        && let Some(ref pb) = processed.pending_blocks
+    {
+        notify_pending_frame_observer(observer, pb);
+    }
 }
 
 impl<Client> StateProcessor<Client>
@@ -111,6 +158,7 @@ where
         max_depth: u64,
         rx: Arc<Mutex<UnboundedReceiver<StateUpdate>>>,
         sender: Sender<Arc<PendingBlocks>>,
+        pending_frame_observer: Arc<StdRwLock<Option<Arc<dyn PendingFrameObserver>>>>,
     ) -> Self {
         let cache = client
             .best_block_number()
@@ -124,6 +172,7 @@ where
             sender,
             cache: Arc::new(Mutex::new(cache)),
             live_state: StdMutex::new(None),
+            pending_frame_observer,
         }
     }
 
@@ -189,7 +238,14 @@ where
         // Move the blocking MDBX read-tx + EVM rebuild off the async worker
         // thread (multi_thread runtime; borrows stay on-thread, no clone).
         match tokio::task::block_in_place(|| {
-            self.process_flashblock(prev_pending_blocks, &flashblock)
+            let processed = self.process_flashblock(prev_pending_blocks, &flashblock)?;
+            let observer = self
+                .pending_frame_observer
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
+            notify_processed_pending_frame_observer(observer, &processed);
+            Ok(processed.pending_blocks)
         }) {
             Ok(new_pending_blocks) => {
                 if let Some(ref pb) = new_pending_blocks {
@@ -345,12 +401,14 @@ where
         &self,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
         flashblock: &Flashblock,
-    ) -> Result<Option<Arc<PendingBlocks>>> {
+    ) -> Result<ProcessedFlashblock> {
         let pending_blocks = match &prev_pending_blocks {
             Some(pb) => pb,
             None => {
                 if flashblock.index == 0 {
-                    return self.build_pending_state(None, std::slice::from_ref(flashblock));
+                    return self
+                        .build_pending_state(None, std::slice::from_ref(flashblock))
+                        .map(ProcessedFlashblock::advanced);
                 }
 
                 return Err(StateProcessorError::MissingFirstFlashblock);
@@ -366,12 +424,12 @@ where
         );
 
         match validation_result {
-            SequenceValidationResult::NextInSequence => {
-                self.build_pending_state_for_same_block(pending_blocks, flashblock)
-            }
-            SequenceValidationResult::FirstOfNextBlock => {
-                self.build_pending_state_for_next_block(pending_blocks, flashblock)
-            }
+            SequenceValidationResult::NextInSequence => self
+                .build_pending_state_for_same_block(pending_blocks, flashblock)
+                .map(ProcessedFlashblock::advanced),
+            SequenceValidationResult::FirstOfNextBlock => self
+                .build_pending_state_for_next_block(pending_blocks, flashblock)
+                .map(ProcessedFlashblock::advanced),
             SequenceValidationResult::Duplicate => {
                 // We have received a duplicate flashblock for the current block
                 Metrics::unexpected_block_order().increment(1);
@@ -380,7 +438,7 @@ where
                     curr_block = %pending_blocks.latest_block_number(),
                     flashblock_index = %flashblock.index,
                 );
-                Ok(prev_pending_blocks)
+                Ok(ProcessedFlashblock::unchanged(prev_pending_blocks))
             }
             SequenceValidationResult::InvalidNewBlockIndex { block_number, index: _ } => {
                 // We have received a non-zero flashblock for a new block
@@ -391,7 +449,7 @@ where
                     new_block = %block_number,
                 );
                 self.clear_live_state();
-                Ok(None)
+                Ok(ProcessedFlashblock::unchanged(None))
             }
             SequenceValidationResult::NonSequentialGap { expected, actual } => {
                 Metrics::unexpected_block_order().increment(1);
@@ -402,7 +460,7 @@ where
                     "received non-sequential flashblock index for current block"
                 );
                 self.clear_live_state();
-                Ok(None)
+                Ok(ProcessedFlashblock::unchanged(None))
             }
             SequenceValidationResult::NonSequentialPredecessor { expected, actual } => {
                 Metrics::unexpected_block_order().increment(1);
@@ -418,7 +476,7 @@ where
                     "received flashblock with non-sequential predecessor link"
                 );
                 self.clear_live_state();
-                Ok(None)
+                Ok(ProcessedFlashblock::unchanged(None))
             }
         }
     }
@@ -875,6 +933,109 @@ mod tests {
     //! the
     //! invariant so a future change to the runtime flavor (or a `#[tokio::test]`
     //! default-`current_thread` harness driving these fns) fails loudly here.
+
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    use super::{
+        ProcessedFlashblock, notify_pending_frame_observer, notify_processed_pending_frame_observer,
+    };
+    use crate::{PendingBlocks, PendingBlocksBuilder, PendingFrameObserver};
+
+    use alloy_consensus::{Header, Sealed};
+    use alloy_primitives::{Address, B256, Bloom, Bytes, U256};
+    use alloy_rpc_types_engine::PayloadId;
+    use base_common_flashblocks::{
+        ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
+    };
+
+    #[derive(Debug)]
+    struct CountingObserver {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl PendingFrameObserver for CountingObserver {
+        fn on_pending_frame(&self, _pending: &PendingBlocks) {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[derive(Debug)]
+    struct PanicObserver;
+
+    impl PendingFrameObserver for PanicObserver {
+        fn on_pending_frame(&self, _pending: &PendingBlocks) {
+            panic!("observer panic should be isolated");
+        }
+    }
+
+    fn test_pending_blocks() -> PendingBlocks {
+        let flashblock = Flashblock {
+            payload_id: PayloadId::default(),
+            index: 0,
+            base: Some(ExecutionPayloadBaseV1 {
+                parent_beacon_block_root: B256::ZERO,
+                parent_hash: B256::ZERO,
+                fee_recipient: Address::ZERO,
+                prev_randao: B256::ZERO,
+                block_number: 1,
+                gas_limit: 30_000_000,
+                timestamp: 1_700_000_000,
+                extra_data: Bytes::default(),
+                base_fee_per_gas: U256::from(1_000_000_000u64),
+            }),
+            diff: ExecutionPayloadFlashblockDeltaV1 {
+                state_root: B256::ZERO,
+                receipts_root: B256::ZERO,
+                logs_bloom: Bloom::default(),
+                gas_used: 0,
+                block_hash: B256::ZERO,
+                transactions: vec![],
+                withdrawals: vec![],
+                withdrawals_root: B256::ZERO,
+                blob_gas_used: None,
+            },
+            metadata: Metadata::new(1),
+        };
+        let mut builder = PendingBlocksBuilder::new();
+        builder.with_flashblocks([flashblock]);
+        builder.with_header(Sealed::new_unchecked(Header::default(), B256::ZERO));
+        builder.build().expect("pending blocks should build")
+    }
+
+    #[test]
+    fn pending_frame_observer_invokes_and_isolates_panic() {
+        let pending_blocks = test_pending_blocks();
+        let calls = Arc::new(AtomicUsize::new(0));
+        notify_pending_frame_observer(
+            Some(Arc::new(CountingObserver { calls: Arc::clone(&calls) })),
+            &pending_blocks,
+        );
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+
+        notify_pending_frame_observer(Some(Arc::new(PanicObserver)), &pending_blocks);
+        notify_pending_frame_observer(None, &pending_blocks);
+    }
+
+    #[test]
+    fn duplicate_processed_flashblock_does_not_notify_observer() {
+        let pending_blocks = Arc::new(test_pending_blocks());
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        notify_processed_pending_frame_observer(
+            Some(Arc::new(CountingObserver { calls: Arc::clone(&calls) })),
+            &ProcessedFlashblock::advanced(Some(Arc::clone(&pending_blocks))),
+        );
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+
+        notify_processed_pending_frame_observer(
+            Some(Arc::new(CountingObserver { calls: Arc::clone(&calls) })),
+            &ProcessedFlashblock::unchanged(Some(pending_blocks)),
+        );
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
 
     /// Mirrors the wrap at the two call sites: `block_in_place` returning a
     /// value, borrowing on-thread. Under `multi_thread` it runs the closure and

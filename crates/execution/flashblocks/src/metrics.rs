@@ -10,6 +10,12 @@ base_metrics::define_metrics! {
     block_processing_duration: histogram,
     #[describe("Time spent on parallel sender recovery")]
     sender_recovery_duration: histogram,
+    #[describe("Time spent running the pending-frame observer hook")]
+    pending_frame_observer_duration: histogram,
+    #[describe("Count of newly advanced pending frames with no observer installed")]
+    pending_frame_observer_skipped: counter,
+    #[describe("Count of pending-frame observer panics isolated from flashblock processing")]
+    pending_frame_observer_panics: counter,
     #[describe("Number of Flashblocks that arrive in an unexpected order")]
     unexpected_block_order: counter,
     #[describe("Number of flashblocks in a block")]
