@@ -60,13 +60,13 @@ impl ProofEncoder {
             buf.extend_from_slice(&U256::from(number).to_be_bytes::<32>());
         }
 
-        for signature in signatures {
-            let mut normalized: [u8; ECDSA_SIGNATURE_LENGTH] = (*signature)
+        for &signature in signatures {
+            let signature: &[u8; ECDSA_SIGNATURE_LENGTH] = signature
                 .try_into()
                 .map_err(|_| CryptoError::InvalidSignatureLength(signature.len()))?;
-            normalized[ECDSA_SIGNATURE_LENGTH - 1] =
-                Self::normalize_v(normalized[ECDSA_SIGNATURE_LENGTH - 1])?;
-            buf.extend_from_slice(&normalized);
+            buf.extend_from_slice(signature);
+            let v_index = buf.len() - 1;
+            buf[v_index] = Self::normalize_v(buf[v_index])?;
         }
 
         Ok(Bytes::from(buf))
