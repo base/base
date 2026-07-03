@@ -83,8 +83,6 @@ pub struct RegisterableSigner {
     pub signer: Address,
     /// Pre-fetched attestation blob for the signer.
     pub attestation: Vec<u8>,
-    /// Attestation platform for this signer.
-    pub attestation_kind: AttestationKind,
 }
 
 /// Per-cycle discovery snapshot consumed by signer reconciliation.
@@ -258,21 +256,16 @@ where
             return Ok(outcome);
         }
 
-        let nonces = if instance.attestation_kind == AttestationKind::Nitro {
-            Some(
-                addresses
-                    .iter()
-                    .map(|signer| self.signer_manager.attestation_nonce(*signer).to_vec())
-                    .collect::<Vec<_>>(),
-            )
-        } else {
-            None
-        };
+        let nonces = (instance.attestation_kind == AttestationKind::Nitro).then(|| {
+            addresses
+                .iter()
+                .map(|signer| self.signer_manager.attestation_nonce(*signer).to_vec())
+                .collect::<Vec<_>>()
+        });
         info!(
             signer_count = addresses.len(),
             instance = %instance.instance_id,
             attestation_kind = ?instance.attestation_kind,
-            nonce_bound = nonces.is_some(),
             "requesting signer attestations"
         );
         let all_attestations =
@@ -335,7 +328,6 @@ where
                 instance: instance.clone(),
                 signer,
                 attestation,
-                attestation_kind: instance.attestation_kind,
             },
         ));
         Ok(outcome)
@@ -703,7 +695,7 @@ mod tests {
         let resolution = discover_once(&driver).await;
 
         assert_eq!(resolution.registerable.len(), 1);
-        assert_eq!(resolution.registerable[0].attestation_kind, AttestationKind::Tdx);
+        assert_eq!(resolution.registerable[0].instance.attestation_kind, AttestationKind::Tdx);
         assert_eq!(*requested_nonces.lock().unwrap(), vec![None]);
     }
 

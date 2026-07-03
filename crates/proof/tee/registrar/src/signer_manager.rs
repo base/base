@@ -601,7 +601,7 @@ where
             let instance_id = entry.instance.instance_id.clone();
             let task_instance_id = instance_id.clone();
             let attestation = entry.attestation.clone();
-            let attestation_kind = entry.attestation_kind;
+            let attestation_kind = entry.instance.attestation_kind;
             let task_cancel = signer_cancel.clone();
             let signer = entry.signer;
 
@@ -925,7 +925,6 @@ mod tests {
                 instance: healthy_prover_instance(ep),
                 signer: signer_from_private_key(key),
                 attestation: b"gated-attestation".to_vec(),
-                attestation_kind: AttestationKind::Nitro,
             })
             .collect();
         DiscoveryResolution {
@@ -1422,13 +1421,11 @@ mod tests {
                     instance: healthy_prover_instance(EP1),
                     signer,
                     attestation: b"attestation-from-instance-a".to_vec(),
-                    attestation_kind: AttestationKind::Nitro,
                 },
                 RegisterableSigner {
                     instance: healthy_prover_instance(EP2),
                     signer,
                     attestation: b"attestation-from-instance-b".to_vec(),
-                    attestation_kind: AttestationKind::Nitro,
                 },
             ],
             active_signers: HashSet::new(),
@@ -1461,13 +1458,11 @@ mod tests {
                     instance: healthy_prover_instance(EP1),
                     signer: signer_a,
                     attestation: att_a.clone(),
-                    attestation_kind: AttestationKind::Nitro,
                 },
                 RegisterableSigner {
                     instance: healthy_prover_instance(EP2),
                     signer: signer_b,
                     attestation: att_b.clone(),
-                    attestation_kind: AttestationKind::Nitro,
                 },
             ],
             active_signers: HashSet::new(),
