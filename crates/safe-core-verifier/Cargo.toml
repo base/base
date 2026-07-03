@@ -5,6 +5,8 @@ version = "2.0.0"
 edition = "2021"
 
 [dependencies]
+safe-core-ethics = { path = "../safe-core-ethics" }
+
 tree-sitter = "0.23.0"
 tree-sitter-rust = "0.23.0"
 tree-sitter-python = "0.23.0"

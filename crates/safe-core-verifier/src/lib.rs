@@ -1,106 +1,65 @@
 pub mod cgf;
 pub mod checks;
+pub mod constraint;
 pub mod context;
 pub mod languages;
+pub mod lean4;
 pub mod report;
 
-use anyhow::{Context as AnyhowContext, Result};
-use std::collections::HashMap;
-use std::path::Path;
-use tree_sitter::Parser;
+pub use checks::Check;
+pub use constraint::{Constraint, ConstraintResult};
+pub use context::FileContext;
+pub use lean4::Lean4Verifier;
+pub use report::{FileReport, GlobalReport};
 
-use checks::{
-    AllChecks, Check, convention_x::ConventionXCheck, dependency::DependencyCheck,
-    safety::SafetyCheck,
-};
-use context::FileContext;
-use languages::Language;
-use report::{FileReport, GlobalReport};
-
+/// Verificador de restrições via Lean4.
+pub trait Verifier: Send + Sync {
+    fn verify(&self, constraint: &Constraint, context: &serde_json::Value) -> ConstraintResult;
+}
 
 pub struct PolyglotVerifier {
-    engines: HashMap<Language, Parser>,
-
-    check_runner: AllChecks,
+    checks: Vec<Box<dyn checks::Check>>,
 }
 
 impl PolyglotVerifier {
-    pub fn new() -> Result<Self> {
-        let mut engines = HashMap::new();
-
-        for lang in Language::all() {
-            let mut parser = Parser::new();
-            parser.set_language(&lang.tree_sitter_language())?;
-            engines.insert(lang, parser);
-        }
-
-        let checks: Vec<Box<dyn Check>> = vec![
-            Box::new(ConventionXCheck),
-            Box::new(DependencyCheck::new()),
-            Box::new(SafetyCheck),
-        ];
-
-        Ok(Self { engines, check_runner: AllChecks(checks) })
+    pub fn new(checks: Vec<Box<dyn checks::Check>>) -> Self {
+        Self { checks }
     }
 
-    pub async fn verify_file(&mut self, path: &Path) -> Result<FileReport> {
-        let code = std::fs::read_to_string(path)
-            .with_context(|| format!("Falha ao ler {}", path.display()))?;
+    pub async fn verify_project(&self, root: &str) -> anyhow::Result<GlobalReport> {
+        let mut reports = Vec::new();
 
-        let lang = Language::detect(path)?;
-
-        let parser = self
-            .engines
-            .get_mut(&lang)
-            .ok_or_else(|| anyhow::anyhow!("Nenhum parser registrado para linguagem {:?}", lang))?;
-
-        let tree = parser
-            .parse(&code, None)
-            .ok_or_else(|| anyhow::anyhow!("Falha ao parsear {}", path.display()))?;
-
-        // Análise de estrutura (Alpha proxy)
-        let metrics = cgf::code_analyzer::CodeStructureAnalyzer::analyze(&tree, &code, lang);
-        let alpha_hat = metrics.to_code_alpha();
-
-        let ctx = FileContext {
-            path: path.to_path_buf(),
-            language: lang,
-            code,
-            tree,
-            content_hash: 0, // Pode ser implementado hash real
-        };
-
-        let result = self.check_runner.execute(&ctx).await?;
-
-        Ok(FileReport {
-            path: path.to_string_lossy().into_owned(),
-            language: lang.to_string(),
-            alpha_hat,
-            issues: result.issues,
-            suggestions: result.suggestions,
-            passed: result.passed,
-        })
-    }
-
-    pub async fn verify_dir(&mut self, dir: &Path) -> Result<GlobalReport> {
-        let mut file_reports = Vec::new();
-
-        for entry in walkdir::WalkDir::new(dir)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_file())
-        {
-            let path = entry.path();
-
-            // Ignora arquivos que não suportamos para evitar erros no walk
-            if Language::detect(path).is_ok() {
-                match self.verify_file(path).await {
-                    Ok(report) => file_reports.push(report),
-                    Err(e) => tracing::warn!("Falha ao verificar {:?}: {}", path, e),
+        for entry in walkdir::WalkDir::new(root).into_iter().filter_map(|e| e.ok()) {
+            if entry.file_type().is_file() {
+                if let Ok(lang) = languages::Language::detect(entry.path()) {
+                    let content = std::fs::read_to_string(entry.path())?;
+                    let mut parser = tree_sitter::Parser::new();
+                    parser.set_language(&lang.tree_sitter_language()).unwrap();
+                    let tree = parser.parse(&content, None).unwrap();
+                    let ctx = context::FileContext {
+                        path: entry.path().to_path_buf(),
+                        language: lang,
+                        code: content,
+                        tree,
+                        content_hash: 0,
+                    };
+                    let mut issues = Vec::new();
+                    for check in &self.checks {
+                        let res = check.execute(&ctx).await?;
+                        issues.extend(res.issues);
+                    }
+                    reports.push(FileReport {
+                        path: entry.path().display().to_string(),
+                        language: format!("{:?}", ctx.language),
+                        alpha_hat: 0.0,
+                        passed: issues.is_empty(),
+                        issues,
+                        suggestions: vec![],
+                    });
                 }
             }
         }
 
-        Ok(GlobalReport::from_file_reports(file_reports))
+        Ok(GlobalReport::from_file_reports(reports))
     }
 }

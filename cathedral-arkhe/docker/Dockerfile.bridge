@@ -1,43 +1,11 @@
-# docker/Dockerfile.bridge
-FROM rust:1.76-slim-bookworm AS builder
-
+FROM rust:1.85-slim AS builder
 WORKDIR /app
-
-RUN apt-get update && apt-get install -y \
-    protobuf-compiler \
-    pkg-config \
-    libssl-dev \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY Cargo.toml Cargo.lock ./
-COPY bridge bridge/
-COPY proto proto/
-COPY sdk-rs sdk-rs/
-COPY wormgraph wormgraph/
-COPY observer-5d observer-5d/
-COPY cem-adapter cem-adapter/
-COPY shard-controller shard-controller/
-COPY sail-zk-pipeline sail-zk-pipeline/
-COPY zk-circuits zk-circuits/
-COPY cathedral-atlassian cathedral-atlassian/
-COPY nostr-replicator nostr-replicator/
-COPY test-utils test-utils/
-
-RUN cargo build --release --bin cathedral-bridge
+COPY Cargo.toml Cargo.lock* ./
+COPY crates ./crates
+RUN cargo build --release -p safe-core-bridge --features mcp
 
 FROM debian:bookworm-slim
-
-RUN apt-get update && apt-get install -y \
-    ca-certificates \
-    libssl-dev \
-    curl \
+RUN apt-get update && apt-get install -y ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /app
-
-COPY --from=builder /app/target/release/cathedral-bridge /usr/local/bin/
-
-EXPOSE 9002 8080
-
-ENTRYPOINT ["cathedral-bridge"]
+COPY --from=builder /app/target/release/safe-core-bridge /usr/local/bin/
+ENTRYPOINT ["safe-core-bridge"]

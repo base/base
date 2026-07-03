@@ -1,0 +1,10 @@
+[package]
+name = "mux-integration"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+safe-core-governance = { path = "../../crates/safe-core-governance" }
+tokio = { version = "1.0", features = ["full", "signal"] }
+anyhow = "1.0"
+tracing-subscriber = "0.3"

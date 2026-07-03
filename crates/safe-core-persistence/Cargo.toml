@@ -1,0 +1,9 @@
+[package]
+name = "safe-core-persistence"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-rustls"] }
+thiserror = "2.0"
+safe-core-ethics = { path = "../safe-core-ethics" }

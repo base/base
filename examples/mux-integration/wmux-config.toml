@@ -1,0 +1,19 @@
+# ~/.wmux/config.toml — com integração Safe-Core
+
+[mcp]
+enabled = true
+servers = [
+    {
+        name = "safe-core-governance",
+        command = "safe-core-governance-mcp",
+        args = ["--stdio"],
+        env = { SAFE_CORE_DB = "~/.safe-core/state.db" }
+    }
+]
+
+[plugins]
+safe_core = { path = "~/.wmux/plugins/safe-core.js", enabled = true }
+
+[hooks]
+on_session_start = "safe-core-mcp-client notify system_started"
+on_pane_close = "safe-core-mcp-client call audit_log --event pane_closed"

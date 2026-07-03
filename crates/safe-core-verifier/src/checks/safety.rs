@@ -1,7 +1,8 @@
-use super::{Check, CheckResult, Issue, IssueCategory, Severity};
-use crate::{FileContext, languages::Language};
 use async_trait::async_trait;
 use tree_sitter::{Query, QueryCursor};
+
+use super::{Check, CheckResult, Issue, IssueCategory, Severity};
+use crate::{FileContext, languages::Language};
 
 pub struct SafetyCheck;
 

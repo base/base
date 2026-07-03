@@ -2,8 +2,7 @@
 //!
 //! Seleciona prompts adaptativos baseado em α̂ e β̂.
 
-use crate::cgf_metrics::EpistemicLevel;
-use crate::cgf_orchestrator::CgfRoundResult;
+use crate::{cgf_metrics::EpistemicLevel, cgf_orchestrator::CgfRoundResult};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PromptDepth {

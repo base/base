@@ -1,5 +1,6 @@
-use crate::FileContext;
 use async_trait::async_trait;
+
+use crate::FileContext;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Issue {

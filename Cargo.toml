@@ -30,6 +30,13 @@ members = [
   "zk-circuits",
   "crates/safe-core-utils",
   "crates/safe-core-verifier",
+  "crates/safe-core-ethics",
+  "crates/safe-core-persistence",
+  "crates/safe-core-audit",
+  "crates/safe-core-governance",
+  "crates/safe-core-bridge",
+  "crates/safe-core-lean4",
+  "crates/safe-core-types",
 
 
 
@@ -87,6 +94,7 @@ members = [
   "actions/*", "bridge",
   "crates/cathedral-cse",
   "crates/cathedral-live-image",
+    "crates/arkhe-eval",
 ]
 default-members = [
   "crates/cathedral-core",
@@ -108,6 +116,13 @@ default-members = [
   "zk-circuits",
   "crates/safe-core-utils",
   "crates/safe-core-verifier",
+  "crates/safe-core-ethics",
+  "crates/safe-core-persistence",
+  "crates/safe-core-audit",
+  "crates/safe-core-governance",
+  "crates/safe-core-bridge",
+  "crates/safe-core-lean4",
+  "crates/safe-core-types",
 
 
 
