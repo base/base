@@ -10,18 +10,6 @@ use crate::ECDSA_SIGNATURE_LENGTH;
 /// Offset to add to ECDSA v-value (0/1 -> 27/28).
 const ECDSA_V_OFFSET: u8 = 27;
 
-/// Length of the proof type prefix byte.
-const PROOF_TYPE_LEN: usize = 1;
-
-/// Length of the L1 origin hash field.
-const L1_ORIGIN_HASH_LEN: usize = 32;
-
-/// Length of the L1 origin number field (uint256).
-const L1_ORIGIN_NUMBER_LEN: usize = 32;
-
-/// Combined length of the L1 origin hash and number fields.
-const L1_ORIGIN_HEADER_LEN: usize = L1_ORIGIN_HASH_LEN + L1_ORIGIN_NUMBER_LEN;
-
 /// Proof type byte for TEE proofs (matches `AggregateVerifier.ProofType.TEE`).
 pub const PROOF_TYPE_TEE: u8 = 0;
 
@@ -60,39 +48,28 @@ impl ProofEncoder {
         }
     }
 
-    /// Returns a copy of a 65-byte ECDSA signature with the v-value normalized.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the signature is not exactly 65 bytes or has an invalid v-value.
-    pub fn normalize_signature(
-        signature: &[u8],
-    ) -> Result<[u8; ECDSA_SIGNATURE_LENGTH], CryptoError> {
-        let mut normalized: [u8; ECDSA_SIGNATURE_LENGTH] = signature
-            .try_into()
-            .map_err(|_| CryptoError::InvalidSignatureLength(signature.len()))?;
-        normalized[ECDSA_SIGNATURE_LENGTH - 1] =
-            Self::normalize_v(normalized[ECDSA_SIGNATURE_LENGTH - 1])?;
-        Ok(normalized)
-    }
-
     /// Encodes a TEE proof with optional L1 origin header and one or more signatures.
     ///
     /// Format: `PROOF_TYPE_TEE(1) [+ l1OriginHash(32) + l1OriginNumber(32)] + signatures(65*N)`.
     fn encode(l1_origin: Option<(B256, u64)>, signatures: &[&[u8]]) -> Result<Bytes, CryptoError> {
-        let header_len = if l1_origin.is_some() { L1_ORIGIN_HEADER_LEN } else { 0 };
-        let total_len = PROOF_TYPE_LEN + header_len + signatures.len() * ECDSA_SIGNATURE_LENGTH;
+        let header_len = if l1_origin.is_some() { 64 } else { 0 };
+        let total_len = 1 + header_len + signatures.len() * ECDSA_SIGNATURE_LENGTH;
 
         let mut buf = Vec::with_capacity(total_len);
         buf.push(PROOF_TYPE_TEE);
 
         if let Some((hash, number)) = l1_origin {
             buf.extend_from_slice(hash.as_slice());
-            buf.extend_from_slice(&U256::from(number).to_be_bytes::<L1_ORIGIN_NUMBER_LEN>());
+            buf.extend_from_slice(&U256::from(number).to_be_bytes::<32>());
         }
 
         for signature in signatures {
-            buf.extend_from_slice(&Self::normalize_signature(signature)?);
+            let mut normalized: [u8; ECDSA_SIGNATURE_LENGTH] = (*signature)
+                .try_into()
+                .map_err(|_| CryptoError::InvalidSignatureLength(signature.len()))?;
+            normalized[ECDSA_SIGNATURE_LENGTH - 1] =
+                Self::normalize_v(normalized[ECDSA_SIGNATURE_LENGTH - 1])?;
+            buf.extend_from_slice(&normalized);
         }
 
         Ok(Bytes::from(buf))
@@ -171,7 +148,7 @@ impl ProofEncoder {
     /// Format: `proofType(1) + rawZkProof`.
     pub fn encode_zk_dispute_proof_bytes(proof: impl AsRef<[u8]>) -> Bytes {
         let proof = proof.as_ref();
-        let mut proof_data = Vec::with_capacity(PROOF_TYPE_LEN + proof.len());
+        let mut proof_data = Vec::with_capacity(1 + proof.len());
         proof_data.push(PROOF_TYPE_ZK);
         proof_data.extend_from_slice(proof);
         Bytes::from(proof_data)
