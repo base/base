@@ -94,6 +94,7 @@ members = [
   "actions/*", "bridge",
   "crates/cathedral-cse",
   "crates/cathedral-live-image",
+    "crates/arkhe-eval",
 ]
 default-members = [
   "crates/cathedral-core",

@@ -70,6 +70,9 @@ multiple-versions = "deny"
 # Skip crates with multiple versions from upstream dependencies that we cannot control
 # These are primarily from reth, alloy, and upstream dependencies
 skip = ["x509-parser",
+    "axum-macros",
+    "chacha20",
+
     # Windows platform crates - different versions used by various upstream deps
     "windows",
     "windows-core",

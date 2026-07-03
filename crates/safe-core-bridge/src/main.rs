@@ -22,7 +22,7 @@ async fn main() -> anyhow::Result<()> {
 
     if cli.mcp {
         let server = SafeCoreMcpServer::new(state);
-        server.run_stdio().await?;
+        server.run_stdio().await.map_err(|e| anyhow::anyhow!("{e}"))?;
     } else {
         let app = Router::new()
             .merge(handlers::router(state.clone()))

@@ -2298,6 +2298,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "arkhe-eval"
+version = "1.0.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "arkhe-security-audit"
 version = "0.1.0"
 dependencies = [

@@ -16,7 +16,8 @@ pub mod mcp_impl {
         }
 
         pub async fn run_stdio(self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-            self.serve(transport::stdio()).await
+            let service = self.serve(rmcp::transport::stdio()).await?;
+            service.waiting().await.map_err(|e| e.into()).map(|_| ())
         }
     }
 
