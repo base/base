@@ -393,14 +393,8 @@ pub fn test_tee_proof_pair(block_number: u64) -> crate::TeeProofPair {
     let mut aggregate_proposal = test_proposal(block_number);
     aggregate_proposal.l1_origin_hash = B256::ZERO;
     let proposals = (1..=block_number).map(test_proposal).collect::<Vec<_>>();
-    crate::TeeProofPair::new(
-        crate::TeeProof {
-            aggregate_proposal: aggregate_proposal.clone(),
-            proposals: proposals.clone(),
-        },
-        crate::TeeProof { aggregate_proposal, proposals },
-    )
-    .unwrap()
+    let proof = crate::TeeProof { aggregate_proposal, proposals };
+    crate::TeeProofPair::new(proof.clone(), proof).unwrap()
 }
 
 /// Mock prover-service requester for pipeline tests.
