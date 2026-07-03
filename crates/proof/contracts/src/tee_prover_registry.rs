@@ -57,9 +57,6 @@ sol! {
         /// Returns the image hash stored for a registered signer.
         function signerImageHash(address signer) external view returns (bytes32);
 
-        /// Returns the expected Nitro TEE image hash from the current `AggregateVerifier`.
-        function getExpectedNitroImageHash() external view returns (bytes32);
-
         /// Returns the expected TDX TEE image hash from the current `AggregateVerifier`.
         function getExpectedTDXImageHash() external view returns (bytes32);
 
