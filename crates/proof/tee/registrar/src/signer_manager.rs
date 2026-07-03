@@ -281,8 +281,40 @@ where
             }
             Err(e) => return Err(RegistrarError::ProofGeneration(e)),
         };
-        let attestation_timestamp =
-            self.validate_proof_journal(attestation_kind, &proof, signer_address)?;
+        let attestation_timestamp = match (attestation_kind, proof.kind) {
+            (AttestationKind::Nitro, TeeAttestationKind::Nitro) => {
+                let journal = VerifierJournal::decode(&proof.output)
+                    .map_err(|e| RegistrarError::InvalidProofJournal { reason: e.to_string() })?;
+                let expected_nonce = self.attestation_nonce(signer_address);
+                if journal.nonce.as_ref() != expected_nonce.as_slice() {
+                    self.proof_provider.block_recovery_for_signer(attestation_kind, signer_address);
+                    return Err(RegistrarError::InvalidAttestationProof(format!(
+                        "nonce mismatch for signer {signer_address}: expected 0x{}, got 0x{}",
+                        hex::encode(expected_nonce),
+                        hex::encode(journal.nonce)
+                    )));
+                }
+                journal.timestamp
+            }
+            (AttestationKind::Tdx, TeeAttestationKind::Tdx) => {
+                let journal = <TDXVerifierJournal as SolValue>::abi_decode_validate(&proof.output)
+                    .map_err(|e| RegistrarError::InvalidProofJournal { reason: e.to_string() })?;
+                if journal.signer != signer_address {
+                    self.proof_provider.block_recovery_for_signer(attestation_kind, signer_address);
+                    return Err(RegistrarError::InvalidAttestationProof(format!(
+                        "TDX signer mismatch: expected {signer_address}, got {}",
+                        journal.signer
+                    )));
+                }
+                journal.timestamp
+            }
+            (expected, actual) => {
+                self.proof_provider.block_recovery_for_signer(expected, signer_address);
+                return Err(RegistrarError::InvalidAttestationProof(format!(
+                    "proof kind mismatch for signer {signer_address}: expected {expected:?}, got {actual:?}",
+                )));
+            }
+        };
         drop(proof_permit);
 
         let calldata = Bytes::from(
@@ -416,52 +448,6 @@ where
         RegistrarMetrics::registrations_total().increment(1);
 
         Ok(())
-    }
-
-    fn validate_proof_journal(
-        &self,
-        attestation_kind: AttestationKind,
-        proof: &TeeAttestationProof,
-        signer_address: Address,
-    ) -> Result<u64> {
-        match (attestation_kind, proof.kind) {
-            (AttestationKind::Nitro, TeeAttestationKind::Nitro) => {
-                let journal = VerifierJournal::decode(&proof.output)
-                    .map_err(|e| RegistrarError::InvalidProofJournal { reason: e.to_string() })?;
-                let expected_nonce = self.attestation_nonce(signer_address);
-                if journal.nonce.as_ref() != expected_nonce.as_slice() {
-                    self.proof_provider.block_recovery_for_signer(attestation_kind, signer_address);
-                    return Err(RegistrarError::InvalidAttestationProof(format!(
-                        "nonce mismatch for signer {signer_address}: expected 0x{}, got 0x{}",
-                        hex::encode(expected_nonce),
-                        hex::encode(journal.nonce)
-                    )));
-                }
-                Ok(journal.timestamp)
-            }
-            (AttestationKind::Tdx, TeeAttestationKind::Tdx) => {
-                let journal = <TDXVerifierJournal as SolValue>::abi_decode_validate(&proof.output)
-                    .map_err(|e| RegistrarError::InvalidProofJournal { reason: e.to_string() })?;
-                if journal.signer != signer_address {
-                    self.proof_provider.block_recovery_for_signer(attestation_kind, signer_address);
-                    return Err(RegistrarError::InvalidAttestationProof(format!(
-                        "TDX signer mismatch: expected {signer_address}, got {}",
-                        journal.signer
-                    )));
-                }
-                Ok(journal.timestamp)
-            }
-            (expected, actual) => {
-                let expected_kind = match expected {
-                    AttestationKind::Nitro => TeeAttestationKind::Nitro,
-                    AttestationKind::Tdx => TeeAttestationKind::Tdx,
-                };
-                self.proof_provider.block_recovery_for_signer(expected, signer_address);
-                Err(RegistrarError::InvalidAttestationProof(format!(
-                    "proof kind mismatch for signer {signer_address}: expected {expected_kind:?}, got {actual:?}",
-                )))
-            }
-        }
     }
 
     fn ensure_attestation_fresh(&self, signer: Address, timestamp_ms: u64) -> Result<()> {
@@ -770,31 +756,16 @@ mod tests {
         }
     }
 
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Default)]
     struct RecordingProofProvider {
-        kind: TeeAttestationKind,
         blocked_signers: Arc<Mutex<Vec<Address>>>,
         proof_output: Option<Bytes>,
         records: ProofRecords,
     }
 
-    impl Default for RecordingProofProvider {
-        fn default() -> Self {
-            Self {
-                kind: TeeAttestationKind::Nitro,
-                blocked_signers: Arc::default(),
-                proof_output: None,
-                records: Arc::default(),
-            }
-        }
-    }
-
     impl RecordingProofProvider {
         fn platform_pair(&self) -> PlatformProofProvider {
-            PlatformProofProvider::new(
-                self.clone(),
-                Self { kind: TeeAttestationKind::Tdx, ..self.clone() },
-            )
+            PlatformProofProvider::new(self.clone(), self.clone())
         }
     }
 
@@ -843,7 +814,7 @@ mod tests {
         ) -> base_proof_tee_attestation::Result<TeeAttestationProof> {
             self.records.lock().unwrap().push((signer_address, attestation_bytes.to_vec()));
             Ok(TeeAttestationProof {
-                kind: self.kind,
+                kind: TeeAttestationKind::Nitro,
                 output: self
                     .proof_output
                     .clone()
