@@ -165,15 +165,9 @@ where
         let mut nitro = None;
         let mut tdx = None;
         for &tee_kind in self.tee_proof_mode.tee_kinds() {
-            let proof = Self::poll_proof(
-                self.proof_requester.as_ref(),
-                target_block,
-                claimed_l2_output_root,
-                tee_kind,
-                self.tee_image_hashes.for_kind(tee_kind),
-                request_dispatched,
-            )
-            .await?;
+            let proof = self
+                .poll_proof(target_block, claimed_l2_output_root, tee_kind, request_dispatched)
+                .await?;
             let Some(proof) = proof else {
                 return Ok(None);
             };
@@ -186,16 +180,16 @@ where
     }
 
     async fn poll_proof(
-        proof_requester: &dyn ProofRequesterProvider,
+        &self,
         target_block: u64,
         claimed_l2_output_root: B256,
         tee_kind: TeeKind,
-        image_hash: B256,
         request_dispatched: bool,
     ) -> Result<Option<TeeProof>, ProposerError> {
         let session_id =
             ProposerProofAdapter::tee_session_id_for_root(claimed_l2_output_root, tee_kind);
-        let response = match proof_requester
+        let response = match self
+            .proof_requester
             .get_proof(GetProofRequest { session_id: session_id.clone() })
             .await
         {
@@ -289,7 +283,11 @@ where
                     return Err(error);
                 };
 
-                match ProposerProofAdapter::tee_proof(result, tee_kind, image_hash) {
+                match ProposerProofAdapter::tee_proof(
+                    result,
+                    tee_kind,
+                    self.tee_image_hashes.for_kind(tee_kind),
+                ) {
                     Ok(proof) => {
                         info!(
                             target_block,
@@ -733,13 +731,7 @@ mod tests {
             l1_head_number: 1000,
             ..Default::default()
         };
-        requester
-            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(
-                proof_request,
-                TeeKind::AwsNitro,
-            ))
-            .await
-            .expect("test setup should dispatch stale root session");
+        dispatch_nitro(&requester, proof_request).await;
         let collector = make_collector(
             Arc::clone(&requester) as Arc<dyn ProofRequesterProvider>,
             rollup_client(target_block, Some(fresh_root)),
