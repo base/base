@@ -38,7 +38,7 @@ mod service;
 pub use service::{ProverError, ProverService};
 
 mod rpc;
-pub use rpc::{ProverRequestHandler, ProverRpc, ProverRpcError};
+pub use rpc::ProverRpc;
 
 #[cfg(feature = "precompiles")]
 mod precompiles;
