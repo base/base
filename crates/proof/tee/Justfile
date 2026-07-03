@@ -298,13 +298,6 @@ tdx-verifier-image-id:
     elf_path="$guest_dir/target/riscv32im-risc0-zkvm-elf/release/{{ tdx_verifier_guest }}"
     r0bf_path="$guest_dir/target/{{ tdx_verifier_guest }}.r0bf"
 
-    command -v cargo >/dev/null 2>&1 || { echo "error: 'cargo' is required" >&2; exit 1; }
-    command -v rustup >/dev/null 2>&1 || { echo "error: 'rustup' is required" >&2; exit 1; }
-    if ! rustup toolchain list | grep -q '^risc0'; then
-        echo "error: RISC Zero rust toolchain 'risc0' is not installed (install with: rzup install)" >&2
-        exit 1
-    fi
-
     echo "Building TDX verifier guest ELF..."
     (
         cd "$guest_dir"
@@ -312,22 +305,10 @@ tdx-verifier-image-id:
     )
 
     echo "Bundling ELF into R0BF and computing image ID..."
-    output=$(
-        RISC0_SKIP_BUILD_KERNELS=1 cargo run --quiet \
-            --manifest-path "$helper_manifest" -- \
-            "$elf_path" \
-            --output "$r0bf_path"
-    )
-    echo "$output"
-
-    actual=$(printf '%s\n' "$output" | sed -n 's/^Image ID: //p' | tail -n1)
-    if [ -z "$actual" ]; then
-        echo "error: failed to parse image ID from helper output" >&2
-        exit 1
-    fi
-
-    echo "image ID: 0x$actual"
-    echo "R0BF: $r0bf_path"
+    RISC0_SKIP_BUILD_KERNELS=1 cargo run --quiet \
+        --manifest-path "$helper_manifest" -- \
+        "$elf_path" \
+        --output "$r0bf_path"
 
 # Inspect a TDX prover's signer and contract-compatible image hash
 tdx-image-hash endpoint="http://136.107.166.21:7310" *args="":
