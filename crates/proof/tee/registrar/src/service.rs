@@ -224,17 +224,17 @@ impl RegistrarConfig {
             .region(aws_config::Region::new(self.aws_region))
             .load()
             .await;
-        let aws_discovery =
-            AwsTargetGroupDiscovery::new(&aws_config, self.target_group_arn, self.prover_port);
-        let gcp_discovery = GcpNodePoolDiscovery::new(
-            self.gcp_project,
-            self.gcp_location,
-            self.gcp_cluster,
-            self.gcp_node_pool,
-            self.prover_port,
-            self.gcp_access_token,
+        let discovery = (
+            AwsTargetGroupDiscovery::new(&aws_config, self.target_group_arn, self.prover_port),
+            GcpNodePoolDiscovery::new(
+                self.gcp_project,
+                self.gcp_location,
+                self.gcp_cluster,
+                self.gcp_node_pool,
+                self.prover_port,
+                self.gcp_access_token,
+            ),
         );
-        let discovery = (aws_discovery, gcp_discovery);
 
         let registry = TEEProverRegistryContractClient::new(
             self.tee_prover_registry_address,
@@ -318,27 +318,8 @@ impl RegistrarConfig {
 
 #[cfg(test)]
 mod tests {
-    use async_trait::async_trait;
-    use base_proof_tee_attestation::{
-        Result as AttestationResult, TeeAttestationProof, TeeAttestationProofProvider,
-    };
-
     use super::*;
-    use crate::test_utils::TEST_REGISTRY_ADDRESS;
-
-    #[derive(Debug)]
-    struct TestProofProvider;
-
-    #[async_trait]
-    impl TeeAttestationProofProvider for TestProofProvider {
-        async fn generate_proof_for_signer(
-            &self,
-            _attestation_bytes: &[u8],
-            _signer_address: Address,
-        ) -> AttestationResult<TeeAttestationProof> {
-            unreachable!("service debug tests do not generate proofs")
-        }
-    }
+    use crate::test_utils::{NoopProofProvider, TEST_REGISTRY_ADDRESS};
 
     #[test]
     fn debug_redacts_l1_rpc_url_path() {
@@ -361,7 +342,7 @@ mod tests {
                     .unwrap(),
             ),
             tx_manager_config: TxManagerConfig::default(),
-            proof_provider: PlatformProofProvider::new(TestProofProvider, TestProofProvider),
+            proof_provider: NoopProofProvider::platform_pair(),
             boundless_rpc_url: Url::parse("https://boundless.example/v3/BOUNDLESS_SECRET").unwrap(),
             boundless_signer_address: Address::repeat_byte(0x02),
             max_attestation_age: Duration::from_secs(1),
