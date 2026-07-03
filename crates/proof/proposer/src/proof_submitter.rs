@@ -430,16 +430,6 @@ mod tests {
     const TEST_GAME_TYPE: u32 = 42;
     const TEST_BLOCK_INTERVAL: u64 = 100;
 
-    fn proof_result(target_block: u64) -> TeeProofPair {
-        let mut proof = test_tee_proof_pair(target_block);
-        let TeeProofPair::Both { nitro, tdx } = &mut proof else {
-            unreachable!("test_tee_proof_pair returns dual-platform proofs");
-        };
-        nitro.aggregate_proposal.l1_origin_hash = B256::ZERO;
-        tdx.aggregate_proposal.l1_origin_hash = B256::ZERO;
-        proof
-    }
-
     fn submitter(
         output_proposer: Arc<MockOutputProposer>,
         factory: impl DisputeGameFactoryClient + 'static,
@@ -474,7 +464,7 @@ mod tests {
         );
 
         let result = submitter
-            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
+            .submit(&test_tee_proof_pair(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
             .await;
 
         assert!(result.is_ok());
@@ -502,7 +492,11 @@ mod tests {
                 );
 
                 submitter
-                    .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
+                    .submit(
+                        &test_tee_proof_pair(TEST_BLOCK_INTERVAL),
+                        TEST_BLOCK_INTERVAL,
+                        Address::ZERO,
+                    )
                     .await
                     .unwrap();
             });
@@ -539,7 +533,7 @@ mod tests {
         );
 
         let result = submitter
-            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
+            .submit(&test_tee_proof_pair(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
             .await;
 
         assert!(result.is_ok());
@@ -558,7 +552,7 @@ mod tests {
         );
 
         let result = submitter
-            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
+            .submit(&test_tee_proof_pair(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
             .await;
 
         assert!(result.is_ok());
@@ -581,7 +575,7 @@ mod tests {
         );
 
         let result = submitter
-            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
+            .submit(&test_tee_proof_pair(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
             .await;
 
         let recovered = result.unwrap();
@@ -603,7 +597,7 @@ mod tests {
         );
 
         let result = submitter
-            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
+            .submit(&test_tee_proof_pair(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
             .await;
 
         assert!(matches!(
@@ -627,7 +621,7 @@ mod tests {
         );
 
         let result = submitter
-            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
+            .submit(&test_tee_proof_pair(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
             .await;
 
         assert!(matches!(result, Err(SubmitAction::GameAlreadyExists)));
@@ -662,7 +656,11 @@ mod tests {
             );
 
             let result = submitter
-                .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
+                .submit(
+                    &test_tee_proof_pair(TEST_BLOCK_INTERVAL),
+                    TEST_BLOCK_INTERVAL,
+                    Address::ZERO,
+                )
                 .await;
 
             match expected_discard_label {
@@ -686,7 +684,7 @@ mod tests {
         );
 
         let result = submitter
-            .submit(&proof_result(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
+            .submit(&test_tee_proof_pair(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
             .await;
 
         assert!(matches!(result, Err(SubmitAction::GameAlreadyExists)));

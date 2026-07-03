@@ -390,7 +390,8 @@ pub fn test_proposal(block_number: u64) -> Proposal {
 
 /// Creates a dual-platform test TEE proof pair for the given L2 block number.
 pub fn test_tee_proof_pair(block_number: u64) -> crate::TeeProofPair {
-    let aggregate_proposal = test_proposal(block_number);
+    let mut aggregate_proposal = test_proposal(block_number);
+    aggregate_proposal.l1_origin_hash = B256::ZERO;
     let proposals = (1..=block_number).map(test_proposal).collect::<Vec<_>>();
     crate::TeeProofPair::new(
         crate::TeeProof {
