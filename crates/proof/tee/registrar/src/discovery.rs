@@ -7,7 +7,7 @@ use std::{
 
 use aws_sdk_ec2::{Client as Ec2Client, types::Reservation};
 use aws_sdk_elasticloadbalancingv2::Client as ElbClient;
-use reqwest::{Client as HttpClient, Url as ReqwestUrl};
+use reqwest::Client as HttpClient;
 use serde::Deserialize;
 use tracing::{debug, warn};
 use url::Url;
@@ -154,28 +154,14 @@ impl InstanceDiscovery for AwsTargetGroupDiscovery {
     }
 }
 
-/// Discovers prover instances from both AWS and GCP.
-#[derive(Debug)]
-pub struct CombinedInstanceDiscovery<A, G> {
-    aws: A,
-    gcp: G,
-}
-
-impl<A, G> CombinedInstanceDiscovery<A, G> {
-    /// Creates a discovery implementation that monitors both providers.
-    pub const fn new(aws: A, gcp: G) -> Self {
-        Self { aws, gcp }
-    }
-}
-
-impl<A, G> InstanceDiscovery for CombinedInstanceDiscovery<A, G>
+impl<A, G> InstanceDiscovery for (A, G)
 where
     A: InstanceDiscovery,
     G: InstanceDiscovery,
 {
     async fn discover_instances(&self) -> Result<Vec<ProverInstance>> {
         let (mut aws, gcp) =
-            tokio::try_join!(self.aws.discover_instances(), self.gcp.discover_instances())?;
+            tokio::try_join!(self.0.discover_instances(), self.1.discover_instances())?;
         aws.extend(gcp);
         Ok(aws)
     }
@@ -280,56 +266,29 @@ impl GcpNodePoolDiscovery {
         response.json().await.map_err(|e| RegistrarError::Discovery(Box::new(e)))
     }
 
-    fn node_pool_url(&self) -> String {
-        format!(
-            "https://container.googleapis.com/v1/projects/{}/locations/{}/clusters/{}/nodePools/{}",
-            self.project, self.location, self.cluster, self.node_pool
-        )
-    }
-
-    fn managed_instances_url(&self, instance_group_url: &str) -> Result<String> {
-        let (zone, name) = Self::parse_instance_group_manager_url(instance_group_url)?;
-        Ok(format!(
-            "https://compute.googleapis.com/compute/v1/projects/{}/zones/{zone}/instanceGroupManagers/{name}/listManagedInstances",
-            self.project
-        ))
-    }
-
     /// Extracts `(zone, instance_group_manager)` from a GKE instance-group URL.
     pub fn parse_instance_group_manager_url(instance_group_url: &str) -> Result<(String, String)> {
-        let url = ReqwestUrl::parse(instance_group_url)
-            .map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
-        let segments = url
-            .path_segments()
-            .ok_or_else(|| {
-                RegistrarError::Discovery(Box::new(std::io::Error::other(
-                    "GCP instance group URL has no path",
-                )))
-            })?
-            .collect::<Vec<_>>();
-        let Some(zone_index) = segments.iter().position(|segment| *segment == "zones") else {
-            return Err(RegistrarError::Discovery(Box::new(std::io::Error::other(
-                "GCP instance group URL is missing zones segment",
-            ))));
+        let malformed_url = || {
+            RegistrarError::Discovery(Box::new(std::io::Error::other(
+                "malformed GCP instance group URL",
+            )))
         };
-        let Some(group_index) =
-            segments.iter().position(|segment| *segment == "instanceGroupManagers")
-        else {
-            return Err(RegistrarError::Discovery(Box::new(std::io::Error::other(
-                "GCP instance group URL is missing instanceGroupManagers segment",
-            ))));
+        let url =
+            Url::parse(instance_group_url).map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
+        let mut segments = url.path_segments().ok_or_else(malformed_url)?;
+        let mut zone = None;
+        let mut name = None;
+        while let Some(segment) = segments.next() {
+            match segment {
+                "zones" => zone = segments.next(),
+                "instanceGroupManagers" => name = segments.next(),
+                _ => {}
+            }
+        }
+        let (Some(zone), Some(name)) = (zone, name) else {
+            return Err(malformed_url());
         };
-        let Some(zone) = segments.get(zone_index + 1) else {
-            return Err(RegistrarError::Discovery(Box::new(std::io::Error::other(
-                "GCP instance group URL is missing zone",
-            ))));
-        };
-        let Some(name) = segments.get(group_index + 1) else {
-            return Err(RegistrarError::Discovery(Box::new(std::io::Error::other(
-                "GCP instance group URL is missing instance group manager name",
-            ))));
-        };
-        Ok(((*zone).to_owned(), (*name).to_owned()))
+        Ok((zone.to_owned(), name.to_owned()))
     }
 
     async fn managed_instance_urls(
@@ -337,7 +296,11 @@ impl GcpNodePoolDiscovery {
         token: &str,
         instance_group_url: &str,
     ) -> Result<Vec<String>> {
-        let url = self.managed_instances_url(instance_group_url)?;
+        let (zone, name) = Self::parse_instance_group_manager_url(instance_group_url)?;
+        let url = format!(
+            "https://compute.googleapis.com/compute/v1/projects/{}/zones/{zone}/instanceGroupManagers/{name}/listManagedInstances",
+            self.project
+        );
         let mut page_token = None;
         let mut instance_urls = Vec::new();
 
@@ -347,11 +310,12 @@ impl GcpNodePoolDiscovery {
                 None => serde_json::json!({}),
             };
             let page: GcpManagedInstancesPage = self.post(&url, token, &body).await?;
-            instance_urls.extend(page.managed_instances.into_iter().filter_map(|instance| {
-                matches!(instance.instance_status.as_deref(), Some("RUNNING"))
-                    .then_some(instance.instance)
-                    .flatten()
-            }));
+            instance_urls.extend(
+                page.managed_instances
+                    .into_iter()
+                    .filter(|instance| instance.instance_status.as_deref() == Some("RUNNING"))
+                    .filter_map(|instance| instance.instance),
+            );
             if page.next_page_token.is_none() {
                 break;
             }
@@ -391,7 +355,11 @@ impl GcpNodePoolDiscovery {
 impl InstanceDiscovery for GcpNodePoolDiscovery {
     async fn discover_instances(&self) -> Result<Vec<ProverInstance>> {
         let token = self.bearer_token().await?;
-        let node_pool: GcpNodePool = self.get(&self.node_pool_url(), &token).await?;
+        let node_pool_url = format!(
+            "https://container.googleapis.com/v1/projects/{}/locations/{}/clusters/{}/nodePools/{}",
+            self.project, self.location, self.cluster, self.node_pool
+        );
+        let node_pool: GcpNodePool = self.get(&node_pool_url, &token).await?;
         let mut instance_urls = Vec::new();
         for instance_group_url in &node_pool.instance_group_urls {
             instance_urls.extend(self.managed_instance_urls(&token, instance_group_url).await?);

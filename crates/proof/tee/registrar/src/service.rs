@@ -22,9 +22,9 @@ use tracing::{info, warn};
 use url::Url;
 
 use crate::{
-    AwsTargetGroupDiscovery, CertManager, CombinedInstanceDiscovery, DriverConfig,
-    GcpNodePoolDiscovery, ProverClient, RegistrarError, RegistrarMetrics, RegistrarProofProvider,
-    RegistrationDriver, Result, SignerManager, SignerManagerConfig,
+    AwsTargetGroupDiscovery, CertManager, DriverConfig, GcpNodePoolDiscovery, ProverClient,
+    RegistrarError, RegistrarMetrics, RegistrarProofProvider, RegistrationDriver, Result,
+    SignerManager, SignerManagerConfig,
 };
 
 const CRL_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
@@ -241,7 +241,7 @@ where
             self.prover_port,
             self.gcp_access_token,
         );
-        let discovery = CombinedInstanceDiscovery::new(aws_discovery, gcp_discovery);
+        let discovery = (aws_discovery, gcp_discovery);
 
         let registry = TEEProverRegistryContractClient::new(
             self.tee_prover_registry_address,
