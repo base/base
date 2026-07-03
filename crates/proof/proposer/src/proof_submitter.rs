@@ -92,14 +92,14 @@ impl ProofSubmitter {
     /// RPC failures, root mismatches, invalid signers, or contract-level
     /// rejections - is mapped to a [`SubmitAction`] variant that tells the
     /// pipeline how to react.
-    #[instrument(skip_all, fields(target_block = target_block, parent_address = %parent_address))]
+    #[instrument(skip_all, fields(target_block = proof.aggregate_proposal().l2_block_number, parent_address = %parent_address))]
     pub async fn submit(
         &self,
         proof: &TeeProofPair,
-        target_block: u64,
         parent_address: Address,
     ) -> Result<RecoveredState, SubmitAction> {
         let aggregate_proposal = proof.aggregate_proposal();
+        let target_block = aggregate_proposal.l2_block_number;
         let proposals = proof.proposals();
 
         let canonical_output = self
@@ -463,9 +463,8 @@ mod tests {
             MockAggregateVerifier::default(),
         );
 
-        let result = submitter
-            .submit(&test_tee_proof_pair(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
-            .await;
+        let result =
+            submitter.submit(&test_tee_proof_pair(TEST_BLOCK_INTERVAL), Address::ZERO).await;
 
         assert!(result.is_ok());
         assert_eq!(*output.created.lock().unwrap(), 0);
@@ -492,11 +491,7 @@ mod tests {
                 );
 
                 submitter
-                    .submit(
-                        &test_tee_proof_pair(TEST_BLOCK_INTERVAL),
-                        TEST_BLOCK_INTERVAL,
-                        Address::ZERO,
-                    )
+                    .submit(&test_tee_proof_pair(TEST_BLOCK_INTERVAL), Address::ZERO)
                     .await
                     .unwrap();
             });
@@ -532,9 +527,8 @@ mod tests {
             },
         );
 
-        let result = submitter
-            .submit(&test_tee_proof_pair(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
-            .await;
+        let result =
+            submitter.submit(&test_tee_proof_pair(TEST_BLOCK_INTERVAL), Address::ZERO).await;
 
         assert!(result.is_ok());
     }
@@ -551,9 +545,8 @@ mod tests {
             MockAggregateVerifier::default(),
         );
 
-        let result = submitter
-            .submit(&test_tee_proof_pair(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
-            .await;
+        let result =
+            submitter.submit(&test_tee_proof_pair(TEST_BLOCK_INTERVAL), Address::ZERO).await;
 
         assert!(result.is_ok());
         assert_eq!(*output.created.lock().unwrap(), 1);
@@ -574,9 +567,8 @@ mod tests {
             MockAggregateVerifier::default(),
         );
 
-        let result = submitter
-            .submit(&test_tee_proof_pair(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
-            .await;
+        let result =
+            submitter.submit(&test_tee_proof_pair(TEST_BLOCK_INTERVAL), Address::ZERO).await;
 
         let recovered = result.unwrap();
         assert_eq!(recovered.parent_address, game_address);
@@ -596,9 +588,8 @@ mod tests {
             MockAggregateVerifier::default(),
         );
 
-        let result = submitter
-            .submit(&test_tee_proof_pair(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
-            .await;
+        let result =
+            submitter.submit(&test_tee_proof_pair(TEST_BLOCK_INTERVAL), Address::ZERO).await;
 
         assert!(matches!(
             result,
@@ -620,9 +611,8 @@ mod tests {
             verifier,
         );
 
-        let result = submitter
-            .submit(&test_tee_proof_pair(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
-            .await;
+        let result =
+            submitter.submit(&test_tee_proof_pair(TEST_BLOCK_INTERVAL), Address::ZERO).await;
 
         assert!(matches!(result, Err(SubmitAction::GameAlreadyExists)));
         assert_eq!(*output.created.lock().unwrap(), 0);
@@ -655,13 +645,8 @@ mod tests {
                 MockAggregateVerifier::default(),
             );
 
-            let result = submitter
-                .submit(
-                    &test_tee_proof_pair(TEST_BLOCK_INTERVAL),
-                    TEST_BLOCK_INTERVAL,
-                    Address::ZERO,
-                )
-                .await;
+            let result =
+                submitter.submit(&test_tee_proof_pair(TEST_BLOCK_INTERVAL), Address::ZERO).await;
 
             match expected_discard_label {
                 None => assert!(result.is_ok()),
@@ -683,9 +668,8 @@ mod tests {
             MockAggregateVerifier::default(),
         );
 
-        let result = submitter
-            .submit(&test_tee_proof_pair(TEST_BLOCK_INTERVAL), TEST_BLOCK_INTERVAL, Address::ZERO)
-            .await;
+        let result =
+            submitter.submit(&test_tee_proof_pair(TEST_BLOCK_INTERVAL), Address::ZERO).await;
 
         assert!(matches!(result, Err(SubmitAction::GameAlreadyExists)));
         assert_eq!(*output.created.lock().unwrap(), 1);

@@ -331,7 +331,7 @@ where
         let mut submit_timer = base_metrics::timed!(Metrics::proposal_total_duration_seconds());
         let result = match cancel
             .run_until_cancelled(async {
-                let submit = self.submitter.submit(&proof, target_block, parent_address);
+                let submit = self.submitter.submit(&proof, parent_address);
                 match self.submit_timeout {
                     Some(timeout) => tokio::time::timeout(timeout, submit).await,
                     None => Ok(submit.await),
