@@ -10,14 +10,16 @@ pub enum RepositoryError {
 }
 
 pub struct StateRepository {
-    pool: sqlx::sqlite::SqlitePool,
+    _pool: sqlx::sqlite::SqlitePool,
 }
 
 impl StateRepository {
     pub async fn new(database_url: &str) -> Result<Self, RepositoryError> {
-        let pool = sqlx::SqlitePool::connect(database_url).await.map_err(|_| RepositoryError::ConnectionError)?;
+        let pool = sqlx::SqlitePool::connect(database_url)
+            .await
+            .map_err(|_| RepositoryError::ConnectionError)?;
         Self::migrate(&pool).await?;
-        Ok(Self { pool })
+        Ok(Self { _pool: pool })
     }
 
     async fn migrate(pool: &sqlx::sqlite::SqlitePool) -> Result<(), RepositoryError> {
@@ -35,7 +37,8 @@ impl StateRepository {
             "#,
         )
         .execute(pool)
-        .await.map_err(|_| RepositoryError::MigrationError)?;
+        .await
+        .map_err(|_| RepositoryError::MigrationError)?;
 
         sqlx::query(
             r#"
@@ -48,7 +51,8 @@ impl StateRepository {
             "#,
         )
         .execute(pool)
-        .await.map_err(|_| RepositoryError::MigrationError)?;
+        .await
+        .map_err(|_| RepositoryError::MigrationError)?;
 
         sqlx::query(
             r#"
@@ -60,7 +64,8 @@ impl StateRepository {
             "#,
         )
         .execute(pool)
-        .await.map_err(|_| RepositoryError::MigrationError)?;
+        .await
+        .map_err(|_| RepositoryError::MigrationError)?;
 
         Ok(())
     }

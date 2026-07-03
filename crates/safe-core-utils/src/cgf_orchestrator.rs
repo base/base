@@ -2,10 +2,12 @@
 //!
 //! Coordena múltiplos LLMs para maximizar α̂ via Coherence-Gradient Following.
 
-use crate::cgf_metrics::{CgfEngine, CgfReportX, EpistemicLevel};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use crate::cgf_metrics::{CgfEngine, CgfReportX, EpistemicLevel};
 
 #[derive(Debug, Error)]
 pub enum CgfOrchestratorError {

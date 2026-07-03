@@ -1,8 +1,9 @@
 //! Relatório de avaliação e níveis de maturidade
 
-use crate::dimensions::DimensionScore;
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+
+use crate::dimensions::DimensionScore;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MaturityLevel {
@@ -67,7 +68,10 @@ impl EvalReport {
         let mut md = String::new();
 
         md.push_str(&format!("# {} ARKHE Evaluation Report\n\n", self.level.emoji()));
-        md.push_str(&format!("**Generated:** {}\n", self.generated_at.format("%Y-%m-%d %H:%M:%S UTC")));
+        md.push_str(&format!(
+            "**Generated:** {}\n",
+            self.generated_at.format("%Y-%m-%d %H:%M:%S UTC")
+        ));
         md.push_str(&format!("**Total Score:** {:.1}/100\n", self.total_score));
         md.push_str(&format!("**Maturity Level:** {:?}\n\n", self.level));
         md.push_str(&format!("{}\n\n", self.level.description()));
@@ -80,11 +84,7 @@ impl EvalReport {
             let percentage = dim.calculate_percentage();
             md.push_str(&format!(
                 "| {} | {:.1} | {:.0}% | {:.2} | {:.1}% |\n",
-                dim.dimension_name,
-                dim.raw_score,
-                100.0,
-                dim.weighted_score,
-                percentage
+                dim.dimension_name, dim.raw_score, 100.0, dim.weighted_score, percentage
             ));
         }
 
@@ -104,7 +104,7 @@ impl EvalReport {
                     criterion.max_points
                 ));
             }
-            md.push_str("\n");
+            md.push('\n');
         }
 
         md

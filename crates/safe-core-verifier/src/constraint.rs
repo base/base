@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Constraint {
     pub id: String,
-    pub expression: String,  // Lean4 expression
+    pub expression: String, // Lean4 expression
     pub description: String,
 }
 

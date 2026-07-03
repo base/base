@@ -1,7 +1,6 @@
 //! ARKHE-EVAL CLI
 
-
-use arkhe_eval::{EvalEngine, EvalConfig};
+use arkhe_eval::{EvalConfig, EvalEngine};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = EvalConfig::default();

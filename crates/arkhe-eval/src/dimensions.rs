@@ -48,12 +48,7 @@ pub struct CriterionResult {
 
 impl Dimension {
     pub fn new(id: &str, name: &str, weight: f64) -> Self {
-        Self {
-            id: id.to_string(),
-            name: name.to_string(),
-            weight,
-            criteria: Vec::new(),
-        }
+        Self { id: id.to_string(), name: name.to_string(), weight, criteria: Vec::new() }
     }
 
     pub fn with_criterion(mut self, criterion: Criterion) -> Self {
@@ -64,12 +59,7 @@ impl Dimension {
 
 impl Criterion {
     pub fn new(id: &str, description: &str, max_points: f64, check_type: CheckType) -> Self {
-        Self {
-            id: id.to_string(),
-            description: description.to_string(),
-            max_points,
-            check_type,
-        }
+        Self { id: id.to_string(), description: description.to_string(), max_points, check_type }
     }
 }
 

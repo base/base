@@ -6,8 +6,9 @@
 //! - Lista de dependências conhecidas
 //! - Padrões de segurança específicos
 
-use anyhow::Result;
 use std::path::Path;
+
+use anyhow::Result;
 use tree_sitter::Language as TsLanguage;
 
 /// Linguagens suportadas pelo verificador.

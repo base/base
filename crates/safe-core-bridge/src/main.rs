@@ -1,8 +1,8 @@
+use std::sync::Arc;
+
 use axum::Router;
 use clap::Parser;
-use safe_core_bridge::{handlers, BridgeState};
-use safe_core_bridge::mcp::mcp_impl::SafeCoreMcpServer;
-use std::sync::Arc;
+use safe_core_bridge::{BridgeState, handlers, mcp::mcp_impl::SafeCoreMcpServer};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 #[derive(Parser)]

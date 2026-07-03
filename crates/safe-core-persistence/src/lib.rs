@@ -1,5 +1,5 @@
-pub mod repository;
 pub mod model;
+pub mod repository;
 
-pub use repository::{StateRepository, RepositoryError};
-pub use model::{StoredRule, StoredWorkflow, StoredMetric};
+pub use model::{StoredMetric, StoredRule, StoredWorkflow};
+pub use repository::{RepositoryError, StateRepository};

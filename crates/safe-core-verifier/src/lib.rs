@@ -1,16 +1,16 @@
-pub mod lean4;
-pub mod constraint;
+pub mod cgf;
 pub mod checks;
+pub mod constraint;
 pub mod context;
 pub mod languages;
+pub mod lean4;
 pub mod report;
-pub mod cgf;
 
-pub use lean4::Lean4Verifier;
+pub use checks::Check;
 pub use constraint::{Constraint, ConstraintResult};
 pub use context::FileContext;
+pub use lean4::Lean4Verifier;
 pub use report::{FileReport, GlobalReport};
-pub use checks::Check;
 
 /// Verificador de restrições via Lean4.
 pub trait Verifier: Send + Sync {

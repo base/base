@@ -1,1 +1,0 @@
-sed -i 's/\[dependencies\]/\[dependencies\]\nclap = { version = "4.0", features = ["derive", "env"] }\nanyhow = "1.0"\ntracing-subscriber = { version = "0.3", features = ["env-filter"] }/g' crates/safe-core-bridge/Cargo.toml

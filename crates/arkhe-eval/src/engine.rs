@@ -1,11 +1,14 @@
 //! Engine principal de avaliação
 
-use crate::dimensions::{Dimension, DimensionScore, CriterionResult, CheckType, Criterion};
-use crate::report::{EvalReport, MaturityLevel};
-use crate::error::{EvalError, Result};
-use std::path::PathBuf;
-use std::process::Command;
-use tracing::{info, warn, debug};
+use std::{path::PathBuf, process::Command};
+
+use tracing::{debug, info, warn};
+
+use crate::{
+    dimensions::{CheckType, Criterion, CriterionResult, Dimension, DimensionScore},
+    error::{EvalError, Result},
+    report::{EvalReport, MaturityLevel},
+};
 
 #[derive(Debug, Clone)]
 pub struct EvalConfig {
@@ -15,10 +18,7 @@ pub struct EvalConfig {
 
 impl Default for EvalConfig {
     fn default() -> Self {
-        Self {
-            workspace_path: PathBuf::from("."),
-            verbose: false,
-        }
+        Self { workspace_path: PathBuf::from("."), verbose: false }
     }
 }
 
@@ -39,7 +39,7 @@ impl EvalEngine {
 
         if !self.config.workspace_path.exists() {
             return Err(EvalError::WorkspaceNotFound(
-                self.config.workspace_path.display().to_string()
+                self.config.workspace_path.display().to_string(),
             ));
         }
 
@@ -87,7 +87,10 @@ impl EvalEngine {
         })
     }
 
-    async fn evaluate_criterion(&self, criterion: &crate::dimensions::Criterion) -> Result<CriterionResult> {
+    async fn evaluate_criterion(
+        &self,
+        criterion: &crate::dimensions::Criterion,
+    ) -> Result<CriterionResult> {
         debug!("Evaluating criterion: {}", criterion.description);
 
         let (passed, points, evidence) = match &criterion.check_type {
@@ -150,13 +153,14 @@ impl EvalEngine {
                             let evidence = if success {
                                 "Command succeeded".to_string()
                             } else {
-                                format!("Command failed: {}", String::from_utf8_lossy(&output.stderr))
+                                format!(
+                                    "Command failed: {}",
+                                    String::from_utf8_lossy(&output.stderr)
+                                )
                             };
                             (success, points, evidence)
                         }
-                        Err(e) => {
-                            (false, 0.0, format!("Command error: {}", e))
-                        }
+                        Err(e) => (false, 0.0, format!("Command error: {}", e)),
                     }
                 }
             }
@@ -182,123 +186,145 @@ impl EvalEngine {
             // 1. Arquitetura Conceitual (15%)
             Dimension::new("D1", "Arquitetura Conceitual", 0.15)
                 .with_criterion(Criterion::new(
-                    "D1-C1", "Cargo.toml existe", 3.0,
-                    CheckType::FileExists { path: "Cargo.toml".into() }
+                    "D1-C1",
+                    "Cargo.toml existe",
+                    3.0,
+                    CheckType::FileExists { path: "Cargo.toml".into() },
                 ))
                 .with_criterion(Criterion::new(
-                    "D1-C2", "Diretório crates existe", 3.0,
-                    CheckType::DirExists { path: "crates".into() }
+                    "D1-C2",
+                    "Diretório crates existe",
+                    3.0,
+                    CheckType::DirExists { path: "crates".into() },
                 ))
                 .with_criterion(Criterion::new(
-                    "D1-C3", "Diretório src existe", 3.0,
-                    CheckType::DirExists { path: "src".into() }
+                    "D1-C3",
+                    "Diretório src existe",
+                    3.0,
+                    CheckType::DirExists { path: "src".into() },
                 )),
-
             // 2. Especificação Formal (20%)
             Dimension::new("D2", "Especificação Formal", 0.20)
                 .with_criterion(Criterion::new(
-                    "D2-C1", "Documentação README existe", 5.0,
-                    CheckType::FileExists { path: "README.md".into() }
+                    "D2-C1",
+                    "Documentação README existe",
+                    5.0,
+                    CheckType::FileExists { path: "README.md".into() },
                 ))
                 .with_criterion(Criterion::new(
-                    "D2-C2", "Diretório docs existe", 5.0,
-                    CheckType::DirExists { path: "docs".into() }
+                    "D2-C2",
+                    "Diretório docs existe",
+                    5.0,
+                    CheckType::DirExists { path: "docs".into() },
                 ))
                 .with_criterion(Criterion::new(
-                    "D2-C3", "Cargo.toml contém description", 5.0,
+                    "D2-C3",
+                    "Cargo.toml contém description",
+                    5.0,
                     CheckType::FileContains {
                         path: "Cargo.toml".into(),
-                        text: "description".into()
-                    }
+                        text: "description".into(),
+                    },
                 )),
-
             // 3. Compilabilidade (20%)
             Dimension::new("D3", "Compilabilidade", 0.20)
                 .with_criterion(Criterion::new(
-                    "D3-C1", "cargo check executa com sucesso", 10.0,
-                    CheckType::CommandSuccess { command: "cargo check".into() }
+                    "D3-C1",
+                    "cargo check executa com sucesso",
+                    10.0,
+                    CheckType::CommandSuccess { command: "cargo check".into() },
                 ))
                 .with_criterion(Criterion::new(
-                    "D3-C2", "Cargo.lock existe", 5.0,
-                    CheckType::FileExists { path: "Cargo.lock".into() }
+                    "D3-C2",
+                    "Cargo.lock existe",
+                    5.0,
+                    CheckType::FileExists { path: "Cargo.lock".into() },
                 ))
                 .with_criterion(Criterion::new(
-                    "D3-C3", "Sem warnings de compilação", 5.0,
-                    CheckType::CommandSuccess { command: "cargo clippy -- -D warnings".into() }
+                    "D3-C3",
+                    "Sem warnings de compilação",
+                    5.0,
+                    CheckType::CommandSuccess { command: "cargo clippy -- -D warnings".into() },
                 )),
-
             // 4. Testabilidade (15%)
             Dimension::new("D4", "Testabilidade", 0.15)
                 .with_criterion(Criterion::new(
-                    "D4-C1", "cargo test executa com sucesso", 8.0,
-                    CheckType::CommandSuccess { command: "cargo test".into() }
+                    "D4-C1",
+                    "cargo test executa com sucesso",
+                    8.0,
+                    CheckType::CommandSuccess { command: "cargo test".into() },
                 ))
                 .with_criterion(Criterion::new(
-                    "D4-C2", "Diretório tests existe", 4.0,
-                    CheckType::DirExists { path: "tests".into() }
+                    "D4-C2",
+                    "Diretório tests existe",
+                    4.0,
+                    CheckType::DirExists { path: "tests".into() },
                 ))
                 .with_criterion(Criterion::new(
-                    "D4-C3", "Cargo.toml contém dev-dependencies", 3.0,
+                    "D4-C3",
+                    "Cargo.toml contém dev-dependencies",
+                    3.0,
                     CheckType::FileContains {
                         path: "Cargo.toml".into(),
-                        text: "dev-dependencies".into()
-                    }
+                        text: "dev-dependencies".into(),
+                    },
                 )),
-
             // 5. Integração (15%)
             Dimension::new("D5", "Integração", 0.15)
                 .with_criterion(Criterion::new(
-                    "D5-C1", "Diretório examples existe", 5.0,
-                    CheckType::DirExists { path: "examples".into() }
+                    "D5-C1",
+                    "Diretório examples existe",
+                    5.0,
+                    CheckType::DirExists { path: "examples".into() },
                 ))
                 .with_criterion(Criterion::new(
-                    "D5-C2", "Cargo.toml contém dependencies", 5.0,
+                    "D5-C2",
+                    "Cargo.toml contém dependencies",
+                    5.0,
                     CheckType::FileContains {
                         path: "Cargo.toml".into(),
-                        text: "dependencies".into()
-                    }
+                        text: "dependencies".into(),
+                    },
                 ))
                 .with_criterion(Criterion::new(
-                    "D5-C3", "Exemplos compilam", 5.0,
-                    CheckType::CommandSuccess { command: "cargo build --examples".into() }
+                    "D5-C3",
+                    "Exemplos compilam",
+                    5.0,
+                    CheckType::CommandSuccess { command: "cargo build --examples".into() },
                 )),
-
             // 6. Documentação (5%)
             Dimension::new("D6", "Documentação", 0.05)
                 .with_criterion(Criterion::new(
-                    "D6-C1", "README contém instruções de uso", 3.0,
-                    CheckType::FileContains {
-                        path: "README.md".into(),
-                        text: "## Uso".into()
-                    }
+                    "D6-C1",
+                    "README contém instruções de uso",
+                    3.0,
+                    CheckType::FileContains { path: "README.md".into(), text: "## Uso".into() },
                 ))
                 .with_criterion(Criterion::new(
-                    "D6-C2", "README contém exemplos", 2.0,
-                    CheckType::FileContains {
-                        path: "README.md".into(),
-                        text: "```rust".into()
-                    }
+                    "D6-C2",
+                    "README contém exemplos",
+                    2.0,
+                    CheckType::FileContains { path: "README.md".into(), text: "```rust".into() },
                 )),
-
             // 7. Maturidade Operacional (10%)
             Dimension::new("D7", "Maturidade Operacional", 0.10)
                 .with_criterion(Criterion::new(
-                    "D7-C1", "Diretório .github/workflows existe", 3.0,
-                    CheckType::DirExists { path: ".github/workflows".into() }
+                    "D7-C1",
+                    "Diretório .github/workflows existe",
+                    3.0,
+                    CheckType::DirExists { path: ".github/workflows".into() },
                 ))
                 .with_criterion(Criterion::new(
-                    "D7-C2", "Cargo.toml contém license", 3.0,
-                    CheckType::FileContains {
-                        path: "Cargo.toml".into(),
-                        text: "license".into()
-                    }
+                    "D7-C2",
+                    "Cargo.toml contém license",
+                    3.0,
+                    CheckType::FileContains { path: "Cargo.toml".into(), text: "license".into() },
                 ))
                 .with_criterion(Criterion::new(
-                    "D7-C3", "Cargo.toml contém authors", 2.0,
-                    CheckType::FileContains {
-                        path: "Cargo.toml".into(),
-                        text: "authors".into()
-                    }
+                    "D7-C3",
+                    "Cargo.toml contém authors",
+                    2.0,
+                    CheckType::FileContains { path: "Cargo.toml".into(), text: "authors".into() },
                 )),
         ]
     }

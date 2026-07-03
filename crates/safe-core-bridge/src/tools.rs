@@ -1,8 +1,9 @@
-use crate::api::*;
-use crate::state::BridgeState;
+use std::sync::Arc;
+
 use safe_core_ethics::EthicsError;
 use serde_json::json;
-use std::sync::Arc;
+
+use crate::{api::*, state::BridgeState};
 
 pub async fn enforce_action(
     state: &Arc<BridgeState>,
@@ -19,41 +20,23 @@ pub async fn enforce_action(
     })
 }
 
-pub async fn get_violations(
-    _state: &Arc<BridgeState>,
-) -> ViolationsResponse {
-    ViolationsResponse {
-        total: 0,
-        violations: vec![],
-        timestamp: chrono::Utc::now().to_rfc3339(),
-    }
+pub async fn get_violations(_state: &Arc<BridgeState>) -> ViolationsResponse {
+    ViolationsResponse { total: 0, violations: vec![], timestamp: chrono::Utc::now().to_rfc3339() }
 }
 
-pub async fn clear_violations(
-    _state: &Arc<BridgeState>,
-) -> serde_json::Value {
+pub async fn clear_violations(_state: &Arc<BridgeState>) -> serde_json::Value {
     json!({"ok": true, "cleared": true})
 }
 
-pub fn list_invariants(
-    _state: &Arc<BridgeState>,
-) -> InvariantsResponse {
-    InvariantsResponse {
-        total: 0,
-        invariants: vec![],
-        timestamp: chrono::Utc::now().to_rfc3339(),
-    }
+pub fn list_invariants(_state: &Arc<BridgeState>) -> InvariantsResponse {
+    InvariantsResponse { total: 0, invariants: vec![], timestamp: chrono::Utc::now().to_rfc3339() }
 }
 
-pub async fn export_invariants(
-    _state: &Arc<BridgeState>,
-) -> Result<serde_json::Value, String> {
+pub async fn export_invariants(_state: &Arc<BridgeState>) -> Result<serde_json::Value, String> {
     Ok(json!({"ok": true, "path": "/tmp/safe-core-lean4-export", "note": "Pseudo-código Lean 4"}))
 }
 
-pub async fn health_check(
-    state: &Arc<BridgeState>,
-) -> HealthResponse {
+pub async fn health_check(state: &Arc<BridgeState>) -> HealthResponse {
     let constraints = state.ethics_engine.constraint_count().await;
     HealthResponse {
         status: "ok".into(),

@@ -1,5 +1,4 @@
-use arkhe_eval::{EvalEngine, EvalConfig};
-
+use arkhe_eval::{EvalConfig, EvalEngine};
 
 #[tokio::test]
 async fn test_engine_creation() {

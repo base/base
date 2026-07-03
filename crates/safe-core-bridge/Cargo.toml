@@ -6,7 +6,7 @@ description = "Integration API — Ethics, Monitoring, Invariants via HTTP + MCP
 
 [features]
 default = []
-mcp = ["dep:rmcp"]
+mcp = [ "dep:rmcp" ]
 
 [dependencies]
 clap = { version = "4.0", features = ["derive", "env"] }

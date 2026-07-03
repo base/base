@@ -1,8 +1,10 @@
+use std::collections::HashSet;
+
+use async_trait::async_trait;
+use tree_sitter::{Query, QueryCursor};
+
 use super::{Check, CheckResult, FileContext, Issue, IssueCategory, Severity};
 use crate::languages::Language;
-use async_trait::async_trait;
-use std::collections::HashSet;
-use tree_sitter::{Query, QueryCursor};
 
 #[derive(Debug, Clone)]
 struct Import {
@@ -73,12 +75,7 @@ impl Check for DependencyCheck {
             1.0 - (issues.len() as f64 / imports.len() as f64)
         };
 
-        Ok(CheckResult {
-            passed: issues.is_empty(),
-            issues,
-            suggestions: vec![],
-            score,
-        })
+        Ok(CheckResult { passed: issues.is_empty(), issues, suggestions: vec![], score })
     }
 }
 

@@ -1,5 +1,6 @@
-use crate::languages::Language;
 use tree_sitter::Tree;
+
+use crate::languages::Language;
 
 pub struct CodeStructureAnalyzer;
 

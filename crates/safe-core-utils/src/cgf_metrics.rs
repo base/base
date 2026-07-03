@@ -6,8 +6,9 @@
 //! - `x_` prefixo: funções que recebem dados de fronteira (respostas de LLM)
 //! - `_x` sufixo: estruturas em estado transitório (não promovidas)
 
-use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
+
+use serde::{Deserialize, Serialize};
 
 // =============================================================================
 // CONCEITOS-CHAVE E PESOS

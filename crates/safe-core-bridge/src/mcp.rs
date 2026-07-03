@@ -1,9 +1,10 @@
 #[cfg(feature = "mcp")]
 pub mod mcp_impl {
-    use crate::tools;
-    use crate::state::BridgeState;
-    use rmcp::{ServerHandler, ServiceExt, transport::stdio};
     use std::sync::Arc;
+
+    use rmcp::{ServerHandler, ServiceExt, transport::stdio};
+
+    use crate::{state::BridgeState, tools};
 
     #[derive(Clone)]
     pub struct SafeCoreMcpServer {

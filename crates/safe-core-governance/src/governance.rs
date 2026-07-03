@@ -1,10 +1,14 @@
-use safe_core_ethics::{EthicsEngine, EthicsRule, EthicsVerdict};
-use safe_core_verifier::{Lean4Verifier, Verifier, Constraint, ConstraintResult};
-use crate::persistence::StateRepository;
-use crate::audit::{AuditTrail, AuditEvent, EventType};
 use std::sync::Arc;
+
+use safe_core_ethics::{EthicsEngine, EthicsVerdict};
+use safe_core_verifier::{Constraint, ConstraintResult, Lean4Verifier, Verifier};
 use tokio::sync::RwLock;
 use tracing::info;
+
+use crate::{
+    audit::{AuditEvent, AuditTrail, EventType},
+    persistence::StateRepository,
+};
 
 /// A Engine Unificada de Governança.
 ///
@@ -44,12 +48,7 @@ impl GovernanceEngine {
 
         info!("GovernanceEngine inicializada com {} regras", repository.count_rules().await?);
 
-        Ok(Self {
-            ethics,
-            repository,
-            verifier,
-            audit,
-        })
+        Ok(Self { ethics, repository, verifier, audit })
     }
 
     /// Avalia uma ação (Pilar 1 + Pilar 4).
@@ -80,7 +79,11 @@ impl GovernanceEngine {
     }
 
     /// Verifica uma restrição (Pilar 3).
-    pub fn verify_constraint(&self, constraint: &Constraint, context: &serde_json::Value) -> ConstraintResult {
+    pub fn verify_constraint(
+        &self,
+        constraint: &Constraint,
+        context: &serde_json::Value,
+    ) -> ConstraintResult {
         self.verifier.verify(constraint, context)
     }
 
@@ -110,18 +113,16 @@ impl Verifier for SimpleVerifier {
         // Em produção: chamar Lean4 real
         // Aqui, simula validação baseada em regex simples
         let valid = match constraint.expression.as_str() {
-            "percentage <= 20" => {
-                context.get("percentage")
-                    .and_then(|v| v.as_f64())
-                    .map(|p| p <= 20.0)
-                    .unwrap_or(false)
-            }
-            "amount <= 100000" => {
-                context.get("amount")
-                    .and_then(|v| v.as_f64())
-                    .map(|a| a <= 100000.0)
-                    .unwrap_or(false)
-            }
+            "percentage <= 20" => context
+                .get("percentage")
+                .and_then(|v| v.as_f64())
+                .map(|p| p <= 20.0)
+                .unwrap_or(false),
+            "amount <= 100000" => context
+                .get("amount")
+                .and_then(|v| v.as_f64())
+                .map(|a| a <= 100000.0)
+                .unwrap_or(false),
             _ => true,
         };
 

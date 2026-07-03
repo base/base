@@ -11,12 +11,12 @@
 
 pub mod dimensions;
 pub mod engine;
-pub mod report;
 pub mod error;
+pub mod report;
 
-pub use dimensions::{Dimension, DimensionScore, Criterion, CriterionResult};
-pub use engine::{EvalEngine, EvalConfig};
-pub use report::{EvalReport, MaturityLevel};
+pub use dimensions::{Criterion, CriterionResult, Dimension, DimensionScore};
+pub use engine::{EvalConfig, EvalEngine};
 pub use error::{EvalError, Result};
+pub use report::{EvalReport, MaturityLevel};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

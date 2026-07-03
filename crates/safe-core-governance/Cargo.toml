@@ -30,6 +30,6 @@ hex = "0.4"
 chrono = "0.4"
 
 [features]
-default = ["stdio"]
-stdio = ["rmcp/transport-io"]
+default = [ "stdio" ]
+stdio = [ "rmcp/transport-io" ]
 http = []

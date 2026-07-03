@@ -1,7 +1,8 @@
+use std::path::PathBuf;
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use safe_core_verifier::PolyglotVerifier;
-use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "safe-core-verify")]

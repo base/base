@@ -1,6 +1,7 @@
-use safe_core_verifier::languages::Language;
 use safe_core_verifier::{
-    checks::Check, checks::convention_x::ConventionXCheck, context::FileContext,
+    checks::{Check, convention_x::ConventionXCheck},
+    context::FileContext,
+    languages::Language,
 };
 
 fn parse_code(lang: Language, code: &str) -> anyhow::Result<(tree_sitter::Tree, String)> {

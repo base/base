@@ -4,7 +4,21 @@ exclude_all_private = false
 max_concurrency = 16
 max_retries = 3
 retry_wait_time = 5
-cache_exclude_status = ["429"]
+cache_exclude_status = ["429"    https://github.com/arkhe-research/safe-core,
+    http://localhost:6333/healthz,
+    http://localhost/,
+    http://localhost:3000/,
+    http://localhost:8000/,
+    http://localhost:9090/,
+    http://localhost:10000/,
+    http://localhost:10001/,
+    http://localhost:10029/,
+    http://localhost:10030/,
+    http://localhost:26657/,
+    https://localhost:5000/v1/api,
+    https://localhost:10000/,
+    https://localhost:10029/,
+]
 accept = ["200", "403", "429", "502", "503"] # 403 is often returned by private repos instead of 404; 429 is rate limiting; 502/503 is transient GitHub unavailability
 exclude_path = [
 

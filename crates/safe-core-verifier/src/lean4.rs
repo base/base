@@ -1,5 +1,5 @@
-use safe_core_ethics::{EthicsRule, EthicsEngine, EthicsVerdict, EthicsError};
 use async_trait::async_trait;
+use safe_core_ethics::{EthicsEngine, EthicsError, EthicsRule, EthicsVerdict};
 
 pub struct Lean4Verifier;
 
@@ -16,23 +16,14 @@ impl EthicsEngine for Lean4Verifier {
         _action: &str,
         _context: &serde_json::Value,
     ) -> Result<EthicsVerdict, EthicsError> {
-        Ok(EthicsVerdict {
-            verdict: "Allow".to_string(),
-            reason: "".to_string(),
-            rule_id: None,
-        })
+        Ok(EthicsVerdict { verdict: "Allow".to_string(), reason: "".to_string(), rule_id: None })
     }
 
-    async fn load_rules(
-        &mut self,
-        _rules: Vec<EthicsRule>,
-    ) -> Result<(), EthicsError> {
+    async fn load_rules(&mut self, _rules: Vec<EthicsRule>) -> Result<(), EthicsError> {
         Ok(())
     }
 
-    async fn list_rules(
-        &self,
-    ) -> Vec<EthicsRule> {
+    async fn list_rules(&self) -> Vec<EthicsRule> {
         vec![]
     }
 }

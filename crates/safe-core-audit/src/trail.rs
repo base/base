@@ -1,5 +1,7 @@
-use crate::event::AuditEvent;
-use crate::merkle::{MerkleTree, MerkleProof};
+use crate::{
+    event::AuditEvent,
+    merkle::{MerkleProof, MerkleTree},
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum AuditError {
@@ -13,12 +15,15 @@ pub struct AuditTrail {
     merkle: MerkleTree,
 }
 
+impl Default for AuditTrail {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AuditTrail {
     pub fn new() -> Self {
-        Self {
-            events: Vec::new(),
-            merkle: MerkleTree::new(),
-        }
+        Self { events: Vec::new(), merkle: MerkleTree::new() }
     }
 
     pub fn push(&mut self, event: AuditEvent) -> Result<(), AuditError> {

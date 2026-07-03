@@ -12,7 +12,6 @@
 
 use serde::{Deserialize, Serialize};
 
-
 // =============================================================================
 // ESTRUTURAS DE DADOS
 // =============================================================================
@@ -106,7 +105,6 @@ impl VibeFailScenario {
                 .replace("billion", "000000000")
                 .replace("$", "")
                 .replace(",", "")
-
                 .split_whitespace()
                 .next()
                 .and_then(|s| s.parse::<f64>().ok())
