@@ -2,7 +2,7 @@
 
 use std::{num::NonZeroUsize, time::Duration};
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::Address;
 use base_cli_utils::CliStyles;
 use clap::{Args, Parser};
 use url::Url;
@@ -89,10 +89,6 @@ pub struct ProposerArgs {
     /// Game type ID for `AggregateVerifier` dispute games.
     #[arg(long = "game-type", env = cli_env!("GAME_TYPE"))]
     pub game_type: u32,
-
-    /// Deprecated: TEE image hashes are read from the AggregateVerifier contract.
-    #[arg(long = "tee-image-hash", env = cli_env!("TEE_IMAGE_HASH"), hide = true)]
-    pub tee_image_hash: Option<B256>,
 
     /// TEE proof requirement: `nitro`, `tdx`, or `both`.
     #[arg(
@@ -198,26 +194,33 @@ pub struct AdminArgs {
 mod tests {
     use super::*;
 
+    const BASE_ARGS: &[&str] = &[
+        "proposer",
+        "--prover-rpc",
+        "http://localhost:8080",
+        "--l1-eth-rpc",
+        "http://localhost:8545",
+        "--l2-eth-rpc",
+        "http://localhost:9545",
+        "--anchor-state-registry-addr",
+        "0x1234567890123456789012345678901234567890",
+        "--dispute-game-factory-addr",
+        "0x2234567890123456789012345678901234567890",
+        "--game-type",
+        "1",
+        "--rollup-rpc",
+        "http://localhost:7545",
+    ];
+
+    fn try_parse(extra_args: &[&str]) -> clap::error::Result<Cli> {
+        let mut args = BASE_ARGS.to_vec();
+        args.extend_from_slice(extra_args);
+        Cli::try_parse_from(args)
+    }
+
     #[test]
     fn test_cli_defaults() {
-        let cli = Cli::try_parse_from([
-            "proposer",
-            "--prover-rpc",
-            "http://localhost:8080",
-            "--l1-eth-rpc",
-            "http://localhost:8545",
-            "--l2-eth-rpc",
-            "http://localhost:9545",
-            "--anchor-state-registry-addr",
-            "0x1234567890123456789012345678901234567890",
-            "--dispute-game-factory-addr",
-            "0x2234567890123456789012345678901234567890",
-            "--game-type",
-            "1",
-            "--rollup-rpc",
-            "http://localhost:7545",
-        ])
-        .unwrap();
+        let cli = try_parse(&[]).unwrap();
 
         assert_eq!(cli.proposer.prover_timeout, Duration::from_secs(70 * 60));
         assert_eq!(cli.proposer.poll_interval, Duration::from_secs(12));
@@ -235,51 +238,14 @@ mod tests {
 
     #[test]
     fn test_tee_proof_mode_arg() {
-        let cli = Cli::try_parse_from([
-            "proposer",
-            "--prover-rpc",
-            "http://localhost:8080",
-            "--l1-eth-rpc",
-            "http://localhost:8545",
-            "--l2-eth-rpc",
-            "http://localhost:9545",
-            "--anchor-state-registry-addr",
-            "0x1234567890123456789012345678901234567890",
-            "--dispute-game-factory-addr",
-            "0x2234567890123456789012345678901234567890",
-            "--game-type",
-            "1",
-            "--rollup-rpc",
-            "http://localhost:7545",
-            "--tee-proof-mode",
-            "both",
-        ])
-        .unwrap();
+        let cli = try_parse(&["--tee-proof-mode", "both"]).unwrap();
 
         assert_eq!(cli.proposer.tee_proof_mode, TeeProofMode::Both);
     }
 
     #[test]
     fn test_recovery_scan_concurrency_zero_rejected() {
-        let result = Cli::try_parse_from([
-            "proposer",
-            "--prover-rpc",
-            "http://localhost:8080",
-            "--l1-eth-rpc",
-            "http://localhost:8545",
-            "--l2-eth-rpc",
-            "http://localhost:9545",
-            "--anchor-state-registry-addr",
-            "0x1234567890123456789012345678901234567890",
-            "--dispute-game-factory-addr",
-            "0x2234567890123456789012345678901234567890",
-            "--game-type",
-            "1",
-            "--rollup-rpc",
-            "http://localhost:7545",
-            "--recovery-scan-concurrency",
-            "0",
-        ]);
+        let result = try_parse(&["--recovery-scan-concurrency", "0"]);
 
         assert!(result.is_err());
     }
