@@ -17,8 +17,6 @@ impl TeeProposals {
     pub const INTERMEDIATE_BLOCK_INTERVAL_ZERO_ERROR: &'static str =
         "intermediate_block_interval must not be zero";
 
-    const L2_BLOCK_NUMBER_ZERO_ERROR: &'static str = "l2_block_number is 0";
-
     /// Build per-block TEE proposals and the aggregate proposal.
     ///
     /// # Errors
@@ -41,7 +39,7 @@ impl TeeProposals {
         let l1_origin_number = boot_info.l1_head_number;
 
         let mut sign_proposal = |journal: ProofJournal| -> Result<Proposal, E> {
-            let signature = sign(journal.encode().as_slice())?;
+            let signature = sign(&journal.encode())?;
             Ok(Proposal {
                 output_root: journal.output_root,
                 signature,
@@ -60,7 +58,7 @@ impl TeeProposals {
             let l2_block_number = l2_info.block_info.number;
             let starting_l2_block = l2_block_number
                 .checked_sub(1)
-                .ok_or_else(|| proof_error(Self::L2_BLOCK_NUMBER_ZERO_ERROR))?;
+                .ok_or_else(|| proof_error("l2_block_number is 0"))?;
             let journal = ProofJournal {
                 proposer: boot_info.proposer,
                 l1_origin_hash,
