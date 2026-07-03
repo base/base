@@ -188,7 +188,7 @@ impl ProofDispatcher {
 
     /// Dispatches every target from the current dispatcher cursor up to `safe_head`.
     pub async fn tick(&self, current: &mut RecoveredState, safe_head: u64) {
-        loop {
+        'targets: loop {
             let Some(target_block) =
                 ProofTarget::next_block(current.l2_block_number, self.config.block_interval)
             else {
@@ -225,7 +225,6 @@ impl ProofDispatcher {
                     }
                 };
 
-            let mut accepted = true;
             for &tee_kind in self.config.tee_proof_mode.tee_kinds() {
                 match self.dispatch_request(request.clone(), tee_kind).await {
                     Ok(session_id) => {
@@ -248,24 +247,14 @@ impl ProofDispatcher {
                             error = %error,
                             "Proof dispatch failed, stopping tick at current cursor"
                         );
-                        accepted = false;
-                        break;
+                        break 'targets;
                     }
                 }
             }
 
-            if accepted {
-                Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_ACCEPTED).increment(1);
-                info!(
-                    target_block,
-                    from_block = current.l2_block_number,
-                    "TEE proof requests accepted by prover service"
-                );
-                current.l2_block_number = target_block;
-                current.output_root = claimed_l2_output_root;
-            } else {
-                break;
-            }
+            Metrics::proof_dispatch_total(Metrics::DISPATCH_OUTCOME_ACCEPTED).increment(1);
+            current.l2_block_number = target_block;
+            current.output_root = claimed_l2_output_root;
         }
     }
 }
@@ -467,13 +456,11 @@ mod tests {
 
         let requests = requester.requests.lock().unwrap();
         assert_eq!(requests.len(), 3);
-        assert!(requests.values().all(|request| {
-            let base_prover_service_protocol::ProofRequestKind::Tee(tee) = &request.proof.request
-            else {
-                return false;
-            };
-            tee.tee_kind == TeeKind::IntelTdx
-        }));
+        assert!(requests.values().all(|request| matches!(
+            &request.proof.request,
+            base_prover_service_protocol::ProofRequestKind::Tee(tee)
+                if tee.tee_kind == TeeKind::IntelTdx
+        )));
         assert_eq!(current.l2_block_number, 400);
     }
 
