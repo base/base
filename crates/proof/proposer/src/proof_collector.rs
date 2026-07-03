@@ -162,21 +162,21 @@ where
         claimed_l2_output_root: B256,
         request_dispatched: bool,
     ) -> Result<Option<TeeProofPair>, ProposerError> {
-        let root = claimed_l2_output_root;
-        let poll = |tee_kind| self.poll_proof(target_block, root, tee_kind, request_dispatched);
-        match self.tee_proof_mode {
-            TeeProofMode::Nitro => Ok(poll(TeeKind::AwsNitro).await?.map(TeeProofPair::Nitro)),
-            TeeProofMode::Tdx => Ok(poll(TeeKind::IntelTdx).await?.map(TeeProofPair::Tdx)),
-            TeeProofMode::Both => {
-                let Some(nitro) = poll(TeeKind::AwsNitro).await? else {
-                    return Ok(None);
-                };
-                let Some(tdx) = poll(TeeKind::IntelTdx).await? else {
-                    return Ok(None);
-                };
-                TeeProofPair::new(nitro, tdx).map(Some)
+        let mut nitro = None;
+        let mut tdx = None;
+        for &tee_kind in self.tee_proof_mode.tee_kinds() {
+            let Some(proof) = self
+                .poll_proof(target_block, claimed_l2_output_root, tee_kind, request_dispatched)
+                .await?
+            else {
+                return Ok(None);
+            };
+            match tee_kind {
+                TeeKind::AwsNitro => nitro = Some(proof),
+                TeeKind::IntelTdx => tdx = Some(proof),
             }
         }
+        TeeProofPair::from_mode(self.tee_proof_mode, nitro, tdx).map(Some)
     }
 
     async fn poll_proof(
