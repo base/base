@@ -422,24 +422,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tick_dispatches_all_targets_up_to_safe_head() {
-        let requester = Arc::new(MockProofRequester::default());
-        let dispatcher = dispatcher(Arc::clone(&requester));
-        let mut current = RecoveredState {
-            parent_address: Address::ZERO,
-            output_root: B256::repeat_byte(0x03),
-            l2_block_number: 100,
-        };
-
-        dispatcher.tick(&mut current, 400).await;
-
-        assert_eq!(requester.requests.lock().unwrap().len(), 3);
-        assert_eq!(current.l2_block_number, 400);
-    }
-
-    #[tokio::test]
     async fn tick_dispatches_configured_tee_modes() {
-        for mode in [TeeProofMode::Tdx, TeeProofMode::Both] {
+        for mode in [TeeProofMode::Nitro, TeeProofMode::Tdx, TeeProofMode::Both] {
             let requester = Arc::new(MockProofRequester::default());
             let mut dispatcher = dispatcher(Arc::clone(&requester));
             dispatcher.config.tee_proof_mode = mode;
