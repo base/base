@@ -225,9 +225,10 @@ impl Cli {
         let boundless_rpc_url = self.boundless_rpc_url;
         let boundless_signer = self.boundless_fee_private_key;
         let boundless_signer_address = boundless_signer.address();
-        let boundless_poll_interval = Duration::from_secs(self.boundless_fulfillment_poll_interval);
-        let boundless_timeout = Duration::from_secs(self.boundless_timeout);
-        let boundless_timing = (boundless_poll_interval, boundless_timeout);
+        let boundless_timing = (
+            Duration::from_secs(self.boundless_fulfillment_poll_interval),
+            Duration::from_secs(self.boundless_timeout),
+        );
         let max_attestation_age = Duration::from_secs(self.max_attestation_age);
 
         Ok(RegistrarConfig {
