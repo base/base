@@ -166,7 +166,10 @@ impl ProofDispatcher {
         mut request: ProofRequest,
         tee_kind: TeeKind,
     ) -> Result<String, ProposerError> {
-        request.image_hash = self.config.tee_image_hashes.for_kind(tee_kind);
+        request.image_hash = match tee_kind {
+            TeeKind::AwsNitro => self.config.tee_image_hashes.nitro,
+            TeeKind::IntelTdx => self.config.tee_image_hashes.tdx,
+        };
         let request = ProposerProofAdapter::tee_prove_block_range_request(request, tee_kind);
         let session_id = request.proof.session_id.clone();
         match self.proof_requester.prove_block_range(request).await {

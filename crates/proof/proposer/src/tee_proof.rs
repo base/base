@@ -20,32 +20,12 @@ pub enum TeeProofMode {
 }
 
 impl TeeProofMode {
-    /// Returns true when the mode requires a Nitro proof.
-    pub const fn requires_nitro(self) -> bool {
-        matches!(self, Self::Nitro | Self::Both)
-    }
-
-    /// Returns true when the mode requires a TDX proof.
-    pub const fn requires_tdx(self) -> bool {
-        matches!(self, Self::Tdx | Self::Both)
-    }
-
     /// Returns the TEE kinds required by this mode.
     pub const fn tee_kinds(self) -> &'static [TeeKind] {
         match self {
             Self::Nitro => &[TeeKind::AwsNitro],
             Self::Tdx => &[TeeKind::IntelTdx],
             Self::Both => &[TeeKind::AwsNitro, TeeKind::IntelTdx],
-        }
-    }
-}
-
-impl std::fmt::Display for TeeProofMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Nitro => write!(f, "nitro"),
-            Self::Tdx => write!(f, "tdx"),
-            Self::Both => write!(f, "both"),
         }
     }
 }
@@ -57,16 +37,6 @@ pub struct TeeImageHashes {
     pub nitro: B256,
     /// Intel TDX image hash.
     pub tdx: B256,
-}
-
-impl TeeImageHashes {
-    /// Returns the image hash for a prover-service TEE kind.
-    pub const fn for_kind(&self, tee_kind: TeeKind) -> B256 {
-        match tee_kind {
-            TeeKind::AwsNitro => self.nitro,
-            TeeKind::IntelTdx => self.tdx,
-        }
-    }
 }
 
 /// A single-platform TEE proof returned by prover-service.
@@ -133,11 +103,7 @@ impl TeeProofPair {
     pub fn build_proof_data(&self) -> Result<Bytes, ProposerError> {
         let proposal = self.aggregate_proposal();
         match self {
-            Self::Nitro(proof) | Self::Tdx(proof) => ProofEncoder::encode_proof_bytes(
-                &proof.aggregate_proposal.signature,
-                proposal.l1_origin_hash,
-                proposal.l1_origin_number,
-            ),
+            Self::Nitro(proof) | Self::Tdx(proof) => proof.aggregate_proposal.build_proof_data(),
             Self::Both { nitro, tdx } => ProofEncoder::encode_dual_tee_proof_bytes(
                 &nitro.aggregate_proposal.signature,
                 &tdx.aggregate_proposal.signature,
@@ -182,31 +148,14 @@ impl TeeProofPair {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const SIGNATURE: [u8; 65] = {
-        let mut signature = [0xab; 65];
-        signature[64] = 1;
-        signature
-    };
-
-    fn proof(block: u64) -> TeeProof {
-        TeeProof {
-            aggregate_proposal: Proposal {
-                output_root: B256::repeat_byte(block as u8),
-                signature: Bytes::from_static(&SIGNATURE),
-                l1_origin_hash: B256::repeat_byte(0x01),
-                l1_origin_number: block + 10,
-                l2_block_number: block,
-                prev_output_root: B256::repeat_byte(0x02),
-                config_hash: B256::repeat_byte(0x03),
-            },
-            proposals: Vec::new(),
-        }
-    }
+    use crate::test_utils::{test_proposal, test_tee_proof_pair};
 
     #[test]
     fn single_proof_uses_single_signature_encoding() {
-        let proof = TeeProofPair::Nitro(proof(100));
+        let proof = TeeProofPair::Nitro(TeeProof {
+            aggregate_proposal: test_proposal(100),
+            proposals: Vec::new(),
+        });
 
         assert_eq!(proof.build_proof_data().unwrap().len(), 130);
         assert_eq!(proof.build_dispute_proof_bytes().unwrap().len(), 66);
@@ -214,7 +163,7 @@ mod tests {
 
     #[test]
     fn both_proof_uses_dual_signature_encoding() {
-        let proof = TeeProofPair::new(proof(100), proof(100)).unwrap();
+        let proof = test_tee_proof_pair(100);
 
         assert_eq!(proof.build_proof_data().unwrap().len(), 195);
         assert_eq!(proof.build_dispute_proof_bytes().unwrap().len(), 131);

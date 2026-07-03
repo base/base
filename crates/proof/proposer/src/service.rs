@@ -30,7 +30,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::{
-    Metrics, TeeImageHashes,
+    Metrics, TeeImageHashes, TeeProofMode,
     config::ProposerConfig,
     driver::{DriverConfig, PipelineHandle, ProposerDriverControl},
     output_proposer::{OutputProposer, ProposalSubmitter},
@@ -64,7 +64,7 @@ impl ProposerService {
             anchor_state_registry = %config.anchor_state_registry_addr,
             dispute_game_factory = %config.dispute_game_factory_addr,
             game_type = config.game_type,
-            tee_proof_mode = %config.tee_proof_mode,
+            tee_proof_mode = ?config.tee_proof_mode,
             prover_timeout = ?config.prover_timeout,
             poll_interval = ?config.poll_interval,
             rpc_timeout = ?config.rpc_timeout,
@@ -138,14 +138,14 @@ impl ProposerService {
             verifier_client.read_intermediate_block_interval(impl_address),
             factory_client.init_bonds(config.game_type),
             async {
-                if config.tee_proof_mode.requires_nitro() {
+                if matches!(config.tee_proof_mode, TeeProofMode::Nitro | TeeProofMode::Both) {
                     verifier_client.read_tee_nitro_image_hash(impl_address).await
                 } else {
                     Ok(B256::ZERO)
                 }
             },
             async {
-                if config.tee_proof_mode.requires_tdx() {
+                if matches!(config.tee_proof_mode, TeeProofMode::Tdx | TeeProofMode::Both) {
                     verifier_client.read_tee_tdx_image_hash(impl_address).await
                 } else {
                     Ok(B256::ZERO)
@@ -170,7 +170,7 @@ impl ProposerService {
             init_bond = %init_bond,
             impl_address = %impl_address,
             game_type = config.game_type,
-            tee_proof_mode = %config.tee_proof_mode,
+            tee_proof_mode = ?config.tee_proof_mode,
             nitro_image_hash = %tee_image_hashes.nitro,
             tdx_image_hash = %tee_image_hashes.tdx,
             "Read onchain config from AggregateVerifier and DisputeGameFactory"

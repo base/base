@@ -94,7 +94,7 @@ pub struct ProposerArgs {
     #[arg(
         long = "tee-proof-mode",
         env = cli_env!("TEE_PROOF_MODE"),
-        default_value_t = TeeProofMode::Nitro,
+        default_value = "nitro",
         value_enum
     )]
     pub tee_proof_mode: TeeProofMode,
