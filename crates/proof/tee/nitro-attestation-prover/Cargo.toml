@@ -17,9 +17,6 @@ base-proof-tee-nitro-verifier.workspace = true
 
 # Shared proof model and errors (always available)
 thiserror.workspace = true
-async-trait.workspace = true
-tokio-util.workspace = true
-alloy-primitives.workspace = true
 base-proof-tee-attestation.workspace = true
 
 # Proving backends (behind `prove` feature). This serves two purposes:
@@ -28,9 +25,11 @@ base-proof-tee-attestation.workspace = true
 #    (e.g. the registrar library compiles in seconds without `prove`)
 url = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
+async-trait = { workspace = true, optional = true }
 boundless-market = { workspace = true, optional = true }
-risc0-ethereum-contracts = { workspace = true, optional = true }
+alloy-primitives = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["rt"], optional = true }
+risc0-ethereum-contracts = { workspace = true, optional = true }
 risc0-zkvm = { workspace = true, features = ["prove"], optional = true }
 
 [dev-dependencies]
@@ -40,6 +39,8 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [features]
 prove = [
+	"dep:alloy-primitives",
+	"dep:async-trait",
 	"dep:boundless-market",
 	"dep:risc0-ethereum-contracts",
 	"dep:risc0-zkvm",
