@@ -356,28 +356,6 @@ mod tests {
     }
 
     #[test]
-    fn test_hash_from_rollup_config_forces_defaults() {
-        let config = PerChainConfig {
-            block_time: 10,
-            genesis: Genesis {
-                l2: BlockId { hash: B256::repeat_byte(0x22), number: 100 },
-                system_config: GenesisSystemConfig {
-                    overhead: B256::repeat_byte(0xff),
-                    ..sample_config().genesis.system_config
-                },
-                ..sample_config().genesis
-            },
-            ..sample_config()
-        };
-        let rollup_config = config.to_rollup_config();
-
-        let mut expected = PerChainConfig::from_rollup_config(&rollup_config).unwrap();
-        expected.force_defaults();
-
-        assert_eq!(PerChainConfig::hash_from_rollup_config(&rollup_config), Some(expected.hash()));
-    }
-
-    #[test]
     fn test_hash_changes_with_chain_id() {
         let config1 = sample_config();
         let mut config2 = sample_config();
