@@ -164,7 +164,7 @@ impl InstanceDiscovery for (AwsTargetGroupDiscovery, GcpNodePoolDiscovery) {
 }
 
 /// Discovers TDX prover instances from a GKE node pool.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct GcpNodePoolDiscovery {
     http_client: HttpClient,
     project: String,
@@ -226,21 +226,6 @@ impl GcpNodePoolDiscovery {
         Self::decode_response(response).await
     }
 
-    async fn post<T>(&self, url: &str, token: &str, body: &serde_json::Value) -> Result<T>
-    where
-        T: for<'de> Deserialize<'de>,
-    {
-        let response = self
-            .http_client
-            .post(url)
-            .bearer_auth(token)
-            .json(body)
-            .send()
-            .await
-            .map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
-        Self::decode_response(response).await
-    }
-
     async fn decode_response<T>(response: reqwest::Response) -> Result<T>
     where
         T: for<'de> Deserialize<'de>,
@@ -267,7 +252,15 @@ impl GcpNodePoolDiscovery {
                 Some(token) => serde_json::json!({ "pageToken": token }),
                 None => serde_json::json!({}),
             };
-            let page: GcpManagedInstancesPage = self.post(&url, token, &body).await?;
+            let response = self
+                .http_client
+                .post(&url)
+                .bearer_auth(token)
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
+            let page: GcpManagedInstancesPage = Self::decode_response(response).await?;
             instance_urls.extend(
                 page.managed_instances
                     .into_iter()
