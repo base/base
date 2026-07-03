@@ -436,9 +436,7 @@ mod tests {
 
     #[tokio::test]
     async fn tick_dispatches_configured_tee_modes() {
-        for (mode, expected_nitro, expected_tdx) in
-            [(TeeProofMode::Tdx, 0, 3), (TeeProofMode::Both, 3, 3)]
-        {
+        for mode in [TeeProofMode::Tdx, TeeProofMode::Both] {
             let requester = Arc::new(MockProofRequester::default());
             let mut dispatcher = dispatcher(Arc::clone(&requester));
             dispatcher.config.tee_proof_mode = mode;
@@ -451,19 +449,17 @@ mod tests {
             dispatcher.tick(&mut current, 400).await;
 
             let requests = requester.requests.lock().unwrap();
-            let (nitro_requests, tdx_requests) =
-                requests.values().fold((0, 0), |counts, request| match &request.proof.request {
-                    base_prover_service_protocol::ProofRequestKind::Tee(tee) => {
-                        match tee.tee_kind {
-                            TeeKind::AwsNitro => (counts.0 + 1, counts.1),
-                            TeeKind::IntelTdx => (counts.0, counts.1 + 1),
-                        }
-                    }
+            let tee_kinds = requests
+                .values()
+                .map(|request| match &request.proof.request {
+                    base_prover_service_protocol::ProofRequestKind::Tee(tee) => tee.tee_kind,
                     other => panic!("unexpected proof request kind: {other:?}"),
-                });
-            assert_eq!(nitro_requests, expected_nitro);
-            assert_eq!(tdx_requests, expected_tdx);
-            assert_eq!(requests.len(), expected_nitro + expected_tdx);
+                })
+                .collect::<Vec<_>>();
+            for &tee_kind in mode.tee_kinds() {
+                assert_eq!(tee_kinds.iter().filter(|&&kind| kind == tee_kind).count(), 3);
+            }
+            assert_eq!(tee_kinds.len(), mode.tee_kinds().len() * 3);
             assert_eq!(current.l2_block_number, 400);
         }
     }
