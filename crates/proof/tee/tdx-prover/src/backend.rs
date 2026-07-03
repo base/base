@@ -40,7 +40,11 @@ impl ProverBackend for TdxBackend {
         let prologue = Prologue::new(witness.clone(), witness, BaseEvmFactory::default());
         let (boot_info, driver) = prologue.load().await.map_err(pipeline_err)?;
         let config_hash = ChainConfig::rollup_config_by_chain_id(boot_info.chain_id)
-            .and_then(|cfg| PerChainConfig::hash_from_rollup_config(&cfg))
+            .and_then(|cfg| {
+                let mut per_chain = PerChainConfig::from_rollup_config(&cfg)?;
+                per_chain.force_defaults();
+                Some(per_chain.hash())
+            })
             .ok_or(TdxProverError::UnsupportedChain(boot_info.chain_id))?;
         let quote = TdxQuote::parse(&self.runtime.signer_quote()?.quote)?;
         let tee_image_hash = quote.image_hash();

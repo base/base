@@ -30,8 +30,9 @@ static CONFIG_HASHES: LazyLock<HashMap<u64, B256>> = LazyLock::new(|| {
     let mut map = HashMap::default();
     for cfg in ChainConfig::all() {
         let rollup = RollupConfig::from(cfg);
-        if let Some(hash) = PerChainConfig::hash_from_rollup_config(&rollup) {
-            map.insert(cfg.chain_id, hash);
+        if let Some(mut per_chain) = PerChainConfig::from_rollup_config(&rollup) {
+            per_chain.force_defaults();
+            map.insert(cfg.chain_id, per_chain.hash());
         }
     }
     map

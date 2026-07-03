@@ -120,14 +120,6 @@ impl Default for PerChainConfig {
 }
 
 impl PerChainConfig {
-    /// Compute the canonical config hash for a rollup config.
-    #[must_use]
-    pub fn hash_from_rollup_config(cfg: &RollupConfig) -> Option<B256> {
-        let mut per_chain = Self::from_rollup_config(cfg)?;
-        per_chain.force_defaults();
-        Some(per_chain.hash())
-    }
-
     /// Create a [`PerChainConfig`] from a [`RollupConfig`].
     ///
     /// Returns `None` if the rollup config is missing `genesis.system_config`.
