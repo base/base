@@ -5,8 +5,8 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_chains::rollup_config;
 use base_proof_host::{ProverConfig, ProverService};
-use base_proof_tee_tdx_prover::{ProofGenerator, TdxBackend, TdxMeasurements, TdxProverServer};
-use base_proof_tee_tdx_runtime::{ConfigfsTdxQuoteProvider, TdxQuoteProvider, TdxRuntime};
+use base_proof_tee_tdx_prover::{ProofGenerator, TdxBackend, TdxProverServer};
+use base_proof_tee_tdx_runtime::{ConfigfsTdxQuoteProvider, TdxRuntime};
 use base_proof_worker::{
     DEFAULT_JOB_DISCOVERY_LOCK_DURATION_SECONDS, DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS,
     DEFAULT_WORKER_HEARTBEAT_LOCK_DURATION_SECONDS, JobDiscovery, JobDiscoveryConfig,
@@ -14,7 +14,7 @@ use base_proof_worker::{
 };
 use base_prover_service_client::{ProverServiceClientConfig, ProverWorkerClient};
 use base_prover_service_protocol::TeeKind;
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use eyre::eyre;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
@@ -27,8 +27,15 @@ base_cli_utils::define_metrics_args!("BASE_PROVER_TDX", 7310);
 #[derive(Parser)]
 #[command(author, version)]
 pub(crate) struct Cli {
-    #[command(subcommand)]
-    command: Command,
+    #[command(flatten)]
+    runtime: ProverRuntimeArgs,
+
+    #[command(flatten)]
+    worker: WorkerArgs,
+
+    /// Configfs report name below `/sys/kernel/config/tsm/report`.
+    #[arg(long, env = "TDX_REPORT_NAME", default_value = "base-tdx-prover")]
+    report_name: String,
 
     /// Logging arguments.
     #[command(flatten)]
@@ -37,16 +44,6 @@ pub(crate) struct Cli {
     /// Metrics arguments.
     #[command(flatten)]
     metrics: MetricsArgs,
-}
-
-/// TDX prover subcommands.
-#[derive(Subcommand)]
-enum Command {
-    /// Run a prover-service worker using Linux TSM/configfs quote collection.
-    Server(ServerArgs),
-
-    /// Run a prover-service worker with deterministic local TDX quote fixtures.
-    Local(LocalArgs),
 }
 
 /// Shared arguments for TDX worker modes.
@@ -143,77 +140,34 @@ struct WorkerArgs {
     proof_generator_heartbeat_lock_duration_seconds: u32,
 }
 
-/// Arguments for the TDX configfs worker mode.
-#[derive(Parser)]
-struct ServerArgs {
-    #[command(flatten)]
-    runtime: ProverRuntimeArgs,
-
-    #[command(flatten)]
-    worker: WorkerArgs,
-
-    /// Configfs report name below `/sys/kernel/config/tsm/report`.
-    #[arg(long, env = "TDX_REPORT_NAME", default_value = "base-tdx-prover")]
-    report_name: String,
-}
-
-/// Arguments for local deterministic mock mode.
-#[derive(Parser)]
-struct LocalArgs {
-    #[command(flatten)]
-    runtime: ProverRuntimeArgs,
-
-    #[command(flatten)]
-    worker: WorkerArgs,
-}
-
 impl Cli {
     /// Run the selected subcommand.
     pub(crate) fn run(self) -> eyre::Result<()> {
-        let Self { command, logging, metrics } = self;
+        let Self { runtime, worker, report_name, logging, metrics } = self;
         LogConfig::from(logging).init_tracing_subscriber()?;
         base_cli_utils::MetricsConfig::from(metrics).init_with(|| {
             base_cli_utils::register_version_metrics!();
         })?;
         RuntimeManager::new().with_thread_stack_size(8 * 1024 * 1024).run_until_shutdown(
-            |cancel| async move {
-                match command {
-                    Command::Server(args) => args.run(cancel).await,
-                    Command::Local(args) => args.run(cancel).await,
-                }
-            },
+            |cancel| async move { run_worker(runtime, worker, report_name, cancel).await },
         )
-    }
-}
-
-impl ServerArgs {
-    async fn run(self, cancel: CancellationToken) -> eyre::Result<()> {
-        let provider = ConfigfsTdxQuoteProvider::new(&self.report_name);
-        info!(
-            addr = %self.runtime.listen_addr,
-            report_name = %self.report_name,
-            "starting tdx prover worker"
-        );
-        run_worker(self.runtime, self.worker, provider, cancel).await
-    }
-}
-
-impl LocalArgs {
-    async fn run(self, cancel: CancellationToken) -> eyre::Result<()> {
-        let provider = TdxMeasurements;
-        info!(addr = %self.runtime.listen_addr, "starting tdx prover worker (local mock mode)");
-        run_worker(self.runtime, self.worker, provider, cancel).await
     }
 }
 
 async fn run_worker(
     runtime_args: ProverRuntimeArgs,
     worker: WorkerArgs,
-    provider: impl TdxQuoteProvider + 'static,
+    report_name: String,
     cancel: CancellationToken,
 ) -> eyre::Result<()> {
     let listen_addr = runtime_args.listen_addr;
     let config = runtime_args.into_prover_config()?;
+    let provider = ConfigfsTdxQuoteProvider::new(&report_name);
+    info!(
+        addr = %listen_addr,
+        report_name = %report_name,
+        "starting tdx prover worker"
+    );
     let runtime = Arc::new(TdxRuntime::new(provider));
     let registrar_handle = TdxProverServer::new(Arc::clone(&runtime)).run(listen_addr).await?;
     let prover = ProverService::new(config, TdxBackend::new(runtime));
