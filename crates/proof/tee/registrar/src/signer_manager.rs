@@ -424,20 +424,8 @@ where
         proof: &TeeAttestationProof,
         signer_address: Address,
     ) -> Result<u64> {
-        let expected_kind = match attestation_kind {
-            AttestationKind::Nitro => TeeAttestationKind::Nitro,
-            AttestationKind::Tdx => TeeAttestationKind::Tdx,
-        };
-        if proof.kind != expected_kind {
-            self.proof_provider.block_recovery_for_signer(attestation_kind, signer_address);
-            return Err(RegistrarError::InvalidAttestationProof(format!(
-                "proof kind mismatch for signer {signer_address}: expected {expected_kind:?}, got {:?}",
-                proof.kind
-            )));
-        }
-
-        match attestation_kind {
-            AttestationKind::Nitro => {
+        match (attestation_kind, proof.kind) {
+            (AttestationKind::Nitro, TeeAttestationKind::Nitro) => {
                 let journal = VerifierJournal::decode(&proof.output)
                     .map_err(|e| RegistrarError::InvalidProofJournal { reason: e.to_string() })?;
                 let expected_nonce = self.attestation_nonce(signer_address);
@@ -451,7 +439,7 @@ where
                 }
                 Ok(journal.timestamp)
             }
-            AttestationKind::Tdx => {
+            (AttestationKind::Tdx, TeeAttestationKind::Tdx) => {
                 let journal = <TDXVerifierJournal as SolValue>::abi_decode_validate(&proof.output)
                     .map_err(|e| RegistrarError::InvalidProofJournal { reason: e.to_string() })?;
                 if journal.signer != signer_address {
@@ -462,6 +450,16 @@ where
                     )));
                 }
                 Ok(journal.timestamp)
+            }
+            (expected, actual) => {
+                let expected_kind = match expected {
+                    AttestationKind::Nitro => TeeAttestationKind::Nitro,
+                    AttestationKind::Tdx => TeeAttestationKind::Tdx,
+                };
+                self.proof_provider.block_recovery_for_signer(expected, signer_address);
+                Err(RegistrarError::InvalidAttestationProof(format!(
+                    "proof kind mismatch for signer {signer_address}: expected {expected_kind:?}, got {actual:?}",
+                )))
             }
         }
     }
@@ -658,9 +656,8 @@ mod tests {
     const SIGNER_A: Address = Address::new([0xAA; 20]);
     const SIGNER_B: Address = Address::new([0xBB; 20]);
 
-    type TestProofProvider = PlatformProofProvider;
     type TestSignerManager =
-        Arc<SignerManager<TestProofProvider, MockRegistry, RecordingTxManager>>;
+        Arc<SignerManager<PlatformProofProvider, MockRegistry, RecordingTxManager>>;
     type ProofRecords = Arc<Mutex<Vec<(Address, Vec<u8>)>>>;
 
     #[derive(Debug, Default)]
@@ -793,17 +790,16 @@ mod tests {
     }
 
     impl RecordingProofProvider {
-        fn for_kind(&self, kind: TeeAttestationKind) -> Self {
-            Self { kind, ..self.clone() }
-        }
-
-        fn platform_pair(&self) -> TestProofProvider {
-            PlatformProofProvider::new(self.clone(), self.for_kind(TeeAttestationKind::Tdx))
+        fn platform_pair(&self) -> PlatformProofProvider {
+            PlatformProofProvider::new(
+                self.clone(),
+                Self { kind: TeeAttestationKind::Tdx, ..self.clone() },
+            )
         }
     }
 
     fn expected_nonce(signer: Address) -> [u8; 32] {
-        SignerManager::<TestProofProvider, MockRegistry, RecordingTxManager>::attestation_nonce_for(
+        SignerManager::<PlatformProofProvider, MockRegistry, RecordingTxManager>::attestation_nonce_for(
             TEST_REGISTRY_ADDRESS,
             signer,
         )
@@ -865,7 +861,7 @@ mod tests {
         proof_provider: RecordingProofProvider,
         registry: MockRegistry,
         tx_manager: T,
-    ) -> SignerManager<TestProofProvider, MockRegistry, T> {
+    ) -> SignerManager<PlatformProofProvider, MockRegistry, T> {
         manager_with_config(
             proof_provider,
             registry,
@@ -883,7 +879,7 @@ mod tests {
         max_tx_retries: u32,
         tx_retry_delay: Duration,
         max_attestation_age: Duration,
-    ) -> SignerManager<TestProofProvider, MockRegistry, T> {
+    ) -> SignerManager<PlatformProofProvider, MockRegistry, T> {
         SignerManager::new(
             proof_provider.platform_pair(),
             registry,
@@ -907,7 +903,7 @@ mod tests {
     }
 
     async fn register(
-        manager: &SignerManager<TestProofProvider, MockRegistry, RecordingTxManager>,
+        manager: &SignerManager<PlatformProofProvider, MockRegistry, RecordingTxManager>,
         cancel: &CancellationToken,
     ) -> Result<()> {
         manager
