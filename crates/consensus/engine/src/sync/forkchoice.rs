@@ -140,7 +140,7 @@ impl L2ForkchoiceState {
     }
 }
 
-fn genesis_l2_block_info(cfg: &RollupConfig) -> L2BlockInfo {
+const fn genesis_l2_block_info(cfg: &RollupConfig) -> L2BlockInfo {
     L2BlockInfo {
         block_info: BlockInfo {
             hash: cfg.genesis.l2.hash,

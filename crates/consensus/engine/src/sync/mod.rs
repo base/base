@@ -232,18 +232,20 @@ mod tests {
 
     #[tokio::test]
     async fn current_uses_config_genesis_when_finalized_label_is_unavailable() {
-        let mut rollup_config = base_common_genesis::RollupConfig::default();
-        rollup_config.genesis = ChainGenesis {
-            l1: BlockNumHash {
-                number: 10,
-                hash: b256!("1111111111111111111111111111111111111111111111111111111111111111"),
+        let rollup_config = base_common_genesis::RollupConfig {
+            genesis: ChainGenesis {
+                l1: BlockNumHash {
+                    number: 10,
+                    hash: b256!("1111111111111111111111111111111111111111111111111111111111111111"),
+                },
+                l2: BlockNumHash {
+                    number: 0,
+                    hash: b256!("2222222222222222222222222222222222222222222222222222222222222222"),
+                },
+                l2_time: 20,
+                system_config: None,
             },
-            l2: BlockNumHash {
-                number: 0,
-                hash: b256!("2222222222222222222222222222222222222222222222222222222222222222"),
-            },
-            l2_time: 20,
-            system_config: None,
+            ..Default::default()
         };
         let latest = l2_block_with_l1_info(1, rollup_config.genesis.l2.hash);
         let latest_hash = latest.clone().into_consensus().hash_slow();
