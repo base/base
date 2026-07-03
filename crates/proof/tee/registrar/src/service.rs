@@ -318,8 +318,26 @@ impl RegistrarConfig {
 
 #[cfg(test)]
 mod tests {
+    use async_trait::async_trait;
+    use base_proof_tee_attestation::{
+        Result as AttestationResult, TeeAttestationProof, TeeAttestationProofProvider,
+    };
+
     use super::*;
-    use crate::test_utils::{NoopProofProvider, TEST_REGISTRY_ADDRESS};
+    use crate::test_utils::TEST_REGISTRY_ADDRESS;
+
+    struct NoopProofProvider;
+
+    #[async_trait]
+    impl TeeAttestationProofProvider for NoopProofProvider {
+        async fn generate_proof_for_signer(
+            &self,
+            _attestation_bytes: &[u8],
+            _signer_address: Address,
+        ) -> AttestationResult<TeeAttestationProof> {
+            unreachable!("NoopProofProvider does not generate proofs")
+        }
+    }
 
     #[test]
     fn debug_redacts_l1_rpc_url_path() {

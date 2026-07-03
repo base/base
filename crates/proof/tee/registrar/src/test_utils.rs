@@ -5,10 +5,6 @@ use std::time::SystemTime;
 use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope};
 use alloy_primitives::{Address, B256};
 use alloy_rpc_types_eth::TransactionReceipt;
-use async_trait::async_trait;
-use base_proof_tee_attestation::{
-    Result as AttestationResult, TeeAttestationProof, TeeAttestationProofProvider,
-};
 use base_tx_manager::{SendHandle, TxCandidate, TxManager};
 use hex_literal::hex;
 use k256::ecdsa::SigningKey;
@@ -38,20 +34,6 @@ pub const EP3: &str = "10.0.0.3:8000";
 
 /// Placeholder registry contract address used in registrar test configs.
 pub const TEST_REGISTRY_ADDRESS: Address = Address::repeat_byte(0x01);
-
-/// Proof provider stub for tests that never generate proofs.
-pub struct NoopProofProvider;
-
-#[async_trait]
-impl TeeAttestationProofProvider for NoopProofProvider {
-    async fn generate_proof_for_signer(
-        &self,
-        _attestation_bytes: &[u8],
-        _signer_address: Address,
-    ) -> AttestationResult<TeeAttestationProof> {
-        unreachable!("NoopProofProvider does not generate proofs")
-    }
-}
 
 /// Tx manager stub for tests that only need to satisfy generic bounds.
 #[derive(Debug, Clone, Copy)]
