@@ -264,6 +264,7 @@ mod tests {
     use std::collections::HashMap;
 
     use alloy_primitives::Address;
+    use base_prover_service_protocol::{ProofRequestKind, ProveBlockRangeRequest};
 
     use super::*;
     use crate::test_utils::{
@@ -449,17 +450,17 @@ mod tests {
             dispatcher.tick(&mut current, 400).await;
 
             let requests = requester.requests.lock().unwrap();
-            let tee_kinds = requests
-                .values()
-                .map(|request| match &request.proof.request {
-                    base_prover_service_protocol::ProofRequestKind::Tee(tee) => tee.tee_kind,
-                    other => panic!("unexpected proof request kind: {other:?}"),
-                })
-                .collect::<Vec<_>>();
+            let request_tee_kind = |request: &ProveBlockRangeRequest| match &request.proof.request {
+                ProofRequestKind::Tee(tee) => tee.tee_kind,
+                other => panic!("unexpected proof request kind: {other:?}"),
+            };
             for &tee_kind in mode.tee_kinds() {
-                assert_eq!(tee_kinds.iter().filter(|&&kind| kind == tee_kind).count(), 3);
+                assert_eq!(
+                    requests.values().filter(|r| request_tee_kind(r) == tee_kind).count(),
+                    3
+                );
             }
-            assert_eq!(tee_kinds.len(), mode.tee_kinds().len() * 3);
+            assert_eq!(requests.len(), mode.tee_kinds().len() * 3);
             assert_eq!(current.l2_block_number, 400);
         }
     }
