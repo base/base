@@ -89,14 +89,13 @@ impl TeeProposals {
             }
             let interval = interval as usize;
             let intermediate_roots = proposals
-                .chunks_exact(interval)
-                .map(|chunk| chunk[interval - 1].output_root)
+                .iter()
+                .skip(interval - 1)
+                .step_by(interval)
+                .map(|proposal| proposal.output_root)
                 .collect();
 
-            let starting_l2_block = first
-                .l2_block_number
-                .checked_sub(1)
-                .ok_or_else(|| proof_error(Self::L2_BLOCK_NUMBER_ZERO_ERROR))?;
+            let starting_l2_block = first.l2_block_number - 1;
             let journal = ProofJournal {
                 proposer: boot_info.proposer,
                 l1_origin_hash,
@@ -159,7 +158,7 @@ mod tests {
 
         let proof = TeeProposals::build(
             &boot_info(2),
-            block_results.as_slice(),
+            &block_results,
             B256::repeat_byte(5),
             B256::repeat_byte(6),
             |_| {
@@ -186,7 +185,7 @@ mod tests {
 
         let err = TeeProposals::build(
             &boot_info(0),
-            block_results.as_slice(),
+            &block_results,
             B256::ZERO,
             B256::ZERO,
             |_| Ok(Bytes::new()),
