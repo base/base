@@ -436,8 +436,6 @@ async fn run_worker(
             .with_registration_checker(Arc::clone(checker))
             .map_err(|e| eyre!("registration checker init failed: {e}"))?;
     }
-    let registrar_transports = pool.transports();
-
     let prover_service = ProverServiceClientConfig::new(worker.prover_service_endpoint.clone())
         .with_request_timeout(Duration::from_secs(worker.prover_service_request_timeout_secs));
 
@@ -456,7 +454,7 @@ async fn run_worker(
     let discovery = JobDiscovery::new(client, proof_generator, discovery_config);
     let registrar_handle = NitroProverServer::run_registrar_rpc_server(
         worker.listen_addr,
-        registrar_transports,
+        pool.transports(),
         registration_checker,
     )
     .await?;
