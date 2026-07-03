@@ -253,35 +253,12 @@ impl GcpNodePoolDiscovery {
             .map_err(|e| RegistrarError::Discovery(Box::new(e)))
     }
 
-    /// Extracts `(zone, instance_group_manager)` from a GKE instance-group URL.
-    pub fn parse_instance_group_manager_url(instance_group_url: &str) -> Result<(String, String)> {
-        let malformed_url = || {
-            RegistrarError::Discovery(Box::new(std::io::Error::other(
-                "malformed GCP instance group URL",
-            )))
-        };
-        let Some((prefix, name)) = instance_group_url.rsplit_once("/instanceGroupManagers/") else {
-            return Err(malformed_url());
-        };
-        let Some((_, zone)) = prefix.rsplit_once("/zones/") else {
-            return Err(malformed_url());
-        };
-        if zone.is_empty() || name.is_empty() {
-            return Err(malformed_url());
-        }
-        Ok((zone.to_owned(), name.to_owned()))
-    }
-
     async fn managed_instance_urls(
         &self,
         token: &str,
         instance_group_url: &str,
     ) -> Result<Vec<String>> {
-        let (zone, name) = Self::parse_instance_group_manager_url(instance_group_url)?;
-        let url = format!(
-            "https://compute.googleapis.com/compute/v1/projects/{}/zones/{zone}/instanceGroupManagers/{name}/listManagedInstances",
-            self.project
-        );
+        let url = format!("{instance_group_url}/listManagedInstances");
         let mut page_token = None;
         let mut instance_urls = Vec::new();
 
@@ -494,16 +471,5 @@ mod tests {
         assert_eq!(instances.len(), 1);
         assert_eq!(instances[0].instance_id, "i-001");
         assert_eq!(missing_ids, vec!["i-002", "i-003"]);
-    }
-
-    #[test]
-    fn parse_instance_group_manager_url_extracts_zone_and_name() {
-        let (zone, name) = GcpNodePoolDiscovery::parse_instance_group_manager_url(
-            "https://www.googleapis.com/compute/v1/projects/base/zones/us-central1-a/instanceGroupManagers/gke-provers-abc",
-        )
-        .unwrap();
-
-        assert_eq!(zone, "us-central1-a");
-        assert_eq!(name, "gke-provers-abc");
     }
 }
