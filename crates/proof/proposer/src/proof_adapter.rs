@@ -7,8 +7,7 @@ use base_prover_service_protocol::{
     TeeProofRequest,
 };
 
-use crate::ProposerError;
-use crate::TeeProof;
+use crate::{ProposerError, TeeProof};
 
 /// Conversion helpers for proposer proof requests and results.
 #[derive(Debug)]
