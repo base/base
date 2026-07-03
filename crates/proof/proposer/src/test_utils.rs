@@ -395,11 +395,10 @@ pub fn test_tee_proof_pair(block_number: u64) -> crate::TeeProofPair {
     let proposals = (1..=block_number).map(test_proposal).collect::<Vec<_>>();
     crate::TeeProofPair::new(
         crate::TeeProof {
-            image_hash: B256::repeat_byte(0x05),
             aggregate_proposal: aggregate_proposal.clone(),
             proposals: proposals.clone(),
         },
-        crate::TeeProof { image_hash: B256::repeat_byte(0x06), aggregate_proposal, proposals },
+        crate::TeeProof { aggregate_proposal, proposals },
     )
     .unwrap()
 }

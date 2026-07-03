@@ -40,11 +40,7 @@ impl ProposerProofAdapter {
     }
 
     /// Converts a prover-service TEE proof result into a typed single-platform TEE proof.
-    pub fn tee_proof(
-        result: ProofResult,
-        tee_kind: TeeKind,
-        image_hash: B256,
-    ) -> Result<TeeProof, ProposerError> {
+    pub fn tee_proof(result: ProofResult, tee_kind: TeeKind) -> Result<TeeProof, ProposerError> {
         let result = match result {
             ProofResult::Tee(result) => result,
             ProofResult::Compressed(_) => {
@@ -65,11 +61,7 @@ impl ProposerProofAdapter {
             )));
         }
 
-        Ok(TeeProof {
-            image_hash,
-            aggregate_proposal: result.aggregate_proposal,
-            proposals: result.proposals,
-        })
+        Ok(TeeProof { aggregate_proposal: result.aggregate_proposal, proposals: result.proposals })
     }
 }
 
@@ -122,16 +114,14 @@ mod tests {
     fn tee_proof_converts_to_typed_proof() {
         let aggregate = test_proposal(600);
         let proposal = test_proposal(300);
-        let image_hash = B256::repeat_byte(0x05);
         let result = ProofResult::Tee(TeeProofResult {
             aggregate_proposal: aggregate.clone(),
             proposals: vec![proposal.clone()],
             tee_kind: TeeKind::AwsNitro,
         });
 
-        let proof = ProposerProofAdapter::tee_proof(result, TeeKind::AwsNitro, image_hash).unwrap();
+        let proof = ProposerProofAdapter::tee_proof(result, TeeKind::AwsNitro).unwrap();
 
-        assert_eq!(proof.image_hash, image_hash);
         assert_eq!(proof.aggregate_proposal, aggregate);
         assert_eq!(proof.proposals, vec![proposal]);
     }
@@ -158,8 +148,7 @@ mod tests {
                 "expected TEE proof result, got SnarkGroth16",
             ),
         ] {
-            let err =
-                ProposerProofAdapter::tee_proof(result, TeeKind::AwsNitro, B256::ZERO).unwrap_err();
+            let err = ProposerProofAdapter::tee_proof(result, TeeKind::AwsNitro).unwrap_err();
             let ProposerError::Prover(message) = err else {
                 panic!("unexpected error: {err:?}");
             };

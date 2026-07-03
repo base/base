@@ -286,7 +286,6 @@ impl ProposerService {
             Arc::clone(&rollup_client),
             proof_submitter,
             driver_config.block_interval,
-            driver_config.tee_image_hashes,
             driver_config.tee_proof_mode,
             driver_config.submit_timeout,
         );

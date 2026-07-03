@@ -8,9 +8,10 @@ use clap::ValueEnum;
 use crate::ProposerError;
 
 /// TEE platforms required before submitting a proposal.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
 pub enum TeeProofMode {
     /// Require only an AWS Nitro proof.
+    #[default]
     Nitro,
     /// Require only an Intel TDX proof.
     Tdx,
@@ -36,12 +37,6 @@ impl TeeProofMode {
             Self::Tdx => &[TeeKind::IntelTdx],
             Self::Both => &[TeeKind::AwsNitro, TeeKind::IntelTdx],
         }
-    }
-}
-
-impl Default for TeeProofMode {
-    fn default() -> Self {
-        Self::Nitro
     }
 }
 
@@ -77,8 +72,6 @@ impl TeeImageHashes {
 /// A single-platform TEE proof returned by prover-service.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TeeProof {
-    /// Image hash used in the signed journal.
-    pub image_hash: B256,
     /// Aggregate proposal for the whole range.
     pub aggregate_proposal: Proposal,
     /// Per-block proposals used for intermediate roots.
@@ -118,30 +111,6 @@ impl TeeProofPair {
             })?;
         }
         Ok(Self::Both { nitro, tdx })
-    }
-
-    /// Builds the proof set for the configured mode.
-    pub fn from_mode(
-        mode: TeeProofMode,
-        nitro: Option<TeeProof>,
-        tdx: Option<TeeProof>,
-    ) -> Result<Self, ProposerError> {
-        match mode {
-            TeeProofMode::Nitro => Ok(Self::Nitro(nitro.ok_or_else(|| {
-                ProposerError::Prover("missing required Nitro TEE proof".into())
-            })?)),
-            TeeProofMode::Tdx => {
-                Ok(Self::Tdx(tdx.ok_or_else(|| {
-                    ProposerError::Prover("missing required TDX TEE proof".into())
-                })?))
-            }
-            TeeProofMode::Both => Self::new(
-                nitro.ok_or_else(|| {
-                    ProposerError::Prover("missing required Nitro TEE proof".into())
-                })?,
-                tdx.ok_or_else(|| ProposerError::Prover("missing required TDX TEE proof".into()))?,
-            ),
-        }
     }
 
     /// Returns the aggregate proposal public inputs.
@@ -220,9 +189,8 @@ mod tests {
         signature
     };
 
-    fn proof(block: u64, image_hash: B256) -> TeeProof {
+    fn proof(block: u64) -> TeeProof {
         TeeProof {
-            image_hash,
             aggregate_proposal: Proposal {
                 output_root: B256::repeat_byte(block as u8),
                 signature: Bytes::from_static(&SIGNATURE),
@@ -238,12 +206,7 @@ mod tests {
 
     #[test]
     fn single_proof_uses_single_signature_encoding() {
-        let proof = TeeProofPair::from_mode(
-            TeeProofMode::Nitro,
-            Some(proof(100, B256::repeat_byte(0x05))),
-            None,
-        )
-        .unwrap();
+        let proof = TeeProofPair::Nitro(proof(100));
 
         assert_eq!(proof.build_proof_data().unwrap().len(), 130);
         assert_eq!(proof.build_dispute_proof_bytes().unwrap().len(), 66);
@@ -251,12 +214,7 @@ mod tests {
 
     #[test]
     fn both_proof_uses_dual_signature_encoding() {
-        let proof = TeeProofPair::from_mode(
-            TeeProofMode::Both,
-            Some(proof(100, B256::repeat_byte(0x05))),
-            Some(proof(100, B256::repeat_byte(0x06))),
-        )
-        .unwrap();
+        let proof = TeeProofPair::new(proof(100), proof(100)).unwrap();
 
         assert_eq!(proof.build_proof_data().unwrap().len(), 195);
         assert_eq!(proof.build_dispute_proof_bytes().unwrap().len(), 131);

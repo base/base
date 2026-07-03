@@ -301,7 +301,6 @@ mod tests {
             Arc::clone(&rollup),
             proof_submitter,
             config.block_interval,
-            config.tee_image_hashes,
             config.tee_proof_mode,
             config.submit_timeout,
         );

@@ -11,7 +11,7 @@ use tracing::{debug, info, warn};
 
 use crate::{
     Metrics, ProofSubmitter, ProofTarget, ProposerError, ProposerProofAdapter, RecoveredState,
-    SubmitAction, TeeImageHashes, TeeProof, TeeProofMode, TeeProofPair,
+    SubmitAction, TeeProof, TeeProofMode, TeeProofPair,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,7 +30,6 @@ where
     rollup_client: Arc<R>,
     submitter: ProofSubmitter,
     block_interval: u64,
-    tee_image_hashes: TeeImageHashes,
     tee_proof_mode: TeeProofMode,
     submit_timeout: Option<Duration>,
 }
@@ -42,7 +41,6 @@ where
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProofCollector")
             .field("block_interval", &self.block_interval)
-            .field("tee_image_hashes", &self.tee_image_hashes)
             .field("tee_proof_mode", &self.tee_proof_mode)
             .field("submit_timeout", &self.submit_timeout)
             .finish_non_exhaustive()
@@ -59,7 +57,6 @@ where
         rollup_client: Arc<R>,
         submitter: ProofSubmitter,
         block_interval: u64,
-        tee_image_hashes: TeeImageHashes,
         tee_proof_mode: TeeProofMode,
         submit_timeout: Option<Duration>,
     ) -> Self {
@@ -68,7 +65,6 @@ where
             rollup_client,
             submitter,
             block_interval,
-            tee_image_hashes,
             tee_proof_mode,
             submit_timeout,
         }
@@ -162,21 +158,51 @@ where
         claimed_l2_output_root: B256,
         request_dispatched: bool,
     ) -> Result<Option<TeeProofPair>, ProposerError> {
-        let mut nitro = None;
-        let mut tdx = None;
-        for &tee_kind in self.tee_proof_mode.tee_kinds() {
-            let Some(proof) = self
-                .poll_proof(target_block, claimed_l2_output_root, tee_kind, request_dispatched)
+        match self.tee_proof_mode {
+            TeeProofMode::Nitro => Ok(self
+                .poll_proof(
+                    target_block,
+                    claimed_l2_output_root,
+                    TeeKind::AwsNitro,
+                    request_dispatched,
+                )
                 .await?
-            else {
-                return Ok(None);
-            };
-            match tee_kind {
-                TeeKind::AwsNitro => nitro = Some(proof),
-                TeeKind::IntelTdx => tdx = Some(proof),
+                .map(TeeProofPair::Nitro)),
+            TeeProofMode::Tdx => Ok(self
+                .poll_proof(
+                    target_block,
+                    claimed_l2_output_root,
+                    TeeKind::IntelTdx,
+                    request_dispatched,
+                )
+                .await?
+                .map(TeeProofPair::Tdx)),
+            TeeProofMode::Both => {
+                let Some(nitro) = self
+                    .poll_proof(
+                        target_block,
+                        claimed_l2_output_root,
+                        TeeKind::AwsNitro,
+                        request_dispatched,
+                    )
+                    .await?
+                else {
+                    return Ok(None);
+                };
+                let Some(tdx) = self
+                    .poll_proof(
+                        target_block,
+                        claimed_l2_output_root,
+                        TeeKind::IntelTdx,
+                        request_dispatched,
+                    )
+                    .await?
+                else {
+                    return Ok(None);
+                };
+                TeeProofPair::new(nitro, tdx).map(Some)
             }
         }
-        TeeProofPair::from_mode(self.tee_proof_mode, nitro, tdx).map(Some)
     }
 
     async fn poll_proof(
@@ -283,11 +309,7 @@ where
                     return Err(error);
                 };
 
-                match ProposerProofAdapter::tee_proof(
-                    result,
-                    tee_kind,
-                    self.tee_image_hashes.for_kind(tee_kind),
-                ) {
+                match ProposerProofAdapter::tee_proof(result, tee_kind) {
                     Ok(proof) => {
                         info!(
                             target_block,
@@ -518,7 +540,6 @@ mod tests {
             rollup_client,
             submitter,
             BLOCK_INTERVAL,
-            TeeImageHashes { nitro: B256::repeat_byte(0x05), tdx: B256::repeat_byte(0x06) },
             TeeProofMode::Nitro,
             Some(std::time::Duration::from_secs(60)),
         )
@@ -711,11 +732,7 @@ mod tests {
 
         let mut aggregate_proposal = crate::test_utils::test_proposal(target_block);
         aggregate_proposal.output_root = stale_root;
-        let proof = TeeProofPair::Nitro(TeeProof {
-            image_hash: B256::repeat_byte(0x05),
-            aggregate_proposal,
-            proposals: Vec::new(),
-        });
+        let proof = TeeProofPair::Nitro(TeeProof { aggregate_proposal, proposals: Vec::new() });
 
         let outcome = collector
             .submit_proof(target_block, stale_root, proof, Address::ZERO, &CancellationToken::new())
