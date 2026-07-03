@@ -145,6 +145,7 @@ fn genesis_l2_block_info(cfg: &RollupConfig) -> L2BlockInfo {
         block_info: BlockInfo {
             hash: cfg.genesis.l2.hash,
             number: cfg.genesis.l2.number,
+            // Base chains start at L2 block 0, whose parent hash is zero.
             parent_hash: B256::ZERO,
             timestamp: cfg.genesis.l2_time,
         },
