@@ -1,17 +1,10 @@
 #![doc = include_str!("../README.md")]
-#![doc(issue_tracker_base_url = "https://github.com/base/base/issues/")]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 use clap::Parser as _;
-use serde as _;
 
 mod cli;
 
-fn main() {
+fn main() -> eyre::Result<()> {
     base_cli_utils::init_common!();
-
-    if let Err(err) = cli::Cli::parse().run() {
-        eprintln!("Error: {err:?}");
-        std::process::exit(1);
-    }
+    cli::Cli::parse().run()
 }
