@@ -26,7 +26,7 @@ mod prover;
 pub use prover::ProverClient;
 
 mod proof_provider;
-pub use proof_provider::{PlatformProofProvider, RegistrarProofProvider};
+pub use proof_provider::PlatformProofProvider;
 
 mod signer_manager;
 pub use signer_manager::{

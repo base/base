@@ -16,15 +16,16 @@ use base_balance_monitor::BalanceMonitorLayer;
 use base_cli_utils::RuntimeManager;
 use base_health::HealthServer;
 use base_proof_contracts::{NitroEnclaveVerifierContractClient, TEEProverRegistryContractClient};
+use base_proof_tee_attestation::TeeAttestationProofProvider;
 use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use url::Url;
 
 use crate::{
-    AwsTargetGroupDiscovery, CertManager, DriverConfig, GcpNodePoolDiscovery, ProverClient,
-    RegistrarError, RegistrarMetrics, RegistrarProofProvider, RegistrationDriver, Result,
-    SignerManager, SignerManagerConfig,
+    AwsTargetGroupDiscovery, CertManager, DriverConfig, GcpNodePoolDiscovery,
+    PlatformProofProvider, ProverClient, RegistrarError, RegistrarMetrics, RegistrationDriver,
+    Result, SignerManager, SignerManagerConfig,
 };
 
 const CRL_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
@@ -124,9 +125,10 @@ where
     }
 }
 
-impl<P> RegistrarConfig<P>
+impl<N, T> RegistrarConfig<PlatformProofProvider<N, T>>
 where
-    P: RegistrarProofProvider + fmt::Debug + 'static,
+    N: TeeAttestationProofProvider + fmt::Debug + 'static,
+    T: TeeAttestationProofProvider + fmt::Debug + 'static,
 {
     /// Runs the full registrar service lifecycle.
     ///
@@ -325,7 +327,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use base_proof_tee_attestation::{BoxError, TeeAttestationProof};
+    use async_trait::async_trait;
+    use base_proof_tee_attestation::{
+        Result as AttestationResult, TeeAttestationProof, TeeAttestationProofProvider,
+    };
 
     use super::*;
     use crate::test_utils::TEST_REGISTRY_ADDRESS;
@@ -333,18 +338,15 @@ mod tests {
     #[derive(Debug)]
     struct TestProofProvider;
 
-    impl RegistrarProofProvider for TestProofProvider {
+    #[async_trait]
+    impl TeeAttestationProofProvider for TestProofProvider {
         async fn generate_proof_for_signer(
             &self,
-            _kind: crate::AttestationKind,
             _attestation_bytes: &[u8],
             _signer_address: Address,
-            _cancel: &CancellationToken,
-        ) -> std::result::Result<TeeAttestationProof, BoxError> {
+        ) -> AttestationResult<TeeAttestationProof> {
             unreachable!("service debug tests do not generate proofs")
         }
-
-        fn block_recovery_for_signer(&self, _kind: crate::AttestationKind, _signer: Address) {}
     }
 
     #[test]
@@ -368,7 +370,7 @@ mod tests {
                     .unwrap(),
             ),
             tx_manager_config: TxManagerConfig::default(),
-            proof_provider: TestProofProvider,
+            proof_provider: PlatformProofProvider::new(TestProofProvider, TestProofProvider),
             boundless_rpc_url: Url::parse("https://boundless.example/v3/BOUNDLESS_SECRET").unwrap(),
             boundless_signer_address: Address::repeat_byte(0x02),
             max_attestation_age: Duration::from_secs(1),

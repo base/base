@@ -13,6 +13,7 @@ use std::{
 
 use alloy_primitives::Address;
 use base_proof_contracts::TEEProverRegistryClient;
+use base_proof_tee_attestation::TeeAttestationProofProvider;
 use base_tx_manager::TxManager;
 use futures::stream::StreamExt;
 use tokio_util::sync::CancellationToken;
@@ -20,7 +21,7 @@ use tracing::{Instrument, debug, info, warn};
 
 use crate::{
     AttestationKind, CertManager, EnclaveEndpointClient, InstanceDiscovery, InstanceHealthStatus,
-    ProofTaskSet, ProverClient, ProverInstance, RegistrarMetrics, RegistrarProofProvider, Result,
+    PlatformProofProvider, ProofTaskSet, ProverClient, ProverInstance, RegistrarMetrics, Result,
     SignerManager,
 };
 
@@ -127,21 +128,17 @@ impl<D, S, P, R, T> RegistrationDriver<D, S, P, R, T> {
     }
 }
 
-impl<D, S, P, R, T> RegistrationDriver<D, S, P, R, T>
+impl<D, S, N, P, R, T> RegistrationDriver<D, S, PlatformProofProvider<N, P>, R, T>
 where
-    D: InstanceDiscovery,
-    S: EnclaveEndpointClient,
-    T: TxManager,
+    D: InstanceDiscovery + 'static,
+    S: EnclaveEndpointClient + 'static,
+    N: TeeAttestationProofProvider + 'static,
+    P: TeeAttestationProofProvider + 'static,
+    R: TEEProverRegistryClient + 'static,
+    T: TxManager + 'static,
 {
     /// Runs the registration loop until cancelled.
-    pub async fn run(&self) -> Result<()>
-    where
-        D: 'static,
-        S: 'static,
-        P: RegistrarProofProvider + 'static,
-        R: TEEProverRegistryClient + 'static,
-        T: 'static,
-    {
+    pub async fn run(&self) -> Result<()> {
         info!(
             poll_interval = ?self.config.poll_interval,
             max_concurrency = self.config.max_concurrency,
@@ -206,6 +203,14 @@ where
         info!("registration driver stopped");
         Ok(())
     }
+}
+
+impl<D, S, P, R, T> RegistrationDriver<D, S, P, R, T>
+where
+    D: InstanceDiscovery,
+    S: EnclaveEndpointClient,
+    T: TxManager,
+{
     /// Resolves one instance into active and registerable signers.
     async fn resolve_instance(&self, instance: &ProverInstance) -> Result<DiscoveryResolution> {
         if self.config.cancel.is_cancelled() {
@@ -507,7 +512,7 @@ mod tests {
     type TestDriver = RegistrationDriver<
         Vec<ProverInstance>,
         MockEnclaveEndpointClient,
-        MockEnclaveEndpointClient,
+        PlatformProofProvider<MockEnclaveEndpointClient, MockEnclaveEndpointClient>,
         (),
         NoopTxManager,
     >;
@@ -538,7 +543,7 @@ mod tests {
         instance_cache_ttl_cycles: u32,
     ) -> TestDriver {
         let signer_manager = Arc::new(SignerManager::new(
-            signer_client.clone(),
+            PlatformProofProvider::new(signer_client.clone(), signer_client.clone()),
             (),
             NoopTxManager,
             SignerManagerConfig {

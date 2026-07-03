@@ -1,27 +1,9 @@
 //! Platform-routed attestation proof providers.
 
-use std::future::Future;
-
 use alloy_primitives::Address;
-use base_proof_tee_attestation::{BoxError, TeeAttestationProof, TeeAttestationProofProvider};
-use tokio_util::sync::CancellationToken;
+use base_proof_tee_attestation::{Result, TeeAttestationProof, TeeAttestationProofProvider};
 
 use crate::AttestationKind;
-
-/// Registrar proof provider that can generate platform-specific attestation proofs.
-pub trait RegistrarProofProvider: Send + Sync {
-    /// Generates an attestation proof for `kind`.
-    fn generate_proof_for_signer<'a>(
-        &'a self,
-        kind: AttestationKind,
-        attestation_bytes: &'a [u8],
-        signer_address: Address,
-        cancel: &'a CancellationToken,
-    ) -> impl Future<Output = Result<TeeAttestationProof, BoxError>> + Send + 'a;
-
-    /// Blocks recovered-proof reuse for one signer on the selected platform.
-    fn block_recovery_for_signer(&self, kind: AttestationKind, signer: Address);
-}
 
 /// Pair of proof providers used by the registrar for Nitro and TDX nodes.
 #[derive(Debug, Clone)]
@@ -37,18 +19,18 @@ impl<N, T> PlatformProofProvider<N, T> {
     }
 }
 
-impl<N, T> RegistrarProofProvider for PlatformProofProvider<N, T>
+impl<N, T> PlatformProofProvider<N, T>
 where
     N: TeeAttestationProofProvider,
     T: TeeAttestationProofProvider,
 {
-    async fn generate_proof_for_signer(
+    /// Generates an attestation proof for `kind`.
+    pub async fn generate_proof_for_signer(
         &self,
         kind: AttestationKind,
         attestation_bytes: &[u8],
         signer_address: Address,
-        _cancel: &CancellationToken,
-    ) -> Result<TeeAttestationProof, BoxError> {
+    ) -> Result<TeeAttestationProof> {
         match kind {
             AttestationKind::Nitro => {
                 self.nitro.generate_proof_for_signer(attestation_bytes, signer_address).await
@@ -59,7 +41,8 @@ where
         }
     }
 
-    fn block_recovery_for_signer(&self, kind: AttestationKind, signer: Address) {
+    /// Blocks recovered-proof reuse for one signer on the selected platform.
+    pub fn block_recovery_for_signer(&self, kind: AttestationKind, signer: Address) {
         match kind {
             AttestationKind::Nitro => self.nitro.block_recovery_for_signer(signer),
             AttestationKind::Tdx => self.tdx.block_recovery_for_signer(signer),

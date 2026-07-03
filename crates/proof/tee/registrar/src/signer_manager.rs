@@ -12,7 +12,9 @@ use std::{
 use alloy_primitives::{Address, Bytes, keccak256};
 use alloy_sol_types::{SolCall, SolValue};
 use base_proof_contracts::{ITEEProverRegistry, TEEProverRegistryClient};
-use base_proof_tee_attestation::{TeeAttestationKind, TeeAttestationProof};
+use base_proof_tee_attestation::{
+    TeeAttestationKind, TeeAttestationProof, TeeAttestationProofProvider,
+};
 use base_proof_tee_nitro_verifier::VerifierJournal;
 use base_proof_tee_tdx_verifier::TDXVerifierJournal;
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
@@ -24,7 +26,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::{
-    AttestationKind, DiscoveryResolution, RegistrarError, RegistrarMetrics, RegistrarProofProvider,
+    AttestationKind, DiscoveryResolution, PlatformProofProvider, RegistrarError, RegistrarMetrics,
     Result,
 };
 
@@ -209,9 +211,10 @@ impl ProofTaskSet {
     }
 }
 
-impl<P, R, T> SignerManager<P, R, T>
+impl<N, D, R, T> SignerManager<PlatformProofProvider<N, D>, R, T>
 where
-    P: RegistrarProofProvider,
+    N: TeeAttestationProofProvider,
+    D: TeeAttestationProofProvider,
     R: TEEProverRegistryClient,
     T: TxManager,
 {
@@ -270,7 +273,6 @@ where
                 attestation_kind,
                 attestation_bytes,
                 signer_address,
-                signer_cancel,
             ))
             .await
         else {
@@ -554,9 +556,10 @@ where
     }
 }
 
-impl<P, R, T> SignerManager<P, R, T>
+impl<N, D, R, T> SignerManager<PlatformProofProvider<N, D>, R, T>
 where
-    P: RegistrarProofProvider + 'static,
+    N: TeeAttestationProofProvider + 'static,
+    D: TeeAttestationProofProvider + 'static,
     R: TEEProverRegistryClient + 'static,
     T: TxManager + 'static,
 {
@@ -660,8 +663,9 @@ mod tests {
     const SIGNER_A: Address = Address::new([0xAA; 20]);
     const SIGNER_B: Address = Address::new([0xBB; 20]);
 
+    type TestProofProvider = PlatformProofProvider<RecordingProofProvider, RecordingProofProvider>;
     type TestSignerManager =
-        Arc<SignerManager<RecordingProofProvider, MockRegistry, RecordingTxManager>>;
+        Arc<SignerManager<TestProofProvider, MockRegistry, RecordingTxManager>>;
     type ProofRecords = Arc<Mutex<Vec<(Address, Vec<u8>)>>>;
 
     #[derive(Debug, Default)]
@@ -774,16 +778,37 @@ mod tests {
         }
     }
 
-    #[derive(Debug, Clone, Default)]
+    #[derive(Debug, Clone)]
     struct RecordingProofProvider {
-        cancel_then_error: bool,
+        kind: TeeAttestationKind,
         blocked_signers: Arc<Mutex<Vec<Address>>>,
         proof_output: Option<Bytes>,
         records: ProofRecords,
     }
 
+    impl Default for RecordingProofProvider {
+        fn default() -> Self {
+            Self {
+                kind: TeeAttestationKind::Nitro,
+                blocked_signers: Arc::default(),
+                proof_output: None,
+                records: Arc::default(),
+            }
+        }
+    }
+
+    impl RecordingProofProvider {
+        fn for_kind(&self, kind: TeeAttestationKind) -> Self {
+            Self { kind, ..self.clone() }
+        }
+
+        fn platform_pair(&self) -> TestProofProvider {
+            PlatformProofProvider::new(self.clone(), self.for_kind(TeeAttestationKind::Tdx))
+        }
+    }
+
     fn expected_nonce(signer: Address) -> [u8; 32] {
-        SignerManager::<RecordingProofProvider, MockRegistry, RecordingTxManager>::attestation_nonce_for(
+        SignerManager::<TestProofProvider, MockRegistry, RecordingTxManager>::attestation_nonce_for(
             TEST_REGISTRY_ADDRESS,
             signer,
         )
@@ -818,24 +843,16 @@ mod tests {
         )
     }
 
-    impl RegistrarProofProvider for RecordingProofProvider {
+    #[async_trait]
+    impl TeeAttestationProofProvider for RecordingProofProvider {
         async fn generate_proof_for_signer(
             &self,
-            kind: AttestationKind,
             attestation_bytes: &[u8],
             signer_address: Address,
-            cancel: &CancellationToken,
         ) -> base_proof_tee_attestation::Result<TeeAttestationProof> {
             self.records.lock().unwrap().push((signer_address, attestation_bytes.to_vec()));
-            if self.cancel_then_error {
-                cancel.cancel();
-                return Err(std::io::Error::other("simulated cancel race").into());
-            }
             Ok(TeeAttestationProof {
-                kind: match kind {
-                    AttestationKind::Nitro => TeeAttestationKind::Nitro,
-                    AttestationKind::Tdx => TeeAttestationKind::Tdx,
-                },
+                kind: self.kind,
                 output: self
                     .proof_output
                     .clone()
@@ -844,7 +861,7 @@ mod tests {
             })
         }
 
-        fn block_recovery_for_signer(&self, _kind: AttestationKind, signer: Address) {
+        fn block_recovery_for_signer(&self, signer: Address) {
             self.blocked_signers.lock().unwrap().push(signer);
         }
     }
@@ -853,7 +870,7 @@ mod tests {
         proof_provider: RecordingProofProvider,
         registry: MockRegistry,
         tx_manager: T,
-    ) -> SignerManager<RecordingProofProvider, MockRegistry, T> {
+    ) -> SignerManager<TestProofProvider, MockRegistry, T> {
         manager_with_config(
             proof_provider,
             registry,
@@ -871,9 +888,9 @@ mod tests {
         max_tx_retries: u32,
         tx_retry_delay: Duration,
         max_attestation_age: Duration,
-    ) -> SignerManager<RecordingProofProvider, MockRegistry, T> {
+    ) -> SignerManager<TestProofProvider, MockRegistry, T> {
         SignerManager::new(
-            proof_provider,
+            proof_provider.platform_pair(),
             registry,
             tx_manager,
             SignerManagerConfig {
@@ -895,7 +912,7 @@ mod tests {
     }
 
     async fn register(
-        manager: &SignerManager<RecordingProofProvider, MockRegistry, RecordingTxManager>,
+        manager: &SignerManager<TestProofProvider, MockRegistry, RecordingTxManager>,
         cancel: &CancellationToken,
     ) -> Result<()> {
         manager
@@ -958,25 +975,6 @@ mod tests {
         tasks.abort_all();
         while tasks.join_next().await.is_some() {}
         proof_tasks.pending.clear();
-    }
-
-    #[tokio::test]
-    async fn register_signer_provider_err_after_cancel_returns_ok() {
-        let manager = manager_with(
-            RecordingProofProvider { cancel_then_error: true, ..Default::default() },
-            MockRegistry::default(),
-            RecordingTxManager::default(),
-        );
-        let cancel = CancellationToken::new();
-
-        let result = register(&manager, &cancel).await;
-
-        assert!(result.is_ok(), "provider Err after cancel must be mapped to Ok(()): {result:?}",);
-        assert_eq!(
-            manager.tx_manager.send_count(),
-            0,
-            "cancelled task must not submit a transaction"
-        );
     }
 
     #[tokio::test]
@@ -1255,7 +1253,7 @@ mod tests {
     async fn register_signer_releases_proof_permit_before_tx_submission_finishes() {
         let proof_provider = RecordingProofProvider::default();
         let manager = Arc::new(SignerManager::new(
-            proof_provider.clone(),
+            proof_provider.platform_pair(),
             MockRegistry::default(),
             RecordingTxManager::stalling(),
             SignerManagerConfig {
