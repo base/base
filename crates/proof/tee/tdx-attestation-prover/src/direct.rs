@@ -2,9 +2,7 @@
 
 use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::SolValue;
-use base_proof_tee_attestation::{
-    TeeAttestationKind, TeeAttestationProof, TeeAttestationProofProvider,
-};
+use base_proof_tee_attestation::{TeeAttestationProof, TeeAttestationProofProvider};
 use base_proof_tee_tdx_verifier::{TdxVerifier, TdxVerifierInput};
 
 /// Native direct prover for local development.
@@ -25,7 +23,6 @@ impl TeeAttestationProofProvider for DirectProver {
         let input = TdxVerifierInput::decode_for_signer(attestation_bytes, signer_address)?;
         let journal = TdxVerifier::verify(&input)?;
         Ok(TeeAttestationProof {
-            kind: TeeAttestationKind::Tdx,
             output: Bytes::from(SolValue::abi_encode(&journal)),
             proof_bytes: Bytes::from_static(b"base-tdx-direct-dev-proof-v1"),
         })

@@ -20,9 +20,7 @@
 use std::{collections::HashSet, fmt, sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, B256, Bytes, keccak256};
-use base_proof_tee_attestation::{
-    TeeAttestationKind, TeeAttestationProof, TeeAttestationProofProvider,
-};
+use base_proof_tee_attestation::{TeeAttestationProof, TeeAttestationProofProvider};
 use base_proof_tee_nitro_verifier::{VerifierInput, VerifierJournal};
 // `boundless-market` re-exports `alloy` (`pub use alloy`) but does not
 // re-export `DynProvider` directly — access it via the SDK's alloy so
@@ -217,7 +215,7 @@ impl BoundlessProver {
             "set inclusion receipt fetched and seal encoded successfully"
         );
 
-        Ok(TeeAttestationProof { kind: TeeAttestationKind::Nitro, output: journal, proof_bytes })
+        Ok(TeeAttestationProof { output: journal, proof_bytes })
     }
 
     /// Waits for fulfillment of a locked request with the TOCTOU retry
@@ -419,7 +417,6 @@ impl BoundlessProver {
 
         self.wait_and_fetch(client, request_id, effective_expiry).await
     }
-
 }
 
 #[async_trait::async_trait]

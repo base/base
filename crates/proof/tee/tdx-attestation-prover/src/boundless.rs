@@ -10,9 +10,7 @@ use std::{
 use alloy_primitives::{Address, B256, Bytes, keccak256};
 use alloy_sol_types::SolValue;
 use async_trait::async_trait;
-use base_proof_tee_attestation::{
-    TeeAttestationKind, TeeAttestationProof, TeeAttestationProofProvider,
-};
+use base_proof_tee_attestation::{TeeAttestationProof, TeeAttestationProofProvider};
 use base_proof_tee_tdx_verifier::{TDXVerifierJournal, TdxVerifierInput};
 use boundless_market::{
     Client, NotProvided,
@@ -194,11 +192,7 @@ impl BoundlessProver {
             ProverError::Boundless(format!("failed to encode set inclusion seal: {e}"))
         })?;
 
-        Ok(TeeAttestationProof {
-            kind: TeeAttestationKind::Tdx,
-            output: journal,
-            proof_bytes: Bytes::from(encoded_seal),
-        })
+        Ok(TeeAttestationProof { output: journal, proof_bytes: Bytes::from(encoded_seal) })
     }
 
     /// Waits for fulfillment and fetches the encoded receipt.
@@ -448,7 +442,6 @@ mod tests {
             reportDataSuffix: B256::repeat_byte(0x88),
         };
         TeeAttestationProof {
-            kind: TeeAttestationKind::Tdx,
             output: Bytes::from(SolValue::abi_encode(&journal)),
             proof_bytes: Bytes::from_static(b"proof"),
         }

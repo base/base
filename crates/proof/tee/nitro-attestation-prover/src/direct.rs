@@ -11,9 +11,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::{Address, Bytes};
-use base_proof_tee_attestation::{
-    TeeAttestationKind, TeeAttestationProof, TeeAttestationProofProvider,
-};
+use base_proof_tee_attestation::{TeeAttestationProof, TeeAttestationProofProvider};
 use base_proof_tee_nitro_verifier::VerifierInput;
 use risc0_zkvm::{ExecutorEnv, ProverOpts, compute_image_id, default_prover};
 
@@ -95,7 +93,6 @@ impl TeeAttestationProofProvider for DirectProver {
         .map_err(|e| ProverError::Risc0(format!("proving task panicked: {e}")))??;
 
         Ok(TeeAttestationProof {
-            kind: TeeAttestationKind::Nitro,
             output: Bytes::from(journal_bytes),
             proof_bytes: Bytes::from(seal),
         })

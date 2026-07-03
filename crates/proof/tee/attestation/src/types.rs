@@ -21,10 +21,8 @@ pub enum TeeAttestationKind {
 }
 
 /// A generated TEE attestation proof ready for on-chain signer registration.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct TeeAttestationProof {
-    /// TEE platform and verifier flavor for this proof.
-    pub kind: TeeAttestationKind,
     /// ABI-encoded verifier journal containing the verified attestation data.
     pub output: Bytes,
     /// ZK proof bytes for on-chain verification.
