@@ -245,14 +245,12 @@ impl GcpNodePoolDiscovery {
     where
         T: for<'de> Deserialize<'de>,
     {
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            return Err(RegistrarError::Discovery(Box::new(std::io::Error::other(format!(
-                "GCP API request failed with status {status}: {body}"
-            )))));
-        }
-        response.json().await.map_err(|e| RegistrarError::Discovery(Box::new(e)))
+        response
+            .error_for_status()
+            .map_err(|e| RegistrarError::Discovery(Box::new(e)))?
+            .json()
+            .await
+            .map_err(|e| RegistrarError::Discovery(Box::new(e)))
     }
 
     /// Extracts `(zone, instance_group_manager)` from a GKE instance-group URL.
@@ -262,18 +260,16 @@ impl GcpNodePoolDiscovery {
                 "malformed GCP instance group URL",
             )))
         };
-        let url =
-            Url::parse(instance_group_url).map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
-        let Some(segments) = url.path_segments() else {
+        let Some((prefix, name)) = instance_group_url.rsplit_once("/instanceGroupManagers/") else {
             return Err(malformed_url());
         };
-        let segments: Vec<_> = segments.collect();
-        let ["compute", "v1", "projects", _, "zones", zone, "instanceGroupManagers", name] =
-            segments.as_slice()
-        else {
+        let Some((_, zone)) = prefix.rsplit_once("/zones/") else {
             return Err(malformed_url());
         };
-        Ok(((*zone).to_owned(), (*name).to_owned()))
+        if zone.is_empty() || name.is_empty() {
+            return Err(malformed_url());
+        }
+        Ok((zone.to_owned(), name.to_owned()))
     }
 
     async fn managed_instance_urls(
@@ -309,32 +305,6 @@ impl GcpNodePoolDiscovery {
 
         Ok(instance_urls)
     }
-
-    fn instance_to_prover(&self, instance: GcpInstance) -> Result<Option<ProverInstance>> {
-        let Some(private_ip) = instance
-            .network_interfaces
-            .iter()
-            .find_map(|interface| interface.network_ip.as_deref())
-        else {
-            warn!(instance = %instance.name, "GCE instance missing private IP");
-            return Ok(None);
-        };
-        let endpoint = Url::parse(&format!("http://{private_ip}:{}", self.port))
-            .map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
-
-        debug!(
-            instance_id = %instance.name,
-            endpoint = %endpoint,
-            "discovered GCP TDX prover instance"
-        );
-        Ok(Some(ProverInstance {
-            instance_id: format!("gcp/{}", instance.name),
-            endpoint,
-            attestation_kind: AttestationKind::Tdx,
-            health_status: InstanceHealthStatus::Healthy,
-            launch_time: None,
-        }))
-    }
 }
 
 impl InstanceDiscovery for GcpNodePoolDiscovery {
@@ -353,9 +323,29 @@ impl InstanceDiscovery for GcpNodePoolDiscovery {
         let mut instances = Vec::with_capacity(instance_urls.len());
         for instance_url in instance_urls {
             let instance = self.get::<GcpInstance>(&instance_url, &token).await?;
-            if let Some(prover) = self.instance_to_prover(instance)? {
-                instances.push(prover);
-            }
+            let Some(private_ip) = instance
+                .network_interfaces
+                .iter()
+                .find_map(|interface| interface.network_ip.as_deref())
+            else {
+                warn!(instance = %instance.name, "GCE instance missing private IP");
+                continue;
+            };
+            let endpoint = Url::parse(&format!("http://{private_ip}:{}", self.port))
+                .map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
+
+            debug!(
+                instance_id = %instance.name,
+                endpoint = %endpoint,
+                "discovered GCP TDX prover instance"
+            );
+            instances.push(ProverInstance {
+                instance_id: format!("gcp/{}", instance.name),
+                endpoint,
+                attestation_kind: AttestationKind::Tdx,
+                health_status: InstanceHealthStatus::Healthy,
+                launch_time: None,
+            });
         }
         Ok(instances)
     }
