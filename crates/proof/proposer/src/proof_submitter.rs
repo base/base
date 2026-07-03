@@ -432,15 +432,11 @@ mod tests {
 
     fn proof_result(target_block: u64) -> TeeProofPair {
         let mut proof = test_tee_proof_pair(target_block);
-        match &mut proof {
-            TeeProofPair::Nitro(proof) | TeeProofPair::Tdx(proof) => {
-                proof.aggregate_proposal.l1_origin_hash = B256::ZERO;
-            }
-            TeeProofPair::Both { nitro, tdx } => {
-                nitro.aggregate_proposal.l1_origin_hash = B256::ZERO;
-                tdx.aggregate_proposal.l1_origin_hash = B256::ZERO;
-            }
-        }
+        let TeeProofPair::Both { nitro, tdx } = &mut proof else {
+            unreachable!("test_tee_proof_pair returns dual-platform proofs");
+        };
+        nitro.aggregate_proposal.l1_origin_hash = B256::ZERO;
+        tdx.aggregate_proposal.l1_origin_hash = B256::ZERO;
         proof
     }
 
