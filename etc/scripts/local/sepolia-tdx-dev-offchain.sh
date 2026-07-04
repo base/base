@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
-set -a
 [ ! -f .env ] || source .env
-set +a
 
 l1_rpc="${L1_RPC_URL:-https://ethereum-full-sepolia-k8s-dev.cbhq.net}"
 l2_rpc="${L2_RPC_URL:-https://base-sepolia-reth-proofs-k8s-donotuse.cbhq.net:8545}"
@@ -16,12 +14,11 @@ worker_rpc=127.0.0.1:9001
 nitro_signer_rpc=127.0.0.1:8000
 tdx_signer_rpc=127.0.0.1:8010
 proposer_private_key="${BASE_PROPOSER_PRIVATE_KEY:?BASE_PROPOSER_PRIVATE_KEY must be set in .env or the environment}"
-forge_account="${TDX_SEPOLIA_FORGE_ACCOUNT:-testnet-admin}"
+forge_account=testnet-admin
 contracts_dir="$(cd ../contracts && pwd)"
-deployments="${TDX_SEPOLIA_DEPLOYMENTS:-$contracts_dir/deployments/11155111-dev-with-tdx.json}"
-deploy_config="${TDX_SEPOLIA_DEPLOY_CONFIG:-$contracts_dir/deploy-config/zeronet-tdx.json}"
+deployments="$contracts_dir/deployments/11155111-dev-with-tdx.json"
+deploy_config="$contracts_dir/deploy-config/zeronet-tdx.json"
 pg_container=base-prover-service-tdx-sepolia
-pg_password=postgres
 
 registry="$(jq -er '.TEEProverRegistry' "$deployments")"
 anchor_state_registry="$(jq -er '.AnchorStateRegistry' "$deployments")"
@@ -31,10 +28,11 @@ nitro_image_hash="$(jq -er '.teeNitroImageHash' "$deploy_config")"
 tdx_image_hash="$(jq -er '.teeTdxImageHash' "$deploy_config")"
 
 wait_rpc() {
-    local url="$1" name="$2"
-    shift 2
+    local url="$1" name="$2" method="$3"
+    local args=("$method")
+    [ "$#" -lt 4 ] || args+=("$4")
     for _ in {1..120}; do
-        "$@" --rpc-url "$url" >/dev/null 2>&1 && return 0
+        cast rpc "${args[@]}" --rpc-url "$url" >/dev/null 2>&1 && return 0
         sleep 1
     done
     echo "Timed out waiting for $name at $url" >&2
@@ -42,11 +40,24 @@ wait_rpc() {
 }
 
 signer_from_rpc() {
-    local public_key_body public_key_hash
-    public_key_body="$(cast rpc enclave_signerPublicKey --rpc-url "$1" \
-        | python3 -c "import json, sys; data = json.load(sys.stdin)[0]; print('0x' + bytes(data[1:]).hex())")"
-    public_key_hash="$(cast keccak "$public_key_body")"
+    local public_key_hash
+    public_key_hash="$(cast keccak "$(cast rpc enclave_signerPublicKey --rpc-url "$1" \
+        | python3 -c "import json, sys; data = json.load(sys.stdin)[0]; print('0x' + bytes(data[1:]).hex())")")"
     echo "0x${public_key_hash: -40}"
+}
+
+start_worker() {
+    local name="$1" binary="$2" listen_addr="$3"
+    echo "Starting $name worker"
+    "$binary" local \
+        --l1-eth-url "$l1_rpc" \
+        --l2-eth-url "$l2_rpc" \
+        --l1-beacon-url "$l1_beacon" \
+        --l2-chain-id "$l2_chain_id" \
+        --listen-addr "$listen_addr" \
+        --prover-service-endpoint "http://$worker_rpc" \
+        --enable-experimental-witness-endpoint &
+    wait_rpc "http://$listen_addr" "$name-signer-rpc" enclave_signerPublicKey
 }
 
 echo "Building local offchain binaries"
@@ -60,7 +71,7 @@ docker rm -f "$pg_container" >/dev/null 2>&1 || true
 docker run -d \
     --name "$pg_container" \
     -e POSTGRES_USER=postgres \
-    -e POSTGRES_PASSWORD="$pg_password" \
+    -e POSTGRES_PASSWORD=postgres \
     -e POSTGRES_DB=proverdb \
     -p "127.0.0.1:$postgres_port:5432" \
     -v "$PWD/crates/proof/prover-service/db/migrations:/docker-entrypoint-initdb.d:ro" \
@@ -74,37 +85,18 @@ POSTGRES_HOST=127.0.0.1 \
 POSTGRES_PORT="$postgres_port" \
 POSTGRES_DB=proverdb \
 POSTGRES_USER=postgres \
-POSTGRES_PASSWORD="$pg_password" \
+POSTGRES_PASSWORD=postgres \
 POSTGRES_SSLMODE=disable \
     target/debug/base-prover-service \
     --rpc-listen-addr "$requester_rpc" \
     --worker-rpc-listen-addr "$worker_rpc" &
 wait_rpc "http://$requester_rpc" prover-service-requester \
-    cast rpc prover_listProofs '{"offset":0,"limit":1}'
+    prover_listProofs '{"offset":0,"limit":1}'
 wait_rpc "http://$worker_rpc" prover-service-worker \
-    cast rpc prover_getProofSession '{"session_id":"__ready__","session_type":"stark"}'
+    prover_getProofSession '{"session_id":"__ready__","session_type":"stark"}'
 
-echo "Starting Nitro worker"
-target/debug/base-prover-nitro-host local \
-    --l1-eth-url "$l1_rpc" \
-    --l2-eth-url "$l2_rpc" \
-    --l1-beacon-url "$l1_beacon" \
-    --l2-chain-id "$l2_chain_id" \
-    --listen-addr "$nitro_signer_rpc" \
-    --prover-service-endpoint "http://$worker_rpc" \
-    --enable-experimental-witness-endpoint &
-wait_rpc "http://$nitro_signer_rpc" nitro-signer-rpc cast rpc enclave_signerPublicKey
-
-echo "Starting TDX worker"
-target/debug/base-prover-tdx local \
-    --l1-eth-url "$l1_rpc" \
-    --l2-eth-url "$l2_rpc" \
-    --l1-beacon-url "$l1_beacon" \
-    --l2-chain-id "$l2_chain_id" \
-    --listen-addr "$tdx_signer_rpc" \
-    --prover-service-endpoint "http://$worker_rpc" \
-    --enable-experimental-witness-endpoint &
-wait_rpc "http://$tdx_signer_rpc" tdx-signer-rpc cast rpc enclave_signerPublicKey
+start_worker nitro target/debug/base-prover-nitro-host "$nitro_signer_rpc"
+start_worker tdx target/debug/base-prover-tdx "$tdx_signer_rpc"
 
 nitro_signer="$(signer_from_rpc "http://$nitro_signer_rpc")"
 tdx_signer="$(signer_from_rpc "http://$tdx_signer_rpc")"
@@ -129,4 +121,4 @@ target/debug/base-proposer \
     --tee-proof-mode both \
     --allow-non-finalized \
     --private-key "$proposer_private_key" \
-    --poll-interval "${TDX_SEPOLIA_PROPOSER_POLL_INTERVAL:-12s}"
+    --poll-interval 12s
