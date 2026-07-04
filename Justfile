@@ -6,8 +6,7 @@
 [private]
 _skip_kernels := if os() == "macos" { "RISC0_SKIP_BUILD_KERNELS=1" } else { "" }
 
-set positional-arguments := true
-set dotenv-load
+set positional-arguments
 
 mod tee 'crates/proof/tee'
 mod actions 'actions'
@@ -172,25 +171,27 @@ basectl:
 sepolia-tdx-dev-offchain:
     #!/usr/bin/env bash
     set -euo pipefail
+    set -a
+    [ ! -f .env ] || source .env
+    set +a
 
     l1_rpc="${L1_RPC_URL:-https://ethereum-full-sepolia-k8s-dev.cbhq.net}"
     l2_rpc="${L2_RPC_URL:-https://base-sepolia-reth-proofs-k8s-donotuse.cbhq.net:8545}"
     rollup_rpc="${ROLLUP_RPC_URL:-${L2_OUTPUT_ROOT_RPC_URL:-https://base-sepolia-reth-internal-rpc-donotuse.cbhq.net:7545}}"
     l1_beacon="${L1_BEACON_URL:-https://ethereum-full-sepolia-k8s-dev.cbhq.net:5052}"
-    l2_chain_id="${TDX_SEPOLIA_L2_CHAIN_ID:-84532}"
-    postgres_port="${TDX_SEPOLIA_POSTGRES_PORT:-5432}"
-    requester_rpc="${TDX_SEPOLIA_PROVER_REQUESTER_RPC:-127.0.0.1:9000}"
-    worker_rpc="${TDX_SEPOLIA_PROVER_WORKER_RPC:-127.0.0.1:9001}"
-    nitro_signer_rpc="${TDX_SEPOLIA_NITRO_SIGNER_RPC:-127.0.0.1:8000}"
-    tdx_signer_rpc="${TDX_SEPOLIA_TDX_SIGNER_RPC:-127.0.0.1:8010}"
+    l2_chain_id=84532
+    postgres_port=5432
+    requester_rpc=127.0.0.1:9000
+    worker_rpc=127.0.0.1:9001
+    nitro_signer_rpc=127.0.0.1:8000
+    tdx_signer_rpc=127.0.0.1:8010
     proposer_private_key="${BASE_PROPOSER_PRIVATE_KEY:?BASE_PROPOSER_PRIVATE_KEY must be set in .env or the environment}"
     forge_account="${TDX_SEPOLIA_FORGE_ACCOUNT:-testnet-admin}"
     contracts_dir="$(cd ../contracts && pwd)"
     deployments="${TDX_SEPOLIA_DEPLOYMENTS:-$contracts_dir/deployments/11155111-dev-with-tdx.json}"
     deploy_config="${TDX_SEPOLIA_DEPLOY_CONFIG:-$contracts_dir/deploy-config/zeronet-tdx.json}"
-    pg_container="${TDX_SEPOLIA_POSTGRES_CONTAINER:-base-prover-service-tdx-sepolia}"
-    pg_data_dir="${TDX_SEPOLIA_POSTGRES_DATA_DIR:-$PWD/.tdx-sepolia/postgres}"
-    pg_password="${TDX_SEPOLIA_POSTGRES_PASSWORD:-postgres}"
+    pg_container=base-prover-service-tdx-sepolia
+    pg_password=postgres
 
     registry="$(jq -er '.TEEProverRegistry' "$deployments")"
     anchor_state_registry="$(jq -er '.AnchorStateRegistry' "$deployments")"
@@ -225,8 +226,6 @@ sepolia-tdx-dev-offchain:
 
     trap 'kill $(jobs -p) 2>/dev/null || true; wait 2>/dev/null || true' EXIT INT TERM
 
-    mkdir -p "$pg_data_dir"
-    # ponytail: initdb migrations run on first DB creation; delete the data dir to replay them.
     docker rm -f "$pg_container" >/dev/null 2>&1 || true
     docker run -d \
         --name "$pg_container" \
@@ -234,7 +233,6 @@ sepolia-tdx-dev-offchain:
         -e POSTGRES_PASSWORD="$pg_password" \
         -e POSTGRES_DB=proverdb \
         -p "127.0.0.1:$postgres_port:5432" \
-        -v "$pg_data_dir:/var/lib/postgresql/data" \
         -v "$PWD/crates/proof/prover-service/db/migrations:/docker-entrypoint-initdb.d:ro" \
         postgres:17-alpine >/dev/null
     until docker exec "$pg_container" pg_isready -U postgres -d proverdb >/dev/null 2>&1; do
