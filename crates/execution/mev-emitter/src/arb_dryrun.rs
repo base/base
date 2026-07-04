@@ -38,6 +38,7 @@ const NET_L1_FEE_STATIC_CALLDATA_PROXY_CAVEAT: &str = "net-l1-fee-static-calldat
 const Q96: u128 = 79_228_162_514_264_337_593_543_950_336u128;
 const MIN_SQRT_RATIO: u128 = 4_295_128_739u128;
 const FEE_DENOMINATOR: u128 = 1_000_000u128;
+const STABLE_SCALE: u128 = 1_000_000_000_000_000_000u128;
 
 /// Pure marker carried through tests and runtime wiring to prove this lane is
 /// observation-only.
@@ -702,15 +703,32 @@ pub fn quote_aero_stable_exact_in(
     reserve_in: u128,
     reserve_out: u128,
     fee_bps: u32,
+    decimals_in: u8,
+    decimals_out: u8,
 ) -> Option<u128> {
     if amount_in == 0 || reserve_in == 0 || reserve_out == 0 || fee_bps >= 10_000 {
         return None;
     }
-    let amount_in_after_fee = amount_in.saturating_mul(u128::from(10_000u32 - fee_bps)) / 10_000;
-    let x0 = BigUint::from(reserve_in);
-    let y0 = BigUint::from(reserve_out);
+
+    let fee_den = BigUint::from(10_000u32);
+    let amount_in_after_fee =
+        BigUint::from(amount_in) * BigUint::from(10_000u32 - fee_bps) / &fee_den;
+    if amount_in_after_fee.is_zero() {
+        return Some(0);
+    }
+
+    let scale = BigUint::from(STABLE_SCALE);
+    let unit_in = BigUint::from(10u32).pow(u32::from(decimals_in));
+    let unit_out = BigUint::from(10u32).pow(u32::from(decimals_out));
+    let x0 = BigUint::from(reserve_in) * &scale / &unit_in;
+    let y0 = BigUint::from(reserve_out) * &scale / &unit_out;
+    let amount_in_scaled = amount_in_after_fee * &scale / &unit_in;
+    if x0.is_zero() || y0.is_zero() || amount_in_scaled.is_zero() {
+        return Some(0);
+    }
+
     let k = stable_k(&x0, &y0);
-    let x1 = x0 + BigUint::from(amount_in_after_fee);
+    let x1 = x0 + amount_in_scaled;
     let mut lo = BigUint::zero();
     let mut hi = y0.clone();
     while lo < hi {
@@ -722,7 +740,8 @@ pub fn quote_aero_stable_exact_in(
             hi = mid - BigUint::one();
         }
     }
-    big_to_u128(&lo)
+    let amount_out = lo * unit_out / scale;
+    big_to_u128(&amount_out)
 }
 
 /// Quotes one pool in the requested direction.
@@ -777,6 +796,8 @@ pub fn quote_pool_exact_in_with_options(
             if zero_for_one { pool.reserve0 } else { pool.reserve1 },
             if zero_for_one { pool.reserve1 } else { pool.reserve0 },
             pool.fee,
+            if zero_for_one { pool.decimals0 } else { pool.decimals1 },
+            if zero_for_one { pool.decimals1 } else { pool.decimals0 },
         )
         .map(|amount_out| QuoteResult {
             amount_out,
@@ -1923,9 +1944,47 @@ mod tests {
     #[test]
     fn aero_stable_preserves_low_slippage_near_parity() {
         let out =
-            quote_aero_stable_exact_in(1_000_000, 1_000_000_000_000, 1_000_000_000_000, 4).unwrap();
+            quote_aero_stable_exact_in(1_000_000, 1_000_000_000_000, 1_000_000_000_000, 4, 18, 18)
+                .unwrap();
+        assert_eq!(out, 999_599);
         assert!(out > 998_000);
         assert!(out <= 1_000_000);
+
+        let equal_decimal_out =
+            quote_aero_stable_exact_in(1_000_000, 1_000_000_000_000, 1_000_000_000_000, 4, 6, 6)
+                .unwrap();
+        assert_eq!(equal_decimal_out, out);
+    }
+
+    #[test]
+    fn aero_stable_normalizes_cross_decimal_quotes() {
+        let out = quote_aero_stable_exact_in(
+            100_000_000_000_000_000_000,
+            1_000_000_000_000_000_000_000_000,
+            999_000_000_000,
+            4,
+            18,
+            6,
+        )
+        .unwrap();
+        assert_eq!(out, 99_959_999);
+        assert_ne!(out, 299_520_237);
+
+        let mut pool = PoolState::v2_like(
+            addr(0xa3),
+            Protocol::AerodromeStable,
+            addr(0x11),
+            addr(0x22),
+            4,
+            1_000_000_000_000_000_000_000_000,
+            999_000_000_000,
+        );
+        pool.decimals0 = 18;
+        pool.decimals1 = 6;
+
+        let quote = quote_pool_exact_in(&pool, pool.token0, 100_000_000_000_000_000_000).unwrap();
+        assert_eq!(quote.amount_out, out);
+        assert_ne!(quote.amount_out, 299_520_237);
     }
 
     #[test]
@@ -1993,6 +2052,20 @@ mod tests {
         assert_eq!(issue76_quote.confidence, issue76.expected.confidence.unwrap());
         assert!(!issue76_quote.approximation);
 
+        let stable = corpus
+            .quote_cases
+            .iter()
+            .find(|case| case.name == "aerodrome-stable-dai-eurc")
+            .expect("aerodrome stable DAI/EURC quote case");
+        let stable_pool = stable.pool.clone().into_pool_state();
+        let stable_amount = stable.amount_in.parse::<u128>().unwrap();
+        let stable_quote =
+            quote_pool_exact_in(&stable_pool, stable.token_in, stable_amount).unwrap();
+        assert_eq!(stable_quote.amount_out.to_string(), stable.expected.amount_out);
+        assert_eq!(stable_quote.amount_out, 99_959_999);
+        assert_ne!(stable_quote.amount_out, 299_520_237);
+        assert!(stable_quote.approximation);
+        assert_eq!(stable_quote.caveat, Some("stable-invariant-binary-search"));
         let fot = corpus
             .quote_cases
             .iter()
