@@ -20,7 +20,7 @@ pub struct TdxProverServer {
 
 impl TdxProverServer {
     /// Create a registrar-facing server for one TDX runtime.
-    pub fn new(runtime: Arc<TdxRuntime>) -> Self {
+    pub const fn new(runtime: Arc<TdxRuntime>) -> Self {
         Self { runtime }
     }
 

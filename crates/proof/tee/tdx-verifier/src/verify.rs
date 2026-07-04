@@ -422,7 +422,7 @@ mod tests {
         let collateral_leaf = fixture_cert("collateral_leaf");
 
         let root_hash = root.hash();
-        let pck_chain = vec![root.clone(), intermediate.clone(), pck_leaf.clone()];
+        let pck_chain = vec![root.clone(), intermediate.clone(), pck_leaf];
         let collateral_chain = vec![root, intermediate, collateral_leaf];
         let tcb_info = collateral(
             &tcb_info_raw("UpToDate"),

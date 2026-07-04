@@ -445,6 +445,7 @@ async fn run_worker(
         Duration::from_secs(worker.proof_generator_heartbeat_interval_secs),
         worker.proof_generator_heartbeat_lock_duration_seconds,
     );
+    let transports = pool.transports();
     let proof_generator = Arc::new(ProofGenerator::new(Arc::new(pool), submitter, heartbeat));
     let worker_id = format!("nitro-host-{}", Uuid::new_v4());
     let discovery_config = JobDiscoveryConfig::new(worker_id.clone())
@@ -454,7 +455,7 @@ async fn run_worker(
     let discovery = JobDiscovery::new(client, proof_generator, discovery_config);
     let registrar_handle = NitroProverServer::run_registrar_rpc_server(
         worker.listen_addr,
-        pool.transports(),
+        transports,
         registration_checker,
     )
     .await?;

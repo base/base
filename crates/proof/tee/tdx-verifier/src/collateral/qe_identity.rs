@@ -2,6 +2,7 @@
 
 use serde::Deserialize;
 
+use super::{CollateralVerifier, IntelTcbStatus, TDX_QE_IDENTITY_ID, TDX_QE_IDENTITY_VERSION};
 use crate::{
     ParsedTdxQuote, Result, TdxQuote, TdxVerifierError,
     quote::{
@@ -10,8 +11,6 @@ use crate::{
         QE_REPORT_MRSIGNER_LEN, QE_REPORT_MRSIGNER_OFFSET,
     },
 };
-
-use super::{CollateralVerifier, IntelTcbStatus, TDX_QE_IDENTITY_ID, TDX_QE_IDENTITY_VERSION};
 
 /// Signed Intel QE identity JSON document.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]

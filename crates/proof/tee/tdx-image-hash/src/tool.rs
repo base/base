@@ -129,12 +129,14 @@ impl TdxImageHashTool {
         signer_address: Address,
         attestation: &TdxSignerAttestation,
     ) -> Result<QuoteVerificationReport> {
-        let hydrator = TdxAttestationHydrator::new(attestation_config.clone())
-            .wrap_err("failed to initialize TDX collateral provider")?;
+        let hydrator =
+            TdxAttestationHydrator::new(attestation_config.clone()).map_err(|error| {
+                eyre::eyre!("failed to initialize TDX collateral provider: {error}")
+            })?;
         let collateral = hydrator
             .fetch_collateral(&attestation.quote)
             .await
-            .wrap_err("failed to fetch TDX collateral")?;
+            .map_err(|error| eyre::eyre!("failed to fetch TDX collateral: {error}"))?;
         let verifier_input = TdxVerifierInput {
             quote: attestation.quote.clone(),
             pck_certificate_chain: collateral.pck_certificate_chain,

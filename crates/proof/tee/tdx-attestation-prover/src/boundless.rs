@@ -14,8 +14,7 @@ use base_proof_tee_attestation::{TeeAttestationProof, TeeAttestationProofProvide
 use base_proof_tee_tdx_verifier::{TDXVerifierJournal, TdxVerifierInput};
 use boundless_market::{
     Client, NotProvided,
-    alloy::providers::DynProvider,
-    alloy::signers::local::PrivateKeySigner,
+    alloy::{providers::DynProvider, signers::local::PrivateKeySigner},
     contracts::{Predicate, RequestId, RequestStatus},
     request_builder::{RequestParams, RequirementParams, StandardRequestBuilder},
 };

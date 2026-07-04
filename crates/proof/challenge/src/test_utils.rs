@@ -317,6 +317,17 @@ impl AggregateVerifierClient for MockAggregateVerifier {
         Ok(5)
     }
 
+    async fn read_tee_nitro_image_hash(
+        &self,
+        _impl_address: Address,
+    ) -> Result<B256, ContractError> {
+        Ok(B256::ZERO)
+    }
+
+    async fn read_tee_tdx_image_hash(&self, _impl_address: Address) -> Result<B256, ContractError> {
+        Ok(B256::ZERO)
+    }
+
     async fn intermediate_output_roots(
         &self,
         game_address: Address,

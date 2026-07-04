@@ -3,9 +3,8 @@
 use alloy_primitives::Bytes;
 use x509_parser::prelude::{CertificateRevocationList, FromDer};
 
-use crate::{Result, TdxVerifierError};
-
 use super::{AuthenticatedTdxCertificate, CollateralVerifier};
+use crate::{Result, TdxVerifierError};
 
 /// Authenticated CRL fields parsed from DER.
 #[derive(Debug, Clone, PartialEq, Eq)]

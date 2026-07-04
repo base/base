@@ -47,7 +47,7 @@ pub struct RegistrarConfig {
     pub gcp_cluster: String,
     /// GKE node pool name for TDX prover node discovery.
     pub gcp_node_pool: String,
-    /// Optional GCP OAuth access token. If unset, the GCP metadata server is used.
+    /// Optional GCP `OAuth` access token. If unset, the GCP metadata server is used.
     pub gcp_access_token: Option<String>,
     /// JSON-RPC port to poll on each prover instance.
     pub prover_port: u16,

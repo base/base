@@ -3,9 +3,8 @@
 use serde::{Deserialize, Deserializer, de};
 use serde_json::Value;
 
-use crate::{ParsedTdxQuote, Result, TdxVerifierError, quote::TDX_TEE_TYPE};
-
 use super::{CollateralVerifier, IntelTcbStatus, TDX_TCB_INFO_ID, TdxPckTcb, TdxPlatformIdentity};
+use crate::{ParsedTdxQuote, Result, TdxVerifierError, quote::TDX_TEE_TYPE};
 
 /// Signed Intel TCB info JSON document body.
 #[derive(Debug, Deserialize)]

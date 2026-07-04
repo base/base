@@ -4,9 +4,8 @@ use alloy_primitives::{B256, Bytes, keccak256};
 use serde_json::Value;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
-use crate::{Result, TdxVerifierError};
-
 use super::{CollateralVerifier, TdxCertificate, TdxQeIdentityDocument, TdxTcbInfoDocument};
+use crate::{Result, TdxVerifierError};
 
 /// Signed collateral document with its signing chain.
 #[derive(Debug, Clone, PartialEq, Eq)]

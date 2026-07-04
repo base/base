@@ -4,12 +4,11 @@ use alloy_primitives::{B256, Bytes, hex};
 use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
 use x509_parser::{certificate::X509Certificate, extensions::ParsedExtension, prelude::FromDer};
 
-use crate::{ParsedTdxQuote, Result, TdxVerifierError};
-
 use super::{
     AuthenticatedTdxCertificate, AuthenticatedTdxCrl, INTEL_TCB_SIGNING_CERT_COMMON_NAME,
     TdxCertificate, TdxRevocationEvidence, TdxSignedCollateral, TdxSignedCollateralBody,
 };
+use crate::{ParsedTdxQuote, Result, TdxVerifierError};
 
 /// Stateless helper for collateral validation.
 #[derive(Debug)]
@@ -91,7 +90,7 @@ impl CollateralVerifier {
             issuer = certificate;
         }
 
-        Ok((issuer.subject_public_key.clone(), expiration))
+        Ok((issuer.subject_public_key, expiration))
     }
 
     /// Validates signed collateral and returns its expiration.

@@ -59,7 +59,7 @@ pub(crate) struct Cli {
     #[arg(long, env = cli_env!("GCP_NODE_POOL"))]
     gcp_node_pool: String,
 
-    /// Optional GCP OAuth access token. If unset, the GCP metadata server is used.
+    /// Optional GCP `OAuth` access token. If unset, the GCP metadata server is used.
     #[arg(long, env = cli_env!("GCP_ACCESS_TOKEN"))]
     gcp_access_token: Option<String>,
 
