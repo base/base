@@ -17,7 +17,9 @@ use alloy_evm::Evm;
 use alloy_network_primitives::TransactionResponse;
 use alloy_primitives::{Address, B256, U256};
 use base_execution_evm::BaseEvmConfig;
-use base_flashblocks::{FlashblocksAPI, FlashblocksState, FlashblocksSubscriber, PendingBlocks};
+use base_flashblocks::{
+    FlashblocksAPI, FlashblocksState, FlashblocksSubscriber, PendingBlocks, PendingFrameObserver,
+};
 use base_node_runner::{BaseNodeAdapter, BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use futures::TryStreamExt;
 use reth_chainspec::ChainSpecProvider;
@@ -71,11 +73,29 @@ const ARB_DRYRUN_BLOB_BASE_FEE_SCALAR_ENV: &str = "MEV_EMITTER_ARB_DRYRUN_BLOB_B
 /// Optional calldata hex for dry-run signed net metadata.
 const ARB_DRYRUN_CALLDATA_HEX_ENV: &str = "MEV_EMITTER_ARB_DRYRUN_CALLDATA_HEX";
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct ArbDryRunRuntime {
     config: crate::arb_dryrun::DryRunConfig,
     pools: Arc<Vec<crate::arb_dryrun::PoolState>>,
     pool_index: Arc<HashMap<Address, usize>>,
+}
+
+#[derive(Debug, Clone)]
+struct CoreArbPendingFrameObserver {
+    sink: EventSink,
+    arb_dryrun: ArbDryRunRuntime,
+}
+
+impl CoreArbPendingFrameObserver {
+    fn new(sink: EventSink, arb_dryrun: ArbDryRunRuntime) -> Self {
+        Self { sink, arb_dryrun }
+    }
+}
+
+impl PendingFrameObserver for CoreArbPendingFrameObserver {
+    fn on_pending_frame(&self, pending: &PendingBlocks) {
+        emit_preconf_pool_slots(pending, &self.sink, Some(&self.arb_dryrun), false);
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -187,29 +207,70 @@ fn arb_dryrun_net_cost_config_from_env() -> Option<crate::arb_dryrun::DryRunNetC
     })
 }
 
-fn arb_dryrun_runtime_from_env() -> ArbDryRunRuntime {
+fn arb_dryrun_runtime_from_env() -> Option<ArbDryRunRuntime> {
     let config = arb_dryrun_config_from_env();
-    let pools = match std::env::var(ARB_DRYRUN_POOL_BASELINE_ENV) {
-        Ok(path) if !path.trim().is_empty() => {
-            match crate::arb_dryrun::load_pool_baseline_from_path(path.trim()) {
-                Ok(pools) => pools,
-                Err(err) => {
-                    warn!(
-                        target: "base::mev_emitter",
-                        error = %err,
-                        "arb dry-run pool baseline unavailable; emitting health-only observations",
-                    );
-                    Vec::new()
-                }
-            }
-        }
-        _ => Vec::new(),
-    };
+    let baseline_path = std::env::var(ARB_DRYRUN_POOL_BASELINE_ENV).ok();
+    arb_dryrun_runtime_from_baseline_path(config, baseline_path.as_deref())
+}
+
+fn build_arb_dryrun_runtime(
+    config: crate::arb_dryrun::DryRunConfig,
+    pools: Vec<crate::arb_dryrun::PoolState>,
+) -> ArbDryRunRuntime {
     let pool_index = pools.iter().enumerate().fold(HashMap::new(), |mut index, (i, pool)| {
         index.entry(pool.pool).or_insert(i);
         index
     });
     ArbDryRunRuntime { config, pools: Arc::new(pools), pool_index: Arc::new(pool_index) }
+}
+
+fn arb_dryrun_runtime_from_baseline_path(
+    config: crate::arb_dryrun::DryRunConfig,
+    baseline_path: Option<&str>,
+) -> Option<ArbDryRunRuntime> {
+    let Some(path) = baseline_path.map(str::trim).filter(|path| !path.is_empty()) else {
+        info!(
+            target: "base::mev_emitter",
+            "arb dry-run observations disabled: MEV_EMITTER_ARB_DRYRUN_POOL_BASELINE is unset",
+        );
+        return None;
+    };
+    let pools = match crate::arb_dryrun::load_pool_baseline_from_path(path) {
+        Ok(pools) if !pools.is_empty() => pools,
+        Ok(_) => {
+            warn!(
+                target: "base::mev_emitter",
+                path = %path,
+                "arb dry-run observations disabled: pool baseline is empty",
+            );
+            return None;
+        }
+        Err(err) => {
+            warn!(
+                target: "base::mev_emitter",
+                path = %path,
+                error = %err,
+                "arb dry-run observations disabled: pool baseline unavailable",
+            );
+            return None;
+        }
+    };
+    Some(build_arb_dryrun_runtime(config, pools))
+}
+
+#[cfg(test)]
+fn core_arb_dryrun_runtime_from_baseline_path(
+    config: crate::arb_dryrun::DryRunConfig,
+    baseline_path: Option<&str>,
+) -> Option<ArbDryRunRuntime> {
+    arb_dryrun_runtime_from_baseline_path(config, baseline_path)
+}
+
+fn preconf_subscriber_arb_dryrun(
+    core_arb_hook_enabled: bool,
+    arb_dryrun: Option<ArbDryRunRuntime>,
+) -> Option<ArbDryRunRuntime> {
+    if core_arb_hook_enabled { None } else { arb_dryrun }
 }
 
 fn parse_env_usize(name: &str) -> Option<usize> {
@@ -571,6 +632,7 @@ fn emit_preconf_pool_slots(
     pb: &PendingBlocks,
     sink: &EventSink,
     arb_dryrun: Option<&ArbDryRunRuntime>,
+    emit_pool_slot_diffs: bool,
 ) {
     let block_number = pb.latest_block_number();
     let payload_id = format!("{}", pb.payload_id());
@@ -601,10 +663,10 @@ fn emit_preconf_pool_slots(
         for ev in events {
             if let Some(runtime) = arb_dryrun {
                 record_pool_slot_event(runtime, &mut dirty_state, &ev, block_number);
-            } else {
-                dirty_state.dirty_pools.insert(ev.pool);
             }
-            sink.send_event(&crate::NodeEvent::PoolSlotDiff(ev));
+            if emit_pool_slot_diffs {
+                sink.send_event(&crate::NodeEvent::PoolSlotDiff(ev));
+            }
         }
     }
     if let Some(runtime) = arb_dryrun {
@@ -731,21 +793,23 @@ pub async fn run_mev_emitter_exex(
     // C-4: outbound WebSocket transport. Failure-isolated: a bind failure leaves
     // the sink valid (events go nowhere) and never affects the ExEx. `info!` is
     // emitted inside once the listener is up.
-    let sink = crate::transport::start_event_server();
+    let sink = crate::transport::shared_event_sink();
     let arb_dryrun = if arb_dryrun_enabled() {
         let runtime = arb_dryrun_runtime_from_env();
-        let time_budget_micros =
-            u64::try_from(runtime.config.time_budget.as_micros()).unwrap_or(u64::MAX);
-        info!(
-            target: "base::mev_emitter",
-            max_pools = runtime.config.max_pools_per_frame,
-            max_candidates = runtime.config.max_candidates_per_frame,
-            time_budget_micros,
-            amount_in_wei = %runtime.config.amount_in_wei,
-            baseline_pools = runtime.pools.len(),
-            "arb dry-run observations enabled (MEV_EMITTER_ARB_DRYRUN=1)",
-        );
-        Some(runtime)
+        if let Some(runtime) = &runtime {
+            let time_budget_micros =
+                u64::try_from(runtime.config.time_budget.as_micros()).unwrap_or(u64::MAX);
+            info!(
+                target: "base::mev_emitter",
+                max_pools = runtime.config.max_pools_per_frame,
+                max_candidates = runtime.config.max_candidates_per_frame,
+                time_budget_micros,
+                amount_in_wei = %runtime.config.amount_in_wei,
+                baseline_pools = runtime.pools.len(),
+                "arb dry-run observations enabled (MEV_EMITTER_ARB_DRYRUN=1)",
+            );
+        }
+        runtime
     } else {
         info!(
             target: "base::mev_emitter",
@@ -753,6 +817,17 @@ pub async fn run_mev_emitter_exex(
         );
         None
     };
+    let core_arb_hook_enabled = fb_state.is_some() && arb_dryrun.is_some();
+    if let (Some(state), Some(runtime)) = (fb_state.as_ref(), arb_dryrun.clone()) {
+        state.set_pending_frame_observer(Some(Arc::new(CoreArbPendingFrameObserver::new(
+            sink.clone(),
+            runtime,
+        ))));
+        info!(
+            target: "base::mev_emitter",
+            "core arb dry-run hook installed on flashblocks StateProcessor",
+        );
+    }
     // Issue #45: ahead-of-committed preconf pool-slot emission. Failure-isolated in
     // its own task — a lagged/closed receiver only ends the task, never the ExEx.
     // This path is explicitly gated by MEV_EMITTER_PRECONF=1 so enabling the
@@ -761,7 +836,8 @@ pub async fn run_mev_emitter_exex(
         if let Some(state) = fb_state {
             let task_sink = sink.clone();
             let mut rx = state.subscribe_to_flashblocks();
-            let task_arb_dryrun = arb_dryrun.clone();
+            let task_arb_dryrun =
+                preconf_subscriber_arb_dryrun(core_arb_hook_enabled, arb_dryrun.clone());
             tokio::spawn(async move {
                 // Tracks the previous preconf so reorg/supersede signals can discard
                 // stale pending slots before they are committed/finalized.
@@ -777,7 +853,12 @@ pub async fn run_mev_emitter_exex(
                             {
                                 task_sink.send_event(&crate::NodeEvent::DiscardPreconf(ev));
                             }
-                            emit_preconf_pool_slots(&pending, &task_sink, task_arb_dryrun.as_ref());
+                            emit_preconf_pool_slots(
+                                &pending,
+                                &task_sink,
+                                task_arb_dryrun.as_ref(),
+                                true,
+                            );
                             last_preconf = Some(next_preconf);
                         }
                         Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -1127,6 +1208,7 @@ mod arb_overlay_tests {
     use crate::PoolSlotDiffEvent;
     use crate::arb_dryrun::{Protocol, slot_key};
     use revm::state::{AccountInfo, Bytecode};
+    use std::{fs, path::PathBuf};
 
     fn addr(byte: u8) -> Address {
         Address::from([byte; 20])
@@ -1146,6 +1228,58 @@ mod arb_overlay_tests {
 
     fn runtime_with_pool(pool: crate::arb_dryrun::PoolState) -> ArbDryRunRuntime {
         runtime_with_pools(vec![pool])
+    }
+
+    fn temp_baseline_path(name: &str) -> PathBuf {
+        std::env::temp_dir()
+            .join(format!("base-mev-core-arb-hook-{name}-{}.json", std::process::id()))
+    }
+
+    #[test]
+    fn core_arb_runtime_requires_non_empty_baseline() {
+        let config = crate::arb_dryrun::DryRunConfig::default();
+        assert!(core_arb_dryrun_runtime_from_baseline_path(config.clone(), None).is_none());
+        assert!(core_arb_dryrun_runtime_from_baseline_path(config.clone(), Some(" ")).is_none());
+        assert!(
+            core_arb_dryrun_runtime_from_baseline_path(
+                config.clone(),
+                Some("/tmp/base-mev-missing-core-arb-baseline.json"),
+            )
+            .is_none()
+        );
+
+        let empty_path = temp_baseline_path("empty");
+        fs::write(&empty_path, "[]").expect("write empty baseline");
+        let empty_path_string = empty_path.display().to_string();
+        assert!(
+            core_arb_dryrun_runtime_from_baseline_path(config.clone(), Some(&empty_path_string),)
+                .is_none()
+        );
+        let _ = fs::remove_file(&empty_path);
+
+        let pool = v2_pool(0xc1, 1_000, 2_000);
+        let non_empty_path = temp_baseline_path("non-empty");
+        fs::write(
+            &non_empty_path,
+            serde_json::to_string(&vec![pool.clone()]).expect("serialize baseline"),
+        )
+        .expect("write non-empty baseline");
+        let non_empty_path_string = non_empty_path.display().to_string();
+        let runtime =
+            core_arb_dryrun_runtime_from_baseline_path(config, Some(&non_empty_path_string))
+                .expect("non-empty baseline should enable core runtime");
+        let _ = fs::remove_file(&non_empty_path);
+
+        assert_eq!(runtime.pools.len(), 1);
+        assert_eq!(runtime.pools[0], pool);
+    }
+    #[test]
+    fn preconf_subscriber_arb_runtime_is_suppressed_when_core_hook_installed() {
+        let runtime = runtime_with_pool(v2_pool(0xc2, 1_000, 2_000));
+
+        assert!(preconf_subscriber_arb_dryrun(false, Some(runtime.clone())).is_some());
+        assert!(preconf_subscriber_arb_dryrun(true, Some(runtime)).is_none());
+        assert!(preconf_subscriber_arb_dryrun(false, None).is_none());
     }
 
     fn pack_univ2_reserves(reserve0: u128, reserve1: u128) -> U256 {

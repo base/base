@@ -1,6 +1,6 @@
 //! Flashblocks state management.
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock as StdRwLock};
 
 use alloy_consensus::Header;
 use arc_swap::{ArcSwapOption, Guard};
@@ -17,7 +17,7 @@ use tokio::sync::{
 };
 
 use crate::{
-    FlashblocksAPI, FlashblocksReceiver, PendingBlocks,
+    FlashblocksAPI, FlashblocksReceiver, PendingBlocks, PendingFrameObserver,
     processor::{StateProcessor, StateUpdate},
 };
 
@@ -32,6 +32,7 @@ pub struct FlashblocksState {
     rx: Arc<Mutex<mpsc::UnboundedReceiver<StateUpdate>>>,
     flashblock_sender: Sender<Arc<PendingBlocks>>,
     max_pending_blocks_depth: u64,
+    pending_frame_observer: Arc<StdRwLock<Option<Arc<dyn PendingFrameObserver>>>>,
 }
 
 impl FlashblocksState {
@@ -43,6 +44,7 @@ impl FlashblocksState {
         let (tx, rx) = mpsc::unbounded_channel::<StateUpdate>();
         let pending_blocks: Arc<ArcSwapOption<PendingBlocks>> = Arc::new(ArcSwapOption::new(None));
         let (flashblock_sender, _) = broadcast::channel(BUFFER_SIZE);
+        let pending_frame_observer = Arc::new(StdRwLock::new(None));
 
         Self {
             pending_blocks,
@@ -50,6 +52,7 @@ impl FlashblocksState {
             rx: Arc::new(Mutex::new(rx)),
             flashblock_sender,
             max_pending_blocks_depth,
+            pending_frame_observer,
         }
     }
 
@@ -71,11 +74,18 @@ impl FlashblocksState {
             self.max_pending_blocks_depth,
             Arc::clone(&self.rx),
             self.flashblock_sender.clone(),
+            Arc::clone(&self.pending_frame_observer),
         );
 
         tokio::spawn(async move {
             state_processor.start().await;
         });
+    }
+
+    /// Sets the synchronous observer for newly advanced pending frames.
+    pub fn set_pending_frame_observer(&self, observer: Option<Arc<dyn PendingFrameObserver>>) {
+        *self.pending_frame_observer.write().unwrap_or_else(|poisoned| poisoned.into_inner()) =
+            observer;
     }
 
     /// Handles a canonical block being received.

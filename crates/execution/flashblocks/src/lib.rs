@@ -24,6 +24,8 @@ pub use error::{
 mod metrics;
 pub use metrics::Metrics;
 
+mod observer;
+pub use observer::PendingFrameObserver;
 mod pending_blocks;
 pub use pending_blocks::{PendingBlocks, PendingBlocksBuilder};
 

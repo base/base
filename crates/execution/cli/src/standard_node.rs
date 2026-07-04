@@ -257,11 +257,13 @@ impl StandardBaseRethNode {
         runner.install_ext::<TxForwardingExtension>((&args).into());
         // Issue #45: clone the shared FlashblocksState BEFORE the config is moved
         // into the flashblocks extension, so the MEV emitter can subscribe to
-        // preconfirmations (ahead-of-committed pool-slot source). This is narrower
-        // than MEV_EMITTER_ENABLE: committed-chain emission remains unchanged unless
-        // operators explicitly set MEV_EMITTER_PRECONF=1.
+        // preconfirmations (ahead-of-committed pool-slot source) or install the
+        // core arb dry-run hook. This is narrower than MEV_EMITTER_ENABLE:
+        // committed-chain emission remains unchanged unless operators explicitly
+        // set MEV_EMITTER_PRECONF=1 or MEV_EMITTER_ARB_DRYRUN=1.
         let mev_fb_state = if std::env::var("MEV_EMITTER_ENABLE").is_ok()
-            && base_mev_emitter::exex::preconf_emission_enabled()
+            && (base_mev_emitter::exex::preconf_emission_enabled()
+                || base_mev_emitter::exex::arb_dryrun_enabled())
         {
             flashblocks_config.as_ref().map(|c| std::sync::Arc::clone(&c.state))
         } else {

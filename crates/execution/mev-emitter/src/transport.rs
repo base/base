@@ -13,7 +13,7 @@
 //! a send error is logged via `warn!`/`debug!` and the rest keeps running. The
 //! producer side ([`EventSink::send_event`]) never blocks and never panics.
 
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::OnceLock};
 
 use futures::SinkExt as _;
 use tokio::net::TcpListener;
@@ -44,6 +44,8 @@ pub struct EventSink {
     tx: broadcast::Sender<String>,
 }
 
+static SHARED_EVENT_SINK: OnceLock<EventSink> = OnceLock::new();
+
 impl EventSink {
     /// Encode `event` and broadcast it to every connected client.
     ///
@@ -55,6 +57,11 @@ impl EventSink {
     pub fn send_event(&self, event: &crate::NodeEvent) {
         let _ = self.tx.send(crate::encode_event(event));
     }
+}
+
+/// Return the process-wide event sink, starting the websocket server at most once.
+pub fn shared_event_sink() -> EventSink {
+    SHARED_EVENT_SINK.get_or_init(start_event_server).clone()
 }
 
 /// Start the outbound event WebSocket server and return its producer [`EventSink`].
