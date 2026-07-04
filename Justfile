@@ -168,26 +168,17 @@ bench-proof-mpt:
 basectl:
     cargo run -p basectl --release -- monitor
 
-# Inspect the zeronet TDX prover signer and contract-compatible image hash
-tdx-zeronet-image-hash *args="":
-    just tee tdx-image-hash http://136.107.166.21:7310 {{ args }}
-
 # Run local Nitro+TDX proof workers, prover-service, and proposer against Base Sepolia.
 sepolia-tdx-dev-offchain:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    need() {
-        command -v "$1" >/dev/null 2>&1 || {
-            echo "Missing required command: $1" >&2
+    for bin in cargo cast docker jq python3; do
+        command -v "$bin" >/dev/null 2>&1 || {
+            echo "Missing required command: $bin" >&2
             exit 1
         }
-    }
-    need cargo
-    need cast
-    need docker
-    need jq
-    need python3
+    done
 
     l1_rpc="${L1_RPC_URL:-https://ethereum-full-sepolia-k8s-dev.cbhq.net}"
     l2_rpc="${L2_RPC_URL:-https://base-sepolia-reth-proofs-k8s-donotuse.cbhq.net:8545}"
@@ -208,19 +199,12 @@ sepolia-tdx-dev-offchain:
     pg_data_dir="${TDX_SEPOLIA_POSTGRES_DATA_DIR:-$PWD/.tdx-sepolia/postgres}"
     pg_password="${TDX_SEPOLIA_POSTGRES_PASSWORD:-postgres}"
 
-    registry="$(jq -r '.TEEProverRegistry // empty' "$deployments")"
-    anchor_state_registry="$(jq -r '.AnchorStateRegistry // empty' "$deployments")"
-    dispute_game_factory="$(jq -r '.DisputeGameFactory // empty' "$deployments")"
+    registry="$(jq -er '.TEEProverRegistry' "$deployments")"
+    anchor_state_registry="$(jq -er '.AnchorStateRegistry' "$deployments")"
+    dispute_game_factory="$(jq -er '.DisputeGameFactory' "$deployments")"
     game_type="$(jq -r '.multiproofGameType // 621' "$deploy_config")"
-    nitro_image_hash="$(jq -r '.teeNitroImageHash // empty' "$deploy_config")"
-    tdx_image_hash="$(jq -r '.teeTdxImageHash // empty' "$deploy_config")"
-
-    for value in registry anchor_state_registry dispute_game_factory nitro_image_hash tdx_image_hash; do
-        if [[ -z "${!value}" || "${!value}" == "null" ]]; then
-            echo "Missing $value in $deployments or $deploy_config" >&2
-            exit 1
-        fi
-    done
+    nitro_image_hash="$(jq -er '.teeNitroImageHash' "$deploy_config")"
+    tdx_image_hash="$(jq -er '.teeTdxImageHash' "$deploy_config")"
 
     wait_rpc() {
         local url="$1" name="$2"
@@ -244,6 +228,7 @@ sepolia-tdx-dev-offchain:
     echo "Building local offchain binaries"
     cargo build -p base-prover-service-bin -p base-prover-tdx -p base-proposer-bin
     cargo build -p base-prover-nitro-host --features local,worker
+    export RUST_LOG="${RUST_LOG:-info}"
 
     pids=()
     cleanup() {
@@ -268,18 +253,8 @@ sepolia-tdx-dev-offchain:
 
     mkdir -p "$pg_data_dir"
     # ponytail: initdb migrations run on first DB creation; delete the data dir to replay them.
-    if [[ -n "$(docker ps --filter "name=^/${pg_container}$" --filter status=running -q)" ]]; then
-        echo "Postgres already running: $pg_container"
-    elif [[ -n "$(docker ps -a --filter "name=^/${pg_container}$" -q)" ]]; then
-        docker start "$pg_container" >/dev/null
-    else
-        create_pg_container
-    fi
-    if ! docker port "$pg_container" 5432/tcp 2>/dev/null | grep -qx "127.0.0.1:$postgres_port"; then
-        echo "Recreating Postgres with localhost port $postgres_port published"
-        docker rm -f "$pg_container" >/dev/null
-        create_pg_container
-    fi
+    docker rm -f "$pg_container" >/dev/null 2>&1 || true
+    create_pg_container
     until docker exec "$pg_container" pg_isready -U postgres -d proverdb >/dev/null 2>&1; do
         sleep 1
     done
@@ -291,7 +266,6 @@ sepolia-tdx-dev-offchain:
     POSTGRES_USER=postgres \
     POSTGRES_PASSWORD="$pg_password" \
     POSTGRES_SSLMODE=disable \
-    RUST_LOG="${RUST_LOG:-info}" \
         target/debug/base-prover-service \
         --rpc-listen-addr "$requester_rpc" \
         --worker-rpc-listen-addr "$worker_rpc" &
@@ -302,8 +276,7 @@ sepolia-tdx-dev-offchain:
         cast rpc prover_getProofSession '{"session_id":"__ready__","session_type":"stark"}'
 
     echo "Starting Nitro worker"
-    RUST_LOG="${RUST_LOG:-info}" \
-        target/debug/base-prover-nitro-host local \
+    target/debug/base-prover-nitro-host local \
         --l1-eth-url "$l1_rpc" \
         --l2-eth-url "$l2_rpc" \
         --l1-beacon-url "$l1_beacon" \
@@ -315,8 +288,7 @@ sepolia-tdx-dev-offchain:
     wait_rpc "http://$nitro_signer_rpc" nitro-signer-rpc cast rpc enclave_signerPublicKey
 
     echo "Starting TDX worker"
-    RUST_LOG="${RUST_LOG:-info}" \
-        target/debug/base-prover-tdx local \
+    target/debug/base-prover-tdx local \
         --l1-eth-url "$l1_rpc" \
         --l2-eth-url "$l2_rpc" \
         --l1-beacon-url "$l1_beacon" \
@@ -339,8 +311,7 @@ sepolia-tdx-dev-offchain:
 
     echo "Starting proposer"
     echo "Proposer address: $(cast wallet address "$proposer_private_key")"
-    RUST_LOG="${RUST_LOG:-info}" \
-        target/debug/base-proposer \
+    target/debug/base-proposer \
         --prover-rpc "http://$requester_rpc" \
         --l1-eth-rpc "$l1_rpc" \
         --l2-eth-rpc "$l2_rpc" \
@@ -352,4 +323,3 @@ sepolia-tdx-dev-offchain:
         --allow-non-finalized \
         --private-key "$proposer_private_key" \
         --poll-interval "${TDX_SEPOLIA_PROPOSER_POLL_INTERVAL:-12s}"
-    cleanup
