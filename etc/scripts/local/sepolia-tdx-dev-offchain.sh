@@ -5,7 +5,7 @@ set -euo pipefail
 
 l1_rpc="${L1_RPC_URL:-https://ethereum-full-sepolia-k8s-dev.cbhq.net}"
 l2_rpc="${L2_RPC_URL:-https://base-sepolia-reth-proofs-k8s-donotuse.cbhq.net:8545}"
-rollup_rpc="${ROLLUP_RPC_URL:-${L2_OUTPUT_ROOT_RPC_URL:-https://base-sepolia-reth-internal-rpc-donotuse.cbhq.net:7545}}"
+rollup_rpc="${ROLLUP_RPC_URL:-https://base-sepolia-reth-internal-rpc-donotuse.cbhq.net:7545}"
 l1_beacon="${L1_BEACON_URL:-https://ethereum-full-sepolia-k8s-dev.cbhq.net:5052}"
 l2_chain_id=84532
 postgres_port=5432
@@ -29,10 +29,8 @@ tdx_image_hash="$(jq -er '.teeTdxImageHash' "$deploy_config")"
 
 wait_rpc() {
     local url="$1" name="$2" method="$3"
-    local args=("$method")
-    [ "$#" -lt 4 ] || args+=("$4")
     for _ in {1..120}; do
-        cast rpc "${args[@]}" --rpc-url "$url" >/dev/null 2>&1 && return 0
+        cast rpc "$method" "${@:4}" --rpc-url "$url" >/dev/null 2>&1 && return 0
         sleep 1
     done
     echo "Timed out waiting for $name at $url" >&2
@@ -102,11 +100,10 @@ nitro_signer="$(signer_from_rpc "http://$nitro_signer_rpc")"
 tdx_signer="$(signer_from_rpc "http://$tdx_signer_rpc")"
 
 echo "Registering local TEE signers in $registry"
-owner="$(cast wallet address --account "$forge_account")"
 cast send "$registry" "addDevSigner(address,bytes32,uint8)" "$nitro_signer" "$nitro_image_hash" 1 \
-    --rpc-url "$l1_rpc" --account "$forge_account" --from "$owner"
+    --rpc-url "$l1_rpc" --account "$forge_account"
 cast send "$registry" "addDevSigner(address,bytes32,uint8)" "$tdx_signer" "$tdx_image_hash" 2 \
-    --rpc-url "$l1_rpc" --account "$forge_account" --from "$owner"
+    --rpc-url "$l1_rpc" --account "$forge_account"
 
 echo "Starting proposer"
 echo "Proposer address: $(cast wallet address "$proposer_private_key")"
