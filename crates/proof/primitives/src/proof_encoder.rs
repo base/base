@@ -92,8 +92,7 @@ impl ProofEncoder {
 
     /// Encodes a dual-platform TEE proof for `AggregateVerifier.initializeWithInitData()`.
     ///
-    /// Format: `proofType(1) + l1OriginHash(32) + l1OriginNumber(32)
-    /// + nitroSignature(65) + tdxSignature(65)`.
+    /// Format: `proofType(1) + l1OriginHash(32) + l1OriginNumber(32) + nitroSignature(65) + tdxSignature(65)`.
     ///
     /// The v-value in each ECDSA signature is adjusted from 0/1 to 27/28 if needed.
     ///
