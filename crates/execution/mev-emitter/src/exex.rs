@@ -304,8 +304,10 @@ fn preconf_subscriber_arb_dryrun(
 /// `base-flashblocks` while its StateProcessor is inside `block_in_place`; the
 /// `drop(live_state)` patch releases the pending-state mutex before observer notification, but
 /// MDBX reads there would still extend the flashblock processor's critical section. The live-reserve
-/// path therefore uses this independent broadcast subscriber, which runs after processed pending
-/// frames are published and is gated only by dry-run + live-reserve flags, not `MEV_EMITTER_PRECONF`.
+/// path therefore replaces `CoreArbPendingFrameObserver` with this independent broadcast subscriber,
+/// which runs after processed pending frames are published and is gated only by dry-run +
+/// live-reserve flags, not `MEV_EMITTER_PRECONF`. While live-reserve is on, dry-run observation is
+/// post-publication, not the synchronous ahead-of-committed observer path.
 fn start_arb_dryrun_live_reserve_worker<Provider>(
     fb_state: &Arc<FlashblocksState>,
     sink: EventSink,
@@ -428,12 +430,13 @@ fn record_pool_slot_event(
     let Some(pool) = baseline_pool(runtime, &event.pool) else {
         return;
     };
-    let mut delta = crate::arb_dryrun::PoolStateDelta::from_slots(
+    let mut delta = crate::arb_dryrun::PoolStateDelta::from_slots_with_live_reserve(
         pool,
         slots,
         crate::arb_dryrun::PoolOverlaySource::SlotDiff,
         Some(block_number),
         Some(block_number),
+        runtime.live_reserve,
     );
     if let Some(existing) = dirty_state.deltas.get(&event.pool) {
         if existing.is_live_read_complete() && !delta.is_live_read_complete() {
@@ -556,7 +559,8 @@ fn refresh_fallback_pools<DB, I>(
         let Some(pool) = baseline_pool(runtime, &pool_addr) else {
             continue;
         };
-        let slots_to_read = crate::arb_dryrun::fallback_overlay_slots(pool);
+        let slots_to_read =
+            crate::arb_dryrun::fallback_overlay_slots_with_live_reserve(pool, runtime.live_reserve);
         if slots_to_read.is_empty() {
             mark_fallback_caveat(
                 dirty_state,
@@ -610,12 +614,13 @@ fn refresh_fallback_pools<DB, I>(
         for (slot, value) in &slots {
             raw_slots.insert(*slot, *value);
         }
-        let mut delta = crate::arb_dryrun::PoolStateDelta::from_slots(
+        let mut delta = crate::arb_dryrun::PoolStateDelta::from_slots_with_live_reserve(
             pool,
             &slots,
             crate::arb_dryrun::PoolOverlaySource::StateProvider,
             Some(block_number),
             Some(block_number),
+            runtime.live_reserve,
         );
         if !delta.has_state_update() && delta.caveats.is_empty() {
             delta.add_caveat("live-overlay-verified");
@@ -1065,7 +1070,9 @@ mod preconf_tests {
 /// emits ahead-of-committed pool-slot diffs via [`emit_preconf_pool_slots`]. The
 /// committed-chain loop below is UNCHANGED and remains the finalizing/reconciling
 /// path (its `BlockBoundaryEvent { finalized: true }` reconciles the preconf
-/// stream).
+/// stream). When `MEV_EMITTER_ARB_DRYRUN_LIVE_RESERVE=1`, the arb dry-run path
+/// intentionally uses a post-publication broadcast worker instead of the synchronous
+/// `CoreArbPendingFrameObserver`, so ahead-of-committed dry-run observations disappear.
 pub async fn run_mev_emitter_exex(
     mut ctx: ExExContext<BaseNodeAdapter>,
     fb_state: Option<Arc<FlashblocksState>>,
@@ -1110,6 +1117,9 @@ pub async fn run_mev_emitter_exex(
     let arb_dryrun_frame_source_installed = fb_state.is_some() && arb_dryrun.is_some();
     if let (Some(state), Some(runtime)) = (fb_state.as_ref(), arb_dryrun.clone()) {
         if runtime.live_reserve {
+            // Live-reserve provider reads deliberately replace the synchronous
+            // `CoreArbPendingFrameObserver`; this avoids MDBX work in the flashblocks
+            // processor and means dry-run observations are no longer ahead-of-committed.
             start_arb_dryrun_live_reserve_worker(
                 state,
                 sink.clone(),
@@ -1938,7 +1948,7 @@ mod arb_overlay_tests {
     }
 
     #[test]
-    fn committed_fallback_decodes_aerodrome_stable_reserve_slots() {
+    fn committed_fallback_leaves_aerodrome_stable_unsupported_when_live_reserve_off() {
         let pool = crate::arb_dryrun::PoolState::v2_like(
             addr(0xa8),
             Protocol::AerodromeStable,
@@ -1950,6 +1960,41 @@ mod arb_overlay_tests {
         );
         let mut runtime = runtime_with_pool(pool.clone());
         runtime.config.time_budget = Duration::from_secs(1);
+        let mut dirty_state = dirty_state_for(pool.pool);
+        let mut db = StorageDb::default()
+            .with_slot(
+                pool.pool,
+                slot_key(crate::arb_dryrun::AERO_STABLE_RESERVE0_SLOT),
+                U256::from(3_000u128),
+            )
+            .with_slot(
+                pool.pool,
+                slot_key(crate::arb_dryrun::AERO_STABLE_RESERVE1_SLOT),
+                U256::from(4_000u128),
+            );
+
+        supplement_committed_fallback(&mut db, &runtime, &mut dirty_state, 42);
+
+        assert_eq!(dirty_state.fallback_attempted, 0);
+        assert_eq!(db.storage_calls, 0);
+        let delta = dirty_state.deltas.get(&pool.pool).expect("unsupported fallback delta");
+        assert!(delta.caveats.iter().any(|c| c == "fallback-unsupported-protocol"));
+    }
+
+    #[test]
+    fn committed_fallback_decodes_aerodrome_stable_reserve_slots_when_live_reserve_on() {
+        let pool = crate::arb_dryrun::PoolState::v2_like(
+            addr(0xa8),
+            Protocol::AerodromeStable,
+            addr(1),
+            addr(2),
+            5,
+            1_000,
+            2_000,
+        );
+        let mut runtime = runtime_with_pool(pool.clone());
+        runtime.config.time_budget = Duration::from_secs(1);
+        runtime.live_reserve = true;
         let mut dirty_state = dirty_state_for(pool.pool);
         let mut db = StorageDb::default()
             .with_slot(
@@ -1997,6 +2042,7 @@ mod arb_overlay_tests {
         let mut runtime = runtime_with_pools(vec![dirty_pool.clone(), stable_pool.clone()]);
         runtime.config.time_budget = Duration::from_secs(1);
         runtime.config.max_pools_per_frame = 8;
+        runtime.live_reserve = true;
         let dirty_slots = BTreeMap::from([(
             slot_key(crate::arb_dryrun::UNIV2_RESERVES_SLOT),
             pack_univ2_reserves(1_000, 1_100),

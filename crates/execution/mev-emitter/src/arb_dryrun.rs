@@ -273,10 +273,10 @@ pub const UNIV2_RESERVES_SLOT: u64 = 8;
 pub const AERO_VOLATILE_RESERVE0_SLOT: u64 = 20;
 /// Verified Aerodrome volatile reserve1 storage slot.
 pub const AERO_VOLATILE_RESERVE1_SLOT: u64 = 21;
-/// Aerodrome stable pools use the same `Pool` contract/storage layout as volatile pools; the
-/// `stable` flag changes quote math, not reserve storage slots.
+/// Aerodrome stable pools use the same `Pool` contract/storage layout as volatile pools, but
+/// stable slot 20/21 overlays stay disabled unless the live-reserve flag is explicitly on.
 pub const AERO_STABLE_RESERVE0_SLOT: u64 = AERO_VOLATILE_RESERVE0_SLOT;
-/// Verified Aerodrome stable reserve1 storage slot.
+/// Aerodrome stable reserve1 storage slot used only by the opt-in live-reserve path.
 pub const AERO_STABLE_RESERVE1_SLOT: u64 = AERO_VOLATILE_RESERVE1_SLOT;
 
 const MASK_160_BITS: usize = 160;
@@ -364,12 +364,27 @@ impl PoolStateDelta {
     }
 
     /// Decodes a dirty pool's raw storage words using the verified TS overlay contract.
+    ///
+    /// AerodromeStable reserve overlays default to unsupported to keep flag-off emission
+    /// byte-equivalent to the base dry-run path.
     pub fn from_slots(
         pool: &PoolState,
         slots: &BTreeMap<U256, U256>,
         source: PoolOverlaySource,
         epoch: Option<u64>,
         target_epoch: Option<u64>,
+    ) -> Self {
+        Self::from_slots_with_live_reserve(pool, slots, source, epoch, target_epoch, false)
+    }
+
+    /// Decodes a dirty pool's raw storage words, enabling AerodromeStable only for live-reserve.
+    pub fn from_slots_with_live_reserve(
+        pool: &PoolState,
+        slots: &BTreeMap<U256, U256>,
+        source: PoolOverlaySource,
+        epoch: Option<u64>,
+        target_epoch: Option<u64>,
+        live_reserve: bool,
     ) -> Self {
         let mut delta = Self::new(source, epoch);
         if let (Some(actual), Some(target)) = (epoch, target_epoch)
@@ -445,39 +460,47 @@ impl PoolStateDelta {
                 }
             }
             Protocol::AerodromeVolatile | Protocol::AerodromeStable => {
-                let (reserve0_slot, reserve1_slot) = match pool.protocol {
+                let reserve_slots = match pool.protocol {
                     Protocol::AerodromeVolatile => {
-                        (AERO_VOLATILE_RESERVE0_SLOT, AERO_VOLATILE_RESERVE1_SLOT)
+                        Some((AERO_VOLATILE_RESERVE0_SLOT, AERO_VOLATILE_RESERVE1_SLOT))
                     }
-                    Protocol::AerodromeStable => {
-                        (AERO_STABLE_RESERVE0_SLOT, AERO_STABLE_RESERVE1_SLOT)
+                    Protocol::AerodromeStable if live_reserve => {
+                        Some((AERO_STABLE_RESERVE0_SLOT, AERO_STABLE_RESERVE1_SLOT))
                     }
+                    Protocol::AerodromeStable => None,
                     Protocol::UniswapV2 | Protocol::UniswapV3 => {
                         unreachable!("matched Aerodrome protocols")
                     }
                 };
-                let reserve0 = slots.get(&slot_key(reserve0_slot));
-                let reserve1 = slots.get(&slot_key(reserve1_slot));
-                if reserve0.is_some() || reserve1.is_some() {
-                    saw_relevant_slot = true;
-                }
-                match (reserve0, reserve1) {
-                    (Some(word0), Some(word1)) => {
-                        let decoded0 = u256_to_u128_checked(*word0);
-                        let decoded1 = u256_to_u128_checked(*word1);
-                        match (decoded0, decoded1) {
-                            (Some(r0), Some(r1)) if r0 != 0 && r1 != 0 => {
-                                complete_live_read = true;
-                                if pool.reserve0 != r0 || pool.reserve1 != r1 {
-                                    delta.reserve0 = Some(r0);
-                                    delta.reserve1 = Some(r1);
-                                }
-                            }
-                            _ => delta.add_caveat("overlay-decode-failed"),
-                        }
+                if let Some((reserve0_slot, reserve1_slot)) = reserve_slots {
+                    let reserve0 = slots.get(&slot_key(reserve0_slot));
+                    let reserve1 = slots.get(&slot_key(reserve1_slot));
+                    if reserve0.is_some() || reserve1.is_some() {
+                        saw_relevant_slot = true;
                     }
-                    (Some(_), None) | (None, Some(_)) => delta.add_caveat("partial-live-overlay"),
-                    (None, None) => {}
+                    match (reserve0, reserve1) {
+                        (Some(word0), Some(word1)) => {
+                            let decoded0 = u256_to_u128_checked(*word0);
+                            let decoded1 = u256_to_u128_checked(*word1);
+                            match (decoded0, decoded1) {
+                                (Some(r0), Some(r1)) if r0 != 0 && r1 != 0 => {
+                                    complete_live_read = true;
+                                    if pool.reserve0 != r0 || pool.reserve1 != r1 {
+                                        delta.reserve0 = Some(r0);
+                                        delta.reserve1 = Some(r1);
+                                    }
+                                }
+                                _ => delta.add_caveat("overlay-decode-failed"),
+                            }
+                        }
+                        (Some(_), None) | (None, Some(_)) => {
+                            delta.add_caveat("partial-live-overlay");
+                        }
+                        (None, None) => {}
+                    }
+                } else if !slots.is_empty() {
+                    saw_relevant_slot = true;
+                    delta.add_caveat("overlay-unsupported-protocol");
                 }
             }
         }
@@ -521,13 +544,24 @@ impl PoolStateDelta {
     }
 }
 
-/// Returns the exact storage slots a fallback read should fetch for a pool.
+/// Returns the exact storage slots a flag-off fallback read should fetch for a pool.
 pub const fn fallback_overlay_slots(pool: &PoolState) -> &'static [u64] {
+    fallback_overlay_slots_with_live_reserve(pool, false)
+}
+
+/// Returns the exact storage slots a fallback read should fetch for a pool.
+pub const fn fallback_overlay_slots_with_live_reserve(
+    pool: &PoolState,
+    live_reserve: bool,
+) -> &'static [u64] {
     match pool.protocol {
         Protocol::UniswapV3 => &[V3_SLOT0_SLOT, V3_LIQUIDITY_SLOT],
         Protocol::UniswapV2 => &[UNIV2_RESERVES_SLOT],
         Protocol::AerodromeVolatile => &[AERO_VOLATILE_RESERVE0_SLOT, AERO_VOLATILE_RESERVE1_SLOT],
-        Protocol::AerodromeStable => &[AERO_STABLE_RESERVE0_SLOT, AERO_STABLE_RESERVE1_SLOT],
+        Protocol::AerodromeStable if live_reserve => {
+            &[AERO_STABLE_RESERVE0_SLOT, AERO_STABLE_RESERVE1_SLOT]
+        }
+        Protocol::AerodromeStable => &[],
     }
 }
 
@@ -1165,6 +1199,8 @@ fn calldata_gas(calldata: &[u8]) -> Option<u128> {
     calldata.iter().try_fold(0u128, |gas, byte| gas.checked_add(if *byte == 0 { 4 } else { 16 }))
 }
 
+// WP-N2: in-node signed net is capability metadata only. It assumes tip=0 and applies no
+// Blink/OFA kickback haircut, so downstream TS drainer c1 remains the authoritative go/no-go net.
 fn estimate_net_wei(
     amount_out: u128,
     amount_in: u128,
@@ -2570,7 +2606,7 @@ mod tests {
     }
 
     #[test]
-    fn overlay_fail_closes_aerodrome_volatile_partial_and_stable_layouts() {
+    fn overlay_fail_closes_aerodrome_volatile_and_flag_gates_stable_layouts() {
         let volatile = PoolState::v2_like(
             addr(0xc2),
             Protocol::AerodromeVolatile,
@@ -2609,18 +2645,24 @@ mod tests {
             Some(10),
         );
         assert!(!stable_delta.has_state_update());
-        assert!(stable_delta.caveats.iter().any(|c| c == "partial-live-overlay"));
+        assert!(stable_delta.caveats.iter().any(|c| c == "overlay-unsupported-protocol"));
+        assert!(fallback_overlay_slots(&stable).is_empty());
+        assert_eq!(
+            fallback_overlay_slots_with_live_reserve(&stable, true),
+            &[AERO_STABLE_RESERVE0_SLOT, AERO_STABLE_RESERVE1_SLOT]
+        );
 
         let complete_stable = BTreeMap::from([
             (slot_key(AERO_STABLE_RESERVE0_SLOT), U256::from(3_000u128)),
             (slot_key(AERO_STABLE_RESERVE1_SLOT), U256::from(4_000u128)),
         ]);
-        let complete_delta = PoolStateDelta::from_slots(
+        let complete_delta = PoolStateDelta::from_slots_with_live_reserve(
             &stable,
             &complete_stable,
             PoolOverlaySource::StateProvider,
             Some(10),
             Some(10),
+            true,
         );
         assert_eq!(complete_delta.reserve0, Some(3_000));
         assert_eq!(complete_delta.reserve1, Some(4_000));
@@ -2631,12 +2673,13 @@ mod tests {
             (slot_key(AERO_STABLE_RESERVE0_SLOT), U256::ZERO),
             (slot_key(AERO_STABLE_RESERVE1_SLOT), U256::from(4_000u128)),
         ]);
-        let zero_delta = PoolStateDelta::from_slots(
+        let zero_delta = PoolStateDelta::from_slots_with_live_reserve(
             &stable,
             &zero_stable,
             PoolOverlaySource::StateProvider,
             Some(10),
             Some(10),
+            true,
         );
         assert!(!zero_delta.is_live_read_complete());
         assert!(zero_delta.caveats.iter().any(|c| c == "overlay-decode-failed"));
