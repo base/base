@@ -82,6 +82,11 @@ pub struct BasePooledTransaction<
     /// consumed by the pool's admission guard. Unset until classified; see
     /// [`crate::LimitClass`].
     limit_class: OnceLock<crate::LimitClass>,
+    /// The captured authorization read-set (config slots with values, payer
+    /// threshold, effective expiry) for stateless intra-block revalidation,
+    /// recorded once during EIP-8130 validation. Unset for non-EIP-8130
+    /// transactions and until captured; see [`crate::WatchManifest`].
+    watch_manifest: OnceLock<crate::WatchManifest>,
 }
 
 impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
@@ -98,6 +103,7 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             max_timestamp: None,
             watch_set: OnceLock::new(),
             limit_class: OnceLock::new(),
+            watch_manifest: OnceLock::new(),
         }
     }
 
@@ -120,6 +126,7 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             max_timestamp: None,
             watch_set: OnceLock::new(),
             limit_class: OnceLock::new(),
+            watch_manifest: OnceLock::new(),
         }
     }
 
@@ -389,6 +396,17 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
     /// Records the admission limit classification computed during validation.
     /// Defaults to a no-op.
     fn set_limit_class(&self, _limit_class: crate::LimitClass) {}
+
+    /// Returns the captured authorization read-set (for stateless intra-block
+    /// revalidation) computed during EIP-8130 validation, if set. Defaults to
+    /// `None`.
+    fn watch_manifest(&self) -> Option<&crate::WatchManifest> {
+        None
+    }
+
+    /// Records the captured authorization read-set computed during EIP-8130
+    /// validation. Defaults to a no-op.
+    fn set_watch_manifest(&self, _watch_manifest: crate::WatchManifest) {}
 }
 
 impl<Pooled> BasePooledTx for BasePooledTransaction<BaseTransactionSigned, Pooled>
@@ -435,6 +453,14 @@ where
 
     fn limit_class(&self) -> Option<&crate::LimitClass> {
         self.limit_class.get()
+    }
+
+    fn watch_manifest(&self) -> Option<&crate::WatchManifest> {
+        self.watch_manifest.get()
+    }
+
+    fn set_watch_manifest(&self, watch_manifest: crate::WatchManifest) {
+        let _ = self.watch_manifest.set(watch_manifest);
     }
 
     fn set_limit_class(&self, limit_class: crate::LimitClass) {

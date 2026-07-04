@@ -54,6 +54,9 @@ mod two_d_nonce_pool;
 mod invalidation;
 pub use invalidation::{InvalidationIndex, InvalidationKey, WatchSet};
 
+mod manifest;
+pub use manifest::{ConfigSlot, WatchManifest};
+
 mod limits;
 pub use limits::{InflightCounters, PayerBook};
 

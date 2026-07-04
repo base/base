@@ -45,7 +45,7 @@ use revm::{
     state::{AccountInfo, Bytecode},
 };
 
-use crate::{BasePooledTx, InvalidationKey, LimitClass, WatchSet};
+use crate::{BasePooledTx, ConfigSlot, InvalidationKey, LimitClass, WatchManifest, WatchSet};
 
 /// Base-specific transaction pool validation errors.
 #[derive(Debug, thiserror::Error)]
@@ -94,6 +94,9 @@ struct Eip8130ValidationState {
     /// The maximum gas (and, for self-pay, value) cost this transaction can
     /// charge the payer, used for payer-balance accounting.
     payer_max_cost: U256,
+    /// The captured authorization read-set (config slots with values, payer
+    /// threshold, effective expiry) for stateless intra-block revalidation.
+    manifest: WatchManifest,
 }
 
 /// Base storage slot of the `AccountConfiguration` `_actorConfig` mapping
@@ -309,11 +312,33 @@ struct OverlayPrecompileStorage<'a> {
     inner: StateProviderPrecompileStorage<'a>,
     storage: BTreeMap<(Address, U256), U256>,
     transient: BTreeMap<(Address, U256), U256>,
+    /// Base-state slots read during authorization, with the value each held.
+    ///
+    /// Only reads that fall through to the underlying snapshot are recorded (the
+    /// first value observed per slot wins); a read served from an overlay-buffered
+    /// write is the transaction's *own* effect, not an external dependency, so it
+    /// is intentionally excluded. This is the drift-free authorization read-set
+    /// captured for the [`WatchManifest`]. See `MEMPOOL_HARDENING.md` §13.
+    reads: BTreeMap<(Address, U256), U256>,
 }
 
 impl<'a> OverlayPrecompileStorage<'a> {
     const fn new(inner: StateProviderPrecompileStorage<'a>) -> Self {
-        Self { inner, storage: BTreeMap::new(), transient: BTreeMap::new() }
+        Self {
+            inner,
+            storage: BTreeMap::new(),
+            transient: BTreeMap::new(),
+            reads: BTreeMap::new(),
+        }
+    }
+
+    /// Drains the recorded base-state read-set into a [`WatchManifest`]-ready
+    /// list of config slots with their captured values.
+    fn take_reads(&mut self) -> Vec<ConfigSlot> {
+        core::mem::take(&mut self.reads)
+            .into_iter()
+            .map(|((address, slot), expected)| ConfigSlot { address, slot, expected })
+            .collect()
     }
 }
 
@@ -364,7 +389,12 @@ impl PrecompileStorageProvider for OverlayPrecompileStorage<'_> {
         if let Some(value) = self.storage.get(&(address, key)) {
             return Ok(*value);
         }
-        self.inner.sload(address, key)
+        let value = self.inner.sload(address, key)?;
+        // Record the base-state dependency. A later read of a slot the transaction
+        // has since written is served from `self.storage` above and never reaches
+        // here, so `reads` holds exactly the pre-state the authorization relied on.
+        self.reads.entry((address, key)).or_insert(value);
+        Ok(value)
     }
 
     fn tload(&mut self, address: Address, key: U256) -> Result<U256, BasePrecompileError> {
@@ -709,6 +739,7 @@ where
             let propagate =
                 matches!(origin, TransactionOrigin::External | TransactionOrigin::Local);
             transaction.set_watch_set(state.watch_set.clone());
+            transaction.set_watch_manifest(state.manifest.clone());
             transaction.set_limit_class(LimitClass {
                 sender: state.sender,
                 payer: state.payer,
@@ -823,6 +854,12 @@ where
                 .map_err(Self::map_tx_auth_error)
         })?;
 
+        // Capture the authorization read-set before the overlay is dropped. This
+        // is drift-free — exactly the `AccountConfiguration` slots the authorizer
+        // read, including the delegate account's slots on the delegate path,
+        // which the hand-derived watch set below cannot see.
+        let config_reads = storage.take_reads();
+
         let sender_account = state
             .basic_account(&sender)
             .map_err(|error| Self::state_read_error(error, "sender account read failed"))?
@@ -914,7 +951,7 @@ where
         .min()
         .unwrap_or(u64::MAX);
 
-        let watch_set = Self::eip8130_watch_set(
+        let mut watch_set = Self::eip8130_watch_set(
             sender,
             payer,
             signed.tx().nonce_key,
@@ -923,6 +960,18 @@ where
             &config_actor_ids,
             effective_expiry,
         );
+        // Augment the hand-derived watch set with the captured authorization
+        // read-set. This closes gaps the hand-derivation cannot see — most
+        // importantly the delegate account's config slot on the delegate path,
+        // and policy / payer-lock slots — so a committed change to any slot the
+        // authorization depended on invalidates the transaction. `push` de-dups,
+        // so the actor-config slots already added are not duplicated.
+        for read in &config_reads {
+            watch_set.push(InvalidationKey::Slot {
+                address: read.address,
+                slot: b256_from_u256(read.slot),
+            });
+        }
 
         // Admission-limit classification. Both reads degrade to the strictest
         // interpretation on failure (not locked / not trusted) so a flaky read
@@ -945,6 +994,9 @@ where
             gas_charge
         };
 
+        let manifest =
+            WatchManifest::new(config_reads, payer, payer_max_cost, effective_expiry);
+
         Ok(Eip8130ValidationState {
             sender,
             payer,
@@ -956,6 +1008,7 @@ where
             sender_locked,
             payer_trusted,
             payer_max_cost,
+            manifest,
         })
     }
 
@@ -2724,6 +2777,26 @@ mod tests {
             .expect("create + config change must be admitted via the overlay");
         assert_eq!(state.sender, derived);
         assert_eq!(state.payer, derived, "self-paid create");
+
+        // The authorization read-set is captured drift-free at the storage layer,
+        // and every captured slot is mirrored into the watch set (closing gaps the
+        // hand-derived set cannot see, e.g. the delegate account's config on the
+        // delegate path). The create authorizes against base state before its own
+        // overlay writes, so at least one base-state config read is recorded.
+        assert!(
+            !state.manifest.is_empty(),
+            "authorization must record at least one base-state config read"
+        );
+        assert_eq!(state.manifest.payer(), derived);
+        for slot in state.manifest.config_slots() {
+            assert!(
+                state.watch_set.contains(&InvalidationKey::Slot {
+                    address: slot.address,
+                    slot: b256_from_u256(slot.slot),
+                }),
+                "every captured config slot must be watched: {slot:?}"
+            );
+        }
     }
 
     #[test]
