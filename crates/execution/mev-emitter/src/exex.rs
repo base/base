@@ -50,6 +50,8 @@ const FLASHBLOCKS_PING_INTERVAL: Duration = Duration::from_secs(5);
 const PRECONF_ENV: &str = "MEV_EMITTER_PRECONF";
 /// Explicit opt-in for in-node arbitrage dry-run observations.
 const ARB_DRYRUN_ENV: &str = crate::arb_dryrun::ARB_DRYRUN_ENV;
+/// Off-by-default provider refresh for dry-run candidate member reserves.
+const ARB_DRYRUN_LIVE_RESERVE_ENV: &str = "MEV_EMITTER_ARB_DRYRUN_LIVE_RESERVE";
 /// Optional per-frame dirty pool cap for dry-run work.
 const ARB_DRYRUN_MAX_POOLS_ENV: &str = "MEV_EMITTER_ARB_DRYRUN_MAX_POOLS";
 /// Optional per-frame candidate cap for dry-run work.
@@ -78,6 +80,7 @@ struct ArbDryRunRuntime {
     config: crate::arb_dryrun::DryRunConfig,
     pools: Arc<Vec<crate::arb_dryrun::PoolState>>,
     pool_index: Arc<HashMap<Address, usize>>,
+    live_reserve: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -176,6 +179,21 @@ fn preconf_emission_enabled_from_value(value: Option<&OsStr>) -> bool {
 pub fn arb_dryrun_enabled() -> bool {
     crate::arb_dryrun::enabled_from_value(std::env::var_os(ARB_DRYRUN_ENV).as_deref())
 }
+/// Returns true only when dry-run is explicitly enabled and live reserve is exactly `1`.
+pub fn arb_dryrun_live_reserve_enabled() -> bool {
+    arb_dryrun_live_reserve_enabled_from_values(
+        std::env::var_os(ARB_DRYRUN_ENV).as_deref(),
+        std::env::var_os(ARB_DRYRUN_LIVE_RESERVE_ENV).as_deref(),
+    )
+}
+
+fn arb_dryrun_live_reserve_enabled_from_values(
+    dryrun: Option<&OsStr>,
+    live_reserve: Option<&OsStr>,
+) -> bool {
+    crate::arb_dryrun::enabled_from_value(dryrun)
+        && crate::arb_dryrun::enabled_from_value(live_reserve)
+}
 
 fn arb_dryrun_config_from_env() -> crate::arb_dryrun::DryRunConfig {
     let mut config = crate::arb_dryrun::DryRunConfig::default();
@@ -210,23 +228,31 @@ fn arb_dryrun_net_cost_config_from_env() -> Option<crate::arb_dryrun::DryRunNetC
 fn arb_dryrun_runtime_from_env() -> Option<ArbDryRunRuntime> {
     let config = arb_dryrun_config_from_env();
     let baseline_path = std::env::var(ARB_DRYRUN_POOL_BASELINE_ENV).ok();
-    arb_dryrun_runtime_from_baseline_path(config, baseline_path.as_deref())
+    let live_reserve = arb_dryrun_live_reserve_enabled();
+    arb_dryrun_runtime_from_baseline_path(config, baseline_path.as_deref(), live_reserve)
 }
 
 fn build_arb_dryrun_runtime(
     config: crate::arb_dryrun::DryRunConfig,
     pools: Vec<crate::arb_dryrun::PoolState>,
+    live_reserve: bool,
 ) -> ArbDryRunRuntime {
     let pool_index = pools.iter().enumerate().fold(HashMap::new(), |mut index, (i, pool)| {
         index.entry(pool.pool).or_insert(i);
         index
     });
-    ArbDryRunRuntime { config, pools: Arc::new(pools), pool_index: Arc::new(pool_index) }
+    ArbDryRunRuntime {
+        config,
+        pools: Arc::new(pools),
+        pool_index: Arc::new(pool_index),
+        live_reserve,
+    }
 }
 
 fn arb_dryrun_runtime_from_baseline_path(
     config: crate::arb_dryrun::DryRunConfig,
     baseline_path: Option<&str>,
+    live_reserve: bool,
 ) -> Option<ArbDryRunRuntime> {
     let Some(path) = baseline_path.map(str::trim).filter(|path| !path.is_empty()) else {
         info!(
@@ -255,7 +281,7 @@ fn arb_dryrun_runtime_from_baseline_path(
             return None;
         }
     };
-    Some(build_arb_dryrun_runtime(config, pools))
+    Some(build_arb_dryrun_runtime(config, pools, live_reserve))
 }
 
 #[cfg(test)]
@@ -263,14 +289,70 @@ fn core_arb_dryrun_runtime_from_baseline_path(
     config: crate::arb_dryrun::DryRunConfig,
     baseline_path: Option<&str>,
 ) -> Option<ArbDryRunRuntime> {
-    arb_dryrun_runtime_from_baseline_path(config, baseline_path)
+    arb_dryrun_runtime_from_baseline_path(config, baseline_path, false)
 }
 
 fn preconf_subscriber_arb_dryrun(
-    core_arb_hook_enabled: bool,
+    arb_dryrun_frame_source_installed: bool,
     arb_dryrun: Option<ArbDryRunRuntime>,
 ) -> Option<ArbDryRunRuntime> {
-    if core_arb_hook_enabled { None } else { arb_dryrun }
+    if arb_dryrun_frame_source_installed { None } else { arb_dryrun }
+}
+
+/// WP-S1a placement decision: provider/MDBX reserve refresh must not run inside
+/// `PendingFrameObserver::on_pending_frame`. That observer is invoked synchronously by
+/// `base-flashblocks` while its StateProcessor is inside `block_in_place`; the
+/// `drop(live_state)` patch releases the pending-state mutex before observer notification, but
+/// MDBX reads there would still extend the flashblock processor's critical section. The live-reserve
+/// path therefore replaces `CoreArbPendingFrameObserver` with this independent broadcast subscriber,
+/// which runs after processed pending frames are published and is gated only by dry-run +
+/// live-reserve flags, not `MEV_EMITTER_PRECONF`. While live-reserve is on, dry-run observation is
+/// post-publication, not the synchronous ahead-of-committed observer path.
+fn start_arb_dryrun_live_reserve_worker<Provider>(
+    fb_state: &Arc<FlashblocksState>,
+    sink: EventSink,
+    runtime: ArbDryRunRuntime,
+    provider: Provider,
+) where
+    Provider: StateProviderFactory + Clone + Send + 'static,
+{
+    let mut rx = fb_state.subscribe_to_flashblocks();
+    tokio::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(pending) => {
+                    let parent = pending.earliest_block_number().saturating_sub(1);
+                    match provider.history_by_block_number(parent) {
+                        Ok(state_provider) => {
+                            let mut db = StateProviderDatabase::new(state_provider);
+                            emit_preconf_pool_slots_with_live_reserve(
+                                &pending, &sink, &runtime, &mut db,
+                            );
+                        }
+                        Err(error) => {
+                            warn!(
+                                target: "base::mev_emitter",
+                                block = parent,
+                                error = %error,
+                                "arb dry-run live-reserve provider unavailable",
+                            );
+                            emit_preconf_pool_slots_with_live_reserve_error(
+                                &pending, &sink, &runtime,
+                            );
+                        }
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(n)) => {
+                    warn!(
+                        target: "base::mev_emitter",
+                        skipped = n,
+                        "arb dry-run live-reserve receiver lagged",
+                    );
+                }
+                Err(broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
 }
 
 fn parse_env_usize(name: &str) -> Option<usize> {
@@ -348,12 +430,13 @@ fn record_pool_slot_event(
     let Some(pool) = baseline_pool(runtime, &event.pool) else {
         return;
     };
-    let mut delta = crate::arb_dryrun::PoolStateDelta::from_slots(
+    let mut delta = crate::arb_dryrun::PoolStateDelta::from_slots_with_live_reserve(
         pool,
         slots,
         crate::arb_dryrun::PoolOverlaySource::SlotDiff,
         Some(block_number),
         Some(block_number),
+        runtime.live_reserve,
     );
     if let Some(existing) = dirty_state.deltas.get(&event.pool) {
         if existing.is_live_read_complete() && !delta.is_live_read_complete() {
@@ -391,6 +474,18 @@ fn merge_fallback_delta(
     pool: Address,
     delta: crate::arb_dryrun::PoolStateDelta,
 ) {
+    if let Some(existing) = dirty_state.deltas.get_mut(&pool) {
+        for caveat in &delta.caveats {
+            existing.add_caveat(caveat);
+        }
+        if existing.is_live_read_complete() {
+            return;
+        }
+        if existing.source == crate::arb_dryrun::PoolOverlaySource::SlotDiff {
+            merge_missing_fallback_fields(existing, &delta);
+            return;
+        }
+    }
     if delta.has_state_update() || delta.is_live_read_complete() {
         dirty_state.deltas.insert(pool, delta);
         return;
@@ -401,16 +496,44 @@ fn merge_fallback_delta(
     }
 }
 
-fn supplement_committed_fallback<DB: Database>(
+fn merge_missing_fallback_fields(
+    existing: &mut crate::arb_dryrun::PoolStateDelta,
+    fallback: &crate::arb_dryrun::PoolStateDelta,
+) {
+    if existing.reserve0.is_none() {
+        existing.reserve0 = fallback.reserve0;
+    }
+    if existing.reserve1.is_none() {
+        existing.reserve1 = fallback.reserve1;
+    }
+    if existing.sqrt_price_x96.is_none() {
+        existing.sqrt_price_x96 = fallback.sqrt_price_x96;
+    }
+    if existing.liquidity.is_none() {
+        existing.liquidity = fallback.liquidity;
+    }
+    if existing.tick.is_none() {
+        existing.tick = fallback.tick;
+    }
+    existing.live_read_complete |= fallback.is_live_read_complete();
+    if existing.live_read_complete {
+        existing.caveats.retain(|caveat| caveat != "partial-live-overlay");
+    }
+}
+
+fn refresh_fallback_pools<DB, I>(
     db: &mut DB,
     runtime: &ArbDryRunRuntime,
     dirty_state: &mut ArbDirtyState,
+    pools_to_refresh: I,
     block_number: u64,
-) {
-    let fallback_cap = runtime.config.max_pools_per_frame.min(8);
+    fallback_cap: usize,
+) where
+    DB: Database,
+    I: IntoIterator<Item = Address>,
+{
     let started = Instant::now();
-    let dirty_pools = selected_dirty_pools_for_fallback(runtime, dirty_state);
-    for pool_addr in dirty_pools {
+    for pool_addr in pools_to_refresh {
         if dirty_state.fallback_pools.contains(&pool_addr) {
             continue;
         }
@@ -436,7 +559,8 @@ fn supplement_committed_fallback<DB: Database>(
         let Some(pool) = baseline_pool(runtime, &pool_addr) else {
             continue;
         };
-        let slots_to_read = crate::arb_dryrun::fallback_overlay_slots(pool);
+        let slots_to_read =
+            crate::arb_dryrun::fallback_overlay_slots_with_live_reserve(pool, runtime.live_reserve);
         if slots_to_read.is_empty() {
             mark_fallback_caveat(
                 dirty_state,
@@ -490,12 +614,13 @@ fn supplement_committed_fallback<DB: Database>(
         for (slot, value) in &slots {
             raw_slots.insert(*slot, *value);
         }
-        let mut delta = crate::arb_dryrun::PoolStateDelta::from_slots(
+        let mut delta = crate::arb_dryrun::PoolStateDelta::from_slots_with_live_reserve(
             pool,
             &slots,
             crate::arb_dryrun::PoolOverlaySource::StateProvider,
             Some(block_number),
             Some(block_number),
+            runtime.live_reserve,
         );
         if !delta.has_state_update() && delta.caveats.is_empty() {
             delta.add_caveat("live-overlay-verified");
@@ -503,6 +628,17 @@ fn supplement_committed_fallback<DB: Database>(
         merge_fallback_delta(dirty_state, pool_addr, delta);
     }
     dirty_state.fallback_elapsed = dirty_state.fallback_elapsed.saturating_add(started.elapsed());
+}
+
+fn supplement_committed_fallback<DB: Database>(
+    db: &mut DB,
+    runtime: &ArbDryRunRuntime,
+    dirty_state: &mut ArbDirtyState,
+    block_number: u64,
+) {
+    let fallback_cap = runtime.config.max_pools_per_frame.min(8);
+    let dirty_pools = selected_dirty_pools_for_fallback(runtime, dirty_state);
+    refresh_fallback_pools(db, runtime, dirty_state, dirty_pools, block_number, fallback_cap);
 }
 
 fn arb_dryrun_observation_events(
@@ -579,6 +715,45 @@ fn arb_dryrun_observation_events(
         .collect()
 }
 
+fn build_arb_dryrun_frame(
+    runtime: &ArbDryRunRuntime,
+    dirty_state: &ArbDirtyState,
+) -> crate::arb_dryrun::DryRunFrame {
+    let mut frame_config = runtime.config.clone();
+    frame_config.time_budget =
+        frame_config.time_budget.saturating_sub(dirty_state.fallback_elapsed);
+    crate::arb_dryrun::run_frame_with_overlay(
+        runtime.pools.as_slice(),
+        &dirty_state.dirty_pools,
+        &dirty_state.deltas,
+        &frame_config,
+        crate::arb_dryrun::NoActionGuard,
+    )
+}
+
+fn candidate_member_pools(frame: &crate::arb_dryrun::DryRunFrame) -> BTreeSet<Address> {
+    frame.candidates.iter().flat_map(|candidate| candidate.pools.iter().copied()).collect()
+}
+
+fn send_arb_dryrun_frame(
+    sink: &EventSink,
+    block_number: u64,
+    payload_id: &str,
+    flashblock_index: u32,
+    runtime: &ArbDryRunRuntime,
+    frame: crate::arb_dryrun::DryRunFrame,
+) {
+    for event in arb_dryrun_observation_events(
+        block_number,
+        flashblock_index,
+        payload_id,
+        runtime.config.amount_in_wei,
+        frame,
+    ) {
+        sink.send_event(&event);
+    }
+}
+
 fn emit_arb_dryrun_frame(
     sink: &EventSink,
     block_number: u64,
@@ -589,25 +764,95 @@ fn emit_arb_dryrun_frame(
     if dirty_state.dirty_pools.is_empty() {
         return;
     }
-    let mut frame_config = runtime.config.clone();
-    frame_config.time_budget =
-        frame_config.time_budget.saturating_sub(dirty_state.fallback_elapsed);
-    let frame = crate::arb_dryrun::run_frame_with_overlay(
-        runtime.pools.as_slice(),
-        &dirty_state.dirty_pools,
-        &dirty_state.deltas,
-        &frame_config,
-        crate::arb_dryrun::NoActionGuard,
-    );
-    for event in arb_dryrun_observation_events(
+    let frame = build_arb_dryrun_frame(runtime, &dirty_state);
+    send_arb_dryrun_frame(
+        sink,
         block_number,
-        dirty_state.flashblock_index,
         &payload_id,
-        runtime.config.amount_in_wei,
+        dirty_state.flashblock_index,
+        runtime,
         frame,
-    ) {
-        sink.send_event(&event);
+    );
+}
+
+fn emit_arb_dryrun_frame_with_refresh<DB: Database>(
+    sink: &EventSink,
+    block_number: u64,
+    payload_id: String,
+    mut dirty_state: ArbDirtyState,
+    runtime: &ArbDryRunRuntime,
+    db: &mut DB,
+) {
+    if dirty_state.dirty_pools.is_empty() {
+        return;
     }
+    let pass1 = build_arb_dryrun_frame(runtime, &dirty_state);
+    let member_pools = candidate_member_pools(&pass1);
+    if member_pools.is_empty() {
+        send_arb_dryrun_frame(
+            sink,
+            block_number,
+            &payload_id,
+            dirty_state.flashblock_index,
+            runtime,
+            pass1,
+        );
+        return;
+    }
+    refresh_fallback_pools(
+        db,
+        runtime,
+        &mut dirty_state,
+        member_pools,
+        block_number,
+        runtime.config.max_pools_per_frame,
+    );
+    let pass2 = build_arb_dryrun_frame(runtime, &dirty_state);
+    send_arb_dryrun_frame(
+        sink,
+        block_number,
+        &payload_id,
+        dirty_state.flashblock_index,
+        runtime,
+        pass2,
+    );
+}
+
+fn emit_arb_dryrun_frame_with_refresh_error(
+    sink: &EventSink,
+    block_number: u64,
+    payload_id: String,
+    mut dirty_state: ArbDirtyState,
+    runtime: &ArbDryRunRuntime,
+) {
+    if dirty_state.dirty_pools.is_empty() {
+        return;
+    }
+    let pass1 = build_arb_dryrun_frame(runtime, &dirty_state);
+    let member_pools = candidate_member_pools(&pass1);
+    if member_pools.is_empty() {
+        send_arb_dryrun_frame(
+            sink,
+            block_number,
+            &payload_id,
+            dirty_state.flashblock_index,
+            runtime,
+            pass1,
+        );
+        return;
+    }
+    for pool in member_pools {
+        mark_fallback_caveat(&mut dirty_state, pool, block_number, "fallback-provider-error");
+    }
+    let pass2 = build_arb_dryrun_frame(runtime, &dirty_state);
+    send_arb_dryrun_frame(
+        sink,
+        block_number,
+        &payload_id,
+        dirty_state.flashblock_index,
+        runtime,
+        pass2,
+    );
 }
 
 /// Issue #45: emit pool storage-slot diffs from one FLASHBLOCK PRECONFIRMATION.
@@ -628,12 +873,12 @@ fn emit_arb_dryrun_frame(
 /// (idempotent per `payload_id`+pool+slot, so the downstream aggregator dedups).
 /// The raw `(slot, post-value)` stream remains unchanged; the optional arb
 /// dry-run lane also decodes those words into an in-node live-state overlay.
-fn emit_preconf_pool_slots(
+fn collect_preconf_dirty_state(
     pb: &PendingBlocks,
     sink: &EventSink,
     arb_dryrun: Option<&ArbDryRunRuntime>,
     emit_pool_slot_diffs: bool,
-) {
+) -> (u64, String, ArbDirtyState) {
     let block_number = pb.latest_block_number();
     let payload_id = format!("{}", pb.payload_id());
     let fb_index = pb.latest_flashblock_index() as u32;
@@ -669,9 +914,41 @@ fn emit_preconf_pool_slots(
             }
         }
     }
+    (block_number, payload_id, dirty_state)
+}
+
+fn emit_preconf_pool_slots(
+    pb: &PendingBlocks,
+    sink: &EventSink,
+    arb_dryrun: Option<&ArbDryRunRuntime>,
+    emit_pool_slot_diffs: bool,
+) {
+    let (block_number, payload_id, dirty_state) =
+        collect_preconf_dirty_state(pb, sink, arb_dryrun, emit_pool_slot_diffs);
     if let Some(runtime) = arb_dryrun {
         emit_arb_dryrun_frame(sink, block_number, payload_id, dirty_state, runtime);
     }
+}
+
+fn emit_preconf_pool_slots_with_live_reserve<DB: Database>(
+    pb: &PendingBlocks,
+    sink: &EventSink,
+    runtime: &ArbDryRunRuntime,
+    db: &mut DB,
+) {
+    let (block_number, payload_id, dirty_state) =
+        collect_preconf_dirty_state(pb, sink, Some(runtime), false);
+    emit_arb_dryrun_frame_with_refresh(sink, block_number, payload_id, dirty_state, runtime, db);
+}
+
+fn emit_preconf_pool_slots_with_live_reserve_error(
+    pb: &PendingBlocks,
+    sink: &EventSink,
+    runtime: &ArbDryRunRuntime,
+) {
+    let (block_number, payload_id, dirty_state) =
+        collect_preconf_dirty_state(pb, sink, Some(runtime), false);
+    emit_arb_dryrun_frame_with_refresh_error(sink, block_number, payload_id, dirty_state, runtime);
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -720,7 +997,10 @@ fn preconf_discard(
 
 #[cfg(test)]
 mod preconf_tests {
-    use super::{PreconfPayloadRef, preconf_discard, preconf_emission_enabled_from_value};
+    use super::{
+        PreconfPayloadRef, arb_dryrun_live_reserve_enabled_from_values, preconf_discard,
+        preconf_emission_enabled_from_value,
+    };
     use crate::DiscardReason;
     use alloy_primitives::B256;
     use std::ffi::OsStr;
@@ -741,6 +1021,20 @@ mod preconf_tests {
         assert!(!preconf_emission_enabled_from_value(Some(OsStr::new("0"))));
         assert!(preconf_emission_enabled_from_value(Some(OsStr::new("1"))));
         assert!(preconf_emission_enabled_from_value(Some(OsStr::new(" 1 "))));
+    }
+
+    #[test]
+    fn live_reserve_env_requires_dryrun_and_explicit_one() {
+        assert!(!arb_dryrun_live_reserve_enabled_from_values(None, Some(OsStr::new("1"))));
+        assert!(!arb_dryrun_live_reserve_enabled_from_values(Some(OsStr::new("1")), None,));
+        assert!(!arb_dryrun_live_reserve_enabled_from_values(
+            Some(OsStr::new("1")),
+            Some(OsStr::new("true")),
+        ));
+        assert!(arb_dryrun_live_reserve_enabled_from_values(
+            Some(OsStr::new("1")),
+            Some(OsStr::new("1")),
+        ));
     }
 
     #[test]
@@ -776,7 +1070,9 @@ mod preconf_tests {
 /// emits ahead-of-committed pool-slot diffs via [`emit_preconf_pool_slots`]. The
 /// committed-chain loop below is UNCHANGED and remains the finalizing/reconciling
 /// path (its `BlockBoundaryEvent { finalized: true }` reconciles the preconf
-/// stream).
+/// stream). When `MEV_EMITTER_ARB_DRYRUN_LIVE_RESERVE=1`, the arb dry-run path
+/// intentionally uses a post-publication broadcast worker instead of the synchronous
+/// `CoreArbPendingFrameObserver`, so ahead-of-committed dry-run observations disappear.
 pub async fn run_mev_emitter_exex(
     mut ctx: ExExContext<BaseNodeAdapter>,
     fb_state: Option<Arc<FlashblocksState>>,
@@ -806,6 +1102,7 @@ pub async fn run_mev_emitter_exex(
                 time_budget_micros,
                 amount_in_wei = %runtime.config.amount_in_wei,
                 baseline_pools = runtime.pools.len(),
+                live_reserve = runtime.live_reserve,
                 "arb dry-run observations enabled (MEV_EMITTER_ARB_DRYRUN=1)",
             );
         }
@@ -817,16 +1114,32 @@ pub async fn run_mev_emitter_exex(
         );
         None
     };
-    let core_arb_hook_enabled = fb_state.is_some() && arb_dryrun.is_some();
+    let arb_dryrun_frame_source_installed = fb_state.is_some() && arb_dryrun.is_some();
     if let (Some(state), Some(runtime)) = (fb_state.as_ref(), arb_dryrun.clone()) {
-        state.set_pending_frame_observer(Some(Arc::new(CoreArbPendingFrameObserver::new(
-            sink.clone(),
-            runtime,
-        ))));
-        info!(
-            target: "base::mev_emitter",
-            "core arb dry-run hook installed on flashblocks StateProcessor",
-        );
+        if runtime.live_reserve {
+            // Live-reserve provider reads deliberately replace the synchronous
+            // `CoreArbPendingFrameObserver`; this avoids MDBX work in the flashblocks
+            // processor and means dry-run observations are no longer ahead-of-committed.
+            start_arb_dryrun_live_reserve_worker(
+                state,
+                sink.clone(),
+                runtime,
+                ctx.provider().clone(),
+            );
+            info!(
+                target: "base::mev_emitter",
+                "arb dry-run live-reserve worker installed on flashblocks broadcast stream",
+            );
+        } else {
+            state.set_pending_frame_observer(Some(Arc::new(CoreArbPendingFrameObserver::new(
+                sink.clone(),
+                runtime,
+            ))));
+            info!(
+                target: "base::mev_emitter",
+                "core arb dry-run hook installed on flashblocks StateProcessor",
+            );
+        }
     }
     // Issue #45: ahead-of-committed preconf pool-slot emission. Failure-isolated in
     // its own task — a lagged/closed receiver only ends the task, never the ExEx.
@@ -836,8 +1149,10 @@ pub async fn run_mev_emitter_exex(
         if let Some(state) = fb_state {
             let task_sink = sink.clone();
             let mut rx = state.subscribe_to_flashblocks();
-            let task_arb_dryrun =
-                preconf_subscriber_arb_dryrun(core_arb_hook_enabled, arb_dryrun.clone());
+            let task_arb_dryrun = preconf_subscriber_arb_dryrun(
+                arb_dryrun_frame_source_installed,
+                arb_dryrun.clone(),
+            );
             tokio::spawn(async move {
                 // Tracks the previous preconf so reorg/supersede signals can discard
                 // stale pending slots before they are committed/finalized.
@@ -1064,13 +1379,24 @@ pub async fn run_mev_emitter_exex(
                     }
                     if let Some(runtime) = arb_dryrun.as_ref() {
                         for (payload_id, dirty_state) in arb_dirty_by_payload {
-                            emit_arb_dryrun_frame(
-                                &sink,
-                                block_number,
-                                payload_id,
-                                dirty_state,
-                                runtime,
-                            );
+                            if runtime.live_reserve {
+                                emit_arb_dryrun_frame_with_refresh(
+                                    &sink,
+                                    block_number,
+                                    payload_id,
+                                    dirty_state,
+                                    runtime,
+                                    evm.db_mut(),
+                                );
+                            } else {
+                                emit_arb_dryrun_frame(
+                                    &sink,
+                                    block_number,
+                                    payload_id,
+                                    dirty_state,
+                                    runtime,
+                                );
+                            }
                         }
                     }
                     // C-5: the tx loop completed successfully — emit, per payloadId
@@ -1223,6 +1549,7 @@ mod arb_overlay_tests {
             config: crate::arb_dryrun::DryRunConfig::default(),
             pools: Arc::new(pools),
             pool_index: Arc::new(pool_index),
+            live_reserve: false,
         }
     }
 
@@ -1274,11 +1601,14 @@ mod arb_overlay_tests {
         assert_eq!(runtime.pools[0], pool);
     }
     #[test]
-    fn preconf_subscriber_arb_runtime_is_suppressed_when_core_hook_installed() {
+    fn preconf_subscriber_arb_runtime_is_suppressed_when_frame_source_installed() {
         let runtime = runtime_with_pool(v2_pool(0xc2, 1_000, 2_000));
 
         assert!(preconf_subscriber_arb_dryrun(false, Some(runtime.clone())).is_some());
         assert!(preconf_subscriber_arb_dryrun(true, Some(runtime)).is_none());
+        let mut live_runtime = runtime_with_pool(v2_pool(0xc3, 1_000, 2_000));
+        live_runtime.live_reserve = true;
+        assert!(preconf_subscriber_arb_dryrun(true, Some(live_runtime)).is_none());
         assert!(preconf_subscriber_arb_dryrun(false, None).is_none());
     }
 
@@ -1618,7 +1948,7 @@ mod arb_overlay_tests {
     }
 
     #[test]
-    fn committed_fallback_unsupported_protocol_is_caveated() {
+    fn committed_fallback_leaves_aerodrome_stable_unsupported_when_live_reserve_off() {
         let pool = crate::arb_dryrun::PoolState::v2_like(
             addr(0xa8),
             Protocol::AerodromeStable,
@@ -1631,14 +1961,177 @@ mod arb_overlay_tests {
         let mut runtime = runtime_with_pool(pool.clone());
         runtime.config.time_budget = Duration::from_secs(1);
         let mut dirty_state = dirty_state_for(pool.pool);
-        let mut db = StorageDb::default();
+        let mut db = StorageDb::default()
+            .with_slot(
+                pool.pool,
+                slot_key(crate::arb_dryrun::AERO_STABLE_RESERVE0_SLOT),
+                U256::from(3_000u128),
+            )
+            .with_slot(
+                pool.pool,
+                slot_key(crate::arb_dryrun::AERO_STABLE_RESERVE1_SLOT),
+                U256::from(4_000u128),
+            );
 
         supplement_committed_fallback(&mut db, &runtime, &mut dirty_state, 42);
 
         assert_eq!(dirty_state.fallback_attempted, 0);
         assert_eq!(db.storage_calls, 0);
-        let delta = dirty_state.deltas.get(&pool.pool).expect("unsupported caveat");
+        let delta = dirty_state.deltas.get(&pool.pool).expect("unsupported fallback delta");
         assert!(delta.caveats.iter().any(|c| c == "fallback-unsupported-protocol"));
+    }
+
+    #[test]
+    fn committed_fallback_decodes_aerodrome_stable_reserve_slots_when_live_reserve_on() {
+        let pool = crate::arb_dryrun::PoolState::v2_like(
+            addr(0xa8),
+            Protocol::AerodromeStable,
+            addr(1),
+            addr(2),
+            5,
+            1_000,
+            2_000,
+        );
+        let mut runtime = runtime_with_pool(pool.clone());
+        runtime.config.time_budget = Duration::from_secs(1);
+        runtime.live_reserve = true;
+        let mut dirty_state = dirty_state_for(pool.pool);
+        let mut db = StorageDb::default()
+            .with_slot(
+                pool.pool,
+                slot_key(crate::arb_dryrun::AERO_STABLE_RESERVE0_SLOT),
+                U256::from(3_000u128),
+            )
+            .with_slot(
+                pool.pool,
+                slot_key(crate::arb_dryrun::AERO_STABLE_RESERVE1_SLOT),
+                U256::from(4_000u128),
+            );
+
+        supplement_committed_fallback(&mut db, &runtime, &mut dirty_state, 42);
+
+        assert_eq!(dirty_state.fallback_attempted, 1);
+        assert_eq!(db.storage_calls, 2);
+        let delta = dirty_state.deltas.get(&pool.pool).expect("stable fallback delta");
+        assert_eq!(delta.reserve0, Some(3_000));
+        assert_eq!(delta.reserve1, Some(4_000));
+        assert!(delta.is_live_read_complete());
+        assert!(delta.caveats.iter().any(|c| c == "live-overlay-applied"));
+    }
+
+    #[test]
+    fn candidate_member_refresh_requotes_untouched_aerodrome_stable_pool() {
+        let dirty_pool = crate::arb_dryrun::PoolState::v2_like(
+            addr(0xd1),
+            Protocol::UniswapV2,
+            addr(1),
+            addr(2),
+            1,
+            1_000,
+            1_100,
+        );
+        let stable_pool = crate::arb_dryrun::PoolState::v2_like(
+            addr(0xd2),
+            Protocol::AerodromeStable,
+            addr(1),
+            addr(2),
+            1,
+            1_100,
+            1_000,
+        );
+        let mut runtime = runtime_with_pools(vec![dirty_pool.clone(), stable_pool.clone()]);
+        runtime.config.time_budget = Duration::from_secs(1);
+        runtime.config.max_pools_per_frame = 8;
+        runtime.live_reserve = true;
+        let dirty_slots = BTreeMap::from([(
+            slot_key(crate::arb_dryrun::UNIV2_RESERVES_SLOT),
+            pack_univ2_reserves(1_000, 1_100),
+        )]);
+        let dirty_delta = crate::arb_dryrun::PoolStateDelta::from_slots(
+            &dirty_pool,
+            &dirty_slots,
+            crate::arb_dryrun::PoolOverlaySource::SlotDiff,
+            Some(42),
+            Some(42),
+        );
+        let mut dirty_state = dirty_state_for(dirty_pool.pool);
+        dirty_state.deltas.insert(dirty_pool.pool, dirty_delta);
+        let pass1 = build_arb_dryrun_frame(&runtime, &dirty_state);
+        assert!(pass1.candidates.iter().any(|candidate| {
+            candidate.pools.contains(&dirty_pool.pool)
+                && candidate.pools.contains(&stable_pool.pool)
+        }));
+        let pass1_gross = pass1.candidates.first().map(|candidate| candidate.estimated_gross_wei);
+        let member_pools = candidate_member_pools(&pass1);
+        let mut db = StorageDb::default()
+            .with_slot(
+                stable_pool.pool,
+                slot_key(crate::arb_dryrun::AERO_STABLE_RESERVE0_SLOT),
+                U256::from(1_000u128),
+            )
+            .with_slot(
+                stable_pool.pool,
+                slot_key(crate::arb_dryrun::AERO_STABLE_RESERVE1_SLOT),
+                U256::from(1_000u128),
+            );
+
+        refresh_fallback_pools(
+            &mut db,
+            &runtime,
+            &mut dirty_state,
+            member_pools,
+            42,
+            runtime.config.max_pools_per_frame,
+        );
+
+        assert_eq!(dirty_state.fallback_attempted, 1);
+        let stable_delta = dirty_state.deltas.get(&stable_pool.pool).expect("stable refreshed");
+        assert_eq!(stable_delta.reserve0, Some(1_000));
+        assert_eq!(stable_delta.reserve1, Some(1_000));
+        assert!(stable_delta.is_live_read_complete());
+        let pass2 = build_arb_dryrun_frame(&runtime, &dirty_state);
+        let pass2_gross = pass2.candidates.first().map(|candidate| candidate.estimated_gross_wei);
+        assert_ne!(pass1_gross, pass2_gross);
+    }
+
+    #[test]
+    fn candidate_member_refresh_preserves_complete_touched_overlay() {
+        let pool = v2_pool(0xd3, 1_000, 2_000);
+        let mut runtime = runtime_with_pool(pool.clone());
+        runtime.config.time_budget = Duration::from_secs(1);
+        let slots = BTreeMap::from([(
+            slot_key(crate::arb_dryrun::UNIV2_RESERVES_SLOT),
+            pack_univ2_reserves(3_000, 4_000),
+        )]);
+        let delta = crate::arb_dryrun::PoolStateDelta::from_slots(
+            &pool,
+            &slots,
+            crate::arb_dryrun::PoolOverlaySource::SlotDiff,
+            Some(42),
+            Some(42),
+        );
+        let mut dirty_state = dirty_state_for(pool.pool);
+        dirty_state.deltas.insert(pool.pool, delta);
+        let mut db = StorageDb::default().with_slot(
+            pool.pool,
+            slot_key(crate::arb_dryrun::UNIV2_RESERVES_SLOT),
+            pack_univ2_reserves(9_000, 9_000),
+        );
+
+        refresh_fallback_pools(
+            &mut db,
+            &runtime,
+            &mut dirty_state,
+            BTreeSet::from([pool.pool]),
+            42,
+            runtime.config.max_pools_per_frame,
+        );
+
+        assert_eq!(dirty_state.fallback_attempted, 0);
+        assert_eq!(db.storage_calls, 0);
+        let preserved = dirty_state.deltas.get(&pool.pool).expect("touched overlay");
+        assert_eq!(preserved.reserve0, Some(3_000));
+        assert_eq!(preserved.reserve1, Some(4_000));
     }
     #[test]
     fn truncated_non_empty_dryrun_frame_emits_candidate_observation() {
