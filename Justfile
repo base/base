@@ -173,13 +173,6 @@ sepolia-tdx-dev-offchain:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    for bin in cargo cast docker jq python3; do
-        command -v "$bin" >/dev/null 2>&1 || {
-            echo "Missing required command: $bin" >&2
-            exit 1
-        }
-    done
-
     l1_rpc="${L1_RPC_URL:-https://ethereum-full-sepolia-k8s-dev.cbhq.net}"
     l2_rpc="${L2_RPC_URL:-https://base-sepolia-reth-proofs-k8s-donotuse.cbhq.net:8545}"
     rollup_rpc="${ROLLUP_RPC_URL:-${L2_OUTPUT_ROOT_RPC_URL:-https://base-sepolia-reth-internal-rpc-donotuse.cbhq.net:7545}}"
@@ -230,31 +223,20 @@ sepolia-tdx-dev-offchain:
     cargo build -p base-prover-nitro-host --features local,worker
     export RUST_LOG="${RUST_LOG:-info}"
 
-    pids=()
-    cleanup() {
-        for pid in "${pids[@]:-}"; do
-            kill "$pid" 2>/dev/null || true
-        done
-        wait 2>/dev/null || true
-    }
-    trap cleanup EXIT INT TERM
-
-    create_pg_container() {
-        docker run -d \
-            --name "$pg_container" \
-            -e POSTGRES_USER=postgres \
-            -e POSTGRES_PASSWORD="$pg_password" \
-            -e POSTGRES_DB=proverdb \
-            -p "127.0.0.1:$postgres_port:5432" \
-            -v "$pg_data_dir:/var/lib/postgresql/data" \
-            -v "$PWD/crates/proof/prover-service/db/migrations:/docker-entrypoint-initdb.d:ro" \
-            postgres:17-alpine >/dev/null
-    }
+    trap 'kill $(jobs -p) 2>/dev/null || true; wait 2>/dev/null || true' EXIT INT TERM
 
     mkdir -p "$pg_data_dir"
     # ponytail: initdb migrations run on first DB creation; delete the data dir to replay them.
     docker rm -f "$pg_container" >/dev/null 2>&1 || true
-    create_pg_container
+    docker run -d \
+        --name "$pg_container" \
+        -e POSTGRES_USER=postgres \
+        -e POSTGRES_PASSWORD="$pg_password" \
+        -e POSTGRES_DB=proverdb \
+        -p "127.0.0.1:$postgres_port:5432" \
+        -v "$pg_data_dir:/var/lib/postgresql/data" \
+        -v "$PWD/crates/proof/prover-service/db/migrations:/docker-entrypoint-initdb.d:ro" \
+        postgres:17-alpine >/dev/null
     until docker exec "$pg_container" pg_isready -U postgres -d proverdb >/dev/null 2>&1; do
         sleep 1
     done
@@ -269,7 +251,6 @@ sepolia-tdx-dev-offchain:
         target/debug/base-prover-service \
         --rpc-listen-addr "$requester_rpc" \
         --worker-rpc-listen-addr "$worker_rpc" &
-    pids+=("$!")
     wait_rpc "http://$requester_rpc" prover-service-requester \
         cast rpc prover_listProofs '{"offset":0,"limit":1}'
     wait_rpc "http://$worker_rpc" prover-service-worker \
@@ -284,7 +265,6 @@ sepolia-tdx-dev-offchain:
         --listen-addr "$nitro_signer_rpc" \
         --prover-service-endpoint "http://$worker_rpc" \
         --enable-experimental-witness-endpoint &
-    pids+=("$!")
     wait_rpc "http://$nitro_signer_rpc" nitro-signer-rpc cast rpc enclave_signerPublicKey
 
     echo "Starting TDX worker"
@@ -296,7 +276,6 @@ sepolia-tdx-dev-offchain:
         --listen-addr "$tdx_signer_rpc" \
         --prover-service-endpoint "http://$worker_rpc" \
         --enable-experimental-witness-endpoint &
-    pids+=("$!")
     wait_rpc "http://$tdx_signer_rpc" tdx-signer-rpc cast rpc enclave_signerPublicKey
 
     nitro_signer="$(signer_from_rpc "http://$nitro_signer_rpc")"
