@@ -4,10 +4,7 @@ use std::{error::Error as StdError, fmt, sync::Arc};
 
 use alloy_primitives::B256;
 use base_l1_head::{L1HeadCalculator, L1HeadError};
-use base_proof_succinct_ethereum_host_utils::host::SingleChainOPSuccinctHost;
-use base_proof_succinct_host_utils::{
-    fetcher::OPSuccinctDataFetcher, host::OPSuccinctHost, witness_generation::WitnessGenerator,
-};
+use base_proof_succinct_host_utils::{fetcher::OPSuccinctDataFetcher, host::SuccinctHost};
 use sp1_sdk::SP1Stdin;
 use thiserror::Error;
 use tracing::{debug, info};
@@ -108,7 +105,7 @@ pub enum WitnessError {
 /// Provider wrapping the Succinct host for witness generation.
 #[derive(Clone)]
 pub struct OpSuccinctWitnessProvider {
-    host: Arc<SingleChainOPSuccinctHost>,
+    host: Arc<SuccinctHost>,
 }
 
 impl fmt::Debug for OpSuccinctWitnessProvider {
@@ -121,7 +118,7 @@ impl OpSuccinctWitnessProvider {
     /// Create a new provider with an initialized host.
     pub fn new(fetcher: Arc<OPSuccinctDataFetcher>) -> Self {
         info!("initializing Succinct witness provider with Ethereum DA");
-        let host = Arc::new(SingleChainOPSuccinctHost::new(fetcher));
+        let host = Arc::new(SuccinctHost::new(fetcher));
         Self { host }
     }
 
