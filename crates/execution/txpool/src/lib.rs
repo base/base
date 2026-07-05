@@ -55,7 +55,7 @@ mod invalidation;
 pub use invalidation::{InvalidationIndex, InvalidationKey, WatchSet};
 
 mod manifest;
-pub use manifest::{ConfigSlot, WatchManifest};
+pub use manifest::{ConfigSlot, ManifestStale, WatchManifest};
 
 mod limits;
 pub use limits::{InflightCounters, PayerBook};

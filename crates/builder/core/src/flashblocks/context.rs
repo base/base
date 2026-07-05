@@ -21,7 +21,8 @@ use base_execution_payload_builder::{
     BasePayloadBuilderAttributes, error::BasePayloadBuilderError,
 };
 use base_execution_txpool::{
-    BundleTransaction, TimestampedTransaction, estimated_da_size::DataAvailabilitySized,
+    BasePooledTx, BundleTransaction, GuardMetrics, TimestampedTransaction,
+    estimated_da_size::DataAvailabilitySized,
 };
 use reth_basic_payload_builder::PayloadConfig;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
@@ -714,6 +715,28 @@ impl BasePayloadBuilderCtx {
                     timestamp = block_timestamp,
                     "skipping bundle tx: not yet valid"
                 );
+                best_txs.mark_invalid(tx.sender(), tx.nonce());
+                continue;
+            }
+
+            // Stateless EIP-8130 manifest pre-check (Stage 1): drop transactions
+            // whose captured authorization read-set was already invalidated by
+            // earlier state in this block (a watched config slot changed, the
+            // payer can no longer cover its charge, or the effective expiry
+            // passed) ahead of execution, without re-running authentication. The
+            // check reads the block's accumulating state via the EVM db and is
+            // conservative (fail-open), so it only drops provably-stale txs.
+            if self.builder_config.manifest_precheck_enabled
+                && let Some(manifest) = tx.watch_manifest()
+                && let Err(stale) = manifest.revalidate(evm.db_mut(), block_timestamp)
+            {
+                trace!(
+                    target: "payload_builder",
+                    tx_hash = ?tx.hash(),
+                    cause = stale.cause(),
+                    "skipping EIP-8130 tx: manifest pre-check failed"
+                );
+                GuardMetrics::record_builder_precheck_drop(&stale);
                 best_txs.mark_invalid(tx.sender(), tx.nonce());
                 continue;
             }

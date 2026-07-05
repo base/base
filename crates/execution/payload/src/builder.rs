@@ -9,7 +9,7 @@ use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseTransaction, Predeploys};
 use base_common_evm::L1BlockInfo;
-use base_execution_txpool::{BasePooledTx, estimated_da_size::DataAvailabilitySized};
+use base_execution_txpool::{BasePooledTx, GuardMetrics, estimated_da_size::DataAvailabilitySized};
 use reth_basic_payload_builder::{
     BuildArguments, BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour, PayloadBuilder,
     PayloadConfig, is_better_payload,
@@ -721,7 +721,29 @@ where
         let tx_da_limit = self.builder_config.da_config.max_da_tx_size();
         let base_fee = builder.evm_mut().block().basefee();
 
+        let block_timestamp = self.attributes().timestamp();
         while let Some(tx) = best_txs.next(()) {
+            // Stateless EIP-8130 manifest pre-check (Stage 1): drop transactions
+            // whose captured authorization read-set was already invalidated by
+            // earlier state in this block (a watched config slot changed, the
+            // payer can no longer cover its charge, or the effective expiry
+            // passed) ahead of execution, without re-running authentication. The
+            // check is conservative (fail-open) and only drops provably-stale txs.
+            if self.builder_config.manifest_precheck_enabled
+                && let Some(manifest) = tx.watch_manifest()
+                && let Err(stale) =
+                    manifest.revalidate(builder.evm_mut().db_mut(), block_timestamp)
+            {
+                trace!(
+                    target: "payload_builder",
+                    cause = stale.cause(),
+                    "skipping EIP-8130 tx: manifest pre-check failed"
+                );
+                GuardMetrics::record_builder_precheck_drop(&stale);
+                best_txs.mark_invalid(tx.sender(), tx.nonce());
+                continue;
+            }
+
             let tx_da_size = tx.estimated_da_size();
             let tx = tx.into_consensus();
 

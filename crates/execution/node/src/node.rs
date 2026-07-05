@@ -1118,6 +1118,7 @@ where
                 BaseBuilderConfig {
                     da_config: self.da_config.clone(),
                     gas_limit_config: self.gas_limit_config.clone(),
+                    ..Default::default()
                 },
             )
             .with_transactions(self.best_transactions.clone())

@@ -95,6 +95,16 @@ pub struct BuilderConfig {
     /// Maximum number of rejected transactions accumulated per block before
     /// further rejections are dropped. Prevents unbounded `ExecutionInfo` growth.
     pub max_rejected_txs_per_block: usize,
+
+    /// Whether the builder runs the stateless EIP-8130 manifest pre-check before
+    /// executing a candidate transaction. When enabled, a transaction whose
+    /// captured authorization read-set has already been invalidated by earlier
+    /// state in the block (a watched config slot changed, the payer can no longer
+    /// cover its charge, or the effective expiry passed) is dropped ahead of
+    /// execution without re-running authentication. The check is conservative
+    /// (fail-open) and never admits an invalid transaction, so it is safe to keep
+    /// on; disabling it only forgoes the fast-drop optimization.
+    pub manifest_precheck_enabled: bool,
 }
 
 impl BuilderConfig {
@@ -132,6 +142,7 @@ impl core::fmt::Debug for BuilderConfig {
             .field("audit_archiver_url", &self.audit_archiver_url)
             .field("rejected_tx_channel_size", &self.rejected_tx_channel_size)
             .field("max_rejected_txs_per_block", &self.max_rejected_txs_per_block)
+            .field("manifest_precheck_enabled", &self.manifest_precheck_enabled)
             .finish()
     }
 }
@@ -161,6 +172,7 @@ impl Default for BuilderConfig {
             audit_archiver_url: None,
             rejected_tx_channel_size: 500,
             max_rejected_txs_per_block: 500,
+            manifest_precheck_enabled: true,
         }
     }
 }
@@ -223,6 +235,13 @@ impl BuilderConfig {
         metering_wait_duration: Option<Duration>,
     ) -> Self {
         self.metering_wait_duration = metering_wait_duration;
+        self
+    }
+
+    /// Toggles the stateless EIP-8130 manifest pre-check.
+    #[must_use]
+    pub const fn with_manifest_precheck_enabled(mut self, enabled: bool) -> Self {
+        self.manifest_precheck_enabled = enabled;
         self
     }
 }

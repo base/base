@@ -17,6 +17,7 @@
 //! `MEMPOOL_HARDENING.md` §13.
 
 use alloy_primitives::{Address, U256};
+use revm::Database;
 
 /// A single `AccountConfiguration` storage slot an EIP-8130 transaction's
 /// authorization read, with the base-state value it held at validation time.
@@ -94,5 +95,192 @@ impl WatchManifest {
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.config_slots.is_empty()
+    }
+
+    /// Conservative, stateless intra-block re-check of the transaction's captured
+    /// validity predicates against current build-time state.
+    ///
+    /// This is the builder-side (Stage 1) fast-drop: because EIP-8130
+    /// authentication is a pure function of the authorization read-set, if every
+    /// recorded config slot still holds its expected value, the payer can still
+    /// cover its maximum charge, and the effective expiry has not passed, then the
+    /// authorizer would produce the identical result — so the transaction is still
+    /// authorizable without re-running any signature recovery.
+    ///
+    /// Returns `Err(reason)` only when a predicate is *positively observed* to
+    /// have failed, in which case the builder may drop the transaction ahead of
+    /// execution. The check is deliberately **fail-open**: any storage/account
+    /// read error (or a payer account that unexpectedly reads as absent) yields a
+    /// pass, since the builder still runs full validation on survivors and a flaky
+    /// read must never drop an otherwise-valid transaction. It therefore never
+    /// admits an invalid transaction (that is execution's job) and never wrongly
+    /// rejects a valid one.
+    ///
+    /// `now` is the timestamp of the block being built.
+    pub fn revalidate<DB: Database>(
+        &self,
+        db: &mut DB,
+        now: u64,
+    ) -> Result<(), ManifestStale> {
+        if self.effective_expiry != u64::MAX && now > self.effective_expiry {
+            return Err(ManifestStale::Expired { deadline: self.effective_expiry, now });
+        }
+
+        for slot in &self.config_slots {
+            // Fail-open on read error: only a positively observed change drops.
+            if let Ok(current) = db.storage(slot.address, slot.slot)
+                && current != slot.expected
+            {
+                return Err(ManifestStale::ConfigSlotChanged {
+                    address: slot.address,
+                    slot: slot.slot,
+                });
+            }
+        }
+
+        // Only drop on a positively observed shortfall from an existing account;
+        // a read error or an unexpectedly-absent account fails open.
+        if !self.payer_max_cost.is_zero()
+            && let Ok(Some(info)) = db.basic(self.payer)
+            && info.balance < self.payer_max_cost
+        {
+            return Err(ManifestStale::PayerUnderfunded {
+                payer: self.payer,
+                required: self.payer_max_cost,
+                available: info.balance,
+            });
+        }
+
+        Ok(())
+    }
+}
+
+/// A positively observed reason an EIP-8130 transaction is stale at build time,
+/// produced by [`WatchManifest::revalidate`]. Carries enough context for
+/// structured tracing without high-cardinality metric labels (metric callers map
+/// this to its coarse [`ManifestStale::cause`] category).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManifestStale {
+    /// A watched `AccountConfiguration` slot no longer holds the value the
+    /// authorization depended on, so authentication would differ.
+    ConfigSlotChanged {
+        /// Contract whose slot changed.
+        address: Address,
+        /// Storage slot that changed.
+        slot: U256,
+    },
+    /// The payer can no longer cover the transaction's maximum charge.
+    PayerUnderfunded {
+        /// Account funding the transaction.
+        payer: Address,
+        /// Maximum charge the transaction can incur.
+        required: U256,
+        /// Balance currently available.
+        available: U256,
+    },
+    /// The effective expiry deadline has passed at the build timestamp.
+    Expired {
+        /// Effective expiry deadline (unix seconds).
+        deadline: u64,
+        /// Build-time timestamp that passed the deadline.
+        now: u64,
+    },
+}
+
+impl ManifestStale {
+    /// A coarse, low-cardinality category suitable for a metric label.
+    #[must_use]
+    pub const fn cause(&self) -> &'static str {
+        match self {
+            Self::ConfigSlotChanged { .. } => "config_slot",
+            Self::PayerUnderfunded { .. } => "payer_balance",
+            Self::Expired { .. } => "expiry",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use revm::{database::InMemoryDB, state::AccountInfo};
+
+    use super::*;
+
+    const CONFIG: Address = Address::repeat_byte(0x11);
+    const PAYER: Address = Address::repeat_byte(0x22);
+    const SLOT: U256 = U256::from_limbs([7, 0, 0, 0]);
+    const EXPECTED: U256 = U256::from_limbs([42, 0, 0, 0]);
+
+    fn db_with(slot_value: U256, payer_balance: u64) -> InMemoryDB {
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            PAYER,
+            AccountInfo { balance: U256::from(payer_balance), ..Default::default() },
+        );
+        db.insert_account_storage(CONFIG, SLOT, slot_value).unwrap();
+        db
+    }
+
+    fn manifest() -> WatchManifest {
+        WatchManifest::new(
+            vec![ConfigSlot { address: CONFIG, slot: SLOT, expected: EXPECTED }],
+            PAYER,
+            U256::from(1_000u64),
+            u64::MAX,
+        )
+    }
+
+    #[test]
+    fn revalidate_passes_when_unchanged_funded_and_unexpired() {
+        let mut db = db_with(EXPECTED, 1_000);
+        assert_eq!(manifest().revalidate(&mut db, 0), Ok(()));
+    }
+
+    #[test]
+    fn revalidate_drops_on_config_slot_change() {
+        let mut db = db_with(U256::from(43u64), 1_000);
+        assert_eq!(
+            manifest().revalidate(&mut db, 0),
+            Err(ManifestStale::ConfigSlotChanged { address: CONFIG, slot: SLOT })
+        );
+    }
+
+    #[test]
+    fn revalidate_drops_on_payer_shortfall() {
+        let mut db = db_with(EXPECTED, 999);
+        assert_eq!(
+            manifest().revalidate(&mut db, 0),
+            Err(ManifestStale::PayerUnderfunded {
+                payer: PAYER,
+                required: U256::from(1_000u64),
+                available: U256::from(999u64),
+            })
+        );
+    }
+
+    #[test]
+    fn revalidate_drops_on_expiry() {
+        let m = WatchManifest::new(vec![], PAYER, U256::ZERO, 100);
+        let mut db = db_with(EXPECTED, 1_000);
+        assert_eq!(
+            m.revalidate(&mut db, 101),
+            Err(ManifestStale::Expired { deadline: 100, now: 101 })
+        );
+        // Exactly at the deadline is still valid.
+        assert_eq!(m.revalidate(&mut db, 100), Ok(()));
+    }
+
+    #[test]
+    fn revalidate_fails_open_when_payer_account_absent() {
+        // Payer never inserted: `basic` returns `Ok(None)`, which must not drop.
+        let mut db = InMemoryDB::default();
+        db.insert_account_storage(CONFIG, SLOT, EXPECTED).unwrap();
+        assert_eq!(manifest().revalidate(&mut db, 0), Ok(()));
+    }
+
+    #[test]
+    fn revalidate_skips_payer_check_when_cost_zero() {
+        let m = WatchManifest::new(vec![], PAYER, U256::ZERO, u64::MAX);
+        let mut db = InMemoryDB::default();
+        assert_eq!(m.revalidate(&mut db, 0), Ok(()));
     }
 }

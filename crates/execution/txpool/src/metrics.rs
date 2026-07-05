@@ -16,6 +16,9 @@ base_metrics::define_metrics! {
     expiry_buckets_fired: counter,
     #[describe("Transactions currently tracked by the admission/invalidation guard")]
     tracked: gauge,
+    #[describe("EIP-8130 transactions dropped by the builder's stateless manifest pre-check before execution")]
+    #[label(name = "cause", default = ["config_slot", "payer_balance", "expiry"])]
+    builder_precheck_dropped: counter,
 }
 
 impl GuardMetrics {
@@ -48,5 +51,11 @@ impl GuardMetrics {
         if count > 0 {
             Self::invalidated("reconcile").increment(count as u64);
         }
+    }
+
+    /// Records a builder-side stateless pre-check drop, attributed to the
+    /// positively-observed stale [`crate::ManifestStale`] cause.
+    pub fn record_builder_precheck_drop(stale: &crate::ManifestStale) {
+        Self::builder_precheck_dropped(stale.cause()).increment(1);
     }
 }

@@ -3,18 +3,37 @@
 use std::sync::{Arc, atomic::AtomicU64};
 
 /// Settings for the Base payload builder.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct BaseBuilderConfig {
     /// Data availability configuration for the Base payload builder.
     pub da_config: BaseDAConfig,
     /// Gas limit configuration for the Base payload builder.
     pub gas_limit_config: GasLimitConfig,
+    /// Whether the builder runs the stateless EIP-8130 manifest pre-check before
+    /// executing a candidate transaction. When enabled, a transaction whose
+    /// captured authorization read-set has already been invalidated by earlier
+    /// state in the block (a watched config slot changed, the payer can no longer
+    /// cover its charge, or the effective expiry passed) is dropped ahead of
+    /// execution without re-running authentication. The check is conservative
+    /// (fail-open) and never admits an invalid transaction, so it is safe to keep
+    /// on; disabling it only forgoes the fast-drop optimization.
+    pub manifest_precheck_enabled: bool,
+}
+
+impl Default for BaseBuilderConfig {
+    fn default() -> Self {
+        Self {
+            da_config: BaseDAConfig::default(),
+            gas_limit_config: GasLimitConfig::default(),
+            manifest_precheck_enabled: true,
+        }
+    }
 }
 
 impl BaseBuilderConfig {
     /// Creates a new Base payload builder configuration with the given data availability configuration.
     pub const fn new(da_config: BaseDAConfig, gas_limit_config: GasLimitConfig) -> Self {
-        Self { da_config, gas_limit_config }
+        Self { da_config, gas_limit_config, manifest_precheck_enabled: true }
     }
 
     /// Returns the data availability configuration for the Base payload builder, if it has

@@ -137,6 +137,13 @@ pub struct Args {
     #[arg(long = "telemetry.sampling-ratio", env = "SAMPLING_RATIO", default_value = "100")]
     pub sampling_ratio: u64,
 
+    /// Whether to run the stateless EIP-8130 manifest pre-check that drops
+    /// transactions invalidated earlier in the block before executing them.
+    /// Conservative (never admits invalid txs); disable only to forgo the
+    /// fast-drop optimization.
+    #[arg(long = "builder.eip8130-manifest-precheck", default_value_t = true)]
+    pub manifest_precheck_enabled: bool,
+
     /// Flashblocks configuration
     #[command(flatten)]
     pub flashblocks: FlashblocksArgs,
@@ -177,6 +184,7 @@ impl Default for Args {
             rejection_cache_max_capacity: 100_000,
             rejection_cache_ttl_secs: 1800,
             sampling_ratio: 100,
+            manifest_precheck_enabled: true,
             flashblocks: FlashblocksArgs::default(),
         }
     }
@@ -223,6 +231,7 @@ impl Args {
             audit_archiver_url: self.audit_archiver_url,
             rejected_tx_channel_size: self.rejected_tx_channel_size,
             max_rejected_txs_per_block: self.max_rejected_txs_per_block,
+            manifest_precheck_enabled: self.manifest_precheck_enabled,
         })
     }
 }
@@ -248,6 +257,16 @@ mod tests {
         let config = convert(Args::default());
         assert_eq!(config.block_time, Duration::from_millis(1000));
         assert!(config.max_gas_per_txn.is_none());
+        // The EIP-8130 manifest pre-check defaults on.
+        assert!(config.manifest_precheck_enabled);
+    }
+
+    #[rstest]
+    #[case::enabled(true)]
+    #[case::disabled(false)]
+    fn manifest_precheck_flag_maps_to_config(#[case] enabled: bool) {
+        let args = Args { manifest_precheck_enabled: enabled, ..Default::default() };
+        assert_eq!(convert(args).manifest_precheck_enabled, enabled);
     }
 
     #[rstest]
