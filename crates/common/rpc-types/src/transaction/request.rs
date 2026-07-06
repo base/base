@@ -518,7 +518,9 @@ mod tests {
                 "{scheme:?} is missing from Eip8130AuthScheme::ALL",
             );
             match scheme {
-                Eip8130AuthScheme::Secp256k1 | Eip8130AuthScheme::P256 | Eip8130AuthScheme::WebAuthn => {}
+                Eip8130AuthScheme::Secp256k1
+                | Eip8130AuthScheme::P256
+                | Eip8130AuthScheme::WebAuthn => {}
             }
         }
         for scheme in Eip8130AuthScheme::ALL {
