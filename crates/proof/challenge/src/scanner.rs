@@ -185,6 +185,9 @@ impl GameScanner {
     /// Maximum number of factory indices to inspect in one anchor lookup batch.
     pub const ANCHOR_SEARCH_BATCH_SIZE: u64 = 1024;
 
+    /// Attempts for status reads during one-time anchor recovery.
+    pub const ANCHOR_RECOVERY_STATUS_ATTEMPTS: usize = 2;
+
     /// Consecutive per-index scan failures before logs escalate to `error!`.
     pub const PERSISTENT_SCAN_ERROR_LOG_THRESHOLD: u64 = 3;
 
@@ -415,7 +418,7 @@ impl GameScanner {
                         }
                     };
 
-                    match self.verifier_client.status(game.proxy).await {
+                    match self.anchor_recovery_status(index, game.proxy).await {
                         Ok(GameStatus::DefenderWins) => (index, Some(game.proxy), false, false),
                         Ok(status) => {
                             debug!(
@@ -456,7 +459,35 @@ impl GameScanner {
             scan_head = game_count.saturating_sub(1),
             "anchor recovery scan complete"
         );
+        if factory_read_errors > 0 || status_read_errors > 0 {
+            return Err(eyre::eyre!(
+                "anchor recovery scan incomplete: {factory_read_errors} factory reads failed, \
+                 {status_read_errors} status reads failed"
+            ));
+        }
         Ok(candidates)
+    }
+
+    async fn anchor_recovery_status(&self, index: u64, game: Address) -> Result<GameStatus> {
+        for attempt in 1..=Self::ANCHOR_RECOVERY_STATUS_ATTEMPTS {
+            match self.verifier_client.status(game).await {
+                Ok(status) => return Ok(status),
+                Err(e) if attempt < Self::ANCHOR_RECOVERY_STATUS_ATTEMPTS => {
+                    warn!(
+                        index,
+                        game = %game,
+                        attempt,
+                        attempts = Self::ANCHOR_RECOVERY_STATUS_ATTEMPTS,
+                        error = %e,
+                        "failed to read game status during anchor recovery, retrying"
+                    );
+                    tokio::task::yield_now().await;
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+
+        unreachable!("anchor recovery status attempts is non-zero")
     }
 
     /// Finds `target` in the half-open factory index range `[start, end)`,
@@ -716,7 +747,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn recover_anchor_candidates_skips_status_errors() {
+    async fn recover_anchor_candidates_retries_status_errors() {
         let factory = Arc::new(MockDisputeGameFactory::new(vec![
             factory_game(0, 1),
             factory_game(1, 1),
@@ -725,11 +756,14 @@ mod tests {
         let verifier = Arc::new(MockAggregateVerifier::new(HashMap::from([
             (addr(0), mock_state(GameStatus::DefenderWins, Address::ZERO, 50)),
             (addr(1), mock_state(GameStatus::DefenderWins, Address::ZERO, 100)),
+            (addr(2), mock_state(GameStatus::DefenderWins, Address::ZERO, 200)),
         ])));
-        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(addr(1)));
+        verifier.fail_status_reads(addr(2), 1);
+        let scanner = GameScanner::new(factory, verifier.clone(), mock_anchor_registry(addr(1)));
 
         let recovered = scanner.recover_anchor_candidates().await.unwrap();
 
-        assert!(recovered.is_empty());
+        assert_eq!(verifier.status_read_count(addr(2)), 2);
+        assert_eq!(recovered, vec![addr(2)]);
     }
 }

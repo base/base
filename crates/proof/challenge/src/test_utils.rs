@@ -237,6 +237,8 @@ pub struct MockAggregateVerifier {
     /// Per-address game state lookup, wrapped in a `Mutex` for interior
     /// mutability in multi-step tests.
     pub games: Mutex<HashMap<Address, MockGameState>>,
+    /// Per-address count of status calls that should fail before reading state.
+    pub status_failures: Mutex<HashMap<Address, u64>>,
     /// Addresses passed to `bond_recipient`, used by tests that assert polling
     /// avoids redundant lifecycle reads.
     pub bond_recipient_reads: Mutex<Vec<Address>>,
@@ -258,9 +260,10 @@ pub struct MockAggregateVerifier {
 
 impl MockAggregateVerifier {
     /// Creates a new mock verifier from a pre-built game state map.
-    pub const fn new(games: HashMap<Address, MockGameState>) -> Self {
+    pub fn new(games: HashMap<Address, MockGameState>) -> Self {
         Self {
             games: Mutex::new(games),
+            status_failures: Mutex::new(HashMap::new()),
             bond_recipient_reads: Mutex::new(Vec::new()),
             game_info_reads: Mutex::new(Vec::new()),
             status_reads: Mutex::new(Vec::new()),
@@ -278,6 +281,13 @@ impl MockAggregateVerifier {
     /// state changes (e.g. marking a game as resolved after proof submission).
     pub fn update_game(&self, address: Address, state: MockGameState) {
         self.games.lock().unwrap().insert(address, state);
+    }
+
+    /// Causes the next `count` status reads for a game to fail.
+    pub fn fail_status_reads(&self, address: Address, count: u64) {
+        if count > 0 {
+            self.status_failures.lock().unwrap().insert(address, count);
+        }
     }
 
     /// Returns how many times `bond_recipient` was read for a game.
@@ -343,6 +353,16 @@ impl AggregateVerifierClient for MockAggregateVerifier {
 
     async fn status(&self, game_address: Address) -> Result<GameStatus, ContractError> {
         self.status_reads.lock().unwrap().push(game_address);
+        let mut failures = self.status_failures.lock().unwrap();
+        if let Some(remaining) = failures.get_mut(&game_address) {
+            *remaining -= 1;
+            if *remaining == 0 {
+                failures.remove(&game_address);
+            }
+            return Err(ContractError::Validation(format!(
+                "simulated status error for game {game_address}"
+            )));
+        }
         self.get(game_address, |s| s.status)
     }
 
