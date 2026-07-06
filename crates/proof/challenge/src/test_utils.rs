@@ -256,11 +256,6 @@ pub struct MockAggregateVerifier {
     /// Per-address game state lookup, wrapped in a `Mutex` for interior
     /// mutability in multi-step tests.
     pub games: Mutex<HashMap<Address, MockGameState>>,
-    /// Per-address count of status calls that should fail before reading state.
-    pub status_failures: Mutex<HashMap<Address, u64>>,
-    /// Addresses passed to `bond_recipient`, used by tests that assert polling
-    /// avoids redundant lifecycle reads.
-    pub bond_recipient_reads: Mutex<Vec<Address>>,
     /// Addresses passed to `game_info`, used by tests that assert cached reads.
     pub game_info_reads: Mutex<Vec<Address>>,
     /// Addresses passed to `status`, used by tests that assert cached reads.
@@ -279,11 +274,9 @@ pub struct MockAggregateVerifier {
 
 impl MockAggregateVerifier {
     /// Creates a new mock verifier from a pre-built game state map.
-    pub fn new(games: HashMap<Address, MockGameState>) -> Self {
+    pub const fn new(games: HashMap<Address, MockGameState>) -> Self {
         Self {
             games: Mutex::new(games),
-            status_failures: Mutex::new(HashMap::new()),
-            bond_recipient_reads: Mutex::new(Vec::new()),
             game_info_reads: Mutex::new(Vec::new()),
             status_reads: Mutex::new(Vec::new()),
             zk_prover_reads: Mutex::new(Vec::new()),
@@ -300,23 +293,6 @@ impl MockAggregateVerifier {
     /// state changes (e.g. marking a game as resolved after proof submission).
     pub fn update_game(&self, address: Address, state: MockGameState) {
         self.games.lock().unwrap().insert(address, state);
-    }
-
-    /// Causes the next `count` status reads for a game to fail.
-    pub fn fail_status_reads(&self, address: Address, count: u64) {
-        if count > 0 {
-            self.status_failures.lock().unwrap().insert(address, count);
-        }
-    }
-
-    /// Returns how many times `bond_recipient` was read for a game.
-    pub fn bond_recipient_read_count(&self, game_address: Address) -> usize {
-        self.bond_recipient_reads
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|&&read_address| read_address == game_address)
-            .count()
     }
 
     /// Returns how many times `game_info` was read for a game.
@@ -372,16 +348,6 @@ impl AggregateVerifierClient for MockAggregateVerifier {
 
     async fn status(&self, game_address: Address) -> Result<GameStatus, ContractError> {
         self.status_reads.lock().unwrap().push(game_address);
-        let mut failures = self.status_failures.lock().unwrap();
-        if let Some(remaining) = failures.get_mut(&game_address) {
-            *remaining -= 1;
-            if *remaining == 0 {
-                failures.remove(&game_address);
-            }
-            return Err(ContractError::Validation(format!(
-                "simulated status error for game {game_address}"
-            )));
-        }
         self.get(game_address, |s| s.status)
     }
 
@@ -450,7 +416,6 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     }
 
     async fn bond_recipient(&self, game_address: Address) -> Result<Address, ContractError> {
-        self.bond_recipient_reads.lock().unwrap().push(game_address);
         self.get(game_address, |s| s.bond_recipient)
     }
 
@@ -938,22 +903,49 @@ impl L1HeadProvider for MockL1HeadProvider {
 pub struct MockTxManager {
     /// Queue of responses returned by [`send`](TxManager::send).
     pub responses: Mutex<VecDeque<SendResponse>>,
+    /// Transaction candidates submitted through [`send`](TxManager::send).
+    pub calls: Mutex<Vec<TxCandidate>>,
 }
 
 impl MockTxManager {
     /// Creates a new mock with a single pre-configured response.
     pub fn new(response: SendResponse) -> Self {
-        Self { responses: Mutex::new(VecDeque::from([response])) }
+        Self { responses: Mutex::new(VecDeque::from([response])), calls: Mutex::new(Vec::new()) }
     }
 
     /// Creates a new mock with multiple responses returned in order.
     pub fn with_responses(responses: Vec<SendResponse>) -> Self {
-        Self { responses: Mutex::new(VecDeque::from(responses)) }
+        Self { responses: Mutex::new(VecDeque::from(responses)), calls: Mutex::new(Vec::new()) }
+    }
+
+    /// Returns the recorded transaction candidates.
+    pub fn recorded_calls(&self) -> Vec<TxCandidate> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+/// Cloneable handle around [`MockTxManager`] for tests that need to inspect
+/// calls after moving a tx manager into another type.
+#[derive(Debug, Clone)]
+pub struct SharedMockTxManager {
+    inner: Arc<MockTxManager>,
+}
+
+impl SharedMockTxManager {
+    /// Creates a shared mock with multiple responses returned in order.
+    pub fn with_responses(responses: Vec<SendResponse>) -> Self {
+        Self { inner: Arc::new(MockTxManager::with_responses(responses)) }
+    }
+
+    /// Returns the recorded transaction candidates.
+    pub fn recorded_calls(&self) -> Vec<TxCandidate> {
+        self.inner.recorded_calls()
     }
 }
 
 impl TxManager for MockTxManager {
-    async fn send(&self, _candidate: TxCandidate) -> SendResponse {
+    async fn send(&self, candidate: TxCandidate) -> SendResponse {
+        self.calls.lock().unwrap().push(candidate);
         self.responses.lock().unwrap().pop_front().expect("MockTxManager has no more responses")
     }
 
@@ -963,6 +955,20 @@ impl TxManager for MockTxManager {
 
     fn sender_address(&self) -> Address {
         Address::ZERO
+    }
+}
+
+impl TxManager for SharedMockTxManager {
+    async fn send(&self, candidate: TxCandidate) -> SendResponse {
+        self.inner.send(candidate).await
+    }
+
+    async fn send_async(&self, candidate: TxCandidate) -> SendHandle {
+        self.inner.send_async(candidate).await
+    }
+
+    fn sender_address(&self) -> Address {
+        self.inner.sender_address()
     }
 }
 
@@ -1042,51 +1048,6 @@ pub fn build_test_header_and_account_for_address(
         storage_proof: vec![],
     };
     (header, account_result)
-}
-
-/// Mock bond transaction submitter for testing the [`BondManager`](crate::BondManager).
-///
-/// Records all submitted transactions and returns pre-configured responses.
-#[derive(Debug)]
-pub struct MockBondTransactionSubmitter {
-    /// Queue of results returned by [`send_bond_tx`](crate::BondTransactionSubmitter::send_bond_tx).
-    pub responses: Mutex<VecDeque<Result<B256, crate::ChallengeSubmitError>>>,
-    /// Recorded `(game_address, to, calldata)` tuples for each submitted transaction.
-    pub calls: Mutex<Vec<(Address, Address, Bytes)>>,
-}
-
-impl MockBondTransactionSubmitter {
-    /// Creates a mock that returns a single successful transaction hash.
-    pub fn success(tx_hash: B256) -> Self {
-        Self { responses: Mutex::new(VecDeque::from([Ok(tx_hash)])), calls: Mutex::new(Vec::new()) }
-    }
-
-    /// Creates a mock with multiple responses returned in order.
-    pub fn with_responses(responses: Vec<Result<B256, crate::ChallengeSubmitError>>) -> Self {
-        Self { responses: Mutex::new(VecDeque::from(responses)), calls: Mutex::new(Vec::new()) }
-    }
-
-    /// Returns the recorded calls as `(game_address, to, calldata)` tuples.
-    pub fn recorded_calls(&self) -> Vec<(Address, Address, Bytes)> {
-        self.calls.lock().unwrap().clone()
-    }
-}
-
-#[async_trait]
-impl crate::BondTransactionSubmitter for MockBondTransactionSubmitter {
-    async fn send_bond_tx(
-        &self,
-        game_address: Address,
-        to: Address,
-        calldata: Bytes,
-    ) -> Result<B256, crate::ChallengeSubmitError> {
-        self.calls.lock().unwrap().push((game_address, to, calldata));
-        self.responses
-            .lock()
-            .unwrap()
-            .pop_front()
-            .expect("MockBondTransactionSubmitter has no more responses")
-    }
 }
 
 #[cfg(test)]

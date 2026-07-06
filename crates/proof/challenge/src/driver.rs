@@ -93,7 +93,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> std::fmt
         f.debug_struct("DriverComponents")
             .field("scanner", &self.scanner)
             .field("tee", &self.tee.as_ref().map(|_| ".."))
-            .field("bond_manager", &self.bond_manager)
+            .field("bond_manager", &self.bond_manager.as_ref().map(|_| ".."))
             .finish_non_exhaustive()
     }
 }

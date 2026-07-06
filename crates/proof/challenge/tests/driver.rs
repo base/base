@@ -12,11 +12,11 @@ use base_challenger::{
     DriverComponents, DriverConfig, GameScanner, L1HeadProvider, OutputValidator, PendingProof,
     PendingProofs, ProofKind, ProofPhase, ProofUpdate, TeeConfig,
     test_utils::{
-        DEFAULT_L1_HEAD, DEFAULT_TEE_PROVER, MockAggregateVerifier, MockBondTransactionSubmitter,
-        MockDisputeGameFactory, MockGameState, MockL1HeadProvider, MockL2Provider, MockTxManager,
-        MockZkProofProvider, MockZkProofState, TEST_DISCOVERY_INTERVAL, addr,
-        build_test_header_and_account, empty_factory, factory_game, mock_anchor_registry,
-        mock_state, mock_state_with_tee, receipt_with_status,
+        DEFAULT_L1_HEAD, DEFAULT_TEE_PROVER, MockAggregateVerifier, MockDisputeGameFactory,
+        MockGameState, MockL1HeadProvider, MockL2Provider, MockTxManager, MockZkProofProvider,
+        MockZkProofState, TEST_DISCOVERY_INTERVAL, addr, build_test_header_and_account,
+        empty_factory, factory_game, mock_anchor_registry, mock_state, mock_state_with_tee,
+        receipt_with_status,
     },
 };
 use base_proof_contracts::{
@@ -1430,241 +1430,18 @@ async fn test_step_dual_proof_tee_fails_falls_back_to_zk_nullify() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Bond lifecycle integration tests
+// Bond tracking integration test
 // ──────────────────────────────────────────────────────────────────────────
 
-const fn bond_test_state(claim_addr: Address) -> MockGameState {
-    let mut state = mock_state(GameStatus::ChallengerWins, Address::ZERO, 100);
-    state.bond_recipient = claim_addr;
-    state
-}
-
-fn bond_test_verifier(claim_addr: Address) -> Arc<MockAggregateVerifier> {
-    single_game_verifier(bond_test_state(claim_addr))
-}
-
 fn default_bond_manager(claim_addr: Address) -> BondManager<TokioRuntime> {
-    let mut mgr = BondManager::new(
+    BondManager::new(
         vec![claim_addr],
         "http://localhost:8545".parse().unwrap(),
         empty_factory(),
         1000,
         TEST_DISCOVERY_INTERVAL,
         TokioRuntime::new(),
-    );
-    mgr.set_weth_delay(Duration::from_secs(0));
-    mgr
-}
-
-#[tokio::test]
-async fn test_bond_manager_full_lifecycle() {
-    // Verify the full bond lifecycle: NeedsResolve → NeedsUnlock →
-    // AwaitingDelay → NeedsWithdraw → Completed.
-    //
-    // The mock verifier uses a static game state, so we set
-    // ChallengerWins to represent a game that has already been
-    // resolved onchain. The manager detects this and advances directly
-    // to NeedsUnlock without submitting a resolve transaction.
-    let claim_addr = ZK_PROVER_ADDR;
-    let game_addr = addr(0);
-    let tx_hash = DEFAULT_TX_HASH;
-    let verifier = bond_test_verifier(claim_addr);
-
-    let submitter = MockBondTransactionSubmitter::with_responses(vec![
-        Ok(tx_hash), // claimCredit (unlock) tx
-        Ok(tx_hash), // claimCredit (withdraw) tx
-    ]);
-
-    let mut mgr = default_bond_manager(claim_addr);
-
-    assert!(mgr.track_game(game_addr, claim_addr));
-    assert_eq!(mgr.tracked_count(), 1);
-
-    // Poll 1: NeedsResolve → already resolved (ChallengerWins) → NeedsUnlock.
-    mgr.poll(&*verifier, &submitter).await;
-    assert_eq!(mgr.tracked_count(), 1, "game should still be tracked after detecting resolution");
-
-    // Poll 2: NeedsUnlock → claimCredit (unlock) tx → AwaitingDelay.
-    mgr.poll(&*verifier, &submitter).await;
-    assert_eq!(mgr.tracked_count(), 1, "game should still be tracked during delay");
-
-    // Poll 3: AwaitingDelay (delay=0s, already elapsed) → NeedsWithdraw.
-    // check_delay transitions to NeedsWithdraw, but advance_game returns
-    // Ok(false), so the game is still tracked. Need one more poll.
-    mgr.poll(&*verifier, &submitter).await;
-    assert_eq!(mgr.tracked_count(), 1, "game should still be tracked after delay");
-
-    // Poll 4: NeedsWithdraw → claimCredit (withdraw) tx → Completed → removed.
-    mgr.poll(&*verifier, &submitter).await;
-    assert_eq!(mgr.tracked_count(), 0, "game should be removed after completion");
-
-    // Verify 2 transactions were submitted (unlock + withdraw, no resolve).
-    let calls = submitter.recorded_calls();
-    assert_eq!(calls.len(), 2, "expected 2 bond transactions (unlock, withdraw)");
-    for (game, target, _) in &calls {
-        assert_eq!(*game, game_addr, "all transactions should reference the game address");
-        assert_eq!(*target, game_addr, "all transactions should target the game address");
-    }
-}
-
-#[tokio::test]
-async fn test_bond_manager_skips_already_unlocked_game() {
-    let claim_addr = ZK_PROVER_ADDR;
-    let game_addr = addr(0);
-    let tx_hash = DEFAULT_TX_HASH;
-
-    let mut state = bond_test_state(claim_addr);
-    state.bond_unlocked = true;
-    state.resolved_at = 1_000_000;
-    let verifier = single_game_verifier(state);
-
-    let submitter = MockBondTransactionSubmitter::with_responses(vec![
-        Ok(tx_hash), // withdraw
-    ]);
-
-    let mut mgr = default_bond_manager(claim_addr);
-    mgr.track_game(game_addr, claim_addr);
-
-    // Poll 1: NeedsResolve → status != 0 → NeedsUnlock (no tx).
-    mgr.poll(&*verifier, &submitter).await;
-    assert_eq!(mgr.tracked_count(), 1);
-
-    // Poll 2: NeedsUnlock -> bond_unlocked=true and delay=0 -> NeedsWithdraw (no tx).
-    mgr.poll(&*verifier, &submitter).await;
-    assert_eq!(mgr.tracked_count(), 1);
-
-    // Poll 3: NeedsWithdraw -> submit withdraw -> Completed -> removed.
-    mgr.poll(&*verifier, &submitter).await;
-    assert_eq!(mgr.tracked_count(), 0);
-
-    assert_eq!(submitter.recorded_calls().len(), 1);
-}
-
-#[tokio::test]
-async fn test_bond_manager_skips_already_claimed_game() {
-    let claim_addr = ZK_PROVER_ADDR;
-    let game_addr = addr(0);
-
-    let mut state = bond_test_state(claim_addr);
-    state.bond_unlocked = true;
-    state.bond_claimed = true;
-    state.resolved_at = 1_000_000;
-    let verifier = single_game_verifier(state);
-
-    let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
-
-    let mut mgr = default_bond_manager(claim_addr);
-    mgr.track_game(game_addr, claim_addr);
-
-    // Polls 1-3: NeedsResolve → NeedsUnlock → AwaitingDelay → NeedsWithdraw (no txs).
-    for _ in 0..3 {
-        mgr.poll(&*verifier, &submitter).await;
-    }
-
-    // Poll 4: NeedsWithdraw → bond_claimed=true → Completed → removed.
-    mgr.poll(&*verifier, &submitter).await;
-    assert_eq!(mgr.tracked_count(), 0);
-
-    assert!(
-        submitter.recorded_calls().is_empty(),
-        "no transactions should be submitted for already-claimed bond"
-    );
-}
-
-#[tokio::test]
-async fn test_bond_manager_tx_failure_retries() {
-    let claim_addr = ZK_PROVER_ADDR;
-    let game_addr = addr(0);
-    let tx_hash = DEFAULT_TX_HASH;
-    let verifier = bond_test_verifier(claim_addr);
-
-    let submitter = MockBondTransactionSubmitter::with_responses(vec![
-        Err(base_tx_manager::TxManagerError::NonceTooLow.into()),
-        Ok(tx_hash), // retry succeeds
-    ]);
-
-    let mut mgr = default_bond_manager(claim_addr);
-    mgr.track_game(game_addr, claim_addr);
-
-    // Poll 1: NeedsResolve → already resolved (ChallengerWins) → NeedsUnlock.
-    mgr.poll(&*verifier, &submitter).await;
-    assert_eq!(mgr.tracked_count(), 1, "game should still be tracked after detecting resolution");
-
-    // Poll 2: NeedsUnlock → claimCredit tx fails → stays NeedsUnlock.
-    mgr.poll(&*verifier, &submitter).await;
-    assert_eq!(mgr.tracked_count(), 1, "game should still be tracked after tx failure");
-
-    // Poll 3: NeedsUnlock → retry → claimCredit tx succeeds → AwaitingDelay.
-    mgr.poll(&*verifier, &submitter).await;
-    assert_eq!(mgr.tracked_count(), 1, "game should still be tracked after unlock");
-
-    assert_eq!(submitter.recorded_calls().len(), 2, "expected 2 claimCredit attempts");
-}
-
-#[tokio::test]
-async fn test_bond_manager_ignores_non_claim_addresses() {
-    let claim_addr = ZK_PROVER_ADDR;
-    let other_addr = Address::repeat_byte(0xDD);
-    let game_addr = addr(0);
-
-    let mut mgr = default_bond_manager(claim_addr);
-    assert!(!mgr.track_game(game_addr, other_addr));
-    assert_eq!(mgr.tracked_count(), 0);
-}
-
-#[tokio::test]
-async fn test_bond_manager_keeps_defender_wins_when_recipient_is_claimable() {
-    // DEFENDER_WINS but bondRecipient is ours → keep and advance to NeedsUnlock.
-    let claim_addr = ZK_PROVER_ADDR;
-    let game_addr = addr(0);
-
-    let mut state = bond_test_state(claim_addr);
-    state.status = GameStatus::DefenderWins;
-    let verifier = single_game_verifier(state);
-
-    let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
-
-    let mut mgr = default_bond_manager(claim_addr);
-    mgr.track_game(game_addr, claim_addr);
-    assert_eq!(mgr.tracked_count(), 1);
-
-    // Poll 1: NeedsResolve → resolved, bondRecipient in claim set → NeedsUnlock.
-    mgr.poll(&*verifier, &submitter).await;
-    assert_eq!(
-        mgr.tracked_count(),
-        1,
-        "game should be kept when bondRecipient is in claim addresses"
-    );
-}
-
-#[tokio::test]
-async fn test_bond_manager_removes_game_when_recipient_not_claimable() {
-    // bondRecipient not in claim set → removed from tracking.
-    let claim_addr = ZK_PROVER_ADDR;
-    let other_addr = Address::repeat_byte(0xDD);
-    let game_addr = addr(0);
-
-    let mut state = bond_test_state(claim_addr);
-    state.status = GameStatus::DefenderWins;
-    state.bond_recipient = other_addr; // bond goes to someone else
-    let verifier = single_game_verifier(state);
-
-    let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
-
-    let mut mgr = default_bond_manager(claim_addr);
-    mgr.track_game(game_addr, claim_addr);
-    assert_eq!(mgr.tracked_count(), 1);
-
-    // Poll 1: NeedsResolve → resolved, bondRecipient not in claim set → removed.
-    mgr.poll(&*verifier, &submitter).await;
-    assert_eq!(
-        mgr.tracked_count(),
-        0,
-        "game should be removed when bondRecipient is not in claim addresses"
-    );
-
-    let calls = submitter.recorded_calls();
-    assert!(calls.is_empty(), "bond manager should not submit anchor update txs");
+    )
 }
 
 #[tokio::test]
@@ -1676,11 +1453,8 @@ async fn test_driver_tracks_bond_after_successful_challenge() {
 
     let tx_manager = default_tx_manager();
 
-    let mut bond_manager = default_bond_manager(sender_addr);
-    bond_manager.set_weth_delay(Duration::from_secs(3600));
-
     let mut driver = test_driver(factory, verifier, l2, zk, tx_manager);
-    driver.bond_manager = Some(bond_manager);
+    driver.bond_manager = Some(default_bond_manager(sender_addr));
 
     // Step 1: proof initiated, not yet polled.
     driver.step().await.unwrap();
@@ -1693,8 +1467,9 @@ async fn test_driver_tracks_bond_after_successful_challenge() {
     driver.step().await.unwrap();
 
     let bond_mgr = driver.bond_manager.as_ref().expect("bond_manager should be Some");
-    assert!(
-        bond_mgr.is_tracking(&addr(0)),
+    assert_eq!(
+        bond_mgr.tracked_count(),
+        1,
         "game should be tracked by bond manager after successful challenge"
     );
 }
