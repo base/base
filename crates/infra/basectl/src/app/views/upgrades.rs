@@ -804,14 +804,13 @@ impl UpgradesView {
             return;
         };
 
-        // Preserve the scan position before reset_for_rpc can clear it on an RPC URL change,
-        // so the new watcher resumes from where the old one left off rather than rescanning
-        // from the current safe head.
-        let last_scanned_safe_block = self.admin_activity[chain_idx].last_scanned_safe_block;
         self.admin_activity[chain_idx].reset_for_rpc(&rpc_url);
 
         if self.admin_activity_watcher.needs_restart(chain_idx, &rpc_url) {
             self.admin_activity_watcher.stop(&mut self.admin_activity);
+            // Capture scan position *after* stop() has drained remaining channel
+            // messages, so we don't regress to a stale value.
+            let last_scanned_safe_block = self.admin_activity[chain_idx].last_scanned_safe_block;
             self.admin_activity[chain_idx].status =
                 "Connecting to confirmed activity watcher…".to_string();
             self.admin_activity_watcher.start(chain_idx, rpc_url, last_scanned_safe_block);
