@@ -39,6 +39,7 @@ impl BaseNodeExtension for ProofsHistoryExtension {
         // TODO: if NodeHooks exposes the underlying Builder, we can call launch_node_with_proof_history
         let args = self.config;
         let proofs_history_enabled = args.proofs_history;
+        let proofs_history_mdbx = args.proofs_history_mdbx;
         let proofs_history_window = args.proofs_history_window;
         let proofs_history_prune_interval = args.proofs_history_prune_interval;
         let proofs_history_verification_interval = args.proofs_history_verification_interval;
@@ -49,8 +50,11 @@ impl BaseNodeExtension for ProofsHistoryExtension {
                 .expect("Path must be provided if not using in-memory storage");
             info!(target: "reth::cli", "Using on-disk storage for proofs history");
 
-            let mdbx = match MdbxProofsStorage::new(&path)
-                .map_err(|e| eyre::eyre!("Failed to create MdbxProofsStorage: {e}"))
+            let mdbx = match MdbxProofsStorage::new_with_options(
+                &path,
+                proofs_history_mdbx.storage_options(),
+            )
+            .map_err(|e| eyre::eyre!("Failed to create MdbxProofsStorage: {e}"))
             {
                 Ok(mdbx) => mdbx,
                 Err(e) => {

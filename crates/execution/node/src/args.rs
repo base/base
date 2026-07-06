@@ -4,6 +4,7 @@
 
 use std::{path::PathBuf, time::Duration};
 
+use base_execution_trie::MdbxProofsStorageOptions;
 use clap::{ValueEnum, builder::ArgPredicate};
 
 /// Transaction ordering strategy for the mempool.
@@ -23,6 +24,28 @@ pub enum TxpoolOrdering {
     /// Transactions are ordered by when they were received by the mempool,
     /// regardless of the fees they offer.
     Timestamp,
+}
+
+/// Runtime tuning options for the `MDBX` proofs history backend.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::Args)]
+pub struct ProofsHistoryMdbxArgs {
+    /// Maximum duration a read transaction can stay open.
+    #[arg(
+        long = "proofs-history.mdbx.max-read-transaction-duration",
+        value_name = "PROOFS_HISTORY_MDBX_MAX_READ_TRANSACTION_DURATION",
+        value_parser = humantime::parse_duration,
+        hide = true
+    )]
+    pub max_read_transaction_duration: Option<Duration>,
+}
+
+impl ProofsHistoryMdbxArgs {
+    /// Converts CLI arguments into storage options.
+    pub const fn storage_options(self) -> MdbxProofsStorageOptions {
+        MdbxProofsStorageOptions {
+            max_read_transaction_duration: self.max_read_transaction_duration,
+        }
+    }
 }
 
 /// Parameters for rollup configuration
@@ -89,6 +112,10 @@ pub struct RollupArgs {
     #[arg(long = "proofs-history.storage-path", value_name = "PROOFS_HISTORY_STORAGE_PATH")]
     pub proofs_history_storage_path: Option<PathBuf>,
 
+    /// Runtime tuning options for the `MDBX` proofs history backend.
+    #[command(flatten)]
+    pub proofs_history_mdbx: ProofsHistoryMdbxArgs,
+
     /// The window to span blocks for proofs history. Value is the number of blocks.
     /// Default is 1 month of blocks based on 2 seconds block time.
     /// 30 * 24 * 60 * 60 / 2 = `1_296_000`
@@ -108,7 +135,7 @@ pub struct RollupArgs {
     ///   but each run can take longer and block writes for longer.
     ///
     /// A shorter interval is preferred so that prune
-    /// runs stay small and don’t stall writes for too long.
+    /// runs stay small and don't stall writes for too long.
     ///
     /// CLI: `--proofs-history.prune-interval 10m`
     #[arg(
@@ -155,6 +182,7 @@ impl Default for RollupArgs {
             max_inflight_delegated_slots: 1,
             proofs_history: false,
             proofs_history_storage_path: None,
+            proofs_history_mdbx: Default::default(),
             proofs_history_window: 1_296_000,
             proofs_history_prune_interval: Duration::from_secs(15),
             proofs_history_verification_interval: 0,
@@ -165,7 +193,7 @@ impl Default for RollupArgs {
 
 #[cfg(test)]
 mod tests {
-    use clap::{Args, Parser};
+    use clap::{Args, CommandFactory, Parser};
 
     use super::*;
 
@@ -295,5 +323,24 @@ mod tests {
         ])
         .args;
         assert!(!args.base_protocol);
+    }
+
+    #[test]
+    fn test_parse_proofs_history_mdbx_tuning_options() {
+        let args = CommandParser::<RollupArgs>::parse_from([
+            "reth",
+            "--proofs-history.mdbx.max-read-transaction-duration",
+            "30s",
+        ])
+        .args;
+
+        let options = args.proofs_history_mdbx.storage_options();
+        assert_eq!(options.max_read_transaction_duration, Some(Duration::from_secs(30)));
+    }
+
+    #[test]
+    fn test_proofs_history_mdbx_hidden_from_help() {
+        let help = CommandParser::<RollupArgs>::command().render_help().to_string();
+        assert!(!help.contains("proofs-history.mdbx.max-read-transaction-duration"));
     }
 }
