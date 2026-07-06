@@ -460,10 +460,12 @@ impl GameScanner {
             "anchor recovery scan complete"
         );
         if factory_read_errors > 0 || status_read_errors > 0 {
-            return Err(eyre::eyre!(
-                "anchor recovery scan incomplete: {factory_read_errors} factory reads failed, \
-                 {status_read_errors} status reads failed"
-            ));
+            warn!(
+                recovered = candidates.len(),
+                factory_read_errors,
+                status_read_errors,
+                "anchor recovery scan had errors, returning partial results"
+            );
         }
         Ok(candidates)
     }
@@ -759,11 +761,42 @@ mod tests {
             (addr(2), mock_state(GameStatus::DefenderWins, Address::ZERO, 200)),
         ])));
         verifier.fail_status_reads(addr(2), 1);
-        let scanner = GameScanner::new(factory, verifier.clone(), mock_anchor_registry(addr(1)));
+        let scanner = GameScanner::new(
+            factory,
+            Arc::<MockAggregateVerifier>::clone(&verifier),
+            mock_anchor_registry(addr(1)),
+        );
 
         let recovered = scanner.recover_anchor_candidates().await.unwrap();
 
         assert_eq!(verifier.status_read_count(addr(2)), 2);
+        assert_eq!(recovered, vec![addr(2)]);
+    }
+
+    #[tokio::test]
+    async fn recover_anchor_candidates_returns_partial_results_after_errors() {
+        let factory = Arc::new(MockDisputeGameFactory::new(vec![
+            factory_game(0, 1),
+            factory_game(1, 1),
+            factory_game(2, 1),
+            factory_game(3, 1),
+        ]));
+        let verifier = Arc::new(MockAggregateVerifier::new(HashMap::from([
+            (addr(0), mock_state(GameStatus::DefenderWins, Address::ZERO, 50)),
+            (addr(1), mock_state(GameStatus::DefenderWins, Address::ZERO, 100)),
+            (addr(2), mock_state(GameStatus::DefenderWins, Address::ZERO, 200)),
+            (addr(3), mock_state(GameStatus::DefenderWins, Address::ZERO, 300)),
+        ])));
+        verifier.fail_status_reads(addr(3), GameScanner::ANCHOR_RECOVERY_STATUS_ATTEMPTS as u64);
+        let scanner = GameScanner::new(
+            factory,
+            Arc::<MockAggregateVerifier>::clone(&verifier),
+            mock_anchor_registry(addr(1)),
+        );
+
+        let recovered = scanner.recover_anchor_candidates().await.unwrap();
+
+        assert_eq!(verifier.status_read_count(addr(3)), 2);
         assert_eq!(recovered, vec![addr(2)]);
     }
 }
