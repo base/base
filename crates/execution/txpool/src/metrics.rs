@@ -12,7 +12,7 @@ base_metrics::define_metrics! {
     #[label(name = "reason", default = ["sender", "payer", "payer_balance"])]
     admission_rejected: counter,
     #[describe("EIP-8130 transactions invalidated and evicted ahead of the builder")]
-    #[label(name = "cause", default = ["state_diff", "expiry", "reconcile"])]
+    #[label(name = "cause", default = ["state_diff", "balance_update", "expiry", "reconcile"])]
     invalidated: counter,
     #[describe("Expiry buckets fired on canonical updates (one-block lookahead eviction)")]
     expiry_buckets_fired: counter,
@@ -38,6 +38,16 @@ impl GuardMetrics {
     pub fn record_state_diff_invalidations(count: usize) {
         if count > 0 {
             Self::invalidated("state_diff").increment(count as u64);
+        }
+    }
+
+    /// Records `count` invalidations attributed to reth's `update_accounts`
+    /// balance-change maintenance path, distinct from the committed-block
+    /// state-diff feeder (`record_state_diff_invalidations`) so the two
+    /// invalidation sources can be told apart when debugging.
+    pub fn record_balance_update_invalidations(count: usize) {
+        if count > 0 {
+            Self::invalidated("balance_update").increment(count as u64);
         }
     }
 

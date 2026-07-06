@@ -1462,7 +1462,7 @@ where
             dropped
         };
         let removed = self.remove_dropped_across_pools(dropped);
-        GuardMetrics::record_state_diff_invalidations(removed.len());
+        GuardMetrics::record_balance_update_invalidations(removed.len());
         if !removed.is_empty() {
             debug!(count = removed.len(), "EIP-8130 transactions invalidated by balance change");
         }
