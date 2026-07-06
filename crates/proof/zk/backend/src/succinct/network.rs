@@ -11,7 +11,9 @@ use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
 use base_proof_zk_host::{ZkProofRequestKind, ZkProver, ZkProverError, ZkSessionState};
-use base_prover_service_protocol::{ProofResult, SessionType, ZkProofResult, ZkVm};
+use base_prover_service_protocol::{
+    ProofResult, SessionType, SnarkGroth16ProofResult, ZkProofResult, ZkVm,
+};
 use sp1_sdk::{
     HashableKey, NetworkProver, ProveRequest, Prover, ProverClient, ProvingKey,
     SP1ProofWithPublicValues, SP1ProvingKey,
@@ -397,7 +399,7 @@ impl ZkProver for NetworkZkProver {
 
     async fn download(
         &self,
-        _session_type: SessionType,
+        session_type: SessionType,
         backend_session_id: &str,
     ) -> Result<ProofResult, ZkProverError> {
         let (state, proof) = self.get_network_proof_status(backend_session_id).await?;
@@ -420,10 +422,11 @@ impl ZkProver for NetworkZkProver {
         let proof = bincode::serde::encode_to_vec(&proof, bincode::config::standard())
             .map_err(|e| backend_error!("failed to serialize proof: {e}"))?;
 
-        Ok(ProofResult::Compressed(ZkProofResult {
-            zk_vm: ZkVm::Sp1,
-            proof: proof.into(),
-            execution_stats: None,
-        }))
+        let proof = ZkProofResult { zk_vm: ZkVm::Sp1, proof: proof.into(), execution_stats: None };
+        if session_type == SessionType::Snark {
+            Ok(ProofResult::SnarkGroth16(SnarkGroth16ProofResult { proof }))
+        } else {
+            Ok(ProofResult::Compressed(proof))
+        }
     }
 }
