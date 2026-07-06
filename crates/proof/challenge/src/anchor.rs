@@ -10,9 +10,10 @@ use base_proof_contracts::{
     AggregateVerifierClient, GameStatus, encode_resolve_calldata, encode_set_anchor_state_calldata,
 };
 use base_runtime::Clock;
+use base_tx_manager::TxManager;
 use tracing::{debug, info, warn};
 
-use crate::{BondTransactionSubmitter, ChallengerMetrics};
+use crate::{ChallengeSubmitter, ChallengerMetrics};
 
 #[derive(Debug, Clone, Copy)]
 enum AnchorUpdateOutcome {
@@ -63,10 +64,10 @@ impl<C: Clock> AnchorUpdater<C> {
     }
 
     /// Polls all tracked games and advances eligible anchor roots.
-    pub async fn poll(
+    pub async fn poll<T: TxManager>(
         &mut self,
         verifier_client: &dyn AggregateVerifierClient,
-        submitter: &dyn BondTransactionSubmitter,
+        submitter: &ChallengeSubmitter<T>,
     ) {
         if self.tracked.is_empty() {
             return;
@@ -113,11 +114,11 @@ impl<C: Clock> AnchorUpdater<C> {
         true
     }
 
-    async fn try_update(
+    async fn try_update<T: TxManager>(
         game_address: Address,
         game: &mut TrackedAnchorUpdate,
         verifier_client: &dyn AggregateVerifierClient,
-        submitter: &dyn BondTransactionSubmitter,
+        submitter: &ChallengeSubmitter<T>,
     ) -> AnchorUpdateOutcome {
         let status = match verifier_client.status(game_address).await {
             Ok(status) => status,
@@ -369,8 +370,8 @@ mod tests {
 
     use super::*;
     use crate::test_utils::{
-        MockAggregateVerifier, MockBondTransactionSubmitter, MockGameState, addr, mock_state,
-        mock_state_with_tee,
+        MockAggregateVerifier, MockGameState, SharedMockTxManager, addr, mock_state,
+        mock_state_with_tee, receipt_with_status,
     };
 
     const DEFAULT_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
@@ -379,16 +380,28 @@ mod tests {
         MockAggregateVerifier::new(HashMap::from([(game, state)]))
     }
 
+    fn tx_success(tx_hash: B256) -> base_tx_manager::SendResponse {
+        Ok(receipt_with_status(true, tx_hash))
+    }
+
+    fn submitter(
+        responses: Vec<base_tx_manager::SendResponse>,
+    ) -> (ChallengeSubmitter<SharedMockTxManager>, SharedMockTxManager) {
+        let tx_manager = SharedMockTxManager::with_responses(responses);
+        (ChallengeSubmitter::new(tx_manager.clone()), tx_manager)
+    }
+
     async fn assert_pending(
         updater: &mut AnchorUpdater<TokioRuntime>,
         verifier: &MockAggregateVerifier,
-        submitter: &MockBondTransactionSubmitter,
+        submitter: &ChallengeSubmitter<SharedMockTxManager>,
+        tx_manager: &SharedMockTxManager,
         game: Address,
     ) {
         updater.poll(verifier, submitter).await;
         updater.poll(verifier, submitter).await;
 
-        assert!(submitter.recorded_calls().is_empty());
+        assert!(tx_manager.recorded_calls().is_empty());
         assert!(updater.tracked.contains_key(&game));
         assert_eq!(updater.tracked[&game].retry_started_at, None);
     }
@@ -402,16 +415,16 @@ mod tests {
         state.anchor_state_registry = asr;
 
         let verifier = verifier(game, state);
-        let submitter = MockBondTransactionSubmitter::with_responses(vec![Ok(tx_hash)]);
+        let (submitter, tx_manager) = submitter(vec![tx_success(tx_hash)]);
 
         let mut updater = AnchorUpdater::new(TokioRuntime::new(), DEFAULT_RETENTION);
         updater.track_game(game);
 
         updater.poll(&verifier, &submitter).await;
 
-        let calls = submitter.recorded_calls();
+        let calls = tx_manager.recorded_calls();
         assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].1, asr);
+        assert_eq!(calls[0].to, Some(asr));
         assert!(updater.tracked.is_empty());
     }
 
@@ -424,12 +437,12 @@ mod tests {
         state.is_finalized = false;
 
         let verifier = verifier(game, state);
-        let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
+        let (submitter, tx_manager) = submitter(vec![]);
 
         let mut updater = AnchorUpdater::new(TokioRuntime::new(), Duration::ZERO);
         updater.track_game(game);
 
-        assert_pending(&mut updater, &verifier, &submitter, game).await;
+        assert_pending(&mut updater, &verifier, &submitter, &tx_manager, game).await;
     }
 
     #[tokio::test]
@@ -442,19 +455,19 @@ mod tests {
         state.is_paused = true;
 
         let verifier = verifier(game, state.clone());
-        let submitter = MockBondTransactionSubmitter::with_responses(vec![Ok(tx_hash)]);
+        let (submitter, tx_manager) = submitter(vec![tx_success(tx_hash)]);
 
         let mut updater = AnchorUpdater::new(TokioRuntime::new(), Duration::ZERO);
         updater.track_game(game);
 
-        assert_pending(&mut updater, &verifier, &submitter, game).await;
+        assert_pending(&mut updater, &verifier, &submitter, &tx_manager, game).await;
 
         state.is_paused = false;
         verifier.update_game(game, state);
 
         updater.poll(&verifier, &submitter).await;
 
-        assert_eq!(submitter.recorded_calls().len(), 1);
+        assert_eq!(tx_manager.recorded_calls().len(), 1);
         assert!(updater.tracked.is_empty());
     }
 
@@ -469,20 +482,18 @@ mod tests {
         state.game_over = true;
 
         let verifier = verifier(game, state.clone());
-        let submitter = MockBondTransactionSubmitter::with_responses(vec![
-            Ok(resolve_tx_hash),
-            Ok(anchor_tx_hash),
-        ]);
+        let (submitter, tx_manager) =
+            submitter(vec![tx_success(resolve_tx_hash), tx_success(anchor_tx_hash)]);
 
         let mut updater = AnchorUpdater::new(TokioRuntime::new(), DEFAULT_RETENTION);
         updater.track_game(game);
 
         updater.poll(&verifier, &submitter).await;
 
-        let calls = submitter.recorded_calls();
+        let calls = tx_manager.recorded_calls();
         assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].1, game);
-        assert_eq!(calls[0].2, encode_resolve_calldata());
+        assert_eq!(calls[0].to, Some(game));
+        assert_eq!(calls[0].tx_data, encode_resolve_calldata());
         assert!(updater.tracked.contains_key(&game));
 
         state.status = GameStatus::DefenderWins;
@@ -490,9 +501,9 @@ mod tests {
 
         updater.poll(&verifier, &submitter).await;
 
-        let calls = submitter.recorded_calls();
+        let calls = tx_manager.recorded_calls();
         assert_eq!(calls.len(), 2);
-        assert_eq!(calls[1].1, asr);
+        assert_eq!(calls[1].to, Some(asr));
         assert!(updater.tracked.is_empty());
     }
 
@@ -504,7 +515,7 @@ mod tests {
         state.game_over = true;
 
         let verifier = verifier(game, state);
-        let submitter = MockBondTransactionSubmitter::with_responses(vec![Ok(resolve_tx_hash)]);
+        let (submitter, tx_manager) = submitter(vec![tx_success(resolve_tx_hash)]);
 
         let mut updater = AnchorUpdater::new(TokioRuntime::new(), DEFAULT_RETENTION);
         updater.track_game(game);
@@ -512,7 +523,7 @@ mod tests {
         updater.poll(&verifier, &submitter).await;
         updater.poll(&verifier, &submitter).await;
 
-        assert_eq!(submitter.recorded_calls().len(), 1);
+        assert_eq!(tx_manager.recorded_calls().len(), 1);
         assert!(updater.tracked.contains_key(&game));
         assert!(updater.tracked[&game].resolve_submitted);
     }
@@ -522,12 +533,12 @@ mod tests {
         let game = addr(0);
         let state = mock_state(GameStatus::InProgress, Address::ZERO, 100);
         let verifier = verifier(game, state);
-        let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
+        let (submitter, tx_manager) = submitter(vec![]);
 
         let mut updater = AnchorUpdater::new(TokioRuntime::new(), Duration::ZERO);
         updater.track_game(game);
 
-        assert_pending(&mut updater, &verifier, &submitter, game).await;
+        assert_pending(&mut updater, &verifier, &submitter, &tx_manager, game).await;
     }
 
     #[tokio::test]
@@ -535,7 +546,7 @@ mod tests {
         let game = addr(0);
         let state = mock_state(GameStatus::InProgress, Address::ZERO, 100);
         let verifier = verifier(game, state);
-        let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
+        let (submitter, tx_manager) = submitter(vec![]);
 
         let mut updater = AnchorUpdater::new(TokioRuntime::new(), DEFAULT_RETENTION);
         updater.track_game(game);
@@ -546,7 +557,7 @@ mod tests {
         assert!(verifier.zk_prover_reads.lock().unwrap().is_empty());
         assert!(verifier.tee_prover_reads.lock().unwrap().is_empty());
         assert!(verifier.countered_index_reads.lock().unwrap().is_empty());
-        assert!(submitter.recorded_calls().is_empty());
+        assert!(tx_manager.recorded_calls().is_empty());
         assert!(updater.tracked.contains_key(&game));
     }
 
@@ -560,12 +571,12 @@ mod tests {
         state.game_over = true;
 
         let verifier = verifier(game, state);
-        let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
+        let (submitter, tx_manager) = submitter(vec![]);
 
         let mut updater = AnchorUpdater::new(TokioRuntime::new(), Duration::ZERO);
         updater.track_game(game);
 
-        assert_pending(&mut updater, &verifier, &submitter, game).await;
+        assert_pending(&mut updater, &verifier, &submitter, &tx_manager, game).await;
     }
 
     #[tokio::test]
@@ -573,14 +584,14 @@ mod tests {
         let game = addr(0);
         let state = mock_state(GameStatus::ChallengerWins, Address::ZERO, 100);
         let verifier = verifier(game, state);
-        let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
+        let (submitter, tx_manager) = submitter(vec![]);
 
         let mut updater = AnchorUpdater::new(TokioRuntime::new(), DEFAULT_RETENTION);
         updater.track_game(game);
 
         updater.poll(&verifier, &submitter).await;
 
-        assert!(submitter.recorded_calls().is_empty());
+        assert!(tx_manager.recorded_calls().is_empty());
         assert!(!updater.tracked.contains_key(&game));
     }
 
@@ -591,14 +602,14 @@ mod tests {
             mock_state_with_tee(GameStatus::InProgress, Address::ZERO, Address::ZERO, 100);
         state.game_over = true;
         let verifier = verifier(game, state);
-        let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
+        let (submitter, tx_manager) = submitter(vec![]);
 
         let mut updater = AnchorUpdater::new(TokioRuntime::new(), DEFAULT_RETENTION);
         updater.track_game(game);
 
         updater.poll(&verifier, &submitter).await;
 
-        assert!(submitter.recorded_calls().is_empty());
+        assert!(tx_manager.recorded_calls().is_empty());
         assert!(!updater.tracked.contains_key(&game));
     }
 
@@ -606,7 +617,7 @@ mod tests {
     async fn poll_drops_after_retention_when_status_read_keeps_failing() {
         let game = addr(0);
         let verifier = MockAggregateVerifier::new(HashMap::new());
-        let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
+        let (submitter, _tx_manager) = submitter(vec![]);
 
         let mut updater = AnchorUpdater::new(TokioRuntime::new(), Duration::ZERO);
         updater.track_game(game);

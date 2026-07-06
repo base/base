@@ -3631,7 +3631,6 @@ dependencies = [
  "base-runtime",
  "base-tx-manager",
  "clap",
- "derive_more 2.1.1",
  "eyre",
  "futures",
  "humantime",
