@@ -506,6 +506,10 @@ impl<C: Clock> BondManager<C> {
         match Self::send_claim_credit(game_address, "unlock", submitter).await {
             Ok(_) => {
                 let Some(delay) = self.weth_delay else {
+                    debug!(
+                        game = %game_address,
+                        "unlock confirmed but WETH delay not yet known, will resolve on next poll"
+                    );
                     return Ok(Some(BondPhase::NeedsUnlock));
                 };
                 Ok(Some(BondPhase::AwaitingDelay {
@@ -660,14 +664,15 @@ impl<C: Clock> BondManager<C> {
 mod tests {
     use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc};
 
+    use alloy_primitives::B256;
+    use futures::stream::BoxStream;
+
     use super::*;
     use crate::test_utils::{
         MockAggregateVerifier, MockDisputeGameFactory, SharedMockTxManager,
         TEST_DISCOVERY_INTERVAL, addr, empty_factory, factory_game, mock_state,
         receipt_with_status,
     };
-    use alloy_primitives::B256;
-    use futures::stream::BoxStream;
 
     const TEST_WETH_DELAY: Duration = Duration::from_secs(60);
     const WITHDRAW_READY_MONOTONIC_SECS: u64 = 3_700;
@@ -1042,8 +1047,7 @@ mod tests {
                 Some(BondPhase::AwaitingDelay { ready_at })
                     if ready_at == Duration::from_secs(500)
             ),
-            "expected ready AwaitingDelay, got {:?}",
-            result,
+            "expected ready AwaitingDelay, got {result:?}",
         );
         assert!(
             tx_manager.recorded_calls().is_empty(),
@@ -1069,8 +1073,7 @@ mod tests {
                 Some(BondPhase::AwaitingDelay { ready_at })
                     if ready_at == Duration::from_secs(560)
             ),
-            "expected AwaitingDelay with monotonic deadline, got {:?}",
-            result,
+            "expected AwaitingDelay with monotonic deadline, got {result:?}",
         );
         assert_eq!(tx_manager.recorded_calls().len(), 1);
     }
