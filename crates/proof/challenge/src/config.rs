@@ -95,8 +95,6 @@ pub struct ChallengerConfig {
     pub poll_interval: Duration,
     /// URL of the ZK RPC endpoint.
     pub zk_rpc_url: Validated<Url>,
-    /// Timeout for establishing the initial gRPC connection to the ZK proof service.
-    pub zk_connect_timeout: Duration,
     /// Timeout for individual gRPC requests to the ZK proof service.
     pub zk_request_timeout: Duration,
     /// Maximum wall-clock time to wait for a ZK proof session before treating it as failed.
@@ -179,7 +177,6 @@ impl ChallengerConfig {
         }
 
         require_nonzero_duration(cli.challenger.poll_interval, "poll-interval")?;
-        require_nonzero_duration(cli.challenger.zk_connect_timeout, "zk-connect-timeout")?;
         require_nonzero_duration(cli.challenger.zk_request_timeout, "zk-request-timeout")?;
         require_nonzero_duration(cli.challenger.max_proof_duration, "max-proof-duration")?;
 
@@ -219,7 +216,6 @@ impl ChallengerConfig {
             anchor_state_registry_addr: cli.challenger.anchor_state_registry_addr,
             poll_interval: cli.challenger.poll_interval,
             zk_rpc_url,
-            zk_connect_timeout: cli.challenger.zk_connect_timeout,
             zk_request_timeout: cli.challenger.zk_request_timeout,
             max_proof_duration: cli.challenger.max_proof_duration,
             tee_submit_retry_limit: cli.challenger.tee_submit_retry_limit,
@@ -290,7 +286,6 @@ mod tests {
         let cli = cli_from_args(&SIGNER_ARGS);
         let config = ChallengerConfig::from_cli(cli).unwrap();
         assert_eq!(config.poll_interval, Duration::from_secs(12));
-        assert_eq!(config.zk_connect_timeout, Duration::from_secs(10));
         assert_eq!(config.zk_request_timeout, Duration::from_secs(30));
         assert_eq!(config.tee_submit_retry_limit, 3);
         assert_eq!(
@@ -325,7 +320,6 @@ mod tests {
 
     #[rstest]
     #[case::poll_interval("--poll-interval", "0s", "poll-interval")]
-    #[case::zk_connect_timeout("--zk-connect-timeout", "0s", "zk-connect-timeout")]
     #[case::zk_request_timeout("--zk-request-timeout", "0s", "zk-request-timeout")]
     #[case::bond_discovery_lookback_games(
         "--bond-discovery-lookback-games",

@@ -1,13 +1,10 @@
 //! CLI argument definitions for the challenger.
-//!
-//! All flags use the `BASE_CHALLENGER_` environment-variable prefix
-//! (e.g. `BASE_CHALLENGER_L1_ETH_RPC`). The default metrics port is **7300**.
 
 use std::time::Duration;
 
 use alloy_primitives::Address;
 use base_cli_utils::CliStyles;
-use clap::Parser;
+use clap::{Args, Parser};
 use url::Url;
 
 base_cli_utils::define_cli_env!("BASE_CHALLENGER");
@@ -41,28 +38,28 @@ pub struct Cli {
 }
 
 /// Core challenger configuration arguments.
-#[derive(Debug, Parser)]
+#[derive(Debug, Args)]
 #[command(next_help_heading = "Challenger")]
 pub struct ChallengerArgs {
     /// URL of the L1 Ethereum RPC endpoint.
-    #[arg(long = "l1-eth-rpc", env = cli_env!("L1_ETH_RPC"))]
+    #[arg(long, env = cli_env!("L1_ETH_RPC"))]
     pub l1_eth_rpc: Url,
 
     /// URL of the L2 Ethereum RPC endpoint.
-    #[arg(long = "l2-eth-rpc", env = cli_env!("L2_ETH_RPC"))]
+    #[arg(long, env = cli_env!("L2_ETH_RPC"))]
     pub l2_eth_rpc: Url,
 
     /// Address of the `DisputeGameFactory` contract on L1.
-    #[arg(long = "dispute-game-factory-addr", env = cli_env!("DISPUTE_GAME_FACTORY_ADDR"))]
+    #[arg(long, env = cli_env!("DISPUTE_GAME_FACTORY_ADDR"))]
     pub dispute_game_factory_addr: Address,
 
     /// Address of the `AnchorStateRegistry` contract on L1.
-    #[arg(long = "anchor-state-registry-addr", env = cli_env!("ANCHOR_STATE_REGISTRY_ADDR"))]
+    #[arg(long, env = cli_env!("ANCHOR_STATE_REGISTRY_ADDR"))]
     pub anchor_state_registry_addr: Address,
 
     /// Polling interval for new dispute games (e.g., "12s", "1m").
     #[arg(
-        long = "poll-interval",
+        long,
         env = cli_env!("POLL_INTERVAL"),
         default_value = "12s",
         value_parser = humantime::parse_duration
@@ -70,23 +67,13 @@ pub struct ChallengerArgs {
     pub poll_interval: Duration,
 
     /// URL of the ZK RPC endpoint.
-    #[arg(long = "zk-rpc-url", env = cli_env!("ZK_RPC_URL"))]
+    #[arg(long, env = cli_env!("ZK_RPC_URL"))]
     pub zk_rpc_url: Url,
-
-    /// Timeout for establishing the initial gRPC connection to the ZK proof
-    /// service (e.g., "10s", "1m").
-    #[arg(
-        long = "zk-connect-timeout",
-        env = cli_env!("ZK_CONNECT_TIMEOUT"),
-        default_value = "10s",
-        value_parser = humantime::parse_duration
-    )]
-    pub zk_connect_timeout: Duration,
 
     /// Timeout for individual gRPC requests to the ZK proof service
     /// (e.g., "30s", "1m").
     #[arg(
-        long = "zk-request-timeout",
+        long,
         env = cli_env!("ZK_REQUEST_TIMEOUT"),
         default_value = "30s",
         value_parser = humantime::parse_duration
@@ -96,7 +83,7 @@ pub struct ChallengerArgs {
     /// Maximum wall-clock time to wait for a ZK proof session before treating it as failed and
     /// retrying (e.g., "30m", "2h"). Should be set above the typical proof generation time.
     #[arg(
-        long = "max-proof-duration",
+        long,
         env = cli_env!("MAX_PROOF_DURATION"),
         default_value = "4h",
         value_parser = humantime::parse_duration
@@ -105,11 +92,7 @@ pub struct ChallengerArgs {
 
     /// Retryable TEE submission failures to tolerate before falling back to ZK.
     /// Set to 0 to fall back immediately on the first retryable TEE tx error.
-    #[arg(
-        long = "tee-submit-retry-limit",
-        env = cli_env!("TEE_SUBMIT_RETRY_LIMIT"),
-        default_value = "3"
-    )]
+    #[arg(long, env = cli_env!("TEE_SUBMIT_RETRY_LIMIT"), default_value_t = 3)]
     pub tee_submit_retry_limit: u32,
 
     /// Signer configuration (local private key or remote sidecar).
@@ -121,17 +104,13 @@ pub struct ChallengerArgs {
     pub tx_manager: TxManagerCli,
 
     /// Number of recent factory games scanned by bond discovery.
-    #[arg(
-        long = "bond-discovery-lookback-games",
-        env = cli_env!("BOND_DISCOVERY_LOOKBACK_GAMES"),
-        default_value = "1000"
-    )]
+    #[arg(long, env = cli_env!("BOND_DISCOVERY_LOOKBACK_GAMES"), default_value_t = 1000)]
     pub bond_discovery_lookback_games: u64,
 
     /// How often a full rescan of the bond lookback window is performed to
     /// catch state transitions (games challenged or resolved by other actors).
     #[arg(
-        long = "bond-discovery-interval",
+        long,
         env = cli_env!("BOND_DISCOVERY_INTERVAL"),
         default_value = "300s",
         value_parser = humantime::parse_duration
@@ -140,7 +119,7 @@ pub struct ChallengerArgs {
 
     /// Maximum time to retry an eligible anchor state update after it starts failing.
     #[arg(
-        long = "anchor-update-retention",
+        long,
         env = cli_env!("ANCHOR_UPDATE_RETENTION"),
         default_value = "24h",
         value_parser = humantime::parse_duration
@@ -154,7 +133,7 @@ pub struct ChallengerArgs {
     /// these addresses. Requires two `claimCredit()` calls per game with
     /// a `DelayedWETH` delay in between.
     #[arg(
-        long = "bond-claim-addresses",
+        long,
         env = cli_env!("BOND_CLAIM_ADDRESSES"),
         value_delimiter = ','
     )]
