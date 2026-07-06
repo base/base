@@ -18,9 +18,8 @@ pub use block::BaseBlock;
 
 mod header;
 pub use header::{
-    BASE_BLOCK_TIME_MILLIS, BaseHeader, BaseHeaderFields, BaseHeaderPostForkFields,
-    BaseHeaderPostForkPayload, TIMESTAMP_MILLIS_PER_SECOND, TimestampMillisPartError,
-    VALID_TIMESTAMP_MILLIS_PARTS,
+    BASE_BLOCK_TIME_MILLIS, BaseHeader, BaseHeaderFields, BaseHeaderPayload,
+    TIMESTAMP_MILLIS_PER_SECOND, TimestampMillisPartError, VALID_TIMESTAMP_MILLIS_PARTS,
 };
 
 #[cfg(feature = "reth")]

@@ -59,10 +59,21 @@ pub enum TimestampMillisPartError {
 }
 
 /// Base-owned header fields committed by the Base header boundary.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Hash,
+    alloy_rlp::RlpEncodable,
+    alloy_rlp::RlpDecodable,
+)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(default, rename_all = "camelCase"))]
+#[rlp(trailing)]
 pub struct BaseHeaderFields {
     /// Post-Beryl millisecond subsecond component committed by the header hash.
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
@@ -88,64 +99,27 @@ impl BaseHeaderFields {
 
         Ok(())
     }
-
-    /// Returns the RLP post-fork view of the Base-owned fields.
-    pub const fn into_post_fork_fields(self) -> BaseHeaderPostForkFields {
-        BaseHeaderPostForkFields { timestamp_millis_part: self.timestamp_millis_part }
-    }
-
-    /// Builds Base-owned fields from the RLP post-fork view.
-    pub const fn from_post_fork_fields(fields: BaseHeaderPostForkFields) -> Self {
-        Self { timestamp_millis_part: fields.timestamp_millis_part }
-    }
 }
 
-/// Base-owned RLP payload for post-hardfork header fields.
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Default,
-    PartialEq,
-    Eq,
-    Hash,
-    alloy_rlp::RlpEncodable,
-    alloy_rlp::RlpDecodable,
-)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-#[rlp(trailing)]
-pub struct BaseHeaderPostForkFields {
-    /// Post-Beryl millisecond subsecond component committed by the header hash.
-    pub timestamp_millis_part: Option<u16>,
-}
-
-impl BaseHeaderPostForkFields {
-    /// Returns `true` when the post-fork payload has no Base-owned fields.
-    pub const fn is_empty(&self) -> bool {
-        self.timestamp_millis_part.is_none()
-    }
-}
-
-/// Base-owned RLP wrapper for post-hardfork Base headers.
+/// Base-owned RLP wrapper used for post-hardfork Base header encoding.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, alloy_rlp::RlpEncodable, alloy_rlp::RlpDecodable)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-pub struct BaseHeaderPostForkPayload {
+pub struct BaseHeaderPayload {
     /// Standard Ethereum execution header fields.
     pub inner: Header,
     /// Base-owned post-hardfork header fields.
-    pub base: BaseHeaderPostForkFields,
+    pub base: BaseHeaderFields,
 }
 
-impl BaseHeaderPostForkPayload {
+impl BaseHeaderPayload {
     /// Creates a post-fork payload from a Base header.
     pub fn from_header(header: &BaseHeader) -> Self {
-        Self { inner: header.inner.clone(), base: header.base.into_post_fork_fields() }
+        Self { inner: header.inner.clone(), base: header.base }
     }
 
     /// Converts the payload back into a Base header.
     pub fn try_into_header(self) -> Result<BaseHeader, TimestampMillisPartError> {
-        let base = BaseHeaderFields::from_post_fork_fields(self.base);
-        BaseHeader::new(self.inner, base)
+        BaseHeader::new(self.inner, self.base)
     }
 }
 
@@ -399,7 +373,7 @@ impl Encodable for BaseHeader {
         if self.is_legacy() {
             self.inner.encode(out);
         } else {
-            BaseHeaderPostForkPayload::from_header(self).encode(out);
+            BaseHeaderPayload::from_header(self).encode(out);
         }
     }
 
@@ -409,7 +383,7 @@ impl Encodable for BaseHeader {
         if self.is_legacy() {
             self.inner.length()
         } else {
-            BaseHeaderPostForkPayload::from_header(self).length()
+            BaseHeaderPayload::from_header(self).length()
         }
     }
 }
@@ -430,14 +404,14 @@ impl Decodable for BaseHeader {
             return Header::decode(buf).map(Self::from);
         }
 
-        let payload = BaseHeaderPostForkPayload::decode(buf)?;
+        let payload = BaseHeaderPayload::decode(buf)?;
         let header = payload
             .try_into_header()
-            .map_err(|_| alloy_rlp::Error::Custom("invalid Base header post-fork fields"))?;
+            .map_err(|_| alloy_rlp::Error::Custom("invalid Base header payload fields"))?;
 
         if header.base.is_empty() {
             return Err(alloy_rlp::Error::Custom(
-                "Base header post-fork payload must contain Base-owned fields",
+                "Base header payload must contain Base-owned fields",
             ));
         }
 
