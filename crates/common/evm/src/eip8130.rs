@@ -851,7 +851,7 @@ impl Eip8130Executor {
 
             // 5. Auto-delegate any code-less sender to the default account so the
             // account can dispatch its calls. An explicit delegation applied in
-            // step 4 with a non-zero target leaves non-empty code and is preserved
+            // step 2 with a non-zero target leaves non-empty code and is preserved
             // here. Clearing the sender's delegation in the same transaction leaves
             // it code-less and is intentionally re-delegated — any basic-account
             // sender is always delegated to `DEFAULT_ACCOUNT` regardless of which
