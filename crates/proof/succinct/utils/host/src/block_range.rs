@@ -59,7 +59,7 @@ pub async fn get_validated_block_range(
 pub async fn get_rolling_block_range(host: &SuccinctHost, range: u64) -> Result<(u64, u64)> {
     let l2_end_block = host.get_finalized_l2_block_number().await?;
 
-    Ok((l2_end_block - range, l2_end_block))
+    Ok((l2_end_block.saturating_sub(range), l2_end_block))
 }
 
 /// A contiguous range of L2 blocks.
