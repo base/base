@@ -668,7 +668,6 @@ impl ClusterZkProver {
             proof_artifact_id: Some(proof_output_id.clone()),
             requester: vec![],
             deadline,
-            // Reuse the configured proof limits for both range and aggregation stages.
             cycle_limit: self.config.range_cycle_limit,
             gas_limit: self.config.range_gas_limit,
             scheduled_by: None,
