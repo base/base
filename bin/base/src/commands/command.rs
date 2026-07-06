@@ -12,14 +12,16 @@ use base_execution_evm::BaseExecutorProvider;
 use base_node_core::BaseNode;
 use clap::Subcommand;
 use reth_cli_commands::{
-    config_cmd, db,
-    download::manifest_cmd::SnapshotManifestCommand,
-    dump_genesis, init_cmd, prune, re_execute, stage,
+    config_cmd, db, download::manifest_cmd::SnapshotManifestCommand, dump_genesis, init_cmd, prune,
+    re_execute, stage,
 };
 use reth_cli_runner::CliRunner;
 
 use crate::{
-    commands::{bootnode::BootnodeCommand, rpc::RpcCommand, sequencer::SequencerCommand, update::UpdateCommand},
+    commands::{
+        bootnode::BootnodeCommand, rpc::RpcCommand, sequencer::SequencerCommand,
+        update::UpdateCommand,
+    },
     config::ChainResolver,
 };
 
