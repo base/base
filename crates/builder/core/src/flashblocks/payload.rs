@@ -1346,7 +1346,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
 
     use alloy_consensus::{Header, Receipt};
     use alloy_primitives::{Address, B256, Log, U256, map::foldhash::HashMap};
@@ -1357,9 +1360,6 @@ mod tests {
     use reth_primitives_traits::SealedHeader;
     use reth_provider::noop::NoopProvider;
     use reth_revm::{State, database::StateProviderDatabase};
-
-    use std::sync::atomic::{AtomicBool, Ordering};
-
     use reth_transaction_pool::{
         PoolTransaction, TransactionOrigin, TransactionPool,
         test_utils::{MockTransaction, testing_pool},
