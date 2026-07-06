@@ -15,6 +15,9 @@ pub const TIMESTAMP_MILLIS_PER_SECOND: u16 = 1_000;
 /// Base block cadence in milliseconds for sub-second header timing.
 pub const BASE_BLOCK_TIME_MILLIS: u16 = 200;
 
+/// First RLP prefix byte that denotes a list payload rather than a string/scalar payload.
+const RLP_LIST_PREFIX_THRESHOLD: u8 = 0xC0;
+
 /// Valid millisecond subsecond components for 200ms Base headers.
 pub const VALID_TIMESTAMP_MILLIS_PARTS: [u16; 5] = [0, 200, 400, 600, 800];
 
@@ -400,7 +403,11 @@ impl Decodable for BaseHeader {
             return Err(alloy_rlp::Error::InputTooShort);
         };
 
-        if *first_payload_byte < 0xC0 {
+        // A legacy `Header` starts with `parent_hash`, whose first payload item is an RLP
+        // string/scalar. `BaseHeaderPayload` starts with nested `inner: Header`, whose first
+        // payload item is an RLP list. RLP list payloads begin at `0xC0`, so this threshold lets
+        // one decoder distinguish the two preserved wire shapes without rewriting legacy bytes.
+        if *first_payload_byte < RLP_LIST_PREFIX_THRESHOLD {
             return Header::decode(buf).map(Self::from);
         }
 
