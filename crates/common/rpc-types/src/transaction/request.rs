@@ -59,6 +59,16 @@ impl Eip8130AuthScheme {
             Self::WebAuthn => 256,
         }
     }
+
+    /// Every scheme this estimator recognizes as an enshrined authenticator, in
+    /// declaration order. The single authoritative list for recognizing a
+    /// blob's leading authenticator selector (e.g.
+    /// [`crate::BaseTransactionRequest::to_eip8130_simulation_tx`]'s
+    /// `is_prefixed_auth`) — consult this rather than re-deriving the
+    /// authenticator set by hand, so a new variant can't silently go
+    /// unrecognized. See the `eip8130_auth_scheme_all_lists_every_variant` test
+    /// for the compile-time guard that keeps this in sync with the enum.
+    pub const ALL: [Self; 3] = [Self::Secp256k1, Self::P256, Self::WebAuthn];
 }
 
 /// EIP-8130 account-abstraction fields layered onto a standard
@@ -495,6 +505,26 @@ impl TransactionBuilder for BaseTransactionRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn eip8130_auth_scheme_all_lists_every_variant() {
+        // Exhaustive match with no wildcard arm: adding a variant to
+        // `Eip8130AuthScheme` without a corresponding arm here fails to
+        // compile (independent of whether the case ever runs), which is the
+        // signal to also extend `Eip8130AuthScheme::ALL` above.
+        fn assert_listed(scheme: Eip8130AuthScheme) {
+            assert!(
+                Eip8130AuthScheme::ALL.contains(&scheme),
+                "{scheme:?} is missing from Eip8130AuthScheme::ALL",
+            );
+            match scheme {
+                Eip8130AuthScheme::Secp256k1 | Eip8130AuthScheme::P256 | Eip8130AuthScheme::WebAuthn => {}
+            }
+        }
+        for scheme in Eip8130AuthScheme::ALL {
+            assert_listed(scheme);
+        }
+    }
 
     #[test]
     fn plain_request_has_no_eip8130_fields() {

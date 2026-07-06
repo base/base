@@ -177,18 +177,19 @@ impl BaseTransactionRequest {
 
     /// Whether a `sender_auth` blob is in the prefixed configured-account form
     /// (`authenticator(20) || data`) rather than a bare EOA signature: true when
-    /// it begins with an enshrined authenticator selector. This mirrors the wire
-    /// authentication form the intrinsic-gas schedule prices the blob under, so a
-    /// prefixed blob simulates on the configured-account path (`sender` set) and
-    /// a bare or absent blob on the default-EOA path (`sender` unset).
+    /// it begins with an enshrined authenticator selector, checked against
+    /// [`Eip8130AuthScheme::ALL`] (the single authoritative list, rather than a
+    /// second hardcoded address set that could drift from the enum). This
+    /// mirrors the wire authentication form the intrinsic-gas schedule prices
+    /// the blob under, so a prefixed blob simulates on the configured-account
+    /// path (`sender` set) and a bare or absent blob on the default-EOA path
+    /// (`sender` unset).
     fn is_prefixed_auth(blob: &Bytes) -> bool {
         if blob.len() < AUTHENTICATOR_SELECTOR_LEN {
             return false;
         }
         let selector = Address::from_slice(&blob[..AUTHENTICATOR_SELECTOR_LEN]);
-        selector == Eip8130AuthScheme::Secp256k1.authenticator()
-            || selector == Eip8130AuthScheme::P256.authenticator()
-            || selector == Eip8130AuthScheme::WebAuthn.authenticator()
+        Eip8130AuthScheme::ALL.into_iter().any(|scheme| scheme.authenticator() == selector)
     }
 
     /// Builds a prefixed stub authentication blob — `authenticator(20) || data`
