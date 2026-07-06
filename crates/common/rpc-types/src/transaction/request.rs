@@ -66,12 +66,12 @@ impl Eip8130AuthScheme {
 ///
 /// All fields are optional and absent for a plain (non-8130) request; their
 /// presence (via [`Eip8130RequestFields::is_some`]) marks a request as an
-/// EIP-8130 simulation. Raw signatures (`sender_auth`, `payer_auth`) are never
-/// passed: estimation runs without a signature. Instead a caller declares the
-/// authentication *scheme* it intends to use (and, for sponsored transactions,
-/// the `payer`), and the estimate prices that scheme's authentication gas by
-/// synthesizing a correctly-shaped stub blob — so a caller estimates the cost
-/// of any key type without first signing.
+/// EIP-8130 simulation. Authentication is priced from the *shape* of the
+/// `sender_auth` / `payer_auth` blobs, never verified: the caller passes the
+/// authentication blob it intends to sign (`authenticator(20) || data`, or a
+/// bare secp256k1 signature for the default EOA), and the estimate charges that
+/// blob's authenticator execution gas plus its EIP-2028 calldata cost — so a
+/// caller estimates the cost of any key type without first signing.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Eip8130RequestFields {
@@ -91,27 +91,29 @@ pub struct Eip8130RequestFields {
     /// Opaque, non-executed transaction metadata.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Bytes>,
-    /// Authentication scheme the sender will use, priced into the estimate.
-    /// Absent (or [`Eip8130AuthScheme::Secp256k1`]) prices the default-EOA
-    /// bare-signature path; [`Eip8130AuthScheme::P256`] / `WebAuthn` price the
-    /// configured-account authenticator path.
+    /// Raw sender authentication blob whose *shape* is priced into the estimate.
+    /// Never verified: estimation only reads its length (for EIP-2028 calldata
+    /// gas) and, when present, its leading 20-byte authenticator selector (for
+    /// the intrinsic-schedule execution gas).
+    ///
+    /// - Absent prices the default-EOA bare-signature (secp256k1) path.
+    /// - A blob prefixed with a configured-account authenticator
+    ///   ([`Eip8130AuthScheme::P256`] / `WebAuthn`) as `authenticator(20) ||
+    ///   data` prices that configured-account path.
+    ///
+    /// Pass a representative blob for the key you intend to sign with (e.g. a
+    /// filler-byte stub of the right length); you need not sign first.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sender_auth_scheme: Option<Eip8130AuthScheme>,
-    /// Byte length of the sender's authentication payload, overriding the
-    /// scheme default — set this to size a variable-length `WebAuthn` signature.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sender_auth_size: Option<u32>,
+    pub sender_auth: Option<Bytes>,
     /// Sponsoring payer account. When set, the estimate includes payer
     /// authentication gas (metered on top of the gas limit, as in execution).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payer: Option<Address>,
-    /// Authentication scheme the payer will use (defaults to secp256k1).
+    /// Raw payer authentication blob (`authenticator(20) || data`) whose shape
+    /// is priced when a `payer` is declared. Absent defaults to a representative
+    /// secp256k1 payer authorization.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub payer_auth_scheme: Option<Eip8130AuthScheme>,
-    /// Byte length of the payer's authentication payload, overriding the scheme
-    /// default.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub payer_auth_size: Option<u32>,
+    pub payer_auth: Option<Bytes>,
 }
 
 impl Eip8130RequestFields {
@@ -123,11 +125,9 @@ impl Eip8130RequestFields {
             || self.calls.is_some()
             || self.expiry.is_some()
             || self.metadata.is_some()
-            || self.sender_auth_scheme.is_some()
-            || self.sender_auth_size.is_some()
+            || self.sender_auth.is_some()
             || self.payer.is_some()
-            || self.payer_auth_scheme.is_some()
-            || self.payer_auth_size.is_some()
+            || self.payer_auth.is_some()
     }
 }
 
