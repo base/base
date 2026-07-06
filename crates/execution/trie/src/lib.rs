@@ -28,7 +28,8 @@ pub use in_memory::{
 
 pub mod db;
 pub use db::{
-    MdbxAccountCursor, MdbxBatchSession, MdbxProofsStorage, MdbxStorageCursor, MdbxTrieCursor,
+    MdbxAccountCursor, MdbxBatchSession, MdbxProofsStorage, MdbxProofsStorageOptions,
+    MdbxStorageCursor, MdbxTrieCursor,
 };
 
 pub mod metrics;
