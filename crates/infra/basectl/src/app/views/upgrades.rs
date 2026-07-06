@@ -83,7 +83,7 @@ impl ChainUpgrades {
         let Some(timestamp) = timestamp else { return };
         let Some(spec) = self.specs.iter_mut().find(|spec| spec.upgrade == upgrade) else {
             tracing::warn!(
-                chain = self.display_name,
+                chain = %self.display_name,
                 upgrade = ?upgrade,
                 "missing upgrade spec while applying upgrade timestamp"
             );
@@ -119,9 +119,22 @@ impl ChainUpgrades {
     }
 
     fn seeded_expected_admin(&self, now: u64) -> Option<(&'static str, Address)> {
-        let spec = self.next_scheduled_spec(now)?;
-        ChainConfig::activation_admin_address_for_upgrade_by_chain_id(self.chain_id, spec.upgrade)
-            .map(|admin| (spec.name, admin))
+        // Scan future specs in ascending timestamp order and return the first one whose upgrade
+        // has a known seeded admin. This way the panel stays informative even when the
+        // immediately-next upgrade (e.g. Azul) predates the activation-registry pattern.
+        self.specs
+            .iter()
+            .filter_map(|spec| {
+                spec.timestamp.filter(|&ts| ts > now).and_then(|ts| {
+                    ChainConfig::activation_admin_address_for_upgrade_by_chain_id(
+                        self.chain_id,
+                        spec.upgrade,
+                    )
+                    .map(|admin| (ts, spec.name, admin))
+                })
+            })
+            .min_by_key(|(ts, _, _)| *ts)
+            .map(|(_, name, admin)| (name, admin))
     }
 }
 
@@ -791,13 +804,16 @@ impl UpgradesView {
             return;
         };
 
+        // Preserve the scan position before reset_for_rpc can clear it on an RPC URL change,
+        // so the new watcher resumes from where the old one left off rather than rescanning
+        // from the current safe head.
+        let last_scanned_safe_block = self.admin_activity[chain_idx].last_scanned_safe_block;
         self.admin_activity[chain_idx].reset_for_rpc(&rpc_url);
 
         if self.admin_activity_watcher.needs_restart(chain_idx, &rpc_url) {
             self.admin_activity_watcher.stop(&mut self.admin_activity);
             self.admin_activity[chain_idx].status =
                 "Connecting to confirmed activity watcher…".to_string();
-            let last_scanned_safe_block = self.admin_activity[chain_idx].last_scanned_safe_block;
             self.admin_activity_watcher.start(chain_idx, rpc_url, last_scanned_safe_block);
         }
     }
@@ -1570,12 +1586,7 @@ fn fmt_activity_timestamp(ts: u64) -> String {
 }
 
 fn short_hash(hash: B256) -> String {
-    let value = format!("{hash:#x}");
-    if value.len() <= 18 {
-        value
-    } else {
-        format!("{}..{}", &value[..12], &value[value.len() - 4..])
-    }
+    truncate_hex(format!("{hash:#x}"), 12)
 }
 
 fn activation_feature_detail(feature: B256) -> String {
@@ -1728,19 +1739,44 @@ async fn run_admin_activity_streaming(
             return;
         }
 
-        let provider = match ProviderBuilder::new().connect(&rpc_url).await {
-            Ok(provider) => provider,
-            Err(error) => {
-                if tx
-                    .send(AdminActivityUpdate::Status(format!("RPC connection failed: {error}")))
-                    .await
-                    .is_err()
-                {
+        let provider = {
+            let url = match rpc_url.parse::<alloy_transport_http::reqwest::Url>() {
+                Ok(u) => u,
+                Err(error) => {
+                    if tx
+                        .send(AdminActivityUpdate::Status(format!("Invalid RPC URL: {error}")))
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                    // An invalid URL won't be fixed by retrying, so stop the loop.
                     return;
                 }
-                tokio::time::sleep(ADMIN_ACTIVITY_RETRY_DELAY).await;
-                continue;
-            }
+            };
+            let http_client = match alloy_transport_http::reqwest::Client::builder()
+                .timeout(Duration::from_secs(12))
+                .build()
+            {
+                Ok(c) => c,
+                Err(error) => {
+                    if tx
+                        .send(AdminActivityUpdate::Status(format!(
+                            "RPC connection failed: {error}"
+                        )))
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                    tokio::time::sleep(ADMIN_ACTIVITY_RETRY_DELAY).await;
+                    continue;
+                }
+            };
+            let transport = alloy_transport_http::Http::with_client(http_client, url);
+            ProviderBuilder::new()
+                .disable_recommended_fillers()
+                .connect_client(alloy_rpc_client::RpcClient::new(transport, false))
         };
 
         let live_admin_client = make_rpc_client(&rpc_url)
@@ -1926,13 +1962,17 @@ fn decode_rpc_bytes(value: &str) -> Result<Vec<u8>, String> {
     hex::decode(value.trim_start_matches("0x")).map_err(|e| format!("invalid hex response: {e}"))
 }
 
-fn short_address(address: Address) -> String {
-    let value = address.to_string();
-    if value.len() <= 14 {
+fn truncate_hex(value: String, prefix_len: usize) -> String {
+    const SUFFIX_LEN: usize = 4;
+    if value.len() <= prefix_len + 2 + SUFFIX_LEN {
         value
     } else {
-        format!("{}..{}", &value[..10], &value[value.len() - 4..])
+        format!("{}..{}", &value[..prefix_len], &value[value.len() - SUFFIX_LEN..])
     }
+}
+
+fn short_address(address: Address) -> String {
+    truncate_hex(address.to_string(), 10)
 }
 
 async fn activation_admin(client: &HttpClient) -> Result<Address, String> {
@@ -2620,7 +2660,8 @@ mod tests {
     }
 
     #[test]
-    fn seeded_expected_admin_uses_next_scheduled_upgrade() {
+    fn seeded_expected_admin_skips_upgrades_without_known_admin() {
+        // Azul has no seeded admin; seeded_expected_admin should look past it to Cobalt.
         let chain = ChainUpgrades {
             display_name: "Mainnet",
             chain_id: ChainConfig::mainnet().chain_id,
@@ -2630,14 +2671,16 @@ mod tests {
                 UpgradeSpec { upgrade: BaseUpgrade::Cobalt, name: "Cobalt", timestamp: Some(30) },
             ],
         };
+        let cobalt_admin = ChainConfig::mainnet()
+            .activation_admin_address_for_upgrade(BaseUpgrade::Cobalt)
+            .map(|admin| ("Cobalt", admin));
 
-        assert_eq!(chain.seeded_expected_admin(10), None);
-        assert_eq!(
-            chain.seeded_expected_admin(25),
-            ChainConfig::mainnet()
-                .activation_admin_address_for_upgrade(BaseUpgrade::Cobalt)
-                .map(|admin| ("Cobalt", admin))
-        );
+        // When Azul is next but has no seeded admin, Cobalt's admin is surfaced instead.
+        assert_eq!(chain.seeded_expected_admin(10), cobalt_admin);
+        // Once Azul has activated, Cobalt is the next with a known admin.
+        assert_eq!(chain.seeded_expected_admin(25), cobalt_admin);
+        // Once all future upgrades have passed, nothing is returned.
+        assert_eq!(chain.seeded_expected_admin(35), None);
     }
 
     #[test]
