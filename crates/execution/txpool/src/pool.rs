@@ -2025,11 +2025,7 @@ mod tests {
             });
         let ordering = BaseOrdering::default();
         let pool = Pool::new(validator, ordering.clone(), blob_store, PoolConfig::default());
-        (
-            BaseTransactionPool::new(pool, ordering)
-                .with_guard_limits(GuardLimits::default()),
-            client,
-        )
+        (BaseTransactionPool::new(pool, ordering).with_guard_limits(GuardLimits::default()), client)
     }
 
     fn fund(client: &MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>, account: Address) {
