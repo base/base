@@ -10,6 +10,10 @@ variable "BASE_SUCCINCT_ELF_REQUIRE" {
   default = "1"
 }
 
+variable "ZK_HOST_PROFILE" {
+  default = "release"
+}
+
 variable "REGISTRY_IMAGE" {
   default = "ghcr.io/base/node-reth-dev"
 }
@@ -123,7 +127,7 @@ target "zk-host" {
   inherits = ["_rust-service-common"]
   target = "zk-host"
   args = {
-    PROFILE                   = "${PROFILE}"
+    PROFILE                   = "${ZK_HOST_PROFILE}"
     BASE_SUCCINCT_ELF_REQUIRE = "${BASE_SUCCINCT_ELF_REQUIRE}"
   }
   tags = ["base-prover-zk-host:local"]

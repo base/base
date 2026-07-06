@@ -114,7 +114,7 @@ build-image target='base' profile='dev':
         esac
         ;;
     esac
-    PROFILE="{{ profile }}" BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" PLATFORM_PAIR="${platform_pair}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ target }}" --load
+    PROFILE="{{ profile }}" ZK_HOST_PROFILE=release BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" PLATFORM_PAIR="${platform_pair}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ target }}" --load
 
 # Prepares Docker images needed for system tests
 pull-images:
@@ -164,7 +164,7 @@ _build-rust-images group profile='dev':
         esac
         ;;
     esac
-    PROFILE="{{ profile }}" BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" PLATFORM_PAIR="${platform_pair}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ group }}" --load
+    PROFILE="{{ profile }}" ZK_HOST_PROFILE=release BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" PLATFORM_PAIR="${platform_pair}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ group }}" --load
 
 [private]
 _up-devnet compose_profile zk:
@@ -188,7 +188,7 @@ _up-devnet compose_profile zk:
         just --justfile {{ source_file() }} down
         just --justfile {{ source_file() }} _build-setup-image
         just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
-        PROOF_TYPE="${PROOF_TYPE:-compressed}" ZK_BACKEND=dry_run docker compose {{ _env }} "${compose_files[@]}" up -d --no-build
+        PROOF_TYPE="${PROOF_TYPE:-compressed}" ZK_BACKEND=dry_run docker compose {{ _env }} "${compose_files[@]}" up -d --no-build --remove-orphans
         ;;
       cluster)
         if [ -z "${AWS_ACCESS_KEY_ID:-}" ] || [ -z "${AWS_SECRET_ACCESS_KEY:-}" ]; then
@@ -238,7 +238,7 @@ _up-devnet compose_profile zk:
         just --justfile {{ source_file() }} down
         just --justfile {{ source_file() }} _build-setup-image
         just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
-        PROOF_TYPE="${PROOF_TYPE:-compressed}" docker compose {{ _env }} --env-file "$cluster_env" "${compose_files[@]}" up -d --no-build
+        PROOF_TYPE="${PROOF_TYPE:-compressed}" docker compose {{ _env }} --env-file "$cluster_env" "${compose_files[@]}" up -d --no-build --remove-orphans
         ;;
       *)
         echo "ERROR: zk must be 'dry-run' or 'cluster' (got '${zk_mode}')" >&2

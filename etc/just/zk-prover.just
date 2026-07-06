@@ -23,6 +23,7 @@ prove start_block number_of_blocks='1' proof_type='compressed' session_id='' pro
     start_block={{ quote(start_block) }}
     number_of_blocks={{ quote(number_of_blocks) }}
     proof_type={{ quote(proof_type) }}
+    proof_type="${proof_type#proof_type=}"
     proof_type="$(printf '%s' "$proof_type" | tr '[:upper:]-' '[:lower:]_')"
     session_id={{ quote(session_id) }}
     prover_address={{ quote(prover_address) }}
@@ -174,4 +175,7 @@ _rpc method params:
     fi
     if [ "$http_status" -ge 400 ]; then
       exit 22
+    fi
+    if jq -e '.error' "$response_file" >/dev/null 2>&1; then
+      exit 1
     fi
