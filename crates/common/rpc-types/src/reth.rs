@@ -67,9 +67,11 @@ impl BaseTransactionRequest {
     /// returns `None` (surfaced as `INVALID_PARAMS`) rather than silently
     /// falling back to the zero address.
     ///
-    /// A `sender_auth` / `payer_auth` blob longer than the 20-byte authenticator
-    /// selector plus [`MAX_AUTH_SIZE`] data bytes returns `None` (surfaced as
-    /// `INVALID_PARAMS`) rather than pricing an unbounded payload.
+    /// A `sender_auth` / `payer_auth` blob whose data exceeds [`MAX_AUTH_SIZE`]
+    /// bytes (excluding the 20-byte authenticator selector on the configured
+    /// path) returns `None` (surfaced as `INVALID_PARAMS`) rather than pricing
+    /// an unbounded payload, as does a `sender` set to anything other than
+    /// `from`.
     pub fn to_eip8130_simulation_tx(
         &self,
         chain_id: u64,
@@ -85,13 +87,21 @@ impl BaseTransactionRequest {
         // configured-account path, where `sender_auth` is a prefixed
         // `authenticator(20) || data` blob. The blob is priced verbatim (never
         // verified); an absent blob synthesizes a correctly-shaped stub.
+        //
+        // A configured-account `sender` must be the `from` account: execution
+        // identity is recovered from `from`, so a divergent `sender` would price
+        // a transaction that could never be submitted.
         let sender = aa.sender;
+        if matches!(sender, Some(s) if s != from) {
+            return None;
+        }
+        let prefixed_sender = sender.is_some();
         let sender_auth = match &aa.sender_auth {
             Some(blob) => {
-                Self::check_auth_len(blob)?;
+                Self::check_auth_len(blob, prefixed_sender)?;
                 blob.clone()
             }
-            None if sender.is_some() => Self::stub_prefixed_auth(
+            None if prefixed_sender => Self::stub_prefixed_auth(
                 Eip8130AuthScheme::Secp256k1,
                 Eip8130AuthScheme::Secp256k1.default_data_len(),
             ),
@@ -105,7 +115,7 @@ impl BaseTransactionRequest {
             Some(payer) => {
                 let blob = match &aa.payer_auth {
                     Some(blob) => {
-                        Self::check_auth_len(blob)?;
+                        Self::check_auth_len(blob, true)?;
                         blob.clone()
                     }
                     None => Self::stub_prefixed_auth(
@@ -150,11 +160,17 @@ impl BaseTransactionRequest {
     }
 
     /// Rejects (as `None`, surfaced to the caller as `INVALID_PARAMS`) an
-    /// authentication blob longer than the 20-byte authenticator selector plus
-    /// [`MAX_AUTH_SIZE`] data bytes, bounding the calldata the estimate prices.
-    fn check_auth_len(blob: &Bytes) -> Option<()> {
-        (blob.len() as u64 <= AUTHENTICATOR_SELECTOR_LEN as u64 + u64::from(MAX_AUTH_SIZE))
-            .then_some(())
+    /// authentication blob whose *data* exceeds [`MAX_AUTH_SIZE`] bytes,
+    /// excluding the 20-byte authenticator selector for a `prefixed`
+    /// (`authenticator(20) || data`) blob, bounding the calldata the estimate
+    /// prices.
+    fn check_auth_len(blob: &Bytes, prefixed: bool) -> Option<()> {
+        let data_len = if prefixed {
+            blob.len().saturating_sub(AUTHENTICATOR_SELECTOR_LEN)
+        } else {
+            blob.len()
+        };
+        (data_len as u64 <= u64::from(MAX_AUTH_SIZE)).then_some(())
     }
 
     /// Builds a prefixed stub authentication blob — `authenticator(20) || data`
@@ -352,31 +368,74 @@ mod tests {
     }
 
     #[test]
-    fn sender_auth_at_the_cap_is_accepted() {
+    fn sender_auth_data_at_the_cap_is_accepted() {
+        // On the configured path the 20-byte selector is excluded from the cap,
+        // so `MAX_AUTH_SIZE` data bytes are honoured (total = selector + data).
         let tx = sim_tx(json!({
             "from": FROM,
             "calls": [],
+            "sender": FROM,
             "senderAuth": blob(Some(Eip8130Contracts::WEBAUTHN_AUTHENTICATOR), MAX_AUTH_SIZE as usize),
         }));
         let auth = signed(&tx).sender_auth();
         assert_eq!(
             auth.len(),
             20 + MAX_AUTH_SIZE as usize,
-            "a blob at the cap is honoured (selector + data)",
+            "data at the cap is honoured (selector + data)",
         );
     }
 
     #[test]
-    fn oversize_sender_auth_is_rejected() {
+    fn bare_sender_auth_data_at_the_cap_is_accepted() {
+        // On the EOA path there is no selector, so the whole blob is the data.
+        let tx = sim_tx(json!({
+            "from": FROM,
+            "calls": [],
+            "senderAuth": blob(None, MAX_AUTH_SIZE as usize),
+        }));
+        assert_eq!(signed(&tx).sender_auth().len(), MAX_AUTH_SIZE as usize);
+    }
+
+    #[test]
+    fn oversize_sender_auth_data_is_rejected() {
         let req: BaseTransactionRequest = serde_json::from_value(json!({
             "from": FROM,
             "calls": [],
+            "sender": FROM,
             "senderAuth": blob(Some(Eip8130Contracts::WEBAUTHN_AUTHENTICATOR), MAX_AUTH_SIZE as usize + 1),
         }))
         .expect("valid request");
         assert!(
             req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none(),
             "an over-cap sender auth blob is rejected rather than priced",
+        );
+    }
+
+    #[test]
+    fn oversize_bare_sender_auth_is_rejected() {
+        // A bare blob has no selector, so its whole length is capped at
+        // MAX_AUTH_SIZE (no 20-byte headroom).
+        let req: BaseTransactionRequest = serde_json::from_value(json!({
+            "from": FROM,
+            "calls": [],
+            "senderAuth": blob(None, MAX_AUTH_SIZE as usize + 1),
+        }))
+        .expect("valid request");
+        assert!(req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none());
+    }
+
+    #[test]
+    fn sender_differing_from_from_is_rejected() {
+        let other = address!("0x00000000000000000000000000000000000000c3");
+        let req: BaseTransactionRequest = serde_json::from_value(json!({
+            "from": FROM,
+            "calls": [],
+            "sender": other,
+        }))
+        .expect("valid request");
+        assert!(
+            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none(),
+            "a configured sender must equal the from account",
         );
     }
 

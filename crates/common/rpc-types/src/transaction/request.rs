@@ -96,8 +96,10 @@ pub struct Eip8130RequestFields {
     ///
     /// - Absent selects the default-EOA path: the sender is a bare secp256k1
     ///   key, exactly as for a 1559 transaction (no authenticator is declared).
-    /// - Set (to the `from` account) selects the configured-account path, where
-    ///   `sender_auth` is priced as a prefixed `authenticator(20) || data` blob.
+    /// - Set selects the configured-account path, where `sender_auth` is priced
+    ///   as a prefixed `authenticator(20) || data` blob. It must equal `from`
+    ///   (the estimate recovers execution identity from `from`); a divergent
+    ///   value is rejected as `INVALID_PARAMS`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sender: Option<Address>,
     /// Raw sender authentication blob whose *shape* is priced into the estimate.
