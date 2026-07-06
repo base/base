@@ -102,7 +102,11 @@ impl EvmFactory for BaseEvmFactory {
 #[cfg(test)]
 mod tests {
     use alloy_evm::EvmEnv;
-    use revm::{context::{BlockEnv, CfgEnv}, database::EmptyDB, inspector::NoOpInspector};
+    use revm::{
+        context::{BlockEnv, CfgEnv},
+        database::EmptyDB,
+        inspector::NoOpInspector,
+    };
 
     use super::*;
     use crate::BaseUpgrade;
@@ -121,7 +125,8 @@ mod tests {
     #[test]
     fn create_evm_with_inspector_has_inspect_true() {
         let factory = BaseEvmFactory::default();
-        let evm = factory.create_evm_with_inspector(EmptyDB::default(), default_env(), NoOpInspector {});
+        let evm =
+            factory.create_evm_with_inspector(EmptyDB::default(), default_env(), NoOpInspector {});
         assert!(evm.inspect);
     }
 }
