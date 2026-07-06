@@ -945,23 +945,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-proof-succinct-ethereum-client-utils"
-version = "0.0.0"
-dependencies = [
- "alloy-genesis",
- "anyhow",
- "async-trait",
- "base-common-genesis",
- "base-consensus-derive",
- "base-proof",
- "base-proof-driver",
- "base-proof-executor",
- "base-proof-preimage",
- "base-proof-succinct-client-utils",
- "spin 0.10.0",
-]
-
-[[package]]
 name = "base-proof-succinct-range-utils"
 version = "0.0.0"
 dependencies = [
@@ -2694,7 +2677,6 @@ version = "0.0.0"
 dependencies = [
  "base-proof",
  "base-proof-succinct-client-utils",
- "base-proof-succinct-ethereum-client-utils",
  "base-proof-succinct-range-utils",
  "rkyv",
  "sp1-zkvm",
