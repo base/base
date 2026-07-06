@@ -117,6 +117,15 @@ impl WatchManifest {
     /// rejects a valid one.
     ///
     /// `now` is the timestamp of the block being built.
+    /// # Note on `&mut DB` and cache effects
+    ///
+    /// `revm::Database::storage` requires `&mut self`, so the signature takes
+    /// `&mut DB` even though `revalidate` does not write anything. The reads may
+    /// be cached by the EVM's journal; this is correct for execution (the same
+    /// value would be returned on any real execution read) but may include extra
+    /// storage proofs in witness mode for slots that no actual execution would
+    /// touch. This is a minor witness-size trade-off and does not affect
+    /// correctness.
     pub fn revalidate<DB: Database>(&self, db: &mut DB, now: u64) -> Result<(), ManifestStale> {
         if self.effective_expiry != u64::MAX && now > self.effective_expiry {
             return Err(ManifestStale::Expired { deadline: self.effective_expiry, now });

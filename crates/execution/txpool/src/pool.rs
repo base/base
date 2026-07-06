@@ -214,7 +214,10 @@ where
             nonce_pool: Arc::new(RwLock::new(TwoDNoncePool::new(price_bump_config))),
             eip8130_replays: Arc::new(RwLock::new(HashMap::new())),
             listeners: Arc::new(RwLock::new(SidecarListeners::default())),
-            guard: Arc::new(RwLock::new(MempoolGuard::new(GuardLimits::default()))),
+            // Start unlimited so a caller that omits `with_guard_limits` gets
+            // the documented fail-open staging behaviour rather than silently
+            // enforcing the 4/4 default caps. `with_guard_limits` replaces this.
+            guard: Arc::new(RwLock::new(MempoolGuard::unlimited())),
             last_fired_expiry_bucket: Arc::new(RwLock::new(None)),
         }
     }
@@ -358,6 +361,13 @@ where
             / InvalidationKey::EXPIRY_BUCKET_SECS;
         let keys: Vec<InvalidationKey> = {
             let mut last = self.last_fired_expiry_bucket.write();
+            // On the first canonical update `last` is `None`, so `start` equals
+            // `horizon_bucket` and only that single bucket is fired. Transactions
+            // admitted during initial sync with expiries in earlier (already-past)
+            // buckets are not eagerly evicted here. This is intentional: the node
+            // is still syncing at that point and such transactions are stale by
+            // construction; the builder's manifest pre-check and the per-block
+            // reconcile will catch them before they can be included.
             let start = last.map_or(horizon_bucket, |prev| prev.saturating_add(1));
             *last = Some(last.map_or(horizon_bucket, |prev| prev.max(horizon_bucket)));
             if start > horizon_bucket {
@@ -1435,6 +1445,14 @@ where
         // single balance sweep covers both the sidecar and reth-resident members
         // that reth's own sender-keyed update_accounts would miss. Dropped hashes
         // are routed back to whichever pool holds them.
+        //
+        // For reth's own maintenance: sponsored EIP-8130 transactions are
+        // validated with `balance = payer_balance_after_auth` and
+        // `authorities = Some(vec![payer])`. Reth uses the `authorities` list to
+        // watch the payer account for balance changes (same mechanism as
+        // EIP-7702), so its `update_accounts` also tracks the payer — not just
+        // the sender. There is therefore no window where reth independently evicts
+        // a sponsored tx for insufficient *sender* balance.
         let dropped = {
             let mut guard = self.guard.write();
             let mut dropped = Vec::new();
@@ -1676,11 +1694,12 @@ fn pooled_element<T: BasePooledTx>(
 mod tests {
     use std::time::Instant;
 
-    use alloy_consensus::{SignableTransaction, TxEip1559, transaction::SignerRecoverable};
-    use alloy_consensus::{Transaction, transaction::Recovered};
+    use alloy_consensus::{
+        SignableTransaction, Transaction, TxEip1559,
+        transaction::{Recovered, SignerRecoverable},
+    };
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::TxKind;
-    use alloy_primitives::{Bytes, U256};
+    use alloy_primitives::{Bytes, TxKind, U256};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
@@ -2006,7 +2025,11 @@ mod tests {
             });
         let ordering = BaseOrdering::default();
         let pool = Pool::new(validator, ordering.clone(), blob_store, PoolConfig::default());
-        (BaseTransactionPool::new(pool, ordering), client)
+        (
+            BaseTransactionPool::new(pool, ordering)
+                .with_guard_limits(GuardLimits::default()),
+            client,
+        )
     }
 
     fn fund(client: &MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>, account: Address) {

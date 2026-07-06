@@ -929,6 +929,12 @@ where
             Self::validate_eip8130_delegation(&*state, sender, sender_actor)?;
         }
 
+        // Deliberately use a fresh (non-overlay) storage for nonce validation.
+        // The overlay accumulated writes from `authorize_and_apply` (config
+        // mutations, etc.); nonce validation must check canonical (committed)
+        // state, not speculative in-flight writes. Do not "fix" this by reusing
+        // the overlay — the overlay's buffered writes would give incorrect nonce
+        // channel state.
         let mut storage = StateProviderPrecompileStorage::new(&*state, local_chain_id, now);
         StorageCtx::enter(&mut storage, |ctx| {
             let nonce_storage = NonceManagerStorage::new(ctx);
