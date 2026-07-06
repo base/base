@@ -31,6 +31,7 @@ pub async fn launch_node_with_proof_history(
 ) -> eyre::Result<(), ErrReport> {
     let RollupArgs {
         proofs_history,
+        proofs_history_mdbx,
         proofs_history_window,
         proofs_history_prune_interval,
         proofs_history_verification_interval,
@@ -48,7 +49,7 @@ pub async fn launch_node_with_proof_history(
         info!(target: "reth::cli", "Using on-disk storage for proofs history");
 
         let mdbx = Arc::new(
-            MdbxProofsStorage::new(&path)
+            MdbxProofsStorage::new_with_options(&path, proofs_history_mdbx.storage_options())
                 .map_err(|e| eyre::eyre!("Failed to create MdbxProofsStorage: {e}"))?,
         );
         let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::clone(&mdbx).into();
