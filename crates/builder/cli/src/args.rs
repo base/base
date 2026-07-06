@@ -116,6 +116,15 @@ pub struct Args {
     #[arg(long = "builder.max-rejected-txs-per-block", default_value = "500")]
     pub max_rejected_txs_per_block: usize,
 
+    /// Whether to restore transactions pruned during flashblock building back into the pool when a
+    /// payload job is abandoned (superseded/expired) before being sealed.
+    #[arg(
+        long = "builder.flashblock-prune-rollback-enabled",
+        env = "BUILDER_FLASHBLOCK_PRUNE_ROLLBACK_ENABLED",
+        default_value = "false"
+    )]
+    pub flashblock_prune_rollback_enabled: bool,
+
     /// Buffer size for tx data store (LRU eviction when full)
     #[arg(long = "builder.tx-data-store-buffer-size", default_value = "10000")]
     pub tx_data_store_buffer_size: usize,
@@ -172,6 +181,7 @@ impl Default for Args {
             audit_archiver_url: None,
             rejected_tx_channel_size: 500,
             max_rejected_txs_per_block: 500,
+            flashblock_prune_rollback_enabled: false,
             tx_data_store_buffer_size: 10000,
             metering_store_ttl_secs: 30,
             rejection_cache_max_capacity: 100_000,
@@ -223,6 +233,7 @@ impl Args {
             audit_archiver_url: self.audit_archiver_url,
             rejected_tx_channel_size: self.rejected_tx_channel_size,
             max_rejected_txs_per_block: self.max_rejected_txs_per_block,
+            flashblock_prune_rollback_enabled: self.flashblock_prune_rollback_enabled,
         })
     }
 }

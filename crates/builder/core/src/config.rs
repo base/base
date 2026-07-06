@@ -167,7 +167,7 @@ impl Default for BuilderConfig {
             audit_archiver_url: None,
             rejected_tx_channel_size: 500,
             max_rejected_txs_per_block: 500,
-            flashblock_prune_rollback_enabled: true,
+            flashblock_prune_rollback_enabled: false,
         }
     }
 }
