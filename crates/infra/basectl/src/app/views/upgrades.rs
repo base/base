@@ -5,9 +5,11 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use alloy_primitives::{Address, B256, hex};
+use alloy_primitives::{Address, B256, Bytes, hex};
 use alloy_provider::{Provider, ProviderBuilder};
-use alloy_rpc_types_eth::{BlockNumberOrTag, Filter};
+use alloy_rpc_types_eth::{
+    BlockId, BlockNumberOrTag, Filter, TransactionInput, TransactionRequest,
+};
 use alloy_sol_types::SolCall;
 use base_common_chains::{BaseUpgrade, ChainConfig};
 use base_common_genesis::UpgradeConfig;
@@ -472,6 +474,7 @@ impl AdminActivityChainState {
         self.entries.clear();
         self.live_admin = None;
         self.last_scanned_safe_block = None;
+        self.status.clear();
     }
 }
 
@@ -495,8 +498,8 @@ struct AdminActivityWatcher {
 impl AdminActivityWatcher {
     fn start(&mut self, chain_idx: usize, rpc_url: String, last_scanned_safe_block: Option<u64>) {
         let (tx, rx) = mpsc::channel(64);
-        debug_assert!(self.handle.is_none());
-        debug_assert!(self.rx.is_none());
+        assert!(self.handle.is_none(), "AdminActivityWatcher::start called while already running");
+        assert!(self.rx.is_none(), "AdminActivityWatcher::start called with rx already set");
         self.chain_idx = Some(chain_idx);
         self.rpc_url = rpc_url.clone();
         self.rx = Some(rx);
@@ -967,12 +970,13 @@ impl View for UpgradesView {
             selected_check_spec,
             self.auto_refresh,
         );
+        let seeded_expected = chain.seeded_expected_admin(now);
         render_admin_activity_panel(
             frame,
             right[1],
             &self.admin_activity[self.selected_chain],
-            next_scheduled.map(|spec| spec.name),
-            chain.seeded_expected_admin(now).map(|(_, admin)| admin),
+            seeded_expected.map(|(name, _)| name),
+            seeded_expected.map(|(_, admin)| admin),
         );
         render_footer(frame, outer[3], self.checks.running, self.auto_refresh);
     }
@@ -1778,10 +1782,7 @@ async fn run_admin_activity_streaming(
                 .connect_client(alloy_rpc_client::RpcClient::new(transport, false))
         };
 
-        let live_admin_client = make_rpc_client(&rpc_url)
-            .map_err(|error| format!("live-admin client build failed: {error}"));
-
-        let live_admin_status = match send_safe_live_admin_update(&tx, &live_admin_client).await {
+        let live_admin_status = match send_safe_live_admin_update(&tx, &provider).await {
             Ok(status) => status,
             Err(()) => return,
         };
@@ -1843,8 +1844,7 @@ async fn run_admin_activity_streaming(
                 {
                     return;
                 }
-                let reset_status = match send_safe_live_admin_update(&tx, &live_admin_client).await
-                {
+                let reset_status = match send_safe_live_admin_update(&tx, &provider).await {
                     Ok(Some(detail)) => {
                         format!(
                             "Safe head moved backwards; resetting confirmed activity cache. {detail}"
@@ -1978,29 +1978,36 @@ async fn activation_admin(client: &HttpClient) -> Result<Address, String> {
     activation_admin_at_tag(client, "latest").await
 }
 
-async fn fetch_safe_live_admin(client: &HttpClient) -> Result<Option<Address>, String> {
-    activation_admin_at_tag(client, "safe")
+async fn fetch_safe_live_admin<P: Provider + ?Sized>(
+    provider: &P,
+) -> Result<Option<Address>, String> {
+    let request = TransactionRequest::default()
+        .to(ActivationRegistryStorage::ADDRESS)
+        .input(TransactionInput::new(Bytes::from(IActivationRegistry::adminCall {}.abi_encode())));
+    provider
+        .call(request)
+        .block(BlockId::Number(BlockNumberOrTag::Safe))
         .await
-        .map(|admin| (!admin.is_zero()).then_some(admin))
-        .map_err(|error| format!("safe live-admin query failed: {error}"))
+        .map_err(|e| format!("safe live-admin query failed: {e}"))
+        .and_then(|bytes| {
+            IActivationRegistry::adminCall::abi_decode_returns(&bytes)
+                .map(|admin| (!admin.is_zero()).then_some(admin))
+                .map_err(|e| format!("safe live-admin decode failed: {e}"))
+        })
 }
 
-async fn send_safe_live_admin_update(
+async fn send_safe_live_admin_update<P: Provider + ?Sized>(
     tx: &mpsc::Sender<AdminActivityUpdate>,
-    client: &Result<HttpClient, String>,
+    provider: &P,
 ) -> Result<Option<String>, ()> {
-    let client = match client {
-        Ok(client) => client,
-        Err(error) => return Ok(Some(format!("Live admin unavailable: {error}"))),
-    };
-    match fetch_safe_live_admin(client).await {
+    match fetch_safe_live_admin(provider).await {
         Ok(admin) => {
             if tx.send(AdminActivityUpdate::LiveAdmin(admin)).await.is_err() {
                 return Err(());
             }
             Ok(None)
         }
-        Err(error) => Ok(Some(format!("Live admin unavailable: {error}"))),
+        Err(error) => Ok(Some(error)),
     }
 }
 
@@ -2726,7 +2733,7 @@ mod tests {
         assert!(state.entries.is_empty());
         assert!(state.live_admin.is_none());
         assert!(state.last_scanned_safe_block.is_none());
-        assert_eq!(state.status, "Watching confirmed activation activity");
+        assert!(state.status.is_empty());
     }
 
     #[test]
