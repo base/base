@@ -247,6 +247,20 @@ where
     }
 }
 
+impl<Builder> Drop for BlockPayloadJob<Builder>
+where
+    Builder: PayloadBuilder,
+{
+    /// Cancel the job's token when the job is dropped without having been resolved, superseded, or
+    /// reaching its deadline (e.g. the `PayloadBuilderService` drops it during shutdown, or a panic
+    /// unwind). This wakes the task spawned by `settle_pruned_transactions` on the
+    /// `disposition_known == false` path, which would otherwise wait forever on
+    /// `cancel.cancelled().await`
+    fn drop(&mut self) {
+        self.cancel.cancel();
+    }
+}
+
 impl<Builder> PayloadJob for BlockPayloadJob<Builder>
 where
     Builder: PayloadBuilder + Unpin + 'static,

@@ -497,7 +497,8 @@ where
                 self.finalize_payload(&mut state, &ctx, &mut info, &finalized_cell)?;
                 // The block is complete but not yet retrieved; the spawned task waits to learn
                 // whether it is sealed via `getPayload` or abandoned before restoring.
-                self.settle_pruned_transactions(
+                settle_pruned_transactions(
+                    self.pool.clone(),
                     pruned_transactions,
                     Arc::clone(&resolved),
                     block_cancel.clone(),
@@ -533,7 +534,8 @@ where
                     );
                     self.finalize_payload(&mut state, &ctx, &mut info, &finalized_cell)?;
                     // Cancellation already occurred; `resolved` distinguishes sealed from abandoned.
-                    self.settle_pruned_transactions(
+                    settle_pruned_transactions(
+                        self.pool.clone(),
                         pruned_transactions,
                         Arc::clone(&resolved),
                         block_cancel.clone(),
@@ -550,7 +552,8 @@ where
                         err
                     );
                     // The block failed to build and will not be sealed; restore pruned transactions.
-                    self.settle_pruned_transactions(
+                    settle_pruned_transactions(
+                        self.pool.clone(),
                         pruned_transactions,
                         Arc::clone(&resolved),
                         block_cancel.clone(),
@@ -574,7 +577,8 @@ where
                     );
                     self.finalize_payload(&mut state, &ctx, &mut info, &finalized_cell)?;
                     // Cancellation already occurred; `resolved` distinguishes sealed from abandoned.
-                    self.settle_pruned_transactions(
+                    settle_pruned_transactions(
+                        self.pool.clone(),
                         pruned_transactions,
                         Arc::clone(&resolved),
                         block_cancel.clone(),
@@ -903,57 +907,6 @@ where
         span.record("flashblock_count", ctx.flashblock_index());
     }
 
-    /// Decide the fate of transactions pruned during flashblock building for a job that is ending.
-    ///
-    /// Flashblock building prunes committed transactions from the pool mined-style (see
-    /// [`Self::build_next_flashblock`]). If the payload is sealed via `getPayload` that removal is
-    /// correct, but if the job is abandoned (superseded by a new FCU or expired) before sealing,
-    /// reth has no recovery path for it — so the pruned transactions are reinserted here.
-    ///
-    /// `disposition_known` should be `false` only when the job has finished building but has not
-    /// yet been cancelled (target flashblock count reached): in that case the spawned task waits for
-    /// the job to be sealed or abandoned before deciding. `resolved` is set by `resolve_kind` when
-    /// the payload is retrieved, distinguishing a sealed payload (keep pruned) from an abandoned one
-    /// (restore).
-    fn settle_pruned_transactions(
-        &self,
-        pruned: PrunedTransactions<Pool>,
-        resolved: Arc<AtomicBool>,
-        block_cancel: CancellationToken,
-        disposition_known: bool,
-    ) {
-        if pruned.is_empty() {
-            return;
-        }
-
-        let pool = self.pool.clone();
-        tokio::spawn(async move {
-            // Wait until the job's fate is known: sealed via `getPayload` (sets `resolved`) or
-            // abandoned (cancelled without `resolved`).
-            if !disposition_known {
-                block_cancel.cancelled().await;
-            }
-
-            if resolved.load(Ordering::Acquire) {
-                // The payload was retrieved and is being sealed; the pruned transactions are
-                // legitimately part of it, so leave them out of the pool.
-                return;
-            }
-
-            // Abandoned before sealing: restore the pruned transactions. Any transaction that does
-            // end up canonical is re-pruned by the canonical-state notification, so an occasional
-            // redundant reinsert is self-correcting.
-            let attempted = pruned.len();
-            let succeeded = restore_pruned_transactions(&pool, &pruned).await;
-            info!(
-                target: "payload_builder",
-                attempted,
-                restored = succeeded,
-                "Restored pruned transactions after payload abandonment",
-            );
-        });
-    }
-
     /// Finalize the payload by computing the state root and setting the finalized cell.
     fn finalize_payload<DB, P>(
         &self,
@@ -1077,6 +1030,61 @@ where
     let info = ctx.execute_sequencer_transactions(state)?;
 
     Ok(info)
+}
+
+/// Decide the fate of transactions pruned during flashblock building for a job that is ending, on a
+/// spawned task so the (blocking) build task can return immediately.
+///
+/// Returns the spawned task's [`JoinHandle`](tokio::task::JoinHandle) (or `None` when there is
+/// nothing to restore). Production callers drop it. The restore is intentionally fire-and-forget
+/// best-effort.
+pub(crate) fn settle_pruned_transactions<P: TransactionPool + 'static>(
+    pool: P,
+    pruned: PrunedTransactions<P>,
+    resolved: Arc<AtomicBool>,
+    block_cancel: CancellationToken,
+    disposition_known: bool,
+) -> Option<tokio::task::JoinHandle<()>> {
+    if pruned.is_empty() {
+        return None;
+    }
+
+    Some(tokio::spawn(async move {
+        // Wait until the job's fate is known: sealed via `getPayload` (sets `resolved`) or
+        // abandoned (cancelled without `resolved`).
+        if !disposition_known {
+            block_cancel.cancelled().await;
+        }
+
+        if resolved.load(Ordering::Acquire) {
+            // The payload was retrieved and is being sealed; the pruned transactions are
+            // legitimately part of it, so leave them out of the pool.
+            return;
+        }
+
+        // Abandoned before sealing: restore the pruned transactions. Any transaction that does end
+        // up canonical is re-pruned by the canonical-state notification, so an occasional redundant
+        // reinsert is self-correcting.
+        let attempted = pruned.len();
+        let restored = restore_pruned_transactions(&pool, &pruned).await;
+        if restored < attempted {
+            // Best-effort: the canonical re-prune and peer gossip remain the backstops, but a
+            // partial failure shouldn't be silent.
+            warn!(
+                target: "payload_builder",
+                attempted,
+                restored,
+                "Failed to restore some pruned transactions after payload abandonment",
+            );
+        } else {
+            info!(
+                target: "payload_builder",
+                attempted,
+                restored,
+                "Restored pruned transactions after payload abandonment",
+            );
+        }
+    }))
 }
 
 /// Reinsert transactions that were pruned from the pool during flashblock building, preserving
@@ -1346,10 +1354,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    };
+    use std::sync::{Arc, atomic::AtomicBool};
 
     use alloy_consensus::{Header, Receipt};
     use alloy_primitives::{Address, B256, Log, U256, map::foldhash::HashMap};
@@ -1364,8 +1369,11 @@ mod tests {
         PoolTransaction, TransactionOrigin, TransactionPool,
         test_utils::{MockTransaction, testing_pool},
     };
+    use tokio_util::sync::CancellationToken;
 
-    use super::{FlashblocksMetadata, build_block, restore_pruned_transactions};
+    use super::{
+        FlashblocksMetadata, build_block, restore_pruned_transactions, settle_pruned_transactions,
+    };
     use crate::{ExecutionInfo, flashblocks::context::BasePayloadBuilderCtx};
 
     /// Creates a minimal [`BaseChainSpec`] with all L1 upgrades through Cancun
@@ -1684,12 +1692,44 @@ mod tests {
         assert_eq!(restore_pruned_transactions(&pool, &[]).await, 0);
     }
 
-    /// Mirrors the decision in [`super::BasePayloadBuilder::settle_pruned_transactions`]: pruned
-    /// transactions are restored only when the payload was abandoned (`resolved == false`). A
-    /// payload sealed via `getPayload` (`resolved == true`) keeps its pruned transactions out of
-    /// the pool, matching canonical inclusion.
+    /// `settle_pruned_transactions` on the target-flashblock-count path (`disposition_known =
+    /// false`): the spawned task must wait for the `CancellationToken` before acting, and once the
+    /// job is abandoned (cancelled without `resolved`) it restores the pruned transactions.
     #[tokio::test]
-    async fn resolved_flag_gates_restoration() {
+    async fn settle_restores_pruned_transactions_after_cancellation() {
+        let pool = testing_pool();
+        let tx = MockTransaction::eip1559();
+        let hash = *tx.hash();
+        pool.add_transaction(TransactionOrigin::Local, tx).await.expect("add");
+        let pruned = pool.prune_transactions(vec![hash]);
+        assert!(!pool.contains(&hash), "prune removes the tx");
+
+        let resolved = Arc::new(AtomicBool::new(false));
+        let cancel = CancellationToken::new();
+        let handle = settle_pruned_transactions(
+            pool.clone(),
+            pruned,
+            Arc::clone(&resolved),
+            cancel.clone(),
+            false,
+        )
+        .expect("a restore task is spawned when there are pruned transactions");
+
+        // Give the task a chance to run: it must park on the (uncancelled) token, not restore.
+        tokio::task::yield_now().await;
+        assert!(!pool.contains(&hash), "must not restore before the job's fate is known");
+
+        // Abandon the job -> wakes the task, which restores the pruned transactions.
+        cancel.cancel();
+        handle.await.expect("settle task completes");
+        assert!(pool.contains(&hash), "an abandoned payload restores pruned transactions");
+    }
+
+    /// `settle_pruned_transactions` when the payload was sealed via `getPayload` (`resolved ==
+    /// true`): the task returns without restoring, so the pruned transactions stay out of the pool
+    /// (matching canonical inclusion).
+    #[tokio::test]
+    async fn settle_keeps_pruned_transactions_when_sealed() {
         let pool = testing_pool();
         let tx = MockTransaction::eip1559();
         let hash = *tx.hash();
@@ -1697,18 +1737,33 @@ mod tests {
         let pruned = pool.prune_transactions(vec![hash]);
         assert!(!pool.contains(&hash));
 
-        // Sealed payload: do not restore.
-        let resolved = AtomicBool::new(true);
-        if !resolved.load(Ordering::Acquire) {
-            restore_pruned_transactions(&pool, &pruned).await;
-        }
-        assert!(!pool.contains(&hash), "a sealed payload must not restore pruned transactions");
+        // disposition_known = true (cancellation already happened) and resolved = true (sealed).
+        let handle = settle_pruned_transactions(
+            pool.clone(),
+            pruned,
+            Arc::new(AtomicBool::new(true)),
+            CancellationToken::new(),
+            true,
+        )
+        .expect("task spawned");
+        handle.await.expect("settle task completes");
+        assert!(
+            !pool.contains(&hash),
+            "a sealed payload keeps pruned transactions out of the pool"
+        );
+    }
 
-        // Abandoned payload: restore.
-        resolved.store(false, Ordering::Release);
-        if !resolved.load(Ordering::Acquire) {
-            restore_pruned_transactions(&pool, &pruned).await;
-        }
-        assert!(pool.contains(&hash), "an abandoned payload must restore pruned transactions");
+    /// `settle_pruned_transactions` spawns nothing when there is nothing to restore.
+    #[tokio::test]
+    async fn settle_is_noop_when_nothing_pruned() {
+        let pool = testing_pool();
+        let handle = settle_pruned_transactions(
+            pool,
+            Vec::new(),
+            Arc::new(AtomicBool::new(false)),
+            CancellationToken::new(),
+            false,
+        );
+        assert!(handle.is_none(), "no task is spawned when there is nothing to restore");
     }
 }
