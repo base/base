@@ -1,7 +1,9 @@
-//! Metrics for the EIP-8130 admission/invalidation guard.
+//! Metrics for the EIP-8130 admission/invalidation guard and the transaction
+//! validator.
 //!
-//! All labels are low-cardinality static strings (rejection reasons and
-//! invalidation causes); no addresses or hashes are ever used as label values.
+//! All labels are low-cardinality static strings (rejection reasons,
+//! invalidation causes, transaction kind, and authenticator type); no addresses
+//! or hashes are ever used as label values.
 
 base_metrics::define_metrics! {
     txpool.guard,
@@ -58,4 +60,15 @@ impl GuardMetrics {
     pub fn record_builder_precheck_drop(stale: &crate::ManifestStale) {
         Self::builder_precheck_dropped(stale.cause()).increment(1);
     }
+}
+
+base_metrics::define_metrics! {
+    txpool.validator,
+    struct = ValidatorMetrics,
+    #[describe("End-to-end mempool validation wall-time per transaction, by transaction kind")]
+    #[label(name = "kind", default = ["eip8130", "standard"])]
+    validate_seconds: histogram,
+    #[describe("EIP-8130 authorize_and_apply (authentication + config apply) wall-time, by sender authenticator type")]
+    #[label(name = "sig_type", default = ["k1", "p256", "passkey", "delegate", "delegate-k1", "delegate-p256", "delegate-passkey", "other"])]
+    auth_seconds: histogram,
 }

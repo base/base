@@ -731,8 +731,7 @@ where
             // check is conservative (fail-open) and only drops provably-stale txs.
             if self.builder_config.manifest_precheck_enabled
                 && let Some(manifest) = tx.watch_manifest()
-                && let Err(stale) =
-                    manifest.revalidate(builder.evm_mut().db_mut(), block_timestamp)
+                && let Err(stale) = manifest.revalidate(builder.evm_mut().db_mut(), block_timestamp)
             {
                 trace!(
                     target: "payload_builder",

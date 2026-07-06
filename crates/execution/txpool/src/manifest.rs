@@ -117,11 +117,7 @@ impl WatchManifest {
     /// rejects a valid one.
     ///
     /// `now` is the timestamp of the block being built.
-    pub fn revalidate<DB: Database>(
-        &self,
-        db: &mut DB,
-        now: u64,
-    ) -> Result<(), ManifestStale> {
+    pub fn revalidate<DB: Database>(&self, db: &mut DB, now: u64) -> Result<(), ManifestStale> {
         if self.effective_expiry != u64::MAX && now > self.effective_expiry {
             return Err(ManifestStale::Expired { deadline: self.effective_expiry, now });
         }

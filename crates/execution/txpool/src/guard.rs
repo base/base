@@ -359,7 +359,10 @@ mod tests {
     }
 
     fn slot_key(slot: u8) -> InvalidationKey {
-        InvalidationKey::Slot { address: addr(0xFF), slot: alloy_primitives::B256::repeat_byte(slot) }
+        InvalidationKey::Slot {
+            address: addr(0xFF),
+            slot: alloy_primitives::B256::repeat_byte(slot),
+        }
     }
 
     /// Builds a default self-paying admission with a single actor-config slot

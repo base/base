@@ -5,6 +5,7 @@ use std::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
+    time::Instant,
 };
 
 use alloy_consensus::{BlockHeader, Transaction, constants::KECCAK_EMPTY};
@@ -45,7 +46,10 @@ use revm::{
     state::{AccountInfo, Bytecode},
 };
 
-use crate::{BasePooledTx, ConfigSlot, InvalidationKey, LimitClass, WatchManifest, WatchSet};
+use crate::{
+    BasePooledTx, ConfigSlot, InvalidationKey, LimitClass, ValidatorMetrics, WatchManifest,
+    WatchSet,
+};
 
 /// Base-specific transaction pool validation errors.
 #[derive(Debug, thiserror::Error)]
@@ -324,12 +328,7 @@ struct OverlayPrecompileStorage<'a> {
 
 impl<'a> OverlayPrecompileStorage<'a> {
     const fn new(inner: StateProviderPrecompileStorage<'a>) -> Self {
-        Self {
-            inner,
-            storage: BTreeMap::new(),
-            transient: BTreeMap::new(),
-            reads: BTreeMap::new(),
-        }
+        Self { inner, storage: BTreeMap::new(), transient: BTreeMap::new(), reads: BTreeMap::new() }
     }
 
     /// Drains the recorded base-state read-set into a [`WatchManifest`]-ready
@@ -719,6 +718,24 @@ where
         transaction: Tx,
         state: &mut Option<Box<dyn AccountInfoReader + Send>>,
     ) -> TransactionValidationOutcome<Tx> {
+        // Time the whole validation, split by transaction kind, so the EIP-8130
+        // authentication cost can be sized against standard-tx validation. The
+        // kind is known up front from the transaction type.
+        let kind = if transaction.as_eip8130().is_some() { "eip8130" } else { "standard" };
+        let start = Instant::now();
+        let outcome = self.validate_one_with_state_timed(origin, transaction, state);
+        ValidatorMetrics::validate_seconds(kind).record(start.elapsed().as_secs_f64());
+        outcome
+    }
+
+    /// The body of [`Self::validate_one_with_state`], factored out so the public
+    /// entry point can record end-to-end validation timing around it.
+    fn validate_one_with_state_timed(
+        &self,
+        origin: TransactionOrigin,
+        transaction: Tx,
+        state: &mut Option<Box<dyn AccountInfoReader + Send>>,
+    ) -> TransactionValidationOutcome<Tx> {
         if transaction.is_eip4844() {
             return TransactionValidationOutcome::Invalid(
                 transaction,
@@ -758,27 +775,53 @@ where
             };
             return self.apply_base_checks(outcome, state.payer_auth);
         }
-        // Standard transactions (Legacy/2930/1559/7702): the only invalidation
-        // surfaces are the sender's balance and protocol nonce. Recorded before
-        // validation since both are known from the signed transaction.
-        let sender = transaction.sender();
-        transaction.set_watch_set(
-            WatchSet::new()
-                .watch(InvalidationKey::Balance(sender))
-                .watch(InvalidationKey::ProtocolNonce(sender)),
-        );
-        // Standard transactions self-pay and are never owner-locked or trusted,
-        // so they always take the default count-limited dimensions.
-        transaction.set_limit_class(LimitClass {
-            sender,
-            payer: sender,
-            sender_locked: false,
-            payer_trusted: false,
-            payer_balance: U256::ZERO,
-            max_cost: *transaction.cost(),
-        });
+        // Standard transactions (Legacy/2930/1559/7702): reth's pool manages
+        // nonce ordering and balance tracking for these directly; the guard and
+        // invalidation index only track EIP-8130 transactions. Setting
+        // watch_set / limit_class here would allocate on every standard-tx
+        // validation for data that is never consumed, so we skip it.
         let outcome = self.inner.validate_one_with_state(origin, transaction, state);
         self.apply_base_checks(outcome, 0)
+    }
+
+    /// Classifies the sender's authenticator into a low-cardinality label for the
+    /// `auth_seconds` timing histogram.
+    ///
+    /// The EOA path (`tx.sender == None`) authenticates a raw 65-byte secp256k1
+    /// signature, so it is `k1`. The configured path carries
+    /// `authenticator(20) || data`; for the delegate authenticator the nested
+    /// authenticator (`delegate_account(20) || nested_authenticator(20) || ...`)
+    /// is surfaced as `delegate-<inner>`. `WebAuthn` is reported as `passkey`.
+    fn sender_sig_type(signed: &Eip8130Signed) -> &'static str {
+        if signed.explicit_sender().is_none() {
+            return "k1";
+        }
+        Self::classify_authenticator(signed.sender_auth())
+    }
+
+    /// Maps an `authenticator(20) || data` auth blob to its type label. Returns
+    /// `other` for a malformed or non-canonical selector.
+    fn classify_authenticator(auth: &[u8]) -> &'static str {
+        let Some(selector) = auth.get(..20).map(Address::from_slice) else {
+            return "other";
+        };
+        if selector == Eip8130Constants::K1_AUTHENTICATOR {
+            "k1"
+        } else if selector == Eip8130Contracts::P256_AUTHENTICATOR {
+            "p256"
+        } else if selector == Eip8130Contracts::WEBAUTHN_AUTHENTICATOR {
+            "passkey"
+        } else if selector == Eip8130Contracts::DELEGATE_AUTHENTICATOR {
+            // Delegate blob: DELEGATE(20) || delegate_account(20) || nested(20) || ...
+            match auth.get(40..60).map(Address::from_slice) {
+                Some(n) if n == Eip8130Constants::K1_AUTHENTICATOR => "delegate-k1",
+                Some(n) if n == Eip8130Contracts::P256_AUTHENTICATOR => "delegate-p256",
+                Some(n) if n == Eip8130Contracts::WEBAUTHN_AUTHENTICATOR => "delegate-passkey",
+                _ => "delegate",
+            }
+        } else {
+            "other"
+        }
     }
 
     /// Runs full EIP-8130 admission checks that require account/precompile state:
@@ -808,6 +851,52 @@ where
             local_chain_id,
             now,
         ));
+        // Time just the authenticate + config-apply step, labelled by the sender's
+        // authenticator type, since this is the crypto-dominated work a builder
+        // could skip intra-block when the manifest is unchanged (Stage 2). Recorded
+        // for both success and failure (the signature work runs either way) before
+        // the `?` propagates.
+        let auth_start = Instant::now();
+        let auth_result = StorageCtx::enter(&mut storage, |ctx| {
+            let mut account_config = AccountConfigurationStorage::new(ctx);
+            TransactionAuthorizer::authorize_and_apply(
+                signed,
+                &mut account_config,
+                local_chain_id,
+                now,
+            )
+            .map(|applied| {
+                let sender = applied.actors.sender.account;
+                let payer = applied.actors.payer.map_or(sender, |actor| actor.account);
+                // Thread the authoritative applied flags through rather than
+                // re-scanning account_changes below.
+                let is_create = applied.applied.created.is_some();
+                let has_delegation = applied.applied.delegation.is_some();
+                // Capture the actor surfaces the transaction's authorization
+                // depends on, for the invalidation watch set: the payer's
+                // authorizing actor (when sponsored) and the authorizing
+                // actor of every config change.
+                let payer_actor_id = applied.actors.payer.map(|actor| actor.resolved.actor_id);
+                // The payer key's authorization expiry feeds the effective
+                // expiry (a wall-clock eviction surface).
+                let payer_actor_expiry = applied.actors.payer.map(|actor| actor.resolved.expiry);
+                let config_actor_ids =
+                    applied.config_changes.iter().map(|actor| actor.actor_id).collect::<Vec<_>>();
+                (
+                    sender,
+                    payer,
+                    applied.actors.sender.resolved,
+                    is_create,
+                    has_delegation,
+                    payer_actor_id,
+                    payer_actor_expiry,
+                    config_actor_ids,
+                )
+            })
+            .map_err(Self::map_tx_auth_error)
+        });
+        ValidatorMetrics::auth_seconds(Self::sender_sig_type(signed))
+            .record(auth_start.elapsed().as_secs_f64());
         let (
             sender,
             payer,
@@ -817,42 +906,7 @@ where
             payer_actor_id,
             payer_actor_expiry,
             config_actor_ids,
-        ) = StorageCtx::enter(&mut storage, |ctx| {
-            let mut account_config = AccountConfigurationStorage::new(ctx);
-            TransactionAuthorizer::authorize_and_apply(signed, &mut account_config, local_chain_id, now)
-                .map(|applied| {
-                    let sender = applied.actors.sender.account;
-                    let payer = applied.actors.payer.map_or(sender, |actor| actor.account);
-                    // Thread the authoritative applied flags through rather than
-                    // re-scanning account_changes below.
-                    let is_create = applied.applied.created.is_some();
-                    let has_delegation = applied.applied.delegation.is_some();
-                    // Capture the actor surfaces the transaction's authorization
-                    // depends on, for the invalidation watch set: the payer's
-                    // authorizing actor (when sponsored) and the authorizing
-                    // actor of every config change.
-                    let payer_actor_id = applied.actors.payer.map(|actor| actor.resolved.actor_id);
-                    // The payer key's authorization expiry feeds the effective
-                    // expiry (a wall-clock eviction surface).
-                    let payer_actor_expiry = applied.actors.payer.map(|actor| actor.resolved.expiry);
-                    let config_actor_ids = applied
-                        .config_changes
-                        .iter()
-                        .map(|actor| actor.actor_id)
-                        .collect::<Vec<_>>();
-                    (
-                        sender,
-                        payer,
-                        applied.actors.sender.resolved,
-                        is_create,
-                        has_delegation,
-                        payer_actor_id,
-                        payer_actor_expiry,
-                        config_actor_ids,
-                    )
-                })
-                .map_err(Self::map_tx_auth_error)
-        })?;
+        ) = auth_result?;
 
         // Capture the authorization read-set before the overlay is dropped. This
         // is drift-free — exactly the `AccountConfiguration` slots the authorizer
@@ -994,8 +1048,7 @@ where
             gas_charge
         };
 
-        let manifest =
-            WatchManifest::new(config_reads, payer, payer_max_cost, effective_expiry);
+        let manifest = WatchManifest::new(config_reads, payer, payer_max_cost, effective_expiry);
 
         Ok(Eip8130ValidationState {
             sender,
@@ -1824,6 +1877,71 @@ mod tests {
     fn build_test_validator() -> TestValidator {
         let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().cobalt_activated().build());
         build_test_validator_with_spec(chain_spec)
+    }
+
+    #[test]
+    fn classify_authenticator_maps_each_selector() {
+        let with = |selector: Address, tail: &[u8]| {
+            let mut blob = selector.as_slice().to_vec();
+            blob.extend_from_slice(tail);
+            blob
+        };
+        assert_eq!(
+            TestValidator::classify_authenticator(&with(
+                Eip8130Constants::K1_AUTHENTICATOR,
+                &[0u8; 65]
+            )),
+            "k1"
+        );
+        assert_eq!(
+            TestValidator::classify_authenticator(&with(
+                Eip8130Contracts::P256_AUTHENTICATOR,
+                &[0u8; 129]
+            )),
+            "p256"
+        );
+        assert_eq!(
+            TestValidator::classify_authenticator(&with(
+                Eip8130Contracts::WEBAUTHN_AUTHENTICATOR,
+                &[0u8; 8]
+            )),
+            "passkey"
+        );
+
+        // Delegate blob: DELEGATE || delegate_account(20) || nested(20) || data.
+        let mut delegate = Eip8130Contracts::DELEGATE_AUTHENTICATOR.as_slice().to_vec();
+        delegate.extend_from_slice(&[0xbb; 20]);
+        delegate.extend_from_slice(Eip8130Contracts::WEBAUTHN_AUTHENTICATOR.as_slice());
+        assert_eq!(TestValidator::classify_authenticator(&delegate), "delegate-passkey");
+
+        // Delegate with a tail too short to hold a nested authenticator.
+        let mut short_delegate = Eip8130Contracts::DELEGATE_AUTHENTICATOR.as_slice().to_vec();
+        short_delegate.extend_from_slice(&[0xbb; 10]);
+        assert_eq!(TestValidator::classify_authenticator(&short_delegate), "delegate");
+
+        // Non-canonical selector and an under-length blob both fall through.
+        assert_eq!(TestValidator::classify_authenticator(&[0u8; 20]), "other");
+        assert_eq!(TestValidator::classify_authenticator(&[0u8; 10]), "other");
+    }
+
+    #[test]
+    fn sender_sig_type_eoa_path_is_k1() {
+        // No explicit sender: raw 65-byte secp256k1 recovery.
+        let signed = sign_eoa_eip8130(TxEip8130 {
+            chain_id: 8453,
+            sender: None,
+            nonce_key: U256::ZERO,
+            nonce_sequence: 0,
+            expiry: 0,
+            max_priority_fee_per_gas: 1,
+            max_fee_per_gas: 1,
+            gas_limit: 21_000,
+            account_changes: Vec::new(),
+            calls: Vec::new(),
+            metadata: Bytes::new(),
+            payer: None,
+        });
+        assert_eq!(TestValidator::sender_sig_type(&signed), "k1");
     }
 
     /// Returns the chain id the [`build_test_validator`] is configured against.

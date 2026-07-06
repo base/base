@@ -67,6 +67,6 @@ pub use guard::{
 };
 
 mod metrics;
-pub use metrics::GuardMetrics;
+pub use metrics::{GuardMetrics, ValidatorMetrics};
 
 pub mod estimated_da_size;

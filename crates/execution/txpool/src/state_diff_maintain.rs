@@ -177,8 +177,7 @@ mod tests {
     #[test]
     fn nonce_change_is_captured() {
         let addr = Address::repeat_byte(0x03);
-        let bundle =
-            bundle(vec![(addr, account(Some(info(100, 1)), Some(info(100, 2)), vec![]))]);
+        let bundle = bundle(vec![(addr, account(Some(info(100, 1)), Some(info(100, 2)), vec![]))]);
 
         let diffs = StateDiffCollector::collect(&bundle);
 
@@ -208,8 +207,7 @@ mod tests {
                 },
             ),
         ];
-        let bundle =
-            bundle(vec![(addr, account(Some(info(100, 0)), Some(info(100, 0)), slots))]);
+        let bundle = bundle(vec![(addr, account(Some(info(100, 0)), Some(info(100, 0)), slots))]);
 
         let diffs = StateDiffCollector::collect(&bundle);
 

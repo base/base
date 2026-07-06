@@ -305,10 +305,7 @@ mod tests {
         let chunk = InvalidationKey::EXPIRY_BUCKET_SECS;
         // Expiries within the same chunk share a bucket; the next chunk differs.
         assert_eq!(InvalidationKey::expiry_bucket(0), InvalidationKey::ExpiryBucket(0));
-        assert_eq!(
-            InvalidationKey::expiry_bucket(chunk - 1),
-            InvalidationKey::expiry_bucket(0)
-        );
+        assert_eq!(InvalidationKey::expiry_bucket(chunk - 1), InvalidationKey::expiry_bucket(0));
         assert_eq!(InvalidationKey::expiry_bucket(chunk), InvalidationKey::ExpiryBucket(1));
         assert_ne!(InvalidationKey::expiry_bucket(0), InvalidationKey::expiry_bucket(chunk));
     }
@@ -433,5 +430,4 @@ mod tests {
         let mut index = InvalidationIndex::new();
         assert!(index.remove(&hash(1)).is_none());
     }
-
 }

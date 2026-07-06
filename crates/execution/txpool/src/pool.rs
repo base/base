@@ -283,7 +283,10 @@ where
     /// Lock order: the guard is taken alone (computing the drop set), released,
     /// then the nonce pool and listeners — matching `update_accounts` so the
     /// global order stays acyclic.
-    pub fn apply_state_diff(&self, diffs: &[AccountStateDiff]) -> Vec<Arc<ValidPoolTransaction<T>>> {
+    pub fn apply_state_diff(
+        &self,
+        diffs: &[AccountStateDiff],
+    ) -> Vec<Arc<ValidPoolTransaction<T>>> {
         let mut exact = Vec::new();
         for diff in diffs {
             diff.push_exact_keys(&mut exact);
@@ -1673,14 +1676,14 @@ fn pooled_element<T: BasePooledTx>(
 mod tests {
     use std::time::Instant;
 
+    use alloy_consensus::{SignableTransaction, TxEip1559, transaction::SignerRecoverable};
     use alloy_consensus::{Transaction, transaction::Recovered};
+    use alloy_eips::eip2718::Encodable2718;
+    use alloy_primitives::TxKind;
     use alloy_primitives::{Bytes, U256};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
-    use alloy_consensus::{SignableTransaction, TxEip1559, transaction::SignerRecoverable};
-    use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::TxKind;
     use base_common_consensus::{
         BasePooledTransaction as ConsensusPooledTransaction, BasePrimitives, BaseTxEnvelope,
         Eip8130Constants, Eip8130Signed, TxEip8130,
@@ -1985,8 +1988,8 @@ mod tests {
     /// `BaseTransactionValidator`) over a `MockEthProvider`, so the `add_transaction`
     /// path — validation, guard gating, and rollback — is exercised end to end.
     /// L1-data-gas checks are disabled so funding is just the tx cost.
-    fn build_integration_pool() -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>)
-    {
+    fn build_integration_pool()
+    -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
         let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().cobalt_activated().build());
         let client = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::clone(&chain_spec))
@@ -2064,8 +2067,12 @@ mod tests {
         // sender/nonce gating), so every one is accepted.
         let count = u64::from(GuardLimits::default().default_sender) + 3;
         for nonce in 0..count {
-            let result = pool.add_transaction(TransactionOrigin::Local, signed_1559(&signer, nonce)).await;
-            assert!(result.is_ok(), "standard 1559 tx #{nonce} should not be 8130-gated: {result:?}");
+            let result =
+                pool.add_transaction(TransactionOrigin::Local, signed_1559(&signer, nonce)).await;
+            assert!(
+                result.is_ok(),
+                "standard 1559 tx #{nonce} should not be 8130-gated: {result:?}"
+            );
         }
     }
 
@@ -2078,8 +2085,9 @@ mod tests {
         let cap = u64::from(GuardLimits::default().default_sender);
         // The first `cap` self-paid nonce_key==0 transactions are admitted.
         for seq in 0..cap {
-            let result =
-                pool.add_transaction(TransactionOrigin::Local, self_paid_eoa_8130(&signer, seq)).await;
+            let result = pool
+                .add_transaction(TransactionOrigin::Local, self_paid_eoa_8130(&signer, seq))
+                .await;
             assert!(result.is_ok(), "8130 tx #{seq} within the cap should admit: {result:?}");
         }
         // The next one trips the sender dimension and is rolled back out of reth.
