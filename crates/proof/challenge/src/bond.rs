@@ -424,7 +424,7 @@ impl<C: Clock> BondManager<C> {
     }
 
     async fn try_resolve<T: TxManager>(
-        &mut self,
+        &self,
         game_address: Address,
         verifier_client: &dyn AggregateVerifierClient,
         submitter: &ChallengeSubmitter<T>,
@@ -530,7 +530,7 @@ impl<C: Clock> BondManager<C> {
     }
 
     async fn try_withdraw<T: TxManager>(
-        &mut self,
+        &self,
         game_address: Address,
         verifier_client: &dyn AggregateVerifierClient,
         submitter: &ChallengeSubmitter<T>,
