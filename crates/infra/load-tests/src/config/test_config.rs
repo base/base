@@ -215,6 +215,15 @@ pub enum TxTypeConfig {
         contract: String,
     },
 
+    /// Storage-heavy contract write (requires deployed contract).
+    Storage {
+        /// Storage-writer contract address.
+        contract: String,
+        /// Number of storage slots to write per transaction.
+        #[serde(default = "default_storage_slots_per_tx")]
+        slots_per_tx: u32,
+    },
+
     /// Precompile call.
     Precompile {
         /// Target precompile configuration.
@@ -295,6 +304,15 @@ const fn default_repeat_count() -> usize {
 const fn default_iterations() -> u32 {
     1
 }
+
+const fn default_storage_slots_per_tx() -> u32 {
+    10
+}
+
+/// Upper bound on `slots_per_tx` so the payload's gas limit
+/// (`slots_per_tx * 23_000 + 30_000`) stays under the ~30M per-tx block cap.
+/// Target RPCs may enforce a lower per-tx ceiling; tune `slots_per_tx` to fit.
+const MAX_STORAGE_SLOTS_PER_TX: u32 = 1_300;
 
 fn default_swap_min_amount() -> String {
     "1000000000000000".to_string()
@@ -591,6 +609,19 @@ impl TestConfig {
                     ))
                 })?;
                 TxType::Erc20 { contract: address }
+            }
+            TxTypeConfig::Storage { contract, slots_per_tx } => {
+                let address = parse_address(contract, "storage contract")?;
+                if !(1..=MAX_STORAGE_SLOTS_PER_TX).contains(slots_per_tx) {
+                    return Err(BaselineError::Config(format!(
+                        "storage slots_per_tx must be 1..={MAX_STORAGE_SLOTS_PER_TX}; the tx gas \
+                         limit ({slots_per_tx} slots) would otherwise exceed the ~30M per-tx cap. \
+                         Note: public RPCs (e.g. sepolia.base.org) often enforce a lower per-tx \
+                         gas ceiling, so a value that passes this check can still be rejected with \
+                         'gas limit too high' — lower slots_per_tx to fit your target's cap."
+                    )));
+                }
+                TxType::Storage { contract: address, slots_per_tx: *slots_per_tx }
             }
             TxTypeConfig::Precompile { target, iterations } => {
                 let looper_contract = if *iterations > 1 {
@@ -926,6 +957,139 @@ transactions:
         }
 
         assert!(config.looper_contract.is_some());
+    }
+
+    #[test]
+    fn parse_storage_config() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:8545
+flashblocks_ws: ws://localhost:7111
+transactions:
+  - weight: 100
+    type: storage
+    contract: "0x1234567890123456789012345678901234567890"
+    slots_per_tx: 25
+"#;
+        let config = TestConfig::from_yaml(yaml).unwrap();
+        assert_eq!(config.transactions.len(), 1);
+        match &config.transactions[0].tx_type {
+            TxTypeConfig::Storage { contract, slots_per_tx } => {
+                assert_eq!(contract, "0x1234567890123456789012345678901234567890");
+                assert_eq!(*slots_per_tx, 25);
+            }
+            _ => panic!("expected Storage"),
+        }
+
+        let load_config = config.to_load_config(Some(1337)).unwrap();
+        assert_eq!(load_config.transactions.len(), 1);
+        match &load_config.transactions[0].tx_type {
+            TxType::Storage { contract, slots_per_tx } => {
+                assert_eq!(
+                    *contract,
+                    "0x1234567890123456789012345678901234567890".parse::<Address>().unwrap(),
+                    "storage contract address must round-trip through conversion"
+                );
+                assert_eq!(*slots_per_tx, 25, "slots_per_tx must be preserved");
+            }
+            _ => panic!("expected TxType::Storage after conversion"),
+        }
+    }
+
+    #[test]
+    fn parse_storage_config_defaults_slots_per_tx() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:8545
+flashblocks_ws: ws://localhost:7111
+transactions:
+  - weight: 100
+    type: storage
+    contract: "0x1234567890123456789012345678901234567890"
+"#;
+        let config = TestConfig::from_yaml(yaml).unwrap();
+        match &config.transactions[0].tx_type {
+            TxTypeConfig::Storage { slots_per_tx, .. } => {
+                assert_eq!(*slots_per_tx, 10, "slots_per_tx must default to 10");
+            }
+            _ => panic!("expected Storage"),
+        }
+    }
+
+    #[test]
+    fn storage_config_rejects_zero_slots_per_tx() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:8545
+flashblocks_ws: ws://localhost:7111
+transactions:
+  - weight: 100
+    type: storage
+    contract: "0x1234567890123456789012345678901234567890"
+    slots_per_tx: 0
+"#;
+        let config = TestConfig::from_yaml(yaml).unwrap();
+        let err = config.to_load_config(Some(1337)).unwrap_err();
+        assert!(
+            err.to_string().contains("slots_per_tx must be 1..=1300"),
+            "expected slots_per_tx range validation error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn storage_config_rejects_slots_per_tx_above_max() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:8545
+flashblocks_ws: ws://localhost:7111
+transactions:
+  - weight: 100
+    type: storage
+    contract: "0x1234567890123456789012345678901234567890"
+    slots_per_tx: 1301
+"#;
+        let config = TestConfig::from_yaml(yaml).unwrap();
+        let err = config.to_load_config(Some(1337)).unwrap_err();
+        assert!(
+            err.to_string().contains("slots_per_tx must be 1..=1300"),
+            "expected slots_per_tx range validation error for value above max, got: {err}"
+        );
+    }
+
+    #[test]
+    fn storage_config_accepts_max_slots_per_tx() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:8545
+flashblocks_ws: ws://localhost:7111
+transactions:
+  - weight: 100
+    type: storage
+    contract: "0x1234567890123456789012345678901234567890"
+    slots_per_tx: 1300
+"#;
+        let config = TestConfig::from_yaml(yaml).unwrap();
+        let load_config = config.to_load_config(Some(1337)).unwrap();
+        match &load_config.transactions[0].tx_type {
+            TxType::Storage { slots_per_tx, .. } => {
+                assert_eq!(*slots_per_tx, 1300, "max slots_per_tx must be accepted");
+            }
+            _ => panic!("expected TxType::Storage"),
+        }
+    }
+
+    #[test]
+    fn storage_config_rejects_invalid_contract_address() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:8545
+flashblocks_ws: ws://localhost:7111
+transactions:
+  - weight: 100
+    type: storage
+    contract: "not_an_address"
+    slots_per_tx: 5
+"#;
+        let config = TestConfig::from_yaml(yaml).unwrap();
+        let err = config.to_load_config(Some(1337)).unwrap_err();
+        assert!(
+            err.to_string().contains("storage contract"),
+            "expected storage contract address error, got: {err}"
+        );
     }
 
     #[test]

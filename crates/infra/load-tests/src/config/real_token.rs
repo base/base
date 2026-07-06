@@ -156,6 +156,7 @@ fn validate_real_token_pair_matches_swaps(
             | TxTypeConfig::Erc20 { .. }
             | TxTypeConfig::B20
             | TxTypeConfig::Precompile { .. }
+            | TxTypeConfig::Storage { .. }
             | TxTypeConfig::Osaka { .. } => continue,
         };
         saw_swap = true;
