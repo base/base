@@ -13,7 +13,6 @@ use alloy_consensus::{
 use alloy_primitives::{
     Address, B256, BlockHash, BlockNumber, Bloom, Bytes, Signature, TxKind, U256,
 };
-use alloy_rlp::{Decodable, Encodable};
 use bytes::{Buf, BufMut};
 use reth_codecs::{
     Compact, CompactZstd, DecompressError,
@@ -516,11 +515,16 @@ impl DepositReceiptExt for BaseReceipt {
 // Compact – BaseHeader
 // ---------------------------------------------------------------------------
 
-/// First-byte prefix for Base-owned compact v1 header rows.
+/// Magic prefix for Base-owned compact v1 header rows.
 ///
-/// `0x7e` sets the frozen legacy compact difficulty length field to `63`, which is impossible for
+/// `[0x7E, 0x01]` is split intentionally:
+///
+/// - `0x7E` is the impossible-legacy sentinel
+/// - `0x01` is the Base-owned compact header version
+///
+/// `0x7E` sets the frozen legacy compact difficulty length field to `63`, which is impossible for
 /// a `U256` difficulty value and therefore cannot collide with any historical upstream header row.
-pub const BASE_HEADER_COMPACT_V1_MAGIC: [u8; 4] = [0x7E, b'B', b'H', 0x01];
+pub const BASE_HEADER_COMPACT_V1_MAGIC: [u8; 2] = [0x7E, 0x01];
 
 /// Error returned when decoding the Base-owned compact header boundary fails.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -541,13 +545,9 @@ pub enum BaseHeaderCompactError {
     #[error("Base header compact timestamp milliseconds {0} do not fit in u16")]
     TimestampMillisPartOutOfRange(u64),
 
-    /// Base-owned compact v1 inner header RLP could not be decoded.
-    #[error("Base header compact inner header RLP decode failed: {0}")]
-    InnerHeaderRlp(alloy_rlp::Error),
-
-    /// Base-owned compact v1 inner header RLP contained trailing bytes.
-    #[error("Base header compact inner header RLP has trailing bytes")]
-    TrailingInnerHeaderRlp,
+    /// Base-owned compact v1 inner header compact bytes contained trailing data.
+    #[error("Base header compact inner header compact bytes have trailing bytes")]
+    TrailingInnerHeaderCompact,
 
     /// Base-owned fields failed semantic validation.
     #[error(transparent)]
@@ -720,31 +720,27 @@ impl LegacyHeaderCompactV0 {
     }
 }
 
-/// Reserved nested extension bucket for future Base-owned compact growth.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Compact)]
-#[reth_codecs(crate = "reth_codecs")]
-pub struct BaseHeaderCompactExtV1 {}
-
-/// Base-owned compact v1 fields stored ahead of the opaque nested header payload.
+/// Base-owned compact v1 fields stored ahead of the nested upstream compact header bytes.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Compact)]
 #[reth_codecs(crate = "reth_codecs")]
 pub struct BaseHeaderCompactFieldsV1 {
-    /// Post-Beryl millisecond subsecond component.
+    /// Compact form of the Base-owned millisecond subsecond component.
+    ///
+    /// This stays in the Base-owned outer field bucket so future Base-only fields append here
+    /// without borrowing upstream `Header` compact layout.
     pub timestamp_millis_part: Option<u64>,
-    /// Reserved nested extension bucket for future Base-owned compact growth.
-    pub ext: Option<BaseHeaderCompactExtV1>,
 }
 
 impl BaseHeaderCompactFieldsV1 {
     /// Builds the compact v1 field set from the semantic Base-owned field set.
     pub fn from_base_fields(base: &BaseHeaderFields) -> Result<Self, BaseHeaderCompactError> {
         base.validate()?;
-        Ok(Self { timestamp_millis_part: base.timestamp_millis_part.map(u64::from), ext: None })
+        Ok(Self { timestamp_millis_part: base.timestamp_millis_part.map(u64::from) })
     }
 
     /// Reconstructs semantic Base-owned fields from the compact v1 field set.
     pub fn try_into_base_fields(self) -> Result<BaseHeaderFields, BaseHeaderCompactError> {
-        let Self { timestamp_millis_part, ext: _ } = self;
+        let Self { timestamp_millis_part } = self;
         let timestamp_millis_part = timestamp_millis_part
             .map(|part| {
                 u16::try_from(part)
@@ -760,20 +756,22 @@ impl BaseHeaderCompactFieldsV1 {
 /// Base-owned compact v1 payload for post-hardfork stored header rows.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct BaseHeaderCompactV1 {
-    /// Base-owned compact v1 field set.
+    /// Base-owned compact v1 field bucket for fields that belong to Base rather than upstream.
     pub base: BaseHeaderCompactFieldsV1,
-    /// Opaque RLP encoding of the nested Ethereum header.
-    pub inner_rlp: Bytes,
+    /// Raw upstream `Header::to_compact` bytes for the nested Ethereum header.
+    ///
+    /// Base owns the outer version boundary; upstream still owns the inner compact layout.
+    pub inner_compact: Bytes,
 }
 
 impl BaseHeaderCompactV1 {
     /// Creates the Base-owned compact v1 payload for a post-hardfork Base header.
     pub fn from_header(header: &BaseHeader) -> Result<Self, BaseHeaderCompactError> {
-        let mut inner_rlp = Vec::new();
-        header.inner.encode(&mut inner_rlp);
+        let mut inner_compact = Vec::new();
+        header.inner.to_compact(&mut inner_compact);
         Ok(Self {
             base: BaseHeaderCompactFieldsV1::from_base_fields(&header.base)?,
-            inner_rlp: inner_rlp.into(),
+            inner_compact: inner_compact.into(),
         })
     }
 
@@ -784,11 +782,10 @@ impl BaseHeaderCompactV1 {
             return Err(BaseHeaderCompactError::EmptyBaseFields);
         }
 
-        let mut inner_rlp = self.inner_rlp.as_ref();
-        let inner =
-            Header::decode(&mut inner_rlp).map_err(BaseHeaderCompactError::InnerHeaderRlp)?;
-        if !inner_rlp.is_empty() {
-            return Err(BaseHeaderCompactError::TrailingInnerHeaderRlp);
+        let (inner, remaining) =
+            Header::from_compact(self.inner_compact.as_ref(), self.inner_compact.len());
+        if !remaining.is_empty() {
+            return Err(BaseHeaderCompactError::TrailingInnerHeaderCompact);
         }
 
         BaseHeader::new(inner, base).map_err(BaseHeaderCompactError::from)
@@ -800,15 +797,15 @@ impl Compact for BaseHeaderCompactV1 {
     where
         B: BufMut + AsMut<[u8]>,
     {
-        self.base.to_compact(buf) + self.inner_rlp.to_compact(buf)
+        self.base.to_compact(buf) + self.inner_compact.to_compact(buf)
     }
 
     fn from_compact(buf: &[u8], len: usize) -> (Self, &[u8]) {
         let (base, remaining) = BaseHeaderCompactFieldsV1::from_compact(buf, len);
         let base_len = buf.len() - remaining.len();
         let inner_len = len - base_len;
-        let (inner_rlp, remaining) = Bytes::from_compact(remaining, inner_len);
-        (Self { base, inner_rlp }, remaining)
+        let (inner_compact, remaining) = Bytes::from_compact(remaining, inner_len);
+        (Self { base, inner_compact }, remaining)
     }
 }
 
@@ -1085,8 +1082,21 @@ mod tests {
     }
 
     #[test]
-    fn base_header_compact_v1_reserves_nested_extension_slot() {
+    fn base_header_compact_v1_uses_one_flag_byte_for_base_fields() {
         assert_eq!(BaseHeaderCompactFieldsV1::bitflag_encoded_bytes(), 1);
-        assert_eq!(BaseHeaderCompactExtV1::bitflag_encoded_bytes(), 0);
+    }
+
+    #[test]
+    fn post_fork_header_compact_v1_stores_upstream_compact_inner_header() {
+        let header =
+            BaseHeader::new(sample_inner_header(), BaseHeaderFields::new(Some(600))).unwrap();
+
+        let payload = BaseHeaderCompactV1::from_header(&header).unwrap();
+
+        let mut expected_inner_compact = Vec::new();
+        header.inner.to_compact(&mut expected_inner_compact);
+
+        assert_eq!(payload.base.timestamp_millis_part, Some(600));
+        assert_eq!(payload.inner_compact.as_ref(), expected_inner_compact.as_slice());
     }
 }

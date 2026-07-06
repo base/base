@@ -12,7 +12,7 @@ use alloy_rlp::{BufMut, Decodable, Encodable};
 /// Number of milliseconds in one Unix timestamp second.
 pub const TIMESTAMP_MILLIS_PER_SECOND: u16 = 1_000;
 
-/// Base block cadence in milliseconds after Beryl.
+/// Base block cadence in milliseconds for sub-second header timing.
 pub const BASE_BLOCK_TIME_MILLIS: u16 = 200;
 
 /// Valid millisecond subsecond components for 200ms Base headers.
@@ -21,8 +21,8 @@ pub const VALID_TIMESTAMP_MILLIS_PARTS: [u16; 5] = [0, 200, 400, 600, 800];
 /// Error returned when a Base header millisecond timestamp component is invalid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum TimestampMillisPartError {
-    /// Post-Subsecond validation requires a millisecond component.
-    #[error("timestamp millisecond part is required after Subsecond")]
+    /// Validation for sub-second header timing requires a millisecond component.
+    #[error("timestamp millisecond part is required when sub-second timing is active")]
     MissingPart,
 
     /// Millisecond component is not aligned to the 200ms cadence.
@@ -75,7 +75,7 @@ pub enum TimestampMillisPartError {
 #[cfg_attr(feature = "serde", serde(default, rename_all = "camelCase"))]
 #[rlp(trailing)]
 pub struct BaseHeaderFields {
-    /// Post-Beryl millisecond subsecond component committed by the header hash.
+    /// Base-owned millisecond subsecond component committed by the header hash.
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub timestamp_millis_part: Option<u16>,
 }
@@ -163,7 +163,7 @@ impl BaseHeader {
         }
     }
 
-    /// Returns the canonical post-Beryl timestamp in milliseconds when present.
+    /// Returns the canonical millisecond timestamp when the sub-second component is present.
     pub fn timestamp_millis(&self) -> Result<Option<u64>, TimestampMillisPartError> {
         let Some(part) = self.base.timestamp_millis_part else {
             return Ok(None);
@@ -180,7 +180,7 @@ impl BaseHeader {
         Ok(Some(timestamp_seconds + u64::from(part)))
     }
 
-    /// Returns the canonical post-Beryl timestamp in milliseconds.
+    /// Returns the canonical millisecond timestamp when the sub-second component is required.
     pub fn required_timestamp_millis(&self) -> Result<u64, TimestampMillisPartError> {
         self.timestamp_millis()?.ok_or(TimestampMillisPartError::MissingPart)
     }
@@ -190,7 +190,7 @@ impl BaseHeader {
         self.base.is_empty()
     }
 
-    /// Validates a child Base header timestamp against its parent for post-Beryl blocks.
+    /// Validates a child Base header timestamp against its parent when sub-second timing is active.
     pub fn validate_timestamp_millis_after(
         &self,
         parent: &Self,

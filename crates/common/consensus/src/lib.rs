@@ -26,9 +26,9 @@ pub use header::{
 mod reth_compat;
 #[cfg(feature = "reth")]
 pub use reth_compat::{
-    BASE_HEADER_COMPACT_V1_MAGIC, BaseBlockBody, BaseHeaderCompactError, BaseHeaderCompactExtV1,
-    BaseHeaderCompactFieldsV1, BaseHeaderCompactV1, BasePrimitives, CompactTxDeposit,
-    DepositReceiptExt, LegacyHeaderCompactV0, LegacyHeaderExtV0,
+    BASE_HEADER_COMPACT_V1_MAGIC, BaseBlockBody, BaseHeaderCompactError, BaseHeaderCompactFieldsV1,
+    BaseHeaderCompactV1, BasePrimitives, CompactTxDeposit, DepositReceiptExt,
+    LegacyHeaderCompactV0, LegacyHeaderExtV0,
 };
 
 mod receipts;
