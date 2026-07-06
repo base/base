@@ -8,8 +8,8 @@ use alloy_rpc_types_eth::{BlockNumberOrTag, SyncStatus as EthSyncStatus};
 use anyhow::Result;
 use base_protocol::{BlockInfo, L2BlockInfo};
 use basectl_cli::{
-    JsonOutput, KeyValueTable, MonitoringConfig, SyncStatusCommandError, SyncStatusReport,
-    TimestampJson, fetch_block, fetch_sync_status, format_duration, format_unix_timestamp,
+    ElClient, JsonOutput, KeyValueTable, MonitoringConfig, RollupClient, SyncStatusCommandError,
+    SyncStatusReport, TimestampJson, format_duration, format_unix_timestamp,
 };
 use serde::Serialize;
 use url::Url;
@@ -29,8 +29,8 @@ pub(crate) async fn run(
     // rather than failing the whole command. Run in parallel with the local
     // sync fetch.
     let (sync_result, tip_result) = tokio::join!(
-        fetch_sync_status(&el_rpc, &cl_rpc),
-        fetch_block(&config.rpc, BlockId::Number(BlockNumberOrTag::Latest)),
+        RollupClient::fetch_sync_status(&el_rpc, &cl_rpc),
+        ElClient::fetch_block(&config.rpc, BlockId::Number(BlockNumberOrTag::Latest)),
     );
     let report = sync_result?;
     let public_tip_block = tip_result.ok().map(|b| b.header.number);

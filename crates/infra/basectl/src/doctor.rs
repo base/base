@@ -18,9 +18,8 @@ use serde_json::{Value, json};
 use url::Url;
 
 use crate::{
-    ClInfoReport, ElInfoReport, MonitoringConfig, NodeEndpoint, SyncStatusReport, TimestampJson,
-    fetch_cl_info, fetch_el_info, fetch_l1_block_number, fetch_l2_block_number, fetch_l2_chain_id,
-    fetch_sync_status,
+    ClInfoReport, ElClient, ElInfoReport, L1Client, MonitoringConfig, NodeEndpoint, P2pClient,
+    RollupClient, SyncStatusReport, TimestampJson,
 };
 
 const RETH_LIMIT_HARDCAP: u64 = 1024;
@@ -219,23 +218,25 @@ impl Doctor {
         };
 
         let (el_info, cl_info, chain_id, local_head, public_head, sync_status, l1_head) = tokio::join!(
-            fetch_el_info(&options.el_rpc),
+            P2pClient::fetch_el_info(&options.el_rpc),
             async {
                 match &options.cl_rpc {
-                    Some(cl_rpc) => Some(fetch_cl_info(cl_rpc).await),
+                    Some(cl_rpc) => Some(P2pClient::fetch_cl_info(cl_rpc).await),
                     None => None,
                 }
             },
-            fetch_l2_chain_id(&options.el_rpc),
-            fetch_l2_block_number(&options.el_rpc),
-            fetch_l2_block_number(&config.rpc),
+            ElClient::fetch_l2_chain_id(&options.el_rpc),
+            ElClient::fetch_l2_block_number(&options.el_rpc),
+            ElClient::fetch_l2_block_number(&config.rpc),
             async {
                 match &options.cl_rpc {
-                    Some(cl_rpc) => Some(fetch_sync_status(&options.el_rpc, cl_rpc).await),
+                    Some(cl_rpc) => {
+                        Some(RollupClient::fetch_sync_status(&options.el_rpc, cl_rpc).await)
+                    }
                     None => None,
                 }
             },
-            fetch_l1_block_number(&config.l1_rpc),
+            L1Client::fetch_l1_block_number(&config.l1_rpc),
         );
 
         let checks = vec![

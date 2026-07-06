@@ -92,18 +92,24 @@ pub async fn fetch_full_system_config(
     })
 }
 
-/// Fetches the latest L1 block number via `eth_blockNumber` with an explicit request timeout.
-pub async fn fetch_l1_block_number(l1_rpc: &Url) -> Result<u64> {
-    let http_client = alloy_transport_http::reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
-        .with_context(|| format!("building L1 HTTP client for {l1_rpc}"))?;
-    let transport = Http::with_client(http_client, l1_rpc.clone());
-    let provider = ProviderBuilder::new().connect_client(RpcClient::new(transport, false));
-    provider
-        .get_block_number()
-        .await
-        .with_context(|| format!("fetching eth_blockNumber from {l1_rpc}"))
+/// L1 RPC client for `basectl`'s L1 block-number query.
+#[derive(Debug)]
+pub struct L1Client;
+
+impl L1Client {
+    /// Fetches the latest L1 block number via `eth_blockNumber` with an explicit request timeout.
+    pub async fn fetch_l1_block_number(l1_rpc: &Url) -> Result<u64> {
+        let http_client = alloy_transport_http::reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .with_context(|| format!("building L1 HTTP client for {l1_rpc}"))?;
+        let transport = Http::with_client(http_client, l1_rpc.clone());
+        let provider = ProviderBuilder::new().connect_client(RpcClient::new(transport, false));
+        provider
+            .get_block_number()
+            .await
+            .with_context(|| format!("fetching eth_blockNumber from {l1_rpc}"))
+    }
 }
 
 /// Information about an L1 block and its blob counts.

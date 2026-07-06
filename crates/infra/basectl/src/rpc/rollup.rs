@@ -39,36 +39,45 @@ pub struct SyncStatusReport {
     pub el: EthSyncStatus,
 }
 
-/// Fetches a combined CL + EL sync-status snapshot.
-///
-/// Calls `optimism_syncStatus` against the consensus-node RPC and
-/// `eth_syncing` against the execution-layer RPC in parallel; either error
-/// short-circuits the call.
-pub async fn fetch_sync_status(rpc: &Url, cl_rpc: &Url) -> Result<SyncStatusReport> {
-    let cl_client = HttpClientBuilder::default()
-        .request_timeout(Duration::from_secs(10))
-        .build(cl_rpc.as_str())
-        .with_context(|| format!("connecting to consensus node RPC at {cl_rpc}"))?;
-    let http_client = alloy_transport_http::reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
-        .with_context(|| format!("building L2 EL HTTP client for {rpc}"))?;
-    let transport = Http::with_client(http_client, rpc.clone());
-    let el_provider = ProviderBuilder::new()
-        .disable_recommended_fillers()
-        .network::<Base>()
-        .connect_client(RpcClient::new(transport, false));
-    let (cl, el) = tokio::try_join!(
-        async {
-            RollupNodeApiClient::sync_status(&cl_client)
-                .await
-                .with_context(|| format!("fetching optimism_syncStatus from {cl_rpc}"))
-        },
-        async {
-            el_provider.syncing().await.with_context(|| format!("fetching eth_syncing from {rpc}"))
-        },
-    )?;
-    Ok(SyncStatusReport { cl, el })
+/// Rollup-node RPC client for `basectl`'s sync-status query.
+#[derive(Debug)]
+pub struct RollupClient;
+
+impl RollupClient {
+    /// Fetches a combined CL + EL sync-status snapshot.
+    ///
+    /// Calls `optimism_syncStatus` against the consensus-node RPC and
+    /// `eth_syncing` against the execution-layer RPC in parallel; either error
+    /// short-circuits the call.
+    pub async fn fetch_sync_status(rpc: &Url, cl_rpc: &Url) -> Result<SyncStatusReport> {
+        let cl_client = HttpClientBuilder::default()
+            .request_timeout(Duration::from_secs(10))
+            .build(cl_rpc.as_str())
+            .with_context(|| format!("connecting to consensus node RPC at {cl_rpc}"))?;
+        let http_client = alloy_transport_http::reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .with_context(|| format!("building L2 EL HTTP client for {rpc}"))?;
+        let transport = Http::with_client(http_client, rpc.clone());
+        let el_provider = ProviderBuilder::new()
+            .disable_recommended_fillers()
+            .network::<Base>()
+            .connect_client(RpcClient::new(transport, false));
+        let (cl, el) = tokio::try_join!(
+            async {
+                RollupNodeApiClient::sync_status(&cl_client)
+                    .await
+                    .with_context(|| format!("fetching optimism_syncStatus from {cl_rpc}"))
+            },
+            async {
+                el_provider
+                    .syncing()
+                    .await
+                    .with_context(|| format!("fetching eth_syncing from {rpc}"))
+            },
+        )?;
+        Ok(SyncStatusReport { cl, el })
+    }
 }
 
 /// Fetches the safe and latest L2 block numbers.

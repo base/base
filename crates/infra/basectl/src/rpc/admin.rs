@@ -14,58 +14,64 @@ use crate::config::ConductorNodeConfig;
 /// Timeout used when polling `admin_sequencerActive` during convergence checks.
 pub const SEQUENCER_ACTIVE_RPC_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Returns whether the consensus node reports the sequencer as active.
-pub async fn fetch_sequencer_active(cl_rpc: &Url) -> Result<bool> {
-    let client = HttpClientBuilder::default()
-        .request_timeout(SEQUENCER_ACTIVE_RPC_TIMEOUT)
-        .build(cl_rpc.as_str())
-        .with_context(|| format!("building consensus admin client for {cl_rpc}"))?;
-    AdminApiClient::admin_sequencer_active(&client)
-        .await
-        .with_context(|| format!("calling admin_sequencerActive on {cl_rpc}"))
-}
+/// Consensus-node admin RPC client for sequencer start/stop/status.
+#[derive(Debug)]
+pub struct SequencerClient;
 
-/// Starts the sequencer via the consensus node's `admin_startSequencer` RPC.
-pub async fn start_sequencer(cl_rpc: &Url, unsafe_head: B256) -> Result<()> {
-    const TIMEOUT: Duration = Duration::from_secs(5);
-
-    ensure!(unsafe_head != B256::ZERO, "unsafe head must not be zero");
-    let client = HttpClientBuilder::default()
-        .request_timeout(TIMEOUT)
-        .build(cl_rpc.as_str())
-        .with_context(|| format!("building consensus admin client for {cl_rpc}"))?;
-    AdminApiClient::admin_start_sequencer(&client, unsafe_head)
-        .await
-        .with_context(|| format!("calling admin_startSequencer on {cl_rpc}"))
-}
-
-/// Stops the sequencer via the consensus node's `admin_stopSequencer` RPC.
-///
-/// Returns the unsafe head hash captured at the moment the sequencer stopped.
-/// A returned [`B256::ZERO`] means the sequencer was stopped but the captured
-/// head is unavailable; it is not a valid restart point and must not be reused.
-/// Because the RPC has already taken effect by the time this returns, surface
-/// the missing head as a warning rather than an error so callers do not retry a
-/// successful stop.
-pub async fn stop_sequencer(cl_rpc: &Url) -> Result<B256> {
-    // `admin_stopSequencer` may defer its response until the seal pipeline
-    // finishes and the final unsafe head is known.
-    const TIMEOUT: Duration = Duration::from_secs(60);
-
-    let client = HttpClientBuilder::default()
-        .request_timeout(TIMEOUT)
-        .build(cl_rpc.as_str())
-        .with_context(|| format!("building consensus admin client for {cl_rpc}"))?;
-    let unsafe_head = AdminApiClient::admin_stop_sequencer(&client)
-        .await
-        .with_context(|| format!("calling admin_stopSequencer on {cl_rpc}"))?;
-    if unsafe_head == B256::ZERO {
-        warn!(
-            cl_rpc = %cl_rpc,
-            "admin_stopSequencer returned a zero unsafe head; sequencer stopped but the captured head is unavailable"
-        );
+impl SequencerClient {
+    /// Returns whether the consensus node reports the sequencer as active.
+    pub async fn fetch_sequencer_active(cl_rpc: &Url) -> Result<bool> {
+        let client = HttpClientBuilder::default()
+            .request_timeout(SEQUENCER_ACTIVE_RPC_TIMEOUT)
+            .build(cl_rpc.as_str())
+            .with_context(|| format!("building consensus admin client for {cl_rpc}"))?;
+        AdminApiClient::admin_sequencer_active(&client)
+            .await
+            .with_context(|| format!("calling admin_sequencerActive on {cl_rpc}"))
     }
-    Ok(unsafe_head)
+
+    /// Starts the sequencer via the consensus node's `admin_startSequencer` RPC.
+    pub async fn start_sequencer(cl_rpc: &Url, unsafe_head: B256) -> Result<()> {
+        const TIMEOUT: Duration = Duration::from_secs(5);
+
+        ensure!(unsafe_head != B256::ZERO, "unsafe head must not be zero");
+        let client = HttpClientBuilder::default()
+            .request_timeout(TIMEOUT)
+            .build(cl_rpc.as_str())
+            .with_context(|| format!("building consensus admin client for {cl_rpc}"))?;
+        AdminApiClient::admin_start_sequencer(&client, unsafe_head)
+            .await
+            .with_context(|| format!("calling admin_startSequencer on {cl_rpc}"))
+    }
+
+    /// Stops the sequencer via the consensus node's `admin_stopSequencer` RPC.
+    ///
+    /// Returns the unsafe head hash captured at the moment the sequencer stopped.
+    /// A returned [`B256::ZERO`] means the sequencer was stopped but the captured
+    /// head is unavailable; it is not a valid restart point and must not be reused.
+    /// Because the RPC has already taken effect by the time this returns, surface
+    /// the missing head as a warning rather than an error so callers do not retry a
+    /// successful stop.
+    pub async fn stop_sequencer(cl_rpc: &Url) -> Result<B256> {
+        // `admin_stopSequencer` may defer its response until the seal pipeline
+        // finishes and the final unsafe head is known.
+        const TIMEOUT: Duration = Duration::from_secs(60);
+
+        let client = HttpClientBuilder::default()
+            .request_timeout(TIMEOUT)
+            .build(cl_rpc.as_str())
+            .with_context(|| format!("building consensus admin client for {cl_rpc}"))?;
+        let unsafe_head = AdminApiClient::admin_stop_sequencer(&client)
+            .await
+            .with_context(|| format!("calling admin_stopSequencer on {cl_rpc}"))?;
+        if unsafe_head == B256::ZERO {
+            warn!(
+                cl_rpc = %cl_rpc,
+                "admin_stopSequencer returned a zero unsafe head; sequencer stopped but the captured head is unavailable"
+            );
+        }
+        Ok(unsafe_head)
+    }
 }
 
 /// Starts the sequencer on a single node via `admin_startSequencer`.
@@ -78,7 +84,7 @@ pub async fn start_sequencer_node(
     unsafe_head: B256,
     result_tx: mpsc::Sender<Result<String, String>>,
 ) {
-    let outcome = start_sequencer(&node.cl_rpc, unsafe_head)
+    let outcome = SequencerClient::start_sequencer(&node.cl_rpc, unsafe_head)
         .await
         .with_context(|| format!("starting sequencer on {} via {}", node.name, node.cl_rpc))
         .map(|()| format!("sequencer started on {} at {unsafe_head}", node.name));
@@ -94,7 +100,7 @@ pub async fn stop_sequencer_node(
     node: ConductorNodeConfig,
     result_tx: mpsc::Sender<Result<String, String>>,
 ) {
-    let outcome = stop_sequencer(&node.cl_rpc)
+    let outcome = SequencerClient::stop_sequencer(&node.cl_rpc)
         .await
         .with_context(|| format!("stopping sequencer on {} via {}", node.name, node.cl_rpc))
         .map(|head| {

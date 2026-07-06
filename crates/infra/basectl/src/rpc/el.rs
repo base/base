@@ -23,46 +23,52 @@ use crate::tui::Toast;
 
 const CONCURRENT_BLOCK_FETCHES: usize = 16;
 
-/// Fetches a single L2 block via `eth_getBlockByHash` or `eth_getBlockByNumber`.
-///
-/// `reference` selects the block by hash, number, or tag (alloy's `BlockId`
-/// dispatches between the two RPC methods internally). The `pending` tag is
-/// not supported because alloy's typed `Block` does not accept a null
-/// number/hash; pass a number, hash, or `latest` / `safe` / `finalized` /
-/// `earliest`.
-pub async fn fetch_block(
-    rpc: &Url,
-    reference: BlockId,
-) -> Result<<Base as Network>::BlockResponse> {
-    let provider = ProviderBuilder::new()
-        .disable_recommended_fillers()
-        .network::<Base>()
-        .connect(rpc.as_str())
-        .await
-        .with_context(|| format!("connecting to L2 RPC at {rpc}"))?;
-    provider
-        .get_block(reference)
-        .await
-        .with_context(|| format!("fetching block {reference}"))?
-        .ok_or_else(|| anyhow!("block {reference} not found"))
-}
+/// Execution-layer RPC client for `basectl`'s block and chain queries.
+#[derive(Debug)]
+pub struct ElClient;
 
-/// Fetches the L2 chain ID via `eth_chainId` with an explicit request timeout.
-pub async fn fetch_l2_chain_id(rpc: &Url) -> Result<u64> {
-    connect_l2_provider(rpc)
-        .await?
-        .get_chain_id()
-        .await
-        .with_context(|| format!("fetching eth_chainId from {rpc}"))
-}
+impl ElClient {
+    /// Fetches a single L2 block via `eth_getBlockByHash` or `eth_getBlockByNumber`.
+    ///
+    /// `reference` selects the block by hash, number, or tag (alloy's `BlockId`
+    /// dispatches between the two RPC methods internally). The `pending` tag is
+    /// not supported because alloy's typed `Block` does not accept a null
+    /// number/hash; pass a number, hash, or `latest` / `safe` / `finalized` /
+    /// `earliest`.
+    pub async fn fetch_block(
+        rpc: &Url,
+        reference: BlockId,
+    ) -> Result<<Base as Network>::BlockResponse> {
+        let provider = ProviderBuilder::new()
+            .disable_recommended_fillers()
+            .network::<Base>()
+            .connect(rpc.as_str())
+            .await
+            .with_context(|| format!("connecting to L2 RPC at {rpc}"))?;
+        provider
+            .get_block(reference)
+            .await
+            .with_context(|| format!("fetching block {reference}"))?
+            .ok_or_else(|| anyhow!("block {reference} not found"))
+    }
 
-/// Fetches the latest L2 block number via `eth_blockNumber` with an explicit request timeout.
-pub async fn fetch_l2_block_number(rpc: &Url) -> Result<u64> {
-    connect_l2_provider(rpc)
-        .await?
-        .get_block_number()
-        .await
-        .with_context(|| format!("fetching eth_blockNumber from {rpc}"))
+    /// Fetches the L2 chain ID via `eth_chainId` with an explicit request timeout.
+    pub async fn fetch_l2_chain_id(rpc: &Url) -> Result<u64> {
+        connect_l2_provider(rpc)
+            .await?
+            .get_chain_id()
+            .await
+            .with_context(|| format!("fetching eth_chainId from {rpc}"))
+    }
+
+    /// Fetches the latest L2 block number via `eth_blockNumber` with an explicit request timeout.
+    pub async fn fetch_l2_block_number(rpc: &Url) -> Result<u64> {
+        connect_l2_provider(rpc)
+            .await?
+            .get_block_number()
+            .await
+            .with_context(|| format!("fetching eth_blockNumber from {rpc}"))
+    }
 }
 
 async fn connect_l2_provider(rpc: &Url) -> Result<impl Provider<Base>> {

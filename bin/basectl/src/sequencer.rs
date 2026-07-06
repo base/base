@@ -11,8 +11,8 @@ use alloy_primitives::B256;
 use anyhow::Result;
 use basectl_cli::{
     ConductorClusterSnapshot, ConductorControl, ConductorNodeConfig, ConductorNodeStatus,
-    ConductorSource, JsonOutput, KeyValueTable, MonitoringConfig, SequencerCommandError,
-    StateConvergenceTimeoutError, fetch_sequencer_active, start_sequencer, stop_sequencer,
+    ConductorSource, JsonOutput, KeyValueTable, MonitoringConfig, SequencerClient,
+    SequencerCommandError, StateConvergenceTimeoutError,
 };
 use serde::Serialize;
 use tokio::time::{Instant, sleep, timeout};
@@ -165,7 +165,7 @@ async fn run_start(
         unsafe_head_source = %unsafe_head_source.as_str(),
         "calling admin_startSequencer"
     );
-    start_sequencer(&node.cl_rpc, unsafe_head).await?;
+    SequencerClient::start_sequencer(&node.cl_rpc, unsafe_head).await?;
     wait_for_expected_state(node, SequencerAction::Start, Some(unsafe_head)).await?;
     info!(
         network = %config.name,
@@ -226,7 +226,7 @@ async fn run_stop(
         cl_rpc = %node.cl_rpc,
         "calling admin_stopSequencer"
     );
-    let unsafe_head = stop_sequencer(&node.cl_rpc).await?;
+    let unsafe_head = SequencerClient::stop_sequencer(&node.cl_rpc).await?;
     // A zero head means the sequencer stopped but the captured head is unavailable,
     // so do not surface it as a valid restart point.
     let captured_head = (unsafe_head != B256::ZERO).then_some(unsafe_head);
@@ -386,7 +386,7 @@ async fn wait_for_expected_state(
         unsafe_head,
         OBSERVATION_TIMEOUT,
         POLL_INTERVAL,
-        || fetch_sequencer_active(&node.cl_rpc),
+        || SequencerClient::fetch_sequencer_active(&node.cl_rpc),
     )
     .await
 }

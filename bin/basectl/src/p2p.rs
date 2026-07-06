@@ -5,10 +5,8 @@ use std::io::{self, Write};
 use anyhow::Result;
 use base_consensus_peers::BootNode;
 use basectl_cli::{
-    JsonOutput, MonitoringConfig, P2pCommandError, P2pInfoJson, P2pInfoTable, P2pTargetError,
-    PeerListReport, PeerSummary, add_peer, ban_peer, connect_peer, disconnect_peer,
-    fetch_connected_peers, fetch_info, fetch_raw_info, fetch_raw_peers, list_banned_peers,
-    remove_peer, unban_peer,
+    JsonOutput, MonitoringConfig, P2pClient, P2pCommandError, P2pInfoJson, P2pInfoTable,
+    P2pTargetError, PeerListReport, PeerSummary,
 };
 use serde::Serialize;
 use url::Url;
@@ -40,15 +38,15 @@ async fn run_peers(config: MonitoringConfig, args: P2pArgs) -> Result<()> {
 
     match (json, raw) {
         (true, true) => {
-            let report = fetch_raw_peers(&el_rpc, &cl_rpc).await?;
+            let report = P2pClient::fetch_raw_peers(&el_rpc, &cl_rpc).await?;
             JsonOutput::print(&report)?;
         }
         (true, false) => {
-            let report = fetch_connected_peers(&el_rpc, &cl_rpc).await?;
+            let report = P2pClient::fetch_connected_peers(&el_rpc, &cl_rpc).await?;
             JsonOutput::print(&PeersJson::from_report(&config.name, &report))?;
         }
         (false, _) => {
-            let report = fetch_connected_peers(&el_rpc, &cl_rpc).await?;
+            let report = P2pClient::fetch_connected_peers(&el_rpc, &cl_rpc).await?;
             print_peers_pretty(&config.name, &report)?;
         }
     }
@@ -75,7 +73,7 @@ async fn run_add_peer(config: MonitoringConfig, args: DestructivePeerArgs) -> Re
                 println!("aborted");
                 return Ok(());
             }
-            let accepted = add_peer(&el_rpc, &enode).await?;
+            let accepted = P2pClient::add_peer(&el_rpc, &enode).await?;
             print_peer_action(
                 &PeerActionJson::el(&config.name, PeerAction::Add, enode, accepted),
                 json,
@@ -94,7 +92,7 @@ async fn run_add_peer(config: MonitoringConfig, args: DestructivePeerArgs) -> Re
                 println!("aborted");
                 return Ok(());
             }
-            connect_peer(&cl_rpc, &multiaddr).await?;
+            P2pClient::connect_peer(&cl_rpc, &multiaddr).await?;
             print_peer_action(&PeerActionJson::cl(&config.name, PeerAction::Add, multiaddr), json)?;
         }
     }
@@ -121,7 +119,7 @@ async fn run_remove_peer(config: MonitoringConfig, args: DestructivePeerArgs) ->
                 println!("aborted");
                 return Ok(());
             }
-            let accepted = remove_peer(&el_rpc, &enode).await?;
+            let accepted = P2pClient::remove_peer(&el_rpc, &enode).await?;
             print_peer_action(
                 &PeerActionJson::el(&config.name, PeerAction::Remove, enode, accepted),
                 json,
@@ -140,7 +138,7 @@ async fn run_remove_peer(config: MonitoringConfig, args: DestructivePeerArgs) ->
                 println!("aborted");
                 return Ok(());
             }
-            disconnect_peer(&cl_rpc, &peer_id).await?;
+            P2pClient::disconnect_peer(&cl_rpc, &peer_id).await?;
             print_peer_action(
                 &PeerActionJson::cl(&config.name, PeerAction::Remove, peer_id),
                 json,
@@ -161,9 +159,9 @@ async fn run_ban_peer(config: MonitoringConfig, args: DestructiveClPeerArgs) -> 
         return Ok(());
     }
 
-    ban_peer(&cl_rpc, &peer_id).await?;
+    P2pClient::ban_peer(&cl_rpc, &peer_id).await?;
     let disconnect_error =
-        disconnect_peer(&cl_rpc, &peer_id).await.err().map(|err| err.to_string());
+        P2pClient::disconnect_peer(&cl_rpc, &peer_id).await.err().map(|err| err.to_string());
     print_peer_action(
         &PeerActionJson::cl_with_disconnect_error(
             &config.name,
@@ -186,7 +184,7 @@ async fn run_unban_peer(config: MonitoringConfig, args: DestructiveClPeerArgs) -
         return Ok(());
     }
 
-    unban_peer(&cl_rpc, &peer_id).await?;
+    P2pClient::unban_peer(&cl_rpc, &peer_id).await?;
     print_peer_action(&PeerActionJson::cl(&config.name, PeerAction::Unban, peer_id), json)?;
     Ok(())
 }
@@ -194,7 +192,7 @@ async fn run_unban_peer(config: MonitoringConfig, args: DestructiveClPeerArgs) -
 async fn run_unban_all(config: MonitoringConfig, args: DestructiveClBulkArgs) -> Result<()> {
     let DestructiveClBulkArgs { cl_rpc: cl_rpc_override, yes, json } = args;
     let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p unban-all")?;
-    let mut peer_ids = list_banned_peers(&cl_rpc).await?;
+    let mut peer_ids = P2pClient::list_banned_peers(&cl_rpc).await?;
     peer_ids.sort();
 
     if peer_ids.is_empty() {
@@ -217,7 +215,7 @@ async fn run_unban_all(config: MonitoringConfig, args: DestructiveClBulkArgs) ->
 
     let mut results = Vec::with_capacity(peer_ids.len());
     for peer_id in peer_ids {
-        match unban_peer(&cl_rpc, &peer_id).await {
+        match P2pClient::unban_peer(&cl_rpc, &peer_id).await {
             Ok(()) => results.push(PeerBulkActionResultJson::ok(peer_id)),
             Err(err) => results.push(PeerBulkActionResultJson::err(peer_id, err.to_string())),
         }
@@ -243,15 +241,15 @@ async fn run_info(config: MonitoringConfig, args: P2pArgs) -> Result<()> {
 
     match (json, raw) {
         (true, true) => {
-            let report = fetch_raw_info(&el_rpc, &cl_rpc).await?;
+            let report = P2pClient::fetch_raw_info(&el_rpc, &cl_rpc).await?;
             JsonOutput::print(&report)?;
         }
         (true, false) => {
-            let (node_info, peer_stats) = fetch_info(&el_rpc, &cl_rpc).await?;
+            let (node_info, peer_stats) = P2pClient::fetch_info(&el_rpc, &cl_rpc).await?;
             JsonOutput::print(&P2pInfoJson::from_report(&config.name, &node_info, &peer_stats))?;
         }
         (false, _) => {
-            let (node_info, peer_stats) = fetch_info(&el_rpc, &cl_rpc).await?;
+            let (node_info, peer_stats) = P2pClient::fetch_info(&el_rpc, &cl_rpc).await?;
             P2pInfoTable::from_report(&config.name, &node_info, &peer_stats).print()?;
         }
     }

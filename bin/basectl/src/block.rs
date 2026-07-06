@@ -7,7 +7,7 @@ use alloy_rpc_types_eth::BlockNumberOrTag;
 use anyhow::Result;
 use base_common_network::Base;
 use basectl_cli::{
-    BlockRefParseError, JsonOutput, KeyValueTable, MonitoringConfig, TimestampJson, fetch_block,
+    BlockRefParseError, ElClient, JsonOutput, KeyValueTable, MonitoringConfig, TimestampJson,
     format_bytes, format_gas, format_gwei, format_unix_timestamp,
 };
 use serde::Serialize;
@@ -55,7 +55,7 @@ pub(crate) async fn run(
     raw: bool,
 ) -> Result<()> {
     let block_ref = parse_block_ref(reference)?;
-    let block = fetch_block(&config.rpc, block_ref).await?;
+    let block = ElClient::fetch_block(&config.rpc, block_ref).await?;
     match (json, raw) {
         (true, true) => JsonOutput::print(&block)?,
         (true, false) => {
