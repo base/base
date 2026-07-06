@@ -165,6 +165,7 @@ async fn estimate_gas_prices_the_supplied_authentication_blob() -> eyre::Result<
                 json!({
                     "from": alice,
                     "calls": [],
+                    "sender": alice,
                     "senderAuth": auth_blob(Eip8130Contracts::P256_AUTHENTICATOR, 128),
                 }),
                 "latest",
@@ -178,6 +179,7 @@ async fn estimate_gas_prices_the_supplied_authentication_blob() -> eyre::Result<
                 json!({
                     "from": alice,
                     "calls": [],
+                    "sender": alice,
                     "senderAuth": auth_blob(Eip8130Contracts::WEBAUTHN_AUTHENTICATOR, 1024),
                 }),
                 "latest",

@@ -91,15 +91,25 @@ pub struct Eip8130RequestFields {
     /// Opaque, non-executed transaction metadata.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Bytes>,
+    /// The sender account, mirroring the on-wire `sender` field and selecting
+    /// the authentication path:
+    ///
+    /// - Absent selects the default-EOA path: the sender is a bare secp256k1
+    ///   key, exactly as for a 1559 transaction (no authenticator is declared).
+    /// - Set (to the `from` account) selects the configured-account path, where
+    ///   `sender_auth` is priced as a prefixed `authenticator(20) || data` blob.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender: Option<Address>,
     /// Raw sender authentication blob whose *shape* is priced into the estimate.
     /// Never verified: estimation only reads its length (for EIP-2028 calldata
-    /// gas) and, when present, its leading 20-byte authenticator selector (for
-    /// the intrinsic-schedule execution gas).
+    /// gas) and, on the configured-account path, its leading 20-byte
+    /// authenticator selector (for the intrinsic-schedule execution gas).
     ///
-    /// - Absent prices the default-EOA bare-signature (secp256k1) path.
-    /// - A blob prefixed with a configured-account authenticator
-    ///   ([`Eip8130AuthScheme::P256`] / `WebAuthn`) as `authenticator(20) ||
-    ///   data` prices that configured-account path.
+    /// - With `sender` unset, this is a bare secp256k1 signature (an absent blob
+    ///   defaults to a representative 65-byte stub).
+    /// - With `sender` set, this is `authenticator(20) || data` for a configured
+    ///   authenticator ([`Eip8130AuthScheme::P256`] / `WebAuthn`); an absent blob
+    ///   defaults to a secp256k1 authorization.
     ///
     /// Pass a representative blob for the key you intend to sign with (e.g. a
     /// filler-byte stub of the right length); you need not sign first.
@@ -125,6 +135,7 @@ impl Eip8130RequestFields {
             || self.calls.is_some()
             || self.expiry.is_some()
             || self.metadata.is_some()
+            || self.sender.is_some()
             || self.sender_auth.is_some()
             || self.payer.is_some()
             || self.payer_auth.is_some()

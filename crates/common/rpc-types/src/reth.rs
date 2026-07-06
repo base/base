@@ -51,11 +51,14 @@ impl BaseTransactionRequest {
     /// without verification. `gas_limit_cap` bounds execution when the request
     /// omits `gas`.
     ///
-    /// - An absent `sender_auth` prices the default-EOA bare-signature path
-    ///   (`sender` unset).
-    /// - A `sender_auth` prefixed with a configured-account authenticator
-    ///   (`authenticator(20) || data`) prices that configured-account path
-    ///   (`sender` set to `from`).
+    /// The `sender` field selects the path, mirroring the on-wire transaction:
+    ///
+    /// - An absent `sender` prices the default-EOA bare-signature (secp256k1)
+    ///   path, exactly as a 1559 transaction — `sender_auth` (if given) is a bare
+    ///   signature, else a representative 65-byte stub.
+    /// - A set `sender` (the `from` account) prices the configured-account path,
+    ///   where `sender_auth` is a prefixed `authenticator(20) || data` blob
+    ///   (defaulting to a secp256k1 authorization when omitted).
     /// - A declared `payer` adds payer authentication, priced from `payer_auth`
     ///   (defaulting to a representative secp256k1 authorization).
     ///
@@ -76,21 +79,23 @@ impl BaseTransactionRequest {
         let req = self.as_ref();
         let from = req.from?;
 
-        // Sender authentication, priced verbatim from the caller-supplied blob
-        // (never verified). A blob prefixed with a configured-account
-        // authenticator (P-256/WebAuthn) prices the configured-account path
-        // (`sender` set); an absent or unprefixed blob prices the default-EOA
-        // bare-signature path.
-        let (sender, sender_auth) = match &aa.sender_auth {
-            None => (None, Self::default_bare_auth()),
+        // The path mirrors the on-wire `sender` field: absent selects the
+        // default-EOA path (the sender is recovered from a bare secp256k1
+        // signature, as for a 1559 transaction); a set `sender` selects the
+        // configured-account path, where `sender_auth` is a prefixed
+        // `authenticator(20) || data` blob. The blob is priced verbatim (never
+        // verified); an absent blob synthesizes a correctly-shaped stub.
+        let sender = aa.sender;
+        let sender_auth = match &aa.sender_auth {
             Some(blob) => {
                 Self::check_auth_len(blob)?;
-                if Self::selects_configured_path(blob) {
-                    (Some(from), blob.clone())
-                } else {
-                    (None, blob.clone())
-                }
+                blob.clone()
             }
+            None if sender.is_some() => Self::stub_prefixed_auth(
+                Eip8130AuthScheme::Secp256k1,
+                Eip8130AuthScheme::Secp256k1.default_data_len(),
+            ),
+            None => Self::default_bare_auth(),
         };
 
         // Sponsored payer authentication, priced only when a payer is declared.
@@ -150,23 +155,6 @@ impl BaseTransactionRequest {
     fn check_auth_len(blob: &Bytes) -> Option<()> {
         (blob.len() as u64 <= AUTHENTICATOR_SELECTOR_LEN as u64 + u64::from(MAX_AUTH_SIZE))
             .then_some(())
-    }
-
-    /// Whether a raw sender authentication blob selects the configured-account
-    /// path (`sender` set): true when it is prefixed with a canonical
-    /// configured-account authenticator (P-256 or `WebAuthn`). An absent or
-    /// unprefixed blob is the default-EOA bare-signature path.
-    ///
-    /// A configured account authenticating with the k1 selector is priced on
-    /// the (equivalent-cost) EOA path: the enshrined k1 execution gas and its
-    /// cold account-state SLOAD are identical either way.
-    fn selects_configured_path(blob: &Bytes) -> bool {
-        if blob.len() < AUTHENTICATOR_SELECTOR_LEN {
-            return false;
-        }
-        let prefix = Address::from_slice(&blob[..AUTHENTICATOR_SELECTOR_LEN]);
-        prefix == Eip8130AuthScheme::P256.authenticator()
-            || prefix == Eip8130AuthScheme::WebAuthn.authenticator()
     }
 
     /// Builds a prefixed stub authentication blob — `authenticator(20) || data`
@@ -278,10 +266,10 @@ mod tests {
     }
 
     #[test]
-    fn absent_sender_auth_builds_bare_secp256k1_stub() {
+    fn absent_sender_builds_bare_secp256k1_stub() {
         let tx = sim_tx(json!({ "from": FROM, "calls": [] }));
         let s = signed(&tx);
-        assert!(s.tx().sender.is_none(), "an absent sender auth uses the default-EOA bare form");
+        assert!(s.tx().sender.is_none(), "an absent sender uses the default-EOA bare form");
         assert_eq!(
             s.sender_auth().len(),
             Eip8130AuthScheme::Secp256k1.default_data_len(),
@@ -291,14 +279,15 @@ mod tests {
     }
 
     #[test]
-    fn p256_prefixed_sender_auth_selects_the_configured_path() {
+    fn set_sender_prices_prefixed_p256_auth_verbatim() {
         let tx = sim_tx(json!({
             "from": FROM,
             "calls": [],
+            "sender": FROM,
             "senderAuth": blob(Some(Eip8130Contracts::P256_AUTHENTICATOR), 128),
         }));
         let s = signed(&tx);
-        assert_eq!(s.tx().sender, Some(FROM), "a configured-authenticator blob sets the sender");
+        assert_eq!(s.tx().sender, Some(FROM), "a set sender selects the configured path");
         let auth = s.sender_auth();
         assert_eq!(
             &auth[..20],
@@ -309,10 +298,11 @@ mod tests {
     }
 
     #[test]
-    fn webauthn_prefixed_sender_auth_is_priced_verbatim() {
+    fn set_sender_prices_prefixed_webauthn_auth_verbatim() {
         let tx = sim_tx(json!({
             "from": FROM,
             "calls": [],
+            "sender": FROM,
             "senderAuth": blob(Some(Eip8130Contracts::WEBAUTHN_AUTHENTICATOR), 512),
         }));
         let s = signed(&tx);
@@ -323,17 +313,33 @@ mod tests {
     }
 
     #[test]
-    fn k1_prefixed_sender_auth_stays_on_the_eoa_path() {
-        // The k1 selector is not a configured-account authenticator, so the blob
-        // prices the (equivalent-cost) default-EOA path with `sender` unset.
+    fn absent_sender_stays_on_the_eoa_path_ignoring_any_blob_prefix() {
+        // Path is driven by `sender`, not the blob: with `sender` unset the blob
+        // is priced on the default-EOA bare path even if it carries a prefix.
         let tx = sim_tx(json!({
             "from": FROM,
             "calls": [],
-            "senderAuth": blob(Some(Eip8130Constants::K1_AUTHENTICATOR), 65),
+            "senderAuth": blob(None, 65),
         }));
         let s = signed(&tx);
-        assert!(s.tx().sender.is_none(), "a k1-prefixed blob stays on the EOA path");
-        assert_eq!(s.sender_auth().len(), 20 + 65, "the blob is still priced verbatim");
+        assert!(s.tx().sender.is_none(), "an absent sender stays on the EOA path");
+        assert_eq!(s.sender_auth().len(), 65, "the bare blob is priced verbatim");
+    }
+
+    #[test]
+    fn set_sender_without_auth_defaults_to_k1_prefixed() {
+        // A configured account that omits the blob is priced as configured-k1:
+        // a k1-prefixed `authenticator(20) || data` authorization.
+        let tx = sim_tx(json!({ "from": FROM, "calls": [], "sender": FROM }));
+        let s = signed(&tx);
+        assert_eq!(s.tx().sender, Some(FROM));
+        let auth = s.sender_auth();
+        assert_eq!(
+            &auth[..20],
+            Eip8130Constants::K1_AUTHENTICATOR.as_slice(),
+            "the default configured authorization is prefixed with the k1 authenticator",
+        );
+        assert_eq!(auth.len(), 20 + Eip8130AuthScheme::Secp256k1.default_data_len());
     }
 
     #[test]
