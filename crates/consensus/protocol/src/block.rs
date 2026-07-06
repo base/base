@@ -2,7 +2,7 @@
 
 use alloc::vec::Vec;
 
-use alloy_consensus::{Block, Transaction};
+use alloy_consensus::{Block, BlockHeader, Transaction};
 use alloy_eips::{BlockNumHash, eip2718::Eip2718Error, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{CancunPayloadFields, PraguePayloadFields};
@@ -52,19 +52,25 @@ impl BlockInfo {
     }
 }
 
-impl<T> From<Block<T>> for BlockInfo {
-    fn from(block: Block<T>) -> Self {
+impl<T, H> From<Block<T, H>> for BlockInfo
+where
+    H: BlockHeader + alloy_primitives::Sealable,
+{
+    fn from(block: Block<T, H>) -> Self {
         Self::from(&block)
     }
 }
 
-impl<T> From<&Block<T>> for BlockInfo {
-    fn from(block: &Block<T>) -> Self {
+impl<T, H> From<&Block<T, H>> for BlockInfo
+where
+    H: BlockHeader + alloy_primitives::Sealable,
+{
+    fn from(block: &Block<T, H>) -> Self {
         Self {
             hash: block.header.hash_slow(),
-            number: block.header.number,
-            parent_hash: block.header.parent_hash,
-            timestamp: block.header.timestamp,
+            number: block.header.number(),
+            parent_hash: block.header.parent_hash(),
+            timestamp: block.header.timestamp(),
         }
     }
 }
@@ -181,8 +187,11 @@ impl L2BlockInfo {
     }
 
     /// Constructs an [`L2BlockInfo`] from a given Base [`Block`] and [`ChainGenesis`].
-    pub fn from_block_and_genesis<T: AsRef<BaseTxEnvelope>>(
-        block: &Block<T>,
+    pub fn from_block_and_genesis<
+        T: AsRef<BaseTxEnvelope>,
+        H: BlockHeader + alloy_primitives::Sealable,
+    >(
+        block: &Block<T, H>,
         genesis: &ChainGenesis,
     ) -> Result<Self, FromBlockError> {
         let block_info = BlockInfo::from(block);
@@ -403,9 +412,9 @@ mod tests {
             block_info,
             BlockInfo {
                 hash: b256!("04d6fefc87466405ba0e5672dcf5c75325b33e5437da2a42423080aab8be889b"),
-                number: block.header.number,
-                parent_hash: block.header.parent_hash,
-                timestamp: block.header.timestamp,
+                number: block.header.number(),
+                parent_hash: block.header.parent_hash(),
+                timestamp: block.header.timestamp(),
             }
         );
     }

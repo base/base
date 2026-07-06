@@ -10,7 +10,10 @@ use alloy_consensus::{
     Header, Receipt, Sealed, Signed, TxEip1559, TxEip2930, TxEip7702, TxLegacy, TxReceipt,
     constants::EIP7702_TX_TYPE_ID,
 };
-use alloy_primitives::{Address, B256, BlockNumber, Bloom, Bytes, Signature, TxKind, U256};
+use alloy_primitives::{
+    Address, B256, BlockHash, BlockNumber, Bloom, Bytes, Signature, TxKind, U256,
+};
+use alloy_rlp::{Decodable, Encodable};
 use bytes::{Buf, BufMut};
 use reth_codecs::{
     Compact, CompactZstd, DecompressError,
@@ -21,8 +24,9 @@ use reth_codecs::{
 };
 
 use crate::{
-    BaseBlock, BaseHeader, BaseReceipt, BaseTxEnvelope, BaseTypedTransaction, DEPOSIT_TX_TYPE_ID,
-    DepositReceipt, EIP8130_TX_TYPE_ID, Eip8130Receipt, OpTxType, TxDeposit, TxEip8130,
+    BaseBlock, BaseHeader, BaseHeaderFields, BaseReceipt, BaseTxEnvelope, BaseTypedTransaction,
+    DEPOSIT_TX_TYPE_ID, DepositReceipt, EIP8130_TX_TYPE_ID, Eip8130Receipt, OpTxType,
+    TimestampMillisPartError, TxDeposit, TxEip8130,
 };
 
 // ---------------------------------------------------------------------------
@@ -512,13 +516,48 @@ impl DepositReceiptExt for BaseReceipt {
 // Compact – BaseHeader
 // ---------------------------------------------------------------------------
 
-/// Helper struct used to derive [`Compact`] for [`BaseHeader`].
+/// First-byte prefix for Base-owned compact v1 header rows.
 ///
-/// Notice: field layout is byte-compatible with the upstream reth helper used for
-/// [`alloy_consensus::Header`]. The only Base-specific addition lives in [`BaseHeaderExt`].
+/// `0x7e` sets the frozen legacy compact difficulty length field to `63`, which is impossible for
+/// a `U256` difficulty value and therefore cannot collide with any historical upstream header row.
+pub const BASE_HEADER_COMPACT_V1_MAGIC: [u8; 4] = [0x7E, b'B', b'H', 0x01];
+
+/// Error returned when decoding the Base-owned compact header boundary fails.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum BaseHeaderCompactError {
+    /// Base-owned compact bytes started with the reserved prefix but not a known version.
+    #[error("invalid Base header compact magic prefix")]
+    InvalidMagic,
+
+    /// Base-owned compact bytes were truncated before the payload started.
+    #[error("Base header compact bytes are too short")]
+    InputTooShort,
+
+    /// Base-owned compact v1 rows must contain at least one Base-owned field.
+    #[error("Base header compact v1 payload must contain Base-owned fields")]
+    EmptyBaseFields,
+
+    /// Base-owned compact v1 timestamp milliseconds did not fit into the public `u16` type.
+    #[error("Base header compact timestamp milliseconds {0} do not fit in u16")]
+    TimestampMillisPartOutOfRange(u64),
+
+    /// Base-owned compact v1 inner header RLP could not be decoded.
+    #[error("Base header compact inner header RLP decode failed: {0}")]
+    InnerHeaderRlp(alloy_rlp::Error),
+
+    /// Base-owned compact v1 inner header RLP contained trailing bytes.
+    #[error("Base header compact inner header RLP has trailing bytes")]
+    TrailingInnerHeaderRlp,
+
+    /// Base-owned fields failed semantic validation.
+    #[error(transparent)]
+    TimestampMillisPart(#[from] TimestampMillisPartError),
+}
+
+/// Frozen legacy compact v0 snapshot for pre-hardfork stored header rows.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Compact)]
 #[reth_codecs(crate = "reth_codecs")]
-pub struct BaseHeaderCompact {
+pub struct LegacyHeaderCompactV0 {
     /// Parent block hash.
     pub parent_hash: B256,
     /// Ommers list hash.
@@ -557,43 +596,30 @@ pub struct BaseHeaderCompact {
     pub excess_blob_gas: Option<u64>,
     /// EIP-4788 parent beacon block root.
     pub parent_beacon_block_root: Option<B256>,
-    /// Optional newly-added header fields, including the Base millisecond trailer.
-    pub extra_fields: Option<BaseHeaderExt>,
+    /// Optional newly-added upstream header fields.
+    pub extra_fields: Option<LegacyHeaderExtV0>,
     /// Free-form extra data.
     pub extra_data: Bytes,
 }
 
-/// Optional extension fields appended to [`BaseHeaderCompact`].
-///
-/// New fields must always be `Option<T>` and appended at the end of this struct so older
-/// compact-encoded headers continue to decode.
+/// Frozen legacy compact v0 snapshot for upstream optional header fields.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Compact)]
 #[reth_codecs(crate = "reth_codecs")]
-pub struct BaseHeaderExt {
+pub struct LegacyHeaderExtV0 {
     /// EIP-7685 execution requests hash.
     pub requests_hash: Option<B256>,
     /// EIP-7928 block access list hash.
     pub block_access_list_hash: Option<B256>,
     /// EIP-7843 slot number.
     pub slot_number: Option<u64>,
-    /// Optional millisecond subsecond component (Base-specific).
-    ///
-    /// Stored as `u64` because reth-codecs only implements [`Compact`] for `u8`/`u64`/`u128`;
-    /// the value is always in the range `0..1000` and is converted to/from `u16` at the
-    /// [`BaseHeader`] boundary.
-    pub timestamp_millis_part: Option<u64>,
 }
 
-impl BaseHeaderExt {
+impl LegacyHeaderExtV0 {
     /// Returns `Some(self)` if any field is populated, `None` otherwise.
-    ///
-    /// Used to keep the `extra_fields` bucket absent (and therefore byte-compatible with
-    /// pre-extension stored headers) when no extension data is present.
     pub const fn into_option(self) -> Option<Self> {
         if self.requests_hash.is_some()
             || self.block_access_list_hash.is_some()
             || self.slot_number.is_some()
-            || self.timestamp_millis_part.is_some()
         {
             Some(self)
         } else {
@@ -602,14 +628,9 @@ impl BaseHeaderExt {
     }
 }
 
-impl Compact for BaseHeader {
-    fn to_compact<B>(&self, buf: &mut B) -> usize
-    where
-        B: BufMut + AsMut<[u8]>,
-    {
-        // Destructure the upstream header exhaustively so that if alloy adds a field, this stops
-        // compiling and forces a decision about how it maps into the compact layout (and whether
-        // it belongs in the `extra_fields` bucket to preserve byte compatibility).
+impl LegacyHeaderCompactV0 {
+    /// Creates the frozen legacy compact v0 snapshot for a plain Ethereum header.
+    pub fn from_header(header: &Header) -> Self {
         let Header {
             parent_hash,
             ommers_hash,
@@ -624,7 +645,6 @@ impl Compact for BaseHeader {
             gas_limit,
             gas_used,
             timestamp,
-            extra_data,
             mix_hash,
             nonce,
             base_fee_per_gas,
@@ -634,16 +654,15 @@ impl Compact for BaseHeader {
             requests_hash,
             block_access_list_hash,
             slot_number,
-        } = &self.inner;
-
-        let extra_fields = BaseHeaderExt {
+            extra_data,
+        } = header;
+        let extra_fields = LegacyHeaderExtV0 {
             requests_hash: *requests_hash,
             block_access_list_hash: *block_access_list_hash,
             slot_number: *slot_number,
-            timestamp_millis_part: self.timestamp_millis_part.map(u64::from),
         };
 
-        let helper = BaseHeaderCompact {
+        Self {
             parent_hash: *parent_hash,
             ommers_hash: *ommers_hash,
             beneficiary: *beneficiary,
@@ -658,53 +677,237 @@ impl Compact for BaseHeader {
             gas_used: *gas_used,
             timestamp: *timestamp,
             mix_hash: *mix_hash,
-            nonce: (*nonce).into(),
+            nonce: u64::from(*nonce),
             base_fee_per_gas: *base_fee_per_gas,
             blob_gas_used: *blob_gas_used,
             excess_blob_gas: *excess_blob_gas,
             parent_beacon_block_root: *parent_beacon_block_root,
             extra_fields: extra_fields.into_option(),
             extra_data: extra_data.clone(),
-        };
-        helper.to_compact(buf)
+        }
+    }
+
+    /// Reconstructs the plain Ethereum header stored in the frozen legacy compact v0 snapshot.
+    pub fn into_header(self) -> Header {
+        Header {
+            parent_hash: self.parent_hash,
+            ommers_hash: self.ommers_hash,
+            beneficiary: self.beneficiary,
+            state_root: self.state_root,
+            transactions_root: self.transactions_root,
+            receipts_root: self.receipts_root,
+            withdrawals_root: self.withdrawals_root,
+            logs_bloom: self.logs_bloom,
+            difficulty: self.difficulty,
+            number: self.number,
+            gas_limit: self.gas_limit,
+            gas_used: self.gas_used,
+            timestamp: self.timestamp,
+            mix_hash: self.mix_hash,
+            nonce: self.nonce.into(),
+            base_fee_per_gas: self.base_fee_per_gas,
+            blob_gas_used: self.blob_gas_used,
+            excess_blob_gas: self.excess_blob_gas,
+            parent_beacon_block_root: self.parent_beacon_block_root,
+            requests_hash: self.extra_fields.as_ref().and_then(|fields| fields.requests_hash),
+            block_access_list_hash: self
+                .extra_fields
+                .as_ref()
+                .and_then(|fields| fields.block_access_list_hash),
+            slot_number: self.extra_fields.as_ref().and_then(|fields| fields.slot_number),
+            extra_data: self.extra_data,
+        }
+    }
+}
+
+/// Reserved nested extension bucket for future Base-owned compact growth.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Compact)]
+#[reth_codecs(crate = "reth_codecs")]
+pub struct BaseHeaderCompactExtV1 {}
+
+/// Base-owned compact v1 fields stored ahead of the opaque nested header payload.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Compact)]
+#[reth_codecs(crate = "reth_codecs")]
+pub struct BaseHeaderCompactFieldsV1 {
+    /// Post-Beryl millisecond subsecond component.
+    pub timestamp_millis_part: Option<u64>,
+    /// Reserved nested extension bucket for future Base-owned compact growth.
+    pub ext: Option<BaseHeaderCompactExtV1>,
+}
+
+impl BaseHeaderCompactFieldsV1 {
+    /// Builds the compact v1 field set from the semantic Base-owned field set.
+    pub fn from_base_fields(base: &BaseHeaderFields) -> Result<Self, BaseHeaderCompactError> {
+        base.validate()?;
+        Ok(Self { timestamp_millis_part: base.timestamp_millis_part.map(u64::from), ext: None })
+    }
+
+    /// Reconstructs semantic Base-owned fields from the compact v1 field set.
+    pub fn try_into_base_fields(self) -> Result<BaseHeaderFields, BaseHeaderCompactError> {
+        let Self { timestamp_millis_part, ext: _ } = self;
+        let timestamp_millis_part = timestamp_millis_part
+            .map(|part| {
+                u16::try_from(part)
+                    .map_err(|_| BaseHeaderCompactError::TimestampMillisPartOutOfRange(part))
+            })
+            .transpose()?;
+        let base = BaseHeaderFields::new(timestamp_millis_part);
+        base.validate()?;
+        Ok(base)
+    }
+}
+
+/// Base-owned compact v1 payload for post-hardfork stored header rows.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct BaseHeaderCompactV1 {
+    /// Base-owned compact v1 field set.
+    pub base: BaseHeaderCompactFieldsV1,
+    /// Opaque RLP encoding of the nested Ethereum header.
+    pub inner_rlp: Bytes,
+}
+
+impl BaseHeaderCompactV1 {
+    /// Creates the Base-owned compact v1 payload for a post-hardfork Base header.
+    pub fn from_header(header: &BaseHeader) -> Result<Self, BaseHeaderCompactError> {
+        let mut inner_rlp = Vec::new();
+        header.inner.encode(&mut inner_rlp);
+        Ok(Self {
+            base: BaseHeaderCompactFieldsV1::from_base_fields(&header.base)?,
+            inner_rlp: inner_rlp.into(),
+        })
+    }
+
+    /// Reconstructs the semantic Base header from a Base-owned compact v1 payload.
+    pub fn try_into_header(self) -> Result<BaseHeader, BaseHeaderCompactError> {
+        let base = self.base.try_into_base_fields()?;
+        if base.is_empty() {
+            return Err(BaseHeaderCompactError::EmptyBaseFields);
+        }
+
+        let mut inner_rlp = self.inner_rlp.as_ref();
+        let inner =
+            Header::decode(&mut inner_rlp).map_err(BaseHeaderCompactError::InnerHeaderRlp)?;
+        if !inner_rlp.is_empty() {
+            return Err(BaseHeaderCompactError::TrailingInnerHeaderRlp);
+        }
+
+        BaseHeader::new(inner, base).map_err(BaseHeaderCompactError::from)
+    }
+}
+
+impl Compact for BaseHeaderCompactV1 {
+    fn to_compact<B>(&self, buf: &mut B) -> usize
+    where
+        B: BufMut + AsMut<[u8]>,
+    {
+        self.base.to_compact(buf) + self.inner_rlp.to_compact(buf)
     }
 
     fn from_compact(buf: &[u8], len: usize) -> (Self, &[u8]) {
-        let (helper, buf) = BaseHeaderCompact::from_compact(buf, len);
-        let timestamp_millis_part = helper
-            .extra_fields
-            .as_ref()
-            .and_then(|h| h.timestamp_millis_part)
-            .map(|v| u16::try_from(v).unwrap_or(0));
-        let inner = Header {
-            parent_hash: helper.parent_hash,
-            ommers_hash: helper.ommers_hash,
-            beneficiary: helper.beneficiary,
-            state_root: helper.state_root,
-            transactions_root: helper.transactions_root,
-            receipts_root: helper.receipts_root,
-            withdrawals_root: helper.withdrawals_root,
-            logs_bloom: helper.logs_bloom,
-            difficulty: helper.difficulty,
-            number: helper.number,
-            gas_limit: helper.gas_limit,
-            gas_used: helper.gas_used,
-            timestamp: helper.timestamp,
-            mix_hash: helper.mix_hash,
-            nonce: helper.nonce.into(),
-            base_fee_per_gas: helper.base_fee_per_gas,
-            blob_gas_used: helper.blob_gas_used,
-            excess_blob_gas: helper.excess_blob_gas,
-            parent_beacon_block_root: helper.parent_beacon_block_root,
-            requests_hash: helper.extra_fields.as_ref().and_then(|h| h.requests_hash),
-            block_access_list_hash: helper
-                .extra_fields
-                .as_ref()
-                .and_then(|h| h.block_access_list_hash),
-            slot_number: helper.extra_fields.as_ref().and_then(|h| h.slot_number),
-            extra_data: helper.extra_data,
-        };
-        (Self { inner, timestamp_millis_part }, buf)
+        let (base, remaining) = BaseHeaderCompactFieldsV1::from_compact(buf, len);
+        let base_len = buf.len() - remaining.len();
+        let inner_len = len - base_len;
+        let (inner_rlp, remaining) = Bytes::from_compact(remaining, inner_len);
+        (Self { base, inner_rlp }, remaining)
+    }
+}
+
+impl BaseHeader {
+    /// Decodes Base compact bytes with validation for the Base-owned v1 boundary.
+    pub fn decode_compact_checked(
+        buf: &[u8],
+        len: usize,
+    ) -> Result<(Self, &[u8]), BaseHeaderCompactError> {
+        if buf.starts_with(&BASE_HEADER_COMPACT_V1_MAGIC) {
+            let payload_len = len
+                .checked_sub(BASE_HEADER_COMPACT_V1_MAGIC.len())
+                .ok_or(BaseHeaderCompactError::InputTooShort)?;
+            let (payload, remaining) = BaseHeaderCompactV1::from_compact(
+                &buf[BASE_HEADER_COMPACT_V1_MAGIC.len()..],
+                payload_len,
+            );
+            return Ok((payload.try_into_header()?, remaining));
+        }
+
+        if buf.first().copied() == Some(BASE_HEADER_COMPACT_V1_MAGIC[0]) {
+            return Err(BaseHeaderCompactError::InvalidMagic);
+        }
+
+        let (payload, remaining) = LegacyHeaderCompactV0::from_compact(buf, len);
+        Ok((Self::from(payload.into_header()), remaining))
+    }
+}
+
+impl Compact for BaseHeader {
+    fn to_compact<B>(&self, buf: &mut B) -> usize
+    where
+        B: BufMut + AsMut<[u8]>,
+    {
+        if self.is_legacy() {
+            return LegacyHeaderCompactV0::from_header(&self.inner).to_compact(buf);
+        }
+
+        let payload =
+            BaseHeaderCompactV1::from_header(self).expect("invalid Base header compact fields");
+        buf.put_slice(&BASE_HEADER_COMPACT_V1_MAGIC);
+        BASE_HEADER_COMPACT_V1_MAGIC.len() + payload.to_compact(buf)
+    }
+
+    fn from_compact(buf: &[u8], len: usize) -> (Self, &[u8]) {
+        Self::decode_compact_checked(buf, len)
+            .unwrap_or_else(|error| panic!("invalid BaseHeader compact bytes: {error}"))
+    }
+}
+
+impl reth_db_api::table::Compress for BaseHeader {
+    type Compressed = Vec<u8>;
+
+    fn compress_to_buf<B: BufMut + AsMut<[u8]>>(&self, buf: &mut B) {
+        let _ = Compact::to_compact(self, buf);
+    }
+}
+
+impl reth_db_api::table::Decompress for BaseHeader {
+    fn decompress(value: &[u8]) -> Result<Self, DecompressError> {
+        let (header, _) =
+            Self::decode_compact_checked(value, value.len()).map_err(DecompressError::new)?;
+        Ok(header)
+    }
+}
+
+impl reth_primitives_traits::BlockHeader for BaseHeader {}
+
+impl reth_primitives_traits::header::HeaderMut for BaseHeader {
+    fn set_parent_hash(&mut self, hash: BlockHash) {
+        self.inner.parent_hash = hash;
+    }
+
+    fn set_block_number(&mut self, number: BlockNumber) {
+        self.inner.number = number;
+    }
+
+    fn set_timestamp(&mut self, timestamp: u64) {
+        self.inner.timestamp = timestamp;
+    }
+
+    fn set_state_root(&mut self, state_root: B256) {
+        self.inner.state_root = state_root;
+    }
+
+    fn set_difficulty(&mut self, difficulty: U256) {
+        self.inner.difficulty = difficulty;
+    }
+
+    fn set_mix_hash(&mut self, mix_hash: B256) {
+        self.inner.mix_hash = mix_hash;
+    }
+
+    fn set_extra_data(&mut self, extra_data: Bytes) {
+        self.inner.extra_data = extra_data;
+    }
+
+    fn set_parent_beacon_block_root(&mut self, parent_beacon_block_root: Option<B256>) {
+        self.inner.parent_beacon_block_root = parent_beacon_block_root;
     }
 }
 
@@ -731,10 +934,10 @@ impl reth_primitives_traits::NodePrimitives for BasePrimitives {
 #[cfg(test)]
 mod tests {
     use alloy_consensus::{Header, Receipt};
-    use alloy_primitives::{B256, Log};
+    use alloy_primitives::{B256, Bytes, Log};
+    use reth_codecs::Compact;
 
     use super::*;
-    use crate::VALID_TIMESTAMP_MILLIS_PARTS;
 
     fn sample_inner_header() -> Header {
         Header {
@@ -748,21 +951,20 @@ mod tests {
             excess_blob_gas: Some(0),
             parent_beacon_block_root: Some(B256::repeat_byte(0x22)),
             requests_hash: Some(B256::repeat_byte(0x33)),
+            block_access_list_hash: Some(B256::repeat_byte(0x44)),
+            slot_number: Some(55),
+            extra_data: Bytes::from_static(b"legacy-header"),
             ..Default::default()
         }
     }
 
     #[test]
     fn compact_phase_statuses_empty_writes_nothing_and_decodes_empty() {
-        // Empty statuses must encode to zero bytes so non-8130 receipts (and
-        // empty-`calls` 8130 receipts) keep the pre-existing on-disk format.
         let mut buf = Vec::new();
         let written = CompactPhaseStatuses(Vec::new()).to_compact(&mut buf);
         assert_eq!(written, 0);
         assert!(buf.is_empty());
 
-        // An empty trailing buffer (a receipt written before this field existed)
-        // must decode to empty rather than panic.
         let (decoded, rest) = CompactPhaseStatuses::from_compact(&[], 0);
         assert_eq!(decoded, CompactPhaseStatuses(Vec::new()));
         assert!(rest.is_empty());
@@ -780,11 +982,6 @@ mod tests {
 
     #[test]
     fn base_receipt_compact_decode_tolerates_missing_phase_statuses() {
-        // A non-8130 receipt encodes with zero trailing phase-status bytes, so
-        // its `Compact` byte stream is identical to receipts written before the
-        // `eip8130_phase_statuses` field existed. Decoding must not panic and
-        // must reproduce the original receipt — proving the field addition is
-        // backward compatible with pre-existing on-disk receipts.
         let receipt = BaseReceipt::Legacy(Receipt {
             status: true.into(),
             cumulative_gas_used: 21_000,
@@ -800,12 +997,7 @@ mod tests {
 
     #[test]
     fn base_receipt_compact_roundtrips_eip8130_phase_statuses() {
-        // Pins that `eip8130_phase_statuses` is wired through `CompactBaseReceipt`
-        // as the trailing field: a non-empty status array must survive a full
-        // encode/decode round-trip. Reordering or dropping the field (so an 8130
-        // receipt decodes via the empty-trailing tolerance path) would lose the
-        // statuses and fail this assertion.
-        let receipt = BaseReceipt::Eip8130(crate::Eip8130Receipt::new(
+        let receipt = BaseReceipt::Eip8130(Eip8130Receipt::new(
             Receipt {
                 status: true.into(),
                 cumulative_gas_used: 21_000,
@@ -826,103 +1018,75 @@ mod tests {
     }
 
     #[test]
-    fn base_header_compact_round_trip_with_none_millis_part() {
-        let base_header = BaseHeader::from(sample_inner_header());
-        let mut encoded = Vec::new();
-        let len = base_header.to_compact(&mut encoded);
-        assert_eq!(len, encoded.len());
-
-        let (decoded, rest) = BaseHeader::from_compact(&encoded, len);
-        assert!(rest.is_empty());
-        assert_eq!(decoded, base_header);
-    }
-
-    #[test]
-    fn base_header_compact_round_trip_with_some_millis_part() {
-        for part in VALID_TIMESTAMP_MILLIS_PARTS {
-            let base_header = BaseHeader::new(sample_inner_header(), Some(part)).unwrap();
-            let mut encoded = Vec::new();
-            let len = base_header.to_compact(&mut encoded);
-            assert_eq!(len, encoded.len());
-
-            let (decoded, rest) = BaseHeader::from_compact(&encoded, len);
-            assert!(rest.is_empty(), "decoder must consume all bytes for part={part}");
-            assert_eq!(decoded, base_header);
-        }
-    }
-
-    #[test]
-    fn base_header_compact_with_none_matches_alloy_header_bytes() {
-        // For headers without the Base millisecond trailer, the compact encoding must be
-        // byte-identical to the upstream `alloy_consensus::Header` compact encoding so
-        // pre-Subsecond stored bytes continue to decode (and re-encode) unchanged.
+    fn legacy_header_compact_matches_upstream_header_bytes() {
         let inner = sample_inner_header();
-        let base_header = BaseHeader::from(inner.clone());
+        let header = BaseHeader::from(inner.clone());
 
-        let mut base_encoding = Vec::new();
-        let base_len = base_header.to_compact(&mut base_encoding);
+        let mut base_encoded = Vec::new();
+        let base_len = header.to_compact(&mut base_encoded);
 
-        let mut alloy_encoding = Vec::new();
-        let alloy_len = inner.to_compact(&mut alloy_encoding);
+        let mut upstream_encoded = Vec::new();
+        let upstream_len = inner.to_compact(&mut upstream_encoded);
 
-        assert_eq!(base_len, alloy_len);
-        assert_eq!(base_encoding, alloy_encoding);
+        assert_eq!(base_len, upstream_len);
+        assert_eq!(base_encoded, upstream_encoded);
     }
 
     #[test]
-    fn base_header_compact_decodes_alloy_header_bytes_as_none_millis_part() {
-        // Old compact bytes (produced before the Base millisecond trailer existed) must
-        // decode cleanly as `timestamp_millis_part = None`.
-        let inner = sample_inner_header();
-        let mut alloy_encoding = Vec::new();
-        let alloy_len = inner.to_compact(&mut alloy_encoding);
-
-        let (decoded, rest) = BaseHeader::from_compact(&alloy_encoding, alloy_len);
-        assert!(rest.is_empty());
-        assert_eq!(decoded.timestamp_millis_part, None);
-        assert_eq!(decoded.inner, inner);
-    }
-
-    #[test]
-    fn base_header_compact_with_all_fields_matches_alloy_header_bytes() {
-        // Drift tripwire: with EVERY upstream optional field populated (including the ones in
-        // reth's `HeaderExt` bucket that the Base millisecond field is appended to), the no-millis
-        // compact encoding must stay byte-identical to upstream. If a reth/alloy bump reorders or
-        // adds a `HeaderExt` field, this fails loudly instead of silently corrupting stored bytes.
+    fn legacy_header_compact_decodes_as_empty_base_fields() {
         let inner = Header {
-            parent_hash: B256::repeat_byte(0x01),
-            ommers_hash: B256::repeat_byte(0x02),
-            beneficiary: alloy_primitives::Address::repeat_byte(0x03),
-            state_root: B256::repeat_byte(0x04),
-            transactions_root: B256::repeat_byte(0x05),
-            receipts_root: B256::repeat_byte(0x06),
-            logs_bloom: alloy_primitives::Bloom::repeat_byte(0x07),
-            difficulty: alloy_primitives::U256::from(0x08),
+            timestamp: 1_780_334_562,
             number: 42_000,
             gas_limit: 30_000_000,
             gas_used: 1_234,
-            timestamp: 1_780_334_562,
-            extra_data: alloy_primitives::Bytes::from_static(&[0xaa, 0xbb, 0xcc]),
-            mix_hash: B256::repeat_byte(0x09),
-            nonce: alloy_primitives::B64::repeat_byte(0x0a),
             base_fee_per_gas: Some(1_000_000_000),
-            withdrawals_root: Some(B256::repeat_byte(0x11)),
-            blob_gas_used: Some(0x12),
-            excess_blob_gas: Some(0x13),
-            parent_beacon_block_root: Some(B256::repeat_byte(0x22)),
             requests_hash: Some(B256::repeat_byte(0x33)),
-            block_access_list_hash: Some(B256::repeat_byte(0x44)),
-            slot_number: Some(0x55),
+            extra_data: Bytes::from_static(b"legacy-header"),
+            ..Default::default()
         };
-        let base_header = BaseHeader::from(inner.clone());
 
-        let mut base_encoding = Vec::new();
-        let base_len = base_header.to_compact(&mut base_encoding);
+        let mut encoded = Vec::new();
+        let len = inner.to_compact(&mut encoded);
+        let (decoded, remaining) = BaseHeader::decode_compact_checked(&encoded, len).unwrap();
 
-        let mut alloy_encoding = Vec::new();
-        let alloy_len = inner.to_compact(&mut alloy_encoding);
+        assert!(remaining.is_empty());
+        assert_eq!(decoded.inner, inner);
+        assert_eq!(decoded.base, BaseHeaderFields::default());
+    }
 
-        assert_eq!(base_len, alloy_len);
-        assert_eq!(base_encoding, alloy_encoding);
+    #[test]
+    fn post_fork_header_compact_round_trips_base_fields() {
+        let header = BaseHeader::new(
+            Header {
+                timestamp: 1_780_334_562,
+                number: 42_000,
+                gas_limit: 30_000_000,
+                gas_used: 1_234,
+                base_fee_per_gas: Some(1_000_000_000),
+                withdrawals_root: Some(B256::repeat_byte(0x11)),
+                blob_gas_used: Some(0),
+                excess_blob_gas: Some(0),
+                parent_beacon_block_root: Some(B256::repeat_byte(0x22)),
+                requests_hash: Some(B256::repeat_byte(0x33)),
+                extra_data: Bytes::from_static(b"post-fork-header"),
+                ..Default::default()
+            },
+            BaseHeaderFields::new(Some(600)),
+        )
+        .unwrap();
+
+        let mut encoded = Vec::new();
+        let len = header.to_compact(&mut encoded);
+        let (decoded, remaining) = BaseHeader::decode_compact_checked(&encoded, len).unwrap();
+
+        assert_eq!(&encoded[..BASE_HEADER_COMPACT_V1_MAGIC.len()], &BASE_HEADER_COMPACT_V1_MAGIC);
+        assert!(remaining.is_empty());
+        assert_eq!(decoded, header);
+    }
+
+    #[test]
+    fn base_header_compact_v1_reserves_nested_extension_slot() {
+        assert_eq!(BaseHeaderCompactFieldsV1::bitflag_encoded_bytes(), 1);
+        assert_eq!(BaseHeaderCompactExtV1::bitflag_encoded_bytes(), 0);
     }
 }

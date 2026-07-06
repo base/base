@@ -7,22 +7,22 @@ use alloy_consensus::{BlockHeader as AlloyBlockHeader, Header, InMemorySize};
 use alloy_primitives::{
     Address, B64, B256, BlockNumber, Bloom, Bytes, Sealable, Sealed, U256, keccak256,
 };
-use alloy_rlp::{BufMut, Decodable, Encodable, RlpDecodable, RlpEncodable};
+use alloy_rlp::{BufMut, Decodable, Encodable};
 
 /// Number of milliseconds in one Unix timestamp second.
 pub const TIMESTAMP_MILLIS_PER_SECOND: u16 = 1_000;
 
-/// Base block cadence in milliseconds when the sub-second timestamp component is used.
+/// Base block cadence in milliseconds after Beryl.
 pub const BASE_BLOCK_TIME_MILLIS: u16 = 200;
 
 /// Valid millisecond subsecond components for 200ms Base headers.
 pub const VALID_TIMESTAMP_MILLIS_PARTS: [u16; 5] = [0, 200, 400, 600, 800];
 
-/// Error returned when a header millisecond timestamp component is invalid.
+/// Error returned when a Base header millisecond timestamp component is invalid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum TimestampMillisPartError {
-    /// Validation requires a millisecond component.
-    #[error("timestamp millisecond part is required")]
+    /// Post-Subsecond validation requires a millisecond component.
+    #[error("timestamp millisecond part is required after Subsecond")]
     MissingPart,
 
     /// Millisecond component is not aligned to the 200ms cadence.
@@ -58,43 +58,121 @@ pub enum TimestampMillisPartError {
     NonSlotAlignedDelta(u64),
 }
 
-/// Base header wrapper with an optional millisecond timestamp component.
-///
-/// `BaseHeader` is the canonical Base block header: it wraps the upstream Ethereum
-/// [`Header`] fields and adds an optional `timestamp_millis_part`
-/// committed by the header hash. When `timestamp_millis_part` is `None`, the RLP
-/// encoding, hash, and reth `Compact` bytes are byte-identical to the upstream
-/// [`Header`].
+/// Base-owned header fields committed by the Base header boundary.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(default, rename_all = "camelCase"))]
+pub struct BaseHeaderFields {
+    /// Post-Beryl millisecond subsecond component committed by the header hash.
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    pub timestamp_millis_part: Option<u16>,
+}
+
+impl BaseHeaderFields {
+    /// Creates Base-owned header fields.
+    pub const fn new(timestamp_millis_part: Option<u16>) -> Self {
+        Self { timestamp_millis_part }
+    }
+
+    /// Returns `true` when no Base-owned fields are populated.
+    pub const fn is_empty(&self) -> bool {
+        self.timestamp_millis_part.is_none()
+    }
+
+    /// Validates all populated Base-owned fields.
+    pub fn validate(&self) -> Result<(), TimestampMillisPartError> {
+        if let Some(part) = self.timestamp_millis_part {
+            BaseHeader::validate_timestamp_millis_part(part)?;
+        }
+
+        Ok(())
+    }
+
+    /// Returns the RLP post-fork view of the Base-owned fields.
+    pub const fn into_post_fork_fields(self) -> BaseHeaderPostForkFields {
+        BaseHeaderPostForkFields { timestamp_millis_part: self.timestamp_millis_part }
+    }
+
+    /// Builds Base-owned fields from the RLP post-fork view.
+    pub const fn from_post_fork_fields(fields: BaseHeaderPostForkFields) -> Self {
+        Self { timestamp_millis_part: fields.timestamp_millis_part }
+    }
+}
+
+/// Base-owned RLP payload for post-hardfork header fields.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Hash,
+    alloy_rlp::RlpEncodable,
+    alloy_rlp::RlpDecodable,
+)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+#[rlp(trailing)]
+pub struct BaseHeaderPostForkFields {
+    /// Post-Beryl millisecond subsecond component committed by the header hash.
+    pub timestamp_millis_part: Option<u16>,
+}
+
+impl BaseHeaderPostForkFields {
+    /// Returns `true` when the post-fork payload has no Base-owned fields.
+    pub const fn is_empty(&self) -> bool {
+        self.timestamp_millis_part.is_none()
+    }
+}
+
+/// Base-owned RLP wrapper for post-hardfork Base headers.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, alloy_rlp::RlpEncodable, alloy_rlp::RlpDecodable)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct BaseHeaderPostForkPayload {
+    /// Standard Ethereum execution header fields.
+    pub inner: Header,
+    /// Base-owned post-hardfork header fields.
+    pub base: BaseHeaderPostForkFields,
+}
+
+impl BaseHeaderPostForkPayload {
+    /// Creates a post-fork payload from a Base header.
+    pub fn from_header(header: &BaseHeader) -> Self {
+        Self { inner: header.inner.clone(), base: header.base.into_post_fork_fields() }
+    }
+
+    /// Converts the payload back into a Base header.
+    pub fn try_into_header(self) -> Result<BaseHeader, TimestampMillisPartError> {
+        let base = BaseHeaderFields::from_post_fork_fields(self.base);
+        BaseHeader::new(self.inner, base)
+    }
+}
+
+/// Base header wrapper with Base-owned post-hardfork fields.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct BaseHeader {
     /// Standard Ethereum execution header fields.
     #[cfg_attr(feature = "serde", serde(flatten))]
     pub inner: Header,
-    /// Optional millisecond subsecond component committed by the header hash.
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
-    pub timestamp_millis_part: Option<u16>,
+    /// Base-owned post-hardfork header fields.
+    #[cfg_attr(feature = "serde", serde(flatten, default))]
+    pub base: BaseHeaderFields,
 }
 
 impl BaseHeader {
-    /// Creates a Base header and validates the optional millisecond timestamp component.
-    pub fn new(
-        inner: Header,
-        timestamp_millis_part: Option<u16>,
-    ) -> Result<Self, TimestampMillisPartError> {
-        if let Some(part) = timestamp_millis_part
-            && !Self::is_valid_timestamp_millis_part(part)
-        {
-            return Err(TimestampMillisPartError::InvalidPart(part));
-        }
-
-        Ok(Self { inner, timestamp_millis_part })
+    /// Creates a Base header and validates the Base-owned fields.
+    pub fn new(inner: Header, base: BaseHeaderFields) -> Result<Self, TimestampMillisPartError> {
+        base.validate()?;
+        Ok(Self { inner, base })
     }
 
-    /// Creates a Base header without validating its millisecond timestamp component.
-    pub const fn new_unchecked(inner: Header, timestamp_millis_part: Option<u16>) -> Self {
-        Self { inner, timestamp_millis_part }
+    /// Creates a Base header without validating its Base-owned fields.
+    pub const fn new_unchecked(inner: Header, base: BaseHeaderFields) -> Self {
+        Self { inner, base }
     }
 
     /// Returns true when the millisecond component is valid for a 200ms cadence.
@@ -111,11 +189,13 @@ impl BaseHeader {
         }
     }
 
-    /// Returns the canonical timestamp in milliseconds when the sub-second component is present.
+    /// Returns the canonical post-Beryl timestamp in milliseconds when present.
     pub fn timestamp_millis(&self) -> Result<Option<u64>, TimestampMillisPartError> {
-        let Some(part) = self.timestamp_millis_part else {
+        let Some(part) = self.base.timestamp_millis_part else {
             return Ok(None);
         };
+
+        Self::validate_timestamp_millis_part(part)?;
 
         let timestamp_seconds = self
             .inner
@@ -126,12 +206,17 @@ impl BaseHeader {
         Ok(Some(timestamp_seconds + u64::from(part)))
     }
 
-    /// Returns the canonical timestamp in milliseconds.
+    /// Returns the canonical post-Beryl timestamp in milliseconds.
     pub fn required_timestamp_millis(&self) -> Result<u64, TimestampMillisPartError> {
         self.timestamp_millis()?.ok_or(TimestampMillisPartError::MissingPart)
     }
 
-    /// Validates a child Base header timestamp against its parent.
+    /// Returns `true` when this header uses the legacy pre-hardfork encoding boundary.
+    pub const fn is_legacy(&self) -> bool {
+        self.base.is_empty()
+    }
+
+    /// Validates a child Base header timestamp against its parent for post-Beryl blocks.
     pub fn validate_timestamp_millis_after(
         &self,
         parent: &Self,
@@ -176,27 +261,15 @@ impl BaseHeader {
         Sealed::new_unchecked(self, hash)
     }
 
-    /// Returns the post-activation RLP payload when a millisecond component is present.
-    ///
-    /// Pre-activation headers (`timestamp_millis_part == None`) have no payload because they
-    /// encode byte-identically to the upstream [`Header`].
-    fn to_payload(&self) -> Option<BaseHeaderPayload> {
-        self.timestamp_millis_part.map(|timestamp_millis_part| BaseHeaderPayload {
-            inner: self.inner.clone(),
-            timestamp_millis_part,
-        })
+    /// Consumes the wrapper and returns the nested Ethereum header.
+    pub fn into_inner(self) -> Header {
+        self.inner
     }
 }
 
 impl From<Header> for BaseHeader {
     fn from(inner: Header) -> Self {
-        Self { inner, timestamp_millis_part: None }
-    }
-}
-
-impl From<BaseHeader> for Header {
-    fn from(header: BaseHeader) -> Self {
-        header.inner
+        Self { inner, base: BaseHeaderFields::default() }
     }
 }
 
@@ -221,7 +294,7 @@ impl Sealable for BaseHeader {
 impl InMemorySize for BaseHeader {
     #[inline]
     fn size(&self) -> usize {
-        self.inner.size() + mem::size_of::<Option<u16>>()
+        self.inner.size() + mem::size_of::<BaseHeaderFields>()
     }
 }
 
@@ -319,69 +392,56 @@ impl AlloyBlockHeader for BaseHeader {
     }
 }
 
-/// RLP body of a post-activation Base header.
-///
-/// Wire layout: `[inner, timestamp_millis_part, <future trailing-optional fields>]`.
-///
-/// The upstream Ethereum [`Header`] is nested verbatim as the first element, so this format can
-/// never drift from upstream's field layout. Nesting it first is also the decode discriminator:
-/// a plain upstream header begins with `parent_hash` (an RLP string), while this begins with the
-/// nested header (an RLP list). Base-specific fields follow the nested header; new ones are added
-/// as trailing optionals (enabled by `#[rlp(trailing)]`), mirroring how Ethereum fork fields and
-/// Tempo's consensus context grow a header without breaking previously encoded blocks.
-#[derive(Clone, Debug, PartialEq, Eq, RlpEncodable, RlpDecodable)]
-#[rlp(trailing)]
-pub struct BaseHeaderPayload {
-    /// Nested upstream Ethereum header, reused verbatim.
-    pub inner: Header,
-    /// Millisecond subsecond component of the block timestamp.
-    pub timestamp_millis_part: u16,
-}
-
 impl Encodable for BaseHeader {
     fn encode(&self, out: &mut dyn BufMut) {
-        let Some(payload) = self.to_payload() else {
-            // Pre-activation headers are byte-identical to the upstream header, so historical
-            // blocks keep their original encoding and hash.
+        self.base.validate().expect("invalid Base header fields");
+
+        if self.is_legacy() {
             self.inner.encode(out);
-            return;
-        };
-        payload.encode(out);
+        } else {
+            BaseHeaderPostForkPayload::from_header(self).encode(out);
+        }
     }
 
     fn length(&self) -> usize {
-        let Some(payload) = self.to_payload() else {
-            return self.inner.length();
-        };
-        payload.length()
+        self.base.validate().expect("invalid Base header fields");
+
+        if self.is_legacy() {
+            self.inner.length()
+        } else {
+            BaseHeaderPostForkPayload::from_header(self).length()
+        }
     }
 }
 
 impl Decodable for BaseHeader {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        // Peek the outer list header and its first inner item without consuming `buf`.
         let mut probe = *buf;
         let outer = alloy_rlp::Header::decode(&mut probe)?;
         if !outer.list {
             return Err(alloy_rlp::Error::UnexpectedString);
         }
 
-        // A plain upstream header starts with `parent_hash` (a 32-byte RLP string, first byte
-        // `< 0xC0`); a post-activation Base header starts with the nested upstream header (an RLP
-        // list, first byte `>= 0xC0`). This is the discriminator between the two encodings.
-        let is_nested = probe.first().is_some_and(|first| *first >= 0xC0);
-        if !is_nested {
-            return Ok(Self::from(Header::decode(buf)?));
+        let Some(first_payload_byte) = probe.first() else {
+            return Err(alloy_rlp::Error::InputTooShort);
+        };
+
+        if *first_payload_byte < 0xC0 {
+            return Header::decode(buf).map(Self::from);
         }
 
-        let payload = BaseHeaderPayload::decode(buf)?;
-        Self::validate_timestamp_millis_part(payload.timestamp_millis_part)
-            .map_err(|_| alloy_rlp::Error::Custom("invalid base header timestamp_millis_part"))?;
+        let payload = BaseHeaderPostForkPayload::decode(buf)?;
+        let header = payload
+            .try_into_header()
+            .map_err(|_| alloy_rlp::Error::Custom("invalid Base header post-fork fields"))?;
 
-        Ok(Self {
-            inner: payload.inner,
-            timestamp_millis_part: Some(payload.timestamp_millis_part),
-        })
+        if header.base.is_empty() {
+            return Err(alloy_rlp::Error::Custom(
+                "Base header post-fork payload must contain Base-owned fields",
+            ));
+        }
+
+        Ok(header)
     }
 }
 
@@ -414,45 +474,63 @@ mod tests {
     #[test]
     fn timestamp_millis_combines_header_seconds_and_part() {
         let header = Header { timestamp: 1_234, ..Default::default() };
-        let base_header = BaseHeader::new(header, Some(600)).unwrap();
+        let base_header = BaseHeader::new(header, BaseHeaderFields::new(Some(600))).unwrap();
 
         assert_eq!(base_header.timestamp_millis(), Ok(Some(1_234_600)));
     }
 
     #[test]
-    fn timestamp_millis_is_absent_when_part_is_missing() {
+    fn timestamp_millis_is_absent_before_beryl() {
         let header = Header { timestamp: 1_234, ..Default::default() };
-        let base_header = BaseHeader::new(header, None).unwrap();
+        let base_header = BaseHeader::new(header, BaseHeaderFields::default()).unwrap();
 
         assert_eq!(base_header.timestamp_millis(), Ok(None));
     }
 
     #[test]
     fn timestamp_millis_validation_accepts_same_second_sequence() {
-        let parent =
-            BaseHeader::new(Header { timestamp: 10, ..Default::default() }, Some(0)).unwrap();
-        let child =
-            BaseHeader::new(Header { timestamp: 10, ..Default::default() }, Some(200)).unwrap();
+        let parent = BaseHeader::new(
+            Header { timestamp: 10, ..Default::default() },
+            BaseHeaderFields::new(Some(0)),
+        )
+        .unwrap();
+        let child = BaseHeader::new(
+            Header { timestamp: 10, ..Default::default() },
+            BaseHeaderFields::new(Some(200)),
+        )
+        .unwrap();
 
         assert_eq!(child.validate_timestamp_millis_after(&parent), Ok(()));
     }
 
     #[test]
     fn timestamp_millis_validation_accepts_second_rollover() {
-        let parent =
-            BaseHeader::new(Header { timestamp: 10, ..Default::default() }, Some(800)).unwrap();
-        let child =
-            BaseHeader::new(Header { timestamp: 11, ..Default::default() }, Some(0)).unwrap();
+        let parent = BaseHeader::new(
+            Header { timestamp: 10, ..Default::default() },
+            BaseHeaderFields::new(Some(800)),
+        )
+        .unwrap();
+        let child = BaseHeader::new(
+            Header { timestamp: 11, ..Default::default() },
+            BaseHeaderFields::new(Some(0)),
+        )
+        .unwrap();
 
         assert_eq!(child.validate_timestamp_millis_after(&parent), Ok(()));
     }
 
     #[test]
     fn timestamp_millis_validation_rejects_duplicate_millis() {
-        let parent =
-            BaseHeader::new(Header { timestamp: 10, ..Default::default() }, Some(200)).unwrap();
-        let child =
-            BaseHeader::new(Header { timestamp: 10, ..Default::default() }, Some(200)).unwrap();
+        let parent = BaseHeader::new(
+            Header { timestamp: 10, ..Default::default() },
+            BaseHeaderFields::new(Some(200)),
+        )
+        .unwrap();
+        let child = BaseHeader::new(
+            Header { timestamp: 10, ..Default::default() },
+            BaseHeaderFields::new(Some(200)),
+        )
+        .unwrap();
 
         assert_eq!(
             child.validate_timestamp_millis_after(&parent),
@@ -461,73 +539,8 @@ mod tests {
     }
 
     #[test]
-    fn timestamp_millis_validation_rejects_backward_millis() {
-        let parent =
-            BaseHeader::new(Header { timestamp: 10, ..Default::default() }, Some(400)).unwrap();
-        let child =
-            BaseHeader::new(Header { timestamp: 10, ..Default::default() }, Some(200)).unwrap();
-
-        assert_eq!(
-            child.validate_timestamp_millis_after(&parent),
-            Err(TimestampMillisPartError::NonIncreasingTimestamp { child: 10_200, parent: 10_400 })
-        );
-    }
-
-    #[test]
-    fn timestamp_millis_validation_rejects_non_slot_aligned_delta() {
-        let parent =
-            BaseHeader::new_unchecked(Header { timestamp: 10, ..Default::default() }, Some(0));
-        let child =
-            BaseHeader::new_unchecked(Header { timestamp: 10, ..Default::default() }, Some(100));
-
-        assert_eq!(
-            child.validate_timestamp_millis_after(&parent),
-            Err(TimestampMillisPartError::NonSlotAlignedDelta(100))
-        );
-    }
-
-    #[test]
-    fn timestamp_millis_validation_rejects_parent_seconds_after_child() {
-        let parent =
-            BaseHeader::new(Header { timestamp: 11, ..Default::default() }, Some(0)).unwrap();
-        let child =
-            BaseHeader::new(Header { timestamp: 10, ..Default::default() }, Some(800)).unwrap();
-
-        assert_eq!(
-            child.validate_timestamp_millis_after(&parent),
-            Err(TimestampMillisPartError::ParentSecondsAfterChild { child: 10, parent: 11 })
-        );
-    }
-
-    #[test]
-    fn base_header_without_millis_part_matches_alloy_header_encoding_and_hash() {
-        let header =
-            Header { timestamp: 42, number: 7, gas_limit: 30_000_000, ..Default::default() };
-        let base_header = BaseHeader::new(header.clone(), None).unwrap();
-        let mut alloy_encoding = Vec::new();
-        let mut base_encoding = Vec::new();
-
-        header.encode(&mut alloy_encoding);
-        base_header.encode(&mut base_encoding);
-
-        assert_eq!(base_encoding, alloy_encoding);
-        assert_eq!(base_header.hash_slow(), header.hash_slow());
-    }
-
-    #[test]
-    fn base_header_hash_commits_millis_part() {
-        let header =
-            Header { timestamp: 42, number: 7, gas_limit: 30_000_000, ..Default::default() };
-        let no_millis_header = BaseHeader::new(header.clone(), None).unwrap();
-        let zero_millis_header = BaseHeader::new(header.clone(), Some(0)).unwrap();
-        let two_hundred_millis_header = BaseHeader::new(header, Some(200)).unwrap();
-
-        assert_ne!(zero_millis_header.hash_slow(), no_millis_header.hash_slow());
-        assert_ne!(two_hundred_millis_header.hash_slow(), zero_millis_header.hash_slow());
-    }
-
-    fn sample_post_subsecond_header() -> Header {
-        Header {
+    fn legacy_rlp_matches_upstream_header_bytes() {
+        let inner = Header {
             timestamp: 1_780_334_562,
             number: 42_000,
             gas_limit: 30_000_000,
@@ -539,175 +552,59 @@ mod tests {
             parent_beacon_block_root: Some(B256::repeat_byte(0x22)),
             requests_hash: Some(B256::repeat_byte(0x33)),
             ..Default::default()
-        }
+        };
+        let header = BaseHeader::from(inner.clone());
+
+        let mut base_encoded = Vec::new();
+        header.encode(&mut base_encoded);
+
+        let mut upstream_encoded = Vec::new();
+        inner.encode(&mut upstream_encoded);
+
+        assert_eq!(base_encoded, upstream_encoded);
     }
 
     #[test]
-    fn rlp_round_trip_with_none_millis_part() {
-        let header = sample_post_subsecond_header();
-        let base_header = BaseHeader::new(header, None).unwrap();
+    fn legacy_rlp_decodes_as_empty_base_fields() {
+        let inner = Header {
+            timestamp: 1_780_334_562,
+            number: 42_000,
+            gas_limit: 30_000_000,
+            gas_used: 1_234,
+            base_fee_per_gas: Some(1_000_000_000),
+            withdrawals_root: Some(B256::repeat_byte(0x11)),
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            parent_beacon_block_root: Some(B256::repeat_byte(0x22)),
+            requests_hash: Some(B256::repeat_byte(0x33)),
+            ..Default::default()
+        };
         let mut encoded = Vec::new();
-        base_header.encode(&mut encoded);
+        inner.encode(&mut encoded);
 
         let mut slice = encoded.as_slice();
         let decoded = BaseHeader::decode(&mut slice).unwrap();
-        assert!(slice.is_empty(), "decoder must consume the entire RLP list");
-        assert_eq!(decoded, base_header);
+
+        assert!(slice.is_empty());
+        assert_eq!(decoded.inner, inner);
+        assert_eq!(decoded.base, BaseHeaderFields::default());
     }
 
     #[test]
-    fn rlp_round_trip_with_some_millis_part() {
-        for part in VALID_TIMESTAMP_MILLIS_PARTS {
-            let header = sample_post_subsecond_header();
-            let base_header = BaseHeader::new(header, Some(part)).unwrap();
-            let mut encoded = Vec::new();
-            base_header.encode(&mut encoded);
+    fn post_fork_rlp_round_trips_base_fields() {
+        let header = BaseHeader::new(
+            Header { timestamp: 1_234, ..Default::default() },
+            BaseHeaderFields::new(Some(600)),
+        )
+        .unwrap();
 
-            let mut slice = encoded.as_slice();
-            let decoded = BaseHeader::decode(&mut slice).unwrap();
-            assert!(slice.is_empty(), "decoder must consume the entire RLP list for part={part}");
-            assert_eq!(decoded, base_header);
-        }
-    }
-
-    #[test]
-    fn base_header_some_encoding_matches_payload_wrapper() {
-        // The post-activation `BaseHeader` encoding is exactly the `BaseHeaderPayload` wrapper,
-        // which is the single source of truth for the growable wire layout.
-        let header = sample_post_subsecond_header();
-        let base_header = BaseHeader::new(header.clone(), Some(400)).unwrap();
-        let payload = BaseHeaderPayload { inner: header, timestamp_millis_part: 400 };
-
-        assert_eq!(alloy_rlp::encode(&base_header), alloy_rlp::encode(&payload));
-
-        let encoded = alloy_rlp::encode(&payload);
-        let decoded = BaseHeaderPayload::decode(&mut encoded.as_slice()).unwrap();
-        assert_eq!(decoded, payload);
-    }
-
-    #[test]
-    fn rlp_length_matches_encoded_bytes() {
-        for millis_part in [None, Some(0), Some(200), Some(800)] {
-            let header = sample_post_subsecond_header();
-            let base_header = BaseHeader::new(header, millis_part).unwrap();
-            let mut encoded = Vec::new();
-            base_header.encode(&mut encoded);
-
-            let mut slice = encoded.as_slice();
-            let rlp_header = alloy_rlp::Header::decode(&mut slice).unwrap();
-
-            assert!(rlp_header.list);
-            assert_eq!(slice.len(), rlp_header.payload_length);
-            assert_eq!(base_header.length(), encoded.len());
-        }
-    }
-
-    #[test]
-    fn rlp_nesting_discriminator_holds() {
-        // The decoder distinguishes the two encodings by the first item inside the outer list:
-        // a plain header begins with `parent_hash` (an RLP string), while a millis-bearing Base
-        // header begins with the nested upstream header (an RLP list).
-        let header = sample_post_subsecond_header();
-
-        let mut none_encoded = Vec::new();
-        BaseHeader::new(header.clone(), None).unwrap().encode(&mut none_encoded);
-        let mut none_payload = none_encoded.as_slice();
-        alloy_rlp::Header::decode(&mut none_payload).unwrap();
-        assert!(none_payload.first().is_some_and(|first| *first < 0xC0));
-
-        let mut some_encoded = Vec::new();
-        BaseHeader::new(header, Some(200)).unwrap().encode(&mut some_encoded);
-        let mut some_payload = some_encoded.as_slice();
-        alloy_rlp::Header::decode(&mut some_payload).unwrap();
-        assert!(some_payload.first().is_some_and(|first| *first >= 0xC0));
-    }
-
-    #[test]
-    fn rlp_decode_of_plain_header_yields_none_millis_part() {
-        let header = sample_post_subsecond_header();
         let mut encoded = Vec::new();
         header.encode(&mut encoded);
 
         let mut slice = encoded.as_slice();
         let decoded = BaseHeader::decode(&mut slice).unwrap();
+
         assert!(slice.is_empty());
-        assert_eq!(decoded.inner, header);
-        assert_eq!(decoded.timestamp_millis_part, None);
-    }
-
-    #[test]
-    fn rlp_decode_rejects_invalid_millis_part() {
-        let header = sample_post_subsecond_header();
-        // Manually craft a header with a trailing u16 outside the 200ms cadence.
-        let base_header = BaseHeader::new_unchecked(header, Some(123));
-        let mut encoded = Vec::new();
-        base_header.encode(&mut encoded);
-
-        let mut slice = encoded.as_slice();
-        let err = BaseHeader::decode(&mut slice).expect_err("invalid millis part must be rejected");
-        assert!(matches!(err, alloy_rlp::Error::Custom(_)), "got {err:?}");
-    }
-
-    #[test]
-    fn rlp_decode_rejects_nested_header_with_trailing_element() {
-        // `[header, millis, extra]` must be rejected: the nested form carries exactly two items.
-        let header = sample_post_subsecond_header();
-        let mut inner_encoded = Vec::new();
-        header.encode(&mut inner_encoded);
-
-        let part = 200u16;
-        let extra = 1u16;
-        let payload_length = inner_encoded.len() + part.length() + extra.length();
-
-        let mut encoded = Vec::new();
-        alloy_rlp::Header { list: true, payload_length }.encode(&mut encoded);
-        encoded.extend_from_slice(&inner_encoded);
-        part.encode(&mut encoded);
-        extra.encode(&mut encoded);
-
-        let mut slice = encoded.as_slice();
-        let err = BaseHeader::decode(&mut slice).expect_err("trailing element must be rejected");
-        assert!(matches!(err, alloy_rlp::Error::ListLengthMismatch { .. }), "got {err:?}");
-    }
-
-    #[test]
-    fn rlp_decode_rejects_nested_first_item_that_is_not_a_header() {
-        // `[[..], millis]` where the first list is not a valid header must be rejected rather
-        // than silently misread.
-        let bogus_inner: [u16; 2] = [1, 2];
-        let part = 200u16;
-        let inner_payload_length = bogus_inner.iter().map(|item| item.length()).sum::<usize>();
-        let inner_length = alloy_rlp::Header { list: true, payload_length: inner_payload_length }
-            .length_with_payload();
-        let payload_length = inner_length + part.length();
-
-        let mut encoded = Vec::new();
-        alloy_rlp::Header { list: true, payload_length }.encode(&mut encoded);
-        alloy_rlp::Header { list: true, payload_length: inner_payload_length }.encode(&mut encoded);
-        for item in bogus_inner {
-            item.encode(&mut encoded);
-        }
-        part.encode(&mut encoded);
-
-        let mut slice = encoded.as_slice();
-        assert!(BaseHeader::decode(&mut slice).is_err(), "non-header first item must be rejected");
-    }
-
-    #[test]
-    fn block_header_trait_forwards_to_inner() {
-        let inner = sample_post_subsecond_header();
-        let base_header = BaseHeader::new(inner.clone(), Some(400)).unwrap();
-        assert_eq!(AlloyBlockHeader::number(&base_header), inner.number);
-        assert_eq!(AlloyBlockHeader::timestamp(&base_header), inner.timestamp);
-        assert_eq!(AlloyBlockHeader::gas_limit(&base_header), inner.gas_limit);
-        assert_eq!(AlloyBlockHeader::base_fee_per_gas(&base_header), inner.base_fee_per_gas);
-        assert_eq!(AlloyBlockHeader::requests_hash(&base_header), inner.requests_hash);
-    }
-
-    #[test]
-    fn in_memory_size_includes_millis_part_slot() {
-        let inner = sample_post_subsecond_header();
-        let base_header = BaseHeader::new(inner.clone(), Some(200)).unwrap();
-        assert_eq!(base_header.size(), inner.size() + mem::size_of::<Option<u16>>());
+        assert_eq!(decoded, header);
     }
 }

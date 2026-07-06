@@ -2,7 +2,7 @@
 
 use alloc::vec::Vec;
 
-use alloy_consensus::{Transaction, Typed2718};
+use alloy_consensus::{BlockHeader, Transaction, Typed2718};
 use alloy_primitives::{B256, U256};
 use alloy_rlp::{Buf, Header};
 use base_common_consensus::{BaseBlock, HoloceneExtraData, JovianExtraData, OpTxType};
@@ -18,7 +18,7 @@ pub fn to_system_config(
     block: &BaseBlock,
     rollup_config: &RollupConfig,
 ) -> Result<SystemConfig, BaseBlockConversionError> {
-    if block.header.number == rollup_config.genesis.l2.number {
+    if block.header.number() == rollup_config.genesis.l2.number {
         if block.header.hash_slow() != rollup_config.genesis.l2.hash {
             return Err(BaseBlockConversionError::InvalidGenesisHash(
                 rollup_config.genesis.l2.hash,
@@ -56,24 +56,24 @@ pub fn to_system_config(
         batcher_address: l1_info.batcher_address(),
         overhead: l1_info.l1_fee_overhead(),
         scalar: l1_fee_scalar,
-        gas_limit: block.header.gas_limit,
+        gas_limit: block.header.gas_limit(),
         ..Default::default()
     };
 
     // After holocene's activation, the EIP-1559 parameters are stored in the block header's nonce.
-    if rollup_config.is_jovian_active(block.header.timestamp) {
+    if rollup_config.is_jovian_active(block.header.timestamp()) {
         let (elasticity, denominator, min_base_fee) =
-            JovianExtraData::decode(&block.header.extra_data)?;
+            JovianExtraData::decode(block.header.extra_data())?;
         cfg.eip1559_denominator = Some(denominator);
         cfg.eip1559_elasticity = Some(elasticity);
         cfg.min_base_fee = Some(min_base_fee);
-    } else if rollup_config.is_holocene_active(block.header.timestamp) {
-        let (elasticity, denominator) = HoloceneExtraData::decode(&block.header.extra_data)?;
+    } else if rollup_config.is_holocene_active(block.header.timestamp()) {
+        let (elasticity, denominator) = HoloceneExtraData::decode(block.header.extra_data())?;
         cfg.eip1559_denominator = Some(denominator);
         cfg.eip1559_elasticity = Some(elasticity);
     }
 
-    if rollup_config.is_isthmus_active(block.header.timestamp) {
+    if rollup_config.is_isthmus_active(block.header.timestamp()) {
         cfg.operator_fee_scalar = Some(l1_info.operator_fee_scalar());
         cfg.operator_fee_constant = Some(l1_info.operator_fee_constant());
     }

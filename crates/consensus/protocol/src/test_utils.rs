@@ -2,6 +2,7 @@
 
 use alloc::{boxed::Box, format, string::String, sync::Arc, vec::Vec};
 
+use alloy_consensus::BlockHeader;
 use alloy_primitives::hex;
 use async_trait::async_trait;
 use base_common_consensus::BaseBlock;
@@ -80,7 +81,7 @@ impl BatchValidationProvider for TestBatchValidator {
     async fn block_by_number(&mut self, number: u64) -> Result<BaseBlock, Self::Error> {
         self.base_blocks
             .iter()
-            .find(|p| p.header.number == number)
+            .find(|p| p.header.number() == number)
             .cloned()
             .ok_or_else(|| TestBatchValidatorError::L2BlockNotFound)
     }
