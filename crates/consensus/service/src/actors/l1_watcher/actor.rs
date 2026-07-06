@@ -33,6 +33,13 @@ use crate::{
     actors::{CancellableContext, l1_watcher::error::L1WatcherActorError},
 };
 
+/// Maximum time to wait for an individual L1 RPC request in the L1 watcher.
+///
+/// This is intentionally above the internal proxyd request timeout so normal proxyd-side deadline
+/// errors can be observed, while still preventing a pending provider future from wedging the actor
+/// indefinitely.
+const L1_WATCHER_PROVIDER_TIMEOUT: Duration = Duration::from_secs(15);
+
 /// Stateless helper that wraps the log-fetch retry loop for [`L1WatcherActor`].
 ///
 /// Extracted as a separate type so the retry logic can be unit-tested independently of the actor's
@@ -58,13 +65,54 @@ impl LogRetrier {
     where
         F: L1BlockFetcher,
     {
+        Self::fetch_logs_with_retry_and_timeout(
+            provider,
+            filter,
+            cancel,
+            block_info,
+            initial_backoff,
+            max_backoff,
+            L1_WATCHER_PROVIDER_TIMEOUT,
+        )
+        .await
+    }
+
+    async fn fetch_logs_with_retry_and_timeout<F>(
+        provider: &F,
+        filter: Filter,
+        cancel: &CancellationToken,
+        block_info: BlockInfo,
+        initial_backoff: Duration,
+        max_backoff: Duration,
+        provider_timeout: Duration,
+    ) -> Result<Option<Vec<Log>>, L1WatcherActorError<BlockInfo>>
+    where
+        F: L1BlockFetcher,
+    {
         const MAX_RETRIES: u32 = 10;
 
         let mut backoff = initial_backoff;
         for attempt in 1..=MAX_RETRIES {
-            match provider.get_logs(filter.clone()).await {
-                Ok(logs) => return Ok(Some(logs)),
-                Err(e) => {
+            match tokio::time::timeout(provider_timeout, provider.get_logs(filter.clone())).await {
+                Err(_) => {
+                    warn!(
+                        target: "l1_watcher",
+                        block_hash = %block_info.hash,
+                        block_number = block_info.number,
+                        attempt,
+                        timeout_ms = provider_timeout.as_millis(),
+                        "Timed out fetching logs for L1 head"
+                    );
+                    if attempt < MAX_RETRIES {
+                        select! {
+                            _ = cancel.cancelled() => return Ok(None),
+                            _ = tokio::time::sleep(backoff) => {}
+                        }
+                        backoff = (backoff * 2).min(max_backoff);
+                    }
+                }
+                Ok(Ok(logs)) => return Ok(Some(logs)),
+                Ok(Err(e)) => {
                     warn!(
                         target: "l1_watcher",
                         error = %e,
@@ -130,6 +178,8 @@ where
     ///
     /// [`ConfDepthProvider`]: base_consensus_providers::ConfDepthProvider
     l1_head_number: Arc<AtomicU64>,
+    /// Maximum time to wait for each L1 provider request before treating it as failed.
+    provider_timeout: Duration,
 }
 impl<BlockStream, L1Provider, L1WatcherDerivationClient_>
     L1WatcherActor<BlockStream, L1Provider, L1WatcherDerivationClient_>
@@ -163,7 +213,14 @@ where
             finalized_stream,
             verifier_l1_confs,
             l1_head_number,
+            provider_timeout: L1_WATCHER_PROVIDER_TIMEOUT,
         }
+    }
+
+    #[cfg(test)]
+    const fn with_provider_timeout(mut self, provider_timeout: Duration) -> Self {
+        self.provider_timeout = provider_timeout;
+        self
     }
 }
 
@@ -224,9 +281,24 @@ where
                             && head_block_info.number >= self.verifier_l1_confs
                         {
                             let target = head_block_info.number - self.verifier_l1_confs;
-                            match self.l1_provider.get_block(BlockId::Number(target.into())).await {
-                                Ok(Some(block)) => block.into_consensus().into(),
-                                Ok(None) => {
+                            match tokio::time::timeout(
+                                self.provider_timeout,
+                                self.l1_provider.get_block(BlockId::Number(target.into())),
+                            )
+                            .await {
+                                Err(_) => {
+                                    Metrics::l1_verifier_delayed_fetch_errors().increment(1);
+                                    warn!(
+                                        target: "l1_watcher",
+                                        head = head_block_info.number,
+                                        target,
+                                        timeout_ms = self.provider_timeout.as_millis(),
+                                        "Timed out fetching delayed L1 block; skipping head update"
+                                    );
+                                    continue;
+                                }
+                                Ok(Ok(Some(block))) => block.into_consensus().into(),
+                                Ok(Ok(None)) => {
                                     Metrics::l1_verifier_delayed_fetch_errors().increment(1);
                                     warn!(
                                         target: "l1_watcher",
@@ -236,7 +308,7 @@ where
                                     );
                                     continue;
                                 }
-                                Err(e) => {
+                                Ok(Err(e)) => {
                                     Metrics::l1_verifier_delayed_fetch_errors().increment(1);
                                     warn!(
                                         target: "l1_watcher",
@@ -268,13 +340,14 @@ where
                             .address(filter_address)
                             .select(derivation_block.hash);
 
-                        let Some(logs) = LogRetrier::fetch_logs_with_retry(
+                        let Some(logs) = LogRetrier::fetch_logs_with_retry_and_timeout(
                             &self.l1_provider,
                             filter,
                             &cancel,
                             derivation_block,
                             INITIAL_BACKOFF,
                             MAX_BACKOFF,
+                            self.provider_timeout,
                         )
                         .await?
                         else {
@@ -370,6 +443,10 @@ mod tests {
         fn always_succeed() -> Self {
             Self::fail_times(0)
         }
+
+        fn call_count(&self) -> Arc<AtomicU32> {
+            Arc::clone(&self.call_count)
+        }
     }
 
     #[async_trait]
@@ -383,6 +460,34 @@ mod tests {
 
         async fn get_block(&self, _: BlockId) -> Result<Option<Block>, Self::Error> {
             Ok(None)
+        }
+    }
+
+    struct HangingLogFetcher {
+        call_count: Arc<AtomicU32>,
+    }
+
+    impl HangingLogFetcher {
+        fn new() -> Self {
+            Self { call_count: Arc::new(AtomicU32::new(0)) }
+        }
+
+        fn call_count(&self) -> Arc<AtomicU32> {
+            Arc::clone(&self.call_count)
+        }
+    }
+
+    #[async_trait]
+    impl L1BlockFetcher for HangingLogFetcher {
+        type Error = String;
+
+        async fn get_logs(&self, _: Filter) -> Result<Vec<Log>, Self::Error> {
+            self.call_count.fetch_add(1, Ordering::SeqCst);
+            std::future::pending().await
+        }
+
+        async fn get_block(&self, _: BlockId) -> Result<Option<Block>, Self::Error> {
+            Ok(Some(Block::default()))
         }
     }
 
@@ -402,11 +507,14 @@ mod tests {
         None,
         /// Always return an error.
         Err,
+        /// Hang on the first request, then return a default [`Block`].
+        PendingOnceThenDefault,
     }
 
     struct ConfigurableFetcher {
         get_block_behavior: GetBlockBehavior,
         get_block_requested_ids: Arc<Mutex<Vec<BlockId>>>,
+        get_block_call_count: Arc<AtomicU32>,
     }
 
     impl ConfigurableFetcher {
@@ -414,6 +522,7 @@ mod tests {
             Self {
                 get_block_behavior: GetBlockBehavior::Default,
                 get_block_requested_ids: Arc::new(Mutex::new(Vec::new())),
+                get_block_call_count: Arc::new(AtomicU32::new(0)),
             }
         }
 
@@ -421,6 +530,7 @@ mod tests {
             Self {
                 get_block_behavior: GetBlockBehavior::None,
                 get_block_requested_ids: Arc::new(Mutex::new(Vec::new())),
+                get_block_call_count: Arc::new(AtomicU32::new(0)),
             }
         }
 
@@ -428,6 +538,15 @@ mod tests {
             Self {
                 get_block_behavior: GetBlockBehavior::Err,
                 get_block_requested_ids: Arc::new(Mutex::new(Vec::new())),
+                get_block_call_count: Arc::new(AtomicU32::new(0)),
+            }
+        }
+
+        fn pending_once_then_default() -> Self {
+            Self {
+                get_block_behavior: GetBlockBehavior::PendingOnceThenDefault,
+                get_block_requested_ids: Arc::new(Mutex::new(Vec::new())),
+                get_block_call_count: Arc::new(AtomicU32::new(0)),
             }
         }
     }
@@ -442,8 +561,14 @@ mod tests {
 
         async fn get_block(&self, id: BlockId) -> Result<Option<Block>, Self::Error> {
             self.get_block_requested_ids.lock().unwrap().push(id);
+            let call_count = self.get_block_call_count.fetch_add(1, Ordering::SeqCst);
             match self.get_block_behavior {
-                GetBlockBehavior::Default => Ok(Some(Block::default())),
+                GetBlockBehavior::PendingOnceThenDefault if call_count == 0 => {
+                    std::future::pending().await
+                }
+                GetBlockBehavior::Default | GetBlockBehavior::PendingOnceThenDefault => {
+                    Ok(Some(Block::default()))
+                }
                 GetBlockBehavior::None => Ok(None),
                 GetBlockBehavior::Err => Err("provider error".to_string()),
             }
@@ -501,6 +626,41 @@ mod tests {
         head_blocks: Vec<BlockInfo>,
         verifier_l1_confs: u64,
     ) -> (RecordingDerivationClient, watch::Receiver<Option<BlockInfo>>, Arc<AtomicU64>) {
+        let (derivation_client, l1_head_rx, l1_head_number, _) =
+            run_actor_result(fetcher, head_blocks, verifier_l1_confs).await;
+        (derivation_client, l1_head_rx, l1_head_number)
+    }
+
+    async fn run_actor_result<F: L1BlockFetcher>(
+        fetcher: F,
+        head_blocks: Vec<BlockInfo>,
+        verifier_l1_confs: u64,
+    ) -> (
+        RecordingDerivationClient,
+        watch::Receiver<Option<BlockInfo>>,
+        Arc<AtomicU64>,
+        Result<(), L1WatcherActorError<BlockInfo>>,
+    ) {
+        run_actor_result_with_provider_timeout(
+            fetcher,
+            head_blocks,
+            verifier_l1_confs,
+            L1_WATCHER_PROVIDER_TIMEOUT,
+        )
+        .await
+    }
+
+    async fn run_actor_result_with_provider_timeout<F: L1BlockFetcher>(
+        fetcher: F,
+        head_blocks: Vec<BlockInfo>,
+        verifier_l1_confs: u64,
+        provider_timeout: Duration,
+    ) -> (
+        RecordingDerivationClient,
+        watch::Receiver<Option<BlockInfo>>,
+        Arc<AtomicU64>,
+        Result<(), L1WatcherActorError<BlockInfo>>,
+    ) {
         let derivation_client = RecordingDerivationClient::default();
         let (l1_head_tx, l1_head_rx) = watch::channel(None);
         let cancel = CancellationToken::new();
@@ -521,12 +681,13 @@ mod tests {
             finalized_stream,
             verifier_l1_confs,
             Arc::clone(&l1_head_number),
-        );
+        )
+        .with_provider_timeout(provider_timeout);
 
         // The actor loop will process all head_stream items then return StreamEnded.
-        let _ = actor.start(()).await;
+        let result = actor.start(()).await;
 
-        (derivation_client, l1_head_rx, l1_head_number)
+        (derivation_client, l1_head_rx, l1_head_number, result)
     }
 
     // ---------------------------------------------------------------------------
@@ -566,8 +727,10 @@ mod tests {
     #[tokio::test]
     async fn fetch_logs_exhausted_retries_returns_error() {
         let cancel = CancellationToken::new();
+        let fetcher = MockFetcher::always_fail();
+        let call_count = fetcher.call_count();
         let result = LogRetrier::fetch_logs_with_retry(
-            &MockFetcher::always_fail(),
+            &fetcher,
             Filter::new(),
             &cancel,
             dummy_block(),
@@ -576,6 +739,45 @@ mod tests {
         )
         .await;
         assert!(matches!(result, Err(L1WatcherActorError::RetriesExhausted)));
+        assert_eq!(call_count.load(Ordering::SeqCst), 10);
+    }
+
+    #[tokio::test]
+    async fn fetch_logs_times_out_hung_requests_and_exhausts_retries() {
+        let cancel = CancellationToken::new();
+        let fetcher = HangingLogFetcher::new();
+        let call_count = fetcher.call_count();
+        let result = LogRetrier::fetch_logs_with_retry_and_timeout(
+            &fetcher,
+            Filter::new(),
+            &cancel,
+            dummy_block(),
+            Duration::from_nanos(1),
+            Duration::from_nanos(1),
+            Duration::from_nanos(1),
+        )
+        .await;
+
+        assert!(matches!(result, Err(L1WatcherActorError::RetriesExhausted)));
+        assert_eq!(call_count.load(Ordering::SeqCst), 10);
+    }
+
+    #[tokio::test]
+    async fn hung_get_logs_does_not_wedge_actor_forever() {
+        let fetcher = HangingLogFetcher::new();
+        let call_count = fetcher.call_count();
+        let (client, _rx, _l1_head_number, result) = run_actor_result_with_provider_timeout(
+            fetcher,
+            vec![block_at(100)],
+            0,
+            Duration::from_nanos(1),
+        )
+        .await;
+
+        assert!(matches!(result, Err(L1WatcherActorError::RetriesExhausted)));
+        assert_eq!(client.sent_heads().len(), 1);
+        assert_eq!(client.sent_heads()[0].number, 100);
+        assert_eq!(call_count.load(Ordering::SeqCst), 10);
     }
 
     #[tokio::test]
@@ -696,6 +898,29 @@ mod tests {
 
         // Watch channel still has the real head.
         assert_eq!(rx.borrow().unwrap().number, 100);
+    }
+
+    #[tokio::test]
+    async fn confs_delayed_block_fetch_timeout_skips_head_and_continues() {
+        let fetcher = ConfigurableFetcher::pending_once_then_default();
+        let ids = Arc::clone(&fetcher.get_block_requested_ids);
+        let (client, rx, _l1_head_number, result) = run_actor_result_with_provider_timeout(
+            fetcher,
+            vec![block_at(100), block_at(104)],
+            4,
+            Duration::from_nanos(1),
+        )
+        .await;
+        assert!(matches!(result, Err(L1WatcherActorError::StreamEnded)));
+
+        let heads = client.sent_heads();
+        assert_eq!(heads.len(), 1);
+        // The first delayed fetch times out and is skipped. The second succeeds with Block::default().
+        assert_eq!(heads[0].number, 0);
+        assert_eq!(rx.borrow().unwrap().number, 104);
+
+        let requested = ids.lock().unwrap().clone();
+        assert_eq!(requested, vec![BlockId::Number(96u64.into()), BlockId::Number(100u64.into())]);
     }
 
     #[tokio::test]
