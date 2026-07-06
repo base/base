@@ -735,6 +735,7 @@ where
             {
                 trace!(
                     target: "payload_builder",
+                    tx_hash = ?tx.hash(),
                     cause = stale.cause(),
                     "skipping EIP-8130 tx: manifest pre-check failed"
                 );

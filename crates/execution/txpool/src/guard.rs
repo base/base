@@ -239,28 +239,48 @@ impl MempoolGuard {
     /// always fee-bump your own pooled transaction).
     ///
     /// A balance-bounded (trusted) payer still goes through the book; if the
-    /// fee-bumped reservation no longer fits the cached balance it is left
-    /// out of the book (but still recorded), and the next balance update
-    /// re-evaluates it — the swap itself is never rejected.
+    /// fee-bumped reservation no longer fits the cached balance (even after the
+    /// replaced transaction's release), the record falls back to the
+    /// count-based, per-transaction-threshold path instead of `payer_trusted`
+    /// — an unreserved trusted-payer record would be invisible both to
+    /// `PayerBook::set_balance` (never entered the book) and to the per-tx
+    /// threshold check in `on_balance_changed` (which skips `payer_trusted`
+    /// records), so it would only ever be cleaned up by `reconcile_guard` or
+    /// expiry. The fallback keeps the "never reject" guarantee while ensuring
+    /// the record stays reachable by the next balance-driven eviction.
     pub fn insert_forced(&mut self, admission: Admission) {
         if self.records.contains_key(&admission.hash) {
             return;
         }
-        self.sender_counts.try_increment(admission.sender, u32::MAX);
-        if admission.payer_trusted {
-            self.payer_books
+        let sender_ok = self.sender_counts.try_increment(admission.sender, u32::MAX);
+        debug_assert!(sender_ok, "uncapped increment must always succeed");
+
+        let payer_trusted = admission.payer_trusted
+            && self
+                .payer_books
                 .entry(admission.payer)
                 .or_insert_with(|| PayerBook::new(admission.payer_balance))
                 .try_reserve(admission.hash, admission.max_cost, admission.priority);
-        } else {
-            self.payer_counts.try_increment(admission.payer, u32::MAX);
+
+        if !payer_trusted {
+            let payer_ok = self.payer_counts.try_increment(admission.payer, u32::MAX);
+            debug_assert!(payer_ok, "uncapped increment must always succeed");
+            // A trusted payer whose reservation didn't fit leaves a freshly
+            // created, still-empty book behind — prune it so a payer that
+            // never successfully reserved doesn't leak an entry.
+            if admission.payer_trusted
+                && self.payer_books.get(&admission.payer).is_some_and(PayerBook::is_empty)
+            {
+                self.payer_books.remove(&admission.payer);
+            }
         }
+
         self.records.insert(
             admission.hash,
             AdmissionRecord {
                 sender: admission.sender,
                 payer: admission.payer,
-                payer_trusted: admission.payer_trusted,
+                payer_trusted,
                 max_cost: admission.max_cost,
             },
         );
@@ -590,6 +610,38 @@ mod tests {
         assert!(guard.contains(&hash(2)));
         // A balance drop below the reservation still evicts it (book-tracked).
         let dropped = guard.on_balance_changed(payer, U256::from(50u64));
+        assert_eq!(dropped, vec![hash(2)]);
+        assert!(guard.is_empty());
+    }
+
+    #[test]
+    fn insert_forced_trusted_replacement_overshooting_balance_falls_back_to_count_path() {
+        let mut guard = MempoolGuard::new(GuardLimits::default());
+        let payer = addr(9);
+        let make = |h: u8, cost: u64| Admission {
+            payer,
+            payer_trusted: true,
+            payer_balance: U256::from(100u64),
+            max_cost: U256::from(cost),
+            watch_set: WatchSet::new().watch(InvalidationKey::Balance(payer)),
+            ..self_pay(h, addr(h + 1), cost)
+        };
+
+        assert!(guard.try_admit(make(1, 60)).is_ok());
+        // Swap: release the old reservation, then force a fee-bumped one whose
+        // cost exceeds even the freed balance. `try_reserve` fails, so the
+        // record must fall back to the count-based path rather than being
+        // silently unreserved-yet-`payer_trusted` (invisible to eviction).
+        assert!(guard.release(&hash(1)));
+        guard.insert_forced(make(2, 150));
+        assert!(guard.contains(&hash(2)));
+
+        // Before this fix, this record would have kept `payer_trusted: true`
+        // without ever entering the book — invisible to `set_balance` (never
+        // reserved) *and* to the per-tx threshold check (which skips
+        // `payer_trusted` records). The fallback makes it evictable again via
+        // the per-transaction threshold path once the balance can't cover it.
+        let dropped = guard.on_balance_changed(payer, U256::from(100u64));
         assert_eq!(dropped, vec![hash(2)]);
         assert!(guard.is_empty());
     }
