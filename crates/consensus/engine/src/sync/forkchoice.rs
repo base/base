@@ -310,10 +310,13 @@ async fn get_block_compat<EngineClient_: EngineClient>(
     match engine_client.get_l2_block(block_id).full().await {
         Err(e) => {
             let err_str = e.to_string();
-            // EIP-4444 error code for pruned state unavailable
-            if e.as_error_resp().is_some_and(|err| err.code == 4444) {
-                Ok(None)
-            } else if err_str.contains("block not found") || err_str.contains("Unknown block") {
+            // EIP-4444 error code for pruned state unavailable, or known string-based
+            // "not found" responses from geth/erigon for safe/finalized when the chain
+            // has just started and nothing is marked safe or finalized yet.
+            if e.as_error_resp().is_some_and(|err| err.code == 4444)
+                || err_str.contains("block not found")
+                || err_str.contains("Unknown block")
+            {
                 Ok(None)
             } else {
                 Err(e)
