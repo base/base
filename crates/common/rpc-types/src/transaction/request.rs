@@ -116,7 +116,11 @@ pub struct Eip8130RequestFields {
     pub payer: Option<Address>,
     /// Raw payer authentication blob (`authenticator(20) || data`) whose shape
     /// is priced when a `payer` is declared. Absent defaults to a representative
-    /// secp256k1 payer authorization.
+    /// secp256k1 payer authorization. Unlike `sender_auth`, a supplied blob is
+    /// always the prefixed form and its leading 20 bytes must be a recognized
+    /// enshrined authenticator selector ([`Eip8130AuthScheme::Secp256k1`] /
+    /// `P256` / `WebAuthn`); an unrecognized selector is rejected as
+    /// `INVALID_PARAMS` rather than priced.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payer_auth: Option<Bytes>,
 }

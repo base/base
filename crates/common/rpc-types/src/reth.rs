@@ -61,17 +61,23 @@ impl BaseTransactionRequest {
     ///   (`authenticator(20) || data`) prices the configured-account path for
     ///   `from`.
     /// - A declared `payer` adds payer authentication, priced from `payer_auth`
-    ///   (defaulting to a representative secp256k1 authorization).
+    ///   (defaulting to a representative secp256k1 authorization). Unlike
+    ///   `sender_auth`, a supplied `payer_auth` is always the prefixed
+    ///   configured-account form and must carry a recognized enshrined
+    ///   authenticator selector.
     ///
     /// `from` is mandatory for EIP-8130: the sender identity drives actor
     /// resolution, policy lookup, and auto-delegation, so a missing `from`
     /// returns `None` (surfaced as `INVALID_PARAMS`) rather than silently
     /// falling back to the zero address.
     ///
-    /// A `sender_auth` / `payer_auth` blob whose data exceeds [`MAX_AUTH_SIZE`]
-    /// bytes (excluding the 20-byte authenticator selector on the configured
-    /// path) returns `None` (surfaced as `INVALID_PARAMS`) rather than pricing
-    /// an unbounded payload.
+    /// A `payer_auth` whose leading 20 bytes are not a recognized enshrined
+    /// authenticator selector returns `None` (surfaced as `INVALID_PARAMS`)
+    /// rather than pricing an authenticator the intrinsic-gas schedule doesn't
+    /// recognize (which could under-price the estimate). A `sender_auth` /
+    /// `payer_auth` blob whose data exceeds [`MAX_AUTH_SIZE`] bytes (excluding
+    /// the 20-byte authenticator selector on the configured path) is rejected
+    /// the same way, rather than pricing an unbounded payload.
     pub fn to_eip8130_simulation_tx(
         &self,
         chain_id: u64,
@@ -98,12 +104,19 @@ impl BaseTransactionRequest {
         };
 
         // Sponsored payer authentication, priced only when a payer is declared.
-        // The payer auth is always a prefixed `authenticator || data` blob.
+        // The payer auth is always a prefixed `authenticator || data` blob, so a
+        // supplied blob must carry an enshrined authenticator selector — an
+        // unrecognized prefix is rejected rather than silently priced (a
+        // selector missing from the intrinsic schedule could under-price the
+        // estimate).
         let (payer, payer_auth) = match aa.payer {
             None => (None, Bytes::new()),
             Some(payer) => {
                 let blob = match &aa.payer_auth {
                     Some(blob) => {
+                        if !Self::is_prefixed_auth(blob) {
+                            return None;
+                        }
                         Self::check_auth_len(blob, true)?;
                         blob.clone()
                     }
@@ -455,6 +468,26 @@ mod tests {
         let auth = s.payer_auth();
         assert_eq!(&auth[..20], Eip8130Contracts::P256_AUTHENTICATOR.as_slice());
         assert_eq!(auth.len(), 20 + 128);
+    }
+
+    #[test]
+    fn payer_auth_with_unrecognized_authenticator_is_rejected() {
+        // An arbitrary 20-byte prefix must not be forwarded to the intrinsic
+        // schedule verbatim: an unrecognized authenticator is rejected rather
+        // than silently priced (potentially as zero, under-pricing the estimate).
+        let payer = address!("0x00000000000000000000000000000000000000b2");
+        let unrecognized = address!("0x000000000000000000000000000000000000dead");
+        let req: BaseTransactionRequest = serde_json::from_value(json!({
+            "from": FROM,
+            "calls": [],
+            "payer": payer,
+            "payerAuth": blob(Some(unrecognized), 65),
+        }))
+        .expect("valid request");
+        assert!(
+            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none(),
+            "an unrecognized payer authenticator selector is rejected rather than priced",
+        );
     }
 
     #[test]
