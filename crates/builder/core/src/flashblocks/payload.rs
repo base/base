@@ -3,7 +3,7 @@ use std::{
     ops::{Div, Rem},
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Instant,
 };
@@ -41,7 +41,7 @@ use reth_provider::{
 use reth_revm::{
     State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
 };
-use reth_transaction_pool::TransactionPool;
+use reth_transaction_pool::{TransactionOrigin, TransactionPool, ValidPoolTransaction};
 use reth_trie::{HashedPostState, updates::TrieUpdates};
 use revm::Database as _;
 use serde::{Deserialize, Serialize};
@@ -73,6 +73,12 @@ type NextBestFlashblocksTxs<Pool> = BestFlashblocksTxs<
             >,
     >,
 >;
+
+/// Transactions pruned from the pool during flashblock building, retained (with their original
+/// [`TransactionOrigin`]) so they can be restored if the payload job is abandoned before it is
+/// sealed via `getPayload`.
+type PrunedTransactions<Pool> =
+    Vec<Arc<ValidPoolTransaction<<Pool as TransactionPool>::Transaction>>>;
 
 #[derive(Debug, Default)]
 struct LastEmittedFlashblockId {
@@ -255,6 +261,7 @@ where
             mut cached_reads,
             config,
             cancel: block_cancel,
+            resolved,
             finalized_cell,
             publish_guard,
         } = args;
@@ -460,6 +467,10 @@ where
         // Highest executed nonce per sender, updated incrementally per flashblock.
         let mut executed_sender_nonces: HashMap<Address, u64> = HashMap::default();
 
+        // Transactions pruned from the pool across this job's flashblocks. Restored to the pool if
+        // the job is abandoned (superseded/expired) before being sealed via `getPayload`.
+        let mut pruned_transactions: PrunedTransactions<Pool> = Vec::new();
+
         // Process flashblocks in a blocking loop
         loop {
             let flashblock_index = ctx.flashblock_index();
@@ -484,6 +495,14 @@ where
                     "Payload building complete, target flashblock count reached",
                 );
                 self.finalize_payload(&mut state, &ctx, &mut info, &finalized_cell)?;
+                // The block is complete but not yet retrieved; the spawned task waits to learn
+                // whether it is sealed via `getPayload` or abandoned before restoring.
+                self.settle_pruned_transactions(
+                    pruned_transactions,
+                    Arc::clone(&resolved),
+                    block_cancel.clone(),
+                    false,
+                );
                 return Ok(());
             }
 
@@ -499,6 +518,7 @@ where
                     &publish_guard,
                     &fb_span,
                     &mut executed_sender_nonces,
+                    &mut pruned_transactions,
                 )
                 .await
             {
@@ -512,6 +532,13 @@ where
                         "Payload building complete, job cancelled or target flashblock count reached",
                     );
                     self.finalize_payload(&mut state, &ctx, &mut info, &finalized_cell)?;
+                    // Cancellation already occurred; `resolved` distinguishes sealed from abandoned.
+                    self.settle_pruned_transactions(
+                        pruned_transactions,
+                        Arc::clone(&resolved),
+                        block_cancel.clone(),
+                        true,
+                    );
                     return Ok(());
                 }
                 Err(err) => {
@@ -521,6 +548,13 @@ where
                         ctx.flashblock_index(),
                         ctx.block_number(),
                         err
+                    );
+                    // The block failed to build and will not be sealed; restore pruned transactions.
+                    self.settle_pruned_transactions(
+                        pruned_transactions,
+                        Arc::clone(&resolved),
+                        block_cancel.clone(),
+                        true,
                     );
                     return Err(PayloadBuilderError::Other(err.into()));
                 }
@@ -539,6 +573,13 @@ where
                         "Payload building complete, channel closed or job cancelled",
                     );
                     self.finalize_payload(&mut state, &ctx, &mut info, &finalized_cell)?;
+                    // Cancellation already occurred; `resolved` distinguishes sealed from abandoned.
+                    self.settle_pruned_transactions(
+                        pruned_transactions,
+                        Arc::clone(&resolved),
+                        block_cancel.clone(),
+                        true,
+                    );
                     return Ok(());
                 }
             }
@@ -560,6 +601,7 @@ where
         publish_guard: &parking_lot::Mutex<()>,
         span: &tracing::Span,
         executed_sender_nonces: &mut HashMap<Address, u64>,
+        pruned_transactions: &mut PrunedTransactions<Pool>,
     ) -> eyre::Result<Option<FlashblocksExtraCtx>> {
         let flashblock_index = ctx.flashblock_index();
         let target_gas_for_batch = ctx.extra.target_gas_for_batch;
@@ -653,7 +695,10 @@ where
             .collect::<Vec<_>>();
         best_txs.mark_committed(&new_transactions);
         self.config.metering_provider.remove(&new_transactions);
-        self.pool.prune_transactions(new_transactions);
+        let pruned = self.pool.prune_transactions(new_transactions);
+        if self.config.flashblock_prune_rollback_enabled {
+            pruned_transactions.extend(pruned);
+        }
 
         // Track executed nonces incrementally for the next flashblock's update_accounts call.
         debug_assert_eq!(
@@ -858,6 +903,57 @@ where
         span.record("flashblock_count", ctx.flashblock_index());
     }
 
+    /// Decide the fate of transactions pruned during flashblock building for a job that is ending.
+    ///
+    /// Flashblock building prunes committed transactions from the pool mined-style (see
+    /// [`Self::build_next_flashblock`]). If the payload is sealed via `getPayload` that removal is
+    /// correct, but if the job is abandoned (superseded by a new FCU or expired) before sealing,
+    /// reth has no recovery path for it — so the pruned transactions are reinserted here.
+    ///
+    /// `disposition_known` should be `false` only when the job has finished building but has not
+    /// yet been cancelled (target flashblock count reached): in that case the spawned task waits for
+    /// the job to be sealed or abandoned before deciding. `resolved` is set by `resolve_kind` when
+    /// the payload is retrieved, distinguishing a sealed payload (keep pruned) from an abandoned one
+    /// (restore).
+    fn settle_pruned_transactions(
+        &self,
+        pruned: PrunedTransactions<Pool>,
+        resolved: Arc<AtomicBool>,
+        block_cancel: CancellationToken,
+        disposition_known: bool,
+    ) {
+        if pruned.is_empty() {
+            return;
+        }
+
+        let pool = self.pool.clone();
+        tokio::spawn(async move {
+            // Wait until the job's fate is known: sealed via `getPayload` (sets `resolved`) or
+            // abandoned (cancelled without `resolved`).
+            if !disposition_known {
+                block_cancel.cancelled().await;
+            }
+
+            if resolved.load(Ordering::Acquire) {
+                // The payload was retrieved and is being sealed; the pruned transactions are
+                // legitimately part of it, so leave them out of the pool.
+                return;
+            }
+
+            // Abandoned before sealing: restore the pruned transactions. Any transaction that does
+            // end up canonical is re-pruned by the canonical-state notification, so an occasional
+            // redundant reinsert is self-correcting.
+            let attempted = pruned.len();
+            let succeeded = restore_pruned_transactions(&pool, &pruned).await;
+            info!(
+                target: "payload_builder",
+                attempted,
+                restored = succeeded,
+                "Restored pruned transactions after payload abandonment",
+            );
+        });
+    }
+
     /// Finalize the payload by computing the state root and setting the finalized cell.
     fn finalize_payload<DB, P>(
         &self,
@@ -981,6 +1077,25 @@ where
     let info = ctx.execute_sequencer_transactions(state)?;
 
     Ok(info)
+}
+
+/// Reinsert transactions that were pruned from the pool during flashblock building, preserving
+/// each transaction's original [`TransactionOrigin`] (unlike reth's canonical-reorg recovery,
+/// which downgrades everything to external). Returns the number successfully reinserted.
+///
+/// Reinsertion re-validates each transaction; any that is now stale (e.g. its nonce was already
+/// satisfied by a canonical block) is simply parked or rejected, so this is safe to call even when
+/// some of the pruned transactions did end up canonical.
+pub(crate) async fn restore_pruned_transactions<P: TransactionPool>(
+    pool: &P,
+    pruned: &[Arc<ValidPoolTransaction<P::Transaction>>],
+) -> usize {
+    if pruned.is_empty() {
+        return 0;
+    }
+    let restored: Vec<(TransactionOrigin, P::Transaction)> =
+        pruned.iter().map(|tx| (tx.origin, tx.transaction.clone())).collect();
+    pool.add_transactions_with_origins(restored).await.iter().filter(|r| r.is_ok()).count()
 }
 
 pub(crate) fn build_block<DB, P>(
@@ -1243,7 +1358,14 @@ mod tests {
     use reth_provider::noop::NoopProvider;
     use reth_revm::{State, database::StateProviderDatabase};
 
-    use super::{FlashblocksMetadata, build_block};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use reth_transaction_pool::{
+        PoolTransaction, TransactionOrigin, TransactionPool,
+        test_utils::{MockTransaction, testing_pool},
+    };
+
+    use super::{FlashblocksMetadata, build_block, restore_pruned_transactions};
     use crate::{ExecutionInfo, flashblocks::context::BasePayloadBuilderCtx};
 
     /// Creates a minimal [`BaseChainSpec`] with all L1 upgrades through Cancun
@@ -1510,5 +1632,83 @@ mod tests {
         let metadata: Metadata = serde_json::from_value(json).expect("v0.4.1 metadata must parse");
         assert_eq!(metadata.block_number, 123);
         assert_eq!(metadata.prev_flashblock_id, FlashblockId::default());
+    }
+
+    /// A transaction pruned during flashblock building (mined-style removal) is restored to the
+    /// pool by [`restore_pruned_transactions`], with its original [`TransactionOrigin`] preserved
+    /// per transaction. This is the abandonment recovery path: pruned, then the payload is
+    /// discarded before sealing, so the transactions must return to the pool.
+    #[tokio::test]
+    async fn restore_pruned_transactions_reinserts_preserving_per_tx_origin() {
+        let pool = testing_pool();
+
+        // A locally-submitted tx and an externally-gossiped tx from distinct senders.
+        let local = MockTransaction::eip1559();
+        let external = MockTransaction::eip1559();
+        let local_hash = *local.hash();
+        let external_hash = *external.hash();
+
+        pool.add_transaction(TransactionOrigin::Local, local).await.expect("add local");
+        pool.add_transaction(TransactionOrigin::External, external).await.expect("add external");
+        assert!(pool.contains(&local_hash) && pool.contains(&external_hash));
+
+        // Simulate flashblock commits pruning both mined-style.
+        let pruned = pool.prune_transactions(vec![local_hash, external_hash]);
+        assert_eq!(pruned.len(), 2, "prune returns the removed transactions");
+        assert!(
+            !pool.contains(&local_hash) && !pool.contains(&external_hash),
+            "prune removes transactions from the pool (canonical-inclusion semantics)"
+        );
+
+        // Abandonment: restore them.
+        let restored = restore_pruned_transactions(&pool, &pruned).await;
+        assert_eq!(restored, 2, "both pruned transactions are reinserted");
+
+        // Both are back, each with its original origin preserved.
+        assert_eq!(
+            pool.get(&local_hash).expect("local present").origin,
+            TransactionOrigin::Local,
+            "local origin must be preserved on restore"
+        );
+        assert_eq!(
+            pool.get(&external_hash).expect("external present").origin,
+            TransactionOrigin::External,
+            "external origin must be preserved on restore"
+        );
+    }
+
+    /// [`restore_pruned_transactions`] is a no-op for an empty journal.
+    #[tokio::test]
+    async fn restore_pruned_transactions_is_noop_when_empty() {
+        let pool = testing_pool();
+        assert_eq!(restore_pruned_transactions(&pool, &[]).await, 0);
+    }
+
+    /// Mirrors the decision in [`super::BasePayloadBuilder::settle_pruned_transactions`]: pruned
+    /// transactions are restored only when the payload was abandoned (`resolved == false`). A
+    /// payload sealed via `getPayload` (`resolved == true`) keeps its pruned transactions out of
+    /// the pool, matching canonical inclusion.
+    #[tokio::test]
+    async fn resolved_flag_gates_restoration() {
+        let pool = testing_pool();
+        let tx = MockTransaction::eip1559();
+        let hash = *tx.hash();
+        pool.add_transaction(TransactionOrigin::Local, tx).await.expect("add");
+        let pruned = pool.prune_transactions(vec![hash]);
+        assert!(!pool.contains(&hash));
+
+        // Sealed payload: do not restore.
+        let resolved = AtomicBool::new(true);
+        if !resolved.load(Ordering::Acquire) {
+            restore_pruned_transactions(&pool, &pruned).await;
+        }
+        assert!(!pool.contains(&hash), "a sealed payload must not restore pruned transactions");
+
+        // Abandoned payload: restore.
+        resolved.store(false, Ordering::Release);
+        if !resolved.load(Ordering::Acquire) {
+            restore_pruned_transactions(&pool, &pruned).await;
+        }
+        assert!(pool.contains(&hash), "an abandoned payload must restore pruned transactions");
     }
 }

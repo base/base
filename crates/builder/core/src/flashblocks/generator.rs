@@ -1,5 +1,8 @@
 use std::{
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     task::Waker,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -163,6 +166,7 @@ where
             cell: BlockCell::new(),
             finalized_cell: BlockCell::new(),
             cancel: cancel_token,
+            resolved: Arc::new(AtomicBool::new(false)),
             publish_guard,
             deadline,
             build_complete: None,
@@ -218,6 +222,11 @@ where
     pub(crate) finalized_cell: BlockCell<Builder::BuiltPayload>,
     /// Cancellation token for the running job
     pub(crate) cancel: CancellationToken,
+    /// Set to `true` when this job is resolved via [`PayloadJob::resolve_kind`] (i.e. the payload
+    /// was retrieved via `getPayload` and is being sealed). Distinguishes a sealed job from one
+    /// that is abandoned (superseded by a new FCU or expired), which the build task uses to decide
+    /// whether to restore transactions pruned during flashblock building back into the pool.
+    pub(crate) resolved: Arc<AtomicBool>,
     /// Mutex to synchronize cancellation with payload publishing.
     pub(crate) publish_guard: Arc<Mutex<()>>,
     pub(crate) deadline: Pin<Box<Sleep>>, // Add deadline
@@ -265,6 +274,9 @@ where
         // Acquire mutex before cancelling to synchronize with payload publishing.
         {
             let _guard = self.publish_guard.lock();
+            // Mark resolved before cancelling so the build task observes it as sealed (and keeps
+            // its pruned transactions) rather than treating the cancellation as abandonment.
+            self.resolved.store(true, Ordering::Release);
             self.cancel.cancel();
         }
 
@@ -283,6 +295,9 @@ pub struct BuildArguments<Attributes, Payload: BuiltPayload> {
     pub config: PayloadConfig<Attributes, HeaderTy<Payload::Primitives>>,
     /// A marker that can be used to cancel the job.
     pub cancel: CancellationToken,
+    /// Set to `true` when the job is resolved via `getPayload`. Lets the build task distinguish a
+    /// sealed payload (keep pruned transactions) from an abandoned one (restore them to the pool).
+    pub resolved: Arc<AtomicBool>,
     /// Mutex to synchronize cancellation with payload publishing.
     pub publish_guard: Arc<Mutex<()>>,
     /// Cell to store the finalized payload with state root.
@@ -302,6 +317,7 @@ where
         let payload_config = self.config.clone();
         let cell = self.cell.clone();
         let cancel = self.cancel.clone();
+        let resolved = Arc::clone(&self.resolved);
         let publish_guard = Arc::clone(&self.publish_guard);
         let finalized_cell = self.finalized_cell.clone();
 
@@ -313,6 +329,7 @@ where
                 cached_reads,
                 config: payload_config,
                 cancel,
+                resolved,
                 publish_guard,
                 finalized_cell,
             };

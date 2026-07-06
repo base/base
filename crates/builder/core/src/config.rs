@@ -95,6 +95,11 @@ pub struct BuilderConfig {
     /// Maximum number of rejected transactions accumulated per block before
     /// further rejections are dropped. Prevents unbounded `ExecutionInfo` growth.
     pub max_rejected_txs_per_block: usize,
+
+    /// Whether to restore transactions pruned during flashblock building back into the pool
+    /// when a payload job is abandoned (superseded by a new FCU or expired) before it is
+    /// sealed via `getPayload`.
+    pub flashblock_prune_rollback_enabled: bool,
 }
 
 impl BuilderConfig {
@@ -132,6 +137,7 @@ impl core::fmt::Debug for BuilderConfig {
             .field("audit_archiver_url", &self.audit_archiver_url)
             .field("rejected_tx_channel_size", &self.rejected_tx_channel_size)
             .field("max_rejected_txs_per_block", &self.max_rejected_txs_per_block)
+            .field("flashblock_prune_rollback_enabled", &self.flashblock_prune_rollback_enabled)
             .finish()
     }
 }
@@ -161,6 +167,7 @@ impl Default for BuilderConfig {
             audit_archiver_url: None,
             rejected_tx_channel_size: 500,
             max_rejected_txs_per_block: 500,
+            flashblock_prune_rollback_enabled: true,
         }
     }
 }
@@ -223,6 +230,13 @@ impl BuilderConfig {
         metering_wait_duration: Option<Duration>,
     ) -> Self {
         self.metering_wait_duration = metering_wait_duration;
+        self
+    }
+
+    /// Sets whether pruned flashblock transactions are restored on payload abandonment.
+    #[must_use]
+    pub const fn with_flashblock_prune_rollback_enabled(mut self, enabled: bool) -> Self {
+        self.flashblock_prune_rollback_enabled = enabled;
         self
     }
 }
