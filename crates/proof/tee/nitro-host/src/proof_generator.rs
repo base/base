@@ -10,7 +10,7 @@ use base_prover_service_protocol::{
 use thiserror::Error;
 use tokio::{task::JoinHandle, time::sleep};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use crate::{
     NitroEnclavePool, NitroEnclavePoolError, ProofSubmitter, ProofSubmitterError,
@@ -249,17 +249,22 @@ where
     where
         Generate: Future<Output = Result<Output, NitroEnclavePoolError>>,
     {
-        let heartbeat = self.heartbeat_until_failure(request);
+        let mut heartbeat = self.spawn_heartbeat_until_failure(request.clone());
         tokio::pin!(generate);
-        tokio::pin!(heartbeat);
 
         tokio::select! {
             biased;
-            result = &mut generate => result.map_err(|source| ProofGeneratorError::Generate {
-                session_id: request.session_id.clone(),
-                source,
-            }),
+            result = &mut generate => {
+                heartbeat.abort();
+                let _ = heartbeat.await;
+
+                result.map_err(|source| ProofGeneratorError::Generate {
+                    session_id: request.session_id.clone(),
+                    source,
+                })
+            }
             source = &mut heartbeat => {
+                let source = source.expect("proof generator heartbeat task panicked");
                 match generate.await {
                     Ok(_) => {
                         info!(
@@ -289,23 +294,36 @@ where
         }
     }
 
-    async fn heartbeat_until_failure(
+    fn spawn_heartbeat_until_failure(
         &self,
-        request: &ProofGeneratorRequest,
+        request: ProofGeneratorRequest,
+    ) -> JoinHandle<ProverServiceClientError> {
+        let submitter = self.submitter.clone();
+        let heartbeat_config = self.heartbeat;
+
+        tokio::spawn(async move {
+            Self::heartbeat_until_failure(submitter, heartbeat_config, request).await
+        })
+    }
+
+    async fn heartbeat_until_failure(
+        submitter: ProofSubmitter<Client>,
+        heartbeat_config: ProofGeneratorHeartbeatConfig,
+        request: ProofGeneratorRequest,
     ) -> ProverServiceClientError {
         loop {
-            sleep(self.heartbeat.normalized_interval()).await;
+            sleep(heartbeat_config.normalized_interval()).await;
 
             let heartbeat = HeartbeatRequest {
                 session_id: request.session_id.clone(),
                 lock_id: request.lock_id.clone(),
                 worker_id: request.worker_id.clone(),
-                lock_duration_seconds: self.heartbeat.lock_duration_seconds,
+                lock_duration_seconds: heartbeat_config.lock_duration_seconds,
             };
 
-            match self.submitter.heartbeat(heartbeat).await {
+            match submitter.heartbeat(heartbeat).await {
                 Ok(response) => {
-                    debug!(
+                    info!(
                         session_id = %request.session_id,
                         lock_id = %request.lock_id,
                         worker_id = %request.worker_id,
@@ -680,6 +698,27 @@ mod tests {
                 && heartbeat.worker_id == TEST_WORKER_ID
                 && heartbeat.lock_duration_seconds == TEST_HEARTBEAT_LOCK_DURATION_SECONDS
         }));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn heartbeat_runs_while_generation_poll_is_busy() {
+        let client = MockWorkerClient::default();
+        let generator = generator_with_heartbeat_interval(client.clone(), Duration::from_millis(5));
+        let request = claimed_tee_request();
+
+        let err = generator
+            .with_heartbeat_while_generating(&request, async {
+                std::thread::sleep(Duration::from_millis(50));
+                Err::<(), NitroEnclavePoolError>(NitroEnclavePoolError::Busy)
+            })
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, ProofGeneratorError::Generate { .. }));
+        assert!(
+            !client.heartbeats().is_empty(),
+            "heartbeat task should run independently of the busy generation task"
+        );
     }
 
     #[tokio::test]
