@@ -80,14 +80,16 @@ impl Eip8130AuthScheme {
 /// presence (via [`Eip8130RequestFields::is_some`]) marks a request as an
 /// EIP-8130 simulation. Authentication is priced from the *shape* of the
 /// `sender_auth` / `payer_auth` blobs, never verified: the caller passes the
-/// prefixed authentication blob it intends to sign (`authenticator(20) ||
-/// data`), and the estimate charges that blob's authenticator execution gas
-/// plus its EIP-2028 calldata cost — so a caller estimates the cost of any key
-/// type without first signing.
+/// authentication blob it intends to sign (`authenticator(20) || data` for a
+/// configured account, or a bare secp256k1 signature for the default EOA), and
+/// the estimate charges that blob's authenticator execution gas plus its
+/// EIP-2028 calldata cost — so a caller estimates the cost of any key type
+/// without first signing.
 ///
-/// The 8130 sender account is [`sender`](Self::sender), not the flattened
-/// `from`: estimation targets configured accounts, so `sender` is required and
-/// `from` is ignored on this path.
+/// The sender account is [`sender`](Self::sender) or the standard `from`, which
+/// must agree when both are present; the `sender_auth` blob's form then selects
+/// the EOA vs configured-account path (see
+/// [`crate::BaseTransactionRequest::to_eip8130_simulation_tx`]).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Eip8130RequestFields {
@@ -107,25 +109,32 @@ pub struct Eip8130RequestFields {
     /// Opaque, non-executed transaction metadata.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Bytes>,
-    /// The EIP-8130 sender (configured) account. Required to mark a request for
-    /// the 8130 simulation path; the sender identity drives actor resolution,
-    /// policy lookup, and auto-delegation. This — not the flattened `from` —
-    /// is the account the batch dispatches from; `from` is ignored on the 8130
-    /// path. An absent `sender` on an otherwise-8130 request is rejected as
-    /// `INVALID_PARAMS`.
+    /// The EIP-8130 sender account the batch dispatches from — the wire-level
+    /// `sender` identity that drives actor resolution, policy lookup, and
+    /// auto-delegation. Interchangeable with the standard `from`: the estimate
+    /// resolves the account as `sender` or `from`, and rejects a request where
+    /// both are present but disagree, or where neither is set, as
+    /// `INVALID_PARAMS`. A declared `sender` also selects the configured-account
+    /// default when `sender_auth` is absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sender: Option<Address>,
     /// Raw sender authentication blob whose *shape* is priced into the estimate
     /// (never verified): estimation reads its length (for EIP-2028 calldata gas)
-    /// and its leading 20-byte authenticator selector (for the intrinsic-schedule
-    /// execution gas).
+    /// and, in the prefixed configured-account form, its leading 20-byte
+    /// authenticator selector (for the intrinsic-schedule execution gas).
     ///
-    /// A supplied blob is always the prefixed configured-account form —
-    /// `authenticator(20) || data` — and its leading 20 bytes must be a
-    /// recognized enshrined authenticator selector ([`Eip8130AuthScheme::Secp256k1`]
-    /// / `P256` / `WebAuthn`); an unrecognized selector is rejected as
-    /// `INVALID_PARAMS`. An absent blob defaults to a representative secp256k1
-    /// authorization.
+    /// The blob's form also selects the authentication path, mirroring the
+    /// on-wire transaction:
+    ///
+    /// - A bare secp256k1 signature prices the default-EOA path: the account
+    ///   authenticates with a k1 key, exactly as for a 1559 transaction.
+    /// - `authenticator(20) || data` prefixed with an enshrined authenticator
+    ///   ([`Eip8130AuthScheme::Secp256k1`] / `P256` / `WebAuthn`) prices the
+    ///   configured-account path.
+    ///
+    /// An absent blob defaults by intent: a declared `sender` synthesizes a
+    /// k1-prefixed configured-account authorization; a `from`-only request
+    /// synthesizes a bare secp256k1 signature.
     ///
     /// Pass a representative blob for the key you intend to sign with (e.g. a
     /// filler-byte stub of the right length); you need not sign first.

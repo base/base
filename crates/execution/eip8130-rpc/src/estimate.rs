@@ -90,9 +90,10 @@ impl Eip8130GasEstimator {
         let sim_tx = request.to_eip8130_simulation_tx(chain_id, gas_cap).ok_or_else(|| {
             ErrorObjectOwned::owned(
                 INVALID_PARAMS_CODE,
-                "invalid EIP-8130 estimate request: missing EIP-8130 fields, missing the required \
-                 `sender`, a `sender_auth`/`payer_auth` blob whose data exceeds the maximum size, \
-                 or a `sender_auth`/`payer_auth` with an unrecognized authenticator selector",
+                "invalid EIP-8130 estimate request: missing EIP-8130 fields, no sender account \
+                 (neither `sender` nor `from`), a `sender`/`from` mismatch, a \
+                 `sender_auth`/`payer_auth` blob whose data exceeds the maximum size, or a \
+                 `payer_auth` with an unrecognized authenticator selector",
                 None::<()>,
             )
         })?;
