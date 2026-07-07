@@ -201,7 +201,7 @@ impl<C: Clock> AnchorUpdater<C> {
                 }
 
                 game.defer_prover_reads_until_game_over = false;
-                game_over = Some(is_game_over);
+                game_over = Some(true);
             }
 
             let (zk_prover, tee_prover, countered_index) = match tokio::try_join!(

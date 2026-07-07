@@ -36,6 +36,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     mem,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use alloy_primitives::{Address, B256};
@@ -436,6 +437,8 @@ impl GameScanner {
                                 error = %e,
                                 "failed to read game status during anchor recovery"
                             );
+                            // Track unknown statuses optimistically so transient startup RPC
+                            // errors do not permanently miss eligible anchor updates.
                             (index, Some(game.proxy), false, true)
                         }
                     }
@@ -483,7 +486,7 @@ impl GameScanner {
                         error = %e,
                         "failed to read game status during anchor recovery, retrying"
                     );
-                    tokio::task::yield_now().await;
+                    tokio::time::sleep(Duration::from_millis(100)).await;
                 }
                 Err(e) => return Err(e.into()),
             }
