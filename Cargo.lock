@@ -6191,6 +6191,7 @@ dependencies = [
 name = "base-reth-cli"
 version = "0.0.0"
 dependencies = [
+ "reth-cli-commands",
  "reth-node-core",
 ]
 
