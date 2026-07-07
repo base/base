@@ -17,7 +17,7 @@ mod container;
 pub use container::{ContainerManager, DockerContainerManager};
 
 mod tip;
-pub use tip::TipChecker;
+pub use tip::{RpcTipChecker, TipChecker};
 
 mod snapshot;
 pub use snapshot::{

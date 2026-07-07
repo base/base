@@ -5,27 +5,46 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use alloy_eips::BlockNumberOrTag;
 use alloy_provider::{Provider, ProviderBuilder};
 use anyhow::{Context, Result};
+use async_trait::async_trait;
 use tracing::info;
 use url::Url;
 
-/// Checks whether an execution layer node is at chain tip by inspecting the
-/// timestamp of its latest block.
-#[derive(Debug)]
-pub struct TipChecker;
-
-impl TipChecker {
+/// Checks whether an execution layer node is at chain tip.
+///
+/// Abstracted behind a trait (like [`crate::ContainerManager`]) so the
+/// orchestrator can be exercised in tests without a live RPC endpoint.
+#[async_trait]
+pub trait TipChecker: Send + Sync {
     /// Returns `true` if the EL's latest block is within `threshold` of the
     /// current wall-clock time.
-    ///
-    /// Fetches the `latest` block via `eth_getBlockByNumber` and compares its
-    /// timestamp against `SystemTime::now()`. A block in the future (clock skew)
-    /// is always considered at tip.
-    pub async fn is_at_tip(rpc_url: &Url, threshold: Duration) -> Result<bool> {
+    async fn is_at_tip(&self, threshold: Duration) -> Result<bool>;
+}
+
+/// [`TipChecker`] backed by an execution layer JSON-RPC endpoint.
+///
+/// Determines tip status by fetching the `latest` block via
+/// `eth_getBlockByNumber` and comparing its timestamp against the current
+/// wall-clock time.
+#[derive(Debug, Clone)]
+pub struct RpcTipChecker {
+    rpc_url: Url,
+}
+
+impl RpcTipChecker {
+    /// Creates a new tip checker targeting the given EL RPC URL.
+    pub const fn new(rpc_url: Url) -> Self {
+        Self { rpc_url }
+    }
+}
+
+#[async_trait]
+impl TipChecker for RpcTipChecker {
+    async fn is_at_tip(&self, threshold: Duration) -> Result<bool> {
         let provider = ProviderBuilder::new()
             .disable_recommended_fillers()
-            .connect(rpc_url.as_str())
+            .connect(self.rpc_url.as_str())
             .await
-            .with_context(|| format!("connecting to EL RPC at {rpc_url}"))?;
+            .with_context(|| format!("connecting to EL RPC at {}", self.rpc_url))?;
 
         let block = provider
             .get_block_by_number(BlockNumberOrTag::Latest)

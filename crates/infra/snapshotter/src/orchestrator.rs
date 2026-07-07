@@ -20,26 +20,29 @@ use crate::{
 ///
 /// The EL container is always restarted, even if snapshot generation or upload
 /// fails. This prevents leaving the node in a stopped state on errors.
-pub struct Snapshotter<C: ContainerManager> {
+pub struct Snapshotter<C: ContainerManager, T: TipChecker> {
     container_manager: C,
+    tip_checker: T,
     uploader: SnapshotUploader,
     config: SnapshotterConfig,
 }
 
-impl<C: ContainerManager> std::fmt::Debug for Snapshotter<C> {
+impl<C: ContainerManager, T: TipChecker> std::fmt::Debug for Snapshotter<C, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Snapshotter").field("config", &self.config).finish_non_exhaustive()
     }
 }
 
-impl<C: ContainerManager> Snapshotter<C> {
-    /// Creates a new snapshotter with the given container manager and uploader.
+impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
+    /// Creates a new snapshotter with the given container manager, tip checker,
+    /// and uploader.
     pub const fn new(
         container_manager: C,
+        tip_checker: T,
         uploader: SnapshotUploader,
         config: SnapshotterConfig,
     ) -> Self {
-        Self { container_manager, uploader, config }
+        Self { container_manager, tip_checker, uploader, config }
     }
 
     /// Executes the full snapshot lifecycle.
@@ -54,10 +57,17 @@ impl<C: ContainerManager> Snapshotter<C> {
     pub async fn run(&self) -> Result<()> {
         // Only snapshot when the EL is caught up to tip. Snapshotting a lagging
         // node would publish stale data and pause a node that is still syncing.
+        //
+        // This is a best-effort PRE-check, not a guarantee of freshness at
+        // snapshot time. There is an inherent TOCTOU gap: after this check
+        // passes, time elapses while we stop the container, generate archives,
+        // and upload — so a node that was "barely at tip" (e.g. 9s old with a
+        // 10s threshold) may be stale by the time data is actually captured.
+        // This is acceptable for the default 10s threshold on a 2s block-time
+        // chain, but callers tightening the threshold should keep this in mind.
         let threshold = Duration::from_secs(self.config.tip_threshold_secs);
-        let at_tip = TipChecker::is_at_tip(&self.config.el_rpc_url, threshold)
-            .await
-            .context("failed to check EL tip status")?;
+        let at_tip =
+            self.tip_checker.is_at_tip(threshold).await.context("failed to check EL tip status")?;
         if !at_tip {
             warn!(
                 threshold_secs = self.config.tip_threshold_secs,

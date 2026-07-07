@@ -27,13 +27,16 @@ base-snapshotter = { workspace = true }
 ```
 
 ```rust,ignore
-use base_snapshotter::{DockerContainerManager, Snapshotter, SnapshotUploader, SnapshotterConfig};
+use base_snapshotter::{
+    DockerContainerManager, RpcTipChecker, Snapshotter, SnapshotUploader, SnapshotterConfig,
+};
 
 let config = SnapshotterConfig::parse();
 let container_manager = DockerContainerManager::new(&config.docker_socket)?;
+let tip_checker = RpcTipChecker::new(config.el_rpc_url.clone());
 
 // ... create s3_client and uploader ...
-let snapshotter = Snapshotter::new(container_manager, uploader, config);
+let snapshotter = Snapshotter::new(container_manager, tip_checker, uploader, config);
 snapshotter.run().await?;
 ```
 
