@@ -8,8 +8,7 @@ use base_common_consensus::{
 };
 use base_common_genesis::RollupConfig;
 
-/// The system transaction gas limit post-Regolith.
-const REGOLITH_SYSTEM_TX_GAS: u64 = 1_000_000;
+use crate::REGOLITH_SYSTEM_TX_GAS;
 
 /// Versioned calldata for the BaseTime metadata deposit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
