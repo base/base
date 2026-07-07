@@ -29,7 +29,7 @@ pub(crate) enum SnapshotSubcommand {
     Manifest(SnapshotManifestCommand),
     /// Download Base node snapshots from R2 storage.
     #[command(name = "download")]
-    Download(download::BaseDownloadCommand<BaseChainSpecParser>),
+    Download(Box<download::BaseDownloadCommand<BaseChainSpecParser>>),
 }
 
 impl SnapshotSubcommand {
@@ -41,7 +41,7 @@ impl SnapshotSubcommand {
             }
             Self::Download(command) => {
                 let runner = CliRunner::try_default_runtime()?;
-                runner.run_blocking_until_ctrl_c(command.execute::<BaseNode>())
+                runner.run_blocking_until_ctrl_c((*command).execute::<BaseNode>())
             }
         }
     }

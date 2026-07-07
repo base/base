@@ -34,7 +34,7 @@ pub(crate) enum BaseCommand {
     Reth(Box<RethCommand>),
     /// Manage storage of historical proofs in the fault-proof window.
     #[command(name = "proofs")]
-    Proofs(base_proofs::Command<BaseChainSpecParser>),
+    Proofs(Box<base_proofs::Command<BaseChainSpecParser>>),
     /// Snapshot manifest generation and download utilities.
     #[command(name = "snapshot")]
     Snapshot(Box<SnapshotCommand>),
@@ -57,7 +57,7 @@ impl BaseCommand {
             Self::Proofs(command) => {
                 let runner = CliRunner::try_default_runtime()?;
                 let runtime = runner.runtime();
-                runner.run_blocking_until_ctrl_c(command.execute::<BaseNode>(runtime))
+                runner.run_blocking_until_ctrl_c((*command).execute::<BaseNode>(runtime))
             }
             Self::Snapshot(snapshot) => (*snapshot).run(),
         }
