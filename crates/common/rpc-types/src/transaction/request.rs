@@ -17,14 +17,22 @@ use serde::{Deserialize, Serialize};
 
 use crate::Transaction;
 
-/// An enshrined EIP-8130 authenticator an estimate can price.
+/// An enshrined EIP-8130 authenticator an estimate can price as a flat leaf.
 ///
 /// Estimation never verifies a signature: the scheme only selects which
 /// enshrined authenticator the intrinsic-gas schedule charges (the
 /// authenticator's execution gas plus the calldata cost of its authentication
-/// payload). It also identifies the recognized authenticator selectors that may
-/// prefix a `sender_auth` / `payer_auth` blob, and provides the default
-/// secp256k1 authorization used when a blob is absent.
+/// payload), and provides the default secp256k1 authorization used when a
+/// blob is absent.
+///
+/// This does **not** enumerate every authenticator selector a `sender_auth` /
+/// `payer_auth` blob's prefix may recognize — see
+/// [`base_common_consensus::Eip8130Contracts::DELEGATE_AUTHENTICATOR`], a
+/// recognized selector that is a structured 3-segment blob (delegate
+/// account + a nested leaf authenticator) rather than a flat leaf, so it
+/// can't be a variant here. Prefix recognition (`is_prefixed_auth` in
+/// `crate::reth`) checks the protocol's actual canonical authenticator set
+/// instead of this enum for that reason.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Eip8130AuthScheme {
@@ -62,14 +70,18 @@ impl Eip8130AuthScheme {
         }
     }
 
-    /// Every scheme this estimator recognizes as an enshrined authenticator, in
-    /// declaration order. The single authoritative list for recognizing a
-    /// blob's leading authenticator selector (e.g.
-    /// [`crate::BaseTransactionRequest::to_eip8130_simulation_tx`]'s
-    /// `is_prefixed_auth`) — consult this rather than re-deriving the
-    /// authenticator set by hand, so a new variant can't silently go
-    /// unrecognized. See the `eip8130_auth_scheme_all_lists_every_variant` test
-    /// for the compile-time guard that keeps this in sync with the enum.
+    /// Every variant, in declaration order. The authoritative list for
+    /// exhaustively handling every flat leaf scheme (e.g. building a default
+    /// stub) — consult this rather than re-deriving the variant set by hand,
+    /// so a new variant can't silently go unhandled. See the
+    /// `eip8130_auth_scheme_all_lists_every_variant` test for the
+    /// compile-time guard that keeps this in sync with the enum.
+    ///
+    /// This is *not* the full set of authenticator selectors a `sender_auth`
+    /// / `payer_auth` blob's prefix may recognize — see
+    /// [`base_common_consensus::Eip8130Contracts::DELEGATE_AUTHENTICATOR`],
+    /// which prefix recognition (`is_prefixed_auth` in `crate::reth`) checks
+    /// for separately since it isn't a flat leaf scheme.
     pub const ALL: [Self; 3] = [Self::Secp256k1, Self::P256, Self::WebAuthn];
 }
 
@@ -128,9 +140,10 @@ pub struct Eip8130RequestFields {
     ///
     /// - A bare secp256k1 signature prices the default-EOA path: the account
     ///   authenticates with a k1 key, exactly as for a 1559 transaction.
-    /// - `authenticator(20) || data` prefixed with an enshrined authenticator
-    ///   ([`Eip8130AuthScheme::Secp256k1`] / `P256` / `WebAuthn`) prices the
-    ///   configured-account path.
+    /// - `authenticator(20) || data` prefixed with a recognized enshrined
+    ///   authenticator (k1, [`Eip8130AuthScheme::P256`] / `WebAuthn`, or
+    ///   [`base_common_consensus::Eip8130Contracts::DELEGATE_AUTHENTICATOR`])
+    ///   prices the configured-account path.
     ///
     /// An absent blob defaults by intent: a declared `sender` synthesizes a
     /// k1-prefixed configured-account authorization; a `from`-only request
@@ -148,9 +161,10 @@ pub struct Eip8130RequestFields {
     /// is priced when a `payer` is declared. Absent defaults to a representative
     /// secp256k1 payer authorization. Unlike `sender_auth`, a supplied blob is
     /// always the prefixed form and its leading 20 bytes must be a recognized
-    /// enshrined authenticator selector ([`Eip8130AuthScheme::Secp256k1`] /
-    /// `P256` / `WebAuthn`); an unrecognized selector is rejected as
-    /// `INVALID_PARAMS` rather than priced.
+    /// enshrined authenticator selector (k1, [`Eip8130AuthScheme::P256`] /
+    /// `WebAuthn`, or
+    /// [`base_common_consensus::Eip8130Contracts::DELEGATE_AUTHENTICATOR`]); an
+    /// unrecognized selector is rejected as `INVALID_PARAMS` rather than priced.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payer_auth: Option<Bytes>,
 }

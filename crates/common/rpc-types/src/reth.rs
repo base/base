@@ -12,7 +12,10 @@ use alloy_evm::{
 use alloy_network::TxSigner;
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_signer::Signature;
-use base_common_consensus::{BaseTransactionInfo, BaseTxEnvelope, Eip8130Signed, TxEip8130};
+use base_common_consensus::{
+    BaseTransactionInfo, BaseTxEnvelope, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
+    TxEip8130,
+};
 use base_common_evm::{BaseTransaction as BaseRevm, Eip8130ExecutionMode};
 use reth_rpc_convert::{FromConsensusTx, SignTxRequestError, SignableTxRequest, TryIntoSimTx};
 use revm::context::TxEnv;
@@ -68,10 +71,12 @@ impl BaseTransactionRequest {
     /// - A bare (unprefixed) blob prices the default-EOA path (`tx.sender`
     ///   unset), where the account authenticates with a k1 signature exactly as a
     ///   1559 transaction. Priced verbatim.
-    /// - A blob prefixed with an enshrined authenticator selector
-    ///   (`authenticator(20) || data`, [`Eip8130AuthScheme::Secp256k1`] / `P256`
-    ///   / `WebAuthn`) prices the configured-account path (`tx.sender` set to the
-    ///   account). Priced verbatim.
+    /// - A blob prefixed with a recognized enshrined authenticator selector
+    ///   (`authenticator(20) || data`) prices the configured-account path
+    ///   (`tx.sender` set to the account). Priced verbatim, including a
+    ///   [`base_common_consensus::Eip8130Contracts::DELEGATE_AUTHENTICATOR`]-prefixed
+    ///   blob — its nested authenticator is resolved and priced by the same
+    ///   intrinsic-gas schedule the verifying `execute` path uses.
     ///
     /// An absent `sender_auth` defaults by intent: a declared `sender`
     /// (configured-account request) synthesizes a k1-prefixed stub on the
@@ -210,19 +215,26 @@ impl BaseTransactionRequest {
     /// Whether an authentication blob is in the prefixed configured-account form
     /// (`authenticator(20) || data`) rather than a bare signature: true when its
     /// leading 20 bytes are a recognized enshrined authenticator selector,
-    /// checked against [`Eip8130AuthScheme::ALL`] (the single authoritative list,
-    /// rather than a second hardcoded address set that could drift from the
-    /// enum). This mirrors the wire form the intrinsic-gas schedule prices the
-    /// blob under, so a `sender_auth` blob prefixed this way simulates on the
-    /// configured-account path (`tx.sender` set) and a bare one on the default-EOA
-    /// path (`tx.sender` unset). For `payer_auth` a `false` result is a rejection
-    /// (payer auth is always the prefixed form).
+    /// checked against the protocol's actual canonical authenticator set
+    /// ([`Eip8130Contracts::is_canonical_authenticator`] plus the native k1
+    /// sentinel) — the same set the block-validation path accepts — rather than
+    /// [`Eip8130AuthScheme::ALL`], which only lists the RPC estimator's own
+    /// flat, schedule-priceable *leaf* schemes and omits
+    /// [`Eip8130Contracts::DELEGATE_AUTHENTICATOR`] (a recognized prefix, but a
+    /// structured 3-segment blob rather than a flat leaf, so it can't be a
+    /// [`Eip8130AuthScheme`] variant). This mirrors the wire form the
+    /// intrinsic-gas schedule prices the blob under, so a `sender_auth` blob
+    /// prefixed this way simulates on the configured-account path (`tx.sender`
+    /// set) and a bare one on the default-EOA path (`tx.sender` unset). For
+    /// `payer_auth` a `false` result is a rejection (payer auth is always the
+    /// prefixed form).
     fn is_prefixed_auth(blob: &Bytes) -> bool {
         if blob.len() < AUTHENTICATOR_SELECTOR_LEN {
             return false;
         }
         let selector = Address::from_slice(&blob[..AUTHENTICATOR_SELECTOR_LEN]);
-        Eip8130AuthScheme::ALL.into_iter().any(|scheme| scheme.authenticator() == selector)
+        selector == Eip8130Constants::K1_AUTHENTICATOR
+            || Eip8130Contracts::is_canonical_authenticator(&selector)
     }
 
     /// Builds a prefixed stub authentication blob — `authenticator(20) || data`
@@ -460,6 +472,56 @@ mod tests {
         let s = signed(&tx);
         assert!(s.tx().sender.is_none(), "an unrecognized prefix falls to the EOA path");
         assert_eq!(s.sender_auth().len(), 20 + 65, "priced verbatim as a bare blob");
+    }
+
+    #[test]
+    fn delegate_prefixed_sender_auth_is_the_configured_path() {
+        // `DELEGATE_AUTHENTICATOR` is a recognized prefix even though it isn't
+        // an `Eip8130AuthScheme` variant (it's a structured 3-segment blob, not
+        // a flat leaf) — `is_prefixed_auth` must still select the
+        // configured-account path for it, so a delegate-authenticated sender
+        // isn't misclassified as a bare EOA and flat-priced at k1.
+        let delegate_account = address!("0x00000000000000000000000000000000000000d4");
+        let mut nested = Eip8130Constants::K1_AUTHENTICATOR.to_vec();
+        nested.extend_from_slice(&[STUB_AUTH_FILL; 65]);
+        let mut blob = Eip8130Contracts::DELEGATE_AUTHENTICATOR.to_vec();
+        blob.extend_from_slice(delegate_account.as_slice());
+        blob.extend_from_slice(&nested);
+        let tx = sim_tx(json!({
+            "sender": SENDER,
+            "calls": [],
+            "senderAuth": alloy_primitives::hex::encode_prefixed(&blob),
+        }));
+        let s = signed(&tx);
+        assert_eq!(
+            s.tx().sender,
+            Some(SENDER),
+            "a delegate-prefixed blob selects the configured-account path",
+        );
+        assert_eq!(s.sender_auth().as_ref(), blob.as_slice(), "priced verbatim");
+    }
+
+    #[test]
+    fn delegate_prefixed_payer_auth_is_accepted() {
+        // Mirrors the sender-side case: a delegate-authenticated payer is a
+        // recognized prefix and must not be rejected as an unrecognized
+        // authenticator selector.
+        let payer = address!("0x00000000000000000000000000000000000000b2");
+        let delegate_account = address!("0x00000000000000000000000000000000000000d4");
+        let mut nested = Eip8130Contracts::P256_AUTHENTICATOR.to_vec();
+        nested.extend_from_slice(&[STUB_AUTH_FILL; 128]);
+        let mut blob = Eip8130Contracts::DELEGATE_AUTHENTICATOR.to_vec();
+        blob.extend_from_slice(delegate_account.as_slice());
+        blob.extend_from_slice(&nested);
+        let tx = sim_tx(json!({
+            "sender": SENDER,
+            "calls": [],
+            "payer": payer,
+            "payerAuth": alloy_primitives::hex::encode_prefixed(&blob),
+        }));
+        let s = signed(&tx);
+        assert_eq!(s.tx().payer, Some(payer));
+        assert_eq!(s.payer_auth().as_ref(), blob.as_slice(), "priced verbatim");
     }
 
     #[test]
