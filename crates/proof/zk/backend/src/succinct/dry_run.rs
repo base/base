@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
 use base_proof_succinct_proof_utils::get_range_elf_embedded;
 use base_proof_zk_host::{ZkProofRequestKind, ZkProver, ZkProverError, ZkSessionState};
-use base_prover_service_protocol::{ExecutionStats, ProofResult, ZkProofResult, ZkVm};
+use base_prover_service_protocol::{ExecutionStats, ProofResult, SessionType, ZkProofResult, ZkVm};
 use sp1_sdk::{
     Elf, SP1Stdin,
     blocking::{LightProver, Prover},
@@ -245,7 +245,11 @@ impl ZkProver for DryRunZkProver {
         if contains_result { Ok(ZkSessionState::Completed) } else { Ok(ZkSessionState::NotFound) }
     }
 
-    async fn download(&self, backend_session_id: &str) -> Result<ProofResult, ZkProverError> {
+    async fn download(
+        &self,
+        _session_type: SessionType,
+        backend_session_id: &str,
+    ) -> Result<ProofResult, ZkProverError> {
         self.completed_results
             .lock()
             .map_err(|e| backend_error!("dry-run result store lock poisoned: {e}"))?

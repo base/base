@@ -78,11 +78,6 @@ pub struct ProofGenerator<Client> {
     poll_interval: Duration,
 }
 
-struct ResolvedBackendSession {
-    backend_session_id: String,
-    needs_polling: bool,
-}
-
 impl<Client> ProofGenerator<Client> {
     /// Create a proof generator with its own submission cancellation token.
     pub fn new(
@@ -220,7 +215,6 @@ where
         &self,
         request: &ProofGeneratorRequest,
     ) -> Result<ProofResult, ZkProverError> {
-        let session_type = request.request.session_type();
         let handle = ProofSessionHandle::new(
             self.submitter.client().clone(),
             request.claim.session_id.clone(),
@@ -228,97 +222,135 @@ where
             request.claim.worker_id.clone(),
         );
 
-        let existing = handle
-            .get(session_type)
-            .await
-            .map_err(|error| ZkProverError::Session(Box::new(error)))?;
-        let resolved =
-            self.resolve_backend_session(request, &handle, session_type, existing).await?;
-
-        if resolved.needs_polling {
-            self.wait_for_backend_session(
+        // Every request begins with a range (STARK) proof. A Groth16 job proves the range over the
+        // compressed request nested in its SNARK request, since backends only submit compressed
+        // proofs in the first stage.
+        let range_request = match &request.request {
+            ZkProofRequestKind::Compressed(proof) => ZkProofRequestKind::Compressed(proof.clone()),
+            ZkProofRequestKind::SnarkGroth16(snark) => {
+                ZkProofRequestKind::Compressed(snark.proof.clone())
+            }
+        };
+        let range_session_id = self
+            .drive_stage(
                 request,
                 &handle,
-                session_type,
-                &resolved.backend_session_id,
+                SessionType::Stark,
+                self.prover.submit(&range_request, &request.claim.session_id),
             )
             .await?;
+
+        // Groth16 requests aggregate the completed range proof into a SNARK; every other request
+        // downloads the range proof directly.
+        match &request.request {
+            ZkProofRequestKind::SnarkGroth16(proof_request) => {
+                let snark_session_id = self
+                    .drive_stage(
+                        request,
+                        &handle,
+                        SessionType::Snark,
+                        self.prover.submit_next(
+                            proof_request,
+                            &request.claim.session_id,
+                            &range_session_id,
+                        ),
+                    )
+                    .await?;
+                self.prover.download(SessionType::Snark, &snark_session_id).await
+            }
+            ZkProofRequestKind::Compressed(_) => {
+                self.prover.download(SessionType::Stark, &range_session_id).await
+            }
         }
-
-        let proof = self.prover.download(&resolved.backend_session_id).await?;
-
-        Ok(proof)
     }
 
-    async fn resolve_backend_session(
+    /// Drive one proving stage to completion, resuming any session recorded on a previous run.
+    ///
+    /// `submit` is awaited only when there is no reusable session. A session reported as already
+    /// completed is returned as-is: the backend may have purged the finished proof, so re-polling
+    /// could trigger a spurious resubmission of an already-finished stage.
+    async fn drive_stage(
         &self,
         request: &ProofGeneratorRequest,
         handle: &ProofSessionHandle<Client>,
         session_type: SessionType,
-        existing: Option<BackendSession>,
-    ) -> Result<ResolvedBackendSession, ZkProverError> {
-        match existing {
+        submit: impl Future<Output = Result<String, ZkProverError>>,
+    ) -> Result<String, ZkProverError> {
+        let backend_session_id = match handle
+            .get(session_type)
+            .await
+            .map_err(|error| ZkProverError::Session(Box::new(error)))?
+        {
+            Some(BackendSession { backend_session_id, state: BackendSessionState::Completed }) => {
+                return Ok(backend_session_id);
+            }
             Some(BackendSession { backend_session_id, state: BackendSessionState::Running }) => {
                 info!(
                     session_id = %request.claim.session_id,
                     backend_session_id = %backend_session_id,
+                    ?session_type,
                     "resuming in-flight backend session"
                 );
-                Ok(ResolvedBackendSession { backend_session_id, needs_polling: true })
-            }
-            Some(BackendSession { backend_session_id, state: BackendSessionState::Completed }) => {
-                info!(
-                    session_id = %request.claim.session_id,
-                    backend_session_id = %backend_session_id,
-                    "backend session already completed, skipping to download"
-                );
-                Ok(ResolvedBackendSession { backend_session_id, needs_polling: false })
+                backend_session_id
             }
             None
             | Some(BackendSession {
                 state: BackendSessionState::Submitting | BackendSessionState::Failed,
                 ..
             }) => {
-                let backend_session_id =
-                    self.prover.submit(&request.request, &request.claim.session_id).await?;
-
+                let backend_session_id = submit.await?;
                 handle
                     .record(session_type, backend_session_id.clone(), BackendSessionState::Running)
                     .await
                     .map_err(|error| ZkProverError::Session(Box::new(error)))?;
-
                 info!(
                     session_id = %request.claim.session_id,
                     backend_session_id = %backend_session_id,
+                    ?session_type,
                     "submitted backend session and recorded it"
                 );
-                Ok(ResolvedBackendSession { backend_session_id, needs_polling: true })
+                backend_session_id
             }
-        }
+        };
+
+        self.poll_to_completion(request, handle, session_type, backend_session_id).await
     }
 
-    async fn wait_for_backend_session(
+    /// Poll a running backend session until it reaches a terminal state.
+    async fn poll_to_completion(
         &self,
         request: &ProofGeneratorRequest,
         handle: &ProofSessionHandle<Client>,
         session_type: SessionType,
-        backend_session_id: &str,
-    ) -> Result<(), ZkProverError> {
+        backend_session_id: String,
+    ) -> Result<String, ZkProverError> {
         loop {
-            match self.prover.poll(backend_session_id).await? {
+            match self.prover.poll(&backend_session_id).await? {
                 ZkSessionState::Running => {
                     debug!(
                         session_id = %request.claim.session_id,
                         backend_session_id = %backend_session_id,
+                        ?session_type,
                         "backend session still running"
                     );
                     sleep(self.normalized_poll_interval()).await;
                 }
-                ZkSessionState::Completed => return Ok(()),
+                ZkSessionState::Completed => {
+                    // The worker API rejects terminal session states, so completion is not
+                    // recorded; the stage resolves by returning its backend session id.
+                    debug!(
+                        session_id = %request.claim.session_id,
+                        backend_session_id = %backend_session_id,
+                        ?session_type,
+                        "backend session completed"
+                    );
+                    return Ok(backend_session_id);
+                }
                 ZkSessionState::Failed(reason) => {
                     warn!(
                         session_id = %request.claim.session_id,
                         backend_session_id = %backend_session_id,
+                        ?session_type,
                         error = %reason,
                         "backend session failed; marking for resubmission"
                     );
@@ -326,30 +358,26 @@ where
                         request,
                         handle,
                         session_type,
-                        backend_session_id,
+                        &backend_session_id,
                     )
                     .await;
-                    return Err(ZkProverError::BackendSessionFailed {
-                        backend_session_id: backend_session_id.to_owned(),
-                        reason,
-                    });
+                    return Err(ZkProverError::BackendSessionFailed { backend_session_id, reason });
                 }
                 ZkSessionState::NotFound => {
                     warn!(
                         session_id = %request.claim.session_id,
                         backend_session_id = %backend_session_id,
+                        ?session_type,
                         "backend session not found; marking for resubmission"
                     );
                     self.record_backend_resubmission(
                         request,
                         handle,
                         session_type,
-                        backend_session_id,
+                        &backend_session_id,
                     )
                     .await;
-                    return Err(ZkProverError::BackendSessionNotFound {
-                        backend_session_id: backend_session_id.to_owned(),
-                    });
+                    return Err(ZkProverError::BackendSessionNotFound { backend_session_id });
                 }
             }
         }
@@ -371,6 +399,7 @@ where
             warn!(
                 session_id = %request.claim.session_id,
                 backend_session_id = %backend_session_id,
+                ?session_type,
                 error = %error,
                 "failed to mark backend session for resubmission"
             );
