@@ -3,6 +3,11 @@
 use std::{num::NonZeroUsize, path::PathBuf};
 
 use clap::{Parser, ValueEnum};
+use url::Url;
+
+/// Default tip threshold in seconds: how fresh the latest block must be for the
+/// EL to be considered "at tip".
+pub const DEFAULT_TIP_THRESHOLD_SECS: u64 = 10;
 
 /// How the S3/R2 client is configured.
 #[derive(Debug, Clone, ValueEnum)]
@@ -23,6 +28,22 @@ pub struct SnapshotterConfig {
     /// Docker container name of the execution layer node to stop/start.
     #[arg(long)]
     pub container_name: String,
+
+    /// HTTP JSON-RPC URL of the execution layer node.
+    ///
+    /// Used to verify the EL is at tip (latest block is recent) before pausing
+    /// the container for a snapshot.
+    #[arg(long, env = "SNAPSHOTTER_EL_RPC_URL")]
+    pub el_rpc_url: Url,
+
+    /// Maximum age (in seconds) of the latest block for the EL to be considered
+    /// "at tip".
+    ///
+    /// If the latest block's timestamp is older than this many seconds relative
+    /// to the current wall-clock time, the snapshot run is skipped and the EL
+    /// container is left untouched.
+    #[arg(long, env = "SNAPSHOTTER_TIP_THRESHOLD_SECS", default_value_t = DEFAULT_TIP_THRESHOLD_SECS)]
+    pub tip_threshold_secs: u64,
 
     /// Source datadir containing the reth node data (static files + DB).
     #[arg(long, short = 'd')]

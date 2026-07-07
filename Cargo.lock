@@ -6257,6 +6257,8 @@ dependencies = [
 name = "base-snapshotter"
 version = "0.0.0"
 dependencies = [
+ "alloy-eips 2.0.5",
+ "alloy-provider 2.0.5",
  "anyhow",
  "async-trait",
  "aws-config",
@@ -6275,6 +6277,7 @@ dependencies = [
  "testcontainers-modules",
  "tokio",
  "tracing",
+ "url",
  "zstd",
 ]
 

@@ -2,16 +2,17 @@
 
 use std::{
     path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result, bail};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::{
     SnapshotterConfig,
     container::ContainerManager,
     snapshot::{SnapshotGenerator, SnapshotManifest},
+    tip::TipChecker,
     upload::SnapshotUploader,
 };
 
@@ -43,6 +44,7 @@ impl<C: ContainerManager> Snapshotter<C> {
 
     /// Executes the full snapshot lifecycle.
     ///
+    /// 0. Verifies the EL is at chain tip; skips the run if it is not
     /// 1. Stops the EL container
     /// 2. Verifies the container is stopped
     /// 3. Generates snapshot archives
@@ -50,6 +52,20 @@ impl<C: ContainerManager> Snapshotter<C> {
     /// 5. Clears reth's persisted peer list (best effort)
     /// 6. Restarts the EL container (always, even on failure)
     pub async fn run(&self) -> Result<()> {
+        // Only snapshot when the EL is caught up to tip. Snapshotting a lagging
+        // node would publish stale data and pause a node that is still syncing.
+        let threshold = Duration::from_secs(self.config.tip_threshold_secs);
+        let at_tip = TipChecker::is_at_tip(&self.config.el_rpc_url, threshold)
+            .await
+            .context("failed to check EL tip status")?;
+        if !at_tip {
+            warn!(
+                threshold_secs = self.config.tip_threshold_secs,
+                "EL is not at tip; skipping snapshot run and leaving container running"
+            );
+            return Ok(());
+        }
+
         let stop_result = self.container_manager.stop(&self.config.container_name).await;
 
         let result = match stop_result {
