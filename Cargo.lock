@@ -3816,7 +3816,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-provider 2.0.5",
  "alloy-rpc-types-engine",
- "alloy-rpc-types-eth 2.0.5",
  "alloy-transport 2.0.5",
  "async-trait",
  "base-common-consensus",

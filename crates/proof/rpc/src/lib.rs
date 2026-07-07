@@ -28,4 +28,4 @@ mod rollup_client;
 pub use rollup_client::{RollupClient, RollupClientConfig};
 
 mod types;
-pub use types::{BaseBlock, HttpProvider, L2HttpProvider};
+pub use types::{BaseBlock, BaseHeader, HttpProvider, L2HttpProvider};
