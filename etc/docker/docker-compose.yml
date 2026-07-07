@@ -636,7 +636,6 @@ services:
         condition: service_healthy
     ports:
       - "${PROVER_SERVICE_RPC_PORT}:9000"
-      - "${PROVER_SERVICE_WORKER_RPC_PORT}:9001"
     environment:
       - RPC_LISTEN_ADDR=0.0.0.0:9000
       - WORKER_RPC_LISTEN_ADDR=0.0.0.0:9001
