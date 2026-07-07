@@ -314,9 +314,9 @@ mod tests {
     fn parses_devnet_unified_client_args() {
         let cli = BaseCli::parse_from([
             "base",
-            "rpc",
             "--chain",
             "dev",
+            "rpc",
             "--execution-chain",
             "dev",
             "--datadir=/data",
