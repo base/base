@@ -104,25 +104,25 @@ impl BaseHeaderFields {
     }
 }
 
-/// Base-owned RLP wrapper used for post-hardfork Base header encoding.
+/// Base-owned RLP wrapper used for Base header encoding.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, alloy_rlp::RlpEncodable, alloy_rlp::RlpDecodable)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct BaseHeaderPayload {
     /// Standard Ethereum execution header fields.
-    pub inner: Header,
-    /// Base-owned post-hardfork header fields.
-    pub base: BaseHeaderFields,
+    pub base: Header,
+    /// Base-owned header fields.
+    pub ext: BaseHeaderFields,
 }
 
 impl BaseHeaderPayload {
     /// Creates a post-fork payload from a Base header.
     pub fn from_header(header: &BaseHeader) -> Self {
-        Self { inner: header.inner.clone(), base: header.base }
+        Self { base: header.inner.clone(), ext: header.base }
     }
 
     /// Converts the payload back into a Base header.
     pub fn try_into_header(self) -> Result<BaseHeader, TimestampMillisPartError> {
-        BaseHeader::new(self.inner, self.base)
+        BaseHeader::new(self.base, self.ext)
     }
 }
 
@@ -621,7 +621,7 @@ mod tests {
     #[test]
     fn wrapped_rlp_payload_with_empty_base_fields_is_rejected() {
         let payload =
-            BaseHeaderPayload { inner: Header::default(), base: BaseHeaderFields::default() };
+            BaseHeaderPayload { base: Header::default(), ext: BaseHeaderFields::default() };
 
         let mut encoded = Vec::new();
         payload.encode(&mut encoded);
