@@ -12,15 +12,15 @@ workspace = true
 
 [dependencies]
 # Alloy
-alloy-provider.workspace = true
 alloy-signer.workspace = true
+alloy-provider.workspace = true
 alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
 
 # AWS
-aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
 aws-sdk-ec2.workspace = true
 aws-sdk-elasticloadbalancingv2.workspace = true
+aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
 
 # Crypto
 k256 = { workspace = true, features = ["ecdsa"] }
