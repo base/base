@@ -10,6 +10,8 @@ use base_sidecrush::{
 };
 use cadence::{StatsdClient, UdpMetricSink};
 use clap::{ArgAction, Parser};
+#[cfg(unix)]
+use tokio::signal::unix::{SignalKind, signal};
 use tracing::Level;
 
 #[derive(Parser, Debug)]
@@ -103,16 +105,32 @@ async fn main() {
 
     let _status_handle = checker.spawn_status_emitter(2000);
 
-    let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    tokio::spawn(async move {
-        let _ = tokio::signal::ctrl_c().await;
-        let _ = shutdown_tx.send(());
-    });
-
     tokio::select! {
         _ = checker.poll_for_health_checks() => {},
-        _ = &mut shutdown_rx => {
-            tracing::info!("shutdown signal received, exiting");
+        received = shutdown_signal() => {
+            tracing::info!(signal = received, "shutdown signal received, exiting");
         }
     }
+}
+
+/// Wait for a graceful-shutdown signal.
+///
+/// On Unix this races `SIGTERM` (the default signal Kubernetes sends on pod shutdown) and
+/// `SIGINT` (Ctrl-C) so the container exits promptly instead of waiting for the `SIGKILL`
+/// that follows `terminationGracePeriodSeconds`. On non-Unix targets it falls back to
+/// Ctrl-C only.
+#[cfg(unix)]
+async fn shutdown_signal() -> &'static str {
+    let mut sigterm = signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+    let mut sigint = signal(SignalKind::interrupt()).expect("failed to install SIGINT handler");
+    tokio::select! {
+        _ = sigterm.recv() => "SIGTERM",
+        _ = sigint.recv() => "SIGINT",
+    }
+}
+
+#[cfg(not(unix))]
+async fn shutdown_signal() -> &'static str {
+    let _ = tokio::signal::ctrl_c().await;
+    "ctrl_c"
 }
