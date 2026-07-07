@@ -1,10 +1,11 @@
 //! Block and header RPC response types.
 
+use core::ops::{Deref, DerefMut};
+
 use alloy_consensus::{BlockHeader, Header as ConsensusHeader};
 use alloy_network_primitives::HeaderResponse;
 use alloy_primitives::{Address, B64, B256, BlockHash, Bloom, Bytes, U256};
 use alloy_rpc_types_eth::{Block, Header};
-use core::ops::{Deref, DerefMut};
 
 use crate::Transaction;
 
