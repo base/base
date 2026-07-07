@@ -132,14 +132,14 @@ async fn nonce_key_pre_cobalt_is_rejected() -> eyre::Result<()> {
 
 /// An `eth_estimateGas` request carrying EIP-8130 fields must estimate via the
 /// read-only simulation path and return a positive gas amount. A minimal
-/// EOA-path request (`from` + empty `calls`) prices intrinsic + authentication
-/// gas without a signature.
+/// configured-account request (`sender` + empty `calls`) prices intrinsic +
+/// authentication gas without a signature.
 #[tokio::test]
 async fn estimate_gas_for_eip8130_request_returns_positive_gas() -> eyre::Result<()> {
     let (_harness, client) = setup().await?;
     let alice: Address = Account::Alice.address();
 
-    let request = json!({ "from": alice, "calls": [] });
+    let request = json!({ "sender": alice, "calls": [] });
     let gas: U256 = client.request("eth_estimateGas", (request, "latest")).await?;
 
     assert!(gas > U256::ZERO, "EIP-8130 gas estimate must be positive, got {gas}");
@@ -147,23 +147,24 @@ async fn estimate_gas_for_eip8130_request_returns_positive_gas() -> eyre::Result
 }
 
 /// A supplied non-secp256k1 authentication blob must be priced into the
-/// estimate: a P-256 sender costs strictly more than the default-EOA secp256k1
-/// path (its authenticator execution gas is higher and its authentication
-/// payload is longer), and a longer `WebAuthn` blob costs more still.
+/// estimate: a P-256 sender costs strictly more than the default secp256k1
+/// authorization (its authenticator execution gas is higher and its
+/// authentication payload is longer), and a longer `WebAuthn` blob costs more
+/// still.
 #[tokio::test]
 async fn estimate_gas_prices_the_supplied_authentication_blob() -> eyre::Result<()> {
     let (_harness, client) = setup().await?;
     let alice: Address = Account::Alice.address();
 
     let k1: U256 = client
-        .request("eth_estimateGas", (json!({ "from": alice, "calls": [] }), "latest"))
+        .request("eth_estimateGas", (json!({ "sender": alice, "calls": [] }), "latest"))
         .await?;
     let p256: U256 = client
         .request(
             "eth_estimateGas",
             (
                 json!({
-                    "from": alice,
+                    "sender": alice,
                     "calls": [],
                     "senderAuth": auth_blob(Eip8130Contracts::P256_AUTHENTICATOR, 128),
                 }),
@@ -176,7 +177,7 @@ async fn estimate_gas_prices_the_supplied_authentication_blob() -> eyre::Result<
             "eth_estimateGas",
             (
                 json!({
-                    "from": alice,
+                    "sender": alice,
                     "calls": [],
                     "senderAuth": auth_blob(Eip8130Contracts::WEBAUTHN_AUTHENTICATOR, 1024),
                 }),
@@ -202,10 +203,13 @@ async fn estimate_gas_includes_sponsored_payer_authentication() -> eyre::Result<
     let bob: Address = Account::Bob.address();
 
     let self_pay: U256 = client
-        .request("eth_estimateGas", (json!({ "from": alice, "calls": [] }), "latest"))
+        .request("eth_estimateGas", (json!({ "sender": alice, "calls": [] }), "latest"))
         .await?;
     let sponsored: U256 = client
-        .request("eth_estimateGas", (json!({ "from": alice, "calls": [], "payer": bob }), "latest"))
+        .request(
+            "eth_estimateGas",
+            (json!({ "sender": alice, "calls": [], "payer": bob }), "latest"),
+        )
         .await?;
 
     assert!(
@@ -231,7 +235,7 @@ async fn estimate_gas_for_eip8130_request_with_reverting_call_fails() -> eyre::R
     );
     let (_harness, client) = setup_with(genesis).await?;
 
-    let request = json!({ "from": alice, "calls": [[{ "to": revert_addr, "data": "0x" }]] });
+    let request = json!({ "sender": alice, "calls": [[{ "to": revert_addr, "data": "0x" }]] });
     let result: Result<U256, _> = client.request("eth_estimateGas", (request, "latest")).await;
 
     let err = result.expect_err("a reverting phase must surface an execution error");
@@ -240,17 +244,17 @@ async fn estimate_gas_for_eip8130_request_with_reverting_call_fails() -> eyre::R
     Ok(())
 }
 
-/// An EIP-8130 `eth_estimateGas` request that omits `from` must be rejected
+/// An EIP-8130 `eth_estimateGas` request that omits `sender` must be rejected
 /// rather than silently simulated from the zero address: the sender identity
 /// drives actor resolution, policy lookup, and auto-delegation.
 #[tokio::test]
-async fn estimate_gas_for_eip8130_request_without_from_is_rejected() -> eyre::Result<()> {
+async fn estimate_gas_for_eip8130_request_without_sender_is_rejected() -> eyre::Result<()> {
     let (_harness, client) = setup().await?;
 
     let request = json!({ "calls": [] });
     let result: Result<U256, _> = client.request("eth_estimateGas", (request, "latest")).await;
 
-    let err = result.expect_err("EIP-8130 estimate without `from` must error");
+    let err = result.expect_err("EIP-8130 estimate without `sender` must error");
     let err_str = err.to_string();
     assert!(err_str.contains("-32602"), "expected INVALID_PARAMS (-32602), got: {err_str}");
     Ok(())
@@ -279,7 +283,7 @@ async fn estimate_gas_for_eip8130_request_pre_cobalt_is_rejected() -> eyre::Resu
     let (_harness, client) = setup_with(build_test_genesis_azul()).await?;
     let alice: Address = Account::Alice.address();
 
-    let request = json!({ "from": alice, "calls": [] });
+    let request = json!({ "sender": alice, "calls": [] });
     let result: Result<U256, _> = client.request("eth_estimateGas", (request, "latest")).await;
 
     let err = result.expect_err("pre-Cobalt EIP-8130 estimate must error");

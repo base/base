@@ -1,6 +1,5 @@
 //! Reth compatibility implementations for RPC types.
 
-use alloc::vec;
 use core::convert::Infallible;
 
 use alloy_consensus::{SignableTransaction, error::ValueError};
@@ -39,7 +38,7 @@ const MAX_AUTH_SIZE: u32 = 8_192;
 impl BaseTransactionRequest {
     /// Builds the unsigned simulation transaction for an EIP-8130
     /// `eth_estimateGas` / `eth_call` request, or `None` when the request
-    /// carries no EIP-8130 fields or omits the required `from` sender.
+    /// carries no EIP-8130 fields or omits the required `sender`.
     ///
     /// Estimation runs without a signature. The caller passes the raw
     /// authentication blob it intends to sign (`sender_auth`, and for sponsored
@@ -47,37 +46,36 @@ impl BaseTransactionRequest {
     /// authentication gas (the authenticator's execution gas, selected by the
     /// leading 20-byte authenticator address, plus the EIP-2028 calldata cost of
     /// the whole blob). The blob is never recovered —
-    /// [`base_common_evm::Eip8130Executor::simulate`] simulates from `from`
+    /// [`base_common_evm::Eip8130Executor::simulate`] simulates from `sender`
     /// without verification. `gas_limit_cap` bounds execution when the request
     /// omits `gas`.
     ///
-    /// The `from` account is the sender; the `sender_auth` blob's form selects
-    /// the authentication path, mirroring the on-wire transaction:
+    /// The 8130 path always targets the configured-account form: `sender` is the
+    /// account (`tx.sender` is set), the flattened `from` is ignored, and
+    /// `sender_auth` is always a prefixed `authenticator(20) || data` blob:
     ///
-    /// - A bare or absent `sender_auth` prices the default-EOA bare-signature
-    ///   (secp256k1) path for `from`, exactly as a 1559 transaction — an absent
-    ///   blob defaults to a representative 65-byte stub.
-    /// - A `sender_auth` prefixed with an enshrined authenticator
-    ///   (`authenticator(20) || data`) prices the configured-account path for
-    ///   `from`.
+    /// - A supplied `sender_auth` must carry a recognized enshrined authenticator
+    ///   selector ([`Eip8130AuthScheme::Secp256k1`] / `P256` / `WebAuthn`); an
+    ///   absent blob defaults to a representative secp256k1 authorization.
     /// - A declared `payer` adds payer authentication, priced from `payer_auth`
-    ///   (defaulting to a representative secp256k1 authorization). Unlike
-    ///   `sender_auth`, a supplied `payer_auth` is always the prefixed
-    ///   configured-account form and must carry a recognized enshrined
-    ///   authenticator selector.
+    ///   (defaulting to a representative secp256k1 authorization). Like
+    ///   `sender_auth`, a supplied `payer_auth` is the prefixed form and must
+    ///   carry a recognized enshrined authenticator selector.
     ///
-    /// `from` is mandatory for EIP-8130: the sender identity drives actor
-    /// resolution, policy lookup, and auto-delegation, so a missing `from`
+    /// `sender` is mandatory for EIP-8130: the sender identity drives actor
+    /// resolution, policy lookup, and auto-delegation, so a missing `sender`
     /// returns `None` (surfaced as `INVALID_PARAMS`) rather than silently
-    /// falling back to the zero address.
+    /// falling back to the zero address. The default-EOA (bare-signature) path
+    /// is intentionally not estimable here — estimation targets configured
+    /// accounts.
     ///
-    /// A `payer_auth` whose leading 20 bytes are not a recognized enshrined
-    /// authenticator selector returns `None` (surfaced as `INVALID_PARAMS`)
-    /// rather than pricing an authenticator the intrinsic-gas schedule doesn't
-    /// recognize (which could under-price the estimate). A `sender_auth` /
-    /// `payer_auth` blob whose data exceeds [`MAX_AUTH_SIZE`] bytes (excluding
-    /// the 20-byte authenticator selector on the configured path) is rejected
-    /// the same way, rather than pricing an unbounded payload.
+    /// A `sender_auth` / `payer_auth` whose leading 20 bytes are not a recognized
+    /// enshrined authenticator selector returns `None` (surfaced as
+    /// `INVALID_PARAMS`) rather than pricing an authenticator the intrinsic-gas
+    /// schedule doesn't recognize (which could under-price the estimate). A blob
+    /// whose data exceeds [`MAX_AUTH_SIZE`] bytes (excluding the 20-byte
+    /// authenticator selector) is rejected the same way, rather than pricing an
+    /// unbounded payload.
     pub fn to_eip8130_simulation_tx(
         &self,
         chain_id: u64,
@@ -85,22 +83,27 @@ impl BaseTransactionRequest {
     ) -> Option<BaseRevm<TxEnv>> {
         let aa = self.as_eip8130()?;
         let req = self.as_ref();
-        let from = req.from?;
+        let sender = aa.sender?;
 
-        // The `from` account is the sender; the `sender_auth` blob's form selects
-        // the authentication path, mirroring the wire. A blob prefixed with an
-        // enshrined authenticator selector (`authenticator(20) || data`) is the
-        // configured-account path (`sender` set to `from`); a bare or absent blob
-        // is the default-EOA path (`sender` unset), where `from` authenticates
-        // with a k1 signature exactly as a 1559 transaction. The blob is priced
-        // verbatim (never verified); an absent blob synthesizes a bare k1 stub.
-        let (sender, sender_auth) = match &aa.sender_auth {
-            None => (None, Self::default_bare_auth()),
+        // The 8130 path always simulates the configured-account form: `sender`
+        // is the account and `sender_auth` is always a prefixed
+        // `authenticator(20) || data` blob. A supplied blob must carry a
+        // recognized enshrined authenticator selector (rejected otherwise, so an
+        // unknown authenticator can't under-price the estimate); an absent blob
+        // synthesizes a representative secp256k1 authorization. The blob is
+        // priced verbatim, never verified.
+        let sender_auth = match &aa.sender_auth {
             Some(blob) => {
-                let prefixed = Self::is_prefixed_auth(blob);
-                Self::check_auth_len(blob, prefixed)?;
-                (prefixed.then_some(from), blob.clone())
+                if !Self::is_prefixed_auth(blob) {
+                    return None;
+                }
+                Self::check_auth_len(blob)?;
+                blob.clone()
             }
+            None => Self::stub_prefixed_auth(
+                Eip8130AuthScheme::Secp256k1,
+                Eip8130AuthScheme::Secp256k1.default_data_len(),
+            ),
         };
 
         // Sponsored payer authentication, priced only when a payer is declared.
@@ -117,7 +120,7 @@ impl BaseTransactionRequest {
                         if !Self::is_prefixed_auth(blob) {
                             return None;
                         }
-                        Self::check_auth_len(blob, true)?;
+                        Self::check_auth_len(blob)?;
                         blob.clone()
                     }
                     None => Self::stub_prefixed_auth(
@@ -131,7 +134,7 @@ impl BaseTransactionRequest {
 
         let tx = TxEip8130 {
             chain_id,
-            sender,
+            sender: Some(sender),
             nonce_key: aa.nonce_key.unwrap_or(U256::ZERO),
             nonce_sequence: 0,
             expiry: aa.expiry.unwrap_or_default(),
@@ -145,7 +148,7 @@ impl BaseTransactionRequest {
         };
 
         let envelope = BaseTxEnvelope::Eip8130(Eip8130Signed::new(tx, sender_auth, payer_auth));
-        let mut sim_tx = BaseRevm::from_recovered_tx(&envelope, from);
+        let mut sim_tx = BaseRevm::from_recovered_tx(&envelope, sender);
         // Route to the unverified `Eip8130Executor::simulate` path rather than
         // the verifying `execute` path.
         if let Some(parts) = sim_tx.eip8130.as_mut() {
@@ -154,36 +157,22 @@ impl BaseTransactionRequest {
         Some(sim_tx)
     }
 
-    /// The default-EOA bare secp256k1 authentication stub: a representative
-    /// `r || s || v`-shaped blob filled with a non-zero byte so its EIP-2028
-    /// calldata cost matches a real signature. Never recovered.
-    fn default_bare_auth() -> Bytes {
-        Bytes::from(vec![STUB_AUTH_FILL; Eip8130AuthScheme::Secp256k1.default_data_len()])
-    }
-
-    /// Rejects (as `None`, surfaced to the caller as `INVALID_PARAMS`) an
-    /// authentication blob whose *data* exceeds [`MAX_AUTH_SIZE`] bytes,
-    /// excluding the 20-byte authenticator selector for a `prefixed`
-    /// (`authenticator(20) || data`) blob, bounding the calldata the estimate
-    /// prices.
-    fn check_auth_len(blob: &Bytes, prefixed: bool) -> Option<()> {
-        let data_len = if prefixed {
-            blob.len().saturating_sub(AUTHENTICATOR_SELECTOR_LEN)
-        } else {
-            blob.len()
-        };
+    /// Rejects (as `None`, surfaced to the caller as `INVALID_PARAMS`) a
+    /// prefixed authentication blob whose *data* (the bytes after the 20-byte
+    /// `authenticator(20) || data` selector) exceeds [`MAX_AUTH_SIZE`] bytes,
+    /// bounding the calldata the estimate prices.
+    fn check_auth_len(blob: &Bytes) -> Option<()> {
+        let data_len = blob.len().saturating_sub(AUTHENTICATOR_SELECTOR_LEN);
         (data_len as u64 <= u64::from(MAX_AUTH_SIZE)).then_some(())
     }
 
-    /// Whether a `sender_auth` blob is in the prefixed configured-account form
-    /// (`authenticator(20) || data`) rather than a bare EOA signature: true when
-    /// it begins with an enshrined authenticator selector, checked against
-    /// [`Eip8130AuthScheme::ALL`] (the single authoritative list, rather than a
-    /// second hardcoded address set that could drift from the enum). This
-    /// mirrors the wire authentication form the intrinsic-gas schedule prices
-    /// the blob under, so a prefixed blob simulates on the configured-account
-    /// path (`sender` set) and a bare or absent blob on the default-EOA path
-    /// (`sender` unset).
+    /// Whether an authentication blob carries a recognized enshrined
+    /// authenticator selector in its leading 20 bytes (`authenticator(20) ||
+    /// data`), checked against [`Eip8130AuthScheme::ALL`] (the single
+    /// authoritative list, rather than a second hardcoded address set that could
+    /// drift from the enum). A supplied `sender_auth` / `payer_auth` blob that
+    /// fails this check is rejected rather than priced, so an unknown
+    /// authenticator can't fall through and under-price the estimate.
     fn is_prefixed_auth(blob: &Bytes) -> bool {
         if blob.len() < AUTHENTICATOR_SELECTOR_LEN {
             return false;
@@ -278,7 +267,7 @@ mod tests {
 
     const CHAIN_ID: u64 = 8453;
     const GAS_CAP: u64 = 30_000_000;
-    const FROM: Address = address!("0x00000000000000000000000000000000000000a1");
+    const SENDER: Address = address!("0x00000000000000000000000000000000000000a1");
 
     fn sim_tx(request: serde_json::Value) -> BaseRevm<TxEnv> {
         let req: BaseTransactionRequest = serde_json::from_value(request).expect("valid request");
@@ -301,27 +290,33 @@ mod tests {
     }
 
     #[test]
-    fn absent_auth_builds_bare_secp256k1_stub() {
-        let tx = sim_tx(json!({ "from": FROM, "calls": [] }));
+    fn absent_auth_defaults_to_prefixed_secp256k1() {
+        let tx = sim_tx(json!({ "sender": SENDER, "calls": [] }));
         let s = signed(&tx);
-        assert!(s.tx().sender.is_none(), "an absent auth blob uses the default-EOA bare form");
+        assert_eq!(s.tx().sender, Some(SENDER), "the 8130 path always sets the configured sender");
+        let auth = s.sender_auth();
         assert_eq!(
-            s.sender_auth().len(),
-            Eip8130AuthScheme::Secp256k1.default_data_len(),
-            "the bare secp256k1 stub is the scheme's default length",
+            &auth[..20],
+            Eip8130Constants::K1_AUTHENTICATOR.as_slice(),
+            "an absent blob defaults to a prefixed secp256k1 authorization",
+        );
+        assert_eq!(
+            auth.len(),
+            20 + Eip8130AuthScheme::Secp256k1.default_data_len(),
+            "the default stub is selector + the scheme's default data length",
         );
         assert!(s.payer_auth().is_empty(), "no declared payer means no payer auth");
     }
 
     #[test]
-    fn prefixed_p256_auth_selects_the_configured_path() {
+    fn prefixed_p256_auth_is_priced_verbatim() {
         let tx = sim_tx(json!({
-            "from": FROM,
+            "sender": SENDER,
             "calls": [],
             "senderAuth": blob(Some(Eip8130Contracts::P256_AUTHENTICATOR), 128),
         }));
         let s = signed(&tx);
-        assert_eq!(s.tx().sender, Some(FROM), "a prefixed blob selects the configured path");
+        assert_eq!(s.tx().sender, Some(SENDER));
         let auth = s.sender_auth();
         assert_eq!(
             &auth[..20],
@@ -332,46 +327,72 @@ mod tests {
     }
 
     #[test]
-    fn prefixed_webauthn_auth_selects_the_configured_path() {
+    fn prefixed_webauthn_auth_is_priced_verbatim() {
         let tx = sim_tx(json!({
-            "from": FROM,
+            "sender": SENDER,
             "calls": [],
             "senderAuth": blob(Some(Eip8130Contracts::WEBAUTHN_AUTHENTICATOR), 512),
         }));
         let s = signed(&tx);
-        assert_eq!(s.tx().sender, Some(FROM));
+        assert_eq!(s.tx().sender, Some(SENDER));
         let auth = s.sender_auth();
         assert_eq!(&auth[..20], Eip8130Contracts::WEBAUTHN_AUTHENTICATOR.as_slice());
         assert_eq!(auth.len(), 20 + 512, "the WebAuthn blob is priced at its supplied size");
     }
 
     #[test]
-    fn prefixed_k1_auth_selects_the_configured_path() {
-        // A k1-prefixed blob is the configured-account path (`sender` set),
-        // distinct from a bare EOA k1 signature — the 20-byte selector is what
-        // distinguishes them.
+    fn prefixed_k1_auth_is_priced_verbatim() {
         let tx = sim_tx(json!({
-            "from": FROM,
+            "sender": SENDER,
             "calls": [],
             "senderAuth": blob(Some(Eip8130Constants::K1_AUTHENTICATOR), 65),
         }));
         let s = signed(&tx);
-        assert_eq!(s.tx().sender, Some(FROM), "a k1-prefixed blob selects the configured path");
+        assert_eq!(s.tx().sender, Some(SENDER));
         assert_eq!(s.sender_auth().len(), 20 + 65);
     }
 
     #[test]
-    fn bare_auth_stays_on_the_eoa_path() {
-        // An unprefixed blob is the default-EOA bare-signature path (`sender`
-        // unset), priced verbatim.
-        let tx = sim_tx(json!({
-            "from": FROM,
+    fn missing_sender_is_rejected() {
+        // Every 8130 estimate targets a configured account; a request with 8130
+        // fields but no `sender` is rejected rather than defaulting the account.
+        let req: BaseTransactionRequest =
+            serde_json::from_value(json!({ "calls": [] })).expect("valid request");
+        assert!(
+            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none(),
+            "an 8130 request without a sender is rejected",
+        );
+    }
+
+    #[test]
+    fn bare_sender_auth_is_rejected() {
+        // A supplied `sender_auth` must carry a recognized enshrined authenticator
+        // selector; an unprefixed (bare) blob is rejected rather than priced.
+        let req: BaseTransactionRequest = serde_json::from_value(json!({
+            "sender": SENDER,
             "calls": [],
             "senderAuth": blob(None, 65),
-        }));
-        let s = signed(&tx);
-        assert!(s.tx().sender.is_none(), "an unprefixed blob stays on the EOA path");
-        assert_eq!(s.sender_auth().len(), 65, "the bare blob is priced verbatim");
+        }))
+        .expect("valid request");
+        assert!(
+            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none(),
+            "an unprefixed sender auth blob is rejected rather than priced",
+        );
+    }
+
+    #[test]
+    fn sender_auth_with_unrecognized_authenticator_is_rejected() {
+        let unrecognized = address!("0x000000000000000000000000000000000000dead");
+        let req: BaseTransactionRequest = serde_json::from_value(json!({
+            "sender": SENDER,
+            "calls": [],
+            "senderAuth": blob(Some(unrecognized), 65),
+        }))
+        .expect("valid request");
+        assert!(
+            req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none(),
+            "an unrecognized sender authenticator selector is rejected rather than priced",
+        );
     }
 
     #[test]
@@ -385,11 +406,10 @@ mod tests {
 
     #[test]
     fn sender_auth_data_at_the_cap_is_accepted() {
-        // On the configured (prefixed) path the 20-byte selector is excluded from
-        // the cap, so `MAX_AUTH_SIZE` data bytes are honoured (total = selector +
-        // data).
+        // The 20-byte selector is excluded from the cap, so `MAX_AUTH_SIZE` data
+        // bytes are honoured (total = selector + data).
         let tx = sim_tx(json!({
-            "from": FROM,
+            "sender": SENDER,
             "calls": [],
             "senderAuth": blob(Some(Eip8130Contracts::WEBAUTHN_AUTHENTICATOR), MAX_AUTH_SIZE as usize),
         }));
@@ -402,20 +422,9 @@ mod tests {
     }
 
     #[test]
-    fn bare_sender_auth_data_at_the_cap_is_accepted() {
-        // On the EOA path there is no selector, so the whole blob is the data.
-        let tx = sim_tx(json!({
-            "from": FROM,
-            "calls": [],
-            "senderAuth": blob(None, MAX_AUTH_SIZE as usize),
-        }));
-        assert_eq!(signed(&tx).sender_auth().len(), MAX_AUTH_SIZE as usize);
-    }
-
-    #[test]
     fn oversize_sender_auth_data_is_rejected() {
         let req: BaseTransactionRequest = serde_json::from_value(json!({
-            "from": FROM,
+            "sender": SENDER,
             "calls": [],
             "senderAuth": blob(Some(Eip8130Contracts::WEBAUTHN_AUTHENTICATOR), MAX_AUTH_SIZE as usize + 1),
         }))
@@ -427,23 +436,10 @@ mod tests {
     }
 
     #[test]
-    fn oversize_bare_sender_auth_is_rejected() {
-        // A bare blob has no selector, so its whole length is capped at
-        // MAX_AUTH_SIZE (no 20-byte headroom).
-        let req: BaseTransactionRequest = serde_json::from_value(json!({
-            "from": FROM,
-            "calls": [],
-            "senderAuth": blob(None, MAX_AUTH_SIZE as usize + 1),
-        }))
-        .expect("valid request");
-        assert!(req.to_eip8130_simulation_tx(CHAIN_ID, GAS_CAP).is_none());
-    }
-
-    #[test]
     fn oversize_payer_auth_is_rejected() {
         let payer = address!("0x00000000000000000000000000000000000000b2");
         let req: BaseTransactionRequest = serde_json::from_value(json!({
-            "from": FROM,
+            "sender": SENDER,
             "calls": [],
             "payer": payer,
             "payerAuth": blob(Some(Eip8130Contracts::P256_AUTHENTICATOR), MAX_AUTH_SIZE as usize + 1),
@@ -459,7 +455,7 @@ mod tests {
     fn declared_payer_auth_is_priced_verbatim() {
         let payer = address!("0x00000000000000000000000000000000000000b2");
         let tx = sim_tx(json!({
-            "from": FROM,
+            "sender": SENDER,
             "calls": [],
             "payer": payer,
             "payerAuth": blob(Some(Eip8130Contracts::P256_AUTHENTICATOR), 128),
@@ -479,7 +475,7 @@ mod tests {
         let payer = address!("0x00000000000000000000000000000000000000b2");
         let unrecognized = address!("0x000000000000000000000000000000000000dead");
         let req: BaseTransactionRequest = serde_json::from_value(json!({
-            "from": FROM,
+            "sender": SENDER,
             "calls": [],
             "payer": payer,
             "payerAuth": blob(Some(unrecognized), 65),
@@ -494,7 +490,7 @@ mod tests {
     #[test]
     fn declared_payer_without_auth_defaults_to_secp256k1() {
         let payer = address!("0x00000000000000000000000000000000000000b2");
-        let tx = sim_tx(json!({ "from": FROM, "calls": [], "payer": payer }));
+        let tx = sim_tx(json!({ "sender": SENDER, "calls": [], "payer": payer }));
         let s = signed(&tx);
         assert_eq!(s.tx().payer, Some(payer));
         let auth = s.payer_auth();

@@ -91,8 +91,8 @@ impl Eip8130GasEstimator {
             ErrorObjectOwned::owned(
                 INVALID_PARAMS_CODE,
                 "invalid EIP-8130 estimate request: missing EIP-8130 fields, missing the required \
-                 `from` sender, a `sender_auth`/`payer_auth` blob whose data exceeds the maximum \
-                 size, or a `payer_auth` with an unrecognized authenticator selector",
+                 `sender`, a `sender_auth`/`payer_auth` blob whose data exceeds the maximum size, \
+                 or a `sender_auth`/`payer_auth` with an unrecognized authenticator selector",
                 None::<()>,
             )
         })?;

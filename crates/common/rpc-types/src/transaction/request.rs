@@ -17,17 +17,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::Transaction;
 
-/// Authentication scheme an EIP-8130 gas estimate should price.
+/// An enshrined EIP-8130 authenticator an estimate can price.
 ///
 /// Estimation never verifies a signature: the scheme only selects which
 /// enshrined authenticator the intrinsic-gas schedule charges (the
 /// authenticator's execution gas plus the calldata cost of its authentication
-/// payload). Absent a scheme, the estimate prices the default-EOA secp256k1
-/// (bare-signature) path.
+/// payload). It also identifies the recognized authenticator selectors that may
+/// prefix a `sender_auth` / `payer_auth` blob, and provides the default
+/// secp256k1 authorization used when a blob is absent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Eip8130AuthScheme {
-    /// secp256k1 — the default-EOA / k1 authenticator.
+    /// secp256k1 — the k1 authenticator (also the absent-blob default).
     Secp256k1,
     /// P-256 (secp256r1) authenticator.
     P256,
@@ -49,8 +50,9 @@ impl Eip8130AuthScheme {
 
     /// Representative byte length of the authentication `data` (the bytes after
     /// the 20-byte authenticator selector) for a real signature of this scheme.
-    /// Used to price calldata gas when the request omits an explicit size; the
-    /// variable-length `WebAuthn` payload should be sized via `*_auth_size`.
+    /// Used to size the default secp256k1 authorization synthesized when a
+    /// `sender_auth` / `payer_auth` blob is absent; a supplied blob is priced at
+    /// its own length instead.
     #[must_use]
     pub const fn default_data_len(self) -> usize {
         match self {
@@ -78,10 +80,14 @@ impl Eip8130AuthScheme {
 /// presence (via [`Eip8130RequestFields::is_some`]) marks a request as an
 /// EIP-8130 simulation. Authentication is priced from the *shape* of the
 /// `sender_auth` / `payer_auth` blobs, never verified: the caller passes the
-/// authentication blob it intends to sign (`authenticator(20) || data`, or a
-/// bare secp256k1 signature for the default EOA), and the estimate charges that
-/// blob's authenticator execution gas plus its EIP-2028 calldata cost — so a
-/// caller estimates the cost of any key type without first signing.
+/// prefixed authentication blob it intends to sign (`authenticator(20) ||
+/// data`), and the estimate charges that blob's authenticator execution gas
+/// plus its EIP-2028 calldata cost — so a caller estimates the cost of any key
+/// type without first signing.
+///
+/// The 8130 sender account is [`sender`](Self::sender), not the flattened
+/// `from`: estimation targets configured accounts, so `sender` is required and
+/// `from` is ignored on this path.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Eip8130RequestFields {
@@ -101,20 +107,25 @@ pub struct Eip8130RequestFields {
     /// Opaque, non-executed transaction metadata.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Bytes>,
+    /// The EIP-8130 sender (configured) account. Required to mark a request for
+    /// the 8130 simulation path; the sender identity drives actor resolution,
+    /// policy lookup, and auto-delegation. This — not the flattened `from` —
+    /// is the account the batch dispatches from; `from` is ignored on the 8130
+    /// path. An absent `sender` on an otherwise-8130 request is rejected as
+    /// `INVALID_PARAMS`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender: Option<Address>,
     /// Raw sender authentication blob whose *shape* is priced into the estimate
     /// (never verified): estimation reads its length (for EIP-2028 calldata gas)
-    /// and, in the prefixed configured-account form, its leading 20-byte
-    /// authenticator selector (for the intrinsic-schedule execution gas).
+    /// and its leading 20-byte authenticator selector (for the intrinsic-schedule
+    /// execution gas).
     ///
-    /// The blob's form also selects the authentication path for the `from`
-    /// account, mirroring the on-wire transaction:
-    ///
-    /// - A bare secp256k1 signature — or an absent blob, defaulting to a
-    ///   representative 65-byte stub — prices the default-EOA path: `from`
-    ///   authenticates with a k1 key, exactly as for a 1559 transaction.
-    /// - `authenticator(20) || data` prefixed with an enshrined authenticator
-    ///   ([`Eip8130AuthScheme::Secp256k1`] / `P256` / `WebAuthn`) prices the
-    ///   configured-account path for `from`.
+    /// A supplied blob is always the prefixed configured-account form —
+    /// `authenticator(20) || data` — and its leading 20 bytes must be a
+    /// recognized enshrined authenticator selector ([`Eip8130AuthScheme::Secp256k1`]
+    /// / `P256` / `WebAuthn`); an unrecognized selector is rejected as
+    /// `INVALID_PARAMS`. An absent blob defaults to a representative secp256k1
+    /// authorization.
     ///
     /// Pass a representative blob for the key you intend to sign with (e.g. a
     /// filler-byte stub of the right length); you need not sign first.
@@ -144,6 +155,7 @@ impl Eip8130RequestFields {
             || self.calls.is_some()
             || self.expiry.is_some()
             || self.metadata.is_some()
+            || self.sender.is_some()
             || self.sender_auth.is_some()
             || self.payer.is_some()
             || self.payer_auth.is_some()
