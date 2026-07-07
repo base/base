@@ -58,8 +58,6 @@ pub struct EthPayloadBuilderAttributes {
 pub struct BasePayloadBuilderAttributes<T> {
     /// Inner ethereum payload builder attributes
     pub payload_attributes: EthPayloadBuilderAttributes,
-    /// The millisecond component of the payload timestamp.
-    pub timestamp_millis_part: Option<u16>,
     /// `NoTxPool` option for the generated payload
     pub no_tx_pool: bool,
     /// Decoded transactions and the original EIP-2718 encoded bytes as received in the payload
@@ -77,7 +75,6 @@ impl<T> Default for BasePayloadBuilderAttributes<T> {
     fn default() -> Self {
         Self {
             payload_attributes: Default::default(),
-            timestamp_millis_part: Default::default(),
             no_tx_pool: Default::default(),
             gas_limit: Default::default(),
             eip_1559_params: Default::default(),
@@ -102,7 +99,6 @@ impl<T> BasePayloadBuilderAttributes<T> {
                 parent_beacon_block_root: self.payload_attributes.parent_beacon_block_root,
                 slot_number: self.payload_attributes.slot_number,
             },
-            timestamp_millis_part: self.timestamp_millis_part,
             transactions: (!self.transactions.is_empty())
                 .then(|| self.transactions.iter().map(|tx| tx.encoded_bytes().clone()).collect()),
             no_tx_pool: Some(self.no_tx_pool),
@@ -175,7 +171,6 @@ impl<T: Decodable2718 + Send + Sync + Debug + Unpin + 'static> BasePayloadBuilde
 
         Ok(Self {
             payload_attributes,
-            timestamp_millis_part: attributes.timestamp_millis_part,
             no_tx_pool: attributes.no_tx_pool.unwrap_or_default(),
             transactions,
             gas_limit: attributes.gas_limit,
@@ -507,9 +502,6 @@ pub fn payload_id(
     let mut hasher = sha2::Sha256::new();
     hasher.update(parent.as_slice());
     hasher.update(&attributes.payload_attributes.timestamp.to_be_bytes()[..]);
-    if let Some(timestamp_millis_part) = attributes.timestamp_millis_part {
-        hasher.update(timestamp_millis_part.to_be_bytes());
-    }
     hasher.update(attributes.payload_attributes.prev_randao.as_slice());
     hasher.update(attributes.payload_attributes.suggested_fee_recipient.as_slice());
     if let Some(withdrawals) = &attributes.payload_attributes.withdrawals {
@@ -626,7 +618,6 @@ mod tests {
                 parent_beacon_block_root: b256!("0x8fe0193b9bf83cb7e5a08538e494fecc23046aab9a497af3704f4afdae3250ff").into(),
                 slot_number: None,
             },
-            timestamp_millis_part: None,
             transactions: Some([bytes!("7ef8f8a0dc19cfa777d90980e4875d0a548a881baaa3f83f14d1bc0d3038bc329350e54194deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e20000f424000000000000000000000000300000000670d6d890000000000000125000000000000000000000000000000000000000000000000000000000000000700000000000000000000000000000000000000000000000000000000000000014bf9181db6e381d4384bbf69c48b0ee0eed23c6ca26143c6d2544f9d39997a590000000000000000000000007f83d659683caf2767fd3c720981d51f5bc365bc")].into()),
             no_tx_pool: None,
             gas_limit: Some(30000000),
@@ -659,7 +650,6 @@ mod tests {
                 parent_beacon_block_root: b256!("0x8fe0193b9bf83cb7e5a08538e494fecc23046aab9a497af3704f4afdae3250ff").into(),
                 slot_number: None,
             },
-            timestamp_millis_part: None,
             transactions: Some([bytes!("7ef8f8a0dc19cfa777d90980e4875d0a548a881baaa3f83f14d1bc0d3038bc329350e54194deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e20000f424000000000000000000000000300000000670d6d890000000000000125000000000000000000000000000000000000000000000000000000000000000700000000000000000000000000000000000000000000000000000000000000014bf9181db6e381d4384bbf69c48b0ee0eed23c6ca26143c6d2544f9d39997a590000000000000000000000007f83d659683caf2767fd3c720981d51f5bc365bc")].into()),
             no_tx_pool: None,
             gas_limit: Some(30000000),
@@ -687,22 +677,6 @@ mod tests {
             };
         let extra_data = attributes.get_holocene_extra_data(BaseFeeParams::new(80, 60));
         assert_eq!(extra_data.unwrap(), Bytes::copy_from_slice(&[0, 0, 0, 0, 8, 0, 0, 0, 8]));
-    }
-
-    #[test]
-    fn test_payload_builder_preserves_timestamp_millis_part() {
-        let attributes =
-            BasePayloadAttributes { timestamp_millis_part: Some(400), ..Default::default() };
-
-        let builder = BasePayloadBuilderAttributes::<BaseTransactionSigned>::try_new(
-            B256::ZERO,
-            attributes,
-            EngineApiMessageVersion::V3 as u8,
-        )
-        .unwrap();
-
-        assert_eq!(builder.timestamp_millis_part, Some(400));
-        assert_eq!(builder.as_rpc_payload_attributes().timestamp_millis_part, Some(400));
     }
 
     #[test]
