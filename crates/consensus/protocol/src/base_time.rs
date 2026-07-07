@@ -28,16 +28,11 @@ impl BaseTimeUpdateTx {
 
     /// Creates a new [`BaseTimeUpdateTx`].
     pub fn new(timestamp_millis_part: u16) -> Result<Self, BaseTimeUpdateError> {
-        if !Self::is_valid_timestamp_millis_part(timestamp_millis_part) {
+        if !matches!(timestamp_millis_part, 0 | 200 | 400 | 600 | 800) {
             return Err(BaseTimeUpdateError::InvalidTimestampMillisPart(timestamp_millis_part));
         }
 
         Ok(Self { timestamp_millis_part })
-    }
-
-    /// Returns `true` when the millis part matches the 200ms cadence.
-    pub const fn is_valid_timestamp_millis_part(timestamp_millis_part: u16) -> bool {
-        matches!(timestamp_millis_part, 0 | 200 | 400 | 600 | 800)
     }
 
     /// Encodes the transaction calldata using standard ABI encoding.

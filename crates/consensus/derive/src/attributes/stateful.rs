@@ -57,24 +57,8 @@ where
             receipts_fetcher: receipts,
         }
     }
-}
 
-#[async_trait]
-impl<L1P, L2P> AttributesBuilder for StatefulAttributesBuilder<L1P, L2P>
-where
-    L1P: ChainProvider + Debug + Send,
-    L2P: L2ChainProvider + Debug + Send,
-{
-    async fn prepare_payload_attributes(
-        &mut self,
-        l2_parent: L2BlockInfo,
-        epoch: BlockNumHash,
-    ) -> PipelineResult<BasePayloadAttributes> {
-        let next_l2_time = l2_parent.block_info.timestamp + self.rollup_cfg.block_time;
-        self.prepare_payload_attributes_at(l2_parent, epoch, next_l2_time, None).await
-    }
-
-    async fn prepare_payload_attributes_at(
+    async fn prepare_payload_attributes_with_timestamp(
         &mut self,
         l2_parent: L2BlockInfo,
         epoch: BlockNumHash,
@@ -257,6 +241,22 @@ where
                 .then(|| sys_config.min_base_fee.unwrap_or_default()), /* Default to zero if not
                                                                         * set at Jovian */
         })
+    }
+}
+
+#[async_trait]
+impl<L1P, L2P> AttributesBuilder for StatefulAttributesBuilder<L1P, L2P>
+where
+    L1P: ChainProvider + Debug + Send,
+    L2P: L2ChainProvider + Debug + Send,
+{
+    async fn prepare_payload_attributes(
+        &mut self,
+        l2_parent: L2BlockInfo,
+        epoch: BlockNumHash,
+    ) -> PipelineResult<BasePayloadAttributes> {
+        let next_l2_time = l2_parent.block_info.timestamp + self.rollup_cfg.block_time;
+        self.prepare_payload_attributes_with_timestamp(l2_parent, epoch, next_l2_time, None).await
     }
 }
 
@@ -621,8 +621,10 @@ mod tests {
             seq_num: 0,
         };
 
-        let payload =
-            builder.prepare_payload_attributes_at(l2_parent, epoch, 101, Some(200)).await.unwrap();
+        let payload = builder
+            .prepare_payload_attributes_with_timestamp(l2_parent, epoch, 101, Some(200))
+            .await
+            .unwrap();
         let txs = payload.transactions.unwrap();
 
         assert_eq!(payload.timestamp_millis_part, Some(200));

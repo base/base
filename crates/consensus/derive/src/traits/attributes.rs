@@ -49,13 +49,4 @@ pub trait AttributesBuilder: Debug + Send {
         l2_parent: L2BlockInfo,
         epoch: BlockNumHash,
     ) -> PipelineResult<BasePayloadAttributes>;
-
-    /// Prepares a template [`BasePayloadAttributes`] for an explicitly chosen L2 timestamp.
-    async fn prepare_payload_attributes_at(
-        &mut self,
-        l2_parent: L2BlockInfo,
-        epoch: BlockNumHash,
-        l2_timestamp: u64,
-        timestamp_millis_part: Option<u16>,
-    ) -> PipelineResult<BasePayloadAttributes>;
 }

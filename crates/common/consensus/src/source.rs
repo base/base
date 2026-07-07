@@ -112,11 +112,6 @@ pub struct BaseTimeDepositSource {
 }
 
 impl BaseTimeDepositSource {
-    /// Creates a new [`BaseTimeDepositSource`].
-    pub const fn new(l1_block_hash: B256, seq_number: u64) -> Self {
-        Self { l1_block_hash, seq_number }
-    }
-
     /// Returns the source hash.
     pub fn source_hash(&self) -> B256 {
         let mut input = [0u8; 32 * 2];
