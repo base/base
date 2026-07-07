@@ -474,7 +474,7 @@ impl GameScanner {
     }
 
     async fn anchor_recovery_status(&self, index: u64, game: Address) -> Result<GameStatus> {
-        debug_assert!(Self::ANCHOR_RECOVERY_STATUS_ATTEMPTS > 0);
+        const { assert!(Self::ANCHOR_RECOVERY_STATUS_ATTEMPTS > 0) };
 
         for attempt in 1..=Self::ANCHOR_RECOVERY_STATUS_ATTEMPTS {
             match self.verifier_client.status(game).await {

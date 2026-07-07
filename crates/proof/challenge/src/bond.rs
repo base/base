@@ -1045,7 +1045,7 @@ impl<C: Clock> BondManager<C> {
     }
 }
 
-/// Trait for submitting bond lifecycle transactions (`resolve`, `claimCredit`).
+/// Trait for submitting dispute game transactions (`resolve`, `claimCredit`, `setAnchorState`).
 ///
 /// This abstracts the transaction submission layer so the [`BondManager`]
 /// can be tested with mock submitters.
