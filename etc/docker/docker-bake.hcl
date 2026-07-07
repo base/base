@@ -75,7 +75,7 @@ target "base" {
 target "execution" {
   inherits = ["_rust-service-common"]
   target = "execution"
-  tags = ["base-reth-node:local"]
+  tags = ["base-execution:local"]
   cache-from = [
     "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
     "type=registry,ref=${REGISTRY_IMAGE}:cache-execution-${PLATFORM_PAIR}",
@@ -105,7 +105,7 @@ target "builder" {
 target "basectl" {
   inherits = ["_rust-service-common"]
   target = "basectl"
-  tags = ["basectl:local"]
+  tags = ["base-basectl:local"]
 }
 
 target "snapshotter" {
