@@ -32,13 +32,19 @@ pub struct InitCommand<C: ChainSpecParser> {
     /// `--proofs-history.storage-path`.
     #[arg(
         long = "proofs-history.storage-path",
+        visible_alias = "proofs.storage-path",
         value_name = "PROOFS_HISTORY_STORAGE_PATH",
         required = true
     )]
     pub storage_path: PathBuf,
 
     /// The on-disk database backend for proofs history.
-    #[arg(long = "proofs-history.db", value_name = "PROOFS_HISTORY_DB", default_value = "mdbx")]
+    #[arg(
+        long = "proofs-history.db",
+        visible_alias = "proofs.db",
+        value_name = "PROOFS_HISTORY_DB",
+        default_value = "mdbx"
+    )]
     pub proofs_history_db: ProofsHistoryDbBackend,
 
     /// Runtime tuning options for the `RocksDB` proofs history backend.
