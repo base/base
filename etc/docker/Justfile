@@ -188,7 +188,7 @@ _up-devnet compose_profile zk:
         just --justfile {{ source_file() }} down
         just --justfile {{ source_file() }} _build-setup-image
         just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
-        PROOF_TYPE="${PROOF_TYPE:-compressed}" ZK_BACKEND=dry_run docker compose {{ _env }} "${compose_files[@]}" up -d --no-build --remove-orphans
+        ZK_BACKEND=dry_run docker compose {{ _env }} "${compose_files[@]}" up -d --no-build --remove-orphans
         ;;
       cluster)
         if [ -z "${AWS_ACCESS_KEY_ID:-}" ] || [ -z "${AWS_SECRET_ACCESS_KEY:-}" ]; then
@@ -238,7 +238,7 @@ _up-devnet compose_profile zk:
         just --justfile {{ source_file() }} down
         just --justfile {{ source_file() }} _build-setup-image
         just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
-        PROOF_TYPE="${PROOF_TYPE:-compressed}" docker compose {{ _env }} --env-file "$cluster_env" "${compose_files[@]}" up -d --no-build --remove-orphans
+        docker compose {{ _env }} --env-file "$cluster_env" "${compose_files[@]}" up -d --no-build --remove-orphans
         ;;
       *)
         echo "ERROR: zk must be 'dry-run' or 'cluster' (got '${zk_mode}')" >&2
