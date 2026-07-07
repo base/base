@@ -132,4 +132,13 @@ mod tests {
         let rendered = err.to_string();
         assert!(rendered.contains("cannot be used multiple times"));
     }
+
+    #[test]
+    fn preserves_base_chain_alongside_reth_subcommand_chain() {
+        let cli =
+            BaseCli::try_parse_from(["base", "--chain", "sepolia", "reth", "db", "stats"]).unwrap();
+
+        assert!(matches!(cli.chain, ChainArg::BuiltIn(BuiltInChain::Sepolia)));
+        assert!(matches!(cli.command, BaseCommand::Reth(_)));
+    }
 }
