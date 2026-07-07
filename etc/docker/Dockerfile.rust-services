@@ -86,6 +86,14 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     cargo build --profile $PROFILE --package base-batcher-bin --bin base-batcher && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-batcher /app/base-batcher
 
+FROM source AS sidecrush-builder
+ARG PROFILE=release
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target,id=sidecrush-target,sharing=locked \
+    cargo build --profile $PROFILE --package base-sidecrush-bin --bin sidecrush && \
+    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/sidecrush /app/sidecrush
+
 FROM zk-builder-base AS zk-source
 COPY . .
 
@@ -128,6 +136,10 @@ ENTRYPOINT ["./audit-archiver"]
 FROM runtime-base AS batcher
 COPY --from=batcher-builder /app/base-batcher ./base-batcher
 ENTRYPOINT ["./base-batcher"]
+
+FROM runtime-base AS sidecrush
+COPY --from=sidecrush-builder /app/sidecrush ./sidecrush
+ENTRYPOINT ["./sidecrush"]
 
 FROM runtime-base AS zk-prover
 COPY --from=zk-prover-builder /app/base-prover-zk ./base-prover-zk

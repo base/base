@@ -34,6 +34,7 @@ group "rust-services" {
     "ingress-rpc",
     "audit-archiver",
     "batcher",
+    "sidecrush",
     "zk-prover",
   ]
 }
@@ -98,6 +99,16 @@ target "batcher" {
   cache-from = [
     "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
     "type=registry,ref=${REGISTRY_IMAGE}:cache-batcher-${PLATFORM_PAIR}",
+  ]
+}
+
+target "sidecrush" {
+  inherits = ["_rust-service-common"]
+  target = "sidecrush"
+  tags = ["sidecrush:local"]
+  cache-from = [
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-sidecrush-${PLATFORM_PAIR}",
   ]
 }
 
