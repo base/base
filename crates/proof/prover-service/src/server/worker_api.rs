@@ -21,7 +21,7 @@ use crate::{
     metrics,
     server::{
         ProverServiceServer, WorkerApiConfig, failed_precondition, internal, invalid_argument,
-        not_found, record_rpc_result,
+        not_found, record_rpc_result, record_worker_rpc_result,
     },
 };
 
@@ -114,8 +114,9 @@ impl ProverServiceServer {
     /// Extends the lock on a worker-owned proof job.
     pub async fn heartbeat_impl(&self, request: HeartbeatRequest) -> RpcResult<HeartbeatResponse> {
         let start = std::time::Instant::now();
+        let worker_id = request.worker_id.clone();
         let result = self.heartbeat_inner(request).await;
-        record_rpc_result("Heartbeat", start, &result);
+        record_worker_rpc_result("Heartbeat", start, &result, &worker_id);
 
         result
     }
