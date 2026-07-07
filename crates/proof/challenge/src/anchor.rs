@@ -146,6 +146,7 @@ impl<C: Clock> AnchorUpdater<C> {
             retention_secs = retention.as_secs(),
             "dropping anchor update after retention timeout"
         );
+        ChallengerMetrics::anchor_update_retention_expired_total().increment(1);
         true
     }
 

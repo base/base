@@ -474,6 +474,8 @@ impl GameScanner {
     }
 
     async fn anchor_recovery_status(&self, index: u64, game: Address) -> Result<GameStatus> {
+        debug_assert!(Self::ANCHOR_RECOVERY_STATUS_ATTEMPTS > 0);
+
         for attempt in 1..=Self::ANCHOR_RECOVERY_STATUS_ATTEMPTS {
             match self.verifier_client.status(game).await {
                 Ok(status) => return Ok(status),
@@ -492,7 +494,7 @@ impl GameScanner {
             }
         }
 
-        unreachable!("anchor recovery status attempts is non-zero")
+        Err(eyre::eyre!("anchor recovery status attempts must be non-zero"))
     }
 
     /// Finds `target` in the half-open factory index range `[start, end)`,

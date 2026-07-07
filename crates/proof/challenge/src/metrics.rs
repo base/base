@@ -125,6 +125,9 @@ base_metrics::define_metrics! {
     #[label(name = "status", default = ["success", "error", "skipped"])]
     anchor_update_tx_outcome_total: counter,
 
+    #[describe("Total number of anchor updates dropped after retention timeout")]
+    anchor_update_retention_expired_total: counter,
+
     #[describe("Number of games currently tracked for anchor state updates")]
     anchor_update_tracked_games: gauge,
 

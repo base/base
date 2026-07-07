@@ -16,7 +16,7 @@
 //!    After the TEE proof is nullified, the game is re-scanned as Path 3.
 
 use std::{
-    collections::HashSet,
+    collections::{HashSet, VecDeque},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -121,6 +121,7 @@ where
     pub pending_proofs: PendingProofs,
     /// Games that hit terminal contract reverts and should not be rediscovered.
     ignored_games: HashSet<Address>,
+    ignored_game_order: VecDeque<Address>,
     /// Bond lifecycle manager (optional; enabled when claim addresses are configured).
     pub bond_manager: Option<BondManager<C>>,
     /// Best-effort anchor state updater.
@@ -151,6 +152,9 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
     /// Maximum number of times a failed proof job will be retried before being dropped.
     pub const MAX_PROOF_RETRIES: u32 = 3;
 
+    /// Maximum number of terminally ignored games retained to avoid rediscovery churn.
+    pub const MAX_IGNORED_GAMES: usize = 10_000;
+
     /// Creates a new driver with the given components.
     pub fn new(config: DriverConfig, components: DriverComponents<L2, P, T, C>) -> Self {
         Self {
@@ -162,6 +166,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
             verifier_client: components.verifier_client,
             pending_proofs: PendingProofs::new(),
             ignored_games: HashSet::new(),
+            ignored_game_order: VecDeque::new(),
             bond_manager: components.bond_manager,
             anchor_updater: components.anchor_updater,
             poll_interval: config.poll_interval,
@@ -960,7 +965,14 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
 
     fn ignore_game(&mut self, game_address: Address) {
         self.pending_proofs.remove(&game_address);
-        self.ignored_games.insert(game_address);
+        if self.ignored_games.insert(game_address) {
+            self.ignored_game_order.push_back(game_address);
+        }
+        while self.ignored_games.len() > Self::MAX_IGNORED_GAMES {
+            if let Some(game_address) = self.ignored_game_order.pop_front() {
+                self.ignored_games.remove(&game_address);
+            }
+        }
         ChallengerMetrics::ignored_games().set(self.ignored_games.len() as f64);
     }
 
@@ -1298,6 +1310,21 @@ mod tests {
         assert!(driver.ignored_games.contains(&addr(0)));
         let state = proof_requester.state.lock().unwrap();
         assert!(state.prove_block_range_log.is_empty());
+    }
+
+    #[test]
+    fn ignored_games_are_bounded() {
+        let (mut driver, _proof_requester) =
+            driver_with_tx_manager(MockTxManager::new(Ok(receipt_with_status(true, B256::ZERO))));
+        let max = Driver::<MockL2Provider, MockZkProofProvider, MockTxManager>::MAX_IGNORED_GAMES;
+
+        for i in 0..=max {
+            driver.ignore_game(addr(i as u64));
+        }
+
+        assert_eq!(driver.ignored_games.len(), max);
+        assert!(!driver.ignored_games.contains(&addr(0)));
+        assert!(driver.ignored_games.contains(&addr(max as u64)));
     }
 
     #[tokio::test]
