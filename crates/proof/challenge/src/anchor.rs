@@ -44,6 +44,8 @@ pub struct TrackedAnchorUpdate {
     pub resolve_submitted: bool,
     /// Whether prover reads should wait until the dispute period has elapsed.
     pub defer_prover_reads_until_game_over: bool,
+    /// Whether tracking should wait for `DefenderWins` without resolving in-progress games.
+    pub status_only: bool,
 }
 
 impl<C: Clock> AnchorUpdater<C> {
@@ -55,30 +57,46 @@ impl<C: Clock> AnchorUpdater<C> {
 
     /// Registers a game for anchor root advancement.
     pub fn track_game(&mut self, game_address: Address) {
-        self.track_game_with_options(game_address, false);
+        self.track_game_with_options(game_address, false, false);
     }
 
     /// Registers a valid in-progress game for anchor root advancement.
     pub fn track_valid_game(&mut self, game_address: Address) {
-        self.track_game_with_options(game_address, true);
+        self.track_game_with_options(game_address, true, false);
+    }
+
+    /// Registers a game for status-only anchor root advancement.
+    pub fn track_status_only_game(&mut self, game_address: Address) {
+        self.track_game_with_options(game_address, false, true);
     }
 
     fn track_game_with_options(
         &mut self,
         game_address: Address,
         defer_prover_reads_until_game_over: bool,
+        status_only: bool,
     ) {
-        let Entry::Vacant(entry) = self.tracked.entry(game_address) else {
-            debug!(game = %game_address, "game already tracked for anchor update");
-            return;
-        };
-
-        info!(game = %game_address, "tracking game for anchor update");
-        entry.insert(TrackedAnchorUpdate {
-            defer_prover_reads_until_game_over,
-            ..TrackedAnchorUpdate::default()
-        });
-        ChallengerMetrics::anchor_update_tracked_games().set(self.tracked.len() as f64);
+        match self.tracked.entry(game_address) {
+            Entry::Vacant(entry) => {
+                info!(game = %game_address, "tracking game for anchor update");
+                entry.insert(TrackedAnchorUpdate {
+                    defer_prover_reads_until_game_over,
+                    status_only,
+                    ..TrackedAnchorUpdate::default()
+                });
+                ChallengerMetrics::anchor_update_tracked_games().set(self.tracked.len() as f64);
+            }
+            Entry::Occupied(mut entry) => {
+                let tracked = entry.get_mut();
+                if !status_only {
+                    tracked.status_only = false;
+                }
+                if defer_prover_reads_until_game_over {
+                    tracked.defer_prover_reads_until_game_over = true;
+                }
+                debug!(game = %game_address, "game already tracked for anchor update");
+            }
+        }
     }
 
     /// Returns `true` if the given game is being tracked.
@@ -178,6 +196,11 @@ impl<C: Clock> AnchorUpdater<C> {
         };
 
         if status == GameStatus::InProgress {
+            if game.status_only {
+                debug!(game = %game_address, "waiting for defender win status before anchor update");
+                return AnchorUpdateOutcome::Pending;
+            }
+
             if game.resolve_submitted {
                 debug!(game = %game_address, "waiting for submitted resolve transaction to be reflected");
                 return AnchorUpdateOutcome::Pending;
@@ -648,6 +671,51 @@ mod tests {
         assert!(verifier.countered_index_reads.lock().unwrap().is_empty());
         assert!(submitter.recorded_calls().is_empty());
         assert!(updater.tracked.contains_key(&game));
+    }
+
+    #[tokio::test]
+    async fn status_only_tracking_waits_for_defender_win_or_validation() {
+        let in_progress = addr(0);
+        let defender_win = addr(1);
+        let asr = Address::repeat_byte(0xAA);
+        let resolve_tx_hash = B256::repeat_byte(0xCC);
+        let anchor_tx_hash = B256::repeat_byte(0xDD);
+
+        let mut in_progress_state = mock_state(GameStatus::InProgress, Address::ZERO, 100);
+        in_progress_state.anchor_state_registry = asr;
+        in_progress_state.game_over = true;
+        let mut defender_win_state = mock_state(GameStatus::DefenderWins, Address::ZERO, 200);
+        defender_win_state.anchor_state_registry = asr;
+
+        let verifier = MockAggregateVerifier::new(HashMap::from([
+            (in_progress, in_progress_state),
+            (defender_win, defender_win_state),
+        ]));
+        let submitter = MockBondTransactionSubmitter::with_responses(vec![
+            Ok(anchor_tx_hash),
+            Ok(resolve_tx_hash),
+        ]);
+
+        let mut updater = AnchorUpdater::new(TokioRuntime::new(), DEFAULT_RETENTION);
+        updater.track_status_only_game(in_progress);
+        updater.track_status_only_game(defender_win);
+
+        updater.poll(&verifier, &submitter).await;
+
+        let calls = submitter.recorded_calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, defender_win);
+        assert_eq!(calls[0].1, asr);
+        assert!(updater.tracked.contains_key(&in_progress));
+
+        updater.track_valid_game(in_progress);
+        updater.poll(&verifier, &submitter).await;
+
+        let calls = submitter.recorded_calls();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[1].0, in_progress);
+        assert_eq!(calls[1].1, in_progress);
+        assert_eq!(calls[1].2, encode_resolve_calldata());
     }
 
     #[tokio::test]

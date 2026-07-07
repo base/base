@@ -396,8 +396,10 @@ impl GameScanner {
         scan_start
     }
 
-    /// Scans post-anchor games for already-resolved defender wins that may
-    /// still need `setAnchorState()`.
+    /// Scans post-anchor games that may still need `setAnchorState()`.
+    ///
+    /// Callers must track returned games status-only unless they have been
+    /// locally validated, because status read failures may still be in progress.
     pub async fn recover_anchor_candidates(&self) -> Result<Vec<Address>> {
         let _scan_guard = self.scan_lock.lock().await;
         let game_count = self.factory_client.game_count().await?;
@@ -437,8 +439,6 @@ impl GameScanner {
                                 error = %e,
                                 "failed to read game status during anchor recovery"
                             );
-                            // Track unknown statuses optimistically so transient startup RPC
-                            // errors do not permanently miss eligible anchor updates.
                             (index, Some(game.proxy), false, true)
                         }
                     }

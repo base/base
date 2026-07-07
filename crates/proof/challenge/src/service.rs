@@ -161,7 +161,7 @@ impl ChallengerService {
         match scanner.recover_anchor_candidates().await {
             Ok(games) => {
                 for game_address in games {
-                    anchor_updater.track_game(game_address);
+                    anchor_updater.track_status_only_game(game_address);
                 }
             }
             Err(e) => warn!(error = %e, "anchor recovery scan failed, continuing without recovery"),
