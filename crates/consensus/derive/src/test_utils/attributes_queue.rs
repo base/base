@@ -37,6 +37,16 @@ impl AttributesBuilder for TestAttributesBuilder {
             ),
         }
     }
+
+    async fn prepare_payload_attributes_at(
+        &mut self,
+        _l2_parent: L2BlockInfo,
+        _epoch: BlockNumHash,
+        _l2_timestamp: u64,
+        _timestamp_millis_part: Option<u16>,
+    ) -> PipelineResult<BasePayloadAttributes> {
+        self.prepare_payload_attributes(_l2_parent, _epoch).await
+    }
 }
 
 /// A mock implementation of the [`AttributesProvider`] stage for testing.

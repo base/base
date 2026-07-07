@@ -13,7 +13,7 @@ use base_common_consensus::Predeploys;
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_upgrades::{Upgrade, Upgrades};
-use base_protocol::{Deposits, L1BlockInfoTx, L2BlockInfo};
+use base_protocol::{BaseTimeUpdateTx, Deposits, L1BlockInfoTx, L2BlockInfo};
 use tracing::warn;
 
 use crate::{
@@ -69,6 +69,17 @@ where
         &mut self,
         l2_parent: L2BlockInfo,
         epoch: BlockNumHash,
+    ) -> PipelineResult<BasePayloadAttributes> {
+        let next_l2_time = l2_parent.block_info.timestamp + self.rollup_cfg.block_time;
+        self.prepare_payload_attributes_at(l2_parent, epoch, next_l2_time, None).await
+    }
+
+    async fn prepare_payload_attributes_at(
+        &mut self,
+        l2_parent: L2BlockInfo,
+        epoch: BlockNumHash,
+        next_l2_time: u64,
+        timestamp_millis_part: Option<u16>,
     ) -> PipelineResult<BasePayloadAttributes> {
         let l1_header;
         let deposit_transactions: Vec<Bytes>;
@@ -129,7 +140,6 @@ where
 
         // Sanity check the L1 origin was correctly selected to maintain the time invariant
         // between L1 and L2.
-        let next_l2_time = l2_parent.block_info.timestamp + self.rollup_cfg.block_time;
         if next_l2_time < l1_header.timestamp {
             return Err(PipelineErrorKind::Reset(
                 BuilderError::BrokenTimeInvariant(
@@ -180,9 +190,33 @@ where
         let mut encoded_l1_info_tx = Vec::with_capacity(l1_info_tx_envelope.length());
         l1_info_tx_envelope.encode_2718(&mut encoded_l1_info_tx);
 
-        let mut txs =
-            Vec::with_capacity(1 + deposit_transactions.len() + upgrade_transactions.len());
+        let encoded_base_time_tx = if let Some(timestamp_millis_part) = timestamp_millis_part {
+            let (_, base_time_tx_envelope) = BaseTimeUpdateTx::try_new_with_deposit_tx(
+                &self.rollup_cfg,
+                l1_header.hash_slow(),
+                sequence_number,
+                timestamp_millis_part,
+                next_l2_time,
+            )
+            .map_err(|e| {
+                PipelineError::AttributesBuilder(BuilderError::Custom(e.to_string())).crit()
+            })?;
+            let mut encoded_base_time_tx = Vec::with_capacity(base_time_tx_envelope.length());
+            base_time_tx_envelope.encode_2718(&mut encoded_base_time_tx);
+            Some(encoded_base_time_tx.into())
+        } else {
+            None
+        };
+
+        let mut txs = Vec::with_capacity(
+            1 + usize::from(encoded_base_time_tx.is_some()) +
+                deposit_transactions.len() +
+                upgrade_transactions.len(),
+        );
         txs.push(encoded_l1_info_tx.into());
+        if let Some(encoded_base_time_tx) = encoded_base_time_tx {
+            txs.push(encoded_base_time_tx);
+        }
         txs.extend(deposit_transactions);
         txs.extend(upgrade_transactions);
 
@@ -206,6 +240,7 @@ where
                 withdrawals,
                 slot_number: None,
             },
+            timestamp_millis_part,
             transactions: Some(txs),
             no_tx_pool: Some(true),
             gas_limit: Some(u64::from_be_bytes(
@@ -262,10 +297,12 @@ mod tests {
     use alloc::vec;
 
     use alloy_consensus::Header;
+    use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{B256, Log, LogData, U64, U256, address};
     use base_common_chains::Sepolia;
+    use base_common_consensus::{BaseTxEnvelope, Predeploys, SystemAddresses};
     use base_common_genesis::{SystemConfig, SystemConfigUpdate, UpgradeConfig};
-    use base_protocol::{BlockInfo, DepositDecodeError};
+    use base_protocol::{BaseTimeUpdateTx, BlockInfo, DepositDecodeError};
 
     use super::*;
     use crate::{
@@ -491,6 +528,7 @@ mod tests {
                 withdrawals: None,
                 slot_number: None,
             },
+            timestamp_millis_part: None,
             transactions: payload.transactions.clone(),
             no_tx_pool: Some(true),
             gas_limit: Some(u64::from_be_bytes(
@@ -544,6 +582,7 @@ mod tests {
                 withdrawals: Some(Vec::default()),
                 slot_number: None,
             },
+            timestamp_millis_part: None,
             transactions: payload.transactions.clone(),
             no_tx_pool: Some(true),
             gas_limit: Some(u64::from_be_bytes(
@@ -554,6 +593,52 @@ mod tests {
         };
         assert_eq!(payload, expected);
         assert_eq!(payload.transactions.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_prepare_payload_with_base_time_deposit() {
+        let block_time = 10;
+        let timestamp = 100;
+        let cfg = Arc::new(RollupConfig { block_time, ..Default::default() });
+        let l1_cfg = Arc::new(Sepolia::l1_config());
+        let l2_number = 1;
+        let mut fetcher = TestSystemConfigL2Fetcher::default();
+        fetcher.insert(l2_number, SystemConfig::default());
+        let mut provider = TestChainProvider::default();
+        let header = Header { timestamp, ..Default::default() };
+        let hash = header.hash_slow();
+        provider.insert_header(hash, header);
+        let mut builder = StatefulAttributesBuilder::new(cfg, l1_cfg, fetcher, provider);
+        let epoch = BlockNumHash { hash, number: l2_number };
+        let l2_parent = L2BlockInfo {
+            block_info: BlockInfo {
+                hash: B256::ZERO,
+                number: l2_number,
+                timestamp,
+                parent_hash: hash,
+            },
+            l1_origin: BlockNumHash { hash, number: l2_number },
+            seq_num: 0,
+        };
+
+        let payload =
+            builder.prepare_payload_attributes_at(l2_parent, epoch, 101, Some(200)).await.unwrap();
+        let txs = payload.transactions.unwrap();
+
+        assert_eq!(payload.timestamp_millis_part, Some(200));
+        assert_eq!(txs.len(), 2);
+
+        let envelope = BaseTxEnvelope::decode_2718_exact(txs[1].as_ref()).unwrap();
+        let BaseTxEnvelope::Deposit(deposit_tx) = envelope else {
+            panic!("expected BaseTime metadata deposit")
+        };
+
+        assert_eq!(deposit_tx.from, SystemAddresses::DEPOSITOR_ACCOUNT);
+        assert_eq!(deposit_tx.to, alloy_primitives::TxKind::Call(Predeploys::BASE_TIME));
+        assert_eq!(
+            BaseTimeUpdateTx::decode_calldata(deposit_tx.input.as_ref()).unwrap().timestamp_millis_part,
+            200
+        );
     }
 
     #[tokio::test]
@@ -598,6 +683,7 @@ mod tests {
                 withdrawals: Some(vec![]),
                 slot_number: None,
             },
+            timestamp_millis_part: None,
             transactions: payload.transactions.clone(),
             no_tx_pool: Some(true),
             gas_limit: Some(u64::from_be_bytes(
@@ -651,6 +737,7 @@ mod tests {
                 withdrawals: Some(vec![]),
                 slot_number: None,
             },
+            timestamp_millis_part: None,
             transactions: payload.transactions.clone(),
             no_tx_pool: Some(true),
             gas_limit: Some(u64::from_be_bytes(

@@ -48,6 +48,9 @@ pub use channel::{Channel, ChannelError, ChannelId};
 mod deposits;
 pub use deposits::{DepositDecodeError, Deposits};
 
+mod base_time;
+pub use base_time::{BaseTimeUpdateDecodeError, BaseTimeUpdateError, BaseTimeUpdateTx};
+
 mod info;
 pub use info::{
     BlockInfoError, DecodeError, L1BlockInfoBedrock, L1BlockInfoBedrockBase,

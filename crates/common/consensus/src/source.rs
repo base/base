@@ -14,6 +14,8 @@ pub enum DepositSourceDomainIdentifier {
     L1Info = 1,
     /// An upgrade deposit source.
     Upgrade = 2,
+    /// A BaseTime metadata deposit source.
+    BaseTime = 3,
 }
 
 /// Source domains for deposit transactions.
@@ -25,6 +27,8 @@ pub enum DepositSourceDomain {
     L1Info(L1InfoDepositSource),
     /// An upgrade deposit source.
     Upgrade(UpgradeDepositSource),
+    /// A BaseTime metadata deposit source.
+    BaseTime(BaseTimeDepositSource),
 }
 
 impl DepositSourceDomain {
@@ -34,6 +38,7 @@ impl DepositSourceDomain {
             Self::User(ds) => ds.source_hash(),
             Self::L1Info(ds) => ds.source_hash(),
             Self::Upgrade(ds) => ds.source_hash(),
+            Self::BaseTime(ds) => ds.source_hash(),
         }
     }
 }
@@ -91,6 +96,36 @@ impl L1InfoDepositSource {
         let mut domain_input = [0u8; 32 * 2];
         let identifier_bytes: [u8; 8] =
             (DepositSourceDomainIdentifier::L1Info as u64).to_be_bytes();
+        domain_input[32 - 8..32].copy_from_slice(&identifier_bytes);
+        domain_input[32..].copy_from_slice(&deposit_id_hash[..]);
+        keccak256(domain_input)
+    }
+}
+
+/// A BaseTime metadata deposit transaction source.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
+pub struct BaseTimeDepositSource {
+    /// The L1 block hash.
+    pub l1_block_hash: B256,
+    /// The sequence number.
+    pub seq_number: u64,
+}
+
+impl BaseTimeDepositSource {
+    /// Creates a new [`BaseTimeDepositSource`].
+    pub const fn new(l1_block_hash: B256, seq_number: u64) -> Self {
+        Self { l1_block_hash, seq_number }
+    }
+
+    /// Returns the source hash.
+    pub fn source_hash(&self) -> B256 {
+        let mut input = [0u8; 32 * 2];
+        input[..32].copy_from_slice(&self.l1_block_hash[..]);
+        input[32 * 2 - 8..].copy_from_slice(&self.seq_number.to_be_bytes());
+        let deposit_id_hash = keccak256(input);
+        let mut domain_input = [0u8; 32 * 2];
+        let identifier_bytes: [u8; 8] =
+            (DepositSourceDomainIdentifier::BaseTime as u64).to_be_bytes();
         domain_input[32 - 8..32].copy_from_slice(&identifier_bytes);
         domain_input[32..].copy_from_slice(&deposit_id_hash[..]);
         keccak256(domain_input)
