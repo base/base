@@ -436,7 +436,7 @@ impl GameScanner {
                                 error = %e,
                                 "failed to read game status during anchor recovery"
                             );
-                            (index, None, false, true)
+                            (index, Some(game.proxy), false, true)
                         }
                     }
                 })
@@ -774,7 +774,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn recover_anchor_candidates_returns_partial_results_after_errors() {
+    async fn recover_anchor_candidates_tracks_status_read_errors() {
         let factory = Arc::new(MockDisputeGameFactory::new(vec![
             factory_game(0, 1),
             factory_game(1, 1),
@@ -797,6 +797,6 @@ mod tests {
         let recovered = scanner.recover_anchor_candidates().await.unwrap();
 
         assert_eq!(verifier.status_read_count(addr(3)), 2);
-        assert_eq!(recovered, vec![addr(2)]);
+        assert_eq!(recovered, vec![addr(2), addr(3)]);
     }
 }
