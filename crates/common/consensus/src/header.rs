@@ -429,9 +429,39 @@ impl Decodable for BaseHeader {
 #[cfg(test)]
 mod tests {
     use alloy_consensus::Header;
+    use alloy_primitives::hex;
     use alloy_rlp::{Decodable, Encodable};
 
     use super::*;
+
+    const LEGACY_HEADER_RLP_V0_HEX: &str = concat!(
+        "f90263a00000000000000000000000000000000000000000000000000000000000000000a01dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142",
+        "fd40d49347940000000000000000000000000000000000000000a056e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421a056e81f17",
+        "1bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421a056e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421b90100",
+        "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "8082a4108401c9c3808204d2846a1dbfe280a00000000000000000000000000000000000000000000000000000000000000000880000000000000000843b9aca",
+        "00a011111111111111111111111111111111111111111111111111111111111111118080a0222222222222222222222222222222222222222222222222222222",
+        "2222222222a03333333333333333333333333333333333333333333333333333333333333333",
+    );
+
+    fn sample_legacy_header() -> Header {
+        Header {
+            timestamp: 1_780_334_562,
+            number: 42_000,
+            gas_limit: 30_000_000,
+            gas_used: 1_234,
+            base_fee_per_gas: Some(1_000_000_000),
+            withdrawals_root: Some(B256::repeat_byte(0x11)),
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            parent_beacon_block_root: Some(B256::repeat_byte(0x22)),
+            requests_hash: Some(B256::repeat_byte(0x33)),
+            ..Default::default()
+        }
+    }
 
     #[test]
     fn timestamp_millis_part_validation_accepts_200ms_cadence() {
@@ -461,7 +491,7 @@ mod tests {
     }
 
     #[test]
-    fn timestamp_millis_is_absent_before_beryl() {
+    fn timestamp_millis_is_absent_without_subsecond_component() {
         let header = Header { timestamp: 1_234, ..Default::default() };
         let base_header = BaseHeader::new(header, BaseHeaderFields::default()).unwrap();
 
@@ -521,47 +551,25 @@ mod tests {
 
     #[test]
     fn legacy_rlp_matches_upstream_header_bytes() {
-        let inner = Header {
-            timestamp: 1_780_334_562,
-            number: 42_000,
-            gas_limit: 30_000_000,
-            gas_used: 1_234,
-            base_fee_per_gas: Some(1_000_000_000),
-            withdrawals_root: Some(B256::repeat_byte(0x11)),
-            blob_gas_used: Some(0),
-            excess_blob_gas: Some(0),
-            parent_beacon_block_root: Some(B256::repeat_byte(0x22)),
-            requests_hash: Some(B256::repeat_byte(0x33)),
-            ..Default::default()
-        };
+        let inner = sample_legacy_header();
         let header = BaseHeader::from(inner.clone());
 
         let mut base_encoded = Vec::new();
         header.encode(&mut base_encoded);
 
+        let expected_encoded = hex::decode(LEGACY_HEADER_RLP_V0_HEX).unwrap();
+
         let mut upstream_encoded = Vec::new();
         inner.encode(&mut upstream_encoded);
 
+        assert_eq!(base_encoded, expected_encoded);
         assert_eq!(base_encoded, upstream_encoded);
     }
 
     #[test]
     fn legacy_rlp_decodes_as_empty_base_fields() {
-        let inner = Header {
-            timestamp: 1_780_334_562,
-            number: 42_000,
-            gas_limit: 30_000_000,
-            gas_used: 1_234,
-            base_fee_per_gas: Some(1_000_000_000),
-            withdrawals_root: Some(B256::repeat_byte(0x11)),
-            blob_gas_used: Some(0),
-            excess_blob_gas: Some(0),
-            parent_beacon_block_root: Some(B256::repeat_byte(0x22)),
-            requests_hash: Some(B256::repeat_byte(0x33)),
-            ..Default::default()
-        };
-        let mut encoded = Vec::new();
-        inner.encode(&mut encoded);
+        let inner = sample_legacy_header();
+        let encoded = hex::decode(LEGACY_HEADER_RLP_V0_HEX).unwrap();
 
         let mut slice = encoded.as_slice();
         let decoded = BaseHeader::decode(&mut slice).unwrap();
@@ -587,5 +595,43 @@ mod tests {
 
         assert!(slice.is_empty());
         assert_eq!(decoded, header);
+    }
+
+    #[test]
+    fn rlp_discriminator_matches_legacy_and_wrapped_shapes() {
+        let legacy = Header::default();
+        let wrapped = BaseHeader::new(Header::default(), BaseHeaderFields::new(Some(0))).unwrap();
+
+        let mut legacy_encoded = Vec::new();
+        legacy.encode(&mut legacy_encoded);
+        let mut legacy_probe = legacy_encoded.as_slice();
+        let legacy_outer = alloy_rlp::Header::decode(&mut legacy_probe).unwrap();
+
+        let mut wrapped_encoded = Vec::new();
+        BaseHeaderPayload::from_header(&wrapped).encode(&mut wrapped_encoded);
+        let mut wrapped_probe = wrapped_encoded.as_slice();
+        let wrapped_outer = alloy_rlp::Header::decode(&mut wrapped_probe).unwrap();
+
+        assert!(legacy_outer.list);
+        assert!(wrapped_outer.list);
+        assert!(legacy_probe.first().is_some_and(|byte| *byte < RLP_LIST_PREFIX_THRESHOLD));
+        assert!(wrapped_probe.first().is_some_and(|byte| *byte >= RLP_LIST_PREFIX_THRESHOLD));
+    }
+
+    #[test]
+    fn wrapped_rlp_payload_with_empty_base_fields_is_rejected() {
+        let payload =
+            BaseHeaderPayload { inner: Header::default(), base: BaseHeaderFields::default() };
+
+        let mut encoded = Vec::new();
+        payload.encode(&mut encoded);
+
+        let mut slice = encoded.as_slice();
+        let error = BaseHeader::decode(&mut slice).unwrap_err();
+
+        assert_eq!(
+            error,
+            alloy_rlp::Error::Custom("Base header payload must contain Base-owned fields")
+        );
     }
 }

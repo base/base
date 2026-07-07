@@ -1099,4 +1099,36 @@ mod tests {
         assert_eq!(payload.base.timestamp_millis_part, Some(600));
         assert_eq!(payload.inner_compact.as_ref(), expected_inner_compact.as_slice());
     }
+
+    #[test]
+    fn base_header_compact_rejects_invalid_base_magic_version() {
+        let error = BaseHeader::decode_compact_checked(&[BASE_HEADER_COMPACT_V1_MAGIC[0], 0xFF], 2)
+            .unwrap_err();
+
+        assert_eq!(error, BaseHeaderCompactError::InvalidMagic);
+    }
+
+    #[test]
+    fn base_header_compact_v1_rejects_empty_base_fields() {
+        let mut inner_compact = Vec::new();
+        sample_inner_header().to_compact(&mut inner_compact);
+
+        let payload = BaseHeaderCompactV1 {
+            base: BaseHeaderCompactFieldsV1::from_base_fields(&BaseHeaderFields::default())
+                .unwrap(),
+            inner_compact: inner_compact.into(),
+        };
+
+        let mut encoded = Vec::new();
+        encoded.extend_from_slice(&BASE_HEADER_COMPACT_V1_MAGIC);
+        let payload_len = payload.to_compact(&mut encoded);
+
+        let error = BaseHeader::decode_compact_checked(
+            &encoded,
+            BASE_HEADER_COMPACT_V1_MAGIC.len() + payload_len,
+        )
+        .unwrap_err();
+
+        assert_eq!(error, BaseHeaderCompactError::EmptyBaseFields);
+    }
 }
