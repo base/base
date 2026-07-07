@@ -41,6 +41,7 @@ impl BaseNodeExtension for ProofsHistoryExtension {
         let proofs_history_enabled = args.proofs_history;
         let proofs_history_db = args.proofs_history_db;
         let proofs_history_rocksdb = args.proofs_history_rocksdb;
+        let proofs_history_mdbx = args.proofs_history_mdbx;
         let proofs_history_window = args.proofs_history_window;
         let proofs_history_prune_interval = args.proofs_history_prune_interval;
         let proofs_history_verification_interval = args.proofs_history_verification_interval;
@@ -94,7 +95,8 @@ impl BaseNodeExtension for ProofsHistoryExtension {
                     );
                 }
                 ProofsHistoryDbBackend::Mdbx => {
-                    let mdbx = match MdbxProofsStorage::new(&path)
+                    let storage_options = proofs_history_mdbx.storage_options();
+                    let mdbx = match MdbxProofsStorage::new_with_options(&path, storage_options)
                         .map_err(|e| eyre::eyre!("Failed to create MdbxProofsStorage: {e}"))
                     {
                         Ok(mdbx) => mdbx,

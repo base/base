@@ -5615,42 +5615,6 @@ name = "base-proof-succinct-elfs"
 version = "0.0.0"
 
 [[package]]
-name = "base-proof-succinct-ethereum-client-utils"
-version = "0.0.0"
-dependencies = [
- "alloy-genesis 2.0.5",
- "anyhow",
- "async-trait",
- "base-common-genesis",
- "base-consensus-derive",
- "base-proof",
- "base-proof-driver",
- "base-proof-executor",
- "base-proof-preimage",
- "base-proof-succinct-client-utils",
- "spin 0.10.0",
-]
-
-[[package]]
-name = "base-proof-succinct-ethereum-host-utils"
-version = "0.0.0"
-dependencies = [
- "alloy-eips 2.0.5",
- "alloy-primitives",
- "anyhow",
- "async-trait",
- "base-consensus-derive",
- "base-proof",
- "base-proof-host",
- "base-proof-preimage",
- "base-proof-succinct-client-utils",
- "base-proof-succinct-ethereum-client-utils",
- "base-proof-succinct-host-utils",
- "rkyv",
- "sp1-sdk",
-]
-
-[[package]]
 name = "base-proof-succinct-host-utils"
 version = "0.0.0"
 dependencies = [
@@ -5711,7 +5675,6 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "base-proof-succinct-elfs",
- "base-proof-succinct-ethereum-host-utils",
  "base-proof-succinct-host-utils",
  "cfg-if",
  "serde",
@@ -5924,7 +5887,6 @@ dependencies = [
  "base-l1-head",
  "base-proof-succinct-client-utils",
  "base-proof-succinct-elfs",
- "base-proof-succinct-ethereum-host-utils",
  "base-proof-succinct-host-utils",
  "base-proof-succinct-proof-utils",
  "base-proof-zk-host",
@@ -6610,7 +6572,6 @@ dependencies = [
  "base-proof-rpc",
  "base-proof-succinct-client-utils",
  "base-proof-succinct-elfs",
- "base-proof-succinct-ethereum-host-utils",
  "base-proof-succinct-host-utils",
  "base-proof-succinct-proof-utils",
  "base-zk-client",

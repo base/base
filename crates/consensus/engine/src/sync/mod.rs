@@ -155,13 +155,20 @@ pub async fn find_starting_forkchoice_with_checkpoint_reader<
 
 #[cfg(test)]
 mod tests {
-    use alloy_eips::BlockNumHash;
-    use alloy_primitives::{B256, b256};
+    use alloy_consensus::transaction::Recovered;
+    use alloy_eips::{BlockId, BlockNumHash, BlockNumberOrTag};
+    use alloy_primitives::{Address, B256, Sealed, b256};
     use alloy_provider::Network;
-    use alloy_rpc_types_eth::Block;
+    use alloy_rpc_types_eth::{
+        Block as RpcBlock, BlockTransactions, Transaction as EthTransaction,
+    };
+    use base_common_consensus::{BaseTxEnvelope, TxDeposit};
     use base_common_genesis::ChainGenesis;
     use base_common_network::Base;
-    use base_protocol::L2BlockInfo;
+    use base_common_rpc_types::Transaction as BaseTransaction;
+    use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
+
+    use crate::test_utils::test_engine_client_builder;
 
     const BASE_SEPOLIA_GENESIS_HASH: B256 =
         b256!("0dcc9e089e30b90ddfc55be9a37dd15bc551aeee999d2e2b51414c54eaf934e4");
@@ -177,7 +184,7 @@ mod tests {
             l2: BlockNumHash { number: 0, hash: BASE_SEPOLIA_GENESIS_HASH },
             ..Default::default()
         };
-        let genesis_block: Block<<Base as Network>::TransactionResponse> =
+        let genesis_block: RpcBlock<<Base as Network>::TransactionResponse> =
             serde_json::from_str(BASE_SEPOLIA_GENESIS_RPC_RESPONSE).unwrap();
 
         let rpc_reported_hash = genesis_block.header.hash;
@@ -190,5 +197,80 @@ mod tests {
         let l2_block_info =
             L2BlockInfo::from_block_and_genesis(&consensus_block, &genesis).unwrap();
         assert_eq!(rpc_reported_hash, l2_block_info.block_info.hash);
+    }
+
+    fn l1_info_rpc_transaction(block_number: u64) -> BaseTransaction {
+        let envelope = BaseTxEnvelope::Deposit(Sealed::new_unchecked(
+            TxDeposit {
+                input: L1BlockInfoBedrock::default().encode_calldata(),
+                ..Default::default()
+            },
+            B256::ZERO,
+        ));
+        BaseTransaction {
+            inner: alloy_rpc_types_eth::Transaction {
+                inner: Recovered::new_unchecked(envelope, Address::ZERO),
+                block_hash: None,
+                block_number: Some(block_number),
+                block_timestamp: None,
+                effective_gas_price: Some(0),
+                transaction_index: Some(0),
+            },
+            deposit_nonce: None,
+            deposit_receipt_version: None,
+        }
+    }
+
+    fn l2_block_with_l1_info(number: u64, parent_hash: B256) -> RpcBlock<BaseTransaction> {
+        let mut block = RpcBlock::<BaseTransaction>::default();
+        block.header.inner.number = number;
+        block.header.inner.parent_hash = parent_hash;
+        block.header.inner.timestamp = number;
+        block.transactions = BlockTransactions::Full(vec![l1_info_rpc_transaction(number)]);
+        block
+    }
+
+    #[tokio::test]
+    async fn current_uses_config_genesis_when_finalized_label_is_unavailable() {
+        let rollup_config = base_common_genesis::RollupConfig {
+            genesis: ChainGenesis {
+                l1: BlockNumHash {
+                    number: 10,
+                    hash: b256!("1111111111111111111111111111111111111111111111111111111111111111"),
+                },
+                l2: BlockNumHash {
+                    number: 0,
+                    hash: b256!("2222222222222222222222222222222222222222222222222222222222222222"),
+                },
+                l2_time: 20,
+                system_config: None,
+            },
+            ..Default::default()
+        };
+        let latest = l2_block_with_l1_info(1, rollup_config.genesis.l2.hash);
+        let latest_hash = latest.clone().into_consensus().hash_slow();
+        let client = test_engine_client_builder()
+            .with_l2_block(BlockId::Number(BlockNumberOrTag::Latest), latest)
+            .with_l1_block(BlockId::from(B256::ZERO), RpcBlock::<EthTransaction>::default())
+            .build();
+
+        let forkchoice = super::find_starting_forkchoice(&rollup_config, &client)
+            .await
+            .expect("forkchoice should not require fetching the pruned L2 genesis block");
+        let expected_genesis = L2BlockInfo {
+            block_info: BlockInfo {
+                hash: rollup_config.genesis.l2.hash,
+                number: rollup_config.genesis.l2.number,
+                parent_hash: B256::ZERO,
+                timestamp: rollup_config.genesis.l2_time,
+            },
+            l1_origin: rollup_config.genesis.l1,
+            seq_num: 0,
+        };
+
+        assert_eq!(forkchoice.un_safe.block_info.number, 1);
+        assert_eq!(forkchoice.un_safe.block_info.hash, latest_hash);
+        assert_eq!(forkchoice.safe, expected_genesis);
+        assert_eq!(forkchoice.finalized, expected_genesis);
     }
 }
