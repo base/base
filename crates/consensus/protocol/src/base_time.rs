@@ -58,14 +58,18 @@ impl BaseTimeUpdateTx {
             return Err(BaseTimeUpdateDecodeError::InvalidSelector);
         }
         if calldata.len() != Self::CALLDATA_LEN {
-            return Err(BaseTimeUpdateDecodeError::InvalidLength(Self::CALLDATA_LEN, calldata.len()));
+            return Err(BaseTimeUpdateDecodeError::InvalidLength(
+                Self::CALLDATA_LEN,
+                calldata.len(),
+            ));
         }
         if calldata[4..34].iter().any(|byte| *byte != 0) {
             return Err(BaseTimeUpdateDecodeError::NonZeroPadding);
         }
 
         let timestamp_millis_part = u16::from_be_bytes([calldata[34], calldata[35]]);
-        Self::new(timestamp_millis_part).map_err(BaseTimeUpdateDecodeError::InvalidTimestampMillisPart)
+        Self::new(timestamp_millis_part)
+            .map_err(BaseTimeUpdateDecodeError::InvalidTimestampMillisPart)
     }
 
     /// Returns a typed deposit transaction for inclusion at `tx[1]`.
@@ -177,14 +181,9 @@ mod tests {
         let _l1_config = Sepolia::l1_config();
         let l1_block_hash = B256::with_last_byte(7);
 
-        let (base_time, deposit_tx) = BaseTimeUpdateTx::try_new_with_deposit_tx(
-            &rollup_config,
-            l1_block_hash,
-            9,
-            600,
-            2,
-        )
-        .unwrap();
+        let (base_time, deposit_tx) =
+            BaseTimeUpdateTx::try_new_with_deposit_tx(&rollup_config, l1_block_hash, 9, 600, 2)
+                .unwrap();
 
         assert_eq!(deposit_tx.from, SystemAddresses::DEPOSITOR_ACCOUNT);
         assert_eq!(deposit_tx.to, TxKind::Call(Predeploys::BASE_TIME));

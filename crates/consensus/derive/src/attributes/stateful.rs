@@ -209,9 +209,9 @@ where
         };
 
         let mut txs = Vec::with_capacity(
-            1 + usize::from(encoded_base_time_tx.is_some()) +
-                deposit_transactions.len() +
-                upgrade_transactions.len(),
+            1 + usize::from(encoded_base_time_tx.is_some())
+                + deposit_transactions.len()
+                + upgrade_transactions.len(),
         );
         txs.push(encoded_l1_info_tx.into());
         if let Some(encoded_base_time_tx) = encoded_base_time_tx {
@@ -636,7 +636,9 @@ mod tests {
         assert_eq!(deposit_tx.from, SystemAddresses::DEPOSITOR_ACCOUNT);
         assert_eq!(deposit_tx.to, alloy_primitives::TxKind::Call(Predeploys::BASE_TIME));
         assert_eq!(
-            BaseTimeUpdateTx::decode_calldata(deposit_tx.input.as_ref()).unwrap().timestamp_millis_part,
+            BaseTimeUpdateTx::decode_calldata(deposit_tx.input.as_ref())
+                .unwrap()
+                .timestamp_millis_part,
             200
         );
     }
