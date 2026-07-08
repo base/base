@@ -97,6 +97,7 @@ fn test_config(bucket: &str, tmp: &Path) -> base_snapshotter::SnapshotterConfig 
         tip_threshold_secs: base_snapshotter::DEFAULT_TIP_THRESHOLD_SECS,
         source_datadir: tmp.join("nonexistent-datadir"),
         output_dir: tmp.join("output"),
+        upload_existing_run_timestamp: None,
         bucket: bucket.to_string(),
         prefix: "test".to_string(),
         chain_id: 8453,
@@ -879,6 +880,42 @@ async fn orchestrator_skips_when_not_at_tip() -> Result<()> {
     assert!(result.is_ok(), "run should return Ok when skipping a not-at-tip node");
     assert!(!manager.was_stopped(), "container must not be stopped when EL is not at tip");
     assert!(!manager.was_started(), "container must not be started when EL is not at tip");
+
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn upload_existing_run_skips_container_lifecycle() -> Result<()> {
+    let harness = TestHarness::new().await?;
+    let manager = std::sync::Arc::new(MockContainerManager::new());
+    let uploader = SnapshotUploader::new(
+        harness.storage_client.clone(),
+        harness.bucket_name.clone(),
+        "test".to_string(),
+        None,
+    );
+
+    let tmp = tempfile::tempdir()?;
+    let output_dir = tmp.path().join("output");
+    let run_timestamp = 1_700_000_123u64;
+    let run_dir = output_dir.join(format!("run-{run_timestamp}"));
+    create_fake_snapshot(&run_dir, 1_000_000)?;
+
+    let mut config = test_config(&harness.bucket_name, tmp.path());
+    config.output_dir = output_dir;
+    config.upload_existing_run_timestamp = Some(run_timestamp);
+
+    let snapshotter = base_snapshotter::Snapshotter::new(
+        std::sync::Arc::clone(&manager),
+        MockTipChecker::new(true),
+        uploader,
+        config,
+    );
+
+    snapshotter.run().await?;
+    assert!(!manager.was_stopped(), "upload-only mode should not stop the container");
+    assert!(!manager.was_started(), "upload-only mode should not restart the container");
 
     Ok(())
 }

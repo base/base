@@ -55,6 +55,11 @@ pub struct SnapshotterConfig {
     #[arg(long, short = 'o')]
     pub output_dir: PathBuf,
 
+    /// Upload an already-generated `run-<timestamp>` directory from `output_dir`
+    /// instead of stopping the EL and regenerating snapshot artifacts.
+    #[arg(long)]
+    pub upload_existing_run_timestamp: Option<u64>,
+
     /// S3-compatible bucket name.
     #[arg(long)]
     pub bucket: String,

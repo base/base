@@ -2,7 +2,7 @@
 
 use std::{
     collections::HashMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -55,7 +55,15 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
     /// 4. Uploads to S3/R2
     /// 5. Clears reth's persisted peer list (best effort)
     /// 6. Restarts the EL container (always, even on failure)
+    ///
+    /// When `upload_existing_run_timestamp` is set, the snapshotter skips the
+    /// container lifecycle entirely and uploads the existing `run-<timestamp>`
+    /// directory from `output_dir`.
     pub async fn run(&self) -> Result<()> {
+        if let Some(run_timestamp) = self.config.upload_existing_run_timestamp {
+            return self.upload_existing_run(run_timestamp).await;
+        }
+
         // Only snapshot when the EL is caught up to tip. Snapshotting a lagging
         // node would publish stale data and pause a node that is still syncing.
         //
@@ -181,20 +189,63 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
             bail!("snapshot generation produced no files");
         }
 
+        self.upload_run_directory(&run_output_dir, run_timestamp, files, remote_manifest.as_ref())
+            .await?;
+
+        info!(output_dir = %run_output_dir.display(), "cleaning up local artifacts");
+        if let Err(e) = tokio::fs::remove_dir_all(&run_output_dir).await {
+            error!(error = %e, "failed to clean up output directory");
+        }
+
+        Ok(())
+    }
+
+    /// Uploads an existing `run-<timestamp>` directory without regenerating artifacts
+    /// or touching the EL container lifecycle.
+    async fn upload_existing_run(&self, run_timestamp: u64) -> Result<()> {
+        let run_output_dir = existing_run_output_dir(&self.config.output_dir, run_timestamp)?;
+        info!(
+            run_timestamp,
+            output_dir = %run_output_dir.display(),
+            "uploading existing snapshot run"
+        );
+
+        let files = collect_output_files(&run_output_dir)?;
+        let remote_manifest = self.uploader.fetch_previous_manifest().await?;
+        info!(
+            has_remote_manifest = remote_manifest.is_some(),
+            "fetched previous manifest for blake3 diff"
+        );
+        self.upload_run_directory(&run_output_dir, run_timestamp, files, remote_manifest.as_ref())
+            .await
+    }
+
+    /// Uploads one prepared run directory after generation or from upload-only mode.
+    async fn upload_run_directory(
+        &self,
+        run_output_dir: &Path,
+        run_timestamp: u64,
+        files: Vec<PathBuf>,
+        remote_manifest: Option<&SnapshotManifest>,
+    ) -> Result<()> {
+        if files.is_empty() {
+            bail!("snapshot run directory produced no files")
+        }
+
         let manifest_bytes = tokio::fs::read(run_output_dir.join("manifest.json"))
             .await
-            .context("failed to read freshly generated manifest.json")?;
-        let local_manifest: SnapshotManifest = serde_json::from_slice(&manifest_bytes)
-            .context("failed to parse freshly generated manifest.json")?;
+            .context("failed to read run manifest.json")?;
+        let local_manifest: SnapshotManifest =
+            serde_json::from_slice(&manifest_bytes).context("failed to parse run manifest.json")?;
 
         self.uploader
             .upload(
-                &run_output_dir,
+                run_output_dir,
                 &files,
                 run_timestamp,
                 self.config.retain_runs.get(),
                 &local_manifest,
-                remote_manifest.as_ref(),
+                remote_manifest,
             )
             .await
             .with_context(|| {
@@ -204,12 +255,6 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
                     run_output_dir.display()
                 )
             })?;
-
-        info!(output_dir = %run_output_dir.display(), "cleaning up local artifacts");
-        if let Err(e) = tokio::fs::remove_dir_all(&run_output_dir).await {
-            error!(error = %e, "failed to clean up output directory");
-        }
-
         Ok(())
     }
 
@@ -237,4 +282,28 @@ fn create_run_output_dir(base: &std::path::Path, timestamp: u64) -> Result<PathB
     std::fs::create_dir_all(&run_dir)
         .with_context(|| format!("failed to create run dir {}", run_dir.display()))?;
     Ok(run_dir)
+}
+
+/// Resolves an existing `run-<timestamp>` directory for upload-only mode.
+fn existing_run_output_dir(base: &Path, timestamp: u64) -> Result<PathBuf> {
+    let run_dir = base.join(format!("run-{timestamp}"));
+    let metadata = std::fs::metadata(&run_dir)
+        .with_context(|| format!("failed to stat existing run dir {}", run_dir.display()))?;
+    if !metadata.is_dir() {
+        bail!("existing run path is not a directory: {}", run_dir.display());
+    }
+    Ok(run_dir)
+}
+
+/// Collects all files in a run output directory (non-recursive).
+fn collect_output_files(dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
+        .with_context(|| format!("failed to read output dir {}", dir.display()))?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<std::io::Result<Vec<_>>>()?
+        .into_iter()
+        .filter(|path| path.is_file())
+        .collect();
+    files.sort();
+    Ok(files)
 }
