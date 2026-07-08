@@ -15,8 +15,8 @@ methods:
 list:
     @just --justfile {{ source_file() }} methods
 
-# Request a proof or dry-run for a block range: proof_type=compressed
-prove start_block number_of_blocks='1' proof_type='compressed' session_id='' l1_head='':
+# Request a proof or dry-run for a block range: proof_type=compressed|snark
+prove start_block number_of_blocks='1' proof_type='compressed' session_id='' prover_address='' l1_head='':
     #!/usr/bin/env bash
     set -euo pipefail
     command -v jq >/dev/null 2>&1 || { echo "jq is required" >&2; exit 1; }
@@ -26,6 +26,7 @@ prove start_block number_of_blocks='1' proof_type='compressed' session_id='' l1_
     proof_type="${proof_type#proof_type=}"
     proof_type="$(printf '%s' "$proof_type" | tr '[:upper:]-' '[:lower:]_')"
     session_id={{ quote(session_id) }}
+    prover_address={{ quote(prover_address) }}
     l1_head={{ quote(l1_head) }}
 
     case "$start_block" in
@@ -41,6 +42,9 @@ prove start_block number_of_blocks='1' proof_type='compressed' session_id='' l1_
 
     if [ -z "$session_id" ]; then
       session_id="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+    fi
+    if [ -z "$prover_address" ]; then
+      prover_address="0x0000000000000000000000000000000000000000"
     fi
 
     block_payload="$(jq -n -c \
@@ -60,11 +64,19 @@ prove start_block number_of_blocks='1' proof_type='compressed' session_id='' l1_
           '{proof_type: "compressed", payload: $proof}')"
         ;;
       snark|groth16|snark_groth16)
-        echo "snark proofs are not supported against devnet; use proof_type=compressed" >&2
-        exit 1
+        request="$(jq -n -c \
+          --argjson proof "$block_payload" \
+          --arg prover_address "$prover_address" \
+          '{
+            proof_type: "snark_groth16",
+            payload: {
+              proof: $proof,
+              prover_address: $prover_address
+            }
+          }')"
         ;;
       *)
-        echo "unknown proof_type: $proof_type (use compressed)" >&2
+        echo "unknown proof_type: $proof_type (use compressed or snark)" >&2
         exit 1
         ;;
     esac
