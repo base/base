@@ -6381,6 +6381,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-telemetry-bin"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "base-cli-utils",
+ "base-telemetry-service",
+ "clap",
+ "dotenvy",
+ "serde",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "base-telemetry-service"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "axum 0.8.9",
+ "base-health",
+ "clap",
+ "reqwest 0.13.4",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "base-test-utils"
 version = "0.0.0"
 dependencies = [
