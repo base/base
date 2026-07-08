@@ -255,25 +255,19 @@ mod tests {
         )
     }
 
-    fn sync_status_with_distinct_heads(
-        finalized_l2_number: u64,
-        safe_l2_number: u64,
-    ) -> SyncStatus {
-        let mut sync_status = test_sync_status(safe_l2_number, B256::repeat_byte(0x52));
+    fn sync_status_with_finalized_head(finalized_l2_number: u64) -> SyncStatus {
+        let mut sync_status = test_sync_status(finalized_l2_number, B256::repeat_byte(0x52));
         sync_status.finalized_l1 = test_l1_block_ref(10);
         sync_status.finalized_l1.hash = B256::repeat_byte(0xf1);
-        sync_status.safe_l1 = test_l1_block_ref(20);
-        sync_status.safe_l1.hash = B256::repeat_byte(0x5a);
         sync_status.finalized_l2 = test_l2_block_ref(finalized_l2_number, B256::repeat_byte(0xf2));
         sync_status.finalized_l2.l1origin.number = sync_status.finalized_l1.number;
-        sync_status.safe_l2.l1origin.number = sync_status.safe_l1.number;
         sync_status
     }
 
     fn headers_for_sync_status(
         sync_status: &SyncStatus,
     ) -> HashMap<B256, alloy_rpc_types_eth::Header> {
-        [sync_status.finalized_l1, sync_status.safe_l1]
+        [sync_status.finalized_l1]
             .into_iter()
             .map(|l1_head| (l1_head.hash, test_l1_header(l1_head.hash, l1_head.number)))
             .collect()
@@ -281,7 +275,7 @@ mod tests {
 
     #[test]
     fn select_l1_head_selects_finalized_head_or_rejects_target() {
-        let sync_status = sync_status_with_distinct_heads(300, 600);
+        let sync_status = sync_status_with_finalized_head(300);
 
         let finalized_l1 = ProofDispatcher::select_l1_head_for_target(200, &sync_status).unwrap();
         assert_eq!(finalized_l1.hash, B256::repeat_byte(0xf1));
@@ -293,7 +287,7 @@ mod tests {
 
     #[test]
     fn select_l1_head_rejects_l2_origin_beyond_finalized_l1_head() {
-        let mut sync_status = sync_status_with_distinct_heads(300, 600);
+        let mut sync_status = sync_status_with_finalized_head(300);
         sync_status.finalized_l2.l1origin.number = sync_status.finalized_l1.number + 1;
 
         let err = ProofDispatcher::select_l1_head_for_target(200, &sync_status)
@@ -304,7 +298,7 @@ mod tests {
 
     #[tokio::test]
     async fn build_request_rejects_l1_rpc_header_mismatch() {
-        let sync_status = sync_status_with_distinct_heads(300, 600);
+        let sync_status = sync_status_with_finalized_head(300);
         let mut headers = headers_for_sync_status(&sync_status);
         headers.insert(
             sync_status.finalized_l1.hash,
