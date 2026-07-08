@@ -10,9 +10,6 @@
 
 extern crate alloc;
 
-/// The system transaction gas limit post-Regolith.
-pub(crate) const REGOLITH_SYSTEM_TX_GAS: u64 = 1_000_000;
-
 mod batch;
 pub use batch::{
     Batch, BatchDecodingError, BatchDropReason, BatchEncodingError, BatchReader, BatchReaderError,
