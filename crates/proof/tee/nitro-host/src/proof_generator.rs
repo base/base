@@ -8,12 +8,8 @@ use base_prover_service_protocol::{
     HeartbeatRequest, ProofJob, ProofRequestKind, TeeKind, WorkerSubmitProofResponse,
 };
 use thiserror::Error;
-use tokio::{
-    sync::{oneshot, oneshot::error::TryRecvError},
-    task::JoinHandle,
-    time::sleep,
-};
-use tokio_util::sync::{CancellationToken, DropGuard};
+use tokio::{task::JoinHandle, time::sleep};
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::{
@@ -253,14 +249,15 @@ where
     where
         Generate: Future<Output = Result<Output, NitroEnclavePoolError>>,
     {
-        let (_heartbeat_cancel, mut heartbeat_failure) =
-            self.spawn_heartbeat_until_failure(request.clone());
+        let heartbeat_cancel = CancellationToken::new();
+        let mut heartbeat_failure =
+            self.spawn_heartbeat_until_failure(request.clone(), heartbeat_cancel.clone());
         tokio::pin!(generate);
 
         tokio::select! {
             biased;
-            source = &mut heartbeat_failure => {
-                let source = source.unwrap_or_else(|_| Self::stopped_heartbeat_error());
+            result = &mut heartbeat_failure => {
+                let source = result.ok().flatten().unwrap_or_else(Self::stopped_heartbeat_error);
                 match generate.await {
                     Ok(_) => {
                         info!(
@@ -288,22 +285,23 @@ where
                 })
             },
             result = &mut generate => {
-                match heartbeat_failure.try_recv() {
-                    Ok(source) => Err(ProofGeneratorError::Heartbeat {
+                if heartbeat_failure.is_finished() {
+                    let source = heartbeat_failure
+                        .await
+                        .ok()
+                        .flatten()
+                        .unwrap_or_else(Self::stopped_heartbeat_error);
+                    return Err(ProofGeneratorError::Heartbeat {
                         session_id: request.session_id.clone(),
                         source,
-                    }),
-                    Err(TryRecvError::Closed) => Err(ProofGeneratorError::Heartbeat {
-                        session_id: request.session_id.clone(),
-                        source: Self::stopped_heartbeat_error(),
-                    }),
-                    Err(TryRecvError::Empty) => result.map_err(|source| {
-                        ProofGeneratorError::Generate {
-                            session_id: request.session_id.clone(),
-                            source,
-                        }
-                    }),
+                    });
                 }
+
+                heartbeat_cancel.cancel();
+                result.map_err(|source| ProofGeneratorError::Generate {
+                    session_id: request.session_id.clone(),
+                    source,
+                })
             }
         }
     }
@@ -311,30 +309,24 @@ where
     fn spawn_heartbeat_until_failure(
         &self,
         request: ProofGeneratorRequest,
-    ) -> (DropGuard, oneshot::Receiver<ProverServiceClientError>) {
+        cancel: CancellationToken,
+    ) -> JoinHandle<Option<ProverServiceClientError>> {
         let submitter = self.submitter.clone();
         let heartbeat_config = self.heartbeat;
-        let cancel = CancellationToken::new();
-        let heartbeat_cancel = cancel.clone();
-        let (failure_tx, failure) = oneshot::channel();
 
-        let _ = tokio::task::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .expect("failed to build proof heartbeat runtime");
 
-            if let Some(error) = runtime.block_on(Self::heartbeat_until_failure(
+            runtime.block_on(Self::heartbeat_until_failure(
                 submitter,
                 heartbeat_config,
                 request,
-                heartbeat_cancel,
-            )) {
-                let _ = failure_tx.send(error);
-            }
-        });
-
-        (cancel.drop_guard(), failure)
+                cancel,
+            ))
+        })
     }
 
     fn stopped_heartbeat_error() -> ProverServiceClientError {
