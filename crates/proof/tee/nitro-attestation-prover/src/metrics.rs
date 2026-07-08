@@ -35,7 +35,7 @@ impl BoundlessMetrics {
     pub const RECOVERY_OUTCOME_EXPIRED: &'static str = "expired";
     /// Boundless recovery found an unused request slot.
     pub const RECOVERY_OUTCOME_UNKNOWN: &'static str = "unknown";
-    /// Boundless recovery hit the RequestIsNotLocked race path.
+    /// Boundless recovery hit the `RequestIsNotLocked` race path.
     pub const RECOVERY_OUTCOME_REQUEST_NOT_LOCKED: &'static str = "request_not_locked";
     /// Boundless recovery skipped a stale fulfilled proof.
     pub const RECOVERY_OUTCOME_STALE: &'static str = "stale";
@@ -52,7 +52,7 @@ impl BoundlessMetrics {
     pub const FULFILLMENT_OUTCOME_SUCCEEDED: &'static str = "succeeded";
     /// Boundless fulfillment polling failed.
     pub const FULFILLMENT_OUTCOME_FAILED: &'static str = "failed";
-    /// Boundless fulfillment polling retried the RequestIsNotLocked race path.
+    /// Boundless fulfillment polling retried the `RequestIsNotLocked` race path.
     pub const FULFILLMENT_OUTCOME_REQUEST_NOT_LOCKED_RETRY: &'static str =
         "request_not_locked_retry";
 
