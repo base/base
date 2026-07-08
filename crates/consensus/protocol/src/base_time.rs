@@ -13,6 +13,9 @@ use base_common_genesis::RollupConfig;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BaseTimeUpdateTx {
     /// The sub-second millisecond component for the block timestamp.
+    ///
+    /// Invariant: this must be one of `0 | 200 | 400 | 600 | 800`. Prefer [`Self::new`] so the
+    /// value is validated before encoding calldata.
     pub timestamp_millis_part: u16,
 }
 
@@ -68,6 +71,10 @@ impl BaseTimeUpdateTx {
     ///
     /// Callers are responsible for activation gating; this helper only validates and encodes the
     /// BaseTime metadata deposit once the surrounding protocol has decided it is allowed.
+    ///
+    /// `_l2_parent_block_time` is reserved so later hard-fork activation logic can make the same
+    /// same-second boundary decisions here that [`crate::L1BlockInfoTx::try_new_with_deposit_tx`]
+    /// already needs.
     pub fn try_new_with_deposit_tx(
         _rollup_config: &RollupConfig,
         l1_block_hash: B256,
@@ -128,7 +135,6 @@ pub enum BaseTimeUpdateDecodeError {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{B256, TxKind, U256};
-    use base_common_chains::Sepolia;
     use base_common_consensus::{Predeploys, SystemAddresses};
     use base_common_genesis::RollupConfig;
 
@@ -164,7 +170,6 @@ mod tests {
     #[test]
     fn base_time_update_builds_deposit_tx() {
         let rollup_config = RollupConfig::default();
-        let _l1_config = Sepolia::l1_config();
         let l1_block_hash = B256::with_last_byte(7);
 
         let (base_time, deposit_tx) =
