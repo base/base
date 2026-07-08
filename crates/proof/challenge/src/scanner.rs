@@ -409,7 +409,10 @@ impl GameScanner {
             return Ok(vec![]);
         }
 
-        let scan_start = self.scan_start_index(game_count).await;
+        let Some(scan_start) = self.anchor_recovery_scan_start_index(game_count).await else {
+            warn!("anchor recovery skipped because post-anchor boundary is unavailable");
+            return Ok(vec![]);
+        };
         let mut results: Vec<(u64, Option<Address>, bool, bool)> =
             stream::iter(scan_start..game_count)
                 .map(|index| async move {
@@ -471,6 +474,56 @@ impl GameScanner {
             );
         }
         Ok(candidates)
+    }
+
+    async fn anchor_recovery_scan_start_index(&self, game_count: u64) -> Option<u64> {
+        let cached_anchor = *self.anchor_index.lock().expect("anchor_index lock poisoned");
+        let anchor = match self.anchor_registry_client.anchor_snapshot().await {
+            Ok(anchor) => anchor,
+            Err(e) => {
+                warn!(error = %e, "failed to read anchor snapshot for anchor recovery");
+                return None;
+            }
+        };
+        let anchor_game = anchor.anchor_game;
+
+        if anchor_game == Address::ZERO {
+            return Some(0);
+        }
+
+        if let Some((cached_game, cached_index)) = cached_anchor
+            && cached_game == anchor_game
+            && cached_index < game_count
+        {
+            return Some(cached_index.saturating_add(1).min(game_count));
+        }
+
+        let search_start = cached_anchor
+            .map(|(_, index)| index.saturating_add(1))
+            .unwrap_or_default()
+            .min(game_count);
+
+        let (mut found, mut lookup_had_errors) =
+            self.find_game_index(anchor_game, search_start, game_count).await;
+
+        if found.is_none() && search_start > 0 {
+            let (wrapped_found, wrapped_lookup_had_errors) =
+                self.find_game_index(anchor_game, 0, search_start).await;
+            found = wrapped_found;
+            lookup_had_errors |= wrapped_lookup_had_errors;
+        }
+
+        let Some(index) = found else {
+            warn!(
+                anchor_game = %anchor_game,
+                lookup_had_errors,
+                "anchor recovery boundary unavailable"
+            );
+            return None;
+        };
+
+        *self.anchor_index.lock().expect("anchor_index lock poisoned") = Some((anchor_game, index));
+        Some(index.saturating_add(1).min(game_count))
     }
 
     async fn anchor_recovery_status(&self, index: u64, game: Address) -> Result<GameStatus> {
@@ -726,8 +779,8 @@ mod tests {
 
     use super::*;
     use crate::test_utils::{
-        MockAggregateVerifier, MockDisputeGameFactory, addr, factory_game, mock_anchor_registry,
-        mock_state,
+        MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, addr, factory_game,
+        mock_anchor_registry, mock_state,
     };
 
     #[tokio::test]
@@ -803,5 +856,55 @@ mod tests {
 
         assert_eq!(verifier.status_read_count(addr(3)), 2);
         assert_eq!(recovered, vec![addr(2), addr(3)]);
+    }
+
+    #[tokio::test]
+    async fn recover_anchor_candidates_skips_when_anchor_snapshot_fails() {
+        let factory = Arc::new(MockDisputeGameFactory::new(vec![
+            factory_game(0, 1),
+            factory_game(1, 1),
+            factory_game(2, 1),
+        ]));
+        let verifier = Arc::new(MockAggregateVerifier::new(HashMap::from([
+            (addr(0), mock_state(GameStatus::DefenderWins, Address::ZERO, 50)),
+            (addr(1), mock_state(GameStatus::DefenderWins, Address::ZERO, 100)),
+            (addr(2), mock_state(GameStatus::DefenderWins, Address::ZERO, 200)),
+        ])));
+        let anchor_registry = Arc::new(MockAnchorStateRegistry::new(addr(1)));
+        anchor_registry.set_fail_snapshot(true);
+        let scanner = GameScanner::new(
+            factory,
+            Arc::<MockAggregateVerifier>::clone(&verifier),
+            anchor_registry,
+        );
+
+        let recovered = scanner.recover_anchor_candidates().await.unwrap();
+
+        assert!(recovered.is_empty());
+        assert_eq!(verifier.status_read_count(addr(2)), 0);
+    }
+
+    #[tokio::test]
+    async fn recover_anchor_candidates_skips_when_anchor_index_is_unknown() {
+        let factory = Arc::new(MockDisputeGameFactory::new(vec![
+            factory_game(0, 1),
+            factory_game(1, 1),
+            factory_game(2, 1),
+        ]));
+        let verifier = Arc::new(MockAggregateVerifier::new(HashMap::from([
+            (addr(0), mock_state(GameStatus::DefenderWins, Address::ZERO, 50)),
+            (addr(1), mock_state(GameStatus::DefenderWins, Address::ZERO, 100)),
+            (addr(2), mock_state(GameStatus::DefenderWins, Address::ZERO, 200)),
+        ])));
+        let scanner = GameScanner::new(
+            factory,
+            Arc::<MockAggregateVerifier>::clone(&verifier),
+            mock_anchor_registry(addr(9)),
+        );
+
+        let recovered = scanner.recover_anchor_candidates().await.unwrap();
+
+        assert!(recovered.is_empty());
+        assert_eq!(verifier.status_read_count(addr(0)), 0);
     }
 }

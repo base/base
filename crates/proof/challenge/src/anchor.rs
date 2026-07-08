@@ -88,10 +88,8 @@ impl<C: Clock> AnchorUpdater<C> {
             }
             Entry::Occupied(mut entry) => {
                 let tracked = entry.get_mut();
-                if !status_only {
-                    tracked.status_only = false;
-                }
                 if defer_prover_reads_until_game_over {
+                    tracked.status_only = false;
                     tracked.defer_prover_reads_until_game_over = true;
                 }
                 debug!(game = %game_address, "game already tracked for anchor update");
@@ -197,8 +195,8 @@ impl<C: Clock> AnchorUpdater<C> {
 
         if status == GameStatus::InProgress {
             if game.status_only {
-                debug!(game = %game_address, "waiting for defender win status before anchor update");
-                return AnchorUpdateOutcome::Pending;
+                debug!(game = %game_address, "waiting for defender win status before anchor update, will retry");
+                return AnchorUpdateOutcome::Retry;
             }
 
             if game.resolve_submitted {
@@ -707,6 +705,14 @@ mod tests {
         assert_eq!(calls[0].0, defender_win);
         assert_eq!(calls[0].1, asr);
         assert!(updater.tracked.contains_key(&in_progress));
+        assert!(updater.tracked[&in_progress].status_only);
+
+        updater.track_game(in_progress);
+        updater.poll(&verifier, &submitter).await;
+
+        let calls = submitter.recorded_calls();
+        assert_eq!(calls.len(), 1);
+        assert!(updater.tracked[&in_progress].status_only);
 
         updater.track_valid_game(in_progress);
         updater.poll(&verifier, &submitter).await;
@@ -716,6 +722,26 @@ mod tests {
         assert_eq!(calls[1].0, in_progress);
         assert_eq!(calls[1].1, in_progress);
         assert_eq!(calls[1].2, encode_resolve_calldata());
+    }
+
+    #[tokio::test]
+    async fn status_only_in_progress_entries_expire_after_retention() {
+        let game = addr(0);
+        let mut state = mock_state(GameStatus::InProgress, Address::ZERO, 100);
+        state.game_over = true;
+
+        let verifier = MockAggregateVerifier::new(HashMap::from([(game, state)]));
+        let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
+
+        let mut updater = AnchorUpdater::new(TokioRuntime::new(), Duration::ZERO);
+        updater.track_status_only_game(game);
+
+        updater.poll(&verifier, &submitter).await;
+        assert!(updater.tracked.contains_key(&game));
+
+        updater.poll(&verifier, &submitter).await;
+        assert!(!updater.tracked.contains_key(&game));
+        assert!(submitter.recorded_calls().is_empty());
     }
 
     #[tokio::test]
