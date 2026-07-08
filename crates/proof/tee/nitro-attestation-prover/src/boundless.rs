@@ -818,10 +818,6 @@ impl AttestationProofProvider for BoundlessProver {
     ) -> Result<AttestationProof> {
         let started_at = Instant::now();
         if cancel.is_cancelled() {
-            BoundlessMetrics::record_proof_duration(
-                started_at,
-                BoundlessMetrics::PROOF_OUTCOME_CANCELLED,
-            );
             return Err(ProverError::Boundless("proof generation cancelled before start".into()));
         }
         let (client, params) = match self.build_client_and_params(attestation_bytes).await {
@@ -887,10 +883,6 @@ impl AttestationProofProvider for BoundlessProver {
     ) -> Result<AttestationProof> {
         let started_at = Instant::now();
         if cancel.is_cancelled() {
-            BoundlessMetrics::record_proof_duration(
-                started_at,
-                BoundlessMetrics::PROOF_OUTCOME_CANCELLED,
-            );
             return Err(ProverError::Boundless("proof generation cancelled before start".into()));
         }
         let (client, params) = match self.build_client_and_params(attestation_bytes).await {
