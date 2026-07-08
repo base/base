@@ -221,6 +221,7 @@ where
                 .is_jovian_active(next_l2_time)
                 .then(|| sys_config.min_base_fee.unwrap_or_default()), /* Default to zero if not
                                                                         * set at Jovian */
+            timestamp_millis_part: None,
         })
     }
 }
