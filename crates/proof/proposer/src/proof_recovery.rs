@@ -24,8 +24,6 @@ pub struct ProofRecoveryConfig {
     pub intermediate_block_interval: u64,
     /// Dispute game type used for proposals.
     pub game_type: u32,
-    /// Whether recovery may use the safe head rather than finalized head.
-    pub allow_non_finalized: bool,
     /// Address used as the parent sentinel when the anchor has no game.
     pub anchor_state_registry_address: Address,
     /// Maximum number of concurrent rollup RPC calls during root fetching.
@@ -66,7 +64,7 @@ impl ProofRecovery {
         Self { config, rollup_client, anchor_registry, factory_client }
     }
 
-    /// Attempts to recover onchain state and fetch the safe head.
+    /// Attempts to recover onchain state and fetch the finalized head.
     ///
     /// Returns `None` if either step fails (logged as warnings), allowing the
     /// caller to fall through to the poll-tick sleep.
@@ -77,15 +75,11 @@ impl ProofRecovery {
         let sync_status = match self.rollup_client.sync_status().await {
             Ok(status) => status,
             Err(e) => {
-                warn!(error = %e, "Failed to fetch safe head, retrying next tick");
+                warn!(error = %e, "Failed to fetch sync status, retrying next tick");
                 return None;
             }
         };
-        let safe_head = if self.config.allow_non_finalized {
-            sync_status.safe_l2.number
-        } else {
-            sync_status.finalized_l2.number
-        };
+        let finalized_head = sync_status.finalized_l2.number;
 
         if let Some(cached) = cache.as_ref() {
             let Some(next_proposal_block) =
@@ -99,14 +93,14 @@ impl ProofRecovery {
                 return None;
             };
 
-            if safe_head < next_proposal_block {
+            if finalized_head < next_proposal_block {
                 debug!(
-                    safe_head,
+                    finalized_head,
                     cached_block = cached.state.l2_block_number,
                     next_proposal_block,
-                    "Safe head below next proposal target, skipping recovery"
+                    "Finalized head below next proposal target, skipping recovery"
                 );
-                return Some((cached.state, safe_head));
+                return Some((cached.state, finalized_head));
             }
         }
 
@@ -118,7 +112,7 @@ impl ProofRecovery {
             }
         };
 
-        Some((state, safe_head))
+        Some((state, finalized_head))
     }
 
     /// Recovers the latest onchain state using a deterministic forward walk
@@ -371,7 +365,6 @@ mod tests {
                 block_interval,
                 intermediate_block_interval,
                 game_type: TEST_GAME_TYPE,
-                allow_non_finalized: false,
                 anchor_state_registry_address: Address::ZERO,
                 scan_concurrency: 8,
             },

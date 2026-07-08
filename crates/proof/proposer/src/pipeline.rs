@@ -62,7 +62,7 @@ where
     /// Runs the proving pipeline until cancelled.
     ///
     /// Each session starts a dispatcher task and a collector task. The
-    /// dispatcher can run ahead up to the safe head, while the collector
+    /// dispatcher can run ahead up to the finalized head, while the collector
     /// submits ready proofs in order from an internal cursor. Outcomes that
     /// cannot safely advance that cursor restart both tasks from a fresh
     /// recovery walk.
@@ -121,10 +121,11 @@ where
             {
                 let _tick_timer = base_metrics::timed!(Metrics::tick_duration_seconds());
 
-                if let Some((recovered, safe_head)) =
+                if let Some((recovered, finalized_head)) =
                     self.proof_recovery.try_recover_and_plan(&mut cache).await
                 {
-                    Metrics::safe_head().set(safe_head as f64);
+                    Metrics::safe_head().set(finalized_head as f64);
+                    Metrics::finalized_head().set(finalized_head as f64);
                     Metrics::last_proposed_block().set(recovered.l2_block_number as f64);
 
                     // Dispatch failures retry from the in-memory cursor. A fresh recovery walk is
@@ -138,7 +139,7 @@ where
                     let current = cursor
                         .as_mut()
                         .expect("dispatcher cursor initialized from recovered state");
-                    self.proof_dispatcher.tick(current, safe_head).await;
+                    self.proof_dispatcher.tick(current, finalized_head).await;
 
                     dispatched_through.store(current.l2_block_number, Ordering::Relaxed);
                 }
@@ -157,10 +158,11 @@ where
             let restart = {
                 let _tick_timer = base_metrics::timed!(Metrics::collector_tick_duration_seconds());
 
-                if let Some((recovered, safe_head)) =
+                if let Some((recovered, finalized_head)) =
                     self.proof_recovery.try_recover_and_plan(&mut cache).await
                 {
-                    Metrics::safe_head().set(safe_head as f64);
+                    Metrics::safe_head().set(finalized_head as f64);
+                    Metrics::finalized_head().set(finalized_head as f64);
                     Metrics::last_proposed_block().set(recovered.l2_block_number as f64);
 
                     if cursor_source != Some(recovered) || cursor.is_none() {
@@ -173,7 +175,7 @@ where
                     self.proof_collector
                         .tick(
                             current,
-                            safe_head,
+                            finalized_head,
                             dispatched_through.load(Ordering::Relaxed),
                             cancel,
                         )
@@ -300,7 +302,6 @@ mod tests {
                 block_interval: config.block_interval,
                 intermediate_block_interval: config.intermediate_block_interval,
                 game_type: config.game_type,
-                allow_non_finalized: config.allow_non_finalized,
                 anchor_state_registry_address: config.anchor_state_registry_address,
                 scan_concurrency: config.recovery_scan_concurrency,
             },

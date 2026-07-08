@@ -29,9 +29,15 @@ base_metrics::define_metrics! {
     #[label(name = "status", default = ["queued", "running", "succeeded", "failed"])]
     proof_status_received_total: counter,
 
-    #[describe("Latest safe (or finalized) L2 block number")]
+    // `safe_head` is kept as a deprecated alias for a zero-downtime metric rename;
+    // drop it once every Datadog monitor/dashboard uses `finalized_head`.
+    #[describe("Deprecated alias of finalized_head. Latest finalized L2 block number")]
     #[no_zero]
     safe_head: gauge,
+
+    #[describe("Latest finalized L2 block number")]
+    #[no_zero]
+    finalized_head: gauge,
 
     #[describe("Total number of L2 output proposals submitted")]
     l2_output_proposals_total: counter,

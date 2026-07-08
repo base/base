@@ -71,7 +71,7 @@ where
     pub async fn tick(
         &self,
         current: &mut RecoveredState,
-        safe_head: u64,
+        finalized_head: u64,
         dispatched_through: u64,
         cancel: &CancellationToken,
     ) -> bool {
@@ -90,12 +90,12 @@ where
                 return false;
             };
 
-            if target_block > safe_head {
+            if target_block > finalized_head {
                 debug!(
                     current_block = current.l2_block_number,
                     target_block,
-                    safe_head,
-                    "Safe head below collection target, waiting for L2 head to advance"
+                    finalized_head,
+                    "Finalized head below collection target, waiting for L2 head to advance"
                 );
                 return false;
             }
