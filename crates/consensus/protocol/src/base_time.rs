@@ -72,6 +72,7 @@ impl BaseTimeUpdateTx {
         l1_block_hash: B256,
         sequence_number: u64,
         timestamp_millis_part: u16,
+        _l2_parent_block_time: u64,
         l2_block_time: u64,
     ) -> Result<(Self, Sealed<TxDeposit>), BaseTimeUpdateError> {
         let base_time = Self::new(timestamp_millis_part)?;
@@ -176,7 +177,7 @@ mod tests {
         let l1_block_hash = B256::with_last_byte(7);
 
         let (base_time, deposit_tx) =
-            BaseTimeUpdateTx::try_new_with_deposit_tx(&rollup_config, l1_block_hash, 9, 600, 2)
+            BaseTimeUpdateTx::try_new_with_deposit_tx(&rollup_config, l1_block_hash, 9, 600, 1, 2)
                 .unwrap();
 
         assert_eq!(deposit_tx.from, SystemAddresses::DEPOSITOR_ACCOUNT);
