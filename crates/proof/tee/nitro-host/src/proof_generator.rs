@@ -280,7 +280,6 @@ where
             result = &mut generate => {
                 match heartbeat.failure.try_recv() {
                     Ok(source) => {
-                        heartbeat.cancel.cancel();
                         return Err(ProofGeneratorError::Heartbeat {
                             session_id: request.session_id.clone(),
                             source,
@@ -288,14 +287,12 @@ where
                     }
                     Err(TryRecvError::Empty) => {}
                     Err(TryRecvError::Closed) => {
-                        heartbeat.cancel.cancel();
                         return Err(ProofGeneratorError::Heartbeat {
                             session_id: request.session_id.clone(),
                             source: HeartbeatTask::stopped_error(),
                         });
                     }
                 }
-                heartbeat.cancel.cancel();
 
                 result.map_err(|source| ProofGeneratorError::Generate {
                     session_id: request.session_id.clone(),
