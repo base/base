@@ -2154,6 +2154,102 @@ mod tests {
     }
 
     #[test]
+    fn warmth_does_not_leak_across_transactions_with_revert() {
+        let key = signing_key(0x66);
+        let sender = eoa_address(&key);
+
+        let reverter = address!("0x00000000000000000000000000000000000000c8");
+        // PUSH1 0, SLOAD, PUSH1 0, REVERT
+        let reverter_code = bytes!("6000546000fd");
+
+        let mut evm = evm_with_accounts(
+            U256::from(10u64).pow(U256::from(18u64)),
+            sender,
+            &[(reverter, reverter_code)],
+        );
+
+        let mut warm_tx = base_tx();
+        warm_tx.calls = vec![vec![Call { to: reverter, data: Bytes::new() }]];
+        let warm_signed = eoa_signed(warm_tx, &key);
+        let warm_outcome =
+            evm.transact_raw(into_base_tx(&warm_signed)).expect("tx should be included");
+        assert!(matches!(warm_outcome.result, ExecutionResult::Revert { .. }));
+        revm::DatabaseCommit::commit(evm.ctx_mut().journal_mut().db_mut(), warm_outcome.state);
+
+        // Tx 1 already bumped the protocol nonce (0 -> 1) and delegated the sender
+        // (both committed above), so tx 2 is a second-use transaction:
+        // base AA_BASE_COST 15_000
+        // payload EIP-2028 DA over the tx 1_684
+        // nonce_key existing channel 0: COLD_SLOAD 2_100 + SSTORE_RESET 2_900 5_000
+        // auto_delegation sender already delegated 0
+        // sender_auth ECRECOVER 3_000 + cold SLOAD 2_100 5_100
+        // call PUSH1 (3) + COLD SLOAD (2_100) + PUSH1 (3) + REVERT 2_106
+        // total 28_890
+        let mut revert_tx = base_tx();
+        revert_tx.nonce_sequence = 1;
+        revert_tx.calls = vec![vec![Call { to: reverter, data: Bytes::new() }]];
+        let revert_signed = eoa_signed(revert_tx, &key);
+        let revert_outcome =
+            evm.transact_raw(into_base_tx(&revert_signed)).expect("tx should be included");
+        assert!(matches!(revert_outcome.result, ExecutionResult::Revert { .. }));
+
+        assert_eq!(
+            revert_outcome.result.gas().tx_gas_used(),
+            28_890,
+            "reverter SLOAD must be COLD (2_100); a warm read (100) would be 2_000 \
+             less, meaning tx 1's warmth leaked across the transaction boundary",
+        );
+    }
+
+    #[test]
+    fn committed_phase_warms_later_phase() {
+        // Intra-transaction warmth: a phase that SLOADs and COMMITS must leave
+        // the slot warm for a later phase in the SAME tx, so the second SLOAD is
+        // charged warm (100), not cold (2100).
+        // This exercises `checkpoint_commit` merging a phase's warmth into the parent
+        // journal, the flip side of the discard path, and reachable only WITHIN a tx before
+        // `finalize`.
+        let key = signing_key(0x66);
+        let sender = eoa_address(&key);
+
+        let loader = address!("0x00000000000000000000000000000000000000c8");
+        // PUSH1 0, SLOAD, STOP
+        let loader_code = bytes!("60005400");
+
+        let mut evm = evm_with_accounts(
+            U256::from(10u64).pow(U256::from(18u64)),
+            sender,
+            &[(loader, loader_code)],
+        );
+
+        let mut tx = base_tx();
+        tx.calls = vec![
+            vec![Call { to: loader, data: Bytes::new() }],
+            vec![Call { to: loader, data: Bytes::new() }],
+        ];
+        let signed = eoa_signed(tx, &key);
+        let outcome = evm.transact_raw(into_base_tx(&signed)).expect("tx should be included");
+        assert!(matches!(outcome.result, ExecutionResult::Success { .. }));
+
+        // First-use, single-tx, two phases each calling `loader`:
+        // base AA_BASE_COST 15_000
+        // payload EIP-2028 DA over the two-phase tx 1_840
+        // nonce_key first use of channel 0: COLD_SLOAD 2_100 + SSTORE_SET 20_000 22_100
+        // auto_delegation codeless EOA -> DEFAULT_ACCOUNT 4_600
+        // sender_auth ECRECOVER 3_000 + cold SLOAD 2_100 5_100
+        // call phase 0 PUSH1 (3) + COLD SLOAD (2_100) + STOP 2_103
+        // call phase 1 PUSH1 (3) + WARM SLOAD (100) + STOP 103
+        // total 50_846
+        assert_eq!(
+            outcome.result.gas().tx_gas_used(),
+            50_846,
+            "phase 1's SLOAD must be WARM (100): committed phase 0 warmed \
+             (loader, slot 0). A cold read (2_100) would be 2_000 more, meaning \
+             the committed phase's warmth failed to carry across phases",
+        );
+    }
+
+    #[test]
     fn validation_error_discards_warmth() {
         let key = signing_key(0x66);
         let sender = eoa_address(&key);
