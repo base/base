@@ -2,7 +2,7 @@
 
 use alloc::vec::Vec;
 
-use alloy_primitives::{B256, Bytes, Sealable, Sealed, TxKind, U256};
+use alloy_primitives::{Bytes, Sealable, Sealed, TxKind, U256};
 use base_common_consensus::{
     BaseTimeDepositSource, DepositSourceDomain, Predeploys, SystemAddresses, TxDeposit,
 };
@@ -81,17 +81,14 @@ impl BaseTimeUpdateTx {
     /// already needs.
     pub fn try_new_with_deposit_tx(
         _rollup_config: &RollupConfig,
-        l1_block_hash: B256,
-        sequence_number: u64,
+        l2_block_number: u64,
         timestamp_millis_part: u16,
         _l2_parent_block_time: u64,
         _l2_block_time: u64,
     ) -> Result<(Self, Sealed<TxDeposit>), BaseTimeUpdateError> {
         let base_time = Self::new(timestamp_millis_part)?;
-        let source = DepositSourceDomain::BaseTime(BaseTimeDepositSource {
-            l1_block_hash,
-            seq_number: sequence_number,
-        });
+        let source =
+            DepositSourceDomain::BaseTime(BaseTimeDepositSource { block_number: l2_block_number });
 
         let deposit_tx = TxDeposit {
             source_hash: source.source_hash(),
@@ -140,7 +137,7 @@ pub enum BaseTimeUpdateDecodeError {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{B256, TxKind, U256};
+    use alloy_primitives::{TxKind, U256};
     use base_common_consensus::{Predeploys, SystemAddresses};
     use base_common_genesis::RollupConfig;
 
@@ -177,10 +174,10 @@ mod tests {
     #[test]
     fn base_time_update_builds_deposit_tx() {
         let rollup_config = RollupConfig::default();
-        let l1_block_hash = B256::with_last_byte(7);
+        let l2_block_number = 9;
 
         let (base_time, deposit_tx) =
-            BaseTimeUpdateTx::try_new_with_deposit_tx(&rollup_config, l1_block_hash, 9, 600, 1, 2)
+            BaseTimeUpdateTx::try_new_with_deposit_tx(&rollup_config, l2_block_number, 600, 1, 2)
                 .unwrap();
 
         assert_eq!(deposit_tx.from, SystemAddresses::DEPOSITOR_ACCOUNT);

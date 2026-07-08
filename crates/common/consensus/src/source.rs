@@ -105,18 +105,15 @@ impl L1InfoDepositSource {
 /// A `BaseTime` metadata deposit transaction source.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
 pub struct BaseTimeDepositSource {
-    /// The L1 block hash.
-    pub l1_block_hash: B256,
-    /// The sequence number.
-    pub seq_number: u64,
+    /// The L2 block number the deposit is attached to.
+    pub block_number: u64,
 }
 
 impl BaseTimeDepositSource {
     /// Returns the source hash.
     pub fn source_hash(&self) -> B256 {
-        let mut input = [0u8; 32 * 2];
-        input[..32].copy_from_slice(&self.l1_block_hash[..]);
-        input[32 * 2 - 8..].copy_from_slice(&self.seq_number.to_be_bytes());
+        let mut input = [0u8; 32];
+        input[32 - 8..].copy_from_slice(&self.block_number.to_be_bytes());
         let deposit_id_hash = keccak256(input);
         let mut domain_input = [0u8; 32 * 2];
         let identifier_bytes: [u8; 8] =
