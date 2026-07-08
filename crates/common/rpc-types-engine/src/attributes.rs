@@ -52,7 +52,7 @@ pub struct BasePayloadAttributes {
     pub min_base_fee: Option<u64>,
     /// The millisecond component of the payload timestamp.
     ///
-    /// Prior to the future BaseTime activation, this field should always be [None].
+    /// Prior to the future `BaseTime` activation, this field should always be [None].
     #[cfg_attr(
         feature = "serde",
         serde(
