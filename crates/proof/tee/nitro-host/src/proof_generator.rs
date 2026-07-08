@@ -250,6 +250,7 @@ where
         Generate: Future<Output = Result<Output, NitroEnclavePoolError>>,
     {
         let heartbeat_cancel = CancellationToken::new();
+        let _heartbeat_cancel_guard = heartbeat_cancel.clone().drop_guard();
         let mut heartbeat_failure =
             self.spawn_heartbeat_until_failure(request.clone(), heartbeat_cancel.clone());
         tokio::pin!(generate);
@@ -682,6 +683,18 @@ mod tests {
         )
     }
 
+    async fn wait_for_heartbeats(client: &MockWorkerClient, count: usize) {
+        for _ in 0..50 {
+            if client.heartbeats().len() >= count {
+                return;
+            }
+
+            sleep(Duration::from_millis(1)).await;
+        }
+
+        panic!("expected at least {count} heartbeat(s)");
+    }
+
     #[test]
     fn request_requires_claim_metadata() {
         let job = proof_job(
@@ -757,6 +770,30 @@ mod tests {
             !client.heartbeats().is_empty(),
             "heartbeat task should run independently of the busy generation task"
         );
+    }
+
+    #[tokio::test]
+    async fn heartbeat_stops_when_generation_future_is_aborted() {
+        let client = MockWorkerClient::default();
+        let generator = generator_with_heartbeat_interval(client.clone(), Duration::from_millis(5));
+        let request = claimed_tee_request();
+
+        let handle = tokio::spawn(async move {
+            generator
+                .with_heartbeat_while_generating(
+                    &request,
+                    std::future::pending::<Result<(), NitroEnclavePoolError>>(),
+                )
+                .await
+        });
+
+        wait_for_heartbeats(&client, 1).await;
+        handle.abort();
+        assert!(handle.await.expect_err("generation task should be aborted").is_cancelled());
+
+        let heartbeat_count = client.heartbeats().len();
+        sleep(Duration::from_millis(25)).await;
+        assert_eq!(client.heartbeats().len(), heartbeat_count);
     }
 
     #[tokio::test]
