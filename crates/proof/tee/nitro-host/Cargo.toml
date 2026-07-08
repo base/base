@@ -46,8 +46,8 @@ tokio-vsock.workspace = true
 [dev-dependencies]
 chrono.workspace = true
 alloy-genesis.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
 base-common-genesis = { workspace = true, features = ["serde", "std"] }
-tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
 
 [features]
 metrics = [ "base-proof-host/metrics" ]

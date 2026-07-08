@@ -115,10 +115,6 @@ struct HeartbeatTask {
 }
 
 impl HeartbeatTask {
-    fn cancel(&self) {
-        self.cancel.cancel();
-    }
-
     fn stopped_error() -> ProverServiceClientError {
         ProverServiceClientError::MissingResult(
             "proof generator heartbeat thread stopped unexpectedly".to_owned(),
@@ -128,7 +124,7 @@ impl HeartbeatTask {
 
 impl Drop for HeartbeatTask {
     fn drop(&mut self) {
-        self.cancel();
+        self.cancel.cancel();
     }
 }
 
@@ -284,7 +280,7 @@ where
             result = &mut generate => {
                 match heartbeat.failure.try_recv() {
                     Ok(source) => {
-                        heartbeat.cancel();
+                        heartbeat.cancel.cancel();
                         return Err(ProofGeneratorError::Heartbeat {
                             session_id: request.session_id.clone(),
                             source,
@@ -292,14 +288,14 @@ where
                     }
                     Err(TryRecvError::Empty) => {}
                     Err(TryRecvError::Closed) => {
-                        heartbeat.cancel();
+                        heartbeat.cancel.cancel();
                         return Err(ProofGeneratorError::Heartbeat {
                             session_id: request.session_id.clone(),
                             source: HeartbeatTask::stopped_error(),
                         });
                     }
                 }
-                heartbeat.cancel();
+                heartbeat.cancel.cancel();
 
                 result.map_err(|source| ProofGeneratorError::Generate {
                     session_id: request.session_id.clone(),
@@ -344,24 +340,21 @@ where
         let heartbeat_cancel = cancel.clone();
         let (failure_tx, failure) = oneshot::channel();
 
-        thread::Builder::new()
-            .name("nitro-proof-heartbeat".to_owned())
-            .spawn(move || {
-                let runtime = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("failed to build proof heartbeat runtime");
+        let _ = thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build proof heartbeat runtime");
 
-                if let Some(error) = runtime.block_on(Self::heartbeat_until_failure(
-                    submitter,
-                    heartbeat_config,
-                    request,
-                    heartbeat_cancel,
-                )) {
-                    let _ = failure_tx.send(error);
-                }
-            })
-            .expect("failed to spawn proof heartbeat thread");
+            if let Some(error) = runtime.block_on(Self::heartbeat_until_failure(
+                submitter,
+                heartbeat_config,
+                request,
+                heartbeat_cancel,
+            )) {
+                let _ = failure_tx.send(error);
+            }
+        });
 
         HeartbeatTask { cancel, failure }
     }
