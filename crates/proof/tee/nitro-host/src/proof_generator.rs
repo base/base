@@ -8,7 +8,11 @@ use base_prover_service_protocol::{
     HeartbeatRequest, ProofJob, ProofRequestKind, TeeKind, WorkerSubmitProofResponse,
 };
 use thiserror::Error;
-use tokio::{sync::oneshot, task::JoinHandle, time::sleep};
+use tokio::{
+    sync::{oneshot, oneshot::error::TryRecvError},
+    task::JoinHandle,
+    time::sleep,
+};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
@@ -113,6 +117,18 @@ struct HeartbeatTask {
 impl HeartbeatTask {
     fn cancel(&self) {
         self.cancel.cancel();
+    }
+
+    fn stopped_error() -> ProverServiceClientError {
+        ProverServiceClientError::MissingResult(
+            "proof generator heartbeat thread stopped unexpectedly".to_owned(),
+        )
+    }
+}
+
+impl Drop for HeartbeatTask {
+    fn drop(&mut self) {
+        self.cancel();
     }
 }
 
@@ -266,6 +282,23 @@ where
         tokio::select! {
             biased;
             result = &mut generate => {
+                match heartbeat.failure.try_recv() {
+                    Ok(source) => {
+                        heartbeat.cancel();
+                        return Err(ProofGeneratorError::Heartbeat {
+                            session_id: request.session_id.clone(),
+                            source,
+                        });
+                    }
+                    Err(TryRecvError::Empty) => {}
+                    Err(TryRecvError::Closed) => {
+                        heartbeat.cancel();
+                        return Err(ProofGeneratorError::Heartbeat {
+                            session_id: request.session_id.clone(),
+                            source: HeartbeatTask::stopped_error(),
+                        });
+                    }
+                }
                 heartbeat.cancel();
 
                 result.map_err(|source| ProofGeneratorError::Generate {
@@ -274,7 +307,7 @@ where
                 })
             }
             source = &mut heartbeat.failure => {
-                let source = source.expect("proof generator heartbeat thread stopped unexpectedly");
+                let source = source.unwrap_or_else(|_| HeartbeatTask::stopped_error());
                 match generate.await {
                     Ok(_) => {
                         info!(
@@ -755,6 +788,35 @@ mod tests {
             !client.heartbeats().is_empty(),
             "heartbeat task should run independently of the busy generation task"
         );
+    }
+
+    #[tokio::test]
+    async fn heartbeat_failure_wins_after_generation_poll_blocks_runtime_thread() {
+        let client = MockWorkerClient::with_heartbeat_failure(MockHeartbeatFailure::NonRetryable);
+        let generator = generator_with_heartbeat_interval(client, Duration::from_millis(5));
+        let request = claimed_tee_request();
+
+        let err = generator
+            .with_heartbeat_while_generating(&request, async {
+                std::thread::sleep(Duration::from_millis(50));
+                Ok::<(), NitroEnclavePoolError>(())
+            })
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, ProofGeneratorError::Heartbeat { .. }));
+    }
+
+    #[tokio::test]
+    async fn dropped_heartbeat_task_cancels_thread() {
+        let client = MockWorkerClient::default();
+        let generator =
+            generator_with_heartbeat_interval(client.clone(), Duration::from_millis(20));
+
+        drop(generator.spawn_heartbeat_until_failure(claimed_tee_request()));
+        sleep(Duration::from_millis(50)).await;
+
+        assert!(client.heartbeats().is_empty());
     }
 
     #[tokio::test]
