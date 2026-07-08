@@ -77,15 +77,6 @@ impl Eip8130Contracts {
     pub const DEFAULT_HIGH_RATE_ACCOUNT_INIT_CODE_HASH: B256 =
         b256!("0x2aa0cfe89cf370c6ece7cc751c00c3fa3c2044a750755ed6f4125119275bc251");
 
-    /// General upgradeable wallet implementation (UUPS, deployed behind
-    /// `UpgradeableProxy`); upgrades are authorized by a CONFIG-scoped key.
-    pub const UPGRADEABLE_ACCOUNT: Address =
-        address!("0xF8dafa4DA35F664cf2CF842f00482ebb68a982b3");
-
-    /// keccak256 of the `UPGRADEABLE_ACCOUNT` deployment init code.
-    pub const UPGRADEABLE_ACCOUNT_INIT_CODE_HASH: B256 =
-        b256!("0xc48d29908053cbebfb8dab1a178e9552a0f3e6df4a17bdd059d9694ce27a15b0");
-
     // ─────────────────────────────────────────────────────────────────────────
     // Canonical authenticators (accepted on the EIP-8130 block-validation path)
     // ─────────────────────────────────────────────────────────────────────────
@@ -155,10 +146,6 @@ mod tests {
             (
                 Eip8130Contracts::DEFAULT_HIGH_RATE_ACCOUNT,
                 Eip8130Contracts::DEFAULT_HIGH_RATE_ACCOUNT_INIT_CODE_HASH,
-            ),
-            (
-                Eip8130Contracts::UPGRADEABLE_ACCOUNT,
-                Eip8130Contracts::UPGRADEABLE_ACCOUNT_INIT_CODE_HASH,
             ),
             (
                 Eip8130Contracts::P256_AUTHENTICATOR,
