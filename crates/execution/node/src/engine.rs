@@ -325,7 +325,7 @@ where
             ));
         }
 
-        // TODO(200ms): update to real hard fork gate. 
+        // TODO(200ms): update to real hard fork gate.
         if attributes.timestamp_millis_part.is_some() {
             return Err(EngineObjectValidationError::InvalidParams(
                 "TimestampMillisPartNotAllowed".to_string().into(),
