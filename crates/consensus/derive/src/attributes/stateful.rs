@@ -499,6 +499,7 @@ mod tests {
             )),
             eip_1559_params: None,
             min_base_fee: None,
+            timestamp_millis_part: None,
         };
         assert_eq!(payload, expected);
         assert_eq!(payload.transactions.unwrap().len(), 1);
@@ -552,6 +553,7 @@ mod tests {
             )),
             eip_1559_params: None,
             min_base_fee: None,
+            timestamp_millis_part: None,
         };
         assert_eq!(payload, expected);
         assert_eq!(payload.transactions.unwrap().len(), 1);
@@ -606,6 +608,7 @@ mod tests {
             )),
             eip_1559_params: None,
             min_base_fee: None,
+            timestamp_millis_part: None,
         };
         assert_eq!(payload, expected);
         assert_eq!(payload.transactions.unwrap().len(), 7);
@@ -659,6 +662,7 @@ mod tests {
             )),
             eip_1559_params: None,
             min_base_fee: None,
+            timestamp_millis_part: None,
         };
         assert_eq!(payload.transactions.as_ref().unwrap().len(), 10);
         assert_eq!(payload, expected);
