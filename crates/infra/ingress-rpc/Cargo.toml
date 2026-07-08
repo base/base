@@ -17,6 +17,7 @@ base-common-evm.workspace = true
 async-trait.workspace = true
 base-bundles.workspace = true
 base-common-chains.workspace = true
+base-observability-events.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-signer-local.workspace = true
 base-execution-evm.workspace = true

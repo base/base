@@ -12,16 +12,19 @@ workspace = true
 
 [dependencies]
 tar = { workspace = true }
+url = { workspace = true }
 zstd = { workspace = true }
 anyhow = { workspace = true }
 blake3 = { workspace = true }
 rayon = { workspace = true }
 bollard = { workspace = true }
 futures = { workspace = true }
-reth-cli-commands = { workspace = true }
 tracing = { workspace = true }
+alloy-eips = { workspace = true }
 async-trait = { workspace = true }
 serde_json = { workspace = true }
+reth-cli-commands = { workspace = true }
+alloy-provider = { workspace = true, features = ["reqwest"] }
 tokio = { workspace = true, features = ["rt", "fs"] }
 clap = { workspace = true, features = ["derive", "env"] }
 aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }

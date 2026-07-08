@@ -225,6 +225,7 @@ base-execution-eip8130-rpc-node = { path = "crates/execution/eip8130-rpc-node" }
 
 # Infra
 basectl-cli = { path = "crates/infra/basectl" }
+base-sidecrush = { path = "crates/infra/sidecrush" }
 audit-archiver-lib = { path = "crates/infra/audit" }
 base-load-tests = { path = "crates/infra/load-tests" }
 ingress-rpc-lib = { path = "crates/infra/ingress-rpc" }
@@ -448,6 +449,7 @@ tracing-subscriber = "0.3.22"
 tracing = { version = "0.1.43", default-features = false }
 
 # Metrics
+cadence = "1.5"
 ordered-float = "5"
 metrics = { version = "0.24.3", default-features = false }
 metrics-util = { version = "0.20.1", default-features = false }

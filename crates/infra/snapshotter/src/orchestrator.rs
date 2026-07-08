@@ -2,16 +2,17 @@
 
 use std::{
     path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result, bail};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::{
     SnapshotterConfig,
     container::ContainerManager,
     snapshot::{SnapshotGenerator, SnapshotManifest},
+    tip::TipChecker,
     upload::SnapshotUploader,
 };
 
@@ -19,30 +20,34 @@ use crate::{
 ///
 /// The EL container is always restarted, even if snapshot generation or upload
 /// fails. This prevents leaving the node in a stopped state on errors.
-pub struct Snapshotter<C: ContainerManager> {
+pub struct Snapshotter<C: ContainerManager, T: TipChecker> {
     container_manager: C,
+    tip_checker: T,
     uploader: SnapshotUploader,
     config: SnapshotterConfig,
 }
 
-impl<C: ContainerManager> std::fmt::Debug for Snapshotter<C> {
+impl<C: ContainerManager, T: TipChecker> std::fmt::Debug for Snapshotter<C, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Snapshotter").field("config", &self.config).finish_non_exhaustive()
     }
 }
 
-impl<C: ContainerManager> Snapshotter<C> {
-    /// Creates a new snapshotter with the given container manager and uploader.
+impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
+    /// Creates a new snapshotter with the given container manager, tip checker,
+    /// and uploader.
     pub const fn new(
         container_manager: C,
+        tip_checker: T,
         uploader: SnapshotUploader,
         config: SnapshotterConfig,
     ) -> Self {
-        Self { container_manager, uploader, config }
+        Self { container_manager, tip_checker, uploader, config }
     }
 
     /// Executes the full snapshot lifecycle.
     ///
+    /// 0. Verifies the EL is at chain tip; skips the run if it is not
     /// 1. Stops the EL container
     /// 2. Verifies the container is stopped
     /// 3. Generates snapshot archives
@@ -50,6 +55,27 @@ impl<C: ContainerManager> Snapshotter<C> {
     /// 5. Clears reth's persisted peer list (best effort)
     /// 6. Restarts the EL container (always, even on failure)
     pub async fn run(&self) -> Result<()> {
+        // Only snapshot when the EL is caught up to tip. Snapshotting a lagging
+        // node would publish stale data and pause a node that is still syncing.
+        //
+        // This is a best-effort PRE-check, not a guarantee of freshness at
+        // snapshot time. There is an inherent TOCTOU gap: after this check
+        // passes, time elapses while we stop the container, generate archives,
+        // and upload — so a node that was "barely at tip" (e.g. 9s old with a
+        // 10s threshold) may be stale by the time data is actually captured.
+        // This is acceptable for the default 10s threshold on a 2s block-time
+        // chain, but callers tightening the threshold should keep this in mind.
+        let threshold = Duration::from_secs(self.config.tip_threshold_secs);
+        let at_tip =
+            self.tip_checker.is_at_tip(threshold).await.context("failed to check EL tip status")?;
+        if !at_tip {
+            warn!(
+                threshold_secs = self.config.tip_threshold_secs,
+                "EL is not at tip; skipping snapshot run and leaving container running"
+            );
+            return Ok(());
+        }
+
         let stop_result = self.container_manager.stop(&self.config.container_name).await;
 
         let result = match stop_result {
@@ -149,6 +175,7 @@ impl<C: ContainerManager> Snapshotter<C> {
                 &run_output_dir,
                 &files,
                 run_timestamp,
+                self.config.retain_runs.get(),
                 &local_manifest,
                 remote_manifest.as_ref(),
             )
