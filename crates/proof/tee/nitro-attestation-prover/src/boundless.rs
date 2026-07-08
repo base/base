@@ -839,8 +839,6 @@ impl AttestationProofProvider for BoundlessProver {
             started_at,
             if result.is_ok() {
                 BoundlessMetrics::PROOF_OUTCOME_SUCCEEDED
-            } else if cancel.is_cancelled() {
-                BoundlessMetrics::PROOF_OUTCOME_CANCELLED
             } else {
                 BoundlessMetrics::PROOF_OUTCOME_FAILED
             },
@@ -1281,8 +1279,6 @@ impl AttestationProofProvider for BoundlessProver {
             started_at,
             if result.is_ok() {
                 BoundlessMetrics::PROOF_OUTCOME_SUCCEEDED
-            } else if cancel.is_cancelled() {
-                BoundlessMetrics::PROOF_OUTCOME_CANCELLED
             } else {
                 BoundlessMetrics::PROOF_OUTCOME_FAILED
             },
