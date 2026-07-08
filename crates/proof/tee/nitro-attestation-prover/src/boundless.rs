@@ -903,8 +903,6 @@ impl AttestationProofProvider for BoundlessProver {
             .contains(&signer_address);
 
         if recovery_is_blocked {
-            BoundlessMetrics::boundless_recovery_total(BoundlessMetrics::RECOVERY_OUTCOME_BLOCKED)
-                .increment(1);
             info!(
                 target_signer = %signer_address,
                 "recovery blocked for signer, will skip recovered proofs"
