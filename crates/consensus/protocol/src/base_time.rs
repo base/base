@@ -8,6 +8,8 @@ use base_common_consensus::{
 };
 use base_common_genesis::RollupConfig;
 
+use crate::REGOLITH_SYSTEM_TX_GAS;
+
 /// Versioned calldata for the BaseTime metadata deposit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -97,7 +99,7 @@ impl BaseTimeUpdateTx {
             value: U256::ZERO,
             // BaseTime only activates on post-Regolith chains, so this deposit always uses the
             // ordinary-deposit semantics introduced there.
-            gas_limit: 1_000_000,
+            gas_limit: REGOLITH_SYSTEM_TX_GAS,
             is_system_transaction: false,
             input: base_time.encode_calldata(),
         };
@@ -139,6 +141,8 @@ mod tests {
     use alloy_primitives::{B256, TxKind, U256};
     use base_common_consensus::{Predeploys, SystemAddresses};
     use base_common_genesis::RollupConfig;
+
+    use crate::REGOLITH_SYSTEM_TX_GAS;
 
     use super::{BaseTimeUpdateDecodeError, BaseTimeUpdateError, BaseTimeUpdateTx};
 
@@ -182,7 +186,7 @@ mod tests {
         assert_eq!(deposit_tx.to, TxKind::Call(Predeploys::BASE_TIME));
         assert_eq!(deposit_tx.mint, 0);
         assert_eq!(deposit_tx.value, U256::ZERO);
-        assert_eq!(deposit_tx.gas_limit, 1_000_000);
+        assert_eq!(deposit_tx.gas_limit, REGOLITH_SYSTEM_TX_GAS);
         assert!(!deposit_tx.is_system_transaction);
         assert_eq!(deposit_tx.input, base_time.encode_calldata());
     }
