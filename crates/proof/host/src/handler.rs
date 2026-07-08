@@ -1172,8 +1172,7 @@ async fn handle_hint_inner(
 
             let hash: B256 = hint.data.as_ref().try_into()?;
 
-            warn!(node_hash = %hash, "L2StateNode hint sent");
-            error!("debug_executePayload failed to return a complete witness");
+            error!(node_hash = %hash, "debug_executePayload failed to return a complete witness");
 
             let preimage: Bytes = providers.l2.client().request("debug_dbGet", &[hash]).await?;
             let actual_hash = keccak256(preimage.as_ref());
