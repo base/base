@@ -67,6 +67,9 @@ impl BaseTimeUpdateTx {
     }
 
     /// Returns a typed deposit transaction for inclusion at `tx[1]`.
+    ///
+    /// Callers are responsible for activation gating; this helper only validates and encodes the
+    /// BaseTime metadata deposit once the surrounding protocol has decided it is allowed.
     pub fn try_new_with_deposit_tx(
         rollup_config: &RollupConfig,
         l1_block_hash: B256,
@@ -92,6 +95,8 @@ impl BaseTimeUpdateTx {
             input: base_time.encode_calldata(),
         };
 
+        // Match the L1 info deposit transaction semantics: post-Regolith system transactions are
+        // deprecated in favor of ordinary deposits with a fixed gas allocation.
         if rollup_config.is_regolith_active(l2_block_time) {
             deposit_tx.is_system_transaction = false;
             deposit_tx.gas_limit = REGOLITH_SYSTEM_TX_GAS;
