@@ -25,6 +25,9 @@ pub enum ConsolidateTaskError {
     /// The consolidation forkchoice update call to the engine api failed.
     #[error(transparent)]
     ForkchoiceUpdateFailed(#[from] SynchronizeTaskError),
+    /// The forkchoice update completed without advancing to the safe head.
+    #[error("Forkchoice update did not advance to the safe head")]
+    ForkchoiceUpdateDidNotAdvance,
 }
 
 impl From<BuildAndSealError> for ConsolidateTaskError {
@@ -44,6 +47,7 @@ impl EngineTaskError for ConsolidateTaskError {
             Self::BuildTaskFailed(inner) => inner.severity(),
             Self::SealTaskFailed(inner) => inner.severity(),
             Self::ForkchoiceUpdateFailed(inner) => inner.severity(),
+            Self::ForkchoiceUpdateDidNotAdvance => EngineTaskErrorSeverity::Temporary,
         }
     }
 }

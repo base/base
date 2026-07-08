@@ -138,6 +138,21 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
             e
         })?;
 
+        if state.sync_state.unsafe_head() != *safe_l2
+            || state.sync_state.local_safe_head() != *safe_l2
+            || state.sync_state.safe_head() != *safe_l2
+        {
+            warn!(
+                target: "engine",
+                safe_l2 = %safe_l2,
+                unsafe_head = %state.sync_state.unsafe_head(),
+                local_safe_head = %state.sync_state.local_safe_head(),
+                safe_head = %state.sync_state.safe_head(),
+                "Apply safe head did not advance engine state"
+            );
+            return Err(ConsolidateTaskError::ForkchoiceUpdateDidNotAdvance);
+        }
+
         let fcu_duration = fcu_start.elapsed();
 
         info!(
@@ -164,6 +179,71 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
                 self.reconcile_to_safe_head(state, safe_l2).await
             }
         }
+    }
+
+    /// If safe derivation is about to build on the current safe head, first check whether the EL
+    /// already has the derived block. This covers the case where an earlier unsafe FCU returned
+    /// `SYNCING`, reth later backfilled the block, but consensus never advanced its unsafe head.
+    async fn reconcile_existing_derived_block(
+        &self,
+        state: &mut EngineState,
+    ) -> Result<bool, ConsolidateTaskError> {
+        let ConsolidateInput::Attributes(attributes) = &self.input else {
+            return Ok(false);
+        };
+
+        let block_num = attributes.block_number();
+        let fetch_start = Instant::now();
+        let block = match self.client.l2_block_by_label(block_num.into()).await {
+            Ok(Some(block)) => block,
+            Ok(None) => {
+                debug!(
+                    target: "engine",
+                    block_num,
+                    "Derived block not found in EL; proceeding to build fallback"
+                );
+                return Ok(false);
+            }
+            Err(_) => {
+                warn!(target: "engine", block_num, "Failed to fetch derived L2 block before build fallback");
+                return Err(ConsolidateTaskError::FailedToFetchUnsafeL2Block);
+            }
+        };
+        let block_fetch_duration = fetch_start.elapsed();
+        let block_hash = block.header.hash;
+
+        if !self.input.is_consistent_with_block(&self.cfg, &block) {
+            debug!(
+                target: "engine",
+                input = ?self.input,
+                block_hash = %block_hash,
+                "Derived block does not match attributes; proceeding to build fallback",
+            );
+            return Ok(false);
+        }
+
+        let block_info = match L2BlockInfo::from_block_and_genesis(
+            &block.into_consensus().map_transactions(|tx| tx.inner.inner.into_inner()),
+            &self.cfg.genesis,
+        ) {
+            Ok(block_info) => block_info,
+            Err(e) => {
+                warn!(target: "engine", error = ?e, "Failed to construct L2BlockInfo from derived block; proceeding to build fallback");
+                return Ok(false);
+            }
+        };
+
+        self.reconcile_to_safe_head(state, &block_info).await?;
+
+        info!(
+            target: "engine",
+            hash = %block_info.block_info.hash,
+            number = block_info.block_info.number,
+            ?block_fetch_duration,
+            "Reconciled existing derived block before build fallback"
+        );
+
+        Ok(true)
     }
 
     /// Attempts consolidation on the engine state.
@@ -293,14 +373,27 @@ impl<EngineClient_: EngineClient> EngineTaskExt for ConsolidateTask<EngineClient
     //   injected safe head is ahead of the EngineActor's unsafe head, we reconcile the unsafe chain
     //   up to the safe head instead of consolidating.
     async fn execute(&self, state: &mut EngineState) -> Result<(), ConsolidateTaskError> {
-        let safe_head_number = match &self.input {
-            ConsolidateInput::Attributes { .. } => state.sync_state.safe_head().block_info.number,
-            ConsolidateInput::BlockInfo(safe_block_info) => safe_block_info.block_info.number,
-        };
-        if safe_head_number < state.sync_state.unsafe_head().block_info.number {
-            self.consolidate(state).await
-        } else {
-            self.reconcile_unsafe_to_safe(state).await
+        match &self.input {
+            ConsolidateInput::Attributes { .. }
+                if state.sync_state.safe_head().block_info.number
+                    < state.sync_state.unsafe_head().block_info.number =>
+            {
+                self.consolidate(state).await
+            }
+            ConsolidateInput::Attributes { .. } => {
+                if self.reconcile_existing_derived_block(state).await? {
+                    Ok(())
+                } else {
+                    self.reconcile_unsafe_to_safe(state).await
+                }
+            }
+            ConsolidateInput::BlockInfo(safe_block_info)
+                if safe_block_info.block_info.number
+                    < state.sync_state.unsafe_head().block_info.number =>
+            {
+                self.consolidate(state).await
+            }
+            ConsolidateInput::BlockInfo { .. } => self.reconcile_unsafe_to_safe(state).await,
         }
     }
 }
