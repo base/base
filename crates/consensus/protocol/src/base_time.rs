@@ -20,6 +20,9 @@ pub struct BaseTimeUpdateTx {
 }
 
 impl BaseTimeUpdateTx {
+    /// The fixed gas allocation for BaseTime deposits on post-Regolith chains.
+    pub const DEPOSIT_GAS_LIMIT: u64 = 1_000_000;
+
     /// The selector for `setTimestampMillisPart(uint16)`.
     pub const SELECTOR: [u8; 4] = [0x86, 0xbd, 0xf3, 0x94];
 
@@ -95,8 +98,10 @@ impl BaseTimeUpdateTx {
             to: TxKind::Call(Predeploys::BASE_TIME),
             mint: 0,
             value: U256::ZERO,
-            gas_limit: 150_000_000,
-            is_system_transaction: true,
+            // BaseTime only activates on post-Regolith chains, so this deposit always uses the
+            // ordinary-deposit semantics introduced there.
+            gas_limit: Self::DEPOSIT_GAS_LIMIT,
+            is_system_transaction: false,
             input: base_time.encode_calldata(),
         };
 
@@ -180,8 +185,8 @@ mod tests {
         assert_eq!(deposit_tx.to, TxKind::Call(Predeploys::BASE_TIME));
         assert_eq!(deposit_tx.mint, 0);
         assert_eq!(deposit_tx.value, U256::ZERO);
-        assert_eq!(deposit_tx.gas_limit, 150_000_000);
-        assert!(deposit_tx.is_system_transaction);
+        assert_eq!(deposit_tx.gas_limit, BaseTimeUpdateTx::DEPOSIT_GAS_LIMIT);
+        assert!(!deposit_tx.is_system_transaction);
         assert_eq!(deposit_tx.input, base_time.encode_calldata());
     }
 }
