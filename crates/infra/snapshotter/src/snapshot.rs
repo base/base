@@ -781,7 +781,7 @@ fn source_files_total_bytes(source_files: &[PathBuf]) -> Result<u64> {
 }
 
 /// Collects all files in the output directory (non-recursive).
-fn collect_output_files(dir: &Path) -> Result<Vec<PathBuf>> {
+pub fn collect_output_files(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     for entry in
         std::fs::read_dir(dir).with_context(|| format!("failed to read {}", dir.display()))?

@@ -306,21 +306,33 @@ impl Drop for ComponentProgressLogger {
 /// Shared immutable metadata and atomics backing one component-wide compression logger.
 #[derive(Debug)]
 pub struct ComponentProgressState {
-    component_name: String,
-    total_bytes: u64,
-    total_archives: usize,
-    started: Instant,
-    bytes_done: AtomicU64,
-    archives_done: AtomicU64,
-    active_archives: Mutex<HashMap<String, ActiveArchiveState>>,
-    interactive: bool,
+    /// Snapshot component name such as `headers` or `receipts`.
+    pub component_name: String,
+    /// Total uncompressed source bytes scheduled for this component.
+    pub total_bytes: u64,
+    /// Number of archives that will be produced for this component.
+    pub total_archives: usize,
+    /// Monotonic timestamp when component compression started.
+    pub started: Instant,
+    /// Aggregate uncompressed source bytes processed across all archives.
+    pub bytes_done: AtomicU64,
+    /// Number of archives that have fully completed compression.
+    pub archives_done: AtomicU64,
+    /// Currently active archive rows for the live component renderer.
+    pub active_archives: Mutex<HashMap<String, ActiveArchiveState>>,
+    /// Whether the component logger is rendering interactively to a TTY.
+    pub interactive: bool,
 }
 
+/// Live progress state for one in-flight archive within a component.
 #[derive(Debug)]
-struct ActiveArchiveState {
-    total_bytes: u64,
-    bytes_done: u64,
-    started: Instant,
+pub struct ActiveArchiveState {
+    /// Total uncompressed source bytes for this archive.
+    pub total_bytes: u64,
+    /// Uncompressed source bytes processed so far for this archive.
+    pub bytes_done: u64,
+    /// Monotonic timestamp when this archive started compression.
+    pub started: Instant,
 }
 
 #[derive(Clone, Debug)]

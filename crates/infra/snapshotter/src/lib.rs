@@ -12,8 +12,8 @@ pub use config::{DEFAULT_TIP_THRESHOLD_SECS, S3ConfigType, SnapshotterConfig};
 
 mod progress;
 pub use progress::{
-    ArchiveProgress, ComponentProgressLogger, ComponentProgressReporter, ComponentProgressState,
-    UploadProgress,
+    ActiveArchiveState, ArchiveProgress, ComponentProgressLogger, ComponentProgressReporter,
+    ComponentProgressState, UploadProgress,
 };
 
 mod container;
@@ -25,7 +25,7 @@ pub use tip::{RpcTipChecker, TipChecker};
 mod snapshot;
 pub use snapshot::{
     ChunkFilename, ChunkedArchive, ComponentManifest, OutputFileChecksum, SingleArchive,
-    SnapshotGenerator, SnapshotManifest, SnapshotManifestExt,
+    SnapshotGenerator, SnapshotManifest, SnapshotManifestExt, collect_output_files,
 };
 
 mod upload;

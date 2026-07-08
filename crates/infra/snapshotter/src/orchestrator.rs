@@ -12,7 +12,10 @@ use tracing::{error, info, warn};
 use crate::{
     SnapshotterConfig,
     container::ContainerManager,
-    snapshot::{OutputFileChecksum, SnapshotGenerator, SnapshotManifest, SnapshotManifestExt},
+    snapshot::{
+        OutputFileChecksum, SnapshotGenerator, SnapshotManifest, SnapshotManifestExt,
+        collect_output_files,
+    },
     tip::TipChecker,
     upload::SnapshotUploader,
 };
@@ -293,17 +296,4 @@ fn existing_run_output_dir(base: &Path, timestamp: u64) -> Result<PathBuf> {
         bail!("existing run path is not a directory: {}", run_dir.display());
     }
     Ok(run_dir)
-}
-
-/// Collects all files in a run output directory (non-recursive).
-fn collect_output_files(dir: &Path) -> Result<Vec<PathBuf>> {
-    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
-        .with_context(|| format!("failed to read output dir {}", dir.display()))?
-        .map(|entry| entry.map(|entry| entry.path()))
-        .collect::<std::io::Result<Vec<_>>>()?
-        .into_iter()
-        .filter(|path| path.is_file())
-        .collect();
-    files.sort();
-    Ok(files)
 }
