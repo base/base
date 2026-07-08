@@ -1,6 +1,6 @@
 //! Proof generation orchestration for claimed Nitro worker jobs.
 
-use std::{future::Future, sync::Arc, thread, time::Duration};
+use std::{future::Future, sync::Arc, time::Duration};
 
 use base_proof_primitives::ProofRequest as NitroProofRequest;
 use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
@@ -276,7 +276,6 @@ where
         tokio::pin!(generate);
 
         tokio::select! {
-            biased;
             result = &mut generate => {
                 match heartbeat.failure.try_recv() {
                     Ok(source) => {
@@ -337,7 +336,7 @@ where
         let heartbeat_cancel = cancel.clone();
         let (failure_tx, failure) = oneshot::channel();
 
-        let _ = thread::spawn(move || {
+        let _ = tokio::task::spawn_blocking(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
