@@ -49,11 +49,11 @@ pub enum BaseReceiptEnvelope {
     /// [deposit]: https://specs.base.org/protocol/bridging/deposits
     #[cfg_attr(feature = "serde", serde(rename = "0x7e", alias = "0x7E"))]
     Deposit(ReceiptWithBloom<DepositReceipt>),
-    /// Receipt envelope with type flag 123, containing an [EIP-8130] Account
+    /// Receipt envelope with type flag 121, containing an [EIP-8130] Account
     /// Abstraction receipt.
     ///
     /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
-    #[cfg_attr(feature = "serde", serde(rename = "0x7b", alias = "0x7B"))]
+    #[cfg_attr(feature = "serde", serde(rename = "0x79"))]
     Eip8130(ReceiptWithBloom<Receipt<Log>>),
 }
 

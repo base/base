@@ -78,7 +78,7 @@ pub enum BaseInvalidTransactionError {
     /// An EIP-8130 (account-abstraction) transaction was submitted via
     /// `eth_sendRawTransaction` before the Cobalt fork was active.
     ///
-    /// The transaction type byte (`0x7B`) is recognised by the consensus layer for
+    /// The transaction type byte (`0x79`) is recognised by the consensus layer for
     /// decoding/serialization purposes, but RPC admission is rejected until the
     /// Cobalt fork is active. The txpool validator enforces the same fork gate for
     /// transactions arriving over devp2p.

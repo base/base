@@ -2429,7 +2429,7 @@ mod tests {
     #[test]
     fn counterfactual_create_executes_and_is_included() {
         // End-to-end regression for the counterfactual smart-account CREATE bug
-        // (PR #3766): a `0x7b` create whose sender is the not-yet-existent CREATE2
+        // (PR #3766): a `0x79` create whose sender is the not-yet-existent CREATE2
         // address must authorize and be *included* through the full
         // `Eip8130Executor::execute` pipeline — not just the unit-level
         // `authorize_and_apply`. Before the fix this returned
