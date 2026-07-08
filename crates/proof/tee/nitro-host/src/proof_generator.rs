@@ -13,7 +13,7 @@ use tokio::{
     task::JoinHandle,
     time::sleep,
 };
-use tokio_util::sync::CancellationToken;
+use tokio_util::sync::{CancellationToken, DropGuard};
 use tracing::{info, warn};
 
 use crate::{
@@ -110,7 +110,7 @@ pub struct ProofGeneratorTask {
 }
 
 struct HeartbeatTask {
-    cancel: CancellationToken,
+    _cancel: DropGuard,
     failure: oneshot::Receiver<ProverServiceClientError>,
 }
 
@@ -119,12 +119,6 @@ impl HeartbeatTask {
         ProverServiceClientError::MissingResult(
             "proof generator heartbeat thread stopped unexpectedly".to_owned(),
         )
-    }
-}
-
-impl Drop for HeartbeatTask {
-    fn drop(&mut self) {
-        self.cancel.cancel();
     }
 }
 
@@ -352,7 +346,7 @@ where
             }
         });
 
-        HeartbeatTask { cancel, failure }
+        HeartbeatTask { _cancel: cancel.drop_guard(), failure }
     }
 
     async fn heartbeat_until_failure(
