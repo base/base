@@ -109,19 +109,6 @@ pub struct ProofGeneratorTask {
     pub submit_handle: JoinHandle<Result<WorkerSubmitProofResponse, ProofSubmitterError>>,
 }
 
-struct HeartbeatTask {
-    _cancel: DropGuard,
-    failure: oneshot::Receiver<ProverServiceClientError>,
-}
-
-impl HeartbeatTask {
-    fn stopped_error() -> ProverServiceClientError {
-        ProverServiceClientError::MissingResult(
-            "proof generator heartbeat thread stopped unexpectedly".to_owned(),
-        )
-    }
-}
-
 /// Orchestrates Nitro witness generation, enclave proving, and async proof submission.
 #[derive(Debug)]
 pub struct ProofGenerator<Client> {
@@ -266,34 +253,14 @@ where
     where
         Generate: Future<Output = Result<Output, NitroEnclavePoolError>>,
     {
-        let mut heartbeat = self.spawn_heartbeat_until_failure(request.clone());
+        let (_heartbeat_cancel, mut heartbeat_failure) =
+            self.spawn_heartbeat_until_failure(request.clone());
         tokio::pin!(generate);
 
         tokio::select! {
-            result = &mut generate => {
-                match heartbeat.failure.try_recv() {
-                    Ok(source) => {
-                        return Err(ProofGeneratorError::Heartbeat {
-                            session_id: request.session_id.clone(),
-                            source,
-                        });
-                    }
-                    Err(TryRecvError::Empty) => {}
-                    Err(TryRecvError::Closed) => {
-                        return Err(ProofGeneratorError::Heartbeat {
-                            session_id: request.session_id.clone(),
-                            source: HeartbeatTask::stopped_error(),
-                        });
-                    }
-                }
-
-                result.map_err(|source| ProofGeneratorError::Generate {
-                    session_id: request.session_id.clone(),
-                    source,
-                })
-            }
-            source = &mut heartbeat.failure => {
-                let source = source.unwrap_or_else(|_| HeartbeatTask::stopped_error());
+            biased;
+            source = &mut heartbeat_failure => {
+                let source = source.unwrap_or_else(|_| Self::stopped_heartbeat_error());
                 match generate.await {
                     Ok(_) => {
                         info!(
@@ -320,10 +287,31 @@ where
                     source,
                 })
             },
+            result = &mut generate => {
+                match heartbeat_failure.try_recv() {
+                    Ok(source) => Err(ProofGeneratorError::Heartbeat {
+                        session_id: request.session_id.clone(),
+                        source,
+                    }),
+                    Err(TryRecvError::Closed) => Err(ProofGeneratorError::Heartbeat {
+                        session_id: request.session_id.clone(),
+                        source: Self::stopped_heartbeat_error(),
+                    }),
+                    Err(TryRecvError::Empty) => result.map_err(|source| {
+                        ProofGeneratorError::Generate {
+                            session_id: request.session_id.clone(),
+                            source,
+                        }
+                    }),
+                }
+            }
         }
     }
 
-    fn spawn_heartbeat_until_failure(&self, request: ProofGeneratorRequest) -> HeartbeatTask {
+    fn spawn_heartbeat_until_failure(
+        &self,
+        request: ProofGeneratorRequest,
+    ) -> (DropGuard, oneshot::Receiver<ProverServiceClientError>) {
         let submitter = self.submitter.clone();
         let heartbeat_config = self.heartbeat;
         let cancel = CancellationToken::new();
@@ -346,7 +334,13 @@ where
             }
         });
 
-        HeartbeatTask { _cancel: cancel.drop_guard(), failure }
+        (cancel.drop_guard(), failure)
+    }
+
+    fn stopped_heartbeat_error() -> ProverServiceClientError {
+        ProverServiceClientError::MissingResult(
+            "proof generator heartbeat thread stopped unexpectedly".to_owned(),
+        )
     }
 
     async fn heartbeat_until_failure(
@@ -753,30 +747,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn heartbeat_runs_while_generation_poll_blocks_runtime_thread() {
-        let client = MockWorkerClient::default();
-        let generator = generator_with_heartbeat_interval(client.clone(), Duration::from_millis(5));
-        let request = claimed_tee_request();
-
-        let err = generator
-            .with_heartbeat_while_generating(&request, async {
-                std::thread::sleep(Duration::from_millis(50));
-                Err::<(), NitroEnclavePoolError>(NitroEnclavePoolError::Busy)
-            })
-            .await
-            .unwrap_err();
-
-        assert!(matches!(err, ProofGeneratorError::Generate { .. }));
-        assert!(
-            !client.heartbeats().is_empty(),
-            "heartbeat task should run independently of the busy generation task"
-        );
-    }
-
-    #[tokio::test]
     async fn heartbeat_failure_wins_after_generation_poll_blocks_runtime_thread() {
         let client = MockWorkerClient::with_heartbeat_failure(MockHeartbeatFailure::NonRetryable);
-        let generator = generator_with_heartbeat_interval(client, Duration::from_millis(5));
+        let generator = generator_with_heartbeat_interval(client.clone(), Duration::from_millis(5));
         let request = claimed_tee_request();
 
         let err = generator
@@ -788,18 +761,10 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(err, ProofGeneratorError::Heartbeat { .. }));
-    }
-
-    #[tokio::test]
-    async fn dropped_heartbeat_task_cancels_thread() {
-        let client = MockWorkerClient::default();
-        let generator =
-            generator_with_heartbeat_interval(client.clone(), Duration::from_millis(20));
-
-        drop(generator.spawn_heartbeat_until_failure(claimed_tee_request()));
-        sleep(Duration::from_millis(50)).await;
-
-        assert!(client.heartbeats().is_empty());
+        assert!(
+            !client.heartbeats().is_empty(),
+            "heartbeat task should run independently of the busy generation task"
+        );
     }
 
     #[tokio::test]
@@ -818,6 +783,7 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(err, ProofGeneratorError::Generate { .. }));
+        sleep(Duration::from_millis(75)).await;
         assert!(client.heartbeats().is_empty());
     }
 
