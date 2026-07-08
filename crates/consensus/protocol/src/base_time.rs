@@ -8,8 +8,6 @@ use base_common_consensus::{
 };
 use base_common_genesis::RollupConfig;
 
-use crate::REGOLITH_SYSTEM_TX_GAS;
-
 /// Versioned calldata for the BaseTime metadata deposit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -71,12 +69,12 @@ impl BaseTimeUpdateTx {
     /// Callers are responsible for activation gating; this helper only validates and encodes the
     /// BaseTime metadata deposit once the surrounding protocol has decided it is allowed.
     pub fn try_new_with_deposit_tx(
-        rollup_config: &RollupConfig,
+        _rollup_config: &RollupConfig,
         l1_block_hash: B256,
         sequence_number: u64,
         timestamp_millis_part: u16,
         _l2_parent_block_time: u64,
-        l2_block_time: u64,
+        _l2_block_time: u64,
     ) -> Result<(Self, Sealed<TxDeposit>), BaseTimeUpdateError> {
         let base_time = Self::new(timestamp_millis_part)?;
         let source = DepositSourceDomain::BaseTime(BaseTimeDepositSource {
@@ -84,7 +82,7 @@ impl BaseTimeUpdateTx {
             seq_number: sequence_number,
         });
 
-        let mut deposit_tx = TxDeposit {
+        let deposit_tx = TxDeposit {
             source_hash: source.source_hash(),
             from: SystemAddresses::DEPOSITOR_ACCOUNT,
             to: TxKind::Call(Predeploys::BASE_TIME),
@@ -94,13 +92,6 @@ impl BaseTimeUpdateTx {
             is_system_transaction: true,
             input: base_time.encode_calldata(),
         };
-
-        // Match the L1 info deposit transaction semantics: post-Regolith system transactions are
-        // deprecated in favor of ordinary deposits with a fixed gas allocation.
-        if rollup_config.is_regolith_active(l2_block_time) {
-            deposit_tx.is_system_transaction = false;
-            deposit_tx.gas_limit = REGOLITH_SYSTEM_TX_GAS;
-        }
 
         Ok((base_time, deposit_tx.seal_slow()))
     }
@@ -139,11 +130,9 @@ mod tests {
     use alloy_primitives::{B256, TxKind, U256};
     use base_common_chains::Sepolia;
     use base_common_consensus::{Predeploys, SystemAddresses};
-    use base_common_genesis::{RollupConfig, UpgradeConfig};
+    use base_common_genesis::RollupConfig;
 
-    use super::{
-        BaseTimeUpdateDecodeError, BaseTimeUpdateError, BaseTimeUpdateTx, REGOLITH_SYSTEM_TX_GAS,
-    };
+    use super::{BaseTimeUpdateDecodeError, BaseTimeUpdateError, BaseTimeUpdateTx};
 
     #[test]
     fn base_time_update_roundtrips() {
@@ -174,10 +163,7 @@ mod tests {
 
     #[test]
     fn base_time_update_builds_deposit_tx() {
-        let rollup_config = RollupConfig {
-            upgrades: UpgradeConfig { regolith_time: Some(1), ..Default::default() },
-            ..Default::default()
-        };
+        let rollup_config = RollupConfig::default();
         let _l1_config = Sepolia::l1_config();
         let l1_block_hash = B256::with_last_byte(7);
 
@@ -189,8 +175,8 @@ mod tests {
         assert_eq!(deposit_tx.to, TxKind::Call(Predeploys::BASE_TIME));
         assert_eq!(deposit_tx.mint, 0);
         assert_eq!(deposit_tx.value, U256::ZERO);
-        assert_eq!(deposit_tx.gas_limit, REGOLITH_SYSTEM_TX_GAS);
-        assert!(!deposit_tx.is_system_transaction);
+        assert_eq!(deposit_tx.gas_limit, 150_000_000);
+        assert!(deposit_tx.is_system_transaction);
         assert_eq!(deposit_tx.input, base_time.encode_calldata());
     }
 }
