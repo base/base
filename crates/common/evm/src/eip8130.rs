@@ -55,10 +55,7 @@ use base_execution_eip8130::{
 };
 use base_precompile_storage::{JournalStorageProvider, StorageCtx};
 use revm::{
-    context::{
-        BlockEnv, LocalContextTr, TxEnv,
-        journaled_state::{JournalCheckpoint, account::JournaledAccountTr},
-    },
+    context::{BlockEnv, LocalContextTr, TxEnv, journaled_state::account::JournaledAccountTr},
     context_interface::{
         Block, Cfg, ContextTr, JournalTr,
         context::take_error,
@@ -235,15 +232,11 @@ impl Eip8130Executor {
             *ctx.chain_mut() = fetched;
         }
 
-        // Guard every journal write so a validity rejection discards the whole
-        // transaction's mutations.
-        let checkpoint = ctx.journal_mut().checkpoint();
-
         let outcome =
             match Self::authorize_and_apply(ctx, &signed, &encoded, chain_id, now, base_fee) {
                 Ok(outcome) => outcome,
                 Err(err) => {
-                    ctx.journal_mut().checkpoint_revert(checkpoint);
+                    Self::teardown_after_error(evm);
                     return Err(err.into());
                 }
             };
@@ -253,11 +246,7 @@ impl Eip8130Executor {
         let prepay = match Self::prepay(ctx, &outcome, &encoded, spec) {
             Ok(prepay) => prepay,
             Err(err) => {
-                ctx.journal_mut().checkpoint_revert(checkpoint);
-                // `prepay` may have cached this tx's L1 cost; clear it so the next
-                // transaction in the block recomputes (parity with the mainnet
-                // handler's `catch_error` cleanup).
-                ctx.chain_mut().clear_tx_l1_cost();
+                Self::teardown_after_error(evm);
                 return Err(err);
             }
         };
@@ -273,7 +262,7 @@ impl Eip8130Executor {
             match Self::execute_calls(evm, &signed, &outcome, outcome.execution_gas_available) {
                 Ok(calls) => calls,
                 Err(err) => {
-                    Self::teardown_after_error(evm, checkpoint);
+                    Self::teardown_after_error(evm);
                     return Err(err);
                 }
             };
@@ -289,7 +278,7 @@ impl Eip8130Executor {
         ) {
             Ok(gas_used) => gas_used,
             Err(err) => {
-                Self::teardown_after_error(evm, checkpoint);
+                Self::teardown_after_error(evm);
                 return Err(err);
             }
         };
@@ -298,9 +287,6 @@ impl Eip8130Executor {
 
         let logs = ctx.journal_mut().take_logs();
 
-        // Explicitly close the checkpoint opened above before committing the
-        // transaction, keeping the checkpoint lifecycle unambiguous.
-        ctx.journal_mut().checkpoint_commit();
         ctx.journal_mut().commit_tx();
         ctx.chain_mut().clear_tx_l1_cost();
 
@@ -444,7 +430,7 @@ impl Eip8130Executor {
         let ceiling = match Self::probe_calls(evm, &signed, &outcome, ceiling_pool) {
             Ok(ceiling) => ceiling,
             Err(err) => {
-                Self::teardown_after_error(evm, checkpoint);
+                Self::teardown_after_error(evm);
                 return Err(err);
             }
         };
@@ -457,7 +443,7 @@ impl Eip8130Executor {
             let final_calls = match Self::execute_calls(evm, &signed, &outcome, ceiling_pool) {
                 Ok(final_calls) => final_calls,
                 Err(err) => {
-                    Self::teardown_after_error(evm, checkpoint);
+                    Self::teardown_after_error(evm);
                     return Err(err);
                 }
             };
@@ -484,7 +470,7 @@ impl Eip8130Executor {
         ) {
             Ok(pool) => pool,
             Err(err) => {
-                Self::teardown_after_error(evm, checkpoint);
+                Self::teardown_after_error(evm);
                 return Err(err);
             }
         };
@@ -494,7 +480,7 @@ impl Eip8130Executor {
         let final_calls = match Self::execute_calls(evm, &signed, &outcome, feasible_pool) {
             Ok(final_calls) => final_calls,
             Err(err) => {
-                Self::teardown_after_error(evm, checkpoint);
+                Self::teardown_after_error(evm);
                 return Err(err);
             }
         };
@@ -1049,8 +1035,8 @@ impl Eip8130Executor {
 
             // revm's `checkpoint_commit` merges the phase savepoint into its
             // parent without finalizing the journal entries, so a committed phase
-            // is still rolled back if the outer checkpoint (taken in `execute`)
-            // later reverts — e.g. when a subsequent phase surfaces a database
+            // is still rolled back if the transaction is ultimately discarded
+            // (see `teardown_after_error`) — e.g. when a subsequent phase surfaces a database
             // error. Committed phases are only durable once `commit_tx` runs.
             evm.ctx_mut().journal_mut().checkpoint_commit();
             phase_statuses.push(0x01);
@@ -1205,12 +1191,12 @@ impl Eip8130Executor {
     }
 
     /// Centralized post-error teardown mirroring the mainnet handler's
-    /// `catch_error` cleanup: reverts the transaction checkpoint, clears the
+    /// `catch_error` cleanup: discards the transaction, clears the
     /// cached L1 cost, and drains the frame stack and local context. A database
     /// error raised inside a nested subcall surfaces while the parent frame is
     /// still on the stack, so draining both prevents stale frame/local state
     /// from leaking into the next transaction when a `BaseEvm` is reused.
-    fn teardown_after_error<DB, I, P>(evm: &mut BaseEvm<DB, I, P>, checkpoint: JournalCheckpoint)
+    fn teardown_after_error<DB, I, P>(evm: &mut BaseEvm<DB, I, P>)
     where
         DB: AlloyDatabase,
         P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
@@ -1218,7 +1204,7 @@ impl Eip8130Executor {
             BaseContextTr + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
     {
         let ctx = evm.ctx_mut();
-        ctx.journal_mut().checkpoint_revert(checkpoint);
+        ctx.journal_mut().discard_tx();
         ctx.chain_mut().clear_tx_l1_cost();
         evm.ctx().local_mut().clear();
         evm.frame_stack().clear();
@@ -2118,6 +2104,119 @@ mod tests {
             warm_coinbase_gas < cold_account_gas,
             "BALANCE(coinbase) ({warm_coinbase_gas}) must be cheaper than a cold \
              BALANCE ({cold_account_gas}) because EIP-3651 pre-warms the coinbase",
+        );
+    }
+
+    #[test]
+    fn revert_discards_warmth() {
+        let key = signing_key(0x66);
+        let sender = eoa_address(&key);
+
+        let loader = address!("0x00000000000000000000000000000000000000c8");
+        // PUSH1 0, SLOAD, STOP
+        let loader_code = bytes!("60005400");
+
+        let reverter = address!("0x00000000000000000000000000000000000000c3");
+        // PUSH1 0, PUSH1 0, REVERT
+        let reverter_code = bytes!("60006000fd");
+
+        let stopper = address!("0x00000000000000000000000000000000000000c9");
+        // PUSH1 0, PUSH1 0, STOP
+        let stopper_code = bytes!("6000600000");
+
+        let mut evm = evm_with_accounts(
+            U256::from(10u64).pow(U256::from(18u64)),
+            sender,
+            &[(loader, loader_code), (reverter, reverter_code), (stopper, stopper_code)],
+        );
+
+        let mut revert_tx = base_tx();
+        revert_tx.calls = vec![
+            vec![Call { to: loader, data: Bytes::new() }],
+            vec![Call { to: reverter, data: Bytes::new() }],
+        ];
+        let revert_signed = eoa_signed(revert_tx, &key);
+        let revert_outcome =
+            evm.transact_raw(into_base_tx(&revert_signed)).expect("tx should be included");
+        assert!(matches!(revert_outcome.result, ExecutionResult::Revert { .. }));
+
+        let mut load_tx = base_tx();
+        load_tx.calls = vec![
+            vec![Call { to: loader, data: Bytes::new() }],
+            vec![Call { to: stopper, data: Bytes::new() }],
+        ];
+        let load_signed = eoa_signed(load_tx, &key);
+        let load_outcome =
+            evm.transact_raw(into_base_tx(&load_signed)).expect("tx should be included");
+        assert!(matches!(load_outcome.result, ExecutionResult::Success { .. }));
+
+        // These transactions should use the same amount of gas.
+        assert!(
+            revert_outcome.result.gas().tx_gas_used() - load_outcome.result.gas().tx_gas_used()
+                == 0,
+            "revert should discard warmth"
+        );
+    }
+
+    #[test]
+    fn validation_error_discards_warmth() {
+        let key = signing_key(0x66);
+        let sender = eoa_address(&key);
+
+        let loader = address!("0x00000000000000000000000000000000000000c8");
+        // PUSH1 0, SLOAD, STOP
+        let loader_code = bytes!("60005400");
+
+        let mut evm = evm_with_accounts(
+            U256::from(10u64).pow(U256::from(18u64)),
+            sender,
+            &[(loader, loader_code)],
+        );
+
+        let mut invalid_tx = base_tx();
+        invalid_tx.nonce_sequence = 5;
+        invalid_tx.calls = vec![vec![Call { to: loader, data: bytes!("60006000fd") }]];
+        let invalid_signed = eoa_signed(invalid_tx, &key);
+        let invalid_outcome = evm.transact_raw(into_base_tx(&invalid_signed)).unwrap_err();
+        assert!(
+            matches!(invalid_outcome, EVMError::Transaction(BaseTransactionError::Eip8130(_))),
+            "validation error should surface as a validation error, got {invalid_outcome:?}",
+        );
+
+        let mut load_tx = base_tx();
+        load_tx.calls = vec![vec![Call { to: loader, data: Bytes::new() }]];
+        let load_signed = eoa_signed(load_tx, &key);
+        let load_outcome =
+            evm.transact_raw(into_base_tx(&load_signed)).expect("tx should be included");
+        assert!(matches!(load_outcome.result, ExecutionResult::Success { .. }));
+
+        // `load_tx` is a self-paying EOA transaction with one phase calling
+        // `loader` (PUSH1 0, SLOAD, STOP). Its gas splits into the EIP-8130
+        // sender-intrinsic charge (48_484) plus the dispatched call (2_103):
+        //
+        //   sender-intrinsic (EIP-8130 schedule):
+        //     base .............. AA_BASE_COST ...................... 15_000
+        //     payload ........... EIP-2028 DA over the 121-byte tx ...  1_684
+        //     nonce_key ......... first use of channel 0:
+        //                         COLD_SLOAD 2_100 + SSTORE_SET 20_000 22_100
+        //     auto_delegation ... codeless EOA -> DEFAULT_ACCOUNT
+        //                         (200 x 23-byte indicator) ..........  4_600
+        //     sender_auth ....... ECRECOVER 3_000 + cold SLOAD 2_100 .  5_100
+        //                                                              -------
+        //                                                               48_484
+        //   call execution (revm, EIP-2929):
+        //     PUSH1 (3) + SLOAD + STOP (0) .........................    2_103
+        //       ^ the SLOAD is COLD = 2_100. The earlier invalid tx that
+        //         touched (loader, slot 0) failed validation and was discarded,
+        //         so its warmth did NOT leak here. A warm SLOAD would be 100,
+        //         making the total 48_587 instead of 50_587.
+        //                                                              -------
+        //   total ..................................................   50_587
+        assert_eq!(
+            load_outcome.result.gas().tx_gas_used(),
+            50_587,
+            "loader SLOAD must be COLD (2_100); a warm read (100) would total \
+             48_587, meaning the discarded invalid tx leaked warmth",
         );
     }
 
