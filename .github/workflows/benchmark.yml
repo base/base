@@ -18,7 +18,7 @@ permissions:
   contents: read
 
 jobs:
-  # Build base-reth-node, base-builder, and base-load-test together, cached by source hash
+  # Build base-reth-node, base-builder, and base-load-tester together, cached by source hash
   build-binaries:
     name: Build binaries
     runs-on: ubuntu-latest
@@ -66,11 +66,11 @@ jobs:
           cargo build --locked --bin base-builder --profile maxperf
           cp target/maxperf/base-builder ~/bin/base-builder
 
-      - name: Build base-load-test
+      - name: Build base-load-tester
         if: steps.cache-binaries.outputs.cache-hit != 'true'
         run: |
-          cargo build --locked -p base-load-tests --bin base-load-test --profile maxperf
-          cp target/maxperf/base-load-test ~/bin/base-load-test
+          cargo build --locked -p base-load-tester-bin --bin base-load-tester --profile maxperf
+          cp target/maxperf/base-load-tester ~/bin/base-load-test
 
       - name: Verify binaries exist
         run: |
