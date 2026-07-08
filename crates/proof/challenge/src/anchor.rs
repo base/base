@@ -55,17 +55,28 @@ impl<C: Clock> AnchorUpdater<C> {
         Self { tracked: HashMap::new(), clock, retention }
     }
 
-    /// Registers a game for anchor root advancement.
+    /// Registers a bond-discovered game for anchor root advancement.
+    ///
+    /// Existing status-only entries stay status-only; only
+    /// [`Self::track_valid_game`] upgrades them because it is called after
+    /// local validation.
     pub fn track_game(&mut self, game_address: Address) {
         self.track_game_with_options(game_address, false, false);
     }
 
-    /// Registers a valid in-progress game for anchor root advancement.
+    /// Registers a locally validated in-progress game for anchor root advancement.
+    ///
+    /// Upgrades existing status-only entries so they may be resolved once the
+    /// dispute period has elapsed.
     pub fn track_valid_game(&mut self, game_address: Address) {
         self.track_game_with_options(game_address, true, false);
     }
 
-    /// Registers a game for status-only anchor root advancement.
+    /// Registers a recovery candidate for status-only anchor root advancement.
+    ///
+    /// In-progress games stay tracked only through the retry retention window;
+    /// normal scanning must locally validate them before this updater will call
+    /// `resolve()`.
     pub fn track_status_only_game(&mut self, game_address: Address) {
         self.track_game_with_options(game_address, false, true);
     }
@@ -380,6 +391,9 @@ impl<C: Clock> AnchorUpdater<C> {
         }
 
         if preflight.paused {
+            // A registry pause is global/admin controlled, not game-specific.
+            // Keep the game pending so it can advance after unpause instead of
+            // expiring through retry retention.
             debug!(
                 game = %game_address,
                 asr = %asr_address,
