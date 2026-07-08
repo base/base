@@ -144,9 +144,8 @@ mod tests {
     use base_common_consensus::{Predeploys, SystemAddresses};
     use base_common_genesis::RollupConfig;
 
-    use crate::REGOLITH_SYSTEM_TX_GAS;
-
     use super::{BaseTimeUpdateDecodeError, BaseTimeUpdateError, BaseTimeUpdateTx};
+    use crate::REGOLITH_SYSTEM_TX_GAS;
 
     #[test]
     fn base_time_update_roundtrips() {
