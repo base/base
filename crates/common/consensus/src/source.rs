@@ -14,7 +14,7 @@ pub enum DepositSourceDomainIdentifier {
     L1Info = 1,
     /// An upgrade deposit source.
     Upgrade = 2,
-    /// A BaseTime metadata deposit source.
+    /// A `BaseTime` metadata deposit source.
     BaseTime = 3,
 }
 
@@ -27,7 +27,7 @@ pub enum DepositSourceDomain {
     L1Info(L1InfoDepositSource),
     /// An upgrade deposit source.
     Upgrade(UpgradeDepositSource),
-    /// A BaseTime metadata deposit source.
+    /// A `BaseTime` metadata deposit source.
     BaseTime(BaseTimeDepositSource),
 }
 
@@ -102,7 +102,7 @@ impl L1InfoDepositSource {
     }
 }
 
-/// A BaseTime metadata deposit transaction source.
+/// A `BaseTime` metadata deposit transaction source.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
 pub struct BaseTimeDepositSource {
     /// The L1 block hash.

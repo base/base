@@ -1,4 +1,4 @@
-//! BaseTime metadata deposit transaction encoding.
+//! `BaseTime` metadata deposit transaction encoding.
 
 use alloc::vec::Vec;
 
@@ -10,7 +10,7 @@ use base_common_genesis::RollupConfig;
 
 use crate::REGOLITH_SYSTEM_TX_GAS;
 
-/// Versioned calldata for the BaseTime metadata deposit.
+/// Versioned calldata for the `BaseTime` metadata deposit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BaseTimeUpdateTx {
@@ -26,7 +26,7 @@ impl BaseTimeUpdateTx {
     pub const CALLDATA_LEN: usize = 4 + 32;
 
     /// Creates a new [`BaseTimeUpdateTx`].
-    pub fn new(timestamp_millis_part: u16) -> Result<Self, BaseTimeUpdateError> {
+    pub const fn new(timestamp_millis_part: u16) -> Result<Self, BaseTimeUpdateError> {
         if !matches!(timestamp_millis_part, 0 | 200 | 400 | 600 | 800) {
             return Err(BaseTimeUpdateError::InvalidTimestampMillisPart(timestamp_millis_part));
         }
@@ -74,7 +74,7 @@ impl BaseTimeUpdateTx {
     /// Returns a typed deposit transaction for inclusion at `tx[1]`.
     ///
     /// Callers are responsible for activation gating; this helper only validates and encodes the
-    /// BaseTime metadata deposit once the surrounding protocol has decided it is allowed.
+    /// `BaseTime` metadata deposit once the surrounding protocol has decided it is allowed.
     ///
     /// `_l2_parent_block_time` is reserved so later hard-fork activation logic can make the same
     /// same-second boundary decisions here that [`crate::L1BlockInfoTx::try_new_with_deposit_tx`]
@@ -110,7 +110,7 @@ impl BaseTimeUpdateTx {
     }
 }
 
-/// An error building a BaseTime metadata deposit.
+/// An error building a `BaseTime` metadata deposit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum BaseTimeUpdateError {
     /// The millis part is not aligned to 200ms slots.
@@ -118,13 +118,13 @@ pub enum BaseTimeUpdateError {
     InvalidTimestampMillisPart(u16),
 }
 
-/// An error decoding BaseTime metadata calldata.
+/// An error decoding `BaseTime` metadata calldata.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum BaseTimeUpdateDecodeError {
     /// The calldata is shorter than the selector.
     #[error("the provided calldata is too short, missing the 4 selector bytes")]
     MissingSelector,
-    /// The selector does not match the BaseTime setter ABI.
+    /// The selector does not match the `BaseTime` setter ABI.
     #[error("invalid BaseTime transaction selector")]
     InvalidSelector,
     /// The calldata length does not match the ABI shape.
