@@ -943,9 +943,8 @@ impl SnapshotUploader {
             },
         )
         .await
-        .map_err(|error| {
+        .inspect_err(|_| {
             progress.fail_file(manifest_key);
-            error
         })?;
         progress.add_for_file(manifest_key, manifest_len);
         progress.finish_file(manifest_key);
@@ -959,11 +958,11 @@ enum UploadAttemptError {
 }
 
 impl UploadAttemptError {
-    fn retry(error: anyhow::Error) -> Self {
+    const fn retry(error: anyhow::Error) -> Self {
         Self::Retry(error)
     }
 
-    fn fatal(error: anyhow::Error) -> Self {
+    const fn fatal(error: anyhow::Error) -> Self {
         Self::Fatal(error)
     }
 }

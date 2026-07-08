@@ -258,12 +258,14 @@ impl ComponentProgressLogger {
                     rendered_lines = render_interactive_component(
                         &state.component_name,
                         &active_archives.unwrap_or_default(),
-                        bytes_done,
-                        state.total_bytes,
-                        archives_done,
-                        state.total_archives,
-                        state.started.elapsed().as_secs(),
-                        rendered_lines,
+                        InteractiveSummary {
+                            done: bytes_done,
+                            total_bytes: state.total_bytes,
+                            completed: archives_done,
+                            total_items: state.total_archives,
+                            elapsed_secs: state.started.elapsed().as_secs(),
+                            previously_rendered_lines: rendered_lines,
+                        },
                     );
                 } else {
                     info!(
@@ -341,6 +343,15 @@ struct ArchiveSnapshot {
     total_bytes: u64,
     bytes_done: u64,
     age_secs: u64,
+}
+
+struct InteractiveSummary {
+    done: u64,
+    total_bytes: u64,
+    completed: u64,
+    total_items: usize,
+    elapsed_secs: u64,
+    previously_rendered_lines: usize,
 }
 
 /// Cumulative upload progress shared across concurrent artifact uploads. A spawned
@@ -647,7 +658,7 @@ fn render_interactive_uploads(
     let mut stdout = io::stdout().lock();
     let lines_to_move_up = previously_rendered_lines.saturating_sub(1);
     if lines_to_move_up > 0 {
-        let _ = write!(stdout, "\x1b[{}F", lines_to_move_up);
+        let _ = write!(stdout, "\x1b[{lines_to_move_up}F");
     }
 
     let hidden_count = active.len().saturating_sub(INTERACTIVE_UPLOAD_ROWS);
@@ -693,7 +704,7 @@ fn clear_interactive_uploads(rendered_lines: usize) {
     let mut stdout = io::stdout().lock();
     let lines_to_move_up = rendered_lines.saturating_sub(1);
     if lines_to_move_up > 0 {
-        let _ = write!(stdout, "\x1b[{}F", lines_to_move_up);
+        let _ = write!(stdout, "\x1b[{lines_to_move_up}F");
     }
     for line in 0..rendered_lines {
         let _ = write!(stdout, "\x1b[2K");
@@ -708,19 +719,14 @@ fn clear_interactive_uploads(rendered_lines: usize) {
 fn render_interactive_component(
     component_name: &str,
     active: &[ArchiveSnapshot],
-    done: u64,
-    total_bytes: u64,
-    archives_done: u64,
-    total_archives: usize,
-    elapsed_secs: u64,
-    previously_rendered_lines: usize,
+    summary: InteractiveSummary,
 ) -> usize {
     const TOTAL_LINES: usize = INTERACTIVE_UPLOAD_ROWS + 1;
 
     let mut stdout = io::stdout().lock();
-    let lines_to_move_up = previously_rendered_lines.saturating_sub(1);
+    let lines_to_move_up = summary.previously_rendered_lines.saturating_sub(1);
     if lines_to_move_up > 0 {
-        let _ = write!(stdout, "\x1b[{}F", lines_to_move_up);
+        let _ = write!(stdout, "\x1b[{lines_to_move_up}F");
     }
 
     let hidden_count = active.len().saturating_sub(INTERACTIVE_UPLOAD_ROWS);
@@ -742,13 +748,15 @@ fn render_interactive_component(
     }
 
     let status = format!(
-        "component {component_name} | archives {archives_done}/{total_archives} | active {}{} | total {} / {} ({}%) | elapsed {}s",
+        "component {component_name} | archives {}/{} | active {}{} | total {} / {} ({}%) | elapsed {}s",
+        summary.completed,
+        summary.total_items,
         active.len(),
         if hidden_count > 0 { format!(" (+{hidden_count} hidden)") } else { String::new() },
-        human_bytes(done),
-        human_bytes(total_bytes),
-        percent(done, total_bytes),
-        elapsed_secs
+        human_bytes(summary.done),
+        human_bytes(summary.total_bytes),
+        percent(summary.done, summary.total_bytes),
+        summary.elapsed_secs
     );
     let _ = write!(stdout, "\x1b[2K{status}");
     let _ = stdout.flush();
