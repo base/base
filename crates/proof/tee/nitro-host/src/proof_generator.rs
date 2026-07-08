@@ -258,7 +258,9 @@ where
         tokio::select! {
             biased;
             result = &mut heartbeat_failure => {
-                let source = result.ok().flatten().unwrap_or_else(Self::stopped_heartbeat_error);
+                let source = result
+                    .unwrap_or_else(|_| Some(Self::stopped_heartbeat_error()))
+                    .unwrap_or_else(Self::stopped_heartbeat_error);
                 match generate.await {
                     Ok(_) => {
                         info!(
@@ -286,19 +288,17 @@ where
                 })
             },
             result = &mut generate => {
-                if heartbeat_failure.is_finished() {
-                    let source = heartbeat_failure
-                        .await
-                        .ok()
-                        .flatten()
-                        .unwrap_or_else(Self::stopped_heartbeat_error);
+                heartbeat_cancel.cancel();
+                if let Some(source) = heartbeat_failure
+                    .await
+                    .unwrap_or_else(|_| Some(Self::stopped_heartbeat_error()))
+                {
                     return Err(ProofGeneratorError::Heartbeat {
                         session_id: request.session_id.clone(),
                         source,
                     });
                 }
 
-                heartbeat_cancel.cancel();
                 result.map_err(|source| ProofGeneratorError::Generate {
                     session_id: request.session_id.clone(),
                     source,
