@@ -362,8 +362,9 @@ where
             };
 
             let result = tokio::select! {
-                () = cancel.cancelled() => return None,
+                biased;
                 result = submitter.heartbeat(heartbeat) => result,
+                () = cancel.cancelled() => return None,
             };
 
             match result {
