@@ -2149,9 +2149,9 @@ mod tests {
         assert!(matches!(load_outcome.result, ExecutionResult::Success { .. }));
 
         // These transactions should use the same amount of gas.
-        assert!(
-            revert_outcome.result.gas().tx_gas_used() - load_outcome.result.gas().tx_gas_used()
-                == 0,
+        assert_eq!(
+            revert_outcome.result.gas().tx_gas_used(),
+            load_outcome.result.gas().tx_gas_used(),
             "revert should discard warmth"
         );
     }
