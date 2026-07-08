@@ -50,7 +50,8 @@ fn progress_bar(done: u64, total: u64) -> String {
     let filled = if total == 0 {
         UPLOAD_PROGRESS_BAR_WIDTH
     } else {
-        ((done.min(total) as usize) * UPLOAD_PROGRESS_BAR_WIDTH) / (total as usize)
+        (((done.min(total) as u128) * (UPLOAD_PROGRESS_BAR_WIDTH as u128)) / (total as u128))
+            as usize
     };
     format!(
         "{}{}",

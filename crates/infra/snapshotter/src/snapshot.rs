@@ -368,8 +368,23 @@ impl SnapshotGenerator {
         std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)?)?;
         info!(block, components = manifest.components.len(), "manifest written");
 
-        let files = collect_output_files(output_dir)?;
+        let files = Self::collect_output_files(output_dir)?;
         info!(file_count = files.len(), "snapshot generation complete");
+        Ok(files)
+    }
+
+    /// Collects all files in a snapshot output directory (non-recursive).
+    pub fn collect_output_files(dir: &Path) -> Result<Vec<PathBuf>> {
+        let mut files = Vec::new();
+        for entry in
+            std::fs::read_dir(dir).with_context(|| format!("failed to read {}", dir.display()))?
+        {
+            let entry = entry?;
+            if entry.file_type()?.is_file() {
+                files.push(entry.path());
+            }
+        }
+        files.sort_unstable();
         Ok(files)
     }
 
@@ -778,21 +793,6 @@ fn source_files_total_bytes(source_files: &[PathBuf]) -> Result<u64> {
     source_files.iter().try_fold(0u64, |chunk_acc, path| {
         std::fs::metadata(path).map(|m| chunk_acc + m.len()).map_err(Into::into)
     })
-}
-
-/// Collects all files in the output directory (non-recursive).
-pub fn collect_output_files(dir: &Path) -> Result<Vec<PathBuf>> {
-    let mut files = Vec::new();
-    for entry in
-        std::fs::read_dir(dir).with_context(|| format!("failed to read {}", dir.display()))?
-    {
-        let entry = entry?;
-        if entry.file_type()?.is_file() {
-            files.push(entry.path());
-        }
-    }
-    files.sort_unstable();
-    Ok(files)
 }
 
 #[cfg(test)]

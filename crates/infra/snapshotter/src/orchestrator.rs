@@ -12,10 +12,7 @@ use tracing::{error, info, warn};
 use crate::{
     SnapshotterConfig,
     container::ContainerManager,
-    snapshot::{
-        OutputFileChecksum, SnapshotGenerator, SnapshotManifest, SnapshotManifestExt,
-        collect_output_files,
-    },
+    snapshot::{OutputFileChecksum, SnapshotGenerator, SnapshotManifest, SnapshotManifestExt},
     tip::TipChecker,
     upload::SnapshotUploader,
 };
@@ -213,7 +210,7 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
             "uploading existing snapshot run"
         );
 
-        let files = collect_output_files(&run_output_dir)?;
+        let files = SnapshotGenerator::collect_output_files(&run_output_dir)?;
         let remote_manifest = self.uploader.fetch_previous_manifest().await?;
         info!(
             has_remote_manifest = remote_manifest.is_some(),
