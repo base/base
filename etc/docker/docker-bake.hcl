@@ -29,6 +29,11 @@ group "default" {
 group "rust-services" {
   targets = [
     "base",
+    "execution",
+    "consensus",
+    "builder",
+    "basectl",
+    "snapshotter",
     "proposer",
     "websocket-proxy",
     "ingress-rpc",
@@ -66,6 +71,48 @@ target "base" {
   inherits = ["_rust-service-common"]
   target = "base"
   tags = ["base:local"]
+}
+
+target "execution" {
+  inherits = ["_rust-service-common"]
+  target = "execution"
+  tags = ["base-execution:local"]
+  cache-from = [
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-execution-${PLATFORM_PAIR}",
+  ]
+}
+
+target "consensus" {
+  inherits = ["_rust-service-common"]
+  target = "consensus"
+  tags = ["base-consensus:local"]
+  cache-from = [
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-consensus-${PLATFORM_PAIR}",
+  ]
+}
+
+target "builder" {
+  inherits = ["_rust-service-common"]
+  target = "builder"
+  tags = ["base-builder:local"]
+  cache-from = [
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-builder-${PLATFORM_PAIR}",
+  ]
+}
+
+target "basectl" {
+  inherits = ["_rust-service-common"]
+  target = "basectl"
+  tags = ["base-basectl:local"]
+}
+
+target "snapshotter" {
+  inherits = ["_rust-service-common"]
+  target = "snapshotter"
+  tags = ["base-snapshotter:local"]
 }
 
 target "proposer" {

@@ -89,7 +89,7 @@ jobs:
   warm-devnet-cache:
     strategy:
       matrix:
-        target: [base, batcher]
+        target: [base, execution, consensus, builder, batcher]
 
     runs-on: ubuntu-24.04
 

@@ -46,6 +46,46 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     cargo build --profile $PROFILE --package base --bin base && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base /app/base
 
+FROM source AS execution-builder
+ARG PROFILE=release
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target,id=execution-target,sharing=locked \
+    cargo build --profile $PROFILE --package base-reth-node --bin base-reth-node && \
+    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-reth-node /app/base-reth-node
+
+FROM source AS consensus-builder
+ARG PROFILE=release
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target,id=consensus-target,sharing=locked \
+    cargo build --profile $PROFILE --package base-consensus --bin base-consensus && \
+    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-consensus /app/base-consensus
+
+FROM source AS builder-builder
+ARG PROFILE=release
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target,id=builder-target,sharing=locked \
+    cargo build --profile $PROFILE --package base-builder-bin --bin base-builder && \
+    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-builder /app/base-builder
+
+FROM source AS basectl-builder
+ARG PROFILE=release
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target,id=basectl-target,sharing=locked \
+    cargo build --profile $PROFILE --package basectl --bin basectl && \
+    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/basectl /app/basectl
+
+FROM source AS snapshotter-builder
+ARG PROFILE=release
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target,id=snapshotter-target,sharing=locked \
+    cargo build --profile $PROFILE --package base-snapshotter-bin --bin snapshotter && \
+    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/snapshotter /app/snapshotter
+
 FROM source AS proposer-builder
 ARG PROFILE=release
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
@@ -115,6 +155,26 @@ WORKDIR /app
 FROM runtime-base AS base
 COPY --from=base-builder /app/base ./base
 ENTRYPOINT ["./base"]
+
+FROM runtime-base AS execution
+COPY --from=execution-builder /app/base-reth-node ./base-reth-node
+ENTRYPOINT ["./base-reth-node"]
+
+FROM runtime-base AS consensus
+COPY --from=consensus-builder /app/base-consensus ./base-consensus
+ENTRYPOINT ["./base-consensus"]
+
+FROM runtime-base AS builder
+COPY --from=builder-builder /app/base-builder ./base-builder
+ENTRYPOINT ["./base-builder"]
+
+FROM runtime-base AS basectl
+COPY --from=basectl-builder /app/basectl ./basectl
+ENTRYPOINT ["./basectl"]
+
+FROM runtime-base AS snapshotter
+COPY --from=snapshotter-builder /app/snapshotter ./snapshotter
+ENTRYPOINT ["./snapshotter"]
 
 FROM runtime-base AS proposer
 COPY --from=proposer-builder /app/base-proposer ./base-proposer
