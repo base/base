@@ -29,7 +29,7 @@ use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    progress::UploadProgress,
+    progress::{UploadProgress, UploadStage},
     snapshot::{ChunkFilename, SnapshotManifest, SnapshotManifestExt},
 };
 
@@ -368,7 +368,7 @@ impl SnapshotUploader {
         }
         .await;
 
-        progress_logger.abort();
+        progress_logger.stop();
         if let Err(error) = upload_result {
             error!(
                 error = %error,
@@ -569,21 +569,34 @@ impl SnapshotUploader {
         let file_size = tokio::fs::metadata(file_path).await?.len();
 
         if file_size > MULTIPART_THRESHOLD {
-            info!(
+            debug!(
                 key = %key,
                 size = file_size,
                 part_size = MULTIPART_PART_SIZE,
                 parts = file_size.div_ceil(MULTIPART_PART_SIZE),
                 "starting multipart upload"
             );
-            self.upload_multipart(file_path, &key, file_size, progress).await?;
-            progress.file_completed();
+            progress.start_file(key.clone(), file_size, UploadStage::CreatingMultipart);
+            match self.upload_multipart(file_path, &key, file_size, progress).await {
+                Ok(()) => progress.finish_file(&key),
+                Err(error) => {
+                    progress.fail_file(&key);
+                    return Err(error);
+                }
+            }
         } else {
             debug!(key = %key, size = file_size, "uploading file");
-            let _activity = progress.start_item(key.clone());
-            self.upload_single(file_path, &key).await?;
-            progress.add(file_size);
-            progress.file_completed();
+            progress.start_file(key.clone(), file_size, UploadStage::Uploading);
+            match self.upload_single(file_path, &key).await {
+                Ok(()) => {
+                    progress.add_for_file(&key, file_size);
+                    progress.finish_file(&key);
+                }
+                Err(error) => {
+                    progress.fail_file(&key);
+                    return Err(error);
+                }
+            }
         }
 
         Ok(())
@@ -637,7 +650,8 @@ impl SnapshotUploader {
             .upload_id()
             .ok_or_else(|| anyhow::anyhow!("no upload_id returned for {key}"))?
             .to_string();
-        info!(
+        progress.set_stage(key, UploadStage::Uploading);
+        debug!(
             key = %key,
             upload_id,
             size = file_size,
@@ -690,7 +704,7 @@ impl SnapshotUploader {
     ) -> Result<aws_sdk_s3::operation::create_multipart_upload::CreateMultipartUploadOutput> {
         retry_upload(
             || async {
-                let _create_activity = progress.start_item(format!("{key}#create"));
+                progress.set_stage(key, UploadStage::CreatingMultipart);
                 self.client
                     .create_multipart_upload()
                     .bucket(&self.bucket)
@@ -726,7 +740,7 @@ impl SnapshotUploader {
     ) -> Result<()> {
         retry_upload(
             || async {
-                let _complete_activity = progress.start_item(format!("{key}#complete"));
+                progress.set_stage(key, UploadStage::CompletingMultipart);
                 let completed =
                     CompletedMultipartUpload::builder().set_parts(Some(parts.clone())).build();
                 match self
@@ -781,7 +795,7 @@ impl SnapshotUploader {
             },
         )
         .await?;
-        info!(key = %key, upload_id, size = file_size, "multipart upload completed");
+        debug!(key = %key, upload_id, size = file_size, "multipart upload completed");
         Ok(())
     }
 
@@ -808,11 +822,10 @@ impl SnapshotUploader {
             .map(|(offset, part_number)| {
                 let length = std::cmp::min(MULTIPART_PART_SIZE, file_size - offset);
                 async move {
-                    let _activity = progress.start_item(format!("{key}#part-{part_number}"));
                     let part = self
                         .upload_single_part(file_path, key, upload_id, part_number, offset, length)
                         .await?;
-                    progress.add(length);
+                    progress.add_for_file(key, length);
                     Ok::<CompletedPart, anyhow::Error>(part)
                 }
             })
@@ -902,9 +915,9 @@ impl SnapshotUploader {
         progress: &UploadProgress,
     ) -> Result<()> {
         let manifest_len = published_manifest.len() as u64;
+        progress.start_file(manifest_key.to_string(), manifest_len, UploadStage::Uploading);
         retry_upload(
             || async {
-                let _activity = progress.start_item(manifest_key.to_string());
                 self.client
                     .put_object()
                     .bucket(&self.bucket)
@@ -929,9 +942,13 @@ impl SnapshotUploader {
                 info!(key = manifest_key, attempt, "manifest upload succeeded after retrying");
             },
         )
-        .await?;
-        progress.add(manifest_len);
-        progress.file_completed();
+        .await
+        .map_err(|error| {
+            progress.fail_file(manifest_key);
+            error
+        })?;
+        progress.add_for_file(manifest_key, manifest_len);
+        progress.finish_file(manifest_key);
         Ok(())
     }
 }

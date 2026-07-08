@@ -21,7 +21,9 @@ pub use reth_cli_commands::download::manifest::{
 };
 use tracing::info;
 
-use crate::progress::{ComponentProgressLogger, ComponentProgressReporter};
+use crate::progress::{
+    ArchiveProgressReporter, ComponentProgressLogger, ComponentProgressReporter,
+};
 
 /// Default blocks per static file segment.
 const DEFAULT_BLOCKS_PER_FILE: u64 = 500_000;
@@ -267,9 +269,6 @@ impl SnapshotGenerator {
                             &p.source_files,
                             progress_reporter.clone(),
                         )?;
-                        if let Some(progress_reporter) = progress_reporter.as_ref() {
-                            progress_reporter.archive_completed();
-                        }
                         let size = std::fs::metadata(&p.archive_path)?.len();
                         Ok(PackagedChunk { chunk_idx: p.chunk_idx, size, output_files })
                     })
@@ -604,6 +603,19 @@ fn write_chunk_archive(
     source_files: &[PathBuf],
     progress: Option<ComponentProgressReporter>,
 ) -> Result<Vec<OutputFileChecksum>> {
+    let archive_progress = match progress.as_ref() {
+        Some(progress) => Some(
+            progress.start_archive(
+                path.file_name()
+                    .ok_or_else(|| anyhow::anyhow!("invalid archive path: {}", path.display()))?
+                    .to_string_lossy()
+                    .to_string(),
+                source_files_total_bytes(source_files)?,
+            ),
+        ),
+        None => None,
+    };
+
     let planned: Vec<PlannedFile> = source_files
         .iter()
         .map(|p| {
@@ -616,7 +628,21 @@ fn write_chunk_archive(
         })
         .collect::<Result<Vec<_>>>()?;
 
-    write_archive_from_planned_files(path, &planned, progress)
+    let result = write_archive_from_planned_files(path, &planned, archive_progress.clone());
+    match result {
+        Ok(output_files) => {
+            if let Some(archive_progress) = archive_progress.as_ref() {
+                archive_progress.finish();
+            }
+            Ok(output_files)
+        }
+        Err(error) => {
+            if let Some(archive_progress) = archive_progress.as_ref() {
+                archive_progress.fail();
+            }
+            Err(error)
+        }
+    }
 }
 
 fn chunk_output_files_for_source_files(
@@ -640,7 +666,7 @@ fn chunk_output_files_for_source_files(
 fn write_archive_from_planned_files(
     path: &Path,
     files: &[PlannedFile],
-    progress: Option<ComponentProgressReporter>,
+    progress: Option<ArchiveProgressReporter>,
 ) -> Result<Vec<OutputFileChecksum>> {
     let file = std::fs::File::create(path)?;
     let mut encoder = zstd::Encoder::new(file, 0)?;
@@ -665,7 +691,7 @@ fn compute_output_files_for_planned_files(
 fn compute_output_files_and_archive(
     files: &[PlannedFile],
     mut archive: Option<(&mut tar::Builder<zstd::Encoder<'_, std::fs::File>>, &Path)>,
-    progress: Option<ComponentProgressReporter>,
+    progress: Option<ArchiveProgressReporter>,
 ) -> Result<Vec<OutputFileChecksum>> {
     let mut output_files = Vec::with_capacity(files.len());
     for planned in files {
@@ -714,11 +740,11 @@ struct HashingReader<R> {
     inner: R,
     hasher: blake3::Hasher,
     bytes_read: u64,
-    progress: Option<ComponentProgressReporter>,
+    progress: Option<ArchiveProgressReporter>,
 }
 
 impl<R: Read> HashingReader<R> {
-    fn new(inner: R, progress: Option<ComponentProgressReporter>) -> Self {
+    fn new(inner: R, progress: Option<ArchiveProgressReporter>) -> Self {
         Self { inner, hasher: blake3::Hasher::new(), bytes_read: 0, progress }
     }
 
@@ -743,10 +769,14 @@ impl<R: Read> Read for HashingReader<R> {
 
 fn planned_chunks_total_bytes(chunks: &[PlannedChunk]) -> Result<u64> {
     chunks.iter().try_fold(0u64, |acc, chunk| {
-        let chunk_bytes = chunk.source_files.iter().try_fold(0u64, |chunk_acc, path| {
-            std::fs::metadata(path).map(|m| chunk_acc + m.len())
-        })?;
+        let chunk_bytes = source_files_total_bytes(&chunk.source_files)?;
         Ok(acc + chunk_bytes)
+    })
+}
+
+fn source_files_total_bytes(source_files: &[PathBuf]) -> Result<u64> {
+    source_files.iter().try_fold(0u64, |chunk_acc, path| {
+        std::fs::metadata(path).map(|m| chunk_acc + m.len()).map_err(Into::into)
     })
 }
 
