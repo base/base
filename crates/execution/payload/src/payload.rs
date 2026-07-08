@@ -58,8 +58,6 @@ pub struct EthPayloadBuilderAttributes {
 pub struct BasePayloadBuilderAttributes<T> {
     /// Inner ethereum payload builder attributes
     pub payload_attributes: EthPayloadBuilderAttributes,
-    /// The millisecond component of the payload timestamp.
-    pub timestamp_millis_part: Option<u16>,
     /// `NoTxPool` option for the generated payload
     pub no_tx_pool: bool,
     /// Decoded transactions and the original EIP-2718 encoded bytes as received in the payload
@@ -71,18 +69,20 @@ pub struct BasePayloadBuilderAttributes<T> {
     pub eip_1559_params: Option<B64>,
     /// Min base fee for the generated payload (only available post-Jovian)
     pub min_base_fee: Option<u64>,
+    /// The millisecond component of the payload timestamp.
+    pub timestamp_millis_part: Option<u16>,
 }
 
 impl<T> Default for BasePayloadBuilderAttributes<T> {
     fn default() -> Self {
         Self {
             payload_attributes: Default::default(),
-            timestamp_millis_part: Default::default(),
             no_tx_pool: Default::default(),
             gas_limit: Default::default(),
             eip_1559_params: Default::default(),
             transactions: Default::default(),
             min_base_fee: Default::default(),
+            timestamp_millis_part: Default::default(),
         }
     }
 }
@@ -102,13 +102,13 @@ impl<T> BasePayloadBuilderAttributes<T> {
                 parent_beacon_block_root: self.payload_attributes.parent_beacon_block_root,
                 slot_number: self.payload_attributes.slot_number,
             },
-            timestamp_millis_part: self.timestamp_millis_part,
             transactions: (!self.transactions.is_empty())
                 .then(|| self.transactions.iter().map(|tx| tx.encoded_bytes().clone()).collect()),
             no_tx_pool: Some(self.no_tx_pool),
             gas_limit: self.gas_limit,
             eip_1559_params: self.eip_1559_params,
             min_base_fee: self.min_base_fee,
+            timestamp_millis_part: self.timestamp_millis_part,
         }
     }
 
@@ -175,12 +175,12 @@ impl<T: Decodable2718 + Send + Sync + Debug + Unpin + 'static> BasePayloadBuilde
 
         Ok(Self {
             payload_attributes,
-            timestamp_millis_part: attributes.timestamp_millis_part,
             no_tx_pool: attributes.no_tx_pool.unwrap_or_default(),
             transactions,
             gas_limit: attributes.gas_limit,
             eip_1559_params: attributes.eip_1559_params,
             min_base_fee: attributes.min_base_fee,
+            timestamp_millis_part: attributes.timestamp_millis_part,
         })
     }
 }
@@ -626,12 +626,12 @@ mod tests {
                 parent_beacon_block_root: b256!("0x8fe0193b9bf83cb7e5a08538e494fecc23046aab9a497af3704f4afdae3250ff").into(),
                 slot_number: None,
             },
-            timestamp_millis_part: None,
             transactions: Some([bytes!("7ef8f8a0dc19cfa777d90980e4875d0a548a881baaa3f83f14d1bc0d3038bc329350e54194deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e20000f424000000000000000000000000300000000670d6d890000000000000125000000000000000000000000000000000000000000000000000000000000000700000000000000000000000000000000000000000000000000000000000000014bf9181db6e381d4384bbf69c48b0ee0eed23c6ca26143c6d2544f9d39997a590000000000000000000000007f83d659683caf2767fd3c720981d51f5bc365bc")].into()),
             no_tx_pool: None,
             gas_limit: Some(30000000),
             eip_1559_params: None,
             min_base_fee: None,
+            timestamp_millis_part: None,
         };
 
         // Reth's `PayloadId` should match op-geth's `PayloadId`. This fails
@@ -659,12 +659,12 @@ mod tests {
                 parent_beacon_block_root: b256!("0x8fe0193b9bf83cb7e5a08538e494fecc23046aab9a497af3704f4afdae3250ff").into(),
                 slot_number: None,
             },
-            timestamp_millis_part: None,
             transactions: Some([bytes!("7ef8f8a0dc19cfa777d90980e4875d0a548a881baaa3f83f14d1bc0d3038bc329350e54194deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e20000f424000000000000000000000000300000000670d6d890000000000000125000000000000000000000000000000000000000000000000000000000000000700000000000000000000000000000000000000000000000000000000000000014bf9181db6e381d4384bbf69c48b0ee0eed23c6ca26143c6d2544f9d39997a590000000000000000000000007f83d659683caf2767fd3c720981d51f5bc365bc")].into()),
             no_tx_pool: None,
             gas_limit: Some(30000000),
             eip_1559_params: None,
             min_base_fee: Some(100),
+            timestamp_millis_part: None,
         };
 
         // Reth's `PayloadId` should match op-geth's `PayloadId`. This fails

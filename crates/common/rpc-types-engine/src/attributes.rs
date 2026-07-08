@@ -23,16 +23,6 @@ pub struct BasePayloadAttributes {
     /// The payload attributes
     #[cfg_attr(feature = "serde", serde(flatten))]
     pub payload_attributes: PayloadAttributes,
-    /// The millisecond component of the payload timestamp.
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            default,
-            skip_serializing_if = "Option::is_none",
-            with = "alloy_serde::quantity::opt"
-        )
-    )]
-    pub timestamp_millis_part: Option<u16>,
     /// Transactions is a field for rollups: the transactions list is forced into the block
     #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
     pub transactions: Option<Vec<Bytes>>,
@@ -60,6 +50,16 @@ pub struct BasePayloadAttributes {
     /// Prior to Jovian activation, this field should always be [None].
     #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
     pub min_base_fee: Option<u64>,
+    /// The millisecond component of the payload timestamp.
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            with = "alloy_serde::quantity::opt"
+        )
+    )]
+    pub timestamp_millis_part: Option<u16>,
 }
 
 impl BasePayloadAttributes {
@@ -250,12 +250,12 @@ mod test {
                 parent_beacon_block_root: b256!("0x8fe0193b9bf83cb7e5a08538e494fecc23046aab9a497af3704f4afdae3250ff").into(),
                 slot_number: None,
             },
-            timestamp_millis_part: None,
             transactions: Some([bytes!("7ef8f8a0dc19cfa777d90980e4875d0a548a881baaa3f83f14d1bc0d3038bc329350e54194deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e20000f424000000000000000000000000300000000670d6d890000000000000125000000000000000000000000000000000000000000000000000000000000000700000000000000000000000000000000000000000000000000000000000000014bf9181db6e381d4384bbf69c48b0ee0eed23c6ca26143c6d2544f9d39997a590000000000000000000000007f83d659683caf2767fd3c720981d51f5bc365bc")].into()),
             no_tx_pool: None,
             gas_limit: Some(30000000),
             eip_1559_params: None,
             min_base_fee: None,
+            timestamp_millis_part: None,
         };
 
         // Reth's `PayloadId` should match op-geth's `PayloadId`. This fails
@@ -285,12 +285,12 @@ mod test {
                 parent_beacon_block_root: b256!("0x8fe0193b9bf83cb7e5a08538e494fecc23046aab9a497af3704f4afdae3250ff").into(),
                 slot_number: None,
             },
-            timestamp_millis_part: None,
             transactions: Some([bytes!("7ef8f8a0dc19cfa777d90980e4875d0a548a881baaa3f83f14d1bc0d3038bc329350e54194deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e20000f424000000000000000000000000300000000670d6d890000000000000125000000000000000000000000000000000000000000000000000000000000000700000000000000000000000000000000000000000000000000000000000000014bf9181db6e381d4384bbf69c48b0ee0eed23c6ca26143c6d2544f9d39997a590000000000000000000000007f83d659683caf2767fd3c720981d51f5bc365bc")].into()),
             no_tx_pool: None,
             gas_limit: Some(30000000),
             eip_1559_params: None,
             min_base_fee: Some(100),
+            timestamp_millis_part: None,
         };
 
         // Reth's `PayloadId` should match op-geth's `PayloadId`. This fails
@@ -315,12 +315,12 @@ mod test {
                 parent_beacon_block_root: Some(B256::ZERO),
                 slot_number: None,
             },
-            timestamp_millis_part: None,
             transactions: Some(vec![b"hello".to_vec().into()]),
             no_tx_pool: Some(true),
             gas_limit: Some(42),
             eip_1559_params: None,
             min_base_fee: None,
+            timestamp_millis_part: None,
         };
 
         let ser = serde_json::to_string(&attributes).unwrap();
@@ -362,12 +362,12 @@ mod test {
                 parent_beacon_block_root: Some(B256::ZERO),
                 slot_number: None,
             },
-            timestamp_millis_part: None,
             transactions: Some(vec![b"hello".to_vec().into()]),
             no_tx_pool: Some(true),
             gas_limit: Some(42),
             eip_1559_params: Some(b64!("0000dead0000beef")),
             min_base_fee: None,
+            timestamp_millis_part: None,
         };
 
         let ser = serde_json::to_string(&attributes).unwrap();
@@ -405,12 +405,12 @@ mod test {
                 parent_beacon_block_root: Some(B256::ZERO),
                 slot_number: None,
             },
-            timestamp_millis_part: None,
             transactions: Some(vec![b"hello".to_vec().into()]),
             no_tx_pool: Some(true),
             gas_limit: Some(42),
             eip_1559_params: Some(b64!("0000dead0000beef")),
             min_base_fee: None,
+            timestamp_millis_part: None,
         };
 
         let ser = serde_json::to_string(&attributes).unwrap();
@@ -430,12 +430,12 @@ mod test {
                 parent_beacon_block_root: Some(B256::ZERO),
                 slot_number: None,
             },
-            timestamp_millis_part: None,
             transactions: Some(vec![b"hello".to_vec().into()]),
             no_tx_pool: Some(true),
             gas_limit: Some(42),
             eip_1559_params: None,
             min_base_fee: Some(1),
+            timestamp_millis_part: None,
         };
 
         let ser = serde_json::to_string(&attributes).unwrap();
