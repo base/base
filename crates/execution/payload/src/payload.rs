@@ -6,8 +6,7 @@ use alloy_consensus::{Block, BlockHeader};
 use alloy_eips::{
     eip1559::BaseFeeParams, eip2718::Decodable2718, eip4895::Withdrawals, eip7685::Requests,
 };
-use alloy_primitives::{Address, B64, B256, Bytes, U256, keccak256};
-use alloy_rlp::Encodable;
+use alloy_primitives::{Address, B64, B256, Bytes, U256};
 use alloy_rpc_types_engine::{
     BlobsBundleV1, BlobsBundleV2, ExecutionPayloadEnvelopeV2, ExecutionPayloadFieldV2,
     ExecutionPayloadV1, ExecutionPayloadV3, PayloadAttributes as EthPayloadAttributes, PayloadId,
@@ -150,7 +149,7 @@ impl<T: Decodable2718 + Send + Sync + Debug + Unpin + 'static> BasePayloadBuilde
         attributes: BasePayloadAttributes,
         version: u8,
     ) -> Result<Self, alloy_rlp::Error> {
-        let id = payload_id(&parent, &attributes, version);
+        let id = attributes.payload_id(&parent, version);
 
         let transactions = attributes
             .transactions
@@ -241,7 +240,7 @@ where
     T: Clone + Decodable2718 + Send + Sync + Debug + Unpin + 'static,
 {
     fn payload_id(&self, parent_hash: &B256) -> PayloadId {
-        payload_id(parent_hash, &self.as_rpc_payload_attributes(), 3)
+        self.as_rpc_payload_attributes().payload_id(parent_hash, 3)
     }
 
     fn timestamp(&self) -> u64 {
@@ -492,71 +491,6 @@ where
     }
 }
 
-/// Generates the payload id for the configured payload from the [`BasePayloadAttributes`].
-///
-/// Returns an 8-byte identifier by hashing the payload components with sha256 hash.
-///
-/// Note: This must be updated whenever the [`BasePayloadAttributes`] changes for an upgrade.
-/// See also <https://github.com/ethereum-optimism/op-geth/blob/d401af16f2dd94b010a72eaef10e07ac10b31931/miner/payload_building.go#L59-L59>
-pub fn payload_id(
-    parent: &B256,
-    attributes: &BasePayloadAttributes,
-    payload_version: u8,
-) -> PayloadId {
-    use sha2::Digest;
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(parent.as_slice());
-    hasher.update(&attributes.payload_attributes.timestamp.to_be_bytes()[..]);
-    if let Some(timestamp_millis_part) = attributes.timestamp_millis_part {
-        hasher.update(timestamp_millis_part.to_be_bytes());
-    }
-    hasher.update(attributes.payload_attributes.prev_randao.as_slice());
-    hasher.update(attributes.payload_attributes.suggested_fee_recipient.as_slice());
-    if let Some(withdrawals) = &attributes.payload_attributes.withdrawals {
-        let mut buf = Vec::new();
-        withdrawals.encode(&mut buf);
-        hasher.update(buf);
-    }
-
-    if let Some(parent_beacon_block) = attributes.payload_attributes.parent_beacon_block_root {
-        hasher.update(parent_beacon_block);
-    }
-
-    let no_tx_pool = attributes.no_tx_pool.unwrap_or_default();
-    if no_tx_pool || attributes.transactions.as_ref().is_some_and(|txs| !txs.is_empty()) {
-        hasher.update([no_tx_pool as u8]);
-        let txs_len = attributes.transactions.as_ref().map(|txs| txs.len()).unwrap_or_default();
-        hasher.update(&txs_len.to_be_bytes()[..]);
-        if let Some(txs) = &attributes.transactions {
-            for tx in txs {
-                // we have to just hash the bytes here because otherwise we would need to decode
-                // the transactions here which really isn't ideal
-                let tx_hash = keccak256(tx);
-                // maybe we can try just taking the hash and not decoding
-                hasher.update(tx_hash)
-            }
-        }
-    }
-
-    if let Some(gas_limit) = attributes.gas_limit {
-        hasher.update(gas_limit.to_be_bytes());
-    }
-
-    if let Some(eip_1559_params) = attributes.eip_1559_params {
-        hasher.update(eip_1559_params.as_slice());
-    }
-
-    if let Some(min_base_fee) = attributes.min_base_fee {
-        hasher.update(min_base_fee.to_be_bytes());
-    }
-
-    let mut out = hasher.finalize();
-    out[0] = payload_version;
-
-    #[allow(deprecated)] // generic-array 0.14 deprecated
-    PayloadId::new(out.as_slice()[..8].try_into().expect("sufficient length"))
-}
-
 impl<H, T, ChainSpec> BuildNextEnv<BasePayloadBuilderAttributes<T>, H, ChainSpec>
     for BaseNextBlockEnvAttributes
 where
@@ -637,9 +571,8 @@ mod tests {
         // Reth's `PayloadId` should match op-geth's `PayloadId`. This fails
         assert_eq!(
             expected,
-            payload_id(
+            attrs.payload_id(
                 &b256!("0x3533bf30edaf9505d0810bf475cbe4e5f4b9889904b9845e83efdeab4e92eb1e"),
-                &attrs,
                 EngineApiMessageVersion::V3 as u8
             )
         );
@@ -670,9 +603,8 @@ mod tests {
         // Reth's `PayloadId` should match op-geth's `PayloadId`. This fails
         assert_eq!(
             expected,
-            payload_id(
+            attrs.payload_id(
                 &b256!("0x3533bf30edaf9505d0810bf475cbe4e5f4b9889904b9845e83efdeab4e92eb1e"),
-                &attrs,
                 EngineApiMessageVersion::V4 as u8
             )
         );
