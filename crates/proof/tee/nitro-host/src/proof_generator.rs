@@ -350,6 +350,7 @@ where
     ) -> Option<ProverServiceClientError> {
         loop {
             tokio::select! {
+                biased;
                 () = cancel.cancelled() => return None,
                 () = sleep(heartbeat_config.normalized_interval()) => {}
             }
