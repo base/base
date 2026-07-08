@@ -73,9 +73,6 @@ impl BasePayloadAttributes {
         let mut hasher = sha2::Sha256::new();
         hasher.update(parent.as_slice());
         hasher.update(&self.payload_attributes.timestamp.to_be_bytes()[..]);
-        if let Some(timestamp_millis_part) = self.timestamp_millis_part {
-            hasher.update(timestamp_millis_part.to_be_bytes());
-        }
         hasher.update(self.payload_attributes.prev_randao.as_slice());
         hasher.update(self.payload_attributes.suggested_fee_recipient.as_slice());
         if let Some(withdrawals) = &self.payload_attributes.withdrawals {
@@ -114,6 +111,10 @@ impl BasePayloadAttributes {
 
         if let Some(min_base_fee) = self.min_base_fee {
             hasher.update(min_base_fee.to_be_bytes());
+        }
+
+        if let Some(timestamp_millis_part) = self.timestamp_millis_part {
+            hasher.update(timestamp_millis_part.to_be_bytes());
         }
 
         let mut out = hasher.finalize();
