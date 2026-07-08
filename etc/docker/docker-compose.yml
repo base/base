@@ -5,6 +5,13 @@ x-rust-service-build: &rust-service-build
     PROFILE: "${CARGO_PROFILE:-dev}"
     BASE_SUCCINCT_ELF_REQUIRE: "${BASE_SUCCINCT_ELF_REQUIRE:-0}"
 
+x-zk-host-build: &zk-host-build
+  context: ../..
+  dockerfile: etc/docker/Dockerfile.rust-services
+  args:
+    PROFILE: "${ZK_HOST_PROFILE:-release}"
+    BASE_SUCCINCT_ELF_REQUIRE: "${BASE_SUCCINCT_ELF_REQUIRE:-1}"
+
 x-node-healthcheck: &node-healthcheck
   test: ["CMD-SHELL", "curl -sf -H 'Content-Type: application/json' --data '{\"jsonrpc\":\"2.0\",\"method\":\"eth_chainId\",\"params\":[],\"id\":1}' \"http://localhost:$${NODE_HEALTHCHECK_HTTP_PORT}/\" >/dev/null && curl -sf \"http://localhost:$${NODE_HEALTHCHECK_CL_RPC_PORT}/healthz\" >/dev/null"]
   interval: 250ms
@@ -658,7 +665,7 @@ services:
   base-prover-zk-host:
     image: base-prover-zk-host:local
     build:
-      <<: *rust-service-build
+      <<: *zk-host-build
       target: zk-host
     container_name: base-prover-zk-host
     depends_on:
