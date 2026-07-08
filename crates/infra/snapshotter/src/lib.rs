@@ -11,7 +11,10 @@ mod config;
 pub use config::{DEFAULT_TIP_THRESHOLD_SECS, S3ConfigType, SnapshotterConfig};
 
 mod progress;
-pub use progress::{ArchiveProgress, UploadProgress};
+pub use progress::{
+    ArchiveProgress, ComponentProgressLogger, ComponentProgressReporter, ComponentProgressState,
+    UploadProgress,
+};
 
 mod container;
 pub use container::{ContainerManager, DockerContainerManager};

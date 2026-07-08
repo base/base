@@ -25,7 +25,7 @@ async-trait = { workspace = true }
 serde_json = { workspace = true }
 reth-cli-commands = { workspace = true }
 alloy-provider = { workspace = true, features = ["reqwest"] }
-tokio = { workspace = true, features = ["rt", "fs"] }
+tokio = { workspace = true, features = ["rt", "fs", "time"] }
 clap = { workspace = true, features = ["derive", "env"] }
 aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }
 

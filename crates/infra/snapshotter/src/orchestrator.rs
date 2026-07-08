@@ -1,6 +1,7 @@
 //! Orchestrates the full snapshot lifecycle with a restart safety guard.
 
 use std::{
+    collections::HashMap,
     path::PathBuf,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -11,7 +12,7 @@ use tracing::{error, info, warn};
 use crate::{
     SnapshotterConfig,
     container::ContainerManager,
-    snapshot::{SnapshotGenerator, SnapshotManifest},
+    snapshot::{OutputFileChecksum, SnapshotGenerator, SnapshotManifest, SnapshotManifestExt},
     tip::TipChecker,
     upload::SnapshotUploader,
 };
@@ -139,21 +140,37 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
             "fetched previous manifest for blake3 diff"
         );
 
+        let previous_chunk_output_files: HashMap<String, Vec<OutputFileChecksum>> = remote_manifest
+            .as_ref()
+            .map(|manifest| {
+                remote_static_files
+                    .keys()
+                    .filter_map(|filename| {
+                        manifest
+                            .chunk_output_files_for_file(filename)
+                            .map(|output_files| (filename.clone(), output_files))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         let source_datadir = self.config.source_datadir.clone();
         let output_dir_for_gen = run_output_dir.clone();
         let chain_id = self.config.chain_id;
         let block = self.config.block;
         let blocks_per_file = self.config.blocks_per_file;
         let remote_for_gen = remote_static_files;
+        let previous_chunk_output_files_for_gen = previous_chunk_output_files;
 
         let files = tokio::task::spawn_blocking(move || {
-            SnapshotGenerator::generate_manifest(
+            SnapshotGenerator::generate_manifest_with_previous_chunk_output_files(
                 &source_datadir,
                 &output_dir_for_gen,
                 chain_id,
                 block,
                 blocks_per_file,
                 &remote_for_gen,
+                &previous_chunk_output_files_for_gen,
             )
         })
         .await
@@ -180,7 +197,13 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
                 remote_manifest.as_ref(),
             )
             .await
-            .context("snapshot upload failed")?;
+            .with_context(|| {
+                format!(
+                    "snapshot upload failed for run_timestamp={} output_dir={}",
+                    run_timestamp,
+                    run_output_dir.display()
+                )
+            })?;
 
         info!(output_dir = %run_output_dir.display(), "cleaning up local artifacts");
         if let Err(e) = tokio::fs::remove_dir_all(&run_output_dir).await {
