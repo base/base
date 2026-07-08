@@ -15,10 +15,7 @@ use crate::REGOLITH_SYSTEM_TX_GAS;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BaseTimeUpdateTx {
     /// The sub-second millisecond component for the block timestamp.
-    ///
-    /// Invariant: this must be one of `0 | 200 | 400 | 600 | 800`. Prefer [`Self::new`] so the
-    /// value is validated before encoding calldata.
-    pub timestamp_millis_part: u16,
+    timestamp_millis_part: u16,
 }
 
 impl BaseTimeUpdateTx {
@@ -35,6 +32,11 @@ impl BaseTimeUpdateTx {
         }
 
         Ok(Self { timestamp_millis_part })
+    }
+
+    /// Returns the validated sub-second millisecond component for the block timestamp.
+    pub const fn timestamp_millis_part(&self) -> u16 {
+        self.timestamp_millis_part
     }
 
     /// Encodes the transaction calldata using standard ABI encoding.
