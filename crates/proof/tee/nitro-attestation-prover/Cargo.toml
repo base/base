@@ -42,7 +42,7 @@ rstest.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [features]
-metrics = [ "dep:metrics", "dep:base-metrics", "base-metrics/metrics" ]
+metrics = [ "base-metrics/metrics", "dep:base-metrics", "dep:metrics" ]
 prove = [
 	"dep:base-metrics",
 	"dep:boundless-market",

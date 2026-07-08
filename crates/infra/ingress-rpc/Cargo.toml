@@ -49,4 +49,9 @@ base-bundles = { workspace = true, features = ["test-utils"] }
 
 [features]
 default = [ "metrics" ]
-metrics = [ "base-common-evm/metrics", "base-metrics/metrics", "dep:metrics" ]
+metrics = [
+	"base-common-evm/metrics",
+	"base-metrics/metrics",
+	"base-observability-events/metrics",
+	"dep:metrics",
+]
