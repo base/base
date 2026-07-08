@@ -2106,7 +2106,7 @@ mod tests {
     }
 
     #[test]
-    fn revert_discards_warmth() {
+    fn warmth_does_not_leak_across_transactions() {
         let key = signing_key(0x66);
         let sender = eoa_address(&key);
 
@@ -2114,45 +2114,42 @@ mod tests {
         // PUSH1 0, SLOAD, STOP
         let loader_code = bytes!("60005400");
 
-        let reverter = address!("0x00000000000000000000000000000000000000c3");
-        // PUSH1 0, PUSH1 0, REVERT
-        let reverter_code = bytes!("60006000fd");
-
-        let stopper = address!("0x00000000000000000000000000000000000000c9");
-        // PUSH1 0, PUSH1 0, STOP
-        let stopper_code = bytes!("6000600000");
-
         let mut evm = evm_with_accounts(
             U256::from(10u64).pow(U256::from(18u64)),
             sender,
-            &[(loader, loader_code), (reverter, reverter_code), (stopper, stopper_code)],
+            &[(loader, loader_code)],
         );
 
-        let mut revert_tx = base_tx();
-        revert_tx.calls = vec![
-            vec![Call { to: loader, data: Bytes::new() }],
-            vec![Call { to: reverter, data: Bytes::new() }],
-        ];
-        let revert_signed = eoa_signed(revert_tx, &key);
-        let revert_outcome =
-            evm.transact_raw(into_base_tx(&revert_signed)).expect("tx should be included");
-        assert!(matches!(revert_outcome.result, ExecutionResult::Revert { .. }));
+        let mut warm_tx = base_tx();
+        warm_tx.calls = vec![vec![Call { to: loader, data: Bytes::new() }]];
+        let warm_signed = eoa_signed(warm_tx, &key);
+        let warm_outcome =
+            evm.transact_raw(into_base_tx(&warm_signed)).expect("tx should be included");
+        assert!(matches!(warm_outcome.result, ExecutionResult::Success { .. }));
+        revm::DatabaseCommit::commit(evm.ctx_mut().journal_mut().db_mut(), warm_outcome.state);
 
+        // Tx 1 already bumped the protocol nonce (0 -> 1) and delegated the sender
+        // (both committed above), so tx 2 is a second-use transaction:
+        // base AA_BASE_COST 15_000
+        // payload EIP-2028 DA over the tx 1_684
+        // nonce_key existing channel 0: COLD_SLOAD 2_100 + SSTORE_RESET 2_900 5_000
+        // auto_delegation sender already delegated 0
+        // sender_auth ECRECOVER 3_000 + cold SLOAD 2_100 5_100
+        // call PUSH1 (3) + COLD SLOAD (2_100) + STOP 2_103
+        // total 28_887
         let mut load_tx = base_tx();
-        load_tx.calls = vec![
-            vec![Call { to: loader, data: Bytes::new() }],
-            vec![Call { to: stopper, data: Bytes::new() }],
-        ];
+        load_tx.nonce_sequence = 1;
+        load_tx.calls = vec![vec![Call { to: loader, data: Bytes::new() }]];
         let load_signed = eoa_signed(load_tx, &key);
         let load_outcome =
             evm.transact_raw(into_base_tx(&load_signed)).expect("tx should be included");
         assert!(matches!(load_outcome.result, ExecutionResult::Success { .. }));
 
-        // These transactions should use the same amount of gas.
         assert_eq!(
-            revert_outcome.result.gas().tx_gas_used(),
             load_outcome.result.gas().tx_gas_used(),
-            "revert should discard warmth"
+            28_887,
+            "loader SLOAD must be COLD (2_100); a warm read (100) would be 2_000 \
+             less, meaning tx 1's warmth leaked across the transaction boundary",
         );
     }
 
@@ -2191,25 +2188,13 @@ mod tests {
         // `load_tx` is a self-paying EOA transaction with one phase calling
         // `loader` (PUSH1 0, SLOAD, STOP). Its gas splits into the EIP-8130
         // sender-intrinsic charge (48_484) plus the dispatched call (2_103):
-        //
-        //   sender-intrinsic (EIP-8130 schedule):
-        //     base .............. AA_BASE_COST ...................... 15_000
-        //     payload ........... EIP-2028 DA over the 121-byte tx ...  1_684
-        //     nonce_key ......... first use of channel 0:
-        //                         COLD_SLOAD 2_100 + SSTORE_SET 20_000 22_100
-        //     auto_delegation ... codeless EOA -> DEFAULT_ACCOUNT
-        //                         (200 x 23-byte indicator) ..........  4_600
-        //     sender_auth ....... ECRECOVER 3_000 + cold SLOAD 2_100 .  5_100
-        //                                                              -------
-        //                                                               48_484
-        //   call execution (revm, EIP-2929):
-        //     PUSH1 (3) + SLOAD + STOP (0) .........................    2_103
-        //       ^ the SLOAD is COLD = 2_100. The earlier invalid tx that
-        //         touched (loader, slot 0) failed validation and was discarded,
-        //         so its warmth did NOT leak here. A warm SLOAD would be 100,
-        //         making the total 48_587 instead of 50_587.
-        //                                                              -------
-        //   total ..................................................   50_587
+        // base AA_BASE_COST 15_000
+        // payload EIP-2028 DA over the 121-byte tx 1_684
+        // nonce_key first use of channel 0: COLD_SLOAD 2_100 + SSTORE_SET 20_000 22_100
+        // auto_delegation codeless EOA -> DEFAULT_ACCOUNT (200 x 23-byte indicator) 4_600
+        // sender_auth ECRECOVER 3_000 + cold SLOAD 2_100 5_100
+        // call PUSH1 (3) + SLOAD + STOP (0) 2_103
+        // total 50_587
         assert_eq!(
             load_outcome.result.gas().tx_gas_used(),
             50_587,
