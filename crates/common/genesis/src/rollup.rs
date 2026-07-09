@@ -875,8 +875,7 @@ mod tests {
 
         // Osaka↔Azul: azul drives Osaka activation; standalone (not cascaded from Jovian).
         let mut cfg = RollupConfig::default();
-        cfg.upgrades.base =
-            BaseUpgradeConfig { azul: Some(700), beryl: None, cobalt: None };
+        cfg.upgrades.base = BaseUpgradeConfig { azul: Some(700), beryl: None, cobalt: None };
         assert_eq!(
             cfg.ethereum_fork_activation(EthereumHardfork::Osaka),
             ForkCondition::Timestamp(700)
@@ -884,8 +883,7 @@ mod tests {
 
         // Beryl follows Azul; Osaka still activates at Azul when both are configured.
         let mut cfg = RollupConfig::default();
-        cfg.upgrades.base =
-            BaseUpgradeConfig { azul: Some(700), beryl: Some(800), cobalt: None };
+        cfg.upgrades.base = BaseUpgradeConfig { azul: Some(700), beryl: Some(800), cobalt: None };
         assert_eq!(
             cfg.ethereum_fork_activation(EthereumHardfork::Osaka),
             ForkCondition::Timestamp(700)
@@ -895,8 +893,7 @@ mod tests {
 
         // Beryl requires Azul, and does not independently activate Osaka.
         let mut cfg = RollupConfig::default();
-        cfg.upgrades.base =
-            BaseUpgradeConfig { azul: None, beryl: Some(800), cobalt: None };
+        cfg.upgrades.base = BaseUpgradeConfig { azul: None, beryl: Some(800), cobalt: None };
         assert_eq!(cfg.ethereum_fork_activation(EthereumHardfork::Osaka), ForkCondition::Never);
 
         // Jovian set but Azul unset → Osaka is Never.
@@ -955,7 +952,10 @@ mod tests {
         assert_eq!(materialized.upgrades.canyon_time, None);
         assert_eq!(materialized.upgrades.base.azul, Some(42));
         assert_eq!(materialized.upgrades.base.cobalt, Some(84));
-        assert_eq!(materialized.contract_upgrade_activation(BaseUpgrade::Zombie), UpgradeActivation::Never);
+        assert_eq!(
+            materialized.contract_upgrade_activation(BaseUpgrade::Zombie),
+            UpgradeActivation::Never
+        );
 
         crate::RuntimeUpgradeRegistry::clear_chain(chain_id);
     }
