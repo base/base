@@ -246,10 +246,10 @@ impl GcpNodePoolDiscovery {
         let mut instance_urls = Vec::new();
 
         loop {
-            let body = match &page_token {
-                Some(token) => serde_json::json!({ "pageToken": token }),
-                None => serde_json::json!({}),
-            };
+            let body = page_token.as_ref().map_or_else(
+                || serde_json::json!({}),
+                |token| serde_json::json!({ "pageToken": token }),
+            );
             let response = self
                 .http_client
                 .post(&url)
