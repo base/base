@@ -7,7 +7,7 @@ use alloy_eips::eip7702::SignedAuthorization;
 #[cfg(feature = "reth")]
 use alloy_network::TransactionBuilder;
 use alloy_network_primitives::TransactionBuilder7702;
-use alloy_primitives::{Address, Bytes, ChainId, Signature, TxKind, U256};
+use alloy_primitives::{Address, B256, Bytes, ChainId, Signature, TxKind, U256};
 use alloy_rpc_types_eth::{AccessList, TransactionInput, TransactionRequest};
 use base_common_consensus::{
     AccountChange, BaseTxEnvelope, BaseTypedTransaction, Call, Eip8130Constants, Eip8130Contracts,
@@ -167,6 +167,15 @@ pub struct Eip8130RequestFields {
     /// unrecognized selector is rejected as `INVALID_PARAMS` rather than priced.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payer_auth: Option<Bytes>,
+    /// Optional acting-actor hint for simulation. Estimation never recovers a
+    /// signature, so without this hint the simulate path publishes the account's
+    /// self-actor to the `TxContext` precompile — which makes policy-gated
+    /// session-key calls look up the wrong policy and revert. When set, the
+    /// simulate path publishes this actor id (and resolves its policy) after
+    /// applying `account_changes`, so an actor authorized in the same estimate
+    /// request is visible. Ignored on the verifying execution path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_actor_id: Option<B256>,
 }
 
 impl Eip8130RequestFields {
@@ -182,6 +191,7 @@ impl Eip8130RequestFields {
             || self.sender_auth.is_some()
             || self.payer.is_some()
             || self.payer_auth.is_some()
+            || self.sender_actor_id.is_some()
     }
 }
 

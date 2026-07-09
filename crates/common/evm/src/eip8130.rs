@@ -362,15 +362,16 @@ impl Eip8130Executor {
                 Journal: core::fmt::Debug,
             >,
     {
-        let signed = evm
+        // Clone the envelope + optional acting-actor hint before taking a mutable
+        // borrow of `ctx` (same pattern as `execute`).
+        let (signed, acting_actor_hint) = evm
             .ctx()
             .tx()
             .eip8130_parts()
+            .map(|parts| (parts.signed.clone(), parts.simulation_sender_actor_id))
             .ok_or_else(|| {
                 BaseTransactionError::eip8130("transaction is not an EIP-8130 transaction")
-            })?
-            .signed
-            .clone();
+            })?;
 
         let ctx = evm.ctx_mut();
         let from = ctx.tx().base.caller;
@@ -384,13 +385,15 @@ impl Eip8130Executor {
             })?;
 
         let checkpoint = ctx.journal_mut().checkpoint();
-        let outcome = match Self::simulate_resolve(ctx, &signed, &encoded, from, base_fee) {
-            Ok(outcome) => outcome,
-            Err(err) => {
-                ctx.journal_mut().checkpoint_revert(checkpoint);
-                return Err(err.into());
-            }
-        };
+        let outcome =
+            match Self::simulate_resolve(ctx, &signed, &encoded, from, base_fee, acting_actor_hint)
+            {
+                Ok(outcome) => outcome,
+                Err(err) => {
+                    ctx.journal_mut().checkpoint_revert(checkpoint);
+                    return Err(err.into());
+                }
+            };
 
         // Dispatch `calls` from the resolved sender so `tx.origin` reads correctly
         // (mirrors `prepay`'s caller overwrite on the execution path).
@@ -610,20 +613,28 @@ impl Eip8130Executor {
         Ok(highest)
     }
 
-    /// Resolves the [`Eip8130Outcome`] for [`Self::simulate`]: derives the
-    /// sender's owner self-actor from `sender` and reads its policy from
-    /// committed account state (no signature recovery), then applies account
-    /// changes, auto-delegates, and prices intrinsic gas — without validating or
-    /// advancing the nonce or checking the payer balance. The authentication gas
-    /// for the sender's (and any payer's) declared authenticator is priced from
-    /// the synthesized auth-blob shape via [`IntrinsicGas`]. Storage writes land
-    /// on the journal; the caller's checkpoint reverts them.
+    /// Resolves the [`Eip8130Outcome`] for [`Self::simulate`]: applies account
+    /// changes, then resolves the acting actor (an optional RPC hint, else the
+    /// account's self-actor) and its policy from the post-apply journal — no
+    /// signature recovery — then auto-delegates and prices intrinsic gas without
+    /// validating or advancing the nonce or checking the payer balance. The
+    /// authentication gas for the sender's (and any payer's) declared
+    /// authenticator is priced from the synthesized auth-blob shape via
+    /// [`IntrinsicGas`]. Storage writes land on the journal; the caller's
+    /// checkpoint reverts them.
+    ///
+    /// `acting_actor_hint` is the optional `senderActorId` from the estimate
+    /// request. Without it, simulation publishes the self-actor (backward
+    /// compatible). With it, policy-gated session-key estimates can name the
+    /// intended actor — including one authorized in the same request's
+    /// `accountChanges`, which is why policy is resolved *after* apply.
     fn simulate_resolve<DB>(
         ctx: &mut BaseContext<DB>,
         signed: &base_common_consensus::Eip8130Signed,
         encoded: &[u8],
         sender: Address,
         base_fee: u128,
+        acting_actor_hint: Option<B256>,
     ) -> Result<Eip8130Outcome, BaseTransactionError>
     where
         DB: AlloyDatabase,
@@ -650,23 +661,9 @@ impl Eip8130Executor {
         let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
 
         StorageCtx::enter(&mut provider, |sctx| {
-            let acc = AccountConfigurationStorage::new(sctx);
             let nonce_mgr = NonceManagerStorage::new(sctx);
 
-            // 1. Resolve the default-EOA self actor from committed account state.
-            //    No signature recovery: revocation/expiry are not enforced here
-            //    because estimation prices the happy-path gas.
-            let sender_actor_id = AccountConfigurationStorage::self_actor_id(sender);
-            let state = acc.get_account_state(sender).map_err(BaseTransactionError::eip8130)?;
-            let policy_type = state.default_eoa_policy_type;
-            let policy_target = if policy_type == 0 {
-                Address::ZERO
-            } else {
-                acc.get_policy_manager(sender, sender_actor_id)
-                    .map_err(BaseTransactionError::eip8130)?
-            };
-
-            // 2. Nonce-channel first-use flag (drives intrinsic gas). Estimation
+            // 1. Nonce-channel first-use flag (drives intrinsic gas). Estimation
             //    neither validates nor advances the nonce.
             let protocol_nonce = sctx
                 .with_account_info(sender, |info| Ok(info.nonce))
@@ -679,10 +676,23 @@ impl Eip8130Executor {
                 nonce_mgr.get_nonce(sender, nonce_key).map_err(BaseTransactionError::eip8130)? == 0
             };
 
-            // 3. Apply account changes and install deferred code effects so the
+            // 2. Apply account changes and install deferred code effects so the
             //    calls run against post-change code and create/delegation gas is
-            //    priced.
+            //    priced. Must precede actor/policy resolution so an actor
+            //    authorized in this same estimate request is visible.
             Self::apply_account_changes(signed, sctx, sender)?;
+
+            // 3. Resolve the acting actor. No signature recovery: the optional
+            //    RPC hint names the intended actor (e.g. a session key); absent
+            //    that, fall back to the account's self-actor. Policy is read from
+            //    the post-apply journal so same-tx authorizations are visible.
+            //    Revocation/expiry are not enforced here because estimation
+            //    prices the happy-path gas.
+            let acc = AccountConfigurationStorage::new(sctx);
+            let sender_actor_id = acting_actor_hint
+                .unwrap_or_else(|| AccountConfigurationStorage::self_actor_id(sender));
+            let (policy_type, policy_target, _) =
+                acc.get_policy(sender, sender_actor_id).map_err(BaseTransactionError::eip8130)?;
 
             // 4. Auto-delegate a code-less sender to the default account. Unlike
             //    the verifying path this is unconditional on a code-less sender: a

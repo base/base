@@ -184,9 +184,11 @@ impl BaseTransactionRequest {
         let envelope = BaseTxEnvelope::Eip8130(Eip8130Signed::new(tx, sender_auth, payer_auth));
         let mut sim_tx = BaseRevm::from_recovered_tx(&envelope, account);
         // Route to the unverified `Eip8130Executor::simulate` path rather than
-        // the verifying `execute` path.
+        // the verifying `execute` path. Thread the optional acting-actor hint so
+        // policy-gated session-key estimates publish the intended actor id.
         if let Some(parts) = sim_tx.eip8130.as_mut() {
             parts.mode = Eip8130ExecutionMode::Simulate;
+            parts.simulation_sender_actor_id = aa.sender_actor_id;
         }
         Some(sim_tx)
     }
@@ -693,5 +695,38 @@ mod tests {
             "the default payer authorization is prefixed with the k1 authenticator",
         );
         assert_eq!(auth.len(), 20 + Eip8130AuthScheme::Secp256k1.default_data_len());
+    }
+
+    #[test]
+    fn sender_actor_id_is_threaded_to_parts() {
+        // The optional acting-actor hint is RPC-only metadata: it must land on
+        // the simulation parts so `simulate_resolve` can publish it to TxContext
+        // (and resolve that actor's policy) instead of always using the self-actor.
+        let actor = alloy_primitives::b256!(
+            "0x30df39d5edcf9ed82b6d77d27bff1192ac265918000000000000000000000000"
+        );
+        let tx = sim_tx(json!({
+            "sender": SENDER,
+            "calls": [],
+            "senderActorId": actor,
+        }));
+        let parts = tx.eip8130.as_ref().expect("eip8130 parts");
+        assert_eq!(parts.mode, Eip8130ExecutionMode::Simulate);
+        assert_eq!(
+            parts.simulation_sender_actor_id,
+            Some(actor),
+            "senderActorId must be threaded onto the simulation parts",
+        );
+    }
+
+    #[test]
+    fn absent_sender_actor_id_leaves_parts_hint_unset() {
+        let tx = sim_tx(json!({ "sender": SENDER, "calls": [] }));
+        let parts = tx.eip8130.as_ref().expect("eip8130 parts");
+        assert_eq!(parts.mode, Eip8130ExecutionMode::Simulate);
+        assert_eq!(
+            parts.simulation_sender_actor_id, None,
+            "without a hint the simulate path keeps the self-actor default",
+        );
     }
 }
