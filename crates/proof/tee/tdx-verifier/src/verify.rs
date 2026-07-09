@@ -633,7 +633,9 @@ mod tests {
 
     #[test]
     fn failure_cases_return_expected_error() {
-        let cases: &[(&str, TdxVerifierError, fn(&mut TdxVerifierInput))] = &[
+        type FailureCase = (&'static str, TdxVerifierError, fn(&mut TdxVerifierInput));
+
+        let cases: &[FailureCase] = &[
             (
                 "bad quote signature",
                 TdxVerifierError::QuoteSignatureInvalid(String::new()),
