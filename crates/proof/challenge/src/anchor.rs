@@ -99,6 +99,7 @@ impl AnchorUpdater {
                     status = %status,
                     "next game cannot update anchor"
                 );
+                self.cached_next_game = None;
                 return;
             }
             Err(e) => {
@@ -467,11 +468,14 @@ mod tests {
             mock_state(GameStatus::ChallengerWins, Address::ZERO, 100),
         )]));
         let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
-        let mut updater = updater(factory, anchor_registry, Arc::new(l2));
+        let mut updater = updater(Arc::clone(&factory), anchor_registry, Arc::new(l2));
 
+        updater.poll(&verifier, &submitter).await;
+        factory.uuid_games.lock().unwrap().clear();
         updater.poll(&verifier, &submitter).await;
 
         assert!(submitter.recorded_calls().is_empty());
+        assert_eq!(verifier.status_read_count(challenger_win), 1);
     }
 
     #[tokio::test]
