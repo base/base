@@ -358,72 +358,6 @@ impl BoundlessProver {
         self.fetch_and_encode_receipt(client, request_id, false).await
     }
 
-    /// Builds the Boundless [`Client`] and [`RequestParams`] from the
-    /// attestation bytes. Shared between `generate_proof` and
-    /// `generate_proof_for_signer` to avoid duplicating the setup logic.
-    async fn build_client_and_params(
-        &self,
-        attestation_bytes: &[u8],
-    ) -> Result<(BoundlessClient, RequestParams)> {
-        let input = VerifierInput {
-            trustedCertsPrefixLen: self.trusted_certs_prefix_len,
-            attestationReport: Bytes::copy_from_slice(attestation_bytes),
-        };
-        let input_bytes = input.encode();
-        let image_id = Digest::from(self.image_id);
-
-        info!(
-            image_id = ?self.image_id,
-            input_len = input_bytes.len(),
-            attestation_len = attestation_bytes.len(),
-            rpc_url = %self.rpc_url.origin().unicode_serialization(),
-            boundless_wallet = %self.signer.address(),
-            program_url = %self.verifier_program_url.origin().unicode_serialization(),
-            timeout = ?self.timeout,
-            poll_interval = ?self.poll_interval,
-            trusted_certs_prefix_len = self.trusted_certs_prefix_len,
-            "building Boundless client and request params"
-        );
-
-        let client = Client::builder()
-            .with_rpc_url(self.rpc_url.clone())
-            .with_private_key(self.signer.clone())
-            .config_storage_layer(|c| c.inline_input_max_bytes(8192))
-            .build()
-            .await
-            .map_err(|e| {
-                warn!(
-                    error = %e,
-                    error_debug = ?e,
-                    rpc_url = %self.rpc_url.origin().unicode_serialization(),
-                    boundless_wallet = %self.signer.address(),
-                    "failed to build Boundless client"
-                );
-                ProverError::Boundless(format!("failed to build client: {e}"))
-            })?;
-
-        debug!("Boundless client built successfully");
-
-        let params = RequestParams::new()
-            .with_program_url(self.verifier_program_url.clone())
-            .map_err(|e| {
-                warn!(
-                    error = %e,
-                    error_debug = ?e,
-                    program_url = %self.verifier_program_url.origin().unicode_serialization(),
-                    "invalid Boundless program URL"
-                );
-                ProverError::Boundless(format!("invalid program URL: {e}"))
-            })?
-            .with_stdin(input_bytes)
-            .with_image_id(image_id)
-            .with_requirements(
-                RequirementParams::builder().predicate(Predicate::prefix_match(image_id, [])),
-            );
-
-        Ok((client, params))
-    }
-
     /// Computes the effective expiry timestamp from the current time and
     /// the prover's timeout, taking the minimum with the onchain expiry
     /// if provided.
@@ -468,48 +402,6 @@ impl BoundlessProver {
 
         true
     }
-
-    /// Acquires the submit lock, submits a proof request onchain, then
-    /// waits for fulfillment and fetches the set inclusion receipt.
-    ///
-    /// Shared between [`generate_proof`](Self::generate_proof) and the fresh-submission tail of
-    /// [`generate_proof_for_signer`](TeeAttestationProofProvider::generate_proof_for_signer).
-    async fn submit_and_wait(
-        &self,
-        client: &BoundlessClient,
-        params: RequestParams,
-    ) -> Result<TeeAttestationProof> {
-        let (request_id, expires_at) = {
-            let _guard = self.submit_lock.lock().await;
-            client.submit_onchain(params).await.map_err(|e| {
-                warn!(
-                    error = %e,
-                    error_debug = ?e,
-                    image_id = ?self.image_id,
-                    boundless_wallet = %self.signer.address(),
-                    "failed to submit Boundless proof request onchain"
-                );
-                ProverError::Boundless(format!("failed to submit request: {e}"))
-            })?
-        };
-
-        info!(
-            request_id = %request_id,
-            expires_at,
-            "proof request submitted, waiting for fulfillment"
-        );
-        BoundlessMetrics::boundless_requests_submitted_total().increment(1);
-
-        let effective_expiry = self.effective_expiry(Some(expires_at));
-        debug!(
-            effective_expiry,
-            request_id = %request_id,
-            poll_interval = ?self.poll_interval,
-            "waiting for fulfillment with computed expiry"
-        );
-
-        self.wait_and_fetch(client, request_id, effective_expiry).await
-    }
 }
 
 #[async_trait::async_trait]
@@ -542,14 +434,69 @@ impl TeeAttestationProofProvider for BoundlessProver {
         signer_address: Address,
     ) -> base_proof_tee_attestation::Result<TeeAttestationProof> {
         let started_at = Instant::now();
-        let (client, params) =
-            self.build_client_and_params(attestation_bytes).await.map_err(|e| {
+        let input = VerifierInput {
+            trustedCertsPrefixLen: self.trusted_certs_prefix_len,
+            attestationReport: Bytes::copy_from_slice(attestation_bytes),
+        };
+        let input_bytes = input.encode();
+        let image_id = Digest::from(self.image_id);
+
+        info!(
+            image_id = ?self.image_id,
+            input_len = input_bytes.len(),
+            attestation_len = attestation_bytes.len(),
+            rpc_url = %self.rpc_url.origin().unicode_serialization(),
+            boundless_wallet = %self.signer.address(),
+            program_url = %self.verifier_program_url.origin().unicode_serialization(),
+            timeout = ?self.timeout,
+            poll_interval = ?self.poll_interval,
+            trusted_certs_prefix_len = self.trusted_certs_prefix_len,
+            "building Boundless client and request params"
+        );
+
+        let client = Client::builder()
+            .with_rpc_url(self.rpc_url.clone())
+            .with_private_key(self.signer.clone())
+            .config_storage_layer(|c| c.inline_input_max_bytes(8192))
+            .build()
+            .await
+            .map_err(|e| {
                 BoundlessMetrics::record_proof_duration(
                     started_at,
                     BoundlessMetrics::PROOF_OUTCOME_FAILED,
                 );
-                e
+                warn!(
+                    error = %e,
+                    error_debug = ?e,
+                    rpc_url = %self.rpc_url.origin().unicode_serialization(),
+                    boundless_wallet = %self.signer.address(),
+                    "failed to build Boundless client"
+                );
+                ProverError::Boundless(format!("failed to build client: {e}"))
             })?;
+
+        debug!("Boundless client built successfully");
+
+        let params = RequestParams::new()
+            .with_program_url(self.verifier_program_url.clone())
+            .map_err(|e| {
+                BoundlessMetrics::record_proof_duration(
+                    started_at,
+                    BoundlessMetrics::PROOF_OUTCOME_FAILED,
+                );
+                warn!(
+                    error = %e,
+                    error_debug = ?e,
+                    program_url = %self.verifier_program_url.origin().unicode_serialization(),
+                    "invalid Boundless program URL"
+                );
+                ProverError::Boundless(format!("invalid program URL: {e}"))
+            })?
+            .with_stdin(input_bytes)
+            .with_image_id(image_id)
+            .with_requirements(
+                RequirementParams::builder().predicate(Predicate::prefix_match(image_id, [])),
+            );
 
         let recovery_is_blocked = self
             .recovery_blocked
@@ -907,7 +854,39 @@ impl TeeAttestationProofProvider for BoundlessProver {
             }
         };
 
-        let result = self.submit_and_wait(&client, params).await;
+        let result = async {
+            let (request_id, expires_at) = {
+                let _guard = self.submit_lock.lock().await;
+                client.submit_onchain(params).await.map_err(|e| {
+                    warn!(
+                        error = %e,
+                        error_debug = ?e,
+                        image_id = ?self.image_id,
+                        boundless_wallet = %self.signer.address(),
+                        "failed to submit Boundless proof request onchain"
+                    );
+                    ProverError::Boundless(format!("failed to submit request: {e}"))
+                })?
+            };
+
+            info!(
+                request_id = %request_id,
+                expires_at,
+                "proof request submitted, waiting for fulfillment"
+            );
+            BoundlessMetrics::boundless_requests_submitted_total().increment(1);
+
+            let effective_expiry = self.effective_expiry(Some(expires_at));
+            debug!(
+                effective_expiry,
+                request_id = %request_id,
+                poll_interval = ?self.poll_interval,
+                "waiting for fulfillment with computed expiry"
+            );
+
+            self.wait_and_fetch(&client, request_id, effective_expiry).await
+        }
+        .await;
         BoundlessMetrics::record_proof_duration(
             started_at,
             if result.is_ok() {
