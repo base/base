@@ -625,9 +625,7 @@ impl Eip8130Executor {
     ///
     /// `acting_actor_hint` is the optional `senderActorId` from the estimate
     /// request. Without it, simulation publishes the self-actor (backward
-    /// compatible). With it, policy-gated session-key estimates can name the
-    /// intended actor — including one authorized in the same request's
-    /// `accountChanges`, which is why policy is resolved *after* apply.
+    /// compatible).
     fn simulate_resolve<DB>(
         ctx: &mut BaseContext<DB>,
         signed: &base_common_consensus::Eip8130Signed,
@@ -686,8 +684,8 @@ impl Eip8130Executor {
             //    RPC hint names the intended actor (e.g. a session key); absent
             //    that, fall back to the account's self-actor. Policy is read from
             //    the post-apply journal so same-tx authorizations are visible.
-            //    Revocation/expiry are not enforced here because estimation
-            //    prices the happy-path gas.
+            //    Expiry is not enforced (estimation prices the happy path);
+            //    `get_policy` still treats a revoked default-EOA self as ungated.
             let acc = AccountConfigurationStorage::new(sctx);
             let sender_actor_id = acting_actor_hint
                 .unwrap_or_else(|| AccountConfigurationStorage::self_actor_id(sender));
@@ -1451,9 +1449,10 @@ impl Eip8130Executor {
 mod tests {
     use alloy_evm::{Evm, FromTxWithEncoded, precompiles::PrecompilesMap};
     use alloy_primitives::{Address, B256, Bytes, U256, address, bytes, keccak256};
+    use alloy_sol_types::{SolValue, sol};
     use base_common_consensus::{
-        AccountChange, BaseTxEnvelope, Call, CreateEntry, Eip8130Signed, InitialActor, Predeploys,
-        TxEip8130,
+        AccountChange, ActorChange, ActorChangeType, BaseTxEnvelope, Call, ConfigChange,
+        CreateEntry, Eip8130Signed, InitialActor, Predeploys, TxEip8130,
     };
     use base_execution_eip8130::AccountChangeApplier;
     use k256::ecdsa::SigningKey;
@@ -1468,7 +1467,10 @@ mod tests {
     };
 
     use super::*;
-    use crate::{BaseEvm, BaseSpecId, BaseTransaction, BaseUpgrade, Builder, DefaultBase};
+    use crate::{
+        BaseEvm, BaseSpecId, BaseTransaction, BaseUpgrade, Builder, DefaultBase,
+        Eip8130ExecutionMode,
+    };
 
     const CHAIN_ID: u64 = 8453;
     const NOW: u64 = 1_000;
@@ -1906,6 +1908,118 @@ mod tests {
             .expect("configured-account estimation should succeed");
         assert!(result.is_success(), "estimation should report success");
         assert!(result.tx_gas_used() > 0, "estimated gas should be positive");
+    }
+
+    sol! {
+        struct ActorConfigAbi {
+            address authenticator;
+            uint8 scope;
+            uint48 expiry;
+            uint8 policyType;
+        }
+    }
+
+    /// ABI-encodes `abi.encode(ActorConfig, bytes policyData)` for an authorize
+    /// change (mirrors `AccountChangeApplier`'s decode shape).
+    fn authorize_change_data(
+        authenticator: Address,
+        scope: u8,
+        expiry: u64,
+        policy_type: u8,
+        policy_data: &[u8],
+    ) -> Bytes {
+        let abi = ActorConfigAbi {
+            authenticator,
+            scope,
+            expiry: alloy_primitives::aliases::U48::from(expiry),
+            policyType: policy_type,
+        };
+        Bytes::from((abi, Bytes::copy_from_slice(policy_data)).abi_encode_params())
+    }
+
+    #[test]
+    fn simulate_sender_actor_id_hint_resolves_policy_after_account_changes() {
+        // Without a hint, simulate publishes the account's self-actor. Gate that
+        // self to `wrong` and authorize a session actor (gated to `allowed`) in
+        // the same estimate's accountChanges: a call to `allowed` then reverts
+        // under the self-actor, and succeeds only when `senderActorId` names the
+        // session actor — proving the hint changes policy resolution post-apply.
+        let owner = signing_key(0xa1);
+        let account = eoa_address(&owner);
+        let session = signing_key(0xa2);
+        let session_addr = eoa_address(&session);
+        let session_actor = AccountConfigurationStorage::self_actor_id(session_addr);
+        let allowed = address!("0x00000000000000000000000000000000000000d1");
+        let wrong = address!("0x00000000000000000000000000000000000000d2");
+        let commitment = B256::repeat_byte(0x42);
+
+        let mut policy_data = Vec::with_capacity(52);
+        policy_data.extend_from_slice(allowed.as_slice());
+        policy_data.extend_from_slice(commitment.as_slice());
+
+        let mut tx = base_tx();
+        tx.sender = Some(account);
+        tx.account_changes = vec![AccountChange::ConfigChange(ConfigChange {
+            chain_id: CHAIN_ID,
+            sequence: 0,
+            actor_changes: vec![ActorChange {
+                change_type: ActorChangeType::Authorize,
+                actor_id: session_actor,
+                data: authorize_change_data(
+                    Eip8130Constants::K1_AUTHENTICATOR,
+                    Eip8130Constants::SCOPE_SENDER,
+                    0,
+                    1,
+                    &policy_data,
+                ),
+            }],
+            // Simulate's apply path does not verify config auth.
+            auth: Bytes::new(),
+        })];
+        tx.calls = vec![vec![Call { to: allowed, data: Bytes::new() }]];
+        let signed = configured_signed(tx, &owner);
+
+        let mut evm = evm_with_accounts(
+            U256::from(10u64).pow(U256::from(18u64)),
+            account,
+            &[(allowed, bytes!("00")), (wrong, bytes!("00"))],
+        );
+        // Gate the account's self-actor away from `allowed` so the no-hint path
+        // hits the node policy gate.
+        seed_gated_sender(&mut evm, account, account, wrong);
+
+        // No hint → self-actor (gated to `wrong`) → ActorPolicyViolation.
+        {
+            let mut tx = into_base_tx(&signed);
+            tx.base.caller = account;
+            if let Some(parts) = tx.eip8130.as_mut() {
+                parts.mode = Eip8130ExecutionMode::Simulate;
+                parts.simulation_sender_actor_id = None;
+            }
+            evm.ctx_mut().tx = tx;
+            let result = Eip8130Executor::simulate(&mut evm).expect("simulate should not error");
+            let ExecutionResult::Revert { output, .. } = &result else {
+                panic!("expected policy-gate revert without hint, got {result:?}");
+            };
+            let expected = keccak256(b"ActorPolicyViolation(bytes32,address)");
+            assert_eq!(&output[..4], &expected[..4]);
+        }
+
+        // Hint → session actor (gated to `allowed`, authorized in accountChanges).
+        {
+            let mut tx = into_base_tx(&signed);
+            tx.base.caller = account;
+            if let Some(parts) = tx.eip8130.as_mut() {
+                parts.mode = Eip8130ExecutionMode::Simulate;
+                parts.simulation_sender_actor_id = Some(session_actor);
+            }
+            evm.ctx_mut().tx = tx;
+            let result = Eip8130Executor::simulate(&mut evm).expect("simulate should not error");
+            assert!(
+                result.is_success(),
+                "hinted session actor should pass the policy gate, got {result:?}"
+            );
+        }
     }
 
     #[test]
