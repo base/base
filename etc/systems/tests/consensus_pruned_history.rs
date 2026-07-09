@@ -17,7 +17,7 @@ use base_consensus_derive::Signal;
 use base_consensus_engine::{
     Engine, EngineState, ForkchoiceCheckpointError, ForkchoiceCheckpointLabel,
     ForkchoiceCheckpointReader,
-    test_utils::{MockEngineClient, test_engine_client_builder},
+    test_utils::{MockEngineClient, MockL2BlockError, test_engine_client_builder},
 };
 use base_consensus_node::{
     DerivationClientResult, EngineActorRequest, EngineDerivationClient, EngineError,
@@ -122,9 +122,9 @@ impl PrunedHistoryStartup {
                 .with_config(Arc::clone(&rollup))
                 .with_block_info_by_tag(BlockNumberOrTag::Latest, reth_latest_head)
                 .with_l2_block(BlockId::Number(BlockNumberOrTag::Finalized), finalized_block)
-                .with_l2_full_block_error(
+                .with_l2_block_error(
                     BlockId::Number(BlockNumberOrTag::Finalized),
-                    pruned_history_unavailable_error(),
+                    MockL2BlockError::ErrorResp(pruned_history_unavailable_error()),
                 )
                 .with_l2_block(BlockId::Number(0.into()), genesis_block)
                 .with_l2_block(

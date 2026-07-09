@@ -102,12 +102,10 @@ pub struct MockEngineStorage {
     /// Storage for L2 blocks by stringified `BlockId`.
     /// L2 blocks use Base transactions.
     pub l2_blocks_by_id: HashMap<String, Block<BaseTransaction>>,
-    /// Errors returned for full L2 block requests by stringified `BlockId`.
-    pub l2_full_block_errors_by_id: HashMap<String, ErrorPayload>,
+    /// Errors returned for L2 block requests by stringified `BlockId`.
+    pub l2_block_errors_by_id: HashMap<String, MockL2BlockError>,
     /// Storage for proofs by (address, stringified `BlockId`) key.
     pub proofs_by_address: HashMap<(Address, String), EIP1186AccountProofResponse>,
-    /// Error to return from `get_l2_block` instead of block data, if set.
-    pub l2_block_error: Option<MockL2BlockError>,
 }
 
 /// Builder for constructing a [`MockEngineClient`] with pre-configured responses.
@@ -276,13 +274,6 @@ impl MockEngineClientBuilder {
         self
     }
 
-    /// Sets an error for full L2 block requests for a specific `BlockId`.
-    pub fn with_l2_full_block_error(mut self, block_id: BlockId, error: ErrorPayload) -> Self {
-        let key = block_id_to_key(&block_id);
-        self.storage.l2_full_block_errors_by_id.insert(key, error);
-        self
-    }
-
     /// Sets a proof response for a specific address and `BlockId`.
     pub fn with_proof(
         mut self,
@@ -295,9 +286,10 @@ impl MockEngineClientBuilder {
         self
     }
 
-    /// Sets an error to return for all `get_l2_block` calls.
-    pub fn with_l2_block_error(mut self, error: MockL2BlockError) -> Self {
-        self.storage.l2_block_error = Some(error);
+    /// Sets an error to return for `get_l2_block` for a specific `BlockId`.
+    pub fn with_l2_block_error(mut self, block_id: BlockId, error: MockL2BlockError) -> Self {
+        let key = block_id_to_key(&block_id);
+        self.storage.l2_block_errors_by_id.insert(key, error);
         self
     }
 
@@ -444,12 +436,6 @@ impl MockEngineClient {
         self.storage.write().await.l2_blocks_by_id.insert(key, block);
     }
 
-    /// Sets an error for full L2 block requests for a specific `BlockId`.
-    pub async fn set_l2_full_block_error(&self, block_id: BlockId, error: ErrorPayload) {
-        let key = block_id_to_key(&block_id);
-        self.storage.write().await.l2_full_block_errors_by_id.insert(key, error);
-    }
-
     /// Sets a proof response for a specific address and `BlockId`.
     pub async fn set_proof(
         &self,
@@ -461,9 +447,10 @@ impl MockEngineClient {
         self.storage.write().await.proofs_by_address.insert((address, key), proof);
     }
 
-    /// Sets an error to return for all `get_l2_block` calls.
-    pub async fn set_l2_block_error(&self, error: MockL2BlockError) {
-        self.storage.write().await.l2_block_error = Some(error);
+    /// Sets an error to return for `get_l2_block` for a specific `BlockId`.
+    pub async fn set_l2_block_error(&self, block_id: BlockId, error: MockL2BlockError) {
+        let key = block_id_to_key(&block_id);
+        self.storage.write().await.l2_block_errors_by_id.insert(key, error);
     }
 }
 
@@ -497,13 +484,14 @@ impl EngineClient for MockEngineClient {
 
         EthGetBlock::new_provider(
             block,
-            Box::new(move |kind| {
+            Box::new(move |_kind| {
                 let storage = Arc::clone(&storage);
                 let block_key = block_key.clone();
 
                 ProviderCall::BoxedFuture(Box::pin(async move {
                     let storage_guard = storage.read().await;
-                    if let Some(err) = storage_guard.l2_block_error.clone() {
+                    if let Some(err) = storage_guard.l2_block_errors_by_id.get(&block_key).cloned()
+                    {
                         return Err(match err {
                             MockL2BlockError::ErrorResp(payload) => {
                                 TransportError::ErrorResp(payload)
@@ -512,12 +500,6 @@ impl EngineClient for MockEngineClient {
                                 TransportError::from(TransportErrorKind::custom_str(&msg))
                             }
                         });
-                    }
-                    if kind.is_full()
-                        && let Some(error) =
-                            storage_guard.l2_full_block_errors_by_id.get(&block_key)
-                    {
-                        return Err(TransportError::ErrorResp(error.clone()));
                     }
                     Ok(storage_guard.l2_blocks_by_id.get(&block_key).cloned())
                 }))
