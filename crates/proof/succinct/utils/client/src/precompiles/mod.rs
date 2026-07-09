@@ -457,9 +457,12 @@ mod tests {
             token_address,
         ];
 
-        for (upgrade, expected) in
-            [(BaseUpgrade::Azul, false), (BaseUpgrade::Beryl, true), (BaseUpgrade::Cobalt, true)]
-        {
+        for (upgrade, expected) in [
+            (BaseUpgrade::Azul, false),
+            (BaseUpgrade::Beryl, true),
+            (BaseUpgrade::Cobalt, true),
+            (BaseUpgrade::Zombie, true),
+        ] {
             let spec = BaseSpecId::new(upgrade);
             let base_precompiles = BasePrecompiles::new_with_spec(spec).install();
             let zkvm_precompiles = BaseZkvmPrecompiles::new_with_spec(spec);
