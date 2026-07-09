@@ -8,7 +8,7 @@ use std::{
 use aws_sdk_ec2::{Client as Ec2Client, types::Reservation};
 use aws_sdk_elasticloadbalancingv2::Client as ElbClient;
 use base_proof_tee_attestation::TeeAttestationKind;
-use reqwest::Client as HttpClient;
+use reqwest::{Client as HttpClient, RequestBuilder};
 use serde::Deserialize;
 use tracing::{debug, warn};
 use url::Url;
@@ -199,36 +199,21 @@ impl GcpNodePoolDiscovery {
             return Ok(token.clone());
         }
 
-        let response = self
-            .http_client
-            .get(GCP_METADATA_TOKEN_URL)
-            .header("Metadata-Flavor", "Google")
-            .send()
-            .await
-            .map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
-        let token: GcpMetadataToken = Self::decode_response(response).await?;
+        let token: GcpMetadataToken = Self::request(
+            self.http_client.get(GCP_METADATA_TOKEN_URL).header("Metadata-Flavor", "Google"),
+        )
+        .await?;
         Ok(token.access_token)
     }
 
-    async fn get<T>(&self, url: &str, token: &str) -> Result<T>
+    async fn request<T>(request: RequestBuilder) -> Result<T>
     where
         T: for<'de> Deserialize<'de>,
     {
-        let response = self
-            .http_client
-            .get(url)
-            .bearer_auth(token)
+        request
             .send()
             .await
-            .map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
-        Self::decode_response(response).await
-    }
-
-    async fn decode_response<T>(response: reqwest::Response) -> Result<T>
-    where
-        T: for<'de> Deserialize<'de>,
-    {
-        response
+            .map_err(|e| RegistrarError::Discovery(Box::new(e)))?
             .error_for_status()
             .map_err(|e| RegistrarError::Discovery(Box::new(e)))?
             .json()
@@ -244,8 +229,9 @@ impl InstanceDiscovery for GcpNodePoolDiscovery {
             "https://container.googleapis.com/v1/projects/{}/locations/{}/clusters/{}/nodePools/{}",
             self.project, self.location, self.cluster, self.node_pool
         );
-        let node_pool: GcpNodePool = self.get(&node_pool_url, &token).await?;
-        let mut instance_urls = Vec::new();
+        let node_pool: GcpNodePool =
+            Self::request(self.http_client.get(&node_pool_url).bearer_auth(&token)).await?;
+        let mut instances = Vec::new();
         for instance_group_url in &node_pool.instance_group_urls {
             let url = format!("{instance_group_url}/listManagedInstances");
             let mut page_token = None;
@@ -255,54 +241,47 @@ impl InstanceDiscovery for GcpNodePoolDiscovery {
                     || serde_json::json!({}),
                     |page_token| serde_json::json!({ "pageToken": page_token }),
                 );
-                let response = self
-                    .http_client
-                    .post(&url)
-                    .bearer_auth(&token)
-                    .json(&body)
-                    .send()
-                    .await
-                    .map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
-                let page: GcpManagedInstancesPage = Self::decode_response(response).await?;
-                instance_urls.extend(
-                    page.managed_instances
-                        .into_iter()
-                        .filter(|instance| instance.instance_status.as_deref() == Some("RUNNING"))
-                        .filter_map(|instance| instance.instance),
-                );
+                let page: GcpManagedInstancesPage =
+                    Self::request(self.http_client.post(&url).bearer_auth(&token).json(&body))
+                        .await?;
+                for instance_url in page
+                    .managed_instances
+                    .into_iter()
+                    .filter(|instance| instance.instance_status.as_deref() == Some("RUNNING"))
+                    .filter_map(|instance| instance.instance)
+                {
+                    let instance: GcpInstance =
+                        Self::request(self.http_client.get(instance_url).bearer_auth(&token))
+                            .await?;
+                    let Some(private_ip) = instance
+                        .network_interfaces
+                        .iter()
+                        .find_map(|interface| interface.network_ip.as_deref())
+                    else {
+                        warn!(instance = %instance.name, "GCE instance missing private IP");
+                        continue;
+                    };
+                    let endpoint = Url::parse(&format!("http://{private_ip}:{}", self.port))
+                        .map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
+
+                    debug!(
+                        instance_id = %instance.name,
+                        endpoint = %endpoint,
+                        "discovered GCP TDX prover instance"
+                    );
+                    instances.push(ProverInstance {
+                        instance_id: format!("gcp/{}", instance.name),
+                        endpoint,
+                        attestation_kind: TeeAttestationKind::Tdx,
+                        health_status: InstanceHealthStatus::Healthy,
+                        launch_time: None,
+                    });
+                }
                 if page.next_page_token.is_none() {
                     break;
                 }
                 page_token = page.next_page_token;
             }
-        }
-
-        let mut instances = Vec::with_capacity(instance_urls.len());
-        for instance_url in instance_urls {
-            let instance = self.get::<GcpInstance>(&instance_url, &token).await?;
-            let Some(private_ip) = instance
-                .network_interfaces
-                .iter()
-                .find_map(|interface| interface.network_ip.as_deref())
-            else {
-                warn!(instance = %instance.name, "GCE instance missing private IP");
-                continue;
-            };
-            let endpoint = Url::parse(&format!("http://{private_ip}:{}", self.port))
-                .map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
-
-            debug!(
-                instance_id = %instance.name,
-                endpoint = %endpoint,
-                "discovered GCP TDX prover instance"
-            );
-            instances.push(ProverInstance {
-                instance_id: format!("gcp/{}", instance.name),
-                endpoint,
-                attestation_kind: TeeAttestationKind::Tdx,
-                health_status: InstanceHealthStatus::Healthy,
-                launch_time: None,
-            });
         }
         Ok(instances)
     }
