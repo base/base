@@ -121,7 +121,6 @@ impl PrunedHistoryStartup {
             test_engine_client_builder()
                 .with_config(Arc::clone(&rollup))
                 .with_block_info_by_tag(BlockNumberOrTag::Latest, reth_latest_head)
-                .with_l2_block(BlockId::Number(BlockNumberOrTag::Finalized), finalized_block)
                 .with_l2_block_error(
                     BlockId::Number(BlockNumberOrTag::Finalized),
                     MockL2BlockError::ErrorResp(pruned_history_unavailable_error()),
