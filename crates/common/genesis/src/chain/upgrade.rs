@@ -335,6 +335,11 @@ impl UpgradeActivationOverrides {
 
     /// Sets the runtime activation override for a contract upgrade ID.
     pub fn set_activation(&mut self, upgrade_id: BaseUpgrade, activation: UpgradeActivation) {
+        // Zombie is a permanently-off gate: never store it as an override so the "Zombie is
+        // never stored as active" invariant holds at the write side, not just at consumers.
+        if matches!(upgrade_id, BaseUpgrade::Zombie) {
+            return;
+        }
         self.activations.insert(upgrade_id, activation);
     }
 
@@ -811,11 +816,14 @@ mod runtime_tests {
         RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Azul, 42);
         RuntimeUpgradeRegistry::clear_activation_timestamp(chain_id, BaseUpgrade::Beryl);
         RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Cobalt, 84);
+        // Zombie is permanently off: the registry drops the write, so it is never stored.
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Zombie, u64::MAX);
 
         assert_eq!(
             RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Azul),
             Some(UpgradeActivation::Timestamp(42))
         );
+        assert_eq!(RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Zombie), None);
         assert_eq!(
             RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Beryl),
             Some(UpgradeActivation::Never)
@@ -836,8 +844,10 @@ mod runtime_tests {
         overrides.clear_activation_timestamp(BaseUpgrade::Canyon);
         overrides.set_activation_timestamp(BaseUpgrade::Azul, 42);
         overrides.set_activation_timestamp(BaseUpgrade::Cobalt, 84);
-        // Even an explicit override cannot activate the permanently-off Zombie gate.
+        // Even an explicit override cannot activate the permanently-off Zombie gate. The write
+        // side drops it entirely, so it is never even stored as an override.
         overrides.set_activation_timestamp(BaseUpgrade::Zombie, u64::MAX);
+        assert_eq!(overrides.activation(BaseUpgrade::Zombie), None);
 
         upgrades.apply_activation_overrides(&overrides);
 
