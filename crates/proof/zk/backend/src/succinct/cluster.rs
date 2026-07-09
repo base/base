@@ -785,6 +785,7 @@ impl ClusterZkProver {
         }
 
         let range_session = ClusterSessionId::parse(range_backend_session_id)?;
+        let witness_start = std::time::Instant::now();
         let range_proof = self.download_cluster_proof(&range_session).await?;
         let stdin = self
             .provider
@@ -795,12 +796,14 @@ impl ClusterZkProver {
             )
             .await
             .map_err(|e| backend_error!("aggregation witness generation failed: {e}"))?;
+        let witness_gen_duration_ms = witness_start.elapsed().as_secs_f64() * 1000.0;
 
         let session = self.create_cluster_request(proof_id, stdin, ProofMode::Groth16).await?;
         let backend_session_id = session.to_backend_session_id()?;
         info!(
             proof_id = %session.proof_id,
             proof_output_id = %session.proof_output_id,
+            witness_gen_duration_ms = witness_gen_duration_ms,
             cycle_limit = self.config.aggregation_cycle_limit,
             gas_limit = self.config.aggregation_gas_limit,
             "aggregation proof request submitted to SP1 cluster"
