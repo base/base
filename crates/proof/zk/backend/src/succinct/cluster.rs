@@ -292,19 +292,14 @@ impl ClusterZkProver {
         )))
     }
 
-    /// Build the cluster proof id for a prover-service session attempt.
-    pub fn proof_id_for_attempt(request_session_id: &str, attempt: u64) -> String {
-        let base_proof_id = format!("prover_service_{request_session_id}");
-        if attempt == 0 {
-            return base_proof_id;
-        }
-
-        format!("{base_proof_id}_retry_{attempt}")
-    }
-
-    /// Build the deterministic cluster aggregation proof id for a prover-service session attempt.
-    pub fn aggregation_proof_id_for_attempt(request_session_id: &str, attempt: u64) -> String {
-        let base_proof_id = format!("prover_service_{request_session_id}_aggregation");
+    /// Build the deterministic cluster proof id for a session attempt. `stage_suffix` is empty for
+    /// the range proof and `"_aggregation"` for the Groth16 stage.
+    pub fn proof_id_for_attempt(
+        request_session_id: &str,
+        stage_suffix: &str,
+        attempt: u64,
+    ) -> String {
+        let base_proof_id = format!("prover_service_{request_session_id}{stage_suffix}");
         if attempt == 0 {
             return base_proof_id;
         }
@@ -564,7 +559,9 @@ impl ClusterZkProver {
         request_session_id: &str,
     ) -> Result<String, ZkProverError> {
         let (proof_id, existing_backend_session_id) = self
-            .find_available_proof_id(request_session_id, "range", Self::proof_id_for_attempt)
+            .find_available_proof_id(request_session_id, "range", |session, attempt| {
+                Self::proof_id_for_attempt(session, "", attempt)
+            })
             .await?;
         if let Some(backend_session_id) = existing_backend_session_id {
             return Ok(backend_session_id);
@@ -774,11 +771,9 @@ impl ClusterZkProver {
         range_backend_session_id: &str,
     ) -> Result<String, ZkProverError> {
         let (proof_id, existing_backend_session_id) = self
-            .find_available_proof_id(
-                request_session_id,
-                "aggregation",
-                Self::aggregation_proof_id_for_attempt,
-            )
+            .find_available_proof_id(request_session_id, "aggregation", |session, attempt| {
+                Self::proof_id_for_attempt(session, "_aggregation", attempt)
+            })
             .await?;
         if let Some(backend_session_id) = existing_backend_session_id {
             return Ok(backend_session_id);
@@ -836,7 +831,7 @@ impl ClusterZkProver {
 impl ZkProver for ClusterZkProver {
     /// Submit the initial range (STARK) proof for a request. The range proof-id namespace is keyed
     /// on `request_session_id`, which the orchestrator maps to exactly one request kind; aggregation
-    /// runs later under a distinct `_aggregation` proof id (see `aggregation_proof_id_for_attempt`).
+    /// runs later under a distinct `_aggregation` proof id (see `proof_id_for_attempt`).
     async fn submit(
         &self,
         request: &ZkProofRequest,
@@ -938,7 +933,7 @@ impl ZkProver for ClusterZkProver {
 
 #[cfg(test)]
 mod tests {
-    use super::{ClusterSessionId, ClusterZkProver};
+    use super::ClusterSessionId;
 
     #[test]
     fn cluster_session_id_round_trips_json() {
@@ -951,23 +946,5 @@ mod tests {
         let decoded = ClusterSessionId::parse(&encoded).unwrap();
 
         assert_eq!(decoded, session);
-    }
-
-    #[test]
-    fn proof_id_for_attempt_uses_retry_suffix_after_first_attempt() {
-        let first = ClusterZkProver::proof_id_for_attempt("session-1", 0);
-        let retry = ClusterZkProver::proof_id_for_attempt("session-1", 2);
-
-        assert_eq!(first, "prover_service_session-1");
-        assert_eq!(retry, "prover_service_session-1_retry_2");
-    }
-
-    #[test]
-    fn aggregation_proof_id_for_attempt_uses_stage_suffix() {
-        let first = ClusterZkProver::aggregation_proof_id_for_attempt("session-1", 0);
-        let retry = ClusterZkProver::aggregation_proof_id_for_attempt("session-1", 2);
-
-        assert_eq!(first, "prover_service_session-1_aggregation");
-        assert_eq!(retry, "prover_service_session-1_aggregation_retry_2");
     }
 }
