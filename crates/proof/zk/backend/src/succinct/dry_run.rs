@@ -9,7 +9,9 @@ use async_trait::async_trait;
 use base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
 use base_proof_succinct_proof_utils::get_range_elf_embedded;
 use base_proof_zk_host::{ZkProver, ZkProverError, ZkSessionState};
-use base_prover_service_protocol::{ExecutionStats, ProofResult, SessionType, ZkProofResult, ZkVm};
+use base_prover_service_protocol::{
+    ExecutionStats, ProofResult, SessionType, ZkProofRequest, ZkProofResult, ZkVm,
+};
 use sp1_sdk::{
     Elf, SP1Stdin,
     blocking::{LightProver, Prover},
@@ -130,7 +132,7 @@ impl DryRunZkProver {
     /// Generate the witness, execute it locally, and return an empty-proof dry-run result.
     pub async fn prove_range(
         &self,
-        request: &base_prover_service_protocol::ZkProofRequest,
+        request: &ZkProofRequest,
         request_session_id: &str,
     ) -> Result<ProofResult, ZkProverError> {
         if request.number_of_blocks_to_prove == 0 {
@@ -217,7 +219,7 @@ impl DryRunZkProver {
 impl ZkProver for DryRunZkProver {
     async fn submit(
         &self,
-        request: &base_prover_service_protocol::ZkProofRequest,
+        request: &ZkProofRequest,
         request_session_id: &str,
     ) -> Result<String, ZkProverError> {
         let backend_session_id = format!("{DRY_RUN_PREFIX}{request_session_id}");

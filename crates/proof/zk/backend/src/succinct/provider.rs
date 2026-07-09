@@ -220,20 +220,14 @@ impl OpSuccinctWitnessProvider {
         Ok(stdin)
     }
 
-    /// Generate aggregation stdin from completed compressed range proofs.
+    /// Generate aggregation stdin from a completed compressed range proof.
     pub async fn generate_aggregation_witness(
         &self,
-        range_proof: SP1ProofWithPublicValues,
+        mut range_proof: SP1ProofWithPublicValues,
         range_vk: &SP1VerifyingKey,
         prover_address: Address,
     ) -> Result<SP1Stdin, WitnessError> {
-        let (boot_info, _): (BootInfoStruct, _) = bincode::serde::decode_from_slice(
-            range_proof.public_values.as_slice(),
-            // The SP1 SDK serialises `public_values` with bincode-1 (legacy) encoding, so the
-            // range proof output must be decoded with `legacy()` rather than `standard()`.
-            bincode::config::legacy(),
-        )
-        .map_err(|source| WitnessError::AggregationStdin { source: source.into() })?;
+        let boot_info: BootInfoStruct = range_proof.public_values.read();
         let boot_infos = vec![boot_info];
         let proofs = vec![range_proof.proof];
 
