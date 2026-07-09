@@ -180,24 +180,14 @@ impl BoundlessProver {
     /// against upstream formatting changes.
     fn is_request_not_locked_error(e: &dyn std::error::Error) -> bool {
         const NEEDLE: &str = "requestisnotlocked";
-        let display = format!("{e}");
-        if display.to_ascii_lowercase().contains(NEEDLE) {
-            return true;
-        }
-        let debug = format!("{e:?}");
-        debug.to_ascii_lowercase().contains(NEEDLE)
+        format!("{e}{e:?}").to_ascii_lowercase().contains(NEEDLE)
     }
 
     /// Checks whether a Boundless receipt fetch failed because the proof
     /// delivery event is no longer available in the SDK's event-log lookup.
     fn is_proof_not_found_error(e: &dyn std::error::Error) -> bool {
         const NEEDLE: &str = "proofnotfound";
-        let display = format!("{e}");
-        if display.to_ascii_lowercase().contains(NEEDLE) {
-            return true;
-        }
-        let debug = format!("{e:?}");
-        debug.to_ascii_lowercase().contains(NEEDLE)
+        format!("{e}{e:?}").to_ascii_lowercase().contains(NEEDLE)
     }
 
     /// Fetches and ABI-encodes the set inclusion receipt for a fulfilled
@@ -552,16 +542,14 @@ impl TeeAttestationProofProvider for BoundlessProver {
         signer_address: Address,
     ) -> base_proof_tee_attestation::Result<TeeAttestationProof> {
         let started_at = Instant::now();
-        let (client, params) = match self.build_client_and_params(attestation_bytes).await {
-            Ok(result) => result,
-            Err(e) => {
+        let (client, params) =
+            self.build_client_and_params(attestation_bytes).await.map_err(|e| {
                 BoundlessMetrics::record_proof_duration(
                     started_at,
                     BoundlessMetrics::PROOF_OUTCOME_FAILED,
                 );
-                return Err(e.into());
-            }
-        };
+                e
+            })?;
 
         let recovery_is_blocked = self
             .recovery_blocked
@@ -928,7 +916,7 @@ impl TeeAttestationProofProvider for BoundlessProver {
                 BoundlessMetrics::PROOF_OUTCOME_FAILED
             },
         );
-        Ok(result?)
+        result.map_err(Into::into)
     }
 
     fn block_recovery_for_signer(&self, signer: Address) {
@@ -957,26 +945,21 @@ mod tests {
     const TEST_IMAGE_ID: [u32; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
     const TEST_POLL_INTERVAL: Duration = Duration::from_secs(5);
     const TEST_TIMEOUT: Duration = Duration::from_secs(300);
-    const DEFAULT_TRUSTED_PREFIX: u8 = 1;
     const TEST_MAX_RECOVERY_ATTEMPTS: u32 = 5;
 
     const TEST_MAX_ATTESTATION_AGE: Duration = Duration::from_secs(3300);
 
     #[fixture]
     fn prover() -> BoundlessProver {
-        BoundlessProver {
-            rpc_url: Url::parse(TEST_RPC_URL).unwrap(),
-            signer: PrivateKeySigner::from_str(TEST_PRIVATE_KEY).unwrap(),
-            verifier_program_url: Url::parse(TEST_PROGRAM_URL).unwrap(),
-            image_id: TEST_IMAGE_ID,
-            poll_interval: TEST_POLL_INTERVAL,
-            timeout: TEST_TIMEOUT,
-            trusted_certs_prefix_len: DEFAULT_TRUSTED_PREFIX,
-            max_recovery_attempts: TEST_MAX_RECOVERY_ATTEMPTS,
-            max_attestation_age: TEST_MAX_ATTESTATION_AGE,
-            submit_lock: Arc::new(Mutex::new(())),
-            recovery_blocked: Arc::new(std::sync::Mutex::new(HashSet::new())),
-        }
+        BoundlessProver::new(
+            Url::parse(TEST_RPC_URL).unwrap(),
+            PrivateKeySigner::from_str(TEST_PRIVATE_KEY).unwrap(),
+            Url::parse(TEST_PROGRAM_URL).unwrap(),
+            TEST_IMAGE_ID,
+            (TEST_POLL_INTERVAL, TEST_TIMEOUT),
+            TEST_MAX_RECOVERY_ATTEMPTS,
+            TEST_MAX_ATTESTATION_AGE,
+        )
     }
 
     // ── Construction ────────────────────────────────────────────────────
@@ -1000,7 +983,7 @@ mod tests {
         assert_eq!(prover.image_id, TEST_IMAGE_ID);
         assert_eq!(prover.poll_interval, TEST_POLL_INTERVAL);
         assert_eq!(prover.timeout, TEST_TIMEOUT);
-        assert_eq!(prover.trusted_certs_prefix_len, DEFAULT_TRUSTED_PREFIX);
+        assert_eq!(prover.trusted_certs_prefix_len, DEFAULT_TRUSTED_CERTS_PREFIX_LEN);
         assert_eq!(prover.max_recovery_attempts, TEST_MAX_RECOVERY_ATTEMPTS);
     }
 
