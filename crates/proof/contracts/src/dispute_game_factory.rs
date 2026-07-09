@@ -231,7 +231,7 @@ pub fn game_lookup_count(
     if intermediate_block_interval == 0 {
         return Err(GameLookupError::ZeroIntermediateBlockInterval);
     }
-    if block_interval % intermediate_block_interval != 0 {
+    if !block_interval.is_multiple_of(intermediate_block_interval) {
         return Err(GameLookupError::InvalidInterval {
             block_interval,
             intermediate_block_interval,

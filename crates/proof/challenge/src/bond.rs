@@ -384,15 +384,15 @@ impl<C: Clock> BondManager<C> {
     pub async fn startup_scan(
         &mut self,
         verifier_client: &dyn AggregateVerifierClient,
-    ) -> eyre::Result<Vec<Address>> {
+    ) -> eyre::Result<()> {
         if !self.is_enabled() {
-            return Ok(Vec::new());
+            return Ok(());
         }
 
         let game_count = self.factory_client.game_count().await?;
         if game_count == 0 {
             info!("no games in factory, skipping bond startup scan");
-            return Ok(Vec::new());
+            return Ok(());
         }
 
         let start_index = game_count.saturating_sub(self.lookback);
@@ -416,7 +416,6 @@ impl<C: Clock> BondManager<C> {
             self.ensure_weth_delay(verifier_client, *game_address).await;
         }
 
-        let mut recovered_games = Vec::new();
         for (game_address, bond_recipient, phase) in results.into_iter().flatten() {
             let Some(phase) = phase else {
                 continue;
@@ -429,7 +428,6 @@ impl<C: Clock> BondManager<C> {
                 "recovered game for bond tracking"
             );
             self.tracked.insert(game_address, TrackedGame::new(phase, bond_recipient));
-            recovered_games.push(game_address);
         }
 
         self.bond_scan_head = game_count;
@@ -437,7 +435,7 @@ impl<C: Clock> BondManager<C> {
 
         ChallengerMetrics::bonds_tracked().set(self.tracked.len() as f64);
         info!(count = self.tracked.len(), "bond startup scan complete");
-        Ok(recovered_games)
+        Ok(())
     }
 
     /// Discovers claimable games via two-tier scanning.
@@ -454,16 +452,16 @@ impl<C: Clock> BondManager<C> {
     pub async fn discover_claimable_games(
         &mut self,
         verifier_client: &dyn AggregateVerifierClient,
-    ) -> eyre::Result<Vec<Address>> {
+    ) -> eyre::Result<()> {
         if !self.is_enabled() {
             warn!("bond manager is disabled, skipping discovery scan");
-            return Ok(Vec::new());
+            return Ok(());
         }
 
         let game_count = self.factory_client.game_count().await?;
         if game_count == 0 {
             debug!("no games found, skipping bond discovery scan");
-            return Ok(Vec::new());
+            return Ok(());
         }
 
         // Periodic full rescan: reset watermark to re-evaluate the
@@ -483,7 +481,7 @@ impl<C: Clock> BondManager<C> {
 
         let scan_start = self.bond_scan_head;
         if scan_start >= game_count {
-            return Ok(Vec::new());
+            return Ok(());
         }
 
         let scan_end = game_count.min(scan_start.saturating_add(self.lookback));
@@ -524,7 +522,7 @@ impl<C: Clock> BondManager<C> {
         )
         .await;
 
-        let mut discovered_games = Vec::new();
+        let mut discovered = 0;
 
         for (game_address, bond_recipient, phase) in results.into_iter().flatten() {
             if self.tracked.contains_key(&game_address) {
@@ -543,7 +541,7 @@ impl<C: Clock> BondManager<C> {
                 "discovered claimable game"
             );
             self.tracked.insert(game_address, TrackedGame::new(phase, bond_recipient));
-            discovered_games.push(game_address);
+            discovered += 1;
         }
 
         self.bond_scan_head = scan_end;
@@ -552,14 +550,13 @@ impl<C: Clock> BondManager<C> {
             self.last_full_scan = self.clock.now();
         }
 
-        if !discovered_games.is_empty() {
-            let discovered = discovered_games.len() as u64;
+        if discovered > 0 {
             ChallengerMetrics::bond_discovery_games_found_total().increment(discovered);
             ChallengerMetrics::bonds_tracked().set(self.tracked.len() as f64);
             info!(discovered, tracked = self.tracked.len(), scan_type, "bond discovery complete");
         }
 
-        Ok(discovered_games)
+        Ok(())
     }
 
     /// Polls all tracked games and advances each through the bond lifecycle.
