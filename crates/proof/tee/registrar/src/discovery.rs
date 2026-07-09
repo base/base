@@ -235,44 +235,6 @@ impl GcpNodePoolDiscovery {
             .await
             .map_err(|e| RegistrarError::Discovery(Box::new(e)))
     }
-
-    async fn managed_instance_urls(
-        &self,
-        token: &str,
-        instance_group_url: &str,
-    ) -> Result<Vec<String>> {
-        let url = format!("{instance_group_url}/listManagedInstances");
-        let mut page_token = None;
-        let mut instance_urls = Vec::new();
-
-        loop {
-            let body = page_token.as_ref().map_or_else(
-                || serde_json::json!({}),
-                |token| serde_json::json!({ "pageToken": token }),
-            );
-            let response = self
-                .http_client
-                .post(&url)
-                .bearer_auth(token)
-                .json(&body)
-                .send()
-                .await
-                .map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
-            let page: GcpManagedInstancesPage = Self::decode_response(response).await?;
-            instance_urls.extend(
-                page.managed_instances
-                    .into_iter()
-                    .filter(|instance| instance.instance_status.as_deref() == Some("RUNNING"))
-                    .filter_map(|instance| instance.instance),
-            );
-            if page.next_page_token.is_none() {
-                break;
-            }
-            page_token = page.next_page_token;
-        }
-
-        Ok(instance_urls)
-    }
 }
 
 impl InstanceDiscovery for GcpNodePoolDiscovery {
@@ -285,7 +247,34 @@ impl InstanceDiscovery for GcpNodePoolDiscovery {
         let node_pool: GcpNodePool = self.get(&node_pool_url, &token).await?;
         let mut instance_urls = Vec::new();
         for instance_group_url in &node_pool.instance_group_urls {
-            instance_urls.extend(self.managed_instance_urls(&token, instance_group_url).await?);
+            let url = format!("{instance_group_url}/listManagedInstances");
+            let mut page_token = None;
+
+            loop {
+                let body = page_token.as_ref().map_or_else(
+                    || serde_json::json!({}),
+                    |page_token| serde_json::json!({ "pageToken": page_token }),
+                );
+                let response = self
+                    .http_client
+                    .post(&url)
+                    .bearer_auth(&token)
+                    .json(&body)
+                    .send()
+                    .await
+                    .map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
+                let page: GcpManagedInstancesPage = Self::decode_response(response).await?;
+                instance_urls.extend(
+                    page.managed_instances
+                        .into_iter()
+                        .filter(|instance| instance.instance_status.as_deref() == Some("RUNNING"))
+                        .filter_map(|instance| instance.instance),
+                );
+                if page.next_page_token.is_none() {
+                    break;
+                }
+                page_token = page.next_page_token;
+            }
         }
 
         let mut instances = Vec::with_capacity(instance_urls.len());
@@ -319,18 +308,18 @@ impl InstanceDiscovery for GcpNodePoolDiscovery {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct GcpMetadataToken {
     access_token: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct GcpNodePool {
     #[serde(default, rename = "instanceGroupUrls")]
     instance_group_urls: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct GcpManagedInstancesPage {
     #[serde(default, rename = "managedInstances")]
     managed_instances: Vec<GcpManagedInstance>,
@@ -338,21 +327,21 @@ struct GcpManagedInstancesPage {
     next_page_token: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct GcpManagedInstance {
     instance: Option<String>,
     #[serde(rename = "instanceStatus")]
     instance_status: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct GcpInstance {
     name: String,
     #[serde(default, rename = "networkInterfaces")]
     network_interfaces: Vec<GcpNetworkInterface>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct GcpNetworkInterface {
     #[serde(rename = "networkIP")]
     network_ip: Option<String>,
