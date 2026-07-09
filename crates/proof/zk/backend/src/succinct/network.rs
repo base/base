@@ -10,7 +10,7 @@ use std::{fmt, sync::Arc, time::Duration};
 use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
-use base_proof_zk_host::{ZkProofRequestKind, ZkProver, ZkProverError, ZkSessionState};
+use base_proof_zk_host::{ZkProver, ZkProverError, ZkSessionState};
 use base_prover_service_protocol::{ProofResult, SessionType, ZkProofResult, ZkVm};
 use sp1_sdk::{
     HashableKey, NetworkProver, ProveRequest, Prover, ProverClient, ProvingKey,
@@ -372,17 +372,10 @@ impl NetworkZkProver {
 impl ZkProver for NetworkZkProver {
     async fn submit(
         &self,
-        request: &ZkProofRequestKind,
+        request: &base_prover_service_protocol::ZkProofRequest,
         request_session_id: &str,
     ) -> Result<String, ZkProverError> {
-        match request {
-            ZkProofRequestKind::Compressed(request) => {
-                self.submit_range_proof(request, request_session_id).await
-            }
-            ZkProofRequestKind::SnarkGroth16(_) => Err(backend_error!(
-                "SP1 Network Groth16 aggregation is not yet supported in the stateless ZK host"
-            )),
-        }
+        self.submit_range_proof(request, request_session_id).await
     }
 
     async fn poll(&self, backend_session_id: &str) -> Result<ZkSessionState, ZkProverError> {

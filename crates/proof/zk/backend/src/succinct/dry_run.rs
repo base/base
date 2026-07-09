@@ -8,7 +8,7 @@ use std::{
 use async_trait::async_trait;
 use base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
 use base_proof_succinct_proof_utils::get_range_elf_embedded;
-use base_proof_zk_host::{ZkProofRequestKind, ZkProver, ZkProverError, ZkSessionState};
+use base_proof_zk_host::{ZkProver, ZkProverError, ZkSessionState};
 use base_prover_service_protocol::{ExecutionStats, ProofResult, SessionType, ZkProofResult, ZkVm};
 use sp1_sdk::{
     Elf, SP1Stdin,
@@ -217,15 +217,9 @@ impl DryRunZkProver {
 impl ZkProver for DryRunZkProver {
     async fn submit(
         &self,
-        request: &ZkProofRequestKind,
+        request: &base_prover_service_protocol::ZkProofRequest,
         request_session_id: &str,
     ) -> Result<String, ZkProverError> {
-        let ZkProofRequestKind::Compressed(request) = request else {
-            return Err(backend_error!(
-                "dry-run backend only supports compressed proof types; SNARK_GROTH16 requires a proof-producing backend"
-            ));
-        };
-
         let backend_session_id = format!("{DRY_RUN_PREFIX}{request_session_id}");
         let result = self.prove_range(request, request_session_id).await?;
         self.completed_results
