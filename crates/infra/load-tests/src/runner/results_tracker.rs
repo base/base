@@ -133,9 +133,9 @@ impl ResultsTracker {
 
     /// Records transaction inclusions observed from the flashblock stream.
     ///
-    /// When a pending transaction is seen in a flashblock, its in-flight slot is released
-    /// immediately so the sender can submit new transactions without waiting for the slower
-    /// canonical block receipt.
+    /// When a pending transaction is seen in a flashblock, its flashblock latency is
+    /// recorded immediately and its in-flight slot is released so the sender can submit
+    /// new transactions without waiting for the slower canonical block receipt.
     pub fn on_new_flashblock(&self, inclusions: Vec<FlashblockInclusion>) {
         let mut inner = self.inner.write();
 
@@ -145,12 +145,31 @@ impl ResultsTracker {
                 inner.flashblock_eviction_queue.push_back(inclusion.tx_hash);
             }
 
-            if let Some(pending) = inner.pending.get_mut(&inclusion.tx_hash)
-                && !pending.in_flight_released
-            {
-                pending.in_flight_released = true;
+            if let Some(pending) = inner.pending.get_mut(&inclusion.tx_hash) {
+                // Capture fields before releasing the borrow.
+                let submit_time = pending.submit_time;
+                let should_release = !pending.in_flight_released;
                 let from = pending.from;
-                inner.decrement_in_flight(&from);
+                if should_release {
+                    pending.in_flight_released = true;
+                }
+
+                // Emit flashblock latency immediately when seen in the WS stream.
+                let flashblocks_latency =
+                    inclusion.included_at.checked_duration_since(submit_time);
+                let metrics = TransactionMetrics::new(
+                    inclusion.tx_hash,
+                    None,
+                    flashblocks_latency,
+                    0,
+                    0,
+                    None,
+                );
+                inner.unreported_confirmations.push_back(metrics);
+
+                if should_release {
+                    inner.decrement_in_flight(&from);
+                }
             }
         }
 
@@ -241,25 +260,21 @@ impl ResultsTrackerInner {
     /// Records the first observation of `tx_hash` in a polled block, emitting its
     /// landing metrics. Idempotent: a tx is removed from `pending` on first landing,
     /// so later blocks containing the same hash are ignored.
+    ///
+    /// Flashblock latency is NOT emitted here — it is recorded immediately when the
+    /// tx is first seen in the flashblock WS stream via `on_new_flashblock`.
     fn land_if_pending(&mut self, tx_hash: TxHash, block: &BlockObservation) {
         let Some(pending) = self.pending.remove(&tx_hash) else {
             return;
         };
 
         let block_latency = block.observed_at.checked_duration_since(pending.submit_time);
-        let flashblocks_latency = self
-            .flashblocks
-            .remove(&tx_hash)
-            .and_then(|included_at| included_at.checked_duration_since(pending.submit_time));
 
-        let mut metrics = TransactionMetrics::new(
-            tx_hash,
-            block_latency,
-            flashblocks_latency,
-            0,
-            0,
-            Some(block.number),
-        );
+        // Clean up the flashblock cache entry if present (already emitted).
+        self.flashblocks.remove(&tx_hash);
+
+        let mut metrics =
+            TransactionMetrics::new(tx_hash, block_latency, None, 0, 0, Some(block.number));
         metrics.confirmed_at = Some(block.observed_at);
 
         self.landed_blocks.insert(block.number);
@@ -337,7 +352,7 @@ mod tests {
     }
 
     #[test]
-    fn joins_flashblock_latency() {
+    fn emits_flashblock_latency_at_ws_observation() {
         let from = address!("0000000000000000000000000000000000000001");
         let tx_hash = TxHash::repeat_byte(2);
         let tracker = ResultsTracker::new(&[from]);
@@ -348,11 +363,21 @@ mod tests {
             tx_hash,
             included_at: now + Duration::from_millis(50),
         }]);
-        tracker.on_new_block_hashes(block_at(8, now + Duration::from_millis(200)), vec![tx_hash]);
 
+        // Flashblock latency emitted immediately — no canonical block needed.
         let metrics = tracker.drain_confirmed_metrics();
-        assert_eq!(metrics.len(), 1);
-        assert!(metrics[0].flashblocks_latency.is_some(), "FB latency joined at landing");
+        assert_eq!(metrics.len(), 1, "FB latency emitted at WS observation");
+        assert!(metrics[0].flashblocks_latency.is_some(), "FB latency must be set");
+        assert!(metrics[0].block_latency.is_none(), "no block latency yet");
+        assert_eq!(metrics[0].block_number, None, "no block number yet");
+
+        // Canonical block landing produces a separate metric without FB latency.
+        tracker.on_new_block_hashes(block_at(8, now + Duration::from_millis(200)), vec![tx_hash]);
+        let block_metrics = tracker.drain_confirmed_metrics();
+        assert_eq!(block_metrics.len(), 1, "block landing still emits its own metric");
+        assert!(block_metrics[0].flashblocks_latency.is_none(), "FB latency not duplicated");
+        assert!(block_metrics[0].block_latency.is_some(), "block latency recorded");
+        assert_eq!(block_metrics[0].block_number, Some(8));
     }
 
     #[test]
@@ -370,13 +395,18 @@ mod tests {
         assert_eq!(tracker.total_in_flight(), 0, "flashblock should release in-flight slot");
         assert_eq!(tracker.in_flight_for(&from), 0);
 
+        // Drain the flashblock metric emitted immediately.
+        let fb_metrics = tracker.drain_confirmed_metrics();
+        assert_eq!(fb_metrics.len(), 1, "FB metric emitted at WS observation");
+        assert!(fb_metrics[0].flashblocks_latency.is_some());
+
         let observed_at = Instant::now() + Duration::from_millis(500);
         tracker.on_new_block_hashes(block_at(10, observed_at), vec![tx_hash]);
 
         assert_eq!(tracker.total_in_flight(), 0, "block landing should not double-decrement");
-        let metrics = tracker.drain_confirmed_metrics();
-        assert_eq!(metrics.len(), 1, "metrics should still be produced from block landing");
-        assert!(metrics[0].flashblocks_latency.is_some());
+        let block_metrics = tracker.drain_confirmed_metrics();
+        assert_eq!(block_metrics.len(), 1, "block landing metric still produced");
+        assert!(block_metrics[0].flashblocks_latency.is_none(), "FB latency not on block metric");
     }
 
     #[test]
