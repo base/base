@@ -39,6 +39,7 @@ pub fn main() {
         // The rollup config must be the same for all the boot infos, to ensure they're
         // from the same chain and span batch range.
         assert_eq!(prev_boot_info.rollupConfigHash, boot_info.rollupConfigHash);
+        assert_eq!(prev_boot_info.scheduleId, boot_info.scheduleId);
     });
 
     // Verify each range program proof.
@@ -93,6 +94,7 @@ pub fn main() {
         l2PostRoot: last_boot_info.l2PostRoot,
         l1Head: agg_inputs.latest_l1_checkpoint_head,
         rollupConfigHash: last_boot_info.rollupConfigHash,
+        scheduleId: last_boot_info.scheduleId,
         intermediateRoots: intermediate_roots,
     };
 
@@ -108,6 +110,7 @@ pub fn main() {
         endingL2SequenceNumber: final_boot_info.l2BlockNumber,
         intermediateRoots: final_boot_info.intermediateRoots,
         rollupConfigHash: final_boot_info.rollupConfigHash,
+        scheduleId: final_boot_info.scheduleId,
         imageHash: multi_block_vkey_b256,
     };
 

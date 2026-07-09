@@ -5420,6 +5420,7 @@ dependencies = [
  "base-proof-mpt",
  "base-proof-preimage",
  "base-proof-primitives",
+ "base-proof-rpc",
  "base-protocol",
  "futures",
  "metrics",

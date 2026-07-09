@@ -185,6 +185,7 @@ impl Server {
                 intermediate_roots: vec![],
                 config_hash,
                 tee_image_hash: self.tee_image_hash,
+                schedule_id: boot_info.schedule_id,
             };
             let signing_data = journal.encode();
 
@@ -198,6 +199,7 @@ impl Server {
                 l2_block_number,
                 prev_output_root,
                 config_hash,
+                schedule_id: boot_info.schedule_id,
             });
 
             prev_output_root = *output_root;
@@ -231,6 +233,7 @@ impl Server {
                 intermediate_roots,
                 config_hash,
                 tee_image_hash: self.tee_image_hash,
+                schedule_id: boot_info.schedule_id,
             };
             let signing_data = journal.encode();
 
@@ -244,6 +247,7 @@ impl Server {
                 l2_block_number: last.l2_block_number,
                 prev_output_root: agreed_l2_output_root,
                 config_hash,
+                schedule_id: boot_info.schedule_id,
             }
         };
 

@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use alloy_provider::{Network, RootProvider};
 use base_common_evm::BaseEvmFactory;
+use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
 use base_proof::HintType;
@@ -10,6 +11,7 @@ use base_proof_preimage::{
     BidirectionalChannel, Channel, HintReader, HintWriter, OracleReader, OracleServer,
     WitnessOracle,
 };
+use base_proof_rpc::OptimismRollupProviderExt;
 use tokio::{
     sync::RwLock,
     task::{self, JoinHandle},
@@ -42,9 +44,8 @@ impl Host {
     where
         C: Channel + Send + Sync + 'static,
     {
-        let kv_store = self.create_key_value_store()?;
-
         let task_handle = if self.config.is_offline() {
+            let kv_store = self.create_key_value_store()?;
             task::spawn(async {
                 PreimageServer::new(
                     OracleServer::new(preimage),
@@ -56,9 +57,10 @@ impl Host {
             })
         } else {
             let providers = self.create_providers().await?;
-            let backend =
-                OnlineHostBackend::new(self.config.clone(), Arc::clone(&kv_store), providers)
-                    .with_proactive_hint(HintType::L2PayloadWitness);
+            let config = self.resolve_online_config(&providers).await?;
+            let kv_store = Self::create_key_value_store_for_config(&config)?;
+            let backend = OnlineHostBackend::new(config, Arc::clone(&kv_store), providers)
+                .with_proactive_hint(HintType::L2PayloadWitness);
 
             task::spawn(async {
                 PreimageServer::new(
@@ -96,11 +98,12 @@ impl Host {
     {
         let witness = Arc::new(witness);
 
-        let kv_store = self.create_key_value_store()?;
         let providers = self.create_providers().await?;
+        let config = self.resolve_online_config(&providers).await?;
+        let kv_store = Self::create_key_value_store_for_config(&config)?;
         let backend = Arc::new(
             OnlineHostBackend::new_with_l1_header_cache(
-                self.config.clone(),
+                config,
                 Arc::clone(&kv_store),
                 providers,
                 l1_header_cache,
@@ -179,9 +182,21 @@ impl Host {
 
     /// Creates the key-value store for the host backend.
     pub fn create_key_value_store(&self) -> Result<SharedKeyValueStore> {
-        let boot_kv = BootKeyValueStore::new(self.config.clone());
+        Self::create_key_value_store_for_config(&self.config)
+    }
 
-        let kv_store: SharedKeyValueStore = if let Some(ref data_dir) = self.config.data_dir {
+    async fn resolve_online_config(&self, providers: &HostProviders) -> Result<HostConfig> {
+        let mut config = self.config.clone();
+        let rollup_config: RollupConfig =
+            serde_json::from_value(providers.l2.optimism_rollup_config().await?)?;
+        config.prover.rollup_config = rollup_config;
+        Ok(config)
+    }
+
+    fn create_key_value_store_for_config(config: &HostConfig) -> Result<SharedKeyValueStore> {
+        let boot_kv = BootKeyValueStore::new(config.clone());
+
+        let kv_store: SharedKeyValueStore = if let Some(ref data_dir) = config.data_dir {
             #[cfg(feature = "disk")]
             {
                 let disk_kv_store = DiskKeyValueStore::new(data_dir.clone());

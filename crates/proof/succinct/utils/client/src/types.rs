@@ -28,6 +28,7 @@ sol! {
         uint64 endingL2SequenceNumber;
         bytes intermediateRoots;
         bytes32 rollupConfigHash;
+        bytes32 scheduleId;
         bytes32 imageHash;
     }
 }
@@ -38,11 +39,12 @@ impl AggregationOutputs {
     /// Layout (packed):
     ///   address  (20) | bytes32 (32) | bytes32 (32) | uint64 (8) |
     ///   bytes32  (32) | uint64  (8)  | bytes (var)  | bytes32 (32) | bytes32 (32)
+    ///   | bytes32 (32)
     ///
-    /// Fixed prefix = 132 bytes, fixed suffix = 64 bytes.
+    /// Fixed prefix = 132 bytes, fixed suffix = 96 bytes.
     pub fn decode_packed(data: &[u8]) -> Result<Self, &'static str> {
         const PREFIX: usize = 20 + 32 + 32 + 8 + 32 + 8; // 132
-        const SUFFIX: usize = 32 + 32; // 64
+        const SUFFIX: usize = 32 + 32 + 32; // 96
         if data.len() < PREFIX + SUFFIX {
             return Err("data too short for packed AggregationOutputs");
         }
@@ -78,6 +80,9 @@ impl AggregationOutputs {
         let rollup_config_hash = B256::from_slice(&data[off..off + 32]);
         off += 32;
 
+        let schedule_id = B256::from_slice(&data[off..off + 32]);
+        off += 32;
+
         let image_hash = B256::from_slice(&data[off..off + 32]);
 
         Ok(Self {
@@ -89,6 +94,7 @@ impl AggregationOutputs {
             endingL2SequenceNumber: ending_seq,
             intermediateRoots: intermediate_roots,
             rollupConfigHash: rollup_config_hash,
+            scheduleId: schedule_id,
             imageHash: image_hash,
         })
     }
