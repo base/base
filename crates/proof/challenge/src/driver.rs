@@ -83,7 +83,7 @@ pub struct DriverComponents<
     /// Bond lifecycle manager (optional; enabled when claim addresses are configured).
     pub bond_manager: Option<BondManager<C>>,
     /// Best-effort anchor state updater.
-    pub anchor_updater: AnchorUpdater<C>,
+    pub anchor_updater: AnchorUpdater,
 }
 
 impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> std::fmt::Debug
@@ -125,7 +125,7 @@ where
     /// Bond lifecycle manager (optional; enabled when claim addresses are configured).
     pub bond_manager: Option<BondManager<C>>,
     /// Best-effort anchor state updater.
-    pub anchor_updater: AnchorUpdater<C>,
+    pub anchor_updater: AnchorUpdater,
     /// Interval between polling cycles.
     pub poll_interval: Duration,
     /// Maximum wall-clock time to wait for a ZK proof session before treating it as failed.
@@ -237,11 +237,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
         };
 
         match bond_manager.discover_claimable_games(&*self.verifier_client).await {
-            Ok(games) => {
-                for game_address in games {
-                    self.anchor_updater.track_game(game_address);
-                }
-            }
+            Ok(_) => {}
             Err(e) => warn!(error = %e, "bond discovery scan failed"),
         }
     }
@@ -384,7 +380,6 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
 
         if result.is_valid {
             debug!(game = %game_address, "game output roots are valid");
-            self.anchor_updater.track_valid_game(game_address);
             return Ok(());
         }
 
@@ -1121,23 +1116,30 @@ mod tests {
         verifier_games.insert(game_address, mock_state(GameStatus::InProgress, Address::ZERO, 100));
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
         let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
+        let anchor_registry = mock_anchor_registry(Address::ZERO);
         let scanner = GameScanner::new(
-            factory,
+            Arc::clone(&factory) as Arc<dyn base_proof_contracts::DisputeGameFactoryClient>,
             Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
-            mock_anchor_registry(Address::ZERO),
+            Arc::clone(&anchor_registry),
         );
         let proof_requester = Arc::new(MockZkProofProvider::default());
+        let l2_provider = Arc::new(MockL2Provider::new());
         let components = DriverComponents {
             scanner,
-            validator: OutputValidator::new(Arc::new(MockL2Provider::new())),
+            validator: OutputValidator::new(Arc::clone(&l2_provider)),
             proof_requester: Arc::clone(&proof_requester),
             submitter: ChallengeSubmitter::new(tx_manager),
             tee: None,
             verifier_client: verifier,
             bond_manager: None,
             anchor_updater: AnchorUpdater::new(
-                TokioRuntime::new(),
-                Duration::from_secs(24 * 60 * 60),
+                factory,
+                anchor_registry,
+                l2_provider,
+                Address::repeat_byte(0xAA),
+                1,
+                100,
+                100,
             ),
         };
         let driver = Driver::new(
@@ -1275,7 +1277,6 @@ mod tests {
         driver.poll_or_submit(addr(0)).await.unwrap();
 
         assert!(!driver.pending_proofs.contains_key(&addr(0)));
-        assert!(!driver.anchor_updater.is_tracking(&addr(0)));
     }
 
     #[tokio::test]

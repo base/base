@@ -133,17 +133,30 @@ impl Default for MockGameState {
 pub struct MockDisputeGameFactory {
     /// Ordered list of games in the factory.
     pub games: Mutex<Vec<GameAtIndex>>,
+    /// Games keyed by `(game_type, root_claim, extra_data)` for UUID lookups.
+    pub uuid_games: Mutex<HashMap<(u32, B256, Bytes), Address>>,
 }
 
 impl MockDisputeGameFactory {
     /// Creates a new mock from an initial set of games.
-    pub const fn new(games: Vec<GameAtIndex>) -> Self {
-        Self { games: Mutex::new(games) }
+    pub fn new(games: Vec<GameAtIndex>) -> Self {
+        Self { games: Mutex::new(games), uuid_games: Mutex::new(HashMap::new()) }
     }
 
     /// Appends a single game to the factory.
     pub fn push(&self, game: GameAtIndex) {
         self.games.lock().unwrap().push(game);
+    }
+
+    /// Inserts a UUID-addressable game.
+    pub fn insert_uuid_game(
+        &self,
+        game_type: u32,
+        root_claim: B256,
+        extra_data: Bytes,
+        proxy: Address,
+    ) {
+        self.uuid_games.lock().unwrap().insert((game_type, root_claim, extra_data), proxy);
     }
 }
 
@@ -172,11 +185,17 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
 
     async fn games(
         &self,
-        _game_type: u32,
-        _root_claim: B256,
-        _extra_data: Bytes,
+        game_type: u32,
+        root_claim: B256,
+        extra_data: Bytes,
     ) -> Result<Address, ContractError> {
-        Ok(Address::ZERO)
+        Ok(self
+            .uuid_games
+            .lock()
+            .unwrap()
+            .get(&(game_type, root_claim, extra_data))
+            .copied()
+            .unwrap_or(Address::ZERO))
     }
 }
 
@@ -638,7 +657,7 @@ pub struct RecordingDisputeGameFactory {
 
 impl RecordingDisputeGameFactory {
     /// Creates a new recording factory.
-    pub const fn new(games: Vec<GameAtIndex>, error_indices: Vec<u64>) -> Self {
+    pub fn new(games: Vec<GameAtIndex>, error_indices: Vec<u64>) -> Self {
         Self {
             inner: MockDisputeGameFactory::new(games),
             error_indices,

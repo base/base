@@ -19,7 +19,9 @@ use base_challenger::{
         mock_state, mock_state_with_tee, receipt_with_status,
     },
 };
-use base_proof_contracts::{AggregateVerifierClient, ContractError, GameAtIndex, GameStatus};
+use base_proof_contracts::{
+    AggregateVerifierClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameStatus,
+};
 use base_proof_primitives::Proposal;
 use base_protocol::OutputRoot;
 use base_prover_service_protocol::{
@@ -76,12 +78,13 @@ fn test_driver_with_tee(
     tx_manager: MockTxManager,
     tee: Option<TeeConfig>,
 ) -> Driver<MockL2Provider, MockZkProofProvider, MockTxManager> {
+    let anchor_registry = mock_anchor_registry(Address::ZERO);
     let scanner = GameScanner::new(
-        factory,
+        Arc::clone(&factory) as Arc<dyn DisputeGameFactoryClient>,
         Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
-        mock_anchor_registry(Address::ZERO),
+        Arc::clone(&anchor_registry),
     );
-    let validator = OutputValidator::new(l2_provider);
+    let validator = OutputValidator::new(Arc::clone(&l2_provider));
     let submitter = ChallengeSubmitter::new(tx_manager);
 
     let config = DriverConfig {
@@ -102,8 +105,13 @@ fn test_driver_with_tee(
             verifier_client: verifier as Arc<dyn AggregateVerifierClient>,
             bond_manager: None,
             anchor_updater: AnchorUpdater::new(
-                TokioRuntime::new(),
-                Duration::from_secs(24 * 60 * 60),
+                factory,
+                anchor_registry,
+                l2_provider as Arc<dyn base_proof_rpc::L2Provider>,
+                Address::repeat_byte(0xAA),
+                1,
+                100,
+                100,
             ),
         },
     )
@@ -380,15 +388,16 @@ async fn test_step_scan_error_propagated() {
     }
 
     let factory = Arc::new(FailingFactory);
+    let anchor_registry = mock_anchor_registry(Address::ZERO);
     let verifier = empty_verifier();
     let scanner = GameScanner::new(
-        factory,
+        Arc::clone(&factory) as Arc<dyn DisputeGameFactoryClient>,
         Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
-        mock_anchor_registry(Address::ZERO),
+        Arc::clone(&anchor_registry),
     );
 
     let l2 = default_l2();
-    let validator = OutputValidator::new(l2);
+    let validator = OutputValidator::new(Arc::clone(&l2));
     let submitter = ChallengeSubmitter::new(default_tx_manager());
 
     let config = DriverConfig {
@@ -409,8 +418,13 @@ async fn test_step_scan_error_propagated() {
             verifier_client: verifier as Arc<dyn AggregateVerifierClient>,
             bond_manager: None::<BondManager<TokioRuntime>>,
             anchor_updater: AnchorUpdater::new(
-                TokioRuntime::new(),
-                Duration::from_secs(24 * 60 * 60),
+                factory,
+                anchor_registry,
+                l2 as Arc<dyn base_proof_rpc::L2Provider>,
+                Address::repeat_byte(0xAA),
+                1,
+                100,
+                100,
             ),
         },
     );
@@ -1098,10 +1112,6 @@ async fn test_successful_nullify_does_not_track_anchor_update() {
     driver.step().await.unwrap();
 
     assert!(!driver.pending_proofs.contains_key(&addr(0)));
-    assert!(
-        !driver.anchor_updater.is_tracking(&addr(0)),
-        "nullify results should be rescanned before anchor update tracking"
-    );
 }
 
 #[tokio::test]
