@@ -21,7 +21,9 @@ pub use reth_cli_commands::download::manifest::{
 };
 use tracing::info;
 
-use crate::progress::ArchiveProgress;
+use crate::progress::{
+    ArchiveProgressReporter, ComponentProgressLogger, ComponentProgressReporter,
+};
 
 /// Default blocks per static file segment.
 const DEFAULT_BLOCKS_PER_FILE: u64 = 500_000;
@@ -117,6 +119,31 @@ impl SnapshotGenerator {
         blocks_per_file: Option<u64>,
         remote_static_files: &HashMap<String, u64>,
     ) -> Result<Vec<PathBuf>> {
+        Self::generate_manifest_with_previous_chunk_output_files(
+            source_datadir,
+            output_dir,
+            chain_id,
+            block,
+            blocks_per_file,
+            remote_static_files,
+            &HashMap::new(),
+        )
+    }
+
+    /// Generates snapshot archives while reusing prior per-file chunk metadata when available.
+    ///
+    /// This avoids a long serial pre-pass over finalized chunks: when `previous_chunk_output_files`
+    /// contains a skipped archive's `OutputFileChecksum` entries, the generator can copy those
+    /// manifest rows directly instead of re-hashing local files that will not be re-uploaded.
+    pub fn generate_manifest_with_previous_chunk_output_files(
+        source_datadir: &Path,
+        output_dir: &Path,
+        chain_id: u64,
+        block: Option<u64>,
+        blocks_per_file: Option<u64>,
+        remote_static_files: &HashMap<String, u64>,
+        previous_chunk_output_files: &HashMap<String, Vec<OutputFileChecksum>>,
+    ) -> Result<Vec<PathBuf>> {
         std::fs::create_dir_all(output_dir)
             .with_context(|| format!("failed to create output dir {}", output_dir.display()))?;
 
@@ -157,6 +184,7 @@ impl SnapshotGenerator {
 
         for &(key, segment_name) in CHUNKED_COMPONENTS {
             let mut planned = Vec::new();
+            let mut planned_hash_only = Vec::new();
             let mut found_any = false;
             let mut chunk_sizes = vec![0u64; num_chunks as usize];
             let mut chunk_decompressed = vec![0u64; num_chunks as usize];
@@ -176,10 +204,6 @@ impl SnapshotGenerator {
                 }
                 found_any = true;
 
-                let output_files = chunk_output_files_for_source_files(&source_files)?;
-                chunk_decompressed[i as usize] = output_files.iter().map(|f| f.size).sum();
-                chunk_output_files[i as usize] = output_files;
-
                 if skip_ranges.contains(&(start, end)) {
                     let archive_name = ChunkFilename::format(key, start, end);
                     chunk_sizes[i as usize] =
@@ -188,6 +212,17 @@ impl SnapshotGenerator {
                                 "missing remote size for skipped archive {archive_name}"
                             )
                         })?;
+
+                    if let Some(output_files) = previous_chunk_output_files.get(&archive_name) {
+                        chunk_decompressed[i as usize] = output_files.iter().map(|f| f.size).sum();
+                        chunk_output_files[i as usize] = output_files.clone();
+                    } else {
+                        planned_hash_only.push(PlannedChunk {
+                            chunk_idx: i,
+                            archive_path: output_dir.join(&archive_name),
+                            source_files,
+                        });
+                    }
                     continue;
                 }
 
@@ -201,14 +236,44 @@ impl SnapshotGenerator {
             if !found_any {
                 info!(component = key, "no static files found, skipping component");
             } else {
+                let hashed_only: Vec<PackagedChunk> = planned_hash_only
+                    .into_par_iter()
+                    .map(|p| {
+                        let output_files = chunk_output_files_for_source_files(&p.source_files)?;
+                        Ok(PackagedChunk { chunk_idx: p.chunk_idx, size: 0, output_files })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+
+                for p in hashed_only {
+                    let idx = p.chunk_idx as usize;
+                    chunk_decompressed[idx] = p.output_files.iter().map(|f| f.size).sum();
+                    chunk_output_files[idx] = p.output_files;
+                }
+
+                let progress_logger = if planned.is_empty() {
+                    None
+                } else {
+                    Some(ComponentProgressLogger::new(
+                        key.to_string(),
+                        planned_chunks_total_bytes(&planned)?,
+                        planned.len(),
+                    ))
+                };
+                let progress_reporter =
+                    progress_logger.as_ref().map(ComponentProgressLogger::reporter);
                 let packaged: Vec<PackagedChunk> = planned
                     .into_par_iter()
                     .map(|p| {
-                        let output_files = write_chunk_archive(&p.archive_path, &p.source_files)?;
+                        let output_files = write_chunk_archive(
+                            &p.archive_path,
+                            &p.source_files,
+                            progress_reporter.clone(),
+                        )?;
                         let size = std::fs::metadata(&p.archive_path)?.len();
                         Ok(PackagedChunk { chunk_idx: p.chunk_idx, size, output_files })
                     })
                     .collect::<Result<Vec<_>>>()?;
+                drop(progress_logger);
 
                 for p in packaged {
                     let idx = p.chunk_idx as usize;
@@ -303,8 +368,23 @@ impl SnapshotGenerator {
         std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)?)?;
         info!(block, components = manifest.components.len(), "manifest written");
 
-        let files = collect_output_files(output_dir)?;
+        let files = Self::collect_output_files(output_dir)?;
         info!(file_count = files.len(), "snapshot generation complete");
+        Ok(files)
+    }
+
+    /// Collects all files in a snapshot output directory (non-recursive).
+    pub fn collect_output_files(dir: &Path) -> Result<Vec<PathBuf>> {
+        let mut files = Vec::new();
+        for entry in
+            std::fs::read_dir(dir).with_context(|| format!("failed to read {}", dir.display()))?
+        {
+            let entry = entry?;
+            if entry.file_type()?.is_file() {
+                files.push(entry.path());
+            }
+        }
+        files.sort_unstable();
         Ok(files)
     }
 
@@ -528,12 +608,29 @@ fn package_single_component(
         bail!("cannot package empty archive: {archive_name}");
     }
     let archive_path = output_dir.join(archive_name);
-    let output_files = write_archive_from_planned_files(&archive_path, files)?;
+    let output_files = write_archive_from_planned_files(&archive_path, files, None)?;
     let size = std::fs::metadata(&archive_path)?.len();
     Ok((size, output_files))
 }
 
-fn write_chunk_archive(path: &Path, source_files: &[PathBuf]) -> Result<Vec<OutputFileChecksum>> {
+fn write_chunk_archive(
+    path: &Path,
+    source_files: &[PathBuf],
+    progress: Option<ComponentProgressReporter>,
+) -> Result<Vec<OutputFileChecksum>> {
+    let archive_progress = match progress.as_ref() {
+        Some(progress) => Some(
+            progress.start_archive(
+                path.file_name()
+                    .ok_or_else(|| anyhow::anyhow!("invalid archive path: {}", path.display()))?
+                    .to_string_lossy()
+                    .to_string(),
+                source_files_total_bytes(source_files)?,
+            ),
+        ),
+        None => None,
+    };
+
     let planned: Vec<PlannedFile> = source_files
         .iter()
         .map(|p| {
@@ -546,7 +643,21 @@ fn write_chunk_archive(path: &Path, source_files: &[PathBuf]) -> Result<Vec<Outp
         })
         .collect::<Result<Vec<_>>>()?;
 
-    write_archive_from_planned_files(path, &planned)
+    let result = write_archive_from_planned_files(path, &planned, archive_progress.clone());
+    match result {
+        Ok(output_files) => {
+            if let Some(archive_progress) = archive_progress.as_ref() {
+                archive_progress.finish();
+            }
+            Ok(output_files)
+        }
+        Err(error) => {
+            if let Some(archive_progress) = archive_progress.as_ref() {
+                archive_progress.fail();
+            }
+            Err(error)
+        }
+    }
 }
 
 fn chunk_output_files_for_source_files(
@@ -570,13 +681,15 @@ fn chunk_output_files_for_source_files(
 fn write_archive_from_planned_files(
     path: &Path,
     files: &[PlannedFile],
+    progress: Option<ArchiveProgressReporter>,
 ) -> Result<Vec<OutputFileChecksum>> {
     let file = std::fs::File::create(path)?;
     let mut encoder = zstd::Encoder::new(file, 0)?;
     encoder.include_checksum(true)?;
     let mut builder = tar::Builder::new(encoder);
 
-    let output_files = compute_output_files_and_archive(files, Some((&mut builder, path)))?;
+    let output_files =
+        compute_output_files_and_archive(files, Some((&mut builder, path)), progress)?;
 
     let encoder = builder.into_inner()?;
     encoder.finish()?;
@@ -587,27 +700,20 @@ fn write_archive_from_planned_files(
 fn compute_output_files_for_planned_files(
     files: &[PlannedFile],
 ) -> Result<Vec<OutputFileChecksum>> {
-    compute_output_files_and_archive(files, None)
+    compute_output_files_and_archive(files, None, None)
 }
 
 fn compute_output_files_and_archive(
     files: &[PlannedFile],
     mut archive: Option<(&mut tar::Builder<zstd::Encoder<'_, std::fs::File>>, &Path)>,
+    progress: Option<ArchiveProgressReporter>,
 ) -> Result<Vec<OutputFileChecksum>> {
-    let archive_name = archive
-        .as_ref()
-        .and_then(|(_, path)| path.file_name().map(|n| n.to_string_lossy().to_string()));
-    let total_bytes: u64 = files
-        .iter()
-        .try_fold(0u64, |acc, f| std::fs::metadata(&f.source_path).map(|m| acc + m.len()))?;
-    let mut progress = archive_name.map(|name| ArchiveProgress::new(name, total_bytes));
-
     let mut output_files = Vec::with_capacity(files.len());
     for planned in files {
         let expected_size = std::fs::metadata(&planned.source_path)?.len();
 
         let source_file = std::fs::File::open(&planned.source_path)?;
-        let mut reader = HashingReader::new(source_file, progress.as_mut());
+        let mut reader = HashingReader::new(source_file, progress.clone());
 
         if let Some((builder, archive_path)) = archive.as_mut() {
             let mut header = tar::Header::new_gnu();
@@ -645,15 +751,15 @@ fn compute_output_files_and_archive(
     Ok(output_files)
 }
 
-struct HashingReader<'a, R> {
+struct HashingReader<R> {
     inner: R,
     hasher: blake3::Hasher,
     bytes_read: u64,
-    progress: Option<&'a mut ArchiveProgress>,
+    progress: Option<ArchiveProgressReporter>,
 }
 
-impl<'a, R: Read> HashingReader<'a, R> {
-    fn new(inner: R, progress: Option<&'a mut ArchiveProgress>) -> Self {
+impl<R: Read> HashingReader<R> {
+    fn new(inner: R, progress: Option<ArchiveProgressReporter>) -> Self {
         Self { inner, hasher: blake3::Hasher::new(), bytes_read: 0, progress }
     }
 
@@ -662,13 +768,13 @@ impl<'a, R: Read> HashingReader<'a, R> {
     }
 }
 
-impl<R: Read> Read for HashingReader<'_, R> {
+impl<R: Read> Read for HashingReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let n = self.inner.read(buf)?;
         if n > 0 {
             self.bytes_read += n as u64;
             self.hasher.update(&buf[..n]);
-            if let Some(progress) = self.progress.as_mut() {
+            if let Some(progress) = self.progress.as_ref() {
                 progress.record(n as u64);
             }
         }
@@ -676,19 +782,17 @@ impl<R: Read> Read for HashingReader<'_, R> {
     }
 }
 
-/// Collects all files in the output directory (non-recursive).
-fn collect_output_files(dir: &Path) -> Result<Vec<PathBuf>> {
-    let mut files = Vec::new();
-    for entry in
-        std::fs::read_dir(dir).with_context(|| format!("failed to read {}", dir.display()))?
-    {
-        let entry = entry?;
-        if entry.file_type()?.is_file() {
-            files.push(entry.path());
-        }
-    }
-    files.sort_unstable();
-    Ok(files)
+fn planned_chunks_total_bytes(chunks: &[PlannedChunk]) -> Result<u64> {
+    chunks.iter().try_fold(0u64, |acc, chunk| {
+        let chunk_bytes = source_files_total_bytes(&chunk.source_files)?;
+        Ok(acc + chunk_bytes)
+    })
+}
+
+fn source_files_total_bytes(source_files: &[PathBuf]) -> Result<u64> {
+    source_files.iter().try_fold(0u64, |chunk_acc, path| {
+        std::fs::metadata(path).map(|m| chunk_acc + m.len()).map_err(Into::into)
+    })
 }
 
 #[cfg(test)]
@@ -904,13 +1008,23 @@ mod tests {
             remote.insert(ChunkFilename::format(key, 0, 499_999), 0u64);
         }
 
-        SnapshotGenerator::generate_manifest(
+        let previous_chunk_output_files = HashMap::from([(
+            "headers-0-499999.tar.zst".to_string(),
+            vec![OutputFileChecksum {
+                path: "static_files/static_file_headers_0_499999".to_string(),
+                size: 777,
+                blake3: "reused-from-previous-manifest".to_string(),
+            }],
+        )]);
+
+        SnapshotGenerator::generate_manifest_with_previous_chunk_output_files(
             source.path(),
             output.path(),
             8453,
             Some(2_000_000),
             Some(500_000),
             &remote,
+            &previous_chunk_output_files,
         )
         .unwrap();
 
@@ -927,6 +1041,10 @@ mod tests {
         assert!(
             chunk_output_files[0].as_array().is_some_and(|files| !files.is_empty()),
             "skipped chunk should still retain output-file metadata"
+        );
+        assert_eq!(
+            chunk_output_files[0][0]["blake3"], "reused-from-previous-manifest",
+            "skipped chunk should reuse previous manifest metadata when available"
         );
         assert!(
             headers.get("chunk_skipped").is_none(),

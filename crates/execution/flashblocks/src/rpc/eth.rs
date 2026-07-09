@@ -60,21 +60,24 @@ use alloy_rpc_types::{
     state::{EvmOverrides, StateOverride, StateOverridesBuilder},
 };
 use alloy_rpc_types_eth::{Filter, Log};
+use base_common_evm::BaseTransaction as BaseRevm;
 use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
-use base_execution_eip8130_rpc::{ChannelNonceReader, Eip8130CobaltGate};
+use base_execution_eip8130_rpc::{ChannelNonceReader, Eip8130CobaltGate, Eip8130GasEstimator};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
 };
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
+use reth_evm::TxEnvFor;
 use reth_provider::CanonStateSubscriptions;
 use reth_rpc::eth::EthFilter;
 use reth_rpc_eth_api::{
-    EthApiTypes, EthFilterApiServer, RpcBlock, RpcReceipt, RpcTransaction,
-    helpers::{EthBlocks, EthCall, EthState, EthTransactions, FullEthApi},
+    EthApiTypes, EthFilterApiServer, FromEthApiError, RpcBlock, RpcReceipt, RpcTransaction,
+    helpers::{EthBlocks, EthCall, EthState, EthTransactions, FullEthApi, LoadPendingBlock},
 };
 use reth_rpc_eth_types::EthApiError;
+use revm::context::TxEnv;
 use tokio::{sync::broadcast::error::RecvError, time};
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 use tracing::{debug, trace, warn};
@@ -185,11 +188,14 @@ impl<Eth: EthApiTypes, FB> EthApiExt<Eth, FB> {
 #[async_trait]
 impl<Eth, FB> EthApiOverrideServer for EthApiExt<Eth, FB>
 where
-    Eth: FullEthApi<NetworkTypes = Base> + Send + Sync + 'static,
+    Eth: FullEthApi<NetworkTypes = Base> + LoadPendingBlock + Clone + Send + Sync + 'static,
+    Eth::Error: FromEthApiError,
     <Eth as reth_rpc_eth_api::RpcNodeCore>::Provider:
         reth_chainspec::ChainSpecProvider + reth_provider::BlockReaderIdExt,
     <<Eth as reth_rpc_eth_api::RpcNodeCore>::Provider as reth_chainspec::ChainSpecProvider>::ChainSpec:
         base_common_chains::Upgrades,
+    TxEnvFor<Eth::Evm>: From<BaseRevm<TxEnv>>,
+    reth_evm::EvmFactoryFor<Eth::Evm>: alloy_evm::EvmFactory<BlockEnv = revm::context::BlockEnv>,
     FB: FlashblocksAPI + Send + Sync + 'static,
     jsonrpsee_types::error::ErrorObject<'static>: From<Eth::Error>,
 {
@@ -481,6 +487,21 @@ where
             StateOverridesBuilder::new(pending_overrides.state.unwrap_or_default());
         state_overrides_builder = state_overrides_builder.extend(overrides.unwrap_or_default());
         let final_overrides = state_overrides_builder.build();
+
+        // EIP-8130 request: estimate via a single read-only simulation against
+        // the (pending-merged) block state, gated on the Cobalt fork. The
+        // deterministic, signature-independent EIP-8130 gas charge means no
+        // gas-limit binary search is needed.
+        if transaction.as_eip8130().is_some() {
+            Eip8130CobaltGate::check(&self.eth_api, block_id)?;
+            return Eip8130GasEstimator::estimate(
+                &self.eth_api,
+                transaction,
+                block_id,
+                EvmOverrides::new(Some(final_overrides), pending_overrides.block),
+            )
+            .await;
+        }
 
         EthCall::estimate_gas_at(
             &self.eth_api,

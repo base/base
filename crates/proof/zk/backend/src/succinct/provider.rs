@@ -2,13 +2,13 @@
 
 use std::{error::Error as StdError, fmt, sync::Arc};
 
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256};
 use base_l1_head::{L1HeadCalculator, L1HeadError};
-use base_proof_succinct_ethereum_host_utils::host::SingleChainOPSuccinctHost;
+use base_proof_succinct_client_utils::boot::BootInfoStruct;
 use base_proof_succinct_host_utils::{
-    fetcher::OPSuccinctDataFetcher, host::OPSuccinctHost, witness_generation::WitnessGenerator,
+    fetcher::OPSuccinctDataFetcher, get_agg_proof_stdin, host::SuccinctHost,
 };
-use sp1_sdk::SP1Stdin;
+use sp1_sdk::{SP1ProofWithPublicValues, SP1Stdin, SP1VerifyingKey};
 use thiserror::Error;
 use tracing::{debug, info};
 
@@ -103,12 +103,33 @@ pub enum WitnessError {
         #[source]
         source: Box<dyn StdError + Send + Sync>,
     },
+    /// Fetching the latest L1 checkpoint head for aggregation failed.
+    #[error("failed to fetch latest L1 checkpoint head for aggregation")]
+    AggregationL1Head {
+        /// Underlying header fetch error.
+        #[source]
+        source: Box<dyn StdError + Send + Sync>,
+    },
+    /// Fetching L1 header preimages for aggregation failed.
+    #[error("failed to fetch L1 header preimages for aggregation")]
+    AggregationHeaders {
+        /// Underlying header fetch error.
+        #[source]
+        source: Box<dyn StdError + Send + Sync>,
+    },
+    /// Building aggregation stdin failed.
+    #[error("failed to build aggregation stdin")]
+    AggregationStdin {
+        /// Underlying aggregation stdin error.
+        #[source]
+        source: Box<dyn StdError + Send + Sync>,
+    },
 }
 
 /// Provider wrapping the Succinct host for witness generation.
 #[derive(Clone)]
 pub struct OpSuccinctWitnessProvider {
-    host: Arc<SingleChainOPSuccinctHost>,
+    host: Arc<SuccinctHost>,
 }
 
 impl fmt::Debug for OpSuccinctWitnessProvider {
@@ -121,7 +142,7 @@ impl OpSuccinctWitnessProvider {
     /// Create a new provider with an initialized host.
     pub fn new(fetcher: Arc<OPSuccinctDataFetcher>) -> Self {
         info!("initializing Succinct witness provider with Ethereum DA");
-        let host = Arc::new(SingleChainOPSuccinctHost::new(fetcher));
+        let host = Arc::new(SuccinctHost::new(fetcher));
         Self { host }
     }
 
@@ -197,5 +218,39 @@ impl OpSuccinctWitnessProvider {
         info!(start_block = start_block, end_block = end_block, "witness generation completed");
 
         Ok(stdin)
+    }
+
+    /// Generate aggregation stdin from a completed compressed range proof.
+    pub async fn generate_aggregation_witness(
+        &self,
+        mut range_proof: SP1ProofWithPublicValues,
+        range_vk: &SP1VerifyingKey,
+        prover_address: Address,
+    ) -> Result<SP1Stdin, WitnessError> {
+        let boot_info: BootInfoStruct = range_proof.public_values.read();
+        let boot_infos = vec![boot_info];
+        let proofs = vec![range_proof.proof];
+
+        let header =
+            self.host.fetcher.get_latest_l1_head_in_batch(&boot_infos).await.map_err(|source| {
+                WitnessError::AggregationL1Head { source: source.into_boxed_dyn_error() }
+            })?;
+        let l1_head_hash = header.hash_slow();
+
+        let headers =
+            self.host.fetcher.get_header_preimages(&boot_infos, l1_head_hash).await.map_err(
+                |source| WitnessError::AggregationHeaders { source: source.into_boxed_dyn_error() },
+            )?;
+
+        info!(
+            l1_head_hash = %l1_head_hash,
+            num_headers = headers.len(),
+            "fetched L1 headers for aggregation proof"
+        );
+
+        get_agg_proof_stdin(proofs, boot_infos, headers, range_vk, l1_head_hash, prover_address)
+            .map_err(|source| WitnessError::AggregationStdin {
+                source: source.into_boxed_dyn_error(),
+            })
     }
 }

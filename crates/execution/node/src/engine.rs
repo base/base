@@ -325,6 +325,13 @@ where
             ));
         }
 
+        // TODO(200ms): update to real hard fork gate.
+        if attributes.timestamp_millis_part.is_some() {
+            return Err(EngineObjectValidationError::InvalidParams(
+                "TimestampMillisPartNotAllowed".to_string().into(),
+            ));
+        }
+
         Ok(())
     }
 }
@@ -421,6 +428,7 @@ mod tests {
                 min_base_fee,
                 transactions: None,
                 no_tx_pool: None,
+                timestamp_millis_part: None,
                 payload_attributes: PayloadAttributes {
                     timestamp,
                     prev_randao: B256::ZERO,
@@ -574,5 +582,19 @@ mod tests {
             &validator, EngineApiMessageVersion::V3, &attributes
         );
         assert_invalid_params_error!(result, "MissingMinBaseFeeInPayloadAttributes");
+    }
+
+    #[test]
+    fn test_malformed_attributes_with_timestamp_millis_part() {
+        let validator = validator();
+        let mut attributes = get_attributes(None, None, 1732633199);
+        attributes.timestamp_millis_part = Some(200);
+
+        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+            BaseEngineTypes,
+        >>::ensure_well_formed_attributes(
+            &validator, EngineApiMessageVersion::V3, &attributes
+        );
+        assert_invalid_params_error!(result, "TimestampMillisPartNotAllowed");
     }
 }

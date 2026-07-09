@@ -51,10 +51,6 @@ pub struct ProposerArgs {
     #[arg(long = "dry-run", env = cli_env!("DRY_RUN"))]
     pub dry_run: bool,
 
-    /// Allow proposals based on non-finalized L1 data.
-    #[arg(long = "allow-non-finalized", env = cli_env!("ALLOW_NON_FINALIZED"))]
-    pub allow_non_finalized: bool,
-
     /// URL of the prover RPC endpoint.
     #[arg(long = "prover-rpc", env = cli_env!("PROVER_RPC"))]
     pub prover_rpc: Url,

@@ -8,8 +8,10 @@ use std::{
 use async_trait::async_trait;
 use base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
 use base_proof_succinct_proof_utils::get_range_elf_embedded;
-use base_proof_zk_host::{ZkProofRequestKind, ZkProver, ZkProverError, ZkSessionState};
-use base_prover_service_protocol::{ExecutionStats, ProofResult, ZkProofResult, ZkVm};
+use base_proof_zk_host::{ZkProver, ZkProverError, ZkSessionState};
+use base_prover_service_protocol::{
+    ExecutionStats, ProofResult, SessionType, ZkProofRequest, ZkProofResult, ZkVm,
+};
 use sp1_sdk::{
     Elf, SP1Stdin,
     blocking::{LightProver, Prover},
@@ -32,7 +34,7 @@ macro_rules! backend_error {
 pub const DRY_RUN_PREFIX: &str = "dry-run-stark-";
 
 /// [`ZkProver`] that generates a witness and executes the range program locally.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct DryRunZkProver {
     provider: OpSuccinctWitnessProvider,
     base_consensus_url: String,
@@ -40,17 +42,6 @@ pub struct DryRunZkProver {
     default_sequence_window: u64,
     range_cycle_limit: u64,
     completed_results: Arc<Mutex<HashMap<String, ProofResult>>>,
-}
-
-impl std::fmt::Debug for DryRunZkProver {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DryRunZkProver")
-            .field("base_consensus_url", &self.base_consensus_url)
-            .field("l1_node_url", &self.l1_node_url)
-            .field("default_sequence_window", &self.default_sequence_window)
-            .field("range_cycle_limit", &self.range_cycle_limit)
-            .finish_non_exhaustive()
-    }
 }
 
 impl DryRunZkProver {
@@ -141,7 +132,7 @@ impl DryRunZkProver {
     /// Generate the witness, execute it locally, and return an empty-proof dry-run result.
     pub async fn prove_range(
         &self,
-        request: &base_prover_service_protocol::ZkProofRequest,
+        request: &ZkProofRequest,
         request_session_id: &str,
     ) -> Result<ProofResult, ZkProverError> {
         if request.number_of_blocks_to_prove == 0 {
@@ -228,15 +219,9 @@ impl DryRunZkProver {
 impl ZkProver for DryRunZkProver {
     async fn submit(
         &self,
-        request: &ZkProofRequestKind,
+        request: &ZkProofRequest,
         request_session_id: &str,
     ) -> Result<String, ZkProverError> {
-        let ZkProofRequestKind::Compressed(request) = request else {
-            return Err(backend_error!(
-                "dry-run backend only supports compressed proof types; SNARK_GROTH16 requires a proof-producing backend"
-            ));
-        };
-
         let backend_session_id = format!("{DRY_RUN_PREFIX}{request_session_id}");
         let result = self.prove_range(request, request_session_id).await?;
         self.completed_results
@@ -256,7 +241,11 @@ impl ZkProver for DryRunZkProver {
         if contains_result { Ok(ZkSessionState::Completed) } else { Ok(ZkSessionState::NotFound) }
     }
 
-    async fn download(&self, backend_session_id: &str) -> Result<ProofResult, ZkProverError> {
+    async fn download(
+        &self,
+        _session_type: SessionType,
+        backend_session_id: &str,
+    ) -> Result<ProofResult, ZkProverError> {
         self.completed_results
             .lock()
             .map_err(|e| backend_error!("dry-run result store lock poisoned: {e}"))?

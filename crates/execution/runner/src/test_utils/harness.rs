@@ -191,6 +191,7 @@ impl TestHarness {
                 no_tx_pool: Some(true),
                 min_base_fee: Some(min_base_fee),
                 eip_1559_params: Some(B64::from(eip_1559_params)),
+                timestamp_millis_part: None,
             },
             3,
         )?;

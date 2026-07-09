@@ -39,7 +39,6 @@ all = { level = "warn", priority = -1 }
 base-proof-succinct-range-utils = { path = "range/utils" }
 base-proof = { path = "../../../proof/proof", default-features = false }
 base-proof-succinct-client-utils = { path = "../utils/client" }
-base-proof-succinct-ethereum-client-utils = { path = "../utils/ethereum/client" }
 
 # SP1 (must match the cargo-prove Docker tag)
 sp1-lib = { version = "=6.3.0", features = ["verify"] }

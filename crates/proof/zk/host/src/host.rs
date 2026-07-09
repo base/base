@@ -9,13 +9,12 @@ use base_proof_worker::{
 use base_prover_service_client::ProverWorkerProvider;
 use tokio_util::sync::CancellationToken;
 
-use crate::{ProofGenerator, ProofGeneratorHeartbeatConfig, ZkProofClaimType, ZkProver, ZkVm};
+use crate::{ProofGenerator, ProofGeneratorHeartbeatConfig, ZkProver, ZkVm};
 
 /// Settings for running a ZK host against the prover service.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ZkHostConfig {
     worker_id: String,
-    proof_type: ZkProofClaimType,
     zk_vms: Vec<ZkVm>,
     job_discovery_poll_interval: Duration,
     job_discovery_lock_duration_seconds: u32,
@@ -25,14 +24,9 @@ pub struct ZkHostConfig {
 
 impl ZkHostConfig {
     /// Creates a ZK host config with default timing settings.
-    pub fn new(
-        worker_id: impl Into<String>,
-        proof_type: ZkProofClaimType,
-        zk_vms: impl Into<Vec<ZkVm>>,
-    ) -> Self {
+    pub fn new(worker_id: impl Into<String>, zk_vms: impl Into<Vec<ZkVm>>) -> Self {
         Self {
             worker_id: worker_id.into(),
-            proof_type,
             zk_vms: zk_vms.into(),
             job_discovery_poll_interval: DEFAULT_JOB_DISCOVERY_POLL_INTERVAL,
             job_discovery_lock_duration_seconds: DEFAULT_JOB_DISCOVERY_LOCK_DURATION_SECONDS,
@@ -42,18 +36,13 @@ impl ZkHostConfig {
     }
 
     /// Creates an SP1 ZK host config with default timing settings.
-    pub fn sp1(worker_id: impl Into<String>, proof_type: ZkProofClaimType) -> Self {
-        Self::new(worker_id, proof_type, vec![ZkVm::Sp1])
+    pub fn sp1(worker_id: impl Into<String>) -> Self {
+        Self::new(worker_id, vec![ZkVm::Sp1])
     }
 
     /// Returns the worker identifier used for prover-service claims.
     pub fn worker_id(&self) -> &str {
         &self.worker_id
-    }
-
-    /// Returns the proof type claimed by the worker.
-    pub const fn proof_type(&self) -> ZkProofClaimType {
-        self.proof_type
     }
 
     /// Returns the ZK VMs claimed by the worker.
@@ -123,7 +112,7 @@ impl ZkHostConfig {
 
     /// Builds the shared worker discovery config.
     pub fn job_discovery_config(&self) -> JobDiscoveryConfig {
-        JobDiscoveryConfig::zk(self.worker_id.clone(), self.proof_type, self.zk_vms.clone())
+        JobDiscoveryConfig::zk(self.worker_id.clone(), self.zk_vms.clone())
             .with_poll_interval(self.job_discovery_poll_interval)
             .with_lock_duration_seconds(self.job_discovery_lock_duration_seconds)
             .with_max_concurrent_jobs(self.job_discovery_max_concurrent_jobs)
@@ -131,7 +120,7 @@ impl ZkHostConfig {
 
     /// Converts this config into the shared worker discovery config.
     pub fn into_job_discovery_config(self) -> JobDiscoveryConfig {
-        JobDiscoveryConfig::zk(self.worker_id, self.proof_type, self.zk_vms)
+        JobDiscoveryConfig::zk(self.worker_id, self.zk_vms)
             .with_poll_interval(self.job_discovery_poll_interval)
             .with_lock_duration_seconds(self.job_discovery_lock_duration_seconds)
             .with_max_concurrent_jobs(self.job_discovery_max_concurrent_jobs)

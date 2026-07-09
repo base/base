@@ -788,7 +788,7 @@ mod tests {
         use crate::BaseTxEnvelope;
 
         let json = serde_json::json!({
-            "type": "0x7b",
+            "type": "0x79",
             "tx": {
                 "chainId": 1,
                 "sender": null,

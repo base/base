@@ -13,20 +13,23 @@
 
 use std::{
     collections::HashMap,
+    future::Future,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use anyhow::{Context, Result, bail};
 use aws_sdk_s3::{
     Client as S3Client,
     primitives::ByteStream,
-    types::{CompletedMultipartUpload, CompletedPart},
+    types::{CompletedMultipartUpload, CompletedPart, Delete, ObjectIdentifier},
 };
 use futures::stream::{self, StreamExt, TryStreamExt};
-use tracing::{debug, info, warn};
+use tokio::time::sleep;
+use tracing::{debug, error, info, warn};
 
 use crate::{
-    progress::UploadProgress,
+    progress::{UploadProgress, UploadStage},
     snapshot::{ChunkFilename, SnapshotManifest, SnapshotManifestExt},
 };
 
@@ -39,6 +42,24 @@ const MULTIPART_THRESHOLD: u64 = 100 * 1024 * 1024;
 
 /// Part size for multipart uploads (100 `MiB`).
 const MULTIPART_PART_SIZE: u64 = 100 * 1024 * 1024;
+
+/// Base delay between upload retries. Backoff is linear to keep behavior simple and predictable.
+const UPLOAD_RETRY_DELAY: Duration = Duration::from_secs(5);
+
+/// Cap for the retry backoff so uploads keep making progress instead of sleeping for minutes.
+const MAX_UPLOAD_RETRY_DELAY: Duration = Duration::from_secs(60);
+
+/// Maximum number of objects per S3-compatible delete batch.
+const DELETE_OBJECT_BATCH_SIZE: usize = 1000;
+
+/// Completed timestamped snapshot run discovered from a published manifest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnapshotRun {
+    /// Unix timestamp used as the run directory name.
+    pub timestamp: u64,
+    /// Full object key for the run's `manifest.json`.
+    pub manifest_key: String,
+}
 
 /// Determines whether a snapshot component is re-uploaded every run
 /// or can be skipped when the remote copy already matches.
@@ -98,15 +119,50 @@ impl SnapshotUploader {
     /// found manifest is logged and treated as no-previous (so we fall back to
     /// re-uploading everything rather than failing the run).
     pub async fn fetch_previous_manifest(&self) -> Result<Option<SnapshotManifest>> {
-        let manifest_suffix = "/manifest.json";
+        let runs = self.list_completed_runs().await?;
+        let best = runs.into_iter().max_by_key(|run| run.timestamp);
+
+        let Some(run) = best else {
+            debug!("no previous manifest found");
+            return Ok(None);
+        };
+
+        debug!(timestamp = run.timestamp, key = %run.manifest_key, "fetching previous manifest");
+        let resp = self
+            .client
+            .get_object()
+            .bucket(&self.bucket)
+            .key(&run.manifest_key)
+            .send()
+            .await
+            .with_context(|| format!("failed to fetch previous manifest {}", run.manifest_key))?;
+
+        let bytes = resp
+            .body
+            .collect()
+            .await
+            .with_context(|| format!("failed to read previous manifest body {}", run.manifest_key))?
+            .into_bytes();
+
+        match serde_json::from_slice::<SnapshotManifest>(&bytes) {
+            Ok(manifest) => Ok(Some(manifest)),
+            Err(e) => {
+                warn!(error = %e, key = %run.manifest_key, "failed to parse previous manifest, treating as missing");
+                Ok(None)
+            }
+        }
+    }
+
+    /// Lists completed timestamped run directories by looking for published manifests.
+    pub async fn list_completed_runs(&self) -> Result<Vec<SnapshotRun>> {
         let list_prefix =
             if self.prefix.is_empty() { String::new() } else { format!("{}/", self.prefix) };
 
-        let mut best: Option<(u64, String)> = None;
+        let mut run_prefixes = Vec::new();
         let mut continuation_token = None;
 
         loop {
-            let mut req = self.client.list_objects_v2().bucket(&self.bucket);
+            let mut req = self.client.list_objects_v2().bucket(&self.bucket).delimiter("/");
             if !list_prefix.is_empty() {
                 req = req.prefix(&list_prefix);
             }
@@ -119,16 +175,11 @@ impl SnapshotUploader {
                 .await
                 .with_context(|| format!("failed to list objects under {list_prefix}"))?;
 
-            for obj in resp.contents() {
-                let Some(key) = obj.key() else { continue };
-                let Some(rest) = key.strip_prefix(list_prefix.as_str()) else { continue };
-                let Some(timestamp_str) = rest.strip_suffix(manifest_suffix) else { continue };
-                if timestamp_str.contains('/') {
-                    continue;
-                }
-                let Ok(timestamp) = timestamp_str.parse::<u64>() else { continue };
-                if best.as_ref().is_none_or(|(prev, _)| timestamp > *prev) {
-                    best = Some((timestamp, key.to_string()));
+            for common_prefix in resp.common_prefixes() {
+                let Some(prefix) = common_prefix.prefix() else { continue };
+                if let Some((timestamp, run_prefix)) = Self::parse_run_prefix(prefix, &list_prefix)
+                {
+                    run_prefixes.push((timestamp, run_prefix));
                 }
             }
 
@@ -139,35 +190,67 @@ impl SnapshotUploader {
             }
         }
 
-        let Some((timestamp, key)) = best else {
-            debug!("no previous manifest found");
-            return Ok(None);
-        };
+        run_prefixes.sort_unstable_by(|a, b| b.0.cmp(&a.0));
 
-        debug!(timestamp, key = %key, "fetching previous manifest");
-        let resp = self
-            .client
-            .get_object()
-            .bucket(&self.bucket)
-            .key(&key)
-            .send()
-            .await
-            .with_context(|| format!("failed to fetch previous manifest {key}"))?;
-
-        let bytes = resp
-            .body
-            .collect()
-            .await
-            .with_context(|| format!("failed to read previous manifest body {key}"))?
-            .into_bytes();
-
-        match serde_json::from_slice::<SnapshotManifest>(&bytes) {
-            Ok(manifest) => Ok(Some(manifest)),
-            Err(e) => {
-                warn!(error = %e, key = %key, "failed to parse previous manifest, treating as missing");
-                Ok(None)
+        let mut runs = Vec::new();
+        for (timestamp, run_prefix) in run_prefixes {
+            let manifest_key = format!("{run_prefix}/manifest.json");
+            if self.remote_key_exists(&manifest_key).await? {
+                runs.push(SnapshotRun { timestamp, manifest_key });
             }
         }
+
+        Ok(runs)
+    }
+
+    /// Prunes old completed timestamped run directories, retaining the newest `retain_runs`.
+    pub async fn prune_old_runs(&self, retain_runs: usize) -> Result<()> {
+        let runs = self.list_completed_runs().await?;
+        let expired = Self::expired_run_timestamps(&runs, retain_runs);
+
+        if expired.is_empty() {
+            info!(retain_runs, total_runs = runs.len(), "no old snapshot runs to prune");
+            return Ok(());
+        }
+
+        let mut last_error = None;
+        for timestamp in expired {
+            let run_prefix = self.run_prefix(timestamp);
+            match self.delete_prefix(&run_prefix).await {
+                Ok(deleted_objects) => {
+                    info!(timestamp, run_prefix = %run_prefix, deleted_objects, "pruned old snapshot run");
+                }
+                Err(e) => {
+                    warn!(error = %e, timestamp, run_prefix = %run_prefix, "failed to prune old snapshot run, continuing");
+                    last_error = Some(e);
+                }
+            }
+        }
+
+        if let Some(e) = last_error {
+            return Err(e);
+        }
+
+        Ok(())
+    }
+
+    /// Parses a common prefix of the form `{list_prefix}{timestamp}/`.
+    pub fn parse_run_prefix(prefix: &str, list_prefix: &str) -> Option<(u64, String)> {
+        let rest = prefix.strip_prefix(list_prefix)?;
+        let timestamp_str = rest.strip_suffix('/')?;
+        if timestamp_str.contains('/') {
+            return None;
+        }
+        let timestamp = timestamp_str.parse::<u64>().ok()?;
+        Some((timestamp, prefix.trim_end_matches('/').to_string()))
+    }
+
+    /// Returns the completed run timestamps that exceed the retention window.
+    pub fn expired_run_timestamps(runs: &[SnapshotRun], retain_runs: usize) -> Vec<u64> {
+        let mut timestamps: Vec<u64> = runs.iter().map(|run| run.timestamp).collect();
+        timestamps.sort_unstable_by(|a, b| b.cmp(a));
+        timestamps.dedup();
+        timestamps.into_iter().skip(retain_runs).collect()
     }
 
     /// Uploads snapshot artifacts with diff-based optimization.
@@ -182,6 +265,7 @@ impl SnapshotUploader {
         output_dir: &Path,
         files: &[PathBuf],
         timestamp: u64,
+        retain_runs: usize,
         local_manifest: &SnapshotManifest,
         remote_manifest: Option<&SnapshotManifest>,
     ) -> Result<String> {
@@ -247,6 +331,9 @@ impl SnapshotUploader {
             "diff analysis complete"
         );
 
+        let static_upload_count = static_uploads.len();
+        let run_upload_count = run_uploads.len();
+
         let progress = UploadProgress::new(&static_uploads, &run_uploads, &manifest_path).await?;
         let progress_logger = progress.spawn_logger();
 
@@ -276,20 +363,28 @@ impl SnapshotUploader {
                 self.public_static_files_base_url().as_deref(),
                 timestamp,
             )?;
-            self.client
-                .put_object()
-                .bucket(&self.bucket)
-                .key(&manifest_key)
-                .body(ByteStream::from(published_manifest))
-                .send()
-                .await
-                .with_context(|| format!("failed to upload {manifest_key}"))?;
+            self.upload_manifest(&manifest_key, published_manifest, progress_ref).await?;
             Ok::<(), anyhow::Error>(())
         }
         .await;
 
-        progress_logger.abort();
-        upload_result?;
+        progress_logger.stop();
+        if let Err(error) = upload_result {
+            error!(
+                error = %error,
+                run_prefix = %run_prefix,
+                manifest_key = %manifest_key,
+                static_uploads = static_upload_count,
+                run_uploads = run_upload_count,
+                skipped,
+                "snapshot artifact upload failed"
+            );
+            return Err(error);
+        }
+
+        if let Err(e) = self.prune_old_runs(retain_runs).await {
+            warn!(error = %e, retain_runs, "failed to prune old snapshot runs");
+        }
 
         info!(
             run_prefix = %run_prefix,
@@ -366,6 +461,97 @@ impl SnapshotUploader {
         Ok(remote)
     }
 
+    /// Lists full object keys under a prefix.
+    async fn list_remote_keys(&self, prefix: &str) -> Result<Vec<String>> {
+        let prefix_with_slash = format!("{prefix}/");
+        let mut keys = Vec::new();
+        let mut continuation_token = None;
+
+        loop {
+            let mut req =
+                self.client.list_objects_v2().bucket(&self.bucket).prefix(&prefix_with_slash);
+
+            if let Some(token) = continuation_token.take() {
+                req = req.continuation_token(token);
+            }
+
+            let resp = req
+                .send()
+                .await
+                .with_context(|| format!("failed to list objects under {prefix_with_slash}"))?;
+
+            for obj in resp.contents() {
+                if let Some(key) = obj.key() {
+                    keys.push(key.to_string());
+                }
+            }
+
+            if resp.is_truncated() == Some(true) {
+                continuation_token = resp.next_continuation_token().map(String::from);
+            } else {
+                break;
+            }
+        }
+
+        Ok(keys)
+    }
+
+    /// Returns whether a full object key exists remotely.
+    async fn remote_key_exists(&self, key: &str) -> Result<bool> {
+        match self.client.head_object().bucket(&self.bucket).key(key).send().await {
+            Ok(_) => Ok(true),
+            Err(err) if err.as_service_error().is_some_and(|e| e.is_not_found()) => Ok(false),
+            Err(err) => Err(anyhow::anyhow!("failed to check object existence for {key}: {err}")),
+        }
+    }
+
+    /// Returns the remote object size for a full object key when it already exists.
+    async fn remote_object_size(&self, key: &str) -> Result<Option<u64>> {
+        match self.client.head_object().bucket(&self.bucket).key(key).send().await {
+            Ok(resp) => Ok(resp.content_length().and_then(|len| u64::try_from(len).ok())),
+            Err(err) if err.as_service_error().is_some_and(|e| e.is_not_found()) => Ok(None),
+            Err(err) => Err(anyhow::anyhow!("failed to check object metadata for {key}: {err}")),
+        }
+    }
+
+    /// Deletes all objects under a prefix and returns the number of deleted keys.
+    async fn delete_prefix(&self, prefix: &str) -> Result<usize> {
+        let keys = self.list_remote_keys(prefix).await?;
+        if keys.is_empty() {
+            return Ok(0);
+        }
+
+        for batch in keys.chunks(DELETE_OBJECT_BATCH_SIZE) {
+            let objects = batch
+                .iter()
+                .map(|key| ObjectIdentifier::builder().key(key).build())
+                .collect::<Result<Vec<_>, _>>()?;
+            let delete = Delete::builder().set_objects(Some(objects)).quiet(true).build()?;
+            let resp = self
+                .client
+                .delete_objects()
+                .bucket(&self.bucket)
+                .delete(delete)
+                .send()
+                .await
+                .with_context(|| format!("failed to delete objects under {prefix}"))?;
+
+            if !resp.errors().is_empty() {
+                for err in resp.errors() {
+                    warn!(
+                        key = %err.key().unwrap_or("<unknown>"),
+                        code = %err.code().unwrap_or("<unknown>"),
+                        message = %err.message().unwrap_or("<unknown>"),
+                        "failed to delete snapshot run object"
+                    );
+                }
+                bail!("failed to delete one or more objects under {prefix}");
+            }
+        }
+
+        Ok(keys.len())
+    }
+
     /// Uploads a single file, using multipart upload for files above the threshold.
     /// On success, adds the uploaded byte count to `progress` for progress tracking.
     async fn upload_file(
@@ -383,32 +569,72 @@ impl SnapshotUploader {
         let file_size = tokio::fs::metadata(file_path).await?.len();
 
         if file_size > MULTIPART_THRESHOLD {
-            debug!(key = %key, size = file_size, "uploading file (multipart)");
-            self.upload_multipart(file_path, &key, file_size, progress).await?;
+            debug!(
+                key = %key,
+                size = file_size,
+                part_size = MULTIPART_PART_SIZE,
+                parts = file_size.div_ceil(MULTIPART_PART_SIZE),
+                "starting multipart upload"
+            );
+            progress.start_file(key.clone(), file_size, UploadStage::CreatingMultipart);
+            match self.upload_multipart(file_path, &key, file_size, progress).await {
+                Ok(()) => progress.finish_file(&key),
+                Err(error) => {
+                    progress.fail_file(&key);
+                    return Err(error);
+                }
+            }
         } else {
             debug!(key = %key, size = file_size, "uploading file");
-            self.upload_single(file_path, &key).await?;
-            progress.add(file_size);
+            progress.start_file(key.clone(), file_size, UploadStage::Uploading);
+            match self.upload_single(file_path, &key).await {
+                Ok(()) => {
+                    progress.add_for_file(&key, file_size);
+                    progress.finish_file(&key);
+                }
+                Err(error) => {
+                    progress.fail_file(&key);
+                    return Err(error);
+                }
+            }
         }
 
         Ok(())
     }
 
     async fn upload_single(&self, file_path: &Path, key: &str) -> Result<()> {
-        let body = ByteStream::from_path(file_path)
-            .await
-            .with_context(|| format!("failed to read {}", file_path.display()))?;
+        retry_upload(
+            || async {
+                let body = ByteStream::from_path(file_path)
+                    .await
+                    .with_context(|| format!("failed to read {}", file_path.display()))
+                    .map_err(UploadAttemptError::fatal)?;
 
-        self.client
-            .put_object()
-            .bucket(&self.bucket)
-            .key(key)
-            .body(body)
-            .send()
-            .await
-            .with_context(|| format!("failed to upload {key}"))?;
-
-        Ok(())
+                self.client
+                    .put_object()
+                    .bucket(&self.bucket)
+                    .key(key)
+                    .body(body)
+                    .send()
+                    .await
+                    .map(|_| ())
+                    .map_err(|error| UploadAttemptError::retry(error.into()))
+            },
+            |attempt, error| {
+                warn!(
+                    key = %key,
+                    attempt,
+                    error = %error,
+                    error_debug = ?error,
+                    next_retry_delay_secs = retry_delay_secs(attempt),
+                    "single-part upload failed, retrying"
+                );
+            },
+            |attempt| {
+                info!(key = %key, attempt, "single-part upload succeeded after retrying");
+            },
+        )
+        .await
     }
 
     async fn upload_multipart(
@@ -418,51 +644,159 @@ impl SnapshotUploader {
         file_size: u64,
         progress: &UploadProgress,
     ) -> Result<()> {
-        let create_resp = self
-            .client
-            .create_multipart_upload()
-            .bucket(&self.bucket)
-            .key(key)
-            .send()
-            .await
-            .with_context(|| format!("failed to initiate multipart upload for {key}"))?;
+        let create_resp = self.create_multipart_upload_with_retry(key, progress).await?;
 
         let upload_id = create_resp
             .upload_id()
             .ok_or_else(|| anyhow::anyhow!("no upload_id returned for {key}"))?
             .to_string();
+        progress.set_stage(key, UploadStage::Uploading);
+        debug!(
+            key = %key,
+            upload_id,
+            size = file_size,
+            parts = file_size.div_ceil(MULTIPART_PART_SIZE),
+            "multipart upload created"
+        );
 
         let result = self.upload_parts(file_path, key, &upload_id, file_size, progress).await;
 
         match result {
             Ok(parts) => {
-                let completed = CompletedMultipartUpload::builder().set_parts(Some(parts)).build();
-
-                self.client
-                    .complete_multipart_upload()
-                    .bucket(&self.bucket)
-                    .key(key)
-                    .upload_id(&upload_id)
-                    .multipart_upload(completed)
-                    .send()
-                    .await
-                    .with_context(|| format!("failed to complete multipart upload for {key}"))?;
-
-                Ok(())
+                self.complete_multipart_upload_with_retry(
+                    key, &upload_id, file_size, parts, progress,
+                )
+                .await
             }
             Err(e) => {
-                self.client
+                match self
+                    .client
                     .abort_multipart_upload()
                     .bucket(&self.bucket)
                     .key(key)
                     .upload_id(&upload_id)
                     .send()
                     .await
-                    .ok();
+                {
+                    Ok(_) => {
+                        warn!(key = %key, upload_id, "aborted multipart upload after failure")
+                    }
+                    Err(abort_error) => {
+                        error!(
+                            key = %key,
+                            upload_id,
+                            error = %abort_error,
+                            error_debug = ?abort_error,
+                            "failed to abort multipart upload after failure"
+                        );
+                    }
+                }
 
                 Err(e)
             }
         }
+    }
+
+    async fn create_multipart_upload_with_retry(
+        &self,
+        key: &str,
+        progress: &UploadProgress,
+    ) -> Result<aws_sdk_s3::operation::create_multipart_upload::CreateMultipartUploadOutput> {
+        retry_upload(
+            || async {
+                progress.set_stage(key, UploadStage::CreatingMultipart);
+                self.client
+                    .create_multipart_upload()
+                    .bucket(&self.bucket)
+                    .key(key)
+                    .send()
+                    .await
+                    .map_err(|error| UploadAttemptError::retry(error.into()))
+            },
+            |attempt, error| {
+                warn!(
+                    key = %key,
+                    attempt,
+                    error = %error,
+                    error_debug = ?error,
+                    next_retry_delay_secs = retry_delay_secs(attempt),
+                    "multipart upload creation failed, retrying"
+                );
+            },
+            |attempt| {
+                info!(key = %key, attempt, "multipart upload creation succeeded after retrying");
+            },
+        )
+        .await
+    }
+
+    async fn complete_multipart_upload_with_retry(
+        &self,
+        key: &str,
+        upload_id: &str,
+        file_size: u64,
+        parts: Vec<CompletedPart>,
+        progress: &UploadProgress,
+    ) -> Result<()> {
+        retry_upload(
+            || async {
+                progress.set_stage(key, UploadStage::CompletingMultipart);
+                let completed =
+                    CompletedMultipartUpload::builder().set_parts(Some(parts.clone())).build();
+                match self
+                    .client
+                    .complete_multipart_upload()
+                    .bucket(&self.bucket)
+                    .key(key)
+                    .upload_id(upload_id)
+                    .multipart_upload(completed)
+                    .send()
+                    .await
+                {
+                    Ok(_) => Ok(()),
+                    Err(error) => {
+                        let error = anyhow::Error::from(error);
+                        if self.remote_object_size(key).await.map_err(UploadAttemptError::fatal)?
+                            == Some(file_size)
+                        {
+                            warn!(
+                                key = %key,
+                                upload_id,
+                                error = %error,
+                                error_debug = ?error,
+                                size = file_size,
+                                "multipart completion response failed after object appeared; treating upload as successful"
+                            );
+                            Ok(())
+                        } else {
+                            Err(UploadAttemptError::retry(error))
+                        }
+                    }
+                }
+            },
+            |attempt, error| {
+                warn!(
+                    key = %key,
+                    upload_id,
+                    attempt,
+                    error = %error,
+                    error_debug = ?error,
+                    next_retry_delay_secs = retry_delay_secs(attempt),
+                    "multipart upload completion failed, retrying"
+                );
+            },
+            |attempt| {
+                info!(
+                    key = %key,
+                    upload_id,
+                    attempt,
+                    "multipart upload completion succeeded after retrying"
+                );
+            },
+        )
+        .await?;
+        debug!(key = %key, upload_id, size = file_size, "multipart upload completed");
+        Ok(())
     }
 
     async fn upload_parts(
@@ -491,7 +825,7 @@ impl SnapshotUploader {
                     let part = self
                         .upload_single_part(file_path, key, upload_id, part_number, offset, length)
                         .await?;
-                    progress.add(length);
+                    progress.add_for_file(key, length);
                     Ok::<CompletedPart, anyhow::Error>(part)
                 }
             })
@@ -512,35 +846,163 @@ impl SnapshotUploader {
         offset: u64,
         length: u64,
     ) -> Result<CompletedPart> {
-        let body = ByteStream::read_from()
-            .path(file_path)
-            .offset(offset)
-            .length(aws_sdk_s3::primitives::Length::Exact(length))
-            .build()
-            .await
-            .with_context(|| {
-                format!("failed to read part {part_number} of {}", file_path.display())
-            })?;
+        retry_upload(
+            || async {
+                let body = ByteStream::read_from()
+                    .path(file_path)
+                    .offset(offset)
+                    .length(aws_sdk_s3::primitives::Length::Exact(length))
+                    .build()
+                    .await
+                    .with_context(|| {
+                        format!("failed to read part {part_number} of {}", file_path.display())
+                    })
+                    .map_err(UploadAttemptError::fatal)?;
 
-        let upload_resp = self
-            .client
-            .upload_part()
-            .bucket(&self.bucket)
-            .key(key)
-            .upload_id(upload_id)
-            .part_number(part_number)
-            .body(body)
-            .send()
-            .await
-            .with_context(|| format!("failed to upload part {part_number} of {key}"))?;
+                let upload_resp = self
+                    .client
+                    .upload_part()
+                    .bucket(&self.bucket)
+                    .key(key)
+                    .upload_id(upload_id)
+                    .part_number(part_number)
+                    .body(body)
+                    .send()
+                    .await
+                    .map_err(|error| UploadAttemptError::retry(error.into()))?;
 
-        let e_tag = upload_resp
-            .e_tag()
-            .ok_or_else(|| anyhow::anyhow!("no ETag for part {part_number} of {key}"))?
-            .to_string();
+                let e_tag = upload_resp
+                    .e_tag()
+                    .ok_or_else(|| anyhow::anyhow!("no ETag for part {part_number} of {key}"))
+                    .map_err(UploadAttemptError::fatal)?
+                    .to_string();
 
-        Ok(CompletedPart::builder().part_number(part_number).e_tag(e_tag).build())
+                Ok(CompletedPart::builder().part_number(part_number).e_tag(e_tag).build())
+            },
+            |attempt, error| {
+                warn!(
+                    key = %key,
+                    upload_id,
+                    part_number,
+                    attempt,
+                    offset,
+                    length,
+                    error = %error,
+                    error_debug = ?error,
+                    next_retry_delay_secs = retry_delay_secs(attempt),
+                    "multipart upload part failed, retrying"
+                );
+            },
+            |attempt| {
+                info!(
+                    key = %key,
+                    upload_id,
+                    part_number,
+                    attempt,
+                    offset,
+                    length,
+                    "multipart upload part succeeded after retrying"
+                );
+            },
+        )
+        .await
     }
+
+    async fn upload_manifest(
+        &self,
+        manifest_key: &str,
+        published_manifest: Vec<u8>,
+        progress: &UploadProgress,
+    ) -> Result<()> {
+        let manifest_len = published_manifest.len() as u64;
+        progress.start_file(manifest_key.to_string(), manifest_len, UploadStage::Uploading);
+        retry_upload(
+            || async {
+                self.client
+                    .put_object()
+                    .bucket(&self.bucket)
+                    .key(manifest_key)
+                    .body(ByteStream::from(published_manifest.clone()))
+                    .send()
+                    .await
+                    .map(|_| ())
+                    .map_err(|error| UploadAttemptError::retry(error.into()))
+            },
+            |attempt, error| {
+                warn!(
+                    key = manifest_key,
+                    attempt,
+                    error = %error,
+                    error_debug = ?error,
+                    next_retry_delay_secs = retry_delay_secs(attempt),
+                    "manifest upload failed, retrying"
+                );
+            },
+            |attempt| {
+                info!(key = manifest_key, attempt, "manifest upload succeeded after retrying");
+            },
+        )
+        .await
+        .inspect_err(|_| {
+            progress.fail_file(manifest_key);
+        })?;
+        progress.add_for_file(manifest_key, manifest_len);
+        progress.finish_file(manifest_key);
+        Ok(())
+    }
+}
+
+enum UploadAttemptError {
+    Retry(anyhow::Error),
+    Fatal(anyhow::Error),
+}
+
+impl UploadAttemptError {
+    const fn retry(error: anyhow::Error) -> Self {
+        Self::Retry(error)
+    }
+
+    const fn fatal(error: anyhow::Error) -> Self {
+        Self::Fatal(error)
+    }
+}
+
+async fn retry_upload<T, F, Fut, OnRetry, OnSuccess>(
+    mut operation: F,
+    mut on_retry: OnRetry,
+    mut on_success_after_retry: OnSuccess,
+) -> Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = std::result::Result<T, UploadAttemptError>>,
+    OnRetry: FnMut(usize, &anyhow::Error),
+    OnSuccess: FnMut(usize),
+{
+    let mut attempt = 1usize;
+    loop {
+        match operation().await {
+            Ok(value) => {
+                if attempt > 1 {
+                    on_success_after_retry(attempt);
+                }
+                return Ok(value);
+            }
+            Err(UploadAttemptError::Retry(error)) => {
+                on_retry(attempt, &error);
+                sleep(retry_delay(attempt)).await;
+                attempt = attempt.saturating_add(1);
+            }
+            Err(UploadAttemptError::Fatal(error)) => return Err(error),
+        }
+    }
+}
+
+fn retry_delay(attempt: usize) -> Duration {
+    UPLOAD_RETRY_DELAY.saturating_mul(attempt as u32).min(MAX_UPLOAD_RETRY_DELAY)
+}
+
+fn retry_delay_secs(attempt: usize) -> u64 {
+    retry_delay(attempt).as_secs()
 }
 
 /// Builds the single published manifest for a run.
@@ -631,5 +1093,41 @@ mod tests {
             UploadStrategy::classify("custom_component-100-200.tar.zst"),
             UploadStrategy::DiffByHash
         );
+    }
+
+    #[test]
+    fn parse_run_prefix_accepts_timestamp_prefixes() {
+        assert_eq!(
+            SnapshotUploader::parse_run_prefix("mainnet/1710000002/", "mainnet/"),
+            Some((1_710_000_002, "mainnet/1710000002".to_string()))
+        );
+        assert_eq!(
+            SnapshotUploader::parse_run_prefix("1710000002/", ""),
+            Some((1_710_000_002, "1710000002".to_string()))
+        );
+    }
+
+    #[test]
+    fn parse_run_prefix_rejects_non_run_prefixes() {
+        assert_eq!(SnapshotUploader::parse_run_prefix("mainnet/static_files/", "mainnet/"), None);
+        assert_eq!(
+            SnapshotUploader::parse_run_prefix("mainnet/1710000002/nested/", "mainnet/"),
+            None
+        );
+        assert_eq!(SnapshotUploader::parse_run_prefix("other/1710000002/", "mainnet/"), None);
+    }
+
+    #[test]
+    fn expired_run_timestamps_keeps_latest_n() {
+        let runs = vec![
+            SnapshotRun { timestamp: 10, manifest_key: "10/manifest.json".to_string() },
+            SnapshotRun { timestamp: 30, manifest_key: "30/manifest.json".to_string() },
+            SnapshotRun { timestamp: 20, manifest_key: "20/manifest.json".to_string() },
+            SnapshotRun { timestamp: 40, manifest_key: "40/manifest.json".to_string() },
+        ];
+
+        assert_eq!(SnapshotUploader::expired_run_timestamps(&runs, 3), vec![10]);
+        assert_eq!(SnapshotUploader::expired_run_timestamps(&runs, 2), vec![20, 10]);
+        assert!(SnapshotUploader::expired_run_timestamps(&runs, 4).is_empty());
     }
 }

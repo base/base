@@ -306,6 +306,7 @@ impl ConductorControl {
                 if nodes.is_empty() {
                     anyhow::bail!("conductor cluster membership is empty");
                 }
+                ConductorNodeConfig::sort_by_server_id(&mut nodes);
                 Ok(nodes)
             }
         }
@@ -1184,6 +1185,32 @@ mod tests {
 
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].name, "op-conductor-0");
+    }
+
+    #[test]
+    fn nodes_from_membership_sorts_static_nodes_naturally() {
+        let source = ConductorSource::Static(vec![
+            node("op-conductor-0", "sequencer-0"),
+            node("op-conductor-1", "sequencer-1"),
+            node("op-conductor-2", "sequencer-2"),
+            node("op-conductor-3", "sequencer-3"),
+            node("op-conductor-4", "sequencer-4"),
+        ]);
+        let membership = membership(&[
+            "sequencer-0",
+            "sequencer-2",
+            "sequencer-3",
+            "sequencer-1",
+            "sequencer-4",
+        ]);
+
+        let nodes = ConductorControl::nodes_from_membership(&source, &membership).unwrap();
+        let server_ids = nodes.iter().map(|node| node.server_id.as_str()).collect::<Vec<_>>();
+
+        assert_eq!(
+            server_ids,
+            vec!["sequencer-0", "sequencer-1", "sequencer-2", "sequencer-3", "sequencer-4"]
+        );
     }
 
     #[test]

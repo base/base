@@ -127,12 +127,23 @@ runs:
       if: inputs.sp1 == 'true'
       shell: bash
       env:
+        GITHUB_TOKEN: ${{ github.token }}
+        # Commit for succinctlabs/sp1 v6.3.0; update alongside SP1_VERSION.
+        SP1UP_REF: ca8700effe99ef7331872cbb4f71f8e29be98c7a
         SP1_VERSION: ${{ inputs.sp1-version }}
       run: |
         if [ -x "$HOME/.sp1/bin/cargo-prove" ]; then
           echo "cargo-prove already installed"
         else
-          curl -L https://sp1up.succinct.xyz | bash
+          mkdir -p "$HOME/.sp1/bin"
+          curl --fail --show-error --location --retry 5 --retry-delay 2 --retry-all-errors \
+            -H "Accept: application/vnd.github.raw" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "User-Agent: base-base-ci" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/succinctlabs/sp1/contents/sp1up/sp1up?ref=$SP1UP_REF" \
+            -o "$HOME/.sp1/bin/sp1up"
+          chmod +x "$HOME/.sp1/bin/sp1up"
           "$HOME/.sp1/bin/sp1up" --version "$SP1_VERSION"
         fi
         echo "$HOME/.sp1/bin" >> "$GITHUB_PATH"

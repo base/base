@@ -1,6 +1,6 @@
 //! Errors returned by transaction actor authorization.
 
-use crate::{AuthorizeError, Operation};
+use crate::{ApplyError, AuthorizeError, Operation};
 
 /// Reason a transaction's actors could not be authorized.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -9,6 +9,14 @@ pub enum TxAuthError {
     /// binding, expiry, implicit-EOA rule, or a storage read).
     #[error("actor authorization failed: {0}")]
     Authorize(#[from] AuthorizeError),
+
+    /// Applying an account change to the (evolving) state failed. Account
+    /// changes are authorized and applied interleaved against the working state,
+    /// so an apply-step `require`/`revert` (a bad create address, an unsorted
+    /// initial-actor set, a malformed actor change, a sequence overflow, …)
+    /// surfaces here as a transaction-authorization failure.
+    #[error("account change apply failed: {0}")]
+    Apply(#[from] ApplyError),
 
     /// The EOA-path sender signature was malformed or did not recover (wrong
     /// length, or a non-canonical upper-half `s` rejected by the checked
@@ -52,12 +60,4 @@ pub enum TxAuthError {
         /// The sequence carried by the config change.
         got: u64,
     },
-
-    /// Authorizing the next same-channel config change in a transaction would
-    /// advance the channel sequence past `u64::MAX`. Unreachable in practice
-    /// (the per-transaction change count is bounded far below the sequence
-    /// space), but rejected explicitly rather than wrapping or saturating into a
-    /// state that re-accepts a duplicate sequence.
-    #[error("config change sequence channel overflowed u64")]
-    ConfigSequenceOverflow,
 }

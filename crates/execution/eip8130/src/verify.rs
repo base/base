@@ -48,8 +48,24 @@ impl ActorTxVerifier {
         storage: &AccountConfigurationStorage<'_>,
         now: u64,
     ) -> Result<TxActors, TxAuthError> {
+        Self::verify_with_recovered_sender(signed, storage, now, None)
+    }
+
+    /// Like [`Self::verify`], but accepts an already-recovered EOA sender token
+    /// to avoid a second secp256k1 recovery on the EOA path (`tx.sender ==
+    /// None`). The caller resolving the sender address up front (e.g.
+    /// `TransactionAuthorizer::authorize_and_apply`) passes the recovered token
+    /// through so the expensive ecrecover runs exactly once per transaction.
+    /// `recovered_sender` is ignored on the configured path (`tx.sender ==
+    /// Some`), and falls back to recovery here when `None`.
+    pub fn verify_with_recovered_sender(
+        signed: &Eip8130Signed,
+        storage: &AccountConfigurationStorage<'_>,
+        now: u64,
+        recovered_sender: Option<RecoveredActorId>,
+    ) -> Result<TxActors, TxAuthError> {
         let tx = signed.tx();
-        let sender = Self::verify_sender(signed, storage, now)?;
+        let sender = Self::verify_sender(signed, storage, now, recovered_sender)?;
 
         let payer = match tx.payer {
             None => {
@@ -85,6 +101,7 @@ impl ActorTxVerifier {
         signed: &Eip8130Signed,
         storage: &AccountConfigurationStorage<'_>,
         now: u64,
+        recovered_sender: Option<RecoveredActorId>,
     ) -> Result<AuthorizedActor, TxAuthError> {
         if let Some(account) = signed.explicit_sender() {
             // Configured account: `sender_auth` is already `authenticator(20) || data`.
@@ -105,10 +122,15 @@ impl ActorTxVerifier {
         // resolution directly — no second ecrecover. The inline self config
         // governs: a full-owner self resolves to the unrestricted owner, a
         // scoped self to its inline scope/policy, and a disabled
-        // (`DEFAULT_EOA_REVOKED`) self is rejected.
-        let recovered = RecoveredActorId::recover_eoa_sender(signed)
-            .map_err(|_| TxAuthError::SenderRecovery)?
-            .ok_or(TxAuthError::SenderRecovery)?;
+        // (`DEFAULT_EOA_REVOKED`) self is rejected. A caller that already
+        // recovered the sender (to resolve its address before applying account
+        // changes) passes the token in so the ecrecover is not repeated.
+        let recovered = match recovered_sender {
+            Some(recovered) => recovered,
+            None => RecoveredActorId::recover_eoa_sender(signed)
+                .map_err(|_| TxAuthError::SenderRecovery)?
+                .ok_or(TxAuthError::SenderRecovery)?,
+        };
         let account = recovered.address();
 
         let resolved = ActorAuthorizer::authorize_k1(storage, account, recovered, now)?;

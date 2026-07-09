@@ -14,7 +14,7 @@ pub use builder::BasePayloadBuilder;
 pub mod config;
 pub mod error;
 pub mod payload;
-pub use payload::{BaseBuiltPayload, BasePayloadBuilderAttributes, payload_id};
+pub use payload::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 mod traits;
 pub use traits::*;
 mod types;

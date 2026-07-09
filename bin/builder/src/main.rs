@@ -20,6 +20,7 @@ static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::ne
 fn main() {
     base_cli_utils::init_common!();
     base_reth_cli::init_reth!();
+    base_reth_cli::init_snapshots!();
 
     let cli = base_cli_utils::parse_cli!(BuilderCli);
 

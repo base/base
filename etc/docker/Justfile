@@ -65,12 +65,12 @@ sequencer-logs:
 
 # Stream logs from the devnet ZK prover services
 zk-logs *containers:
-    docker compose {{ _env }} {{ _ha }} logs -f {{ if containers == "" { "base-prover-zk zk-prover-postgres" } else { containers } }}
+    docker compose {{ _env }} {{ _ha }} logs -f {{ if containers == "" { "base-prover-service base-prover-zk-host prover-service-postgres" } else { containers } }}
 
 # Stop only the devnet ZK prover services, leaving the rest of devnet running
 zk-down:
-    -docker compose {{ _env }} {{ _ha }} stop base-prover-zk zk-prover-postgres
-    -docker compose {{ _env }} {{ _ha }} rm -f base-prover-zk zk-prover-postgres
+    -docker compose {{ _env }} {{ _ha }} stop base-prover-zk-host base-prover-service prover-service-postgres
+    -docker compose {{ _env }} {{ _ha }} rm -f base-prover-zk-host base-prover-service prover-service-postgres
 
 # Follow the active raft leader's unified sequencer logs, switching automatically on failover
 follow-leader:
@@ -110,11 +110,11 @@ build-image target='base' profile='dev':
     case "{{ profile }}" in
       dev|profiling)
         case "{{ target }}" in
-          zk-prover|devnet) elf_require=0 ;;
+          zk-host|devnet) elf_require=0 ;;
         esac
         ;;
     esac
-    PROFILE="{{ profile }}" BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" PLATFORM_PAIR="${platform_pair}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ target }}" --load
+    PROFILE="{{ profile }}" ZK_HOST_PROFILE=release BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" PLATFORM_PAIR="${platform_pair}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ target }}" --load
 
 # Prepares Docker images needed for system tests
 pull-images:
@@ -164,7 +164,7 @@ _build-rust-images group profile='dev':
         esac
         ;;
     esac
-    PROFILE="{{ profile }}" BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" PLATFORM_PAIR="${platform_pair}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ group }}" --load
+    PROFILE="{{ profile }}" ZK_HOST_PROFILE=release BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" PLATFORM_PAIR="${platform_pair}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ group }}" --load
 
 [private]
 _up-devnet compose_profile zk:
@@ -188,7 +188,7 @@ _up-devnet compose_profile zk:
         just --justfile {{ source_file() }} down
         just --justfile {{ source_file() }} _build-setup-image
         just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
-        SP1_PROVER=dry-run docker compose {{ _env }} "${compose_files[@]}" up -d --no-build
+        ZK_BACKEND=dry_run docker compose {{ _env }} "${compose_files[@]}" up -d --no-build --remove-orphans
         ;;
       cluster)
         if [ -z "${AWS_ACCESS_KEY_ID:-}" ] || [ -z "${AWS_SECRET_ACCESS_KEY:-}" ]; then
@@ -217,7 +217,7 @@ _up-devnet compose_profile zk:
         cluster_env="$(mktemp)"
         trap 'rm -f "$cluster_env"' EXIT
         python3 {{ _yaml_to_env }} "$cluster_config" "$cluster_env" \
-          --map sp1.prover=SP1_PROVER \
+          --map sp1.prover=ZK_BACKEND \
           --map sp1.cluster_api_endpoint=SP1_CLUSTER_API_ENDPOINT \
           --map sp1.cluster_timeout_hours=SP1_CLUSTER_TIMEOUT_HOURS \
           --map artifact.s3_bucket=CLI_S3_BUCKET \
@@ -226,7 +226,7 @@ _up-devnet compose_profile zk:
           --map aws.default_region=AWS_DEFAULT_REGION \
           --map prover.default_sequence_window=DEFAULT_SEQUENCE_WINDOW \
           --map logging.rust_log=RUST_LOG \
-          --default SP1_PROVER=cluster \
+          --default ZK_BACKEND=cluster \
           --default SP1_CLUSTER_TIMEOUT_HOURS=24 \
           --default CLI_S3_REGION=us-east-1 \
           --default AWS_DEFAULT_REGION=us-east-1 \
@@ -238,7 +238,7 @@ _up-devnet compose_profile zk:
         just --justfile {{ source_file() }} down
         just --justfile {{ source_file() }} _build-setup-image
         just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
-        docker compose {{ _env }} --env-file "$cluster_env" "${compose_files[@]}" up -d --no-build
+        docker compose {{ _env }} --env-file "$cluster_env" "${compose_files[@]}" up -d --no-build --remove-orphans
         ;;
       *)
         echo "ERROR: zk must be 'dry-run' or 'cluster' (got '${zk_mode}')" >&2

@@ -43,9 +43,6 @@ pub struct DriverConfig {
     pub intermediate_block_interval: u64,
     /// Game type ID for `AggregateVerifier` dispute games.
     pub game_type: u32,
-    /// If true, use `safe_l2` (derived from L1 but L1 not yet finalized).
-    /// If false (default), use `finalized_l2` (derived from finalized L1).
-    pub allow_non_finalized: bool,
     /// Address of the proposer that submits proof transactions onchain.
     /// Included in the proof journal so the enclave signs over the correct `msg.sender`.
     pub proposer_address: Address,
@@ -67,7 +64,6 @@ impl Default for DriverConfig {
             block_interval: 512,
             intermediate_block_interval: 512,
             game_type: 0,
-            allow_non_finalized: false,
             proposer_address: Address::ZERO,
             tee_image_hash: B256::ZERO,
             anchor_state_registry_address: Address::ZERO,
@@ -240,7 +236,7 @@ mod tests {
 
     fn test_pipeline_handle(global_cancel: CancellationToken) -> PipelineHandle<MockRollupClient> {
         let l1 = Arc::new(MockL1::new(1000));
-        let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
+        let l2 = Arc::new(MockL2);
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(200, B256::ZERO),
             output_roots: HashMap::new(),
@@ -252,7 +248,7 @@ mod tests {
                 anchor_game: Address::ZERO,
             });
         let factory: Arc<dyn base_proof_contracts::DisputeGameFactoryClient> =
-            Arc::new(MockDisputeGameFactory::with_games(vec![]));
+            Arc::new(MockDisputeGameFactory::default());
         let proof_requester: Arc<dyn base_prover_service_client::ProofRequesterProvider> =
             Arc::new(MockProofRequester::default());
         let verifier: Arc<dyn base_proof_contracts::AggregateVerifierClient> =
@@ -287,7 +283,6 @@ mod tests {
                 block_interval: config.block_interval,
                 intermediate_block_interval: config.intermediate_block_interval,
                 game_type: config.game_type,
-                allow_non_finalized: config.allow_non_finalized,
                 anchor_state_registry_address: config.anchor_state_registry_address,
                 scan_concurrency: config.recovery_scan_concurrency,
             },
