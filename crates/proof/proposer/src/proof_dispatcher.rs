@@ -264,15 +264,6 @@ mod tests {
         sync_status
     }
 
-    fn headers_for_sync_status(
-        sync_status: &SyncStatus,
-    ) -> HashMap<B256, alloy_rpc_types_eth::Header> {
-        [sync_status.finalized_l1]
-            .into_iter()
-            .map(|l1_head| (l1_head.hash, test_l1_header(l1_head.hash, l1_head.number)))
-            .collect()
-    }
-
     #[test]
     fn select_l1_head_selects_finalized_head_or_rejects_target() {
         let sync_status = sync_status_with_finalized_head(300);
@@ -299,11 +290,12 @@ mod tests {
     #[tokio::test]
     async fn build_request_rejects_l1_rpc_header_mismatch() {
         let sync_status = sync_status_with_finalized_head(300);
-        let mut headers = headers_for_sync_status(&sync_status);
-        headers.insert(
+        // Map the finalized L1 head hash to a header with a mismatched number to
+        // force the RPC-header mismatch path.
+        let headers = HashMap::from([(
             sync_status.finalized_l1.hash,
             test_l1_header(sync_status.finalized_l1.hash, sync_status.finalized_l1.number + 1),
-        );
+        )]);
         let dispatcher = ProofDispatcher::new(
             Arc::new(MockProofRequester::default()),
             Arc::new(MockL1 {

@@ -104,7 +104,7 @@ impl ProofRecovery {
             }
         }
 
-        let state = match self.recover_latest_state(cache).await {
+        let state = match self.recover_latest_state(cache, finalized_head).await {
             Ok(s) => s,
             Err(e) => {
                 warn!(error = %e, "Failed to recover onchain state, retrying next tick");
@@ -116,10 +116,11 @@ impl ProofRecovery {
     }
 
     /// Recovers the latest onchain state using a deterministic forward walk
-    /// from the anchor root.
+    /// from the anchor root, bounded by `finalized_head`.
     pub async fn recover_latest_state(
         &self,
         cache: &mut Option<ProofRecoveryCache>,
+        finalized_head: u64,
     ) -> Result<RecoveredState, ProposerError> {
         let count = self
             .factory_client
@@ -138,15 +139,21 @@ impl ProofRecovery {
         let usable_cache =
             cache.as_ref().filter(|cached| anchor.l2_block_number <= cached.state.l2_block_number);
 
+        // Trust the cache only when no new games appeared AND finalized has not
+        // advanced far enough to admit the next already-existing game. The walk
+        // is bounded by finalized_head, so a rising finalized head can extend the
+        // cursor over games that already existed (game_count unchanged).
         if let Some(cached) = usable_cache
             && cached.game_count == count
+            && ProofTarget::next_block(cached.state.l2_block_number, self.config.block_interval)
+                .is_none_or(|next_block| next_block > finalized_head)
         {
             debug!(game_count = count, "No changes since last recovery, returning cached state");
             return Ok(cached.state);
         }
 
         let start = match usable_cache {
-            Some(cached) if count > cached.game_count => {
+            Some(cached) if count >= cached.game_count => {
                 debug!(
                     cached_block = cached.state.l2_block_number,
                     old_count = cached.game_count,
@@ -170,20 +177,30 @@ impl ProofRecovery {
             }
         };
 
-        let state = self.forward_walk(&start).await?;
+        let state = self.forward_walk(&start, finalized_head).await?;
 
         *cache = Some(ProofRecoveryCache { game_count: count, state });
         Ok(state)
     }
 
     /// Performs a deterministic forward walk to find the latest verified game
-    /// using UUID-based `games()` lookups.
-    async fn forward_walk(&self, start: &RecoveredState) -> Result<RecoveredState, ProposerError> {
+    /// using UUID-based `games()` lookups, stopping at `finalized_head` so the
+    /// recovered cursor never anchors on a non-finalized game.
+    async fn forward_walk(
+        &self,
+        start: &RecoveredState,
+        finalized_head: u64,
+    ) -> Result<RecoveredState, ProposerError> {
         let mut state = *start;
 
         while let Some(expected_block) =
             ProofTarget::next_block(state.l2_block_number, self.config.block_interval)
         {
+            if expected_block > finalized_head {
+                debug!(expected_block, finalized_head, "Reached finalized head, ending walk");
+                break;
+            }
+
             // Fetch all intermediate roots, including the canonical root for
             // `expected_block`, from the rollup node in one batch.
             let intermediate_blocks = ProposalIntervals::intermediate_block_numbers(
@@ -382,7 +399,7 @@ mod tests {
         recovery: &ProofRecovery,
     ) -> (RecoveredState, Option<ProofRecoveryCache>) {
         let mut cache: Option<ProofRecoveryCache> = None;
-        let state = recovery.recover_latest_state(&mut cache).await.unwrap();
+        let state = recovery.recover_latest_state(&mut cache, u64::MAX).await.unwrap();
         (state, cache)
     }
 
@@ -461,7 +478,7 @@ mod tests {
         let recovery = recovery(factory, output_roots);
 
         let mut cache: Option<ProofRecoveryCache> = None;
-        let result = recovery.recover_latest_state(&mut cache).await;
+        let result = recovery.recover_latest_state(&mut cache, u64::MAX).await;
 
         assert!(matches!(result, Err(ProposerError::Contract(_))));
     }
@@ -487,6 +504,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_recovery_walk_bounded_by_finalized_head() {
+        // Games exist on-chain for blocks 1..=4, but finalized only covers block 2.
+        let (factory, output_roots) = game_chain(4);
+        let recovery = recovery(factory, output_roots);
+
+        let mut cache: Option<ProofRecoveryCache> = None;
+        let state =
+            recovery.recover_latest_state(&mut cache, TEST_BLOCK_INTERVAL * 2).await.unwrap();
+        assert_eq!(state.l2_block_number, TEST_BLOCK_INTERVAL * 2, "walk stops at finalized head");
+        assert_eq!(state.parent_address, proxy_addr(1), "cursor is the last finalized game");
+
+        // Finalized rises to cover every game. game_count is unchanged, yet the
+        // cursor must still advance over the games that already existed.
+        let state =
+            recovery.recover_latest_state(&mut cache, TEST_BLOCK_INTERVAL * 4).await.unwrap();
+        assert_eq!(
+            state.l2_block_number,
+            TEST_BLOCK_INTERVAL * 4,
+            "cursor advances when finalized rises, without any new game"
+        );
+        assert_eq!(state.parent_address, proxy_addr(3));
+    }
+
+    #[tokio::test]
     async fn test_recovery_cache_hit_equal_game_count() {
         let (factory, output_roots) = game_chain(1);
         let game_proxy = proxy_addr(0);
@@ -499,7 +540,9 @@ mod tests {
         assert_eq!(state1.l2_block_number, TEST_BLOCK_INTERVAL);
         assert_eq!(cache.as_ref().unwrap().game_count, 1);
 
-        let state2 = recovery.recover_latest_state(&mut cache).await.unwrap();
+        // finalized_head leaves no room past the cached tip, so the short-circuit
+        // returns the cached state without re-walking.
+        let state2 = recovery.recover_latest_state(&mut cache, TEST_BLOCK_INTERVAL).await.unwrap();
         assert_eq!(state2, state1);
     }
 
@@ -510,7 +553,7 @@ mod tests {
         let mut cache = cache(3, proxy_addr(2), B256::repeat_byte(0x03), TEST_BLOCK_INTERVAL * 3);
 
         let recovery = recovery(factory, output_roots);
-        let state = recovery.recover_latest_state(&mut cache).await.unwrap();
+        let state = recovery.recover_latest_state(&mut cache, u64::MAX).await.unwrap();
 
         assert_eq!(state.parent_address, proxy_addr(4), "should reach game 4 from cached tip");
         assert_eq!(state.l2_block_number, TEST_BLOCK_INTERVAL * 5);
@@ -527,7 +570,7 @@ mod tests {
 
         let mut cache = cache(1, proxy_addr(0), B256::repeat_byte(0x01), TEST_BLOCK_INTERVAL);
 
-        let state = recovery.recover_latest_state(&mut cache).await.unwrap();
+        let state = recovery.recover_latest_state(&mut cache, u64::MAX).await.unwrap();
 
         assert_eq!(state.parent_address, proxy_addr(0), "should remain at game 0");
         assert_eq!(state.l2_block_number, TEST_BLOCK_INTERVAL);
@@ -541,7 +584,7 @@ mod tests {
         let mut cache = cache(5, proxy_addr(99), B256::repeat_byte(0xDD), 5 * TEST_BLOCK_INTERVAL);
 
         let recovery = recovery(factory, output_roots);
-        let state = recovery.recover_latest_state(&mut cache).await.unwrap();
+        let state = recovery.recover_latest_state(&mut cache, u64::MAX).await.unwrap();
 
         assert_eq!(state.parent_address, proxy_addr(0), "reorg: should find the 1 remaining game");
         assert_eq!(state.l2_block_number, TEST_BLOCK_INTERVAL);
@@ -565,7 +608,7 @@ mod tests {
             TEST_BLOCK_INTERVAL,
             None,
         );
-        let state = recovery.recover_latest_state(&mut cache).await.unwrap();
+        let state = recovery.recover_latest_state(&mut cache, u64::MAX).await.unwrap();
 
         assert_eq!(state.parent_address, proxy_addr(0));
         assert_eq!(state.l2_block_number, anchor_block + TEST_BLOCK_INTERVAL);
