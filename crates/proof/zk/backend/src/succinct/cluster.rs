@@ -933,7 +933,7 @@ impl ZkProver for ClusterZkProver {
 
 #[cfg(test)]
 mod tests {
-    use super::ClusterSessionId;
+    use super::{ClusterSessionId, ClusterZkProver};
 
     #[test]
     fn cluster_session_id_round_trips_json() {
@@ -946,5 +946,21 @@ mod tests {
         let decoded = ClusterSessionId::parse(&encoded).unwrap();
 
         assert_eq!(decoded, session);
+    }
+
+    // The proof id is persisted and re-derived on resume, so range and aggregation must stay in
+    // distinct namespaces; this pins that load-bearing format.
+    #[test]
+    fn proof_id_for_attempt_formats_each_stage() {
+        assert_eq!(ClusterZkProver::proof_id_for_attempt("s1", "", 0), "prover_service_s1");
+        assert_eq!(ClusterZkProver::proof_id_for_attempt("s1", "", 2), "prover_service_s1_retry_2");
+        assert_eq!(
+            ClusterZkProver::proof_id_for_attempt("s1", "_aggregation", 0),
+            "prover_service_s1_aggregation"
+        );
+        assert_eq!(
+            ClusterZkProver::proof_id_for_attempt("s1", "_aggregation", 2),
+            "prover_service_s1_aggregation_retry_2"
+        );
     }
 }
