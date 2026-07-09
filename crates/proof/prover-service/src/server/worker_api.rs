@@ -14,14 +14,14 @@ use jsonrpsee::{
     core::{RpcResult, async_trait},
     types::ErrorObjectOwned,
 };
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::{
     metrics,
     server::{
         ProverServiceServer, WorkerApiConfig, failed_precondition, internal, invalid_argument,
-        not_found, record_rpc_result,
+        not_found, record_rpc_result, record_worker_rpc_result, rpc_status_code_str,
     },
 };
 
@@ -114,8 +114,38 @@ impl ProverServiceServer {
     /// Extends the lock on a worker-owned proof job.
     pub async fn heartbeat_impl(&self, request: HeartbeatRequest) -> RpcResult<HeartbeatResponse> {
         let start = std::time::Instant::now();
+        let session_id = request.session_id.clone();
+        let lock_id = request.lock_id.clone();
+        let worker_id = request.worker_id.clone();
+        let lock_duration_seconds = request.lock_duration_seconds;
         let result = self.heartbeat_inner(request).await;
-        record_rpc_result("Heartbeat", start, &result);
+        record_worker_rpc_result("Heartbeat", start, &result, &worker_id);
+
+        match &result {
+            Ok(response) => {
+                debug!(
+                    session_id = %session_id,
+                    lock_id = %lock_id,
+                    worker_id = %worker_id,
+                    lock_duration_seconds = lock_duration_seconds,
+                    status = ?response.job.status,
+                    lock_expires_at = ?response.job.lock_expires_at,
+                    "worker proof job heartbeat succeeded"
+                );
+            }
+            Err(error) => {
+                debug!(
+                    session_id = %session_id,
+                    lock_id = %lock_id,
+                    worker_id = %worker_id,
+                    lock_duration_seconds = lock_duration_seconds,
+                    status_code = %rpc_status_code_str(error.code()),
+                    error_code = error.code(),
+                    error_message = %error.message(),
+                    "worker proof job heartbeat failed"
+                );
+            }
+        }
 
         result
     }

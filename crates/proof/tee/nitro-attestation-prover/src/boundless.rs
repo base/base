@@ -17,7 +17,12 @@
 //! [`generate_proof_for_signer`](TeeAttestationProofProvider::generate_proof_for_signer)
 //! override on [`BoundlessProver`] for details.
 
-use std::{collections::HashSet, fmt, sync::Arc, time::Duration};
+use std::{
+    collections::HashSet,
+    fmt,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use alloy_primitives::{Address, B256, Bytes, keccak256};
 use base_proof_tee_attestation::{TeeAttestationProof, TeeAttestationProofProvider};
@@ -37,7 +42,7 @@ use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 use url::Url;
 
-use crate::{ProverError, Result};
+use crate::{AttestationProof, AttestationProofProvider, BoundlessMetrics, ProverError, Result};
 
 const DEFAULT_TRUSTED_CERTS_PREFIX_LEN: u8 = 1;
 
@@ -203,8 +208,37 @@ impl BoundlessProver {
         let (journal, receipt) = loop {
             match client.fetch_set_inclusion_receipt(request_id, image_id_b256, None, None).await {
                 Ok(result) => break result,
+                // Stale-fulfillment short-circuit, recovery-context only.
+                // See the doc comment on this method and on
+                // [`Self::is_proof_not_found_error`] for the rationale.
+                // The wrapped error preserves the original Display
+                // string via the `{e}` interpolation, so callers can
+                // still re-classify with `is_proof_not_found_error`.
+                Err(e) if fail_fast_on_proof_not_found && Self::is_proof_not_found_error(&e) => {
+                    BoundlessMetrics::boundless_receipt_fetch_total(
+                        BoundlessMetrics::RECEIPT_FETCH_OUTCOME_STALE,
+                    )
+                    .increment(1);
+                    warn!(
+                        error = %e,
+                        error_debug = ?e,
+                        request_id = %request_id,
+                        image_id = ?self.image_id,
+                        retry = receipt_retries,
+                        max_retries = MAX_RECEIPT_FETCH_RETRIES,
+                        "fulfillment event outside SDK lookback window \
+                         (proof likely stale), skipping receipt fetch retries"
+                    );
+                    return Err(ProverError::Boundless(format!(
+                        "stale fulfilled proof (event outside SDK lookback): {e}"
+                    )));
+                }
                 Err(e) if receipt_retries < MAX_RECEIPT_FETCH_RETRIES => {
                     receipt_retries += 1;
+                    BoundlessMetrics::boundless_receipt_fetch_total(
+                        BoundlessMetrics::RECEIPT_FETCH_OUTCOME_RETRY,
+                    )
+                    .increment(1);
                     warn!(
                         error = %e,
                         error_debug = ?e,
@@ -218,6 +252,10 @@ impl BoundlessProver {
                     tokio::time::sleep(RECEIPT_FETCH_RETRY_DELAY).await;
                 }
                 Err(e) => {
+                    BoundlessMetrics::boundless_receipt_fetch_total(
+                        BoundlessMetrics::RECEIPT_FETCH_OUTCOME_FAILED,
+                    )
+                    .increment(1);
                     return Err(ProverError::Boundless(format!(
                         "failed to fetch set inclusion receipt: {e}"
                     )));
@@ -226,6 +264,10 @@ impl BoundlessProver {
         };
 
         let encoded_seal = receipt.abi_encode_seal().map_err(|e| {
+            BoundlessMetrics::boundless_receipt_fetch_total(
+                BoundlessMetrics::RECEIPT_FETCH_OUTCOME_ENCODE_FAILED,
+            )
+            .increment(1);
             warn!(
                 error = %e,
                 error_debug = ?e,
@@ -236,6 +278,10 @@ impl BoundlessProver {
         })?;
 
         let proof_bytes = Bytes::from(encoded_seal);
+        BoundlessMetrics::boundless_receipt_fetch_total(
+            BoundlessMetrics::RECEIPT_FETCH_OUTCOME_SUCCEEDED,
+        )
+        .increment(1);
 
         info!(
             request_id = %request_id,
@@ -263,10 +309,20 @@ impl BoundlessProver {
                 .wait_for_request_fulfillment(request_id, self.poll_interval, effective_expiry)
                 .await
             {
-                Ok(f) => break f,
+                Ok(f) => {
+                    BoundlessMetrics::boundless_fulfillment_total(
+                        BoundlessMetrics::FULFILLMENT_OUTCOME_SUCCEEDED,
+                    )
+                    .increment(1);
+                    break f;
+                }
                 Err(e) => {
                     if Self::is_request_not_locked_error(&e) && race_retries < MAX_RACE_RETRIES {
                         race_retries += 1;
+                        BoundlessMetrics::boundless_fulfillment_total(
+                            BoundlessMetrics::FULFILLMENT_OUTCOME_REQUEST_NOT_LOCKED_RETRY,
+                        )
+                        .increment(1);
                         warn!(
                             error = %e,
                             request_id = %request_id,
@@ -276,6 +332,10 @@ impl BoundlessProver {
                         );
                         continue;
                     }
+                    BoundlessMetrics::boundless_fulfillment_total(
+                        BoundlessMetrics::FULFILLMENT_OUTCOME_FAILED,
+                    )
+                    .increment(1);
                     warn!(
                         error = %e,
                         error_debug = ?e,
@@ -435,6 +495,7 @@ impl BoundlessProver {
             expires_at,
             "proof request submitted, waiting for fulfillment"
         );
+        BoundlessMetrics::boundless_requests_submitted_total().increment(1);
 
         let effective_expiry = self.effective_expiry(Some(expires_at));
         debug!(
@@ -449,7 +510,52 @@ impl BoundlessProver {
 }
 
 #[async_trait::async_trait]
-impl TeeAttestationProofProvider for BoundlessProver {
+impl AttestationProofProvider for BoundlessProver {
+    /// # Cancellation
+    ///
+    /// Cooperatively honors `cancel` once, at the top of the method,
+    /// before building the client/params. The build + submit +
+    /// wait-for-fulfillment phases are not interrupted once entered;
+    /// callers that need finer-grained cancellation should `select!`
+    /// against the cancel token externally. Dropping the future
+    /// mid-flight is safe because any submitted request remains
+    /// discoverable on the next call via the deterministic request-id
+    /// derivation (see the module docs on proof recovery).
+    ///
+    /// The per-probe cancel checks the doc previously referenced live
+    /// in [`Self::generate_proof_for_signer`], which has its own
+    /// recovery loop; this method has no probes to break between.
+    async fn generate_proof(
+        &self,
+        attestation_bytes: &[u8],
+        cancel: &CancellationToken,
+    ) -> Result<AttestationProof> {
+        let started_at = Instant::now();
+        if cancel.is_cancelled() {
+            return Err(ProverError::Boundless("proof generation cancelled before start".into()));
+        }
+        let (client, params) = match self.build_client_and_params(attestation_bytes).await {
+            Ok(result) => result,
+            Err(e) => {
+                BoundlessMetrics::record_proof_duration(
+                    started_at,
+                    BoundlessMetrics::PROOF_OUTCOME_FAILED,
+                );
+                return Err(e);
+            }
+        };
+        let result = self.submit_and_wait(&client, params).await;
+        BoundlessMetrics::record_proof_duration(
+            started_at,
+            if result.is_ok() {
+                BoundlessMetrics::PROOF_OUTCOME_SUCCEEDED
+            } else {
+                BoundlessMetrics::PROOF_OUTCOME_FAILED
+            },
+        );
+        result
+    }
+
     /// Generates a proof with deterministic request-ID recovery.
     ///
     /// Before submitting a new proof request, this method probes up to
@@ -476,8 +582,22 @@ impl TeeAttestationProofProvider for BoundlessProver {
         &self,
         attestation_bytes: &[u8],
         signer_address: Address,
-    ) -> base_proof_tee_attestation::Result<TeeAttestationProof> {
-        let (client, params) = self.build_client_and_params(attestation_bytes).await?;
+        cancel: &CancellationToken,
+    ) -> Result<AttestationProof> {
+        let started_at = Instant::now();
+        if cancel.is_cancelled() {
+            return Err(ProverError::Boundless("proof generation cancelled before start".into()));
+        }
+        let (client, params) = match self.build_client_and_params(attestation_bytes).await {
+            Ok(result) => result,
+            Err(e) => {
+                BoundlessMetrics::record_proof_duration(
+                    started_at,
+                    BoundlessMetrics::PROOF_OUTCOME_FAILED,
+                );
+                return Err(e);
+            }
+        };
 
         let recovery_is_blocked = self
             .recovery_blocked
@@ -495,6 +615,18 @@ impl TeeAttestationProofProvider for BoundlessProver {
         // Probe deterministic request-ID slots for recovery.
         let mut first_unknown_attempt: Option<u32> = None;
         for attempt in 0..self.max_recovery_attempts {
+            // Check cancellation between probe slots. Already-locked
+            // requests stay on-chain and remain recoverable on the next
+            // call via the same deterministic index.
+            if cancel.is_cancelled() {
+                BoundlessMetrics::record_proof_duration(
+                    started_at,
+                    BoundlessMetrics::PROOF_OUTCOME_CANCELLED,
+                );
+                return Err(ProverError::Boundless(
+                    "proof generation cancelled mid-recovery probe".into(),
+                ));
+            }
             let index = Self::derive_request_index(signer_address, attempt);
             // RequestId is keyed on the Boundless wallet (fee-payer,
             // `self.signer`), not the enclave signer (`signer_address`).
@@ -530,6 +662,10 @@ impl TeeAttestationProofProvider for BoundlessProver {
                     // recovery is blocked.
                     if Self::is_request_not_locked_error(&e) {
                         if recovery_is_blocked {
+                            BoundlessMetrics::boundless_recovery_total(
+                                BoundlessMetrics::RECOVERY_OUTCOME_BLOCKED,
+                            )
+                            .increment(1);
                             debug!(
                                 attempt,
                                 request_id = %request_id,
@@ -539,6 +675,10 @@ impl TeeAttestationProofProvider for BoundlessProver {
                             );
                             continue;
                         }
+                        BoundlessMetrics::boundless_recovery_total(
+                            BoundlessMetrics::RECOVERY_OUTCOME_REQUEST_NOT_LOCKED,
+                        )
+                        .increment(1);
                         info!(
                             attempt,
                             request_id = %request_id,
@@ -548,8 +688,18 @@ impl TeeAttestationProofProvider for BoundlessProver {
                         );
                         let effective_expiry = self.effective_expiry(None);
                         match self.wait_and_fetch(&client, request_id, effective_expiry).await {
-                            Ok(proof) => return Ok(proof),
+                            Ok(proof) => {
+                                BoundlessMetrics::record_proof_duration(
+                                    started_at,
+                                    BoundlessMetrics::PROOF_OUTCOME_SUCCEEDED,
+                                );
+                                return Ok(proof);
+                            }
                             Err(e) => {
+                                BoundlessMetrics::boundless_recovery_total(
+                                    BoundlessMetrics::RECOVERY_OUTCOME_FAILED,
+                                )
+                                .increment(1);
                                 warn!(
                                     error = %e,
                                     attempt,
@@ -562,6 +712,10 @@ impl TeeAttestationProofProvider for BoundlessProver {
                             }
                         }
                     }
+                    BoundlessMetrics::boundless_recovery_total(
+                        BoundlessMetrics::RECOVERY_OUTCOME_QUERY_ERROR,
+                    )
+                    .increment(1);
                     warn!(
                         error = %e,
                         attempt,
@@ -577,6 +731,10 @@ impl TeeAttestationProofProvider for BoundlessProver {
             match status {
                 RequestStatus::Locked => {
                     if recovery_is_blocked {
+                        BoundlessMetrics::boundless_recovery_total(
+                            BoundlessMetrics::RECOVERY_OUTCOME_BLOCKED,
+                        )
+                        .increment(1);
                         debug!(
                             attempt,
                             request_id = %request_id,
@@ -585,6 +743,10 @@ impl TeeAttestationProofProvider for BoundlessProver {
                         );
                         continue;
                     }
+                    BoundlessMetrics::boundless_recovery_total(
+                        BoundlessMetrics::RECOVERY_OUTCOME_LOCKED,
+                    )
+                    .increment(1);
                     info!(
                         attempt,
                         request_id = %request_id,
@@ -593,8 +755,18 @@ impl TeeAttestationProofProvider for BoundlessProver {
                     );
                     let effective_expiry = self.effective_expiry(None);
                     match self.wait_and_fetch(&client, request_id, effective_expiry).await {
-                        Ok(proof) => return Ok(proof),
+                        Ok(proof) => {
+                            BoundlessMetrics::record_proof_duration(
+                                started_at,
+                                BoundlessMetrics::PROOF_OUTCOME_SUCCEEDED,
+                            );
+                            return Ok(proof);
+                        }
                         Err(e) => {
+                            BoundlessMetrics::boundless_recovery_total(
+                                BoundlessMetrics::RECOVERY_OUTCOME_FAILED,
+                            )
+                            .increment(1);
                             warn!(
                                 error = %e,
                                 attempt,
@@ -608,6 +780,10 @@ impl TeeAttestationProofProvider for BoundlessProver {
                 }
                 RequestStatus::Fulfilled => {
                     if recovery_is_blocked {
+                        BoundlessMetrics::boundless_recovery_total(
+                            BoundlessMetrics::RECOVERY_OUTCOME_BLOCKED,
+                        )
+                        .increment(1);
                         debug!(
                             attempt,
                             request_id = %request_id,
@@ -616,6 +792,10 @@ impl TeeAttestationProofProvider for BoundlessProver {
                         );
                         continue;
                     }
+                    BoundlessMetrics::boundless_recovery_total(
+                        BoundlessMetrics::RECOVERY_OUTCOME_FULFILLED,
+                    )
+                    .increment(1);
                     info!(
                         attempt,
                         request_id = %request_id,
@@ -625,11 +805,75 @@ impl TeeAttestationProofProvider for BoundlessProver {
                     match self.fetch_and_encode_receipt(&client, request_id).await {
                         Ok(proof) => {
                             if !self.is_journal_fresh(&proof) {
+                                BoundlessMetrics::boundless_recovery_total(
+                                    BoundlessMetrics::RECOVERY_OUTCOME_STALE,
+                                )
+                                .increment(1);
                                 continue;
                             }
+                            BoundlessMetrics::record_proof_duration(
+                                started_at,
+                                BoundlessMetrics::PROOF_OUTCOME_SUCCEEDED,
+                            );
                             return Ok(proof);
                         }
+                        Err(e) if Self::is_proof_not_found_error(&e) => {
+                            // Stale-fulfillment case: the slot is
+                            // genuinely `Fulfilled` on-chain but its
+                            // `ProofDelivered` event has scrolled past
+                            // the SDK's default event-log lookback.
+                            // The proof itself is almost certainly
+                            // older than [`Self::max_attestation_age`]
+                            // and would be rejected by
+                            // [`Self::is_journal_fresh`] anyway.
+                            //
+                            // Probe the next deterministic slot —
+                            // which may hold a recent in-flight proof
+                            // from a more recent instance — rather
+                            // than abandoning recovery on the first
+                            // stale slot. If no later slot is
+                            // recoverable either, the loop falls
+                            // through to a deterministic-ID fresh
+                            // submission (via `first_unknown_attempt`)
+                            // at the bottom of this method.
+                            //
+                            // We re-classify on the wrapped
+                            // [`ProverError`]: the wrapping in
+                            // [`Self::fetch_and_encode_receipt`] uses
+                            // `format!("...{e}")`, preserving the
+                            // SDK's original Display string and so the
+                            // `is_proof_not_found_error` needle still
+                            // matches.
+                            BoundlessMetrics::boundless_recovery_total(
+                                BoundlessMetrics::RECOVERY_OUTCOME_STALE,
+                            )
+                            .increment(1);
+                            warn!(
+                                error = %e,
+                                attempt,
+                                request_id = %request_id,
+                                target_signer = %signer_address,
+                                "recovery receipt fetch hit stale fulfillment, \
+                                 trying next deterministic slot"
+                            );
+                            continue;
+                        }
                         Err(e) => {
+                            // Non-stale receipt-fetch failure (typically
+                            // a persistent infrastructure problem that
+                            // has already exhausted the 60-retry
+                            // transient loop inside
+                            // [`Self::fetch_and_encode_receipt`]).
+                            // Break out of the recovery scan rather
+                            // than retrying each remaining slot for
+                            // the same ~5-minute window — the failure
+                            // mode is global, not slot-local.
+                            // Fall-through behavior preserved from the
+                            // pre-fix code.
+                            BoundlessMetrics::boundless_recovery_total(
+                                BoundlessMetrics::RECOVERY_OUTCOME_FAILED,
+                            )
+                            .increment(1);
                             warn!(
                                 error = %e,
                                 attempt,
@@ -643,6 +887,10 @@ impl TeeAttestationProofProvider for BoundlessProver {
                     }
                 }
                 RequestStatus::Expired => {
+                    BoundlessMetrics::boundless_recovery_total(
+                        BoundlessMetrics::RECOVERY_OUTCOME_EXPIRED,
+                    )
+                    .increment(1);
                     // Note: expired slots are never reclaimed. After
                     // `max_recovery_attempts` consecutive expirations for
                     // a given signer (across any number of restarts), all
@@ -663,6 +911,10 @@ impl TeeAttestationProofProvider for BoundlessProver {
                     continue;
                 }
                 RequestStatus::Unknown => {
+                    BoundlessMetrics::boundless_recovery_total(
+                        BoundlessMetrics::RECOVERY_OUTCOME_UNKNOWN,
+                    )
+                    .increment(1);
                     if first_unknown_attempt.is_none() {
                         first_unknown_attempt = Some(attempt);
                     }
@@ -701,6 +953,10 @@ impl TeeAttestationProofProvider for BoundlessProver {
                 params.with_request_id(rid)
             }
             None => {
+                BoundlessMetrics::boundless_recovery_total(
+                    BoundlessMetrics::RECOVERY_OUTCOME_RANDOM_FALLBACK,
+                )
+                .increment(1);
                 warn!(
                     target_signer = %signer_address,
                     max_attempts = self.max_recovery_attempts,
@@ -711,7 +967,16 @@ impl TeeAttestationProofProvider for BoundlessProver {
             }
         };
 
-        self.submit_and_wait(&client, params).await.map_err(Into::into)
+        let result = self.submit_and_wait(&client, params).await;
+        BoundlessMetrics::record_proof_duration(
+            started_at,
+            if result.is_ok() {
+                BoundlessMetrics::PROOF_OUTCOME_SUCCEEDED
+            } else {
+                BoundlessMetrics::PROOF_OUTCOME_FAILED
+            },
+        );
+        result
     }
 
     fn block_recovery_for_signer(&self, signer: Address) {

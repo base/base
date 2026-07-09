@@ -30,11 +30,13 @@ the common `nonce_key != 0` case while keeping layout ownership inside
 ## `Eip8130GasEstimator`
 
 Exposes [`Eip8130GasEstimator`], which estimates gas for an `eth_estimateGas`
-request carrying EIP-8130 fields (account changes, calls, `nonce_key`, expiry,
-metadata). It builds an unsigned simulation transaction — a stub k1
-authentication blob stands in for the bare-signature EOA wire form so the
-intrinsic schedule prices authentication gas from its shape — and runs a single
-read-only `base_common_evm::Eip8130Executor::simulate` against the block state.
+request carrying EIP-8130 fields (the sender account via `sender` or `from`,
+account changes, calls, `nonce_key`, expiry, metadata). It builds an unsigned
+simulation transaction — the caller's `sender_auth` blob (a prefixed
+`authenticator(20) || data` blob for a configured account, a bare signature for
+the default EOA, or a stub when absent) lets the intrinsic schedule price
+authentication gas from its shape — and runs a single read-only
+`base_common_evm::Eip8130Executor::simulate` against the block state.
 
 Because the EIP-8130 pipeline charges a deterministic, signature-independent
 amount (intrinsic + phased-call gas, less the EIP-3529-capped refund, plus payer

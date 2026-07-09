@@ -8,13 +8,19 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod config;
-pub use config::{S3ConfigType, SnapshotterConfig};
+pub use config::{DEFAULT_TIP_THRESHOLD_SECS, S3ConfigType, SnapshotterConfig};
 
 mod progress;
-pub use progress::{ArchiveProgress, UploadProgress};
+pub use progress::{
+    ActiveArchiveState, ArchiveProgress, ComponentProgressLogger, ComponentProgressReporter,
+    ComponentProgressState, UploadProgress,
+};
 
 mod container;
 pub use container::{ContainerManager, DockerContainerManager};
+
+mod tip;
+pub use tip::{RpcTipChecker, TipChecker};
 
 mod snapshot;
 pub use snapshot::{
@@ -23,7 +29,7 @@ pub use snapshot::{
 };
 
 mod upload;
-pub use upload::{SnapshotUploader, UploadStrategy};
+pub use upload::{SnapshotRun, SnapshotUploader, UploadStrategy};
 
 mod orchestrator;
 pub use orchestrator::Snapshotter;

@@ -50,32 +50,32 @@ impl Eip8130Contracts {
 
     /// Account Configuration system contract (`ACCOUNT_CONFIG_ADDRESS`). The
     /// protocol reads actor/account state directly from this contract's storage.
-    pub const ACCOUNT_CONFIG: Address = address!("0xC6595B992AF49099B476690d4D7CAb7D1890388F");
+    pub const ACCOUNT_CONFIG: Address = address!("0x2403408177dB7F8512a9593343a7C80371D8f2dF");
 
     /// keccak256 of the `ACCOUNT_CONFIG` deployment init code (for CREATE2
     /// derivation and bytecode-drift detection).
     pub const ACCOUNT_CONFIG_INIT_CODE_HASH: B256 =
-        b256!("0x6df114ff518d1543c913e5956bc5f1e96e7e52690615fca2e0ac9c73b2b16784");
+        b256!("0x742384b2e8ee556f4575e73524f6c3d84780c73b73140ea8770cb65abc143714");
 
     // ─────────────────────────────────────────────────────────────────────────
     // Account implementations (init code embeds `ACCOUNT_CONFIG`)
     // ─────────────────────────────────────────────────────────────────────────
 
     /// Default wallet implementation, used as the target of default EOA delegation.
-    pub const DEFAULT_ACCOUNT: Address = address!("0xca8D7419FEC024a5CEDB8D427615f3A74E3ebA6b");
+    pub const DEFAULT_ACCOUNT: Address = address!("0xaF0973bbebe12BDaE6B61c96019dc0DcA554b67c");
 
     /// keccak256 of the `DEFAULT_ACCOUNT` deployment init code.
     pub const DEFAULT_ACCOUNT_INIT_CODE_HASH: B256 =
-        b256!("0xab95d25967e35fd112023f1a0feb79ef73025c06b0f44896d03a7c1e05f5a07c");
+        b256!("0xf447cb971ef3087ff92c3238b4f90721d73c681661be5525d8937c476c7ac707");
 
     /// Wallet variant that blocks ETH transfers when locked, granting higher
     /// EIP-8130 mempool access (rate limits).
     pub const DEFAULT_HIGH_RATE_ACCOUNT: Address =
-        address!("0x9bB1a51927A7B8Fc433956E1a417DB9f97465527");
+        address!("0x6c4230a4101849a3CB6438C40D3d47EdE9aca096");
 
     /// keccak256 of the `DEFAULT_HIGH_RATE_ACCOUNT` deployment init code.
     pub const DEFAULT_HIGH_RATE_ACCOUNT_INIT_CODE_HASH: B256 =
-        b256!("0x63c88a66000cdee9e63ef7878870092d3a0ddd58623d135d4e187ddf85a7b0db");
+        b256!("0x2aa0cfe89cf370c6ece7cc751c00c3fa3c2044a750755ed6f4125119275bc251");
 
     // ─────────────────────────────────────────────────────────────────────────
     // Canonical authenticators (accepted on the EIP-8130 block-validation path)
@@ -87,28 +87,28 @@ impl Eip8130Contracts {
     // (`address(1)`), handled directly by the protocol, not a deployed contract.
 
     /// secp256r1 / P-256 (raw) authenticator contract.
-    pub const P256_AUTHENTICATOR: Address = address!("0x3AE129D846CD1CAf0369b4Caa56c188E18E11B15");
+    pub const P256_AUTHENTICATOR: Address = address!("0x28096E6f98996799A08fBbCFF0B7c0D512D1f503");
 
     /// keccak256 of the `P256_AUTHENTICATOR` deployment init code.
     pub const P256_AUTHENTICATOR_INIT_CODE_HASH: B256 =
-        b256!("0x87b9a0dbffce118797e1d133f563f99697396c9b447becb900157f60197adea0");
+        b256!("0xf2e69d7271b922c65cb55cc325efca4c7bd22e0c154fd6ff75575cd9f1a4db78");
 
     /// secp256r1 / P-256 (`WebAuthn`) authenticator contract.
     pub const WEBAUTHN_AUTHENTICATOR: Address =
-        address!("0x1CB75BE39Fb950202BF4239010534B86EdA66c31");
+        address!("0xD9B8d163a34FBaD781057F7B68889F0bbd70D7ed");
 
     /// keccak256 of the `WEBAUTHN_AUTHENTICATOR` deployment init code.
     pub const WEBAUTHN_AUTHENTICATOR_INIT_CODE_HASH: B256 =
-        b256!("0xbaeb605566ca94a5d7af1bb61996e409d457ac3d21a2cda682f08ee46a356ef5");
+        b256!("0x35cc9b095487cc4debe2956dcda11be5ae0586bb3c985d1b4d90d8e2a1f09460");
 
     /// Delegated-validation (1-hop) authenticator contract (init code embeds
     /// `ACCOUNT_CONFIG`).
     pub const DELEGATE_AUTHENTICATOR: Address =
-        address!("0xCc81575121084c3538773478577e04CA7e9b35B1");
+        address!("0xb1f064A99919E4199b45F1b553b6ecb8d5d62a11");
 
     /// keccak256 of the `DELEGATE_AUTHENTICATOR` deployment init code.
     pub const DELEGATE_AUTHENTICATOR_INIT_CODE_HASH: B256 =
-        b256!("0x92f1af0fdf6084d18cf38e60e5cf1630941b5d33b472b7a2540f900f87aa8c9f");
+        b256!("0xb4c6b1f40cd6a3a256f20cc7aad6599390ba3540044e08134349b54f7b1439a8");
 
     /// The canonical authenticator allowlist: the deployed `IAuthenticator`
     /// contracts a compliant node accepts on the EIP-8130 block-validation path.

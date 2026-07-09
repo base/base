@@ -20,7 +20,6 @@ base-prover-service-protocol.workspace = true
 base-proof-succinct-host-utils.workspace = true
 base-proof-succinct-proof-utils.workspace = true
 base-proof-succinct-client-utils.workspace = true
-base-proof-succinct-ethereum-host-utils.workspace = true
 
 # network
 url.workspace = true

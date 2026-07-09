@@ -497,7 +497,7 @@ fn render_config_panel(f: &mut Frame<'_>, area: Rect, resources: &Resources) {
         |sys| {
             let gas_limit = sys.gas_limit;
             let elasticity = sys.eip1559_elasticity.unwrap_or(0) as u64;
-            let gas_target = if elasticity > 0 { gas_limit / elasticity } else { 0 };
+            let gas_target = gas_limit.checked_div(elasticity).unwrap_or(0);
             let denominator = sys.eip1559_denominator.unwrap_or(0);
 
             let basefee_scalar =

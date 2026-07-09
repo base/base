@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use base_zk_client::ExecutionStats;
+use base_prover_service_protocol::ExecutionStats;
 use eyre::{Result, ensure};
 
 /// Operation-level gas and cycle tracker metadata emitted by a benchmark workload.

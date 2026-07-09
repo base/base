@@ -148,11 +148,18 @@ impl ProofTaskSet {
         match joined {
             Ok((id, (signer, result))) => {
                 let removed = self.pending.remove(&signer);
+                let was_cancelled =
+                    removed.as_ref().is_some_and(|entry| entry.cancel.is_cancelled());
                 let instance_id =
                     removed.as_ref().map_or("missing", |entry| entry.instance_id.as_str());
 
                 match result {
                     Ok(()) => {
+                        RegistrarMetrics::record_proof_task_completed(if was_cancelled {
+                            RegistrarMetrics::PROOF_TASK_OUTCOME_CANCELLED
+                        } else {
+                            RegistrarMetrics::PROOF_TASK_OUTCOME_SUCCEEDED
+                        });
                         debug!(
                             task_id = ?id,
                             signer = %signer,
@@ -162,6 +169,9 @@ impl ProofTaskSet {
                         );
                     }
                     Err(e) => {
+                        RegistrarMetrics::record_proof_task_completed(
+                            RegistrarMetrics::PROOF_TASK_OUTCOME_FAILED,
+                        );
                         warn!(
                             task_id = ?id,
                             error = %e,
@@ -175,6 +185,9 @@ impl ProofTaskSet {
                 }
             }
             Err(join_err) => {
+                RegistrarMetrics::record_proof_task_completed(
+                    RegistrarMetrics::PROOF_TASK_OUTCOME_JOIN_ERROR,
+                );
                 let id = join_err.id();
                 let removed = self.pending.extract_if(|_, p| p.task_id == id).next();
                 let signer = removed.as_ref().map(|(signer, _)| *signer);
@@ -228,6 +241,9 @@ where
             return Ok(());
         };
         if already_registered {
+            RegistrarMetrics::record_registration_stage(
+                RegistrarMetrics::REGISTRATION_STAGE_ALREADY_REGISTERED,
+            );
             debug!(
                 signer = %signer_address,
                 instance = %instance_id,
@@ -242,9 +258,15 @@ where
             attestation_kind = ?attestation_kind,
             "generating proof for unregistered signer"
         );
+        RegistrarMetrics::record_registration_stage(
+            RegistrarMetrics::REGISTRATION_STAGE_PROOF_STARTED,
+        );
 
         let Some(permit) = signer_cancel.run_until_cancelled(self.proof_semaphore.acquire()).await
         else {
+            RegistrarMetrics::record_registration_stage(
+                RegistrarMetrics::REGISTRATION_STAGE_PROOF_CANCELLED,
+            );
             return Ok(());
         };
         let proof_permit = match permit {
@@ -269,11 +291,22 @@ where
             ))
             .await
         else {
+            RegistrarMetrics::record_registration_stage(
+                RegistrarMetrics::REGISTRATION_STAGE_PROOF_CANCELLED,
+            );
             return Ok(());
         };
         let proof = match proof_result {
-            Ok(proof) => proof,
+            Ok(proof) => {
+                RegistrarMetrics::record_registration_stage(
+                    RegistrarMetrics::REGISTRATION_STAGE_PROOF_SUCCEEDED,
+                );
+                proof
+            }
             Err(_) if signer_cancel.is_cancelled() => {
+                RegistrarMetrics::record_registration_stage(
+                    RegistrarMetrics::REGISTRATION_STAGE_PROOF_CANCELLED,
+                );
                 return Ok(());
             }
             Err(e) => return Err(RegistrarError::ProofGeneration(e)),
@@ -335,10 +368,19 @@ where
                 if signer_cancel.is_cancelled() {
                     return Ok(());
                 }
-                self.ensure_attestation_fresh(signer_address, attestation_timestamp)?;
+                if let Err(e) = self.ensure_attestation_fresh(signer_address, attestation_timestamp)
+                {
+                    RegistrarMetrics::record_registration_stage(
+                        RegistrarMetrics::REGISTRATION_STAGE_PROOF_STALE,
+                    );
+                    return Err(e);
+                }
 
                 // Do not wrap send in run_until_cancelled: dropping it after nonce
                 // acquisition can leave a nonce gap.
+                RegistrarMetrics::record_registration_stage(
+                    RegistrarMetrics::REGISTRATION_STAGE_TX_SUBMITTED,
+                );
                 match self.tx_manager.send(candidate.clone()).await {
                     Ok(receipt) => break 'submit receipt,
                     Err(e) => {
@@ -354,6 +396,9 @@ where
                                     signer = %signer_address,
                                     error = %e,
                                     "tx error but signer is registered onchain, treating as success"
+                                );
+                                RegistrarMetrics::record_registration_stage(
+                                    RegistrarMetrics::REGISTRATION_STAGE_TX_OBSERVED_REGISTERED,
                                 );
                                 RegistrarMetrics::registrations_total().increment(1);
                                 return Ok(());
@@ -386,10 +431,16 @@ where
                                 self.proof_provider
                                     .block_recovery_for_signer(attestation_kind, signer_address);
                             }
+                            RegistrarMetrics::record_registration_stage(
+                                RegistrarMetrics::REGISTRATION_STAGE_TX_FAILED,
+                            );
                             return Err(RegistrarError::from(e));
                         }
 
                         if retry == self.max_tx_retries {
+                            RegistrarMetrics::record_registration_stage(
+                                RegistrarMetrics::REGISTRATION_STAGE_TX_FAILED,
+                            );
                             return Err(RegistrarError::from(e));
                         }
 
@@ -407,6 +458,9 @@ where
                             delay = ?retry_delay,
                             "tx submission failed, retrying with same proof"
                         );
+                        RegistrarMetrics::record_registration_stage(
+                            RegistrarMetrics::REGISTRATION_STAGE_TX_RETRY,
+                        );
 
                         if signer_cancel
                             .run_until_cancelled(tokio::time::sleep(retry_delay))
@@ -422,6 +476,9 @@ where
         };
 
         if !receipt.inner.status() {
+            RegistrarMetrics::record_registration_stage(
+                RegistrarMetrics::REGISTRATION_STAGE_TX_REVERTED,
+            );
             warn!(
                 signer = %signer_address,
                 tx_hash = %receipt.transaction_hash,
@@ -435,6 +492,9 @@ where
             signer = %signer_address,
             tx_hash = %receipt.transaction_hash,
             "signer registered successfully"
+        );
+        RegistrarMetrics::record_registration_stage(
+            RegistrarMetrics::REGISTRATION_STAGE_TX_SUCCEEDED,
         );
         RegistrarMetrics::registrations_total().increment(1);
 

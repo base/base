@@ -1,4 +1,5 @@
 use std::{
+    cmp::Reverse,
     collections::VecDeque,
     time::{Duration, Instant},
 };
@@ -462,7 +463,7 @@ impl DaTracker {
 
         // Distribute the leftover (l2_delta - allocated) to entries with largest remainders
         let mut leftover = l2_delta - allocated;
-        remainders.sort_by(|a, b| b.1.cmp(&a.1));
+        remainders.sort_by_key(|&(_, frac)| Reverse(frac));
         for &(nth, _) in &remainders {
             if leftover == 0 {
                 break;

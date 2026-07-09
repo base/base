@@ -52,10 +52,10 @@ pub enum BaseTxEnvelope {
     #[envelope(ty = 126)]
     #[serde(serialize_with = "crate::serde_deposit_tx_rpc")]
     Deposit(Sealed<TxDeposit>),
-    /// An [EIP-8130] Account Abstraction transaction tagged with type 0x7B.
+    /// An [EIP-8130] Account Abstraction transaction tagged with type 0x79.
     ///
     /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
-    #[envelope(ty = 123, typed = TxEip8130)]
+    #[envelope(ty = 121, typed = TxEip8130)]
     Eip8130(Eip8130Signed),
 }
 

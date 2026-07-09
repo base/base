@@ -50,15 +50,12 @@ use base_common_consensus::{
 };
 use base_common_precompiles::{NonceManagerStorage, TxContextStorage};
 use base_execution_eip8130::{
-    AccountChangeApplier, AccountConfigurationStorage, FeeCheck, IntrinsicGas, IntrinsicGasInput,
-    NonceMode, NonceValidator, TransactionAuthorizer,
+    AccountChangeApplier, AccountConfigurationStorage, ApplyError, FeeCheck, IntrinsicGas,
+    IntrinsicGasInput, NonceMode, NonceValidator, TransactionAuthorizer,
 };
 use base_precompile_storage::{JournalStorageProvider, StorageCtx};
 use revm::{
-    context::{
-        BlockEnv, LocalContextTr, TxEnv,
-        journaled_state::{JournalCheckpoint, account::JournaledAccountTr},
-    },
+    context::{BlockEnv, LocalContextTr, TxEnv, journaled_state::account::JournaledAccountTr},
     context_interface::{
         Block, Cfg, ContextTr, JournalTr,
         context::take_error,
@@ -235,15 +232,11 @@ impl Eip8130Executor {
             *ctx.chain_mut() = fetched;
         }
 
-        // Guard every journal write so a validity rejection discards the whole
-        // transaction's mutations.
-        let checkpoint = ctx.journal_mut().checkpoint();
-
         let outcome =
             match Self::authorize_and_apply(ctx, &signed, &encoded, chain_id, now, base_fee) {
                 Ok(outcome) => outcome,
                 Err(err) => {
-                    ctx.journal_mut().checkpoint_revert(checkpoint);
+                    Self::teardown_after_error(evm);
                     return Err(err.into());
                 }
             };
@@ -253,11 +246,7 @@ impl Eip8130Executor {
         let prepay = match Self::prepay(ctx, &outcome, &encoded, spec) {
             Ok(prepay) => prepay,
             Err(err) => {
-                ctx.journal_mut().checkpoint_revert(checkpoint);
-                // `prepay` may have cached this tx's L1 cost; clear it so the next
-                // transaction in the block recomputes (parity with the mainnet
-                // handler's `catch_error` cleanup).
-                ctx.chain_mut().clear_tx_l1_cost();
+                Self::teardown_after_error(evm);
                 return Err(err);
             }
         };
@@ -273,7 +262,7 @@ impl Eip8130Executor {
             match Self::execute_calls(evm, &signed, &outcome, outcome.execution_gas_available) {
                 Ok(calls) => calls,
                 Err(err) => {
-                    Self::teardown_after_error(evm, checkpoint);
+                    Self::teardown_after_error(evm);
                     return Err(err);
                 }
             };
@@ -289,7 +278,7 @@ impl Eip8130Executor {
         ) {
             Ok(gas_used) => gas_used,
             Err(err) => {
-                Self::teardown_after_error(evm, checkpoint);
+                Self::teardown_after_error(evm);
                 return Err(err);
             }
         };
@@ -298,9 +287,6 @@ impl Eip8130Executor {
 
         let logs = ctx.journal_mut().take_logs();
 
-        // Explicitly close the checkpoint opened above before committing the
-        // transaction, keeping the checkpoint lifecycle unambiguous.
-        ctx.journal_mut().checkpoint_commit();
         ctx.journal_mut().commit_tx();
         ctx.chain_mut().clear_tx_l1_cost();
 
@@ -444,7 +430,7 @@ impl Eip8130Executor {
         let ceiling = match Self::probe_calls(evm, &signed, &outcome, ceiling_pool) {
             Ok(ceiling) => ceiling,
             Err(err) => {
-                Self::teardown_after_error(evm, checkpoint);
+                Self::teardown_after_error(evm);
                 return Err(err);
             }
         };
@@ -457,7 +443,7 @@ impl Eip8130Executor {
             let final_calls = match Self::execute_calls(evm, &signed, &outcome, ceiling_pool) {
                 Ok(final_calls) => final_calls,
                 Err(err) => {
-                    Self::teardown_after_error(evm, checkpoint);
+                    Self::teardown_after_error(evm);
                     return Err(err);
                 }
             };
@@ -484,7 +470,7 @@ impl Eip8130Executor {
         ) {
             Ok(pool) => pool,
             Err(err) => {
-                Self::teardown_after_error(evm, checkpoint);
+                Self::teardown_after_error(evm);
                 return Err(err);
             }
         };
@@ -494,7 +480,7 @@ impl Eip8130Executor {
         let final_calls = match Self::execute_calls(evm, &signed, &outcome, feasible_pool) {
             Ok(final_calls) => final_calls,
             Err(err) => {
-                Self::teardown_after_error(evm, checkpoint);
+                Self::teardown_after_error(evm);
                 return Err(err);
             }
         };
@@ -741,7 +727,7 @@ impl Eip8130Executor {
     /// gas, fee-cap check, account-change apply, auto-delegation) over a gas-free
     /// journal view and publishes the transaction context, returning the resolved
     /// [`Eip8130Outcome`]. Storage writes land on the journal directly; the
-    /// caller's checkpoint reverts them on error.
+    /// caller discards the transaction on error.
     fn authorize_and_apply<DB>(
         ctx: &mut BaseContext<DB>,
         signed: &base_common_consensus::Eip8130Signed,
@@ -761,7 +747,6 @@ impl Eip8130Executor {
             >,
     {
         let tx = signed.tx();
-        let sender_is_eoa = tx.sender.is_none();
         let nonce_key = tx.nonce_key;
         let gas_limit = tx.gas_limit;
         let max_fee = tx.max_fee_per_gas;
@@ -775,12 +760,10 @@ impl Eip8130Executor {
         StorageCtx::enter(&mut provider, |sctx| {
             // Ordering note: the apply step (1) and code effects (2) write journal
             // storage *before* the nonce is validated (3). Any `Err` returned from
-            // this closure propagates out of `authorize_and_apply` and is reverted
-            // wholesale by the caller's journal checkpoint in `execute` (taken
-            // before this call, reverted on error), so these earlier writes never
-            // persist for a rejected transaction. This mirrors the
-            // caller-MUST-discard contract documented on
-            // `TransactionAuthorizer::authorize_and_apply`.
+            // this closure propagates out of `authorize_and_apply` and the caller
+            // discards the transaction, so these earlier writes never persist for a
+            // rejected transaction. This mirrors the caller-MUST-discard contract
+            // documented on `TransactionAuthorizer::authorize_and_apply`.
             let mut acc = AccountConfigurationStorage::new(sctx);
 
             // 1. Authorize and apply the account changes interleaved against the
@@ -850,16 +833,14 @@ impl Eip8130Executor {
                 false
             };
 
-            // 5. Auto-delegate a code-less EOA sender to the default account so a
-            // basic account can dispatch its calls. This is unconditional for
-            // code-less EOA senders: an explicit delegation installed in step 2 with
-            // a non-zero target leaves non-empty code and is preserved here, but
-            // clearing the sender's delegation in the same transaction leaves it
-            // code-less and is intentionally re-delegated — a basic-account sender
-            // is always delegated to `DEFAULT_ACCOUNT`. The `&&` short-circuits so
-            // a configured (non-EOA) sender is never auto-delegated.
-            let sender_auto_delegated =
-                sender_is_eoa && Self::auto_delegate_codeless_sender(sctx, sender)?;
+            // 5. Auto-delegate any code-less sender to the default account so the
+            // account can dispatch its calls. An explicit delegation applied in
+            // step 2 with a non-zero target leaves non-empty code and is preserved
+            // here. Clearing the sender's delegation in the same transaction leaves
+            // it code-less and is intentionally re-delegated — any basic-account
+            // sender is always delegated to `DEFAULT_ACCOUNT` regardless of which
+            // signing key or authenticator was used.
+            let sender_auto_delegated = Self::auto_delegate_codeless_sender(sctx, sender)?;
 
             // 6. Intrinsic gas under the EIP-8130 schedule.
             let (sender_intrinsic, payer_auth, execution_gas_available) =
@@ -1052,8 +1033,8 @@ impl Eip8130Executor {
 
             // revm's `checkpoint_commit` merges the phase savepoint into its
             // parent without finalizing the journal entries, so a committed phase
-            // is still rolled back if the outer checkpoint (taken in `execute`)
-            // later reverts — e.g. when a subsequent phase surfaces a database
+            // is still rolled back if the transaction is ultimately discarded
+            // (see `teardown_after_error`) — e.g. when a subsequent phase surfaces a database
             // error. Committed phases are only durable once `commit_tx` runs.
             evm.ctx_mut().journal_mut().checkpoint_commit();
             phase_statuses.push(0x01);
@@ -1208,12 +1189,12 @@ impl Eip8130Executor {
     }
 
     /// Centralized post-error teardown mirroring the mainnet handler's
-    /// `catch_error` cleanup: reverts the transaction checkpoint, clears the
+    /// `catch_error` cleanup: discards the transaction, clears the
     /// cached L1 cost, and drains the frame stack and local context. A database
     /// error raised inside a nested subcall surfaces while the parent frame is
     /// still on the stack, so draining both prevents stale frame/local state
     /// from leaking into the next transaction when a `BaseEvm` is reused.
-    fn teardown_after_error<DB, I, P>(evm: &mut BaseEvm<DB, I, P>, checkpoint: JournalCheckpoint)
+    fn teardown_after_error<DB, I, P>(evm: &mut BaseEvm<DB, I, P>)
     where
         DB: AlloyDatabase,
         P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
@@ -1221,7 +1202,7 @@ impl Eip8130Executor {
             BaseContextTr + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
     {
         let ctx = evm.ctx_mut();
-        ctx.journal_mut().checkpoint_revert(checkpoint);
+        ctx.journal_mut().discard_tx();
         ctx.chain_mut().clear_tx_l1_cost();
         evm.ctx().local_mut().clear();
         evm.frame_stack().clear();
@@ -1348,9 +1329,17 @@ impl Eip8130Executor {
         let mut acc_mut = AccountConfigurationStorage::new(sctx);
         let mut created_effect: Option<(Address, Bytes)> = None;
         let mut delegation_effect: Option<(Address, Address)> = None;
-        for change in &signed.tx().account_changes {
+        for (index, change) in signed.tx().account_changes.iter().enumerate() {
             match change {
                 AccountChange::Create(entry) => {
+                    if delegation_effect.is_some() {
+                        return Err(BaseTransactionError::eip8130(ApplyError::CreateAndDelegation));
+                    }
+                    if index != 0 || created_effect.is_some() {
+                        return Err(BaseTransactionError::eip8130(
+                            ApplyError::InvalidCreatePosition,
+                        ));
+                    }
                     let created = AccountChangeApplier::apply_create(&mut acc_mut, entry)
                         .map_err(BaseTransactionError::eip8130)?;
                     created_effect = Some((created.address, created.code));
@@ -1365,6 +1354,12 @@ impl Eip8130Executor {
                     .map_err(BaseTransactionError::eip8130)?;
                 }
                 AccountChange::Delegation(Delegation { target }) => {
+                    if delegation_effect.is_some() {
+                        return Err(BaseTransactionError::eip8130(ApplyError::MultipleDelegations));
+                    }
+                    if created_effect.is_some() {
+                        return Err(BaseTransactionError::eip8130(ApplyError::CreateAndDelegation));
+                    }
                     delegation_effect = Some((sender, *target));
                 }
             }
@@ -1382,11 +1377,12 @@ impl Eip8130Executor {
     }
 
     /// Auto-delegates a code-less sender to [`Eip8130Contracts::DEFAULT_ACCOUNT`]
-    /// so a basic account can dispatch its `calls`, returning whether the
-    /// delegation was installed (which feeds the intrinsic-gas schedule). The
-    /// caller decides *whether* to consider auto-delegation: the verifying path
-    /// only does so for an EOA sender, while estimation considers any code-less
-    /// sender (a configured account already has code, so the check is a no-op).
+    /// so the account can dispatch its `calls`, returning whether the delegation
+    /// was installed (which feeds the intrinsic-gas schedule). Both the verifying
+    /// and estimation paths call this unconditionally: a configured account
+    /// already has code so the check is a no-op for it, and any basic-account
+    /// sender — regardless of signing path or authenticator — is delegated to
+    /// `DEFAULT_ACCOUNT`.
     fn auto_delegate_codeless_sender(
         sctx: StorageCtx<'_>,
         sender: Address,
@@ -2110,6 +2106,152 @@ mod tests {
     }
 
     #[test]
+    fn warmth_does_not_leak_across_transactions() {
+        let key = signing_key(0x66);
+        let sender = eoa_address(&key);
+
+        let loader = address!("0x00000000000000000000000000000000000000c8");
+        // PUSH1 0, SLOAD, STOP
+        let loader_code = bytes!("60005400");
+
+        let mut evm = evm_with_accounts(
+            U256::from(10u64).pow(U256::from(18u64)),
+            sender,
+            &[(loader, loader_code)],
+        );
+
+        let mut warm_tx = base_tx();
+        warm_tx.calls = vec![vec![Call { to: loader, data: Bytes::new() }]];
+        let warm_signed = eoa_signed(warm_tx, &key);
+        let warm_outcome =
+            evm.transact_raw(into_base_tx(&warm_signed)).expect("tx should be included");
+        assert!(matches!(warm_outcome.result, ExecutionResult::Success { .. }));
+        revm::DatabaseCommit::commit(evm.ctx_mut().journal_mut().db_mut(), warm_outcome.state);
+
+        // Tx 1 already bumped the protocol nonce (0 -> 1) and delegated the sender
+        // (both committed above), so tx 2 is a second-use transaction:
+        // base AA_BASE_COST 15_000
+        // payload EIP-2028 DA over the tx 1_684
+        // nonce_key existing channel 0: COLD_SLOAD 2_100 + SSTORE_RESET 2_900 5_000
+        // auto_delegation sender already delegated 0
+        // sender_auth ECRECOVER 3_000 + cold SLOAD 2_100 5_100
+        // call PUSH1 (3) + COLD SLOAD (2_100) + STOP 2_103
+        // total 28_887
+        let mut load_tx = base_tx();
+        load_tx.nonce_sequence = 1;
+        load_tx.calls = vec![vec![Call { to: loader, data: Bytes::new() }]];
+        let load_signed = eoa_signed(load_tx, &key);
+        let load_outcome =
+            evm.transact_raw(into_base_tx(&load_signed)).expect("tx should be included");
+        assert!(matches!(load_outcome.result, ExecutionResult::Success { .. }));
+
+        assert_eq!(
+            load_outcome.result.gas().tx_gas_used(),
+            28_887,
+            "loader SLOAD must be COLD (2_100); a warm read (100) would be 2_000 \
+             less, meaning tx 1's warmth leaked across the transaction boundary",
+        );
+    }
+
+    #[test]
+    fn committed_phase_warms_later_phase() {
+        // Intra-transaction warmth: a phase that SLOADs and COMMITS must leave
+        // the slot warm for a later phase in the SAME tx, so the second SLOAD is
+        // charged warm (100), not cold (2100).
+        // This exercises `checkpoint_commit` merging a phase's warmth into the parent
+        // journal, the flip side of the discard path, and reachable only WITHIN a tx before
+        // `finalize`.
+        let key = signing_key(0x66);
+        let sender = eoa_address(&key);
+
+        let loader = address!("0x00000000000000000000000000000000000000c8");
+        // PUSH1 0, SLOAD, STOP
+        let loader_code = bytes!("60005400");
+
+        let mut evm = evm_with_accounts(
+            U256::from(10u64).pow(U256::from(18u64)),
+            sender,
+            &[(loader, loader_code)],
+        );
+
+        let mut tx = base_tx();
+        tx.calls = vec![
+            vec![Call { to: loader, data: Bytes::new() }],
+            vec![Call { to: loader, data: Bytes::new() }],
+        ];
+        let signed = eoa_signed(tx, &key);
+        let outcome = evm.transact_raw(into_base_tx(&signed)).expect("tx should be included");
+        assert!(matches!(outcome.result, ExecutionResult::Success { .. }));
+
+        // First-use, single-tx, two phases each calling `loader`:
+        // base AA_BASE_COST 15_000
+        // payload EIP-2028 DA over the two-phase tx 1_840
+        // nonce_key first use of channel 0: COLD_SLOAD 2_100 + SSTORE_SET 20_000 22_100
+        // auto_delegation codeless EOA -> DEFAULT_ACCOUNT 4_600
+        // sender_auth ECRECOVER 3_000 + cold SLOAD 2_100 5_100
+        // call phase 0 PUSH1 (3) + COLD SLOAD (2_100) + STOP 2_103
+        // call phase 1 PUSH1 (3) + WARM SLOAD (100) + STOP 103
+        // total 50_846
+        assert_eq!(
+            outcome.result.gas().tx_gas_used(),
+            50_846,
+            "phase 1's SLOAD must be WARM (100): committed phase 0 warmed \
+             (loader, slot 0). A cold read (2_100) would be 2_000 more, meaning \
+             the committed phase's warmth failed to carry across phases",
+        );
+    }
+
+    #[test]
+    fn validation_error_discards_warmth() {
+        let key = signing_key(0x66);
+        let sender = eoa_address(&key);
+
+        let loader = address!("0x00000000000000000000000000000000000000c8");
+        // PUSH1 0, SLOAD, STOP
+        let loader_code = bytes!("60005400");
+
+        let mut evm = evm_with_accounts(
+            U256::from(10u64).pow(U256::from(18u64)),
+            sender,
+            &[(loader, loader_code)],
+        );
+
+        let mut invalid_tx = base_tx();
+        invalid_tx.nonce_sequence = 5;
+        invalid_tx.calls = vec![vec![Call { to: loader, data: bytes!("60006000fd") }]];
+        let invalid_signed = eoa_signed(invalid_tx, &key);
+        let invalid_outcome = evm.transact_raw(into_base_tx(&invalid_signed)).unwrap_err();
+        assert!(
+            matches!(invalid_outcome, EVMError::Transaction(BaseTransactionError::Eip8130(_))),
+            "validation error should surface as a validation error, got {invalid_outcome:?}",
+        );
+
+        let mut load_tx = base_tx();
+        load_tx.calls = vec![vec![Call { to: loader, data: Bytes::new() }]];
+        let load_signed = eoa_signed(load_tx, &key);
+        let load_outcome =
+            evm.transact_raw(into_base_tx(&load_signed)).expect("tx should be included");
+        assert!(matches!(load_outcome.result, ExecutionResult::Success { .. }));
+
+        // `load_tx` is a self-paying EOA transaction with one phase calling
+        // `loader` (PUSH1 0, SLOAD, STOP). Its gas splits into the EIP-8130
+        // sender-intrinsic charge (48_484) plus the dispatched call (2_103):
+        // base AA_BASE_COST 15_000
+        // payload EIP-2028 DA over the 121-byte tx 1_684
+        // nonce_key first use of channel 0: COLD_SLOAD 2_100 + SSTORE_SET 20_000 22_100
+        // auto_delegation codeless EOA -> DEFAULT_ACCOUNT (200 x 23-byte indicator) 4_600
+        // sender_auth ECRECOVER 3_000 + cold SLOAD 2_100 5_100
+        // call PUSH1 (3) + SLOAD + STOP (0) 2_103
+        // total 50_587
+        assert_eq!(
+            load_outcome.result.gas().tx_gas_used(),
+            50_587,
+            "loader SLOAD must be COLD (2_100); a warm read (100) would total \
+             48_587, meaning the discarded invalid tx leaked warmth",
+        );
+    }
+
+    #[test]
     fn later_phase_skipped_after_earlier_phase_reverts() {
         // Phase 0 reverts; phase 1 must not run. Phase 1 targets a contract that
         // would SSTORE a marker — its absence proves the phase was skipped.
@@ -2287,7 +2429,7 @@ mod tests {
     #[test]
     fn counterfactual_create_executes_and_is_included() {
         // End-to-end regression for the counterfactual smart-account CREATE bug
-        // (PR #3766): a `0x7b` create whose sender is the not-yet-existent CREATE2
+        // (PR #3766): a `0x79` create whose sender is the not-yet-existent CREATE2
         // address must authorize and be *included* through the full
         // `Eip8130Executor::execute` pipeline — not just the unit-level
         // `authorize_and_apply`. Before the fix this returned

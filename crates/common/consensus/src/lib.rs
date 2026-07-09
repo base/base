@@ -40,8 +40,8 @@ pub use extra::{EIP1559ParamEncoder, EIP1559ParamError, HoloceneExtraData, Jovia
 
 mod source;
 pub use source::{
-    DepositSourceDomain, DepositSourceDomainIdentifier, L1InfoDepositSource, UpgradeDepositSource,
-    UserDepositSource,
+    BaseTimeDepositSource, DepositSourceDomain, DepositSourceDomainIdentifier, L1InfoDepositSource,
+    UpgradeDepositSource, UserDepositSource,
 };
 
 mod predeploys;

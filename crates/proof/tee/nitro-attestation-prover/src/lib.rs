@@ -7,6 +7,14 @@ pub use base_proof_tee_attestation::{
 };
 pub use error::{ProverError, Result};
 
+mod types;
+pub use types::{AttestationProof, AttestationProofProvider};
+
+#[cfg(any(feature = "prove", feature = "metrics"))]
+mod metrics;
+#[cfg(any(feature = "prove", feature = "metrics"))]
+pub use metrics::BoundlessMetrics;
+
 // Prover implementations are behind the `prove` feature to avoid pulling in
 // risc0-sys (Metal kernel builds on macOS) and to reduce compile times for
 // consumers that only need the trait, types, and error definitions.

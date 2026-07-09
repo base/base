@@ -57,6 +57,7 @@ pub async fn launch_node_with_proof_history(
         proofs_history_storage_path,
         proofs_history_db,
         proofs_history_rocksdb,
+        proofs_history_mdbx,
         proofs_history_window,
         proofs_history_prune_interval,
         proofs_history_verification_interval,
@@ -78,6 +79,7 @@ pub async fn launch_node_with_proof_history(
         proofs_history_storage_path: None,
         proofs_history_db: ProofsHistoryDbBackend::default(),
         proofs_history_rocksdb: Default::default(),
+        proofs_history_mdbx: Default::default(),
         proofs_history_window: DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS,
         proofs_history_prune_interval: Duration::from_secs(15),
         proofs_history_verification_interval: 0,
@@ -111,8 +113,11 @@ pub async fn launch_node_with_proof_history(
             }
             ProofsHistoryDbBackend::Mdbx => {
                 let mdbx = Arc::new(
-                    MdbxProofsStorage::new(&path)
-                        .map_err(|e| eyre::eyre!("Failed to create MdbxProofsStorage: {e}"))?,
+                    MdbxProofsStorage::new_with_options(
+                        &path,
+                        proofs_history_mdbx.storage_options(),
+                    )
+                    .map_err(|e| eyre::eyre!("Failed to create MdbxProofsStorage: {e}"))?,
                 );
                 node_builder = install_proofs_history(
                     node_builder,

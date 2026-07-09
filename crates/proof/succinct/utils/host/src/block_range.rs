@@ -3,23 +3,19 @@ use std::{
     collections::HashSet,
 };
 
-use alloy_eips::BlockId;
 use anyhow::{Result, bail};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     fetcher::{OPSuccinctDataFetcher, RPCMode},
-    host::OPSuccinctHost,
+    host::SuccinctHost,
     rpc_types::{OutputResponse, SafeHeadResponse},
 };
 
-const TWO_HOURS_IN_BLOCKS: u64 = 3600;
-
 /// Get the start and end block numbers for a range, with validation.
-pub async fn get_validated_block_range<H: OPSuccinctHost>(
-    host: &H,
-    data_fetcher: &OPSuccinctDataFetcher,
+pub async fn get_validated_block_range(
+    host: &SuccinctHost,
     start: Option<u64>,
     end: Option<u64>,
     default_range: u64,
@@ -30,14 +26,7 @@ pub async fn get_validated_block_range<H: OPSuccinctHost>(
     // Failure error.
     // L2 Block Validation Failure error might still occur. See
     // [Troubleshooting](../troubleshooting.md#l2-block-validation-failure) for more details.
-    let l2_finalized_block_number = data_fetcher.get_l2_header(BlockId::finalized()).await?.number;
-    let end_number = host
-        .get_finalized_l2_block_number(
-            data_fetcher,
-            l2_finalized_block_number - TWO_HOURS_IN_BLOCKS,
-        )
-        .await?
-        .expect("Failed to get finalized L2 block number");
+    let end_number = host.get_finalized_l2_block_number().await?;
 
     // If end block not provided, use latest finalized block
     let l2_end_block = match end {
@@ -67,18 +56,10 @@ pub async fn get_validated_block_range<H: OPSuccinctHost>(
 ///
 /// The returned tuple represents the last `range` blocks that the host considers finalized
 /// according to its DA-specific logic, making the range safe to use for proof generation.
-pub async fn get_rolling_block_range<H: OPSuccinctHost>(
-    host: &H,
-    data_fetcher: &OPSuccinctDataFetcher,
-    range: u64,
-) -> Result<(u64, u64)> {
-    let header = data_fetcher.get_l2_header(BlockId::finalized()).await?;
-    let l2_end_block = host
-        .get_finalized_l2_block_number(data_fetcher, header.number - TWO_HOURS_IN_BLOCKS)
-        .await?
-        .expect("Failed to get finalized L2 block number");
+pub async fn get_rolling_block_range(host: &SuccinctHost, range: u64) -> Result<(u64, u64)> {
+    let l2_end_block = host.get_finalized_l2_block_number().await?;
 
-    Ok((l2_end_block - range, l2_end_block))
+    Ok((l2_end_block.saturating_sub(range), l2_end_block))
 }
 
 /// A contiguous range of L2 blocks.

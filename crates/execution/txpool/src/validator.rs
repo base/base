@@ -507,6 +507,25 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
     pub const fn requires_l1_data_gas_fee(&self) -> bool {
         self.require_l1_data_gas_fee
     }
+
+    /// Whether execution will auto-delegate the code-less sender to
+    /// `DEFAULT_ACCOUNT` (charging a `DELEGATION_DEPOSIT_COST`) given the
+    /// transaction's `account_changes`.
+    ///
+    /// Auto-delegation is suppressed only when the transaction leaves the sender
+    /// with non-empty code: a `Create` or a *non-zero* `Delegation` both install
+    /// code, so `auto_delegate_codeless_sender` is a no-op at execution. A
+    /// zero-target `Delegation` (a delegation clear) instead leaves the sender
+    /// code-less, so execution re-fires auto-delegation and charges a second
+    /// deposit (one for the clear entry itself, one for the auto-delegation); it
+    /// must NOT suppress budgeting here.
+    pub fn sender_auto_delegated(account_changes: &[AccountChange]) -> bool {
+        !account_changes.iter().any(|change| match change {
+            AccountChange::Create(_) => true,
+            AccountChange::Delegation(delegation) => !delegation.target.is_zero(),
+            AccountChange::ConfigChange(_) => false,
+        })
+    }
 }
 
 impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm>
@@ -708,10 +727,16 @@ where
 
         let (nonce_key_first_use, sender_nonce) =
             self.eip8130_nonce_state(&*state, local_chain_id, now, signed, sender, protocol_nonce)?;
-        let sender_auto_delegated = !Self::account_has_code(&*state, sender)
-            .map_err(|error| Self::state_read_error(error, "sender code read failed"))?
-            && !is_create
-            && !has_delegation;
+        // Conservatively assume auto-delegation fires unless the transaction itself
+        // leaves the sender with non-empty code (see `sender_auto_delegated`). This
+        // intentionally ignores the sender's current on-chain code state: a sender
+        // that is already delegated (has code) at admission time may lose its
+        // delegation before inclusion (e.g. via a native EIP-7702 revocation), so
+        // always budgeting `DELEGATION_DEPOSIT_COST` in `gas_limit` prevents a hard
+        // intrinsic-gas error at block production time. The overestimate is safe:
+        // if execution finds the sender already has code, `auto_delegate_codeless_sender`
+        // is a no-op and the reserved gas flows into execution gas instead.
+        let sender_auto_delegated = Self::sender_auto_delegated(&signed.tx().account_changes);
         let intrinsic = IntrinsicGas::compute(
             signed,
             self.eip8130_encoded(signed).as_ref(),
@@ -2325,5 +2350,30 @@ mod tests {
             .expect("create + config change must be admitted via the overlay");
         assert_eq!(state.sender, derived);
         assert_eq!(state.payer, derived, "self-paid create");
+    }
+
+    #[test]
+    fn sender_auto_delegated_budgets_clear_delegation() {
+        // No account changes: a code-less sender is auto-delegated at execution,
+        // so the mempool must budget the deposit.
+        assert!(TestValidator::sender_auto_delegated(&[]));
+
+        // A zero-target `Delegation` (a clear) leaves the sender code-less at
+        // execution, so auto-delegation re-fires and charges a *second* deposit.
+        // The mempool must still budget it — matching xenoliss's reported case.
+        assert!(TestValidator::sender_auto_delegated(&[AccountChange::Delegation(Delegation {
+            target: Address::ZERO,
+        })]));
+
+        // A non-zero `Delegation` leaves the sender with code, so execution's
+        // `auto_delegate_codeless_sender` is a no-op — no auto-delegation deposit.
+        assert!(!TestValidator::sender_auto_delegated(&[AccountChange::Delegation(Delegation {
+            target: Address::repeat_byte(0x11),
+        })]));
+
+        // A `Create` installs code, so auto-delegation does not fire.
+        assert!(!TestValidator::sender_auto_delegated(&[AccountChange::Create(
+            make_valid_create_entry(),
+        )]));
     }
 }

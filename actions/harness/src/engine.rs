@@ -518,6 +518,7 @@ impl ActionEngineClient {
             // The spec notes: "as long as MinBaseFee is not explicitly set, the
             // default value (0) will be systematically applied."
             min_base_fee: Some(0),
+            timestamp_millis_part: None,
         };
 
         let built = Self::build_payload(inner, payload.parent_hash, attrs)?;

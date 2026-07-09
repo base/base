@@ -157,6 +157,21 @@ fn record_rpc_result<T>(method: &str, start: std::time::Instant, result: &RpcRes
     crate::metrics::record_response_latency(method, success, elapsed_ms);
 }
 
+fn record_worker_rpc_result<T>(
+    method: &str,
+    start: std::time::Instant,
+    result: &RpcResult<T>,
+    worker_id: &str,
+) {
+    let (success, status_code) = match result {
+        Ok(_) => (true, "OK"),
+        Err(error) => (false, rpc_status_code_str(error.code())),
+    };
+    let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+    crate::metrics::inc_worker_requests(method, success, status_code, worker_id);
+    crate::metrics::record_response_latency(method, success, elapsed_ms);
+}
+
 #[cfg(test)]
 mod tests {
     use super::WorkerApiConfig;

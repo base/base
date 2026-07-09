@@ -17,6 +17,7 @@ base-common-evm.workspace = true
 async-trait.workspace = true
 base-bundles.workspace = true
 base-common-chains.workspace = true
+base-observability-events.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-signer-local.workspace = true
 base-execution-evm.workspace = true
@@ -48,4 +49,9 @@ base-bundles = { workspace = true, features = ["test-utils"] }
 
 [features]
 default = [ "metrics" ]
-metrics = [ "base-common-evm/metrics", "base-metrics/metrics", "dep:metrics" ]
+metrics = [
+	"base-common-evm/metrics",
+	"base-metrics/metrics",
+	"base-observability-events/metrics",
+	"dep:metrics",
+]
