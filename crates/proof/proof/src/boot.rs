@@ -49,7 +49,7 @@ pub const L2_CHAIN_ID_KEY: U256 = uint!(5_U256);
 /// This key retrieves the rollup configuration served by the L2 node.
 ///
 /// For known chains, the built-in configuration remains authoritative for static fields, while the
-/// oracle-provided `hardforks` become the dynamic execution schedule. For unknown chains, the full
+/// oracle-provided `upgrades` become the dynamic execution schedule. For unknown chains, the full
 /// oracle-provided config is used after validation.
 pub const L2_ROLLUP_CONFIG_KEY: U256 = uint!(6_U256);
 
@@ -270,11 +270,11 @@ impl BootInfo {
             });
         }
 
-        // Use the built-in config for known chains, but always refresh the hardfork schedule from
+        // Use the built-in config for known chains, but always refresh the upgrade schedule from
         // the node-served rollup config so execution tracks live upgrades.
         let rollup_config = if let Some(config) = built_in_chain_config {
             let mut rollup_config = config.rollup_config();
-            rollup_config.hardforks = oracle_rollup_config.hardforks;
+            rollup_config.upgrades = oracle_rollup_config.upgrades;
             rollup_config
         } else {
             warn!(
@@ -395,7 +395,7 @@ mod tests {
     use alloy_primitives::B256;
     use async_trait::async_trait;
     use base_common_chains::ChainConfig as BaseChainConfig;
-    use base_common_genesis::{HardForkConfig, HardforkConfig};
+    use base_common_genesis::{BaseUpgradeConfig, UpgradeConfig};
     use base_proof_preimage::{
         PreimageKey, PreimageOracleClient,
         errors::{PreimageOracleError, PreimageOracleResult},
@@ -462,15 +462,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn uses_oracle_hardforks_for_builtin_chain() {
+    async fn uses_oracle_upgrades_for_builtin_chain() {
         let chain_config = BaseChainConfig::MAINNET;
-        let hardforks = HardForkConfig {
+        let upgrades = UpgradeConfig {
             canyon_time: Some(123),
-            base: HardforkConfig { azul: Some(456), beryl: None, cobalt: None },
+            base: BaseUpgradeConfig { azul: Some(456), beryl: None, cobalt: None },
             ..Default::default()
         };
         let mut rollup_config = chain_config.rollup_config();
-        rollup_config.hardforks = hardforks;
+        rollup_config.upgrades = upgrades;
 
         let mut oracle = MockOracle::new();
         oracle.insert(L1_HEAD_KEY, B256::repeat_byte(0x11).to_vec());
@@ -485,8 +485,8 @@ mod tests {
 
         let boot_info = BootInfo::load(&oracle).await.expect("boot info should load");
 
-        assert_eq!(boot_info.rollup_config.hardforks, hardforks);
-        assert_eq!(boot_info.schedule_id, ScheduleId::from_hardforks(&hardforks));
+        assert_eq!(boot_info.rollup_config.upgrades, upgrades);
+        assert_eq!(boot_info.schedule_id, ScheduleId::from_upgrades(&upgrades));
     }
 
     #[tokio::test]

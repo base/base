@@ -5,13 +5,13 @@ use base_common_evm::BaseEvmFactory;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
+use base_optimism_rpc::OptimismRollupProviderExt;
 use base_proof::HintType;
 use base_proof_client::{FaultProofProgramError, Prologue};
 use base_proof_preimage::{
     BidirectionalChannel, Channel, HintReader, HintWriter, OracleReader, OracleServer,
     WitnessOracle,
 };
-use base_proof_rpc::OptimismRollupProviderExt;
 use tokio::{
     sync::RwLock,
     task::{self, JoinHandle},
