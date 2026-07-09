@@ -222,21 +222,18 @@ where
             request.claim.worker_id.clone(),
         );
 
-        // Every request begins with a range (STARK) proof. A Groth16 job proves the range over the
-        // compressed request nested in its SNARK request, since backends only submit compressed
-        // proofs in the first stage.
+        // Every request begins with a range (STARK) proof. For a Groth16 job that is the compressed
+        // request nested in its SNARK request.
         let range_request = match &request.request {
-            ZkProofRequestKind::Compressed(proof) => ZkProofRequestKind::Compressed(proof.clone()),
-            ZkProofRequestKind::SnarkGroth16(snark) => {
-                ZkProofRequestKind::Compressed(snark.proof.clone())
-            }
+            ZkProofRequestKind::Compressed(proof) => proof,
+            ZkProofRequestKind::SnarkGroth16(snark) => &snark.proof,
         };
         let range_session_id = self
             .drive_stage(
                 request,
                 &handle,
                 SessionType::Stark,
-                self.prover.submit(&range_request, &request.claim.session_id),
+                self.prover.submit(range_request, &request.claim.session_id),
             )
             .await?;
 

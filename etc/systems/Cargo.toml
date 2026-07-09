@@ -93,6 +93,17 @@ testcontainers = { workspace = true, features = ["blocking", "host-port-exposure
 # cli
 clap = { workspace = true, features = ["derive"] }
 
+# consensus
+base-consensus-derive.workspace = true
+base-consensus-engine = { workspace = true, features = ["test-utils"] }
+
+# alloy
+alloy-json-rpc.workspace = true
+
+# base-alloy
+base-common-consensus.workspace = true
+base-common-rpc-types-engine.workspace = true
+
 # proof
 base-proof-rpc.workspace = true
 base-optimism-rpc.workspace = true
@@ -101,6 +112,7 @@ base-prover-service-protocol.workspace = true
 
 # misc
 indicatif.workspace = true
+async-trait.workspace = true
 
 [[bench]]
 name = "b20_zk_proving"

@@ -23,8 +23,6 @@ use crate::{
 /// Static parameters needed to build and dispatch proposer proof requests.
 #[derive(Debug, Clone, Copy)]
 pub struct ProofDispatcherConfig {
-    /// Whether requests may target safe, non-finalized L2 blocks.
-    pub allow_non_finalized: bool,
     /// Number of L2 blocks between proof targets.
     pub block_interval: u64,
     /// Address of the proposer that will submit the proof onchain.
@@ -40,7 +38,6 @@ pub struct ProofDispatcherConfig {
 impl From<&DriverConfig> for ProofDispatcherConfig {
     fn from(config: &DriverConfig) -> Self {
         Self {
-            allow_non_finalized: config.allow_non_finalized,
             block_interval: config.block_interval,
             proposer_address: config.proposer_address,
             intermediate_block_interval: config.intermediate_block_interval,
@@ -89,16 +86,12 @@ impl ProofDispatcher {
             self.l2_client.header_by_number(BlockNumberOrTag::Number(recovered.l2_block_number)),
         )
         .map_err(ProposerError::Rpc)?;
-        let (l1_head_source, l1_head) = Self::select_l1_head_for_target(
-            target_block,
-            &sync_status,
-            self.config.allow_non_finalized,
-        )?;
+        let l1_head = Self::select_l1_head_for_target(target_block, &sync_status)?;
         let l1_header =
             self.l1_client.header_by_hash(l1_head.hash).await.map_err(ProposerError::Rpc)?;
         if l1_header.hash != l1_head.hash || l1_header.number != l1_head.number {
             return Err(ProposerError::Internal(format!(
-                "selected {l1_head_source} L1 head {}:{} does not match L1 RPC header {}:{}",
+                "selected finalized L1 head {}:{} does not match L1 RPC header {}:{}",
                 l1_head.number, l1_head.hash, l1_header.number, l1_header.hash
             )));
         }
@@ -106,8 +99,6 @@ impl ProofDispatcher {
         info!(
             from_block = recovered.l2_block_number,
             to_block = target_block,
-            allow_non_finalized = self.config.allow_non_finalized,
-            l1_head_source = l1_head_source,
             l1_head_number = l1_header.number,
             l1_head_hash = %l1_header.hash,
             agreed_l2_head_hash = %agreed_l2_head.hash,
@@ -132,33 +123,24 @@ impl ProofDispatcher {
     fn select_l1_head_for_target(
         target_block: u64,
         sync_status: &SyncStatus,
-        allow_non_finalized: bool,
-    ) -> Result<(&'static str, L1BlockRef), ProposerError> {
-        let (l1_head_source, l1_head, l2_coverage) =
-            if target_block <= sync_status.finalized_l2.number {
-                ("finalized", sync_status.finalized_l1, sync_status.finalized_l2)
-            } else if !allow_non_finalized {
-                return Err(ProposerError::Internal(format!(
-                    "target block {target_block} is above rollup finalized head {}",
-                    sync_status.finalized_l2.number
-                )));
-            } else if target_block <= sync_status.safe_l2.number {
-                ("safe", sync_status.safe_l1, sync_status.safe_l2)
-            } else {
-                return Err(ProposerError::Internal(format!(
-                    "target block {target_block} is above rollup safe head {}",
-                    sync_status.safe_l2.number
-                )));
-            };
-
-        if l1_head.number < l2_coverage.l1origin.number {
+    ) -> Result<L1BlockRef, ProposerError> {
+        if target_block > sync_status.finalized_l2.number {
             return Err(ProposerError::Internal(format!(
-                "selected {l1_head_source} L1 head {} is below {l1_head_source} L2 origin {}",
-                l1_head.number, l2_coverage.l1origin.number
+                "target block {target_block} is above rollup finalized head {}",
+                sync_status.finalized_l2.number
             )));
         }
 
-        Ok((l1_head_source, l1_head))
+        let l1_head = sync_status.finalized_l1;
+        let l1_origin = sync_status.finalized_l2.l1origin.number;
+        if l1_head.number < l1_origin {
+            return Err(ProposerError::Internal(format!(
+                "selected finalized L1 head {} is below finalized L2 origin {l1_origin}",
+                l1_head.number
+            )));
+        }
+
+        Ok(l1_head)
     }
 
     async fn dispatch_request(
@@ -189,20 +171,20 @@ impl ProofDispatcher {
         }
     }
 
-    /// Dispatches every target from the current dispatcher cursor up to `safe_head`.
-    pub async fn tick(&self, current: &mut RecoveredState, safe_head: u64) {
+    /// Dispatches every target from the current dispatcher cursor up to `finalized_head`.
+    pub async fn tick(&self, current: &mut RecoveredState, finalized_head: u64) {
         loop {
             let Some(target_block) =
                 ProofTarget::next_block(current.l2_block_number, self.config.block_interval)
             else {
                 break;
             };
-            if target_block > safe_head {
+            if target_block > finalized_head {
                 debug!(
                     current_block = current.l2_block_number,
                     target_block,
-                    safe_head,
-                    "Safe head below dispatch target, waiting for L2 head to advance"
+                    finalized_head,
+                    "Finalized head below dispatch target, waiting for L2 head to advance"
                 );
                 break;
             }
@@ -293,71 +275,47 @@ mod tests {
         )
     }
 
-    fn sync_status_with_distinct_heads(
-        finalized_l2_number: u64,
-        safe_l2_number: u64,
-    ) -> SyncStatus {
-        let mut sync_status = test_sync_status(safe_l2_number, B256::repeat_byte(0x52));
+    fn sync_status_with_finalized_head(finalized_l2_number: u64) -> SyncStatus {
+        let mut sync_status = test_sync_status(finalized_l2_number, B256::repeat_byte(0x52));
         sync_status.finalized_l1 = test_l1_block_ref(10);
         sync_status.finalized_l1.hash = B256::repeat_byte(0xf1);
-        sync_status.safe_l1 = test_l1_block_ref(20);
-        sync_status.safe_l1.hash = B256::repeat_byte(0x5a);
         sync_status.finalized_l2 = test_l2_block_ref(finalized_l2_number, B256::repeat_byte(0xf2));
         sync_status.finalized_l2.l1origin.number = sync_status.finalized_l1.number;
-        sync_status.safe_l2.l1origin.number = sync_status.safe_l1.number;
         sync_status
     }
 
-    fn headers_for_sync_status(
-        sync_status: &SyncStatus,
-    ) -> HashMap<B256, alloy_rpc_types_eth::Header> {
-        [sync_status.finalized_l1, sync_status.safe_l1]
-            .into_iter()
-            .map(|l1_head| (l1_head.hash, test_l1_header(l1_head.hash, l1_head.number)))
-            .collect()
-    }
-
     #[test]
-    fn select_l1_head_selects_expected_head_or_rejects_target() {
-        let sync_status = sync_status_with_distinct_heads(300, 600);
-        let (source, finalized_l1) =
-            ProofDispatcher::select_l1_head_for_target(200, &sync_status, true).unwrap();
-        assert_eq!(source, "finalized");
+    fn select_l1_head_selects_finalized_head_or_rejects_target() {
+        let sync_status = sync_status_with_finalized_head(300);
+
+        let finalized_l1 = ProofDispatcher::select_l1_head_for_target(200, &sync_status).unwrap();
         assert_eq!(finalized_l1.hash, B256::repeat_byte(0xf1));
         assert_eq!(finalized_l1.number, 10);
 
-        let (source, safe_l1) =
-            ProofDispatcher::select_l1_head_for_target(400, &sync_status, true).unwrap();
-        assert_eq!(source, "safe");
-        assert_eq!(safe_l1.hash, B256::repeat_byte(0x5a));
-        assert_eq!(safe_l1.number, 20);
-
-        let err = ProofDispatcher::select_l1_head_for_target(700, &sync_status, true).unwrap_err();
-        assert!(err.to_string().contains("above rollup safe head"));
-
-        let err = ProofDispatcher::select_l1_head_for_target(400, &sync_status, false).unwrap_err();
+        let err = ProofDispatcher::select_l1_head_for_target(400, &sync_status).unwrap_err();
         assert!(err.to_string().contains("above rollup finalized head"));
     }
 
     #[test]
-    fn select_l1_head_rejects_l2_coverage_beyond_selected_l1_head() {
-        let mut sync_status = sync_status_with_distinct_heads(300, 600);
-        sync_status.safe_l2.l1origin.number = sync_status.safe_l1.number + 1;
+    fn select_l1_head_rejects_l2_origin_beyond_finalized_l1_head() {
+        let mut sync_status = sync_status_with_finalized_head(300);
+        sync_status.finalized_l2.l1origin.number = sync_status.finalized_l1.number + 1;
 
-        let err = ProofDispatcher::select_l1_head_for_target(400, &sync_status, true)
-            .expect_err("safe L1 must cover selected safe L2 origin");
+        let err = ProofDispatcher::select_l1_head_for_target(200, &sync_status)
+            .expect_err("finalized L1 must cover finalized L2 origin");
 
-        assert!(err.to_string().contains("below safe L2 origin"));
+        assert!(err.to_string().contains("below finalized L2 origin"));
     }
 
     #[tokio::test]
     async fn build_request_rejects_l1_rpc_header_mismatch() {
-        let sync_status = sync_status_with_distinct_heads(300, 600);
-        let mut headers = headers_for_sync_status(&sync_status);
-        headers.insert(
-            sync_status.safe_l1.hash,
-            test_l1_header(sync_status.safe_l1.hash, sync_status.safe_l1.number + 1),
-        );
+        let sync_status = sync_status_with_finalized_head(300);
+        // Map the finalized L1 head hash to a header with a mismatched number to
+        // force the RPC-header mismatch path.
+        let headers = HashMap::from([(
+            sync_status.finalized_l1.hash,
+            test_l1_header(sync_status.finalized_l1.hash, sync_status.finalized_l1.number + 1),
+        )]);
         let dispatcher = ProofDispatcher::new(
             Arc::new(MockProofRequester::default()),
             Arc::new(MockL1 {
@@ -370,10 +328,7 @@ mod tests {
                 output_roots: Default::default(),
                 max_safe_block: None,
             }),
-            ProofDispatcherConfig::from(&DriverConfig {
-                allow_non_finalized: true,
-                ..Default::default()
-            }),
+            ProofDispatcherConfig::from(&DriverConfig::default()),
         );
         let recovered = RecoveredState {
             parent_address: Address::ZERO,
@@ -382,7 +337,7 @@ mod tests {
         };
 
         let err = dispatcher
-            .build_request(400, &recovered, B256::repeat_byte(0xaa))
+            .build_request(200, &recovered, B256::repeat_byte(0xaa))
             .await
             .expect_err("L1 RPC header must match rollup-selected L1 head");
 

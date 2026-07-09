@@ -46,11 +46,15 @@ hardfork!(
     ///   the L1 upgrade-signal contract `hardforkId` strings and the genesis [`UpgradeConfig`]
     ///   timestamp fields.
     ///
-    /// Variants are listed in chronological order. [`Bedrock`](BaseUpgrade::Bedrock) is
-    /// execution-only (block-activated, not contract-backed), while
+    /// Real network upgrades are listed in chronological order. [`Bedrock`](BaseUpgrade::Bedrock)
+    /// is execution-only (block-activated, not contract-backed), while
     /// [`Delta`](BaseUpgrade::Delta) and [`PectraBlobSchedule`](BaseUpgrade::PectraBlobSchedule)
     /// are contract-backed config upgrades that do not change EVM execution and therefore never
     /// enter the execution fork ladder.
+    ///
+    /// [`Zombie`](BaseUpgrade::Zombie) is a permanently-off gate: it is a known upgrade identity
+    /// used to gate not-yet-ready features (checked like any other fork), but it is neither
+    /// contract-backed nor configurable and can never activate.
     ///
     /// When building a list of upgrades for a chain, it's still expected to zip with
     /// [`EthereumHardfork`](alloy_hardforks::EthereumHardfork).
@@ -87,6 +91,9 @@ hardfork!(
         Beryl,
         /// Cobalt: Third Base-specific network upgrade.
         Cobalt,
+        /// Zombie: permanently-off gate used to keep not-yet-ready features disabled. Never
+        /// activates and is not contract-backed or configurable.
+        Zombie,
     }
 );
 
@@ -98,7 +105,7 @@ impl BaseUpgrade {
     ///
     /// These are the upgrades that participate in the reth/revm hardfork schedule. Excludes the
     /// contract-only [`Delta`](Self::Delta) and [`PectraBlobSchedule`](Self::PectraBlobSchedule)
-    /// upgrades, which do not change EVM execution.
+    /// upgrades and the [`Zombie`](Self::Zombie) gate, which do not change EVM execution.
     pub const EXECUTION_VARIANTS: [Self; 12] = [
         Self::Bedrock,
         Self::Regolith,
@@ -117,7 +124,8 @@ impl BaseUpgrade {
     /// The contract-backed upgrade set, in activation order.
     ///
     /// These are the upgrades addressable by the L1 upgrade-signal contract and stored in the
-    /// genesis [`UpgradeConfig`]. Excludes block-activated [`Bedrock`](Self::Bedrock).
+    /// genesis [`UpgradeConfig`]. Excludes block-activated [`Bedrock`](Self::Bedrock) and the
+    /// [`Zombie`](Self::Zombie) gate, which is never signaled or configured.
     pub const CONTRACT_VARIANTS: [Self; 13] = [
         Self::Regolith,
         Self::Canyon,
@@ -140,9 +148,10 @@ impl BaseUpgrade {
     }
 
     /// Returns true if this upgrade is contract-backed (i.e. signaled by the L1 upgrade-signal
-    /// contract and stored in [`UpgradeConfig`]). False only for [`Bedrock`](Self::Bedrock).
+    /// contract and stored in [`UpgradeConfig`]). False for block-activated
+    /// [`Bedrock`](Self::Bedrock) and the never-activating [`Zombie`](Self::Zombie) gate.
     pub const fn is_contract_backed(self) -> bool {
-        !matches!(self, Self::Bedrock)
+        !matches!(self, Self::Bedrock | Self::Zombie)
     }
 
     /// Returns this upgrade's index within [`EXECUTION_VARIANTS`](Self::EXECUTION_VARIANTS), or
@@ -161,7 +170,7 @@ impl BaseUpgrade {
             Self::Azul => 9,
             Self::Beryl => 10,
             Self::Cobalt => 11,
-            Self::Delta | Self::PectraBlobSchedule => return None,
+            Self::Delta | Self::PectraBlobSchedule | Self::Zombie => return None,
         })
     }
 
@@ -186,6 +195,7 @@ impl BaseUpgrade {
             Self::Azul => "azul",
             Self::Beryl => "beryl",
             Self::Cobalt => "cobalt",
+            Self::Zombie => "zombie",
         }
     }
 
@@ -228,6 +238,8 @@ impl BaseUpgrade {
             "osaka" | "azul" | "baseazul" | "v1" => Self::Azul,
             "beryl" | "baseberyl" | "v2" => Self::Beryl,
             "cobalt" | "basecobalt" | "v3" => Self::Cobalt,
+            // Zombie is a permanently-off gate: even though `contract_id` emits "zombie", it is
+            // deliberately not resolvable here, so the L1 upgrade signal can never address it.
             _ => return None,
         };
         Some(upgrade)
@@ -324,6 +336,11 @@ impl UpgradeActivationOverrides {
 
     /// Sets the runtime activation override for a contract upgrade ID.
     pub fn set_activation(&mut self, upgrade_id: BaseUpgrade, activation: UpgradeActivation) {
+        // Zombie is a permanently-off gate: never store it as an override so the "Zombie is
+        // never stored as active" invariant holds at the write side, not just at consumers.
+        if matches!(upgrade_id, BaseUpgrade::Zombie) {
+            return;
+        }
         self.activations.insert(upgrade_id, activation);
     }
 
@@ -520,7 +537,9 @@ impl UpgradeConfig {
     /// Clears a timestamp-based activation time by contract upgrade ID.
     pub const fn clear_activation_timestamp(&mut self, upgrade_id: BaseUpgrade) {
         match upgrade_id {
-            BaseUpgrade::Bedrock => {}
+            // Bedrock is block-activated and Zombie is a permanently-off gate; neither has a
+            // timestamp slot.
+            BaseUpgrade::Bedrock | BaseUpgrade::Zombie => {}
             BaseUpgrade::Regolith => self.regolith_time = None,
             BaseUpgrade::Canyon => self.canyon_time = None,
             BaseUpgrade::Delta => self.delta_time = None,
@@ -557,7 +576,8 @@ impl UpgradeConfig {
     /// Returns the activation for a timestamp-based contract upgrade ID.
     pub const fn activation(&self, upgrade_id: BaseUpgrade) -> UpgradeActivation {
         let timestamp = match upgrade_id {
-            BaseUpgrade::Bedrock => None,
+            // Bedrock is block-activated; Zombie is a permanently-off gate that never activates.
+            BaseUpgrade::Bedrock | BaseUpgrade::Zombie => None,
             BaseUpgrade::Regolith => self.regolith_time,
             BaseUpgrade::Canyon => self.canyon_time,
             BaseUpgrade::Delta => self.delta_time,
@@ -584,7 +604,9 @@ impl UpgradeConfig {
     /// Sets a timestamp-based activation time by contract upgrade ID.
     pub const fn set_activation_timestamp(&mut self, upgrade_id: BaseUpgrade, timestamp: u64) {
         match upgrade_id {
-            BaseUpgrade::Bedrock => {}
+            // Bedrock is block-activated and Zombie is a permanently-off gate; neither can be
+            // scheduled by timestamp, so setting one is a no-op.
+            BaseUpgrade::Bedrock | BaseUpgrade::Zombie => {}
             BaseUpgrade::Regolith => self.regolith_time = Some(timestamp),
             BaseUpgrade::Canyon => self.canyon_time = Some(timestamp),
             BaseUpgrade::Delta => self.delta_time = Some(timestamp),
@@ -759,19 +781,23 @@ mod tests {
         upgrades.set_activation_timestamp(BaseUpgrade::Regolith, 1);
         upgrades.set_activation_timestamp(BaseUpgrade::PectraBlobSchedule, 2);
         upgrades.set_activation_timestamp(BaseUpgrade::Azul, 3);
-        upgrades.set_activation_timestamp(BaseUpgrade::Beryl, 4);
-        upgrades.set_activation_timestamp(BaseUpgrade::Cobalt, 5);
+        upgrades.set_activation_timestamp(BaseUpgrade::Beryl, 5);
+        upgrades.set_activation_timestamp(BaseUpgrade::Cobalt, 6);
+        // Zombie is a permanently-off gate: setting a timestamp is a no-op, it stays Never.
+        upgrades.set_activation_timestamp(BaseUpgrade::Zombie, u64::MAX);
 
         assert_eq!(upgrades.regolith_time, Some(1));
         assert_eq!(upgrades.pectra_blob_schedule_time, Some(2));
         assert_eq!(upgrades.base.azul, Some(3));
-        assert_eq!(upgrades.base.beryl, Some(4));
-        assert_eq!(upgrades.base.cobalt, Some(5));
+        assert_eq!(upgrades.base.beryl, Some(5));
+        assert_eq!(upgrades.base.cobalt, Some(6));
+        assert_eq!(upgrades.activation(BaseUpgrade::Zombie), UpgradeActivation::Never);
 
         upgrades.clear_activation_timestamp(BaseUpgrade::Azul);
         assert_eq!(upgrades.base.azul, None);
-        assert_eq!(upgrades.base.beryl, Some(4));
-        assert_eq!(upgrades.base.cobalt, Some(5));
+        assert_eq!(upgrades.base.beryl, Some(5));
+        assert_eq!(upgrades.base.cobalt, Some(6));
+        assert_eq!(upgrades.activation(BaseUpgrade::Zombie), UpgradeActivation::Never);
 
         upgrades.clear_activation_timestamps();
 
@@ -791,11 +817,14 @@ mod runtime_tests {
         RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Azul, 42);
         RuntimeUpgradeRegistry::clear_activation_timestamp(chain_id, BaseUpgrade::Beryl);
         RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Cobalt, 84);
+        // Zombie is permanently off: the registry drops the write, so it is never stored.
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Zombie, u64::MAX);
 
         assert_eq!(
             RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Azul),
             Some(UpgradeActivation::Timestamp(42))
         );
+        assert_eq!(RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Zombie), None);
         assert_eq!(
             RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Beryl),
             Some(UpgradeActivation::Never)
@@ -816,11 +845,16 @@ mod runtime_tests {
         overrides.clear_activation_timestamp(BaseUpgrade::Canyon);
         overrides.set_activation_timestamp(BaseUpgrade::Azul, 42);
         overrides.set_activation_timestamp(BaseUpgrade::Cobalt, 84);
+        // Even an explicit override cannot activate the permanently-off Zombie gate. The write
+        // side drops it entirely, so it is never even stored as an override.
+        overrides.set_activation_timestamp(BaseUpgrade::Zombie, u64::MAX);
+        assert_eq!(overrides.activation(BaseUpgrade::Zombie), None);
 
         upgrades.apply_activation_overrides(&overrides);
 
         assert_eq!(upgrades.canyon_time, None);
         assert_eq!(upgrades.base.azul, Some(42));
         assert_eq!(upgrades.base.cobalt, Some(84));
+        assert_eq!(upgrades.activation(BaseUpgrade::Zombie), UpgradeActivation::Never);
     }
 }

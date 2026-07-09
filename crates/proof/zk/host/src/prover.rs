@@ -77,10 +77,13 @@ pub enum ZkProverError {
 /// Drives a single ZK proving job on a backend.
 #[async_trait]
 pub trait ZkProver: Send + Sync + std::fmt::Debug {
-    /// Submit the proving job to the backend and return its backend session id.
+    /// Submit the range (STARK) proof to the backend and return its backend session id.
+    ///
+    /// Every job's first stage is a compressed range proof; SNARK aggregation (when required) is
+    /// driven separately via [`ZkProver::submit_next`].
     async fn submit(
         &self,
-        request: &ZkProofRequestKind,
+        request: &ZkProofRequest,
         request_session_id: &str,
     ) -> Result<String, ZkProverError>;
 
@@ -117,7 +120,7 @@ pub struct UnimplementedZkProver;
 impl ZkProver for UnimplementedZkProver {
     async fn submit(
         &self,
-        _request: &ZkProofRequestKind,
+        _request: &ZkProofRequest,
         _request_session_id: &str,
     ) -> Result<String, ZkProverError> {
         Err(ZkProverError::Unimplemented)
@@ -171,7 +174,7 @@ mod tests {
     async fn unimplemented_prover_reports_unimplemented() {
         let prover = UnimplementedZkProver;
         let error = prover
-            .submit(&ZkProofRequestKind::Compressed(zk_request()), "session-1")
+            .submit(&zk_request(), "session-1")
             .await
             .expect_err("stub prover should not produce a proof");
 

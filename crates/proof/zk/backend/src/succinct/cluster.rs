@@ -12,8 +12,8 @@ use std::{
 use async_trait::async_trait;
 use base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
 use base_proof_succinct_proof_utils::{ClusterArtifactStore, ClusterProofConfig};
-use base_proof_zk_host::{ZkProofRequestKind, ZkProver, ZkProverError, ZkSessionState};
-use base_prover_service_protocol::{ProofResult, SessionType, ZkProofResult, ZkVm};
+use base_proof_zk_host::{ZkProver, ZkProverError, ZkSessionState};
+use base_prover_service_protocol::{ProofResult, SessionType, ZkProofRequest, ZkProofResult, ZkVm};
 use serde::{Deserialize, Serialize};
 use sp1_cluster_common::{
     client::ClusterServiceClient,
@@ -389,7 +389,7 @@ impl ClusterZkProver {
     /// Submit a compressed range proof to the cluster.
     pub async fn submit_range_proof(
         &self,
-        request: &base_prover_service_protocol::ZkProofRequest,
+        request: &ZkProofRequest,
         request_session_id: &str,
     ) -> Result<String, ZkProverError> {
         let mut proof_id = None;
@@ -679,17 +679,10 @@ impl ClusterZkProver {
 impl ZkProver for ClusterZkProver {
     async fn submit(
         &self,
-        request: &ZkProofRequestKind,
+        request: &ZkProofRequest,
         request_session_id: &str,
     ) -> Result<String, ZkProverError> {
-        match request {
-            ZkProofRequestKind::Compressed(request) => {
-                self.submit_range_proof(request, request_session_id).await
-            }
-            ZkProofRequestKind::SnarkGroth16(_) => Err(backend_error!(
-                "SP1 cluster Groth16 aggregation is not yet supported in the stateless ZK host"
-            )),
-        }
+        self.submit_range_proof(request, request_session_id).await
     }
 
     async fn poll(&self, backend_session_id: &str) -> Result<ZkSessionState, ZkProverError> {

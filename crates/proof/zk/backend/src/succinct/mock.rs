@@ -1,10 +1,10 @@
 //! Mock [`ZkProver`] that produces instant placeholder proofs.
 
 use async_trait::async_trait;
-use base_proof_zk_host::{ZkProofRequestKind, ZkProver, ZkProverError, ZkSessionState};
+use base_proof_zk_host::{ZkProver, ZkProverError, ZkSessionState};
 use base_prover_service_protocol::{
-    ProofResult, SessionType, SnarkGroth16ProofRequest, SnarkGroth16ProofResult, ZkProofResult,
-    ZkVm,
+    ProofResult, SessionType, SnarkGroth16ProofRequest, SnarkGroth16ProofResult, ZkProofRequest,
+    ZkProofResult, ZkVm,
 };
 
 /// Placeholder proof bytes returned by the mock prover.
@@ -21,7 +21,7 @@ pub struct MockZkProver;
 impl ZkProver for MockZkProver {
     async fn submit(
         &self,
-        _request: &ZkProofRequestKind,
+        _request: &ZkProofRequest,
         request_session_id: &str,
     ) -> Result<String, ZkProverError> {
         Ok(format!("mock-stark-{request_session_id}"))
@@ -62,6 +62,7 @@ impl ZkProver for MockZkProver {
 
 #[cfg(test)]
 mod tests {
+    use base_proof_zk_host::ZkProofRequestKind;
     use base_prover_service_protocol::{SnarkGroth16ProofRequest, ZkProofRequest, ZkVm};
 
     use super::*;
@@ -77,10 +78,6 @@ mod tests {
         }
     }
 
-    fn compressed() -> ZkProofRequestKind {
-        ZkProofRequestKind::Compressed(zk_request())
-    }
-
     fn snark_groth16() -> ZkProofRequestKind {
         ZkProofRequestKind::SnarkGroth16(SnarkGroth16ProofRequest {
             proof: zk_request(),
@@ -91,8 +88,8 @@ mod tests {
     #[tokio::test]
     async fn submit_is_deterministic() {
         let prover = MockZkProver;
-        let first = prover.submit(&compressed(), "session-1").await.unwrap();
-        let second = prover.submit(&compressed(), "session-1").await.unwrap();
+        let first = prover.submit(&zk_request(), "session-1").await.unwrap();
+        let second = prover.submit(&zk_request(), "session-1").await.unwrap();
 
         assert_eq!(first, second);
         assert_eq!(first, "mock-stark-session-1");
@@ -101,7 +98,7 @@ mod tests {
     #[tokio::test]
     async fn poll_completes_immediately_and_downloads_compressed() {
         let prover = MockZkProver;
-        let id = prover.submit(&compressed(), "session-1").await.unwrap();
+        let id = prover.submit(&zk_request(), "session-1").await.unwrap();
 
         assert_eq!(prover.poll(&id).await.unwrap(), ZkSessionState::Completed);
         assert!(matches!(
@@ -114,7 +111,7 @@ mod tests {
     async fn submit_next_advances_groth16_to_snark_session() {
         let prover = MockZkProver;
         let request = snark_groth16();
-        let range_id = prover.submit(&request, "session-1").await.unwrap();
+        let range_id = prover.submit(&zk_request(), "session-1").await.unwrap();
         assert_eq!(range_id, "mock-stark-session-1");
 
         let ZkProofRequestKind::SnarkGroth16(proof_request) = &request else {

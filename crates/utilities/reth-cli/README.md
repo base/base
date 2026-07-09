@@ -16,6 +16,7 @@ base-reth-cli = { git = "https://github.com/base/base" }
 ```rust,ignore
 fn main() {
     base_reth_cli::init_reth!();
+    base_reth_cli::init_snapshots!();
 }
 ```
 

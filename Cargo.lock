@@ -6333,6 +6333,7 @@ dependencies = [
 name = "base-reth-cli"
 version = "0.0.0"
 dependencies = [
+ "reth-cli-commands",
  "reth-node-core",
 ]
 
@@ -6456,6 +6457,7 @@ dependencies = [
  "alloy-consensus 2.0.5",
  "alloy-eips 2.0.5",
  "alloy-genesis 2.0.5",
+ "alloy-json-rpc 2.0.5",
  "alloy-network 2.0.5",
  "alloy-primitives",
  "alloy-provider 2.0.5",
@@ -6465,14 +6467,19 @@ dependencies = [
  "alloy-signer 2.0.5",
  "alloy-signer-local 2.0.5",
  "alloy-sol-types",
+ "async-trait",
  "base-batcher-service",
  "base-builder-core",
  "base-bundle-extension",
+ "base-common-consensus",
  "base-common-genesis",
  "base-common-network",
  "base-common-precompiles",
  "base-common-rpc-types",
+ "base-common-rpc-types-engine",
+ "base-consensus-derive",
  "base-consensus-disc",
+ "base-consensus-engine",
  "base-consensus-gossip",
  "base-consensus-node",
  "base-consensus-peers",
@@ -6518,6 +6525,34 @@ dependencies = [
  "tokio-util",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "base-telemetry-bin"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "base-cli-utils",
+ "base-telemetry-service",
+ "clap",
+ "dotenvy",
+ "serde",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "base-telemetry-service"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "axum 0.8.9",
+ "base-health",
+ "clap",
+ "reqwest 0.13.4",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]
