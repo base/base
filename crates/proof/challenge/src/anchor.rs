@@ -398,7 +398,7 @@ mod tests {
 
         let verifier = MockAggregateVerifier::new(HashMap::from([(game, state.clone())]));
         let submitter = MockBondTransactionSubmitter::with_responses(vec![Ok(tx_hash)]);
-        let mut updater = updater(factory.clone(), anchor_registry, Arc::new(l2));
+        let mut updater = updater(Arc::clone(&factory), anchor_registry, Arc::new(l2));
 
         updater.poll(&verifier, &submitter).await;
         factory.uuid_games.lock().unwrap().clear();
