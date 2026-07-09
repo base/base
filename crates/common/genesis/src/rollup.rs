@@ -463,6 +463,10 @@ impl UpgradeActivationSink for RollupConfig {
         upgrade_id: BaseUpgrade,
         activation: UpgradeActivation,
     ) -> Result<bool, Self::Error> {
+        if matches!(upgrade_id, BaseUpgrade::Zombie) {
+            return Ok(false);
+        }
+
         self.apply_upgrade_activation(upgrade_id, activation);
         Ok(true)
     }
