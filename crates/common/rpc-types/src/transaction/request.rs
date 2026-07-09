@@ -179,8 +179,12 @@ pub struct Eip8130RequestFields {
 }
 
 impl Eip8130RequestFields {
-    /// Whether any EIP-8130 field is present, marking the request as an
-    /// EIP-8130 simulation rather than a plain transaction request.
+    /// Whether any field that defines an EIP-8130 request is present.
+    ///
+    /// [`Self::sender_actor_id`] is excluded: it is a simulation-only auxiliary
+    /// hint about an already-8130 request, not an indicator of one. A stray
+    /// `senderActorId` on a plain transaction is therefore ignored rather than
+    /// routing the request onto the AA simulation path.
     pub const fn is_some(&self) -> bool {
         self.nonce_key.is_some()
             || self.account_changes.is_some()
@@ -191,7 +195,6 @@ impl Eip8130RequestFields {
             || self.sender_auth.is_some()
             || self.payer.is_some()
             || self.payer_auth.is_some()
-            || self.sender_actor_id.is_some()
     }
 }
 
@@ -605,5 +608,21 @@ mod tests {
         assert_eq!(calls[0].len(), 1);
         // The base fields still deserialize into the inner request.
         assert_eq!(req.as_ref().max_fee_per_gas, Some(5));
+    }
+
+    #[test]
+    fn sender_actor_id_alone_does_not_mark_request_as_eip8130() {
+        // `senderActorId` is metadata about an 8130 request, not a defining
+        // field — a lone hint must not route a plain request onto the AA path.
+        let json = r#"{
+            "from":"0x0000000000000000000000000000000000000001",
+            "to":"0x0000000000000000000000000000000000000002",
+            "senderActorId":"0x30df39d5edcf9ed82b6d77d27bff1192ac265918000000000000000000000000"
+        }"#;
+        let req: BaseTransactionRequest = serde_json::from_str(json).unwrap();
+        assert!(
+            req.as_eip8130().is_none(),
+            "senderActorId alone must not classify the request as EIP-8130",
+        );
     }
 }
