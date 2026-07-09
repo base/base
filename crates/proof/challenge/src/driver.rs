@@ -153,6 +153,9 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
     pub const MAX_PROOF_RETRIES: u32 = 3;
 
     /// Maximum number of terminally ignored games retained to avoid rediscovery churn.
+    ///
+    /// Evicted games may be rediscovered by a later scan, then re-ignored after
+    /// one check.
     pub const MAX_IGNORED_GAMES: usize = 10_000;
 
     /// Creates a new driver with the given components.
