@@ -52,8 +52,11 @@ services:
       l1-cl:
         condition: service_healthy
 
-  zk-prover-postgres:
+  prover-service-postgres:
     profiles: ["zk"]
 
-  base-prover-zk:
+  base-prover-service:
+    profiles: ["zk"]
+
+  base-prover-zk-host:
     profiles: ["zk"]
