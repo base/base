@@ -6399,11 +6399,19 @@ dependencies = [
 name = "base-telemetry-service"
 version = "0.0.0"
 dependencies = [
+ "alloy-primitives",
  "anyhow",
+ "async-trait",
  "axum 0.8.9",
  "base-health",
  "clap",
+ "ipnet",
  "reqwest 0.13.4",
+ "reth-ecies",
+ "reth-eth-wire",
+ "secp256k1 0.30.0",
+ "serde",
+ "serial_test",
  "tokio",
  "tokio-util",
  "tracing",

@@ -344,7 +344,9 @@ reth-revm = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-trie = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-exex = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-tasks = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
+reth-ecies = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-errors = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
+reth-eth-wire = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-codecs = { version = "0.4.1", default-features = false, features = ["alloy"] }
 reth-db-api = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-discv4 = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
