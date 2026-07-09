@@ -7,8 +7,8 @@ pub fn test_block_info(number: u64) -> L2BlockInfo {
     L2BlockInfo {
         block_info: BlockInfo {
             number,
-            hash: B256::random(),
-            parent_hash: B256::random(),
+            hash: B256::with_last_byte(number as u8),
+            parent_hash: B256::with_last_byte(number.saturating_sub(1) as u8),
             timestamp: number * 2,
         },
         l1_origin: BlockNumHash::default(),

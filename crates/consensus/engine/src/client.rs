@@ -11,7 +11,7 @@ use alloy_rpc_types_engine::{
     ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadEnvelopeV2, ExecutionPayloadInputV2,
     ExecutionPayloadV3, ForkchoiceState, ForkchoiceUpdated, JwtSecret, PayloadId, PayloadStatus,
 };
-use alloy_rpc_types_eth::{Block, EIP1186AccountProofResponse};
+use alloy_rpc_types_eth::EIP1186AccountProofResponse;
 use alloy_transport::{RpcError, TransportErrorKind, TransportResult};
 use alloy_transport_http::{
     AuthLayer, Http, HyperClient,
@@ -20,7 +20,6 @@ use alloy_transport_http::{
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_common_network::{Base, BaseEngineApi};
-use base_common_rpc_types::Transaction;
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
     BaseExecutionPayloadV4, BasePayloadAttributes,
@@ -32,6 +31,8 @@ use tower::ServiceBuilder;
 use url::Url;
 
 use crate::{JwtWsConnect, Metrics, trace_layer::TraceContextLayer};
+
+type L2RpcBlock = <Base as Network>::BlockResponse;
 
 /// An error that occurred in the [`EngineClient`].
 #[derive(Error, Debug)]
@@ -66,11 +67,11 @@ pub trait EngineClient: BaseEngineApi + Send + Sync {
         keys: Vec<StorageKey>,
     ) -> RpcWithBlock<(Address, Vec<StorageKey>), EIP1186AccountProofResponse>;
 
-    /// Fetches the [`Block<Transaction>`] for the given [`BlockNumberOrTag`].
+    /// Fetches the L2 RPC block for the given [`BlockNumberOrTag`].
     async fn l2_block_by_label(
         &self,
         numtag: BlockNumberOrTag,
-    ) -> Result<Option<Block<Transaction>>, EngineClientError>;
+    ) -> Result<Option<L2RpcBlock>, EngineClientError>;
 
     /// Fetches the [`L2BlockInfo`] by [`BlockNumberOrTag`].
     async fn l2_block_info_by_label(
@@ -221,7 +222,7 @@ where
     async fn l2_block_by_label(
         &self,
         numtag: BlockNumberOrTag,
-    ) -> Result<Option<Block<Transaction>>, EngineClientError> {
+    ) -> Result<Option<L2RpcBlock>, EngineClientError> {
         Ok(self.engine.get_block_by_number(numtag).full().await?)
     }
 
@@ -233,7 +234,10 @@ where
         let Some(block) = block else {
             return Ok(None);
         };
-        Ok(Some(L2BlockInfo::from_block_and_genesis(&block.into_consensus(), &self.cfg.genesis)?))
+        Ok(Some(L2BlockInfo::from_block_and_genesis(
+            &block.map_header(|header| header.into_inner()).into_consensus(),
+            &self.cfg.genesis,
+        )?))
     }
 }
 

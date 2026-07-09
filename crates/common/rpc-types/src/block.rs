@@ -180,6 +180,18 @@ impl<H: HeaderResponse> HeaderResponse for BaseHeaderResponse<H> {
     }
 }
 
+#[cfg(feature = "reth")]
+impl<T: alloy_consensus::Sealable> reth_rpc_convert::FromConsensusHeader<T>
+    for BaseHeaderResponse<Header<T>>
+{
+    fn from_consensus_header(
+        header: reth_primitives_traits::SealedHeader<T>,
+        block_size: usize,
+    ) -> Self {
+        Self::new(Header::from_consensus(header.into(), None, Some(U256::from(block_size))))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloy_consensus::Header as ConsensusHeader;
@@ -215,5 +227,15 @@ mod tests {
 
         assert_eq!(response.timestamp, 42);
         assert_eq!(response.number, 7);
+    }
+
+    #[test]
+    fn base_header_response_round_trips_through_json() {
+        let inner = Header::new(ConsensusHeader { timestamp: 42, ..Default::default() });
+        let original = BaseHeaderResponse::with_timestamp_fields(inner, Some(42_200), Some(200));
+        let json = serde_json::to_value(&original).unwrap();
+        let decoded: BaseHeaderResponse = serde_json::from_value(json).unwrap();
+
+        assert_eq!(original, decoded);
     }
 }

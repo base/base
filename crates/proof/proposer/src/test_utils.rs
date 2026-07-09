@@ -103,8 +103,11 @@ impl L2Provider for MockL2 {
         unimplemented!()
     }
     async fn header_by_number(&self, _: BlockNumberOrTag) -> RpcResult<BaseHeader> {
-        Ok(alloy_rpc_types_eth::Header { hash: B256::repeat_byte(0x30), ..Default::default() }
-            .into())
+        Ok(Header::<alloy_consensus::Header> {
+            hash: B256::repeat_byte(0x30),
+            ..Default::default()
+        }
+        .into())
     }
     async fn block_by_number(&self, _: BlockNumberOrTag) -> RpcResult<BaseBlock> {
         unimplemented!()
