@@ -72,6 +72,11 @@ target "base" {
   inherits = ["_rust-service-common"]
   target = "base"
   tags = ["base:local"]
+  cache-from = [
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-execution-${PLATFORM_PAIR}",
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-consensus-${PLATFORM_PAIR}",
+  ]
 }
 
 target "execution" {
