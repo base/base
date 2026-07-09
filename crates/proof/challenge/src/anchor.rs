@@ -221,6 +221,8 @@ impl AnchorUpdater {
         };
 
         if preflight.permanently_ineligible() {
+            // Later games are keyed from their parent game, so re-running the same-anchor lookup
+            // would rediscover this game. External anchor advancement is required to move past it.
             info!(
                 game = %game_address,
                 asr = %asr_address,
