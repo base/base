@@ -5,7 +5,8 @@ use aws_config::BehaviorVersion;
 use aws_credential_types::Credentials;
 use aws_sdk_s3::{Client as S3Client, config::Builder as S3ConfigBuilder};
 use base_snapshotter::{
-    DockerContainerManager, S3ConfigType, SnapshotUploader, Snapshotter, SnapshotterConfig,
+    DockerContainerManager, RpcTipChecker, S3ConfigType, SnapshotUploader, Snapshotter,
+    SnapshotterConfig,
 };
 use clap::Parser;
 use tracing::{info, warn};
@@ -28,6 +29,7 @@ async fn main() -> Result<()> {
     }
 
     let container_manager = DockerContainerManager::new(&config.docker_socket)?;
+    let tip_checker = RpcTipChecker::new(config.el_rpc_url.clone());
     let storage_client = create_s3_client(&config).await?;
     let uploader = SnapshotUploader::new(
         storage_client,
@@ -36,7 +38,7 @@ async fn main() -> Result<()> {
         config.public_base_url.clone(),
     );
 
-    let snapshotter = Snapshotter::new(container_manager, uploader, config);
+    let snapshotter = Snapshotter::new(container_manager, tip_checker, uploader, config);
     snapshotter.run().await
 }
 

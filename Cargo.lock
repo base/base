@@ -4666,7 +4666,6 @@ dependencies = [
  "reth-trie-common",
  "revm",
  "serde",
- "sha2 0.10.9",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -5711,8 +5710,10 @@ dependencies = [
  "alloy-primitives",
  "anyhow",
  "async-trait",
+ "base-metrics",
  "base-proof-tee-nitro-verifier",
  "boundless-market",
+ "metrics",
  "risc0-ethereum-contracts",
  "risc0-zkvm",
  "rstest",
@@ -6258,6 +6259,8 @@ dependencies = [
 name = "base-snapshotter"
 version = "0.0.0"
 dependencies = [
+ "alloy-eips 2.0.5",
+ "alloy-provider 2.0.5",
  "anyhow",
  "async-trait",
  "aws-config",
@@ -6276,6 +6279,7 @@ dependencies = [
  "testcontainers-modules",
  "tokio",
  "tracing",
+ "url",
  "zstd",
 ]
 
@@ -6344,12 +6348,13 @@ dependencies = [
  "base-optimism-rpc",
  "base-proof-rpc",
  "base-protocol",
+ "base-prover-service-client",
+ "base-prover-service-protocol",
  "base-runtime",
  "base-tx-forwarding",
  "base-tx-manager",
  "base-txpool-rpc",
  "base-txpool-tracing",
- "base-zk-client",
  "clap",
  "eyre",
  "hex",

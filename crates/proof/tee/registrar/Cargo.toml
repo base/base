@@ -82,4 +82,9 @@ alloy-rpc-types-eth.workspace = true
 tokio = { workspace = true, features = ["rt", "macros", "test-util"] }
 
 [features]
-metrics = [ "base-metrics/metrics", "base-tx-manager/metrics", "dep:metrics" ]
+metrics = [
+	"base-metrics/metrics",
+	"base-proof-tee-nitro-attestation-prover/metrics",
+	"base-tx-manager/metrics",
+	"dep:metrics",
+]

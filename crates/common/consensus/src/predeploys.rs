@@ -12,7 +12,7 @@ pub struct Predeploys;
 
 impl Predeploys {
     /// List of all predeploys.
-    pub const ALL: [Address; 24] = [
+    pub const ALL: [Address; 25] = [
         Self::LEGACY_MESSAGE_PASSER,
         Self::DEPLOYER_WHITELIST,
         Self::LEGACY_ERC20_ETH,
@@ -35,6 +35,7 @@ impl Predeploys {
         Self::EAS,
         Self::BEACON_BLOCK_ROOT,
         Self::OPERATOR_FEE_VAULT,
+        Self::BASE_TIME,
         Self::CROSS_L2_INBOX,
         Self::L2_TO_L2_XDM,
     ];
@@ -132,6 +133,9 @@ impl Predeploys {
 
     /// The Operator Fee Vault proxy address.
     pub const OPERATOR_FEE_VAULT: Address = address!("0x420000000000000000000000000000000000001B");
+
+    /// The `BaseTime` predeploy address.
+    pub const BASE_TIME: Address = address!("0x420000000000000000000000000000000000001c");
 
     /// The `CrossL2Inbox` proxy address.
     pub const CROSS_L2_INBOX: Address = address!("0x4200000000000000000000000000000000000022");

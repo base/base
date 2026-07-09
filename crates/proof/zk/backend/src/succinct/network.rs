@@ -11,7 +11,7 @@ use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
 use base_proof_zk_host::{ZkProofRequestKind, ZkProver, ZkProverError, ZkSessionState};
-use base_prover_service_protocol::{ProofResult, ZkProofResult, ZkVm};
+use base_prover_service_protocol::{ProofResult, SessionType, ZkProofResult, ZkVm};
 use sp1_sdk::{
     HashableKey, NetworkProver, ProveRequest, Prover, ProverClient, ProvingKey,
     SP1ProofWithPublicValues, SP1ProvingKey,
@@ -391,7 +391,11 @@ impl ZkProver for NetworkZkProver {
         Ok(state)
     }
 
-    async fn download(&self, backend_session_id: &str) -> Result<ProofResult, ZkProverError> {
+    async fn download(
+        &self,
+        _session_type: SessionType,
+        backend_session_id: &str,
+    ) -> Result<ProofResult, ZkProverError> {
         let (state, proof) = self.get_network_proof_status(backend_session_id).await?;
         let proof = match state {
             ZkSessionState::Completed => proof.ok_or_else(|| {

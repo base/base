@@ -1,4 +1,4 @@
-//! End-to-end inclusion test for an EIP-8130 (type `0x7b`) transaction: sign a
+//! End-to-end inclusion test for an EIP-8130 (type `0x79`) transaction: sign a
 //! minimal EOA-path transaction, mine it into a block, and assert that
 //! `eth_getTransactionReceipt` returns a successful receipt.
 
@@ -17,10 +17,10 @@ use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness};
 use base_test_utils::{Account, DEVNET_CHAIN_ID, build_test_genesis_cobalt};
 
 /// EIP-8130 transaction type byte.
-const EIP8130_TX_TYPE: u8 = 0x7b;
+const EIP8130_TX_TYPE: u8 = 0x79;
 
 /// Mines a minimal EOA-path EIP-8130 transaction and asserts its receipt is a
-/// successful type `0x7b` receipt.
+/// successful type `0x79` receipt.
 #[tokio::test]
 async fn eip8130_transaction_is_mined_and_has_a_receipt() -> eyre::Result<()> {
     let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_cobalt()));
@@ -56,7 +56,7 @@ async fn eip8130_transaction_is_mined_and_has_a_receipt() -> eyre::Result<()> {
     let tx_hash = *signed.hash();
     let raw: Bytes = signed.encoded_2718().into();
 
-    assert_eq!(raw[0], EIP8130_TX_TYPE, "encoded transaction must carry the 0x7b type byte");
+    assert_eq!(raw[0], EIP8130_TX_TYPE, "encoded transaction must carry the 0x79 type byte");
 
     // The L1 block-info deposit must lead every block.
     harness.build_block_from_transactions(vec![L1_BLOCK_INFO_DEPOSIT_TX, raw]).await?;

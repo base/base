@@ -338,6 +338,7 @@ where
 
         let discovered_instance_ids: HashSet<String> =
             instances.iter().map(|instance| instance.instance_id.clone()).collect();
+        RegistrarMetrics::discovered_instances_count().set(discovered_instance_ids.len() as f64);
         let mut resolution = DiscoveryResolution::default();
 
         let mut futs = futures::stream::iter(instances.into_iter().map(|instance| {
@@ -412,6 +413,11 @@ where
                 false
             }
         });
+
+        RegistrarMetrics::active_signers_count().set(resolution.active_signers.len() as f64);
+        RegistrarMetrics::registerable_signers_count().set(resolution.registerable.len() as f64);
+        RegistrarMetrics::unresolved_instances_count()
+            .set(resolution.unresolved_instance_ids.len() as f64);
 
         Ok(resolution)
     }

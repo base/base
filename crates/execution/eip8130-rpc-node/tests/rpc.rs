@@ -12,7 +12,7 @@ use std::{collections::BTreeMap, sync::Arc};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, B256, U256, address, bytes};
 use alloy_rpc_client::RpcClient;
-use base_common_consensus::Eip8130Constants;
+use base_common_consensus::{Eip8130Constants, Eip8130Contracts};
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
@@ -36,6 +36,14 @@ async fn setup_with(genesis: Genesis) -> eyre::Result<(TestHarness, RpcClient)> 
 /// Cobalt-activated harness (the common case for EIP-8130 RPC reads).
 async fn setup() -> eyre::Result<(TestHarness, RpcClient)> {
     setup_with(build_test_genesis_cobalt()).await
+}
+
+/// A hex (`0x`) authentication blob for an `eth_estimateGas` request: a 20-byte
+/// authenticator selector followed by `data_len` filler bytes.
+fn auth_blob(authenticator: Address, data_len: usize) -> String {
+    let mut v = authenticator.as_slice().to_vec();
+    v.resize(v.len() + data_len, 0xff);
+    alloy_primitives::hex::encode_prefixed(v)
 }
 
 /// `nonce_key == 0` must delegate to the standard protocol-nonce path
@@ -138,12 +146,43 @@ async fn estimate_gas_for_eip8130_request_returns_positive_gas() -> eyre::Result
     Ok(())
 }
 
-/// A declared non-secp256k1 authentication scheme must be priced into the
+/// The account may be named by the EIP-8130 `sender` field instead of `from`;
+/// a configured-account request estimates to a positive gas amount.
+#[tokio::test]
+async fn estimate_gas_accepts_explicit_sender() -> eyre::Result<()> {
+    let (_harness, client) = setup().await?;
+    let alice: Address = Account::Alice.address();
+
+    let request = json!({ "sender": alice, "calls": [] });
+    let gas: U256 = client.request("eth_estimateGas", (request, "latest")).await?;
+
+    assert!(gas > U256::ZERO, "EIP-8130 gas estimate must be positive, got {gas}");
+    Ok(())
+}
+
+/// A request naming the account by both `from` and `sender` with disagreeing
+/// values is rejected rather than guessing which to trust.
+#[tokio::test]
+async fn estimate_gas_rejects_mismatched_from_and_sender() -> eyre::Result<()> {
+    let (_harness, client) = setup().await?;
+    let alice: Address = Account::Alice.address();
+    let bob: Address = Account::Bob.address();
+
+    let request = json!({ "from": alice, "sender": bob, "calls": [] });
+    let result: Result<U256, _> = client.request("eth_estimateGas", (request, "latest")).await;
+
+    let err = result.expect_err("a `from`/`sender` mismatch must error");
+    let err_str = err.to_string();
+    assert!(err_str.contains("-32602"), "expected INVALID_PARAMS (-32602), got: {err_str}");
+    Ok(())
+}
+
+/// A supplied non-secp256k1 authentication blob must be priced into the
 /// estimate: a P-256 sender costs strictly more than the default-EOA secp256k1
 /// path (its authenticator execution gas is higher and its authentication
-/// payload is longer), and a `WebAuthn` sender sized larger costs more still.
+/// payload is longer), and a longer `WebAuthn` blob costs more still.
 #[tokio::test]
-async fn estimate_gas_prices_declared_authentication_scheme() -> eyre::Result<()> {
+async fn estimate_gas_prices_the_supplied_authentication_blob() -> eyre::Result<()> {
     let (_harness, client) = setup().await?;
     let alice: Address = Account::Alice.address();
 
@@ -153,7 +192,14 @@ async fn estimate_gas_prices_declared_authentication_scheme() -> eyre::Result<()
     let p256: U256 = client
         .request(
             "eth_estimateGas",
-            (json!({ "from": alice, "calls": [], "senderAuthScheme": "p256" }), "latest"),
+            (
+                json!({
+                    "from": alice,
+                    "calls": [],
+                    "senderAuth": auth_blob(Eip8130Contracts::P256_AUTHENTICATOR, 128),
+                }),
+                "latest",
+            ),
         )
         .await?;
     let webauthn: U256 = client
@@ -163,8 +209,7 @@ async fn estimate_gas_prices_declared_authentication_scheme() -> eyre::Result<()
                 json!({
                     "from": alice,
                     "calls": [],
-                    "senderAuthScheme": "webAuthn",
-                    "senderAuthSize": 1024,
+                    "senderAuth": auth_blob(Eip8130Contracts::WEBAUTHN_AUTHENTICATOR, 1024),
                 }),
                 "latest",
             ),
@@ -226,17 +271,18 @@ async fn estimate_gas_for_eip8130_request_with_reverting_call_fails() -> eyre::R
     Ok(())
 }
 
-/// An EIP-8130 `eth_estimateGas` request that omits `from` must be rejected
-/// rather than silently simulated from the zero address: the sender identity
-/// drives actor resolution, policy lookup, and auto-delegation.
+/// An EIP-8130 `eth_estimateGas` request that names no account (neither `from`
+/// nor `sender`) must be rejected rather than silently simulated from the zero
+/// address: the sender identity drives actor resolution, policy lookup, and
+/// auto-delegation.
 #[tokio::test]
-async fn estimate_gas_for_eip8130_request_without_from_is_rejected() -> eyre::Result<()> {
+async fn estimate_gas_for_eip8130_request_without_account_is_rejected() -> eyre::Result<()> {
     let (_harness, client) = setup().await?;
 
     let request = json!({ "calls": [] });
     let result: Result<U256, _> = client.request("eth_estimateGas", (request, "latest")).await;
 
-    let err = result.expect_err("EIP-8130 estimate without `from` must error");
+    let err = result.expect_err("EIP-8130 estimate without an account must error");
     let err_str = err.to_string();
     assert!(err_str.contains("-32602"), "expected INVALID_PARAMS (-32602), got: {err_str}");
     Ok(())

@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
 use base_proof_succinct_proof_utils::{ClusterArtifactStore, ClusterProofConfig};
 use base_proof_zk_host::{ZkProofRequestKind, ZkProver, ZkProverError, ZkSessionState};
-use base_prover_service_protocol::{ProofResult, ZkProofResult, ZkVm};
+use base_prover_service_protocol::{ProofResult, SessionType, ZkProofResult, ZkVm};
 use serde::{Deserialize, Serialize};
 use sp1_cluster_common::{
     client::ClusterServiceClient,
@@ -742,7 +742,11 @@ impl ZkProver for ClusterZkProver {
         }
     }
 
-    async fn download(&self, backend_session_id: &str) -> Result<ProofResult, ZkProverError> {
+    async fn download(
+        &self,
+        _session_type: SessionType,
+        backend_session_id: &str,
+    ) -> Result<ProofResult, ZkProverError> {
         let session = ClusterSessionId::parse(backend_session_id)?;
         let req = self
             .get_cluster_request(&session.proof_id)

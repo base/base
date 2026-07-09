@@ -94,9 +94,10 @@ testcontainers = { workspace = true, features = ["blocking", "host-port-exposure
 clap = { workspace = true, features = ["derive"] }
 
 # proof
-base-zk-client.workspace = true
 base-proof-rpc.workspace = true
 base-optimism-rpc.workspace = true
+base-prover-service-client.workspace = true
+base-prover-service-protocol.workspace = true
 
 # misc
 indicatif.workspace = true
