@@ -238,7 +238,8 @@ impl BaseUpgrade {
             "osaka" | "azul" | "baseazul" | "v1" => Self::Azul,
             "beryl" | "baseberyl" | "v2" => Self::Beryl,
             "cobalt" | "basecobalt" | "v3" => Self::Cobalt,
-            // Zombie is a permanently-off gate: it is not addressable by the L1 upgrade signal.
+            // Zombie is a permanently-off gate: even though `contract_id` emits "zombie", it is
+            // deliberately not resolvable here, so the L1 upgrade signal can never address it.
             _ => return None,
         };
         Some(upgrade)
