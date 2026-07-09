@@ -162,6 +162,13 @@ WORKDIR /app
 
 FROM runtime-base AS base
 COPY --from=base-builder /app/base ./base
+# Keep split binaries here for now, needed for bare metal work
+# Remove only when there is an alternative available
+# e.g. when we publish independent separate Docker images for each
+# via the CI
+COPY --from=execution-builder /app/base-reth-node ./base-reth-node
+COPY --from=consensus-builder /app/base-consensus ./base-consensus
+COPY --from=snapshotter-builder /app/snapshotter ./snapshotter
 ENTRYPOINT ["./base"]
 
 FROM runtime-base AS execution
