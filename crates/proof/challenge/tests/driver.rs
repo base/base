@@ -8,9 +8,9 @@ use std::{
 
 use alloy_primitives::{Address, B256, Bytes};
 use base_challenger::{
-    BondManager, ChallengeSubmitter, ChallengerProofAdapter, DisputeIntent, Driver,
+    AnchorUpdater, BondManager, ChallengeSubmitter, ChallengerProofAdapter, DisputeIntent, Driver,
     DriverComponents, DriverConfig, GameScanner, L1HeadProvider, OutputValidator, PendingProof,
-    PendingProofs, ProofPhase, ProofUpdate, TeeConfig,
+    PendingProofs, ProofKind, ProofPhase, ProofUpdate, TeeConfig,
     test_utils::{
         DEFAULT_L1_HEAD, DEFAULT_TEE_PROVER, MockAggregateVerifier, MockBondTransactionSubmitter,
         MockDisputeGameFactory, MockGameState, MockL1HeadProvider, MockL2Provider, MockTxManager,
@@ -19,7 +19,9 @@ use base_challenger::{
         mock_state, mock_state_with_tee, receipt_with_status,
     },
 };
-use base_proof_contracts::{AggregateVerifierClient, ContractError, GameAtIndex, GameStatus};
+use base_proof_contracts::{
+    AggregateVerifierClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameStatus,
+};
 use base_proof_primitives::Proposal;
 use base_protocol::OutputRoot;
 use base_prover_service_protocol::{
@@ -76,12 +78,13 @@ fn test_driver_with_tee(
     tx_manager: MockTxManager,
     tee: Option<TeeConfig>,
 ) -> Driver<MockL2Provider, MockZkProofProvider, MockTxManager> {
+    let anchor_registry = mock_anchor_registry(Address::ZERO);
     let scanner = GameScanner::new(
-        factory,
+        Arc::clone(&factory) as Arc<dyn DisputeGameFactoryClient>,
         Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
-        mock_anchor_registry(Address::ZERO),
+        Arc::clone(&anchor_registry),
     );
-    let validator = OutputValidator::new(l2_provider);
+    let validator = OutputValidator::new(Arc::clone(&l2_provider));
     let submitter = ChallengeSubmitter::new(tx_manager);
 
     let config = DriverConfig {
@@ -101,6 +104,15 @@ fn test_driver_with_tee(
             tee,
             verifier_client: verifier as Arc<dyn AggregateVerifierClient>,
             bond_manager: None,
+            anchor_updater: AnchorUpdater::new(
+                factory,
+                anchor_registry,
+                l2_provider as Arc<dyn base_proof_rpc::L2Provider>,
+                Address::repeat_byte(0xAA),
+                1,
+                100,
+                100,
+            ),
         },
     )
 }
@@ -293,7 +305,7 @@ async fn test_step_invalid_game_proof_succeeded() {
         "proof should be pending after initiation"
     );
 
-    // Simulate the on-chain effect of a successful challenge: game is resolved.
+    // Simulate the onchain effect of a successful challenge: game is resolved.
     verifier.update_game(
         addr(0),
         MockGameState { status: GameStatus::ChallengerWins, ..game_state(20) },
@@ -376,15 +388,16 @@ async fn test_step_scan_error_propagated() {
     }
 
     let factory = Arc::new(FailingFactory);
+    let anchor_registry = mock_anchor_registry(Address::ZERO);
     let verifier = empty_verifier();
     let scanner = GameScanner::new(
-        factory,
+        Arc::clone(&factory) as Arc<dyn DisputeGameFactoryClient>,
         Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
-        mock_anchor_registry(Address::ZERO),
+        Arc::clone(&anchor_registry),
     );
 
     let l2 = default_l2();
-    let validator = OutputValidator::new(l2);
+    let validator = OutputValidator::new(Arc::clone(&l2));
     let submitter = ChallengeSubmitter::new(default_tx_manager());
 
     let config = DriverConfig {
@@ -404,6 +417,15 @@ async fn test_step_scan_error_propagated() {
             tee: None,
             verifier_client: verifier as Arc<dyn AggregateVerifierClient>,
             bond_manager: None::<BondManager<TokioRuntime>>,
+            anchor_updater: AnchorUpdater::new(
+                factory,
+                anchor_registry,
+                l2 as Arc<dyn base_proof_rpc::L2Provider>,
+                Address::repeat_byte(0xAA),
+                1,
+                100,
+                100,
+            ),
         },
     );
 
@@ -435,7 +457,7 @@ async fn test_step_pending_proof_skips_prove_block() {
     // Simulate the proof completing before the next poll.
     zk.state.lock().unwrap().proof_status = ProofStatus::Succeeded;
 
-    // Simulate the on-chain effect: game is resolved after challenge tx.
+    // Simulate the onchain effect: game is resolved after challenge tx.
     verifier.update_game(
         addr(0),
         MockGameState { status: GameStatus::ChallengerWins, ..game_state(20) },
@@ -478,7 +500,7 @@ async fn test_step_nullification_failure_preserves_proof() {
     let entry = driver.pending_proofs.get(&addr(0)).expect("proof should be preserved");
     assert!(entry.is_ready(), "phase should be ReadyToSubmit after tx failure");
 
-    // Simulate the on-chain effect of a successful challenge: game is resolved.
+    // Simulate the onchain effect of a successful challenge: game is resolved.
     verifier.update_game(
         addr(0),
         MockGameState { status: GameStatus::ChallengerWins, ..game_state(20) },
@@ -586,7 +608,7 @@ async fn test_step_proof_retry_succeeds() {
     // Simulate proof succeeding on the retry session.
     zk.state.lock().unwrap().proof_status = ProofStatus::Succeeded;
 
-    // Simulate the on-chain effect of a successful challenge: game is resolved.
+    // Simulate the onchain effect of a successful challenge: game is resolved.
     verifier.update_game(
         addr(0),
         MockGameState { status: GameStatus::ChallengerWins, ..game_state(20) },
@@ -704,7 +726,7 @@ async fn test_step_proof_exceeds_max_retries() {
         assert_eq!(entry.retry_count, i + 1);
     }
 
-    // Simulate the on-chain effect: mark the game as resolved so the
+    // Simulate the onchain effect: mark the game as resolved so the
     // stateless scanner does not re-discover it after the entry is dropped.
     verifier.update_game(
         addr(0),
@@ -789,7 +811,7 @@ async fn test_step_invalid_game_tee_fails_zk_succeeds() {
         "ZK proof should be pending after TEE fallback"
     );
 
-    // Simulate the on-chain effect of a successful challenge: game is resolved.
+    // Simulate the onchain effect of a successful challenge: game is resolved.
     verifier.update_game(
         addr(0),
         MockGameState { status: GameStatus::ChallengerWins, ..game_state(20) },
@@ -865,7 +887,7 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
 
 #[tokio::test]
 async fn test_step_tee_contract_revert_falls_back_to_zk() {
-    // TEE proof succeeds but the on-chain nullify() call reverts.
+    // TEE proof succeeds but the onchain nullify() call reverts.
     // Contract-level failures are proof-specific enough to fall back to ZK.
     let (l2, factory, root_15, root_20) = base_game_mocks();
 
@@ -1063,6 +1085,36 @@ async fn test_poll_or_submit_nullify_intent_not_dropped_when_zk_prover_set() {
 }
 
 #[tokio::test]
+async fn test_successful_nullify_does_not_track_anchor_update() {
+    let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
+    let l2 = default_l2();
+    let verifier = single_game_verifier(mock_state_with_tee(
+        GameStatus::InProgress,
+        ZK_PROVER_ADDR,
+        DEFAULT_TEE_PROVER,
+        20,
+    ));
+
+    let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
+    driver.pending_proofs.insert(
+        addr(0),
+        PendingProof {
+            phase: ProofPhase::ReadyToSubmit { proof_bytes: Bytes::from_static(&[0x00, 0xAA]) },
+            kind: ProofKind::Tee { zk_fallback_request: None, zk_fallback_intent: None },
+            invalid_index: 1,
+            expected_root: BOGUS_ROOT,
+            retry_count: 0,
+            tee_submit_retry_count: 0,
+            intent: DisputeIntent::Nullify,
+        },
+    );
+
+    driver.step().await.unwrap();
+
+    assert!(!driver.pending_proofs.contains_key(&addr(0)));
+}
+
+#[tokio::test]
 async fn test_poll_or_submit_challenge_intent_dropped_when_zk_prover_set() {
     // A pending proof with DisputeIntent::Challenge should be dropped
     // when zkProver is non-zero (game already challenged).
@@ -1094,10 +1146,10 @@ async fn test_poll_or_submit_challenge_intent_dropped_when_zk_prover_set() {
 /// root is at 0-based index 1 (block 20).
 ///
 /// Layout: starting=10, `l2_block=20`, interval=5, checkpoints at 15 and 20.
-/// `correct_root_at_20` controls whether the on-chain root at index 1
+/// `correct_root_at_20` controls whether the onchain root at index 1
 /// (block 20) matches the L2-computed root:
-/// - `true`: on-chain root is correct → ZK challenge was fraudulent → nullify.
-/// - `false`: on-chain root is bogus → ZK challenge was legitimate → skip.
+/// - `true`: onchain root is correct → ZK challenge was fraudulent → nullify.
+/// - `false`: onchain root is bogus → ZK challenge was legitimate → skip.
 fn fraudulent_zk_challenge_mocks(
     correct_root_at_20: bool,
 ) -> (Arc<MockL2Provider>, Arc<MockDisputeGameFactory>, Arc<MockAggregateVerifier>) {
@@ -1117,7 +1169,7 @@ fn fraudulent_zk_challenge_mocks(
 
 #[tokio::test]
 async fn test_step_fraudulent_zk_challenge_legitimate_skips() {
-    // The on-chain root at the challenged index is wrong, meaning the ZK
+    // The onchain root at the challenged index is wrong, meaning the ZK
     // challenge was legitimate. The driver should skip without initiating
     // a proof.
     let (l2, factory, verifier) = fraudulent_zk_challenge_mocks(false);
@@ -1133,7 +1185,7 @@ async fn test_step_fraudulent_zk_challenge_legitimate_skips() {
 
 #[tokio::test]
 async fn test_step_fraudulent_zk_challenge_nullifies() {
-    // The on-chain root at the challenged index is correct, meaning the
+    // The onchain root at the challenged index is correct, meaning the
     // ZK challenge was fraudulent. The driver should initiate a ZK proof
     // with DisputeIntent::Nullify.
     let (l2, factory, verifier) = fraudulent_zk_challenge_mocks(true);
@@ -1411,7 +1463,7 @@ async fn test_bond_manager_full_lifecycle() {
     //
     // The mock verifier uses a static game state, so we set
     // ChallengerWins to represent a game that has already been
-    // resolved on-chain. The manager detects this and advances directly
+    // resolved onchain. The manager detects this and advances directly
     // to NeedsUnlock without submitting a resolve transaction.
     let claim_addr = ZK_PROVER_ADDR;
     let game_addr = addr(0);
@@ -1570,9 +1622,7 @@ async fn test_bond_manager_keeps_defender_wins_when_recipient_is_claimable() {
     state.status = GameStatus::DefenderWins;
     let verifier = single_game_verifier(state);
 
-    // One response for the anchor state update that is attempted after
-    // advance_game (DEFENDER_WINS triggers a setAnchorState call).
-    let submitter = MockBondTransactionSubmitter::with_responses(vec![Ok(DEFAULT_TX_HASH)]);
+    let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
 
     let mut mgr = default_bond_manager(claim_addr);
     mgr.track_game(game_addr, claim_addr);
@@ -1599,10 +1649,7 @@ async fn test_bond_manager_removes_game_when_recipient_not_claimable() {
     state.bond_recipient = other_addr; // bond goes to someone else
     let verifier = single_game_verifier(state);
 
-    // One response for the anchor state update — even though the bond is
-    // not claimable, anchor updates are a public good and are still
-    // attempted for DEFENDER_WINS games before removal.
-    let submitter = MockBondTransactionSubmitter::with_responses(vec![Ok(DEFAULT_TX_HASH)]);
+    let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
 
     let mut mgr = default_bond_manager(claim_addr);
     mgr.track_game(game_addr, claim_addr);
@@ -1616,9 +1663,8 @@ async fn test_bond_manager_removes_game_when_recipient_not_claimable() {
         "game should be removed when bondRecipient is not in claim addresses"
     );
 
-    // The only transaction submitted should be the anchor state update.
     let calls = submitter.recorded_calls();
-    assert_eq!(calls.len(), 1, "only the anchor update tx should be submitted");
+    assert!(calls.is_empty(), "bond manager should not submit anchor update txs");
 }
 
 #[tokio::test]
@@ -1681,7 +1727,7 @@ async fn test_step_checkpoint_count_mismatch_surfaces_error() {
 
     // The mock verifier's `read_intermediate_block_interval` returns 5,
     // so the scanner caches interval=5. With span=10, the validator
-    // expects 10/5 = 2 intermediate roots, but only 1 is on-chain.
+    // expects 10/5 = 2 intermediate roots, but only 1 is onchain.
     let l2 = default_l2();
 
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());

@@ -5,15 +5,16 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
+use alloy_primitives::Address;
 use alloy_provider::{Provider, ProviderBuilder};
 use base_balance_monitor::BalanceMonitorLayer;
 use base_cli_utils::RuntimeManager;
 use base_health::HealthServer;
 use base_proof_contracts::{
-    AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryContractClient,
-    DisputeGameFactoryClient, DisputeGameFactoryContractClient,
+    AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryClient,
+    AnchorStateRegistryContractClient, DisputeGameFactoryClient, DisputeGameFactoryContractClient,
 };
-use base_proof_rpc::{L1Client, L1ClientConfig, L2Client, L2ClientConfig};
+use base_proof_rpc::{L1Client, L1ClientConfig, L2Client, L2ClientConfig, L2Provider};
 use base_prover_service_client::{ProofRequesterClient, ProverServiceClientConfig};
 use base_runtime::TokioRuntime;
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
@@ -22,8 +23,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::{
-    BondManager, ChallengeSubmitter, ChallengerConfig, ChallengerMetrics, Driver, DriverComponents,
-    DriverConfig, GameScanner, OutputValidator,
+    AnchorUpdater, BondManager, ChallengeSubmitter, ChallengerConfig, ChallengerMetrics, Driver,
+    DriverComponents, DriverConfig, GameScanner, OutputValidator,
 };
 
 /// Top-level challenger service.
@@ -109,6 +110,36 @@ impl ChallengerService {
         );
 
         let verifier_client = AggregateVerifierContractClient::new(l1_rpc_url.clone())?;
+        let impl_address = factory_client.game_impls(config.game_type).await?;
+        if impl_address == Address::ZERO {
+            return Err(eyre::eyre!(
+                "no AggregateVerifier implementation registered for game type {}",
+                config.game_type
+            ));
+        }
+        let (block_interval, intermediate_block_interval) = tokio::try_join!(
+            verifier_client.read_block_interval(impl_address),
+            verifier_client.read_intermediate_block_interval(impl_address),
+        )?;
+        if block_interval == 0 || intermediate_block_interval == 0 {
+            return Err(eyre::eyre!(
+                "BLOCK_INTERVAL ({block_interval}) and INTERMEDIATE_BLOCK_INTERVAL ({intermediate_block_interval}) must be non-zero"
+            ));
+        }
+        if block_interval % intermediate_block_interval != 0 {
+            return Err(eyre::eyre!(
+                "BLOCK_INTERVAL ({block_interval}) is not divisible by INTERMEDIATE_BLOCK_INTERVAL ({intermediate_block_interval})"
+            ));
+        }
+        info!(
+            block_interval,
+            intermediate_block_interval,
+            intermediate_roots_count = block_interval / intermediate_block_interval,
+            impl_address = %impl_address,
+            game_type = config.game_type,
+            "Read onchain config from AggregateVerifier"
+        );
+
         let anchor_registry_client = AnchorStateRegistryContractClient::new(
             config.anchor_state_registry_addr,
             l1_rpc_url.clone(),
@@ -147,7 +178,23 @@ impl ChallengerService {
             .map_err(|e| eyre::eyre!("failed to create TEE L1 client: {e}"))?;
         let tee = Some(crate::TeeConfig { l1_head_provider: Arc::new(l1_client) });
 
-        // ── 7. Bond manager (optional) ─────────────────────────────────────
+        // ── 7. Scanner, anchor updater, and bond manager ──────────────────
+        let scanner = GameScanner::new(
+            Arc::clone(&factory_client) as Arc<dyn DisputeGameFactoryClient>,
+            Arc::clone(&verifier_client),
+            Arc::clone(&anchor_registry_client) as Arc<dyn AnchorStateRegistryClient>,
+        );
+
+        let anchor_updater = AnchorUpdater::new(
+            Arc::clone(&factory_client) as Arc<dyn DisputeGameFactoryClient>,
+            Arc::clone(&anchor_registry_client) as Arc<dyn AnchorStateRegistryClient>,
+            Arc::clone(&l2_client) as Arc<dyn L2Provider>,
+            config.anchor_state_registry_addr,
+            config.game_type,
+            block_interval,
+            intermediate_block_interval,
+        );
+
         let bond_manager = if !config.bond_claim_addresses.is_empty() {
             let mut bm = BondManager::new(
                 config.bond_claim_addresses,
@@ -157,15 +204,17 @@ impl ChallengerService {
                 config.bond_discovery_interval,
                 TokioRuntime::new(),
             );
-            bm.set_anchor_update_retention(config.anchor_update_retention);
             info!("starting bond recovery scan");
-            if let Err(e) = bm.startup_scan(&*verifier_client).await {
-                // On failure `bond_scan_head` stays at 0, so
-                // `discover_claimable_games` will progressively scan the
-                // factory over multiple ticks (capped at `lookback` games
-                // per tick). This is intentional: progressive catch-up
-                // is preferable to disabling bond claiming entirely.
-                warn!(error = %e, "bond startup scan failed, continuing without recovery");
+            match bm.startup_scan(&*verifier_client).await {
+                Ok(_) => {}
+                Err(e) => {
+                    // On failure `bond_scan_head` stays at 0, so
+                    // `discover_claimable_games` will progressively scan the
+                    // factory over multiple ticks (capped at `lookback` games
+                    // per tick). This is intentional: progressive catch-up
+                    // is preferable to disabling bond claiming entirely.
+                    warn!(error = %e, "bond startup scan failed, continuing without recovery");
+                }
             }
             info!(tracked = bm.tracked_count(), "bond manager ready");
             Some(bm)
@@ -174,10 +223,7 @@ impl ChallengerService {
             None
         };
 
-        // ── 7b. Assemble scanner, validator, and driver ─────────────────────
-        let scanner =
-            GameScanner::new(factory_client, Arc::clone(&verifier_client), anchor_registry_client);
-
+        // ── 7b. Assemble validator and driver ──────────────────────────────
         let validator = OutputValidator::new(l2_client);
 
         // ── 8. Start health HTTP server ──────────────────────────────────────
@@ -206,6 +252,7 @@ impl ChallengerService {
                 tee,
                 verifier_client,
                 bond_manager,
+                anchor_updater,
             },
         );
 

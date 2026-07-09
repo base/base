@@ -3,7 +3,7 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, B256, Bytes};
-use base_proof_contracts::{AggregateVerifierClient, DisputeGameFactoryClient, encode_extra_data};
+use base_proof_contracts::{AggregateVerifierClient, DisputeGameFactoryClient, game_lookup_key};
 use base_proof_primitives::Proposal;
 use base_proof_rpc::RollupProvider;
 use base_proof_submission::ProofSubmissionError;
@@ -179,10 +179,17 @@ impl ProofSubmitter {
             }
         }
 
-        let extra_data = encode_extra_data(target_block, parent_address, &intermediate_roots);
+        let key = game_lookup_key(
+            starting_block_number,
+            parent_address,
+            self.block_interval,
+            self.intermediate_block_interval,
+            &intermediate_roots,
+        )
+        .map_err(|e| SubmitAction::Failed(ProposerError::Config(e.to_string())))?;
         let existing_game = self
             .factory_client
-            .games(self.game_type, aggregate_proposal.output_root, extra_data.clone())
+            .games(self.game_type, key.root_claim, key.extra_data.clone())
             .await
             .map_err(|e| {
                 SubmitAction::Failed(ProposerError::Contract(format!(
@@ -217,7 +224,7 @@ impl ProofSubmitter {
                 info!(target_block, "Dispute game created successfully");
                 Metrics::l2_output_proposals_total().increment(1);
                 let game_address = self
-                    .lookup_recent_game(aggregate_proposal.output_root, &extra_data, target_block)
+                    .lookup_recent_game(key.root_claim, &key.extra_data, key.target_block)
                     .await?;
                 Ok(RecoveredState {
                     parent_address: game_address,
@@ -229,7 +236,7 @@ impl ProofSubmitter {
                 drop(propose_timer);
                 info!(target_block, "Game already exists, checking fresh state from chain");
                 let raced_game = self
-                    .lookup_recent_game(aggregate_proposal.output_root, &extra_data, target_block)
+                    .lookup_recent_game(key.root_claim, &key.extra_data, key.target_block)
                     .await?;
                 self.attach_existing_game_proof(raced_game, aggregate_proposal, target_block).await
             }

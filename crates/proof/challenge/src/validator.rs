@@ -138,17 +138,17 @@ struct Checkpoint {
 ///
 /// Fetches L2 block headers and `L2ToL1MessagePasser` storage proofs to
 /// recompute expected output roots and compare them against onchain claims.
-pub struct OutputValidator<L2: L2Provider> {
+pub struct OutputValidator<L2: L2Provider + ?Sized> {
     l2_provider: Arc<L2>,
 }
 
-impl<L2: L2Provider> std::fmt::Debug for OutputValidator<L2> {
+impl<L2: L2Provider + ?Sized> std::fmt::Debug for OutputValidator<L2> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OutputValidator").finish_non_exhaustive()
     }
 }
 
-impl<L2: L2Provider> OutputValidator<L2> {
+impl<L2: L2Provider + ?Sized> OutputValidator<L2> {
     /// Maximum number of intermediate output roots to validate concurrently.
     pub const VALIDATION_CONCURRENCY: usize = 32;
 
