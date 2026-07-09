@@ -87,7 +87,6 @@ tokio = { workspace = true, features = ["rt", "macros", "test-util"] }
 [features]
 metrics = [
 	"base-metrics/metrics",
-	"base-proof-tee-nitro-attestation-prover/metrics",
 	"base-tx-manager/metrics",
 	"dep:metrics",
 ]

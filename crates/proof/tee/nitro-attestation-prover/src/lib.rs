@@ -7,9 +7,6 @@ pub use base_proof_tee_attestation::{
 };
 pub use error::{ProverError, Result};
 
-mod types;
-pub use types::{AttestationProof, AttestationProofProvider};
-
 #[cfg(any(feature = "prove", feature = "metrics"))]
 mod metrics;
 #[cfg(any(feature = "prove", feature = "metrics"))]

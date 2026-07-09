@@ -42,7 +42,7 @@ use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 use url::Url;
 
-use crate::{AttestationProof, AttestationProofProvider, BoundlessMetrics, ProverError, Result};
+use crate::{BoundlessMetrics, ProverError, Result};
 
 const DEFAULT_TRUSTED_CERTS_PREFIX_LEN: u8 = 1;
 
@@ -188,6 +188,18 @@ impl BoundlessProver {
         debug.to_ascii_lowercase().contains(NEEDLE)
     }
 
+    /// Checks whether a Boundless receipt fetch failed because the proof
+    /// delivery event is no longer available in the SDK's event-log lookup.
+    fn is_proof_not_found_error(e: &dyn std::error::Error) -> bool {
+        const NEEDLE: &str = "proofnotfound";
+        let display = format!("{e}");
+        if display.to_ascii_lowercase().contains(NEEDLE) {
+            return true;
+        }
+        let debug = format!("{e:?}");
+        debug.to_ascii_lowercase().contains(NEEDLE)
+    }
+
     /// Fetches and ABI-encodes the set inclusion receipt for a fulfilled
     /// Boundless request. Shared between the recovery and fresh-submission
     /// paths.
@@ -195,6 +207,7 @@ impl BoundlessProver {
         &self,
         client: &BoundlessClient,
         request_id: alloy_primitives::U256,
+        fail_fast_on_proof_not_found: bool,
     ) -> Result<TeeAttestationProof> {
         let image_id_bytes: [u8; 32] = Digest::from(self.image_id).into();
         let image_id_b256 = B256::from(image_id_bytes);
@@ -352,7 +365,7 @@ impl BoundlessProver {
 
         info!(request_id = %request_id, "fulfillment confirmed, fetching set inclusion receipt");
 
-        self.fetch_and_encode_receipt(client, request_id).await
+        self.fetch_and_encode_receipt(client, request_id, false).await
     }
 
     /// Builds the Boundless [`Client`] and [`RequestParams`] from the
@@ -510,52 +523,7 @@ impl BoundlessProver {
 }
 
 #[async_trait::async_trait]
-impl AttestationProofProvider for BoundlessProver {
-    /// # Cancellation
-    ///
-    /// Cooperatively honors `cancel` once, at the top of the method,
-    /// before building the client/params. The build + submit +
-    /// wait-for-fulfillment phases are not interrupted once entered;
-    /// callers that need finer-grained cancellation should `select!`
-    /// against the cancel token externally. Dropping the future
-    /// mid-flight is safe because any submitted request remains
-    /// discoverable on the next call via the deterministic request-id
-    /// derivation (see the module docs on proof recovery).
-    ///
-    /// The per-probe cancel checks the doc previously referenced live
-    /// in [`Self::generate_proof_for_signer`], which has its own
-    /// recovery loop; this method has no probes to break between.
-    async fn generate_proof(
-        &self,
-        attestation_bytes: &[u8],
-        cancel: &CancellationToken,
-    ) -> Result<AttestationProof> {
-        let started_at = Instant::now();
-        if cancel.is_cancelled() {
-            return Err(ProverError::Boundless("proof generation cancelled before start".into()));
-        }
-        let (client, params) = match self.build_client_and_params(attestation_bytes).await {
-            Ok(result) => result,
-            Err(e) => {
-                BoundlessMetrics::record_proof_duration(
-                    started_at,
-                    BoundlessMetrics::PROOF_OUTCOME_FAILED,
-                );
-                return Err(e);
-            }
-        };
-        let result = self.submit_and_wait(&client, params).await;
-        BoundlessMetrics::record_proof_duration(
-            started_at,
-            if result.is_ok() {
-                BoundlessMetrics::PROOF_OUTCOME_SUCCEEDED
-            } else {
-                BoundlessMetrics::PROOF_OUTCOME_FAILED
-            },
-        );
-        result
-    }
-
+impl TeeAttestationProofProvider for BoundlessProver {
     /// Generates a proof with deterministic request-ID recovery.
     ///
     /// Before submitting a new proof request, this method probes up to
@@ -582,12 +550,8 @@ impl AttestationProofProvider for BoundlessProver {
         &self,
         attestation_bytes: &[u8],
         signer_address: Address,
-        cancel: &CancellationToken,
-    ) -> Result<AttestationProof> {
+    ) -> base_proof_tee_attestation::Result<TeeAttestationProof> {
         let started_at = Instant::now();
-        if cancel.is_cancelled() {
-            return Err(ProverError::Boundless("proof generation cancelled before start".into()));
-        }
         let (client, params) = match self.build_client_and_params(attestation_bytes).await {
             Ok(result) => result,
             Err(e) => {
@@ -595,7 +559,7 @@ impl AttestationProofProvider for BoundlessProver {
                     started_at,
                     BoundlessMetrics::PROOF_OUTCOME_FAILED,
                 );
-                return Err(e);
+                return Err(e.into());
             }
         };
 
@@ -615,18 +579,6 @@ impl AttestationProofProvider for BoundlessProver {
         // Probe deterministic request-ID slots for recovery.
         let mut first_unknown_attempt: Option<u32> = None;
         for attempt in 0..self.max_recovery_attempts {
-            // Check cancellation between probe slots. Already-locked
-            // requests stay on-chain and remain recoverable on the next
-            // call via the same deterministic index.
-            if cancel.is_cancelled() {
-                BoundlessMetrics::record_proof_duration(
-                    started_at,
-                    BoundlessMetrics::PROOF_OUTCOME_CANCELLED,
-                );
-                return Err(ProverError::Boundless(
-                    "proof generation cancelled mid-recovery probe".into(),
-                ));
-            }
             let index = Self::derive_request_index(signer_address, attempt);
             // RequestId is keyed on the Boundless wallet (fee-payer,
             // `self.signer`), not the enclave signer (`signer_address`).
@@ -802,7 +754,7 @@ impl AttestationProofProvider for BoundlessProver {
                         target_signer = %signer_address,
                         "recovered fulfilled proof, fetching receipt"
                     );
-                    match self.fetch_and_encode_receipt(&client, request_id).await {
+                    match self.fetch_and_encode_receipt(&client, request_id, true).await {
                         Ok(proof) => {
                             if !self.is_journal_fresh(&proof) {
                                 BoundlessMetrics::boundless_recovery_total(
@@ -976,7 +928,7 @@ impl AttestationProofProvider for BoundlessProver {
                 BoundlessMetrics::PROOF_OUTCOME_FAILED
             },
         );
-        result
+        Ok(result?)
     }
 
     fn block_recovery_for_signer(&self, signer: Address) {
