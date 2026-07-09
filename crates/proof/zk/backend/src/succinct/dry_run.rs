@@ -10,7 +10,8 @@ use base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL
 use base_proof_succinct_proof_utils::get_range_elf_embedded;
 use base_proof_zk_host::{ZkProver, ZkProverError, ZkSessionState};
 use base_prover_service_protocol::{
-    ExecutionStats, ProofResult, SessionType, ZkProofRequest, ZkProofResult, ZkVm,
+    ExecutionStats, ProofResult, SessionType, SnarkGroth16ProofRequest, SnarkGroth16ProofResult,
+    ZkProofRequest, ZkProofResult, ZkVm,
 };
 use sp1_sdk::{
     Elf, SP1Stdin,
@@ -30,8 +31,11 @@ macro_rules! backend_error {
     };
 }
 
-/// Prefix marking a dry-run backend session id.
-pub const DRY_RUN_PREFIX: &str = "dry-run-stark-";
+/// Prefix marking a dry-run STARK (range) backend session id.
+pub const DRY_RUN_STARK_PREFIX: &str = "dry-run-stark-";
+
+/// Prefix marking a dry-run SNARK (aggregation) backend session id.
+pub const DRY_RUN_SNARK_PREFIX: &str = "dry-run-snark-";
 
 /// [`ZkProver`] that generates a witness and executes the range program locally.
 #[derive(Clone, Debug)]
@@ -208,13 +212,59 @@ impl DryRunZkProver {
             execution_stats: Some(execution_stats),
         }))
     }
+
+    /// Deterministic backend session id for a request's initial range (STARK) stage.
+    pub fn backend_session_id(request_session_id: &str) -> String {
+        Self::backend_session_id_for_type(SessionType::Stark, request_session_id)
+    }
+
+    /// Deterministic backend session id for a given stage.
+    pub fn backend_session_id_for_type(
+        session_type: SessionType,
+        request_session_id: &str,
+    ) -> String {
+        match session_type {
+            SessionType::Stark => format!("{DRY_RUN_STARK_PREFIX}{request_session_id}"),
+            SessionType::Snark => format!("{DRY_RUN_SNARK_PREFIX}{request_session_id}"),
+        }
+    }
+
+    /// Swap a completed range result for its aggregation (SNARK) result under
+    /// `backend_session_id`, returning that id. The lock is held across the whole check-remove-
+    /// insert so the swap is atomic and idempotent on crash-resume.
+    pub fn advance_range_to_snark(
+        completed_results: &Mutex<HashMap<String, ProofResult>>,
+        backend_session_id: String,
+        completed_backend_session_id: &str,
+    ) -> Result<String, ZkProverError> {
+        let mut store = completed_results
+            .lock()
+            .map_err(|e| backend_error!("dry-run result store lock poisoned: {e}"))?;
+
+        if store.contains_key(&backend_session_id) {
+            return Ok(backend_session_id);
+        }
+
+        let range_result = store.remove(completed_backend_session_id).ok_or_else(|| {
+            ZkProverError::BackendSessionNotFound {
+                backend_session_id: completed_backend_session_id.to_owned(),
+            }
+        })?;
+        let execution_stats = match range_result {
+            ProofResult::Compressed(proof) => proof.execution_stats,
+            _ => return Err(backend_error!("dry-run range result had unexpected proof type")),
+        };
+        let result = ProofResult::SnarkGroth16(SnarkGroth16ProofResult {
+            proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: Vec::new().into(), execution_stats },
+        });
+        store.insert(backend_session_id.clone(), result);
+
+        Ok(backend_session_id)
+    }
 }
 
-/// Dry-run submission is synchronous: `submit` generates the witness and runs local SP1 execution
-/// before returning a completed backend session id. The backend stores one result per session, so
-/// `poll` only reports `Completed` before the single `download` call consumes that result.
-/// Results are process-local and non-durable; if the process exits before `download`, the dry-run
-/// must be submitted again.
+/// Dry-run submission is synchronous: `submit` runs local SP1 execution before returning a
+/// completed backend session id. Results are process-local and non-durable.
 #[async_trait]
 impl ZkProver for DryRunZkProver {
     async fn submit(
@@ -222,7 +272,7 @@ impl ZkProver for DryRunZkProver {
         request: &ZkProofRequest,
         request_session_id: &str,
     ) -> Result<String, ZkProverError> {
-        let backend_session_id = format!("{DRY_RUN_PREFIX}{request_session_id}");
+        let backend_session_id = Self::backend_session_id(request_session_id);
         let result = self.prove_range(request, request_session_id).await?;
         self.completed_results
             .lock()
@@ -230,6 +280,21 @@ impl ZkProver for DryRunZkProver {
             .insert(backend_session_id.clone(), result);
 
         Ok(backend_session_id)
+    }
+
+    async fn submit_next(
+        &self,
+        _request: &SnarkGroth16ProofRequest,
+        request_session_id: &str,
+        completed_backend_session_id: &str,
+    ) -> Result<String, ZkProverError> {
+        let backend_session_id =
+            Self::backend_session_id_for_type(SessionType::Snark, request_session_id);
+        Self::advance_range_to_snark(
+            &self.completed_results,
+            backend_session_id,
+            completed_backend_session_id,
+        )
     }
 
     async fn poll(&self, backend_session_id: &str) -> Result<ZkSessionState, ZkProverError> {
@@ -253,5 +318,60 @@ impl ZkProver for DryRunZkProver {
             .ok_or_else(|| ZkProverError::BackendSessionNotFound {
                 backend_session_id: backend_session_id.to_owned(),
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::HashMap, sync::Mutex};
+
+    use base_prover_service_protocol::{ProofResult, SnarkGroth16ProofResult, ZkProofResult, ZkVm};
+
+    use super::{DRY_RUN_SNARK_PREFIX, DRY_RUN_STARK_PREFIX, DryRunZkProver};
+
+    fn stark_key(session: &str) -> String {
+        format!("{DRY_RUN_STARK_PREFIX}{session}")
+    }
+
+    fn snark_key(session: &str) -> String {
+        format!("{DRY_RUN_SNARK_PREFIX}{session}")
+    }
+
+    fn empty_proof() -> ZkProofResult {
+        ZkProofResult { zk_vm: ZkVm::Sp1, proof: Vec::new().into(), execution_stats: None }
+    }
+
+    #[test]
+    fn advance_range_to_snark_swaps_range_result_for_snark() {
+        let session = "session-1";
+        let store = Mutex::new(HashMap::from([(
+            stark_key(session),
+            ProofResult::Compressed(empty_proof()),
+        )]));
+
+        let snark_id =
+            DryRunZkProver::advance_range_to_snark(&store, snark_key(session), &stark_key(session))
+                .unwrap();
+
+        assert_eq!(snark_id, snark_key(session));
+        let guard = store.lock().unwrap();
+        assert!(!guard.contains_key(&stark_key(session)), "range result should be consumed");
+        assert!(matches!(guard.get(&snark_key(session)), Some(ProofResult::SnarkGroth16(_))));
+    }
+
+    #[test]
+    fn advance_range_to_snark_is_idempotent_on_resume() {
+        let session = "session-1";
+        let store = Mutex::new(HashMap::from([(
+            snark_key(session),
+            ProofResult::SnarkGroth16(SnarkGroth16ProofResult { proof: empty_proof() }),
+        )]));
+
+        let snark_id =
+            DryRunZkProver::advance_range_to_snark(&store, snark_key(session), &stark_key(session))
+                .unwrap();
+
+        assert_eq!(snark_id, snark_key(session));
+        assert_eq!(store.lock().unwrap().len(), 1, "store should be unchanged on resume");
     }
 }
