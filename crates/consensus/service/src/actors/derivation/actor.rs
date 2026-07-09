@@ -107,10 +107,11 @@ where
 
     /// Handles a [`Signal`] received over the derivation signal receiver channel.
     async fn signal(&mut self, signal: Signal) {
-        if let Signal::Reset(ResetSignal { l2_safe_head: _reset_safe_head }) = signal {
-            Metrics::derivation_l1_origin().absolute(_reset_safe_head.l1_origin.number);
-            // Clear the finalization queue on reset.
-            self.finalizer.clear();
+        if let Signal::Reset(ResetSignal { l2_safe_head: reset_safe_head }) = signal {
+            Metrics::derivation_l1_origin().absolute(reset_safe_head.l1_origin.number);
+            // Prune finalization queue entries above the reset anchor; entries at or
+            // below the safe head remain canonical across a reset.
+            self.finalizer.prune_above(reset_safe_head.block_info.number);
             // Discard any in-flight derived_from so that a stale pre-reset L1 inclusion
             // block is never recorded for a post-reset safe head confirmation.
             self.pending_derived_from = None;
@@ -343,6 +344,15 @@ where
 
         // Enqueue the payload attributes for finalization tracking.
         self.finalizer.enqueue_for_finalization(&payload_attributes);
+
+        // Retry finalization in case a finalized L1 signal arrived while the queue
+        // was empty (e.g. after a pipeline reset or during EL sync).
+        if let Some(l2_block_number) = self.finalizer.try_finalize_pending() {
+            self.engine_client
+                .send_finalized_l2_block(l2_block_number)
+                .await
+                .map_err(|e| DerivationError::Sender(Box::new(e)))?;
+        }
 
         // Remember the L1 inclusion block so that when the engine confirms this safe head we
         // can key the SafeDB entry by inclusion block rather than epoch origin.

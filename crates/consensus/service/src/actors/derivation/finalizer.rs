@@ -22,6 +22,10 @@ pub struct L2Finalizer {
     /// block is received, the highest L2 block whose inputs are contained within the finalized
     /// L1 chain is finalized.
     awaiting_finalization: BTreeMap<L1BlockNumber, L2BlockNumber>,
+    /// The highest finalized L1 block number observed so far. Preserved across `clear()` calls
+    /// so that blocks enqueued after a pipeline reset can be finalized immediately if their
+    /// L1 origin is already finalized.
+    latest_finalized_l1: Option<L1BlockNumber>,
 }
 
 impl L2Finalizer {
@@ -39,9 +43,13 @@ impl L2Finalizer {
             .or_insert_with(|| attributes.block_number());
     }
 
-    /// Clears the finalization queue.
-    pub fn clear(&mut self) {
-        self.awaiting_finalization.clear();
+    /// Prunes queue entries whose L2 block number is above `l2_block_number`.
+    ///
+    /// Called on pipeline reset with the reset anchor (the L2 safe head): blocks at or
+    /// below the safe head remain canonical across a reset, so their entries stay valid.
+    /// `latest_finalized_l1` is preserved — L1 finality is independent of pipeline state.
+    pub fn prune_above(&mut self, l2_block_number: L2BlockNumber) {
+        self.awaiting_finalization.retain(|_, &mut l2| l2 <= l2_block_number);
     }
 
     /// Attempts to find L2 blocks that can be finalized based on the new finalized L1 block.
@@ -52,16 +60,33 @@ impl L2Finalizer {
         &mut self,
         new_finalized_l1_block: BlockInfo,
     ) -> Option<L2BlockNumber> {
+        self.latest_finalized_l1 = Some(
+            self.latest_finalized_l1
+                .map_or(new_finalized_l1_block.number, |n| n.max(new_finalized_l1_block.number)),
+        );
+
+        self.try_finalize_up_to(new_finalized_l1_block.number)
+    }
+
+    /// Attempts to finalize enqueued L2 blocks against the most recently observed
+    /// finalized L1 block, catching up on signals that arrived while the queue was empty.
+    pub fn try_finalize_pending(&mut self) -> Option<L2BlockNumber> {
+        let finalized_l1 = self.latest_finalized_l1?;
+        self.try_finalize_up_to(finalized_l1)
+    }
+
+    /// Finds the highest enqueued L2 block whose L1 origin is `<= l1_block_number`, drains
+    /// all queue entries contained in that finalized L1 range, and returns the L2 block.
+    fn try_finalize_up_to(&mut self, l1_block_number: L1BlockNumber) -> Option<L2BlockNumber> {
         // Find the highest safe L2 block that is contained within the finalized chain,
         // that the finalizer is aware of.
-        let highest_safe =
-            self.awaiting_finalization.range(..=new_finalized_l1_block.number).next_back();
+        let highest_safe = self.awaiting_finalization.range(..=l1_block_number).next_back();
 
         // If the highest safe block is found, return it and drain the
         // queue of all L1 blocks not contained in the finalized L1 chain.
         if let Some((_, highest_safe_number)) = highest_safe {
             let result = *highest_safe_number;
-            self.awaiting_finalization.retain(|&number, _| number > new_finalized_l1_block.number);
+            self.awaiting_finalization.retain(|&number, _| number > l1_block_number);
             Some(result)
         } else {
             None
@@ -149,11 +174,11 @@ mod tests {
     }
 
     #[test]
-    fn clear_empties_queue() {
+    fn prune_above_zero_empties_queue() {
         let mut f = L2Finalizer::default();
         f.enqueue_for_finalization(&attrs(4, 1));
         f.enqueue_for_finalization(&attrs(7, 2));
-        f.clear();
+        f.prune_above(0);
         assert!(f.try_finalize_next(l1_at(100)).is_none());
     }
 
@@ -178,5 +203,49 @@ mod tests {
         assert_eq!(f.try_finalize_next(l1_at(5)), Some(20));
         // Queue is now empty; an older signal cannot regress to a stale entry.
         assert!(f.try_finalize_next(l1_at(2)).is_none());
+    }
+
+    #[test]
+    fn finalized_signal_on_empty_queue_remembered_for_later() {
+        // A finalized L1 signal arriving on an empty queue must not be lost.
+        let mut f = L2Finalizer::default();
+        assert!(f.try_finalize_next(l1_at(100)).is_none());
+
+        f.enqueue_for_finalization(&attrs(999, 50)); // l2=1000, l1_origin=50
+        assert_eq!(f.try_finalize_pending(), Some(1000));
+    }
+
+    #[test]
+    fn try_finalize_pending_returns_none_without_prior_signal() {
+        let mut f = L2Finalizer::default();
+        f.enqueue_for_finalization(&attrs(4, 1)); // l2=5, l1_origin=1
+        assert!(f.try_finalize_pending().is_none());
+    }
+
+    #[test]
+    fn reset_preserves_latest_finalized_l1() {
+        // Blocks enqueued after a reset can finalize against a pre-reset signal.
+        let mut f = L2Finalizer::default();
+        f.enqueue_for_finalization(&attrs(4, 1)); // l2=5, l1_origin=1
+        assert_eq!(f.try_finalize_next(l1_at(10)), Some(5));
+
+        f.prune_above(5);
+
+        f.enqueue_for_finalization(&attrs(14, 3)); // l2=15, l1_origin=3
+        assert_eq!(f.try_finalize_pending(), Some(15));
+    }
+
+    #[test]
+    fn prune_above_keeps_entries_at_or_below_anchor() {
+        let mut f = L2Finalizer::default();
+        f.enqueue_for_finalization(&attrs(99, 10)); // l2=100, l1_origin=10
+        f.enqueue_for_finalization(&attrs(199, 20)); // l2=200, l1_origin=20
+        f.enqueue_for_finalization(&attrs(299, 30)); // l2=300, l1_origin=30
+
+        f.prune_above(200);
+
+        assert_eq!(f.try_finalize_next(l1_at(20)), Some(200));
+        // The pruned l2=300 entry must not resurface.
+        assert!(f.try_finalize_next(l1_at(30)).is_none());
     }
 }
