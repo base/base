@@ -20,6 +20,8 @@ use crate::{
     macros::decode_precompile_call,
 };
 
+use super::logic;
+
 impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
     /// ABI-dispatches `calldata` to the appropriate `IB20Asset` handler.
     pub fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
@@ -196,15 +198,13 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
             C::transfer(c) => {
                 let caller = ctx.caller();
                 let version = self.version();
-                crate::versioned_transfer!(version, transfer, self, caller, c.to, c.amount, privileged)?;
+                logic::transfer(version, self, caller, c.to, c.amount, privileged)?;
                 true.abi_encode().into()
             }
             C::transferFrom(c) => {
                 let caller = ctx.caller();
                 let version = self.version();
-                crate::versioned_transfer!(
-                    version, transfer_from, self, caller, c.from, c.to, c.amount, privileged
-                )?;
+                logic::transfer_from(version, self, caller, c.from, c.to, c.amount, privileged)?;
                 true.abi_encode().into()
             }
             C::approve(c) => {
@@ -215,17 +215,14 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
             C::transferWithMemo(c) => {
                 let caller = ctx.caller();
                 let version = self.version();
-                crate::versioned_transfer!(
-                    version, transfer_with_memo, self, caller, c.to, c.amount, c.memo, privileged
-                )?;
+                logic::transfer_with_memo(version, self, caller, c.to, c.amount, c.memo, privileged)?;
                 true.abi_encode().into()
             }
             C::transferFromWithMemo(c) => {
                 let caller = ctx.caller();
                 let version = self.version();
-                crate::versioned_transfer!(
-                    version, transfer_from_with_memo, self, caller, c.from, c.to, c.amount, c.memo,
-                    privileged
+                logic::transfer_from_with_memo(
+                    version, self, caller, c.from, c.to, c.amount, c.memo, privileged,
                 )?;
                 true.abi_encode().into()
             }

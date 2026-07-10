@@ -13,7 +13,11 @@
 //! (a verbatim port of `common/ops/transferable.rs`); `v2` demonstrates a future hard-fork change
 //! (reject zero-amount transfers). Every other method stays unversioned in this PoC.
 
+use alloy_primitives::{Address, B256, U256};
 use base_common_chains::BaseUpgrade;
+use base_precompile_storage::Result;
+
+use crate::Token;
 
 /// Identifies which frozen behavior generation a fork runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +38,73 @@ pub enum Version {
 /// draft/demonstration only.
 pub fn for_upgrade(upgrade: BaseUpgrade) -> Version {
     if upgrade >= BaseUpgrade::Cobalt { Version::V2 } else { Version::V1 }
+}
+
+// --- Version dispatch: plain functions that route a resolved `Version` to the frozen module.
+// Whole-version selection — one `Version` per call, every cluster method routed the same way.
+
+/// Runs `transfer` under behavior generation `version`.
+pub(crate) fn transfer<T: Token>(
+    version: Version,
+    t: &mut T,
+    from: Address,
+    to: Address,
+    amount: U256,
+    privileged: bool,
+) -> Result<()> {
+    match version {
+        Version::V1 => v1::transfer(t, from, to, amount, privileged),
+        Version::V2 => v2::transfer(t, from, to, amount, privileged),
+    }
+}
+
+/// Runs `transfer_from` under behavior generation `version`.
+pub(crate) fn transfer_from<T: Token>(
+    version: Version,
+    t: &mut T,
+    spender: Address,
+    from: Address,
+    to: Address,
+    amount: U256,
+    privileged: bool,
+) -> Result<()> {
+    match version {
+        Version::V1 => v1::transfer_from(t, spender, from, to, amount, privileged),
+        Version::V2 => v2::transfer_from(t, spender, from, to, amount, privileged),
+    }
+}
+
+/// Runs `transfer_with_memo` under behavior generation `version`.
+pub(crate) fn transfer_with_memo<T: Token>(
+    version: Version,
+    t: &mut T,
+    from: Address,
+    to: Address,
+    amount: U256,
+    memo: B256,
+    privileged: bool,
+) -> Result<()> {
+    match version {
+        Version::V1 => v1::transfer_with_memo(t, from, to, amount, memo, privileged),
+        Version::V2 => v2::transfer_with_memo(t, from, to, amount, memo, privileged),
+    }
+}
+
+/// Runs `transfer_from_with_memo` under behavior generation `version`.
+pub(crate) fn transfer_from_with_memo<T: Token>(
+    version: Version,
+    t: &mut T,
+    spender: Address,
+    from: Address,
+    to: Address,
+    amount: U256,
+    memo: B256,
+    privileged: bool,
+) -> Result<()> {
+    match version {
+        Version::V1 => v1::transfer_from_with_memo(t, spender, from, to, amount, memo, privileged),
+        Version::V2 => v2::transfer_from_with_memo(t, spender, from, to, amount, memo, privileged),
+    }
 }
 
 /// Genesis behavior — a verbatim port of `common/ops/transferable.rs`. FROZEN once shipped.
@@ -280,20 +351,6 @@ pub(crate) mod v2 {
         transfer_from(t, spender, from, to, amount, privileged)?;
         t.accounting_mut().emit_event(IB20::Memo { caller: spender, memo }.encode_log_data())
     }
-}
-
-/// Selects a version's `transfer`-cluster function by the resolved [`Version`] value.
-///
-/// Whole-version selection: the caller resolves ONE `Version` per call and every arm binds to it.
-/// No wildcard arm — adding a `Version` variant forces every call site to cover it (compile error).
-#[macro_export]
-macro_rules! versioned_transfer {
-    ($version:expr, $f:ident, $($arg:expr),* $(,)?) => {
-        match $version {
-            $crate::Version::V1 => $crate::b20_asset::logic::v1::$f($($arg),*),
-            $crate::Version::V2 => $crate::b20_asset::logic::v2::$f($($arg),*),
-        }
-    };
 }
 
 #[cfg(test)]
