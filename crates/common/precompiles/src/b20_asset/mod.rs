@@ -6,8 +6,8 @@ pub use abi::IB20Asset;
 mod accounting;
 pub use accounting::AssetAccounting;
 
-mod logic;
-pub use logic::{AssetLogic, AssetLogicId, AssetLogicV1, AssetLogicV2, AssetOps, asset_logic_for};
+pub(crate) mod logic;
+pub use logic::{Version, for_upgrade};
 
 mod dispatch;
 
