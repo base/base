@@ -1,7 +1,7 @@
 use std::{fmt::Debug, sync::Arc, time::Duration};
 
 use alloy_eips::BlockNumberOrTag;
-use base_protocol::{BlockInfo, L2BlockInfo};
+use base_protocol::L2BlockInfo;
 use tokio::{
     sync::mpsc,
     time::{self, MissedTickBehavior},
@@ -135,6 +135,7 @@ where
 
         // Read number and hash from the same response, matching op-node's `L2BlockRefByLabel`.
         let source_safe = source.get_block_info(BlockNumberOrTag::Safe).await?;
+        Self::validate_source_l1_origin(local.as_ref(), &source_safe).await?;
         let safe = Self::verified_local_block(
             &local,
             &source_safe,
@@ -147,6 +148,7 @@ where
 
         // Finalized floor at the local finalized head (never unwind), ceiling at the safe head.
         let source_finalized = source.get_block_info(BlockNumberOrTag::Finalized).await?;
+        Self::validate_source_l1_origin(local.as_ref(), &source_finalized).await?;
         let local_finalized_number =
             local_finalized.map(|block| block.block_info.number).unwrap_or_default();
         let finalized = Self::verified_local_block(
@@ -166,18 +168,18 @@ where
     /// divergence returns `SourceBlockHashMismatch`.
     async fn verified_local_block(
         local: &Local,
-        source_block: &BlockInfo,
+        source_block: &L2BlockInfo,
         floor: u64,
         ceiling: u64,
     ) -> Result<Option<L2BlockInfo>, FollowError> {
-        let number = source_block.number;
+        let number = source_block.block_info.number;
         if number < floor || number > ceiling {
             debug!(
                 target: "follow",
                 number,
                 floor,
                 ceiling,
-                hash = %source_block.hash,
+                hash = %source_block.block_info.hash,
                 "Skipping source label outside local range"
             );
             return Ok(None);
@@ -185,14 +187,35 @@ where
         let Some(local_block) = local.block_info(number.into()).await? else {
             return Ok(None);
         };
-        if local_block.block_info.hash != source_block.hash {
+        if local_block.block_info.hash != source_block.block_info.hash {
             return Err(FollowError::SourceBlockHashMismatch {
                 number,
                 local: local_block.block_info.hash,
-                remote: source_block.hash,
+                remote: source_block.block_info.hash,
             });
         }
         Ok(Some(local_block))
+    }
+
+    /// Verifies that the source label's claimed L1 origin is canonical in the local L1 view.
+    async fn validate_source_l1_origin(
+        local: &Local,
+        source_block: &L2BlockInfo,
+    ) -> Result<(), FollowError> {
+        let origin = source_block.l1_origin;
+        let local_hash = local
+            .l1_block_hash(origin.number)
+            .await?
+            .ok_or(FollowError::LocalL1BlockUnavailable(origin.number))?;
+        if local_hash != origin.hash {
+            return Err(FollowError::SourceL1OriginMismatch {
+                l2_number: source_block.block_info.number,
+                l1_number: origin.number,
+                local: local_hash,
+                remote: origin.hash,
+            });
+        }
+        Ok(())
     }
 }
 
@@ -248,7 +271,7 @@ mod tests {
     use alloy_rpc_types_engine::ExecutionPayloadV1;
     use async_trait::async_trait;
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
-    use base_protocol::L2BlockInfo;
+    use base_protocol::{BlockInfo, L2BlockInfo};
     use mockall::predicate::eq;
     use tokio::{sync::Mutex, time};
     use tokio_util::sync::CancellationToken;
@@ -294,7 +317,7 @@ mod tests {
         async fn get_block_info(
             &self,
             tag: BlockNumberOrTag,
-        ) -> Result<BlockInfo, crate::RemoteL2ClientError> {
+        ) -> Result<L2BlockInfo, crate::RemoteL2ClientError> {
             Ok(match tag {
                 BlockNumberOrTag::Latest => source_block_info(self.latest),
                 BlockNumberOrTag::Number(number) => source_block_info(number),
@@ -350,8 +373,15 @@ mod tests {
         }
     }
 
-    fn source_block_info(number: u64) -> BlockInfo {
-        BlockInfo { number, hash: B256::from([number as u8; 32]), ..Default::default() }
+    fn source_block_info(number: u64) -> L2BlockInfo {
+        L2BlockInfo {
+            block_info: BlockInfo {
+                number,
+                hash: B256::from([number as u8; 32]),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
     }
 
     fn payload(number: u64) -> BaseExecutionPayloadEnvelope {
@@ -392,6 +422,7 @@ mod tests {
                 _ => block_info(0),
             }))
         });
+        local.expect_l1_block_hash().returning(|_| Ok(Some(B256::ZERO)));
         local.expect_proofs_latest().returning(move || Ok(Some(proofs_latest)));
         local
     }
@@ -522,6 +553,7 @@ mod tests {
                 _ => block_info(0),
             }))
         });
+        local.expect_l1_block_hash().returning(|_| Ok(Some(B256::ZERO)));
         let proofs_for_mock = Arc::clone(&proofs_latest);
         local
             .expect_proofs_latest()
@@ -665,7 +697,14 @@ mod tests {
         let local = Arc::new(local_client(10, 8, 7, 100));
         let mut source = MockRemoteClient::new();
         source.expect_get_block_info().with(eq(BlockNumberOrTag::Safe)).times(1).returning(|_| {
-            Ok(BlockInfo { number: 10, hash: B256::from([99; 32]), ..Default::default() })
+            Ok(L2BlockInfo {
+                block_info: BlockInfo {
+                    number: 10,
+                    hash: B256::from([99; 32]),
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
         });
         let engine = Arc::new(RecordingEngine {
             inserted: Mutex::new(Vec::new()),
@@ -688,6 +727,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn source_safe_l1_origin_must_be_canonical_locally() {
+        let local = Arc::new(local_client(10, 8, 7, 100));
+        let mut source = MockRemoteClient::new();
+        source.expect_get_block_info().with(eq(BlockNumberOrTag::Safe)).returning(|_| {
+            Ok(L2BlockInfo {
+                l1_origin: alloy_eips::BlockNumHash { number: 0, hash: B256::with_last_byte(1) },
+                ..source_block_info(9)
+            })
+        });
+        let engine = Arc::new(RecordingEngine {
+            inserted: Mutex::new(Vec::new()),
+            labels: Mutex::new(Vec::new()),
+            delay: Duration::ZERO,
+        });
+        let engine_for_update: Arc<dyn FollowEngine> = Arc::<RecordingEngine>::clone(&engine);
+
+        let error =
+            FollowRuntime::<MockFollowLocalClient, MockRemoteClient, NoopProofGate>::update_safe_and_finalized(
+                local,
+                Arc::new(source),
+                engine_for_update,
+            )
+            .await
+            .expect_err("source L1 origin must match local canonical L1");
+
+        assert!(matches!(
+            error,
+            FollowError::SourceL1OriginMismatch { l2_number: 9, l1_number: 0, .. }
+        ));
+        assert!(engine.labels.lock().await.is_empty());
+    }
+
+    #[tokio::test]
     async fn finalized_label_rejects_source_hash_mismatch() {
         // The same coherent-read check applies to the finalized label. Here the safe label is
         // consistent (so evaluation reaches the finalized read), but the in-range finalized block's
@@ -699,7 +771,16 @@ mod tests {
             .with(eq(BlockNumberOrTag::Safe))
             .returning(|_| Ok(source_block_info(9)));
         source.expect_get_block_info().with(eq(BlockNumberOrTag::Finalized)).times(1).returning(
-            |_| Ok(BlockInfo { number: 8, hash: B256::from([99; 32]), ..Default::default() }),
+            |_| {
+                Ok(L2BlockInfo {
+                    block_info: BlockInfo {
+                        number: 8,
+                        hash: B256::from([99; 32]),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                })
+            },
         );
         let engine = Arc::new(RecordingEngine {
             inserted: Mutex::new(Vec::new()),

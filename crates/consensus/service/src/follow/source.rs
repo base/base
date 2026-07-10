@@ -1,13 +1,14 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, sync::Arc};
 
 use alloy_consensus::Block;
 use alloy_eips::BlockNumberOrTag;
 use alloy_provider::{Provider, RootProvider};
 use async_trait::async_trait;
 use base_common_consensus::BaseTxEnvelope;
+use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
-use base_protocol::BlockInfo;
+use base_protocol::{FromBlockError, L2BlockInfo};
 use thiserror::Error;
 use url::Url;
 
@@ -26,6 +27,10 @@ pub enum RemoteL2ClientError {
     /// Block not found at the requested tag.
     #[error("block not found at {0}")]
     BlockNotFound(String),
+
+    /// Failed to decode rollup metadata from a source L2 block.
+    #[error("failed to build source L2 block info: {0}")]
+    BlockInfo(#[from] FromBlockError),
 }
 
 /// Trait for fetching L2 block data from the remote node.
@@ -36,8 +41,10 @@ pub trait RemoteClient: Debug + Send + Sync {
     async fn get_block_number(&self, tag: BlockNumberOrTag) -> Result<u64, RemoteL2ClientError>;
 
     /// Fetches the block info at the given tag.
-    async fn get_block_info(&self, tag: BlockNumberOrTag)
-    -> Result<BlockInfo, RemoteL2ClientError>;
+    async fn get_block_info(
+        &self,
+        tag: BlockNumberOrTag,
+    ) -> Result<L2BlockInfo, RemoteL2ClientError>;
 
     /// Fetches a block by number and converts it to an [`BaseExecutionPayloadEnvelope`].
     async fn get_payload_by_number(
@@ -51,13 +58,21 @@ pub trait RemoteClient: Debug + Send + Sync {
 #[derive(Debug, Clone)]
 pub struct RemoteL2Client {
     provider: RootProvider<Base>,
+    rollup_config: Arc<RollupConfig>,
 }
 
 impl RemoteL2Client {
     /// Creates a new [`RemoteL2Client`] from a source L2 node URL.
-    pub fn new(url: Url) -> Self {
+    pub fn new(url: Url, rollup_config: Arc<RollupConfig>) -> Self {
         let provider = RootProvider::<Base>::new_http(url);
-        Self { provider }
+        Self { provider, rollup_config }
+    }
+
+    fn block_info(
+        &self,
+        block: alloy_consensus::Block<BaseTxEnvelope>,
+    ) -> Result<L2BlockInfo, RemoteL2ClientError> {
+        L2BlockInfo::from_block_and_genesis(&block, &self.rollup_config.genesis).map_err(Into::into)
     }
 }
 
@@ -70,22 +85,23 @@ impl RemoteClient for RemoteL2Client {
             });
         }
 
-        self.get_block_info(tag).await.map(|block| block.number)
+        self.get_block_info(tag).await.map(|block| block.block_info.number)
     }
 
     async fn get_block_info(
         &self,
         tag: BlockNumberOrTag,
-    ) -> Result<BlockInfo, RemoteL2ClientError> {
+    ) -> Result<L2BlockInfo, RemoteL2ClientError> {
         let block = self
             .provider
             .get_block_by_number(tag)
+            .full()
             .await
             .map_err(|e| RemoteL2ClientError::FetchBlock { tag: format!("{tag:?}"), source: e })?
             .ok_or_else(|| RemoteL2ClientError::BlockNotFound(format!("{tag:?}")))?;
         let block = block.map_header(|header| header.into_inner());
 
-        Ok(BlockInfo::from(&block))
+        self.block_info(block.into_consensus().map_transactions(|tx| tx.inner.inner.into_inner()))
     }
 
     async fn get_payload_by_number(

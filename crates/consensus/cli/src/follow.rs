@@ -192,12 +192,15 @@ impl ConsensusFollowNodeArgs {
         };
         let engine_client =
             Arc::new(engine_config.build_engine_client().await.map_err(|e| eyre::eyre!(e))?);
-        let l2_source = RemoteL2Client::new(self.config.source_l2_rpc.clone());
+        let l1_provider = RootProvider::new_http(self.config.l1_rpc_args.l1_eth_rpc.clone());
+        let l2_source =
+            RemoteL2Client::new(self.config.source_l2_rpc.clone(), Arc::clone(&rollup_config));
         let rpc_builder = Option::<RpcBuilder>::from(self.config.rpc_flags.clone());
 
         Ok(FollowNode::new(FollowNodeConfig {
             rollup_config,
             engine_client,
+            l1_provider,
             local_l2_provider,
             l2_source,
             rpc_builder,
