@@ -32,7 +32,7 @@ pub enum BondPhase {
     AwaitingDelay {
         /// Monotonic timestamp at which withdrawal should be retried.
         ready_at: Duration,
-        /// Wall-clock Unix timestamp when the DelayedWETH delay started.
+        /// Wall-clock Unix timestamp when the `DelayedWETH` delay started.
         delay_started_at: u64,
         /// Whether `ready_at` was computed with the fallback WETH delay.
         using_default_delay: bool,
