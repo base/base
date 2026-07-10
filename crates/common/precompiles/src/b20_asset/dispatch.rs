@@ -11,12 +11,12 @@ use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    AssetAccounting, AssetLogic, B20AssetStorage, B20AssetToken, B20TokenRole, BerylAuxiliaryMetrics,
-    BerylCallRecorder, BerylMetricLabels, BerylSelector, Burnable, Configurable,
+    AssetAccounting, AssetLogic, B20AssetStorage, B20AssetToken, B20TokenRole,
+    BerylAuxiliaryMetrics, BerylCallRecorder, BerylMetricLabels, BerylSelector,
     IB20::{self, IB20Calls as C},
     IB20Asset::{self, IB20AssetCalls as SC},
-    Mintable, NoopPrecompileCallObserver, Pausable, PermitArgs, Permittable, Policy,
-    PrecompileCallObserver, RoleManaged, Token, Transferable,
+    NoopPrecompileCallObserver, Pausable, PermitArgs, Permittable, Policy, PrecompileCallObserver,
+    RoleManaged, Token,
     macros::decode_precompile_call,
 };
 
@@ -204,7 +204,7 @@ impl<S: AssetAccounting, P: Policy, L: AssetLogic> B20AssetToken<S, P, L> {
             }
             C::approve(c) => {
                 let caller = ctx.caller();
-                self.approve(caller, c.spender, c.amount)?;
+                L::approve(self, caller, c.spender, c.amount)?;
                 true.abi_encode().into()
             }
             C::transferWithMemo(c) => {
@@ -221,12 +221,12 @@ impl<S: AssetAccounting, P: Policy, L: AssetLogic> B20AssetToken<S, P, L> {
             // --- Mint ---
             C::mint(c) => {
                 let caller = ctx.caller();
-                self.mint(caller, c.to, c.amount, privileged)?;
+                L::mint(self, caller, c.to, c.amount, privileged)?;
                 Bytes::new()
             }
             C::mintWithMemo(c) => {
                 let caller = ctx.caller();
-                self.mint_with_memo(caller, c.to, c.amount, c.memo, privileged)?;
+                L::mint_with_memo(self, caller, c.to, c.amount, c.memo, privileged)?;
                 Bytes::new()
             }
 
@@ -235,84 +235,86 @@ impl<S: AssetAccounting, P: Policy, L: AssetLogic> B20AssetToken<S, P, L> {
             // factory, not a token holder.
             C::burn(c) => {
                 let caller = ctx.caller();
-                self.burn(caller, caller, c.amount, false)?;
+                L::burn(self, caller, caller, c.amount, false)?;
                 Bytes::new()
             }
             C::burnWithMemo(c) => {
                 let caller = ctx.caller();
-                self.burn_with_memo(caller, caller, c.amount, c.memo, false)?;
+                L::burn_with_memo(self, caller, caller, c.amount, c.memo, false)?;
                 Bytes::new()
             }
             C::burnBlocked(c) => {
                 let caller = ctx.caller();
-                self.burn_blocked(caller, c.from, c.amount, privileged)?;
+                L::burn_blocked(self, caller, c.from, c.amount, privileged)?;
                 Bytes::new()
             }
 
             // --- Pause ---
             C::pause(c) => {
                 let caller = ctx.caller();
-                self.pause(caller, c.features, privileged)?;
+                L::pause(self, caller, c.features, privileged)?;
                 Bytes::new()
             }
             C::unpause(c) => {
                 let caller = ctx.caller();
-                self.unpause(caller, c.features, privileged)?;
+                L::unpause(self, caller, c.features, privileged)?;
                 Bytes::new()
             }
 
             // --- Admin ---
             C::updateSupplyCap(c) => {
                 let caller = ctx.caller();
-                Configurable::update_supply_cap(self, caller, c.newSupplyCap, privileged)?;
+                L::update_supply_cap(self, caller, c.newSupplyCap, privileged)?;
                 Bytes::new()
             }
             C::updateName(c) => {
                 let caller = ctx.caller();
-                Configurable::update_name(self, caller, c.newName, privileged)?;
+                L::update_name(self, caller, c.newName, privileged)?;
                 Bytes::new()
             }
             C::updateSymbol(c) => {
                 let caller = ctx.caller();
-                Configurable::update_symbol(self, caller, c.newSymbol, privileged)?;
+                L::update_symbol(self, caller, c.newSymbol, privileged)?;
                 Bytes::new()
             }
             C::updateContractURI(c) => {
                 let caller = ctx.caller();
-                Configurable::update_contract_uri(self, caller, c.newURI, privileged)?;
+                L::update_contract_uri(self, caller, c.newURI, privileged)?;
                 Bytes::new()
             }
 
             // --- Role mutations ---
             C::grantRole(c) => {
                 let caller = ctx.caller();
-                self.grant_role(caller, c.role, c.account, privileged)?;
+                L::grant_role(self, caller, c.role, c.account, privileged)?;
                 Bytes::new()
             }
             C::revokeRole(c) => {
                 let caller = ctx.caller();
-                self.revoke_role(caller, c.role, c.account, privileged)?;
+                L::revoke_role(self, caller, c.role, c.account, privileged)?;
                 Bytes::new()
             }
             // Renounce operations are never factory-privileged: they are only meaningful for the
             // role holder making the call after token creation.
             C::renounceRole(c) => {
                 let caller = ctx.caller();
-                self.renounce_role(caller, c.role, c.callerConfirmation)?;
+                L::renounce_role(self, caller, c.role, c.callerConfirmation)?;
                 Bytes::new()
             }
             C::renounceLastAdmin(_) => {
                 let caller = ctx.caller();
-                self.renounce_last_admin(caller)?;
+                L::renounce_last_admin(self, caller)?;
                 Bytes::new()
             }
             C::setRoleAdmin(c) => {
                 let caller = ctx.caller();
-                self.set_role_admin(caller, c.role, c.newAdminRole, privileged)?;
+                L::set_role_admin(self, caller, c.role, c.newAdminRole, privileged)?;
                 Bytes::new()
             }
 
             // --- Policy mutations ---
+            // `update_policy` is an asset-specific inherent method (not yet behind a capability
+            // trait), so it is not versioned by `AssetLogic` in this sample.
             C::updatePolicy(c) => {
                 let caller = ctx.caller();
                 self.update_policy(caller, c.policyScope, c.newPolicyId, privileged)?;
@@ -321,7 +323,8 @@ impl<S: AssetAccounting, P: Policy, L: AssetLogic> B20AssetToken<S, P, L> {
 
             // --- Permit ---
             C::permit(c) => {
-                self.permit(
+                L::permit(
+                    self,
                     ctx.chain_id(),
                     ctx.timestamp(),
                     PermitArgs {
