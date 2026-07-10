@@ -232,7 +232,8 @@ impl SuccinctZkProversConfig {
         }
         let cluster_rpc = Self::optional_string(self.cluster_rpc.as_deref());
         let s3_bucket = Self::optional_string(self.s3_bucket.as_deref());
-        if cluster_rpc.is_none() && s3_bucket.is_some() {
+        let s3_region = Self::optional_string(self.s3_region.as_deref());
+        if cluster_rpc.is_none() && (s3_bucket.is_some() || s3_region.is_some()) {
             return Err(SuccinctZkProverBuildError::config(
                 "cluster backend requires SP1_CLUSTER_API_ENDPOINT",
             ));
@@ -273,7 +274,7 @@ impl SuccinctZkProversConfig {
             let s3_bucket = s3_bucket.ok_or_else(|| {
                 SuccinctZkProverBuildError::config("cluster backend requires CLI_S3_BUCKET")
             })?;
-            let s3_region = Self::optional_string(self.s3_region.as_deref()).ok_or_else(|| {
+            let s3_region = s3_region.ok_or_else(|| {
                 SuccinctZkProverBuildError::config("cluster backend requires CLI_S3_REGION")
             })?;
             configs.push((
@@ -493,11 +494,11 @@ mod tests {
         assert!(rpc.is_none());
 
         config.s3_bucket = Some("bucket".to_owned());
+        config.s3_region = Some("region".to_owned());
         assert!(config.backend_configs().is_err());
 
         set_rpc_config(&mut config);
         config.cluster_rpc = Some("http://cluster".to_owned());
-        config.s3_region = Some("region".to_owned());
         config.network_private_key = Some("network-key".to_owned());
         let (configs, rpc) = config.backend_configs().unwrap();
         assert_eq!(
