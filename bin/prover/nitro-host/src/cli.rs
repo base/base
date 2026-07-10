@@ -171,10 +171,6 @@ struct ServerArgs {
     #[command(flatten)]
     worker: WorkerArgs,
 
-    /// Socket address for the registrar-facing signer JSON-RPC API.
-    #[arg(long, env = "LISTEN_ADDR", default_value = "0.0.0.0:8000")]
-    listen_addr: SocketAddr,
-
     /// Vsock CID(s) of the enclave(s), comma-separated for multi-enclave mode.
     #[arg(long, env = "VSOCK_CID", value_delimiter = ',')]
     vsock_cid: Vec<u32>,
@@ -184,6 +180,10 @@ struct ServerArgs {
 #[cfg(all(feature = "worker", any(target_os = "linux", feature = "local")))]
 #[derive(Parser)]
 struct WorkerArgs {
+    /// Socket address for the registrar-facing signer JSON-RPC API.
+    #[arg(long, env = "LISTEN_ADDR", default_value = "0.0.0.0:8000")]
+    listen_addr: SocketAddr,
+
     /// Prover-service JSON-RPC endpoint.
     #[arg(long, env = "PROVER_SERVICE_ENDPOINT")]
     prover_service_endpoint: String,
@@ -302,15 +302,7 @@ impl ServerArgs {
         let transports = vsock_transports(&self.vsock_cid);
 
         info!(cids = ?self.vsock_cid, "configured vsock CIDs");
-        run_worker(
-            self.runtime,
-            self.worker,
-            transports,
-            WorkerTransportMode::Vsock,
-            Some(self.listen_addr),
-            cancel,
-        )
-        .await
+        run_worker(self.runtime, self.worker, transports, WorkerTransportMode::Vsock, cancel).await
     }
 }
 
@@ -382,8 +374,7 @@ impl LocalArgs {
         }
 
         let transports = local_transports(self.local_enclave_count)?;
-        run_worker(self.runtime, self.worker, transports, WorkerTransportMode::Local, None, cancel)
-            .await
+        run_worker(self.runtime, self.worker, transports, WorkerTransportMode::Local, cancel).await
     }
 }
 
@@ -408,7 +399,6 @@ async fn run_worker(
     worker: WorkerArgs,
     transports: Vec<Arc<NitroTransport>>,
     transport_mode: WorkerTransportMode,
-    registrar_listen_addr: Option<SocketAddr>,
     cancel: CancellationToken,
 ) -> eyre::Result<()> {
     let registration_health = runtime.registration_health_config();
@@ -446,8 +436,6 @@ async fn run_worker(
             .with_registration_checker(Arc::clone(checker))
             .map_err(|e| eyre!("registration checker init failed: {e}"))?;
     }
-    let registrar_transports = pool.transports();
-
     let prover_service = ProverServiceClientConfig::new(worker.prover_service_endpoint.clone())
         .with_request_timeout(Duration::from_secs(worker.prover_service_request_timeout_secs));
 
@@ -457,6 +445,7 @@ async fn run_worker(
         Duration::from_secs(worker.proof_generator_heartbeat_interval_secs),
         worker.proof_generator_heartbeat_lock_duration_seconds,
     );
+    let transports = pool.transports();
     let proof_generator = Arc::new(ProofGenerator::new(Arc::new(pool), submitter, heartbeat));
     let worker_id = format!("nitro-host-{}", Uuid::new_v4());
     let discovery_config = JobDiscoveryConfig::new(worker_id.clone())
@@ -464,18 +453,12 @@ async fn run_worker(
         .with_lock_duration_seconds(worker.job_discovery_lock_duration_seconds)
         .with_max_concurrent_jobs(worker.job_discovery_max_concurrent_jobs);
     let discovery = JobDiscovery::new(client, proof_generator, discovery_config);
-    let registrar_handle = if let Some(addr) = registrar_listen_addr {
-        Some(
-            NitroProverServer::run_registrar_rpc_server(
-                addr,
-                registrar_transports,
-                registration_checker,
-            )
-            .await?,
-        )
-    } else {
-        None
-    };
+    let registrar_handle = NitroProverServer::run_registrar_rpc_server(
+        worker.listen_addr,
+        transports,
+        registration_checker,
+    )
+    .await?;
 
     match transport_mode {
         #[cfg(target_os = "linux")]
@@ -497,10 +480,8 @@ async fn run_worker(
         }
     }
     discovery.run_until_cancelled(cancel).await;
-    if let Some(handle) = registrar_handle {
-        let _ = handle.stop();
-        handle.stopped().await;
-    }
+    let _ = registrar_handle.stop();
+    registrar_handle.stopped().await;
     Ok(())
 }
 

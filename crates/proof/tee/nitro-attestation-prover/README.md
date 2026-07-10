@@ -65,8 +65,9 @@ on-chain configuration is updated.
 
 - **`error`** — [`ProverError`] enum covering verification, risc0, and
   Boundless failures.
-- **`types`** — [`AttestationProof`] output type and
-  [`AttestationProofProvider`] trait.
+- Shared proof output types and provider traits live in
+  [`base-proof-tee-attestation`] as [`TeeAttestationProof`] and
+  [`TeeAttestationProofProvider`].
 - **`direct`** — [`DirectProver`] implementation using `default_prover()`.
 - **`boundless`** — [`BoundlessProver`] implementation using the Boundless
   marketplace.

@@ -25,7 +25,7 @@ pub(crate) async fn fetch_safe_head_hash<O>(
     agreed_l2_output_root: B256,
 ) -> Result<B256, OracleProviderError>
 where
-    O: CommsClient,
+    O: CommsClient + Sync,
 {
     let mut output_preimage = [0u8; 128];
     HintType::StartingL2Output

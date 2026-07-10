@@ -4,7 +4,7 @@ use async_trait::async_trait;
 
 use crate::{
     PreimageKey,
-    errors::{ChannelResult, PreimageOracleResult, WitnessOracleResult},
+    errors::{ChannelResult, PreimageOracleError, PreimageOracleResult, WitnessOracleResult},
 };
 
 /// A [`PreimageOracleClient`] is a high-level interface to read data from the host, keyed by a
@@ -25,7 +25,14 @@ pub trait PreimageOracleClient {
     /// # Returns
     /// - `Ok(())` if the data was successfully written into the buffer.
     /// - `Err(_)` if the data could not be written into the buffer.
-    async fn get_exact(&self, key: PreimageKey, buf: &mut [u8]) -> PreimageOracleResult<()>;
+    async fn get_exact(&self, key: PreimageKey, buf: &mut [u8]) -> PreimageOracleResult<()> {
+        let value = self.get(key).await?;
+        if value.len() != buf.len() {
+            return Err(PreimageOracleError::BufferLengthMismatch(value.len(), buf.len()));
+        }
+        buf.copy_from_slice(&value);
+        Ok(())
+    }
 }
 
 /// A [`HintWriterClient`] is a high-level interface to the hint pipe. It provides a way to write
@@ -129,7 +136,9 @@ pub trait WitnessOracle: Send + Sync {
     fn insert_preimage(&self, key: PreimageKey, value: &[u8]) -> WitnessOracleResult<()>;
 
     /// Finalize the oracle, signaling that no more preimages will be inserted.
-    fn finalize(&self) -> WitnessOracleResult<()>;
+    fn finalize(&self) -> WitnessOracleResult<()> {
+        Ok(())
+    }
 
     /// Return the number of preimages currently held by the oracle.
     fn preimage_count(&self) -> WitnessOracleResult<usize>;

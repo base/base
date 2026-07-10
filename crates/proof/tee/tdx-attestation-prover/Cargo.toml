@@ -1,0 +1,44 @@
+[package]
+name = "base-proof-tee-tdx-attestation-prover"
+description = "ZK attestation prover for Intel TDX quote registration journals"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Verification and shared proof model
+base-proof-tee-attestation.workspace = true
+base-proof-tee-tdx-verifier.workspace = true
+
+# Types / traits
+async-trait.workspace = true
+alloy-sol-types.workspace = true
+alloy-primitives = { workspace = true, default-features = false }
+
+# Error
+thiserror.workspace = true
+
+# Proving backends
+url = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+risc0-zkvm = { workspace = true, optional = true }
+boundless-market = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["rt"], optional = true }
+
+[dev-dependencies]
+rstest.workspace = true
+
+[features]
+prove = [
+	"dep:boundless-market",
+	"dep:risc0-zkvm",
+	"dep:tokio",
+	"dep:tracing",
+	"dep:url",
+]

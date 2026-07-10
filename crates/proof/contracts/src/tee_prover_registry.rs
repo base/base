@@ -54,6 +54,12 @@ sol! {
         /// whether its image hash matches the current expected value.
         function isRegisteredSigner(address signer) external view returns (bool);
 
+        /// Returns the image hash stored for a registered signer.
+        function signerImageHash(address signer) external view returns (bytes32);
+
+        /// Returns the expected TDX TEE image hash from the current `AggregateVerifier`.
+        function getExpectedTDXImageHash() external view returns (bytes32);
+
         /// Returns all currently registered signer addresses.
         function getRegisteredSigners() external view returns (address[]);
     }

@@ -170,7 +170,7 @@ impl Host {
         W: WitnessOracle + std::fmt::Debug + 'static,
     {
         let _timer = base_metrics::timed!(Metrics::replay_duration_seconds());
-        let driver =
+        let (_, driver) =
             Prologue::new(recording.clone(), recording, BaseEvmFactory::default()).load().await?;
         let epilogue = driver.execute().await?;
         epilogue.validate().map_err(|e| *e)?;

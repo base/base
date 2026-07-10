@@ -16,15 +16,15 @@ use base_balance_monitor::BalanceMonitorLayer;
 use base_cli_utils::RuntimeManager;
 use base_health::HealthServer;
 use base_proof_contracts::{NitroEnclaveVerifierContractClient, TEEProverRegistryContractClient};
-use base_proof_tee_nitro_attestation_prover::BoundlessProver;
 use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use url::Url;
 
 use crate::{
-    AwsTargetGroupDiscovery, CertManager, DriverConfig, ProverClient, RegistrarError,
-    RegistrarMetrics, RegistrationDriver, Result, SignerManager, SignerManagerConfig,
+    AwsTargetGroupDiscovery, CertManager, DriverConfig, GcpNodePoolDiscovery,
+    PlatformProofProvider, ProverClient, RegistrarError, RegistrarMetrics, RegistrationDriver,
+    Result, SignerManager, SignerManagerConfig,
 };
 
 const CRL_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
@@ -39,14 +39,30 @@ pub struct RegistrarConfig {
     pub target_group_arn: String,
     /// AWS region.
     pub aws_region: String,
+    /// GCP project ID for TDX prover node pool discovery.
+    pub gcp_project: String,
+    /// GCP location for the GKE cluster.
+    pub gcp_location: String,
+    /// GKE cluster name containing the TDX prover node pool.
+    pub gcp_cluster: String,
+    /// GKE node pool name for TDX prover node discovery.
+    pub gcp_node_pool: String,
+    /// Optional GCP `OAuth` access token. If unset, the GCP metadata server is used.
+    pub gcp_access_token: Option<String>,
     /// JSON-RPC port to poll on each prover instance.
     pub prover_port: u16,
     /// L1 transaction signer.
     pub signing: SignerConfig,
     /// Transaction manager configuration.
     pub tx_manager_config: TxManagerConfig,
-    /// Boundless prover client configuration.
-    pub boundless_prover: BoundlessProver,
+    /// Platform-routed Boundless proof provider configuration.
+    pub proof_provider: PlatformProofProvider,
+    /// Boundless Network RPC URL used for fee-wallet balance monitoring.
+    pub boundless_rpc_url: Url,
+    /// Boundless fee wallet address used for balance monitoring.
+    pub boundless_signer_address: Address,
+    /// Maximum proof attestation age accepted before onchain submission.
+    pub max_attestation_age: Duration,
     /// Interval between discovery and registration poll cycles.
     pub poll_interval: Duration,
     /// Timeout for JSON-RPC calls to prover instances.
@@ -78,10 +94,17 @@ impl fmt::Debug for RegistrarConfig {
             .field("tee_prover_registry_address", &self.tee_prover_registry_address)
             .field("target_group_arn", &self.target_group_arn)
             .field("aws_region", &self.aws_region)
+            .field("gcp_project", &self.gcp_project)
+            .field("gcp_location", &self.gcp_location)
+            .field("gcp_cluster", &self.gcp_cluster)
+            .field("gcp_node_pool", &self.gcp_node_pool)
+            .field("gcp_access_token", &self.gcp_access_token.as_ref().map(|_| "<redacted>"))
             .field("prover_port", &self.prover_port)
             .field("signing", &self.signing)
             .field("tx_manager_config", &self.tx_manager_config)
-            .field("boundless_prover", &self.boundless_prover)
+            .field("boundless_rpc_url", &self.boundless_rpc_url.origin().unicode_serialization())
+            .field("boundless_signer_address", &self.boundless_signer_address)
+            .field("max_attestation_age", &self.max_attestation_age)
             .field("poll_interval", &self.poll_interval)
             .field("prover_timeout", &self.prover_timeout)
             .field("max_concurrency", &self.max_concurrency)
@@ -149,16 +172,15 @@ impl RegistrarConfig {
                 }
             }));
 
-            let boundless_address = self.boundless_prover.signer.address();
             let (boundless_layer, mut boundless_balance_rx) = BalanceMonitorLayer::new(
-                boundless_address,
+                self.boundless_signer_address,
                 cancel.clone(),
                 BalanceMonitorLayer::DEFAULT_POLL_INTERVAL,
             );
             // The balance monitor layer starts polling when it is applied.
             let _boundless_provider = ProviderBuilder::new()
                 .layer(boundless_layer)
-                .connect_http(self.boundless_prover.rpc_url.clone());
+                .connect_http(self.boundless_rpc_url.clone());
             let boundless_balance_cancel = cancel.clone();
             balance_monitor_handles.push(tokio::spawn(async move {
                 loop {
@@ -202,8 +224,17 @@ impl RegistrarConfig {
             .region(aws_config::Region::new(self.aws_region))
             .load()
             .await;
-        let discovery =
-            AwsTargetGroupDiscovery::new(&aws_config, self.target_group_arn, self.prover_port);
+        let discovery = (
+            AwsTargetGroupDiscovery::new(&aws_config, self.target_group_arn, self.prover_port),
+            GcpNodePoolDiscovery::new(
+                self.gcp_project,
+                self.gcp_location,
+                self.gcp_cluster,
+                self.gcp_node_pool,
+                self.prover_port,
+                self.gcp_access_token,
+            ),
+        );
 
         let registry = TEEProverRegistryContractClient::new(
             self.tee_prover_registry_address,
@@ -214,9 +245,8 @@ impl RegistrarConfig {
         let health_handle =
             tokio::spawn(HealthServer::serve(self.health_addr, Arc::clone(&ready), cancel.clone()));
 
-        let max_attestation_age = self.boundless_prover.max_attestation_age;
         let signer_manager = Arc::new(SignerManager::new(
-            self.boundless_prover,
+            self.proof_provider,
             registry,
             tx_manager.clone(),
             SignerManagerConfig {
@@ -224,7 +254,7 @@ impl RegistrarConfig {
                 max_concurrency: self.max_concurrency,
                 max_tx_retries: self.max_tx_retries,
                 tx_retry_delay: self.tx_retry_delay,
-                max_attestation_age,
+                max_attestation_age: self.max_attestation_age,
             },
         ));
         let cert_manager = if let Some(nitro_verifier_address) = self.crl_nitro_verifier_address {
@@ -288,10 +318,26 @@ impl RegistrarConfig {
 
 #[cfg(test)]
 mod tests {
-    use base_proof_tee_nitro_attestation_prover::BoundlessProverConfig;
+    use async_trait::async_trait;
+    use base_proof_tee_attestation::{
+        Result as AttestationResult, TeeAttestationProof, TeeAttestationProofProvider,
+    };
 
     use super::*;
     use crate::test_utils::TEST_REGISTRY_ADDRESS;
+
+    struct NoopProofProvider;
+
+    #[async_trait]
+    impl TeeAttestationProofProvider for NoopProofProvider {
+        async fn generate_proof_for_signer(
+            &self,
+            _attestation_bytes: &[u8],
+            _signer_address: Address,
+        ) -> AttestationResult<TeeAttestationProof> {
+            unreachable!("NoopProofProvider does not generate proofs")
+        }
+    }
 
     #[test]
     fn debug_redacts_l1_rpc_url_path() {
@@ -302,6 +348,11 @@ mod tests {
             target_group_arn: "arn:aws:elasticloadbalancing:us-east-1:123:targetgroup/test/abc"
                 .to_string(),
             aws_region: "us-east-1".to_string(),
+            gcp_project: "base-project".to_string(),
+            gcp_location: "us-central1".to_string(),
+            gcp_cluster: "tee-provers".to_string(),
+            gcp_node_pool: "tdx-provers".to_string(),
+            gcp_access_token: Some("GCP_SECRET".to_string()),
             prover_port: 8000,
             signing: SignerConfig::local(
                 "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
@@ -309,25 +360,10 @@ mod tests {
                     .unwrap(),
             ),
             tx_manager_config: TxManagerConfig::default(),
-            boundless_prover: BoundlessProver::new(BoundlessProverConfig {
-                rpc_url: Url::parse("https://boundless.example/v3/BOUNDLESS_SECRET").unwrap(),
-                signer: "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
-                    .parse()
-                    .unwrap(),
-                verifier_program_url: Url::parse("https://program.example/ipfs/PROGRAM_SECRET")
-                    .unwrap(),
-                image_id: [0; 8],
-                poll_interval: Duration::from_secs(1),
-                timeout: Duration::from_secs(1),
-                max_recovery_attempts: 1,
-                max_attestation_age: Duration::from_secs(1),
-                offer_min_price: None,
-                offer_max_price: None,
-                offer_ramp_up_period_secs: None,
-                offer_lock_timeout_secs: None,
-                offer_bidding_start_delay_secs: 0,
-            })
-            .unwrap(),
+            proof_provider: PlatformProofProvider::new(NoopProofProvider, NoopProofProvider),
+            boundless_rpc_url: Url::parse("https://boundless.example/v3/BOUNDLESS_SECRET").unwrap(),
+            boundless_signer_address: Address::repeat_byte(0x02),
+            max_attestation_age: Duration::from_secs(1),
             poll_interval: Duration::from_secs(1),
             prover_timeout: Duration::from_secs(1),
             max_concurrency: 1,
@@ -344,6 +380,11 @@ mod tests {
         let debug = format!("{config:?}");
 
         assert!(!debug.contains(api_key), "L1 RPC URL path must not appear in Debug output");
+        assert!(!debug.contains("GCP_SECRET"), "GCP access token must not appear in Debug output");
+        assert!(
+            !debug.contains("BOUNDLESS_SECRET"),
+            "Boundless RPC URL path must not appear in Debug output"
+        );
         assert!(debug.contains("mainnet.infura.io"), "L1 RPC host should still be visible");
     }
 }

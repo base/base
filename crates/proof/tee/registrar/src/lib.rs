@@ -8,7 +8,7 @@ mod crl;
 pub use crl::{CertCrlInfo, CrlError, check_chain_against_crls};
 
 mod discovery;
-pub use discovery::AwsTargetGroupDiscovery;
+pub use discovery::{AwsTargetGroupDiscovery, GcpNodePoolDiscovery};
 
 mod driver;
 pub use driver::{
@@ -24,6 +24,9 @@ pub use metrics::RegistrarMetrics;
 
 mod prover;
 pub use prover::ProverClient;
+
+mod proof_provider;
+pub use proof_provider::PlatformProofProvider;
 
 mod signer_manager;
 pub use signer_manager::{

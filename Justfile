@@ -6,7 +6,7 @@
 [private]
 _skip_kernels := if os() == "macos" { "RISC0_SKIP_BUILD_KERNELS=1" } else { "" }
 
-set positional-arguments := true
+set positional-arguments
 
 mod tee 'crates/proof/tee'
 mod actions 'actions'
@@ -166,3 +166,7 @@ bench-proof-mpt:
 # Run basectl TUI dashboard
 basectl:
     cargo run -p basectl --release -- monitor
+
+# Run local Nitro+TDX proof workers, prover-service, and proposer against Base Sepolia.
+sepolia-tdx-dev-offchain:
+    etc/scripts/local/sepolia-tdx-dev-offchain.sh

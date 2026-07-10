@@ -1,0 +1,19 @@
+[workspace]
+
+[package]
+name = "base-proof-tee-tdx-attestation-prover-guest"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+base-proof-tee-tdx-verifier = { path = "../../tdx-verifier" }
+alloy-sol-types = { version = "1.6.0", default-features = false }
+risc0-zkvm = { version = "=3.0.5", default-features = false, features = ["std"] }
+
+[lints.rust]
+missing-docs = "warn"
+unused-must-use = "deny"
+rust-2018-idioms = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

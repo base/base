@@ -71,8 +71,8 @@ pub struct ProofRequest {
     pub l1_head_number: u64,
     /// Keccak256 hash of the expected enclave PCR0 measurement.
     ///
-    /// Used by multi-enclave provers to select the enclave whose PCR0
-    /// matches the on-chain `TEE_IMAGE_HASH`. Single-enclave provers
+    /// Used by multi-enclave provers to select the enclave whose measurements
+    /// match the on-chain type-specific TEE image hash. Single-enclave provers
     /// accept and ignore this field.
     #[cfg_attr(feature = "serde", serde(default))]
     pub image_hash: B256,

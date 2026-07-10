@@ -15,5 +15,8 @@ pub use epilogue::Epilogue;
 mod prologue;
 pub use prologue::Prologue;
 
+mod tee_proposals;
+pub use tee_proposals::TeeProposals;
+
 mod driver;
 pub use driver::FaultProofDriver;

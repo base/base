@@ -86,7 +86,9 @@ impl TryFrom<ProofJob> for ProofGeneratorRequest {
         let ProofRequestKind::Tee(tee) = job.request.request else {
             return Err(ProofGeneratorError::UnsupportedProofRequest { session_id });
         };
-        let TeeKind::AwsNitro = tee.tee_kind;
+        if tee.tee_kind != TeeKind::AwsNitro {
+            return Err(ProofGeneratorError::UnsupportedProofRequest { session_id });
+        }
 
         Ok(Self { session_id, lock_id, worker_id, proof: tee.proof })
     }

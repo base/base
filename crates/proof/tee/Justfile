@@ -286,6 +286,19 @@ describe-eif:
     docker run --rm --platform linux/amd64 {{ eif_describe_image }} \
         ./nitro-cli describe-eif --eif-path eif.bin
 
+# Build the TDX verifier guest and print its RISC Zero image ID
+[working-directory("tdx-attestation-prover/guest")]
+tdx-verifier-image-id:
+    cargo +risc0 build --release --target riscv32im-risc0-zkvm-elf --ignore-rust-version
+    RISC0_SKIP_BUILD_KERNELS=1 cargo run --quiet \
+        --manifest-path ../../nitro-attestation-prover/guest/tools/compute-image-id/Cargo.toml -- \
+        target/riscv32im-risc0-zkvm-elf/release/base-proof-tee-tdx-attestation-prover-guest \
+        --output target/base-proof-tee-tdx-attestation-prover-guest.r0bf
+
+# Inspect a TDX prover's signer and contract-compatible image hash
+tdx-image-hash endpoint *args="":
+    cargo run -q -p base-proof-tee-tdx-image-hash -- --endpoint "{{ endpoint }}" --verify-quote {{ args }}
+
 # Build twice and compare to verify reproducibility
 verify-reproducible:
     #!/usr/bin/env bash

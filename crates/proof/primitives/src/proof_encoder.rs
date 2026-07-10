@@ -1,6 +1,6 @@
-//! Proof encoding for the `AggregateVerifier` contract.
+//! TEE proof encoding for the `AggregateVerifier` contract.
 
-use alloc::{vec, vec::Vec};
+use alloc::vec::Vec;
 
 use alloy_primitives::{B256, Bytes, U256};
 use thiserror::Error;
@@ -28,7 +28,7 @@ pub enum CryptoError {
     InvalidVValue(u8),
 }
 
-/// Proof encoding utilities for aggregate verifier proofs.
+/// Proof encoding utilities for TEE proofs.
 #[derive(Debug)]
 pub struct ProofEncoder;
 
@@ -48,6 +48,30 @@ impl ProofEncoder {
         }
     }
 
+    fn encode(l1_origin: Option<(B256, u64)>, signatures: &[&[u8]]) -> Result<Bytes, CryptoError> {
+        let header_len = if l1_origin.is_some() { 64 } else { 0 };
+        let total_len = 1 + header_len + signatures.len() * ECDSA_SIGNATURE_LENGTH;
+
+        let mut buf = Vec::with_capacity(total_len);
+        buf.push(PROOF_TYPE_TEE);
+
+        if let Some((hash, number)) = l1_origin {
+            buf.extend_from_slice(hash.as_slice());
+            buf.extend_from_slice(&U256::from(number).to_be_bytes::<32>());
+        }
+
+        for &signature in signatures {
+            let signature: &[u8; ECDSA_SIGNATURE_LENGTH] = signature
+                .try_into()
+                .map_err(|_| CryptoError::InvalidSignatureLength(signature.len()))?;
+            buf.extend_from_slice(signature);
+            let v_index = buf.len() - 1;
+            buf[v_index] = Self::normalize_v(buf[v_index])?;
+        }
+
+        Ok(Bytes::from(buf))
+    }
+
     /// Encodes a TEE proof into the 130-byte format expected by
     /// `AggregateVerifier.initializeWithInitData()`.
     ///
@@ -63,26 +87,25 @@ impl ProofEncoder {
         l1_origin_hash: B256,
         l1_origin_number: u64,
     ) -> Result<Bytes, CryptoError> {
-        if signature.len() != ECDSA_SIGNATURE_LENGTH {
-            return Err(CryptoError::InvalidSignatureLength(signature.len()));
-        }
+        Self::encode(Some((l1_origin_hash, l1_origin_number)), &[signature])
+    }
 
-        let mut proof_data = vec![0u8; 1 + 32 + 32 + ECDSA_SIGNATURE_LENGTH];
-
-        // Byte 0: proof type (TEE = 0)
-        proof_data[0] = PROOF_TYPE_TEE;
-
-        // Bytes 1-32: L1 origin hash
-        proof_data[1..33].copy_from_slice(l1_origin_hash.as_slice());
-
-        // Bytes 33-64: L1 origin number as 32-byte big-endian uint256
-        proof_data[33..65].copy_from_slice(&U256::from(l1_origin_number).to_be_bytes::<32>());
-
-        // Bytes 65-129: ECDSA signature with v-value adjusted from 0/1 to 27/28
-        proof_data[65..130].copy_from_slice(&signature[..ECDSA_SIGNATURE_LENGTH]);
-        proof_data[129] = Self::normalize_v(proof_data[129])?;
-
-        Ok(Bytes::from(proof_data))
+    /// Encodes a dual-platform TEE proof for `AggregateVerifier.initializeWithInitData()`.
+    ///
+    /// Format: `proofType(1) + l1OriginHash(32) + l1OriginNumber(32) + nitroSignature(65) + tdxSignature(65)`.
+    ///
+    /// The v-value in each ECDSA signature is adjusted from 0/1 to 27/28 if needed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if either signature is not exactly 65 bytes or has an invalid v-value.
+    pub fn encode_dual_tee_proof_bytes(
+        nitro_signature: &[u8],
+        tdx_signature: &[u8],
+        l1_origin_hash: B256,
+        l1_origin_number: u64,
+    ) -> Result<Bytes, CryptoError> {
+        Self::encode(Some((l1_origin_hash, l1_origin_number)), &[nitro_signature, tdx_signature])
     }
 
     /// Encodes a TEE proof into the compact 66-byte format expected by
@@ -99,20 +122,21 @@ impl ProofEncoder {
     ///
     /// Returns an error if the signature is not exactly 65 bytes or has an invalid v-value.
     pub fn encode_dispute_proof_bytes(signature: &[u8]) -> Result<Bytes, CryptoError> {
-        if signature.len() != ECDSA_SIGNATURE_LENGTH {
-            return Err(CryptoError::InvalidSignatureLength(signature.len()));
-        }
+        Self::encode(None, &[signature])
+    }
 
-        let mut proof_data = vec![0u8; 1 + ECDSA_SIGNATURE_LENGTH];
-
-        // Byte 0: proof type (TEE = 0)
-        proof_data[0] = PROOF_TYPE_TEE;
-
-        // Bytes 1-65: ECDSA signature with v-value adjusted from 0/1 to 27/28
-        proof_data[1..66].copy_from_slice(&signature[..ECDSA_SIGNATURE_LENGTH]);
-        proof_data[65] = Self::normalize_v(proof_data[65])?;
-
-        Ok(Bytes::from(proof_data))
+    /// Encodes a compact dual-platform TEE proof for dispute-game entry points.
+    ///
+    /// Format: `proofType(1) + nitroSignature(65) + tdxSignature(65)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if either signature is not exactly 65 bytes or has an invalid v-value.
+    pub fn encode_dual_tee_dispute_proof_bytes(
+        nitro_signature: &[u8],
+        tdx_signature: &[u8],
+    ) -> Result<Bytes, CryptoError> {
+        Self::encode(None, &[nitro_signature, tdx_signature])
     }
 
     /// Encodes raw ZK proof bytes into the compact format expected by dispute game entry points.
@@ -177,7 +201,7 @@ mod tests {
     }
 
     #[rstest]
-    #[case::invalid_v(vec![0xAB; 64].into_iter().chain(core::iter::once(5)).collect::<Vec<_>>(), "invalid ECDSA v-value")]
+    #[case::invalid_v(test_signature(5).to_vec(), "invalid ECDSA v-value")]
     #[case::short_signature(vec![0u8; 32], "invalid signature length")]
     #[case::oversized_signature(vec![0u8; 70], "invalid signature length")]
     fn test_encode_proof_bytes_errors(#[case] sig: Vec<u8>, #[case] expected_err: &str) {
@@ -186,7 +210,26 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains(expected_err));
     }
 
-    // --- encode_dispute_proof_bytes tests ---
+    #[test]
+    fn test_encode_dual_tee_proof_bytes_format() {
+        let nitro_sig = test_signature(0);
+        let tdx_sig = test_signature(1);
+        let proof = ProofEncoder::encode_dual_tee_proof_bytes(
+            &nitro_sig,
+            &tdx_sig,
+            B256::repeat_byte(0xCC),
+            500,
+        )
+        .unwrap();
+
+        assert_eq!(proof.len(), 195);
+        assert_eq!(proof[0], PROOF_TYPE_TEE);
+        assert_eq!(&proof[1..33], B256::repeat_byte(0xCC).as_slice());
+        assert_eq!(&proof[33..65], &U256::from(500u64).to_be_bytes::<32>());
+        assert_eq!(&proof[65..129], &nitro_sig[..64]);
+        assert_eq!(&proof[130..194], &tdx_sig[..64]);
+        assert_eq!((proof[129], proof[194]), (27, 28));
+    }
 
     #[test]
     fn test_encode_dispute_proof_bytes_format() {
@@ -201,9 +244,7 @@ mod tests {
         let mut raw_sig = vec![0xAB; 65];
         raw_sig[64] = 1;
         let proof = ProofEncoder::encode_dispute_proof_bytes(&raw_sig).unwrap();
-        // r and s should be preserved
         assert_eq!(&proof[1..65], &raw_sig[..64]);
-        // v should be adjusted from 1 to 28
         assert_eq!(proof[65], 28);
     }
 
@@ -219,13 +260,26 @@ mod tests {
     }
 
     #[rstest]
-    #[case::invalid_v(vec![0xAB; 64].into_iter().chain(core::iter::once(5)).collect::<Vec<_>>(), "invalid ECDSA v-value")]
+    #[case::invalid_v(test_signature(5).to_vec(), "invalid ECDSA v-value")]
     #[case::short_signature(vec![0u8; 32], "invalid signature length")]
     #[case::oversized_signature(vec![0u8; 70], "invalid signature length")]
     fn test_encode_dispute_proof_bytes_errors(#[case] sig: Vec<u8>, #[case] expected_err: &str) {
         let result = ProofEncoder::encode_dispute_proof_bytes(&sig);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains(expected_err));
+    }
+
+    #[test]
+    fn test_encode_dual_tee_dispute_proof_bytes_format() {
+        let nitro_sig = test_signature(0);
+        let tdx_sig = test_signature(1);
+        let proof =
+            ProofEncoder::encode_dual_tee_dispute_proof_bytes(&nitro_sig, &tdx_sig).unwrap();
+
+        assert_eq!(proof.len(), 131);
+        assert_eq!(proof[0], PROOF_TYPE_TEE);
+        assert_eq!(proof[65], 27);
+        assert_eq!(proof[130], 28);
     }
 
     #[test]

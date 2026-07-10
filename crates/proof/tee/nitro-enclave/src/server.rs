@@ -1,15 +1,14 @@
 /// Enclave server — manages keys, attestation, signing, and proof execution.
 use std::sync::LazyLock;
 
-use alloy_primitives::{Address, B256, Bytes, keccak256, map::HashMap};
+use alloy_primitives::{Address, B256, keccak256, map::HashMap};
 use alloy_signer_local::PrivateKeySigner;
 use base_common_chains::ChainConfig;
 use base_common_evm::BaseEvmFactory;
 use base_common_genesis::RollupConfig;
-use base_proof::BootInfo;
-use base_proof_client::Prologue;
+use base_proof_client::{Prologue, TeeProposals};
 use base_proof_preimage::PreimageKey;
-use base_proof_primitives::{PerChainConfig, ProofJournal, ProofResult, Proposal};
+use base_proof_primitives::{PerChainConfig, ProofResult};
 use tracing::info;
 
 use crate::{
@@ -145,109 +144,32 @@ impl Server {
         preimages: impl IntoIterator<Item = (PreimageKey, Vec<u8>)>,
     ) -> Result<ProofResult> {
         let oracle = Oracle::new(preimages)?;
-
-        let boot_info =
-            BootInfo::load(&oracle).await.map_err(|e| NitroError::ProofPipeline(e.to_string()))?;
-        let config_hash = config_hash_for_chain(boot_info.chain_id)?;
-        let agreed_l2_output_root = boot_info.agreed_l2_output_root;
-
         let prologue = Prologue::new(oracle.clone(), oracle, BaseEvmFactory::default());
-        let driver = prologue.load().await.map_err(|e| NitroError::ProofPipeline(e.to_string()))?;
+        let (boot_info, driver) =
+            prologue.load().await.map_err(|e| NitroError::ProofPipeline(e.to_string()))?;
+        let config_hash = config_hash_for_chain(boot_info.chain_id)?;
         let (epilogue, block_results) = driver
             .execute_with_intermediates()
             .await
             .map_err(|e| NitroError::ProofPipeline(e.to_string()))?;
 
-        if block_results.is_empty() {
-            return Err(ProposalError::EmptyProposals.into());
-        }
-
         // Trust-critical: validate final output root against claim
         epilogue.validate().map_err(|e| NitroError::ProofPipeline(e.to_string()))?;
 
-        let mut proposals = Vec::with_capacity(block_results.len());
-        let mut prev_output_root = agreed_l2_output_root;
-
-        let l1_origin_hash = boot_info.l1_head;
-        let l1_origin_number = boot_info.l1_head_number;
-        for (l2_info, output_root) in &block_results {
-            let l2_block_number = l2_info.block_info.number;
-
-            let journal = ProofJournal {
-                proposer: boot_info.proposer,
-                l1_origin_hash,
-                prev_output_root,
-                starting_l2_block: l2_block_number
-                    .checked_sub(1)
-                    .ok_or_else(|| NitroError::ProofPipeline("l2_block_number is 0".into()))?,
-                output_root: *output_root,
-                ending_l2_block: l2_block_number,
-                intermediate_roots: vec![],
-                config_hash,
-                tee_image_hash: self.tee_image_hash,
-            };
-            let signing_data = journal.encode();
-
-            let signature = Signing::sign(&self.signer_key, &signing_data)?;
-
-            proposals.push(Proposal {
-                output_root: *output_root,
-                signature: Bytes::from(signature.to_vec()),
-                l1_origin_hash,
-                l1_origin_number,
-                l2_block_number,
-                prev_output_root,
-                config_hash,
-            });
-
-            prev_output_root = *output_root;
-        }
-
-        let aggregate_proposal = if proposals.len() == 1 {
-            proposals[0].clone()
-        } else {
-            let first = &proposals[0];
-            let last = proposals.last().unwrap();
-
-            let interval = boot_info.intermediate_block_interval;
-            if interval == 0 {
-                return Err(ProposalError::InvalidInterval.into());
-            }
-            let interval = interval as usize;
-            let count = proposals.len() / interval;
-            let intermediate_roots: Vec<B256> =
-                (1..=count).map(|i| proposals[i * interval - 1].output_root).collect();
-
-            let journal = ProofJournal {
-                proposer: boot_info.proposer,
-                l1_origin_hash,
-                prev_output_root: agreed_l2_output_root,
-                starting_l2_block: first
-                    .l2_block_number
-                    .checked_sub(1)
-                    .ok_or_else(|| NitroError::ProofPipeline("l2_block_number is 0".into()))?,
-                output_root: last.output_root,
-                ending_l2_block: last.l2_block_number,
-                intermediate_roots,
-                config_hash,
-                tee_image_hash: self.tee_image_hash,
-            };
-            let signing_data = journal.encode();
-
-            let signature = Signing::sign(&self.signer_key, &signing_data)?;
-
-            Proposal {
-                output_root: last.output_root,
-                signature: Bytes::from(signature.to_vec()),
-                l1_origin_hash,
-                l1_origin_number,
-                l2_block_number: last.l2_block_number,
-                prev_output_root: agreed_l2_output_root,
-                config_hash,
-            }
-        };
-
-        Ok(ProofResult::Tee { aggregate_proposal, proposals })
+        TeeProposals::build(
+            &boot_info,
+            &block_results,
+            config_hash,
+            self.tee_image_hash,
+            |data| Signing::sign(&self.signer_key, data),
+            |message| match message {
+                TeeProposals::EMPTY_PROPOSALS_ERROR => ProposalError::EmptyProposals.into(),
+                TeeProposals::INTERMEDIATE_BLOCK_INTERVAL_ZERO_ERROR => {
+                    ProposalError::InvalidInterval.into()
+                }
+                _ => NitroError::ProofPipeline(message.into()),
+            },
+        )
     }
 }
 

@@ -8,6 +8,9 @@ The proposer reads L2, rollup, and L1 state, requests a TEE-signed proposal,
 verifies the output root locally, then submits through
 `DisputeGameFactory.createWithInitData()` for onchain verification.
 
+`BASE_PROPOSER_TEE_PROOF_MODE` controls which TEE proofs are required:
+`nitro` (default), `tdx`, or `both`.
+
 ### Game Tracking and Parent Selection
 
 Each dispute game references a parent game via `parent_address` in the factory.

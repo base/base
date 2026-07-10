@@ -21,11 +21,11 @@ use crate::{HintType, errors::OracleProviderError};
 
 /// An oracle-backed blob provider.
 #[derive(Debug, Clone)]
-pub struct OracleBlobProvider<T: CommsClient> {
+pub struct OracleBlobProvider<T: CommsClient + Sync> {
     oracle: Arc<T>,
 }
 
-impl<T: CommsClient> OracleBlobProvider<T> {
+impl<T: CommsClient + Sync> OracleBlobProvider<T> {
     /// Constructs a new `OracleBlobProvider`.
     pub const fn new(oracle: Arc<T>) -> Self {
         Self { oracle }

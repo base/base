@@ -2,10 +2,10 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod error;
+pub use base_proof_tee_attestation::{
+    TeeAttestationKind, TeeAttestationProof, TeeAttestationProofProvider,
+};
 pub use error::{ProverError, Result};
-
-mod types;
-pub use types::{AttestationProof, AttestationProofProvider};
 
 #[cfg(any(feature = "prove", feature = "metrics"))]
 mod metrics;
@@ -23,4 +23,4 @@ pub use direct::DirectProver;
 #[cfg(feature = "prove")]
 mod boundless;
 #[cfg(feature = "prove")]
-pub use boundless::{BoundlessProver, BoundlessProverConfig};
+pub use boundless::BoundlessProver;

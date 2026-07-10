@@ -23,12 +23,14 @@ alloy-primitives.workspace = true
 base-proof-driver.workspace = true
 base-proof-executor.workspace = true
 base-proof-preimage.workspace = true
+base-common-genesis.workspace = true
+base-proof-primitives.workspace = true
 base-common-consensus.workspace = true
 base-consensus-derive.workspace = true
-base-common-genesis.workspace = true
 
 [dev-dependencies]
 rstest.workspace = true
+alloy-genesis.workspace = true
 tokio = { workspace = true, features = ["full"] }
 
 [features]
@@ -42,6 +44,7 @@ std = [
 	"base-proof-driver/std",
 	"base-proof-executor/std",
 	"base-proof-preimage/std",
+	"base-proof-primitives/std",
 	"base-proof/std",
 	"base-protocol/std",
 	"spin/std",

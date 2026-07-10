@@ -43,7 +43,7 @@ where
     /// Returns an error if boot information cannot be loaded or pipeline initialization fails.
     pub async fn load(
         self,
-    ) -> Result<FaultProofDriver<P, H, BaseEvmFactory>, FaultProofProgramError> {
+    ) -> Result<(BootInfo, FaultProofDriver<P, H, BaseEvmFactory>), FaultProofProgramError> {
         const ORACLE_LRU_SIZE: usize = 1024;
 
         let oracle = Arc::new(CachingOracle::new(
@@ -54,8 +54,8 @@ where
         let boot = BootInfo::load(oracle.as_ref()).await?;
         let evm_factory =
             self.evm_factory.with_activation_admin_address(boot.activation_admin_address);
-        let l1_config = boot.l1_config;
-        let rollup_config = Arc::new(boot.rollup_config);
+        let l1_config = boot.l1_config.clone();
+        let rollup_config = Arc::new(boot.rollup_config.clone());
 
         let safe_head_hash =
             fetch_safe_head_hash(oracle.as_ref(), boot.agreed_l2_output_root).await?;
@@ -132,7 +132,7 @@ where
         )
         .await?;
 
-        Ok(FaultProofDriver::new(
+        let driver = FaultProofDriver::new(
             rollup_config,
             boot.claimed_l2_block_number,
             boot.claimed_l2_output_root,
@@ -140,7 +140,9 @@ where
             pipeline,
             l2_provider,
             evm_factory,
-        ))
+        );
+
+        Ok((boot, driver))
     }
 }
 
@@ -149,7 +151,7 @@ async fn fetch_safe_head_hash<O>(
     agreed_l2_output_root: B256,
 ) -> Result<B256, FaultProofProgramError>
 where
-    O: CommsClient,
+    O: CommsClient + Sync,
 {
     let mut output_preimage = [0u8; 128];
     HintType::StartingL2Output

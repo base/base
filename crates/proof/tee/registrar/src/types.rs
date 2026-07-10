@@ -1,17 +1,20 @@
 use std::time::SystemTime;
 
+use base_proof_tee_attestation::TeeAttestationKind;
 use url::Url;
 
 /// A prover instance discovered from the infrastructure layer.
 #[derive(Debug, Clone)]
 pub struct ProverInstance {
-    /// EC2 instance ID (e.g. `i-0abc123def456`).
+    /// Infrastructure instance ID (e.g. `i-0abc123def456` or a GCE instance name).
     pub instance_id: String,
     /// HTTP endpoint URL for the prover (e.g. `http://10.0.1.5:8000/`).
     pub endpoint: Url,
+    /// Attestation platform exposed by this prover.
+    pub attestation_kind: TeeAttestationKind,
     /// Current health status of the instance.
     pub health_status: InstanceHealthStatus,
-    /// EC2 launch time of the instance. Used to determine if recently-launched
+    /// Launch time of the instance. Used to determine if recently-launched
     /// unhealthy instances should still be eligible for registration.
     pub launch_time: Option<SystemTime>,
 }

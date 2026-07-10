@@ -14,7 +14,7 @@
 //! without external state.
 //!
 //! See [`BoundlessProver::derive_request_index`] and the
-//! [`generate_proof_for_signer`](AttestationProofProvider::generate_proof_for_signer)
+//! [`generate_proof_for_signer`](TeeAttestationProofProvider::generate_proof_for_signer)
 //! override on [`BoundlessProver`] for details.
 
 use std::{
@@ -25,25 +25,24 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256, Bytes, keccak256};
+use base_proof_tee_attestation::{TeeAttestationProof, TeeAttestationProofProvider};
 use base_proof_tee_nitro_verifier::{VerifierInput, VerifierJournal};
 // `boundless-market` re-exports `alloy` (`pub use alloy`) but does not
 // re-export `DynProvider` directly — access it via the SDK's alloy so
-// the type in our alias matches the one inside `Client`.
+// the type in `BoundlessClient` matches the one inside `Client`.
 use boundless_market::alloy::providers::DynProvider;
 use boundless_market::{
     Client, NotProvided,
     alloy::signers::local::PrivateKeySigner,
     contracts::{Predicate, RequestId, RequestStatus},
-    price_oracle::Amount,
-    request_builder::{OfferParams, RequestParams, RequirementParams, StandardRequestBuilder},
+    request_builder::{RequestParams, RequirementParams, StandardRequestBuilder},
 };
 use risc0_zkvm::sha::Digest;
 use tokio::sync::Mutex;
-use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 use url::Url;
 
-use crate::{AttestationProof, AttestationProofProvider, BoundlessMetrics, ProverError, Result};
+use crate::{BoundlessMetrics, ProverError, Result};
 
 const DEFAULT_TRUSTED_CERTS_PREFIX_LEN: u8 = 1;
 
@@ -62,69 +61,6 @@ type BoundlessClient = Client<
     StandardRequestBuilder<DynProvider, NotProvided, boundless_market::StandardDownloader>,
     PrivateKeySigner,
 >;
-
-/// Configuration for [`BoundlessProver`].
-pub struct BoundlessProverConfig {
-    /// Ethereum RPC URL for the Boundless settlement chain.
-    pub rpc_url: Url,
-    /// Signer for Boundless Network proving fees.
-    pub signer: PrivateKeySigner,
-    /// HTTP(S) URL where the guest ELF is hosted (e.g. a Pinata or Boundless IPFS gateway URL).
-    pub verifier_program_url: Url,
-    /// Expected image ID of the guest program.
-    pub image_id: [u32; 8],
-    /// Interval between fulfillment status checks.
-    pub poll_interval: Duration,
-    /// Maximum time to wait for proof fulfillment.
-    pub timeout: Duration,
-    /// Maximum number of deterministic request-ID slots to probe when
-    /// recovering in-flight proofs after an instance rotation.
-    pub max_recovery_attempts: u32,
-    /// Maximum age of an attestation timestamp for a recovered proof to
-    /// be considered fresh enough for on-chain submission.
-    pub max_attestation_age: Duration,
-    /// Optional minimum Boundless offer price for each submitted proof request.
-    /// Must be set together with [`offer_max_price`](Self::offer_max_price).
-    pub offer_min_price: Option<Amount>,
-    /// Optional maximum Boundless offer price for each submitted proof request.
-    /// Must be set together with [`offer_min_price`](Self::offer_min_price). When set, the
-    /// Boundless SDK uses it verbatim as the on-chain `maxPrice` and does not add the gas-cost
-    /// buffer it applies to SDK-derived max prices.
-    pub offer_max_price: Option<Amount>,
-    /// Optional duration in seconds for the Boundless offer price to
-    /// ramp from its min price to max price. May be set independently
-    /// of explicit min/max prices.
-    pub offer_ramp_up_period_secs: Option<u32>,
-    /// Optional maximum time, in seconds, that a prover that locks a
-    /// request has to deliver the proof before forfeiting its stake bond.
-    pub offer_lock_timeout_secs: Option<u32>,
-    /// Delay, in seconds, between request submission and the moment
-    /// bidding is allowed to begin (`Offer.rampUpStart`).
-    pub offer_bidding_start_delay_secs: u64,
-}
-
-impl fmt::Debug for BoundlessProverConfig {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("BoundlessProverConfig")
-            .field("rpc_url", &self.rpc_url.origin().unicode_serialization())
-            .field("signer", &self.signer.address())
-            .field(
-                "verifier_program_url",
-                &self.verifier_program_url.origin().unicode_serialization(),
-            )
-            .field("image_id", &self.image_id)
-            .field("poll_interval", &self.poll_interval)
-            .field("timeout", &self.timeout)
-            .field("max_recovery_attempts", &self.max_recovery_attempts)
-            .field("max_attestation_age", &self.max_attestation_age)
-            .field("offer_min_price", &self.offer_min_price)
-            .field("offer_max_price", &self.offer_max_price)
-            .field("offer_ramp_up_period_secs", &self.offer_ramp_up_period_secs)
-            .field("offer_lock_timeout_secs", &self.offer_lock_timeout_secs)
-            .field("offer_bidding_start_delay_secs", &self.offer_bidding_start_delay_secs)
-            .finish()
-    }
-}
 
 /// Attestation prover using the Boundless marketplace.
 ///
@@ -150,51 +86,17 @@ pub struct BoundlessProver {
     /// recovering in-flight proofs after an instance rotation.
     pub max_recovery_attempts: u32,
     /// Maximum age of an attestation timestamp for a recovered proof to
-    /// be considered fresh enough for on-chain submission. Proofs whose
+    /// be considered fresh enough for onchain submission. Proofs whose
     /// journal timestamp is older than this are skipped during recovery.
-    /// Should be set slightly below the on-chain `MAX_AGE` to account
+    /// Should be set slightly below the onchain `MAX_AGE` to account
     /// for clock skew and processing time.
     pub max_attestation_age: Duration,
-    /// Optional minimum Boundless offer price for each submitted proof request.
-    /// Must be set together with [`offer_max_price`](Self::offer_max_price).
-    pub offer_min_price: Option<Amount>,
-    /// Optional maximum Boundless offer price for each submitted proof request.
-    /// Must be set together with [`offer_min_price`](Self::offer_min_price). When set, the
-    /// Boundless SDK uses it verbatim as the on-chain `maxPrice` and does not add the gas-cost
-    /// buffer it applies to SDK-derived max prices.
-    pub offer_max_price: Option<Amount>,
-    /// Optional duration in seconds for the Boundless offer price to
-    /// ramp from its min price to max price. May be set independently
-    /// of explicit min/max prices. When unset the Boundless SDK derives
-    /// a cycle-count-based ramp; set to `0` to eliminate the ramp
-    /// entirely (max price offered immediately).
-    pub offer_ramp_up_period_secs: Option<u32>,
-    /// Optional maximum time, in seconds, that a prover that locks a
-    /// request has to deliver the proof before forfeiting its stake bond
-    /// and the request opening up to permissionless secondary
-    /// fulfillment. Also the deadline for any prover to lock the request
-    /// in the first place — locking and delivery share a single
-    /// deadline at `rampUpStart + lockTimeout`. When unset, the
-    /// Boundless SDK derives a recommended value from the program's
-    /// cycle count.
-    pub offer_lock_timeout_secs: Option<u32>,
-    /// Delay, in seconds, between request submission and the moment
-    /// bidding is allowed to begin (`Offer.rampUpStart`).
-    ///
-    /// Defaults to `0` so that bidding opens immediately at submission,
-    /// eliminating the SDK's default "pre-bid flat period" (visible on
-    /// the Boundless explorer as the gap before the price-ramp begins).
-    /// With `0`, the fastest prover can lock as soon as it finishes
-    /// executing — at the cost of fewer provers seeing the request
-    /// before lock. The value is added to the current wall-clock time
-    /// per request to produce `Offer.rampUpStart`.
-    pub offer_bidding_start_delay_secs: u64,
     /// Serialises the `submit_onchain` call so that concurrent proof
     /// requests do not race on the Boundless wallet nonce. The lock is
     /// released immediately after submission, allowing the long-running
     /// fulfillment poll to proceed concurrently.
     pub submit_lock: Arc<Mutex<()>>,
-    /// Signers whose recovered proofs have been rejected on-chain.
+    /// Signers whose recovered proofs have been rejected onchain.
     /// When a signer is in this set, recovery is skipped and a fresh
     /// proof is generated instead. Cleared on process restart, giving
     /// recovered proofs one new attempt after each restart.
@@ -216,37 +118,24 @@ impl fmt::Debug for BoundlessProver {
             .field("trusted_certs_prefix_len", &self.trusted_certs_prefix_len)
             .field("max_recovery_attempts", &self.max_recovery_attempts)
             .field("max_attestation_age", &self.max_attestation_age)
-            .field("offer_min_price", &self.offer_min_price)
-            .field("offer_max_price", &self.offer_max_price)
-            .field("offer_ramp_up_period_secs", &self.offer_ramp_up_period_secs)
-            .field("offer_lock_timeout_secs", &self.offer_lock_timeout_secs)
-            .field("offer_bidding_start_delay_secs", &self.offer_bidding_start_delay_secs)
             .finish()
     }
 }
 
 impl BoundlessProver {
-    /// Creates a Boundless prover.
-    pub fn new(config: BoundlessProverConfig) -> Result<Self> {
-        let BoundlessProverConfig {
-            rpc_url,
-            signer,
-            verifier_program_url,
-            image_id,
-            poll_interval,
-            timeout,
-            max_recovery_attempts,
-            max_attestation_age,
-            offer_min_price,
-            offer_max_price,
-            offer_ramp_up_period_secs,
-            offer_lock_timeout_secs,
-            offer_bidding_start_delay_secs,
-        } = config;
+    /// Creates a Boundless prover with default process-local recovery state.
+    pub fn new(
+        rpc_url: Url,
+        signer: PrivateKeySigner,
+        verifier_program_url: Url,
+        image_id: [u32; 8],
+        timing: (Duration, Duration),
+        max_recovery_attempts: u32,
+        max_attestation_age: Duration,
+    ) -> Self {
+        let (poll_interval, timeout) = timing;
 
-        Self::validate_offer_prices(&offer_min_price, &offer_max_price)?;
-
-        Ok(Self {
+        Self {
             rpc_url,
             signer,
             verifier_program_url,
@@ -256,32 +145,9 @@ impl BoundlessProver {
             trusted_certs_prefix_len: DEFAULT_TRUSTED_CERTS_PREFIX_LEN,
             max_recovery_attempts,
             max_attestation_age,
-            offer_min_price,
-            offer_max_price,
-            offer_ramp_up_period_secs,
-            offer_lock_timeout_secs,
-            offer_bidding_start_delay_secs,
             submit_lock: Arc::new(Mutex::new(())),
             recovery_blocked: Arc::new(std::sync::Mutex::new(HashSet::new())),
-        })
-    }
-
-    fn validate_offer_prices(min_price: &Option<Amount>, max_price: &Option<Amount>) -> Result<()> {
-        match (min_price, max_price) {
-            (Some(min_price), Some(max_price)) if max_price.value < min_price.value => {
-                return Err(ProverError::Config(
-                    "offer_max_price must be greater than or equal to offer_min_price".into(),
-                ));
-            }
-            (Some(_), None) | (None, Some(_)) => {
-                return Err(ProverError::Config(
-                    "offer_min_price and offer_max_price must be set together".into(),
-                ));
-            }
-            _ => {}
         }
-
-        Ok(())
     }
 
     /// Derives a deterministic `u32` index for a Boundless request ID
@@ -314,162 +180,25 @@ impl BoundlessProver {
     /// against upstream formatting changes.
     fn is_request_not_locked_error(e: &dyn std::error::Error) -> bool {
         const NEEDLE: &str = "requestisnotlocked";
-        let display = format!("{e}");
-        if display.to_ascii_lowercase().contains(NEEDLE) {
-            return true;
-        }
-        let debug = format!("{e:?}");
-        debug.to_ascii_lowercase().contains(NEEDLE)
+        format!("{e}{e:?}").to_ascii_lowercase().contains(NEEDLE)
     }
 
-    /// Checks whether an error from the Boundless SDK is the
-    /// [`MarketError::ProofNotFound`](boundless_market::contracts::boundless_market::MarketError::ProofNotFound)
-    /// variant, raised when an event-log scan for a fulfilled request
-    /// finishes without finding the `ProofDelivered` event.
-    ///
-    /// This is a **terminal** outcome of one event scan, not a
-    /// transient RPC blip: it means the SDK's default
-    /// `EventQueryConfig.block_range` × `max_iterations` window did
-    /// not reach the block where the request was fulfilled. Retrying
-    /// the same call with the same parameters will keep scanning the
-    /// same recent window and keep returning the same error, just with
-    /// the upper bound creeping forward as the chain head moves.
-    ///
-    /// In the registrar's recovery path this overwhelmingly means the
-    /// fulfilled proof is older than [`Self::max_attestation_age`] (and
-    /// would be rejected by [`Self::is_journal_fresh`] anyway). The
-    /// caller should short-circuit the receipt-fetch retry loop and
-    /// move on to the next deterministic slot or fall through to a
-    /// fresh submission.
-    ///
-    /// As with [`Self::is_request_not_locked_error`], we string-match
-    /// rather than pattern-match the typed variant so the SDK can
-    /// rewrap the error in opaque outer types (e.g.
-    /// `ClientError::MarketError`) without breaking detection. Both
-    /// `Display` (`"Proof not found for request 0x… in events logs
-    /// after searching from block N to block M …"`) and `Debug`
-    /// (`"ProofNotFound(0x…, N, M)"`) representations are searched
-    /// case-insensitively.
+    /// Checks whether a Boundless receipt fetch failed because the proof
+    /// delivery event is no longer available in the SDK's event-log lookup.
     fn is_proof_not_found_error(e: &dyn std::error::Error) -> bool {
-        // Two needles cover both rendering paths: Display always
-        // includes the prose form via the SDK's `#[error("…")]` attr,
-        // Debug always includes the variant name via `thiserror`'s
-        // derive. Matching either is sufficient — both being present
-        // is the common case.
-        const DISPLAY_NEEDLE: &str = "proof not found for request";
-        const DEBUG_NEEDLE: &str = "proofnotfound";
-        let display = format!("{e}").to_ascii_lowercase();
-        if display.contains(DISPLAY_NEEDLE) {
-            return true;
-        }
-        let debug = format!("{e:?}").to_ascii_lowercase();
-        debug.contains(DEBUG_NEEDLE)
-    }
-
-    /// Returns the current Unix timestamp in seconds, used to compute
-    /// `Offer.rampUpStart` as `now + offer_bidding_start_delay_secs`
-    /// immediately before each on-chain submission. Factored out so
-    /// tests can bracket calls between `before`/`after` snapshots to
-    /// assert the resulting timestamp falls in the expected window.
-    fn now_unix_secs() -> u64 {
-        // Matches the fail-soft pattern used elsewhere in this file
-        // (`effective_expiry`, `is_journal_fresh`): a pre-epoch system
-        // clock is unrealistic, and on a long-running registrar
-        // returning 0 here is preferable to panicking — the resulting
-        // bidding_start would be rejected downstream rather than
-        // crashing the process.
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-    }
-
-    /// Applies the time-independent Boundless offer overrides to
-    /// request params.
-    ///
-    /// `min_price`, `max_price`, `ramp_up_period`, and `lock_timeout`
-    /// are only passed through when explicitly configured; when unset,
-    /// the Boundless SDK derives sensible values from the workload's
-    /// cycle count.
-    ///
-    /// `bidding_start` is intentionally **not** set here: it is a
-    /// wall-clock-relative deadline anchor (the SDK computes
-    /// `Offer.lockTimeout = bidding_start + lock_timeout_secs` and
-    /// `Offer.timeout = bidding_start + timeout_secs`), so capturing
-    /// it at params-build time would let the recovery scan,
-    /// `submit_lock` contention, and preflight execution consume the
-    /// lock/expiry window before the request is even submitted. It is
-    /// instead set by [`apply_bidding_start`](Self::apply_bidding_start)
-    /// immediately before `client.submit_onchain` inside the
-    /// `submit_lock` guard.
-    fn apply_offer_config(&self, params: RequestParams) -> Result<RequestParams> {
-        Self::validate_offer_prices(&self.offer_min_price, &self.offer_max_price)?;
-
-        let mut offer = OfferParams::builder();
-        if let Some(min_price) = &self.offer_min_price {
-            offer.min_price(min_price.clone());
-        }
-        if let Some(max_price) = &self.offer_max_price {
-            offer.max_price(max_price.clone());
-        }
-        if let Some(ramp_up_period) = self.offer_ramp_up_period_secs {
-            offer.ramp_up_period(ramp_up_period);
-        }
-        if let Some(lock_timeout) = self.offer_lock_timeout_secs {
-            offer.lock_timeout(lock_timeout);
-        }
-
-        Ok(params.with_offer(offer))
-    }
-
-    /// Sets `Offer.rampUpStart` to `now_unix_secs() + offer_bidding_start_delay_secs`
-    /// on the given params, mutating the existing offer in place rather
-    /// than replacing it (so prior `apply_offer_config` settings are
-    /// preserved).
-    ///
-    /// Must be called as late as possible — ideally inside the
-    /// `submit_lock` guard, immediately before `client.submit_onchain`
-    /// — so that the deadline anchor is fresh at the moment the
-    /// request actually hits the chain. Calling it earlier (e.g. when
-    /// the params are first built) lets recovery RPC latency and lock
-    /// contention silently consume the lock/expiry window before the
-    /// request exists, which can result in requests submitted with
-    /// little or no remaining lock window.
-    fn apply_bidding_start(&self, mut params: RequestParams) -> RequestParams {
-        params.offer.bidding_start =
-            Some(Self::now_unix_secs().saturating_add(self.offer_bidding_start_delay_secs));
-        params
+        const NEEDLE: &str = "proofnotfound";
+        format!("{e}{e:?}").to_ascii_lowercase().contains(NEEDLE)
     }
 
     /// Fetches and ABI-encodes the set inclusion receipt for a fulfilled
     /// Boundless request. Shared between the recovery and fresh-submission
     /// paths.
-    ///
-    /// `fail_fast_on_proof_not_found` controls how the SDK's
-    /// [`MarketError::ProofNotFound`] error is treated. This error
-    /// fires when the SDK's event-log scan finishes without finding
-    /// the `ProofDelivered` event in its default lookback window:
-    ///
-    /// - In the **direct recovery `Fulfilled` arm**, the slot is
-    ///   almost certainly stale (older than the SDK's lookback). The
-    ///   60-retry transient loop would burn ~5 min per attempt before
-    ///   inevitably returning the same error. Pass `true` here to
-    ///   short-circuit immediately and let the caller probe the next
-    ///   slot.
-    /// - In the **fresh-submission / `Locked` recovery path** (via
-    ///   [`Self::wait_and_fetch`]),
-    ///   [`Client::wait_for_request_fulfillment`] has just confirmed
-    ///   the `ProofDelivered` event moments earlier. A subsequent
-    ///   `ProofNotFound` here indicates transient RPC log-indexing
-    ///   inconsistency, not staleness. Pass `false` to keep the full
-    ///   retry budget so transient inconsistency can resolve before
-    ///   we give up.
     async fn fetch_and_encode_receipt(
         &self,
         client: &BoundlessClient,
         request_id: alloy_primitives::U256,
         fail_fast_on_proof_not_found: bool,
-    ) -> Result<AttestationProof> {
+    ) -> Result<TeeAttestationProof> {
         let image_id_bytes: [u8; 32] = Digest::from(self.image_id).into();
         let image_id_b256 = B256::from(image_id_bytes);
 
@@ -564,7 +293,7 @@ impl BoundlessProver {
             "set inclusion receipt fetched and seal encoded successfully"
         );
 
-        Ok(AttestationProof { output: journal, proof_bytes })
+        Ok(TeeAttestationProof { output: journal, proof_bytes })
     }
 
     /// Waits for fulfillment of a locked request with the TOCTOU retry
@@ -575,7 +304,7 @@ impl BoundlessProver {
         client: &BoundlessClient,
         request_id: alloy_primitives::U256,
         effective_expiry: u64,
-    ) -> Result<AttestationProof> {
+    ) -> Result<TeeAttestationProof> {
         const MAX_RACE_RETRIES: u32 = 3;
         let mut race_retries = 0;
         let _fulfillment = loop {
@@ -626,20 +355,85 @@ impl BoundlessProver {
 
         info!(request_id = %request_id, "fulfillment confirmed, fetching set inclusion receipt");
 
-        // `wait_for_request_fulfillment` above just confirmed the
-        // `ProofDelivered` event. A subsequent `ProofNotFound` here is
-        // RPC log-indexing inconsistency, not staleness — keep the
-        // full retry budget so transient inconsistency can resolve.
         self.fetch_and_encode_receipt(client, request_id, false).await
     }
 
-    /// Builds the Boundless [`Client`] and [`RequestParams`] from the
-    /// attestation bytes. Shared between `generate_proof` and
-    /// `generate_proof_for_signer` to avoid duplicating the setup logic.
-    async fn build_client_and_params(
+    /// Computes the effective expiry timestamp from the current time and
+    /// the prover's timeout, taking the minimum with the onchain expiry
+    /// if provided.
+    fn effective_expiry(&self, onchain_expiry: Option<u64>) -> u64 {
+        let timeout_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            .saturating_add(self.timeout.as_secs());
+        onchain_expiry.map_or(timeout_at, |e| e.min(timeout_at))
+    }
+
+    /// Returns `true` if the proof's attestation timestamp is within
+    /// [`max_attestation_age`](Self::max_attestation_age) of the current
+    /// wall-clock time. Returns `false` (stale) when the journal cannot
+    /// be decoded, since an undecodable proof is unlikely to verify
+    /// onchain.
+    fn is_journal_fresh(&self, proof: &TeeAttestationProof) -> bool {
+        let journal = match VerifierJournal::decode(&proof.output) {
+            Ok(j) => j,
+            Err(e) => {
+                warn!(error = %e, "failed to decode VerifierJournal from recovered proof, treating as stale");
+                return false;
+            }
+        };
+
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let age = Duration::from_millis(now_ms.saturating_sub(journal.timestamp));
+
+        if age > self.max_attestation_age {
+            info!(
+                age_secs = age.as_secs(),
+                max_age_secs = self.max_attestation_age.as_secs(),
+                timestamp_ms = journal.timestamp,
+                "recovered proof attestation is stale, skipping"
+            );
+            return false;
+        }
+
+        true
+    }
+}
+
+#[async_trait::async_trait]
+impl TeeAttestationProofProvider for BoundlessProver {
+    /// Generates a proof with deterministic request-ID recovery.
+    ///
+    /// Before submitting a new proof request, this method probes up to
+    /// [`MAX_RECOVERY_ATTEMPTS`] deterministic request-ID slots derived
+    /// from `signer_address` to find any in-flight or fulfilled proof
+    /// from a previous instance. This allows the registrar to survive
+    /// instance rotations without paying for duplicate proofs.
+    ///
+    /// Recovery outcomes per slot:
+    /// - **`Locked`** — an in-flight proof is being worked on by a
+    ///   Boundless prover. Resume polling for fulfillment.
+    /// - **`Fulfilled`** — a previous instance's proof completed. Fetch
+    ///   the receipt directly.
+    /// - **`Expired`** — the slot was used but the proof expired. Skip
+    ///   to the next attempt.
+    /// - **`Unknown`** — the slot is unused. Submit a new request with
+    ///   this deterministic ID.
+    ///
+    /// If recovery fails for any reason (RPC errors, receipt fetch
+    /// failures, etc.), the method logs a warning and falls through to
+    /// submit a fresh proof — the same graceful degradation as the
+    /// non-recovery path.
+    async fn generate_proof_for_signer(
         &self,
         attestation_bytes: &[u8],
-    ) -> Result<(BoundlessClient, RequestParams)> {
+        signer_address: Address,
+    ) -> base_proof_tee_attestation::Result<TeeAttestationProof> {
+        let started_at = Instant::now();
         let input = VerifierInput {
             trustedCertsPrefixLen: self.trusted_certs_prefix_len,
             attestationReport: Bytes::copy_from_slice(attestation_bytes),
@@ -667,6 +461,10 @@ impl BoundlessProver {
             .build()
             .await
             .map_err(|e| {
+                BoundlessMetrics::record_proof_duration(
+                    started_at,
+                    BoundlessMetrics::PROOF_OUTCOME_FAILED,
+                );
                 warn!(
                     error = %e,
                     error_debug = ?e,
@@ -682,6 +480,10 @@ impl BoundlessProver {
         let params = RequestParams::new()
             .with_program_url(self.verifier_program_url.clone())
             .map_err(|e| {
+                BoundlessMetrics::record_proof_duration(
+                    started_at,
+                    BoundlessMetrics::PROOF_OUTCOME_FAILED,
+                );
                 warn!(
                     error = %e,
                     error_debug = ?e,
@@ -695,206 +497,6 @@ impl BoundlessProver {
             .with_requirements(
                 RequirementParams::builder().predicate(Predicate::prefix_match(image_id, [])),
             );
-        let params = self.apply_offer_config(params)?;
-
-        Ok((client, params))
-    }
-
-    /// Computes the effective expiry timestamp from the current time and
-    /// the prover's timeout, taking the minimum with the on-chain expiry
-    /// if provided.
-    fn effective_expiry(&self, on_chain_expiry: Option<u64>) -> u64 {
-        let timeout_at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-            .saturating_add(self.timeout.as_secs());
-        on_chain_expiry.map_or(timeout_at, |e| e.min(timeout_at))
-    }
-
-    /// Returns `true` if the proof's attestation timestamp is within
-    /// [`max_attestation_age`](Self::max_attestation_age) of the current
-    /// wall-clock time. Returns `false` (stale) when the journal cannot
-    /// be decoded, since an undecodable proof is unlikely to verify
-    /// on-chain.
-    fn is_journal_fresh(&self, proof: &AttestationProof) -> bool {
-        let journal = match VerifierJournal::decode(&proof.output) {
-            Ok(j) => j,
-            Err(e) => {
-                warn!(error = %e, "failed to decode VerifierJournal from recovered proof, treating as stale");
-                return false;
-            }
-        };
-
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
-        let age = Duration::from_millis(now_ms.saturating_sub(journal.timestamp));
-
-        if age > self.max_attestation_age {
-            info!(
-                age_secs = age.as_secs(),
-                max_age_secs = self.max_attestation_age.as_secs(),
-                timestamp_ms = journal.timestamp,
-                "recovered proof attestation is stale, skipping"
-            );
-            return false;
-        }
-
-        true
-    }
-
-    /// Acquires the submit lock, submits a proof request on-chain, then
-    /// waits for fulfillment and fetches the set inclusion receipt.
-    ///
-    /// Shared between [`generate_proof`](AttestationProofProvider::generate_proof)
-    /// and the fresh-submission tail of
-    /// [`generate_proof_for_signer`](AttestationProofProvider::generate_proof_for_signer).
-    async fn submit_and_wait(
-        &self,
-        client: &BoundlessClient,
-        params: RequestParams,
-    ) -> Result<AttestationProof> {
-        let (request_id, expires_at) = {
-            let _guard = self.submit_lock.lock().await;
-            // Anchor `Offer.rampUpStart` to the current wall-clock as
-            // late as possible — after any recovery scan, preflight,
-            // and `submit_lock` contention — so the full configured
-            // lock/timeout window is available to provers once the
-            // request hits the chain. See `apply_bidding_start`.
-            let params = self.apply_bidding_start(params);
-            client.submit_onchain(params).await.map_err(|e| {
-                warn!(
-                    error = %e,
-                    error_debug = ?e,
-                    image_id = ?self.image_id,
-                    boundless_wallet = %self.signer.address(),
-                    "failed to submit Boundless proof request on-chain"
-                );
-                ProverError::Boundless(format!("failed to submit request: {e}"))
-            })?
-        };
-
-        info!(
-            request_id = %request_id,
-            expires_at,
-            "proof request submitted, waiting for fulfillment"
-        );
-        BoundlessMetrics::boundless_requests_submitted_total().increment(1);
-
-        let effective_expiry = self.effective_expiry(Some(expires_at));
-        debug!(
-            effective_expiry,
-            request_id = %request_id,
-            poll_interval = ?self.poll_interval,
-            "waiting for fulfillment with computed expiry"
-        );
-
-        self.wait_and_fetch(client, request_id, effective_expiry).await
-    }
-}
-
-#[async_trait::async_trait]
-impl AttestationProofProvider for BoundlessProver {
-    /// # Cancellation
-    ///
-    /// Cooperatively honors `cancel` once, at the top of the method,
-    /// before building the client/params. The build + submit +
-    /// wait-for-fulfillment phases are not interrupted once entered;
-    /// callers that need finer-grained cancellation should `select!`
-    /// against the cancel token externally. Dropping the future
-    /// mid-flight is safe because any submitted request remains
-    /// discoverable on the next call via the deterministic request-id
-    /// derivation (see the module docs on proof recovery).
-    ///
-    /// The per-probe cancel checks the doc previously referenced live
-    /// in [`Self::generate_proof_for_signer`], which has its own
-    /// recovery loop; this method has no probes to break between.
-    async fn generate_proof(
-        &self,
-        attestation_bytes: &[u8],
-        cancel: &CancellationToken,
-    ) -> Result<AttestationProof> {
-        let started_at = Instant::now();
-        if cancel.is_cancelled() {
-            return Err(ProverError::Boundless("proof generation cancelled before start".into()));
-        }
-        let (client, params) = match self.build_client_and_params(attestation_bytes).await {
-            Ok(result) => result,
-            Err(e) => {
-                BoundlessMetrics::record_proof_duration(
-                    started_at,
-                    BoundlessMetrics::PROOF_OUTCOME_FAILED,
-                );
-                return Err(e);
-            }
-        };
-        let result = self.submit_and_wait(&client, params).await;
-        BoundlessMetrics::record_proof_duration(
-            started_at,
-            if result.is_ok() {
-                BoundlessMetrics::PROOF_OUTCOME_SUCCEEDED
-            } else {
-                BoundlessMetrics::PROOF_OUTCOME_FAILED
-            },
-        );
-        result
-    }
-
-    /// Generates a proof with deterministic request-ID recovery.
-    ///
-    /// Before submitting a new proof request, this method probes up to
-    /// [`MAX_RECOVERY_ATTEMPTS`] deterministic request-ID slots derived
-    /// from `signer_address` to find any in-flight or fulfilled proof
-    /// from a previous instance. This allows the registrar to survive
-    /// instance rotations without paying for duplicate proofs.
-    ///
-    /// Recovery outcomes per slot:
-    /// - **`Locked`** — an in-flight proof is being worked on by a
-    ///   Boundless prover. Resume polling for fulfillment.
-    /// - **`Fulfilled`** — a previous instance's proof completed.
-    ///   Fetch the receipt directly. The receipt fetch is discriminated:
-    ///   - **Stale fulfillment** (the `ProofDelivered` event is
-    ///     outside the SDK's default event-log lookback — see
-    ///     [`Self::is_proof_not_found_error`]) → skip to the next
-    ///     attempt. The proof would almost certainly fail
-    ///     [`Self::is_journal_fresh`] anyway, and later slots may
-    ///     hold genuine in-flight work from a more recent instance.
-    ///   - **Any other receipt-fetch failure** → break out of
-    ///     recovery and fall through to fresh submission. Such
-    ///     failures are typically global infrastructure problems
-    ///     (already retried by the wrapper); continuing the scan
-    ///     would multiply the wait by `max_recovery_attempts`.
-    /// - **`Expired`** — the slot was used but the proof expired. Skip
-    ///   to the next attempt.
-    /// - **`Unknown`** — the slot is unused. Submit a new request with
-    ///   this deterministic ID.
-    ///
-    /// If a probe fails with a transport/SDK error during status
-    /// query, the method logs a warning, breaks out of the recovery
-    /// loop and falls through to submit a fresh proof — the same
-    /// graceful degradation as the non-recovery path.
-    async fn generate_proof_for_signer(
-        &self,
-        attestation_bytes: &[u8],
-        signer_address: Address,
-        cancel: &CancellationToken,
-    ) -> Result<AttestationProof> {
-        let started_at = Instant::now();
-        if cancel.is_cancelled() {
-            return Err(ProverError::Boundless("proof generation cancelled before start".into()));
-        }
-        let (client, params) = match self.build_client_and_params(attestation_bytes).await {
-            Ok(result) => result,
-            Err(e) => {
-                BoundlessMetrics::record_proof_duration(
-                    started_at,
-                    BoundlessMetrics::PROOF_OUTCOME_FAILED,
-                );
-                return Err(e);
-            }
-        };
 
         let recovery_is_blocked = self
             .recovery_blocked
@@ -912,18 +514,6 @@ impl AttestationProofProvider for BoundlessProver {
         // Probe deterministic request-ID slots for recovery.
         let mut first_unknown_attempt: Option<u32> = None;
         for attempt in 0..self.max_recovery_attempts {
-            // Check cancellation between probe slots. Already-locked
-            // requests stay on-chain and remain recoverable on the next
-            // call via the same deterministic index.
-            if cancel.is_cancelled() {
-                BoundlessMetrics::record_proof_duration(
-                    started_at,
-                    BoundlessMetrics::PROOF_OUTCOME_CANCELLED,
-                );
-                return Err(ProverError::Boundless(
-                    "proof generation cancelled mid-recovery probe".into(),
-                ));
-            }
             let index = Self::derive_request_index(signer_address, attempt);
             // RequestId is keyed on the Boundless wallet (fee-payer,
             // `self.signer`), not the enclave signer (`signer_address`).
@@ -1264,7 +854,39 @@ impl AttestationProofProvider for BoundlessProver {
             }
         };
 
-        let result = self.submit_and_wait(&client, params).await;
+        let result = async {
+            let (request_id, expires_at) = {
+                let _guard = self.submit_lock.lock().await;
+                client.submit_onchain(params).await.map_err(|e| {
+                    warn!(
+                        error = %e,
+                        error_debug = ?e,
+                        image_id = ?self.image_id,
+                        boundless_wallet = %self.signer.address(),
+                        "failed to submit Boundless proof request onchain"
+                    );
+                    ProverError::Boundless(format!("failed to submit request: {e}"))
+                })?
+            };
+
+            info!(
+                request_id = %request_id,
+                expires_at,
+                "proof request submitted, waiting for fulfillment"
+            );
+            BoundlessMetrics::boundless_requests_submitted_total().increment(1);
+
+            let effective_expiry = self.effective_expiry(Some(expires_at));
+            debug!(
+                effective_expiry,
+                request_id = %request_id,
+                poll_interval = ?self.poll_interval,
+                "waiting for fulfillment with computed expiry"
+            );
+
+            self.wait_and_fetch(&client, request_id, effective_expiry).await
+        }
+        .await;
         BoundlessMetrics::record_proof_duration(
             started_at,
             if result.is_ok() {
@@ -1273,13 +895,13 @@ impl AttestationProofProvider for BoundlessProver {
                 BoundlessMetrics::PROOF_OUTCOME_FAILED
             },
         );
-        result
+        result.map_err(Into::into)
     }
 
     fn block_recovery_for_signer(&self, signer: Address) {
         info!(
             signer = %signer,
-            "blocking proof recovery for signer after on-chain rejection"
+            "blocking proof recovery for signer after onchain rejection"
         );
         self.recovery_blocked.lock().unwrap_or_else(|e| e.into_inner()).insert(signer);
     }
@@ -1290,7 +912,6 @@ mod tests {
     use std::str::FromStr;
 
     use alloy_primitives::Address;
-    use boundless_market::price_oracle::{Amount, Asset};
     use rstest::{fixture, rstest};
 
     use super::*;
@@ -1304,44 +925,20 @@ mod tests {
     const TEST_POLL_INTERVAL: Duration = Duration::from_secs(5);
     const TEST_TIMEOUT: Duration = Duration::from_secs(300);
     const TEST_MAX_RECOVERY_ATTEMPTS: u32 = 5;
-    const TEST_MIN_PRICE_ETH: &str = "0.01";
-    const TEST_MAX_PRICE_ETH: &str = "0.03";
-    const TEST_RAMP_UP_PERIOD_SECS: u32 = 30;
-    const TEST_LOCK_TIMEOUT_SECS: u32 = 600;
-    const TEST_NON_ZERO_BIDDING_START_DELAY_SECS: u64 = 120;
 
     const TEST_MAX_ATTESTATION_AGE: Duration = Duration::from_secs(3300);
 
-    fn eth_amount(value: &str) -> Amount {
-        Amount::parse(value, Some(Asset::ETH)).expect("valid ETH amount")
-    }
-
-    fn prover_config() -> BoundlessProverConfig {
-        BoundlessProverConfig {
-            rpc_url: Url::parse(TEST_RPC_URL).unwrap(),
-            signer: PrivateKeySigner::from_str(TEST_PRIVATE_KEY).unwrap(),
-            verifier_program_url: Url::parse(TEST_PROGRAM_URL).unwrap(),
-            image_id: TEST_IMAGE_ID,
-            poll_interval: TEST_POLL_INTERVAL,
-            timeout: TEST_TIMEOUT,
-            max_recovery_attempts: TEST_MAX_RECOVERY_ATTEMPTS,
-            max_attestation_age: TEST_MAX_ATTESTATION_AGE,
-            offer_min_price: None,
-            offer_max_price: None,
-            offer_ramp_up_period_secs: None,
-            offer_lock_timeout_secs: None,
-            offer_bidding_start_delay_secs: 0,
-        }
-    }
-
     #[fixture]
     fn prover() -> BoundlessProver {
-        BoundlessProver::new(prover_config()).unwrap()
-    }
-
-    fn assert_config_error(error: ProverError, expected: &str) {
-        assert!(matches!(error, ProverError::Config(_)));
-        assert!(error.to_string().contains(expected), "got: {error}");
+        BoundlessProver::new(
+            Url::parse(TEST_RPC_URL).unwrap(),
+            PrivateKeySigner::from_str(TEST_PRIVATE_KEY).unwrap(),
+            Url::parse(TEST_PROGRAM_URL).unwrap(),
+            TEST_IMAGE_ID,
+            (TEST_POLL_INTERVAL, TEST_TIMEOUT),
+            TEST_MAX_RECOVERY_ATTEMPTS,
+            TEST_MAX_ATTESTATION_AGE,
+        )
     }
 
     // ── Construction ────────────────────────────────────────────────────
@@ -1350,48 +947,6 @@ mod tests {
     fn struct_construction(prover: BoundlessProver) {
         let debug = format!("{prover:?}");
         assert!(debug.contains("BoundlessProver"));
-    }
-
-    #[test]
-    fn new_accepts_ramp_up_period_without_prices() {
-        let mut config = prover_config();
-        config.offer_ramp_up_period_secs = Some(TEST_RAMP_UP_PERIOD_SECS);
-
-        let prover = BoundlessProver::new(config).unwrap();
-
-        assert_eq!(prover.offer_ramp_up_period_secs, Some(TEST_RAMP_UP_PERIOD_SECS));
-        assert!(prover.offer_min_price.is_none());
-        assert!(prover.offer_max_price.is_none());
-    }
-
-    #[test]
-    fn new_rejects_unpaired_offer_prices() {
-        for (min_price, max_price) in [
-            (Some(eth_amount(TEST_MIN_PRICE_ETH)), None),
-            (None, Some(eth_amount(TEST_MAX_PRICE_ETH))),
-        ] {
-            let mut config = prover_config();
-            config.offer_min_price = min_price;
-            config.offer_max_price = max_price;
-
-            let error = BoundlessProver::new(config).unwrap_err();
-
-            assert_config_error(error, "offer_min_price and offer_max_price must be set together");
-        }
-    }
-
-    #[test]
-    fn new_rejects_max_price_below_min_price() {
-        let mut config = prover_config();
-        config.offer_min_price = Some(eth_amount(TEST_MAX_PRICE_ETH));
-        config.offer_max_price = Some(eth_amount(TEST_MIN_PRICE_ETH));
-
-        let error = BoundlessProver::new(config).unwrap_err();
-
-        assert_config_error(
-            error,
-            "offer_max_price must be greater than or equal to offer_min_price",
-        );
     }
 
     // ── Field access ────────────────────────────────────────────────────
@@ -1409,146 +964,6 @@ mod tests {
         assert_eq!(prover.timeout, TEST_TIMEOUT);
         assert_eq!(prover.trusted_certs_prefix_len, DEFAULT_TRUSTED_CERTS_PREFIX_LEN);
         assert_eq!(prover.max_recovery_attempts, TEST_MAX_RECOVERY_ATTEMPTS);
-        assert!(prover.offer_min_price.is_none());
-        assert!(prover.offer_max_price.is_none());
-        assert!(prover.offer_ramp_up_period_secs.is_none());
-        assert!(prover.offer_lock_timeout_secs.is_none());
-        assert_eq!(prover.offer_bidding_start_delay_secs, 0);
-    }
-
-    /// With every Option-typed offer override unset, `apply_offer_config`
-    /// leaves the corresponding offer fields unset so the Boundless SDK
-    /// derives them from cycle count. `bidding_start` is intentionally
-    /// **not** set here — it is anchored later by `apply_bidding_start`
-    /// immediately before on-chain submission.
-    #[rstest]
-    fn apply_offer_config_defaults_to_sdk(prover: BoundlessProver) {
-        let params = prover.apply_offer_config(RequestParams::new()).unwrap();
-
-        assert!(params.offer.ramp_up_period.is_none());
-        assert!(params.offer.min_price.is_none());
-        assert!(params.offer.max_price.is_none());
-        assert!(params.offer.lock_timeout.is_none());
-        assert!(
-            params.offer.bidding_start.is_none(),
-            "bidding_start must be left unset by apply_offer_config and only \
-             populated by apply_bidding_start at submission time"
-        );
-    }
-
-    #[rstest]
-    fn apply_offer_config_sets_explicit_prices(mut prover: BoundlessProver) {
-        let min_price = eth_amount(TEST_MIN_PRICE_ETH);
-        let max_price = eth_amount(TEST_MAX_PRICE_ETH);
-        prover.offer_min_price = Some(min_price.clone());
-        prover.offer_max_price = Some(max_price.clone());
-        prover.offer_ramp_up_period_secs = Some(TEST_RAMP_UP_PERIOD_SECS);
-        prover.offer_lock_timeout_secs = Some(TEST_LOCK_TIMEOUT_SECS);
-        prover.offer_bidding_start_delay_secs = TEST_NON_ZERO_BIDDING_START_DELAY_SECS;
-
-        let params = prover.apply_offer_config(RequestParams::new()).unwrap();
-
-        assert_eq!(params.offer.min_price, Some(min_price));
-        assert_eq!(params.offer.max_price, Some(max_price));
-        assert_eq!(params.offer.ramp_up_period, Some(TEST_RAMP_UP_PERIOD_SECS));
-        assert_eq!(params.offer.lock_timeout, Some(TEST_LOCK_TIMEOUT_SECS));
-        assert!(
-            params.offer.bidding_start.is_none(),
-            "bidding_start is set by apply_bidding_start, not apply_offer_config"
-        );
-    }
-
-    #[rstest]
-    fn apply_offer_config_rejects_unpaired_offer_prices(mut prover: BoundlessProver) {
-        prover.offer_min_price = Some(eth_amount(TEST_MIN_PRICE_ETH));
-
-        let error = prover.apply_offer_config(RequestParams::new()).unwrap_err();
-
-        assert_config_error(error, "offer_min_price and offer_max_price must be set together");
-    }
-
-    #[rstest]
-    fn apply_offer_config_rejects_max_price_below_min_price(mut prover: BoundlessProver) {
-        prover.offer_min_price = Some(eth_amount(TEST_MAX_PRICE_ETH));
-        prover.offer_max_price = Some(eth_amount(TEST_MIN_PRICE_ETH));
-
-        let error = prover.apply_offer_config(RequestParams::new()).unwrap_err();
-
-        assert_config_error(
-            error,
-            "offer_max_price must be greater than or equal to offer_min_price",
-        );
-    }
-
-    /// `lock_timeout` can be set independently of price/ramp fields.
-    #[rstest]
-    fn apply_offer_config_sets_lock_timeout_alone(mut prover: BoundlessProver) {
-        prover.offer_lock_timeout_secs = Some(TEST_LOCK_TIMEOUT_SECS);
-
-        let params = prover.apply_offer_config(RequestParams::new()).unwrap();
-
-        assert_eq!(params.offer.lock_timeout, Some(TEST_LOCK_TIMEOUT_SECS));
-        assert!(params.offer.ramp_up_period.is_none());
-        assert!(params.offer.min_price.is_none());
-        assert!(params.offer.max_price.is_none());
-        assert!(params.offer.bidding_start.is_none());
-    }
-
-    /// `apply_bidding_start` with the default (`0`) delay sets
-    /// `bidding_start` to the current wall-clock at call time.
-    #[rstest]
-    fn apply_bidding_start_defaults_to_now(prover: BoundlessProver) {
-        let before = BoundlessProver::now_unix_secs();
-        let params = prover.apply_bidding_start(RequestParams::new());
-        let after = BoundlessProver::now_unix_secs();
-
-        let bidding_start = params.offer.bidding_start.expect("bidding_start set");
-        assert!(
-            (before..=after).contains(&bidding_start),
-            "bidding_start {bidding_start} outside [{before}, {after}]"
-        );
-    }
-
-    /// Non-zero `bidding_start_delay` is offset from the current clock
-    /// at call time (per-request, not captured at startup), so the
-    /// resulting timestamp is always in the configured window.
-    #[rstest]
-    fn apply_bidding_start_uses_current_clock(mut prover: BoundlessProver) {
-        prover.offer_bidding_start_delay_secs = TEST_NON_ZERO_BIDDING_START_DELAY_SECS;
-
-        let before = BoundlessProver::now_unix_secs();
-        let params = prover.apply_bidding_start(RequestParams::new());
-        let after = BoundlessProver::now_unix_secs();
-
-        let bidding_start = params.offer.bidding_start.expect("bidding_start set");
-        assert!(
-            (before.saturating_add(TEST_NON_ZERO_BIDDING_START_DELAY_SECS)
-                ..=after.saturating_add(TEST_NON_ZERO_BIDDING_START_DELAY_SECS))
-                .contains(&bidding_start),
-            "bidding_start {bidding_start} outside expected window"
-        );
-    }
-
-    /// `apply_bidding_start` preserves all other offer fields set by
-    /// `apply_offer_config` — it mutates `bidding_start` in place
-    /// rather than replacing the offer.
-    #[rstest]
-    fn apply_bidding_start_preserves_other_offer_fields(mut prover: BoundlessProver) {
-        let min_price = eth_amount(TEST_MIN_PRICE_ETH);
-        let max_price = eth_amount(TEST_MAX_PRICE_ETH);
-        prover.offer_min_price = Some(min_price.clone());
-        prover.offer_max_price = Some(max_price.clone());
-        prover.offer_ramp_up_period_secs = Some(TEST_RAMP_UP_PERIOD_SECS);
-        prover.offer_lock_timeout_secs = Some(TEST_LOCK_TIMEOUT_SECS);
-
-        let params = prover.apply_offer_config(RequestParams::new()).unwrap();
-        let params = prover.apply_bidding_start(params);
-
-        assert_eq!(params.offer.min_price, Some(min_price));
-        assert_eq!(params.offer.max_price, Some(max_price));
-        assert_eq!(params.offer.ramp_up_period, Some(TEST_RAMP_UP_PERIOD_SECS));
-        assert_eq!(params.offer.lock_timeout, Some(TEST_LOCK_TIMEOUT_SECS));
-        assert!(params.offer.bidding_start.is_some());
     }
 
     // ── Clone ───────────────────────────────────────────────────────────
@@ -1660,19 +1075,19 @@ mod tests {
 
     // ── effective_expiry ────────────────────────────────────────────────
 
-    /// When an on-chain expiry is provided and is sooner than the
-    /// timeout, the effective expiry equals the on-chain value.
+    /// When an onchain expiry is provided and is sooner than the
+    /// timeout, the effective expiry equals the onchain value.
     #[rstest]
-    fn effective_expiry_picks_on_chain_when_sooner(prover: BoundlessProver) {
-        // Use a very near on-chain expiry (1 second from now).
+    fn effective_expiry_picks_onchain_when_sooner(prover: BoundlessProver) {
+        // Use a very near onchain expiry (1 second from now).
         let now =
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-        let on_chain = now + 1;
-        let result = prover.effective_expiry(Some(on_chain));
-        assert_eq!(result, on_chain, "should pick the nearer on-chain expiry");
+        let onchain = now + 1;
+        let result = prover.effective_expiry(Some(onchain));
+        assert_eq!(result, onchain, "should pick the nearer onchain expiry");
     }
 
-    /// When no on-chain expiry is provided, the effective expiry is
+    /// When no onchain expiry is provided, the effective expiry is
     /// `now + timeout`.
     #[rstest]
     fn effective_expiry_uses_timeout_when_none(prover: BoundlessProver) {
@@ -1689,7 +1104,7 @@ mod tests {
         );
     }
 
-    /// When the on-chain expiry is far in the future, the effective
+    /// When the onchain expiry is far in the future, the effective
     /// expiry is clamped to `now + timeout`.
     #[rstest]
     fn effective_expiry_clamps_to_timeout(prover: BoundlessProver) {
@@ -1809,188 +1224,6 @@ mod tests {
             assert!(
                 !BoundlessProver::is_request_not_locked_error(&err),
                 "should NOT match an unrelated I/O error"
-            );
-        }
-    }
-
-    // ── is_proof_not_found_error ────────────────────────────────────────
-    //
-    // These tests construct the *real* Boundless SDK error type that
-    // surfaces when the event-log scan for a fulfilled request finishes
-    // empty (i.e. the `ProofDelivered` event lives outside the SDK's
-    // default `EventQueryConfig` lookback window). The detection is
-    // string-based and must survive both the bare `MarketError` and the
-    // typical `ClientError::MarketError(...)` wrapping that
-    // `fetch_set_inclusion_receipt` returns. If a `boundless-market`
-    // upgrade changes the Display/Debug formatting of `MarketError` →
-    // `ProofNotFound`, these tests will fail and alert us that the
-    // string-matching needles need updating.
-
-    mod proof_not_found {
-        use alloy_primitives::{U256, uint};
-        use boundless_market::{client::ClientError, contracts::boundless_market::MarketError};
-
-        use super::*;
-
-        /// Arbitrary request ID used in error construction.
-        const TEST_REQUEST_ID: U256 = uint!(42_U256);
-        /// Arbitrary block range used in error construction.
-        const TEST_FROM_BLOCK: u64 = 46_617_070;
-        const TEST_TO_BLOCK: u64 = 46_367_571;
-
-        /// Build a bare [`MarketError::ProofNotFound`] as the SDK
-        /// returns from `query_fulfilled_event`.
-        fn bare_market_error() -> MarketError {
-            MarketError::ProofNotFound(TEST_REQUEST_ID, TEST_FROM_BLOCK, TEST_TO_BLOCK)
-        }
-
-        /// Build a [`ClientError::MarketError`] wrapping
-        /// `ProofNotFound`, matching the path that
-        /// `fetch_set_inclusion_receipt` returns to
-        /// `fetch_and_encode_receipt`.
-        fn client_error() -> ClientError {
-            ClientError::MarketError(bare_market_error())
-        }
-
-        /// Bare `MarketError::ProofNotFound` is detected.
-        #[rstest]
-        fn matches_bare_market_error() {
-            let err = bare_market_error();
-            assert!(
-                BoundlessProver::is_proof_not_found_error(&err),
-                "should detect bare MarketError::ProofNotFound. \
-                 Display: {err}, Debug: {err:?}"
-            );
-        }
-
-        /// `ClientError::MarketError(MarketError::ProofNotFound(..))`
-        /// — the actual error chain returned by
-        /// `fetch_set_inclusion_receipt` — is detected.
-        #[rstest]
-        fn matches_client_error_wrapping() {
-            let err = client_error();
-            assert!(
-                BoundlessProver::is_proof_not_found_error(&err),
-                "should detect ClientError-wrapped ProofNotFound. \
-                 Display: {err}, Debug: {err:?}"
-            );
-        }
-
-        /// The unique Display substring from the SDK's
-        /// `#[error("…")]` attr must be present in the Display output.
-        /// Guards against accidental needle drift if the SDK reformats
-        /// the message.
-        #[rstest]
-        fn display_includes_expected_substring() {
-            let err = client_error();
-            let display = format!("{err}").to_ascii_lowercase();
-            assert!(
-                display.contains("proof not found for request"),
-                "SDK Display string must still contain the expected needle. \
-                 Got: {display}"
-            );
-        }
-
-        /// A different `MarketError` variant (`RequestNotFound`) must
-        /// NOT match — it has an almost identical Display string but
-        /// covers a different scenario (the *request* itself was
-        /// never observed, not just its fulfillment event).
-        #[rstest]
-        fn rejects_request_not_found() {
-            let err = MarketError::RequestNotFound(TEST_REQUEST_ID, TEST_FROM_BLOCK, TEST_TO_BLOCK);
-            assert!(
-                !BoundlessProver::is_proof_not_found_error(&err),
-                "should NOT match RequestNotFound (different scenario). \
-                 Display: {err}, Debug: {err:?}"
-            );
-        }
-
-        /// Plain `std::io::Error` must NOT match.
-        #[rstest]
-        fn rejects_unrelated_error() {
-            let err = std::io::Error::new(std::io::ErrorKind::TimedOut, "connection timed out");
-            assert!(
-                !BoundlessProver::is_proof_not_found_error(&err),
-                "should NOT match an unrelated I/O error"
-            );
-        }
-
-        /// An error whose user-supplied message merely *contains* the
-        /// substring "proof not found" (without being the actual SDK
-        /// variant) must still match — false positives on similar
-        /// upstream errors are acceptable here because the
-        /// non-transient classification is also correct for any
-        /// hypothetical synonymous error. This test pins the
-        /// permissive matching behavior so a future tightening is an
-        /// intentional, reviewed change.
-        #[rstest]
-        fn matches_synonymous_message() {
-            let err =
-                std::io::Error::other("upstream said: Proof not found for request 0xdeadbeef");
-            assert!(
-                BoundlessProver::is_proof_not_found_error(&err),
-                "permissive match: any error whose Display contains the needle qualifies. \
-                 Display: {err}, Debug: {err:?}"
-            );
-        }
-
-        /// Case-insensitive Display matching is preserved when the
-        /// SDK or an upstream wrapper renders the message in non-
-        /// canonical casing. The classifier must still detect it.
-        #[rstest]
-        #[case::all_caps("PROOF NOT FOUND FOR REQUEST 0xabc")]
-        #[case::mixed_case("Proof Not Found For Request 0xabc")]
-        #[case::title_case("Proof not found for request 0xabc")]
-        fn matches_case_insensitive_display(#[case] msg: &'static str) {
-            let err = std::io::Error::other(msg);
-            assert!(
-                BoundlessProver::is_proof_not_found_error(&err),
-                "case-insensitive Display match should detect '{msg}'. Display: {err}, Debug: {err:?}"
-            );
-        }
-
-        /// The most critical regression guard: the wrapped
-        /// [`ProverError::Boundless`] string produced by
-        /// [`BoundlessProver::fetch_and_encode_receipt`] when it
-        /// short-circuits on `ProofNotFound` must still match the
-        /// classifier. The recovery loop's discrimination between
-        /// "stale → continue" and "other failure → break" depends on
-        /// this round-trip detection. If
-        /// `fetch_and_encode_receipt`'s wrapping prefix ever changes
-        /// in a way that obscures the original Display string, this
-        /// test will fail and alert us that the discrimination is
-        /// broken.
-        #[rstest]
-        fn matches_wrapped_prover_error_stale() {
-            let inner = client_error();
-            let wrapped = ProverError::Boundless(format!(
-                "stale fulfilled proof (event outside SDK lookback): {inner}"
-            ));
-            assert!(
-                BoundlessProver::is_proof_not_found_error(&wrapped),
-                "the wrapped ProverError from fetch_and_encode_receipt must still be detectable \
-                 as ProofNotFound so the recovery arm can choose 'continue' over 'break'. \
-                 Display: {wrapped}, Debug: {wrapped:?}"
-            );
-        }
-
-        /// Negative counterpart to the wrapped-stale test: a
-        /// non-`ProofNotFound` failure wrapped by
-        /// [`BoundlessProver::fetch_and_encode_receipt`]'s catch-all
-        /// arm must NOT be misclassified as stale. If it were, the
-        /// recovery loop would incorrectly `continue` to the next
-        /// slot on a persistent infrastructure failure, multiplying
-        /// the wait by `max_recovery_attempts`.
-        #[rstest]
-        fn rejects_wrapped_prover_error_non_stale() {
-            let wrapped = ProverError::Boundless(
-                "failed to fetch set inclusion receipt: connection timed out".into(),
-            );
-            assert!(
-                !BoundlessProver::is_proof_not_found_error(&wrapped),
-                "a wrapped non-PNF receipt-fetch failure must NOT be classified as stale; \
-                 misclassifying would defeat the recovery arm's defensive break. \
-                 Display: {wrapped}, Debug: {wrapped:?}"
             );
         }
     }

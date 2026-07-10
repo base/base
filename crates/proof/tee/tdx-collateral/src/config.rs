@@ -1,0 +1,40 @@
+//! Configuration for Intel TDX collateral hydration.
+
+use std::time::Duration;
+
+use alloy_primitives::{B256, b256};
+use base_proof_tee_tdx_verifier::TDXTcbStatus;
+use reqwest::Url;
+
+/// Intel PCS and verifier policy configuration for TDX attestation hydration.
+#[derive(Clone, Debug)]
+pub struct TdxAttestationConfig {
+    /// Intel TDX PCS API base URL.
+    pub pcs_tdx_base_url: Url,
+    /// Trusted Intel SGX/TDX root CA certificate hash expected by the verifier.
+    pub trusted_root_ca_hash: B256,
+    /// Maximum accepted TDX quote age.
+    pub max_quote_age: Duration,
+    /// Contract TCB statuses accepted by verifier policy.
+    pub allowed_tcb_statuses: Vec<TDXTcbStatus>,
+    /// HTTP timeout for Intel PCS collateral and CRL fetches.
+    pub fetch_timeout: Duration,
+}
+
+impl TdxAttestationConfig {
+    /// Production Intel PCS v4 endpoint with `UpToDate`-only TCB policy.
+    pub fn intel_pcs() -> Self {
+        Self {
+            pcs_tdx_base_url: Url::parse(
+                "https://api.trustedservices.intel.com/tdx/certification/v4/",
+            )
+            .expect("default Intel PCS URL must be valid"),
+            trusted_root_ca_hash: b256!(
+                "a1acc73eb45794fa1734f14d882e91925b6006f79d3bb2460df9d01b333d7009"
+            ),
+            max_quote_age: Duration::from_secs(300),
+            allowed_tcb_statuses: vec![TDXTcbStatus::UpToDate],
+            fetch_timeout: Duration::from_secs(30),
+        }
+    }
+}

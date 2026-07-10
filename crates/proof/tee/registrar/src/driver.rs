@@ -13,15 +13,16 @@ use std::{
 
 use alloy_primitives::Address;
 use base_proof_contracts::TEEProverRegistryClient;
-use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
+use base_proof_tee_attestation::TeeAttestationKind;
 use base_tx_manager::TxManager;
 use futures::stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, info, warn};
 
 use crate::{
-    CertManager, EnclaveEndpointClient, InstanceDiscovery, InstanceHealthStatus, ProofTaskSet,
-    ProverClient, ProverInstance, RegistrarMetrics, Result, SignerManager,
+    CertManager, EnclaveEndpointClient, InstanceDiscovery, InstanceHealthStatus,
+    PlatformProofProvider, ProofTaskSet, ProverClient, ProverInstance, RegistrarMetrics, Result,
+    SignerManager,
 };
 
 /// Default maximum number of instances processed concurrently.
@@ -127,21 +128,15 @@ impl<D, S, P, R, T> RegistrationDriver<D, S, P, R, T> {
     }
 }
 
-impl<D, S, P, R, T> RegistrationDriver<D, S, P, R, T>
+impl<D, S, R, T> RegistrationDriver<D, S, PlatformProofProvider, R, T>
 where
-    D: InstanceDiscovery,
-    S: EnclaveEndpointClient,
-    T: TxManager,
+    D: InstanceDiscovery + 'static,
+    S: EnclaveEndpointClient + 'static,
+    R: TEEProverRegistryClient + 'static,
+    T: TxManager + 'static,
 {
     /// Runs the registration loop until cancelled.
-    pub async fn run(&self) -> Result<()>
-    where
-        D: 'static,
-        S: 'static,
-        P: AttestationProofProvider + 'static,
-        R: TEEProverRegistryClient + 'static,
-        T: 'static,
-    {
+    pub async fn run(&self) -> Result<()> {
         info!(
             poll_interval = ?self.config.poll_interval,
             max_concurrency = self.config.max_concurrency,
@@ -206,6 +201,14 @@ where
         info!("registration driver stopped");
         Ok(())
     }
+}
+
+impl<D, S, P, R, T> RegistrationDriver<D, S, P, R, T>
+where
+    D: InstanceDiscovery,
+    S: EnclaveEndpointClient,
+    T: TxManager,
+{
     /// Resolves one instance into active and registerable signers.
     async fn resolve_instance(&self, instance: &ProverInstance) -> Result<DiscoveryResolution> {
         if self.config.cancel.is_cancelled() {
@@ -256,17 +259,20 @@ where
             return Ok(outcome);
         }
 
-        let nonces = addresses
-            .iter()
-            .map(|signer| self.signer_manager.attestation_nonce(*signer).to_vec())
-            .collect::<Vec<_>>();
+        let nonces = (instance.attestation_kind == TeeAttestationKind::Nitro).then(|| {
+            addresses
+                .iter()
+                .map(|signer| self.signer_manager.attestation_nonce(*signer).to_vec())
+                .collect::<Vec<_>>()
+        });
         info!(
             signer_count = addresses.len(),
             instance = %instance.instance_id,
-            "requesting attestations with deterministic nonces"
+            attestation_kind = ?instance.attestation_kind,
+            "requesting signer attestations"
         );
         let all_attestations =
-            match self.signer_client.signer_attestation(&instance.endpoint, Some(nonces)).await {
+            match self.signer_client.signer_attestation(&instance.endpoint, nonces).await {
                 Ok(attestations) => attestations,
                 Err(e) => {
                     warn!(
@@ -295,7 +301,9 @@ where
         if self.config.cancel.is_cancelled() {
             return Ok(outcome);
         }
-        if let Some(cert_manager) = &self.cert_manager {
+        if instance.attestation_kind == TeeAttestationKind::Nitro
+            && let Some(cert_manager) = &self.cert_manager
+        {
             let first_attestation = all_attestations
                 .first()
                 .expect("guarded by attestation count == signer count >= 1");
@@ -346,6 +354,7 @@ where
                 "resolve_instance",
                 instance_id = %instance.instance_id,
                 endpoint = %instance.endpoint,
+                attestation_kind = ?instance.attestation_kind,
                 health = ?instance.health_status,
             );
             async move {
@@ -431,6 +440,10 @@ mod tests {
         time::SystemTime,
     };
 
+    use async_trait::async_trait;
+    use base_proof_tee_attestation::{
+        Result as AttestationResult, TeeAttestationProof, TeeAttestationProofProvider,
+    };
     use tokio_util::sync::CancellationToken;
     use url::Url;
 
@@ -504,10 +517,21 @@ mod tests {
         }
     }
 
+    #[async_trait]
+    impl TeeAttestationProofProvider for MockEnclaveEndpointClient {
+        async fn generate_proof_for_signer(
+            &self,
+            _attestation_bytes: &[u8],
+            _signer_address: Address,
+        ) -> AttestationResult<TeeAttestationProof> {
+            unreachable!("driver tests do not generate proofs")
+        }
+    }
+
     type TestDriver = RegistrationDriver<
         Vec<ProverInstance>,
         MockEnclaveEndpointClient,
-        MockEnclaveEndpointClient,
+        PlatformProofProvider,
         (),
         NoopTxManager,
     >;
@@ -538,7 +562,7 @@ mod tests {
         instance_cache_ttl_cycles: u32,
     ) -> TestDriver {
         let signer_manager = Arc::new(SignerManager::new(
-            signer_client.clone(),
+            PlatformProofProvider::new(signer_client.clone(), signer_client.clone()),
             (),
             NoopTxManager,
             SignerManagerConfig {
@@ -679,6 +703,22 @@ mod tests {
             )
             .to_vec();
         assert_eq!(*requested_nonces.lock().unwrap(), vec![Some(vec![nonce_a, nonce_b])]);
+    }
+
+    #[tokio::test]
+    async fn discover_and_resolve_requests_tdx_attestation_without_nonce() {
+        let signer_client = MockEnclaveEndpointClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
+        let requested_nonces = Arc::clone(&signer_client.requested_nonces);
+        let mut instance = healthy_prover_instance(EP1);
+        instance.attestation_kind = TeeAttestationKind::Tdx;
+
+        let driver = cycle_driver(vec![instance], signer_client, CancellationToken::new());
+
+        let resolution = discover_once(&driver).await;
+
+        assert_eq!(resolution.registerable.len(), 1);
+        assert_eq!(resolution.registerable[0].instance.attestation_kind, TeeAttestationKind::Tdx);
+        assert_eq!(*requested_nonces.lock().unwrap(), vec![None]);
     }
 
     #[tokio::test]

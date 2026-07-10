@@ -1,0 +1,31 @@
+[package]
+name = "base-proof-tee-tdx-verifier"
+description = "Pure verification logic for Intel TDX quote registration journals"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Parsing
+x509-parser.workspace = true
+serde = { workspace = true, features = ["derive"] }
+time = { workspace = true, features = ["parsing"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+
+# Crypto
+sha2.workspace = true
+k256.workspace = true
+p256 = { workspace = true, features = ["ecdsa"] }
+
+# Types
+alloy-sol-types.workspace = true
+alloy-primitives = { workspace = true, default-features = false }
+
+# Error
+thiserror.workspace = true

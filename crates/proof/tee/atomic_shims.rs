@@ -1,8 +1,7 @@
 //! Atomic operation shims for the riscv32im zkVM target.
 //!
-//! The riscv32im ISA lacks the "A" (atomics) extension, so LLVM emits calls to
-//! `__atomic_*` builtins for any `core::sync::atomic` usage. The risc0 zkVM is
-//! single-threaded, so these can be safely implemented as plain memory
+//! The riscv32im ISA lacks the "A" atomics extension. The RISC Zero zkVM is
+//! single-threaded, so these builtins can be implemented as volatile memory
 //! operations.
 
 use core::ptr;
@@ -54,16 +53,7 @@ unsafe extern "C" fn __atomic_compare_exchange_1(
     _success_ordering: i32,
     _failure_ordering: i32,
 ) -> bool {
-    unsafe {
-        let old = ptr::read_volatile(dst);
-        if old == ptr::read(expected) {
-            ptr::write_volatile(dst, desired);
-            true
-        } else {
-            ptr::write(expected, old);
-            false
-        }
-    }
+    unsafe { compare_exchange(dst, expected, desired) }
 }
 
 #[unsafe(no_mangle)]
@@ -75,6 +65,10 @@ unsafe extern "C" fn __atomic_compare_exchange_4(
     _success_ordering: i32,
     _failure_ordering: i32,
 ) -> bool {
+    unsafe { compare_exchange(dst, expected, desired) }
+}
+
+unsafe fn compare_exchange<T: Copy + PartialEq>(dst: *mut T, expected: *mut T, desired: T) -> bool {
     unsafe {
         let old = ptr::read_volatile(dst);
         if old == ptr::read(expected) {

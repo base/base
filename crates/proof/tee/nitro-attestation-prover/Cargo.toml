@@ -15,11 +15,9 @@ workspace = true
 # Verification types (always available)
 base-proof-tee-nitro-verifier.workspace = true
 
-# Types / traits (always available)
+# Shared proof model and errors (always available)
 thiserror.workspace = true
-tokio-util.workspace = true
-async-trait.workspace = true
-alloy-primitives.workspace = true
+base-proof-tee-attestation.workspace = true
 
 # Metrics
 metrics = { workspace = true, optional = true }
@@ -31,9 +29,11 @@ base-metrics = { workspace = true, optional = true }
 #    (e.g. the registrar library compiles in seconds without `prove`)
 url = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
+async-trait = { workspace = true, optional = true }
 boundless-market = { workspace = true, optional = true }
-risc0-ethereum-contracts = { workspace = true, optional = true }
+alloy-primitives = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["rt"], optional = true }
+risc0-ethereum-contracts = { workspace = true, optional = true }
 risc0-zkvm = { workspace = true, features = ["prove"], optional = true }
 
 [dev-dependencies]
@@ -44,6 +44,8 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 [features]
 metrics = [ "base-metrics/metrics", "dep:base-metrics", "dep:metrics" ]
 prove = [
+	"dep:alloy-primitives",
+	"dep:async-trait",
 	"dep:base-metrics",
 	"dep:boundless-market",
 	"dep:risc0-ethereum-contracts",

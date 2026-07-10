@@ -5,6 +5,7 @@ use std::time::SystemTime;
 use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope};
 use alloy_primitives::{Address, B256};
 use alloy_rpc_types_eth::TransactionReceipt;
+use base_proof_tee_attestation::TeeAttestationKind;
 use base_tx_manager::{SendHandle, TxCandidate, TxManager};
 use hex_literal::hex;
 use k256::ecdsa::SigningKey;
@@ -73,6 +74,7 @@ pub fn prover_instance(
     ProverInstance {
         instance_id: format!("i-{host_port}"),
         endpoint: url::Url::parse(&format!("http://{host_port}")).unwrap(),
+        attestation_kind: TeeAttestationKind::Nitro,
         health_status,
         launch_time,
     }

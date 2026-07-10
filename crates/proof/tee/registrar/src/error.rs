@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use alloy_primitives::{Address, B256};
 use base_proof_contracts::ContractError;
-use base_proof_tee_nitro_attestation_prover::ProverError;
+use base_proof_tee_attestation::BoxError;
 use base_tx_manager::TxManagerError;
 use thiserror::Error;
 
@@ -29,7 +29,7 @@ pub enum RegistrarError {
 
     /// ZK proof generation failed.
     #[error("proof generation failed")]
-    ProofGeneration(#[from] ProverError),
+    ProofGeneration(#[source] BoxError),
 
     /// Shared contract client call failed.
     #[error(transparent)]
@@ -57,7 +57,7 @@ pub enum RegistrarError {
         reason: String,
     },
 
-    /// Generated proof is too old for on-chain registration.
+    /// Generated proof is too old for onchain registration.
     #[error(
         "attestation proof for signer {signer} is too old: age {age:?} exceeds max {max_age:?}"
     )]

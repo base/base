@@ -1,0 +1,25 @@
+[package]
+name = "base-proof-tee-tdx-runtime"
+description = "Intel TDX runtime support for signer identity and quote collection"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Types
+alloy-signer.workspace = true
+alloy-signer-local.workspace = true
+alloy-primitives = { workspace = true, default-features = false }
+
+# Error
+thiserror.workspace = true
+
+[dev-dependencies]
+hex.workspace = true
+tempfile.workspace = true

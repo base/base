@@ -2,10 +2,12 @@
 
 use std::{num::NonZeroUsize, time::Duration};
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::Address;
 use base_cli_utils::CliStyles;
 use clap::{Args, Parser};
 use url::Url;
+
+use crate::TeeProofMode;
 
 base_cli_utils::define_cli_env!("BASE_PROPOSER");
 base_cli_utils::define_log_args!("BASE_PROPOSER");
@@ -84,9 +86,14 @@ pub struct ProposerArgs {
     #[arg(long = "game-type", env = cli_env!("GAME_TYPE"))]
     pub game_type: u32,
 
-    /// Keccak256 hash of the TEE image PCR0 (0x-prefixed hex).
-    #[arg(long = "tee-image-hash", env = cli_env!("TEE_IMAGE_HASH"))]
-    pub tee_image_hash: B256,
+    /// TEE proof requirement: `nitro`, `tdx`, or `both`.
+    #[arg(
+        long = "tee-proof-mode",
+        env = cli_env!("TEE_PROOF_MODE"),
+        default_value = "nitro",
+        value_enum
+    )]
+    pub tee_proof_mode: TeeProofMode,
 
     /// Polling interval for new blocks (e.g., "12s", "1m").
     #[arg(
@@ -183,28 +190,33 @@ pub struct AdminArgs {
 mod tests {
     use super::*;
 
+    const BASE_ARGS: &[&str] = &[
+        "proposer",
+        "--prover-rpc",
+        "http://localhost:8080",
+        "--l1-eth-rpc",
+        "http://localhost:8545",
+        "--l2-eth-rpc",
+        "http://localhost:9545",
+        "--anchor-state-registry-addr",
+        "0x1234567890123456789012345678901234567890",
+        "--dispute-game-factory-addr",
+        "0x2234567890123456789012345678901234567890",
+        "--game-type",
+        "1",
+        "--rollup-rpc",
+        "http://localhost:7545",
+    ];
+
+    fn try_parse(extra_args: &[&str]) -> clap::error::Result<Cli> {
+        let mut args = BASE_ARGS.to_vec();
+        args.extend_from_slice(extra_args);
+        Cli::try_parse_from(args)
+    }
+
     #[test]
     fn test_cli_defaults() {
-        let cli = Cli::try_parse_from([
-            "proposer",
-            "--prover-rpc",
-            "http://localhost:8080",
-            "--l1-eth-rpc",
-            "http://localhost:8545",
-            "--l2-eth-rpc",
-            "http://localhost:9545",
-            "--anchor-state-registry-addr",
-            "0x1234567890123456789012345678901234567890",
-            "--dispute-game-factory-addr",
-            "0x2234567890123456789012345678901234567890",
-            "--game-type",
-            "1",
-            "--tee-image-hash",
-            "0x0000000000000000000000000000000000000000000000000000000000000001",
-            "--rollup-rpc",
-            "http://localhost:7545",
-        ])
-        .unwrap();
+        let cli = try_parse(&[]).unwrap();
 
         assert_eq!(cli.proposer.prover_timeout, Duration::from_secs(70 * 60));
         assert_eq!(cli.proposer.poll_interval, Duration::from_secs(12));
@@ -217,31 +229,19 @@ mod tests {
         assert_eq!(cli.proposer.rpc_max_retries, 5);
         assert_eq!(cli.proposer.rpc_retry_initial_delay, Duration::from_millis(100));
         assert_eq!(cli.proposer.rpc_retry_max_delay, Duration::from_secs(10));
+        assert_eq!(cli.proposer.tee_proof_mode, TeeProofMode::Nitro);
+    }
+
+    #[test]
+    fn test_tee_proof_mode_arg() {
+        let cli = try_parse(&["--tee-proof-mode", "both"]).unwrap();
+
+        assert_eq!(cli.proposer.tee_proof_mode, TeeProofMode::Both);
     }
 
     #[test]
     fn test_recovery_scan_concurrency_zero_rejected() {
-        let result = Cli::try_parse_from([
-            "proposer",
-            "--prover-rpc",
-            "http://localhost:8080",
-            "--l1-eth-rpc",
-            "http://localhost:8545",
-            "--l2-eth-rpc",
-            "http://localhost:9545",
-            "--anchor-state-registry-addr",
-            "0x1234567890123456789012345678901234567890",
-            "--dispute-game-factory-addr",
-            "0x2234567890123456789012345678901234567890",
-            "--game-type",
-            "1",
-            "--tee-image-hash",
-            "0x0000000000000000000000000000000000000000000000000000000000000001",
-            "--rollup-rpc",
-            "http://localhost:7545",
-            "--recovery-scan-concurrency",
-            "0",
-        ]);
+        let result = try_parse(&["--recovery-scan-concurrency", "0"]);
 
         assert!(result.is_err());
     }

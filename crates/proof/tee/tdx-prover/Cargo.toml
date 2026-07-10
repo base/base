@@ -1,0 +1,49 @@
+[package]
+name = "base-proof-tee-tdx-prover"
+description = "Host-side TEE proving backend for Intel TDX."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# base
+base-health.workspace = true
+base-common-evm.workspace = true
+base-proof-host.workspace = true
+base-proof-worker.workspace = true
+base-common-chains.workspace = true
+base-proof-tee-tdx-runtime.workspace = true
+base-prover-service-client.workspace = true
+base-proof-tee-tdx-verifier.workspace = true
+base-prover-service-protocol.workspace = true
+base-proof = { workspace = true, features = ["std"] }
+base-proof-client = { workspace = true, features = ["std"] }
+base-proof-preimage = { workspace = true, features = ["serde"] }
+base-proof-primitives = { workspace = true, features = ["std", "serde", "rpc-server"] }
+
+# alloy
+alloy-primitives.workspace = true
+
+# async
+tokio-util.workspace = true
+async-trait.workspace = true
+tokio = { workspace = true, features = ["rt", "time"] }
+
+# misc
+eyre.workspace = true
+tower.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+jsonrpsee = { workspace = true, features = ["server", "macros"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
+
+[features]
+test-utils = []
