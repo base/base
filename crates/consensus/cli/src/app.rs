@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand};
 
 use crate::{
     Bootnode, BootnodeEnr, ConsensusChainArgs, ConsensusFollowNodeCommand, ConsensusNodeCommand,
-    GlobalConsensusChainArgs,
+    ConsensusObserveCommand, GlobalConsensusChainArgs,
 };
 
 base_cli_utils::define_log_args!("BASE_NODE");
@@ -37,6 +37,7 @@ impl ConsensusCli {
         let chain = ConsensusChainArgs::from(self.chain);
         match self.command {
             ConsensusCommands::Node(node) => node.run(chain),
+            ConsensusCommands::Observe(observe) => observe.run(chain),
             ConsensusCommands::Follow(follow) => follow.run(chain),
             ConsensusCommands::Bootnode(bootnode) => bootnode.run(chain),
             ConsensusCommands::BootnodeEnr(bootnode_enr) => bootnode_enr.run(chain),
@@ -51,6 +52,10 @@ pub enum ConsensusCommands {
     /// Start the node.
     #[command(name = "node")]
     Node(ConsensusNodeCommand),
+
+    /// Observe CL gossip and record block-arrival latency (no execution layer / L1).
+    #[command(name = "observe")]
+    Observe(ConsensusObserveCommand),
 
     /// Follow another node.
     #[command(name = "follow")]

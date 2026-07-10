@@ -178,7 +178,10 @@ impl LatencyRecorder {
 mod tests {
     use std::{thread::sleep, time::Duration};
 
-    use alloy_primitives::b256;
+    use alloy_primitives::{Signature, b256};
+    use alloy_rpc_types_engine::ExecutionPayloadV2;
+    use base_common_rpc_types_engine::{BaseExecutionPayload, PayloadHash};
+    use libp2p::PeerId;
 
     use super::*;
 
@@ -260,5 +263,49 @@ mod tests {
             lines.next().unwrap(),
             "123,7,0x0000000000000000000000000000000000000000000000000000000000000000,100,0,us-east,peer"
         );
+    }
+
+    /// End-to-end smoke test of the record path: a real `NetworkPayloadEnvelope` built from a real
+    /// block is run through `record()` and every persisted CSV field is asserted against the
+    /// envelope. Mirrors what the gossip driver does on a first-seen block.
+    #[test]
+    fn record_persists_fields_from_real_envelope() {
+        let block = crate::v2_valid_block();
+        let payload = BaseExecutionPayload::V2(ExecutionPayloadV2::from_block_slow(&block));
+        let expected_number = payload.block_number();
+        let expected_hash = payload.block_hash();
+        let expected_ts = payload.timestamp();
+        let envelope = NetworkPayloadEnvelope {
+            payload,
+            signature: Signature::test_signature(),
+            payload_hash: PayloadHash(B256::ZERO),
+            parent_beacon_block_root: None,
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("latency.csv");
+        let recorder = LatencyRecorder::new(&path, "eu-central".to_string()).unwrap();
+        let peer = PeerId::random();
+        recorder.record(&envelope, 42, &peer);
+        drop(recorder);
+
+        let mut contents = String::new();
+        for _ in 0..50 {
+            contents = std::fs::read_to_string(&path).unwrap();
+            if contents.lines().count() >= 2 {
+                break;
+            }
+            sleep(Duration::from_millis(20));
+        }
+
+        let row = contents.lines().nth(1).expect("a data row should be written");
+        let fields: Vec<&str> = row.split(',').collect();
+        assert_eq!(fields[0], "42", "recv_wallclock_ns");
+        assert_eq!(fields[1], expected_number.to_string(), "block_number");
+        assert_eq!(fields[2], format!("{expected_hash:#x}"), "block_hash");
+        assert_eq!(fields[3], expected_ts.to_string(), "produced_sec");
+        assert_eq!(fields[4], "0", "produced_millis_part (no BaseTime deposit)");
+        assert_eq!(fields[5], "eu-central", "region");
+        assert_eq!(fields[6], peer.to_string(), "peer_id");
     }
 }

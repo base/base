@@ -10,6 +10,9 @@
 mod app;
 pub use app::{ConsensusCli, ConsensusCommands, LogArgs, MetricsArgs};
 
+mod observe;
+pub use observe::ConsensusObserveCommand;
+
 mod bootnode;
 pub use bootnode::{Bootnode, BootnodeEnr, BootnodeP2PArgs, resolve_host};
 
