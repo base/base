@@ -13,11 +13,30 @@
 //! (a verbatim port of `common/ops/transferable.rs`); `v2` demonstrates a future hard-fork change
 //! (reject zero-amount transfers). Every other method stays unversioned in this PoC.
 
+use alloc::{string::String, vec::Vec};
+
 use alloy_primitives::{Address, B256, U256};
 use base_common_chains::BaseUpgrade;
 use base_precompile_storage::Result;
 
-use crate::Token;
+use crate::{
+    Burnable, Configurable, IB20, Mintable, Pausable, PermitArgs, Permittable, RoleManaged,
+    Transferable,
+};
+
+/// Capability bundle: every `common/ops` behavior a versioned B-20 asset dispatcher may invoke.
+///
+/// Bounding the generated dispatchers on this single alias (rather than each trait individually)
+/// keeps the macro invocation terse and lets `v1` forward to whichever `common/ops` trait method a
+/// given op wraps.
+pub(crate) trait AssetOps:
+    Transferable + Mintable + Burnable + Pausable + Configurable + Permittable + RoleManaged
+{
+}
+impl<T> AssetOps for T where
+    T: Transferable + Mintable + Burnable + Pausable + Configurable + Permittable + RoleManaged
+{
+}
 
 /// Identifies which frozen behavior generation a fork runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,7 +71,7 @@ pub fn for_upgrade(upgrade: BaseUpgrade) -> Version {
 macro_rules! versioned_ops {
     ( $( $op:ident ( $($arg:ident : $arg_ty:ty),* $(,)? ); )+ ) => {
         $(
-            pub(crate) fn $op<T: Token>(
+            pub(crate) fn $op<T: AssetOps>(
                 version: Version,
                 t: &mut T,
                 $($arg: $arg_ty),*
@@ -73,15 +92,39 @@ versioned_ops! {
     transfer_from_with_memo(
         spender: Address, from: Address, to: Address, amount: U256, memo: B256, privileged: bool
     );
+    approve(owner: Address, spender: Address, amount: U256);
+    mint(caller: Address, to: Address, amount: U256, privileged: bool);
+    mint_with_memo(caller: Address, to: Address, amount: U256, memo: B256, privileged: bool);
+    burn(caller: Address, from: Address, amount: U256, privileged: bool);
+    burn_with_memo(caller: Address, from: Address, amount: U256, memo: B256, privileged: bool);
+    burn_blocked(caller: Address, from: Address, amount: U256, privileged: bool);
+    pause(caller: Address, features: Vec<IB20::PausableFeature>, privileged: bool);
+    unpause(caller: Address, features: Vec<IB20::PausableFeature>, privileged: bool);
+    update_supply_cap(caller: Address, new_cap: U256, privileged: bool);
+    update_name(caller: Address, name: String, privileged: bool);
+    update_symbol(caller: Address, symbol: String, privileged: bool);
+    update_contract_uri(caller: Address, uri: String, privileged: bool);
+    grant_role(caller: Address, role: B256, account: Address, privileged: bool);
+    revoke_role(caller: Address, role: B256, account: Address, privileged: bool);
+    renounce_role(caller: Address, role: B256, confirmation: Address);
+    renounce_last_admin(caller: Address);
+    set_role_admin(caller: Address, role: B256, new_admin_role: B256, privileged: bool);
+    permit(chain_id: u64, now: U256, args: PermitArgs);
 }
 
 /// Genesis behavior — a verbatim port of `common/ops/transferable.rs`. FROZEN once shipped.
 pub(crate) mod v1 {
+    use alloc::{string::String, vec::Vec};
+
     use alloy_primitives::{Address, B256, U256};
     use alloy_sol_types::SolEvent;
     use base_precompile_storage::{BasePrecompileError, Result};
 
-    use crate::{B20Guards, B20PolicyType, IB20, Token, TokenAccounting};
+    use super::AssetOps;
+    use crate::{
+        B20Guards, B20PolicyType, Burnable, Configurable, IB20, Mintable, Pausable, PermitArgs,
+        Permittable, RoleManaged, Token, TokenAccounting, Transferable,
+    };
 
     /// ERC-20 transfer: pause check, then [`transfer_inner`].
     pub(crate) fn transfer<T: Token>(
@@ -192,6 +235,196 @@ pub(crate) mod v1 {
         transfer_from(t, spender, from, to, amount, privileged)?;
         t.accounting_mut().emit_event(IB20::Memo { caller: spender, memo }.encode_log_data())
     }
+
+    // --- Unversioned ops (single behavior): thin forwards to the `common/ops` trait methods. ---
+    //
+    // These share one behavior across all forks until a future fork diverges them, at which point
+    // the diverging method's body is lifted out of the trait and into this module.
+
+    /// Forwards to [`Transferable::approve`].
+    pub(crate) fn approve<T: AssetOps>(
+        t: &mut T,
+        owner: Address,
+        spender: Address,
+        amount: U256,
+    ) -> Result<()> {
+        Transferable::approve(t, owner, spender, amount)
+    }
+
+    /// Forwards to [`Mintable::mint`].
+    pub(crate) fn mint<T: AssetOps>(
+        t: &mut T,
+        caller: Address,
+        to: Address,
+        amount: U256,
+        privileged: bool,
+    ) -> Result<()> {
+        Mintable::mint(t, caller, to, amount, privileged)
+    }
+
+    /// Forwards to [`Mintable::mint_with_memo`].
+    pub(crate) fn mint_with_memo<T: AssetOps>(
+        t: &mut T,
+        caller: Address,
+        to: Address,
+        amount: U256,
+        memo: B256,
+        privileged: bool,
+    ) -> Result<()> {
+        Mintable::mint_with_memo(t, caller, to, amount, memo, privileged)
+    }
+
+    /// Forwards to [`Burnable::burn`].
+    pub(crate) fn burn<T: AssetOps>(
+        t: &mut T,
+        caller: Address,
+        from: Address,
+        amount: U256,
+        privileged: bool,
+    ) -> Result<()> {
+        Burnable::burn(t, caller, from, amount, privileged)
+    }
+
+    /// Forwards to [`Burnable::burn_with_memo`].
+    pub(crate) fn burn_with_memo<T: AssetOps>(
+        t: &mut T,
+        caller: Address,
+        from: Address,
+        amount: U256,
+        memo: B256,
+        privileged: bool,
+    ) -> Result<()> {
+        Burnable::burn_with_memo(t, caller, from, amount, memo, privileged)
+    }
+
+    /// Forwards to [`Burnable::burn_blocked`].
+    pub(crate) fn burn_blocked<T: AssetOps>(
+        t: &mut T,
+        caller: Address,
+        from: Address,
+        amount: U256,
+        privileged: bool,
+    ) -> Result<()> {
+        Burnable::burn_blocked(t, caller, from, amount, privileged)
+    }
+
+    /// Forwards to [`Pausable::pause`].
+    pub(crate) fn pause<T: AssetOps>(
+        t: &mut T,
+        caller: Address,
+        features: Vec<IB20::PausableFeature>,
+        privileged: bool,
+    ) -> Result<()> {
+        Pausable::pause(t, caller, features, privileged)
+    }
+
+    /// Forwards to [`Pausable::unpause`].
+    pub(crate) fn unpause<T: AssetOps>(
+        t: &mut T,
+        caller: Address,
+        features: Vec<IB20::PausableFeature>,
+        privileged: bool,
+    ) -> Result<()> {
+        Pausable::unpause(t, caller, features, privileged)
+    }
+
+    /// Forwards to [`Configurable::update_supply_cap`].
+    pub(crate) fn update_supply_cap<T: AssetOps>(
+        t: &mut T,
+        caller: Address,
+        new_cap: U256,
+        privileged: bool,
+    ) -> Result<()> {
+        Configurable::update_supply_cap(t, caller, new_cap, privileged)
+    }
+
+    /// Forwards to [`Configurable::update_name`].
+    pub(crate) fn update_name<T: AssetOps>(
+        t: &mut T,
+        caller: Address,
+        name: String,
+        privileged: bool,
+    ) -> Result<()> {
+        Configurable::update_name(t, caller, name, privileged)
+    }
+
+    /// Forwards to [`Configurable::update_symbol`].
+    pub(crate) fn update_symbol<T: AssetOps>(
+        t: &mut T,
+        caller: Address,
+        symbol: String,
+        privileged: bool,
+    ) -> Result<()> {
+        Configurable::update_symbol(t, caller, symbol, privileged)
+    }
+
+    /// Forwards to [`Configurable::update_contract_uri`].
+    pub(crate) fn update_contract_uri<T: AssetOps>(
+        t: &mut T,
+        caller: Address,
+        uri: String,
+        privileged: bool,
+    ) -> Result<()> {
+        Configurable::update_contract_uri(t, caller, uri, privileged)
+    }
+
+    /// Forwards to [`RoleManaged::grant_role`].
+    pub(crate) fn grant_role<T: AssetOps>(
+        t: &mut T,
+        caller: Address,
+        role: B256,
+        account: Address,
+        privileged: bool,
+    ) -> Result<()> {
+        RoleManaged::grant_role(t, caller, role, account, privileged)
+    }
+
+    /// Forwards to [`RoleManaged::revoke_role`].
+    pub(crate) fn revoke_role<T: AssetOps>(
+        t: &mut T,
+        caller: Address,
+        role: B256,
+        account: Address,
+        privileged: bool,
+    ) -> Result<()> {
+        RoleManaged::revoke_role(t, caller, role, account, privileged)
+    }
+
+    /// Forwards to [`RoleManaged::renounce_role`].
+    pub(crate) fn renounce_role<T: AssetOps>(
+        t: &mut T,
+        caller: Address,
+        role: B256,
+        confirmation: Address,
+    ) -> Result<()> {
+        RoleManaged::renounce_role(t, caller, role, confirmation)
+    }
+
+    /// Forwards to [`RoleManaged::renounce_last_admin`].
+    pub(crate) fn renounce_last_admin<T: AssetOps>(t: &mut T, caller: Address) -> Result<()> {
+        RoleManaged::renounce_last_admin(t, caller)
+    }
+
+    /// Forwards to [`RoleManaged::set_role_admin`].
+    pub(crate) fn set_role_admin<T: AssetOps>(
+        t: &mut T,
+        caller: Address,
+        role: B256,
+        new_admin_role: B256,
+        privileged: bool,
+    ) -> Result<()> {
+        RoleManaged::set_role_admin(t, caller, role, new_admin_role, privileged)
+    }
+
+    /// Forwards to [`Permittable::permit`].
+    pub(crate) fn permit<T: AssetOps>(
+        t: &mut T,
+        chain_id: u64,
+        now: U256,
+        args: PermitArgs,
+    ) -> Result<()> {
+        Permittable::permit(t, chain_id, now, args)
+    }
 }
 
 /// Next-generation behavior (Cobalt in this PoC): identical to [`v1`] except `transfer_inner`
@@ -204,6 +437,13 @@ pub(crate) mod v2 {
     use alloy_sol_types::SolEvent;
     use base_precompile_storage::{BasePrecompileError, Result};
 
+    // Unversioned ops reuse v1's single behavior verbatim: v2 diverges only in the transfer
+    // cluster (below). When a future fork changes one of these, its body is lifted here.
+    pub(crate) use super::v1::{
+        approve, burn, burn_blocked, burn_with_memo, grant_role, mint, mint_with_memo, pause,
+        permit, renounce_last_admin, renounce_role, revoke_role, set_role_admin,
+        update_contract_uri, update_name, update_supply_cap, update_symbol, unpause,
+    };
     use crate::{B20Guards, B20PolicyType, IB20, Token, TokenAccounting};
 
     /// ERC-20 transfer: pause check, then [`transfer_inner`].

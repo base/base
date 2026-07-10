@@ -12,11 +12,11 @@ use revm::precompile::PrecompileResult;
 
 use crate::{
     AssetAccounting, B20AssetStorage, B20AssetToken, B20TokenRole, BerylAuxiliaryMetrics,
-    BerylCallRecorder, BerylMetricLabels, BerylSelector, Burnable, Configurable,
+    BerylCallRecorder, BerylMetricLabels, BerylSelector,
     IB20::{self, IB20Calls as C},
     IB20Asset::{self, IB20AssetCalls as SC},
-    Mintable, NoopPrecompileCallObserver, Pausable, PermitArgs, Permittable, Policy,
-    PrecompileCallObserver, RoleManaged, Token, Transferable,
+    NoopPrecompileCallObserver, Pausable, PermitArgs, Permittable, Policy, PrecompileCallObserver,
+    RoleManaged, Token,
     macros::decode_precompile_call,
 };
 
@@ -209,7 +209,8 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
             }
             C::approve(c) => {
                 let caller = ctx.caller();
-                self.approve(caller, c.spender, c.amount)?;
+                let version = self.version();
+                logic::approve(version, self, caller, c.spender, c.amount)?;
                 true.abi_encode().into()
             }
             C::transferWithMemo(c) => {
@@ -227,15 +228,17 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
                 true.abi_encode().into()
             }
 
-            // --- Mint (unversioned in this PoC) ---
+            // --- Mint ---
             C::mint(c) => {
                 let caller = ctx.caller();
-                self.mint(caller, c.to, c.amount, privileged)?;
+                let version = self.version();
+                logic::mint(version, self, caller, c.to, c.amount, privileged)?;
                 Bytes::new()
             }
             C::mintWithMemo(c) => {
                 let caller = ctx.caller();
-                self.mint_with_memo(caller, c.to, c.amount, c.memo, privileged)?;
+                let version = self.version();
+                logic::mint_with_memo(version, self, caller, c.to, c.amount, c.memo, privileged)?;
                 Bytes::new()
             }
 
@@ -244,80 +247,94 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
             // factory, not a token holder.
             C::burn(c) => {
                 let caller = ctx.caller();
-                self.burn(caller, caller, c.amount, false)?;
+                let version = self.version();
+                logic::burn(version, self, caller, caller, c.amount, false)?;
                 Bytes::new()
             }
             C::burnWithMemo(c) => {
                 let caller = ctx.caller();
-                self.burn_with_memo(caller, caller, c.amount, c.memo, false)?;
+                let version = self.version();
+                logic::burn_with_memo(version, self, caller, caller, c.amount, c.memo, false)?;
                 Bytes::new()
             }
             C::burnBlocked(c) => {
                 let caller = ctx.caller();
-                self.burn_blocked(caller, c.from, c.amount, privileged)?;
+                let version = self.version();
+                logic::burn_blocked(version, self, caller, c.from, c.amount, privileged)?;
                 Bytes::new()
             }
 
             // --- Pause ---
             C::pause(c) => {
                 let caller = ctx.caller();
-                self.pause(caller, c.features, privileged)?;
+                let version = self.version();
+                logic::pause(version, self, caller, c.features, privileged)?;
                 Bytes::new()
             }
             C::unpause(c) => {
                 let caller = ctx.caller();
-                self.unpause(caller, c.features, privileged)?;
+                let version = self.version();
+                logic::unpause(version, self, caller, c.features, privileged)?;
                 Bytes::new()
             }
 
             // --- Admin ---
             C::updateSupplyCap(c) => {
                 let caller = ctx.caller();
-                Configurable::update_supply_cap(self, caller, c.newSupplyCap, privileged)?;
+                let version = self.version();
+                logic::update_supply_cap(version, self, caller, c.newSupplyCap, privileged)?;
                 Bytes::new()
             }
             C::updateName(c) => {
                 let caller = ctx.caller();
-                Configurable::update_name(self, caller, c.newName, privileged)?;
+                let version = self.version();
+                logic::update_name(version, self, caller, c.newName, privileged)?;
                 Bytes::new()
             }
             C::updateSymbol(c) => {
                 let caller = ctx.caller();
-                Configurable::update_symbol(self, caller, c.newSymbol, privileged)?;
+                let version = self.version();
+                logic::update_symbol(version, self, caller, c.newSymbol, privileged)?;
                 Bytes::new()
             }
             C::updateContractURI(c) => {
                 let caller = ctx.caller();
-                Configurable::update_contract_uri(self, caller, c.newURI, privileged)?;
+                let version = self.version();
+                logic::update_contract_uri(version, self, caller, c.newURI, privileged)?;
                 Bytes::new()
             }
 
             // --- Role mutations ---
             C::grantRole(c) => {
                 let caller = ctx.caller();
-                self.grant_role(caller, c.role, c.account, privileged)?;
+                let version = self.version();
+                logic::grant_role(version, self, caller, c.role, c.account, privileged)?;
                 Bytes::new()
             }
             C::revokeRole(c) => {
                 let caller = ctx.caller();
-                self.revoke_role(caller, c.role, c.account, privileged)?;
+                let version = self.version();
+                logic::revoke_role(version, self, caller, c.role, c.account, privileged)?;
                 Bytes::new()
             }
             // Renounce operations are never factory-privileged: they are only meaningful for the
             // role holder making the call after token creation.
             C::renounceRole(c) => {
                 let caller = ctx.caller();
-                self.renounce_role(caller, c.role, c.callerConfirmation)?;
+                let version = self.version();
+                logic::renounce_role(version, self, caller, c.role, c.callerConfirmation)?;
                 Bytes::new()
             }
             C::renounceLastAdmin(_) => {
                 let caller = ctx.caller();
-                self.renounce_last_admin(caller)?;
+                let version = self.version();
+                logic::renounce_last_admin(version, self, caller)?;
                 Bytes::new()
             }
             C::setRoleAdmin(c) => {
                 let caller = ctx.caller();
-                self.set_role_admin(caller, c.role, c.newAdminRole, privileged)?;
+                let version = self.version();
+                logic::set_role_admin(version, self, caller, c.role, c.newAdminRole, privileged)?;
                 Bytes::new()
             }
 
@@ -330,7 +347,10 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
 
             // --- Permit ---
             C::permit(c) => {
-                self.permit(
+                let version = self.version();
+                logic::permit(
+                    version,
+                    self,
                     ctx.chain_id(),
                     ctx.timestamp(),
                     PermitArgs {
