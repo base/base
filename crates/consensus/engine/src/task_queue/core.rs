@@ -82,14 +82,6 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         self.task_queue_length.subscribe()
     }
 
-    /// Sets `need_fcu_call_backup_unsafe_reorg` on the engine state.
-    ///
-    /// For test use only — allows harness tests to inspect sticky-flag behavior.
-    pub fn set_need_fcu_call_backup_unsafe_reorg(&mut self, value: bool) {
-        self.state.need_fcu_call_backup_unsafe_reorg = value;
-        self.state_sender.send_replace(self.state);
-    }
-
     /// Starts a block build directly against the execution layer.
     pub async fn build(
         &mut self,

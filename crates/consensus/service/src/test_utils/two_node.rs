@@ -3,17 +3,18 @@
 use std::{collections::VecDeque, future::Future, sync::Arc};
 
 use alloy_primitives::B256;
-use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
+use alloy_rpc_types_engine::{
+    ForkchoiceState, ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum,
+};
 use base_protocol::BlockInfo;
 use thiserror::Error;
 use tokio::sync::{Mutex, mpsc, oneshot};
 
 use super::{
     Driver, EngineClientCall, FakeEngineClientHandle, FakeL1, FakeSafeDBHandle, HarnessBuilder,
-    NodeConfig,
-    ProgressTimeout, ScriptedForkchoiceResponse,
+    NodeConfig, ProgressTimeout, ScriptedForkchoiceResponse,
 };
-use crate::{DerivationActorRequest, DerivationState, EngineActorRequest, NodeMode};
+use crate::{DerivationActorRequest, DerivationState, NodeMode};
 
 fn run_async<F>(future: F) -> F::Output
 where
@@ -128,10 +129,7 @@ pub struct FakeL1Handle {
 
 impl FakeL1Handle {
     fn new(sequencer_l1: FakeL1, validator_l1: FakeL1) -> Self {
-        Self {
-            sequencer_l1,
-            validator_l1,
-        }
+        Self { sequencer_l1, validator_l1 }
     }
 
     /// Extends both nodes' fake L1 chains with the same block.
@@ -164,7 +162,6 @@ pub struct NodeHandles {
     /// Shared fake gossip transport control handle.
     pub fake_gossip: FakeGossipTransportHandle,
     derivation_request_tx: mpsc::Sender<DerivationActorRequest>,
-    engine_request_tx: mpsc::Sender<EngineActorRequest>,
 }
 
 impl NodeHandles {
@@ -190,24 +187,6 @@ impl NodeHandles {
             return None;
         }
         result_rx.await.ok()
-    }
-
-    /// Forces `need_fcu_call_backup_unsafe_reorg=true` in engine state.
-    pub async fn force_backup_unsafe_reorg(&self) {
-        self.set_need_fcu_call_backup_unsafe_reorg(true).await;
-    }
-
-    /// Sets `need_fcu_call_backup_unsafe_reorg` in engine state.
-    pub async fn set_need_fcu_call_backup_unsafe_reorg(&self, value: bool) {
-        let (result_tx, result_rx) = oneshot::channel();
-        if self
-            .engine_request_tx
-            .send(EngineActorRequest::SetNeedFcuCallBackupUnsafeReorgRequest { value, result_tx })
-            .await
-            .is_ok()
-        {
-            let _ = result_rx.await;
-        }
     }
 }
 
@@ -245,9 +224,9 @@ impl<'a> TwoNodeHarness<'a> {
                 harness.fake_safedb_handle().clone(),
             )
         };
-        let (sequencer_derivation_tx, sequencer_engine_tx) = {
+        let sequencer_derivation_tx = {
             let harness = driver.harness(sequencer_id);
-            (harness.derivation_request_sender(), harness.engine_request_sender())
+            harness.derivation_request_sender()
         };
         let (validator_l1, validator_engine, validator_safedb) = {
             let harness = driver.harness(validator_id);
@@ -257,9 +236,9 @@ impl<'a> TwoNodeHarness<'a> {
                 harness.fake_safedb_handle().clone(),
             )
         };
-        let (validator_derivation_tx, validator_engine_tx) = {
+        let validator_derivation_tx = {
             let harness = driver.harness(validator_id);
-            (harness.derivation_request_sender(), harness.engine_request_sender())
+            harness.derivation_request_sender()
         };
 
         let fake_gossip_transport = FakeGossipTransportHandle::default();
@@ -271,7 +250,6 @@ impl<'a> TwoNodeHarness<'a> {
             fake_safedb: sequencer_safedb,
             fake_gossip: fake_gossip_transport.clone(),
             derivation_request_tx: sequencer_derivation_tx,
-            engine_request_tx: sequencer_engine_tx,
         };
         let validator = NodeHandles {
             node_id: validator_id,
@@ -279,31 +257,23 @@ impl<'a> TwoNodeHarness<'a> {
             fake_safedb: validator_safedb,
             fake_gossip: fake_gossip_transport.clone(),
             derivation_request_tx: validator_derivation_tx,
-            engine_request_tx: validator_engine_tx,
         };
 
-        Self {
-            driver,
-            sequencer,
-            validator,
-            fake_l1,
-            fake_gossip_transport,
-        }
+        Self { driver, sequencer, validator, fake_l1, fake_gossip_transport }
     }
 
     /// Scripts identical FCU responses on both nodes.
     pub fn script_both_fcu(&self, scripted: impl IntoIterator<Item = ScriptedForkchoiceResponse>) {
         let responses = scripted.into_iter().collect::<Vec<_>>();
-        self.sequencer
-            .fake_engine_client
-            .push_scripted_fcu_v3_blocking(responses.clone());
-        self.validator
-            .fake_engine_client
-            .push_scripted_fcu_v3_blocking(responses);
+        self.sequencer.fake_engine_client.push_scripted_fcu_v3_blocking(responses.clone());
+        self.validator.fake_engine_client.push_scripted_fcu_v3_blocking(responses);
     }
 
     /// Scripts FCU responses only on validator.
-    pub fn script_validator_fcu(&self, scripted: impl IntoIterator<Item = ScriptedForkchoiceResponse>) {
+    pub fn script_validator_fcu(
+        &self,
+        scripted: impl IntoIterator<Item = ScriptedForkchoiceResponse>,
+    ) {
         self.validator.fake_engine_client.push_scripted_fcu_v3_blocking(scripted);
     }
 
@@ -312,9 +282,7 @@ impl<'a> TwoNodeHarness<'a> {
         &self,
         scripted: impl IntoIterator<Item = PayloadStatus>,
     ) {
-        self.validator
-            .fake_engine_client
-            .push_scripted_new_payload_v3_blocking(scripted);
+        self.validator.fake_engine_client.push_scripted_new_payload_v3_blocking(scripted);
     }
 
     /// Extends shared L1 and relays corresponding synthetic gossip deliveries.
@@ -392,221 +360,253 @@ mod tests {
 
     #[test]
     fn c1_sequencer_output_reaches_validator() {
-    let mut driver = Driver::new();
-    let mut harness = TwoNodeHarness::build(&mut driver);
-    harness.script_both_fcu((0..64).map(|_| valid_fcu()));
+        let mut driver = Driver::new();
+        let mut harness = TwoNodeHarness::build(&mut driver);
+        harness.script_both_fcu((0..64).map(|_| valid_fcu()));
 
-    for number in 1..=3 {
-        harness.extend_l1_with_gossip(block(number, hash_for(number - 1), hash_for(number), number));
+        for number in 1..=3 {
+            harness.extend_l1_with_gossip(block(
+                number,
+                hash_for(number - 1),
+                hash_for(number),
+                number,
+            ));
+        }
+
+        harness
+            .run_until_progress(3, 50)
+            .expect("validator safe head did not reach sequencer target within liveness gate");
+
+        let sequencer_safe = harness.safe_head_number(harness.sequencer.node_id);
+        let validator_safe = harness.safe_head_number(harness.validator.node_id);
+        // Invariant C1: sequencer output reaches validator and final safe heads agree.
+        assert_eq!(
+            validator_safe, sequencer_safe,
+            "validator safe head must match sequencer safe head"
+        );
+
+        let sequencer_fcu = TwoNodeHarness::latest_fcu_state(&harness.sequencer.fake_engine_client)
+            .expect("sequencer should have at least one FCU call");
+        let validator_fcu = TwoNodeHarness::latest_fcu_state(&harness.validator.fake_engine_client)
+            .expect("validator should have at least one FCU call");
+        // Invariant C1: validator unsafe head (FCU head hash) matches sequencer unsafe head.
+        assert_eq!(validator_fcu.head_block_hash, sequencer_fcu.head_block_hash);
+        // Invariant C1: validator safe head hash matches sequencer safe head hash.
+        assert_eq!(validator_fcu.safe_block_hash, sequencer_fcu.safe_block_hash);
     }
 
-    harness
-        .run_until_progress(3, 50)
-        .expect("validator safe head did not reach sequencer target within liveness gate");
+    #[test]
+    fn c1_dropped_gossip_validator_catches_up_via_l1_derivation() {
+        let mut driver = Driver::new();
+        let mut harness = TwoNodeHarness::build(&mut driver);
+        harness.script_both_fcu((0..128).map(|_| valid_fcu()));
+        run_async(harness.fake_gossip_transport.drop_next(3));
 
-    let sequencer_safe = harness.safe_head_number(harness.sequencer.node_id);
-    let validator_safe = harness.safe_head_number(harness.validator.node_id);
-    // Invariant C1: sequencer output reaches validator and final safe heads agree.
-    assert_eq!(validator_safe, sequencer_safe, "validator safe head must match sequencer safe head");
+        for number in 1..=3 {
+            harness.extend_l1_with_gossip(block(
+                number,
+                hash_for(number - 1),
+                hash_for(number),
+                number,
+            ));
+        }
 
-    let sequencer_fcu = TwoNodeHarness::latest_fcu_state(&harness.sequencer.fake_engine_client)
-        .expect("sequencer should have at least one FCU call");
-    let validator_fcu = TwoNodeHarness::latest_fcu_state(&harness.validator.fake_engine_client)
-        .expect("validator should have at least one FCU call");
-    // Invariant C1: validator unsafe head (FCU head hash) matches sequencer unsafe head.
-    assert_eq!(validator_fcu.head_block_hash, sequencer_fcu.head_block_hash);
-    // Invariant C1: validator safe head hash matches sequencer safe head hash.
-    assert_eq!(validator_fcu.safe_block_hash, sequencer_fcu.safe_block_hash);
-}
+        harness
+            .run_until_progress(3, 100)
+            .expect("validator did not catch up after dropped gossip within liveness gate");
 
-#[test]
-fn c1_dropped_gossip_validator_catches_up_via_l1_derivation() {
-    let mut driver = Driver::new();
-    let mut harness = TwoNodeHarness::build(&mut driver);
-    harness.script_both_fcu((0..128).map(|_| valid_fcu()));
-    run_async(harness.fake_gossip_transport.drop_next(3));
-
-    for number in 1..=3 {
-        harness.extend_l1_with_gossip(block(number, hash_for(number - 1), hash_for(number), number));
+        let sequencer_safe = harness.safe_head_number(harness.sequencer.node_id);
+        let validator_safe = harness.safe_head_number(harness.validator.node_id);
+        // Invariant C1: final sequencer/validator agreement still holds after gossip faults.
+        assert_eq!(validator_safe, sequencer_safe);
+        // Invariant L2: validator eventually progresses to available safe tip.
+        assert!(validator_safe >= 3, "validator safe head must make forward progress");
     }
 
-    harness
-        .run_until_progress(3, 100)
-        .expect("validator did not catch up after dropped gossip within liveness gate");
+    #[test]
+    fn c2_l1_reorg_both_roles_converge() {
+        let mut driver = Driver::new();
+        let mut harness = TwoNodeHarness::build(&mut driver);
+        harness.script_both_fcu((0..192).map(|_| valid_fcu()));
 
-    let sequencer_safe = harness.safe_head_number(harness.sequencer.node_id);
-    let validator_safe = harness.safe_head_number(harness.validator.node_id);
-    // Invariant C1: final sequencer/validator agreement still holds after gossip faults.
-    assert_eq!(validator_safe, sequencer_safe);
-    // Invariant L2: validator eventually progresses to available safe tip.
-    assert!(validator_safe >= 3, "validator safe head must make forward progress");
-}
+        for number in 1..=5 {
+            harness.extend_l1_with_gossip(block(
+                number,
+                hash_for(number - 1),
+                hash_for(number),
+                number,
+            ));
+        }
 
-#[test]
-fn c2_l1_reorg_both_roles_converge() {
-    let mut driver = Driver::new();
-    let mut harness = TwoNodeHarness::build(&mut driver);
-    harness.script_both_fcu((0..192).map(|_| valid_fcu()));
+        harness
+            .run_until_progress(5, 80)
+            .expect("initial convergence to safe=5 failed before reorg");
 
-    for number in 1..=5 {
-        harness.extend_l1_with_gossip(block(number, hash_for(number - 1), hash_for(number), number));
-    }
+        let alt_4 = block(4, hash_for(3), B256::from([44_u8; 32]), 44);
+        let alt_5 = block(5, alt_4.hash, B256::from([55_u8; 32]), 55);
+        harness.reorg_l1(2, vec![alt_4, alt_5]);
 
-    harness
-        .run_until_progress(5, 80)
-        .expect("initial convergence to safe=5 failed before reorg");
+        harness
+            .run_until_progress(5, 80)
+            .expect("post-reorg convergence to new safe tip failed within liveness gate");
 
-    let alt_4 = block(4, hash_for(3), B256::from([44_u8; 32]), 44);
-    let alt_5 = block(5, alt_4.hash, B256::from([55_u8; 32]), 55);
-    harness.reorg_l1(2, vec![alt_4, alt_5]);
+        let sequencer_safe = harness.safe_head_number(harness.sequencer.node_id);
+        let validator_safe = harness.safe_head_number(harness.validator.node_id);
+        // Invariant C2: sequencer and validator safe heads converge after reorg.
+        assert_eq!(validator_safe, sequencer_safe);
 
-    harness
-        .run_until_progress(5, 80)
-        .expect("post-reorg convergence to new safe tip failed within liveness gate");
+        let l1_state = run_async(harness.fake_l1.state());
+        // Invariant C2: both roles follow the new canonical L1 tip (alt_5).
+        assert_eq!(l1_state.canonical.last().map(|tip| tip.hash), Some(alt_5.hash));
 
-    let sequencer_safe = harness.safe_head_number(harness.sequencer.node_id);
-    let validator_safe = harness.safe_head_number(harness.validator.node_id);
-    // Invariant C2: sequencer and validator safe heads converge after reorg.
-    assert_eq!(validator_safe, sequencer_safe);
-
-    let l1_state = run_async(harness.fake_l1.state());
-    // Invariant C2: both roles follow the new canonical L1 tip (alt_5).
-    assert_eq!(l1_state.canonical.last().map(|tip| tip.hash), Some(alt_5.hash));
-
-    let sequencer_calls = run_async(harness.sequencer.fake_engine_client.calls());
-    let validator_calls = run_async(harness.validator.fake_engine_client.calls());
-    let seq_replayed_height = sequencer_calls.iter().filter(|call| {
+        let sequencer_calls = run_async(harness.sequencer.fake_engine_client.calls());
+        let validator_calls = run_async(harness.validator.fake_engine_client.calls());
+        let seq_replayed_height = sequencer_calls.iter().filter(|call| {
         matches!(call, EngineClientCall::ForkChoiceUpdatedV3 { fcs, .. } if fcs.head_block_hash == hash_for(4))
     });
-    let val_replayed_height = validator_calls.iter().filter(|call| {
+        let val_replayed_height = validator_calls.iter().filter(|call| {
         matches!(call, EngineClientCall::ForkChoiceUpdatedV3 { fcs, .. } if fcs.head_block_hash == hash_for(4))
     });
-    // Invariant S2.b: safe can regress on explicit signal and then re-advance during reorg handling.
-    assert!(seq_replayed_height.count() >= 2, "sequencer should process reorged safe height at least twice");
-    // Invariant S2.b: validator mirrors the same regress-then-advance behavior under reorg signal.
-    assert!(val_replayed_height.count() >= 2, "validator should process reorged safe height at least twice");
-}
-
-#[test]
-fn c1_syncing_response_wedges_validator_liveness_gate_catches() {
-    let mut driver = Driver::new();
-    let mut harness = TwoNodeHarness::build(&mut driver);
-    harness.script_both_fcu((0..128).map(|_| valid_fcu()));
-    harness.script_validator_fcu([syncing_fcu(), valid_fcu(), valid_fcu(), valid_fcu()]);
-
-    for number in 1..=3 {
-        harness.extend_l1_with_gossip(block(number, hash_for(number - 1), hash_for(number), number));
+        // Invariant S2.b: safe can regress on explicit signal and then re-advance during reorg handling.
+        assert!(
+            seq_replayed_height.count() >= 2,
+            "sequencer should process reorged safe height at least twice"
+        );
+        // Invariant S2.b: validator mirrors the same regress-then-advance behavior under reorg signal.
+        assert!(
+            val_replayed_height.count() >= 2,
+            "validator should process reorged safe height at least twice"
+        );
     }
 
-    // This is the integration-level symptom of #3809/#3803.
-    // On pre-fix commit, this test would time out because validator's safe_head would wedge.
-    let result = harness.run_until_progress(3, 50);
-    // Invariant L2: validator must still make progress despite transient Syncing response.
-    assert!(result.is_ok(), "validator should not wedge on first Syncing FCU response");
-    // Invariant L3: accepted monotonic updates eventually become visible in safe_head.
-    assert!(harness.safe_head_number(harness.validator.node_id) >= 3);
-}
+    #[test]
+    fn c1_syncing_response_wedges_validator_liveness_gate_catches() {
+        let mut driver = Driver::new();
+        let mut harness = TwoNodeHarness::build(&mut driver);
+        harness.script_both_fcu((0..128).map(|_| valid_fcu()));
+        harness.script_validator_fcu([syncing_fcu(), valid_fcu(), valid_fcu(), valid_fcu()]);
 
-#[test]
-fn liveness_gate_catches_wedged_validator() {
-    let mut driver = Driver::new();
-    let mut harness = TwoNodeHarness::build(&mut driver);
-    harness.script_validator_fcu((0..64).map(|_| syncing_fcu()));
+        for number in 1..=3 {
+            harness.extend_l1_with_gossip(block(
+                number,
+                hash_for(number - 1),
+                hash_for(number),
+                number,
+            ));
+        }
 
-    let result = harness.run_until_progress(1, 10);
-    // Invariant L2 (negative proof): liveness gate must detect and fail a wedged validator.
-    assert!(result.is_err(), "liveness gate should return TimeoutError for wedged validator");
-}
-
-#[test]
-fn c1_sequencer_invalid_block_reorg_validator_recovers() {
-    // Property tested: L2 — validator never wedges. C1 — sequencer output ⇒ validator agreement.
-    //
-    // User-reported production bug: when the sequencer produces block B that is INVALID
-    // (originally caused by a receipt-root mismatch between the sealed header and the EL's
-    // execution result), the sequencer reorgs back and produces a new block B'. Validators
-    // that gossip-received B and got INVALID from their own newPayload/FCU do NOT
-    // automatically recover to B' — they remain wedged on the invalid tip.
-    //
-    // We reproduce the failure shape by scripting an INVALID FCU response on the first
-    // engine call for both roles (any-INVALID-mechanism-equivalent per user directive), then
-    // Valid for the retry/next block. Reception of INVALID on the first FCU is the
-    // equivalent-shape signal for "this block cannot be committed"; the fix under test is
-    // that the CL retries/reorgs to a valid replacement block and the validator converges.
-    //
-    // Outcome interpretation:
-    // - PASS ⇒ validator recovers, confirming the CL handles sequencer-side INVALID + retry.
-    // - FAIL (TimeoutError) ⇒ documents the reported bug: validator does not automatically
-    //   recover from an invalid sequencer block reorg.
-
-    let mut driver = Driver::new();
-    let mut harness = TwoNodeHarness::build(&mut driver);
-
-    // Sequencer's own engine view is fine (it produced the block from its perspective).
-    // Validator's engine rejects the first gossiped block as INVALID on newPayload (models
-    // a receipt-root or state-root mismatch surfacing only when the EL executes the payload),
-    // and returns INVALID on the first FCU as well (the CL sees the block as unusable through
-    // both entry points). Subsequent responses are Valid — modeling the sequencer's reorged
-    // replacement block being executable. The question this test answers: after rejecting the
-    // first gossiped block on both newPayload and FCU, does the validator recover to the
-    // sequencer's tip via subsequent gossip / L1 derivation?
-    harness.script_both_fcu(std::iter::repeat_with(valid_fcu).take(128));
-    harness.script_validator_fcu(
-        std::iter::once(invalid_fcu()).chain(std::iter::repeat_with(valid_fcu).take(127)),
-    );
-    let invalid_payload = PayloadStatus {
-        status: PayloadStatusEnum::Invalid { validation_error: "test-invalid-newpayload".into() },
-        latest_valid_hash: Some(B256::ZERO),
-    };
-    let valid_payload =
-        || PayloadStatus { status: PayloadStatusEnum::Valid, latest_valid_hash: Some(B256::ZERO) };
-    harness.script_validator_new_payload_v3(
-        std::iter::once(invalid_payload).chain(std::iter::repeat_with(valid_payload).take(127)),
-    );
-
-    for number in 1..=3 {
-        harness.extend_l1_with_gossip(block(
-            number,
-            hash_for(number - 1),
-            hash_for(number),
-            number,
-        ));
+        // This is the integration-level symptom of #3809/#3803.
+        // On pre-fix commit, this test would time out because validator's safe_head would wedge.
+        let result = harness.run_until_progress(3, 50);
+        // Invariant L2: validator must still make progress despite transient Syncing response.
+        assert!(result.is_ok(), "validator should not wedge on first Syncing FCU response");
+        // Invariant L3: accepted monotonic updates eventually become visible in safe_head.
+        assert!(harness.safe_head_number(harness.validator.node_id) >= 3);
     }
 
-    let result = harness.run_until_progress(3, 100);
+    #[test]
+    fn liveness_gate_catches_wedged_validator() {
+        let mut driver = Driver::new();
+        let mut harness = TwoNodeHarness::build(&mut driver);
+        harness.script_validator_fcu((0..64).map(|_| syncing_fcu()));
 
-    // Invariant L2: validator must not wedge after sequencer-driven invalid-block reorg.
-    // Invariant C1: after the sequencer's reorged replacement, the validator's safe head
-    // must eventually equal the sequencer's.
-    assert!(
-        result.is_ok(),
-        "validator should recover after sequencer's invalid block is reorged (bug: it currently does not)",
-    );
-    let validator_safe = harness.safe_head_number(harness.validator.node_id);
-    let sequencer_safe = harness.safe_head_number(harness.sequencer.node_id);
-    assert_eq!(
-        validator_safe, sequencer_safe,
-        "validator safe head should match sequencer after reorg recovery",
-    );
+        let result = harness.run_until_progress(1, 10);
+        // Invariant L2 (negative proof): liveness gate must detect and fail a wedged validator.
+        assert!(result.is_err(), "liveness gate should return TimeoutError for wedged validator");
+    }
 
-    // Diagnostic: confirm which EngineClient boundaries the validator's harness route hits.
-    // If NewPayloadV3 count is 0, the scripted-INVALID newPayload seam was never reached and
-    // this test does not actually exercise the receipt-root-mismatch failure mode.
-    let validator_calls = run_async(harness.validator.fake_engine_client.calls());
-    let fcu_v3_count = validator_calls
-        .iter()
-        .filter(|c| matches!(c, EngineClientCall::ForkChoiceUpdatedV3 { .. }))
-        .count();
-    let new_payload_v3_count = validator_calls
-        .iter()
-        .filter(|c| matches!(c, EngineClientCall::NewPayloadV3(_)))
-        .count();
-    eprintln!(
-        "diagnostic: validator EngineClient calls: total={}, fcu_v3={}, new_payload_v3={}",
-        validator_calls.len(),
-        fcu_v3_count,
-        new_payload_v3_count,
-    );
+    #[test]
+    fn c1_sequencer_invalid_block_reorg_validator_recovers() {
+        // Property tested: L2 — validator never wedges. C1 — sequencer output ⇒ validator agreement.
+        //
+        // User-reported production bug: when the sequencer produces block B that is INVALID
+        // (originally caused by a receipt-root mismatch between the sealed header and the EL's
+        // execution result), the sequencer reorgs back and produces a new block B'. Validators
+        // that gossip-received B and got INVALID from their own newPayload/FCU do NOT
+        // automatically recover to B' — they remain wedged on the invalid tip.
+        //
+        // We reproduce the failure shape by scripting an INVALID FCU response on the first
+        // engine call for both roles (any-INVALID-mechanism-equivalent per user directive), then
+        // Valid for the retry/next block. Reception of INVALID on the first FCU is the
+        // equivalent-shape signal for "this block cannot be committed"; the fix under test is
+        // that the CL retries/reorgs to a valid replacement block and the validator converges.
+        //
+        // Outcome interpretation:
+        // - PASS ⇒ validator recovers, confirming the CL handles sequencer-side INVALID + retry.
+        // - FAIL (TimeoutError) ⇒ documents the reported bug: validator does not automatically
+        //   recover from an invalid sequencer block reorg.
+
+        let mut driver = Driver::new();
+        let mut harness = TwoNodeHarness::build(&mut driver);
+
+        // Sequencer's own engine view is fine (it produced the block from its perspective).
+        // Validator's engine rejects the first gossiped block as INVALID on newPayload (models
+        // a receipt-root or state-root mismatch surfacing only when the EL executes the payload),
+        // and returns INVALID on the first FCU as well (the CL sees the block as unusable through
+        // both entry points). Subsequent responses are Valid — modeling the sequencer's reorged
+        // replacement block being executable. The question this test answers: after rejecting the
+        // first gossiped block on both newPayload and FCU, does the validator recover to the
+        // sequencer's tip via subsequent gossip / L1 derivation?
+        harness.script_both_fcu(std::iter::repeat_with(valid_fcu).take(128));
+        harness.script_validator_fcu(
+            std::iter::once(invalid_fcu()).chain(std::iter::repeat_with(valid_fcu).take(127)),
+        );
+        let invalid_payload = PayloadStatus {
+            status: PayloadStatusEnum::Invalid {
+                validation_error: "test-invalid-newpayload".into(),
+            },
+            latest_valid_hash: Some(B256::ZERO),
+        };
+        let valid_payload = || PayloadStatus {
+            status: PayloadStatusEnum::Valid,
+            latest_valid_hash: Some(B256::ZERO),
+        };
+        harness.script_validator_new_payload_v3(
+            std::iter::once(invalid_payload).chain(std::iter::repeat_with(valid_payload).take(127)),
+        );
+
+        for number in 1..=3 {
+            harness.extend_l1_with_gossip(block(
+                number,
+                hash_for(number - 1),
+                hash_for(number),
+                number,
+            ));
+        }
+
+        let result = harness.run_until_progress(3, 100);
+
+        // Invariant L2: validator must not wedge after sequencer-driven invalid-block reorg.
+        // Invariant C1: after the sequencer's reorged replacement, the validator's safe head
+        // must eventually equal the sequencer's.
+        assert!(
+            result.is_ok(),
+            "validator should recover after sequencer's invalid block is reorged (bug: it currently does not)",
+        );
+        let validator_safe = harness.safe_head_number(harness.validator.node_id);
+        let sequencer_safe = harness.safe_head_number(harness.sequencer.node_id);
+        assert_eq!(
+            validator_safe, sequencer_safe,
+            "validator safe head should match sequencer after reorg recovery",
+        );
+
+        // Diagnostic: confirm which EngineClient boundaries the validator's harness route hits.
+        // If NewPayloadV3 count is 0, the scripted-INVALID newPayload seam was never reached and
+        // this test does not actually exercise the receipt-root-mismatch failure mode.
+        let validator_calls = run_async(harness.validator.fake_engine_client.calls());
+        let fcu_v3_count = validator_calls
+            .iter()
+            .filter(|c| matches!(c, EngineClientCall::ForkChoiceUpdatedV3 { .. }))
+            .count();
+        let new_payload_v3_count = validator_calls
+            .iter()
+            .filter(|c| matches!(c, EngineClientCall::NewPayloadV3(_)))
+            .count();
+        eprintln!(
+            "diagnostic: validator EngineClient calls: total={}, fcu_v3={}, new_payload_v3={}",
+            validator_calls.len(),
+            fcu_v3_count,
+            new_payload_v3_count,
+        );
     }
 }
-

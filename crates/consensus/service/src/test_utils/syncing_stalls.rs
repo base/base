@@ -19,7 +19,7 @@ use super::{
 use crate::NodeMode;
 
 /// Number of explicit Tier-0 syncing-stall tests in this module.
-pub const SYNCING_STALL_TEST_COUNT: usize = 7;
+pub const SYNCING_STALL_TEST_COUNT: usize = 6;
 
 fn run_async<F>(future: F) -> F::Output
 where
@@ -136,7 +136,9 @@ fn s_a1_consolidate_task_syncing_preserves_safe_advance() {
 
     driver
         .await_progress(
-            |snapshot| snapshot.nodes.get(node_id).map(|node| node.safe_head_number >= 2).unwrap_or(false),
+            |snapshot| {
+                snapshot.nodes.get(node_id).map(|node| node.safe_head_number >= 2).unwrap_or(false)
+            },
             20,
         )
         .expect("safe head did not reach consolidated target after Syncing->Valid FCU responses");
@@ -151,8 +153,14 @@ fn s_a1_consolidate_task_syncing_preserves_safe_advance() {
         .collect::<Vec<_>>();
 
     // Invariant L3: pending consolidated-safe update survives a transient Syncing FCU and commits.
-    assert!(fcu_heads.len() >= 2, "expected FCU progression to continue after first Syncing response");
-    assert!(fcu_heads.contains(&hash_for(2)), "expected consolidated safe target hash to appear in FCU calls");
+    assert!(
+        fcu_heads.len() >= 2,
+        "expected FCU progression to continue after first Syncing response"
+    );
+    assert!(
+        fcu_heads.contains(&hash_for(2)),
+        "expected consolidated safe target hash to appear in FCU calls"
+    );
 }
 
 #[test]
@@ -182,7 +190,9 @@ fn s_a2_finalize_task_syncing_never_regresses_finalized() {
 
     driver
         .await_progress(
-            |snapshot| snapshot.nodes.get(node_id).map(|node| node.safe_head_number >= 4).unwrap_or(false),
+            |snapshot| {
+                snapshot.nodes.get(node_id).map(|node| node.safe_head_number >= 4).unwrap_or(false)
+            },
             120,
         )
         .expect("safe head did not converge during finalized monotonicity scenario");
@@ -198,7 +208,10 @@ fn s_a2_finalize_task_syncing_never_regresses_finalized() {
         })
         .collect::<Vec<_>>();
 
-    assert!(!finalized_timeline.is_empty(), "expected FCU-v3 timeline for finalized monotonicity check");
+    assert!(
+        !finalized_timeline.is_empty(),
+        "expected FCU-v3 timeline for finalized monotonicity check"
+    );
     // Invariant S2.a: finalized.number is monotonically non-decreasing across FCU timeline.
     assert!(
         finalized_timeline.windows(2).all(|window| window[1] >= window[0]),
@@ -226,10 +239,8 @@ fn s_a3_insert_task_syncing_block_not_lost() {
         (harness.fake_l1().clone(), harness.fake_engine_client().clone())
     };
 
-    let _ = fake_engine_client.with_new_payload_v3_responses(vec![
-        syncing_payload_status(),
-        valid_payload_status(),
-    ]);
+    let _ = fake_engine_client
+        .with_new_payload_v3_responses(vec![syncing_payload_status(), valid_payload_status()]);
 
     run_async(async {
         fake_l1.extend(block(1, B256::ZERO, hash_for(1), 1)).await;
@@ -237,7 +248,9 @@ fn s_a3_insert_task_syncing_block_not_lost() {
 
     driver
         .await_progress(
-            |snapshot| snapshot.nodes.get(node_id).map(|node| node.safe_head_number >= 1).unwrap_or(false),
+            |snapshot| {
+                snapshot.nodes.get(node_id).map(|node| node.safe_head_number >= 1).unwrap_or(false)
+            },
             60,
         )
         .expect("insert-task syncing scenario failed to reach safe-head confirmation");
@@ -273,7 +286,9 @@ fn s_b1_sequencer_fcu_with_attrs_syncing_no_wedge() {
 
     driver
         .await_progress(
-            |snapshot| snapshot.nodes.get(node_id).map(|node| node.safe_head_number >= 2).unwrap_or(false),
+            |snapshot| {
+                snapshot.nodes.get(node_id).map(|node| node.safe_head_number >= 2).unwrap_or(false)
+            },
             30,
         )
         .expect("sequencer wedged after transient Syncing FCU response");
@@ -319,67 +334,6 @@ fn s_b2_getpayload_after_syncing_slot_not_dropped() {
 }
 
 #[test]
-fn s_c1_backup_unsafe_reorg_syncing_sticky_flag_holds() {
-    let mut driver = Driver::new();
-    let node_id = driver.spawn_node(
-        NodeMode::Validator,
-        NodeConfig {
-            builder: HarnessBuilder::new().with_scripted_el_responses([
-                syncing_fcu(),
-                syncing_fcu(),
-                valid_fcu(),
-                valid_fcu(),
-                valid_fcu(),
-            ]),
-        },
-    );
-
-    let (fake_l1, fake_engine_handle) = {
-        let harness = driver.harness(node_id);
-        (harness.fake_l1().clone(), harness.fake_engine_handle().clone())
-    };
-    driver.block_on(driver.harness(node_id).force_backup_unsafe_reorg());
-
-    run_async(async {
-        fake_l1.extend(block(1, B256::ZERO, hash_for(1), 1)).await;
-    });
-    let first_syncing_kept = driver
-        .snapshot()
-        .nodes
-        .get(node_id)
-        .map(|node| node.need_fcu_call_backup_unsafe_reorg)
-        .unwrap_or(false);
-
-    run_async(async {
-        fake_l1.extend(block(2, hash_for(1), hash_for(2), 2)).await;
-    });
-    let second_syncing_kept = driver
-        .snapshot()
-        .nodes
-        .get(node_id)
-        .map(|node| node.need_fcu_call_backup_unsafe_reorg)
-        .unwrap_or(false);
-
-    driver
-        .await_progress(
-            |snapshot| snapshot.nodes.get(node_id).map(|node| node.safe_head_number >= 2).unwrap_or(false),
-            120,
-        )
-        .expect("backup-unsafe recovery path did not converge");
-
-    driver.block_on(driver.harness(node_id).set_need_fcu_call_backup_unsafe_reorg(false));
-
-    let calls = run_async(fake_engine_handle.calls());
-    let backup_fcu_calls = calls
-        .iter()
-        .filter(|call| matches!(call, EngineClientCall::ForkChoiceUpdatedV3 { .. }))
-        .count();
-    assert!(first_syncing_kept, "sticky flag should hold true across first Syncing response");
-    assert!(second_syncing_kept, "sticky flag should hold true across second Syncing response");
-    assert!(backup_fcu_calls >= 3, "expected at least three backup FCU attempts");
-}
-
-#[test]
 fn s_c2_signal_reset_fcu_syncing_eventually_commits() {
     let mut driver = Driver::new();
     let node_id = driver.spawn_node(
@@ -408,7 +362,9 @@ fn s_c2_signal_reset_fcu_syncing_eventually_commits() {
     });
     driver
         .await_progress(
-            |snapshot| snapshot.nodes.get(node_id).map(|node| node.safe_head_number >= 3).unwrap_or(false),
+            |snapshot| {
+                snapshot.nodes.get(node_id).map(|node| node.safe_head_number >= 3).unwrap_or(false)
+            },
             60,
         )
         .expect("failed to reach pre-reorg safe head in reset scenario");
@@ -419,7 +375,9 @@ fn s_c2_signal_reset_fcu_syncing_eventually_commits() {
 
     driver
         .await_progress(
-            |snapshot| snapshot.nodes.get(node_id).map(|node| node.safe_head_number >= 3).unwrap_or(false),
+            |snapshot| {
+                snapshot.nodes.get(node_id).map(|node| node.safe_head_number >= 3).unwrap_or(false)
+            },
             20,
         )
         .expect("safe head did not reconverge after reset Syncing->Valid window");

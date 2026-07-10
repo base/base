@@ -154,15 +154,18 @@ impl FakeL1 {
         }
 
         if let Some(engine_handle) = &self.engine_handle {
-            engine_handle.inject_fcu_v3_call(alloy_rpc_types_engine::ForkchoiceState {
-                head_block_hash: safe_l2.block_info.hash,
-                safe_block_hash: safe_l2.block_info.hash,
-                finalized_block_hash: safe_l2.block_info.hash,
-            }).await;
+            engine_handle
+                .inject_fcu_v3_call(alloy_rpc_types_engine::ForkchoiceState {
+                    head_block_hash: safe_l2.block_info.hash,
+                    safe_block_hash: safe_l2.block_info.hash,
+                    finalized_block_hash: safe_l2.block_info.hash,
+                })
+                .await;
         }
 
         if let Some(derivation_request_tx) = &self.derivation_request_tx {
-            let update = DerivationActorRequest::ProcessEngineSafeHeadUpdateRequest(Box::new(safe_l2));
+            let update =
+                DerivationActorRequest::ProcessEngineSafeHeadUpdateRequest(Box::new(safe_l2));
             if let Err(error) = derivation_request_tx.send(update).await {
                 warn!(target: "test_utils::fake_l1", error = ?error, "failed to dispatch derivation safe-head update");
             }

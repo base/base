@@ -8,13 +8,16 @@ use base_consensus_derive::test_utils::new_test_pipeline;
 use base_consensus_engine::{Engine, EngineState};
 use base_consensus_safedb::SafeHeadResponse;
 use base_protocol::{BlockInfo, L2BlockInfo};
-use tokio::{sync::{mpsc, oneshot, watch}, task::JoinHandle};
+use tokio::{
+    sync::{mpsc, oneshot, watch},
+    task::JoinHandle,
+};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
     DerivationActor, DerivationActorRequest, DerivationState, EngineActorRequest, EngineProcessor,
-    EngineProcessorOptions, EngineRequestReceiver,
-    NodeActor, NodeMode, QueuedDerivationEngineClient, QueuedEngineDerivationClient,
+    EngineProcessorOptions, EngineRequestReceiver, NodeActor, NodeMode,
+    QueuedDerivationEngineClient, QueuedEngineDerivationClient,
 };
 
 use super::{
@@ -83,8 +86,12 @@ impl Harness {
 
     /// Returns the latest safe head number persisted in the fake safedb.
     pub async fn latest_safe_head_number(&self) -> u64 {
-        let safedb_number =
-            self.fake_safedb_handle.latest().await.map(|entry| entry.safe_head.number).unwrap_or_default();
+        let safedb_number = self
+            .fake_safedb_handle
+            .latest()
+            .await
+            .map(|entry| entry.safe_head.number)
+            .unwrap_or_default();
         let l1_number = self.fake_l1.state().await.canonical.len() as u64;
         safedb_number.max(l1_number)
     }
@@ -116,24 +123,6 @@ impl Harness {
             .await
             .expect("failed to send CurrentStateRequest to derivation actor");
         result_rx.await.expect("failed to receive derivation state")
-    }
-
-    /// Forces the backup-unsafe-reorg sticky flag in engine state.
-    pub async fn force_backup_unsafe_reorg(&self) {
-        self.set_need_fcu_call_backup_unsafe_reorg(true).await;
-    }
-
-    /// Sets the backup-unsafe-reorg sticky flag in engine state.
-    pub async fn set_need_fcu_call_backup_unsafe_reorg(&self, value: bool) {
-        let (result_tx, result_rx) = oneshot::channel();
-        if self
-            .engine_request_tx
-            .send(EngineActorRequest::SetNeedFcuCallBackupUnsafeReorgRequest { value, result_tx })
-            .await
-            .is_ok()
-        {
-            let _ = result_rx.await;
-        }
     }
 }
 
@@ -208,11 +197,9 @@ impl HarnessBuilder {
         let fake_engine_handle = fake_engine_client.handle();
         fake_engine_handle.push_scripted_fcu_v3(self.scripted_el_responses).await;
 
-        fake_engine_client.set_l2_block_info_by_label(
-            BlockNumberOrTag::Latest,
-            L2BlockInfo::default(),
-        )
-        .await;
+        fake_engine_client
+            .set_l2_block_info_by_label(BlockNumberOrTag::Latest, L2BlockInfo::default())
+            .await;
 
         let initial_state = EngineState::default();
         let (engine_state_tx, engine_state_rx) = watch::channel(initial_state);

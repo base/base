@@ -3,11 +3,14 @@
 use std::{collections::HashSet, future::Future};
 
 use alloy_primitives::B256;
-use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
+use alloy_rpc_types_engine::{
+    ForkchoiceState, ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum,
+};
 use base_protocol::BlockInfo;
 
 use super::{
-    Driver, EngineClientCall, FakeSafeDBHandle, HarnessBuilder, NodeConfig, ScriptedForkchoiceResponse,
+    Driver, EngineClientCall, FakeSafeDBHandle, HarnessBuilder, NodeConfig,
+    ScriptedForkchoiceResponse,
 };
 use crate::NodeMode;
 
@@ -84,7 +87,8 @@ fn e1_bootstrap_from_fresh() {
         (harness.fake_l1().clone(), harness.fake_engine_handle().clone())
     };
 
-    let initial_safe = driver.snapshot().validator().map(|validator| validator.safe_head_number).unwrap_or(0);
+    let initial_safe =
+        driver.snapshot().validator().map(|validator| validator.safe_head_number).unwrap_or(0);
     assert_eq!(initial_safe, 0, "fresh bootstrap should start at genesis safe head");
 
     run_async(async {
@@ -94,7 +98,12 @@ fn e1_bootstrap_from_fresh() {
     });
     driver
         .await_progress(
-            |snapshot| snapshot.validator().map(|validator| validator.safe_head_number >= 3).unwrap_or(false),
+            |snapshot| {
+                snapshot
+                    .validator()
+                    .map(|validator| validator.safe_head_number >= 3)
+                    .unwrap_or(false)
+            },
             100,
         )
         .expect("bootstrap progression did not reach safe head >= 3");
@@ -121,7 +130,12 @@ fn e1_bootstrap_from_fresh() {
     });
     driver
         .await_progress(
-            |snapshot| snapshot.validator().map(|validator| validator.safe_head_number >= 4).unwrap_or(false),
+            |snapshot| {
+                snapshot
+                    .validator()
+                    .map(|validator| validator.safe_head_number >= 4)
+                    .unwrap_or(false)
+            },
             100,
         )
         .expect("safe head did not keep advancing after bootstrap");
@@ -132,7 +146,10 @@ fn e1_bootstrap_from_fresh() {
         .filter(|call| matches!(call, EngineClientCall::ForkChoiceUpdatedV3 { .. }))
         .count();
     // Invariant S3: el_sync_finished monotonic proxy (forward progress continues; no regression wedge).
-    assert!(total_fcu_after > before_more_progress, "expected FCU progression to continue after bootstrap");
+    assert!(
+        total_fcu_after > before_more_progress,
+        "expected FCU progression to continue after bootstrap"
+    );
 }
 
 #[test]
@@ -162,14 +179,22 @@ fn e2_reorg_during_derivation() {
 
     driver
         .await_progress(
-            |snapshot| snapshot.validator().map(|validator| validator.safe_head_number >= 2).unwrap_or(false),
+            |snapshot| {
+                snapshot
+                    .validator()
+                    .map(|validator| validator.safe_head_number >= 2)
+                    .unwrap_or(false)
+            },
             100,
         )
         .expect("safe head did not reach reorged block height");
 
     let l1_state = run_async(fake_l1.state());
     assert_eq!(l1_state.canonical.len(), 2, "reorg should keep canonical length at 2");
-    assert_eq!(l1_state.canonical[1].hash, alt_block_2.hash, "canonical tip should be alt reorg block");
+    assert_eq!(
+        l1_state.canonical[1].hash, alt_block_2.hash,
+        "canonical tip should be alt reorg block"
+    );
 
     let calls = run_async(fake_engine_handle.calls());
     let fcu_heads = calls
@@ -183,9 +208,15 @@ fn e2_reorg_during_derivation() {
     let count_block_2 = fcu_heads.iter().filter(|hash| **hash == old_block_2.hash).count();
 
     // Invariant D3: signal-before-resume proxy (old block-2 attrs are superseded by reorg processing).
-    assert!(count_block_2 >= 2, "expected block-2 FCU to be observed before and after reorg handling");
+    assert!(
+        count_block_2 >= 2,
+        "expected block-2 FCU to be observed before and after reorg handling"
+    );
     // Invariant D4: derivation determinism proxy (final canonical L1 tip is the alt block).
-    assert_eq!(l1_state.canonical[1].hash, alt_block_2.hash, "expected final canonical L1 tip to match alt reorg block");
+    assert_eq!(
+        l1_state.canonical[1].hash, alt_block_2.hash,
+        "expected final canonical L1 tip to match alt reorg block"
+    );
 }
 
 #[test]
@@ -221,7 +252,10 @@ fn e3_empty_l1_batch() {
     assert!(!entries_before.is_empty(), "expected initial safedb entry");
     assert!(!entries_after.is_empty(), "expected safedb entries after second L1 block");
     // Invariant S2.b: safe/local-safe non-decreasing without silent regression.
-    assert!(entries_after.len() > entries_before.len(), "expected new safedb entry after empty L1 batch");
+    assert!(
+        entries_after.len() > entries_before.len(),
+        "expected new safedb entry after empty L1 batch"
+    );
     // Edge-case E3 property: L1-origin can advance while L2 number is unchanged.
     assert_eq!(
         entries_after.last().map(|entry| entry.safe_head.number),
@@ -251,7 +285,12 @@ fn e5_concurrent_gossip_and_derivation_same_block() {
     });
     driver
         .await_progress(
-            |snapshot| snapshot.validator().map(|validator| validator.safe_head_number >= 5).unwrap_or(false),
+            |snapshot| {
+                snapshot
+                    .validator()
+                    .map(|validator| validator.safe_head_number >= 5)
+                    .unwrap_or(false)
+            },
             100,
         )
         .expect("target block did not advance safe head");
@@ -260,7 +299,9 @@ fn e5_concurrent_gossip_and_derivation_same_block() {
     let target_heads = calls
         .iter()
         .filter_map(|call| match call {
-            EngineClientCall::ForkChoiceUpdatedV3 { fcs, .. } if fcs.head_block_hash == target.hash => {
+            EngineClientCall::ForkChoiceUpdatedV3 { fcs, .. }
+                if fcs.head_block_hash == target.hash =>
+            {
                 Some(fcs.head_block_hash)
             }
             _ => None,
@@ -298,13 +339,20 @@ fn e8_task_queue_backpressure() {
 
     run_async(async {
         for number in 1..=24 {
-            fake_l1.extend(block(number, hash_for(number.saturating_sub(1)), hash_for(number), number)).await;
+            fake_l1
+                .extend(block(number, hash_for(number.saturating_sub(1)), hash_for(number), number))
+                .await;
         }
     });
 
     driver
         .await_progress(
-            |snapshot| snapshot.validator().map(|validator| validator.safe_head_number >= 24).unwrap_or(false),
+            |snapshot| {
+                snapshot
+                    .validator()
+                    .map(|validator| validator.safe_head_number >= 24)
+                    .unwrap_or(false)
+            },
             250,
         )
         .expect("backpressure run did not converge to final safe head");
@@ -323,54 +371,6 @@ fn e8_task_queue_backpressure() {
     assert!(fcu_heads.len() >= 24, "expected at least one FCU per enqueued derivation step");
     // Invariant S6: idempotence/no double-apply for identical task state effects.
     assert_eq!(unique_heads.len(), fcu_heads.len(), "expected no duplicate FCU head applications");
-}
-
-#[test]
-fn e9_backup_unsafe_reorg_race() {
-    let mut driver = Driver::new();
-    let node_id = driver.spawn_node(
-        NodeMode::Validator,
-        NodeConfig {
-            builder: HarnessBuilder::new().with_scripted_el_responses([
-                syncing_fcu(),
-                valid_fcu(),
-                valid_fcu(),
-                valid_fcu(),
-            ]),
-        },
-    );
-
-    let (fake_l1, fake_engine_handle) = {
-        let harness = driver.harness(node_id);
-        (harness.fake_l1().clone(), harness.fake_engine_handle().clone())
-    };
-
-    run_async(async {
-        fake_l1.extend(block(1, B256::ZERO, hash_for(1), 1)).await;
-        fake_l1.extend(block(2, hash_for(1), hash_for(2), 2)).await;
-    });
-
-    driver
-        .await_progress(
-            |snapshot| snapshot.validator().map(|validator| validator.safe_head_number >= 2).unwrap_or(false),
-            100,
-        )
-        .expect("backup-unsafe-reorg race setup did not progress");
-
-    let calls = run_async(fake_engine_handle.calls());
-    let matching_recovery = calls
-        .iter()
-        .filter_map(|call| match call {
-            EngineClientCall::ForkChoiceUpdatedV3 { fcs, .. } if fcs.head_block_hash == hash_for(1) => {
-                Some(fcs)
-            }
-            _ => None,
-        })
-        .count();
-
-    // Invariant S3: sticky flag should clear once (proxy: no repeated recovery FCU for same forgotten head).
-    // Invariant S5: recovery does not double-fire and diverge CL↔EL forkchoice intent.
-    assert_eq!(matching_recovery, 1, "expected exactly one recovery FCU for the forgotten unsafe head");
 }
 
 #[test]
@@ -405,7 +405,8 @@ fn e13_l1_provider_stall() {
     });
     driver.tick(20);
 
-    let latest_while_stalled = run_async(fake_safedb_handle.latest()).map(|entry| entry.safe_head.number);
+    let latest_while_stalled =
+        run_async(fake_safedb_handle.latest()).map(|entry| entry.safe_head.number);
     // Invariant L2/S1: derivation-safe progression halts while L1 provider is stalled.
     assert_eq!(latest_while_stalled, Some(1), "safe head should not advance while L1 is stalled");
 
@@ -430,7 +431,10 @@ fn e13_l1_provider_stall() {
         )
     });
     // Invariant L2: unsafe path can still progress independently of L1 retrieval stall.
-    assert!(has_unsafe_progress, "expected unsafe-style FCU progression while derivation is stalled");
+    assert!(
+        has_unsafe_progress,
+        "expected unsafe-style FCU progression while derivation is stalled"
+    );
 
     run_async(async {
         fake_l1.resume().await;

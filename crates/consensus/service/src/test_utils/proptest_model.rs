@@ -3,15 +3,15 @@
 use std::{collections::HashMap, future::Future};
 
 use alloy_primitives::B256;
-use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
+use alloy_rpc_types_engine::{
+    ForkchoiceState, ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum,
+};
 use base_protocol::BlockInfo;
 use proptest::prelude::*;
 use proptest::test_runner::Config as ProptestConfig;
 use proptest_state_machine::{ReferenceStateMachine, StateMachineTest, prop_state_machine};
 
-use super::{
-    Driver, EngineClientCall, HarnessBuilder, NodeConfig, ScriptedForkchoiceResponse,
-};
+use super::{Driver, EngineClientCall, HarnessBuilder, NodeConfig, ScriptedForkchoiceResponse};
 use crate::NodeMode;
 
 /// Bounded-lookahead budget for liveness checks.
@@ -95,8 +95,6 @@ pub struct RefState {
     pub finalized_head: L2BlockRef,
     /// Sticky EL-sync completion flag.
     pub el_sync_finished: bool,
-    /// Sticky backup-unsafe-reorg flag.
-    pub need_fcu_call_backup_unsafe_reorg: bool,
     /// Aux: current awaiting attributes marker.
     pub awaiting_attrs: Option<AttributesRef>,
     /// Aux: pending consolidated-safe target used by L3 checks.
@@ -133,7 +131,6 @@ impl RefState {
             safe_head: genesis,
             finalized_head: genesis,
             el_sync_finished: false,
-            need_fcu_call_backup_unsafe_reorg: false,
             awaiting_attrs: None,
             pending_consolidated_safe: None,
             prev_finalized_number: 0,
@@ -160,17 +157,12 @@ impl RefState {
         match action {
             Action::ExtendL1(_) => {
                 let next = self.safe_head.number + 1;
-                let next_ref = L2BlockRef {
-                    number: next,
-                    hash: deterministic_hash(next, 0, 0x11),
-                };
+                let next_ref = L2BlockRef { number: next, hash: deterministic_hash(next, 0, 0x11) };
                 if !self.l1_stalled {
                     self.highest_implied_safe = self.highest_implied_safe.max(next);
                 }
                 self.pending_consolidated_safe = Some(next_ref);
-                self.awaiting_attrs = Some(AttributesRef {
-                    parent: self.safe_head,
-                });
+                self.awaiting_attrs = Some(AttributesRef { parent: self.safe_head });
 
                 if self.el_sync_finished && !self.l1_stalled {
                     self.safe_head = next_ref;
@@ -184,25 +176,25 @@ impl RefState {
             Action::ReorgL1 { depth } => {
                 let rollback = (*depth as u64).min(self.safe_head.number);
                 let target = self.safe_head.number.saturating_sub(rollback);
-                let target_ref = L2BlockRef {
-                    number: target,
-                    hash: deterministic_hash(target, *depth, 0x31),
-                };
+                let target_ref =
+                    L2BlockRef { number: target, hash: deterministic_hash(target, *depth, 0x31) };
                 self.safe_head = target_ref;
                 self.local_safe_head = target_ref;
                 self.unsafe_head = L2BlockRef {
                     number: self.unsafe_head.number.saturating_sub(rollback),
-                    hash: deterministic_hash(self.unsafe_head.number.saturating_sub(rollback), *depth, 0x41),
+                    hash: deterministic_hash(
+                        self.unsafe_head.number.saturating_sub(rollback),
+                        *depth,
+                        0x41,
+                    ),
                 };
                 self.awaiting_attrs = None;
             }
             Action::GossipUnsafeBlock(_) => {
                 let next = self.unsafe_head.number + 1;
                 self.highest_gossiped_unsafe = self.highest_gossiped_unsafe.max(next);
-                self.unsafe_head = L2BlockRef {
-                    number: next,
-                    hash: deterministic_hash(next, 0, 0x51),
-                };
+                self.unsafe_head =
+                    L2BlockRef { number: next, hash: deterministic_hash(next, 0, 0x51) };
             }
             Action::TickTime => {}
             Action::EngineResponse(kind) => {
@@ -386,14 +378,11 @@ pub fn apply_action(sut: &mut SutState, action: &Action) {
         Action::ExtendL1(input) => {
             let l1_state = run_async(fake_l1.state());
             let next_number = l1_state.canonical.len() as u64 + 1;
-            let parent_hash = l1_state.canonical.last().map(|block| block.hash).unwrap_or(B256::ZERO);
+            let parent_hash =
+                l1_state.canonical.last().map(|block| block.hash).unwrap_or(B256::ZERO);
             let hash = deterministic_hash(next_number, input.salt, 0x11);
-            let l1_block = BlockInfo {
-                number: next_number,
-                hash,
-                parent_hash,
-                timestamp: next_number,
-            };
+            let l1_block =
+                BlockInfo { number: next_number, hash, parent_hash, timestamp: next_number };
             sut.hash_numbers.insert(hash, next_number);
             run_async(fake_l1.extend(l1_block));
         }
@@ -405,11 +394,8 @@ pub fn apply_action(sut: &mut SutState, action: &Action) {
 
             let bounded_depth = (*depth as usize).min(l1_state.canonical.len());
             let start = l1_state.canonical.len() - bounded_depth;
-            let mut parent_hash = if start == 0 {
-                B256::ZERO
-            } else {
-                l1_state.canonical[start - 1].hash
-            };
+            let mut parent_hash =
+                if start == 0 { B256::ZERO } else { l1_state.canonical[start - 1].hash };
 
             let mut alt_blocks = Vec::with_capacity(bounded_depth);
             for (idx, old_block) in l1_state.canonical.iter().skip(start).enumerate() {
@@ -473,8 +459,7 @@ pub fn check_safety(sut: &SutState, ref_state: &RefState) {
 
     // S1: finalized <= local_safe <= safe <= unsafe.
     assert!(
-        observed.finalized_head.number
-            <= observed.local_safe_head.number
+        observed.finalized_head.number <= observed.local_safe_head.number
             && observed.local_safe_head.number <= observed.safe_head.number
             && observed.safe_head.number <= observed.unsafe_head.number,
         "S1 violated: observed={observed:?} trace={:?}",
@@ -502,7 +487,8 @@ pub fn check_safety(sut: &SutState, ref_state: &RefState) {
     }
 
     // S2.c: unsafe.number non-decreasing except after ReorgL1.
-    let should_check_unsafe_monotonic = matches!(sut.trace.last(), Some(Action::GossipUnsafeBlock(_)));
+    let should_check_unsafe_monotonic =
+        matches!(sut.trace.last(), Some(Action::GossipUnsafeBlock(_)));
     if should_check_unsafe_monotonic {
         assert!(
             observed.unsafe_head.number >= sut.previous_observed.unsafe_head.number,
@@ -546,9 +532,9 @@ pub fn check_safety(sut: &SutState, ref_state: &RefState) {
     }
 
     // S6: idempotence proxy (duplicate FCU states must not double-advance persisted safe head).
-    let duplicate_safe_advances = count_duplicate_fcu_heads(
-        &run_async(sut.driver.harness(sut.node_id).fake_engine_handle().calls()),
-    );
+    let duplicate_safe_advances = count_duplicate_fcu_heads(&run_async(
+        sut.driver.harness(sut.node_id).fake_engine_handle().calls(),
+    ));
     assert!(
         duplicate_safe_advances <= observed.fcu_calls,
         "S6 violated: duplicate FCU side-effects detected trace={:?}",
@@ -629,22 +615,23 @@ pub fn deterministic_hash(number: u64, salt: u8, domain: u8) -> B256 {
 pub fn scripted_response(kind: EngineResponseKind) -> ScriptedForkchoiceResponse {
     let status = match kind {
         EngineResponseKind::Valid => PayloadStatusEnum::Valid,
-        EngineResponseKind::Invalid => PayloadStatusEnum::Invalid {
-            validation_error: "scripted invalid".to_string(),
-        },
+        EngineResponseKind::Invalid => {
+            PayloadStatusEnum::Invalid { validation_error: "scripted invalid".to_string() }
+        }
         EngineResponseKind::Syncing => PayloadStatusEnum::Syncing,
     };
     ScriptedForkchoiceResponse::Ok(ForkchoiceUpdated {
-        payload_status: PayloadStatus {
-            status,
-            latest_valid_hash: Some(B256::ZERO),
-        },
+        payload_status: PayloadStatus { status, latest_valid_hash: Some(B256::ZERO) },
         payload_id: None,
     })
 }
 
 /// Builds an observable state snapshot from harness side effects.
-pub fn observe_state(driver: &Driver, node_id: usize, hash_numbers: &HashMap<B256, u64>) -> ObservedState {
+pub fn observe_state(
+    driver: &Driver,
+    node_id: usize,
+    hash_numbers: &HashMap<B256, u64>,
+) -> ObservedState {
     let harness = driver.harness(node_id);
     let calls = run_async(harness.fake_engine_handle().calls());
     let latest_safe = run_async(harness.fake_safedb_handle().latest());
@@ -657,15 +644,10 @@ pub fn observe_state(driver: &Driver, node_id: usize, hash_numbers: &HashMap<B25
     let safe_number = latest_safe.map(|entry| entry.safe_head.number).unwrap_or_default();
     let safe_hash = last_fcu.map(|fcu| fcu.safe_block_hash).unwrap_or(B256::ZERO);
     let unsafe_hash = last_fcu.map(|fcu| fcu.head_block_hash).unwrap_or(B256::ZERO);
-    let finalized_hash = last_fcu
-        .map(|fcu| fcu.finalized_block_hash)
-        .unwrap_or(B256::ZERO);
+    let finalized_hash = last_fcu.map(|fcu| fcu.finalized_block_hash).unwrap_or(B256::ZERO);
 
-    let unsafe_number = hash_numbers
-        .get(&unsafe_hash)
-        .copied()
-        .unwrap_or(safe_number)
-        .max(safe_number);
+    let unsafe_number =
+        hash_numbers.get(&unsafe_hash).copied().unwrap_or(safe_number).max(safe_number);
     let finalized_number = hash_numbers
         .get(&finalized_hash)
         .copied()
@@ -678,22 +660,10 @@ pub fn observe_state(driver: &Driver, node_id: usize, hash_numbers: &HashMap<B25
         .count();
 
     ObservedState {
-        unsafe_head: L2BlockRef {
-            number: unsafe_number,
-            hash: unsafe_hash,
-        },
-        local_safe_head: L2BlockRef {
-            number: safe_number,
-            hash: safe_hash,
-        },
-        safe_head: L2BlockRef {
-            number: safe_number,
-            hash: safe_hash,
-        },
-        finalized_head: L2BlockRef {
-            number: finalized_number,
-            hash: finalized_hash,
-        },
+        unsafe_head: L2BlockRef { number: unsafe_number, hash: unsafe_hash },
+        local_safe_head: L2BlockRef { number: safe_number, hash: safe_hash },
+        safe_head: L2BlockRef { number: safe_number, hash: safe_hash },
+        finalized_head: L2BlockRef { number: finalized_number, hash: finalized_hash },
         el_sync_finished: safe_number > 0,
         fcu_calls,
     }
@@ -704,11 +674,7 @@ pub fn count_duplicate_fcu_heads(calls: &[EngineClientCall]) -> usize {
     let mut seen = HashMap::<(B256, B256, B256), usize>::new();
     for call in calls {
         if let EngineClientCall::ForkChoiceUpdatedV3 { fcs: state, .. } = call {
-            let key = (
-                state.head_block_hash,
-                state.safe_block_hash,
-                state.finalized_block_hash,
-            );
+            let key = (state.head_block_hash, state.safe_block_hash, state.finalized_block_hash);
             *seen.entry(key).or_default() += 1;
         }
     }
@@ -765,9 +731,8 @@ mod tests {
         let observed = observe_state(&sut.driver, sut.node_id, &sut.hash_numbers);
 
         // L3: pending consolidated-safe update survives Syncing and eventually commits.
-        let pending = ref_state
-            .pending_consolidated_safe
-            .expect("expected pending consolidated safe target");
+        let pending =
+            ref_state.pending_consolidated_safe.expect("expected pending consolidated safe target");
         assert!(
             observed.safe_head.number >= pending.number,
             "#3809 injected regression failed: safe={} pending={} trace={trace:?}",

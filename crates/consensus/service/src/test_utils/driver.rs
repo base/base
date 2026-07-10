@@ -1,7 +1,7 @@
 //! Deterministic runtime driver for actor-integration harnesses.
 
-use std::time::Duration;
 use std::future::Future;
+use std::time::Duration;
 
 use thiserror::Error;
 
@@ -23,8 +23,6 @@ pub struct NodeSnapshot {
     pub safe_head_number: u64,
     /// Latest unsafe-head number observed in engine state.
     pub unsafe_head_number: u64,
-    /// Latest value of the backup-unsafe-reorg sticky flag.
-    pub need_fcu_call_backup_unsafe_reorg: bool,
 }
 
 /// Snapshot of all nodes managed by the driver.
@@ -126,7 +124,6 @@ impl Driver {
                 nodes.push(NodeSnapshot {
                     safe_head_number: harness.latest_safe_head_number().await,
                     unsafe_head_number: engine_state.sync_state.unsafe_head().block_info.number,
-                    need_fcu_call_backup_unsafe_reorg: engine_state.need_fcu_call_backup_unsafe_reorg,
                 });
             }
             nodes

@@ -150,15 +150,11 @@ fn d4_derivation_determinism() {
 
     let node_a = driver.spawn_node(
         NodeMode::Validator,
-        NodeConfig {
-            builder: HarnessBuilder::new().with_scripted_el_responses(scripted.clone()),
-        },
+        NodeConfig { builder: HarnessBuilder::new().with_scripted_el_responses(scripted.clone()) },
     );
     let node_b = driver.spawn_node(
         NodeMode::Validator,
-        NodeConfig {
-            builder: HarnessBuilder::new().with_scripted_el_responses(scripted),
-        },
+        NodeConfig { builder: HarnessBuilder::new().with_scripted_el_responses(scripted) },
     );
 
     let (l1_a, l1_b, engine_a, engine_b) = {
@@ -174,7 +170,8 @@ fn d4_derivation_determinism() {
 
     run_async(async {
         for number in 1..=5 {
-            let current = block(number, hash_for(number.saturating_sub(1)), hash_for(number), number);
+            let current =
+                block(number, hash_for(number.saturating_sub(1)), hash_for(number), number);
             l1_a.extend(current).await;
             l1_b.extend(current).await;
         }
@@ -184,7 +181,11 @@ fn d4_derivation_determinism() {
         .await_progress(
             |snapshot| {
                 snapshot.nodes.get(node_a).map(|node| node.safe_head_number >= 5).unwrap_or(false)
-                    && snapshot.nodes.get(node_b).map(|node| node.safe_head_number >= 5).unwrap_or(false)
+                    && snapshot
+                        .nodes
+                        .get(node_b)
+                        .map(|node| node.safe_head_number >= 5)
+                        .unwrap_or(false)
             },
             150,
         )
@@ -205,7 +206,10 @@ fn d4_derivation_determinism() {
         })
         .collect::<Vec<_>>();
 
-    assert_eq!(fcu_a, fcu_b, "D4 violated: FCU-v3 forkchoice sequence diverged for identical input traces");
+    assert_eq!(
+        fcu_a, fcu_b,
+        "D4 violated: FCU-v3 forkchoice sequence diverged for identical input traces"
+    );
 }
 
 #[test]
@@ -234,7 +238,9 @@ fn d5_attrs_reference_known_parent() {
 
     driver
         .await_progress(
-            |snapshot| snapshot.nodes.get(node_id).map(|node| node.safe_head_number >= 5).unwrap_or(false),
+            |snapshot| {
+                snapshot.nodes.get(node_id).map(|node| node.safe_head_number >= 5).unwrap_or(false)
+            },
             100,
         )
         .expect("safe head should advance through scripted derivation");
@@ -314,7 +320,10 @@ fn v1_parent_before_child_gossip_ordering() {
     };
 
     let client = FakeEngineClient::new(std::sync::Arc::new(RollupConfig::default()))
-        .with_scripted_new_payload_v3_responses(vec![valid_payload_status(), valid_payload_status()]);
+        .with_scripted_new_payload_v3_responses(vec![
+            valid_payload_status(),
+            valid_payload_status(),
+        ]);
     let handle = client.handle();
 
     run_async(async {
@@ -375,7 +384,12 @@ fn v2_bootstrap_consistency() {
 
     for _ in 0..20 {
         driver.tick(1);
-        let safe_now = driver.snapshot().nodes.get(node_id).map(|node| node.safe_head_number).unwrap_or_default();
+        let safe_now = driver
+            .snapshot()
+            .nodes
+            .get(node_id)
+            .map(|node| node.safe_head_number)
+            .unwrap_or_default();
         assert_eq!(safe_now, 3, "without new L1 activity, bootstrap safe head must remain stable");
     }
 
@@ -387,7 +401,12 @@ fn v2_bootstrap_consistency() {
     let mut transition_count = 0_u64;
     let mut last_was_progressed = false;
     for _ in 0..120 {
-        let safe_now = driver.snapshot().nodes.get(node_id).map(|node| node.safe_head_number).unwrap_or_default();
+        let safe_now = driver
+            .snapshot()
+            .nodes
+            .get(node_id)
+            .map(|node| node.safe_head_number)
+            .unwrap_or_default();
         let progressed = safe_now > 3;
         if progressed && !last_was_progressed {
             transition_count += 1;
@@ -397,7 +416,10 @@ fn v2_bootstrap_consistency() {
         driver.tick(1);
     }
 
-    assert!(saw_transition_to_derived_progress, "expected derivation-driven progress after L1 extension");
+    assert!(
+        saw_transition_to_derived_progress,
+        "expected derivation-driven progress after L1 extension"
+    );
     assert_eq!(
         transition_count, 1,
         "V2 violated: expected a single bootstrap->derived progression transition",
@@ -422,7 +444,9 @@ fn l4_confirmations_observed_by_derivation() {
 
     driver
         .await_progress(
-            |snapshot| snapshot.nodes.get(node_id).map(|node| node.safe_head_number >= 1).unwrap_or(false),
+            |snapshot| {
+                snapshot.nodes.get(node_id).map(|node| node.safe_head_number >= 1).unwrap_or(false)
+            },
             100,
         )
         .expect("safe head did not advance for derivation confirmation check");
@@ -486,7 +510,8 @@ fn l5_no_cross_actor_deadlock() {
 
     driver.tick(200);
 
-    let safe_number = driver.snapshot().nodes.get(node_id).map(|node| node.safe_head_number).unwrap_or_default();
+    let safe_number =
+        driver.snapshot().nodes.get(node_id).map(|node| node.safe_head_number).unwrap_or_default();
     let fcu_calls = run_async(fake_engine_handle.calls())
         .into_iter()
         .filter(|call| matches!(call, EngineClientCall::ForkChoiceUpdatedV3 { .. }))

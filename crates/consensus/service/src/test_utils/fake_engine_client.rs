@@ -129,7 +129,11 @@ impl FakeEngineClientHandle {
     }
 
     /// Sets the `l2_block_info_by_label` response for a specific tag.
-    pub fn set_l2_block_info_by_label_blocking(&self, tag: Eip1898BlockNumberOrTag, block: L2BlockInfo) {
+    pub fn set_l2_block_info_by_label_blocking(
+        &self,
+        tag: Eip1898BlockNumberOrTag,
+        block: L2BlockInfo,
+    ) {
         self.state.blocking_lock().l2_block_info_by_tag.insert(tag, block);
     }
 

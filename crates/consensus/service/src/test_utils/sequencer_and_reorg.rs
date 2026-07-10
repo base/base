@@ -127,7 +127,9 @@ fn sq1_sequencer_no_self_reorg_of_unsafe_head() {
 
     driver
         .await_progress(
-            |snapshot| snapshot.nodes.get(node_id).map(|node| node.safe_head_number >= 10).unwrap_or(false),
+            |snapshot| {
+                snapshot.nodes.get(node_id).map(|node| node.safe_head_number >= 10).unwrap_or(false)
+            },
             150,
         )
         .expect("sequencer did not process 10 L1-driven updates");
@@ -168,10 +170,8 @@ fn sq2_one_payload_per_slot_idempotent_retries() {
     let handle = client.handle();
 
     run_async(async {
-        let first = client
-            .get_payload_v3(payload_id)
-            .await
-            .expect("first get_payload_v3 should succeed");
+        let first =
+            client.get_payload_v3(payload_id).await.expect("first get_payload_v3 should succeed");
         let second = client
             .get_payload_v3(payload_id)
             .await
@@ -199,7 +199,10 @@ fn sq3_build_parent_freshness() {
     let fresh = payload_v3(11, expected_parent, hash_for(11));
     let stale = payload_v3(11, hash_for(9), B256::from([0x99; 32]));
     let client = FakeEngineClient::new(std::sync::Arc::new(RollupConfig::default()))
-        .with_scripted_new_payload_v3_responses(vec![valid_payload_status(), valid_payload_status()]);
+        .with_scripted_new_payload_v3_responses(vec![
+            valid_payload_status(),
+            valid_payload_status(),
+        ]);
     let handle = client.handle();
 
     run_async(async {
@@ -223,13 +226,11 @@ fn sq3_build_parent_freshness() {
 
     assert_eq!(new_payload_calls.len(), 2, "expected two recorded new_payload_v3 calls");
     assert_eq!(
-        new_payload_calls[0].payload_inner.payload_inner.parent_hash,
-        expected_parent,
+        new_payload_calls[0].payload_inner.payload_inner.parent_hash, expected_parent,
         "first call should be fresh parent build",
     );
     assert_ne!(
-        new_payload_calls[1].payload_inner.payload_inner.parent_hash,
-        expected_parent,
+        new_payload_calls[1].payload_inner.payload_inner.parent_hash, expected_parent,
         "second call should expose stale-parent build for discard logic",
     );
 }
@@ -240,7 +241,8 @@ fn sq4_bounded_lag_unsafe_vs_safe() {
     let node_id = driver.spawn_node(
         NodeMode::Sequencer,
         NodeConfig {
-            builder: HarnessBuilder::new().with_scripted_el_responses((0..1024).map(|_| valid_fcu())),
+            builder: HarnessBuilder::new()
+                .with_scripted_el_responses((0..1024).map(|_| valid_fcu())),
         },
     );
 
@@ -259,7 +261,13 @@ fn sq4_bounded_lag_unsafe_vs_safe() {
 
     driver
         .await_progress(
-            |snapshot| snapshot.nodes.get(node_id).map(|node| node.safe_head_number >= 150).unwrap_or(false),
+            |snapshot| {
+                snapshot
+                    .nodes
+                    .get(node_id)
+                    .map(|node| node.safe_head_number >= 150)
+                    .unwrap_or(false)
+            },
             300,
         )
         .expect("sequencer safe head did not advance under L1 progression");
@@ -286,7 +294,8 @@ fn e6_deep_l1_reorg_past_safe_not_finalized() {
     let node_id = driver.spawn_node(
         NodeMode::Validator,
         NodeConfig {
-            builder: HarnessBuilder::new().with_scripted_el_responses((0..256).map(|_| valid_fcu())),
+            builder: HarnessBuilder::new()
+                .with_scripted_el_responses((0..256).map(|_| valid_fcu())),
         },
     );
 
@@ -305,7 +314,9 @@ fn e6_deep_l1_reorg_past_safe_not_finalized() {
 
     driver
         .await_progress(
-            |snapshot| snapshot.nodes.get(node_id).map(|node| node.safe_head_number >= 4).unwrap_or(false),
+            |snapshot| {
+                snapshot.nodes.get(node_id).map(|node| node.safe_head_number >= 4).unwrap_or(false)
+            },
             120,
         )
         .expect("failed to reach pre-reorg safe head");
@@ -327,7 +338,9 @@ fn e6_deep_l1_reorg_past_safe_not_finalized() {
 
     driver
         .await_progress(
-            |snapshot| snapshot.nodes.get(node_id).map(|node| node.safe_head_number >= 4).unwrap_or(false),
+            |snapshot| {
+                snapshot.nodes.get(node_id).map(|node| node.safe_head_number >= 4).unwrap_or(false)
+            },
             120,
         )
         .expect("failed to reconverge after deep reorg");
@@ -346,10 +359,7 @@ fn e6_deep_l1_reorg_past_safe_not_finalized() {
     );
     // E6 / S2.b: safe derivation reconverges to a valid canonical chain after explicit reorg signal.
     assert!(
-        l1_state
-            .canonical
-            .windows(2)
-            .all(|window| window[1].parent_hash == window[0].hash),
+        l1_state.canonical.windows(2).all(|window| window[1].parent_hash == window[0].hash),
         "expected canonical chain to be internally consistent after reorg"
     );
 }

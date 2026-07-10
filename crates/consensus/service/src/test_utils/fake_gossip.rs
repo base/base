@@ -60,11 +60,7 @@ impl FakeGossipTransport {
     /// Creates a new in-memory gossip transport.
     pub fn new(buffer: usize) -> Self {
         let (inbound_tx, inbound_rx) = mpsc::channel(buffer);
-        Self {
-            state: Arc::new(Mutex::new(FakeGossipState::default())),
-            inbound_rx,
-            inbound_tx,
-        }
+        Self { state: Arc::new(Mutex::new(FakeGossipState::default())), inbound_rx, inbound_tx }
     }
 
     /// Returns a shared control handle.
@@ -72,7 +68,10 @@ impl FakeGossipTransport {
         FakeGossipHandle { state: Arc::clone(&self.state) }
     }
 
-    async fn enqueue_network_payload(&self, payload: NetworkPayloadEnvelope) -> Result<(), FakeGossipError> {
+    async fn enqueue_network_payload(
+        &self,
+        payload: NetworkPayloadEnvelope,
+    ) -> Result<(), FakeGossipError> {
         let mut state = self.state.lock().await;
         if state.drop_next > 0 {
             state.drop_next -= 1;
@@ -143,8 +142,8 @@ impl UnsafePayloadGossipClient for FakeGossipTransport {
             payload_hash: PayloadHash(B256::ZERO),
             parent_beacon_block_root: payload.parent_beacon_block_root,
         };
-        self.enqueue_network_payload(network_payload)
-            .await
-            .map_err(|_| UnsafePayloadGossipClientError::RequestError("gossip queue closed".to_string()))
+        self.enqueue_network_payload(network_payload).await.map_err(|_| {
+            UnsafePayloadGossipClientError::RequestError("gossip queue closed".to_string())
+        })
     }
 }

@@ -91,11 +91,7 @@ fn s_b3_sequencer_own_newpayload_syncing_no_wedge() {
     driver
         .await_progress(
             |snapshot| {
-                snapshot
-                    .nodes
-                    .get(node_id)
-                    .map(|node| node.safe_head_number >= 1)
-                    .unwrap_or(false)
+                snapshot.nodes.get(node_id).map(|node| node.safe_head_number >= 1).unwrap_or(false)
             },
             30,
         )
@@ -106,10 +102,8 @@ fn s_b3_sequencer_own_newpayload_syncing_no_wedge() {
 #[ignore = "Harness gap: deterministic Tier-0 harness does not expose a reliable Syncing->Valid retry-flip path for 100 consecutive FCU outcomes with observable unsafe-head convergence. Test body kept for follow-up."]
 fn s_d1_long_syncing_chain_100_no_retry_storm() {
     let mut driver = Driver::new();
-    let scripted = (0..100)
-        .map(|_| syncing_fcu())
-        .chain((0..8).map(|_| valid_fcu()))
-        .collect::<Vec<_>>();
+    let scripted =
+        (0..100).map(|_| syncing_fcu()).chain((0..8).map(|_| valid_fcu())).collect::<Vec<_>>();
     let node_id = driver.spawn_node(
         NodeMode::Validator,
         NodeConfig { builder: HarnessBuilder::new().with_scripted_el_responses(scripted) },
@@ -124,11 +118,7 @@ fn s_d1_long_syncing_chain_100_no_retry_storm() {
     driver
         .await_progress(
             |snapshot| {
-                snapshot
-                    .nodes
-                    .get(node_id)
-                    .map(|node| node.safe_head_number >= 1)
-                    .unwrap_or(false)
+                snapshot.nodes.get(node_id).map(|node| node.safe_head_number >= 1).unwrap_or(false)
             },
             300,
         )
@@ -175,11 +165,7 @@ fn s_d2_alternating_valid_syncing_el_sync_finished_sticky() {
     driver
         .await_progress(
             |snapshot| {
-                snapshot
-                    .nodes
-                    .get(node_id)
-                    .map(|node| node.safe_head_number >= 8)
-                    .unwrap_or(false)
+                snapshot.nodes.get(node_id).map(|node| node.safe_head_number >= 8).unwrap_or(false)
             },
             120,
         )
@@ -196,7 +182,10 @@ fn s_d2_alternating_valid_syncing_el_sync_finished_sticky() {
 
     // S3: el_sync_finished sticky-true proxy — forward-progress FCU heads keep advancing,
     // proving we do not restart from scratch on every Syncing flip.
-    assert!(distinct_heads >= 8, "expected FCU trace to include advancing heads, got {distinct_heads}");
+    assert!(
+        distinct_heads >= 8,
+        "expected FCU trace to include advancing heads, got {distinct_heads}"
+    );
 }
 
 #[test]
@@ -239,13 +228,11 @@ fn s_d3_task_retried_after_syncing_identical_input_idempotent() {
 
     // S6: idempotence proxy — retry after Syncing must preserve head/safe target intent.
     assert_eq!(
-        fcu_states[0].head_block_hash,
-        fcu_states[1].head_block_hash,
+        fcu_states[0].head_block_hash, fcu_states[1].head_block_hash,
         "expected retry to preserve FCU head target after Syncing",
     );
     assert_eq!(
-        fcu_states[0].safe_block_hash,
-        fcu_states[1].safe_block_hash,
+        fcu_states[0].safe_block_hash, fcu_states[1].safe_block_hash,
         "expected retry to preserve FCU safe target after Syncing",
     );
 
@@ -330,11 +317,7 @@ fn s_e3_latest_valid_hash_thrashing_across_syncing() {
     driver
         .await_progress(
             |snapshot| {
-                snapshot
-                    .nodes
-                    .get(node_id)
-                    .map(|node| node.safe_head_number >= 1)
-                    .unwrap_or(false)
+                snapshot.nodes.get(node_id).map(|node| node.safe_head_number >= 1).unwrap_or(false)
             },
             30,
         )

@@ -94,7 +94,10 @@ impl SafeHeadListener for FakeSafeDB {
         l1_block: BlockInfo,
     ) -> Result<(), SafeDBError> {
         let mut state = self.state.lock().await;
-        state.entries.push(SafeHeadResponse { l1_block: l1_block.id(), safe_head: safe_head.block_info.id() });
+        state.entries.push(SafeHeadResponse {
+            l1_block: l1_block.id(),
+            safe_head: safe_head.block_info.id(),
+        });
         Ok(())
     }
 
