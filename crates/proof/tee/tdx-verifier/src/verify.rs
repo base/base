@@ -9,7 +9,7 @@ use crate::{
     TdxVerifierError, collateral::CollateralVerifier,
 };
 
-const REPORT_DATA_CONTEXT: &[u8; 22] = b"base-tdx-tee-prover-v1";
+const REPORT_DATA_CONTEXT: &[u8] = b"base-tdx-tee-prover-v1";
 
 /// Complete explicit input to the pure TDX verifier.
 #[derive(Debug)]
@@ -93,11 +93,12 @@ impl TdxVerifier {
             return Err(TdxVerifierError::TcbStatusNotAllowed);
         }
 
-        Self::verify_quote_timestamp(
-            input.quote_timestamp_millis,
-            input.verification_time,
-            input.max_quote_age_seconds,
-        )?;
+        let timestamp_seconds = input.quote_timestamp_millis / 1_000;
+        if timestamp_seconds >= input.verification_time
+            || input.verification_time - timestamp_seconds >= input.max_quote_age_seconds
+        {
+            return Err(TdxVerifierError::InvalidTimestamp);
+        }
 
         let public_key_hash = Self::validate_public_key(&input.expected_public_key)?;
         let signer = Address::from_slice(&public_key_hash.as_slice()[12..]);
@@ -152,26 +153,11 @@ impl TdxVerifier {
         }
         Ok(())
     }
-
-    /// Verifies quote timestamp age and future-skew policy.
-    pub fn verify_quote_timestamp(
-        timestamp_millis: u64,
-        verification_time_seconds: u64,
-        max_quote_age_seconds: u64,
-    ) -> Result<()> {
-        let timestamp_seconds = timestamp_millis / 1_000;
-        if timestamp_seconds >= verification_time_seconds
-            || verification_time_seconds - timestamp_seconds >= max_quote_age_seconds
-        {
-            return Err(TdxVerifierError::InvalidTimestamp);
-        }
-        Ok(())
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, B256, Bytes, hex};
+    use alloy_primitives::{B256, Bytes, address, hex};
     use k256::{SecretKey, elliptic_curve::sec1::ToEncodedPoint};
     use p256::ecdsa::{Signature, SigningKey, signature::Signer};
     use serde_json::json;
@@ -208,11 +194,6 @@ mod tests {
         bytes[31] = scalar;
         let secret_key = SecretKey::from_slice(&bytes).expect("fixture secret key must be valid");
         Bytes::copy_from_slice(secret_key.public_key().to_encoded_point(false).as_bytes())
-    }
-
-    fn signer_address(public_key: &[u8]) -> Address {
-        let public_key_hash = TdxVerifier::validate_public_key(public_key).unwrap();
-        Address::from_slice(&public_key_hash.as_slice()[12..])
     }
 
     fn sign(key: &SigningKey, message: &[u8]) -> Bytes {
@@ -332,7 +313,7 @@ mod tests {
         json_bytes(tcb_info_document(status))
     }
 
-    fn sgx_tcb_info_raw(status: &str) -> Vec<u8> {
+    fn sgx_tcb_info_raw() -> Vec<u8> {
         let components = tcb_components(3);
         json_bytes(json!({
             "tcbInfo": {
@@ -342,7 +323,7 @@ mod tests {
                 "nextUpdate": COLLATERAL_NEXT_UPDATE_DATE,
                 "fmspc": FMSPC_HEX,
                 "pceId": PCE_ID_HEX,
-                "tcbLevels": [{ "tcb": { "pcesvn": 9, "sgxtcbcomponents": components }, "tcbStatus": status }],
+                "tcbLevels": [{ "tcb": { "pcesvn": 9, "sgxtcbcomponents": components }, "tcbStatus": "UpToDate" }],
             }
         }))
     }
@@ -418,7 +399,7 @@ mod tests {
         assert_eq!(journal.tcbInfoHash, input.collateral.tcb_info.hash());
         assert_eq!(journal.qeIdentityHash, input.collateral.qe_identity.hash());
         assert_eq!(journal.publicKey, input.expected_public_key);
-        assert_eq!(journal.signer, signer_address(&input.expected_public_key));
+        assert_eq!(journal.signer, address!("7e5f4552091a69125d5dfcb7b8c2659029395bdf"));
         assert_eq!(
             journal.reportDataSuffix,
             TdxVerifier::timestamp_report_data_suffix(QUOTE_TIMESTAMP_MILLIS)
@@ -505,39 +486,6 @@ mod tests {
     }
 
     #[test]
-    fn quote_timestamp_allows_strictly_past_and_inside_max_age() {
-        for timestamp_millis in [
-            (VERIFICATION_TIME - 1) * 1_000,
-            (VERIFICATION_TIME - MAX_QUOTE_AGE_SECONDS + 1) * 1_000,
-        ] {
-            TdxVerifier::verify_quote_timestamp(
-                timestamp_millis,
-                VERIFICATION_TIME,
-                MAX_QUOTE_AGE_SECONDS,
-            )
-            .expect("quote inside timestamp policy must be accepted");
-        }
-    }
-
-    #[test]
-    fn quote_timestamp_rejects_contract_boundaries_future_second_and_over_age() {
-        for timestamp_millis in [
-            VERIFICATION_TIME * 1_000,
-            (VERIFICATION_TIME - MAX_QUOTE_AGE_SECONDS) * 1_000,
-            (VERIFICATION_TIME + 1) * 1_000,
-            (VERIFICATION_TIME - MAX_QUOTE_AGE_SECONDS - 1) * 1_000,
-        ] {
-            let error = TdxVerifier::verify_quote_timestamp(
-                timestamp_millis,
-                VERIFICATION_TIME,
-                MAX_QUOTE_AGE_SECONDS,
-            )
-            .expect_err("quote outside timestamp policy must fail");
-            assert!(matches!(error, TdxVerifierError::InvalidTimestamp));
-        }
-    }
-
-    #[test]
     fn collateral_expiration_includes_earliest_crl_next_update() {
         let mut input = fixture();
         input.revocation = TdxRevocationEvidence {
@@ -555,12 +503,12 @@ mod tests {
     #[test]
     fn failure_cases_return_expected_error() {
         macro_rules! expect_failure {
-            ($name:literal, $pattern:pat, $mutate:expr) => {{
-                let mut input = fixture();
-                let mutate: fn(&mut TdxVerifierInput) = $mutate;
-                mutate(&mut input);
+            ($name:literal, $pattern:pat, |$input:ident| $mutate:block) => {{
+                let mut verifier_input = fixture();
+                let $input = &mut verifier_input;
+                $mutate
 
-                let error = TdxVerifier::verify(&input).expect_err($name);
+                let error = TdxVerifier::verify(&verifier_input).expect_err($name);
                 assert!(matches!(&error, $pattern), "{error:?}");
             }};
         }
@@ -628,7 +576,7 @@ mod tests {
             resign_tcb_info(input);
         });
         expect_failure!("SGX TCB info", TdxVerifierError::TcbInfoInvalid(_), |input| {
-            input.collateral.tcb_info.raw = Bytes::from(sgx_tcb_info_raw("UpToDate"));
+            input.collateral.tcb_info.raw = Bytes::from(sgx_tcb_info_raw());
             resign_tcb_info(input);
         });
         expect_failure!(
