@@ -352,10 +352,10 @@ impl StandardBaseRethNode {
         let transaction_event_writer_config =
             transaction_event_writer_config(&args.rpc, &transaction_event_env)?;
         runner.add_started_callback(move || {
-            if let Some(config) = transaction_event_writer_config {
-                if let Err(err) = GlobalTransactionEventWriter::init(Some(config)) {
-                    tracing::warn!(error = %err, "transaction event journal disabled");
-                }
+            if let Some(config) = transaction_event_writer_config
+                && let Err(err) = GlobalTransactionEventWriter::init(Some(config))
+            {
+                tracing::warn!(error = %err, "transaction event journal disabled");
             }
             Ok(())
         });
