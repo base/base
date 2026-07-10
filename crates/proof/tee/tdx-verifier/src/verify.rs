@@ -156,24 +156,17 @@ mod tests {
     use super::*;
     use crate::{
         TdxCertificate, TdxCollateral, TdxRevocationEvidence, TdxSignedCollateral,
-        collateral::{TDX_QE_IDENTITY_ID, TDX_QE_IDENTITY_VERSION},
         quote::{
             CERTIFICATION_DATA_HEADER_LEN, ECDSA_P256_PUBLIC_KEY_BODY_LEN,
             ECDSA_P256_SIGNATURE_LEN, QE_REPORT_LEN, TDX_MEASUREMENT_LEN, TDX_QUOTE_HEADER_LEN,
-            TDX_REPORT_BODY_LEN, TDX_SEAM_ATTRIBUTES_LEN, TDX_TEE_TCB_SVN_LEN, TDX_TEE_TYPE,
+            TDX_REPORT_BODY_LEN, TDX_TEE_TCB_SVN_LEN,
         },
     };
 
     const VERIFICATION_TIME: u64 = 1_711_111_111;
     const QUOTE_TIMESTAMP_MILLIS: u64 = 1_711_111_000_000;
     const MAX_QUOTE_AGE_SECONDS: u64 = 300;
-    const COLLATERAL_ISSUE_DATE: &str = "2024-01-01T00:00:00Z";
-    const COLLATERAL_NEXT_UPDATE_DATE: &str = "2035-01-01T00:00:00Z";
     const FIXTURE_HEX: &str = include_str!("testdata/verify_fixture.hex");
-
-    fn signing_key() -> SigningKey {
-        SigningKey::from_slice(&[4; 32]).expect("fixture signing key must be valid")
-    }
 
     fn secp256k1_public_key(scalar: u8) -> Bytes {
         let mut bytes = [0; 32];
@@ -183,7 +176,9 @@ mod tests {
     }
 
     fn sign(message: &[u8]) -> Bytes {
-        let signature: Signature = signing_key().sign(message);
+        let signature: Signature = SigningKey::from_slice(&[4; 32])
+            .expect("fixture signing key must be valid")
+            .sign(message);
         Bytes::copy_from_slice(&signature.to_bytes())
     }
 
@@ -209,15 +204,11 @@ mod tests {
     }
 
     fn collateral(
-        raw: &[u8],
+        raw: Bytes,
         body_kind: TdxSignedCollateralBody,
         signing_chain: Vec<TdxCertificate>,
     ) -> TdxSignedCollateral {
-        let mut collateral = TdxSignedCollateral {
-            raw: Bytes::copy_from_slice(raw),
-            signing_chain,
-            signature: Bytes::new(),
-        };
+        let mut collateral = TdxSignedCollateral { raw, signing_chain, signature: Bytes::new() };
         resign_collateral_body(&mut collateral, body_kind);
         collateral
     }
@@ -236,57 +227,6 @@ mod tests {
         serde_json::to_vec(&value).expect("fixture JSON must serialize")
     }
 
-    fn tcb_info_document() -> serde_json::Value {
-        json!({
-            "tcbInfo": {
-                "id": "TDX",
-                "teeType": format!("{TDX_TEE_TYPE:08x}"),
-                "issueDate": COLLATERAL_ISSUE_DATE,
-                "nextUpdate": COLLATERAL_NEXT_UPDATE_DATE,
-                "fmspc": "010203040506",
-                "pceId": "0009",
-                "tdxModule": {
-                    "mrsigner": "00".repeat(TDX_MEASUREMENT_LEN),
-                    "attributes": "00".repeat(TDX_SEAM_ATTRIBUTES_LEN),
-                    "attributesMask": "ff".repeat(TDX_SEAM_ATTRIBUTES_LEN),
-                },
-                "tdxModuleIdentities": [{
-                    "id": "TDX_03",
-                    "mrsigner": "00".repeat(TDX_MEASUREMENT_LEN),
-                    "attributes": "00".repeat(TDX_SEAM_ATTRIBUTES_LEN),
-                    "attributesMask": "ff".repeat(TDX_SEAM_ATTRIBUTES_LEN),
-                    "tcbLevels": [{ "tcb": { "isvsvn": 3 }, "tcbStatus": "UpToDate" }],
-                }],
-                "tcbLevels": [{
-                    "tcb": {
-                        "pcesvn": 9,
-                        "sgxtcbcomponents": vec![json!({ "svn": 3 }); TDX_TEE_TCB_SVN_LEN],
-                        "tdxtcbcomponents": vec![json!({ "svn": 3 }); TDX_TEE_TCB_SVN_LEN],
-                    },
-                    "tcbStatus": "UpToDate",
-                }],
-            }
-        })
-    }
-
-    fn qe_identity_document() -> serde_json::Value {
-        json!({
-            "enclaveIdentity": {
-                "id": TDX_QE_IDENTITY_ID,
-                "version": TDX_QE_IDENTITY_VERSION,
-                "issueDate": COLLATERAL_ISSUE_DATE,
-                "nextUpdate": COLLATERAL_NEXT_UPDATE_DATE,
-                "miscselect": "00000000",
-                "miscselectMask": "ffffffff",
-                "attributes": "00000000000000000000000000000000",
-                "attributesMask": "ffffffffffffffffffffffffffffffff",
-                "mrsigner": "0000000000000000000000000000000000000000000000000000000000000000",
-                "isvprodid": 0,
-                "tcbLevels": [{ "tcb": { "isvsvn": 0 }, "tcbStatus": "UpToDate" }],
-            }
-        })
-    }
-
     fn fixture() -> TdxVerifierInput {
         let root = fixture_cert("root");
         let intermediate = fixture_cert("intermediate");
@@ -297,12 +237,12 @@ mod tests {
         let pck_chain = vec![root.clone(), intermediate.clone(), pck_leaf];
         let collateral_chain = vec![root, intermediate, collateral_leaf];
         let tcb_info = collateral(
-            &json_bytes(tcb_info_document()),
+            fixture_bytes("tcb_info_raw"),
             TdxSignedCollateralBody::TcbInfo,
             collateral_chain.clone(),
         );
         let qe_identity = collateral(
-            &json_bytes(qe_identity_document()),
+            fixture_bytes("qe_identity_raw"),
             TdxSignedCollateralBody::QeIdentity,
             collateral_chain,
         );
@@ -327,14 +267,16 @@ mod tests {
     }
 
     fn edit_tcb_info(input: &mut TdxVerifierInput, mutate: impl FnOnce(&mut serde_json::Value)) {
-        let mut document = tcb_info_document();
+        let mut document = serde_json::from_slice(&input.collateral.tcb_info.raw)
+            .expect("fixture TCB info JSON must parse");
         mutate(&mut document);
         input.collateral.tcb_info.raw = Bytes::from(json_bytes(document));
         resign_collateral_body(&mut input.collateral.tcb_info, TdxSignedCollateralBody::TcbInfo);
     }
 
     fn edit_qe_identity(input: &mut TdxVerifierInput, mutate: impl FnOnce(&mut serde_json::Value)) {
-        let mut document = qe_identity_document();
+        let mut document = serde_json::from_slice(&input.collateral.qe_identity.raw)
+            .expect("fixture QE identity JSON must parse");
         mutate(&mut document);
         input.collateral.qe_identity.raw = Bytes::from(json_bytes(document));
         resign_collateral_body(
