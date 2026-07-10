@@ -212,8 +212,6 @@ pub(crate) fn emit_builder_payload_event(
 
 #[cfg(test)]
 mod tests {
-    use base_observability_events::TransactionEventType;
-
     use super::*;
 
     fn context() -> BuilderTransactionEventContext {
