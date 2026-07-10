@@ -13,25 +13,18 @@ use tracing::{debug, info, warn};
 use crate::{BondTransactionSubmitter, ChallengerMetrics, OutputValidator};
 
 /// Best-effort updater for the `AnchorStateRegistry`.
+#[derive(derive_more::Debug)]
 pub struct AnchorUpdater {
+    #[debug(skip)]
     factory_client: Arc<dyn DisputeGameFactoryClient>,
+    #[debug(skip)]
     anchor_registry_client: Arc<dyn AnchorStateRegistryClient>,
+    #[debug(skip)]
     output_validator: OutputValidator<dyn L2Provider>,
     anchor_state_registry_address: Address,
     game_type: u32,
     block_interval: u64,
     intermediate_block_interval: u64,
-}
-
-impl std::fmt::Debug for AnchorUpdater {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AnchorUpdater")
-            .field("anchor_state_registry_address", &self.anchor_state_registry_address)
-            .field("game_type", &self.game_type)
-            .field("block_interval", &self.block_interval)
-            .field("intermediate_block_interval", &self.intermediate_block_interval)
-            .finish_non_exhaustive()
-    }
 }
 
 impl AnchorUpdater {
@@ -295,12 +288,7 @@ mod tests {
         anchor_game: Address,
         game: Address,
         status: GameStatus,
-    ) -> (
-        Arc<MockDisputeGameFactory>,
-        MockAggregateVerifier,
-        MockBondTransactionSubmitter,
-        AnchorUpdater,
-    ) {
+    ) -> (MockAggregateVerifier, MockBondTransactionSubmitter, AnchorUpdater) {
         let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
         let anchor_registry = Arc::new(MockAnchorStateRegistry::new(anchor_game));
         let mut l2 = MockL2Provider::new();
@@ -330,14 +318,13 @@ mod tests {
             INTERMEDIATE_BLOCK_INTERVAL,
         );
 
-        (factory, verifier, submitter, updater)
+        (verifier, submitter, updater)
     }
 
     #[tokio::test]
     async fn poll_updates_next_defender_win() {
         let game = addr(1);
-        let (_, verifier, submitter, updater) =
-            fixture(Address::ZERO, game, GameStatus::DefenderWins);
+        let (verifier, submitter, updater) = fixture(Address::ZERO, game, GameStatus::DefenderWins);
 
         updater.poll(&verifier, &submitter).await;
 
@@ -350,8 +337,7 @@ mod tests {
     #[tokio::test]
     async fn poll_waits_for_in_progress_next_game() {
         let game = addr(1);
-        let (_, verifier, submitter, updater) =
-            fixture(Address::ZERO, game, GameStatus::InProgress);
+        let (verifier, submitter, updater) = fixture(Address::ZERO, game, GameStatus::InProgress);
 
         updater.poll(&verifier, &submitter).await;
 
@@ -361,11 +347,9 @@ mod tests {
     #[tokio::test]
     async fn poll_stops_at_challenger_wins_next_game() {
         let challenger_win = addr(10);
-        let (factory, verifier, submitter, updater) =
+        let (verifier, submitter, updater) =
             fixture(Address::ZERO, challenger_win, GameStatus::ChallengerWins);
 
-        updater.poll(&verifier, &submitter).await;
-        factory.uuid_games.lock().unwrap().clear();
         updater.poll(&verifier, &submitter).await;
 
         assert!(submitter.recorded_calls().is_empty());
@@ -376,7 +360,7 @@ mod tests {
     async fn poll_starts_after_current_anchor_game() {
         let anchor_game = addr(10);
         let next_game = addr(11);
-        let (_, verifier, submitter, updater) =
+        let (verifier, submitter, updater) =
             fixture(anchor_game, next_game, GameStatus::DefenderWins);
 
         updater.poll(&verifier, &submitter).await;
@@ -389,8 +373,7 @@ mod tests {
     #[tokio::test]
     async fn poll_waits_for_finalized_defender_win() {
         let game = addr(1);
-        let (_, verifier, submitter, updater) =
-            fixture(Address::ZERO, game, GameStatus::DefenderWins);
+        let (verifier, submitter, updater) = fixture(Address::ZERO, game, GameStatus::DefenderWins);
         let mut state = mock_state(GameStatus::DefenderWins, Address::ZERO, 100);
         state.anchor_state_registry = ASR_ADDRESS;
         state.is_finalized = false;
