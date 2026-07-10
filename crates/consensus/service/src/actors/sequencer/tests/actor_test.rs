@@ -1,4 +1,11 @@
-use std::{num::NonZeroU64, sync::Arc, time::Duration};
+use std::{
+    num::NonZeroU64,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::ExecutionPayloadV1;
@@ -10,10 +17,12 @@ use base_consensus_engine::SealTaskError;
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 use jsonrpsee::core::ClientError;
 use rstest::rstest;
+use tokio::sync::{mpsc, oneshot};
 
 use crate::{
-    ConductorError, SealState, SealStepError, SealStepOutcome, SequencerActorError,
-    UnsafePayloadGossipClientError, UnsealedPayloadHandle,
+    ConductorError, NodeActor, ScheduledTicker, SealState, SealStepError, SealStepOutcome,
+    SequencerActorError, SequencerAdminQuery, UnsafePayloadGossipClientError,
+    UnsealedPayloadHandle,
     actors::{
         MockConductor, MockOriginSelector, MockSequencerEngineClient,
         MockUnsafePayloadGossipClient,
@@ -81,6 +90,277 @@ fn head_at_with_hash(number: u64, hash: B256) -> L2BlockInfo {
         block_info: BlockInfo { number, hash, ..Default::default() },
         ..Default::default()
     }
+}
+
+fn head_at_timestamp(number: u64, hash: B256, timestamp: u64) -> L2BlockInfo {
+    L2BlockInfo {
+        block_info: BlockInfo { number, hash, timestamp, ..Default::default() },
+        ..Default::default()
+    }
+}
+
+fn attributes_at(timestamp: u64) -> BasePayloadAttributes {
+    let mut attributes = BasePayloadAttributes::default();
+    attributes.payload_attributes.timestamp = timestamp;
+    attributes
+}
+
+#[rstest]
+#[case::no_previous_seal(Duration::ZERO)]
+#[case::short_previous_seal(Duration::from_millis(5))]
+#[case::long_previous_seal(Duration::from_millis(500))]
+#[tokio::test]
+async fn test_parent_build_target_overrides_variable_seal_schedule(
+    #[case] previous_seal_duration: Duration,
+) {
+    let parent_timestamp = 2_000_000_000;
+    let mut ticker = ScheduledTicker::new(Duration::from_secs(2));
+
+    ticker.reset_before_unix_timestamp(parent_timestamp + 2, previous_seal_duration);
+    ticker.reset_at_unix_timestamp(parent_timestamp);
+
+    assert_eq!(ticker.target(), Some(UNIX_EPOCH + Duration::from_secs(parent_timestamp)));
+}
+
+#[rstest]
+#[case::on_time(0)]
+#[case::late(1)]
+#[tokio::test(start_paused = true)]
+async fn test_on_time_or_late_parent_build_target_is_immediately_runnable(
+    #[case] seconds_ago: u64,
+) {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let mut ticker = ScheduledTicker::new(Duration::from_secs(2));
+
+    ticker.reset_at_unix_timestamp(now.saturating_sub(seconds_ago));
+
+    tokio::time::timeout(Duration::from_millis(1), ticker.tick()).await.unwrap();
+}
+
+#[rstest]
+#[case::on_time(0)]
+#[case::late(1)]
+#[tokio::test(start_paused = true)]
+async fn test_on_time_or_late_insert_starts_child_build_immediately(#[case] seconds_ago: u64) {
+    let block_time = 2;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let inserted_timestamp = now.saturating_sub(seconds_ago);
+    let initial_timestamp = inserted_timestamp.saturating_sub(block_time);
+    let initial_head = head_at_timestamp(10, B256::with_last_byte(10), initial_timestamp);
+    let inserted_head = head_at_timestamp(11, B256::with_last_byte(11), inserted_timestamp);
+
+    let (build_tx, mut build_rx) = mpsc::unbounded_channel();
+
+    let mut client = MockSequencerEngineClient::new();
+    client.expect_reset_engine_forkchoice().times(1).return_once(|| Ok(()));
+    client.expect_get_unsafe_head().times(2).returning(move || Ok(initial_head));
+    client.expect_start_build_block().times(2).returning(move |attributes| {
+        build_tx.send(attributes.parent().block_info.number).unwrap();
+        Ok(Default::default())
+    });
+    client.expect_get_sealed_payload().times(1).return_once(|_, _| Ok(dummy_envelope()));
+    client.expect_insert_unsafe_payload().times(1).return_once(move |_| Ok(inserted_head));
+
+    let mut origin_selector = MockOriginSelector::new();
+    origin_selector.expect_next_l1_origin().times(2).returning(|_, _| Ok(BlockInfo::default()));
+
+    let mut gossip = MockUnsafePayloadGossipClient::new();
+    gossip.expect_schedule_execution_payload_gossip().times(1).return_once(|_| Ok(()));
+
+    let rollup_config =
+        Arc::new(base_common_genesis::RollupConfig { block_time, ..Default::default() });
+    let engine_client = Arc::new(client);
+
+    let mut actor = test_actor();
+    actor.builder.attributes_builder = TestAttributesBuilder {
+        attributes: vec![
+            Ok(attributes_at(inserted_timestamp + block_time)),
+            Ok(attributes_at(inserted_timestamp)),
+        ],
+    };
+    actor.builder.engine_client = Arc::clone(&engine_client);
+    actor.builder.origin_selector = origin_selector;
+    actor.builder.rollup_config = Arc::clone(&rollup_config);
+    actor.engine_client = engine_client;
+    actor.rollup_config = rollup_config;
+    actor.unsafe_payload_gossip_client = gossip;
+
+    let cancellation_token = actor.cancellation_token.clone();
+    let actor_task = tokio::spawn(actor.start(()));
+
+    assert_eq!(build_rx.recv().await.unwrap(), initial_head.block_info.number);
+    assert_eq!(
+        tokio::time::timeout(Duration::from_millis(1), build_rx.recv()).await.unwrap().unwrap(),
+        inserted_head.block_info.number
+    );
+
+    cancellation_token.cancel();
+    actor_task.await.unwrap().unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn test_early_insert_defers_child_build_until_parent_timestamp() {
+    let block_time = 2;
+    let initial_timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let initial_head = head_at_timestamp(10, B256::with_last_byte(10), initial_timestamp);
+    let inserted_head =
+        head_at_timestamp(11, B256::with_last_byte(11), initial_timestamp + block_time);
+
+    let (build_tx, mut build_rx) = mpsc::unbounded_channel();
+    let (insert_tx, mut insert_rx) = mpsc::unbounded_channel();
+
+    let mut client = MockSequencerEngineClient::new();
+    client.expect_reset_engine_forkchoice().times(1).return_once(|| Ok(()));
+    client.expect_get_unsafe_head().times(2).returning(move || Ok(initial_head));
+    client.expect_start_build_block().times(2).returning(move |attributes| {
+        build_tx.send(attributes.parent().block_info.number).unwrap();
+        Ok(Default::default())
+    });
+    client.expect_get_sealed_payload().times(1).return_once(|_, _| Ok(dummy_envelope()));
+    client.expect_insert_unsafe_payload().times(1).return_once(move |_| {
+        insert_tx.send(()).unwrap();
+        Ok(inserted_head)
+    });
+
+    let mut origin_selector = MockOriginSelector::new();
+    origin_selector.expect_next_l1_origin().times(2).returning(|_, _| Ok(BlockInfo::default()));
+
+    let mut gossip = MockUnsafePayloadGossipClient::new();
+    gossip.expect_schedule_execution_payload_gossip().times(1).return_once(|_| Ok(()));
+
+    let rollup_config =
+        Arc::new(base_common_genesis::RollupConfig { block_time, ..Default::default() });
+    let engine_client = Arc::new(client);
+
+    let mut actor = test_actor();
+    actor.builder.attributes_builder = TestAttributesBuilder {
+        attributes: vec![
+            Ok(attributes_at(initial_timestamp + 2 * block_time)),
+            Ok(attributes_at(initial_timestamp + block_time)),
+        ],
+    };
+    actor.builder.engine_client = Arc::clone(&engine_client);
+    actor.builder.origin_selector = origin_selector;
+    actor.builder.rollup_config = Arc::clone(&rollup_config);
+    actor.engine_client = engine_client;
+    actor.rollup_config = rollup_config;
+    actor.unsafe_payload_gossip_client = gossip;
+
+    let cancellation_token = actor.cancellation_token.clone();
+    let actor_task = tokio::spawn(actor.start(()));
+
+    assert_eq!(build_rx.recv().await.unwrap(), initial_head.block_info.number);
+
+    tokio::time::advance(Duration::from_secs(block_time)).await;
+    insert_rx.recv().await.unwrap();
+    tokio::task::yield_now().await;
+
+    assert!(build_rx.try_recv().is_err());
+
+    tokio::time::advance(Duration::from_millis(500)).await;
+    tokio::task::yield_now().await;
+    assert!(build_rx.try_recv().is_err());
+
+    tokio::time::advance(Duration::from_secs(block_time)).await;
+    assert_eq!(build_rx.recv().await.unwrap(), inserted_head.block_info.number);
+
+    cancellation_token.cancel();
+    actor_task.await.unwrap().unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn test_stop_discards_queued_parent_and_restart_builds_immediately_on_fresh_head() {
+    let block_time = 2;
+    let initial_timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let initial_head = head_at_timestamp(20, B256::with_last_byte(20), initial_timestamp);
+    let inserted_head =
+        head_at_timestamp(21, B256::with_last_byte(21), initial_timestamp + block_time);
+    let restart_head =
+        head_at_timestamp(22, B256::with_last_byte(22), initial_timestamp + 2 * block_time);
+
+    let (build_tx, mut build_rx) = mpsc::unbounded_channel();
+    let (insert_tx, mut insert_rx) = mpsc::unbounded_channel();
+    let get_head_calls = Arc::new(AtomicUsize::new(0));
+
+    let mut client = MockSequencerEngineClient::new();
+    client.expect_reset_engine_forkchoice().times(1).return_once(|| Ok(()));
+    client.expect_get_unsafe_head().times(5).returning({
+        let get_head_calls = Arc::clone(&get_head_calls);
+        move || {
+            let call = get_head_calls.fetch_add(1, Ordering::Relaxed);
+            Ok(match call {
+                0 | 1 => initial_head,
+                2 => inserted_head,
+                _ => restart_head,
+            })
+        }
+    });
+    client.expect_start_build_block().times(2).returning(move |attributes| {
+        build_tx.send(attributes.parent().block_info.number).unwrap();
+        Ok(Default::default())
+    });
+    client.expect_get_sealed_payload().times(1).return_once(|_, _| Ok(dummy_envelope()));
+    client.expect_insert_unsafe_payload().times(1).return_once(move |_| {
+        insert_tx.send(()).unwrap();
+        Ok(inserted_head)
+    });
+
+    let mut origin_selector = MockOriginSelector::new();
+    origin_selector.expect_next_l1_origin().times(2).returning(|_, _| Ok(BlockInfo::default()));
+
+    let mut gossip = MockUnsafePayloadGossipClient::new();
+    gossip.expect_schedule_execution_payload_gossip().times(1).return_once(|_| Ok(()));
+
+    let rollup_config =
+        Arc::new(base_common_genesis::RollupConfig { block_time, ..Default::default() });
+    let engine_client = Arc::new(client);
+
+    let (admin_api_tx, admin_api_rx) = mpsc::channel(4);
+    let mut actor = test_actor();
+    actor.admin_api_rx = admin_api_rx;
+    actor.builder.attributes_builder = TestAttributesBuilder {
+        attributes: vec![
+            Ok(attributes_at(restart_head.block_info.timestamp + block_time)),
+            Ok(attributes_at(inserted_head.block_info.timestamp)),
+        ],
+    };
+    actor.builder.engine_client = Arc::clone(&engine_client);
+    actor.builder.origin_selector = origin_selector;
+    actor.builder.rollup_config = Arc::clone(&rollup_config);
+    actor.engine_client = engine_client;
+    actor.rollup_config = rollup_config;
+    actor.unsafe_payload_gossip_client = gossip;
+
+    let cancellation_token = actor.cancellation_token.clone();
+    let actor_task = tokio::spawn(actor.start(()));
+
+    assert_eq!(build_rx.recv().await.unwrap(), initial_head.block_info.number);
+    tokio::time::advance(Duration::from_secs(block_time)).await;
+    insert_rx.recv().await.unwrap();
+    tokio::task::yield_now().await;
+
+    let (stop_tx, stop_rx) = oneshot::channel();
+    admin_api_tx.send(SequencerAdminQuery::StopSequencer(stop_tx)).await.unwrap();
+    assert_eq!(stop_rx.await.unwrap().unwrap(), inserted_head.block_info.hash);
+
+    tokio::time::advance(Duration::from_secs(block_time + 1)).await;
+    tokio::task::yield_now().await;
+    assert!(build_rx.try_recv().is_err());
+
+    let (start_tx, start_rx) = oneshot::channel();
+    admin_api_tx
+        .send(SequencerAdminQuery::StartSequencer(restart_head.block_info.hash, start_tx))
+        .await
+        .unwrap();
+    start_rx.await.unwrap().unwrap();
+
+    assert_eq!(
+        tokio::time::timeout(Duration::from_millis(1), build_rx.recv()).await.unwrap().unwrap(),
+        restart_head.block_info.number
+    );
+
+    cancellation_token.cancel();
+    actor_task.await.unwrap().unwrap();
 }
 
 // --- try_seal_handle tests ---
