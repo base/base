@@ -1,0 +1,8 @@
+# Throwaway offline analysis deps for the P2P block-latency measurement.
+# Pinned, minimal. kaleido is optional (only needed for static PNG export).
+pandas==2.2.3
+numpy==2.1.3
+plotly==5.24.1
+# Optional: static PNG export engine for analyze.py's headline chart.
+# If missing, analyze.py degrades gracefully and skips the PNG.
+kaleido==0.2.1

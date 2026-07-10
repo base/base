@@ -1,6 +1,6 @@
 //! A builder for the [`GossipDriver`].
 
-use std::{num::NonZeroUsize, time::Duration};
+use std::{num::NonZeroUsize, path::PathBuf, time::Duration};
 
 use alloy_primitives::Address;
 use base_common_genesis::RollupConfig;
@@ -14,7 +14,7 @@ use tokio::sync::watch::{self};
 use crate::{
     Behaviour, BlockHandler, ConnectionLimitsConfig, DEFAULT_MAX_ESTABLISHED_CONNECTIONS,
     DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS, GaterConfig, GossipDriver, GossipDriverBuilderError,
-    GossipDriverConfig, Handler,
+    GossipDriverConfig, Handler, LatencyRecorder,
 };
 
 /// A builder for the [`GossipDriver`].
@@ -45,6 +45,10 @@ pub struct GossipDriverBuilder {
     max_identify_peerstore_peers: NonZeroUsize,
     /// Topic scoring. Disabled by default.
     topic_scoring: bool,
+    /// Optional path to append block-arrival latency CSV rows to.
+    latency_log: Option<PathBuf>,
+    /// Optional region label stamped on latency rows.
+    latency_region: Option<String>,
 }
 
 impl GossipDriverBuilder {
@@ -70,7 +74,17 @@ impl GossipDriverBuilder {
             max_identify_peerstore_peers: DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS,
             rollup_config,
             topic_scoring: false,
+            latency_log: None,
+            latency_region: None,
         }
+    }
+
+    /// Enables the block-arrival latency recorder, appending CSV rows to `log` and stamping each
+    /// row with `region`. When `log` is `None` the recorder is disabled.
+    pub fn with_latency(mut self, log: Option<PathBuf>, region: Option<String>) -> Self {
+        self.latency_log = log;
+        self.latency_region = region;
+        self
     }
 
     /// Sets the configuration for the connection gater.
@@ -261,6 +275,24 @@ impl GossipDriverBuilder {
         let gater_config = self.gater_config.take().unwrap_or_default();
         let gate = crate::ConnectionGater::new(gater_config);
 
+        // Optionally enable the block-arrival latency recorder.
+        let latency_recorder = match self.latency_log.take() {
+            Some(path) => {
+                let region = self.latency_region.take().unwrap_or_else(|| "unknown".to_string());
+                match LatencyRecorder::new(&path, region) {
+                    Ok(recorder) => {
+                        info!(target: "gossip", path = %path.display(), "Block-arrival latency recorder enabled");
+                        Some(recorder)
+                    }
+                    Err(error) => {
+                        warn!(target: "gossip", %error, path = %path.display(), "Failed to enable block-arrival latency recorder");
+                        None
+                    }
+                }
+            }
+            None => None,
+        };
+
         Ok((
             GossipDriver::new(
                 swarm,
@@ -273,6 +305,7 @@ impl GossipDriverBuilder {
                     max_identify_peerstore_peers,
                     peer_monitoring: self.peer_monitoring,
                     connection_limits_config,
+                    latency_recorder,
                 },
             ),
             signer_tx,

@@ -1,6 +1,6 @@
 //! Network Builder Module.
 
-use std::{num::NonZeroUsize, time::Duration};
+use std::{num::NonZeroUsize, path::PathBuf, time::Duration};
 
 use alloy_primitives::Address;
 use base_common_genesis::RollupConfig;
@@ -55,6 +55,7 @@ impl From<NetworkConfig> for NetworkBuilder {
         .with_gater_config(config.gater_config)
         .with_connection_limits_config(config.connection_limits_config)
         .with_max_identify_peerstore_peers(config.max_identify_peerstore_peers)
+        .with_latency(config.latency_log, config.latency_region)
     }
 }
 
@@ -104,6 +105,11 @@ impl NetworkBuilder {
     /// Sets the maximum number of peers to retain identify metadata for.
     pub fn with_max_identify_peerstore_peers(self, max_peers: NonZeroUsize) -> Self {
         Self { gossip: self.gossip.with_max_identify_peerstore_peers(max_peers), ..self }
+    }
+
+    /// Enables the block-arrival latency recorder on the [`GossipDriverBuilder`].
+    pub fn with_latency(self, log: Option<PathBuf>, region: Option<String>) -> Self {
+        Self { gossip: self.gossip.with_latency(log, region), ..self }
     }
 
     /// Sets the signer for the [`NetworkBuilder`].

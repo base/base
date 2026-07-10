@@ -1,0 +1,52 @@
+# THROWAWAY one-off measurement kit — P2P block-latency measurement.
+#
+# systemd unit template for a single-region Base CL "observer" node.
+# Install per node:
+#   sudo cp run_observer.sh /usr/local/bin/run_observer.sh
+#   sudo chmod +x /usr/local/bin/run_observer.sh
+#   sudo cp base-observer.service /etc/systemd/system/base-observer.service
+#   # edit the Environment= lines below for THIS node's region + endpoints
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now base-observer
+#   journalctl -u base-observer -f    # watch startup / mesh join
+#
+# The two latency flags are set by run_observer.sh via these env vars.
+
+[Unit]
+Description=Base CL block-latency observer (throwaway measurement)
+After=network-online.target chrony.service
+Wants=network-online.target chrony.service
+
+[Service]
+Type=exec
+
+# --- EDIT PER NODE ---------------------------------------------------------
+# Region label (must match the region list in README.md).
+Environment=REGION=us-east
+# CSV output (default is /var/lib/base-observer/latency-<region>.csv if unset).
+Environment=LOG_PATH=/var/lib/base-observer/latency-us-east.csv
+# L1 / L2 endpoints (operator-supplied; hosted or local/stub EL).
+Environment=L1_ETH_RPC=https://REPLACE-ME-l1-execution-rpc
+Environment=L1_BEACON=https://REPLACE-ME-l1-beacon-api
+Environment=L2_ENGINE_RPC=http://127.0.0.1:8551
+Environment=L2_JWT_PATH=/var/lib/base-observer/jwt.hex
+# Public IP to advertise to peers (recommended on cloud VMs behind NAT).
+Environment=ADVERTISE_IP=REPLACE-ME-public-ip
+# Optional: pin the binary and chain.
+# Environment=BASE_CONSENSUS_BIN=/usr/local/bin/base-consensus
+# Environment=CHAIN=8453
+# ---------------------------------------------------------------------------
+
+ExecStart=/usr/local/bin/run_observer.sh
+
+Restart=on-failure
+RestartSec=5s
+# Give snap-sync / mesh join time before systemd considers a slow start failed.
+TimeoutStartSec=0
+
+# Light hardening; state (CSV + bootstore) lives under /var/lib/base-observer.
+StateDirectory=base-observer
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

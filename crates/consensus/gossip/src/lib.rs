@@ -55,6 +55,9 @@ pub use handler::{BlockHandler, Handler};
 mod driver;
 pub use driver::{GossipDriver, GossipDriverConfig};
 
+mod latency;
+pub use latency::{LatencyRecord, LatencyRecorder};
+
 mod block_validity;
 pub use block_validity::BlockInvalidError;
 #[cfg(test)]

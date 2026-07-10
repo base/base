@@ -4,7 +4,7 @@ use std::{
     collections::{HashMap, HashSet},
     num::NonZeroUsize,
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use alloy_primitives::{Address, hex};
@@ -29,7 +29,7 @@ use tokio::sync::Mutex;
 
 use crate::{
     Behaviour, BlockHandler, ConnectionGate, ConnectionGater, ConnectionLimitsConfig, Event,
-    GossipDriverBuilder, Handler, Metrics, PublishError,
+    GossipDriverBuilder, Handler, LatencyRecorder, Metrics, PublishError,
 };
 
 /// Configuration applied when constructing a [`GossipDriver`].
@@ -41,6 +41,8 @@ pub struct GossipDriverConfig {
     pub peer_monitoring: Option<PeerMonitoring>,
     /// The configured libp2p connection limits enforced by the swarm.
     pub connection_limits_config: ConnectionLimitsConfig,
+    /// Optional block-arrival latency recorder (enabled via `--p2p.latency.log`).
+    pub latency_recorder: Option<LatencyRecorder>,
 }
 
 /// A driver for a [`Swarm`] instance.
@@ -80,6 +82,8 @@ pub struct GossipDriver<G: ConnectionGate> {
     pub connection_limits_config: ConnectionLimitsConfig,
     /// Tracks ping times for peers.
     pub ping: Arc<Mutex<HashMap<PeerId, Duration>>>,
+    /// Optional block-arrival latency recorder.
+    pub latency_recorder: Option<LatencyRecorder>,
 }
 
 impl<G> GossipDriver<G>
@@ -118,6 +122,7 @@ where
             connection_gate: gate,
             connection_limits_config: config.connection_limits_config,
             ping: Arc::new(Mutex::new(Default::default())),
+            latency_recorder: config.latency_recorder,
         }
     }
 
@@ -448,6 +453,10 @@ where
                 message_id: id,
                 message,
             } => {
+                // Capture wall-clock receive time before any decode/validation work so it reflects
+                // network arrival as closely as possible.
+                let recv_wallclock_ns =
+                    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
                 trace!(target: "gossip", topic = %message.topic, "Received message");
                 Metrics::gossip_event("message").increment(1.0);
                 if self.handler.topics().contains(&message.topic) {
@@ -457,6 +466,13 @@ where
                         .behaviour_mut()
                         .gossipsub
                         .report_message_validation_result(&id, &src, status);
+                    // `payload` is `Some` only on first-seen acceptance (duplicates are rejected),
+                    // so this records one row per block first-arrival.
+                    if let (Some(recorder), Some(envelope)) =
+                        (self.latency_recorder.as_ref(), payload.as_ref())
+                    {
+                        recorder.record(envelope, recv_wallclock_ns, &src);
+                    }
                     return payload;
                 }
             }

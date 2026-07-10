@@ -1,6 +1,6 @@
 //! Configuration for the `Network`.
 
-use std::num::NonZeroUsize;
+use std::{num::NonZeroUsize, path::PathBuf};
 
 use alloy_primitives::Address;
 use base_common_genesis::RollupConfig;
@@ -53,6 +53,10 @@ pub struct NetworkConfig {
     pub rollup_config: RollupConfig,
     /// A signer for gossip payloads.
     pub gossip_signer: Option<BlockSigner>,
+    /// Optional path to append block-arrival latency CSV rows to (enables the recorder).
+    pub latency_log: Option<PathBuf>,
+    /// Optional region label stamped on latency rows.
+    pub latency_region: Option<String>,
 }
 
 impl NetworkConfig {
@@ -104,6 +108,8 @@ impl NetworkConfig {
             topic_scoring: Default::default(),
             monitor_peers: Default::default(),
             gossip_signer: Default::default(),
+            latency_log: None,
+            latency_region: None,
         }
     }
 }

@@ -280,6 +280,19 @@ pub struct P2PNetworkArgs {
     /// This is useful for discovering a wider set of peers.
     #[arg(long = "p2p.discovery.randomize", env = "BASE_NODE_P2P_DISCOVERY_RANDOMIZE")]
     pub discovery_randomize: Option<u64>,
+
+    /// Optional path to append block-arrival latency CSV rows to.
+    ///
+    /// Enables the CL gossip block-arrival latency recorder, which writes one row per first-seen
+    /// canonical block. Used to evaluate whether the P2P layer is viable for 200ms blocks.
+    #[arg(long = "p2p.latency.log", env = "BASE_NODE_P2P_LATENCY_LOG")]
+    pub latency_log: Option<PathBuf>,
+
+    /// The geographic region label stamped on latency rows (e.g. "us-east", "ap-southeast").
+    ///
+    /// Only used when `--p2p.latency.log` is set.
+    #[arg(long = "p2p.latency.region", env = "BASE_NODE_P2P_LATENCY_REGION")]
+    pub latency_region: Option<String>,
 }
 
 impl Default for P2PNetworkArgs {
@@ -597,6 +610,11 @@ impl P2PArgs {
                 ))
             };
 
+        // Bind these before the struct literal: constructing `gossip_signer` below moves
+        // `self.signer`, after which `self` (and its deref target) can no longer be borrowed.
+        let latency_log = self.latency_log.clone();
+        let latency_region = self.latency_region.clone();
+
         Ok(NetworkConfig {
             discovery_config,
             discovery_interval: Duration::from_secs(self.discovery_interval),
@@ -624,6 +642,8 @@ impl P2PArgs {
             bootnodes,
             rollup_config: config.clone(),
             gossip_signer: self.signer.config(l2_chain_id)?,
+            latency_log,
+            latency_region,
         })
     }
 

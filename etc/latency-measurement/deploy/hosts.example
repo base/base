@@ -1,0 +1,18 @@
+# THROWAWAY one-off measurement kit — P2P block-latency measurement.
+#
+# Hosts file for collect_logs.sh. One line per observer:
+#   <region>  <ssh-target>  <remote-csv-path>
+#
+# - region:       label used for the local ./collected/<region>.csv filename
+# - ssh-target:   [user@]host reachable via ssh/scp/rsync
+# - remote-path:  absolute path to the CSV on that node
+#
+# Lines starting with '#' and blank lines are ignored.
+# Copy this to 'hosts' and fill in real values.
+
+us-east       root@203.0.113.10   /var/lib/base-observer/latency-us-east.csv
+us-west       root@203.0.113.11   /var/lib/base-observer/latency-us-west.csv
+eu-central    root@203.0.113.12   /var/lib/base-observer/latency-eu-central.csv
+eu-north      root@203.0.113.13   /var/lib/base-observer/latency-eu-north.csv
+ap-northeast  root@203.0.113.14   /var/lib/base-observer/latency-ap-northeast.csv
+ap-southeast  root@203.0.113.15   /var/lib/base-observer/latency-ap-southeast.csv
