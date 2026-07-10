@@ -102,7 +102,12 @@ impl TdxVerifier {
 
         let public_key_hash = Self::validate_public_key(&input.expected_public_key)?;
         let signer = Address::from_slice(&public_key_hash.as_slice()[12..]);
-        Self::verify_report_data(&quote, public_key_hash, input.quote_timestamp_millis)?;
+        if quote.report_data_prefix() != public_key_hash
+            || quote.report_data_suffix()
+                != Self::timestamp_report_data_suffix(input.quote_timestamp_millis)
+        {
+            return Err(TdxVerifierError::ReportDataMismatch);
+        }
         let collateral_expiration = pck_expiration.min(tcb_expiration).min(qe_expiration);
 
         Ok(TDXVerifierJournal {
@@ -139,20 +144,6 @@ impl TdxVerifier {
         preimage[REPORT_DATA_CONTEXT.len()..].copy_from_slice(&timestamp_millis.to_le_bytes());
         keccak256(preimage)
     }
-
-    /// Verifies that `TDREPORT.REPORTDATA` binds both the signer key and quote timestamp.
-    pub fn verify_report_data(
-        quote: &crate::ParsedTdxQuote,
-        public_key_hash: B256,
-        timestamp_millis: u64,
-    ) -> Result<()> {
-        if quote.report_data_prefix() != public_key_hash
-            || quote.report_data_suffix() != Self::timestamp_report_data_suffix(timestamp_millis)
-        {
-            return Err(TdxVerifierError::ReportDataMismatch);
-        }
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -176,13 +167,8 @@ mod tests {
     const VERIFICATION_TIME: u64 = 1_711_111_111;
     const QUOTE_TIMESTAMP_MILLIS: u64 = 1_711_111_000_000;
     const MAX_QUOTE_AGE_SECONDS: u64 = 300;
-    const COLLATERAL_NEXT_UPDATE: u64 = 2_051_222_400;
-    const EARLY_CRL_NEXT_UPDATE: u64 = 1_893_456_000;
     const COLLATERAL_ISSUE_DATE: &str = "2024-01-01T00:00:00Z";
     const COLLATERAL_NEXT_UPDATE_DATE: &str = "2035-01-01T00:00:00Z";
-    const EXPIRED_COLLATERAL_NEXT_UPDATE_DATE: &str = "2024-03-01T00:00:00Z";
-    const FMSPC_HEX: &str = "010203040506";
-    const PCE_ID_HEX: &str = "0009";
     const FIXTURE_HEX: &str = include_str!("testdata/verify_fixture.hex");
 
     fn signing_key(byte: u8) -> SigningKey {
@@ -267,8 +253,8 @@ mod tests {
                 "teeType": format!("{TDX_TEE_TYPE:08x}"),
                 "issueDate": COLLATERAL_ISSUE_DATE,
                 "nextUpdate": COLLATERAL_NEXT_UPDATE_DATE,
-                "fmspc": FMSPC_HEX,
-                "pceId": PCE_ID_HEX,
+                "fmspc": "010203040506",
+                "pceId": "0009",
                 "tdxModule": {
                     "mrsigner": "00".repeat(TDX_MEASUREMENT_LEN),
                     "attributes": "00".repeat(TDX_SEAM_ATTRIBUTES_LEN),
@@ -390,7 +376,7 @@ mod tests {
             TdxVerifier::timestamp_report_data_suffix(QUOTE_TIMESTAMP_MILLIS)
         );
         assert_eq!(
-            journal.collateralExpiration, COLLATERAL_NEXT_UPDATE,
+            journal.collateralExpiration, 2_051_222_400,
             "earliest collateral/cert expiration must be journaled",
         );
     }
@@ -410,8 +396,7 @@ mod tests {
         let mut input = fixture();
         let document: serde_json::Value =
             serde_json::from_slice(&input.collateral.tcb_info.raw).unwrap();
-        input.collateral.tcb_info.raw =
-            Bytes::from(serde_json::to_string_pretty(&document).unwrap().into_bytes());
+        input.collateral.tcb_info.raw = Bytes::from(serde_json::to_vec_pretty(&document).unwrap());
         resign(&mut input, TdxSignedCollateralBody::TcbInfo);
 
         TdxVerifier::verify(&input).expect("body-signed pretty collateral must verify");
@@ -479,7 +464,7 @@ mod tests {
 
         let journal = TdxVerifier::verify(&input).unwrap();
 
-        assert_eq!(journal.collateralExpiration, EARLY_CRL_NEXT_UPDATE);
+        assert_eq!(journal.collateralExpiration, 1_893_456_000);
     }
 
     fn verify_failure(name: &str, mutate: impl FnOnce(&mut TdxVerifierInput)) -> TdxVerifierError {
@@ -535,7 +520,7 @@ mod tests {
         assert_failure!(
             "expired collateral",
             |input| edit_tcb_info(input, |document| {
-                document["tcbInfo"]["nextUpdate"] = json!(EXPIRED_COLLATERAL_NEXT_UPDATE_DATE);
+                document["tcbInfo"]["nextUpdate"] = json!("2024-03-01T00:00:00Z");
             }),
             TdxVerifierError::CollateralExpired
         );
