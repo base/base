@@ -11,7 +11,7 @@
 
 use alloy_eips::{Decodable2718, Encodable2718};
 use alloy_network::TransactionResponse;
-use alloy_primitives::{Bloom, B256, Bytes, U256};
+use alloy_primitives::{B256, Bloom, Bytes, U256};
 use alloy_rpc_types_engine::PayloadId;
 use base_common_consensus::{BaseBlock, BaseTransactionSigned, TxDeposit};
 use base_common_flashblocks::{
@@ -123,7 +123,6 @@ async fn assert_fold_matches_full_block(flashblock_count: u64) {
         assert_ne!(dropped_hash, full_block.hash());
         assert_ne!(dropped_folded.header.state_root, full_block.header().state_root);
     }
-
 }
 
 fn build_flashblocks_for_full_block(
@@ -156,12 +155,17 @@ fn build_flashblocks_for_full_block(
     (0..flashblock_count)
         .map(|index| {
             let is_latest = index + 1 == flashblock_count;
+            let intermediate_state_root = B256::from([0xAB_u8; 32]);
             Flashblock {
                 payload_id: PayloadId::default(),
                 index: index as u64,
                 base: (index == 0).then_some(base.clone()),
                 diff: ExecutionPayloadFlashblockDeltaV1 {
-                    state_root: if is_latest { full_header.state_root } else { B256::ZERO },
+                    state_root: if is_latest {
+                        full_header.state_root
+                    } else {
+                        intermediate_state_root
+                    },
                     receipts_root: if is_latest { full_header.receipts_root } else { B256::ZERO },
                     block_hash: if is_latest { full_block.hash() } else { B256::ZERO },
                     gas_used: if is_latest { full_header.gas_used } else { 0 },
