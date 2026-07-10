@@ -128,13 +128,14 @@ impl AnchorUpdater {
 
         let mut intermediate_roots = Vec::new();
         while let Some((block, result)) = roots.next().await {
-            match result {
-                Ok(root) => intermediate_roots.push(root),
+            let root = match result {
+                Ok(root) => root,
                 Err(e) => {
                     debug!(block, error = %e, "anchor update waiting for output root");
                     return None;
                 }
-            }
+            };
+            intermediate_roots.push(root);
         }
 
         let parent = if anchor_game == Address::ZERO {
@@ -260,8 +261,10 @@ impl AnchorUpdater {
             return false;
         }
 
-        let calldata = encode_set_anchor_state_calldata(game_address);
-        match submitter.send_bond_tx(game_address, asr_address, calldata).await {
+        match submitter
+            .send_bond_tx(game_address, asr_address, encode_set_anchor_state_calldata(game_address))
+            .await
+        {
             Ok(tx_hash) => {
                 info!(
                     game = %game_address,
@@ -347,20 +350,38 @@ mod tests {
         )
     }
 
+    fn fixture(
+        anchor_game: Address,
+        game: Address,
+        status: GameStatus,
+    ) -> (
+        Arc<MockDisputeGameFactory>,
+        MockAggregateVerifier,
+        MockBondTransactionSubmitter,
+        AnchorUpdater,
+    ) {
+        let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
+        let anchor_registry = Arc::new(MockAnchorStateRegistry::new(anchor_game));
+        let mut l2 = MockL2Provider::new();
+        let output_root = insert_l2_block(&mut l2, BLOCK_INTERVAL);
+        let parent = if anchor_game == Address::ZERO { ASR_ADDRESS } else { anchor_game };
+        insert_next_game(&factory, parent, output_root, game);
+
+        let mut state = mock_state(status, Address::ZERO, 100);
+        state.anchor_state_registry = ASR_ADDRESS;
+        let verifier = MockAggregateVerifier::new(HashMap::from([(game, state)]));
+        let submitter =
+            MockBondTransactionSubmitter::with_responses(vec![Ok(B256::ZERO), Ok(B256::ZERO)]);
+        let updater = updater(Arc::clone(&factory), anchor_registry, Arc::new(l2));
+
+        (factory, verifier, submitter, updater)
+    }
+
     #[tokio::test]
     async fn poll_updates_next_defender_win() {
         let game = addr(1);
-        let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
-        let anchor_registry = Arc::new(MockAnchorStateRegistry::new(Address::ZERO));
-        let mut l2 = MockL2Provider::new();
-        let output_root = insert_l2_block(&mut l2, BLOCK_INTERVAL);
-        insert_next_game(&factory, ASR_ADDRESS, output_root, game);
-        let mut state = mock_state(GameStatus::DefenderWins, Address::ZERO, 100);
-        state.anchor_state_registry = ASR_ADDRESS;
-
-        let verifier = MockAggregateVerifier::new(HashMap::from([(game, state)]));
-        let submitter = MockBondTransactionSubmitter::with_responses(vec![Ok(B256::ZERO)]);
-        let mut updater = updater(factory, anchor_registry, Arc::new(l2));
+        let (_, verifier, submitter, mut updater) =
+            fixture(Address::ZERO, game, GameStatus::DefenderWins);
 
         updater.poll(&verifier, &submitter).await;
 
@@ -373,16 +394,8 @@ mod tests {
     #[tokio::test]
     async fn poll_waits_for_in_progress_next_game() {
         let game = addr(1);
-        let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
-        let anchor_registry = Arc::new(MockAnchorStateRegistry::new(Address::ZERO));
-        let mut l2 = MockL2Provider::new();
-        let output_root = insert_l2_block(&mut l2, BLOCK_INTERVAL);
-        insert_next_game(&factory, ASR_ADDRESS, output_root, game);
-        let state = mock_state(GameStatus::InProgress, Address::ZERO, 100);
-
-        let verifier = MockAggregateVerifier::new(HashMap::from([(game, state)]));
-        let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
-        let mut updater = updater(factory, anchor_registry, Arc::new(l2));
+        let (_, verifier, submitter, mut updater) =
+            fixture(Address::ZERO, game, GameStatus::InProgress);
 
         updater.poll(&verifier, &submitter).await;
 
@@ -392,22 +405,13 @@ mod tests {
     #[tokio::test]
     async fn poll_reuses_cached_next_game_while_anchor_is_unchanged() {
         let game = addr(1);
-        let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
-        let anchor_registry = Arc::new(MockAnchorStateRegistry::new(Address::ZERO));
-        let mut l2 = MockL2Provider::new();
-        let output_root = insert_l2_block(&mut l2, BLOCK_INTERVAL);
-        insert_next_game(&factory, ASR_ADDRESS, output_root, game);
-        let state = mock_state(GameStatus::InProgress, Address::ZERO, 100);
-
-        let verifier = MockAggregateVerifier::new(HashMap::from([(game, state.clone())]));
-        let submitter = MockBondTransactionSubmitter::with_responses(vec![Ok(B256::ZERO)]);
-        let mut updater = updater(Arc::clone(&factory), anchor_registry, Arc::new(l2));
+        let (factory, verifier, submitter, mut updater) =
+            fixture(Address::ZERO, game, GameStatus::InProgress);
 
         updater.poll(&verifier, &submitter).await;
         factory.uuid_games.lock().unwrap().clear();
 
-        let mut resolved_state = state;
-        resolved_state.status = GameStatus::DefenderWins;
+        let mut resolved_state = mock_state(GameStatus::DefenderWins, Address::ZERO, 100);
         resolved_state.anchor_state_registry = ASR_ADDRESS;
         verifier.update_game(game, resolved_state);
 
@@ -421,18 +425,8 @@ mod tests {
     #[tokio::test]
     async fn poll_clears_cached_next_game_after_successful_update() {
         let game = addr(1);
-        let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
-        let anchor_registry = Arc::new(MockAnchorStateRegistry::new(Address::ZERO));
-        let mut l2 = MockL2Provider::new();
-        let output_root = insert_l2_block(&mut l2, BLOCK_INTERVAL);
-        insert_next_game(&factory, ASR_ADDRESS, output_root, game);
-        let mut state = mock_state(GameStatus::DefenderWins, Address::ZERO, 100);
-        state.anchor_state_registry = ASR_ADDRESS;
-
-        let verifier = MockAggregateVerifier::new(HashMap::from([(game, state)]));
-        let submitter =
-            MockBondTransactionSubmitter::with_responses(vec![Ok(B256::ZERO), Ok(B256::ZERO)]);
-        let mut updater = updater(Arc::clone(&factory), anchor_registry, Arc::new(l2));
+        let (factory, verifier, submitter, mut updater) =
+            fixture(Address::ZERO, game, GameStatus::DefenderWins);
 
         updater.poll(&verifier, &submitter).await;
         factory.uuid_games.lock().unwrap().clear();
@@ -446,18 +440,8 @@ mod tests {
     #[tokio::test]
     async fn poll_stops_at_challenger_wins_next_game() {
         let challenger_win = addr(10);
-        let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
-        let anchor_registry = Arc::new(MockAnchorStateRegistry::new(Address::ZERO));
-        let mut l2 = MockL2Provider::new();
-        let output_root = insert_l2_block(&mut l2, BLOCK_INTERVAL);
-        insert_next_game(&factory, ASR_ADDRESS, output_root, challenger_win);
-
-        let verifier = MockAggregateVerifier::new(HashMap::from([(
-            challenger_win,
-            mock_state(GameStatus::ChallengerWins, Address::ZERO, 100),
-        )]));
-        let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
-        let mut updater = updater(Arc::clone(&factory), anchor_registry, Arc::new(l2));
+        let (factory, verifier, submitter, mut updater) =
+            fixture(Address::ZERO, challenger_win, GameStatus::ChallengerWins);
 
         updater.poll(&verifier, &submitter).await;
         factory.uuid_games.lock().unwrap().clear();
@@ -471,20 +455,8 @@ mod tests {
     async fn poll_starts_after_current_anchor_game() {
         let anchor_game = addr(10);
         let next_game = addr(11);
-        let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
-        let anchor_registry = Arc::new(MockAnchorStateRegistry::new(anchor_game));
-        let mut l2 = MockL2Provider::new();
-        let output_root = insert_l2_block(&mut l2, BLOCK_INTERVAL);
-        insert_next_game(&factory, anchor_game, output_root, next_game);
-        let mut next_state = mock_state(GameStatus::DefenderWins, Address::ZERO, 200);
-        next_state.anchor_state_registry = ASR_ADDRESS;
-
-        let verifier = MockAggregateVerifier::new(HashMap::from([
-            (anchor_game, mock_state(GameStatus::DefenderWins, Address::ZERO, 100)),
-            (next_game, next_state),
-        ]));
-        let submitter = MockBondTransactionSubmitter::with_responses(vec![Ok(B256::ZERO)]);
-        let mut updater = updater(factory, anchor_registry, Arc::new(l2));
+        let (_, verifier, submitter, mut updater) =
+            fixture(anchor_game, next_game, GameStatus::DefenderWins);
 
         updater.poll(&verifier, &submitter).await;
 
@@ -496,18 +468,12 @@ mod tests {
     #[tokio::test]
     async fn poll_waits_for_finalized_defender_win() {
         let game = addr(1);
-        let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
-        let anchor_registry = Arc::new(MockAnchorStateRegistry::new(Address::ZERO));
-        let mut l2 = MockL2Provider::new();
-        let output_root = insert_l2_block(&mut l2, BLOCK_INTERVAL);
-        insert_next_game(&factory, ASR_ADDRESS, output_root, game);
+        let (_, verifier, submitter, mut updater) =
+            fixture(Address::ZERO, game, GameStatus::DefenderWins);
         let mut state = mock_state(GameStatus::DefenderWins, Address::ZERO, 100);
         state.anchor_state_registry = ASR_ADDRESS;
         state.is_finalized = false;
-
-        let verifier = MockAggregateVerifier::new(HashMap::from([(game, state)]));
-        let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
-        let mut updater = updater(factory, anchor_registry, Arc::new(l2));
+        verifier.update_game(game, state);
 
         updater.poll(&verifier, &submitter).await;
 
