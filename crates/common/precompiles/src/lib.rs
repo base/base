@@ -38,9 +38,10 @@ pub use bls12_381::{
 
 mod common;
 pub use common::{
-    B20_MAX_SUPPLY_CAP, B20CoreStorage, B20Guards, B20PausableFeature, B20PolicyType, B20TokenRole,
-    Burnable, Configurable, Eip712Domain, IB20, Mintable, Pausable, PermitArgs, Permittable,
-    Policy, PolicyRegistry, RoleManaged, Token, TokenAccounting, Transferable,
+    AssetLogic, AssetLogicId, AssetLogicV1, AssetLogicV2, B20_MAX_SUPPLY_CAP, B20CoreStorage,
+    B20Guards, B20PausableFeature, B20PolicyType, B20TokenRole, Burnable, Configurable,
+    Eip712Domain, IB20, Mintable, Pausable, PermitArgs, Permittable, Policy, PolicyRegistry,
+    RoleManaged, Token, TokenAccounting, Transferable, asset_logic_for,
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use common::{InMemoryPolicy, InMemoryTokenAccounting, TestStablecoinToken, TestToken};

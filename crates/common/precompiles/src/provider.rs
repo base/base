@@ -199,7 +199,11 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
         // design, since metrics are scoped to the B-20 token call path.
         if self.spec.upgrade() >= BaseUpgrade::Beryl {
             B20Factory::install_with_observer(&mut precompiles, observer.clone());
-            BerylLookup::install_with_observer(&mut precompiles, observer.clone());
+            BerylLookup::install_with_observer(
+                &mut precompiles,
+                self.spec.upgrade(),
+                observer.clone(),
+            );
             PolicyRegistryPrecompile::install_with_observer(&mut precompiles, observer.clone());
             ActivationRegistry::install_with_observer(
                 &mut precompiles,

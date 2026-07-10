@@ -7,8 +7,8 @@ use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
-    AssetAccounting, B20AssetStorage, B20Guards, B20PolicyType, B20TokenRole, Burnable,
-    Configurable,
+    AssetAccounting, AssetLogic, AssetLogicV1, B20AssetStorage, B20Guards, B20PolicyType,
+    B20TokenRole, Burnable, Configurable,
     IB20::{self},
     IB20Asset, Mintable, Pausable, Permittable, Policy, RoleManaged, Token, Transferable,
 };
@@ -19,12 +19,14 @@ use crate::{
 /// so the dispatch layer can read and write asset-specific storage (multiplier,
 /// extra metadata, announcement IDs).
 #[derive(Debug, Clone)]
-pub struct B20AssetToken<S: AssetAccounting, P: Policy> {
+pub struct B20AssetToken<S: AssetAccounting, P: Policy, L: AssetLogic = AssetLogicV1> {
     accounting: S,
     policy: P,
+    /// Selects the fork-versioned behavior (see [`AssetLogic`]). Zero-sized: no runtime cost.
+    _logic: core::marker::PhantomData<fn() -> L>,
 }
 
-impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
+impl<S: AssetAccounting, P: Policy, L: AssetLogic> B20AssetToken<S, P, L> {
     /// Role identifier for asset operators: `keccak256("OPERATOR_ROLE")`.
     pub const OPERATOR_ROLE: B256 =
         b256!("97667070c54ef182b0f5858b034beac1b6f3089aa2d3188bb1e8929f4fa9b929");
@@ -33,13 +35,21 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
     pub const METADATA_ROLE: B256 =
         b256!("6bd6b5318a46e5fff572d5e4258a20774aab40cc35ac7680654b9081fcc82f80");
 
-    /// Creates a `B20AssetToken` backed by the provided storage and policy adapters.
-    pub const fn with_storage_and_policy(accounting: S, policy: P) -> Self {
-        Self { accounting, policy }
+    /// Creates a `B20AssetToken` running logic version `L`, backed by the given adapters.
+    pub const fn with_storage_policy_and_logic(accounting: S, policy: P) -> Self {
+        Self { accounting, policy, _logic: core::marker::PhantomData }
     }
 }
 
-impl<S: AssetAccounting, P: Policy> Token for B20AssetToken<S, P> {
+impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P, AssetLogicV1> {
+    /// Creates a `B20AssetToken` backed by the provided storage and policy adapters, running the
+    /// genesis logic version ([`AssetLogicV1`], i.e. today's behavior).
+    pub const fn with_storage_and_policy(accounting: S, policy: P) -> Self {
+        Self::with_storage_policy_and_logic(accounting, policy)
+    }
+}
+
+impl<S: AssetAccounting, P: Policy, L: AssetLogic> Token for B20AssetToken<S, P, L> {
     type Accounting = S;
     type Policy = P;
 
@@ -64,17 +74,17 @@ impl<S: AssetAccounting, P: Policy> Token for B20AssetToken<S, P> {
     }
 }
 
-impl<S: AssetAccounting, P: Policy> Transferable for B20AssetToken<S, P> {}
-impl<S: AssetAccounting, P: Policy> Mintable for B20AssetToken<S, P> {}
-impl<S: AssetAccounting, P: Policy> Burnable for B20AssetToken<S, P> {}
-impl<S: AssetAccounting, P: Policy> Pausable for B20AssetToken<S, P> {}
-impl<S: AssetAccounting, P: Policy> Configurable for B20AssetToken<S, P> {}
-impl<S: AssetAccounting, P: Policy> Permittable for B20AssetToken<S, P> {}
-impl<S: AssetAccounting, P: Policy> RoleManaged for B20AssetToken<S, P> {}
+impl<S: AssetAccounting, P: Policy, L: AssetLogic> Transferable for B20AssetToken<S, P, L> {}
+impl<S: AssetAccounting, P: Policy, L: AssetLogic> Mintable for B20AssetToken<S, P, L> {}
+impl<S: AssetAccounting, P: Policy, L: AssetLogic> Burnable for B20AssetToken<S, P, L> {}
+impl<S: AssetAccounting, P: Policy, L: AssetLogic> Pausable for B20AssetToken<S, P, L> {}
+impl<S: AssetAccounting, P: Policy, L: AssetLogic> Configurable for B20AssetToken<S, P, L> {}
+impl<S: AssetAccounting, P: Policy, L: AssetLogic> Permittable for B20AssetToken<S, P, L> {}
+impl<S: AssetAccounting, P: Policy, L: AssetLogic> RoleManaged for B20AssetToken<S, P, L> {}
 
 // --- Asset-Specific Operations ---
 
-impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
+impl<S: AssetAccounting, P: Policy, L: AssetLogic> B20AssetToken<S, P, L> {
     // --- Policy Scope Validation ---
 
     /// Ensures `policy_scope` names an inherited B-20 policy slot.

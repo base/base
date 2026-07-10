@@ -11,7 +11,7 @@ use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    AssetAccounting, B20AssetStorage, B20AssetToken, B20TokenRole, BerylAuxiliaryMetrics,
+    AssetAccounting, AssetLogic, B20AssetStorage, B20AssetToken, B20TokenRole, BerylAuxiliaryMetrics,
     BerylCallRecorder, BerylMetricLabels, BerylSelector, Burnable, Configurable,
     IB20::{self, IB20Calls as C},
     IB20Asset::{self, IB20AssetCalls as SC},
@@ -20,7 +20,7 @@ use crate::{
     macros::decode_precompile_call,
 };
 
-impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
+impl<S: AssetAccounting, P: Policy, L: AssetLogic> B20AssetToken<S, P, L> {
     /// ABI-dispatches `calldata` to the appropriate `IB20Asset` handler.
     pub fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
         self.dispatch_with_observer(ctx, calldata, NoopPrecompileCallObserver)
@@ -194,12 +194,12 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
             // --- ERC-20 mutating ---
             C::transfer(c) => {
                 let caller = ctx.caller();
-                self.transfer(caller, c.to, c.amount, privileged)?;
+                L::transfer(self, caller, c.to, c.amount, privileged)?;
                 true.abi_encode().into()
             }
             C::transferFrom(c) => {
                 let caller = ctx.caller();
-                self.transfer_from(caller, c.from, c.to, c.amount, privileged)?;
+                L::transfer_from(self, caller, c.from, c.to, c.amount, privileged)?;
                 true.abi_encode().into()
             }
             C::approve(c) => {
@@ -209,12 +209,12 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
             }
             C::transferWithMemo(c) => {
                 let caller = ctx.caller();
-                self.transfer_with_memo(caller, c.to, c.amount, c.memo, privileged)?;
+                L::transfer_with_memo(self, caller, c.to, c.amount, c.memo, privileged)?;
                 true.abi_encode().into()
             }
             C::transferFromWithMemo(c) => {
                 let caller = ctx.caller();
-                self.transfer_from_with_memo(caller, c.from, c.to, c.amount, c.memo, privileged)?;
+                L::transfer_from_with_memo(self, caller, c.from, c.to, c.amount, c.memo, privileged)?;
                 true.abi_encode().into()
             }
 

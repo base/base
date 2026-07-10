@@ -6,6 +6,9 @@ pub use abi::IB20;
 mod core_storage;
 pub use core_storage::B20CoreStorage;
 
+mod logic;
+pub use logic::{AssetLogic, AssetLogicId, AssetLogicV1, AssetLogicV2, asset_logic_for};
+
 mod ops;
 pub use ops::{
     B20Guards, B20TokenRole, Burnable, Configurable, Eip712Domain, Mintable, Pausable, PermitArgs,
