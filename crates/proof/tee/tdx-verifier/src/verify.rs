@@ -52,14 +52,7 @@ impl TdxVerifier {
             input.trusted_root_ca_hash,
             input.verification_time,
             &input.revocation,
-        )
-        .map_err(|e| {
-            if matches!(e, TdxVerifierError::RootCaNotTrusted) {
-                e
-            } else {
-                TdxVerifierError::PckCertChainInvalid(e.to_string())
-            }
-        })?;
+        )?;
         TdxQuote::verify_qe_report(&quote, &pck_leaf_key)?;
         TdxQuote::verify_signature(&quote)?;
 
