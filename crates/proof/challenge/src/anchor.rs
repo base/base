@@ -1,11 +1,11 @@
 //! Anchor root update management.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use alloy_primitives::Address;
 use base_proof_contracts::{
-    AggregateVerifierClient, AnchorStateRegistryClient, DisputeGameFactoryClient, GameStatus,
-    encode_set_anchor_state_calldata, game_lookup_blocks, game_lookup_key,
+    AggregateVerifierClient, AnchorSnapshot, AnchorStateRegistryClient, DisputeGameFactoryClient,
+    GameStatus, encode_set_anchor_state_calldata, game_lookup_blocks, game_lookup_key,
 };
 use base_proof_rpc::L2Provider;
 use futures::stream::{self, StreamExt};
@@ -22,6 +22,8 @@ pub struct AnchorUpdater {
     anchor_registry_client: Arc<dyn AnchorStateRegistryClient>,
     #[debug(skip)]
     output_validator: OutputValidator<dyn L2Provider>,
+    #[debug(skip)]
+    cached_next_game: Mutex<Option<(AnchorSnapshot, Address)>>,
     anchor_state_registry_address: Address,
     game_type: u32,
     block_interval: u64,
@@ -43,6 +45,7 @@ impl AnchorUpdater {
             factory_client,
             anchor_registry_client,
             output_validator: OutputValidator::new(l2_provider),
+            cached_next_game: Mutex::new(None),
             anchor_state_registry_address,
             game_type,
             block_interval,
@@ -64,10 +67,17 @@ impl AnchorUpdater {
             }
         };
 
-        let Some(game_address) =
-            self.next_game(anchor.anchor_root.l2_block_number, anchor.anchor_game).await
-        else {
-            return;
+        let game_address = match self.cached_next_game(anchor) {
+            Some(address) => address,
+            None => {
+                let Some(address) =
+                    self.next_game(anchor.anchor_root.l2_block_number, anchor.anchor_game).await
+                else {
+                    return;
+                };
+                self.cache_next_game(anchor, address);
+                address
+            }
         };
 
         match verifier_client.status(game_address).await {
@@ -86,7 +96,28 @@ impl AnchorUpdater {
             }
         }
 
-        Self::try_update(game_address, verifier_client, submitter).await;
+        if Self::try_update(game_address, verifier_client, submitter).await {
+            self.clear_cached_next_game();
+        }
+    }
+
+    fn cached_next_game(&self, anchor: AnchorSnapshot) -> Option<Address> {
+        let mut cached = self.cached_next_game.lock().unwrap();
+        match *cached {
+            Some((cached_anchor, address)) if cached_anchor == anchor => Some(address),
+            _ => {
+                *cached = None;
+                None
+            }
+        }
+    }
+
+    fn cache_next_game(&self, anchor: AnchorSnapshot, address: Address) {
+        *self.cached_next_game.lock().unwrap() = Some((anchor, address));
+    }
+
+    fn clear_cached_next_game(&self) {
+        *self.cached_next_game.lock().unwrap() = None;
     }
 
     async fn next_game(
@@ -171,12 +202,12 @@ impl AnchorUpdater {
         game_address: Address,
         verifier_client: &dyn AggregateVerifierClient,
         submitter: &dyn BondTransactionSubmitter,
-    ) {
+    ) -> bool {
         let asr_address = match verifier_client.anchor_state_registry(game_address).await {
             Ok(address) => address,
             Err(e) => {
                 warn!(game = %game_address, error = %e, "failed to read anchor registry for game");
-                return;
+                return false;
             }
         };
 
@@ -184,11 +215,11 @@ impl AnchorUpdater {
             Ok(true) => {}
             Ok(false) => {
                 debug!(game = %game_address, asr = %asr_address, "anchor update waiting for finality");
-                return;
+                return false;
             }
             Err(e) => {
                 warn!(game = %game_address, asr = %asr_address, error = %e, "failed to read game finality for anchor update");
-                return;
+                return false;
             }
         }
 
@@ -196,7 +227,7 @@ impl AnchorUpdater {
             Ok(preflight) => preflight,
             Err(e) => {
                 warn!(game = %game_address, asr = %asr_address, error = %e, "failed to read anchor preflight");
-                return;
+                return false;
             }
         };
 
@@ -212,7 +243,7 @@ impl AnchorUpdater {
             );
             ChallengerMetrics::anchor_update_tx_outcome_total(ChallengerMetrics::STATUS_SKIPPED)
                 .increment(1);
-            return;
+            return false;
         }
 
         if preflight.paused || !preflight.respected {
@@ -223,14 +254,14 @@ impl AnchorUpdater {
                 respected = preflight.respected,
                 "anchor update waiting for registry eligibility"
             );
-            return;
+            return false;
         }
 
         let game_info = match verifier_client.game_info(game_address).await {
             Ok(info) => info,
             Err(e) => {
                 warn!(game = %game_address, asr = %asr_address, error = %e, "failed to read game info for anchor update");
-                return;
+                return false;
             }
         };
 
@@ -244,7 +275,7 @@ impl AnchorUpdater {
             );
             ChallengerMetrics::anchor_update_tx_outcome_total(ChallengerMetrics::STATUS_SKIPPED)
                 .increment(1);
-            return;
+            return false;
         }
 
         match submitter
@@ -263,6 +294,7 @@ impl AnchorUpdater {
                 )
                 .increment(1);
                 ChallengerMetrics::anchor_l2_block_number().set(game_info.l2_block_number as f64);
+                true
             }
             Err(e) => {
                 warn!(
@@ -273,6 +305,7 @@ impl AnchorUpdater {
                 );
                 ChallengerMetrics::anchor_update_tx_outcome_total(ChallengerMetrics::STATUS_ERROR)
                     .increment(1);
+                false
             }
         }
     }
@@ -300,7 +333,12 @@ mod tests {
         anchor_game: Address,
         game: Address,
         status: GameStatus,
-    ) -> (MockAggregateVerifier, MockBondTransactionSubmitter, AnchorUpdater) {
+    ) -> (
+        MockAggregateVerifier,
+        MockBondTransactionSubmitter,
+        AnchorUpdater,
+        Arc<MockDisputeGameFactory>,
+    ) {
         let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
         let anchor_registry = Arc::new(MockAnchorStateRegistry::new(anchor_game));
         let mut l2 = MockL2Provider::new();
@@ -330,7 +368,7 @@ mod tests {
             INTERMEDIATE_BLOCK_INTERVAL,
         );
 
-        (verifier, submitter, updater)
+        (verifier, submitter, updater, factory)
     }
 
     #[tokio::test(start_paused = true)]
@@ -373,7 +411,8 @@ mod tests {
     #[tokio::test]
     async fn poll_updates_next_defender_win() {
         let game = addr(1);
-        let (verifier, submitter, updater) = fixture(Address::ZERO, game, GameStatus::DefenderWins);
+        let (verifier, submitter, updater, _) =
+            fixture(Address::ZERO, game, GameStatus::DefenderWins);
 
         updater.poll(&verifier, &submitter).await;
 
@@ -389,7 +428,7 @@ mod tests {
             [GameStatus::InProgress, GameStatus::ChallengerWins].into_iter().enumerate()
         {
             let game = addr(index as u64 + 1);
-            let (verifier, submitter, updater) = fixture(Address::ZERO, game, status);
+            let (verifier, submitter, updater, _) = fixture(Address::ZERO, game, status);
 
             updater.poll(&verifier, &submitter).await;
 
@@ -399,10 +438,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn poll_reuses_cached_next_game_while_anchor_is_unchanged() {
+        let game = addr(1);
+        let (verifier, submitter, updater, factory) =
+            fixture(Address::ZERO, game, GameStatus::InProgress);
+
+        updater.poll(&verifier, &submitter).await;
+        factory.uuid_games.lock().unwrap().clear();
+
+        let mut resolved_state = mock_state(GameStatus::DefenderWins, Address::ZERO, 100);
+        resolved_state.anchor_state_registry = ASR_ADDRESS;
+        verifier.update_game(game, resolved_state);
+
+        updater.poll(&verifier, &submitter).await;
+
+        let calls = submitter.recorded_calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, game);
+    }
+
+    #[tokio::test]
+    async fn poll_clears_cached_next_game_after_successful_update() {
+        let game = addr(1);
+        let (verifier, submitter, updater, factory) =
+            fixture(Address::ZERO, game, GameStatus::DefenderWins);
+
+        updater.poll(&verifier, &submitter).await;
+        factory.uuid_games.lock().unwrap().clear();
+        updater.poll(&verifier, &submitter).await;
+
+        assert_eq!(submitter.recorded_calls().len(), 1);
+    }
+
+    #[tokio::test]
     async fn poll_starts_after_current_anchor_game() {
         let anchor_game = addr(10);
         let next_game = addr(11);
-        let (verifier, submitter, updater) =
+        let (verifier, submitter, updater, _) =
             fixture(anchor_game, next_game, GameStatus::DefenderWins);
 
         updater.poll(&verifier, &submitter).await;
@@ -415,7 +487,8 @@ mod tests {
     #[tokio::test]
     async fn poll_waits_for_finalized_defender_win() {
         let game = addr(1);
-        let (verifier, submitter, updater) = fixture(Address::ZERO, game, GameStatus::DefenderWins);
+        let (verifier, submitter, updater, _) =
+            fixture(Address::ZERO, game, GameStatus::DefenderWins);
         let mut state = mock_state(GameStatus::DefenderWins, Address::ZERO, 100);
         state.anchor_state_registry = ASR_ADDRESS;
         state.is_finalized = false;
