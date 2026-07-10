@@ -32,6 +32,8 @@ enum BondPhase {
     AwaitingDelay {
         /// Monotonic timestamp at which withdrawal should be retried.
         ready_at: Duration,
+        /// Whether `ready_at` was computed with the fallback WETH delay.
+        using_default_delay: bool,
     },
 }
 
@@ -392,7 +394,14 @@ impl<C: Clock> BondManager<C> {
                 self.try_unlock(game_address, verifier_client, submitter).await,
                 BondPhase::NeedsUnlock,
             ),
-            BondPhase::AwaitingDelay { ready_at } => {
+            BondPhase::AwaitingDelay { mut ready_at, using_default_delay } => {
+                if using_default_delay {
+                    self.ensure_weth_delay(verifier_client, game_address).await;
+                    if let Some(delay) = self.weth_delay {
+                        ready_at = Self::recompute_default_ready_at(ready_at, delay);
+                    }
+                }
+
                 let now = self.clock.now();
                 if now < ready_at {
                     let remaining = ready_at.saturating_sub(now);
@@ -401,7 +410,10 @@ impl<C: Clock> BondManager<C> {
                         remaining_secs = remaining.as_secs(),
                         "waiting for DelayedWETH delay"
                     );
-                    return Some(BondPhase::AwaitingDelay { ready_at });
+                    return Some(BondPhase::AwaitingDelay {
+                        ready_at,
+                        using_default_delay: using_default_delay && self.weth_delay.is_none(),
+                    });
                 }
 
                 info!(
@@ -411,7 +423,7 @@ impl<C: Clock> BondManager<C> {
                 );
                 (
                     self.try_withdraw(game_address, verifier_client, submitter).await,
-                    BondPhase::AwaitingDelay { ready_at: now },
+                    BondPhase::AwaitingDelay { ready_at: now, using_default_delay: false },
                 )
             }
         };
@@ -496,8 +508,9 @@ impl<C: Clock> BondManager<C> {
         )?;
         if unlocked {
             self.ensure_weth_delay(verifier_client, game_address).await;
+            let using_default_delay = self.weth_delay.is_none();
             let delay = self.effective_weth_delay(game_address);
-            let phase = Self::unlocked_phase(&self.clock, resolved_at, delay);
+            let phase = Self::unlocked_phase(&self.clock, resolved_at, delay, using_default_delay);
             info!(game = %game_address, resolved_at, phase = ?phase, "bond already unlocked");
             return Ok(Some(phase));
         }
@@ -506,9 +519,11 @@ impl<C: Clock> BondManager<C> {
 
         match Self::send_claim_credit(game_address, "unlock", submitter).await {
             Ok(_) => {
+                let using_default_delay = self.weth_delay.is_none();
                 let delay = self.effective_weth_delay(game_address);
                 Ok(Some(BondPhase::AwaitingDelay {
                     ready_at: self.clock.now().saturating_add(delay),
+                    using_default_delay,
                 }))
             }
             Err(e) => {
@@ -557,16 +572,31 @@ impl<C: Clock> BondManager<C> {
                 );
                 Ok(Some(BondPhase::AwaitingDelay {
                     ready_at: self.clock.now().saturating_add(retry_delay),
+                    using_default_delay: false,
                 }))
             }
         }
     }
 
-    fn unlocked_phase(clock: &C, resolved_at: u64, delay: Duration) -> BondPhase {
+    fn unlocked_phase(
+        clock: &C,
+        resolved_at: u64,
+        delay: Duration,
+        using_default_delay: bool,
+    ) -> BondPhase {
         let elapsed_since_resolve =
             Duration::from_secs(clock.wall_clock_unix_secs().saturating_sub(resolved_at));
         BondPhase::AwaitingDelay {
             ready_at: clock.now().saturating_add(delay.saturating_sub(elapsed_since_resolve)),
+            using_default_delay,
+        }
+    }
+
+    fn recompute_default_ready_at(ready_at: Duration, delay: Duration) -> Duration {
+        if delay >= Self::DEFAULT_WETH_DELAY {
+            ready_at.saturating_add(delay - Self::DEFAULT_WETH_DELAY)
+        } else {
+            ready_at.saturating_sub(Self::DEFAULT_WETH_DELAY - delay)
         }
     }
 
@@ -625,7 +655,7 @@ impl<C: Clock> BondManager<C> {
                 return Ok(Some(BondPhase::NeedsUnlock));
             };
 
-            return Ok(Some(Self::unlocked_phase(clock, resolved_at, delay)));
+            return Ok(Some(Self::unlocked_phase(clock, resolved_at, delay, false)));
         }
 
         if resolved_at > 0 {
@@ -736,7 +766,10 @@ mod tests {
     }
 
     fn ready_phase() -> BondPhase {
-        BondPhase::AwaitingDelay { ready_at: Duration::from_secs(WITHDRAW_READY_MONOTONIC_SECS) }
+        BondPhase::AwaitingDelay {
+            ready_at: Duration::from_secs(WITHDRAW_READY_MONOTONIC_SECS),
+            using_default_delay: false,
+        }
     }
 
     async fn advance(
@@ -779,58 +812,68 @@ mod tests {
     }
 
     fn delayed_weth_rpc(delay: Option<Duration>) -> (url::Url, thread::JoinHandle<()>) {
+        delayed_weth_rpc_sequence(vec![delay])
+    }
+
+    fn delayed_weth_rpc_sequence(
+        delays: Vec<Option<Duration>>,
+    ) -> (url::Url, thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap()).parse().unwrap();
         let handle = thread::spawn(move || {
-            let mut stream = (0..100)
-                .find_map(|_| match listener.accept() {
-                    Ok((stream, _)) => Some(stream),
-                    Err(e) if e.kind() == ErrorKind::WouldBlock => {
-                        thread::sleep(Duration::from_millis(10));
-                        None
+            for delay in delays {
+                let mut stream = (0..100)
+                    .find_map(|_| match listener.accept() {
+                        Ok((stream, _)) => Some(stream),
+                        Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                            thread::sleep(Duration::from_millis(10));
+                            None
+                        }
+                        Err(e) => panic!("accept failed: {e}"),
+                    })
+                    .expect("timed out waiting for DelayedWETH delay request");
+                let mut request = Vec::new();
+                let mut buffer = [0; 1024];
+                loop {
+                    let read = stream.read(&mut buffer).unwrap();
+                    if read == 0 {
+                        break;
                     }
-                    Err(e) => panic!("accept failed: {e}"),
-                })
-                .expect("timed out waiting for DelayedWETH delay request");
-            let mut request = Vec::new();
-            let mut buffer = [0; 1024];
-            loop {
-                let read = stream.read(&mut buffer).unwrap();
-                if read == 0 {
-                    break;
+                    request.extend_from_slice(&buffer[..read]);
+                    let text = String::from_utf8_lossy(&request);
+                    let Some((headers, body)) = text.split_once("\r\n\r\n") else {
+                        continue;
+                    };
+                    if body.len() >= content_length(headers).unwrap_or(0) {
+                        break;
+                    }
                 }
-                request.extend_from_slice(&buffer[..read]);
-                let text = String::from_utf8_lossy(&request);
-                let Some((headers, body)) = text.split_once("\r\n\r\n") else {
-                    continue;
-                };
-                if body.len() >= content_length(headers).unwrap_or(0) {
-                    break;
-                }
-            }
 
-            let request = String::from_utf8_lossy(&request);
-            let body = match delay {
-                Some(delay) => {
-                    let result = format!("0x{:064x}", delay.as_secs());
-                    format!(
-                        r#"{{"jsonrpc":"2.0","id":{},"result":"{}"}}"#,
-                        rpc_id(&request),
-                        result
-                    )
-                }
-                None => format!(
-                    r#"{{"jsonrpc":"2.0","id":{},"error":{{"code":-32000,"message":"boom"}}}}"#,
-                    rpc_id(&request)
-                ),
-            };
-            let response = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
-                body.len(),
-                body,
-            );
-            stream.write_all(response.as_bytes()).unwrap();
+                let request = String::from_utf8_lossy(&request);
+                let body = delay.map_or_else(
+                    || {
+                        format!(
+                            r#"{{"jsonrpc":"2.0","id":{},"error":{{"code":-32000,"message":"boom"}}}}"#,
+                            rpc_id(&request)
+                        )
+                    },
+                    |delay| {
+                        let result = format!("0x{:064x}", delay.as_secs());
+                        format!(
+                            r#"{{"jsonrpc":"2.0","id":{},"result":"{}"}}"#,
+                            rpc_id(&request),
+                            result
+                        )
+                    },
+                );
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body,
+                );
+                stream.write_all(response.as_bytes()).unwrap();
+            }
         });
         (url, handle)
     }
@@ -915,7 +958,7 @@ mod tests {
         assert!(
             matches!(
                 phase,
-                BondPhase::AwaitingDelay { ready_at } if ready_at == expected_ready_at
+                BondPhase::AwaitingDelay { ready_at, .. } if ready_at == expected_ready_at
             ),
             "withdraw revert should back off briefly"
         );
@@ -941,7 +984,7 @@ mod tests {
         assert!(
             matches!(
                 phase,
-                BondPhase::AwaitingDelay { ready_at }
+                BondPhase::AwaitingDelay { ready_at, .. }
                     if ready_at == Duration::from_secs(WITHDRAW_READY_MONOTONIC_SECS)
             ),
             "non-revert withdraw failure must retry immediately"
@@ -956,7 +999,7 @@ mod tests {
         assert!(
             matches!(
                 phase,
-                BondPhase::AwaitingDelay { ready_at }
+                BondPhase::AwaitingDelay { ready_at, .. }
                     if ready_at == Duration::from_secs(WITHDRAW_READY_MONOTONIC_SECS)
             ),
             "non-revert withdraw failure must stay ready for retry"
@@ -1114,7 +1157,7 @@ mod tests {
                 .unwrap()
                 .unwrap();
             match (expected_ready_at, phase) {
-                (expected, BondPhase::AwaitingDelay { ready_at }) if ready_at == expected => {}
+                (expected, BondPhase::AwaitingDelay { ready_at, .. }) if ready_at == expected => {}
                 (_, phase) => panic!("unexpected phase: {phase:?}"),
             }
         }
@@ -1134,7 +1177,7 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Some(BondPhase::AwaitingDelay { ready_at })
+                Some(BondPhase::AwaitingDelay { ready_at, .. })
                     if ready_at == Duration::from_secs(500)
             ),
             "expected ready AwaitingDelay, got {result:?}",
@@ -1160,7 +1203,7 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Some(BondPhase::AwaitingDelay { ready_at })
+                Some(BondPhase::AwaitingDelay { ready_at, .. })
                     if ready_at == Duration::from_secs(560)
             ),
             "expected AwaitingDelay with monotonic deadline, got {result:?}",
@@ -1194,7 +1237,7 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Some(BondPhase::AwaitingDelay { ready_at })
+                Some(BondPhase::AwaitingDelay { ready_at, .. })
                     if ready_at == Duration::from_secs(560)
             ),
             "expected AwaitingDelay from unlock time, got {result:?}",
@@ -1228,7 +1271,7 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Some(BondPhase::AwaitingDelay { ready_at })
+                Some(BondPhase::AwaitingDelay { ready_at, .. })
                     if ready_at
                         == Duration::from_secs(500)
                             .saturating_add(BondManager::<FixedClock>::DEFAULT_WETH_DELAY)
@@ -1236,6 +1279,43 @@ mod tests {
             "expected fallback AwaitingDelay from unlock time, got {result:?}",
         );
         assert_eq!(tx_manager.recorded_calls().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn awaiting_delay_recomputes_default_when_weth_delay_recovers() {
+        let claim_addr = claim_addr();
+        let game = addr(0);
+        let tx_hash = B256::repeat_byte(0xDD);
+        let mut state = game_state(GameStatus::ChallengerWins, claim_addr, 1_999_999_000, false);
+        state.delayed_weth = addr(9);
+        let verifier = verifier(state);
+        let (rpc_url, handle) = delayed_weth_rpc_sequence(vec![None, Some(TEST_WETH_DELAY)]);
+        let mut mgr = BondManager::new(
+            vec![claim_addr],
+            rpc_url,
+            empty_factory(),
+            1000,
+            TEST_DISCOVERY_INTERVAL,
+            fixed_clock(500),
+        );
+        mgr.track_game(game, claim_addr);
+
+        let (submitter, tx_manager) = bond_submitter(vec![
+            Ok(receipt_with_status(true, tx_hash)),
+            Ok(receipt_with_status(true, tx_hash)),
+        ]);
+        let phase = mgr.try_unlock(game, &*verifier, &submitter).await.unwrap().unwrap();
+        assert!(
+            matches!(&phase, BondPhase::AwaitingDelay { using_default_delay: true, .. }),
+            "expected default-delay AwaitingDelay, got {phase:?}",
+        );
+
+        mgr.clock.monotonic = Duration::from_secs(561);
+        let result = mgr.advance_game(game, phase, &*verifier, &submitter).await;
+        handle.join().unwrap();
+
+        assert!(result.is_none(), "withdraw should complete after recovered delay");
+        assert_eq!(tx_manager.recorded_calls().len(), 2);
     }
 
     #[tokio::test]
