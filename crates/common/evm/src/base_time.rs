@@ -51,7 +51,7 @@ impl BaseTime {
 
     /// Computes the full millisecond timestamp using the canonical block timestamp in seconds.
     pub fn timestamp_ms(&self, block_timestamp: u64) -> u64 {
-        block_timestamp.saturating_mul(1_000).saturating_add(u64::from(self.timestamp_millis_part))
+        block_timestamp.wrapping_mul(1_000).wrapping_add(u64::from(self.timestamp_millis_part))
     }
 }
 
@@ -94,6 +94,17 @@ mod tests {
         let base_time = BaseTime { timestamp_millis_part: 800 };
 
         assert_eq!(base_time.timestamp_ms(1_725), 1_725_800);
+    }
+
+    #[test]
+    fn timestamp_ms_matches_solidity_uint64_truncation() {
+        let base_time = BaseTime { timestamp_millis_part: 800 };
+        let block_timestamp = u64::MAX / 1_000 + 1;
+
+        assert_eq!(
+            base_time.timestamp_ms(block_timestamp),
+            block_timestamp.wrapping_mul(1_000).wrapping_add(800)
+        );
     }
 
     #[test]

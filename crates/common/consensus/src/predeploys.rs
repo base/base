@@ -38,7 +38,6 @@ impl Predeploys {
         Self::BASE_TIME,
         Self::CROSS_L2_INBOX,
         Self::L2_TO_L2_XDM,
-        Self::BASE_TIME,
     ];
 
     /// The `LegacyMessagePasser` contract stores commitments to withdrawal transactions before the
@@ -143,9 +142,6 @@ impl Predeploys {
 
     /// The `L2ToL2CrossDomainMessenger` proxy address.
     pub const L2_TO_L2_XDM: Address = address!("0x4200000000000000000000000000000000000023");
-
-    /// The `BaseTime` proxy address.
-    pub const BASE_TIME: Address = address!("0x4200000000000000000000000000000000000024");
 }
 
 /// Container for system addresses that are not predeploy contracts.
