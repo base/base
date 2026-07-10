@@ -22,7 +22,9 @@ pub const RLPX_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RlpxProbeOutcome {
-    /// TCP, ECIES, and devp2p Hello completed successfully.
+    /// TCP and ECIES completed, and the peer answered the devp2p Hello
+    /// exchange, either with its own Hello or with an authenticated
+    /// Disconnect (e.g. at peer capacity).
     Reachable,
     /// The TCP connection could not be established.
     ConnectionFailed,
@@ -160,6 +162,17 @@ impl ReachabilityProber for RlpxProber {
             Err(_) | Ok(Err(P2PStreamError::HandshakeError(P2PHandshakeError::Timeout))) => {
                 finish(RlpxProbeOutcome::TimedOut, RlpxProbeStage::Rlpx, None)
             }
+            Ok(Err(P2PStreamError::HandshakeError(P2PHandshakeError::Disconnected(reason)))) => {
+                // A Disconnect received here arrived over the authenticated ECIES
+                // stream, so the node is reachable even though it refused the
+                // session (e.g. it is at peer capacity).
+                debug!(
+                    reason = %reason,
+                    stage = ?RlpxProbeStage::Rlpx,
+                    "reachability probe disconnected by reachable peer"
+                );
+                finish(RlpxProbeOutcome::Reachable, RlpxProbeStage::Rlpx, None)
+            }
             Ok(Err(error)) => {
                 debug!(
                     error = %error,
@@ -183,7 +196,7 @@ mod tests {
 
     use alloy_primitives::B512;
     use reth_ecies::stream::ECIESStream;
-    use reth_eth_wire::{HelloMessage, UnauthedP2PStream};
+    use reth_eth_wire::{DisconnectReason, HelloMessage, UnauthedP2PStream};
     use secp256k1::{PublicKey, SECP256K1, SecretKey};
     use tokio::{net::TcpListener, sync::oneshot};
 
@@ -220,6 +233,30 @@ mod tests {
         assert_eq!(result.outcome, RlpxProbeOutcome::Reachable);
         assert_eq!(result.stage, RlpxProbeStage::Rlpx);
         assert_eq!(result.client_version.as_deref(), Some("test-peer/1.0"));
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn reports_disconnect_during_hello_as_reachable() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (remote_secret, remote_id) = node_identity();
+
+        let server = tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let ecies = ECIESStream::incoming(tcp, remote_secret).await.unwrap();
+            UnauthedP2PStream::new(ecies)
+                .send_disconnect(DisconnectReason::TooManyPeers)
+                .await
+                .unwrap();
+        });
+
+        let result =
+            RlpxProber::ephemeral().probe(RlpxProbeTarget { address, node_id: remote_id }).await;
+
+        assert_eq!(result.outcome, RlpxProbeOutcome::Reachable);
+        assert_eq!(result.stage, RlpxProbeStage::Rlpx);
+        assert_eq!(result.client_version, None);
         server.await.unwrap();
     }
 

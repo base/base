@@ -14,7 +14,9 @@ The reachability endpoint acts as an external observer. A caller sends its
 execution-layer node ID and advertised TCP port, then the service opens a
 separate connection to the caller's observed public IP. A node is reported as
 `reachable` only after TCP, ECIES authentication, and the devp2p Hello exchange
-all complete.
+all complete. A node that answers the Hello exchange with an authenticated
+Disconnect (for example because it is at peer capacity) is still `reachable`;
+its response omits `clientVersion`.
 
 The caller must run on the node host or behind the same public NAT. The API
 never accepts a target IP, so it cannot be used to probe arbitrary hosts. The
