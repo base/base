@@ -13,17 +13,25 @@ use tracing::{debug, info, warn};
 use crate::{BondTransactionSubmitter, ChallengerMetrics, OutputValidator};
 
 /// Best-effort updater for the `AnchorStateRegistry`.
-#[derive(derive_more::Debug)]
 pub struct AnchorUpdater {
-    #[debug(skip)]
     factory_client: Arc<dyn DisputeGameFactoryClient>,
-    #[debug(skip)]
     anchor_registry_client: Arc<dyn AnchorStateRegistryClient>,
     output_validator: OutputValidator<dyn L2Provider>,
     anchor_state_registry_address: Address,
     game_type: u32,
     block_interval: u64,
     intermediate_block_interval: u64,
+}
+
+impl std::fmt::Debug for AnchorUpdater {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AnchorUpdater")
+            .field("anchor_state_registry_address", &self.anchor_state_registry_address)
+            .field("game_type", &self.game_type)
+            .field("block_interval", &self.block_interval)
+            .field("intermediate_block_interval", &self.intermediate_block_interval)
+            .finish_non_exhaustive()
+    }
 }
 
 impl AnchorUpdater {
@@ -50,7 +58,7 @@ impl AnchorUpdater {
 
     /// Finds the next game after the anchor game and advances the anchor root if it is ready.
     pub async fn poll(
-        &mut self,
+        &self,
         verifier_client: &dyn AggregateVerifierClient,
         submitter: &dyn BondTransactionSubmitter,
     ) {
@@ -69,10 +77,6 @@ impl AnchorUpdater {
 
         match verifier_client.status(game_address).await {
             Ok(GameStatus::DefenderWins) => {}
-            Ok(GameStatus::InProgress) => {
-                debug!(game = %game_address, "anchor update waiting for next game");
-                return;
-            }
             Ok(status) => {
                 debug!(
                     game = %game_address,
@@ -287,15 +291,6 @@ mod tests {
     const BLOCK_INTERVAL: u64 = 100;
     const INTERMEDIATE_BLOCK_INTERVAL: u64 = 100;
 
-    fn insert_l2_block(l2: &mut MockL2Provider, block: u64) -> B256 {
-        let storage_hash = B256::repeat_byte(block as u8);
-        let (header, account) = build_test_header_and_account(block, storage_hash);
-        let output_root =
-            OutputRoot::from_parts(header.state_root, storage_hash, header.hash_slow()).hash();
-        l2.insert_block(block, header, account);
-        output_root
-    }
-
     fn fixture(
         anchor_game: Address,
         game: Address,
@@ -309,7 +304,11 @@ mod tests {
         let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
         let anchor_registry = Arc::new(MockAnchorStateRegistry::new(anchor_game));
         let mut l2 = MockL2Provider::new();
-        let output_root = insert_l2_block(&mut l2, BLOCK_INTERVAL);
+        let storage_hash = B256::repeat_byte(BLOCK_INTERVAL as u8);
+        let (header, account) = build_test_header_and_account(BLOCK_INTERVAL, storage_hash);
+        let output_root =
+            OutputRoot::from_parts(header.state_root, storage_hash, header.hash_slow()).hash();
+        l2.insert_block(BLOCK_INTERVAL, header, account);
         let parent = if anchor_game == Address::ZERO { ASR_ADDRESS } else { anchor_game };
         let extra_data =
             game_lookup_key(0, parent, BLOCK_INTERVAL, INTERMEDIATE_BLOCK_INTERVAL, &[output_root])
@@ -337,7 +336,7 @@ mod tests {
     #[tokio::test]
     async fn poll_updates_next_defender_win() {
         let game = addr(1);
-        let (_, verifier, submitter, mut updater) =
+        let (_, verifier, submitter, updater) =
             fixture(Address::ZERO, game, GameStatus::DefenderWins);
 
         updater.poll(&verifier, &submitter).await;
@@ -351,7 +350,7 @@ mod tests {
     #[tokio::test]
     async fn poll_waits_for_in_progress_next_game() {
         let game = addr(1);
-        let (_, verifier, submitter, mut updater) =
+        let (_, verifier, submitter, updater) =
             fixture(Address::ZERO, game, GameStatus::InProgress);
 
         updater.poll(&verifier, &submitter).await;
@@ -362,7 +361,7 @@ mod tests {
     #[tokio::test]
     async fn poll_stops_at_challenger_wins_next_game() {
         let challenger_win = addr(10);
-        let (factory, verifier, submitter, mut updater) =
+        let (factory, verifier, submitter, updater) =
             fixture(Address::ZERO, challenger_win, GameStatus::ChallengerWins);
 
         updater.poll(&verifier, &submitter).await;
@@ -377,7 +376,7 @@ mod tests {
     async fn poll_starts_after_current_anchor_game() {
         let anchor_game = addr(10);
         let next_game = addr(11);
-        let (_, verifier, submitter, mut updater) =
+        let (_, verifier, submitter, updater) =
             fixture(anchor_game, next_game, GameStatus::DefenderWins);
 
         updater.poll(&verifier, &submitter).await;
@@ -390,7 +389,7 @@ mod tests {
     #[tokio::test]
     async fn poll_waits_for_finalized_defender_win() {
         let game = addr(1);
-        let (_, verifier, submitter, mut updater) =
+        let (_, verifier, submitter, updater) =
             fixture(Address::ZERO, game, GameStatus::DefenderWins);
         let mut state = mock_state(GameStatus::DefenderWins, Address::ZERO, 100);
         state.anchor_state_registry = ASR_ADDRESS;
