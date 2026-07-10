@@ -270,6 +270,8 @@ pub struct MockAggregateVerifier {
     pub game_over_reads: Mutex<Vec<Address>>,
     /// Addresses passed to `anchor_state_registry`, used by tests that assert cached reads.
     pub anchor_state_registry_reads: Mutex<Vec<Address>>,
+    /// Addresses passed to `delayed_weth`, used by tests that assert cached reads.
+    pub delayed_weth_reads: Mutex<Vec<Address>>,
 }
 
 impl MockAggregateVerifier {
@@ -284,6 +286,7 @@ impl MockAggregateVerifier {
             countered_index_reads: Mutex::new(Vec::new()),
             game_over_reads: Mutex::new(Vec::new()),
             anchor_state_registry_reads: Mutex::new(Vec::new()),
+            delayed_weth_reads: Mutex::new(Vec::new()),
         }
     }
 
@@ -440,6 +443,7 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     }
 
     async fn delayed_weth(&self, game_address: Address) -> Result<Address, ContractError> {
+        self.delayed_weth_reads.lock().unwrap().push(game_address);
         self.get(game_address, |s| s.delayed_weth)
     }
 

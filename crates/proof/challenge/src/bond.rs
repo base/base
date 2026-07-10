@@ -365,9 +365,17 @@ impl<C: Clock> BondManager<C> {
         let tracked = std::mem::take(&mut self.tracked);
         let tracked_count = tracked.len();
 
+        let mut tried_weth_delay = false;
         for (game_address, phase) in tracked {
-            if let Some(next_phase) =
-                self.advance_game(game_address, phase, verifier_client, submitter).await
+            if let Some(next_phase) = self
+                .advance_game(
+                    game_address,
+                    phase,
+                    verifier_client,
+                    submitter,
+                    &mut tried_weth_delay,
+                )
+                .await
             {
                 self.tracked.insert(game_address, next_phase);
             }
@@ -384,6 +392,7 @@ impl<C: Clock> BondManager<C> {
         phase: BondPhase,
         verifier_client: &dyn AggregateVerifierClient,
         submitter: &ChallengeSubmitter<T>,
+        tried_weth_delay: &mut bool,
     ) -> Option<BondPhase> {
         let (result, retry_phase) = match phase {
             BondPhase::NeedsResolve => (
@@ -391,12 +400,12 @@ impl<C: Clock> BondManager<C> {
                 BondPhase::NeedsResolve,
             ),
             BondPhase::NeedsUnlock => (
-                self.try_unlock(game_address, verifier_client, submitter).await,
+                self.try_unlock(game_address, verifier_client, submitter, tried_weth_delay).await,
                 BondPhase::NeedsUnlock,
             ),
             BondPhase::AwaitingDelay { mut ready_at, using_default_delay } => {
                 if using_default_delay {
-                    self.ensure_weth_delay(verifier_client, game_address).await;
+                    self.ensure_weth_delay(verifier_client, game_address, tried_weth_delay).await;
                     if let Some(delay) = self.weth_delay {
                         ready_at = Self::recompute_default_ready_at(ready_at, delay);
                     }
@@ -422,8 +431,17 @@ impl<C: Clock> BondManager<C> {
                     "DelayedWETH delay elapsed, submitting withdraw"
                 );
                 (
-                    self.try_withdraw(game_address, verifier_client, submitter).await,
-                    BondPhase::AwaitingDelay { ready_at: now, using_default_delay: false },
+                    self.try_withdraw(
+                        game_address,
+                        verifier_client,
+                        submitter,
+                        using_default_delay,
+                    )
+                    .await,
+                    BondPhase::AwaitingDelay {
+                        ready_at: now,
+                        using_default_delay: using_default_delay && self.weth_delay.is_none(),
+                    },
                 )
             }
         };
@@ -501,13 +519,14 @@ impl<C: Clock> BondManager<C> {
         game_address: Address,
         verifier_client: &dyn AggregateVerifierClient,
         submitter: &ChallengeSubmitter<T>,
+        tried_weth_delay: &mut bool,
     ) -> eyre::Result<Option<BondPhase>> {
         let (unlocked, resolved_at) = futures::try_join!(
             verifier_client.bond_unlocked(game_address),
             verifier_client.resolved_at(game_address),
         )?;
         if unlocked {
-            self.ensure_weth_delay(verifier_client, game_address).await;
+            self.ensure_weth_delay(verifier_client, game_address, tried_weth_delay).await;
             let using_default_delay = self.weth_delay.is_none();
             let delay = self.effective_weth_delay(game_address);
             let phase = Self::unlocked_phase(&self.clock, resolved_at, delay, using_default_delay);
@@ -515,7 +534,7 @@ impl<C: Clock> BondManager<C> {
             return Ok(Some(phase));
         }
 
-        self.ensure_weth_delay(verifier_client, game_address).await;
+        self.ensure_weth_delay(verifier_client, game_address, tried_weth_delay).await;
 
         match Self::send_claim_credit(game_address, "unlock", submitter).await {
             Ok(_) => {
@@ -544,6 +563,7 @@ impl<C: Clock> BondManager<C> {
         game_address: Address,
         verifier_client: &dyn AggregateVerifierClient,
         submitter: &ChallengeSubmitter<T>,
+        using_default_delay: bool,
     ) -> eyre::Result<Option<BondPhase>> {
         let claimed = verifier_client.bond_claimed(game_address).await?;
         if claimed {
@@ -572,7 +592,7 @@ impl<C: Clock> BondManager<C> {
                 );
                 Ok(Some(BondPhase::AwaitingDelay {
                     ready_at: self.clock.now().saturating_add(retry_delay),
-                    using_default_delay: false,
+                    using_default_delay: using_default_delay && self.weth_delay.is_none(),
                 }))
             }
         }
@@ -669,10 +689,12 @@ impl<C: Clock> BondManager<C> {
         &mut self,
         verifier_client: &dyn AggregateVerifierClient,
         game_address: Address,
+        tried_weth_delay: &mut bool,
     ) {
-        if self.weth_delay.is_some() {
+        if self.weth_delay.is_some() || *tried_weth_delay {
             return;
         }
+        *tried_weth_delay = true;
 
         let result: eyre::Result<Duration> = async {
             let weth_address = verifier_client.delayed_weth(game_address).await?;
@@ -778,7 +800,10 @@ mod tests {
         verifier: &Arc<MockAggregateVerifier>,
         submitter: &ChallengeSubmitter<SharedMockTxManager>,
     ) -> BondPhase {
-        mgr.advance_game(addr(0), phase, &**verifier, submitter).await.unwrap()
+        let mut tried_weth_delay = false;
+        mgr.advance_game(addr(0), phase, &**verifier, submitter, &mut tried_weth_delay)
+            .await
+            .unwrap()
     }
 
     fn bond_submitter(
@@ -1173,7 +1198,9 @@ mod tests {
         mgr.track_game(game, claim_addr);
 
         let (submitter, tx_manager) = bond_submitter(vec![]);
-        let result = mgr.try_unlock(game, &*verifier, &submitter).await.unwrap();
+        let mut tried_weth_delay = false;
+        let result =
+            mgr.try_unlock(game, &*verifier, &submitter, &mut tried_weth_delay).await.unwrap();
         assert!(
             matches!(
                 result,
@@ -1199,7 +1226,9 @@ mod tests {
         mgr.track_game(game, claim_addr);
 
         let (submitter, tx_manager) = bond_submitter(vec![Ok(receipt_with_status(true, tx_hash))]);
-        let result = mgr.try_unlock(game, &*verifier, &submitter).await.unwrap();
+        let mut tried_weth_delay = false;
+        let result =
+            mgr.try_unlock(game, &*verifier, &submitter, &mut tried_weth_delay).await.unwrap();
         assert!(
             matches!(
                 result,
@@ -1231,7 +1260,9 @@ mod tests {
         mgr.track_game(game, claim_addr);
 
         let (submitter, tx_manager) = bond_submitter(vec![Ok(receipt_with_status(true, tx_hash))]);
-        let result = mgr.try_unlock(game, &*verifier, &submitter).await.unwrap();
+        let mut tried_weth_delay = false;
+        let result =
+            mgr.try_unlock(game, &*verifier, &submitter, &mut tried_weth_delay).await.unwrap();
         handle.join().unwrap();
 
         assert!(
@@ -1265,7 +1296,9 @@ mod tests {
         mgr.track_game(game, claim_addr);
 
         let (submitter, tx_manager) = bond_submitter(vec![Ok(receipt_with_status(true, tx_hash))]);
-        let result = mgr.try_unlock(game, &*verifier, &submitter).await.unwrap();
+        let mut tried_weth_delay = false;
+        let result =
+            mgr.try_unlock(game, &*verifier, &submitter, &mut tried_weth_delay).await.unwrap();
         handle.join().unwrap();
 
         assert!(
@@ -1279,6 +1312,38 @@ mod tests {
             "expected fallback AwaitingDelay from unlock time, got {result:?}",
         );
         assert_eq!(tx_manager.recorded_calls().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn poll_tries_weth_delay_once_per_tick() {
+        let claim_addr = claim_addr();
+        let tx_hash = B256::repeat_byte(0xDD);
+        let states = (0..2).map(|i| {
+            let mut state =
+                game_state(GameStatus::ChallengerWins, claim_addr, 1_999_999_000, false);
+            state.delayed_weth = addr(9);
+            (addr(i), state)
+        });
+        let verifier = Arc::new(MockAggregateVerifier::new(states.collect()));
+        let mut mgr = BondManager::new(
+            vec![claim_addr],
+            "http://127.0.0.1:0".parse().unwrap(),
+            empty_factory(),
+            1000,
+            TEST_DISCOVERY_INTERVAL,
+            fixed_clock(500),
+        );
+        mgr.tracked.insert(addr(0), BondPhase::NeedsUnlock);
+        mgr.tracked.insert(addr(1), BondPhase::NeedsUnlock);
+
+        let (submitter, tx_manager) = bond_submitter(vec![
+            Ok(receipt_with_status(true, tx_hash)),
+            Ok(receipt_with_status(true, tx_hash)),
+        ]);
+        mgr.poll(&*verifier, &submitter).await;
+
+        assert_eq!(verifier.delayed_weth_reads.lock().unwrap().len(), 1);
+        assert_eq!(tx_manager.recorded_calls().len(), 2);
     }
 
     #[tokio::test]
@@ -1304,18 +1369,67 @@ mod tests {
             Ok(receipt_with_status(true, tx_hash)),
             Ok(receipt_with_status(true, tx_hash)),
         ]);
-        let phase = mgr.try_unlock(game, &*verifier, &submitter).await.unwrap().unwrap();
+        let mut tried_weth_delay = false;
+        let phase = mgr
+            .try_unlock(game, &*verifier, &submitter, &mut tried_weth_delay)
+            .await
+            .unwrap()
+            .unwrap();
         assert!(
             matches!(&phase, BondPhase::AwaitingDelay { using_default_delay: true, .. }),
             "expected default-delay AwaitingDelay, got {phase:?}",
         );
 
         mgr.clock.monotonic = Duration::from_secs(561);
-        let result = mgr.advance_game(game, phase, &*verifier, &submitter).await;
+        let mut tried_weth_delay = false;
+        let result =
+            mgr.advance_game(game, phase, &*verifier, &submitter, &mut tried_weth_delay).await;
         handle.join().unwrap();
 
         assert!(result.is_none(), "withdraw should complete after recovered delay");
         assert_eq!(tx_manager.recorded_calls().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn reverted_default_withdraw_keeps_learning_weth_delay() {
+        let claim_addr = claim_addr();
+        let long_delay =
+            BondManager::<FixedClock>::DEFAULT_WETH_DELAY.saturating_add(Duration::from_secs(3600));
+        let mut state = game_state(GameStatus::ChallengerWins, claim_addr, 1_999_999_000, true);
+        state.delayed_weth = addr(9);
+        let verifier = verifier(state);
+        let (rpc_url, handle) = delayed_weth_rpc_sequence(vec![None, Some(long_delay)]);
+        let mut mgr = BondManager::new(
+            vec![claim_addr],
+            rpc_url,
+            empty_factory(),
+            1000,
+            TEST_DISCOVERY_INTERVAL,
+            fixed_clock(WITHDRAW_READY_MONOTONIC_SECS),
+        );
+        let (submitter, tx_manager) =
+            bond_submitter(vec![Ok(receipt_with_status(false, B256::ZERO))]);
+        let phase = BondPhase::AwaitingDelay {
+            ready_at: Duration::from_secs(WITHDRAW_READY_MONOTONIC_SECS),
+            using_default_delay: true,
+        };
+
+        let phase = advance(&mut mgr, phase, &verifier, &submitter).await;
+        assert!(
+            matches!(&phase, BondPhase::AwaitingDelay { using_default_delay: true, .. }),
+            "reverted fallback withdraw should keep retrying delay lookup, got {phase:?}",
+        );
+
+        mgr.clock.monotonic = Duration::from_secs(WITHDRAW_READY_MONOTONIC_SECS)
+            .saturating_add(BondManager::<FixedClock>::WITHDRAW_REVERT_RETRY_DELAY);
+        let phase = advance(&mut mgr, phase, &verifier, &submitter).await;
+        handle.join().unwrap();
+
+        assert!(
+            matches!(phase, BondPhase::AwaitingDelay { using_default_delay: false, .. }),
+            "recovered WETH delay should replace fallback state"
+        );
+        assert_eq!(tx_manager.recorded_calls().len(), 1);
     }
 
     #[tokio::test]
