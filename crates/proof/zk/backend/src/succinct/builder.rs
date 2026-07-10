@@ -88,12 +88,20 @@ pub struct SuccinctRpcConfig {
 #[derive(Clone, Debug)]
 pub struct SuccinctZkProverBuilder {
     config: SuccinctZkBackendConfig,
+    witness_provider: Option<OpSuccinctWitnessProvider>,
 }
 
 impl SuccinctZkProverBuilder {
     /// Creates a builder for a Succinct ZK prover backend.
     pub const fn new(config: SuccinctZkBackendConfig) -> Self {
-        Self { config }
+        Self { config, witness_provider: None }
+    }
+
+    /// Reuses an already initialized witness provider.
+    #[must_use]
+    pub fn with_witness_provider(mut self, witness_provider: OpSuccinctWitnessProvider) -> Self {
+        self.witness_provider = Some(witness_provider);
+        self
     }
 
     /// Builds the configured prover unless cancellation is requested first.
@@ -108,13 +116,19 @@ impl SuccinctZkProverBuilder {
         match self.config {
             SuccinctZkBackendConfig::Mock => Ok(Some(Arc::new(MockZkProver))),
             SuccinctZkBackendConfig::DryRun { rpc, range_cycle_limit } => {
-                DryRunZkProver::build_until_cancelled(rpc, range_cycle_limit, cancel).await
+                DryRunZkProver::build_until_cancelled(
+                    rpc,
+                    range_cycle_limit,
+                    self.witness_provider,
+                    cancel,
+                )
+                .await
             }
             SuccinctZkBackendConfig::Cluster(config) => {
-                ClusterZkProver::build_until_cancelled(config, cancel).await
+                ClusterZkProver::build_until_cancelled(config, self.witness_provider, cancel).await
             }
             SuccinctZkBackendConfig::Network(config) => {
-                NetworkZkProver::build_until_cancelled(config, cancel).await
+                NetworkZkProver::build_until_cancelled(config, self.witness_provider, cancel).await
             }
         }
     }

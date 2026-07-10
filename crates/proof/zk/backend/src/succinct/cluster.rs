@@ -153,6 +153,7 @@ impl ClusterZkProver {
     /// Builds an SP1 cluster backend.
     pub async fn build_until_cancelled(
         config: SuccinctClusterBackendConfig,
+        witness_provider: Option<OpSuccinctWitnessProvider>,
         cancel: &CancellationToken,
     ) -> Result<Option<Arc<dyn ZkProver>>, SuccinctZkProverBuildError> {
         let SuccinctClusterBackendConfig {
@@ -190,9 +191,16 @@ impl ClusterZkProver {
         };
         info!("range verification key computed successfully");
 
-        let Some(provider) = SuccinctZkProverBuilder::build_witness_provider(rpc, cancel).await?
-        else {
-            return Ok(None);
+        let provider = match witness_provider {
+            Some(provider) => provider,
+            None => {
+                let Some(provider) =
+                    SuccinctZkProverBuilder::build_witness_provider(rpc, cancel).await?
+                else {
+                    return Ok(None);
+                };
+                provider
+            }
         };
         let Some((artifact_store, artifact_store_config)) =
             Self::s3_artifact_store(s3_bucket, s3_region, cancel).await?

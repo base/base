@@ -683,7 +683,6 @@ services:
     environment:
       - PROVER_SERVICE_ENDPOINT=http://base-prover-service:9001
       - PROVER_WORKER_ID=devnet-zk-host
-      - ZK_BACKEND=${ZK_BACKEND:-dry_run}
       - SP1_CLUSTER_API_ENDPOINT=${SP1_CLUSTER_API_ENDPOINT:-}
       - SP1_CLUSTER_TIMEOUT_HOURS=${SP1_CLUSTER_TIMEOUT_HOURS:-24}
       - CLI_S3_BUCKET=${CLI_S3_BUCKET:-}

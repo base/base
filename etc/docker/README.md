@@ -18,7 +18,7 @@ The `docker-compose.yml` orchestrates a complete local devnet environment with b
 - Unified Base sequencer and validator/RPC nodes on L2
 - The `base-batcher` for submitting L2 data to L1
 - The `base-prover-service` JSON-RPC coordinator with local Postgres storage
-- The `base-prover-zk-host` worker in `ZK_BACKEND=dry_run` mode
+- The `base-prover-zk-host` worker (dry-run when RPC URLs are set)
 
 All services read configuration from `devnet-env` in this directory. The devnet stores chain data in `.devnet/` which is created on first run.
 

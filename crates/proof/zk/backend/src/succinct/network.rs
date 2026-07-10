@@ -146,6 +146,7 @@ impl NetworkZkProver {
     /// Builds an SP1 Network backend.
     pub async fn build_until_cancelled(
         config: SuccinctNetworkBackendConfig,
+        witness_provider: Option<OpSuccinctWitnessProvider>,
         cancel: &CancellationToken,
     ) -> Result<Option<Arc<dyn ZkProver>>, SuccinctZkProverBuildError> {
         let SuccinctNetworkBackendConfig {
@@ -183,9 +184,16 @@ impl NetworkZkProver {
         };
         info!("range and aggregation proving keys computed successfully");
 
-        let Some(provider) = SuccinctZkProverBuilder::build_witness_provider(rpc, cancel).await?
-        else {
-            return Ok(None);
+        let provider = match witness_provider {
+            Some(provider) => provider,
+            None => {
+                let Some(provider) =
+                    SuccinctZkProverBuilder::build_witness_provider(rpc, cancel).await?
+                else {
+                    return Ok(None);
+                };
+                provider
+            }
         };
 
         // This worker always submits public SP1 Network auction requests; reserved and hosted

@@ -71,6 +71,7 @@ impl DryRunZkProver {
     pub async fn build_until_cancelled(
         rpc: SuccinctRpcConfig,
         range_cycle_limit: u64,
+        witness_provider: Option<OpSuccinctWitnessProvider>,
         cancel: &CancellationToken,
     ) -> Result<Option<Arc<dyn ZkProver>>, SuccinctZkProverBuildError> {
         let base_consensus_url = rpc.base_consensus_rpc.as_str().to_owned();
@@ -78,9 +79,16 @@ impl DryRunZkProver {
         let default_sequence_window = rpc.default_sequence_window;
 
         info!(backend = "dry_run", "using local SP1 dry-run backend");
-        let Some(provider) = SuccinctZkProverBuilder::build_witness_provider(rpc, cancel).await?
-        else {
-            return Ok(None);
+        let provider = match witness_provider {
+            Some(provider) => provider,
+            None => {
+                let Some(provider) =
+                    SuccinctZkProverBuilder::build_witness_provider(rpc, cancel).await?
+                else {
+                    return Ok(None);
+                };
+                provider
+            }
         };
 
         Ok(Some(Arc::new(Self::new(
