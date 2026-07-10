@@ -3,7 +3,7 @@
 use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 
 use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
-use base_prover_service_protocol::{GetNextProofRequest, ProofJob, ProofType, TeeKind, ZkBackend};
+use base_prover_service_protocol::{GetNextProofRequest, ProofJob, ProofType, TeeKind};
 use tokio::{
     sync::{OwnedSemaphorePermit, Semaphore},
     task::{JoinError, JoinHandle, JoinSet},
@@ -334,7 +334,7 @@ mod tests {
         GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse, HeartbeatRequest,
         HeartbeatResponse, ProofJob, ProofJobStatus, ProofRequest, ProofRequestKind,
         RecordProofSessionRequest, RecordProofSessionResponse, WorkerSubmitProofRequest,
-        WorkerSubmitProofResponse, ZkProofRequest, ZkVm,
+        WorkerSubmitProofResponse, ZkBackend, ZkProofRequest, ZkVm,
     };
     use chrono::Utc;
     use tokio::time::timeout;
