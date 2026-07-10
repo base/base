@@ -1,11 +1,11 @@
 //! Execution-layer `RLPx` reachability probing: dials a target over TCP,
 //! authenticates the ECIES transport, and exchanges the devp2p Hello.
 
-use std::{fmt, net::SocketAddr, time::Duration};
+use std::{fmt, io, net::SocketAddr, time::Duration};
 
 use alloy_primitives::B512;
 use async_trait::async_trait;
-use reth_ecies::stream::ECIESStream;
+use reth_ecies::{ECIESError, stream::ECIESStream};
 use reth_eth_wire::{
     HelloMessage, UnauthedP2PStream,
     errors::{P2PHandshakeError, P2PStreamError},
@@ -70,6 +70,44 @@ impl fmt::Display for RlpxProbeStage {
     }
 }
 
+/// Failure of one execution-layer `RLPx` reachability probe.
+#[derive(Debug, thiserror::Error)]
+pub enum RlpxProbeError {
+    /// The TCP connection could not be established.
+    #[error("tcp connect failed: {0}")]
+    Tcp(#[from] io::Error),
+    /// The encrypted ECIES transport could not be authenticated.
+    #[error("ecies handshake failed: {0}")]
+    Ecies(#[from] ECIESError),
+    /// The devp2p Hello exchange failed.
+    #[error("rlpx hello exchange failed: {0}")]
+    Rlpx(P2PStreamError),
+    /// The probe deadline elapsed at the given stage.
+    #[error("probe timed out at {0} stage")]
+    TimedOut(RlpxProbeStage),
+}
+
+impl RlpxProbeError {
+    /// Returns the stable outcome for this failure.
+    pub const fn outcome(&self) -> RlpxProbeOutcome {
+        match self {
+            Self::Tcp(_) => RlpxProbeOutcome::ConnectionFailed,
+            Self::Ecies(_) | Self::Rlpx(_) => RlpxProbeOutcome::HandshakeFailed,
+            Self::TimedOut(_) => RlpxProbeOutcome::TimedOut,
+        }
+    }
+
+    /// Returns the protocol stage at which the failure occurred.
+    pub const fn stage(&self) -> RlpxProbeStage {
+        match self {
+            Self::Tcp(_) => RlpxProbeStage::Tcp,
+            Self::Ecies(_) => RlpxProbeStage::Ecies,
+            Self::Rlpx(_) => RlpxProbeStage::Rlpx,
+            Self::TimedOut(stage) => *stage,
+        }
+    }
+}
+
 /// Network target for an execution-layer `RLPx` probe.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RlpxProbeTarget {
@@ -126,56 +164,24 @@ impl RlpxProber {
     pub fn ephemeral_with_timeout(timeout: Duration) -> Self {
         Self { secret_key: SecretKey::new(&mut secp256k1::rand::thread_rng()), timeout }
     }
-}
 
-#[async_trait]
-impl ReachabilityProber for RlpxProber {
-    async fn probe(&self, target: RlpxProbeTarget) -> RlpxProbeResult {
-        let started = Instant::now();
-        let deadline = started + self.timeout;
-        let finish = |outcome, stage, client_version| RlpxProbeResult {
-            outcome,
-            stage,
-            elapsed: started.elapsed(),
-            client_version,
-        };
+    /// Runs one probe attempt against the deadline and returns the remote
+    /// client version advertised in its Hello, if any.
+    pub async fn try_probe(
+        &self,
+        target: RlpxProbeTarget,
+        deadline: Instant,
+    ) -> Result<Option<String>, RlpxProbeError> {
+        let tcp = timeout_at(deadline, TcpStream::connect(target.address))
+            .await
+            .map_err(|_| RlpxProbeError::TimedOut(RlpxProbeStage::Tcp))??;
 
-        let tcp = match timeout_at(deadline, TcpStream::connect(target.address)).await {
-            Err(_) => {
-                return finish(RlpxProbeOutcome::TimedOut, RlpxProbeStage::Tcp, None);
-            }
-            Ok(Err(error)) => {
-                debug!(
-                    error = %error,
-                    target = %target.address,
-                    stage = %RlpxProbeStage::Tcp,
-                    "reachability probe transport failed"
-                );
-                return finish(RlpxProbeOutcome::ConnectionFailed, RlpxProbeStage::Tcp, None);
-            }
-            Ok(Ok(tcp)) => tcp,
-        };
-
-        let ecies = match timeout_at(
+        let ecies = timeout_at(
             deadline,
             ECIESStream::connect_without_timeout(tcp, self.secret_key, target.node_id),
         )
         .await
-        {
-            Err(_) => {
-                return finish(RlpxProbeOutcome::TimedOut, RlpxProbeStage::Ecies, None);
-            }
-            Ok(Err(error)) => {
-                debug!(
-                    error = %error,
-                    target = %target.address,
-                    stage = %RlpxProbeStage::Ecies,
-                    "reachability probe handshake failed"
-                );
-                return finish(RlpxProbeOutcome::HandshakeFailed, RlpxProbeStage::Ecies, None);
-            }
-            Ok(Ok(ecies)) => ecies,
-        };
+        .map_err(|_| RlpxProbeError::TimedOut(RlpxProbeStage::Ecies))??;
 
         let public_key = PublicKey::from_secret_key(SECP256K1, &self.secret_key);
         let local_node_id = B512::from_slice(&public_key.serialize_uncompressed()[1..]);
@@ -184,36 +190,55 @@ impl ReachabilityProber for RlpxProber {
             .port(0)
             .build();
 
-        match timeout_at(deadline, UnauthedP2PStream::new(ecies).handshake(hello)).await {
-            Err(_) | Ok(Err(P2PStreamError::HandshakeError(P2PHandshakeError::Timeout))) => {
-                finish(RlpxProbeOutcome::TimedOut, RlpxProbeStage::Rlpx, None)
+        match timeout_at(deadline, UnauthedP2PStream::new(ecies).handshake(hello))
+            .await
+            .map_err(|_| RlpxProbeError::TimedOut(RlpxProbeStage::Rlpx))?
+        {
+            Ok((_, remote_hello)) => Ok(Some(remote_hello.client_version)),
+            Err(P2PStreamError::HandshakeError(P2PHandshakeError::Timeout)) => {
+                Err(RlpxProbeError::TimedOut(RlpxProbeStage::Rlpx))
             }
-            Ok(Err(P2PStreamError::HandshakeError(P2PHandshakeError::Disconnected(reason)))) => {
+            Err(P2PStreamError::HandshakeError(P2PHandshakeError::Disconnected(reason))) => {
                 // A Disconnect received here arrived over the authenticated ECIES
                 // stream, so the node is reachable even though it refused the
                 // session (e.g. it is at peer capacity).
                 debug!(
                     reason = %reason,
                     target = %target.address,
-                    stage = %RlpxProbeStage::Rlpx,
                     "reachability probe disconnected by reachable peer"
                 );
-                finish(RlpxProbeOutcome::Reachable, RlpxProbeStage::Rlpx, None)
+                Ok(None)
             }
-            Ok(Err(error)) => {
+            Err(error) => Err(RlpxProbeError::Rlpx(error)),
+        }
+    }
+}
+
+#[async_trait]
+impl ReachabilityProber for RlpxProber {
+    async fn probe(&self, target: RlpxProbeTarget) -> RlpxProbeResult {
+        let started = Instant::now();
+        match self.try_probe(target, started + self.timeout).await {
+            Ok(client_version) => RlpxProbeResult {
+                outcome: RlpxProbeOutcome::Reachable,
+                stage: RlpxProbeStage::Rlpx,
+                elapsed: started.elapsed(),
+                client_version,
+            },
+            Err(error) => {
                 debug!(
                     error = %error,
                     target = %target.address,
-                    stage = %RlpxProbeStage::Rlpx,
-                    "reachability probe handshake failed"
+                    stage = %error.stage(),
+                    "reachability probe failed"
                 );
-                finish(RlpxProbeOutcome::HandshakeFailed, RlpxProbeStage::Rlpx, None)
+                RlpxProbeResult {
+                    outcome: error.outcome(),
+                    stage: error.stage(),
+                    elapsed: started.elapsed(),
+                    client_version: None,
+                }
             }
-            Ok(Ok((_, remote_hello))) => finish(
-                RlpxProbeOutcome::Reachable,
-                RlpxProbeStage::Rlpx,
-                Some(remote_hello.client_version),
-            ),
         }
     }
 }

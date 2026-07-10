@@ -17,17 +17,16 @@ reachability check:
 curl --ipv4 https://telemetry.example/v1/p2p/reachability/el \
   --header 'content-type: application/json' \
   --data '{
-    "nodeId": "2bd2e657bb3c8efffb8ff6db9071d9eb7be70d7c6d7d980ff80fc93b2629675c5f750bc0a5ef27cd788c2e491b8795a7e9a4a6e72178c14acc6753c0e5d77ae4",
-    "tcpPort": 30303,
-    "addressFamily": "ipv4"
+    "enode": "enode://2bd2e657bb3c8efffb8ff6db9071d9eb7be70d7c6d7d980ff80fc93b2629675c5f750bc0a5ef27cd788c2e491b8795a7e9a4a6e72178c14acc6753c0e5d77ae4@203.0.113.7:30303"
   }'
 ```
 
-Run this request from the node host or from the same public NAT identity. The
-service probes the request's observed public IP and supplied port; it does not
-accept an arbitrary target address. Use `--ipv4` with `"ipv4"` or `--ipv6`
-with `"ipv6"` so the control connection matches the node's advertised address
-family.
+The `enode://` URL is printed on node startup and returned by
+`admin_nodeInfo`. Run this request from the node host or from the same public
+NAT identity. The service probes the request's observed public IP and the
+enode's TCP port; the IP embedded in the enode URL is never used as a target,
+so the API cannot probe arbitrary hosts. Use `--ipv4` or `--ipv6` so the
+control connection matches the address family the node advertises.
 
 ## Trusted proxies
 

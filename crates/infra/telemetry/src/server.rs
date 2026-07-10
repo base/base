@@ -89,9 +89,9 @@ mod tests {
     use tokio::{net::TcpListener, sync::Semaphore, task::JoinHandle};
 
     use crate::{
-        BaseTelemetryServer, P2P_REACHABILITY_PATH, P2pAddressFamily, P2pReachabilityRequest,
-        P2pRoutes, ReachabilityProber, RlpxProbeOutcome, RlpxProbeResult, RlpxProbeStage,
-        RlpxProbeTarget, ServerConfig, TEST_NODE_ID,
+        BaseTelemetryServer, P2P_REACHABILITY_PATH, P2pReachabilityRequest, P2pRoutes,
+        ReachabilityProber, RlpxProbeOutcome, RlpxProbeResult, RlpxProbeStage, RlpxProbeTarget,
+        ServerConfig, TEST_NODE_ID,
     };
 
     #[derive(Debug, Parser)]
@@ -227,11 +227,8 @@ mod tests {
             ),
         );
         let (addr, handle) = start_router(router).await;
-        let request = P2pReachabilityRequest {
-            node_id: TEST_NODE_ID.to_string(),
-            tcp_port: 30303,
-            address_family: P2pAddressFamily::Ipv4,
-        };
+        let request =
+            P2pReachabilityRequest { enode: format!("enode://{TEST_NODE_ID}@8.8.8.8:30303") };
         let client = reqwest::Client::new();
         let probe_client = client.clone();
 

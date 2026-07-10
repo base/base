@@ -11,17 +11,19 @@ Axum backend for Base telemetry services.
 ## Execution-layer reachability
 
 The reachability endpoint acts as an external observer. A caller sends its
-execution-layer node ID and advertised TCP port, then the service opens a
-separate connection to the caller's observed public IP. A node is reported as
-`reachable` only after TCP, ECIES authentication, and the devp2p Hello exchange
-all complete. A node that answers the Hello exchange with an authenticated
-Disconnect (for example because it is at peer capacity) is still `reachable`;
-its response omits `clientVersion`.
+execution-layer `enode://` URL (as printed on node startup and returned by
+`admin_nodeInfo`), then the service opens a separate connection to the
+caller's observed public IP. A node is reported as `reachable` only after TCP,
+ECIES authentication, and the devp2p Hello exchange all complete. A node that
+answers the Hello exchange with an authenticated Disconnect (for example
+because it is at peer capacity) is still `reachable`; its response omits
+`clientVersion`.
 
-The caller must run on the node host or behind the same public NAT. The API
-never accepts a target IP, so it cannot be used to probe arbitrary hosts. The
-request's `addressFamily` must match the HTTP connection source; callers should
-connect over the same family that the node advertises.
+The caller must run on the node host or behind the same public NAT. Only the
+node identity and TCP port are taken from the enode URL; the IP embedded in it
+is never probed, so the API cannot be used to probe arbitrary hosts. Hostnames
+in the enode URL are rejected. Callers should connect over the same address
+family that the node advertises.
 
 Request:
 
@@ -30,9 +32,7 @@ POST /v1/p2p/reachability/el
 Content-Type: application/json
 
 {
-  "nodeId": "2bd2e657bb3c8efffb8ff6db9071d9eb7be70d7c6d7d980ff80fc93b2629675c5f750bc0a5ef27cd788c2e491b8795a7e9a4a6e72178c14acc6753c0e5d77ae4",
-  "tcpPort": 30303,
-  "addressFamily": "ipv4"
+  "enode": "enode://2bd2e657bb3c8efffb8ff6db9071d9eb7be70d7c6d7d980ff80fc93b2629675c5f750bc0a5ef27cd788c2e491b8795a7e9a4a6e72178c14acc6753c0e5d77ae4@203.0.113.7:30303"
 }
 ```
 

@@ -34,43 +34,37 @@ pub const P2P_REACHABILITY_MAX_CONCURRENT_PROBES: usize = 32;
 /// Valid execution-layer node identity shared by reachability tests.
 pub const TEST_NODE_ID: &str = "2bd2e657bb3c8efffb8ff6db9071d9eb7be70d7c6d7d980ff80fc93b2629675c5f750bc0a5ef27cd788c2e491b8795a7e9a4a6e72178c14acc6753c0e5d77ae4";
 
-/// Public address family the caller expects the service to observe.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum P2pAddressFamily {
-    /// `IPv4` source and probe target.
-    Ipv4,
-    /// `IPv6` source and probe target.
-    Ipv6,
-}
-
-impl P2pAddressFamily {
-    /// Returns whether an observed source IP matches this family.
-    pub const fn matches(self, ip: IpAddr) -> bool {
-        matches!((self, ip), (Self::Ipv4, IpAddr::V4(_)) | (Self::Ipv6, IpAddr::V6(_)))
-    }
-}
-
 /// JSON request for an execution-layer reachability check.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct P2pReachabilityRequest {
-    /// Expected 64-byte `RLPx` node identity, encoded as 128 hexadecimal characters.
-    pub node_id: String,
-    /// Public TCP port advertised by the execution-layer node.
-    pub tcp_port: u16,
-    /// Address family of the node's advertised public endpoint.
-    pub address_family: P2pAddressFamily,
+    /// The node's advertised `enode://` URL, as printed on startup and
+    /// returned by `admin_nodeInfo`.
+    pub enode: String,
 }
 
 impl P2pReachabilityRequest {
     /// Validates the request and combines it with the observed source IP.
+    ///
+    /// Only the node identity and TCP port are taken from the enode URL. The
+    /// embedded IP is never used as the probe target, so the endpoint cannot
+    /// probe arbitrary hosts.
     pub fn target(&self, source_ip: IpAddr) -> Option<RlpxProbeTarget> {
-        if self.tcp_port == 0 || !self.address_family.matches(source_ip) {
+        let (node_id, tcp_port) = Self::parse_enode(&self.enode)?;
+        if tcp_port == 0 {
             return None;
         }
 
-        let raw_node_id = self.node_id.strip_prefix("0x").unwrap_or(&self.node_id);
+        Some(RlpxProbeTarget { address: SocketAddr::new(source_ip, tcp_port), node_id })
+    }
+
+    /// Parses an `enode://` URL into a validated node identity and TCP port.
+    /// Hostnames are rejected; only IP literals are accepted.
+    pub fn parse_enode(enode: &str) -> Option<(B512, u16)> {
+        let rest = enode.strip_prefix("enode://")?;
+        // Drop any query string, e.g. `?discport=30301`.
+        let rest = rest.split('?').next().unwrap_or(rest);
+        let (raw_node_id, endpoint) = rest.split_once('@')?;
         let node_id = B512::from_str(raw_node_id).ok()?;
 
         let mut encoded_public_key = [0_u8; 65];
@@ -78,7 +72,8 @@ impl P2pReachabilityRequest {
         encoded_public_key[1..].copy_from_slice(node_id.as_slice());
         PublicKey::from_slice(&encoded_public_key).ok()?;
 
-        Some(RlpxProbeTarget { address: SocketAddr::new(source_ip, self.tcp_port), node_id })
+        let endpoint = endpoint.parse::<SocketAddr>().ok()?;
+        Some((node_id, endpoint.port()))
     }
 }
 
@@ -454,7 +449,7 @@ mod tests {
     use tokio::{net::TcpListener, sync::Semaphore, task::JoinHandle};
 
     use super::{
-        ClientIpError, ClientIpResolver, P2P_REACHABILITY_PATH, P2pAddressFamily, P2pErrorResponse,
+        ClientIpError, ClientIpResolver, P2P_REACHABILITY_PATH, P2pErrorResponse,
         P2pReachabilityRequest, P2pReachabilityResponse, P2pRoutes, ProbeLimiter, TEST_NODE_ID,
     };
     use crate::{
@@ -512,6 +507,10 @@ mod tests {
 
     fn trusted_loopback() -> Vec<IpNet> {
         vec![IpNet::from_str("127.0.0.1/32").unwrap()]
+    }
+
+    fn test_request() -> P2pReachabilityRequest {
+        P2pReachabilityRequest { enode: format!("enode://{TEST_NODE_ID}@8.8.8.8:30303") }
     }
 
     #[test]
@@ -609,34 +608,42 @@ mod tests {
     }
 
     #[test]
-    fn validates_node_identity_and_port() {
-        let valid = P2pReachabilityRequest {
-            node_id: TEST_NODE_ID.to_string(),
-            tcp_port: 30303,
-            address_family: P2pAddressFamily::Ipv4,
-        };
-        assert!(valid.target(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))).is_some());
+    fn validates_enode_identity_and_port() {
+        let source = IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8));
 
-        let zero_port = P2pReachabilityRequest {
-            node_id: valid.node_id,
-            tcp_port: 0,
-            address_family: valid.address_family,
-        };
-        assert!(zero_port.target(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))).is_none());
+        assert!(test_request().target(source).is_some());
 
-        let invalid_identity = P2pReachabilityRequest {
-            node_id: "00".repeat(64),
-            tcp_port: 30303,
-            address_family: P2pAddressFamily::Ipv4,
+        let with_discport = P2pReachabilityRequest {
+            enode: format!("enode://{TEST_NODE_ID}@8.8.8.8:30303?discport=30301"),
         };
-        assert!(invalid_identity.target(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))).is_none());
+        assert!(with_discport.target(source).is_some());
 
-        let wrong_family = P2pReachabilityRequest {
-            node_id: TEST_NODE_ID.to_string(),
-            tcp_port: 30303,
-            address_family: P2pAddressFamily::Ipv6,
-        };
-        assert!(wrong_family.target(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))).is_none());
+        let zero_port =
+            P2pReachabilityRequest { enode: format!("enode://{TEST_NODE_ID}@8.8.8.8:0") };
+        assert!(zero_port.target(source).is_none());
+
+        let invalid_identity =
+            P2pReachabilityRequest { enode: format!("enode://{}@8.8.8.8:30303", "00".repeat(64)) };
+        assert!(invalid_identity.target(source).is_none());
+
+        let missing_scheme =
+            P2pReachabilityRequest { enode: format!("{TEST_NODE_ID}@8.8.8.8:30303") };
+        assert!(missing_scheme.target(source).is_none());
+
+        let hostname =
+            P2pReachabilityRequest { enode: format!("enode://{TEST_NODE_ID}@example.com:30303") };
+        assert!(hostname.target(source).is_none());
+    }
+
+    #[test]
+    fn probes_source_ip_instead_of_advertised_ip() {
+        let source = IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8));
+        let request =
+            P2pReachabilityRequest { enode: format!("enode://{TEST_NODE_ID}@9.9.9.9:30303") };
+
+        let target = request.target(source).unwrap();
+
+        assert_eq!(target.address, SocketAddr::from(([8, 8, 8, 8], 30303)));
     }
 
     #[test]
@@ -667,11 +674,7 @@ mod tests {
         let prober = Arc::new(FakeProber::default());
         let router = P2pRoutes::router_with_prober(trusted_loopback(), Arc::clone(&prober));
         let (address, handle) = start_test_server(router).await;
-        let request = P2pReachabilityRequest {
-            node_id: TEST_NODE_ID.to_string(),
-            tcp_port: 30303,
-            address_family: P2pAddressFamily::Ipv4,
-        };
+        let request = test_request();
 
         let response = reqwest::Client::new()
             .post(format!("http://{address}{P2P_REACHABILITY_PATH}"))
@@ -690,7 +693,7 @@ mod tests {
             prober.targets.lock().unwrap_or_else(PoisonError::into_inner).as_slice(),
             &[RlpxProbeTarget {
                 address: SocketAddr::from(([8, 8, 8, 8], 30303)),
-                node_id: B512::from_str(request.node_id.trim_start_matches("0x")).unwrap(),
+                node_id: B512::from_str(TEST_NODE_ID).unwrap(),
             }]
         );
 
@@ -701,11 +704,7 @@ mod tests {
     async fn rejects_spoofed_forwarding_header() {
         let router = P2pRoutes::router_with_prober(Vec::new(), Arc::new(FakeProber::default()));
         let (address, handle) = start_test_server(router).await;
-        let request = P2pReachabilityRequest {
-            node_id: TEST_NODE_ID.to_string(),
-            tcp_port: 30303,
-            address_family: P2pAddressFamily::Ipv4,
-        };
+        let request = test_request();
 
         let response = reqwest::Client::new()
             .post(format!("http://{address}{P2P_REACHABILITY_PATH}"))
@@ -748,11 +747,7 @@ mod tests {
         });
         let router = P2pRoutes::router_with_prober(trusted_loopback(), Arc::clone(&prober));
         let (address, handle) = start_test_server(router).await;
-        let request = P2pReachabilityRequest {
-            node_id: TEST_NODE_ID.to_string(),
-            tcp_port: 30303,
-            address_family: P2pAddressFamily::Ipv4,
-        };
+        let request = test_request();
         let client = reqwest::Client::new();
         let first_client = client.clone();
         let first_request = request.clone();
