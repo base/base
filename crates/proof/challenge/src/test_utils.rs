@@ -716,6 +716,8 @@ pub struct MockL2Provider {
     pub proofs: HashMap<B256, EIP1186AccountProofResponse>,
     /// Block numbers that should return an error (simulating missing blocks).
     pub error_blocks: Vec<u64>,
+    /// Optional delay before returning block headers.
+    pub header_delay: Option<Duration>,
 }
 
 impl MockL2Provider {
@@ -766,6 +768,9 @@ impl L2Provider for MockL2Provider {
         };
         if self.error_blocks.contains(&block_number) {
             return Err(RpcError::BlockNotFound(format!("block {block_number} not available")));
+        }
+        if let Some(delay) = self.header_delay {
+            tokio::time::sleep(delay).await;
         }
         self.headers
             .get(&block_number)

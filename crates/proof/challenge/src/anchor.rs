@@ -8,6 +8,7 @@ use base_proof_contracts::{
     encode_set_anchor_state_calldata, game_lookup_blocks, game_lookup_key,
 };
 use base_proof_rpc::L2Provider;
+use futures::stream::{self, StreamExt};
 use tracing::{debug, info, warn};
 
 use crate::{BondTransactionSubmitter, ChallengerMetrics, OutputValidator};
@@ -105,9 +106,15 @@ impl AnchorUpdater {
             }
         };
 
+        let mut roots =
+            stream::iter(blocks)
+                .map(|block| async move {
+                    (block, self.output_validator.compute_output_root(block).await)
+                })
+                .buffered(OutputValidator::<dyn L2Provider>::VALIDATION_CONCURRENCY);
         let mut intermediate_roots = Vec::new();
-        for block in blocks {
-            let root = match self.output_validator.compute_output_root(block).await {
+        while let Some((block, result)) = roots.next().await {
+            let root = match result {
                 Ok(root) => root,
                 Err(e) => {
                     debug!(block, error = %e, "anchor update waiting for output root");
@@ -273,7 +280,7 @@ impl AnchorUpdater {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, sync::Arc};
+    use std::{collections::HashMap, sync::Arc, time::Duration};
 
     use alloy_primitives::B256;
     use base_protocol::OutputRoot;
@@ -324,6 +331,43 @@ mod tests {
         );
 
         (verifier, submitter, updater)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn next_game_computes_intermediate_roots_concurrently() {
+        let game = addr(1);
+        let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
+        let anchor_registry = Arc::new(MockAnchorStateRegistry::new(Address::ZERO));
+        let mut l2 = MockL2Provider::new();
+        let blocks = [25, 50, 75, 100];
+        let mut roots = Vec::new();
+
+        for block in blocks {
+            let storage_hash = B256::repeat_byte(block as u8);
+            let (header, account) = build_test_header_and_account(block, storage_hash);
+            roots.push(
+                OutputRoot::from_parts(header.state_root, storage_hash, header.hash_slow()).hash(),
+            );
+            l2.insert_block(block, header, account);
+        }
+
+        let extra_data = game_lookup_key(0, ASR_ADDRESS, 100, 25, &roots).unwrap().extra_data;
+        factory.insert_uuid_game(GAME_TYPE, roots[3], extra_data, game);
+        l2.header_delay = Some(Duration::from_secs(1));
+
+        let updater = AnchorUpdater::new(
+            Arc::clone(&factory) as Arc<dyn DisputeGameFactoryClient>,
+            anchor_registry as Arc<dyn AnchorStateRegistryClient>,
+            Arc::new(l2) as Arc<dyn L2Provider>,
+            ASR_ADDRESS,
+            GAME_TYPE,
+            100,
+            25,
+        );
+
+        let started = tokio::time::Instant::now();
+        assert_eq!(updater.next_game(0, Address::ZERO).await, Some(game));
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 
     #[tokio::test]
