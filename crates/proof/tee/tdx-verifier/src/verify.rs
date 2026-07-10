@@ -156,6 +156,7 @@ mod tests {
     use super::*;
     use crate::{
         TdxCertificate, TdxCollateral, TdxRevocationEvidence, TdxSignedCollateral,
+        TdxSignedCollateralBody::{QeIdentity, TcbInfo},
         quote::{
             CERTIFICATION_DATA_HEADER_LEN, ECDSA_P256_PUBLIC_KEY_BODY_LEN,
             ECDSA_P256_SIGNATURE_LEN, QE_REPORT_LEN, TDX_MEASUREMENT_LEN, TDX_QUOTE_HEADER_LEN,
@@ -223,10 +224,6 @@ mod tests {
         collateral.signature = sign(&signed_body);
     }
 
-    fn json_bytes(value: serde_json::Value) -> Vec<u8> {
-        serde_json::to_vec(&value).expect("fixture JSON must serialize")
-    }
-
     fn fixture() -> TdxVerifierInput {
         let root = fixture_cert("root");
         let intermediate = fixture_cert("intermediate");
@@ -236,16 +233,9 @@ mod tests {
         let root_hash = root.hash();
         let pck_chain = vec![root.clone(), intermediate.clone(), pck_leaf];
         let collateral_chain = vec![root, intermediate, collateral_leaf];
-        let tcb_info = collateral(
-            fixture_bytes("tcb_info_raw"),
-            TdxSignedCollateralBody::TcbInfo,
-            collateral_chain.clone(),
-        );
-        let qe_identity = collateral(
-            fixture_bytes("qe_identity_raw"),
-            TdxSignedCollateralBody::QeIdentity,
-            collateral_chain,
-        );
+        let tcb_info = collateral(fixture_bytes("tcb_info_raw"), TcbInfo, collateral_chain.clone());
+        let qe_identity =
+            collateral(fixture_bytes("qe_identity_raw"), QeIdentity, collateral_chain);
         TdxVerifierInput {
             quote: fixture_bytes("quote"),
             pck_certificate_chain: pck_chain,
@@ -266,23 +256,21 @@ mod tests {
         input.quote = Bytes::from(quote);
     }
 
-    fn edit_tcb_info(input: &mut TdxVerifierInput, mutate: impl FnOnce(&mut serde_json::Value)) {
-        let mut document = serde_json::from_slice(&input.collateral.tcb_info.raw)
-            .expect("fixture TCB info JSON must parse");
+    fn edit_collateral(
+        input: &mut TdxVerifierInput,
+        body_kind: TdxSignedCollateralBody,
+        mutate: impl FnOnce(&mut serde_json::Value),
+    ) {
+        let collateral = match body_kind {
+            TcbInfo => &mut input.collateral.tcb_info,
+            QeIdentity => &mut input.collateral.qe_identity,
+        };
+        let mut document =
+            serde_json::from_slice(&collateral.raw).expect("fixture JSON must parse");
         mutate(&mut document);
-        input.collateral.tcb_info.raw = Bytes::from(json_bytes(document));
-        resign_collateral_body(&mut input.collateral.tcb_info, TdxSignedCollateralBody::TcbInfo);
-    }
-
-    fn edit_qe_identity(input: &mut TdxVerifierInput, mutate: impl FnOnce(&mut serde_json::Value)) {
-        let mut document = serde_json::from_slice(&input.collateral.qe_identity.raw)
-            .expect("fixture QE identity JSON must parse");
-        mutate(&mut document);
-        input.collateral.qe_identity.raw = Bytes::from(json_bytes(document));
-        resign_collateral_body(
-            &mut input.collateral.qe_identity,
-            TdxSignedCollateralBody::QeIdentity,
-        );
+        collateral.raw =
+            Bytes::from(serde_json::to_vec(&document).expect("fixture JSON must serialize"));
+        resign_collateral_body(collateral, body_kind);
     }
 
     #[test]
@@ -312,7 +300,7 @@ mod tests {
     #[test]
     fn verifies_tdx_tcb_info_without_tee_type() {
         let mut input = fixture();
-        edit_tcb_info(&mut input, |document| {
+        edit_collateral(&mut input, TcbInfo, |document| {
             document["tcbInfo"].as_object_mut().unwrap().remove("teeType");
         });
 
@@ -325,7 +313,7 @@ mod tests {
         let document: serde_json::Value =
             serde_json::from_slice(&input.collateral.tcb_info.raw).unwrap();
         input.collateral.tcb_info.raw = Bytes::from(serde_json::to_vec_pretty(&document).unwrap());
-        resign_collateral_body(&mut input.collateral.tcb_info, TdxSignedCollateralBody::TcbInfo);
+        resign_collateral_body(&mut input.collateral.tcb_info, TcbInfo);
 
         TdxVerifier::verify(&input).expect("body-signed pretty collateral must verify");
 
@@ -342,15 +330,18 @@ mod tests {
             serde_json::from_slice(&input.collateral.tcb_info.raw).unwrap();
         let qe_document: serde_json::Value =
             serde_json::from_slice(&input.collateral.qe_identity.raw).unwrap();
-        input.collateral.qe_identity.raw = Bytes::from(json_bytes(json!({
-            "tcbInfo": tcb_document["tcbInfo"].clone(),
-            "enclaveIdentity": qe_document["enclaveIdentity"].clone(),
-        })));
+        input.collateral.qe_identity.raw = Bytes::from(
+            serde_json::to_vec(&json!({
+                "tcbInfo": tcb_document["tcbInfo"].clone(),
+                "enclaveIdentity": qe_document["enclaveIdentity"].clone(),
+            }))
+            .expect("fixture JSON must serialize"),
+        );
 
         let signed_tcb_body = input
             .collateral
             .tcb_info
-            .signed_body_bytes(TdxSignedCollateralBody::TcbInfo)
+            .signed_body_bytes(TcbInfo)
             .expect("fixture collateral body must serialize");
         input.collateral.qe_identity.signature = sign(&signed_tcb_body);
 
@@ -395,22 +386,21 @@ mod tests {
         assert_eq!(journal.collateralExpiration, 1_893_456_000);
     }
 
-    fn verify_failure(name: &str, mutate: impl FnOnce(&mut TdxVerifierInput)) -> TdxVerifierError {
-        let mut input = fixture();
-        mutate(&mut input);
-        TdxVerifier::verify(&input).expect_err(name)
-    }
-
     macro_rules! assert_failure {
-        ($name:expr, |$input:ident| $mutate:expr, $pattern:pat) => {
-            assert!(matches!(verify_failure($name, |$input| $mutate), $pattern));
-        };
+        (|$input:ident| $mutate:expr, $pattern:pat) => {{
+            let mut verifier_input = fixture();
+            let $input = &mut verifier_input;
+            $mutate;
+            assert!(matches!(
+                TdxVerifier::verify(&verifier_input).expect_err("verification must fail"),
+                $pattern
+            ));
+        }};
     }
 
     #[test]
     fn failure_cases_return_expected_error() {
         assert_failure!(
-            "bad quote signature",
             |input| {
                 let signature_offset = TDX_QUOTE_HEADER_LEN + TDX_REPORT_BODY_LEN + 4;
                 edit_quote(input, |quote| quote[signature_offset] ^= 0x01);
@@ -418,17 +408,14 @@ mod tests {
             TdxVerifierError::QuoteSignatureInvalid(_)
         );
         assert_failure!(
-            "non-TDX quote header",
             |input| edit_quote(input, |quote| quote[4..8].copy_from_slice(&0u32.to_le_bytes())),
             TdxVerifierError::InvalidQuote(_)
         );
         assert_failure!(
-            "unsupported attestation key type",
             |input| edit_quote(input, |quote| quote[2..4].copy_from_slice(&1u16.to_le_bytes())),
             TdxVerifierError::InvalidQuote(_)
         );
         assert_failure!(
-            "bad QE report signature",
             |input| {
                 let signature_data_offset = TDX_QUOTE_HEADER_LEN + TDX_REPORT_BODY_LEN + 4;
                 let qe_report_signature_offset = signature_data_offset
@@ -441,100 +428,84 @@ mod tests {
             TdxVerifierError::PckCertChainInvalid(_)
         );
         assert_failure!(
-            "wrong root CA hash",
             |input| input.trusted_root_ca_hash = B256::repeat_byte(0xEF),
             TdxVerifierError::RootCaNotTrusted
         );
         assert_failure!(
-            "expired collateral",
-            |input| edit_tcb_info(input, |document| {
+            |input| edit_collateral(input, TcbInfo, |document| {
                 document["tcbInfo"]["nextUpdate"] = json!("2024-03-01T00:00:00Z");
             }),
             TdxVerifierError::CollateralExpired
         );
         assert_failure!(
-            "revoked collateral signer",
             |input| input.revocation = revocation_evidence("intermediate_crl_revoked_04"),
             TdxVerifierError::TcbInfoInvalid(_)
         );
         assert_failure!(
-            "timestamp outside policy",
             |input| input.verification_time = VERIFICATION_TIME + MAX_QUOTE_AGE_SECONDS + 1,
             TdxVerifierError::InvalidTimestamp
         );
         assert_failure!(
-            "unsupported TCB status",
-            |input| edit_tcb_info(input, |document| {
+            |input| edit_collateral(input, TcbInfo, |document| {
                 document["tcbInfo"]["tcbLevels"][0]["tcbStatus"] = json!("Revoked");
             }),
             TdxVerifierError::TcbStatusNotAllowed
         );
         assert_failure!(
-            "SGX TCB info",
-            |input| edit_tcb_info(input, |document| {
+            |input| edit_collateral(input, TcbInfo, |document| {
                 document["tcbInfo"]["id"] = json!("SGX");
                 document["tcbInfo"]["teeType"] = json!("00000000");
             }),
             TdxVerifierError::TcbInfoInvalid(_)
         );
         assert_failure!(
-            "malformed TCB info signature",
             |input| input.collateral.tcb_info.signature = Bytes::from(vec![0]),
             TdxVerifierError::TcbInfoInvalid(_)
         );
         assert_failure!(
-            "malformed QE identity signature",
             |input| input.collateral.qe_identity.signature = Bytes::from(vec![0]),
             TdxVerifierError::QeIdentityInvalid(_)
         );
         assert_failure!(
-            "stale QE identity",
-            |input| edit_qe_identity(input, |document| {
+            |input| edit_collateral(input, QeIdentity, |document| {
                 document["enclaveIdentity"]["tcbLevels"][0]["tcbStatus"] = json!("Revoked");
             }),
             TdxVerifierError::QeIdentityInvalid(_)
         );
         assert_failure!(
-            "SGX QE identity",
-            |input| edit_qe_identity(input, |document| {
+            |input| edit_collateral(input, QeIdentity, |document| {
                 document["enclaveIdentity"]["id"] = json!("QE");
             }),
             TdxVerifierError::QeIdentityInvalid(_)
         );
         assert_failure!(
-            "QVE identity",
-            |input| edit_qe_identity(input, |document| {
+            |input| edit_collateral(input, QeIdentity, |document| {
                 document["enclaveIdentity"]["id"] = json!("QVE");
             }),
             TdxVerifierError::QeIdentityInvalid(_)
         );
         assert_failure!(
-            "v1 QE identity",
-            |input| edit_qe_identity(input, |document| {
+            |input| edit_collateral(input, QeIdentity, |document| {
                 document["enclaveIdentity"]["version"] = json!(1);
             }),
             TdxVerifierError::QeIdentityInvalid(_)
         );
         assert_failure!(
-            "malformed public key",
             |input| input.expected_public_key = Bytes::from(vec![0x04; 64]),
             TdxVerifierError::MalformedPublicKey
         );
         assert_failure!(
-            "report data mismatch",
             |input| input.expected_public_key = secp256k1_public_key(2),
             TdxVerifierError::ReportDataMismatch
         );
         assert_failure!(
-            "revoked PCK leaf",
             |input| input.revocation = revocation_evidence("intermediate_crl_revoked_03"),
             TdxVerifierError::PckCertChainInvalid(_)
         );
         assert_failure!(
-            "downgraded PCK certificate TCB",
             |input| {
                 input.pck_certificate_chain[2] = fixture_cert("pck_leaf_downgraded_tcb");
-                edit_tcb_info(input, |document| {
+                edit_collateral(input, TcbInfo, |document| {
                     document["tcbInfo"]["tcbLevels"] = json!([{
                         "tcb": {
                             "pcesvn": 8,
@@ -548,30 +519,26 @@ mod tests {
             TdxVerifierError::TcbStatusNotAllowed
         );
         assert_failure!(
-            "out-of-date TDX module identity",
-            |input| edit_tcb_info(input, |document| {
+            |input| edit_collateral(input, TcbInfo, |document| {
                 document["tcbInfo"]["tdxModuleIdentities"][0]["tcbLevels"][0]["tcbStatus"] =
                     json!("OutOfDate");
             }),
             TdxVerifierError::TcbStatusNotAllowed
         );
         assert_failure!(
-            "TDX module identity mismatch",
-            |input| edit_tcb_info(input, |document| {
+            |input| edit_collateral(input, TcbInfo, |document| {
                 document["tcbInfo"]["tdxModuleIdentities"][0]["id"] = json!("TDX_04");
             }),
             TdxVerifierError::TcbInfoInvalid(_)
         );
         assert_failure!(
-            "TDX module signer mismatch",
-            |input| edit_tcb_info(input, |document| {
+            |input| edit_collateral(input, TcbInfo, |document| {
                 document["tcbInfo"]["tdxModuleIdentities"][0]["mrsigner"] =
                     json!("11".repeat(TDX_MEASUREMENT_LEN));
             }),
             TdxVerifierError::TcbInfoInvalid(_)
         );
         assert_failure!(
-            "padded serial revocation",
             |input| {
                 input.pck_certificate_chain[2] = fixture_cert("pck_leaf_serial_80");
                 input.revocation = revocation_evidence("intermediate_crl_revoked_80");
@@ -579,7 +546,6 @@ mod tests {
             TdxVerifierError::PckCertChainInvalid(_)
         );
         assert_failure!(
-            "wrong collateral signer subject",
             |input| {
                 input.collateral.tcb_info.signing_chain[2] =
                     fixture_cert("collateral_leaf_wrong_subject");
@@ -587,7 +553,6 @@ mod tests {
             TdxVerifierError::TcbInfoInvalid(_)
         );
         assert_failure!(
-            "wrong collateral key usage",
             |input| {
                 input.collateral.tcb_info.signing_chain[2] =
                     fixture_cert("collateral_leaf_key_usage_20");
@@ -595,19 +560,16 @@ mod tests {
             TdxVerifierError::TcbInfoInvalid(_)
         );
         assert_failure!(
-            "missing CRL evidence",
             |input| input.revocation = TdxRevocationEvidence::default(),
             TdxVerifierError::PckCertChainInvalid(_)
         );
         assert_failure!(
-            "TCB info platform mismatch",
-            |input| edit_tcb_info(input, |document| {
+            |input| edit_collateral(input, TcbInfo, |document| {
                 document["tcbInfo"]["fmspc"] = json!("060504030201");
             }),
             TdxVerifierError::TcbInfoInvalid(_)
         );
         assert_failure!(
-            "bad QE identity signature",
             |input| {
                 let mut signature = input.collateral.qe_identity.signature.to_vec();
                 signature[0] ^= 0x01;
