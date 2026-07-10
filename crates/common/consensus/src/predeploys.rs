@@ -135,7 +135,7 @@ impl Predeploys {
     pub const OPERATOR_FEE_VAULT: Address = address!("0x420000000000000000000000000000000000001B");
 
     /// The `BaseTime` predeploy address.
-    pub const BASE_TIME: Address = address!("0x420000000000000000000000000000000000001c");
+    pub const BASE_TIME: Address = address!("0x4200000000000000000000000000000000000030");
 
     /// The `CrossL2Inbox` proxy address.
     pub const CROSS_L2_INBOX: Address = address!("0x4200000000000000000000000000000000000022");
