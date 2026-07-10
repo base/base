@@ -26,7 +26,7 @@ use base_prover_service_db::{
 use base_prover_service_protocol::{
     ProofRequest as ProtocolProofRequest, ProofRequestKind as ProtocolProofRequestKind,
     ProofResult as ProtocolProofResult, SnarkGroth16ProofRequest, SnarkGroth16ProofResult,
-    TeeKind as ProtocolTeeKind, TeeProofRequest, ZkProofRequest, ZkProofResult, ZkVm,
+    TeeKind as ProtocolTeeKind, TeeProofRequest, ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
 };
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
@@ -56,6 +56,13 @@ fn compressed_request() -> CreateProofRequest {
 }
 
 fn compressed_request_at(start_block_number: u64) -> CreateProofRequest {
+    compressed_request_at_with_backend(start_block_number, ZkBackend::Cluster)
+}
+
+fn compressed_request_at_with_backend(
+    start_block_number: u64,
+    zk_backend: ZkBackend,
+) -> CreateProofRequest {
     CreateProofRequest::new(ProtocolProofRequest {
         session_id: Uuid::new_v4().to_string(),
         request: ProtocolProofRequestKind::Compressed(ZkProofRequest {
@@ -65,6 +72,7 @@ fn compressed_request_at(start_block_number: u64) -> CreateProofRequest {
             l1_head: None,
             intermediate_root_interval: None,
             zk_vm: ZkVm::Sp1,
+            zk_backend,
         }),
     })
     .expect("compressed request should validate")
@@ -80,6 +88,7 @@ fn compressed_request_with_l1_head(l1_head: &str) -> CreateProofRequest {
             l1_head: Some(l1_head.parse().expect("valid hash")),
             intermediate_root_interval: None,
             zk_vm: ZkVm::Sp1,
+            zk_backend: ZkBackend::Cluster,
         }),
     })
     .expect("compressed request should validate")
@@ -100,6 +109,7 @@ fn snark_request() -> CreateProofRequest {
                 ),
                 intermediate_root_interval: None,
                 zk_vm: ZkVm::Sp1,
+                zk_backend: ZkBackend::Cluster,
             },
             prover_address: "0x1234567890abcdef1234567890abcdef12345678"
                 .parse()
@@ -1085,19 +1095,49 @@ async fn test_create_for_worker_queue_accepts_tee_requests() {
 
 #[tokio::test]
 #[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_create_for_worker_queue_idempotent() {
+async fn test_create_for_worker_queue_idempotent_for_legacy_null_backend() {
     let pool = test_pool().await;
-    let repo = test_repo(pool);
+    let repo = test_repo(pool.clone());
 
     let explicit_id = Uuid::new_v4();
     let mut req = compressed_request();
     set_request_session_id(&mut req, explicit_id.to_string());
 
     let first = repo.create_for_worker_queue(req.clone(), TEST_MAX_PROOF_RETRIES).await.unwrap();
+    sqlx::query("UPDATE proof_requests SET zk_backend = NULL WHERE id = $1")
+        .bind(explicit_id)
+        .execute(&pool)
+        .await
+        .unwrap();
     let second = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
 
     assert!(matches!(first, CreateProofRequestOutcome::Created(id) if id == explicit_id));
     assert!(matches!(second, CreateProofRequestOutcome::Replayed(id) if id == explicit_id));
+    let claimed = repo
+        .claim_next_proof_job(compressed_claim("legacy-cluster-worker", 3))
+        .await
+        .unwrap()
+        .expect("legacy NULL backend should be claimable as cluster");
+    assert_eq!(claimed.id, explicit_id);
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_create_for_worker_queue_rejects_backend_collision() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool);
+
+    let explicit_id = Uuid::new_v4();
+    let mut cluster = compressed_request_at_with_backend(100, ZkBackend::Cluster);
+    set_request_session_id(&mut cluster, explicit_id.to_string());
+    repo.create_for_worker_queue(cluster, TEST_MAX_PROOF_RETRIES).await.unwrap();
+
+    let mut network = compressed_request_at_with_backend(100, ZkBackend::Network);
+    set_request_session_id(&mut network, explicit_id.to_string());
+    assert!(matches!(
+        repo.create_for_worker_queue(network, TEST_MAX_PROOF_RETRIES).await.unwrap_err(),
+        CreateProofRequestError::IdCollision { id, field: "zk_backend" } if id == explicit_id
+    ));
 }
 
 #[tokio::test]
@@ -1483,6 +1523,11 @@ fn claim_job(
         api_proof_type,
         tee_kinds,
         zk_vms,
+        zk_backends: if api_proof_type == ApiProofType::Tee {
+            Vec::new()
+        } else {
+            vec![ZkBackend::Cluster]
+        },
         lock_duration_seconds: 3600,
         max_attempts,
     }

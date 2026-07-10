@@ -2,7 +2,8 @@ use std::convert::TryFrom;
 
 use base_prover_service_protocol::{
     ProofRequest as ProtocolProofRequest, ProofRequestKind as ProtocolProofRequestKind,
-    ProofResult as ProtocolProofResult, TeeKind as ProtocolTeeKind, ZkVm as ProtocolZkVm,
+    ProofResult as ProtocolProofResult, TeeKind as ProtocolTeeKind, ZkBackend,
+    ZkVm as ProtocolZkVm,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -318,14 +319,17 @@ pub enum CreateProofRequestValidationError {
     },
 }
 
-/// Type of proof that determines success criteria
+/// Legacy SP1 proof-shape discriminator retained for receipt compatibility.
+///
+/// Backend routing uses [`ZkBackend`]; the persisted strings keep their
+/// historical `cluster` names for schema compatibility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "VARCHAR")]
 pub enum ProofType {
-    /// Compressed proof generated via the Succinct SP1 cluster.
+    /// Compressed SP1 proof.
     #[sqlx(rename = "op_succinct_sp1_cluster_compressed")]
     OpSuccinctSp1ClusterCompressed,
-    /// SNARK Groth16 proof generated via the Succinct SP1 cluster.
+    /// Groth16 SNARK SP1 proof.
     #[sqlx(rename = "op_succinct_sp1_cluster_snark_groth16")]
     OpSuccinctSp1ClusterSnarkGroth16,
 }
@@ -747,6 +751,8 @@ pub struct CreateProofRequest {
     pub zk_vm: Option<ZkVmKind>,
     /// Protocol-level TEE discriminator for TEE proofs.
     pub tee_kind: Option<TeeKind>,
+    /// Protocol-level ZK proving backend for ZK proofs.
+    pub zk_backend: Option<ZkBackend>,
     /// Backend-specific proof type for current OP Succinct backends.
     pub proof_type: Option<ProofType>,
     /// Starting L2 block number.
@@ -776,6 +782,7 @@ impl CreateProofRequest {
             api_proof_type: fields.api_proof_type,
             zk_vm: fields.zk_vm,
             tee_kind: fields.tee_kind,
+            zk_backend: fields.zk_backend,
             proof_type: fields.proof_type,
             start_block_number: fields.start_block_number,
             number_of_blocks_to_prove: fields.number_of_blocks_to_prove,
@@ -805,6 +812,9 @@ impl CreateProofRequest {
         }
         if self.tee_kind != expected.tee_kind {
             return Err(CreateProofRequestValidationError::FieldMismatch { field: "tee_kind" });
+        }
+        if self.zk_backend != expected.zk_backend {
+            return Err(CreateProofRequestValidationError::FieldMismatch { field: "zk_backend" });
         }
         if self.proof_type != expected.proof_type {
             return Err(CreateProofRequestValidationError::FieldMismatch { field: "proof_type" });
@@ -851,6 +861,8 @@ pub struct DerivedProofRequestFields {
     pub zk_vm: Option<ZkVmKind>,
     /// Protocol-level TEE discriminator for TEE proofs.
     pub tee_kind: Option<TeeKind>,
+    /// Protocol-level ZK proving backend for ZK proofs.
+    pub zk_backend: Option<ZkBackend>,
     /// Backend-specific proof type for current OP Succinct backends.
     pub proof_type: Option<ProofType>,
     /// Starting L2 block number.
@@ -877,6 +889,7 @@ impl DerivedProofRequestFields {
                 api_proof_type: ApiProofType::Compressed,
                 zk_vm: Some(protocol_zk_vm(proof.zk_vm)),
                 tee_kind: None,
+                zk_backend: Some(proof.zk_backend),
                 proof_type: Some(ProofType::OpSuccinctSp1ClusterCompressed),
                 start_block_number: proof.start_block_number,
                 number_of_blocks_to_prove: proof.number_of_blocks_to_prove,
@@ -889,6 +902,7 @@ impl DerivedProofRequestFields {
                 api_proof_type: ApiProofType::SnarkGroth16,
                 zk_vm: Some(protocol_zk_vm(request.proof.zk_vm)),
                 tee_kind: None,
+                zk_backend: Some(request.proof.zk_backend),
                 proof_type: Some(ProofType::OpSuccinctSp1ClusterSnarkGroth16),
                 start_block_number: request.proof.start_block_number,
                 number_of_blocks_to_prove: request.proof.number_of_blocks_to_prove,
@@ -901,6 +915,7 @@ impl DerivedProofRequestFields {
                 api_proof_type: ApiProofType::Tee,
                 zk_vm: None,
                 tee_kind: Some(protocol_tee_kind(request.tee_kind)),
+                zk_backend: None,
                 proof_type: None,
                 start_block_number: request.proof.claimed_l2_block_number,
                 number_of_blocks_to_prove: 1,
@@ -1004,6 +1019,8 @@ pub struct ClaimProofJob {
     pub tee_kinds: Vec<TeeKind>,
     /// ZK virtual machines this worker can execute (matched for ZK proofs).
     pub zk_vms: Vec<ZkVmKind>,
+    /// ZK proving backends this worker can execute (matched for ZK proofs).
+    pub zk_backends: Vec<ZkBackend>,
     /// Lock duration in seconds. Callers must resolve the server default first.
     pub lock_duration_seconds: u32,
     /// Reclaim budget for expired claims.
@@ -1208,7 +1225,7 @@ pub struct FailExpiredProofJobs<'a> {
 #[cfg(test)]
 mod tests {
     use base_prover_service_protocol::{
-        SnarkGroth16ProofResult, ZkProofRequest, ZkProofResult, ZkVm,
+        SnarkGroth16ProofResult, ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
     };
 
     use super::*;
@@ -1251,6 +1268,7 @@ mod tests {
                 l1_head: None,
                 intermediate_root_interval: None,
                 zk_vm: ZkVm::Sp1,
+                zk_backend: ZkBackend::Cluster,
             }),
         }
     }

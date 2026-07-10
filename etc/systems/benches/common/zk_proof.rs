@@ -10,7 +10,7 @@ use base_optimism_rpc::OptimismRollupProviderExt;
 use base_prover_service_client::{ProofRequesterClient, ProverServiceClientConfig};
 use base_prover_service_protocol::{
     ExecutionStats, GetProofRequest, GetProofResponse, ProofRequest, ProofRequestKind, ProofResult,
-    ProofStatus, ProveBlockRangeRequest, ZkProofRequest, ZkVm,
+    ProofStatus, ProveBlockRangeRequest, ZkBackend, ZkProofRequest, ZkVm,
 };
 use eyre::{Result, WrapErr, ensure};
 use nanoid::nanoid;
@@ -126,6 +126,7 @@ impl ZkProofBench {
                         l1_head: Some(l1_head),
                         intermediate_root_interval: None,
                         zk_vm: ZkVm::Sp1,
+                        zk_backend: ZkBackend::DryRun,
                     }),
                 },
             })

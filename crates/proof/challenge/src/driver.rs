@@ -27,7 +27,9 @@ use base_proof_primitives::ProofRequest as TeeProofRequest;
 use base_proof_rpc::L2Provider;
 use base_proof_submission::KnownRevert;
 use base_prover_service_client::ProofRequesterProvider;
-use base_prover_service_protocol::{SnarkGroth16ProofRequest, TeeKind, ZkProofRequest, ZkVm};
+use base_prover_service_protocol::{
+    SnarkGroth16ProofRequest, TeeKind, ZkBackend, ZkProofRequest, ZkVm,
+};
 use base_runtime::{Clock, TokioRuntime};
 use base_tx_manager::{TxManager, TxManagerError};
 use tokio::select;
@@ -662,6 +664,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
                 l1_head: Some(candidate.l1_head),
                 intermediate_root_interval: Some(candidate.intermediate_block_interval),
                 zk_vm: ZkVm::Sp1,
+                zk_backend: ZkBackend::Cluster,
             },
             prover_address: self.submitter.sender_address(),
         })
@@ -1098,6 +1101,7 @@ mod tests {
                 l1_head: Some(B256::repeat_byte(0xAA)),
                 intermediate_root_interval: Some(10),
                 zk_vm: ZkVm::Sp1,
+                zk_backend: ZkBackend::Cluster,
             },
             prover_address: Address::repeat_byte(0xCC),
         }

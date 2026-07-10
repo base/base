@@ -244,7 +244,7 @@ mod tests {
         DeleteProofRequest, GetProofRequest, GetProofResponse, ListProofsRequest,
         ListProofsResponse, ProofRequest, ProofRequestKind, ProofResult, ProofStatus, ProofSummary,
         ProofType, ProveBlockRangeRequest, ProveBlockRangeResponse, ProverRequesterApiServer,
-        ZkProofRequest, ZkProofResult, ZkVm,
+        ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
     };
     use base_retry::RetryConfig;
     use chrono::Utc;
@@ -478,6 +478,7 @@ mod tests {
                     l1_head: None,
                     intermediate_root_interval: None,
                     zk_vm: ZkVm::Sp1,
+                    zk_backend: ZkBackend::Cluster,
                 }),
             },
         }

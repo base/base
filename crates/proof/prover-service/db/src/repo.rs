@@ -1,5 +1,5 @@
 use base_prover_service_protocol::{
-    ProofResult as ProtocolProofResult, SnarkGroth16ProofResult, ZkProofResult, ZkVm,
+    ProofResult as ProtocolProofResult, SnarkGroth16ProofResult, ZkBackend, ZkProofResult, ZkVm,
 };
 use chrono::Utc;
 use sqlx::{PgPool, Result, Row};
@@ -38,11 +38,11 @@ impl ProofRequestRepo {
         sqlx::query(
             r#"
             INSERT INTO proof_requests (
-                id, session_id, request_payload, api_proof_type, zk_vm, tee_kind, start_block_number,
-                number_of_blocks_to_prove, sequence_window, proof_type, status,
+                id, session_id, request_payload, api_proof_type, zk_vm, tee_kind, zk_backend,
+                start_block_number, number_of_blocks_to_prove, sequence_window, proof_type, status,
                 prover_address, l1_head, intermediate_root_interval
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             "#,
         )
         .bind(prepared.id)
@@ -51,6 +51,7 @@ impl ProofRequestRepo {
         .bind(prepared.api_proof_type.as_str())
         .bind(prepared.zk_vm.map(|zk_vm| zk_vm.as_str()))
         .bind(prepared.tee_kind.map(|tee_kind| tee_kind.as_str()))
+        .bind(prepared.zk_backend.map(|zk_backend| zk_backend.as_str()))
         .bind(prepared.start_block_number)
         .bind(prepared.number_of_blocks_to_prove)
         .bind(prepared.sequence_window)
@@ -77,11 +78,11 @@ impl ProofRequestRepo {
         let insert_result = sqlx::query(
             r#"
             INSERT INTO proof_requests (
-                id, session_id, request_payload, api_proof_type, zk_vm, tee_kind, start_block_number,
-                number_of_blocks_to_prove, sequence_window, proof_type, status,
+                id, session_id, request_payload, api_proof_type, zk_vm, tee_kind, zk_backend,
+                start_block_number, number_of_blocks_to_prove, sequence_window, proof_type, status,
                 prover_address, l1_head, intermediate_root_interval
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             ON CONFLICT ((COALESCE(session_id, id::text))) DO NOTHING
             "#,
         )
@@ -91,6 +92,7 @@ impl ProofRequestRepo {
         .bind(prepared.api_proof_type.as_str())
         .bind(prepared.zk_vm.map(|zk_vm| zk_vm.as_str()))
         .bind(prepared.tee_kind.map(|tee_kind| tee_kind.as_str()))
+        .bind(prepared.zk_backend.map(|zk_backend| zk_backend.as_str()))
         .bind(prepared.start_block_number)
         .bind(prepared.number_of_blocks_to_prove)
         .bind(prepared.sequence_window)
@@ -111,7 +113,7 @@ impl ProofRequestRepo {
         let row = sqlx::query(
             r#"
             SELECT id, COALESCE(session_id, id::text) AS session_id,
-                   request_payload, api_proof_type, zk_vm, tee_kind,
+                   request_payload, api_proof_type, zk_vm, tee_kind, zk_backend,
                    start_block_number, number_of_blocks_to_prove, sequence_window,
                    proof_type, status, prover_address, l1_head,
                    intermediate_root_interval, retry_count
@@ -137,6 +139,7 @@ impl ProofRequestRepo {
             api_proof_type: prepared.api_proof_type.as_str(),
             zk_vm: prepared.zk_vm.map(|zk_vm| zk_vm.as_str()),
             tee_kind: prepared.tee_kind.map(|tee_kind| tee_kind.as_str()),
+            zk_backend: prepared.zk_backend.map(|zk_backend| zk_backend.as_str()),
             start_block_number: prepared.start_block_number,
             number_of_blocks_to_prove: prepared.number_of_blocks_to_prove,
             sequence_window: prepared.sequence_window,
@@ -201,6 +204,7 @@ impl ProofRequestRepo {
                     SET status = $1,
                         request_payload = $2,
                         l1_head = $3,
+                        zk_backend = $4,
                         job_status = 'PENDING',
                         retry_count = retry_count + 1,
                         error_message = NULL,
@@ -216,12 +220,13 @@ impl ProofRequestRepo {
                         claimed_at = NULL,
                         last_heartbeat_at = NULL,
                         attempt = 0
-                    WHERE id = $4
+                    WHERE id = $5
                     "#,
                 )
                 .bind(ProofStatus::Created.as_str())
                 .bind(&prepared.request_payload)
                 .bind(&prepared.l1_head)
+                .bind(prepared.zk_backend.map(|backend| backend.as_str()))
                 .bind(existing_id)
                 .execute(&mut *tx)
                 .await?;
@@ -285,7 +290,7 @@ impl ProofRequestRepo {
             r#"
             SELECT
                 id, COALESCE(session_id, id::text) AS session_id,
-                request_payload, api_proof_type, zk_vm, tee_kind,
+                request_payload, api_proof_type, zk_vm, tee_kind, zk_backend,
                 start_block_number, number_of_blocks_to_prove, sequence_window, proof_type,
                 stark_receipt, snark_receipt, result_payload,
                 submitted_by_worker_id, submitted_lock_id,
@@ -311,7 +316,7 @@ impl ProofRequestRepo {
             r#"
             SELECT
                 id, COALESCE(session_id, id::text) AS session_id,
-                request_payload, api_proof_type, zk_vm, tee_kind,
+                request_payload, api_proof_type, zk_vm, tee_kind, zk_backend,
                 start_block_number, number_of_blocks_to_prove, sequence_window, proof_type,
                 stark_receipt, snark_receipt, result_payload,
                 submitted_by_worker_id, submitted_lock_id,
@@ -574,17 +579,38 @@ impl ProofRequestRepo {
     pub async fn claim_next_proof_job(&self, req: ClaimProofJob) -> Result<Option<ProofJob>> {
         let lock_id = Uuid::new_v4();
         let sql = claim_query(req.api_proof_type);
-        let cap_values = worker_capability_values(&req);
 
-        let row = sqlx::query(&sql)
-            .bind(&req.worker_id)
-            .bind(lock_id)
-            .bind(i64::from(req.lock_duration_seconds))
-            .bind(req.api_proof_type.as_str())
-            .bind(&cap_values)
-            .bind(i64::from(req.max_attempts))
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = match req.api_proof_type {
+            ApiProofType::Tee => {
+                let tee_kinds: Vec<String> =
+                    req.tee_kinds.iter().map(|kind| kind.as_str().to_owned()).collect();
+                sqlx::query(&sql)
+                    .bind(&req.worker_id)
+                    .bind(lock_id)
+                    .bind(i64::from(req.lock_duration_seconds))
+                    .bind(req.api_proof_type.as_str())
+                    .bind(&tee_kinds)
+                    .bind(i64::from(req.max_attempts))
+                    .fetch_optional(&self.pool)
+                    .await?
+            }
+            ApiProofType::Compressed | ApiProofType::SnarkGroth16 => {
+                let zk_vms: Vec<String> =
+                    req.zk_vms.iter().map(|vm| vm.as_str().to_owned()).collect();
+                let zk_backends: Vec<String> =
+                    req.zk_backends.iter().map(|backend| backend.as_str().to_owned()).collect();
+                sqlx::query(&sql)
+                    .bind(&req.worker_id)
+                    .bind(lock_id)
+                    .bind(i64::from(req.lock_duration_seconds))
+                    .bind(req.api_proof_type.as_str())
+                    .bind(&zk_vms)
+                    .bind(&zk_backends)
+                    .bind(i64::from(req.max_attempts))
+                    .fetch_optional(&self.pool)
+                    .await?
+            }
+        };
 
         row.as_ref().map(row_to_proof_job).transpose()
     }
@@ -1356,7 +1382,7 @@ impl ProofRequestRepo {
         let rows = sqlx::query(
             r#"
             SELECT id, COALESCE(session_id, id::text) AS session_id,
-                   request_payload, api_proof_type, zk_vm, tee_kind,
+                   request_payload, api_proof_type, zk_vm, tee_kind, zk_backend,
                    start_block_number, number_of_blocks_to_prove,
                    sequence_window, proof_type, stark_receipt, snark_receipt,
                    result_payload, submitted_by_worker_id, submitted_lock_id,
@@ -1386,7 +1412,7 @@ impl ProofRequestRepo {
             SELECT
                 pr.id, COALESCE(pr.session_id, pr.id::text) AS session_id,
                 pr.request_payload, pr.api_proof_type, pr.zk_vm,
-                pr.tee_kind, pr.start_block_number, pr.number_of_blocks_to_prove,
+                pr.tee_kind, pr.zk_backend, pr.start_block_number, pr.number_of_blocks_to_prove,
                 pr.sequence_window, pr.proof_type, pr.stark_receipt, pr.snark_receipt,
                 pr.result_payload, pr.submitted_by_worker_id, pr.submitted_lock_id,
                 pr.status, pr.error_message, pr.prover_address, pr.l1_head,
@@ -1603,7 +1629,7 @@ impl ProofRequestRepo {
                 r#"
                 SELECT
                     id, COALESCE(session_id, id::text) AS session_id,
-                    request_payload, api_proof_type, zk_vm, tee_kind,
+                    request_payload, api_proof_type, zk_vm, tee_kind, zk_backend,
                     start_block_number, number_of_blocks_to_prove, sequence_window, proof_type,
                     stark_receipt, snark_receipt, result_payload,
                     submitted_by_worker_id, submitted_lock_id,
@@ -1625,7 +1651,7 @@ impl ProofRequestRepo {
                 r#"
                 SELECT
                     id, COALESCE(session_id, id::text) AS session_id,
-                    request_payload, api_proof_type, zk_vm, tee_kind,
+                    request_payload, api_proof_type, zk_vm, tee_kind, zk_backend,
                     start_block_number, number_of_blocks_to_prove, sequence_window, proof_type,
                     stark_receipt, snark_receipt, result_payload,
                     submitted_by_worker_id, submitted_lock_id,
@@ -1755,6 +1781,7 @@ struct PreparedProofRequest {
     api_proof_type: ApiProofType,
     zk_vm: Option<ZkVmKind>,
     tee_kind: Option<TeeKind>,
+    zk_backend: Option<ZkBackend>,
     start_block_number: i64,
     number_of_blocks_to_prove: i64,
     sequence_window: Option<i64>,
@@ -1809,6 +1836,7 @@ impl TryFrom<CreateProofRequest> for PreparedProofRequest {
             api_proof_type: req.api_proof_type,
             zk_vm: req.zk_vm,
             tee_kind: req.tee_kind,
+            zk_backend: req.zk_backend,
             start_block_number,
             number_of_blocks_to_prove,
             sequence_window,
@@ -1915,6 +1943,13 @@ const fn fallback_zk_vm_for_request(api_proof_type: ApiProofType) -> Option<ZkVm
     }
 }
 
+const fn fallback_zk_backend_for_request(api_proof_type: ApiProofType) -> Option<ZkBackend> {
+    match api_proof_type {
+        ApiProofType::Compressed | ApiProofType::SnarkGroth16 => Some(ZkBackend::Cluster),
+        ApiProofType::Tee => None,
+    }
+}
+
 /// Fields needed to build the canonical protocol request payload.
 #[derive(Debug, Clone, Copy)]
 struct ProtocolRequestPayloadParams<'a> {
@@ -1924,6 +1959,7 @@ struct ProtocolRequestPayloadParams<'a> {
     sequence_window: Option<i64>,
     api_proof_type: ApiProofType,
     tee_kind: Option<TeeKind>,
+    zk_backend: Option<ZkBackend>,
     prover_address: Option<&'a str>,
     l1_head: Option<&'a str>,
     intermediate_root_interval: Option<i64>,
@@ -1938,6 +1974,7 @@ impl ProtocolRequestPayloadParams<'_> {
             "l1_head": self.l1_head,
             "intermediate_root_interval": self.intermediate_root_interval,
             "zk_vm": ZkVmKind::Sp1.as_str(),
+            "zk_backend": self.zk_backend.unwrap_or(ZkBackend::Cluster).as_str(),
         });
         strip_null_object_fields(&mut zk_payload);
 
@@ -2045,6 +2082,11 @@ fn row_to_proof_request(row: &sqlx::postgres::PgRow) -> Result<ProofRequest> {
         .map(parse_zk_vm_kind)
         .transpose()?
         .or_else(|| fallback_zk_vm_for_request(api_proof_type));
+    let zk_backend = row
+        .get::<Option<&str>, _>("zk_backend")
+        .map(parse_zk_backend)
+        .transpose()?
+        .or_else(|| fallback_zk_backend_for_request(api_proof_type));
     let tee_kind = row.get::<Option<&str>, _>("tee_kind").map(parse_tee_kind).transpose()?;
     let mut request_payload =
         row.get::<Option<serde_json::Value>, _>("request_payload").unwrap_or_else(|| {
@@ -2055,6 +2097,7 @@ fn row_to_proof_request(row: &sqlx::postgres::PgRow) -> Result<ProofRequest> {
                 sequence_window,
                 api_proof_type,
                 tee_kind,
+                zk_backend,
                 prover_address: prover_address.as_deref(),
                 l1_head: l1_head.as_deref(),
                 intermediate_root_interval,
@@ -2096,6 +2139,11 @@ fn parse_zk_vm_kind(value: &str) -> Result<ZkVmKind> {
         .map_err(|e| sqlx::Error::Protocol(format!("Unknown zk_vm '{value}': {e}")))
 }
 
+fn parse_zk_backend(value: &str) -> Result<ZkBackend> {
+    ZkBackend::try_from(value)
+        .map_err(|e| sqlx::Error::Protocol(format!("Unknown zk_backend '{value}': {e}")))
+}
+
 fn parse_tee_kind(value: &str) -> Result<TeeKind> {
     TeeKind::try_from(value)
         .map_err(|e| sqlx::Error::Protocol(format!("Unknown tee_kind '{value}': {e}")))
@@ -2103,7 +2151,7 @@ fn parse_tee_kind(value: &str) -> Result<TeeKind> {
 
 /// Columns returned by the claim query.
 const PROOF_JOB_RETURNING_COLUMNS: &str = "id, COALESCE(session_id, id::text) AS session_id, \
-     request_payload, api_proof_type, zk_vm, tee_kind, \
+     request_payload, api_proof_type, zk_vm, tee_kind, zk_backend, \
      start_block_number, number_of_blocks_to_prove, sequence_window, proof_type, \
      stark_receipt, snark_receipt, result_payload, \
      submitted_by_worker_id, submitted_lock_id, status, error_message, \
@@ -2111,25 +2159,11 @@ const PROOF_JOB_RETURNING_COLUMNS: &str = "id, COALESCE(session_id, id::text) AS
      created_at, updated_at, completed_at, retry_count, \
      job_status, worker_id, lock_id, lock_expires_at, claimed_at, attempt, last_heartbeat_at";
 
-/// Capability values bound (as `$5`) into the claim query.
-///
-/// TEE workers contribute their `tee_kinds`, ZK workers their `zk_vms`. An empty
-/// list binds `ANY('{}')`, which matches no rows, so a worker that advertises no
-/// matching capabilities simply claims nothing.
-fn worker_capability_values(req: &ClaimProofJob) -> Vec<String> {
-    match req.api_proof_type {
-        ApiProofType::Tee => req.tee_kinds.iter().map(|kind| kind.as_str().to_owned()).collect(),
-        ApiProofType::Compressed | ApiProofType::SnarkGroth16 => {
-            req.zk_vms.iter().map(|vm| vm.as_str().to_owned()).collect()
-        }
-    }
-}
-
 /// Build the atomic claim query for a proof type.
 ///
-/// The capability column (`tee_kind` for TEE, `zk_vm` for ZK) is hardcoded as a
-/// literal in each variant rather than interpolated from a value, so no
-/// caller-derived string can ever reach the SQL as a column name. The only
+/// Capability columns (`tee_kind` for TEE, `zk_vm`/`zk_backend` for ZK) are
+/// hardcoded as literals in each variant rather than interpolated from a value,
+/// so no caller-derived string can ever reach the SQL as a column name. The only
 /// interpolated token is the fixed [`PROOF_JOB_RETURNING_COLUMNS`] constant.
 fn claim_query(api_proof_type: ApiProofType) -> String {
     let columns = PROOF_JOB_RETURNING_COLUMNS;
@@ -2175,9 +2209,10 @@ fn claim_query(api_proof_type: ApiProofType) -> String {
                 SELECT id FROM proof_requests
                 WHERE api_proof_type = $4
                   AND zk_vm = ANY($5::text[])
+                  AND COALESCE(zk_backend, 'cluster') = ANY($6::text[])
                   AND (
                       job_status = 'PENDING'
-                      OR (job_status = 'CLAIMED' AND lock_expires_at < NOW() AND attempt < $6)
+                      OR (job_status = 'CLAIMED' AND lock_expires_at < NOW() AND attempt < $7)
                   )
                 ORDER BY start_block_number ASC, created_at ASC, id ASC
                 FOR UPDATE SKIP LOCKED
@@ -2253,6 +2288,7 @@ struct CreateRequestParams<'a> {
     api_proof_type: &'a str,
     zk_vm: Option<&'a str>,
     tee_kind: Option<&'a str>,
+    zk_backend: Option<&'a str>,
     start_block_number: i64,
     number_of_blocks_to_prove: i64,
     sequence_window: Option<i64>,
@@ -2321,6 +2357,12 @@ impl CreateRequestParams<'_> {
         {
             return Some("tee_kind");
         }
+        let stored_zk_backend = row.get::<Option<&str>, _>("zk_backend").or_else(|| {
+            matches!(self.api_proof_type, "compressed" | "snark_groth16").then_some("cluster")
+        });
+        if stored_zk_backend != self.zk_backend {
+            return Some("zk_backend");
+        }
         if let Some(request_payload) = row.get::<Option<serde_json::Value>, _>("request_payload")
             && !request_payload_matches(&request_payload, self.request_payload, mode)
         {
@@ -2373,7 +2415,7 @@ fn remove_l1_head_fields(value: &mut serde_json::Value) {
 mod tests {
     use base_prover_service_protocol::{
         ProofRequest as ProtocolProofRequest, ProofRequestKind, TeeKind as ProtocolTeeKind,
-        TeeProofRequest, ZkProofRequest, ZkVm,
+        TeeProofRequest, ZkBackend, ZkProofRequest, ZkVm,
     };
 
     use super::*;
@@ -2390,6 +2432,7 @@ mod tests {
                 l1_head: None,
                 intermediate_root_interval: Some(5),
                 zk_vm: ZkVm::Sp1,
+                zk_backend: ZkBackend::Cluster,
             }),
         })
         .expect("request should validate");
@@ -2425,6 +2468,7 @@ mod tests {
                 l1_head: None,
                 intermediate_root_interval: None,
                 zk_vm: ZkVm::Sp1,
+                zk_backend: ZkBackend::Cluster,
             }),
         })
         .expect("request should validate");
@@ -2457,6 +2501,7 @@ mod tests {
             sequence_window: None,
             api_proof_type: ApiProofType::Tee,
             tee_kind: Some(TeeKind::AwsNitro),
+            zk_backend: None,
             prover_address: None,
             l1_head: Some(ZERO_HASH),
             intermediate_root_interval: Some(10),
@@ -2599,6 +2644,7 @@ mod tests {
                 l1_head: None,
                 intermediate_root_interval: None,
                 zk_vm: ZkVm::Sp1,
+                zk_backend: ZkBackend::Cluster,
             }),
         })
         .expect("request should validate");

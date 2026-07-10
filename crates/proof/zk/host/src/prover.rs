@@ -141,7 +141,7 @@ impl ZkProver for UnimplementedZkProver {
 
 #[cfg(test)]
 mod tests {
-    use base_prover_service_protocol::ZkVm;
+    use base_prover_service_protocol::{ZkBackend, ZkVm};
 
     use super::*;
 
@@ -153,6 +153,7 @@ mod tests {
             l1_head: None,
             intermediate_root_interval: None,
             zk_vm: ZkVm::Sp1,
+            zk_backend: ZkBackend::Cluster,
         }
     }
 

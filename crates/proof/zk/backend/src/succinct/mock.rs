@@ -63,7 +63,7 @@ impl ZkProver for MockZkProver {
 #[cfg(test)]
 mod tests {
     use base_proof_zk_host::ZkProofRequestKind;
-    use base_prover_service_protocol::{SnarkGroth16ProofRequest, ZkProofRequest, ZkVm};
+    use base_prover_service_protocol::{SnarkGroth16ProofRequest, ZkBackend, ZkProofRequest, ZkVm};
 
     use super::*;
 
@@ -75,6 +75,7 @@ mod tests {
             l1_head: None,
             intermediate_root_interval: None,
             zk_vm: ZkVm::Sp1,
+            zk_backend: ZkBackend::Cluster,
         }
     }
 

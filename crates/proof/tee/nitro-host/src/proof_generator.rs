@@ -640,6 +640,7 @@ mod tests {
                     l1_head: None,
                     intermediate_root_interval: None,
                     zk_vm: base_prover_service_protocol::ZkVm::Sp1,
+                    zk_backend: base_prover_service_protocol::ZkBackend::Cluster,
                 })
             }
         };

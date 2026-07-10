@@ -49,6 +49,55 @@ pub enum ZkVm {
     Sp1,
 }
 
+/// ZK proving backend that executes a proof request.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ZkBackend {
+    /// Instant placeholder proofs for tests and local smoke checks.
+    Mock,
+    /// Local SP1 execution statistics without proof bytes.
+    DryRun,
+    /// Self-hosted SP1 cluster.
+    #[default]
+    Cluster,
+    /// Succinct SP1 prover network.
+    Network,
+}
+
+impl ZkBackend {
+    /// Returns the canonical wire and database representation.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Mock => "mock",
+            Self::DryRun => "dry_run",
+            Self::Cluster => "cluster",
+            Self::Network => "network",
+        }
+    }
+}
+
+impl fmt::Display for ZkBackend {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl TryFrom<&str> for ZkBackend {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "mock" => Ok(Self::Mock),
+            "dry_run" => Ok(Self::DryRun),
+            "cluster" => Ok(Self::Cluster),
+            "network" => Ok(Self::Network),
+            other => Err(format!("Unknown ZK backend: {other}")),
+        }
+    }
+}
+
 /// Status of a submitted proof request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -137,6 +186,11 @@ pub struct ZkProofRequest {
     pub intermediate_root_interval: Option<u64>,
     /// ZK virtual machine implementation to use.
     pub zk_vm: ZkVm,
+    /// Proving backend that should execute this request.
+    ///
+    /// Defaults to [`ZkBackend::Cluster`] when omitted so older clients keep working.
+    #[serde(default)]
+    pub zk_backend: ZkBackend,
 }
 
 /// Groth16 SNARK proof request parameters.
@@ -327,6 +381,9 @@ pub struct GetNextProofRequest {
     /// ZK virtual machines this worker can execute for ZK proofs.
     #[serde(default)]
     pub zk_vms: Vec<ZkVm>,
+    /// ZK proving backends this worker can execute for ZK proofs.
+    #[serde(default)]
+    pub zk_backends: Vec<ZkBackend>,
     /// Requested lock duration in seconds. Zero uses the server default.
     pub lock_duration_seconds: u32,
 }
@@ -478,6 +535,7 @@ mod tests {
                     l1_head: Some(B256::repeat_byte(0xab)),
                     intermediate_root_interval: Some(128),
                     zk_vm: ZkVm::Sp1,
+                    zk_backend: ZkBackend::Cluster,
                 }),
             },
         };
@@ -496,7 +554,8 @@ mod tests {
                             "number_of_blocks_to_prove": 20,
                             "l1_head": format!("{:#x}", B256::repeat_byte(0xab)),
                             "intermediate_root_interval": 128,
-                            "zk_vm": "sp1"
+                            "zk_vm": "sp1",
+                            "zk_backend": "cluster"
                         }
                     }
                 }
@@ -813,6 +872,7 @@ mod tests {
                 l1_head: None,
                 intermediate_root_interval: None,
                 zk_vm: ZkVm::Sp1,
+                zk_backend: ZkBackend::Cluster,
             }
         );
     }
@@ -836,6 +896,7 @@ mod tests {
             proof_type: ProofType::Compressed,
             tee_kinds: Vec::new(),
             zk_vms: vec![ZkVm::Sp1],
+            zk_backends: vec![ZkBackend::Cluster, ZkBackend::DryRun],
             lock_duration_seconds: 30,
         };
 
@@ -848,6 +909,7 @@ mod tests {
                 "proof_type": "compressed",
                 "tee_kinds": [],
                 "zk_vms": ["sp1"],
+                "zk_backends": ["cluster", "dry_run"],
                 "lock_duration_seconds": 30
             })
         );
@@ -864,6 +926,7 @@ mod tests {
 
         assert_eq!(request.tee_kinds, Vec::new());
         assert_eq!(request.zk_vms, Vec::new());
+        assert_eq!(request.zk_backends, Vec::new());
     }
 
     #[test]

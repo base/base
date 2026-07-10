@@ -3,7 +3,7 @@
 use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 
 use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
-use base_prover_service_protocol::{GetNextProofRequest, ProofJob, ProofType, TeeKind};
+use base_prover_service_protocol::{GetNextProofRequest, ProofJob, ProofType, TeeKind, ZkBackend};
 use tokio::{
     sync::{OwnedSemaphorePermit, Semaphore},
     task::{JoinError, JoinHandle, JoinSet},
@@ -95,6 +95,7 @@ impl JobDiscoveryConfig {
             proof_type: ProofType::Tee,
             tee_kinds: vec![TeeKind::AwsNitro],
             zk_vms: Vec::new(),
+            zk_backends: Vec::new(),
             lock_duration_seconds: self.lock_duration_seconds,
         }
     }
@@ -477,6 +478,7 @@ mod tests {
                     l1_head: None,
                     intermediate_root_interval: None,
                     zk_vm: ZkVm::Sp1,
+                    zk_backend: ZkBackend::Cluster,
                 }),
             },
             attempt: 1,

@@ -121,7 +121,7 @@ mod tests {
     use base_proof_primitives::{PROOF_TYPE_TEE, Proposal};
     use base_prover_service_protocol::{
         ProofRequestKind, ProofResult, SnarkGroth16ProofRequest, SnarkGroth16ProofResult, TeeKind,
-        TeeProofResult, ZkProofRequest, ZkProofResult, ZkVm,
+        TeeProofResult, ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
     };
 
     use super::ChallengerProofAdapter;
@@ -198,6 +198,7 @@ mod tests {
             l1_head: Some(l1_head),
             intermediate_root_interval: Some(150),
             zk_vm: ZkVm::Sp1,
+            zk_backend: ZkBackend::Cluster,
         };
         let request = SnarkGroth16ProofRequest { proof, prover_address };
 

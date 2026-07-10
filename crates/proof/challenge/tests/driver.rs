@@ -26,7 +26,7 @@ use base_proof_primitives::Proposal;
 use base_protocol::OutputRoot;
 use base_prover_service_protocol::{
     ProofResult as ApiProofResult, ProofStatus, SnarkGroth16ProofRequest, TeeKind, TeeProofResult,
-    ZkProofRequest, ZkVm,
+    ZkBackend, ZkProofRequest, ZkVm,
 };
 use base_runtime::TokioRuntime;
 use base_tx_manager::TxManagerError;
@@ -158,6 +158,7 @@ fn default_ready_proof(intent: DisputeIntent) -> PendingProof {
             l1_head: Some(DEFAULT_L1_HEAD),
             intermediate_root_interval: None,
             zk_vm: ZkVm::Sp1,
+            zk_backend: ZkBackend::Cluster,
         },
         prover_address: addr(0),
     };
@@ -1753,6 +1754,7 @@ const fn minimal_prove_request() -> SnarkGroth16ProofRequest {
             l1_head: None,
             intermediate_root_interval: None,
             zk_vm: ZkVm::Sp1,
+            zk_backend: ZkBackend::Cluster,
         },
         prover_address: Address::ZERO,
     }

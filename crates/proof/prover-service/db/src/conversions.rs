@@ -260,7 +260,9 @@ impl ProofRequest {
 
 #[cfg(test)]
 mod tests {
-    use base_prover_service_protocol::{ProofRequest as ProtocolProofRequest, ProofRequestKind};
+    use base_prover_service_protocol::{
+        ProofRequest as ProtocolProofRequest, ProofRequestKind, ZkBackend as ProtocolZkBackend,
+    };
     use chrono::Utc;
     use uuid::Uuid;
 
@@ -276,6 +278,7 @@ mod tests {
                 l1_head: None,
                 intermediate_root_interval: None,
                 zk_vm: ProtocolZkVm::Sp1,
+                zk_backend: ProtocolZkBackend::Cluster,
             }),
         })
         .expect("protocol request should serialize")

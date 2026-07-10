@@ -322,7 +322,8 @@ mod tests {
     use base_prover_service_protocol::{
         GetNextProofRequest, GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse,
         ProofJob, ProofJobStatus, ProofRequest, ProofRequestKind, ProofResult,
-        RecordProofSessionRequest, RecordProofSessionResponse, ZkProofRequest, ZkProofResult, ZkVm,
+        RecordProofSessionRequest, RecordProofSessionResponse, ZkBackend, ZkProofRequest,
+        ZkProofResult, ZkVm,
     };
     use chrono::Utc;
     use tokio::{sync::Notify, time::timeout};
@@ -447,6 +448,7 @@ mod tests {
                     l1_head: None,
                     intermediate_root_interval: None,
                     zk_vm: ZkVm::Sp1,
+                    zk_backend: ZkBackend::Cluster,
                 }),
             },
             attempt: 1,
