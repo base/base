@@ -14,7 +14,7 @@ use crate::succinct::{
     SuccinctClusterBackendConfig, SuccinctNetworkBackendConfig,
 };
 
-type BackendConfigs = (Vec<(ZkBackend, SuccinctZkBackendConfig)>, Option<SuccinctRpcConfig>);
+type BackendConfigs = Vec<(ZkBackend, SuccinctZkBackendConfig)>;
 
 /// Errors raised while building a Succinct ZK prover backend.
 #[derive(Debug, Error)]
@@ -157,7 +157,16 @@ impl SuccinctZkProversConfig {
         cancel: &CancellationToken,
     ) -> Result<Option<HashMap<ZkBackend, Arc<dyn ZkProver>>>, SuccinctZkProverBuildError> {
         let mut provers = HashMap::new();
-        let (configs, rpc) = self.backend_configs()?;
+        let configs = self.backend_configs()?;
+        let rpc = configs
+            .iter()
+            .find_map(|(_, config)| match config {
+                SuccinctZkBackendConfig::Mock => None,
+                SuccinctZkBackendConfig::DryRun { rpc, .. } => Some(rpc),
+                SuccinctZkBackendConfig::Cluster(config) => Some(&config.rpc),
+                SuccinctZkBackendConfig::Network(config) => Some(&config.rpc),
+            })
+            .cloned();
         let witness_provider = if let Some(rpc) = rpc {
             let Some(provider) =
                 Box::pin(SuccinctZkProverBuilder::build_witness_provider(rpc, cancel)).await?
@@ -225,62 +234,42 @@ impl SuccinctZkProversConfig {
         Ok(Duration::from_secs(seconds))
     }
 
-    fn backend_configs(&self) -> Result<BackendConfigs, SuccinctZkProverBuildError> {
-        let mut configs = Vec::new();
-        if self.enable_mock {
-            configs.push((ZkBackend::Mock, SuccinctZkBackendConfig::Mock));
-        }
+    fn cluster_requested(&self) -> bool {
+        [self.cluster_rpc.as_deref(), self.s3_bucket.as_deref(), self.s3_region.as_deref()]
+            .into_iter()
+            .flatten()
+            .any(|value| !value.trim().is_empty())
+    }
+
+    fn network_requested(&self) -> bool {
+        self.use_kms_requester
+            || self.network_private_key.as_deref().is_some_and(|value| !value.trim().is_empty())
+    }
+
+    fn cluster_config(
+        &self,
+        rpc: Option<&SuccinctRpcConfig>,
+    ) -> Result<Option<SuccinctClusterBackendConfig>, SuccinctZkProverBuildError> {
         let cluster_rpc = Self::optional_string(self.cluster_rpc.as_deref());
         let s3_bucket = Self::optional_string(self.s3_bucket.as_deref());
         let s3_region = Self::optional_string(self.s3_region.as_deref());
-        if cluster_rpc.is_none() && (s3_bucket.is_some() || s3_region.is_some()) {
-            return Err(SuccinctZkProverBuildError::config(
+        match (cluster_rpc, s3_bucket, s3_region, rpc) {
+            (None, None, None, _) => Ok(None),
+            (None, _, _, _) => Err(SuccinctZkProverBuildError::config(
                 "cluster backend requires SP1_CLUSTER_API_ENDPOINT",
-            ));
-        }
-        let network_private_key = Self::optional_string(self.network_private_key.as_deref());
-        if self.use_kms_requester && network_private_key.is_none() {
-            return Err(SuccinctZkProverBuildError::config(
-                "USE_KMS_REQUESTER requires NETWORK_PRIVATE_KEY",
-            ));
-        }
-        let has_complete_rpc = matches!(
-            (&self.base_consensus_rpc, &self.l1_rpc, &self.l1_beacon_rpc, &self.l2_rpc),
-            (Some(_), Some(_), Some(_), Some(_))
-        );
-        let rpc = if self.enable_mock
-            && cluster_rpc.is_none()
-            && network_private_key.is_none()
-            && !has_complete_rpc
-        {
-            None
-        } else {
-            self.rpc_config()?
-        };
-
-        if let Some(rpc) = rpc.clone() {
-            configs.push((
-                ZkBackend::DryRun,
-                SuccinctZkBackendConfig::DryRun { rpc, range_cycle_limit: self.range_cycle_limit },
-            ));
-        }
-
-        if let Some(cluster_rpc) = cluster_rpc {
-            let Some(rpc) = rpc.clone() else {
-                return Err(SuccinctZkProverBuildError::config(
-                    "cluster backend requires all RPC URLs",
-                ));
-            };
-            let s3_bucket = s3_bucket.ok_or_else(|| {
-                SuccinctZkProverBuildError::config("cluster backend requires CLI_S3_BUCKET")
-            })?;
-            let s3_region = s3_region.ok_or_else(|| {
-                SuccinctZkProverBuildError::config("cluster backend requires CLI_S3_REGION")
-            })?;
-            configs.push((
-                ZkBackend::Cluster,
-                SuccinctZkBackendConfig::Cluster(SuccinctClusterBackendConfig {
-                    rpc,
+            )),
+            (Some(_), None, _, _) => {
+                Err(SuccinctZkProverBuildError::config("cluster backend requires CLI_S3_BUCKET"))
+            }
+            (Some(_), _, None, _) => {
+                Err(SuccinctZkProverBuildError::config("cluster backend requires CLI_S3_REGION"))
+            }
+            (Some(_), Some(_), Some(_), None) => {
+                Err(SuccinctZkProverBuildError::config("cluster backend requires all RPC URLs"))
+            }
+            (Some(cluster_rpc), Some(s3_bucket), Some(s3_region), Some(rpc)) => {
+                Ok(Some(SuccinctClusterBackendConfig {
+                    rpc: rpc.clone(),
                     cluster_rpc,
                     s3_bucket,
                     s3_region,
@@ -292,38 +281,76 @@ impl SuccinctZkProversConfig {
                     range_gas_limit: self.range_gas_limit,
                     aggregation_cycle_limit: self.aggregation_cycle_limit,
                     aggregation_gas_limit: self.aggregation_gas_limit,
-                }),
+                }))
+            }
+        }
+    }
+
+    fn network_config(
+        &self,
+        rpc: Option<&SuccinctRpcConfig>,
+    ) -> Result<Option<SuccinctNetworkBackendConfig>, SuccinctZkProverBuildError> {
+        match (
+            Self::optional_string(self.network_private_key.as_deref()),
+            self.use_kms_requester,
+            rpc,
+        ) {
+            (None, false, _) => Ok(None),
+            (None, true, _) => Err(SuccinctZkProverBuildError::config(
+                "USE_KMS_REQUESTER requires NETWORK_PRIVATE_KEY",
+            )),
+            (Some(_), _, None) => {
+                Err(SuccinctZkProverBuildError::config("network backend requires all RPC URLs"))
+            }
+            (Some(network_private_key), use_kms_requester, Some(rpc)) => {
+                Ok(Some(SuccinctNetworkBackendConfig {
+                    rpc: rpc.clone(),
+                    network_private_key,
+                    use_kms_requester,
+                    timeout: Self::duration_from_hours(
+                        self.network_timeout_hours,
+                        "SP1_NETWORK_TIMEOUT_HOURS",
+                    )?,
+                    range_cycle_limit: self.range_cycle_limit,
+                    range_gas_limit: self.range_gas_limit,
+                    aggregation_cycle_limit: self.aggregation_cycle_limit,
+                    aggregation_gas_limit: self.aggregation_gas_limit,
+                }))
+            }
+        }
+    }
+
+    fn backend_configs(&self) -> Result<BackendConfigs, SuccinctZkProverBuildError> {
+        let rpc = match self.rpc_config() {
+            Ok(rpc) => rpc,
+            Err(_)
+                if self.enable_mock && !self.cluster_requested() && !self.network_requested() =>
+            {
+                None
+            }
+            Err(error) => return Err(error),
+        };
+        let mut configs = Vec::new();
+        if self.enable_mock {
+            configs.push((ZkBackend::Mock, SuccinctZkBackendConfig::Mock));
+        }
+
+        if let Some(rpc) = rpc.clone() {
+            configs.push((
+                ZkBackend::DryRun,
+                SuccinctZkBackendConfig::DryRun { rpc, range_cycle_limit: self.range_cycle_limit },
             ));
         }
 
-        match (network_private_key, rpc.clone()) {
-            (Some(network_private_key), Some(rpc)) => {
-                configs.push((
-                    ZkBackend::Network,
-                    SuccinctZkBackendConfig::Network(SuccinctNetworkBackendConfig {
-                        rpc,
-                        network_private_key,
-                        use_kms_requester: self.use_kms_requester,
-                        timeout: Self::duration_from_hours(
-                            self.network_timeout_hours,
-                            "SP1_NETWORK_TIMEOUT_HOURS",
-                        )?,
-                        range_cycle_limit: self.range_cycle_limit,
-                        range_gas_limit: self.range_gas_limit,
-                        aggregation_cycle_limit: self.aggregation_cycle_limit,
-                        aggregation_gas_limit: self.aggregation_gas_limit,
-                    }),
-                ));
-            }
-            (None, _) => {}
-            (Some(_), None) => {
-                return Err(SuccinctZkProverBuildError::config(
-                    "network backend requires all RPC URLs",
-                ));
-            }
+        if let Some(config) = self.cluster_config(rpc.as_ref())? {
+            configs.push((ZkBackend::Cluster, SuccinctZkBackendConfig::Cluster(config)));
         }
 
-        Ok((configs, rpc))
+        if let Some(config) = self.network_config(rpc.as_ref())? {
+            configs.push((ZkBackend::Network, SuccinctZkBackendConfig::Network(config)));
+        }
+
+        Ok(configs)
     }
 }
 
@@ -471,16 +498,28 @@ mod tests {
     #[test]
     fn backend_enablement_is_presence_based() {
         let mut config = config();
-        assert!(config.backend_configs().unwrap().0.is_empty());
+        assert!(config.backend_configs().unwrap().is_empty());
+
+        config.use_kms_requester = true;
+        assert!(config.backend_configs().is_err());
+        config.use_kms_requester = false;
+
+        config.network_private_key = Some("network-key".to_owned());
+        assert!(config.backend_configs().is_err());
+        config.network_private_key = None;
+
+        config.cluster_rpc = Some("http://cluster".to_owned());
+        assert!(config.backend_configs().is_err());
+        config.cluster_rpc = None;
 
         config.enable_mock = true;
-        let (configs, _) = config.backend_configs().unwrap();
+        let configs = config.backend_configs().unwrap();
         assert_eq!(configs.len(), 1);
         assert_eq!(configs[0].0, ZkBackend::Mock);
 
         config.enable_mock = false;
         set_rpc_config(&mut config);
-        let (configs, _) = config.backend_configs().unwrap();
+        let configs = config.backend_configs().unwrap();
         assert_eq!(configs.len(), 1);
         assert_eq!(configs[0].0, ZkBackend::DryRun);
 
@@ -488,10 +527,9 @@ mod tests {
         assert!(config.backend_configs().is_err());
 
         config.enable_mock = true;
-        let (configs, rpc) = config.backend_configs().unwrap();
+        let configs = config.backend_configs().unwrap();
         assert_eq!(configs.len(), 1);
         assert_eq!(configs[0].0, ZkBackend::Mock);
-        assert!(rpc.is_none());
 
         config.s3_bucket = Some("bucket".to_owned());
         config.s3_region = Some("region".to_owned());
@@ -500,11 +538,10 @@ mod tests {
         set_rpc_config(&mut config);
         config.cluster_rpc = Some("http://cluster".to_owned());
         config.network_private_key = Some("network-key".to_owned());
-        let (configs, rpc) = config.backend_configs().unwrap();
+        let configs = config.backend_configs().unwrap();
         assert_eq!(
             configs.iter().map(|(backend, _)| *backend).collect::<Vec<_>>(),
             vec![ZkBackend::Mock, ZkBackend::DryRun, ZkBackend::Cluster, ZkBackend::Network]
         );
-        assert!(rpc.is_some());
     }
 }
