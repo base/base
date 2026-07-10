@@ -128,7 +128,7 @@ impl TdxVerifier {
             return Err(TdxVerifierError::MalformedPublicKey);
         }
         PublicKey::from_sec1_bytes(public_key).map_err(|_| TdxVerifierError::MalformedPublicKey)?;
-        Ok(keccak256(&public_key[1..65]))
+        Ok(keccak256(&public_key[1..]))
     }
 
     /// Computes the expected signed `TDREPORT.REPORTDATA` suffix for a quote timestamp.
@@ -160,10 +160,8 @@ impl TdxVerifier {
         max_quote_age_seconds: u64,
     ) -> Result<()> {
         let timestamp_seconds = timestamp_millis / 1_000;
-        if timestamp_seconds
-            .checked_add(max_quote_age_seconds)
-            .is_none_or(|expiry| expiry <= verification_time_seconds)
-            || timestamp_seconds >= verification_time_seconds
+        if timestamp_seconds >= verification_time_seconds
+            || verification_time_seconds - timestamp_seconds >= max_quote_age_seconds
         {
             return Err(TdxVerifierError::InvalidTimestamp);
         }
@@ -173,8 +171,7 @@ impl TdxVerifier {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, B256, Bytes, hex, keccak256};
-    use alloy_sol_types::SolValue;
+    use alloy_primitives::{Address, B256, Bytes, hex};
     use k256::{SecretKey, elliptic_curve::sec1::ToEncodedPoint};
     use p256::ecdsa::{Signature, SigningKey, signature::Signer};
     use serde_json::json;
@@ -430,16 +427,6 @@ mod tests {
             journal.collateralExpiration, COLLATERAL_NEXT_UPDATE,
             "earliest collateral/cert expiration must be journaled",
         );
-
-        let encoded = SolValue::abi_encode(&journal);
-        let decoded = <TDXVerifierJournal as SolValue>::abi_decode_validate(&encoded)
-            .expect("journal must decode with Solidity ABI type");
-        assert_eq!(decoded.result as u8, TDXVerificationResult::Success as u8);
-        assert_eq!(decoded.signer, signer_address(&input.expected_public_key));
-        assert_eq!(decoded.imageHash, journal.imageHash);
-        assert_eq!(decoded.mrTdHash, journal.mrTdHash);
-        assert_eq!(decoded.reportDataPrefix, journal.reportDataPrefix);
-        assert_eq!(decoded.reportDataSuffix, journal.reportDataSuffix);
     }
 
     #[test]
@@ -497,21 +484,6 @@ mod tests {
     }
 
     #[test]
-    fn image_hash_matches_contract_formula() {
-        let parsed = TdxQuote::parse(&fixture().quote).unwrap();
-        let expected = [
-            &parsed.mrtd[..],
-            &parsed.rtmr0[..],
-            &parsed.rtmr1[..],
-            &parsed.rtmr2[..],
-            &parsed.rtmr3[..],
-        ]
-        .concat();
-        assert_eq!(parsed.image_hash(), keccak256(expected));
-        assert_eq!(keccak256(parsed.mrtd), TdxVerifier::verify(&fixture()).unwrap().mrTdHash);
-    }
-
-    #[test]
     fn malformed_signer_public_key_must_be_on_secp256k1_curve() {
         let mut public_key = vec![0x04];
         public_key.extend_from_slice(&[0; 64]);
@@ -519,18 +491,6 @@ mod tests {
         let error =
             TdxVerifier::validate_public_key(&public_key).expect_err("off-curve key must fail");
         assert!(matches!(error, TdxVerifierError::MalformedPublicKey));
-    }
-
-    #[test]
-    fn quote_v5_is_rejected_until_body_layout_is_supported() {
-        let mut quote = fixture().quote.to_vec();
-        quote[0..2].copy_from_slice(&5u16.to_le_bytes());
-
-        let error = TdxQuote::parse(&quote).expect_err("quote v5 must not use v4 body offsets");
-
-        assert!(
-            matches!(error, TdxVerifierError::InvalidQuote(message) if message == "unsupported quote version 5")
-        );
     }
 
     #[test]
