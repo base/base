@@ -41,6 +41,8 @@ pub enum BondPhase {
     AwaitingDelay {
         /// Monotonic timestamp at which withdrawal should be retried.
         ready_at: Duration,
+        /// Wall-clock Unix timestamp when the DelayedWETH delay started.
+        delay_started_at: u64,
         /// Whether `ready_at` was computed with the fallback WETH delay.
         using_default_delay: bool,
     },
@@ -428,11 +430,11 @@ impl<C: Clock> BondManager<C> {
                 self.try_unlock(game_address, verifier_client, submitter, tried_weth_delay).await,
                 BondPhase::NeedsUnlock,
             ),
-            BondPhase::AwaitingDelay { mut ready_at, using_default_delay } => {
+            BondPhase::AwaitingDelay { mut ready_at, delay_started_at, using_default_delay } => {
                 if using_default_delay {
                     self.ensure_weth_delay(verifier_client, game_address, tried_weth_delay).await;
                     if let Some(delay) = self.weth_delay {
-                        ready_at = Self::recompute_default_ready_at(ready_at, delay);
+                        ready_at = Self::delay_ready_at(&self.clock, delay_started_at, delay);
                     }
                 }
 
@@ -446,6 +448,7 @@ impl<C: Clock> BondManager<C> {
                     );
                     return Some(BondPhase::AwaitingDelay {
                         ready_at,
+                        delay_started_at,
                         using_default_delay: using_default_delay && self.weth_delay.is_none(),
                     });
                 }
@@ -460,11 +463,13 @@ impl<C: Clock> BondManager<C> {
                         game_address,
                         verifier_client,
                         submitter,
+                        delay_started_at,
                         using_default_delay,
                     )
                     .await,
                     BondPhase::AwaitingDelay {
                         ready_at: now,
+                        delay_started_at,
                         using_default_delay: using_default_delay && self.weth_delay.is_none(),
                     },
                 )
@@ -567,6 +572,7 @@ impl<C: Clock> BondManager<C> {
                 let delay = self.effective_weth_delay(game_address);
                 Ok(Some(BondPhase::AwaitingDelay {
                     ready_at: self.clock.now().saturating_add(delay),
+                    delay_started_at: self.clock.wall_clock_unix_secs(),
                     using_default_delay,
                 }))
             }
@@ -588,6 +594,7 @@ impl<C: Clock> BondManager<C> {
         game_address: Address,
         verifier_client: &dyn AggregateVerifierClient,
         submitter: &ChallengeSubmitter<T>,
+        delay_started_at: u64,
         using_default_delay: bool,
     ) -> eyre::Result<Option<BondPhase>> {
         let claimed = verifier_client.bond_claimed(game_address).await?;
@@ -617,6 +624,7 @@ impl<C: Clock> BondManager<C> {
                 );
                 Ok(Some(BondPhase::AwaitingDelay {
                     ready_at: self.clock.now().saturating_add(retry_delay),
+                    delay_started_at,
                     using_default_delay: using_default_delay && self.weth_delay.is_none(),
                 }))
             }
@@ -629,20 +637,17 @@ impl<C: Clock> BondManager<C> {
         delay: Duration,
         using_default_delay: bool,
     ) -> BondPhase {
-        let elapsed_since_resolve =
-            Duration::from_secs(clock.wall_clock_unix_secs().saturating_sub(resolved_at));
         BondPhase::AwaitingDelay {
-            ready_at: clock.now().saturating_add(delay.saturating_sub(elapsed_since_resolve)),
+            ready_at: Self::delay_ready_at(clock, resolved_at, delay),
+            delay_started_at: resolved_at,
             using_default_delay,
         }
     }
 
-    fn recompute_default_ready_at(ready_at: Duration, delay: Duration) -> Duration {
-        if delay >= Self::DEFAULT_WETH_DELAY {
-            ready_at.saturating_add(delay - Self::DEFAULT_WETH_DELAY)
-        } else {
-            ready_at.saturating_sub(Self::DEFAULT_WETH_DELAY - delay)
-        }
+    fn delay_ready_at(clock: &C, delay_started_at: u64, delay: Duration) -> Duration {
+        let elapsed =
+            Duration::from_secs(clock.wall_clock_unix_secs().saturating_sub(delay_started_at));
+        clock.now().saturating_add(delay.saturating_sub(elapsed))
     }
 
     fn effective_weth_delay(&self, game_address: Address) -> Duration {
@@ -827,6 +832,7 @@ mod tests {
     fn ready_phase() -> BondPhase {
         BondPhase::AwaitingDelay {
             ready_at: Duration::from_secs(WITHDRAW_READY_MONOTONIC_SECS),
+            delay_started_at: 2_000_000_000,
             using_default_delay: false,
         }
     }
@@ -1418,6 +1424,7 @@ mod tests {
         );
 
         mgr.clock.monotonic = Duration::from_secs(561);
+        mgr.clock.wall_unix += 61;
         let mut tried_weth_delay = false;
         let result =
             mgr.advance_game(game, phase, &*verifier, &submitter, &mut tried_weth_delay).await;
@@ -1425,6 +1432,33 @@ mod tests {
 
         assert!(result.is_none(), "withdraw should complete after recovered delay");
         assert_eq!(tx_manager.recorded_calls().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn recovered_delay_uses_original_delay_start() {
+        let claim_addr = claim_addr();
+        let game = addr(0);
+        let actual_delay = Duration::from_secs(14 * 24 * 60 * 60);
+        let resolved_at = 2_000_000_000 - (30 * 24 * 60 * 60);
+        let verifier =
+            verifier(game_state(GameStatus::ChallengerWins, claim_addr, resolved_at, true));
+        let mut mgr =
+            manager(claim_addr, empty_factory(), 1000, fixed_clock(WITHDRAW_READY_MONOTONIC_SECS));
+        mgr.weth_delay = Some(actual_delay);
+        let (submitter, tx_manager) =
+            bond_submitter(vec![Ok(receipt_with_status(true, B256::ZERO))]);
+        let phase = BondPhase::AwaitingDelay {
+            ready_at: Duration::from_secs(WITHDRAW_READY_MONOTONIC_SECS),
+            delay_started_at: resolved_at,
+            using_default_delay: true,
+        };
+        let mut tried_weth_delay = false;
+
+        let result =
+            mgr.advance_game(game, phase, &*verifier, &submitter, &mut tried_weth_delay).await;
+
+        assert!(result.is_none(), "old unlocked game should withdraw immediately");
+        assert_eq!(tx_manager.recorded_calls().len(), 1);
     }
 
     #[tokio::test]
@@ -1448,6 +1482,8 @@ mod tests {
             bond_submitter(vec![Ok(receipt_with_status(false, B256::ZERO))]);
         let phase = BondPhase::AwaitingDelay {
             ready_at: Duration::from_secs(WITHDRAW_READY_MONOTONIC_SECS),
+            delay_started_at: 2_000_000_000
+                - BondManager::<FixedClock>::DEFAULT_WETH_DELAY.as_secs(),
             using_default_delay: true,
         };
 
