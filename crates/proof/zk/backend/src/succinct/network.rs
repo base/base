@@ -11,7 +11,10 @@ use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
 use base_proof_zk_host::{ZkProver, ZkProverError, ZkSessionState};
-use base_prover_service_protocol::{ProofResult, SessionType, ZkProofRequest, ZkProofResult, ZkVm};
+use base_prover_service_protocol::{
+    ProofResult, SessionType, SnarkGroth16ProofRequest, SnarkGroth16ProofResult, ZkProofRequest,
+    ZkProofResult, ZkVm,
+};
 use sp1_sdk::{
     HashableKey, NetworkProver, ProveRequest, Prover, ProverClient, ProvingKey,
     SP1ProofWithPublicValues, SP1ProvingKey,
@@ -53,6 +56,10 @@ pub struct SuccinctNetworkBackendConfig {
     pub range_cycle_limit: u64,
     /// Gas limit for range proof requests.
     pub range_gas_limit: u64,
+    /// Cycle limit for aggregation proof requests.
+    pub aggregation_cycle_limit: u64,
+    /// Gas limit for aggregation proof requests.
+    pub aggregation_gas_limit: u64,
 }
 
 impl fmt::Debug for SuccinctNetworkBackendConfig {
@@ -64,6 +71,8 @@ impl fmt::Debug for SuccinctNetworkBackendConfig {
             .field("timeout", &self.timeout)
             .field("range_cycle_limit", &self.range_cycle_limit)
             .field("range_gas_limit", &self.range_gas_limit)
+            .field("aggregation_cycle_limit", &self.aggregation_cycle_limit)
+            .field("aggregation_gas_limit", &self.aggregation_gas_limit)
             .finish()
     }
 }
@@ -81,26 +90,36 @@ pub struct NetworkZkProverConfig {
     pub network_prover: Arc<NetworkProver>,
     /// Range program proving key.
     pub range_pk: Arc<SP1ProvingKey>,
+    /// Aggregation program proving key.
+    pub aggregation_pk: Arc<SP1ProvingKey>,
     /// Proof timeout.
     pub timeout: Duration,
     /// Cycle limit for range proof requests.
     pub range_cycle_limit: u64,
     /// Gas limit for range proof requests.
     pub range_gas_limit: u64,
+    /// Cycle limit for aggregation proof requests.
+    pub aggregation_cycle_limit: u64,
+    /// Gas limit for aggregation proof requests.
+    pub aggregation_gas_limit: u64,
 }
 
 impl fmt::Debug for NetworkZkProverConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let range_pk = self.range_pk.verifying_key().bytes32();
+        let aggregation_pk = self.aggregation_pk.verifying_key().bytes32();
 
         f.debug_struct("NetworkZkProverConfig")
             .field("base_consensus_url", &self.base_consensus_url)
             .field("l1_node_url", &self.l1_node_url)
             .field("default_sequence_window", &self.default_sequence_window)
             .field("range_pk", &range_pk)
+            .field("aggregation_pk", &aggregation_pk)
             .field("timeout", &self.timeout)
             .field("range_cycle_limit", &self.range_cycle_limit)
             .field("range_gas_limit", &self.range_gas_limit)
+            .field("aggregation_cycle_limit", &self.aggregation_cycle_limit)
+            .field("aggregation_gas_limit", &self.aggregation_gas_limit)
             .finish_non_exhaustive()
     }
 }
@@ -136,30 +155,33 @@ impl NetworkZkProver {
             timeout,
             range_cycle_limit,
             range_gas_limit,
+            aggregation_cycle_limit,
+            aggregation_gas_limit,
         } = config;
         let base_consensus_url = rpc.base_consensus_rpc.as_str().to_owned();
         let l1_node_url = rpc.l1_rpc.as_str().to_owned();
         let default_sequence_window = rpc.default_sequence_window;
 
         info!(backend = "network", "using Succinct SP1 Network backend");
-        info!("computing range proving key");
-        let Some(range_pk) = SuccinctZkProverBuilder::complete_unless_cancelled(
-            cancel,
-            async {
-                base_proof_succinct_proof_utils::cluster_setup_range_key().await.map_err(|error| {
-                    SuccinctZkProverBuildError::boxed_operation(
-                        "failed to compute range proving key",
-                        error.into_boxed_dyn_error(),
-                    )
-                })
-            },
-            "range_proving_key",
-        )
-        .await?
+        info!("computing range and aggregation proving keys");
+        let Some((range_pk, _range_vk, aggregation_pk, _aggregation_vk)) =
+            SuccinctZkProverBuilder::complete_unless_cancelled(
+                cancel,
+                async {
+                    base_proof_succinct_proof_utils::cluster_setup_keys().await.map_err(|error| {
+                        SuccinctZkProverBuildError::boxed_operation(
+                            "failed to compute proving keys",
+                            error.into_boxed_dyn_error(),
+                        )
+                    })
+                },
+                "proving_keys",
+            )
+            .await?
         else {
             return Ok(None);
         };
-        info!("range proving key computed successfully");
+        info!("range and aggregation proving keys computed successfully");
 
         let Some(provider) = SuccinctZkProverBuilder::build_witness_provider(rpc, cancel).await?
         else {
@@ -204,9 +226,12 @@ impl NetworkZkProver {
             default_sequence_window,
             network_prover,
             range_pk: range_pk.into(),
+            aggregation_pk: aggregation_pk.into(),
             timeout,
             range_cycle_limit,
             range_gas_limit,
+            aggregation_cycle_limit,
+            aggregation_gas_limit,
         };
 
         Ok(Some(Arc::new(Self::new(provider, prover_config))))
@@ -366,6 +391,83 @@ impl NetworkZkProver {
 
         Ok(proof_id.to_string())
     }
+
+    /// Submit the Groth16 aggregation proof after the compressed range proof completes.
+    ///
+    /// Unlike the cluster backend, the SP1 Network assigns the proof id, so this submission
+    /// cannot be made idempotent: a crash after the network accepts the request but before the
+    /// host records the SNARK session will orphan the request and re-submit a fresh one on
+    /// resume. The orphaned proof only wastes proving resources; it does not affect correctness.
+    pub async fn submit_aggregation_proof(
+        &self,
+        request: &SnarkGroth16ProofRequest,
+        request_session_id: &str,
+        range_backend_session_id: &str,
+    ) -> Result<String, ZkProverError> {
+        info!(
+            request_session_id = %request_session_id,
+            range_backend_session_id = %range_backend_session_id,
+            "submitting non-idempotent network aggregation; a crash before the snark session is \
+             recorded will orphan this request and re-submit on resume"
+        );
+
+        let (state, range_proof) = self.get_network_proof_status(range_backend_session_id).await?;
+        if state != ZkSessionState::Completed {
+            return Err(backend_error!(
+                "network range proof {range_backend_session_id} is not completed"
+            ));
+        }
+        let range_proof = range_proof.ok_or_else(|| {
+            backend_error!(
+                "network range proof {range_backend_session_id} completed without a proof"
+            )
+        })?;
+
+        let witness_start = std::time::Instant::now();
+        let stdin = self
+            .provider
+            .generate_aggregation_witness(
+                range_proof,
+                self.config.range_pk.verifying_key(),
+                request.prover_address,
+            )
+            .await
+            .map_err(|e| backend_error!("aggregation witness generation failed: {e}"))?;
+        let witness_gen_duration_ms = witness_start.elapsed().as_secs_f64() * 1000.0;
+
+        info!(
+            request_session_id = %request_session_id,
+            witness_gen_duration_ms = witness_gen_duration_ms,
+            aggregation_cycle_limit = self.config.aggregation_cycle_limit,
+            aggregation_gas_limit = self.config.aggregation_gas_limit,
+            "aggregation witness generated, submitting Groth16 proof to SP1 Network"
+        );
+
+        let proof_id = self
+            .config
+            .network_prover
+            .prove(self.config.aggregation_pk.as_ref(), stdin)
+            .groth16()
+            .skip_simulation(true)
+            .strategy(FulfillmentStrategy::Auction)
+            .timeout(self.config.timeout)
+            .cycle_limit(self.config.aggregation_cycle_limit)
+            .gas_limit(self.config.aggregation_gas_limit)
+            .request()
+            .await
+            .map_err(|e| {
+                error!(error = %e, "failed to submit aggregation proof to SP1 Network");
+                backend_error!("failed to submit aggregation to SP1 Network: {e}")
+            })?;
+
+        info!(
+            request_session_id = %request_session_id,
+            proof_id = %proof_id,
+            "aggregation proof request submitted to SP1 Network"
+        );
+
+        Ok(proof_id.to_string())
+    }
 }
 
 #[async_trait]
@@ -378,6 +480,16 @@ impl ZkProver for NetworkZkProver {
         self.submit_range_proof(request, request_session_id).await
     }
 
+    async fn submit_next(
+        &self,
+        request: &SnarkGroth16ProofRequest,
+        request_session_id: &str,
+        completed_backend_session_id: &str,
+    ) -> Result<String, ZkProverError> {
+        self.submit_aggregation_proof(request, request_session_id, completed_backend_session_id)
+            .await
+    }
+
     async fn poll(&self, backend_session_id: &str) -> Result<ZkSessionState, ZkProverError> {
         let (state, _proof) = self.get_network_proof_status(backend_session_id).await?;
 
@@ -386,7 +498,7 @@ impl ZkProver for NetworkZkProver {
 
     async fn download(
         &self,
-        _session_type: SessionType,
+        session_type: SessionType,
         backend_session_id: &str,
     ) -> Result<ProofResult, ZkProverError> {
         let (state, proof) = self.get_network_proof_status(backend_session_id).await?;
@@ -409,10 +521,10 @@ impl ZkProver for NetworkZkProver {
         let proof = bincode::serde::encode_to_vec(&proof, bincode::config::standard())
             .map_err(|e| backend_error!("failed to serialize proof: {e}"))?;
 
-        Ok(ProofResult::Compressed(ZkProofResult {
-            zk_vm: ZkVm::Sp1,
-            proof: proof.into(),
-            execution_stats: None,
-        }))
+        let proof = ZkProofResult { zk_vm: ZkVm::Sp1, proof: proof.into(), execution_stats: None };
+        match session_type {
+            SessionType::Snark => Ok(ProofResult::SnarkGroth16(SnarkGroth16ProofResult { proof })),
+            SessionType::Stark => Ok(ProofResult::Compressed(proof)),
+        }
     }
 }

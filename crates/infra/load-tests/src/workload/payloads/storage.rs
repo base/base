@@ -1,9 +1,19 @@
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_rpc_types::TransactionRequest;
+use alloy_sol_types::{SolCall, sol};
 
 use super::Payload;
 use crate::workload::SeededRng;
+
+/// Gas budgeted per fresh storage slot. A cold zero -> non-zero SSTORE is 22,100
+/// gas; the extra ~900 covers the per-iteration loop, keccak mixing, and warm
+/// SLOAD overhead so the tx does not run out of gas on the last slots.
+const STORAGE_GAS_PER_SLOT: u64 = 23_000;
+
+/// Fixed per-tx gas overhead: 21,000 intrinsic + calldata + selector dispatch +
+/// the single keccak256 over the slot-key preimage.
+const STORAGE_GAS_BASE: u64 = 30_000;
 
 /// Generates storage-heavy transactions that write to contract slots.
 #[derive(Debug, Clone)]
@@ -21,11 +31,13 @@ impl StoragePayload {
     }
 
     fn encode_fill_storage(slot_count: u32, seed: u64) -> Bytes {
-        let mut data = Vec::with_capacity(4 + 32 + 32);
-        data.extend_from_slice(&[0x12, 0x34, 0x56, 0x78]);
-        data.extend_from_slice(&U256::from(slot_count).to_be_bytes::<32>());
-        data.extend_from_slice(&U256::from(seed).to_be_bytes::<32>());
-        Bytes::from(data)
+        sol! {
+            function fillStorage(uint256 slotCount, uint256 seed) external;
+        }
+        Bytes::from(
+            fillStorageCall { slotCount: U256::from(slot_count), seed: U256::from(seed) }
+                .abi_encode(),
+        )
     }
 }
 
@@ -45,6 +57,6 @@ impl Payload for StoragePayload {
         TransactionRequest::default()
             .with_to(self.contract)
             .with_input(data)
-            .with_gas_limit(u64::from(self.slots_per_tx) * 22_000 + 21_000)
+            .with_gas_limit(u64::from(self.slots_per_tx) * STORAGE_GAS_PER_SLOT + STORAGE_GAS_BASE)
     }
 }

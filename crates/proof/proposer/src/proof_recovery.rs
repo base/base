@@ -3,9 +3,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::Address;
-use base_proof_contracts::{
-    AnchorStateRegistryClient, DisputeGameFactoryClient, encode_extra_data,
-};
+use base_proof_contracts::{AnchorStateRegistryClient, DisputeGameFactoryClient, game_lookup_key};
 use base_proof_rpc::{RollupProvider, RpcError};
 use futures::{StreamExt, TryStreamExt, stream};
 use tracing::{debug, info, warn};
@@ -240,22 +238,23 @@ impl ProofRecovery {
                 }
             };
 
-            let canonical_root = *intermediate_roots.last().ok_or_else(|| {
-                ProposerError::Internal(format!(
-                    "missing canonical root for expected block {expected_block}"
-                ))
-            })?;
-
-            let extra_data =
-                encode_extra_data(expected_block, state.parent_address, &intermediate_roots);
+            let key = game_lookup_key(
+                state.l2_block_number,
+                state.parent_address,
+                self.config.block_interval,
+                self.config.intermediate_block_interval,
+                &intermediate_roots,
+            )
+            .map_err(|e| ProposerError::Config(e.to_string()))?;
 
             let lookup = self
                 .factory_client
-                .games(self.config.game_type, canonical_root, extra_data)
+                .games(self.config.game_type, key.root_claim, key.extra_data)
                 .await
                 .map_err(|e| {
                     ProposerError::Contract(format!(
-                        "games lookup failed at block {expected_block}: {e}"
+                        "games lookup failed at block {}: {e}",
+                        key.target_block
                     ))
                 })?;
 
@@ -271,8 +270,8 @@ impl ProofRecovery {
 
             state = RecoveredState {
                 parent_address: lookup,
-                output_root: canonical_root,
-                l2_block_number: expected_block,
+                output_root: key.root_claim,
+                l2_block_number: key.target_block,
             };
         }
 
@@ -293,7 +292,7 @@ mod tests {
     use std::{collections::HashMap, sync::Arc};
 
     use alloy_primitives::{Address, B256};
-    use base_proof_contracts::{AnchorRoot, encode_extra_data};
+    use base_proof_contracts::AnchorRoot;
 
     use super::*;
     use crate::test_utils::{
@@ -339,10 +338,17 @@ mod tests {
             })
             .collect::<Vec<_>>();
             output_roots.insert(block, root_claim);
-            let extra_data = encode_extra_data(block, parent, &intermediate_roots);
+            let key = game_lookup_key(
+                parent_block,
+                parent,
+                block_interval,
+                intermediate_block_interval,
+                &intermediate_roots,
+            )
+            .unwrap();
             let proxy = proxy_addr(i as u64);
 
-            uuid_games.insert((TEST_GAME_TYPE, root_claim, extra_data), proxy);
+            uuid_games.insert((TEST_GAME_TYPE, key.root_claim, key.extra_data), proxy);
 
             parent = proxy;
         }

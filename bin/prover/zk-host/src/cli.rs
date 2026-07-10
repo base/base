@@ -259,6 +259,8 @@ impl WorkerArgs {
                     )?,
                     range_cycle_limit: self.range_cycle_limit,
                     range_gas_limit: self.range_gas_limit,
+                    aggregation_cycle_limit: self.aggregation_cycle_limit,
+                    aggregation_gas_limit: self.aggregation_gas_limit,
                 }))
             }
         }
