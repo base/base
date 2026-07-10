@@ -181,4 +181,25 @@ mod tests {
         let err = SealTaskError::PayloadInsertionFailed(Box::new(insert_err));
         assert_eq!(err.is_fatal(), expected);
     }
+
+    #[rstest]
+    #[case::holocene_invalid_flush(SealTaskError::HoloceneInvalidFlush, EngineTaskErrorSeverity::Flush)]
+    #[case::unsafe_head_changed(
+        SealTaskError::UnsafeHeadChangedSinceBuild,
+        EngineTaskErrorSeverity::Reset
+    )]
+    #[case::get_payload_failed(
+        SealTaskError::GetPayloadFailed(rpc_error()),
+        EngineTaskErrorSeverity::Temporary
+    )]
+    #[case::deposit_only_failed(
+        SealTaskError::DepositOnlyPayloadFailed,
+        EngineTaskErrorSeverity::Critical
+    )]
+    fn seal_task_error_severity(
+        #[case] error: SealTaskError,
+        #[case] expected: EngineTaskErrorSeverity,
+    ) {
+        assert_eq!(error.severity(), expected);
+    }
 }
