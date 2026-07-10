@@ -40,71 +40,39 @@ pub fn for_upgrade(upgrade: BaseUpgrade) -> Version {
     if upgrade >= BaseUpgrade::Cobalt { Version::V2 } else { Version::V1 }
 }
 
-// --- Version dispatch: plain functions that route a resolved `Version` to the frozen module.
-// Whole-version selection — one `Version` per call, every cluster method routed the same way.
-
-/// Runs `transfer` under behavior generation `version`.
-pub(crate) fn transfer<T: Token>(
-    version: Version,
-    t: &mut T,
-    from: Address,
-    to: Address,
-    amount: U256,
-    privileged: bool,
-) -> Result<()> {
-    match version {
-        Version::V1 => v1::transfer(t, from, to, amount, privileged),
-        Version::V2 => v2::transfer(t, from, to, amount, privileged),
-    }
+// --- Version dispatch --------------------------------------------------------------------------
+//
+// `versioned_ops!` generates one plain routing function per op: it matches the resolved `Version`
+// and calls the identically-named function in that version's frozen module. It generates ONLY the
+// dumb routing — behavior lives in the hand-written, frozen `v1`/`v2` modules below.
+//
+// The version arms are the SINGLE canonical list, written once here in the macro body. Adding a
+// `Version` variant is one new arm (e.g. `Version::V3 => v3::$op(...)`) that applies to every op at
+// once. The `match` has NO wildcard, so a new `Version` fails to compile until this arm is added.
+macro_rules! versioned_ops {
+    ( $( $op:ident ( $($arg:ident : $arg_ty:ty),* $(,)? ); )+ ) => {
+        $(
+            pub(crate) fn $op<T: Token>(
+                version: Version,
+                t: &mut T,
+                $($arg: $arg_ty),*
+            ) -> Result<()> {
+                match version {
+                    Version::V1 => v1::$op(t, $($arg),*),
+                    Version::V2 => v2::$op(t, $($arg),*),
+                }
+            }
+        )+
+    };
 }
 
-/// Runs `transfer_from` under behavior generation `version`.
-pub(crate) fn transfer_from<T: Token>(
-    version: Version,
-    t: &mut T,
-    spender: Address,
-    from: Address,
-    to: Address,
-    amount: U256,
-    privileged: bool,
-) -> Result<()> {
-    match version {
-        Version::V1 => v1::transfer_from(t, spender, from, to, amount, privileged),
-        Version::V2 => v2::transfer_from(t, spender, from, to, amount, privileged),
-    }
-}
-
-/// Runs `transfer_with_memo` under behavior generation `version`.
-pub(crate) fn transfer_with_memo<T: Token>(
-    version: Version,
-    t: &mut T,
-    from: Address,
-    to: Address,
-    amount: U256,
-    memo: B256,
-    privileged: bool,
-) -> Result<()> {
-    match version {
-        Version::V1 => v1::transfer_with_memo(t, from, to, amount, memo, privileged),
-        Version::V2 => v2::transfer_with_memo(t, from, to, amount, memo, privileged),
-    }
-}
-
-/// Runs `transfer_from_with_memo` under behavior generation `version`.
-pub(crate) fn transfer_from_with_memo<T: Token>(
-    version: Version,
-    t: &mut T,
-    spender: Address,
-    from: Address,
-    to: Address,
-    amount: U256,
-    memo: B256,
-    privileged: bool,
-) -> Result<()> {
-    match version {
-        Version::V1 => v1::transfer_from_with_memo(t, spender, from, to, amount, memo, privileged),
-        Version::V2 => v2::transfer_from_with_memo(t, spender, from, to, amount, memo, privileged),
-    }
+versioned_ops! {
+    transfer(from: Address, to: Address, amount: U256, privileged: bool);
+    transfer_from(spender: Address, from: Address, to: Address, amount: U256, privileged: bool);
+    transfer_with_memo(from: Address, to: Address, amount: U256, memo: B256, privileged: bool);
+    transfer_from_with_memo(
+        spender: Address, from: Address, to: Address, amount: U256, memo: B256, privileged: bool
+    );
 }
 
 /// Genesis behavior — a verbatim port of `common/ops/transferable.rs`. FROZEN once shipped.
