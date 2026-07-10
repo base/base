@@ -62,6 +62,14 @@ pub enum EngineActorRequest {
     ProcessLocalUnsafeL2BlockRequest(Box<InsertUnsafePayloadRequest>),
     /// Request to reset engine forkchoice.
     ResetRequest(Box<ResetRequest>),
+    /// Request to force the backup-unsafe-reorg sticky flag.
+    #[cfg(test)]
+    SetNeedFcuCallBackupUnsafeReorgRequest {
+        /// New sticky-flag value.
+        value: bool,
+        /// Acks once the value has been applied.
+        result_tx: tokio::sync::oneshot::Sender<()>,
+    },
 }
 
 /// RPC Request for the engine to handle.

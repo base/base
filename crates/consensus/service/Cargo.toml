@@ -86,6 +86,10 @@ metrics = { workspace = true, optional = true }
 rand.workspace = true
 rstest.workspace = true
 anyhow.workspace = true
+proptest = "1"
+proptest-state-machine = "0.3"
+tokio = { workspace = true, features = ["test-util"] }
+alloy-network.workspace = true
 mockall.workspace = true
 tempfile.workspace = true
 arbitrary.workspace = true

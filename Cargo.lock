@@ -4135,6 +4135,7 @@ dependencies = [
  "alloy-consensus 2.0.5",
  "alloy-eips 2.0.5",
  "alloy-genesis 2.0.5",
+ "alloy-network 2.0.5",
  "alloy-primitives",
  "alloy-provider 2.0.5",
  "alloy-rpc-client 2.0.5",
@@ -4182,6 +4183,8 @@ dependencies = [
  "metrics",
  "mockall",
  "opentelemetry 0.31.0",
+ "proptest",
+ "proptest-state-machine",
  "rand 0.9.4",
  "redb",
  "reqwest 0.13.4",
@@ -15379,6 +15382,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "proptest-state-machine"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e943d140e09d07740fb496487c51fb8eb31c70389ac4a2e9dcd8a0d9fdf228d4"
+dependencies = [
+ "proptest",
 ]
 
 [[package]]

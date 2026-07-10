@@ -858,6 +858,16 @@ where
                             reset_res?;
                         }
                     }
+                    #[cfg(test)]
+                    EngineActorRequest::SetNeedFcuCallBackupUnsafeReorgRequest {
+                        value,
+                        result_tx,
+                    } => {
+                        self.engine.set_need_fcu_call_backup_unsafe_reorg(value);
+                        if result_tx.send(()).is_err() {
+                            warn!(target: "engine", "test observer dropped backup-unsafe-reorg ack receiver");
+                        }
+                    }
                 }
             }
         })
