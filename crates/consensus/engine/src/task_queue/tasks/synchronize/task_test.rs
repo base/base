@@ -303,10 +303,7 @@ async fn syncing_then_valid_advances_state_on_second_call() {
     assert!(state.el_sync_finished);
 }
 
-mod tests {
-    use super::*;
-
-    mod forkchoice_update_commit_policy {
+mod forkchoice_update_commit_policy {
     //! Design decision: `MockEngineClient` is sufficient here because we only need one
     //! scripted `fork_choice_updated_v3` response per execution and no call-sequence
     //! assertions or per-call response queueing.
@@ -540,6 +537,5 @@ mod tests {
                 }
             }
         }
-    }
     }
 }

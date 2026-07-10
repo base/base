@@ -408,7 +408,11 @@ mod tests {
         }
     }
 
-    fn pruned_tip_block(number: u64, parent_hash: B256, has_l1_info: bool) -> RpcBlock<Transaction> {
+    fn pruned_tip_block(
+        number: u64,
+        parent_hash: B256,
+        has_l1_info: bool,
+    ) -> RpcBlock<Transaction> {
         let mut block = RpcBlock::<Transaction>::default();
         block.header.inner.number = number;
         block.header.inner.parent_hash = parent_hash;
@@ -508,7 +512,7 @@ mod tests {
                     .with_l2_block(
                         BlockId::Number(10u64.into()),
                         pruned_tip_block(10, pruned_tip_parent_hash(9), false),
-                );
+                    );
                 10
             }
             PrunedTipScenario::PrunedAboveBoundary => {

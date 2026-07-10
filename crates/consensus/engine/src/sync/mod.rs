@@ -249,7 +249,10 @@ mod tests {
             block_info: BlockInfo::from(
                 &block.clone().into_consensus().map_transactions(|tx| tx.inner.inner.into_inner()),
             ),
-            l1_origin: BlockNumHash { number: 1, hash: b256!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") },
+            l1_origin: BlockNumHash {
+                number: 1,
+                hash: b256!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+            },
             seq_num: 0,
         }
     }
@@ -343,22 +346,25 @@ mod tests {
             ..Default::default()
         };
 
-        let finalized_labeled_pruned =
-            l2_block_without_l1_info(10, b256!("0303030303030303030303030303030303030303030303030303030303030303"));
+        let finalized_labeled_pruned = l2_block_without_l1_info(
+            10,
+            b256!("0303030303030303030303030303030303030303030303030303030303030303"),
+        );
         let safe_labeled_pruned = l2_block_without_l1_info(
             11,
             finalized_labeled_pruned.clone().into_consensus().hash_slow(),
         );
         let safe_labeled_hash = safe_labeled_pruned.clone().into_consensus().hash_slow();
-        let middle_unpruned = l2_block_with_l1_info(11, b256!("0404040404040404040404040404040404040404040404040404040404040404"));
+        let middle_unpruned = l2_block_with_l1_info(
+            11,
+            b256!("0404040404040404040404040404040404040404040404040404040404040404"),
+        );
         let latest_unpruned = l2_block_with_l1_info(12, safe_labeled_hash);
 
         let checkpoint_safe = checkpoint_from_header(&safe_labeled_pruned);
         let checkpoint_finalized = checkpoint_from_header(&finalized_labeled_pruned);
-        let checkpoint_reader = ScriptedCheckpointReader {
-            safe: checkpoint_safe,
-            finalized: checkpoint_finalized,
-        };
+        let checkpoint_reader =
+            ScriptedCheckpointReader { safe: checkpoint_safe, finalized: checkpoint_finalized };
 
         let client = Arc::new(
             test_engine_client_builder()
@@ -392,7 +398,8 @@ mod tests {
         };
 
         if use_scripted_checkpoint_reader {
-            let forkchoice = result.expect("scripted checkpoint reader should recover pruned labels");
+            let forkchoice =
+                result.expect("scripted checkpoint reader should recover pruned labels");
             assert_eq!(forkchoice.safe, checkpoint_safe);
             assert_eq!(forkchoice.finalized, checkpoint_finalized);
         } else {
