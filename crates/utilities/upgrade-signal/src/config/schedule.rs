@@ -37,7 +37,7 @@ impl UpgradeSignalConfig {
             upgrade_ids: vec![upgrade_id],
             mode: UpgradeSignalMode::MetricsOnly,
             l1_block_tag: BlockNumberOrTag::Finalized,
-            node_protocol_version: U256::from(UpgradeSignalDefaults::NODE_PROTOCOL_VERSION),
+            node_protocol_version: UpgradeSignalDefaults::NODE_PROTOCOL_VERSION,
         }
     }
 

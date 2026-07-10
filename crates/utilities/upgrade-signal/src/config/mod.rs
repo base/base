@@ -2,6 +2,8 @@
 
 use core::time::Duration;
 
+use alloy_primitives::U256;
+
 mod args;
 pub use args::{UpgradeSignalArgs, UpgradeSignalL1RpcArgs, UpgradeSignalStartupConfig};
 
@@ -28,9 +30,17 @@ impl UpgradeSignalDefaults {
     /// Default backoff between L1 upgrade signal schedule read attempts.
     pub const READ_BACKOFF: Duration = Duration::from_secs(2);
 
-    /// Node protocol version supported by this binary for contract-backed upgrade signals.
+    /// Node protocol version supported by this binary for contract-backed upgrade signals
+    /// (packed semver `1.1.0`).
     ///
     /// Contract schedules with a higher minimum protocol version are rejected before any timestamp is
     /// applied. Bump this with the node software that fully implements the next dynamic upgrade.
-    pub const NODE_PROTOCOL_VERSION: u64 = 7;
+    pub const NODE_PROTOCOL_VERSION: U256 = Self::packed_protocol_version(1, 1, 0);
+
+    /// Encodes a `major.minor.patch` version into the packed-semver `uint256` layout used by the
+    /// L1 `ProtocolVersions` contract: `major << 96 | minor << 64 | patch << 32`, with the
+    /// prerelease field left zero.
+    pub const fn packed_protocol_version(major: u32, minor: u32, patch: u32) -> U256 {
+        U256::from_limbs([(patch as u64) << 32, ((major as u64) << 32) | minor as u64, 0, 0])
+    }
 }

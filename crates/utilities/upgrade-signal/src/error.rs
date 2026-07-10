@@ -1,7 +1,5 @@
 //! Upgrade signal error types.
 
-use alloy_primitives::U256;
-
 /// Error returned by upgrade signal readers.
 #[derive(Debug, thiserror::Error)]
 pub enum UpgradeSignalError {
@@ -21,9 +19,6 @@ pub enum UpgradeSignalError {
         /// Decode error string.
         error: String,
     },
-    /// The activation timestamp does not fit in a `u64`.
-    #[error("activation timestamp {0} does not fit in u64")]
-    TimestampOverflow(U256),
     /// A positive activation timestamp was not paired with a minimum node protocol version.
     #[error(
         "upgrade signal for {0} has an activation timestamp but no minimum node protocol version"
@@ -58,11 +53,6 @@ impl UpgradeSignalError {
     /// Creates a decode error.
     pub fn decode(context: &'static str, error: impl ToString) -> Self {
         Self::Decode { context, error: error.to_string() }
-    }
-
-    /// Creates a timestamp overflow error.
-    pub const fn timestamp_overflow(value: U256) -> Self {
-        Self::TimestampOverflow(value)
     }
 
     /// Creates a missing protocol version error.
