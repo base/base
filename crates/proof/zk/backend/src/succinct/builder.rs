@@ -6,7 +6,7 @@ use base_proof_succinct_host_utils::fetcher::{OPSuccinctDataFetcher, RPCConfig};
 use base_proof_zk_host::{ZkBackend, ZkProver};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{info, warn};
 use url::Url;
 
 use crate::succinct::{
@@ -234,16 +234,12 @@ impl SuccinctZkProversConfig {
         Ok(Duration::from_secs(seconds))
     }
 
-    fn cluster_requested(&self) -> bool {
-        [self.cluster_rpc.as_deref(), self.s3_bucket.as_deref(), self.s3_region.as_deref()]
-            .into_iter()
-            .flatten()
-            .any(|value| !value.trim().is_empty())
+    fn cluster_requires_rpc(&self) -> bool {
+        self.cluster_rpc.as_deref().is_some_and(|value| !value.trim().is_empty())
     }
 
-    fn network_requested(&self) -> bool {
-        self.use_kms_requester
-            || self.network_private_key.as_deref().is_some_and(|value| !value.trim().is_empty())
+    fn network_requires_rpc(&self) -> bool {
+        self.network_private_key.as_deref().is_some_and(|value| !value.trim().is_empty())
     }
 
     fn cluster_config(
@@ -321,32 +317,42 @@ impl SuccinctZkProversConfig {
     }
 
     fn backend_configs(&self) -> Result<BackendConfigs, SuccinctZkProverBuildError> {
-        let rpc = match self.rpc_config() {
-            Ok(rpc) => rpc,
-            Err(_)
-                if self.enable_mock && !self.cluster_requested() && !self.network_requested() =>
+        let (rpc, ignored_rpc_error) = match self.rpc_config() {
+            Ok(rpc) => (rpc, None),
+            Err(error)
+                if self.enable_mock
+                    && !self.cluster_requires_rpc()
+                    && !self.network_requires_rpc() =>
             {
-                None
+                (None, Some(error))
             }
             Err(error) => return Err(error),
         };
+        let cluster = self.cluster_config(rpc.as_ref())?;
+        let network = self.network_config(rpc.as_ref())?;
+        if let Some(error) = ignored_rpc_error {
+            warn!(
+                error = %error,
+                "ignoring incomplete RPC configuration for mock-only host"
+            );
+        }
         let mut configs = Vec::new();
         if self.enable_mock {
             configs.push((ZkBackend::Mock, SuccinctZkBackendConfig::Mock));
         }
 
-        if let Some(rpc) = rpc.clone() {
+        if let Some(rpc) = rpc {
             configs.push((
                 ZkBackend::DryRun,
                 SuccinctZkBackendConfig::DryRun { rpc, range_cycle_limit: self.range_cycle_limit },
             ));
         }
 
-        if let Some(config) = self.cluster_config(rpc.as_ref())? {
+        if let Some(config) = cluster {
             configs.push((ZkBackend::Cluster, SuccinctZkBackendConfig::Cluster(config)));
         }
 
-        if let Some(config) = self.network_config(rpc.as_ref())? {
+        if let Some(config) = network {
             configs.push((ZkBackend::Network, SuccinctZkBackendConfig::Network(config)));
         }
 
@@ -533,7 +539,10 @@ mod tests {
 
         config.s3_bucket = Some("bucket".to_owned());
         config.s3_region = Some("region".to_owned());
-        assert!(config.backend_configs().is_err());
+        assert_eq!(
+            config.backend_configs().unwrap_err().to_string(),
+            "configuration error: cluster backend requires SP1_CLUSTER_API_ENDPOINT"
+        );
 
         set_rpc_config(&mut config);
         config.cluster_rpc = Some("http://cluster".to_owned());
