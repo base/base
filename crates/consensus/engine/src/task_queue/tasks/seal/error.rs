@@ -183,7 +183,10 @@ mod tests {
     }
 
     #[rstest]
-    #[case::holocene_invalid_flush(SealTaskError::HoloceneInvalidFlush, EngineTaskErrorSeverity::Flush)]
+    #[case::holocene_invalid_flush(
+        SealTaskError::HoloceneInvalidFlush,
+        EngineTaskErrorSeverity::Flush
+    )]
     #[case::unsafe_head_changed(
         SealTaskError::UnsafeHeadChangedSinceBuild,
         EngineTaskErrorSeverity::Reset
@@ -195,6 +198,22 @@ mod tests {
     #[case::deposit_only_failed(
         SealTaskError::DepositOnlyPayloadFailed,
         EngineTaskErrorSeverity::Critical
+    )]
+    #[case::deposit_only_reattempt_failed(
+        SealTaskError::DepositOnlyPayloadReattemptFailed,
+        EngineTaskErrorSeverity::Critical
+    )]
+    #[case::from_block(
+        SealTaskError::FromBlock(FromBlockError::InvalidGenesisHash),
+        EngineTaskErrorSeverity::Critical
+    )]
+    #[case::clock_went_backwards(
+        SealTaskError::ClockWentBackwards,
+        EngineTaskErrorSeverity::Critical
+    )]
+    #[case::unexpected_payload_version(
+        SealTaskError::UnexpectedPayloadVersion("V3".to_string()),
+        EngineTaskErrorSeverity::Temporary
     )]
     fn seal_task_error_severity(
         #[case] error: SealTaskError,
