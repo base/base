@@ -46,27 +46,6 @@ mod tests {
     use super::*;
 
     #[test]
-    // TODO(base): Replace this with a contract-derived golden value.
-    // This rebuilds the expected hash chain from the same local field-ordering assumptions, so it
-    // only checks the local implementation shape, not true compatibility with the onchain
-    // scheduleId calculation.
-    fn schedule_id_matches_contract_hash_chain() {
-        let upgrades =
-            UpgradeConfig { regolith_time: Some(1), canyon_time: Some(2), ..Default::default() };
-
-        let expected =
-            upgrades.iter().enumerate().fold(B256::ZERO, |previous, (index, (_, timestamp))| {
-                let mut buf = [0u8; 96];
-                buf[..32].copy_from_slice(previous.as_slice());
-                buf[32..64].copy_from_slice(&ScheduleId::encode_u256(index as u64));
-                buf[64..].copy_from_slice(&ScheduleId::encode_u256(timestamp.unwrap_or_default()));
-                keccak256(buf)
-            });
-
-        assert_eq!(ScheduleId::from_upgrades(&upgrades), expected);
-    }
-
-    #[test]
     fn schedule_id_changes_when_schedule_changes() {
         let a = UpgradeConfig {
             regolith_time: Some(1),

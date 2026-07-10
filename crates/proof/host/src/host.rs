@@ -16,7 +16,7 @@ use tokio::{
     sync::RwLock,
     task::{self, JoinHandle},
 };
-use tracing::{Instrument, info, info_span};
+use tracing::{Instrument, info, info_span, warn};
 
 #[cfg(feature = "disk")]
 use crate::DiskKeyValueStore;
@@ -44,7 +44,12 @@ impl Host {
     where
         C: Channel + Send + Sync + 'static,
     {
-        let task_handle = if self.config.is_offline() {
+        let task_handle = if let Some(data_dir) = &self.config.data_dir {
+            warn!(
+                l2_chain_id = self.config.prover.l2_chain_id,
+                data_dir = %data_dir.display(),
+                "offline proof host will not refresh rollup config from L2 RPC; using configured rollup config"
+            );
             let kv_store = self.create_key_value_store()?;
             task::spawn(async {
                 PreimageServer::new(
