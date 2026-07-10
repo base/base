@@ -17,6 +17,7 @@ use ipnet::IpNet;
 use secp256k1::PublicKey;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tracing::{debug, info};
 
 use crate::prober::{ReachabilityProber, RlpxProbeOutcome, RlpxProbeStage, RlpxProbeTarget};
 
@@ -173,6 +174,9 @@ pub struct ClientIpResolver {
 }
 
 impl ClientIpResolver {
+    /// Maximum number of forwarded hops accepted from a trusted proxy.
+    pub const MAX_FORWARDED_HOPS: usize = 32;
+
     /// Creates a resolver with the supplied trusted proxy networks.
     pub fn new(trusted_proxy_cidrs: Vec<IpNet>) -> Self {
         Self { trusted_proxy_cidrs: trusted_proxy_cidrs.into() }
@@ -210,6 +214,9 @@ impl ClientIpResolver {
                     .parse::<IpAddr>()
                     .map(Self::normalize)
                     .map_err(|_| ClientIpError::MalformedForwardedFor)?;
+                if hops.len() >= Self::MAX_FORWARDED_HOPS {
+                    return Err(ClientIpError::MalformedForwardedFor);
+                }
                 hops.push(hop);
             }
         }
@@ -311,11 +318,12 @@ impl ProbeLimiter {
 
     /// Attempts to reserve global and per-source probe capacity.
     pub fn try_acquire(&self, source_ip: IpAddr) -> Option<ProbePermit> {
-        let global_permit = Arc::clone(&self.global).try_acquire_owned().ok()?;
         let mut active_sources = self.active_sources.lock().unwrap_or_else(PoisonError::into_inner);
-        if !active_sources.insert(source_ip) {
+        if active_sources.contains(&source_ip) {
             return None;
         }
+        let global_permit = Arc::clone(&self.global).try_acquire_owned().ok()?;
+        active_sources.insert(source_ip);
         drop(active_sources);
 
         Some(ProbePermit {
@@ -376,17 +384,36 @@ impl P2pRoutes {
         headers: HeaderMap,
         body: Result<Json<P2pReachabilityRequest>, JsonRejection>,
     ) -> Result<Json<P2pReachabilityResponse>, P2pApiError> {
-        let source_ip = state.resolver.resolve(socket_peer, &headers)?;
-        let Json(request) = body.map_err(P2pApiError::from_json_rejection)?;
-        let target = request.target(source_ip).ok_or(P2pApiError::InvalidRequest)?;
-        let _permit = state.limiter.try_acquire(source_ip).ok_or(P2pApiError::Saturated)?;
+        let source_ip = state.resolver.resolve(socket_peer, &headers).inspect_err(|error| {
+            debug!(error = ?error, "reachability request source rejected");
+        })?;
+        let Json(request) = body.map_err(|rejection| {
+            debug!(status = %rejection.status(), "reachability request body rejected");
+            P2pApiError::from_json_rejection(rejection)
+        })?;
+        let target = request.target(source_ip).ok_or_else(|| {
+            debug!("reachability request target validation failed");
+            P2pApiError::InvalidRequest
+        })?;
+        let _permit = state.limiter.try_acquire(source_ip).ok_or_else(|| {
+            debug!("reachability probe capacity exhausted");
+            P2pApiError::Saturated
+        })?;
         let result = state.prober.probe(target).await;
+        let elapsed_ms = u64::try_from(result.elapsed.as_millis()).unwrap_or(u64::MAX);
+
+        info!(
+            outcome = ?result.outcome,
+            stage = ?result.stage,
+            elapsed_ms,
+            "reachability probe completed"
+        );
 
         Ok(Json(P2pReachabilityResponse {
             outcome: result.outcome,
             stage: result.stage,
             observed_address: target.address,
-            elapsed_ms: u64::try_from(result.elapsed.as_millis()).unwrap_or(u64::MAX),
+            elapsed_ms,
             client_version: result.client_version,
         }))
     }
@@ -517,6 +544,18 @@ mod tests {
         let resolver = ClientIpResolver::new(vec![IpNet::from_str("10.0.0.0/8").unwrap()]);
         let mut headers = HeaderMap::new();
         headers.insert("x-forwarded-for", HeaderValue::from_static("8.8.8.8,not-an-ip"));
+
+        let error = resolver.resolve(SocketAddr::from(([10, 0, 0, 2], 443)), &headers).unwrap_err();
+
+        assert_eq!(error, ClientIpError::MalformedForwardedFor);
+    }
+
+    #[test]
+    fn rejects_forwarding_chain_over_hop_limit() {
+        let resolver = ClientIpResolver::new(vec![IpNet::from_str("10.0.0.0/8").unwrap()]);
+        let forwarded = vec!["8.8.8.8"; ClientIpResolver::MAX_FORWARDED_HOPS + 1].join(",");
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", HeaderValue::from_str(&forwarded).unwrap());
 
         let error = resolver.resolve(SocketAddr::from(([10, 0, 0, 2], 443)), &headers).unwrap_err();
 
