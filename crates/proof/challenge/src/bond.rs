@@ -502,19 +502,16 @@ impl<C: Clock> BondManager<C> {
             return Ok(Some(phase));
         }
 
+        self.ensure_weth_delay(verifier_client, game_address).await;
+        let Some(delay) = self.weth_delay else {
+            debug!(game = %game_address, "WETH delay not yet known, waiting to submit unlock");
+            return Ok(Some(BondPhase::NeedsUnlock));
+        };
+
         match Self::send_claim_credit(game_address, "unlock", submitter).await {
-            Ok(_) => {
-                let Some(delay) = self.weth_delay else {
-                    debug!(
-                        game = %game_address,
-                        "unlock confirmed but WETH delay not yet known, will resolve on next poll"
-                    );
-                    return Ok(Some(BondPhase::NeedsUnlock));
-                };
-                Ok(Some(BondPhase::AwaitingDelay {
-                    ready_at: self.clock.now().saturating_add(delay),
-                }))
-            }
+            Ok(_) => Ok(Some(BondPhase::AwaitingDelay {
+                ready_at: self.clock.now().saturating_add(delay),
+            })),
             Err(e) => {
                 warn!(
                     game = %game_address,
@@ -661,7 +658,15 @@ impl<C: Clock> BondManager<C> {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc};
+    use std::{
+        collections::HashMap,
+        future::Future,
+        io::{ErrorKind, Read, Write},
+        net::TcpListener,
+        pin::Pin,
+        sync::Arc,
+        thread,
+    };
 
     use alloy_primitives::B256;
     use futures::stream::BoxStream;
@@ -742,6 +747,75 @@ mod tests {
     ) -> (ChallengeSubmitter<SharedMockTxManager>, SharedMockTxManager) {
         let tx_manager = SharedMockTxManager::with_responses(responses);
         (ChallengeSubmitter::new(tx_manager.clone()), tx_manager)
+    }
+
+    fn rpc_id(request: &str) -> &str {
+        let Some((_, tail)) = request.split_once("\"id\"") else {
+            return "0";
+        };
+        let Some((_, value)) = tail.split_once(':') else {
+            return "0";
+        };
+        value
+            .trim_start()
+            .split([',', '}'])
+            .next()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .unwrap_or("0")
+    }
+
+    fn content_length(request: &str) -> Option<usize> {
+        request.lines().find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length").then(|| value.trim().parse().ok())?
+        })
+    }
+
+    fn delayed_weth_rpc(delay: Duration) -> (url::Url, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap()).parse().unwrap();
+        let handle = thread::spawn(move || {
+            let mut stream = (0..100)
+                .find_map(|_| match listener.accept() {
+                    Ok((stream, _)) => Some(stream),
+                    Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(10));
+                        None
+                    }
+                    Err(e) => panic!("accept failed: {e}"),
+                })
+                .expect("timed out waiting for DelayedWETH delay request");
+            let mut request = Vec::new();
+            let mut buffer = [0; 1024];
+            loop {
+                let read = stream.read(&mut buffer).unwrap();
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+                let text = String::from_utf8_lossy(&request);
+                let Some((headers, body)) = text.split_once("\r\n\r\n") else {
+                    continue;
+                };
+                if body.len() >= content_length(headers).unwrap_or(0) {
+                    break;
+                }
+            }
+
+            let request = String::from_utf8_lossy(&request);
+            let result = format!("0x{:064x}", delay.as_secs());
+            let body =
+                format!(r#"{{"jsonrpc":"2.0","id":{},"result":"{}"}}"#, rpc_id(&request), result);
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body,
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+        (url, handle)
     }
 
     fn manager(
@@ -1073,6 +1147,40 @@ mod tests {
                     if ready_at == Duration::from_secs(560)
             ),
             "expected AwaitingDelay with monotonic deadline, got {result:?}",
+        );
+        assert_eq!(tx_manager.recorded_calls().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn try_unlock_loads_weth_delay_before_unlock() {
+        let claim_addr = claim_addr();
+        let game = addr(0);
+        let tx_hash = B256::repeat_byte(0xDD);
+        let mut state = game_state(GameStatus::ChallengerWins, claim_addr, 1_999_999_000, false);
+        state.delayed_weth = addr(9);
+        let verifier = verifier(state);
+        let (rpc_url, handle) = delayed_weth_rpc(TEST_WETH_DELAY);
+        let mut mgr = BondManager::new(
+            vec![claim_addr],
+            rpc_url,
+            empty_factory(),
+            1000,
+            TEST_DISCOVERY_INTERVAL,
+            fixed_clock(500),
+        );
+        mgr.track_game(game, claim_addr);
+
+        let (submitter, tx_manager) = bond_submitter(vec![Ok(receipt_with_status(true, tx_hash))]);
+        let result = mgr.try_unlock(game, &*verifier, &submitter).await.unwrap();
+        handle.join().unwrap();
+
+        assert!(
+            matches!(
+                result,
+                Some(BondPhase::AwaitingDelay { ready_at })
+                    if ready_at == Duration::from_secs(560)
+            ),
+            "expected AwaitingDelay from unlock time, got {result:?}",
         );
         assert_eq!(tx_manager.recorded_calls().len(), 1);
     }
