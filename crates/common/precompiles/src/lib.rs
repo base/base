@@ -38,10 +38,9 @@ pub use bls12_381::{
 
 mod common;
 pub use common::{
-    AssetLogic, AssetLogicId, AssetLogicV1, AssetLogicV2, AssetOps, B20_MAX_SUPPLY_CAP,
-    B20CoreStorage, B20Guards, B20PausableFeature, B20PolicyType, B20TokenRole, Burnable,
-    Configurable, Eip712Domain, IB20, Mintable, Pausable, PermitArgs, Permittable, Policy,
-    PolicyRegistry, RoleManaged, Token, TokenAccounting, Transferable, asset_logic_for,
+    B20_MAX_SUPPLY_CAP, B20CoreStorage, B20Guards, B20PausableFeature, B20PolicyType, B20TokenRole,
+    Burnable, Configurable, Eip712Domain, IB20, Mintable, Pausable, PermitArgs, Permittable, Policy,
+    PolicyRegistry, RoleManaged, Token, TokenAccounting, Transferable,
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use common::{InMemoryPolicy, InMemoryTokenAccounting, TestStablecoinToken, TestToken};
@@ -58,8 +57,9 @@ pub use metrics::{
 
 mod b20_asset;
 pub use b20_asset::{
-    AssetAccounting, B20AssetExtensionStorage, B20AssetInit, B20AssetPrecompile, B20AssetStorage,
-    B20AssetToken, IB20Asset,
+    AssetAccounting, AssetLogic, AssetLogicId, AssetLogicV1, AssetLogicV2, AssetOps,
+    B20AssetExtensionStorage, B20AssetInit, B20AssetPrecompile, B20AssetStorage, B20AssetToken,
+    IB20Asset, asset_logic_for,
 };
 
 mod b20_stablecoin;
