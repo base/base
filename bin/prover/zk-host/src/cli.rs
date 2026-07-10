@@ -170,8 +170,8 @@ struct WorkerArgs {
 }
 
 impl WorkerArgs {
-    fn optional_string(value: &Option<String>) -> Option<String> {
-        value.as_deref().map(str::trim).filter(|value| !value.is_empty()).map(ToOwned::to_owned)
+    fn optional_string(value: Option<&str>) -> Option<String> {
+        value.map(str::trim).filter(|value| !value.is_empty()).map(ToOwned::to_owned)
     }
 
     fn rpc_config(&self) -> eyre::Result<Option<SuccinctRpcConfig>> {
@@ -207,8 +207,8 @@ impl WorkerArgs {
         if self.enable_mock_zk_backend {
             configs.push((ZkBackend::Mock, SuccinctZkBackendConfig::Mock));
         }
-        let cluster_rpc = Self::optional_string(&self.sp1_cluster_api_endpoint);
-        let network_private_key = Self::optional_string(&self.network_private_key);
+        let cluster_rpc = Self::optional_string(self.sp1_cluster_api_endpoint.as_deref());
+        let network_private_key = Self::optional_string(self.network_private_key.as_deref());
         if self.use_kms_requester && network_private_key.is_none() {
             return Err(eyre!("USE_KMS_REQUESTER requires NETWORK_PRIVATE_KEY"));
         }
@@ -242,9 +242,9 @@ impl WorkerArgs {
             let Some(rpc) = rpc.clone() else {
                 return Err(eyre!("cluster backend requires all RPC URLs"));
             };
-            let s3_bucket = Self::optional_string(&self.cli_s3_bucket)
+            let s3_bucket = Self::optional_string(self.cli_s3_bucket.as_deref())
                 .ok_or_else(|| eyre!("cluster backend requires CLI_S3_BUCKET"))?;
-            let s3_region = Self::optional_string(&self.cli_s3_region)
+            let s3_region = Self::optional_string(self.cli_s3_region.as_deref())
                 .ok_or_else(|| eyre!("cluster backend requires CLI_S3_REGION"))?;
             configs.push((
                 ZkBackend::Cluster,
@@ -466,5 +466,17 @@ mod tests {
         assert_eq!(configs.len(), 1);
         assert_eq!(configs[0].0, ZkBackend::Mock);
         assert!(rpc.is_none());
+
+        set_rpc_config(&mut args);
+        args.sp1_cluster_api_endpoint = Some("http://cluster".to_owned());
+        args.cli_s3_bucket = Some("bucket".to_owned());
+        args.cli_s3_region = Some("region".to_owned());
+        args.network_private_key = Some("network-key".to_owned());
+        let (configs, rpc) = args.backend_configs().unwrap();
+        assert_eq!(
+            configs.iter().map(|(backend, _)| *backend).collect::<Vec<_>>(),
+            vec![ZkBackend::Mock, ZkBackend::DryRun, ZkBackend::Cluster, ZkBackend::Network]
+        );
+        assert!(rpc.is_some());
     }
 }
