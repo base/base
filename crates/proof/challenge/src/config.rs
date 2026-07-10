@@ -91,6 +91,8 @@ pub struct ChallengerConfig {
     pub dispute_game_factory_addr: Address,
     /// Address of the `AnchorStateRegistry` contract on L1.
     pub anchor_state_registry_addr: Address,
+    /// Game type ID for `AggregateVerifier` dispute games.
+    pub game_type: u32,
     /// Polling interval for new dispute games.
     pub poll_interval: Duration,
     /// URL of the ZK RPC endpoint.
@@ -111,9 +113,6 @@ pub struct ChallengerConfig {
     pub bond_discovery_lookback_games: u64,
     /// How often a full rescan of the bond lookback window is performed.
     pub bond_discovery_interval: Duration,
-    /// Maximum time to keep a completed bond game tracked while waiting for
-    /// its anchor update to complete.
-    pub anchor_update_retention: Duration,
     /// Addresses to claim bonds on behalf of.
     pub bond_claim_addresses: Vec<Address>,
     /// Health server socket address.
@@ -192,10 +191,6 @@ impl ChallengerConfig {
             cli.challenger.bond_discovery_interval,
             "bond-discovery-interval",
         )?;
-        require_nonzero_duration(
-            cli.challenger.anchor_update_retention,
-            "anchor-update-retention",
-        )?;
 
         // Health server is always started, so the port must be valid.
         require_nonzero(cli.health.port.into(), "health.port")?;
@@ -218,6 +213,7 @@ impl ChallengerConfig {
             l2_eth_rpc,
             dispute_game_factory_addr: cli.challenger.dispute_game_factory_addr,
             anchor_state_registry_addr: cli.challenger.anchor_state_registry_addr,
+            game_type: cli.challenger.game_type,
             poll_interval: cli.challenger.poll_interval,
             zk_rpc_url,
             zk_connect_timeout: cli.challenger.zk_connect_timeout,
@@ -228,7 +224,6 @@ impl ChallengerConfig {
             tx_manager,
             bond_discovery_lookback_games: cli.challenger.bond_discovery_lookback_games,
             bond_discovery_interval: cli.challenger.bond_discovery_interval,
-            anchor_update_retention: cli.challenger.anchor_update_retention,
             bond_claim_addresses: cli.challenger.bond_claim_addresses,
             health_addr,
             log: LogConfig::from(cli.logging),
@@ -260,6 +255,7 @@ mod tests {
             ("--l2-eth-rpc", "http://localhost:9545"),
             ("--dispute-game-factory-addr", "0x1234567890123456789012345678901234567890"),
             ("--anchor-state-registry-addr", "0x2234567890123456789012345678901234567890"),
+            ("--game-type", "1"),
             ("--zk-rpc-url", "http://localhost:5000"),
         ];
 
@@ -298,9 +294,9 @@ mod tests {
             config.anchor_state_registry_addr,
             "0x2234567890123456789012345678901234567890".parse::<Address>().unwrap()
         );
+        assert_eq!(config.game_type, 1);
         assert_eq!(config.bond_discovery_lookback_games, 1000);
         assert_eq!(config.bond_discovery_interval, Duration::from_secs(300));
-        assert_eq!(config.anchor_update_retention, Duration::from_secs(24 * 60 * 60));
         assert_eq!(config.health_addr, "0.0.0.0:8080".parse::<SocketAddr>().unwrap());
         assert!(matches!(config.signing, SignerConfig::Remote { .. }));
         assert_eq!(config.tx_manager.num_confirmations, 10);
@@ -334,7 +330,6 @@ mod tests {
         "bond-discovery-lookback-games"
     )]
     #[case::bond_discovery_interval("--bond-discovery-interval", "0s", "bond-discovery-interval")]
-    #[case::anchor_update_retention("--anchor-update-retention", "0s", "anchor-update-retention")]
     #[case::max_proof_duration("--max-proof-duration", "0s", "max-proof-duration")]
     fn test_zero_value_rejected(#[case] flag: &str, #[case] value: &str, #[case] field: &str) {
         let all_args = [&LOCAL_SIGNER_ARGS[..], &[flag, value]].concat();

@@ -37,6 +37,13 @@ pub enum TxType {
         /// ERC20 contract address.
         contract: Address,
     },
+    /// Storage-heavy contract write.
+    Storage {
+        /// Storage-writer contract address.
+        contract: Address,
+        /// Number of storage slots to write per transaction.
+        slots_per_tx: u32,
+    },
     /// Precompile call.
     Precompile {
         /// Target precompile.

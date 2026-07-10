@@ -46,8 +46,8 @@ use crate::{
     },
     workload::{
         AccountPool, AerodromeClPayload, B20TransferPayload, CalldataPayload, Erc20Payload,
-        KeyStream, OsakaPayload, PrecompilePayload, SeededRng, TransferPayload, UniswapV3Payload,
-        WorkloadGenerator,
+        KeyStream, OsakaPayload, PrecompilePayload, SeededRng, StoragePayload, TransferPayload,
+        UniswapV3Payload, WorkloadGenerator,
     },
 };
 
@@ -274,6 +274,10 @@ impl LoadRunner {
                         weight_pct,
                     );
                 }
+                TxType::Storage { contract, slots_per_tx } => {
+                    generator = generator
+                        .with_payload(StoragePayload::new(*contract, *slots_per_tx), weight_pct);
+                }
                 TxType::Precompile { target, blake2f_rounds, iterations, looper_contract } => {
                     let payload = PrecompilePayload::with_options(
                         target.clone(),
@@ -366,6 +370,7 @@ impl LoadRunner {
                 TxType::Transfer => 21_000,
                 TxType::Calldata { max_size, .. } => 21_000 + (*max_size as u64 * 16),
                 TxType::Erc20 { .. } => 65_000,
+                TxType::Storage { slots_per_tx, .. } => u64::from(*slots_per_tx) * 22_000 + 21_000,
                 TxType::B20 => 100_000,
                 TxType::Precompile { target, iterations, blake2f_rounds, .. } => {
                     let per_call = match target {
@@ -739,6 +744,7 @@ impl LoadRunner {
                 TxType::Transfer
                 | TxType::Calldata { .. }
                 | TxType::Erc20 { .. }
+                | TxType::Storage { .. }
                 | TxType::B20
                 | TxType::Precompile { .. }
                 | TxType::Osaka { .. } => {}
@@ -758,6 +764,7 @@ impl LoadRunner {
                 TxType::Transfer
                 | TxType::Calldata { .. }
                 | TxType::Erc20 { .. }
+                | TxType::Storage { .. }
                 | TxType::B20
                 | TxType::Precompile { .. }
                 | TxType::Osaka { .. } => {}

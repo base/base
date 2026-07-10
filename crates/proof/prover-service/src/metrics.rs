@@ -10,7 +10,8 @@ use metrics::{counter, describe_counter, describe_histogram, histogram};
 // Metric name constants
 // ---------------------------------------------------------------------------
 
-/// Unified RPC request counter. Tags: method, success, `status_code`
+/// Unified RPC request counter. Tags: method, success, `status_code`.
+/// Worker-scoped RPCs also include `worker_id` and `prover_id`.
 pub const REQUESTS: &str = "prover_service.requests";
 /// RPC response latency in milliseconds. Tags: method, success
 pub const RESPONSE_LATENCY_MS: &str = "prover_service.response_latency_ms";
@@ -75,6 +76,18 @@ pub fn inc_requests(method: &str, success: bool, status_code: &str) {
         "method" => method.to_string(),
         "success" => success.to_string(),
         "status_code" => status_code.to_string(),
+    )
+    .increment(1);
+}
+
+/// Record a worker-scoped RPC request metric. Called once per RPC at handler completion.
+pub fn inc_worker_requests(method: &str, success: bool, status_code: &str, worker_id: &str) {
+    counter!(REQUESTS,
+        "method" => method.to_string(),
+        "success" => success.to_string(),
+        "status_code" => status_code.to_string(),
+        "worker_id" => worker_id.to_string(),
+        "prover_id" => worker_id.to_string(),
     )
     .increment(1);
 }
@@ -282,6 +295,51 @@ mod tests {
                 }
             }),
             Some(vec![0.0]),
+        );
+    }
+
+    #[test]
+    fn worker_request_records_worker_and_prover_labels() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+
+        metrics::with_local_recorder(&recorder, || {
+            inc_worker_requests("Heartbeat", true, "OK", "worker-1");
+        });
+
+        let snapshot = snapshotter.snapshot().into_vec();
+        assert_eq!(
+            snapshot.iter().find_map(|(ck, _, _, value)| {
+                if ck.kind() != MetricKind::Counter || ck.key().name() != REQUESTS {
+                    return None;
+                }
+                if !ck
+                    .key()
+                    .labels()
+                    .any(|label| label.key() == "method" && label.value() == "Heartbeat")
+                {
+                    return None;
+                }
+                if !ck
+                    .key()
+                    .labels()
+                    .any(|label| label.key() == "worker_id" && label.value() == "worker-1")
+                {
+                    return None;
+                }
+                if !ck
+                    .key()
+                    .labels()
+                    .any(|label| label.key() == "prover_id" && label.value() == "worker-1")
+                {
+                    return None;
+                }
+                match value {
+                    DebugValue::Counter(value) => Some(*value),
+                    _ => None,
+                }
+            }),
+            Some(1),
         );
     }
 

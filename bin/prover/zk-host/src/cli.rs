@@ -138,6 +138,14 @@ struct WorkerArgs {
     #[arg(long, env = "RANGE_GAS_LIMIT", default_value_t = 1_000_000_000_000)]
     range_gas_limit: u64,
 
+    /// Cycle limit for aggregation proof requests.
+    #[arg(long, env = "AGGREGATION_CYCLE_LIMIT", default_value_t = 1_000_000_000_000)]
+    aggregation_cycle_limit: u64,
+
+    /// Gas limit for aggregation proof requests.
+    #[arg(long, env = "AGGREGATION_GAS_LIMIT", default_value_t = 1_000_000_000_000)]
+    aggregation_gas_limit: u64,
+
     /// Delay after an empty or failed discovery attempt, in milliseconds.
     #[arg(long, env = "JOB_DISCOVERY_POLL_INTERVAL_MS", default_value_t = 5_000)]
     job_discovery_poll_interval_ms: u64,
@@ -233,6 +241,8 @@ impl WorkerArgs {
                     )?,
                     range_cycle_limit: self.range_cycle_limit,
                     range_gas_limit: self.range_gas_limit,
+                    aggregation_cycle_limit: self.aggregation_cycle_limit,
+                    aggregation_gas_limit: self.aggregation_gas_limit,
                 }))
             }
             ZkBackendArg::Network => {
@@ -249,6 +259,8 @@ impl WorkerArgs {
                     )?,
                     range_cycle_limit: self.range_cycle_limit,
                     range_gas_limit: self.range_gas_limit,
+                    aggregation_cycle_limit: self.aggregation_cycle_limit,
+                    aggregation_gas_limit: self.aggregation_gas_limit,
                 }))
             }
         }

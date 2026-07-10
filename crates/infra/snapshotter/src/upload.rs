@@ -13,7 +13,9 @@
 
 use std::{
     collections::HashMap,
+    future::Future,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use anyhow::{Context, Result, bail};
@@ -23,10 +25,11 @@ use aws_sdk_s3::{
     types::{CompletedMultipartUpload, CompletedPart, Delete, ObjectIdentifier},
 };
 use futures::stream::{self, StreamExt, TryStreamExt};
-use tracing::{debug, info, warn};
+use tokio::time::sleep;
+use tracing::{debug, error, info, warn};
 
 use crate::{
-    progress::UploadProgress,
+    progress::{UploadProgress, UploadStage},
     snapshot::{ChunkFilename, SnapshotManifest, SnapshotManifestExt},
 };
 
@@ -39,6 +42,12 @@ const MULTIPART_THRESHOLD: u64 = 100 * 1024 * 1024;
 
 /// Part size for multipart uploads (100 `MiB`).
 const MULTIPART_PART_SIZE: u64 = 100 * 1024 * 1024;
+
+/// Base delay between upload retries. Backoff is linear to keep behavior simple and predictable.
+const UPLOAD_RETRY_DELAY: Duration = Duration::from_secs(5);
+
+/// Cap for the retry backoff so uploads keep making progress instead of sleeping for minutes.
+const MAX_UPLOAD_RETRY_DELAY: Duration = Duration::from_secs(60);
 
 /// Maximum number of objects per S3-compatible delete batch.
 const DELETE_OBJECT_BATCH_SIZE: usize = 1000;
@@ -322,6 +331,9 @@ impl SnapshotUploader {
             "diff analysis complete"
         );
 
+        let static_upload_count = static_uploads.len();
+        let run_upload_count = run_uploads.len();
+
         let progress = UploadProgress::new(&static_uploads, &run_uploads, &manifest_path).await?;
         let progress_logger = progress.spawn_logger();
 
@@ -351,20 +363,24 @@ impl SnapshotUploader {
                 self.public_static_files_base_url().as_deref(),
                 timestamp,
             )?;
-            self.client
-                .put_object()
-                .bucket(&self.bucket)
-                .key(&manifest_key)
-                .body(ByteStream::from(published_manifest))
-                .send()
-                .await
-                .with_context(|| format!("failed to upload {manifest_key}"))?;
+            self.upload_manifest(&manifest_key, published_manifest, progress_ref).await?;
             Ok::<(), anyhow::Error>(())
         }
         .await;
 
-        progress_logger.abort();
-        upload_result?;
+        progress_logger.stop();
+        if let Err(error) = upload_result {
+            error!(
+                error = %error,
+                run_prefix = %run_prefix,
+                manifest_key = %manifest_key,
+                static_uploads = static_upload_count,
+                run_uploads = run_upload_count,
+                skipped,
+                "snapshot artifact upload failed"
+            );
+            return Err(error);
+        }
 
         if let Err(e) = self.prune_old_runs(retain_runs).await {
             warn!(error = %e, retain_runs, "failed to prune old snapshot runs");
@@ -489,6 +505,15 @@ impl SnapshotUploader {
         }
     }
 
+    /// Returns the remote object size for a full object key when it already exists.
+    async fn remote_object_size(&self, key: &str) -> Result<Option<u64>> {
+        match self.client.head_object().bucket(&self.bucket).key(key).send().await {
+            Ok(resp) => Ok(resp.content_length().and_then(|len| u64::try_from(len).ok())),
+            Err(err) if err.as_service_error().is_some_and(|e| e.is_not_found()) => Ok(None),
+            Err(err) => Err(anyhow::anyhow!("failed to check object metadata for {key}: {err}")),
+        }
+    }
+
     /// Deletes all objects under a prefix and returns the number of deleted keys.
     async fn delete_prefix(&self, prefix: &str) -> Result<usize> {
         let keys = self.list_remote_keys(prefix).await?;
@@ -544,32 +569,72 @@ impl SnapshotUploader {
         let file_size = tokio::fs::metadata(file_path).await?.len();
 
         if file_size > MULTIPART_THRESHOLD {
-            debug!(key = %key, size = file_size, "uploading file (multipart)");
-            self.upload_multipart(file_path, &key, file_size, progress).await?;
+            debug!(
+                key = %key,
+                size = file_size,
+                part_size = MULTIPART_PART_SIZE,
+                parts = file_size.div_ceil(MULTIPART_PART_SIZE),
+                "starting multipart upload"
+            );
+            progress.start_file(key.clone(), file_size, UploadStage::CreatingMultipart);
+            match self.upload_multipart(file_path, &key, file_size, progress).await {
+                Ok(()) => progress.finish_file(&key),
+                Err(error) => {
+                    progress.fail_file(&key);
+                    return Err(error);
+                }
+            }
         } else {
             debug!(key = %key, size = file_size, "uploading file");
-            self.upload_single(file_path, &key).await?;
-            progress.add(file_size);
+            progress.start_file(key.clone(), file_size, UploadStage::Uploading);
+            match self.upload_single(file_path, &key).await {
+                Ok(()) => {
+                    progress.add_for_file(&key, file_size);
+                    progress.finish_file(&key);
+                }
+                Err(error) => {
+                    progress.fail_file(&key);
+                    return Err(error);
+                }
+            }
         }
 
         Ok(())
     }
 
     async fn upload_single(&self, file_path: &Path, key: &str) -> Result<()> {
-        let body = ByteStream::from_path(file_path)
-            .await
-            .with_context(|| format!("failed to read {}", file_path.display()))?;
+        retry_upload(
+            || async {
+                let body = ByteStream::from_path(file_path)
+                    .await
+                    .with_context(|| format!("failed to read {}", file_path.display()))
+                    .map_err(UploadAttemptError::fatal)?;
 
-        self.client
-            .put_object()
-            .bucket(&self.bucket)
-            .key(key)
-            .body(body)
-            .send()
-            .await
-            .with_context(|| format!("failed to upload {key}"))?;
-
-        Ok(())
+                self.client
+                    .put_object()
+                    .bucket(&self.bucket)
+                    .key(key)
+                    .body(body)
+                    .send()
+                    .await
+                    .map(|_| ())
+                    .map_err(|error| UploadAttemptError::retry(error.into()))
+            },
+            |attempt, error| {
+                warn!(
+                    key = %key,
+                    attempt,
+                    error = %error,
+                    error_debug = ?error,
+                    next_retry_delay_secs = retry_delay_secs(attempt),
+                    "single-part upload failed, retrying"
+                );
+            },
+            |attempt| {
+                info!(key = %key, attempt, "single-part upload succeeded after retrying");
+            },
+        )
+        .await
     }
 
     async fn upload_multipart(
@@ -579,51 +644,159 @@ impl SnapshotUploader {
         file_size: u64,
         progress: &UploadProgress,
     ) -> Result<()> {
-        let create_resp = self
-            .client
-            .create_multipart_upload()
-            .bucket(&self.bucket)
-            .key(key)
-            .send()
-            .await
-            .with_context(|| format!("failed to initiate multipart upload for {key}"))?;
+        let create_resp = self.create_multipart_upload_with_retry(key, progress).await?;
 
         let upload_id = create_resp
             .upload_id()
             .ok_or_else(|| anyhow::anyhow!("no upload_id returned for {key}"))?
             .to_string();
+        progress.set_stage(key, UploadStage::Uploading);
+        debug!(
+            key = %key,
+            upload_id,
+            size = file_size,
+            parts = file_size.div_ceil(MULTIPART_PART_SIZE),
+            "multipart upload created"
+        );
 
         let result = self.upload_parts(file_path, key, &upload_id, file_size, progress).await;
 
         match result {
             Ok(parts) => {
-                let completed = CompletedMultipartUpload::builder().set_parts(Some(parts)).build();
-
-                self.client
-                    .complete_multipart_upload()
-                    .bucket(&self.bucket)
-                    .key(key)
-                    .upload_id(&upload_id)
-                    .multipart_upload(completed)
-                    .send()
-                    .await
-                    .with_context(|| format!("failed to complete multipart upload for {key}"))?;
-
-                Ok(())
+                self.complete_multipart_upload_with_retry(
+                    key, &upload_id, file_size, parts, progress,
+                )
+                .await
             }
             Err(e) => {
-                self.client
+                match self
+                    .client
                     .abort_multipart_upload()
                     .bucket(&self.bucket)
                     .key(key)
                     .upload_id(&upload_id)
                     .send()
                     .await
-                    .ok();
+                {
+                    Ok(_) => {
+                        warn!(key = %key, upload_id, "aborted multipart upload after failure")
+                    }
+                    Err(abort_error) => {
+                        error!(
+                            key = %key,
+                            upload_id,
+                            error = %abort_error,
+                            error_debug = ?abort_error,
+                            "failed to abort multipart upload after failure"
+                        );
+                    }
+                }
 
                 Err(e)
             }
         }
+    }
+
+    async fn create_multipart_upload_with_retry(
+        &self,
+        key: &str,
+        progress: &UploadProgress,
+    ) -> Result<aws_sdk_s3::operation::create_multipart_upload::CreateMultipartUploadOutput> {
+        retry_upload(
+            || async {
+                progress.set_stage(key, UploadStage::CreatingMultipart);
+                self.client
+                    .create_multipart_upload()
+                    .bucket(&self.bucket)
+                    .key(key)
+                    .send()
+                    .await
+                    .map_err(|error| UploadAttemptError::retry(error.into()))
+            },
+            |attempt, error| {
+                warn!(
+                    key = %key,
+                    attempt,
+                    error = %error,
+                    error_debug = ?error,
+                    next_retry_delay_secs = retry_delay_secs(attempt),
+                    "multipart upload creation failed, retrying"
+                );
+            },
+            |attempt| {
+                info!(key = %key, attempt, "multipart upload creation succeeded after retrying");
+            },
+        )
+        .await
+    }
+
+    async fn complete_multipart_upload_with_retry(
+        &self,
+        key: &str,
+        upload_id: &str,
+        file_size: u64,
+        parts: Vec<CompletedPart>,
+        progress: &UploadProgress,
+    ) -> Result<()> {
+        retry_upload(
+            || async {
+                progress.set_stage(key, UploadStage::CompletingMultipart);
+                let completed =
+                    CompletedMultipartUpload::builder().set_parts(Some(parts.clone())).build();
+                match self
+                    .client
+                    .complete_multipart_upload()
+                    .bucket(&self.bucket)
+                    .key(key)
+                    .upload_id(upload_id)
+                    .multipart_upload(completed)
+                    .send()
+                    .await
+                {
+                    Ok(_) => Ok(()),
+                    Err(error) => {
+                        let error = anyhow::Error::from(error);
+                        if self.remote_object_size(key).await.map_err(UploadAttemptError::fatal)?
+                            == Some(file_size)
+                        {
+                            warn!(
+                                key = %key,
+                                upload_id,
+                                error = %error,
+                                error_debug = ?error,
+                                size = file_size,
+                                "multipart completion response failed after object appeared; treating upload as successful"
+                            );
+                            Ok(())
+                        } else {
+                            Err(UploadAttemptError::retry(error))
+                        }
+                    }
+                }
+            },
+            |attempt, error| {
+                warn!(
+                    key = %key,
+                    upload_id,
+                    attempt,
+                    error = %error,
+                    error_debug = ?error,
+                    next_retry_delay_secs = retry_delay_secs(attempt),
+                    "multipart upload completion failed, retrying"
+                );
+            },
+            |attempt| {
+                info!(
+                    key = %key,
+                    upload_id,
+                    attempt,
+                    "multipart upload completion succeeded after retrying"
+                );
+            },
+        )
+        .await?;
+        debug!(key = %key, upload_id, size = file_size, "multipart upload completed");
+        Ok(())
     }
 
     async fn upload_parts(
@@ -652,7 +825,7 @@ impl SnapshotUploader {
                     let part = self
                         .upload_single_part(file_path, key, upload_id, part_number, offset, length)
                         .await?;
-                    progress.add(length);
+                    progress.add_for_file(key, length);
                     Ok::<CompletedPart, anyhow::Error>(part)
                 }
             })
@@ -673,35 +846,163 @@ impl SnapshotUploader {
         offset: u64,
         length: u64,
     ) -> Result<CompletedPart> {
-        let body = ByteStream::read_from()
-            .path(file_path)
-            .offset(offset)
-            .length(aws_sdk_s3::primitives::Length::Exact(length))
-            .build()
-            .await
-            .with_context(|| {
-                format!("failed to read part {part_number} of {}", file_path.display())
-            })?;
+        retry_upload(
+            || async {
+                let body = ByteStream::read_from()
+                    .path(file_path)
+                    .offset(offset)
+                    .length(aws_sdk_s3::primitives::Length::Exact(length))
+                    .build()
+                    .await
+                    .with_context(|| {
+                        format!("failed to read part {part_number} of {}", file_path.display())
+                    })
+                    .map_err(UploadAttemptError::fatal)?;
 
-        let upload_resp = self
-            .client
-            .upload_part()
-            .bucket(&self.bucket)
-            .key(key)
-            .upload_id(upload_id)
-            .part_number(part_number)
-            .body(body)
-            .send()
-            .await
-            .with_context(|| format!("failed to upload part {part_number} of {key}"))?;
+                let upload_resp = self
+                    .client
+                    .upload_part()
+                    .bucket(&self.bucket)
+                    .key(key)
+                    .upload_id(upload_id)
+                    .part_number(part_number)
+                    .body(body)
+                    .send()
+                    .await
+                    .map_err(|error| UploadAttemptError::retry(error.into()))?;
 
-        let e_tag = upload_resp
-            .e_tag()
-            .ok_or_else(|| anyhow::anyhow!("no ETag for part {part_number} of {key}"))?
-            .to_string();
+                let e_tag = upload_resp
+                    .e_tag()
+                    .ok_or_else(|| anyhow::anyhow!("no ETag for part {part_number} of {key}"))
+                    .map_err(UploadAttemptError::fatal)?
+                    .to_string();
 
-        Ok(CompletedPart::builder().part_number(part_number).e_tag(e_tag).build())
+                Ok(CompletedPart::builder().part_number(part_number).e_tag(e_tag).build())
+            },
+            |attempt, error| {
+                warn!(
+                    key = %key,
+                    upload_id,
+                    part_number,
+                    attempt,
+                    offset,
+                    length,
+                    error = %error,
+                    error_debug = ?error,
+                    next_retry_delay_secs = retry_delay_secs(attempt),
+                    "multipart upload part failed, retrying"
+                );
+            },
+            |attempt| {
+                info!(
+                    key = %key,
+                    upload_id,
+                    part_number,
+                    attempt,
+                    offset,
+                    length,
+                    "multipart upload part succeeded after retrying"
+                );
+            },
+        )
+        .await
     }
+
+    async fn upload_manifest(
+        &self,
+        manifest_key: &str,
+        published_manifest: Vec<u8>,
+        progress: &UploadProgress,
+    ) -> Result<()> {
+        let manifest_len = published_manifest.len() as u64;
+        progress.start_file(manifest_key.to_string(), manifest_len, UploadStage::Uploading);
+        retry_upload(
+            || async {
+                self.client
+                    .put_object()
+                    .bucket(&self.bucket)
+                    .key(manifest_key)
+                    .body(ByteStream::from(published_manifest.clone()))
+                    .send()
+                    .await
+                    .map(|_| ())
+                    .map_err(|error| UploadAttemptError::retry(error.into()))
+            },
+            |attempt, error| {
+                warn!(
+                    key = manifest_key,
+                    attempt,
+                    error = %error,
+                    error_debug = ?error,
+                    next_retry_delay_secs = retry_delay_secs(attempt),
+                    "manifest upload failed, retrying"
+                );
+            },
+            |attempt| {
+                info!(key = manifest_key, attempt, "manifest upload succeeded after retrying");
+            },
+        )
+        .await
+        .inspect_err(|_| {
+            progress.fail_file(manifest_key);
+        })?;
+        progress.add_for_file(manifest_key, manifest_len);
+        progress.finish_file(manifest_key);
+        Ok(())
+    }
+}
+
+enum UploadAttemptError {
+    Retry(anyhow::Error),
+    Fatal(anyhow::Error),
+}
+
+impl UploadAttemptError {
+    const fn retry(error: anyhow::Error) -> Self {
+        Self::Retry(error)
+    }
+
+    const fn fatal(error: anyhow::Error) -> Self {
+        Self::Fatal(error)
+    }
+}
+
+async fn retry_upload<T, F, Fut, OnRetry, OnSuccess>(
+    mut operation: F,
+    mut on_retry: OnRetry,
+    mut on_success_after_retry: OnSuccess,
+) -> Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = std::result::Result<T, UploadAttemptError>>,
+    OnRetry: FnMut(usize, &anyhow::Error),
+    OnSuccess: FnMut(usize),
+{
+    let mut attempt = 1usize;
+    loop {
+        match operation().await {
+            Ok(value) => {
+                if attempt > 1 {
+                    on_success_after_retry(attempt);
+                }
+                return Ok(value);
+            }
+            Err(UploadAttemptError::Retry(error)) => {
+                on_retry(attempt, &error);
+                sleep(retry_delay(attempt)).await;
+                attempt = attempt.saturating_add(1);
+            }
+            Err(UploadAttemptError::Fatal(error)) => return Err(error),
+        }
+    }
+}
+
+fn retry_delay(attempt: usize) -> Duration {
+    UPLOAD_RETRY_DELAY.saturating_mul(attempt as u32).min(MAX_UPLOAD_RETRY_DELAY)
+}
+
+fn retry_delay_secs(attempt: usize) -> u64 {
+    retry_delay(attempt).as_secs()
 }
 
 /// Builds the single published manifest for a run.

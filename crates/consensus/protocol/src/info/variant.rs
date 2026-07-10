@@ -12,15 +12,13 @@ use base_common_genesis::{BaseUpgrade, RollupConfig, SystemConfig};
 
 use crate::{
     BlockInfoError, DecodeError, L1BlockInfoBedrock, L1BlockInfoEcotone, L1BlockInfoIsthmus,
+    REGOLITH_SYSTEM_TX_GAS,
     info::{
         L1BlockInfoBedrockBaseFields, L1BlockInfoEcotoneBaseFields as _, L1BlockInfoJovian,
         bedrock::L1BlockInfoBedrockOnlyFields as _, ecotone::L1BlockInfoEcotoneOnlyFields as _,
         isthmus::L1BlockInfoIsthmusBaseFields as _,
     },
 };
-
-/// The system transaction gas limit post-Regolith
-const REGOLITH_SYSTEM_TX_GAS: u64 = 1_000_000;
 
 /// The [`L1BlockInfoTx`] enum contains variants for the different versions of the L1 block info
 /// transaction on Base.

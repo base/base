@@ -12,7 +12,7 @@ use alloy_primitives::{Address, U256, address};
 ///
 /// Spec status (as of writing): EIP-8130 is in Draft. The transaction and payer
 /// type bytes below are pinned to the EIP-8130 constant-table values
-/// (`AA_TX_TYPE = 0x7B`, `AA_PAYER_TYPE = 0x7C`).
+/// (`AA_TX_TYPE = 0x79`, `AA_PAYER_TYPE = 0x7A`).
 ///
 /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 #[derive(Debug)]
@@ -21,18 +21,18 @@ pub struct Eip8130Constants;
 impl Eip8130Constants {
     /// [EIP-2718] transaction type byte for AA transactions (`EIP8130_TX_TYPE`).
     ///
-    /// Pinned to the EIP-8130 constant-table value `AA_TX_TYPE = 0x7B`.
+    /// Pinned to the EIP-8130 constant-table value `AA_TX_TYPE = 0x79`.
     ///
     /// [EIP-2718]: https://eips.ethereum.org/EIPS/eip-2718
-    pub const EIP8130_TX_TYPE: u8 = 0x7B;
+    pub const EIP8130_TX_TYPE: u8 = 0x79;
 
     /// Magic prefix byte for payer signature domain separation (`EIP8130_PAYER_TYPE`).
     ///
     /// Used in the payer signature preimage:
     /// `keccak256(EIP8130_PAYER_TYPE || rlp([...fields through calls...]))`.
     ///
-    /// Pinned to the EIP-8130 constant-table value `AA_PAYER_TYPE = 0x7C`.
-    pub const EIP8130_PAYER_TYPE: u8 = 0x7C;
+    /// Pinned to the EIP-8130 constant-table value `AA_PAYER_TYPE = 0x7A`.
+    pub const EIP8130_PAYER_TYPE: u8 = 0x7A;
 
     /// Base intrinsic gas cost for any AA transaction (`EIP8130_BASE_COST`).
     pub const EIP8130_BASE_COST: u64 = 15_000;

@@ -71,7 +71,7 @@ where
     pub async fn tick(
         &self,
         current: &mut RecoveredState,
-        safe_head: u64,
+        finalized_head: u64,
         dispatched_through: u64,
         cancel: &CancellationToken,
     ) -> bool {
@@ -90,12 +90,12 @@ where
                 return false;
             };
 
-            if target_block > safe_head {
+            if target_block > finalized_head {
                 debug!(
                     current_block = current.l2_block_number,
                     target_block,
-                    safe_head,
-                    "Safe head below collection target, waiting for L2 head to advance"
+                    finalized_head,
+                    "Finalized head below collection target, waiting for L2 head to advance"
                 );
                 return false;
             }
@@ -390,7 +390,7 @@ mod tests {
 
     use alloy_primitives::{Address, B256};
     use base_proof_contracts::{
-        AggregateVerifierClient, DisputeGameFactoryClient, encode_extra_data,
+        AggregateVerifierClient, DisputeGameFactoryClient, game_lookup_key,
     };
     use base_proof_primitives::ProofRequest;
     use base_proof_submission::ProofSubmissionError;
@@ -559,14 +559,24 @@ mod tests {
         }
 
         let mut factory = MockDisputeGameFactory::default();
-        factory.uuid_games.insert(
-            (0, first_root, encode_extra_data(first_target, Address::ZERO, &[first_root])),
+        let first_key = game_lookup_key(
+            first_target - BLOCK_INTERVAL,
+            Address::ZERO,
+            BLOCK_INTERVAL,
+            BLOCK_INTERVAL,
+            &[first_root],
+        )
+        .unwrap();
+        let second_key = game_lookup_key(
+            second_target - BLOCK_INTERVAL,
             first_game,
-        );
-        factory.uuid_games.insert(
-            (0, second_root, encode_extra_data(second_target, first_game, &[second_root])),
-            second_game,
-        );
+            BLOCK_INTERVAL,
+            BLOCK_INTERVAL,
+            &[second_root],
+        )
+        .unwrap();
+        factory.uuid_games.insert((0, first_key.root_claim, first_key.extra_data), first_game);
+        factory.uuid_games.insert((0, second_key.root_claim, second_key.extra_data), second_game);
 
         let rollup_client = Arc::new(MockRollupClient {
             sync_status: test_sync_status(second_target, B256::ZERO),

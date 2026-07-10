@@ -347,11 +347,14 @@ mod tests {
     #[tokio::test]
     async fn get_block_compat_eip4444_error_code_returns_none() {
         let client = test_engine_client_builder()
-            .with_l2_block_error(MockL2BlockError::ErrorResp(ErrorPayload {
-                code: 4444,
-                message: "history unavailable".into(),
-                data: None,
-            }))
+            .with_l2_block_error(
+                BlockNumberOrTag::Finalized.into(),
+                MockL2BlockError::ErrorResp(ErrorPayload {
+                    code: 4444,
+                    message: "history unavailable".into(),
+                    data: None,
+                }),
+            )
             .build();
 
         let result = get_block_compat(&client, BlockNumberOrTag::Finalized.into()).await.unwrap();
@@ -361,7 +364,10 @@ mod tests {
     #[tokio::test]
     async fn get_block_compat_block_not_found_string_returns_none() {
         let client = test_engine_client_builder()
-            .with_l2_block_error(MockL2BlockError::Custom("block not found".into()))
+            .with_l2_block_error(
+                BlockNumberOrTag::Safe.into(),
+                MockL2BlockError::Custom("block not found".into()),
+            )
             .build();
 
         let result = get_block_compat(&client, BlockNumberOrTag::Safe.into()).await.unwrap();
@@ -371,7 +377,10 @@ mod tests {
     #[tokio::test]
     async fn get_block_compat_unknown_block_string_returns_none() {
         let client = test_engine_client_builder()
-            .with_l2_block_error(MockL2BlockError::Custom("Unknown block".into()))
+            .with_l2_block_error(
+                BlockNumberOrTag::Safe.into(),
+                MockL2BlockError::Custom("Unknown block".into()),
+            )
             .build();
 
         let result = get_block_compat(&client, BlockNumberOrTag::Safe.into()).await.unwrap();
@@ -381,7 +390,10 @@ mod tests {
     #[tokio::test]
     async fn get_block_compat_unrecognized_error_propagates() {
         let client = test_engine_client_builder()
-            .with_l2_block_error(MockL2BlockError::Custom("connection refused".into()))
+            .with_l2_block_error(
+                BlockNumberOrTag::Latest.into(),
+                MockL2BlockError::Custom("connection refused".into()),
+            )
             .build();
 
         let err = get_block_compat(&client, BlockNumberOrTag::Latest.into()).await.unwrap_err();

@@ -43,9 +43,6 @@ pub struct DriverConfig {
     pub intermediate_block_interval: u64,
     /// Game type ID for `AggregateVerifier` dispute games.
     pub game_type: u32,
-    /// If true, use `safe_l2` (derived from L1 but L1 not yet finalized).
-    /// If false (default), use `finalized_l2` (derived from finalized L1).
-    pub allow_non_finalized: bool,
     /// Address of the proposer that submits proof transactions onchain.
     /// Included in the proof journal so the enclave signs over the correct `msg.sender`.
     pub proposer_address: Address,
@@ -67,7 +64,6 @@ impl Default for DriverConfig {
             block_interval: 512,
             intermediate_block_interval: 512,
             game_type: 0,
-            allow_non_finalized: false,
             proposer_address: Address::ZERO,
             tee_image_hash: B256::ZERO,
             anchor_state_registry_address: Address::ZERO,
@@ -287,7 +283,6 @@ mod tests {
                 block_interval: config.block_interval,
                 intermediate_block_interval: config.intermediate_block_interval,
                 game_type: config.game_type,
-                allow_non_finalized: config.allow_non_finalized,
                 anchor_state_registry_address: config.anchor_state_registry_address,
                 scan_concurrency: config.recovery_scan_concurrency,
             },

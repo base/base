@@ -16,7 +16,7 @@
 //!    After the TEE proof is nullified, the game is re-scanned as Path 3.
 
 use std::{
-    collections::HashSet,
+    collections::{HashSet, VecDeque},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -35,10 +35,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    BondManager, CandidateGame, ChallengeSubmitError, ChallengeSubmitter, ChallengerMetrics,
-    DisputeIntent, GameCategory, GameScanner, IntermediateValidationParams, L1HeadProvider,
-    OutputValidator, PendingProof, PendingProofs, ProofKind, ProofPhase, ProofUpdate,
-    ValidatorError,
+    AnchorUpdater, BondManager, CandidateGame, ChallengeSubmitError, ChallengeSubmitter,
+    ChallengerMetrics, DisputeIntent, GameCategory, GameScanner, IntermediateValidationParams,
+    L1HeadProvider, OutputValidator, PendingProof, PendingProofs, ProofKind, ProofPhase,
+    ProofUpdate, ValidatorError,
 };
 
 /// Configuration for the challenger [`Driver`].
@@ -82,6 +82,8 @@ pub struct DriverComponents<
     pub verifier_client: Arc<dyn AggregateVerifierClient>,
     /// Bond lifecycle manager (optional; enabled when claim addresses are configured).
     pub bond_manager: Option<BondManager<C>>,
+    /// Best-effort anchor state updater.
+    pub anchor_updater: AnchorUpdater,
 }
 
 impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> std::fmt::Debug
@@ -119,8 +121,11 @@ where
     pub pending_proofs: PendingProofs,
     /// Games that hit terminal contract reverts and should not be rediscovered.
     ignored_games: HashSet<Address>,
+    ignored_game_order: VecDeque<Address>,
     /// Bond lifecycle manager (optional; enabled when claim addresses are configured).
     pub bond_manager: Option<BondManager<C>>,
+    /// Best-effort anchor state updater.
+    pub anchor_updater: AnchorUpdater,
     /// Interval between polling cycles.
     pub poll_interval: Duration,
     /// Maximum wall-clock time to wait for a ZK proof session before treating it as failed.
@@ -147,6 +152,12 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
     /// Maximum number of times a failed proof job will be retried before being dropped.
     pub const MAX_PROOF_RETRIES: u32 = 3;
 
+    /// Maximum number of terminally ignored games retained to avoid rediscovery churn.
+    ///
+    /// Evicted games may be rediscovered by a later scan, then re-ignored after
+    /// one check.
+    pub const MAX_IGNORED_GAMES: usize = 10_000;
+
     /// Creates a new driver with the given components.
     pub fn new(config: DriverConfig, components: DriverComponents<L2, P, T, C>) -> Self {
         Self {
@@ -158,7 +169,9 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
             verifier_client: components.verifier_client,
             pending_proofs: PendingProofs::new(),
             ignored_games: HashSet::new(),
+            ignored_game_order: VecDeque::new(),
             bond_manager: components.bond_manager,
+            anchor_updater: components.anchor_updater,
             poll_interval: config.poll_interval,
             max_proof_duration: config.max_proof_duration,
             tee_submit_retry_limit: config.tee_submit_retry_limit,
@@ -197,11 +210,13 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
     ///
     /// First polls any in-flight proof sessions that are not in the current
     /// scan batch, then discovers claimable bonds, advances bond lifecycle
-    /// claims, and finally scans for new candidates and processes them.
+    /// claims, polls anchor updates, and finally scans for new candidates and
+    /// processes them.
     pub async fn step(&mut self) -> eyre::Result<()> {
         self.poll_pending_proofs().await;
         self.discover_claimable_bonds().await;
         self.poll_bond_claims().await;
+        self.anchor_updater.poll(&*self.verifier_client, &self.submitter).await;
 
         let candidates = self.scanner.scan().await?;
 
@@ -220,10 +235,13 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
     /// so that newly discovered games are immediately eligible for
     /// advancement in the same tick.
     async fn discover_claimable_bonds(&mut self) {
-        if let Some(ref mut bond_manager) = self.bond_manager
-            && let Err(e) = bond_manager.discover_claimable_games(&*self.verifier_client).await
-        {
-            warn!(error = %e, "bond discovery scan failed");
+        let Some(ref mut bond_manager) = self.bond_manager else {
+            return;
+        };
+
+        match bond_manager.discover_claimable_games(&*self.verifier_client).await {
+            Ok(_) => {}
+            Err(e) => warn!(error = %e, "bond discovery scan failed"),
         }
     }
 
@@ -319,7 +337,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
                     }
 
                     // Persistent configuration errors: these indicate a
-                    // mismatch between the cached interval and on-chain
+                    // mismatch between the cached interval and onchain
                     // state (e.g. after a governance `setImplementation`
                     // that changed `INTERMEDIATE_BLOCK_INTERVAL`).
                     // Propagate so the caller logs the error at game level
@@ -496,7 +514,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
 
     /// Attempts TEE-first proof sourcing with ZK fallback.
     ///
-    /// The `intent` determines the on-chain action for the ZK fallback path.
+    /// The `intent` determines the onchain action for the ZK fallback path.
     /// TEE proofs always use `nullify()` regardless of `intent`.
     ///
     /// When `try_tee_first` is `true` and the game has a non-zero TEE prover,
@@ -604,7 +622,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
             .ok_or_else(|| eyre::eyre!("claimed_l2_block_number overflow"))?;
 
         // Use the game's stored L1 head (from CWIA) so the enclave signs a
-        // journal whose `l1OriginHash` matches what the on-chain `nullify()`
+        // journal whose `l1OriginHash` matches what the onchain `nullify()`
         // will use for verification. Look up its block number concurrently
         // with the agreed L2 state computation.
         let l1_head = candidate.l1_head;
@@ -807,8 +825,6 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
             Ok(_) => {
                 self.pending_proofs.remove(&game_address);
 
-                // After a successful challenge(), register the game for bond
-                // tracking so the BondManager can resolve and claim the bond.
                 if intent == DisputeIntent::Challenge
                     && let Some(ref mut bond_manager) = self.bond_manager
                 {
@@ -947,7 +963,14 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
 
     fn ignore_game(&mut self, game_address: Address) {
         self.pending_proofs.remove(&game_address);
-        self.ignored_games.insert(game_address);
+        if self.ignored_games.insert(game_address) {
+            self.ignored_game_order.push_back(game_address);
+        }
+        while self.ignored_games.len() > Self::MAX_IGNORED_GAMES {
+            if let Some(game_address) = self.ignored_game_order.pop_front() {
+                self.ignored_games.remove(&game_address);
+            }
+        }
         ChallengerMetrics::ignored_games().set(self.ignored_games.len() as f64);
     }
 
@@ -1096,20 +1119,31 @@ mod tests {
         verifier_games.insert(game_address, mock_state(GameStatus::InProgress, Address::ZERO, 100));
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
         let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
+        let anchor_registry = mock_anchor_registry(Address::ZERO);
         let scanner = GameScanner::new(
-            factory,
+            Arc::clone(&factory) as Arc<dyn base_proof_contracts::DisputeGameFactoryClient>,
             Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
-            mock_anchor_registry(Address::ZERO),
+            Arc::clone(&anchor_registry),
         );
         let proof_requester = Arc::new(MockZkProofProvider::default());
+        let l2_provider = Arc::new(MockL2Provider::new());
         let components = DriverComponents {
             scanner,
-            validator: OutputValidator::new(Arc::new(MockL2Provider::new())),
+            validator: OutputValidator::new(Arc::clone(&l2_provider)),
             proof_requester: Arc::clone(&proof_requester),
             submitter: ChallengeSubmitter::new(tx_manager),
             tee: None,
             verifier_client: verifier,
             bond_manager: None,
+            anchor_updater: AnchorUpdater::new(
+                factory,
+                anchor_registry,
+                l2_provider,
+                Address::repeat_byte(0xAA),
+                1,
+                100,
+                100,
+            ),
         };
         let driver = Driver::new(
             DriverConfig {
@@ -1237,6 +1271,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn challenge_success_does_not_track_anchor_update() {
+        let tx_hash = B256::repeat_byte(0x44);
+        let (mut driver, _proof_requester) =
+            driver_with_tx_manager(MockTxManager::new(Ok(receipt_with_status(true, tx_hash))));
+        insert_ready_proof(&mut driver);
+
+        driver.poll_or_submit(addr(0)).await.unwrap();
+
+        assert!(!driver.pending_proofs.contains_key(&addr(0)));
+    }
+
+    #[tokio::test]
     async fn stale_l1_origin_revert_drops_pending_zk_proof() {
         let (mut driver, proof_requester) =
             driver_with_tx_error(TxManagerError::ExecutionReverted {
@@ -1268,6 +1314,21 @@ mod tests {
         assert!(driver.ignored_games.contains(&addr(0)));
         let state = proof_requester.state.lock().unwrap();
         assert!(state.prove_block_range_log.is_empty());
+    }
+
+    #[test]
+    fn ignored_games_are_bounded() {
+        let (mut driver, _proof_requester) =
+            driver_with_tx_manager(MockTxManager::new(Ok(receipt_with_status(true, B256::ZERO))));
+        let max = Driver::<MockL2Provider, MockZkProofProvider, MockTxManager>::MAX_IGNORED_GAMES;
+
+        for i in 0..=max {
+            driver.ignore_game(addr(i as u64));
+        }
+
+        assert_eq!(driver.ignored_games.len(), max);
+        assert!(!driver.ignored_games.contains(&addr(0)));
+        assert!(driver.ignored_games.contains(&addr(max as u64)));
     }
 
     #[tokio::test]

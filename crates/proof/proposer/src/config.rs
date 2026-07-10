@@ -15,8 +15,6 @@ use crate::cli::Cli;
 pub struct ProposerConfig {
     /// Dry-run mode: source proofs but do not submit transactions onchain.
     pub dry_run: bool,
-    /// Allow proposals based on non-finalized L1 data.
-    pub allow_non_finalized: bool,
     /// URL of the prover RPC endpoint.
     pub prover_rpc: Url,
     /// Prover RPC request timeout.
@@ -120,7 +118,6 @@ impl ProposerConfig {
 
         Ok(Self {
             dry_run: proposer.dry_run,
-            allow_non_finalized: proposer.allow_non_finalized,
             prover_rpc: proposer.prover_rpc,
             prover_timeout: proposer.prover_timeout,
             l1_eth_rpc: proposer.l1_eth_rpc,
@@ -194,7 +191,6 @@ mod tests {
     #[test]
     fn test_valid_config_maps_cli_fields() {
         let mut cli = minimal_cli();
-        cli.proposer.allow_non_finalized = true;
         cli.proposer.rpc_max_retries = 7;
         cli.proposer.recovery_scan_concurrency = 4.try_into().unwrap();
         cli.admin.admin_enabled = true;
@@ -202,7 +198,6 @@ mod tests {
         let config = ProposerConfig::from_cli(cli).unwrap();
 
         assert!(!config.dry_run);
-        assert!(config.allow_non_finalized);
         assert_eq!(config.game_type, 1);
         assert_eq!(config.retry.max_attempts, Some(7));
         assert_eq!(config.recovery_scan_concurrency, 4);

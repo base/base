@@ -195,6 +195,11 @@ macro_rules! rollup_fork_methods {
 impl RollupConfig {
     /// Returns this rollup config's runtime-aware activation for a contract upgrade ID.
     pub fn contract_upgrade_activation(&self, upgrade_id: BaseUpgrade) -> UpgradeActivation {
+        // Zombie is a permanently-off gate: it can never activate, not even via a runtime
+        // override, so short-circuit before consulting the registry or genesis config.
+        if matches!(upgrade_id, BaseUpgrade::Zombie) {
+            return UpgradeActivation::Never;
+        }
         RuntimeUpgradeRegistry::activation(self.l2_chain_id.id(), upgrade_id)
             .unwrap_or_else(|| self.upgrades.activation(upgrade_id))
     }
@@ -324,6 +329,11 @@ impl RollupConfig {
         is_first_cobalt_block,
         [contract_upgrade_activation_timestamp(BaseUpgrade::Cobalt)],
         "Cobalt";
+
+        is_zombie_active,
+        is_first_zombie_block,
+        [contract_upgrade_activation_timestamp(BaseUpgrade::Zombie)],
+        "Zombie";
     }
 
     /// Returns the max sequencer drift for the given timestamp.
@@ -453,6 +463,10 @@ impl UpgradeActivationSink for RollupConfig {
         upgrade_id: BaseUpgrade,
         activation: UpgradeActivation,
     ) -> Result<bool, Self::Error> {
+        if matches!(upgrade_id, BaseUpgrade::Zombie) {
+            return Ok(false);
+        }
+
         self.apply_upgrade_activation(upgrade_id, activation);
         Ok(true)
     }
@@ -925,15 +939,27 @@ mod tests {
         crate::RuntimeUpgradeRegistry::clear_activation_timestamp(chain_id, BaseUpgrade::Canyon);
         crate::RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Azul, 42);
         crate::RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Cobalt, 84);
+        // The Zombie gate stays off even when a runtime override tries to activate it.
+        crate::RuntimeUpgradeRegistry::set_activation_timestamp(
+            chain_id,
+            BaseUpgrade::Zombie,
+            u64::MAX,
+        );
 
         assert!(!cfg.is_canyon_active(10));
         assert!(cfg.is_base_azul_active(42));
         assert!(cfg.is_cobalt_active(84));
+        assert!(!cfg.is_zombie_active(84));
+        assert!(!cfg.is_zombie_active(u64::MAX));
 
         let materialized = cfg.with_runtime_upgrade_overrides();
         assert_eq!(materialized.upgrades.canyon_time, None);
         assert_eq!(materialized.upgrades.base.azul, Some(42));
         assert_eq!(materialized.upgrades.base.cobalt, Some(84));
+        assert_eq!(
+            materialized.contract_upgrade_activation(BaseUpgrade::Zombie),
+            UpgradeActivation::Never
+        );
 
         crate::RuntimeUpgradeRegistry::clear_chain(chain_id);
     }

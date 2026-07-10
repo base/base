@@ -1,4 +1,5 @@
 //! Contains EIP-8130 account-abstraction transaction parts.
+use alloy_primitives::B256;
 pub use base_common_consensus::EIP8130_TX_TYPE_ID as EIP8130_TRANSACTION_TYPE;
 use base_common_consensus::Eip8130Signed;
 
@@ -56,14 +57,20 @@ pub struct Eip8130TransactionParts {
     /// [`Eip8130ExecutionMode::Verified`], so block execution and txpool
     /// admission never reach the unverified path.
     pub mode: Eip8130ExecutionMode,
+    /// Optional acting-actor hint for the RPC simulation path. Estimation never
+    /// recovers a signature, so without this the simulate path publishes the
+    /// account's self-actor. Set only by `to_eip8130_simulation_tx`; always
+    /// [`None`] on the verified consensus path.
+    pub simulation_sender_actor_id: Option<B256>,
 }
 
 impl Eip8130TransactionParts {
     /// Create new EIP-8130 transaction parts from a signed envelope, for the
     /// verified consensus/block-execution path. The RPC simulation path builds
     /// parts through the consensus-tx conversion and then sets
-    /// [`Eip8130ExecutionMode::Simulate`] on the result.
+    /// [`Eip8130ExecutionMode::Simulate`] (and optionally
+    /// [`Self::simulation_sender_actor_id`]) on the result.
     pub const fn new(signed: Eip8130Signed) -> Self {
-        Self { signed, mode: Eip8130ExecutionMode::Verified }
+        Self { signed, mode: Eip8130ExecutionMode::Verified, simulation_sender_actor_id: None }
     }
 }

@@ -30,6 +30,10 @@ impl UpgradeActivationSink for RuntimeRegistrySink {
         upgrade_id: BaseUpgrade,
         activation: UpgradeActivation,
     ) -> Result<bool, Self::Error> {
+        if matches!(upgrade_id, BaseUpgrade::Zombie) {
+            return Ok(false);
+        }
+
         self.updates.set_activation(upgrade_id, activation);
         Ok(true)
     }

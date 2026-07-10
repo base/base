@@ -126,16 +126,6 @@ base_metrics::define_metrics! {
     anchor_update_tx_outcome_total: counter,
 
     #[describe(
-        "Number of otherwise-removable games currently retained while awaiting anchor state update"
-    )]
-    anchor_update_retained_games: gauge,
-
-    #[describe(
-        "Total games retained past bond lifecycle completion while awaiting anchor state update"
-    )]
-    anchor_update_retained_games_total: counter,
-
-    #[describe(
         "L2 block number of the most recent anchor state successfully advanced by this challenger. \
          Monotonically increases as the challenger drives the anchor forward; absent until the \
          first successful setAnchorState() observation."
@@ -158,7 +148,7 @@ impl ChallengerMetrics {
     pub const STATUS_ERROR: &str = "error";
 
     /// Label value when a resolve was skipped because the game was already
-    /// resolved on-chain (e.g. by another actor).
+    /// resolved onchain (e.g. by another actor).
     pub const STATUS_ALREADY_RESOLVED: &str = "already_resolved";
 
     /// Label value when an anchor update was skipped (game not eligible).

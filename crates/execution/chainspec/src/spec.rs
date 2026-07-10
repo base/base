@@ -447,7 +447,7 @@ impl BaseChainSpec {
             inserted = true;
         }
         // Only execution-ladder upgrades enter the reth hardfork schedule; contract-only
-        // upgrades (Delta, PectraBlobSchedule) are ignored here.
+        // upgrades (Delta, PectraBlobSchedule) and the permanently-off Zombie gate are ignored.
         if hardfork_id.is_execution() {
             hardforks.insert(hardfork_id, condition);
             inserted = true;
@@ -960,6 +960,17 @@ mod tests {
     }
 
     #[test]
+    fn builtin_chain_specs_never_activate_zombie() {
+        // Zombie is a permanently-off gate: it never enters any chain's fork schedule, so it is
+        // always `Never` and never active.
+        for spec in [BaseChainSpec::mainnet(), BaseChainSpec::sepolia(), BaseChainSpec::devnet()] {
+            assert_eq!(spec.fork(BaseUpgrade::Zombie), ForkCondition::Never);
+            assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Zombie, 0));
+            assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Zombie, u64::MAX));
+        }
+    }
+
+    #[test]
     fn base_mainnet_genesis() {
         let base_mainnet_spec = BaseChainSpec::mainnet();
         let genesis = base_mainnet_spec.genesis_header();
@@ -1202,7 +1213,8 @@ mod tests {
         "jovianTime": 54,
         "base": {
           "v1": 55,
-          "v2": 60
+          "v2": 60,
+          "v3": 65
         },
         "activationAdminAddress": "0xcb00000000000000000000000000000000000000",
         "optimism": {
@@ -1243,6 +1255,12 @@ mod tests {
         assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Azul, 55));
         assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Beryl, 59));
         assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Beryl, 60));
+        assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Cobalt, 64));
+        assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Cobalt, 65));
+
+        // Zombie is a permanently-off gate: never scheduled, always Never.
+        assert_eq!(chain_spec.fork(BaseUpgrade::Zombie), ForkCondition::Never);
+        assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Zombie, 9999));
     }
 
     #[test]

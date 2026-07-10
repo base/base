@@ -35,10 +35,10 @@ pub enum BasePooledTransaction {
     /// A [`TxEip7702`] transaction tagged with type 4.
     #[envelope(ty = 4)]
     Eip7702(Signed<TxEip7702>),
-    /// An [EIP-8130] Account Abstraction transaction tagged with type 0x7B.
+    /// An [EIP-8130] Account Abstraction transaction tagged with type 0x79.
     ///
     /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
-    #[envelope(ty = 123, typed = TxEip8130)]
+    #[envelope(ty = 121, typed = TxEip8130)]
     Eip8130(Eip8130Signed),
 }
 

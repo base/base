@@ -78,6 +78,13 @@ pub trait Upgrades: EthereumHardforks {
     fn is_cobalt_active_at_timestamp(&self, timestamp: u64) -> bool {
         self.upgrade_activation(BaseUpgrade::Cobalt).active_at_timestamp(timestamp)
     }
+
+    /// Returns `true` if the [`Zombie`](BaseUpgrade::Zombie) gate is active at the given block
+    /// timestamp. Zombie is a permanently-off gate, so this always returns `false`; use it to
+    /// keep not-yet-ready features disabled behind a fork check like any other upgrade.
+    fn is_zombie_active_at_timestamp(&self, timestamp: u64) -> bool {
+        self.upgrade_activation(BaseUpgrade::Zombie).active_at_timestamp(timestamp)
+    }
 }
 
 impl Upgrades for RollupConfig {
@@ -128,8 +135,8 @@ impl Upgrades for RollupConfig {
                 .contract_upgrade_activation_timestamp(BaseUpgrade::Cobalt)
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
-            // Contract-only upgrades (Delta, PectraBlobSchedule) and any future variants are
-            // absent from the execution fork ladder.
+            // Contract-only upgrades (Delta, PectraBlobSchedule), the permanently-off Zombie gate,
+            // and any future variants are absent from the execution fork ladder.
             _ => ForkCondition::Never,
         }
     }
@@ -165,6 +172,7 @@ mod tests {
         assert_eq!(cfg.upgrade_activation(BaseUpgrade::Azul), ForkCondition::Never);
         assert_eq!(cfg.upgrade_activation(BaseUpgrade::Beryl), ForkCondition::Never);
         assert_eq!(cfg.upgrade_activation(BaseUpgrade::Cobalt), ForkCondition::Never);
+        assert_eq!(cfg.upgrade_activation(BaseUpgrade::Zombie), ForkCondition::Never);
     }
 
     #[cfg(feature = "std")]
@@ -186,12 +194,15 @@ mod tests {
             BaseUpgrade::Cobalt,
             ACTIVATION + 1,
         );
+        // Even a runtime override cannot activate the permanently-off Zombie gate.
+        RuntimeUpgradeRegistry::set_activation_timestamp(CHAIN_ID, BaseUpgrade::Zombie, u64::MAX);
 
         assert_eq!(cfg.upgrade_activation(BaseUpgrade::Azul), ForkCondition::Timestamp(ACTIVATION));
         assert_eq!(
             cfg.upgrade_activation(BaseUpgrade::Cobalt),
             ForkCondition::Timestamp(ACTIVATION + 1)
         );
+        assert_eq!(cfg.upgrade_activation(BaseUpgrade::Zombie), ForkCondition::Never);
 
         RuntimeUpgradeRegistry::clear_chain(CHAIN_ID);
     }
