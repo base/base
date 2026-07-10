@@ -1,3 +1,6 @@
+//! Execution-layer `RLPx` reachability probing: dials a target over TCP,
+//! authenticates the ECIES transport, and exchanges the devp2p Hello.
+
 use std::{fmt, net::SocketAddr, time::Duration};
 
 use alloy_primitives::B512;
@@ -34,6 +37,17 @@ pub enum RlpxProbeOutcome {
     HandshakeFailed,
 }
 
+impl fmt::Display for RlpxProbeOutcome {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Reachable => "reachable",
+            Self::ConnectionFailed => "connection_failed",
+            Self::TimedOut => "timed_out",
+            Self::HandshakeFailed => "handshake_failed",
+        })
+    }
+}
+
 /// Protocol stage reached by an `RLPx` reachability probe.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -44,6 +58,16 @@ pub enum RlpxProbeStage {
     Ecies,
     /// Exchanging the devp2p Hello message.
     Rlpx,
+}
+
+impl fmt::Display for RlpxProbeStage {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Tcp => "tcp",
+            Self::Ecies => "ecies",
+            Self::Rlpx => "rlpx",
+        })
+    }
 }
 
 /// Network target for an execution-layer `RLPx` probe.
@@ -123,7 +147,8 @@ impl ReachabilityProber for RlpxProber {
             Ok(Err(error)) => {
                 debug!(
                     error = %error,
-                    stage = ?RlpxProbeStage::Tcp,
+                    target = %target.address,
+                    stage = %RlpxProbeStage::Tcp,
                     "reachability probe transport failed"
                 );
                 return finish(RlpxProbeOutcome::ConnectionFailed, RlpxProbeStage::Tcp, None);
@@ -143,7 +168,8 @@ impl ReachabilityProber for RlpxProber {
             Ok(Err(error)) => {
                 debug!(
                     error = %error,
-                    stage = ?RlpxProbeStage::Ecies,
+                    target = %target.address,
+                    stage = %RlpxProbeStage::Ecies,
                     "reachability probe handshake failed"
                 );
                 return finish(RlpxProbeOutcome::HandshakeFailed, RlpxProbeStage::Ecies, None);
@@ -168,7 +194,8 @@ impl ReachabilityProber for RlpxProber {
                 // session (e.g. it is at peer capacity).
                 debug!(
                     reason = %reason,
-                    stage = ?RlpxProbeStage::Rlpx,
+                    target = %target.address,
+                    stage = %RlpxProbeStage::Rlpx,
                     "reachability probe disconnected by reachable peer"
                 );
                 finish(RlpxProbeOutcome::Reachable, RlpxProbeStage::Rlpx, None)
@@ -176,7 +203,8 @@ impl ReachabilityProber for RlpxProber {
             Ok(Err(error)) => {
                 debug!(
                     error = %error,
-                    stage = ?RlpxProbeStage::Rlpx,
+                    target = %target.address,
+                    stage = %RlpxProbeStage::Rlpx,
                     "reachability probe handshake failed"
                 );
                 finish(RlpxProbeOutcome::HandshakeFailed, RlpxProbeStage::Rlpx, None)

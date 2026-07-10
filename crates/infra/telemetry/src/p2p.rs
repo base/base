@@ -1,3 +1,6 @@
+//! HTTP API for execution-layer P2P reachability checks: request validation,
+//! trusted-proxy client IP resolution, and probe concurrency limits.
+
 use std::{
     collections::HashSet,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -320,13 +323,14 @@ impl ProbeLimiter {
 
     /// Attempts to reserve global and per-source probe capacity.
     pub fn try_acquire(&self, source_ip: IpAddr) -> Option<ProbePermit> {
-        let mut active_sources = self.active_sources.lock().unwrap_or_else(PoisonError::into_inner);
-        if active_sources.contains(&source_ip) {
+        if !self.active_sources.lock().unwrap_or_else(PoisonError::into_inner).insert(source_ip) {
             return None;
         }
-        let global_permit = Arc::clone(&self.global).try_acquire_owned().ok()?;
-        active_sources.insert(source_ip);
-        drop(active_sources);
+
+        let Ok(global_permit) = Arc::clone(&self.global).try_acquire_owned() else {
+            self.active_sources.lock().unwrap_or_else(PoisonError::into_inner).remove(&source_ip);
+            return None;
+        };
 
         Some(ProbePermit {
             source_ip,
@@ -358,6 +362,20 @@ pub struct P2pState {
     prober: Arc<dyn ReachabilityProber>,
 }
 
+impl P2pState {
+    /// Creates handler state with default probe capacity limits.
+    pub fn new<P>(trusted_proxy_cidrs: Vec<IpNet>, prober: Arc<P>) -> Self
+    where
+        P: ReachabilityProber + 'static,
+    {
+        Self {
+            resolver: ClientIpResolver::new(trusted_proxy_cidrs),
+            limiter: Arc::new(ProbeLimiter::new(P2P_REACHABILITY_MAX_CONCURRENT_PROBES)),
+            prober,
+        }
+    }
+}
+
 /// Axum routes for execution-layer P2P reachability checks.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct P2pRoutes;
@@ -368,15 +386,10 @@ impl P2pRoutes {
     where
         P: ReachabilityProber + 'static,
     {
-        let state = P2pState {
-            resolver: ClientIpResolver::new(trusted_proxy_cidrs),
-            limiter: Arc::new(ProbeLimiter::new(P2P_REACHABILITY_MAX_CONCURRENT_PROBES)),
-            prober,
-        };
         Router::new()
             .route(P2P_REACHABILITY_PATH, post(Self::check))
             .layer(DefaultBodyLimit::max(P2P_REACHABILITY_MAX_REQUEST_BYTES))
-            .with_state(state)
+            .with_state(P2pState::new(trusted_proxy_cidrs, prober))
     }
 
     /// Handles one execution-layer P2P reachability check.
@@ -398,15 +411,16 @@ impl P2pRoutes {
             P2pApiError::InvalidRequest
         })?;
         let _permit = state.limiter.try_acquire(source_ip).ok_or_else(|| {
-            debug!("reachability probe capacity exhausted");
+            debug!(source = %source_ip, "reachability probe capacity exhausted");
             P2pApiError::Saturated
         })?;
         let result = state.prober.probe(target).await;
         let elapsed_ms = u64::try_from(result.elapsed.as_millis()).unwrap_or(u64::MAX);
 
         info!(
-            outcome = ?result.outcome,
-            stage = ?result.stage,
+            outcome = %result.outcome,
+            stage = %result.stage,
+            target = %target.address,
             elapsed_ms,
             "reachability probe completed"
         );
