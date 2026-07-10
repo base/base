@@ -155,6 +155,8 @@ pub async fn find_starting_forkchoice_with_checkpoint_reader<
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use alloy_consensus::transaction::Recovered;
     use alloy_eips::{BlockId, BlockNumHash, BlockNumberOrTag};
     use alloy_primitives::{Address, B256, Sealed, b256};
@@ -162,12 +164,15 @@ mod tests {
     use alloy_rpc_types_eth::{
         Block as RpcBlock, BlockTransactions, Transaction as EthTransaction,
     };
+    use async_trait::async_trait;
     use base_common_consensus::{BaseTxEnvelope, TxDeposit};
     use base_common_genesis::ChainGenesis;
     use base_common_network::Base;
     use base_common_rpc_types::Transaction as BaseTransaction;
     use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
+    use rstest::rstest;
 
+    use super::{ForkchoiceCheckpointLabel, ForkchoiceCheckpointReader, SyncStartError};
     use crate::test_utils::test_engine_client_builder;
 
     const BASE_SEPOLIA_GENESIS_HASH: B256 =
@@ -230,6 +235,45 @@ mod tests {
         block
     }
 
+    fn l2_block_without_l1_info(number: u64, parent_hash: B256) -> RpcBlock<BaseTransaction> {
+        let mut block = RpcBlock::<BaseTransaction>::default();
+        block.header.inner.number = number;
+        block.header.inner.parent_hash = parent_hash;
+        block.header.inner.timestamp = number;
+        block.transactions = BlockTransactions::Full(vec![]);
+        block
+    }
+
+    fn checkpoint_from_header(block: &RpcBlock<BaseTransaction>) -> L2BlockInfo {
+        L2BlockInfo {
+            block_info: BlockInfo::from(
+                &block.clone().into_consensus().map_transactions(|tx| tx.inner.inner.into_inner()),
+            ),
+            l1_origin: BlockNumHash { number: 1, hash: b256!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") },
+            seq_num: 0,
+        }
+    }
+
+    #[derive(Debug)]
+    struct ScriptedCheckpointReader {
+        safe: L2BlockInfo,
+        finalized: L2BlockInfo,
+    }
+
+    #[async_trait]
+    impl ForkchoiceCheckpointReader for ScriptedCheckpointReader {
+        async fn checkpoint(
+            &self,
+            label: ForkchoiceCheckpointLabel,
+        ) -> Result<Option<L2BlockInfo>, super::ForkchoiceCheckpointError> {
+            let checkpoint = match label {
+                ForkchoiceCheckpointLabel::Safe => self.safe,
+                ForkchoiceCheckpointLabel::Finalized => self.finalized,
+            };
+            Ok(Some(checkpoint))
+        }
+    }
+
     #[tokio::test]
     async fn current_uses_config_genesis_when_finalized_label_is_unavailable() {
         let rollup_config = base_common_genesis::RollupConfig {
@@ -272,5 +316,88 @@ mod tests {
         assert_eq!(forkchoice.un_safe.block_info.hash, latest_hash);
         assert_eq!(forkchoice.safe, expected_genesis);
         assert_eq!(forkchoice.finalized, expected_genesis);
+    }
+
+    #[rstest]
+    #[case::noop_reader_errs(false)]
+    #[case::scripted_reader_recovers(true)]
+    #[tokio::test]
+    async fn recover_pruned_safe_finalized_via_checkpoint_reader(
+        #[case] use_scripted_checkpoint_reader: bool,
+    ) {
+        // Design decision: existing `MockEngineClient` is sufficient because this test only needs
+        // deterministic per-method responses and not call-order assertions.
+        let rollup_config = base_common_genesis::RollupConfig {
+            genesis: ChainGenesis {
+                l1: BlockNumHash {
+                    number: 0,
+                    hash: b256!("1111111111111111111111111111111111111111111111111111111111111111"),
+                },
+                l2: BlockNumHash {
+                    number: 0,
+                    hash: b256!("2222222222222222222222222222222222222222222222222222222222222222"),
+                },
+                l2_time: 0,
+                system_config: None,
+            },
+            ..Default::default()
+        };
+
+        let finalized_labeled_pruned =
+            l2_block_without_l1_info(10, b256!("0303030303030303030303030303030303030303030303030303030303030303"));
+        let safe_labeled_pruned = l2_block_without_l1_info(
+            11,
+            finalized_labeled_pruned.clone().into_consensus().hash_slow(),
+        );
+        let safe_labeled_hash = safe_labeled_pruned.clone().into_consensus().hash_slow();
+        let middle_unpruned = l2_block_with_l1_info(11, b256!("0404040404040404040404040404040404040404040404040404040404040404"));
+        let latest_unpruned = l2_block_with_l1_info(12, safe_labeled_hash);
+
+        let checkpoint_safe = checkpoint_from_header(&safe_labeled_pruned);
+        let checkpoint_finalized = checkpoint_from_header(&finalized_labeled_pruned);
+        let checkpoint_reader = ScriptedCheckpointReader {
+            safe: checkpoint_safe,
+            finalized: checkpoint_finalized,
+        };
+
+        let client = Arc::new(
+            test_engine_client_builder()
+                .with_l2_block(BlockId::Number(BlockNumberOrTag::Latest), latest_unpruned)
+                .with_l2_block(BlockId::Number(BlockNumberOrTag::Safe), safe_labeled_pruned.clone())
+                .with_l2_block(
+                    BlockId::Number(BlockNumberOrTag::Finalized),
+                    finalized_labeled_pruned.clone(),
+                )
+                .with_l2_block(BlockId::Number(10u64.into()), finalized_labeled_pruned)
+                .with_l2_block(BlockId::Number(11u64.into()), middle_unpruned)
+                .with_l2_block(BlockId::Hash(safe_labeled_hash.into()), safe_labeled_pruned)
+                .with_l1_block(BlockId::from(B256::ZERO), RpcBlock::<EthTransaction>::default())
+                .build(),
+        );
+
+        let result = if use_scripted_checkpoint_reader {
+            super::find_starting_forkchoice_with_checkpoint_reader(
+                &rollup_config,
+                client.as_ref(),
+                &checkpoint_reader,
+            )
+            .await
+        } else {
+            super::find_starting_forkchoice_with_checkpoint_reader(
+                &rollup_config,
+                client.as_ref(),
+                &super::NoopForkchoiceCheckpointReader,
+            )
+            .await
+        };
+
+        if use_scripted_checkpoint_reader {
+            let forkchoice = result.expect("scripted checkpoint reader should recover pruned labels");
+            assert_eq!(forkchoice.safe, checkpoint_safe);
+            assert_eq!(forkchoice.finalized, checkpoint_finalized);
+        } else {
+            let err = result.expect_err("noop checkpoint reader should fail pruned recovery path");
+            assert!(matches!(err, SyncStartError::FromBlock(_)), "unexpected error: {err:?}");
+        }
     }
 }

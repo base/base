@@ -338,11 +338,92 @@ async fn get_block_compat<EngineClient_: EngineClient>(
 
 #[cfg(test)]
 mod tests {
+    use alloy_consensus::transaction::Recovered;
+    use alloy_eips::BlockId;
     use alloy_eips::BlockNumberOrTag;
     use alloy_json_rpc::ErrorPayload;
+    use alloy_primitives::{Address, B256, b256};
+    use alloy_rpc_types_eth::{Block as RpcBlock, BlockTransactions};
+    use base_common_consensus::{BaseTxEnvelope, TxDeposit};
+    use base_common_genesis::{ChainGenesis, RollupConfig};
+    use base_common_rpc_types::Transaction;
+    use base_protocol::L1BlockInfoBedrock;
+    use rstest::rstest;
 
-    use super::get_block_compat;
+    use super::{find_earliest_unpruned_block, get_block_compat};
+    use crate::SyncStartError;
     use crate::test_utils::{MockL2BlockError, test_engine_client_builder};
+
+    #[derive(Debug, Clone, Copy)]
+    enum PrunedTipScenario {
+        EqualsPrunedAllPruned,
+        PrunedAboveBoundary,
+        BoundaryPlusOne,
+        HealthySeparation,
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum PrunedTipExpectation {
+        NoUnprunedBlockAvailable,
+        EarliestUnprunedBlockNumber(u64),
+    }
+
+    fn pruned_tip_rollup_config() -> RollupConfig {
+        RollupConfig {
+            genesis: ChainGenesis {
+                l1: alloy_eips::BlockNumHash {
+                    number: 0,
+                    hash: b256!("1111111111111111111111111111111111111111111111111111111111111111"),
+                },
+                l2: alloy_eips::BlockNumHash {
+                    number: 0,
+                    hash: b256!("2222222222222222222222222222222222222222222222222222222222222222"),
+                },
+                l2_time: 0,
+                system_config: None,
+            },
+            ..Default::default()
+        }
+    }
+
+    fn l1_info_rpc_transaction(block_number: u64) -> Transaction {
+        let envelope = BaseTxEnvelope::Deposit(alloy_primitives::Sealed::new_unchecked(
+            TxDeposit {
+                input: L1BlockInfoBedrock::default().encode_calldata(),
+                ..Default::default()
+            },
+            B256::ZERO,
+        ));
+        Transaction {
+            inner: alloy_rpc_types_eth::Transaction {
+                inner: Recovered::new_unchecked(envelope, Address::ZERO),
+                block_hash: None,
+                block_number: Some(block_number),
+                block_timestamp: None,
+                effective_gas_price: Some(0),
+                transaction_index: Some(0),
+            },
+            deposit_nonce: None,
+            deposit_receipt_version: None,
+        }
+    }
+
+    fn pruned_tip_block(number: u64, parent_hash: B256, has_l1_info: bool) -> RpcBlock<Transaction> {
+        let mut block = RpcBlock::<Transaction>::default();
+        block.header.inner.number = number;
+        block.header.inner.parent_hash = parent_hash;
+        block.header.inner.timestamp = number;
+        block.transactions = if has_l1_info {
+            BlockTransactions::Full(vec![l1_info_rpc_transaction(number)])
+        } else {
+            BlockTransactions::Full(vec![])
+        };
+        block
+    }
+
+    fn pruned_tip_parent_hash(number: u64) -> B256 {
+        B256::from([number as u8; 32])
+    }
 
     #[tokio::test]
     async fn get_block_compat_eip4444_error_code_returns_none() {
@@ -386,5 +467,118 @@ mod tests {
 
         let err = get_block_compat(&client, BlockNumberOrTag::Latest.into()).await.unwrap_err();
         assert!(err.to_string().contains("connection refused"));
+    }
+
+    #[rstest]
+    #[case::latest_equals_pruned_all_pruned(
+        PrunedTipScenario::EqualsPrunedAllPruned,
+        10,
+        PrunedTipExpectation::NoUnprunedBlockAvailable
+    )]
+    #[case::latest_pruned_above_boundary(
+        PrunedTipScenario::PrunedAboveBoundary,
+        10,
+        PrunedTipExpectation::NoUnprunedBlockAvailable
+    )]
+    #[case::latest_is_boundary_plus_one(
+        PrunedTipScenario::BoundaryPlusOne,
+        10,
+        PrunedTipExpectation::EarliestUnprunedBlockNumber(11)
+    )]
+    #[case::latest_healthy_separation(
+        PrunedTipScenario::HealthySeparation,
+        10,
+        PrunedTipExpectation::EarliestUnprunedBlockNumber(13)
+    )]
+    #[tokio::test]
+    async fn find_earliest_unpruned_block_boundary_cases(
+        #[case] scenario: PrunedTipScenario,
+        #[case] pruned_block_number: u64,
+        #[case] expected: PrunedTipExpectation,
+    ) {
+        let cfg = pruned_tip_rollup_config();
+
+        let mut client_builder = test_engine_client_builder();
+
+        let latest_number = match scenario {
+            PrunedTipScenario::EqualsPrunedAllPruned => {
+                let latest = pruned_tip_block(10, pruned_tip_parent_hash(9), false);
+                client_builder = client_builder
+                    .with_l2_block(BlockId::Number(BlockNumberOrTag::Latest), latest)
+                    .with_l2_block(
+                        BlockId::Number(10u64.into()),
+                        pruned_tip_block(10, pruned_tip_parent_hash(9), false),
+                );
+                10
+            }
+            PrunedTipScenario::PrunedAboveBoundary => {
+                let latest = pruned_tip_block(14, pruned_tip_parent_hash(13), false);
+                client_builder = client_builder
+                    .with_l2_block(BlockId::Number(BlockNumberOrTag::Latest), latest)
+                    .with_l2_block(
+                        BlockId::Number(12u64.into()),
+                        pruned_tip_block(12, pruned_tip_parent_hash(11), false),
+                    )
+                    .with_l2_block(
+                        BlockId::Number(13u64.into()),
+                        pruned_tip_block(13, pruned_tip_parent_hash(12), false),
+                    );
+                14
+            }
+            PrunedTipScenario::BoundaryPlusOne => {
+                let latest = pruned_tip_block(11, pruned_tip_parent_hash(10), true);
+                client_builder = client_builder
+                    .with_l2_block(BlockId::Number(BlockNumberOrTag::Latest), latest)
+                    .with_l2_block(
+                        BlockId::Number(10u64.into()),
+                        pruned_tip_block(10, pruned_tip_parent_hash(9), false),
+                    );
+                11
+            }
+            PrunedTipScenario::HealthySeparation => {
+                let latest = pruned_tip_block(14, pruned_tip_parent_hash(13), true);
+                client_builder = client_builder
+                    .with_l2_block(BlockId::Number(BlockNumberOrTag::Latest), latest)
+                    .with_l2_block(
+                        BlockId::Number(12u64.into()),
+                        pruned_tip_block(12, pruned_tip_parent_hash(11), false),
+                    )
+                    .with_l2_block(
+                        BlockId::Number(13u64.into()),
+                        pruned_tip_block(13, pruned_tip_parent_hash(12), true),
+                    );
+                14
+            }
+        };
+
+        let client = client_builder.build();
+
+        let result = find_earliest_unpruned_block(&cfg, &client, pruned_block_number).await;
+
+        match expected {
+            PrunedTipExpectation::NoUnprunedBlockAvailable => {
+                // Startup liveness: binary search must terminate and surface
+                // `NoUnprunedBlockAvailable` (not `MissingL1InfoDeposit`) when no
+                // unpruned upper bound exists.
+                let err = result.expect_err("expected no unpruned block to be available");
+                assert!(
+                    matches!(
+                        err,
+                        SyncStartError::NoUnprunedBlockAvailable {
+                            pruned_block_number: p,
+                            latest_block_number: l,
+                        } if p == pruned_block_number && l == latest_number
+                    ),
+                    "expected SyncStartError::NoUnprunedBlockAvailable, got: {err:?}"
+                );
+            }
+            PrunedTipExpectation::EarliestUnprunedBlockNumber(expected_number) => {
+                // Startup liveness: boundary conditions (`pruned + 1` and wider
+                // separations) must still return the earliest unpruned block, proving the
+                // search guard is not overly conservative.
+                let block = result.expect("expected earliest unpruned block");
+                assert_eq!(block.block_info.number, expected_number);
+            }
+        }
     }
 }
