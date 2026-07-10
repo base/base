@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use alloy_primitives::Address;
 use base_proof_contracts::{
-    AggregateVerifierClient, AnchorRoot, AnchorStateRegistryClient, DisputeGameFactoryClient,
-    GameStatus, encode_set_anchor_state_calldata, game_lookup_blocks, game_lookup_key,
+    AggregateVerifierClient, AnchorStateRegistryClient, DisputeGameFactoryClient, GameStatus,
+    encode_set_anchor_state_calldata, game_lookup_blocks, game_lookup_key,
 };
 use base_proof_rpc::L2Provider;
 use tracing::{debug, info, warn};
@@ -63,7 +63,8 @@ impl AnchorUpdater {
             }
         };
 
-        let Some(game_address) = self.next_game(anchor.anchor_root, anchor.anchor_game).await
+        let Some(game_address) =
+            self.next_game(anchor.anchor_root.l2_block_number, anchor.anchor_game).await
         else {
             return;
         };
@@ -87,9 +88,13 @@ impl AnchorUpdater {
         Self::try_update(game_address, verifier_client, submitter).await;
     }
 
-    async fn next_game(&self, anchor_root: AnchorRoot, anchor_game: Address) -> Option<Address> {
+    async fn next_game(
+        &self,
+        anchor_l2_block_number: u64,
+        anchor_game: Address,
+    ) -> Option<Address> {
         let blocks = match game_lookup_blocks(
-            anchor_root.l2_block_number,
+            anchor_l2_block_number,
             self.block_interval,
             self.intermediate_block_interval,
         ) {
@@ -118,7 +123,7 @@ impl AnchorUpdater {
             anchor_game
         };
         let key = match game_lookup_key(
-            anchor_root.l2_block_number,
+            anchor_l2_block_number,
             parent,
             self.block_interval,
             self.intermediate_block_interval,
@@ -335,25 +340,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn poll_waits_for_in_progress_next_game() {
-        let game = addr(1);
-        let (verifier, submitter, updater) = fixture(Address::ZERO, game, GameStatus::InProgress);
+    async fn poll_skips_non_defender_wins_next_game() {
+        for (index, status) in
+            [GameStatus::InProgress, GameStatus::ChallengerWins].into_iter().enumerate()
+        {
+            let game = addr(index as u64 + 1);
+            let (verifier, submitter, updater) = fixture(Address::ZERO, game, status);
 
-        updater.poll(&verifier, &submitter).await;
+            updater.poll(&verifier, &submitter).await;
 
-        assert!(submitter.recorded_calls().is_empty());
-    }
-
-    #[tokio::test]
-    async fn poll_stops_at_challenger_wins_next_game() {
-        let challenger_win = addr(10);
-        let (verifier, submitter, updater) =
-            fixture(Address::ZERO, challenger_win, GameStatus::ChallengerWins);
-
-        updater.poll(&verifier, &submitter).await;
-
-        assert!(submitter.recorded_calls().is_empty());
-        assert_eq!(verifier.status_read_count(challenger_win), 1);
+            assert!(submitter.recorded_calls().is_empty());
+            assert_eq!(verifier.status_read_count(game), 1);
+        }
     }
 
     #[tokio::test]
