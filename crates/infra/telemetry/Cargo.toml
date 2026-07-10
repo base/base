@@ -19,6 +19,7 @@ reth-eth-wire.workspace = true
 alloy-primitives.workspace = true
 anyhow = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive", "std"] }
 base-health = { workspace = true, features = ["axum-server"] }
 clap = { workspace = true, features = ["derive", "env", "std"] }

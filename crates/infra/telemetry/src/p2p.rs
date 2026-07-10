@@ -68,9 +68,6 @@ impl P2pReachabilityRequest {
         }
 
         let raw_node_id = self.node_id.strip_prefix("0x").unwrap_or(&self.node_id);
-        if raw_node_id.len() != 128 || !raw_node_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return None;
-        }
         let node_id = B512::from_str(raw_node_id).ok()?;
 
         let mut encoded_public_key = [0_u8; 65];
@@ -153,17 +150,22 @@ impl From<ClientIpError> for P2pApiError {
 }
 
 /// Error resolving the public client IP for a probe request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ClientIpError {
     /// An untrusted client supplied `X-Forwarded-For`.
+    #[error("untrusted peer supplied X-Forwarded-For")]
     UntrustedForwardedFor,
     /// A trusted proxy did not supply `X-Forwarded-For`.
+    #[error("trusted proxy omitted X-Forwarded-For")]
     MissingForwardedFor,
     /// A forwarded hop was empty, non-UTF-8, or not an IP address.
+    #[error("malformed X-Forwarded-For chain")]
     MalformedForwardedFor,
     /// Every forwarded hop belonged to a trusted proxy network.
+    #[error("X-Forwarded-For chain contains only trusted proxies")]
     AllHopsTrusted,
     /// The resolved client IP was not globally routable.
+    #[error("resolved client IP is not globally routable")]
     NonGlobalClientIp,
 }
 
@@ -385,7 +387,7 @@ impl P2pRoutes {
         body: Result<Json<P2pReachabilityRequest>, JsonRejection>,
     ) -> Result<Json<P2pReachabilityResponse>, P2pApiError> {
         let source_ip = state.resolver.resolve(socket_peer, &headers).inspect_err(|error| {
-            debug!(error = ?error, "reachability request source rejected");
+            debug!(error = %error, "reachability request source rejected");
         })?;
         let Json(request) = body.map_err(|rejection| {
             debug!(status = %rejection.status(), "reachability request body rejected");
@@ -439,7 +441,7 @@ mod tests {
 
     use super::{
         ClientIpError, ClientIpResolver, P2P_REACHABILITY_PATH, P2pAddressFamily, P2pErrorResponse,
-        P2pReachabilityRequest, P2pReachabilityResponse, P2pRoutes, TEST_NODE_ID,
+        P2pReachabilityRequest, P2pReachabilityResponse, P2pRoutes, ProbeLimiter, TEST_NODE_ID,
     };
     use crate::{
         ReachabilityProber, RlpxProbeOutcome, RlpxProbeResult, RlpxProbeStage, RlpxProbeTarget,
@@ -621,6 +623,29 @@ mod tests {
             address_family: P2pAddressFamily::Ipv6,
         };
         assert!(wrong_family.target(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))).is_none());
+    }
+
+    #[test]
+    fn duplicate_source_does_not_consume_global_capacity() {
+        let limiter = ProbeLimiter::new(2);
+        let source = IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8));
+        let other = IpAddr::V4(Ipv4Addr::new(9, 9, 9, 9));
+        let _source_permit = limiter.try_acquire(source).unwrap();
+
+        assert!(limiter.try_acquire(source).is_none());
+        assert!(limiter.try_acquire(other).is_some());
+    }
+
+    #[test]
+    fn global_rejection_does_not_reserve_source() {
+        let limiter = ProbeLimiter::new(1);
+        let first = IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8));
+        let waiting = IpAddr::V4(Ipv4Addr::new(9, 9, 9, 9));
+        let first_permit = limiter.try_acquire(first).unwrap();
+
+        assert!(limiter.try_acquire(waiting).is_none());
+        drop(first_permit);
+        assert!(limiter.try_acquire(waiting).is_some());
     }
 
     #[tokio::test]

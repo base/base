@@ -13,6 +13,7 @@ use tokio::{
     net::TcpStream,
     time::{Instant, timeout_at},
 };
+use tracing::debug;
 
 /// Maximum time allowed for one complete reachability probe.
 pub const RLPX_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -117,7 +118,12 @@ impl ReachabilityProber for RlpxProber {
             Err(_) => {
                 return finish(RlpxProbeOutcome::TimedOut, RlpxProbeStage::Tcp, None);
             }
-            Ok(Err(_)) => {
+            Ok(Err(error)) => {
+                debug!(
+                    error = %error,
+                    stage = ?RlpxProbeStage::Tcp,
+                    "reachability probe transport failed"
+                );
                 return finish(RlpxProbeOutcome::ConnectionFailed, RlpxProbeStage::Tcp, None);
             }
             Ok(Ok(tcp)) => tcp,
@@ -132,7 +138,12 @@ impl ReachabilityProber for RlpxProber {
             Err(_) => {
                 return finish(RlpxProbeOutcome::TimedOut, RlpxProbeStage::Ecies, None);
             }
-            Ok(Err(_)) => {
+            Ok(Err(error)) => {
+                debug!(
+                    error = %error,
+                    stage = ?RlpxProbeStage::Ecies,
+                    "reachability probe handshake failed"
+                );
                 return finish(RlpxProbeOutcome::HandshakeFailed, RlpxProbeStage::Ecies, None);
             }
             Ok(Ok(ecies)) => ecies,
@@ -149,7 +160,14 @@ impl ReachabilityProber for RlpxProber {
             Err(_) | Ok(Err(P2PStreamError::HandshakeError(P2PHandshakeError::Timeout))) => {
                 finish(RlpxProbeOutcome::TimedOut, RlpxProbeStage::Rlpx, None)
             }
-            Ok(Err(_)) => finish(RlpxProbeOutcome::HandshakeFailed, RlpxProbeStage::Rlpx, None),
+            Ok(Err(error)) => {
+                debug!(
+                    error = %error,
+                    stage = ?RlpxProbeStage::Rlpx,
+                    "reachability probe handshake failed"
+                );
+                finish(RlpxProbeOutcome::HandshakeFailed, RlpxProbeStage::Rlpx, None)
+            }
             Ok(Ok((_, remote_hello))) => finish(
                 RlpxProbeOutcome::Reachable,
                 RlpxProbeStage::Rlpx,
