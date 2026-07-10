@@ -121,7 +121,7 @@ pub struct ZkHost<Client> {
 
 impl<Client> ZkHost<Client> {
     /// Creates a ZK host from a prover-service client and ZK prover backends.
-    pub const fn new(
+    pub fn new(
         client: Client,
         provers: HashMap<ZkBackend, Arc<dyn ZkProver>>,
         config: ZkHostConfig,
