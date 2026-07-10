@@ -38,8 +38,7 @@ fn main() {
         let transaction_events_enabled = builder_args.transaction_events.enabled;
         GlobalTransactionEventWriter::init(
             transaction_events_enabled.then(|| builder_args.transaction_events.writer_config()),
-        )
-        .await?;
+        )?;
 
         let builder_config = builder_args
             .into_builder_config(Arc::clone(&metering_provider))
