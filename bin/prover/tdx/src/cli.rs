@@ -5,6 +5,8 @@ use std::{net::SocketAddr, sync::Arc};
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_chains::rollup_config;
 use base_proof_host::{ProverConfig, ProverService};
+#[cfg(feature = "local")]
+use base_proof_tee_tdx_prover::TdxMeasurements;
 use base_proof_tee_tdx_prover::{ProofGenerator, TdxBackend, TdxProverServer};
 use base_proof_tee_tdx_runtime::{ConfigfsTdxQuoteProvider, TdxRuntime};
 use base_proof_worker::{JobDiscovery, JobDiscoveryConfig, ProofSubmitter, WorkerHeartbeatConfig};
@@ -23,6 +25,11 @@ base_cli_utils::define_metrics_args!("BASE_PROVER_TDX", 7310);
 #[derive(Parser)]
 #[command(author, version)]
 pub(crate) struct Cli {
+    /// Run with deterministic local TDX quote fixtures.
+    #[cfg(feature = "local")]
+    #[arg(value_name = "MODE", hide = true)]
+    mode: Option<LocalMode>,
+
     /// L1 execution layer RPC URL.
     #[arg(long, env = "L1_ETH_URL")]
     l1_eth_url: String,
@@ -64,6 +71,12 @@ pub(crate) struct Cli {
     metrics: MetricsArgs,
 }
 
+#[cfg(feature = "local")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
+enum LocalMode {
+    Local,
+}
+
 impl Cli {
     /// Run the TDX prover worker.
     pub(crate) fn run(self) -> eyre::Result<()> {
@@ -89,6 +102,8 @@ impl Cli {
             enable_experimental_witness_endpoint,
             prover_service_endpoint,
             report_name,
+            #[cfg(feature = "local")]
+            mode,
             ..
         } = self;
         let rollup_config = rollup_config!(l2_chain_id)
@@ -106,13 +121,20 @@ impl Cli {
             l1_config,
             enable_experimental_witness_endpoint,
         };
-        let provider = ConfigfsTdxQuoteProvider::new(&report_name);
         info!(
             addr = %listen_addr,
             report_name = %report_name,
             "starting tdx prover worker"
         );
-        let runtime = Arc::new(TdxRuntime::new(provider));
+        #[cfg(feature = "local")]
+        let runtime = if mode == Some(LocalMode::Local) {
+            info!("using deterministic local TDX quote fixture");
+            Arc::new(TdxRuntime::new(TdxMeasurements))
+        } else {
+            Arc::new(TdxRuntime::new(ConfigfsTdxQuoteProvider::new(&report_name)))
+        };
+        #[cfg(not(feature = "local"))]
+        let runtime = Arc::new(TdxRuntime::new(ConfigfsTdxQuoteProvider::new(&report_name)));
         let registrar_handle = TdxProverServer::new(Arc::clone(&runtime)).run(listen_addr).await?;
         let prover = ProverService::new(config, TdxBackend::new(runtime));
 

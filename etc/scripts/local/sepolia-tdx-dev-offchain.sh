@@ -59,7 +59,7 @@ start_worker() {
 }
 
 echo "Building local offchain binaries"
-cargo build -p base-prover-service-bin -p base-prover-tdx -p base-proposer-bin
+cargo build -p base-prover-service-bin -p base-prover-tdx -p base-proposer-bin --features base-prover-tdx/local
 cargo build -p base-prover-nitro-host --features local,worker
 export RUST_LOG="${RUST_LOG:-info}"
 
@@ -116,6 +116,5 @@ target/debug/base-proposer \
     --dispute-game-factory-addr "$dispute_game_factory" \
     --game-type "$game_type" \
     --tee-proof-mode both \
-    --allow-non-finalized \
     --private-key "$proposer_private_key" \
     --poll-interval 12s
