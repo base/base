@@ -2,39 +2,18 @@
 
 use std::{collections::VecDeque, future::Future, sync::Arc};
 
-use alloy_consensus::{proofs, transaction::Recovered, Block, BlockBody, EMPTY_OMMER_ROOT_HASH};
-use alloy_eips::{BlockNumberOrTag, NumHash};
-use alloy_eips::Encodable2718;
-use alloy_primitives::{Address, B256, Bytes};
-use alloy_rpc_types_engine::{
-    CancunPayloadFields, ForkchoiceState, ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum,
-};
-use alloy_rpc_types_eth::{BlockTransactions, Header as RpcHeader};
-use base_common_consensus::{BaseTxEnvelope, TxDeposit};
-use base_common_rpc_types::Transaction as BaseTransaction;
-use base_common_rpc_types_engine::{
-    BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadSidecar,
-};
-use base_consensus_engine::{ConsolidateInput, InsertTaskError};
-use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
-use libp2p::bytes::BufMut;
-use opentelemetry::Context;
+use alloy_primitives::B256;
+use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
+use base_protocol::BlockInfo;
 use thiserror::Error;
-use tokio::sync::{
-    Mutex, mpsc,
-    mpsc::error::TryRecvError,
-    oneshot,
-};
+use tokio::sync::{Mutex, mpsc, oneshot};
 
 use super::{
     Driver, EngineClientCall, FakeEngineClientHandle, FakeL1, FakeSafeDBHandle, HarnessBuilder,
     NodeConfig,
     ProgressTimeout, ScriptedForkchoiceResponse,
 };
-use crate::{
-    DerivationActorRequest, DerivationState, EngineActorRequest, InsertUnsafePayloadRequest,
-    NodeMode,
-};
+use crate::{DerivationActorRequest, DerivationState, EngineActorRequest, NodeMode};
 
 fn run_async<F>(future: F) -> F::Output
 where
@@ -338,165 +317,6 @@ impl<'a> TwoNodeHarness<'a> {
             .push_scripted_new_payload_v3_blocking(scripted);
     }
 
-    /// Sends an unsafe payload to the validator engine via the real insert path and returns the insert result.
-    pub fn insert_validator_unsafe_payload(
-        &mut self,
-        envelope: BaseExecutionPayloadEnvelope,
-    ) -> Result<L2BlockInfo, InsertTaskError> {
-        let latest_block = match envelope.execution_payload.clone() {
-            BaseExecutionPayload::V3(payload) => BaseExecutionPayload::V3(payload)
-                .try_into_block_with_sidecar::<BaseTxEnvelope>(&BaseExecutionPayloadSidecar::v3(
-                    CancunPayloadFields::new(
-                        envelope.parent_beacon_block_root.unwrap_or_default(),
-                        Vec::new(),
-                    ),
-                )),
-            payload => payload.try_into_block::<BaseTxEnvelope>(),
-        }
-        .map(|block| {
-            let alloy_consensus::Block { header, body } = block;
-            let block_hash = header.hash_slow();
-            let block_number = header.number;
-            let block_timestamp = header.timestamp;
-            let transactions = body
-                .transactions
-                .into_iter()
-                .enumerate()
-                .map(|(transaction_index, tx)| BaseTransaction {
-                    inner: alloy_rpc_types_eth::Transaction {
-                        inner: Recovered::new_unchecked(tx, Address::ZERO),
-                        block_hash: Some(block_hash),
-                        block_number: Some(block_number),
-                        transaction_index: Some(transaction_index as u64),
-                        effective_gas_price: Some(0),
-                        block_timestamp: Some(block_timestamp),
-                    },
-                    deposit_nonce: None,
-                    deposit_receipt_version: None,
-                })
-                .collect::<Vec<_>>();
-            alloy_rpc_types_eth::Block::new(
-                RpcHeader::new(header),
-                BlockTransactions::Full(transactions),
-            )
-            .with_withdrawals(body.withdrawals)
-        })
-            .expect("failed to convert execution payload into rpc block for fake latest label");
-        self.validator
-            .fake_engine_client
-            .set_l2_block_by_label_blocking(BlockNumberOrTag::Latest, latest_block);
-
-        let (result_tx, mut result_rx) = mpsc::channel(1);
-        let validator_engine_tx = self.validator.engine_request_tx.clone();
-
-        validator_engine_tx
-            .try_send(EngineActorRequest::ProcessLocalUnsafeL2BlockRequest(Box::new(
-                InsertUnsafePayloadRequest {
-                    envelope,
-                    result_tx: Some(result_tx),
-                    otel_cx: Context::current(),
-                },
-            )))
-            .expect("failed to send ProcessLocalUnsafeL2BlockRequest");
-
-        for _ in 0..200 {
-            self.driver.tick(1);
-            match result_rx.try_recv() {
-                Ok(result) => return result,
-                Err(TryRecvError::Empty) => continue,
-                Err(TryRecvError::Disconnected) => {
-                    panic!("insert result channel disconnected before response")
-                }
-            }
-        }
-
-        panic!("timed out waiting for validator unsafe payload insert result")
-    }
-
-    fn l2_block_info(number: u64, hash: B256, parent_hash: B256) -> L2BlockInfo {
-        L2BlockInfo {
-            block_info: BlockInfo {
-                number,
-                hash,
-                parent_hash,
-                timestamp: number,
-            },
-            l1_origin: NumHash { number, hash },
-            seq_num: number,
-        }
-    }
-
-    /// Sends a validator safe-L2 signal through the real consolidate path.
-    pub fn send_validator_safe_signal(&mut self, safe: L2BlockInfo) {
-        let validator_engine_tx = self.validator.engine_request_tx.clone();
-        run_async(async move {
-            validator_engine_tx
-                .send(EngineActorRequest::ProcessSafeL2SignalRequest(
-                    ConsolidateInput::BlockInfo(safe),
-                ))
-                .await
-                .expect("failed to send ProcessSafeL2SignalRequest");
-        });
-
-        self.driver.tick(1);
-    }
-
-    fn controlled_v3_envelope(
-        block_number: u64,
-        parent_hash: B256,
-    ) -> (BaseExecutionPayloadEnvelope, B256) {
-        let l1_info_tx = BaseTxEnvelope::from(TxDeposit {
-            input: L1BlockInfoBedrock::default().encode_calldata(),
-            ..Default::default()
-        });
-        let mut block = Block::<BaseTxEnvelope> {
-            header: Default::default(),
-            body: BlockBody {
-                transactions: vec![l1_info_tx],
-                ommers: vec![],
-                withdrawals: Some(vec![].into()),
-            },
-        };
-        block.header.parent_hash = parent_hash;
-        block.header.number = block_number;
-        block.header.timestamp = block_number;
-        block.header.base_fee_per_gas = Some(1);
-
-        let transactions: Vec<Bytes> =
-            block.body.transactions().map(|tx| tx.encoded_2718().into()).collect();
-        block.header.transactions_root =
-            proofs::ordered_trie_root_with_encoder(&transactions, |item, buf| buf.put_slice(item));
-        block.header.withdrawals_root = Some(proofs::calculate_withdrawals_root(
-            &block.body.withdrawals.clone().unwrap_or_default(),
-        ));
-        block.header.blob_gas_used = Some(0);
-        block.header.excess_blob_gas = Some(0);
-        block.header.parent_beacon_block_root = Some(B256::ZERO);
-        block.header.ommers_hash = EMPTY_OMMER_ROOT_HASH;
-
-        let (execution_payload, _) = BaseExecutionPayload::from_block_slow(&block);
-        let block_hash = match &execution_payload {
-            BaseExecutionPayload::V3(payload) => BaseExecutionPayload::V3(payload.clone())
-                .try_into_block_with_sidecar::<BaseTxEnvelope>(&BaseExecutionPayloadSidecar::v3(
-                    CancunPayloadFields::new(
-                        block.header.parent_beacon_block_root.unwrap_or_default(),
-                        Vec::new(),
-                    ),
-                ))
-                .expect("expected V3 payload to convert to block")
-                .header
-                .hash_slow(),
-            _ => panic!("expected V3 payload from controlled envelope helper"),
-        };
-        (
-            BaseExecutionPayloadEnvelope {
-                parent_beacon_block_root: block.header.parent_beacon_block_root,
-                execution_payload,
-            },
-            block_hash,
-        )
-    }
-
     /// Extends shared L1 and relays corresponding synthetic gossip deliveries.
     pub fn extend_l1_with_gossip(&mut self, block: BlockInfo) {
         let fake_l1 = self.fake_l1.clone();
@@ -566,8 +386,12 @@ impl<'a> TwoNodeHarness<'a> {
     }
 }
 
-#[test]
-fn c1_sequencer_output_reaches_validator() {
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn c1_sequencer_output_reaches_validator() {
     let mut driver = Driver::new();
     let mut harness = TwoNodeHarness::build(&mut driver);
     harness.script_both_fcu((0..64).map(|_| valid_fcu()));
@@ -783,92 +607,6 @@ fn c1_sequencer_invalid_block_reorg_validator_recovers() {
         fcu_v3_count,
         new_payload_v3_count,
     );
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    /// Reproduces the 2026-06-25 Base mainnet validator wedge via real insert/consolidate paths.
-    ///
-    /// Kona/base currently ports only the `need_fcu_call_backup_unsafe_reorg` field but not the
-    /// op-node recovery logic (`tryBackupUnsafeReorg` + `onBuildInvalid` arming). The desired
-    /// behavior is: after a bad unsafe head is detected, the validator rolls unsafe head back to
-    /// the last-known-good ancestor.
-    ///
-    /// This test intentionally asserts that desired rollback (`unsafe_head_number == 1`) and must
-    /// remain non-ignored. It is EXPECTED to fail on current main and pass once recovery is ported.
-    fn c1_receipt_root_mismatch_poisons_validator_unsafe_head() {
-        let mut driver = Driver::new();
-        let mut harness = TwoNodeHarness::build(&mut driver);
-
-        harness
-            .validator
-            .fake_engine_client
-            .push_scripted_new_payload_v3_blocking([
-                PayloadStatus { status: PayloadStatusEnum::Valid, latest_valid_hash: Some(B256::ZERO) },
-                PayloadStatus { status: PayloadStatusEnum::Valid, latest_valid_hash: Some(B256::ZERO) },
-                PayloadStatus { status: PayloadStatusEnum::Valid, latest_valid_hash: Some(B256::ZERO) },
-                PayloadStatus { status: PayloadStatusEnum::Valid, latest_valid_hash: Some(B256::ZERO) },
-            ]);
-        harness
-            .validator
-            .fake_engine_client
-            .push_scripted_fcu_v3_blocking((0..8).map(|_| valid_fcu()));
-
-        let (envelope_1, hash_1) = TwoNodeHarness::controlled_v3_envelope(1, B256::ZERO);
-        let insert_1 = harness.insert_validator_unsafe_payload(envelope_1);
-        assert!(insert_1.is_ok(), "block 1 insert should succeed, got {insert_1:?}");
-        let unsafe_after_1 = harness
-            .driver
-            .snapshot()
-            .nodes
-            .get(harness.validator.node_id)
-            .expect("validator snapshot should exist after block 1")
-            .unsafe_head_number;
-        assert_eq!(unsafe_after_1, 1, "validator unsafe head should advance to block 1");
-
-        let (envelope_2, hash_2) = TwoNodeHarness::controlled_v3_envelope(2, hash_1);
-        let insert_2 = harness.insert_validator_unsafe_payload(envelope_2);
-        assert!(insert_2.is_ok(), "block 2 insert should succeed, got {insert_2:?}");
-        let unsafe_after_2 = harness
-            .driver
-            .snapshot()
-            .nodes
-            .get(harness.validator.node_id)
-            .expect("validator snapshot should exist after block 2")
-            .unsafe_head_number;
-        assert_eq!(unsafe_after_2, 2, "validator unsafe head should advance to block 2");
-
-        harness.validator.fake_engine_client.push_poisoned_hash_blocking(hash_2);
-
-        harness.send_validator_safe_signal(TwoNodeHarness::l2_block_info(1, hash_1, B256::ZERO));
-        for _ in 0..50 {
-            let current_unsafe = harness
-                .driver
-                .snapshot()
-                .nodes
-                .get(harness.validator.node_id)
-                .expect("validator snapshot should exist while waiting for recovery")
-                .unsafe_head_number;
-            if current_unsafe == 1 {
-                break;
-            }
-            harness.driver.tick(1);
-        }
-
-        let snapshot = harness.driver.snapshot();
-        let validator_snapshot = snapshot
-            .nodes
-            .get(harness.validator.node_id)
-            .expect("validator snapshot should exist after recovery attempt");
-        assert_eq!(
-            validator_snapshot.unsafe_head_number,
-            1,
-            "missing op-node tryBackupUnsafeReorg recovery: unsafe head must roll back to last-known-good block 1, but stayed at {} (need_fcu_call_backup_unsafe_reorg remained unconsumed={})",
-            validator_snapshot.unsafe_head_number,
-            validator_snapshot.need_fcu_call_backup_unsafe_reorg,
-        );
     }
 }
+

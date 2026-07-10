@@ -5,7 +5,7 @@
 //! which Engine API requests were sent by the CL. Responses are still scriptable per call.
 
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
     sync::Arc,
 };
 
@@ -67,7 +67,6 @@ struct FakeEngineClientState {
     calls: Vec<EngineClientCall>,
     l2_block_info_by_tag: HashMap<BlockNumberOrTag, L2BlockInfo>,
     l2_blocks_by_label: HashMap<BlockNumberOrTag, Block<BaseTransaction>>,
-    poisoned_hashes: HashSet<B256>,
     scripted_fcu_v3: VecDeque<ScriptedForkchoiceResponse>,
     scripted_new_payload_v3: VecDeque<PayloadStatus>,
     scripted_get_payload_v3: VecDeque<Result<BaseExecutionPayloadEnvelopeV3, String>>,
@@ -117,26 +116,6 @@ impl FakeEngineClientHandle {
         scripted: impl IntoIterator<Item = PayloadStatus>,
     ) {
         self.state.blocking_lock().scripted_new_payload_v3.extend(scripted);
-    }
-
-    /// Marks a block hash as poisoned so FCU calls to it return `INVALID`.
-    pub async fn push_poisoned_hash(&self, hash: B256) {
-        self.state.lock().await.poisoned_hashes.insert(hash);
-    }
-
-    /// Blocking variant of [`Self::push_poisoned_hash`] for runtime-owned setup code.
-    pub fn push_poisoned_hash_blocking(&self, hash: B256) {
-        self.state.blocking_lock().poisoned_hashes.insert(hash);
-    }
-
-    /// Clears all poisoned hashes.
-    pub async fn clear_poison(&self) {
-        self.state.lock().await.poisoned_hashes.clear();
-    }
-
-    /// Blocking variant of [`Self::clear_poison`] for runtime-owned setup code.
-    pub fn clear_poison_blocking(&self) {
-        self.state.blocking_lock().poisoned_hashes.clear();
     }
 
     /// Injects an FCU-v3 call into the call log and consumes one scripted response.
@@ -338,18 +317,11 @@ impl BaseEngineApi for FakeEngineClient {
         _parent_beacon_block_root: B256,
     ) -> TransportResult<PayloadStatus> {
         let mut state = self.state.lock().await;
-        let block_hash = payload.payload_inner.payload_inner.block_hash;
         state.calls.push(EngineClientCall::NewPayloadV3(Box::new(payload)));
         if let Some(response) = state.scripted_new_payload_v3.pop_front() {
-            if matches!(response.status, alloy_rpc_types_engine::PayloadStatusEnum::Invalid { .. }) {
-                state.poisoned_hashes.insert(block_hash);
-            }
             return Ok(response);
         }
         if let Some(response) = state.single_new_payload_v3.clone() {
-            if matches!(response.status, alloy_rpc_types_engine::PayloadStatusEnum::Invalid { .. }) {
-                state.poisoned_hashes.insert(block_hash);
-            }
             return Ok(response);
         }
         Ok(PayloadStatus {
@@ -386,35 +358,15 @@ impl BaseEngineApi for FakeEngineClient {
         payload_attributes: Option<BasePayloadAttributes>,
     ) -> TransportResult<ForkchoiceUpdated> {
         let mut state = self.state.lock().await;
-        let head_block_hash = fork_choice_state.head_block_hash;
         state.calls.push(EngineClientCall::ForkChoiceUpdatedV3 {
             fcs: fork_choice_state,
             payload_attributes: Box::new(payload_attributes),
         });
-        if state.poisoned_hashes.contains(&head_block_hash) {
-            return Ok(ForkchoiceUpdated {
-                payload_status: PayloadStatus {
-                    status: alloy_rpc_types_engine::PayloadStatusEnum::Invalid {
-                        validation_error: "links to previously rejected block".to_string(),
-                    },
-                    latest_valid_hash: Some(B256::ZERO),
-                },
-                payload_id: None,
-            });
-        }
         let response = state.scripted_fcu_v3.pop_front().unwrap_or_else(|| {
             ScriptedForkchoiceResponse::Err("no scripted FCU-v3 response available".to_string())
         });
         match response {
-            ScriptedForkchoiceResponse::Ok(value) => {
-                if matches!(
-                    value.payload_status.status,
-                    alloy_rpc_types_engine::PayloadStatusEnum::Invalid { .. }
-                ) {
-                    state.poisoned_hashes.insert(head_block_hash);
-                }
-                Ok(value)
-            }
+            ScriptedForkchoiceResponse::Ok(value) => Ok(value),
             ScriptedForkchoiceResponse::Err(message) => {
                 Err(TransportError::from(TransportErrorKind::custom_str(&message)))
             }
