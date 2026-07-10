@@ -15,7 +15,7 @@ use base_proof_contracts::{encode_challenge_calldata, encode_nullify_calldata};
 use base_tx_manager::{TxCandidate, TxManager};
 use tracing::{debug, info};
 
-use crate::{ChallengeSubmitError, ChallengerMetrics, DisputeIntent};
+use crate::{BondTransactionSubmitter, ChallengeSubmitError, ChallengerMetrics, DisputeIntent};
 
 /// Submits dispute transactions (nullify or challenge) to game contracts on L1.
 #[derive(Debug)]
@@ -145,6 +145,18 @@ impl<T: TxManager> ChallengeSubmitter<T> {
         }
 
         Ok(tx_hash)
+    }
+}
+
+#[async_trait::async_trait]
+impl<T: TxManager> BondTransactionSubmitter for ChallengeSubmitter<T> {
+    async fn send_bond_tx(
+        &self,
+        game_address: Address,
+        to: Address,
+        calldata: Bytes,
+    ) -> Result<B256, ChallengeSubmitError> {
+        ChallengeSubmitter::send_bond_tx(self, game_address, to, calldata).await
     }
 }
 

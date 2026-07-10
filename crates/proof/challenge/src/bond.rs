@@ -19,9 +19,18 @@ use tracing::{debug, info, warn};
 
 use crate::{ChallengeSubmitError, ChallengeSubmitter, ChallengerMetrics, GameScanner};
 
+/// Reason a game was removed from bond tracking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemovalReason {
+    /// Bond was successfully claimed.
+    Completed,
+    /// Bond is not claimable by the configured claim addresses.
+    NotClaimable,
+}
+
 /// Phase of the bond claim lifecycle for a single tracked game.
-#[derive(Debug)]
-enum BondPhase {
+#[derive(Debug, Clone)]
+pub enum BondPhase {
     /// The game's dispute period is over; needs a `resolve()` call.
     NeedsResolve,
     /// The game has been resolved; needs the first `claimCredit()` call
@@ -35,6 +44,22 @@ enum BondPhase {
         /// Whether `ready_at` was computed with the fallback WETH delay.
         using_default_delay: bool,
     },
+}
+
+/// A dispute game tracked for bond lifecycle management.
+#[derive(Debug, Clone)]
+pub struct TrackedGame {
+    /// Current lifecycle phase.
+    pub phase: BondPhase,
+    /// The address that will receive the bond.
+    pub bond_recipient: Address,
+}
+
+impl TrackedGame {
+    /// Creates a tracked game in the given phase.
+    pub const fn new(phase: BondPhase, bond_recipient: Address) -> Self {
+        Self { phase, bond_recipient }
+    }
 }
 
 /// Manages bond claiming for dispute games.
@@ -712,6 +737,18 @@ impl<C: Clock> BondManager<C> {
             Err(e) => warn!(error = %e, "failed to read DelayedWETH delay, will retry later"),
         }
     }
+}
+
+/// Trait for submitting dispute game maintenance transactions.
+#[async_trait::async_trait]
+pub trait BondTransactionSubmitter: Send + Sync {
+    /// Sends a transaction with the given calldata to `to`.
+    async fn send_bond_tx(
+        &self,
+        game_address: Address,
+        to: Address,
+        calldata: alloy_primitives::Bytes,
+    ) -> Result<alloy_primitives::B256, ChallengeSubmitError>;
 }
 
 #[cfg(test)]
