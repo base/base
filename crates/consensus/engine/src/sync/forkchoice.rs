@@ -339,8 +339,7 @@ async fn get_block_compat<EngineClient_: EngineClient>(
 #[cfg(test)]
 mod tests {
     use alloy_consensus::transaction::Recovered;
-    use alloy_eips::BlockId;
-    use alloy_eips::BlockNumberOrTag;
+    use alloy_eips::{BlockId, BlockNumberOrTag};
     use alloy_json_rpc::ErrorPayload;
     use alloy_primitives::{Address, B256, b256};
     use alloy_rpc_types_eth::{Block as RpcBlock, BlockTransactions};
@@ -351,8 +350,10 @@ mod tests {
     use rstest::rstest;
 
     use super::{find_earliest_unpruned_block, get_block_compat};
-    use crate::SyncStartError;
-    use crate::test_utils::{MockL2BlockError, test_engine_client_builder};
+    use crate::{
+        SyncStartError,
+        test_utils::{MockL2BlockError, test_engine_client_builder},
+    };
 
     #[derive(Debug, Clone, Copy)]
     enum PrunedTipScenario {
