@@ -156,7 +156,7 @@ impl<T: TxManager> BondTransactionSubmitter for ChallengeSubmitter<T> {
         to: Address,
         calldata: Bytes,
     ) -> Result<B256, ChallengeSubmitError> {
-        ChallengeSubmitter::send_bond_tx(self, game_address, to, calldata).await
+        Self::send_bond_tx(self, game_address, to, calldata).await
     }
 }
 
