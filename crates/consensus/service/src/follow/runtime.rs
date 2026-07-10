@@ -192,8 +192,8 @@ where
             }
             LabelOutcome::Skip => None,
             LabelOutcome::Diverged { number, local: local_hash, remote } => {
-                // The source is authoritative for the L2 chain in follow mode. Rather than wedge
-                // forever, reset to the common ancestor and replay the source chain forward.
+                // Rather than wedge forever, reset to the common ancestor and replay the source
+                // branch forward.
                 warn!(
                     target: "follow",
                     number,
@@ -201,13 +201,21 @@ where
                     source = %remote,
                     "Local chain diverged from source safe head; recovering to common ancestor",
                 );
-                generation.cancel();
                 let finalized = local_finalized
                     .as_ref()
                     .ok_or(FollowError::LocalBlockUnavailable(BlockNumberOrTag::Finalized))?;
-                let ancestor =
-                    recovery::recover(local.as_ref(), source.as_ref(), &engine, finalized, number)
-                        .await?;
+                let ancestor = recovery::recover(
+                    local.as_ref(),
+                    source.as_ref(),
+                    &engine,
+                    finalized,
+                    &source_safe,
+                )
+                .await?;
+                // Cancel only after a confirmed reset. Cancelling earlier lets fetch/insert finish
+                // first and causes the outer select to shut down follow mode before recovery can
+                // return its restart point.
+                generation.cancel();
                 return Ok(SafetyOutcome::Reorged { ancestor });
             }
         };
@@ -447,6 +455,13 @@ mod tests {
             })
         }
 
+        async fn get_block_info_by_hash(
+            &self,
+            hash: B256,
+        ) -> Result<BlockInfo, crate::RemoteL2ClientError> {
+            Ok(source_block_info(hash[31] as u64))
+        }
+
         async fn get_payload_by_number(
             &self,
             number: u64,
@@ -501,7 +516,21 @@ mod tests {
     }
 
     fn source_block_info(number: u64) -> BlockInfo {
-        BlockInfo { number, hash: B256::from([number as u8; 32]), ..Default::default() }
+        BlockInfo {
+            number,
+            hash: B256::from([number as u8; 32]),
+            parent_hash: B256::from([number.saturating_sub(1) as u8; 32]),
+            ..Default::default()
+        }
+    }
+
+    fn fork_source_block_info(number: u64, offset: u8) -> BlockInfo {
+        BlockInfo {
+            number,
+            hash: B256::from([number as u8 + offset; 32]),
+            parent_hash: B256::from([number.saturating_sub(1) as u8 + offset; 32]),
+            ..Default::default()
+        }
     }
 
     fn payload(number: u64) -> BaseExecutionPayloadEnvelope {
@@ -835,15 +864,17 @@ mod tests {
         let local = Arc::new(local_client(10, 8, 7, 100));
         let mut source = MockRemoteClient::new();
         source.expect_get_block_info().with(eq(BlockNumberOrTag::Safe)).returning(|_| {
-            Ok(BlockInfo { number: 10, hash: B256::from([99; 32]), ..Default::default() })
+            Ok(BlockInfo {
+                number: 10,
+                hash: B256::from([99; 32]),
+                parent_hash: B256::from([9; 32]),
+                ..Default::default()
+            })
         });
         source
-            .expect_get_block_info()
-            .withf(|tag| matches!(tag, BlockNumberOrTag::Number(_)))
-            .returning(|tag| {
-                let BlockNumberOrTag::Number(number) = tag else { unreachable!() };
-                Ok(source_block_info(number))
-            });
+            .expect_get_block_info_by_hash()
+            .with(eq(B256::from([9; 32])))
+            .returning(|_| Ok(source_block_info(9)));
         let engine = Arc::new(RecordingEngine::new(Duration::ZERO));
         let engine_for_update: Arc<dyn FollowEngine> = Arc::<RecordingEngine>::clone(&engine);
         let generation = CancellationToken::new();
@@ -883,6 +914,7 @@ mod tests {
             }))
         });
         local.expect_l1_block_hash().returning(|_| Ok(Some(B256::ZERO)));
+
         let mut source = MockRemoteClient::new();
         source
             .expect_get_block_info()
@@ -910,6 +942,37 @@ mod tests {
             FollowError::SourceL1OriginMismatch { l2_number: 9, l1_number: 0, .. }
         ));
         assert!(engine.labels.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn failed_safe_recovery_keeps_fetch_generation_running() {
+        let local = Arc::new(local_client(10, 8, 7, 100));
+        let mut source = MockRemoteClient::new();
+        source
+            .expect_get_block_info()
+            .with(eq(BlockNumberOrTag::Safe))
+            .returning(|_| Ok(fork_source_block_info(10, 100)));
+        source.expect_get_block_info_by_hash().returning(|hash| {
+            let number = hash[31].saturating_sub(100) as u64;
+            Ok(fork_source_block_info(number, 100))
+        });
+        let engine = Arc::new(RecordingEngine::new(Duration::ZERO));
+        let engine_for_update: Arc<dyn FollowEngine> = Arc::<RecordingEngine>::clone(&engine);
+        let generation = CancellationToken::new();
+
+        let error =
+            FollowRuntime::<MockFollowLocalClient, MockRemoteClient, NoopProofGate>::update_safe_and_finalized(
+                local,
+                Arc::new(source),
+                engine_for_update,
+                generation.clone(),
+            )
+            .await
+            .expect_err("source branch diverges at finalized");
+
+        assert!(matches!(error, FollowError::SourceBlockHashMismatch { number: 7, .. }));
+        assert!(!generation.is_cancelled());
+        assert!(engine.reset.lock().await.is_empty());
     }
 
     #[tokio::test]
@@ -945,7 +1008,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn find_common_ancestor_binary_search() {
+    async fn find_common_ancestor_follows_captured_source_branch() {
         // Local and source agree at and below block 5 and disagree above it. A divergence detected
         // at block 10 must converge to block 5 as the highest common ancestor.
         let mut local = MockFollowLocalClient::new();
@@ -967,16 +1030,13 @@ mod tests {
             }))
         });
         let mut source = MockRemoteClient::new();
-        source.expect_get_block_info().returning(|tag| {
-            let number = match tag {
-                BlockNumberOrTag::Number(n) => n,
-                _ => 0,
-            };
-            Ok(source_block_info(number))
-        });
+        source
+            .expect_get_block_info_by_hash()
+            .returning(|hash| Ok(source_block_info(hash[31] as u64)));
 
         let finalized = block_info(2);
-        let ancestor = recovery::find_common_ancestor(&local, &source, &finalized, 10)
+        let source_safe = source_block_info(10);
+        let ancestor = recovery::find_common_ancestor(&local, &source, &finalized, &source_safe)
             .await
             .expect("common ancestor");
 
@@ -997,21 +1057,25 @@ mod tests {
             }))
         });
         let mut source = MockRemoteClient::new();
-        source.expect_get_block_info().returning(|tag| {
-            let number = match tag {
-                BlockNumberOrTag::Number(n) => n,
-                _ => 0,
-            };
+        source.expect_get_block_info_by_hash().returning(|hash| {
+            let number = hash[31].saturating_sub(100) as u64;
             Ok(BlockInfo {
                 number,
-                hash: B256::from([number as u8 + 100; 32]),
+                hash,
+                parent_hash: B256::from([number.saturating_sub(1) as u8 + 100; 32]),
                 ..Default::default()
             })
         });
         let engine: Arc<dyn FollowEngine> = Arc::new(RecordingEngine::new(Duration::ZERO));
         let finalized = block_info(7);
+        let source_safe = BlockInfo {
+            number: 10,
+            hash: B256::from([110; 32]),
+            parent_hash: B256::from([109; 32]),
+            ..Default::default()
+        };
 
-        let error = recovery::recover(&local, &source, &engine, &finalized, 10)
+        let error = recovery::recover(&local, &source, &engine, &finalized, &source_safe)
             .await
             .expect_err("finalized divergence");
 

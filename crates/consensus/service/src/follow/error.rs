@@ -73,6 +73,17 @@ pub enum FollowError {
         remote: B256,
     },
 
+    /// A source block's parent lookup did not return its direct parent.
+    #[error(
+        "source chain is discontinuous between child block {child_number} and parent block {parent_number}"
+    )]
+    SourceChainDiscontinuity {
+        /// Child block number.
+        child_number: u64,
+        /// Number reported by the block fetched using the child's parent hash.
+        parent_number: u64,
+    },
+
     /// A recovery reorg was refused because it would rewind below the finalized head.
     #[error("refusing to reorg to block {number} below the finalized head {finalized}")]
     ReorgBelowFinalized {
