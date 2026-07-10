@@ -1627,9 +1627,10 @@ async fn test_claim_next_proof_job_claim_and_capabilities() {
     repo.create(compressed_request()).await.unwrap();
     assert!(repo.claim_next_proof_job(tee_claim("worker-2", 3)).await.unwrap().is_none());
 
-    // A ZK worker can claim a compressed job (block-number ordering may surface a
-    // lower-block pending ZK job from another test, so we only assert the proof type).
-    let zk = claim_job("zk-worker", ApiProofType::Compressed, vec![], vec![ZkVmKind::Sp1], 3);
+    // An empty backend list defaults to cluster. Block-number ordering may surface a lower-block
+    // pending ZK job from another test, so we only assert the proof type.
+    let mut zk = claim_job("zk-worker", ApiProofType::Compressed, vec![], vec![ZkVmKind::Sp1], 3);
+    zk.zk_backends.clear();
     let job = repo
         .claim_next_proof_job(zk)
         .await

@@ -597,8 +597,13 @@ impl ProofRequestRepo {
             ApiProofType::Compressed | ApiProofType::SnarkGroth16 => {
                 let zk_vms: Vec<String> =
                     req.zk_vms.iter().map(|vm| vm.as_str().to_owned()).collect();
-                let zk_backends: Vec<String> =
-                    req.zk_backends.iter().map(|backend| backend.as_str().to_owned()).collect();
+                let zk_backends: Vec<String> = req
+                    .zk_backends
+                    .iter()
+                    .copied()
+                    .chain(req.zk_backends.is_empty().then_some(ZkBackend::Cluster))
+                    .map(|backend| backend.as_str().to_owned())
+                    .collect();
                 sqlx::query(&sql)
                     .bind(&req.worker_id)
                     .bind(lock_id)
