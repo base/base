@@ -87,7 +87,7 @@ pub enum SuccinctZkBackendConfig {
 }
 
 /// Shared RPC settings for Succinct proving backends.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SuccinctRpcConfig {
     /// Base consensus node RPC URL.
     pub base_consensus_rpc: Url,
@@ -159,15 +159,7 @@ impl SuccinctZkProversConfig {
     ) -> Result<Option<HashMap<ZkBackend, Arc<dyn ZkProver>>>, SuccinctZkProverBuildError> {
         let mut provers = HashMap::new();
         let configs = self.backend_configs()?;
-        let rpc = configs
-            .iter()
-            .find_map(|(_, config)| match config {
-                SuccinctZkBackendConfig::Mock => None,
-                SuccinctZkBackendConfig::DryRun { rpc, .. } => Some(rpc),
-                SuccinctZkBackendConfig::Cluster(config) => Some(&config.rpc),
-                SuccinctZkBackendConfig::Network(config) => Some(&config.rpc),
-            })
-            .cloned();
+        let rpc = Self::shared_rpc_config(&configs)?;
         let witness_provider = if let Some(rpc) = rpc {
             let Some(provider) =
                 Box::pin(SuccinctZkProverBuilder::build_witness_provider(rpc, cancel)).await?
@@ -196,13 +188,25 @@ impl SuccinctZkProversConfig {
         }
 
         while let Some(result) = tasks.join_next().await {
-            let (backend, prover) = result.map_err(|source| {
-                SuccinctZkProverBuildError::operation(
-                    "zk backend initialization task failed",
-                    source,
-                )
-            })??;
+            let result = match result {
+                Ok(result) => result,
+                Err(source) => {
+                    tasks.shutdown().await;
+                    return Err(SuccinctZkProverBuildError::operation(
+                        "zk backend initialization task failed",
+                        source,
+                    ));
+                }
+            };
+            let (backend, prover) = match result {
+                Ok(result) => result,
+                Err(error) => {
+                    tasks.shutdown().await;
+                    return Err(error);
+                }
+            };
             let Some(prover) = prover else {
+                tasks.shutdown().await;
                 return Ok(None);
             };
             provers.insert(backend, prover);
@@ -215,6 +219,26 @@ impl SuccinctZkProversConfig {
         }
 
         Ok(Some(provers))
+    }
+
+    fn shared_rpc_config(
+        configs: &BackendConfigs,
+    ) -> Result<Option<SuccinctRpcConfig>, SuccinctZkProverBuildError> {
+        let mut rpcs = configs.iter().filter_map(|(_, config)| match config {
+            SuccinctZkBackendConfig::Mock => None,
+            SuccinctZkBackendConfig::DryRun { rpc, .. } => Some(rpc),
+            SuccinctZkBackendConfig::Cluster(config) => Some(&config.rpc),
+            SuccinctZkBackendConfig::Network(config) => Some(&config.rpc),
+        });
+        let Some(rpc) = rpcs.next() else {
+            return Ok(None);
+        };
+        if rpcs.any(|candidate| candidate != rpc) {
+            return Err(SuccinctZkProverBuildError::config(
+                "all proving backends must use the same RPC configuration",
+            ));
+        }
+        Ok(Some(rpc.clone()))
     }
 
     fn optional_string(value: Option<&str>) -> Option<String> {
@@ -562,10 +586,16 @@ mod tests {
         set_rpc_config(&mut config);
         config.cluster_rpc = Some("http://cluster".to_owned());
         config.network_private_key = Some("network-key".to_owned());
-        let configs = config.backend_configs().unwrap();
+        let mut configs = config.backend_configs().unwrap();
         assert_eq!(
             configs.iter().map(|(backend, _)| *backend).collect::<Vec<_>>(),
             vec![ZkBackend::Mock, ZkBackend::DryRun, ZkBackend::Cluster, ZkBackend::Network]
         );
+        assert!(SuccinctZkProversConfig::shared_rpc_config(&configs).unwrap().is_some());
+        let SuccinctZkBackendConfig::DryRun { rpc, .. } = &mut configs[1].1 else {
+            panic!("expected dry-run config");
+        };
+        rpc.l2_rpc = Url::parse("http://other-l2").unwrap();
+        assert!(SuccinctZkProversConfig::shared_rpc_config(&configs).is_err());
     }
 }
