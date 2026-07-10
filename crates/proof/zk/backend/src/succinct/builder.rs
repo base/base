@@ -5,6 +5,7 @@ use std::{collections::HashMap, error::Error, fmt, future::Future, sync::Arc, ti
 use base_proof_succinct_host_utils::fetcher::{OPSuccinctDataFetcher, RPCConfig};
 use base_proof_zk_host::{ZkBackend, ZkProver};
 use thiserror::Error;
+use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use url::Url;
@@ -178,16 +179,30 @@ impl SuccinctZkProversConfig {
             None
         };
 
+        let mut tasks = JoinSet::new();
         for (backend, config) in configs {
-            let mut builder = SuccinctZkProverBuilder::new(config);
-            if let Some(provider) = &witness_provider {
-                builder = builder.with_witness_provider(provider.clone());
-            }
-            let prover = builder.build_until_cancelled(cancel);
-            let Some(prover) = Box::pin(prover)
-                .await
-                .map_err(|source| SuccinctZkProverBuildError::backend(backend, source))?
-            else {
+            let witness_provider = witness_provider.clone();
+            let cancel = cancel.clone();
+            tasks.spawn(async move {
+                let mut builder = SuccinctZkProverBuilder::new(config);
+                if let Some(provider) = witness_provider {
+                    builder = builder.with_witness_provider(provider);
+                }
+                let result = Box::pin(builder.build_until_cancelled(&cancel))
+                    .await
+                    .map_err(|source| SuccinctZkProverBuildError::backend(backend, source))?;
+                Ok::<_, SuccinctZkProverBuildError>((backend, result))
+            });
+        }
+
+        while let Some(result) = tasks.join_next().await {
+            let (backend, prover) = result.map_err(|source| {
+                SuccinctZkProverBuildError::operation(
+                    "zk backend initialization task failed",
+                    source,
+                )
+            })??;
+            let Some(prover) = prover else {
                 return Ok(None);
             };
             provers.insert(backend, prover);
