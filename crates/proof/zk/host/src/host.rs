@@ -1,23 +1,21 @@
 //! ZK host orchestration.
 
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use base_proof_worker::{
     DEFAULT_JOB_DISCOVERY_LOCK_DURATION_SECONDS, DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS,
     DEFAULT_JOB_DISCOVERY_POLL_INTERVAL, JobDiscovery, JobDiscoveryConfig, ProofSubmitter,
 };
 use base_prover_service_client::ProverWorkerProvider;
-use base_prover_service_protocol::ZkBackend;
 use tokio_util::sync::CancellationToken;
 
-use crate::{ProofGenerator, ProofGeneratorHeartbeatConfig, ZkProver, ZkVm};
+use crate::{ProofGenerator, ProofGeneratorHeartbeatConfig, ZkBackend, ZkProver, ZkVm};
 
 /// Settings for running a ZK host against the prover service.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ZkHostConfig {
     worker_id: String,
     zk_vms: Vec<ZkVm>,
-    zk_backend: ZkBackend,
     job_discovery_poll_interval: Duration,
     job_discovery_lock_duration_seconds: u32,
     job_discovery_max_concurrent_jobs: usize,
@@ -30,7 +28,6 @@ impl ZkHostConfig {
         Self {
             worker_id: worker_id.into(),
             zk_vms: zk_vms.into(),
-            zk_backend: ZkBackend::Cluster,
             job_discovery_poll_interval: DEFAULT_JOB_DISCOVERY_POLL_INTERVAL,
             job_discovery_lock_duration_seconds: DEFAULT_JOB_DISCOVERY_LOCK_DURATION_SECONDS,
             job_discovery_max_concurrent_jobs: DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS,
@@ -51,11 +48,6 @@ impl ZkHostConfig {
     /// Returns the ZK VMs claimed by the worker.
     pub fn zk_vms(&self) -> &[ZkVm] {
         &self.zk_vms
-    }
-
-    /// Returns the ZK backend claimed by the worker.
-    pub const fn zk_backend(&self) -> ZkBackend {
-        self.zk_backend
     }
 
     /// Returns the heartbeat settings used while proofs are generated.
@@ -108,13 +100,6 @@ impl ZkHostConfig {
         self
     }
 
-    /// Sets the ZK backend claimed by the worker.
-    #[must_use]
-    pub const fn with_zk_backend(mut self, zk_backend: ZkBackend) -> Self {
-        self.zk_backend = zk_backend;
-        self
-    }
-
     /// Sets the heartbeat settings used while proofs are generated.
     #[must_use]
     pub const fn with_proof_generator_heartbeat(
@@ -124,36 +109,24 @@ impl ZkHostConfig {
         self.proof_generator_heartbeat = proof_generator_heartbeat;
         self
     }
-
-    /// Builds the shared worker discovery config.
-    pub fn job_discovery_config(&self) -> JobDiscoveryConfig {
-        JobDiscoveryConfig::zk(self.worker_id.clone(), self.zk_vms.clone(), self.zk_backend)
-            .with_poll_interval(self.job_discovery_poll_interval)
-            .with_lock_duration_seconds(self.job_discovery_lock_duration_seconds)
-            .with_max_concurrent_jobs(self.job_discovery_max_concurrent_jobs)
-    }
-
-    /// Converts this config into the shared worker discovery config.
-    pub fn into_job_discovery_config(self) -> JobDiscoveryConfig {
-        JobDiscoveryConfig::zk(self.worker_id, self.zk_vms, self.zk_backend)
-            .with_poll_interval(self.job_discovery_poll_interval)
-            .with_lock_duration_seconds(self.job_discovery_lock_duration_seconds)
-            .with_max_concurrent_jobs(self.job_discovery_max_concurrent_jobs)
-    }
 }
 
 /// Runs ZK proof generation jobs claimed from the prover service.
 #[derive(Debug)]
 pub struct ZkHost<Client> {
     client: Client,
-    prover: Arc<dyn ZkProver>,
+    provers: HashMap<ZkBackend, Arc<dyn ZkProver>>,
     config: ZkHostConfig,
 }
 
 impl<Client> ZkHost<Client> {
-    /// Creates a ZK host from a prover-service client and ZK prover backend.
-    pub const fn new(client: Client, prover: Arc<dyn ZkProver>, config: ZkHostConfig) -> Self {
-        Self { client, prover, config }
+    /// Creates a ZK host from a prover-service client and ZK prover backends.
+    pub const fn new(
+        client: Client,
+        provers: HashMap<ZkBackend, Arc<dyn ZkProver>>,
+        config: ZkHostConfig,
+    ) -> Self {
+        Self { client, provers, config }
     }
 
     /// Returns the host config.
@@ -168,29 +141,17 @@ where
 {
     /// Runs the host until cancellation is requested.
     pub async fn run_until_cancelled(self, cancel: CancellationToken) {
-        let Self { client, prover, config } = self;
+        let Self { client, provers, config } = self;
+        let zk_backends = provers.keys().copied().collect::<Vec<_>>();
+        let discovery_config = JobDiscoveryConfig::zk(config.worker_id, config.zk_vms, zk_backends)
+            .with_poll_interval(config.job_discovery_poll_interval)
+            .with_lock_duration_seconds(config.job_discovery_lock_duration_seconds)
+            .with_max_concurrent_jobs(config.job_discovery_max_concurrent_jobs);
         let submitter = ProofSubmitter::new(client.clone());
         let proof_generator =
-            Arc::new(ProofGenerator::new(prover, submitter, config.proof_generator_heartbeat));
-        let discovery =
-            JobDiscovery::new(client, proof_generator, config.into_job_discovery_config());
+            Arc::new(ProofGenerator::new(provers, submitter, config.proof_generator_heartbeat));
+        let discovery = JobDiscovery::new(client, proof_generator, discovery_config);
 
         discovery.run_until_cancelled(cancel).await;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn advertises_selected_backend() {
-        let requests = ZkHostConfig::sp1("worker")
-            .with_zk_backend(ZkBackend::Network)
-            .job_discovery_config()
-            .get_next_proof_requests()
-            .collect::<Vec<_>>();
-
-        assert!(requests.iter().all(|request| request.zk_backends == [ZkBackend::Network]));
     }
 }

@@ -1,6 +1,6 @@
 //! CLI definition for the ZK prover host worker binary.
 
-use std::{fmt, time::Duration};
+use std::{collections::HashMap, fmt, time::Duration};
 
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_proof_worker::{
@@ -224,6 +224,17 @@ impl fmt::Display for ZkBackendArg {
     }
 }
 
+impl From<ZkBackendArg> for ZkBackend {
+    fn from(backend: ZkBackendArg) -> Self {
+        match backend {
+            ZkBackendArg::Mock => Self::Mock,
+            ZkBackendArg::DryRun => Self::DryRun,
+            ZkBackendArg::Cluster => Self::Cluster,
+            ZkBackendArg::Network => Self::Network,
+        }
+    }
+}
+
 impl WorkerArgs {
     fn backend_config(&self) -> eyre::Result<SuccinctZkBackendConfig> {
         match self.backend {
@@ -368,7 +379,7 @@ impl WorkerArgs {
             .with_job_discovery_lock_duration_seconds(args.job_discovery_lock_duration_seconds)
             .with_job_discovery_max_concurrent_jobs(args.job_discovery_max_concurrent_jobs)
             .with_proof_generator_heartbeat(heartbeat);
-        let host = ZkHost::new(client, prover, host_config);
+        let host = ZkHost::new(client, HashMap::from([(args.backend.into(), prover)]), host_config);
 
         info!(
             worker_id = %worker_id,

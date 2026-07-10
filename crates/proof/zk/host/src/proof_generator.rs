@@ -1,6 +1,6 @@
 //! Proof generation orchestration for claimed ZK worker jobs.
 
-use std::{future::Future, sync::Arc, time::Duration};
+use std::{collections::HashMap, future::Future, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use base_proof_worker::{
@@ -17,7 +17,7 @@ pub use base_proof_worker::{
 use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
 use base_prover_service_protocol::{
     BackendSession, BackendSessionState, ProofJob, ProofRequestKind, ProofResult, SessionType,
-    WorkerSubmitProofRequest,
+    WorkerSubmitProofRequest, ZkBackend,
 };
 use thiserror::Error;
 use tokio::time::{sleep, timeout};
@@ -71,7 +71,7 @@ impl TryFrom<ProofJob> for ProofGeneratorRequest {
 /// Orchestrates ZK proof generation, claim heartbeats, and async proof submission.
 #[derive(Debug)]
 pub struct ProofGenerator<Client> {
-    prover: Arc<dyn ZkProver>,
+    provers: HashMap<ZkBackend, Arc<dyn ZkProver>>,
     submitter: ProofSubmitter<Client>,
     tasks: ProofTaskController,
     heartbeat: ProofGeneratorHeartbeatConfig,
@@ -81,12 +81,12 @@ pub struct ProofGenerator<Client> {
 impl<Client> ProofGenerator<Client> {
     /// Create a proof generator with its own submission cancellation token.
     pub fn new(
-        prover: Arc<dyn ZkProver>,
+        provers: HashMap<ZkBackend, Arc<dyn ZkProver>>,
         submitter: ProofSubmitter<Client>,
         heartbeat: ProofGeneratorHeartbeatConfig,
     ) -> Self {
         Self {
-            prover,
+            provers,
             submitter,
             tasks: ProofTaskController::new(),
             heartbeat,
@@ -127,6 +127,14 @@ impl<Client> ProofGenerator<Client> {
     pub fn normalized_poll_interval(&self) -> Duration {
         self.poll_interval.max(MIN_PROOF_GENERATOR_POLL_INTERVAL)
     }
+
+    fn prover_for(
+        &self,
+        request: &ZkProofRequestKind,
+    ) -> Result<&Arc<dyn ZkProver>, ZkProverError> {
+        let backend = request.zk_backend();
+        self.provers.get(&backend).ok_or(ZkProverError::UnsupportedBackend { backend })
+    }
 }
 
 impl<Client> ProofGenerator<Client>
@@ -146,6 +154,7 @@ where
             worker_id = %request.claim.worker_id,
             start_block = request.request.start_block_number(),
             block_count = request.request.number_of_blocks_to_prove(),
+            zk_backend = ?request.request.zk_backend(),
             "starting zk proof generation"
         );
 
@@ -159,6 +168,7 @@ where
                     session_id = %request.claim.session_id,
                     lock_id = %request.claim.lock_id,
                     worker_id = %request.claim.worker_id,
+                    zk_backend = ?request.request.zk_backend(),
                     error = %source,
                     "zk proof generation failed"
                 );
@@ -170,6 +180,7 @@ where
                     session_id = %request.claim.session_id,
                     lock_id = %request.claim.lock_id,
                     worker_id = %request.claim.worker_id,
+                    zk_backend = ?request.request.zk_backend(),
                     error = %source,
                     "aborting zk proof generation due to heartbeat failure"
                 );
@@ -215,6 +226,8 @@ where
         &self,
         request: &ProofGeneratorRequest,
     ) -> Result<ProofResult, ZkProverError> {
+        let prover = self.prover_for(&request.request)?;
+
         let handle = ProofSessionHandle::new(
             self.submitter.client().clone(),
             request.claim.session_id.clone(),
@@ -233,7 +246,8 @@ where
                 request,
                 &handle,
                 SessionType::Stark,
-                self.prover.submit(range_request, &request.claim.session_id),
+                prover,
+                prover.submit(range_request, &request.claim.session_id),
             )
             .await?;
 
@@ -246,17 +260,18 @@ where
                         request,
                         &handle,
                         SessionType::Snark,
-                        self.prover.submit_next(
+                        prover,
+                        prover.submit_next(
                             proof_request,
                             &request.claim.session_id,
                             &range_session_id,
                         ),
                     )
                     .await?;
-                self.prover.download(SessionType::Snark, &snark_session_id).await
+                prover.download(SessionType::Snark, &snark_session_id).await
             }
             ZkProofRequestKind::Compressed(_) => {
-                self.prover.download(SessionType::Stark, &range_session_id).await
+                prover.download(SessionType::Stark, &range_session_id).await
             }
         }
     }
@@ -271,6 +286,7 @@ where
         request: &ProofGeneratorRequest,
         handle: &ProofSessionHandle<Client>,
         session_type: SessionType,
+        prover: &Arc<dyn ZkProver>,
         submit: impl Future<Output = Result<String, ZkProverError>>,
     ) -> Result<String, ZkProverError> {
         let backend_session_id = match handle
@@ -310,7 +326,7 @@ where
             }
         };
 
-        self.poll_to_completion(request, handle, session_type, backend_session_id).await
+        self.poll_to_completion(request, handle, session_type, prover, backend_session_id).await
     }
 
     /// Poll a running backend session until it reaches a terminal state.
@@ -319,10 +335,11 @@ where
         request: &ProofGeneratorRequest,
         handle: &ProofSessionHandle<Client>,
         session_type: SessionType,
+        prover: &Arc<dyn ZkProver>,
         backend_session_id: String,
     ) -> Result<String, ZkProverError> {
         loop {
-            match self.prover.poll(&backend_session_id).await? {
+            match prover.poll(&backend_session_id).await? {
                 ZkSessionState::Running => {
                     debug!(
                         session_id = %request.claim.session_id,

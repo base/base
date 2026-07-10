@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use base_prover_service_protocol::{
-    ProofResult, SessionType, SnarkGroth16ProofRequest, ZkProofRequest,
+    ProofResult, SessionType, SnarkGroth16ProofRequest, ZkBackend, ZkProofRequest,
 };
 use thiserror::Error;
 
@@ -29,6 +29,14 @@ impl ZkProofRequestKind {
         match self {
             Self::Compressed(request) => request.number_of_blocks_to_prove,
             Self::SnarkGroth16(request) => request.proof.number_of_blocks_to_prove,
+        }
+    }
+
+    /// Returns the proving backend selected for this request.
+    pub const fn zk_backend(&self) -> ZkBackend {
+        match self {
+            Self::Compressed(request) => request.zk_backend,
+            Self::SnarkGroth16(request) => request.proof.zk_backend,
         }
     }
 }
@@ -65,6 +73,12 @@ pub enum ZkProverError {
     BackendSessionNotFound {
         /// Backend proving session identifier.
         backend_session_id: String,
+    },
+    /// The proving backend selected by the request is not configured on this host.
+    #[error("zk backend {backend:?} is not configured on this host")]
+    UnsupportedBackend {
+        /// Backend requested by the proof job.
+        backend: ZkBackend,
     },
     /// The proving backend failed to produce a proof.
     #[error("zk proving backend failed")]
