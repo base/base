@@ -364,11 +364,15 @@ impl<C: Clock> BondManager<C> {
             return;
         }
 
-        let tracked = std::mem::take(&mut self.tracked);
-        let tracked_count = tracked.len();
+        let addresses: Vec<_> = self.tracked.keys().copied().collect();
+        let tracked_count = self.tracked.len();
 
         let mut tried_weth_delay = false;
-        for (game_address, phase) in tracked {
+        for game_address in addresses {
+            let Some(phase) = self.tracked.remove(&game_address) else {
+                continue;
+            };
+
             if let Some(next_phase) = self
                 .advance_game(
                     game_address,
