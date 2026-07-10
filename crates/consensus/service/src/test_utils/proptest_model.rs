@@ -7,8 +7,7 @@ use alloy_rpc_types_engine::{
     ForkchoiceState, ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum,
 };
 use base_protocol::BlockInfo;
-use proptest::prelude::*;
-use proptest::test_runner::Config as ProptestConfig;
+use proptest::{prelude::*, test_runner::Config as ProptestConfig};
 use proptest_state_machine::{ReferenceStateMachine, StateMachineTest, prop_state_machine};
 
 use super::{Driver, EngineClientCall, HarnessBuilder, NodeConfig, ScriptedForkchoiceResponse};

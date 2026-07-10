@@ -1,13 +1,11 @@
 //! Deterministic runtime driver for actor-integration harnesses.
 
-use std::future::Future;
-use std::time::Duration;
+use std::{future::Future, time::Duration};
 
 use thiserror::Error;
 
-use crate::NodeMode;
-
 use super::{EngineClientCall, Harness, HarnessBuilder, ScriptedForkchoiceResponse};
+use crate::NodeMode;
 
 /// Node spawn configuration accepted by [`Driver::spawn_node`].
 #[derive(Debug, Default)]

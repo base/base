@@ -14,15 +14,14 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+use super::{
+    FakeEngineClient, FakeEngineClientHandle, FakeGossipTransport, FakeL1, FakeSafeDB,
+    FakeSafeDBHandle, ScriptedForkchoiceResponse,
+};
 use crate::{
     DerivationActor, DerivationActorRequest, DerivationState, EngineActorRequest, EngineProcessor,
     EngineProcessorOptions, EngineRequestReceiver, NodeActor, NodeMode,
     QueuedDerivationEngineClient, QueuedEngineDerivationClient,
-};
-
-use super::{
-    FakeEngineClient, FakeEngineClientHandle, FakeGossipTransport, FakeL1, FakeSafeDB,
-    FakeSafeDBHandle, ScriptedForkchoiceResponse,
 };
 
 /// Live actor-system harness assembled by [`HarnessBuilder`].

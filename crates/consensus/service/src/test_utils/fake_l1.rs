@@ -15,9 +15,8 @@ use base_consensus_providers::{APIConfigResponse, APIGenesisResponse, BeaconClie
 use base_protocol::{BlockInfo, L2BlockInfo};
 use tokio::sync::{Mutex, mpsc};
 
-use crate::{DerivationActorRequest, EngineActorRequest};
-
 use super::FakeEngineClientHandle;
+use crate::{DerivationActorRequest, EngineActorRequest};
 
 /// Beacon-client error for [`FakeL1`].
 #[derive(Clone, Debug)]
