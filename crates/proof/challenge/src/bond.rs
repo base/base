@@ -56,6 +56,10 @@ impl<C: Clock> std::fmt::Debug for BondManager<C> {
 }
 
 impl<C: Clock> BondManager<C> {
+    /// Conservative fallback when the onchain `DelayedWETH` delay has not
+    /// been read yet.
+    const DEFAULT_WETH_DELAY: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+
     /// How long to wait before retrying a reverted withdraw attempt.
     const WITHDRAW_REVERT_RETRY_DELAY: Duration = Duration::from_secs(60);
 
@@ -492,26 +496,21 @@ impl<C: Clock> BondManager<C> {
         )?;
         if unlocked {
             self.ensure_weth_delay(verifier_client, game_address).await;
-            let Some(delay) = self.weth_delay else {
-                debug!(game = %game_address, "WETH delay not yet known, waiting to advance unlock");
-                return Ok(Some(BondPhase::NeedsUnlock));
-            };
-
+            let delay = self.effective_weth_delay(game_address);
             let phase = Self::unlocked_phase(&self.clock, resolved_at, delay);
             info!(game = %game_address, resolved_at, phase = ?phase, "bond already unlocked");
             return Ok(Some(phase));
         }
 
         self.ensure_weth_delay(verifier_client, game_address).await;
-        let Some(delay) = self.weth_delay else {
-            debug!(game = %game_address, "WETH delay not yet known, waiting to submit unlock");
-            return Ok(Some(BondPhase::NeedsUnlock));
-        };
 
         match Self::send_claim_credit(game_address, "unlock", submitter).await {
-            Ok(_) => Ok(Some(BondPhase::AwaitingDelay {
-                ready_at: self.clock.now().saturating_add(delay),
-            })),
+            Ok(_) => {
+                let delay = self.effective_weth_delay(game_address);
+                Ok(Some(BondPhase::AwaitingDelay {
+                    ready_at: self.clock.now().saturating_add(delay),
+                }))
+            }
             Err(e) => {
                 warn!(
                     game = %game_address,
@@ -569,6 +568,13 @@ impl<C: Clock> BondManager<C> {
         BondPhase::AwaitingDelay {
             ready_at: clock.now().saturating_add(delay.saturating_sub(elapsed_since_resolve)),
         }
+    }
+
+    fn effective_weth_delay(&self, game_address: Address) -> Duration {
+        self.weth_delay.unwrap_or_else(|| {
+            debug!(game = %game_address, "WETH delay not yet known, using default delay");
+            Self::DEFAULT_WETH_DELAY
+        })
     }
 
     async fn send_claim_credit<T: TxManager>(
@@ -772,7 +778,7 @@ mod tests {
         })
     }
 
-    fn delayed_weth_rpc(delay: Duration) -> (url::Url, thread::JoinHandle<()>) {
+    fn delayed_weth_rpc(delay: Option<Duration>) -> (url::Url, thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap()).parse().unwrap();
@@ -805,9 +811,20 @@ mod tests {
             }
 
             let request = String::from_utf8_lossy(&request);
-            let result = format!("0x{:064x}", delay.as_secs());
-            let body =
-                format!(r#"{{"jsonrpc":"2.0","id":{},"result":"{}"}}"#, rpc_id(&request), result);
+            let body = match delay {
+                Some(delay) => {
+                    let result = format!("0x{:064x}", delay.as_secs());
+                    format!(
+                        r#"{{"jsonrpc":"2.0","id":{},"result":"{}"}}"#,
+                        rpc_id(&request),
+                        result
+                    )
+                }
+                None => format!(
+                    r#"{{"jsonrpc":"2.0","id":{},"error":{{"code":-32000,"message":"boom"}}}}"#,
+                    rpc_id(&request)
+                ),
+            };
             let response = format!(
                 "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
                 body.len(),
@@ -1159,7 +1176,7 @@ mod tests {
         let mut state = game_state(GameStatus::ChallengerWins, claim_addr, 1_999_999_000, false);
         state.delayed_weth = addr(9);
         let verifier = verifier(state);
-        let (rpc_url, handle) = delayed_weth_rpc(TEST_WETH_DELAY);
+        let (rpc_url, handle) = delayed_weth_rpc(Some(TEST_WETH_DELAY));
         let mut mgr = BondManager::new(
             vec![claim_addr],
             rpc_url,
@@ -1181,6 +1198,42 @@ mod tests {
                     if ready_at == Duration::from_secs(560)
             ),
             "expected AwaitingDelay from unlock time, got {result:?}",
+        );
+        assert_eq!(tx_manager.recorded_calls().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn try_unlock_submits_with_default_when_weth_delay_unavailable() {
+        let claim_addr = claim_addr();
+        let game = addr(0);
+        let tx_hash = B256::repeat_byte(0xDD);
+        let mut state = game_state(GameStatus::ChallengerWins, claim_addr, 1_999_999_000, false);
+        state.delayed_weth = addr(9);
+        let verifier = verifier(state);
+        let (rpc_url, handle) = delayed_weth_rpc(None);
+        let mut mgr = BondManager::new(
+            vec![claim_addr],
+            rpc_url,
+            empty_factory(),
+            1000,
+            TEST_DISCOVERY_INTERVAL,
+            fixed_clock(500),
+        );
+        mgr.track_game(game, claim_addr);
+
+        let (submitter, tx_manager) = bond_submitter(vec![Ok(receipt_with_status(true, tx_hash))]);
+        let result = mgr.try_unlock(game, &*verifier, &submitter).await.unwrap();
+        handle.join().unwrap();
+
+        assert!(
+            matches!(
+                result,
+                Some(BondPhase::AwaitingDelay { ready_at })
+                    if ready_at
+                        == Duration::from_secs(500)
+                            .saturating_add(BondManager::<FixedClock>::DEFAULT_WETH_DELAY)
+            ),
+            "expected fallback AwaitingDelay from unlock time, got {result:?}",
         );
         assert_eq!(tx_manager.recorded_calls().len(), 1);
     }
