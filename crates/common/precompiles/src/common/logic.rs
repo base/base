@@ -272,20 +272,19 @@ pub enum AssetLogicId {
 
 /// Maps a [`BaseUpgrade`] to the asset-logic generation active at that fork.
 ///
-/// This is the single place a fork's transfer behavior is bound. Every shipped fork uses V1
-/// (today's behavior). A future fork that changes `transfer` adds exactly one line here, e.g.:
+/// This is the single place a fork's transfer behavior is bound — adding a fork's new behavior is a
+/// one-line change here. For this sample, Cobalt (the latest fork) runs [`AssetLogicV2`] and every
+/// earlier fork runs [`AssetLogicV1`], so the fork boundary is exercised through the real
+/// lookup/dispatch path and not only by the unit tests below.
 ///
-/// ```ignore
-/// if upgrade >= BaseUpgrade::<NextFork> {
-///     return AssetLogicId::V2;
-/// }
-/// ```
-///
-/// (Selection is demonstrated end-to-end by the `AssetLogicV2` tests below; no shipped fork is
-/// remapped, since that would be a real consensus change.)
+/// NOTE: remapping a *shipped* fork to new behavior is itself a real consensus change; this Cobalt
+/// mapping is a draft/demonstration only and is not intended to ship as-is.
 pub fn asset_logic_for(upgrade: BaseUpgrade) -> AssetLogicId {
-    let _ = upgrade;
-    AssetLogicId::V1
+    if upgrade >= BaseUpgrade::Cobalt {
+        AssetLogicId::V2
+    } else {
+        AssetLogicId::V1
+    }
 }
 
 #[cfg(test)]
@@ -356,11 +355,18 @@ mod tests {
     }
 
     #[test]
-    fn asset_logic_for_maps_every_shipped_fork_to_v1() {
+    fn asset_logic_for_selects_v2_at_cobalt_and_v1_before() {
         // Exhaustiveness guard (mirrors `test_all_base_upgrades_have_precompile_sets`): every fork
-        // must resolve to a defined generation. When a future fork flips to V2, update this test.
+        // resolves to a defined generation, and the Cobalt boundary is pinned.
         for upgrade in BaseUpgrade::VARIANTS {
-            assert_eq!(asset_logic_for(*upgrade), AssetLogicId::V1);
+            let expected = if *upgrade >= BaseUpgrade::Cobalt {
+                AssetLogicId::V2
+            } else {
+                AssetLogicId::V1
+            };
+            assert_eq!(asset_logic_for(*upgrade), expected);
         }
+        assert_eq!(asset_logic_for(BaseUpgrade::Beryl), AssetLogicId::V1);
+        assert_eq!(asset_logic_for(BaseUpgrade::Cobalt), AssetLogicId::V2);
     }
 }
