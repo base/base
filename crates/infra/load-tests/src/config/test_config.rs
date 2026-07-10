@@ -614,11 +614,7 @@ impl TestConfig {
                 let address = parse_address(contract, "storage contract")?;
                 if !(1..=MAX_STORAGE_SLOTS_PER_TX).contains(slots_per_tx) {
                     return Err(BaselineError::Config(format!(
-                        "storage slots_per_tx must be 1..={MAX_STORAGE_SLOTS_PER_TX}; the tx gas \
-                         limit ({slots_per_tx} slots) would otherwise exceed the ~30M per-tx cap. \
-                         Note: public RPCs (e.g. sepolia.base.org) often enforce a lower per-tx \
-                         gas ceiling, so a value that passes this check can still be rejected with \
-                         'gas limit too high' — lower slots_per_tx to fit your target's cap."
+                        "storage slots_per_tx must be 1..={MAX_STORAGE_SLOTS_PER_TX}"
                     )));
                 }
                 TxType::Storage { contract: address, slots_per_tx: *slots_per_tx }
@@ -1015,61 +1011,49 @@ transactions:
     }
 
     #[test]
-    fn storage_config_rejects_zero_slots_per_tx() {
-        let yaml = r#"
-transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
-transactions:
-  - weight: 100
-    type: storage
-    contract: "0x1234567890123456789012345678901234567890"
-    slots_per_tx: 0
-"#;
-        let config = TestConfig::from_yaml(yaml).unwrap();
-        let err = config.to_load_config(Some(1337)).unwrap_err();
-        assert!(
-            err.to_string().contains("slots_per_tx must be 1..=1300"),
-            "expected slots_per_tx range validation error, got: {err}"
-        );
-    }
+    fn storage_config_slots_per_tx_boundaries() {
+        // (slots_per_tx, expect_ok): 0 and 1301 are out of range, 1300 is the accepted max.
+        let cases = [
+            (0u32, false),
+            (MAX_STORAGE_SLOTS_PER_TX, true),
+            (MAX_STORAGE_SLOTS_PER_TX + 1, false),
+        ];
 
-    #[test]
-    fn storage_config_rejects_slots_per_tx_above_max() {
-        let yaml = r#"
+        for (slots_per_tx, expect_ok) in cases {
+            let yaml = format!(
+                r#"
 transaction_submission_rpcs: http://localhost:8545
 flashblocks_ws: ws://localhost:7111
 transactions:
   - weight: 100
     type: storage
     contract: "0x1234567890123456789012345678901234567890"
-    slots_per_tx: 1301
-"#;
-        let config = TestConfig::from_yaml(yaml).unwrap();
-        let err = config.to_load_config(Some(1337)).unwrap_err();
-        assert!(
-            err.to_string().contains("slots_per_tx must be 1..=1300"),
-            "expected slots_per_tx range validation error for value above max, got: {err}"
-        );
-    }
+    slots_per_tx: {slots_per_tx}
+"#
+            );
+            let config = TestConfig::from_yaml(&yaml).unwrap();
+            let result = config.to_load_config(Some(1337));
 
-    #[test]
-    fn storage_config_accepts_max_slots_per_tx() {
-        let yaml = r#"
-transaction_submission_rpcs: http://localhost:8545
-flashblocks_ws: ws://localhost:7111
-transactions:
-  - weight: 100
-    type: storage
-    contract: "0x1234567890123456789012345678901234567890"
-    slots_per_tx: 1300
-"#;
-        let config = TestConfig::from_yaml(yaml).unwrap();
-        let load_config = config.to_load_config(Some(1337)).unwrap();
-        match &load_config.transactions[0].tx_type {
-            TxType::Storage { slots_per_tx, .. } => {
-                assert_eq!(*slots_per_tx, 1300, "max slots_per_tx must be accepted");
+            if expect_ok {
+                let load_config = result.unwrap_or_else(|e| {
+                    panic!("slots_per_tx {slots_per_tx} must be accepted, got: {e}")
+                });
+                match &load_config.transactions[0].tx_type {
+                    TxType::Storage { slots_per_tx: parsed, .. } => {
+                        assert_eq!(
+                            *parsed, slots_per_tx,
+                            "slots_per_tx {slots_per_tx} must be preserved"
+                        );
+                    }
+                    _ => panic!("expected TxType::Storage for slots_per_tx {slots_per_tx}"),
+                }
+            } else {
+                let err = result.unwrap_err();
+                assert!(
+                    err.to_string().contains("slots_per_tx must be 1..=1300"),
+                    "expected range validation error for slots_per_tx {slots_per_tx}, got: {err}"
+                );
             }
-            _ => panic!("expected TxType::Storage"),
         }
     }
 
