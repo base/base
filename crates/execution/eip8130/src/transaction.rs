@@ -178,9 +178,7 @@ mod tests {
     use k256::ecdsa::SigningKey as K256SigningKey;
 
     use super::*;
-    use crate::{
-        AccountChangeApplier, ApplyError, AuthorizeError, ConfigChangeAuthorizer, Operation,
-    };
+    use crate::{AccountChangeApplier, ApplyError, AuthorizeError, ConfigChangeAuthorizer};
 
     const NOW: u64 = 1_000;
     const LOCAL: u64 = 8453;
@@ -217,11 +215,10 @@ mod tests {
     }
 
     /// Canonical Solidity packing of `ActorConfig`.
-    fn pack(authenticator: Address, scope: u8, expiry: u64, policy_type: u8) -> U256 {
+    fn pack(authenticator: Address, scope: u8, expiry: u64, _policy_type: u8) -> U256 {
         U256::from_be_slice(authenticator.as_slice())
             | (U256::from(scope) << 160)
             | (U256::from(expiry) << 168)
-            | (U256::from(policy_type) << 216)
     }
 
     /// Canonical Solidity packing of `AccountState` (`multichain`, `local`
@@ -513,13 +510,11 @@ mod tests {
     }
 
     #[test]
-    fn config_changes_authorized_before_final_sender_check() {
+    fn admin_config_actor_also_passes_final_sender_check() {
         // Account changes are authorized and applied first; the sender/payer
         // signatures are only checked against the resulting post-apply state. A
-        // sender that holds CONFIG scope (so its config change applies) but lacks
-        // SENDER scope is therefore rejected at the final sender check — proving
-        // the config stage ran before the sender gate, the opposite of the old
-        // "authorize sender first" ordering.
+        // An admin actor authorizes config and, because unrestricted scope grants
+        // sender operations, also passes the final sender check.
         let sk = key(0x22);
         let account = address!("0x00000000000000000000000000000000000000aa");
         let sid = actor_id(addr(&sk));
@@ -531,17 +526,10 @@ mod tests {
             acc.actor_config
                 .at_mut(&sid)
                 .at_mut(&account)
-                .write(pack(K1, Eip8130Constants::SCOPE_CONFIG, 0, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_UNRESTRICTED, 0, 0))
                 .unwrap();
-            assert_eq!(
-                TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW),
-                Err(TxAuthError::Scope {
-                    operation: Operation::Sender,
-                    scope: Eip8130Constants::SCOPE_CONFIG,
-                }),
-            );
-            // The config change applied (channel advanced) before the sender
-            // check failed; the caller is responsible for discarding these writes.
+            let out = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW).unwrap();
+            assert!(out.config_changes[0].is_admin());
             assert_eq!(acc.get_change_sequences(account).unwrap(), (1, 0));
         });
     }
@@ -574,7 +562,12 @@ mod tests {
             acc.actor_config
                 .at_mut(&sid)
                 .at_mut(&sender_account)
-                .write(pack(K1, Eip8130Constants::SCOPE_SENDER, 0, 0))
+                .write(pack(
+                    K1,
+                    Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_NONCE,
+                    0,
+                    0,
+                ))
                 .unwrap();
             acc.actor_config
                 .at_mut(&pid)
@@ -584,13 +577,13 @@ mod tests {
             acc.actor_config
                 .at_mut(&cid)
                 .at_mut(&sender_account)
-                .write(pack(K1, Eip8130Constants::SCOPE_CONFIG, 0, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_UNRESTRICTED, 0, 0))
                 .unwrap();
             let out = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW).unwrap();
             assert_eq!(out.actors.sender.account, sender_account);
             assert_eq!(out.actors.payer.expect("payer present").account, payer_account);
             assert_eq!(out.config_changes.len(), 1);
-            assert_eq!(out.config_changes[0].scope, Eip8130Constants::SCOPE_CONFIG);
+            assert!(out.config_changes[0].is_admin());
         });
     }
 

@@ -11,7 +11,7 @@ use alloy_eips::{
     eip7594::BlobTransactionSidecarVariant,
     eip7702::SignedAuthorization,
 };
-use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256, keccak256};
+use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256};
 use base_common_consensus::{BaseTransactionSigned, Eip8130Constants, Eip8130Signed};
 use c_kzg::KzgSettings;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
@@ -348,8 +348,8 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
         None
     }
 
-    /// Returns the EIP-8130 nonce-free replay identifier, if applicable.
-    fn eip8130_nonce_free_replay_id(&self) -> Option<B256> {
+    /// Returns the EIP-8130 replay identifier, if applicable.
+    fn eip8130_replay_id(&self) -> Option<B256> {
         None
     }
 }
@@ -374,14 +374,9 @@ where
         (!nonce_key.is_zero() && nonce_key != Eip8130Constants::NONCE_KEY_MAX).then_some(nonce_key)
     }
 
-    fn eip8130_nonce_free_replay_id(&self) -> Option<B256> {
+    fn eip8130_replay_id(&self) -> Option<B256> {
         let signed = self.as_eip8130()?;
-        (signed.tx().nonce_key == Eip8130Constants::NONCE_KEY_MAX).then(|| {
-            let mut buf = Vec::with_capacity(52);
-            buf.extend_from_slice(self.sender().as_slice());
-            buf.extend_from_slice(signed.tx().sender_signature_hash().as_slice());
-            keccak256(buf)
-        })
+        Some(signed.tx().replay_id(self.sender()))
     }
 }
 

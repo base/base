@@ -715,7 +715,6 @@ where
             NonceValidator::validate(
                 signed.tx(),
                 sender,
-                signed.tx().sender_signature_hash(),
                 protocol_nonce,
                 &nonce_storage,
                 NonceMode::Pool,
@@ -921,7 +920,6 @@ where
             ApplyError::Storage(_) => "account configuration write failed",
             ApplyError::MalformedAuthorizeData => "actor change authorize data is malformed",
             ApplyError::InvalidAuthenticator => "actor authenticator is not canonical",
-            ApplyError::PolicyScope => "policy-bearing actor scope is invalid",
             ApplyError::MalformedPolicyData => "actor policy data is malformed",
             ApplyError::NotAnActor { .. } => "revoked actor is not authorized",
             ApplyError::NoInitialActors => "create entry has no initial actors",

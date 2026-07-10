@@ -113,7 +113,7 @@ impl ActorAuthorizer {
     /// the account-state slot, a single SLOAD: a set `DEFAULT_EOA_REVOKED` flag
     /// disables it (revoked, or a non-k1 self is the live self authenticator), an
     /// all-zero inline config is the implicit full owner, and a non-zero inline
-    /// `scope`/`policy_type`/`expiry` is a scoped self. Every *other* recovered
+    /// `scope`/`expiry` is a scoped self. Every *other* recovered
     /// signer must carry an explicit k1 `actor_config` entry, validated by
     /// [`Self::resolve_bound`].
     ///
@@ -150,7 +150,7 @@ impl ActorAuthorizer {
             // `_resolvePolicyTarget`: address(0) when ungated, else the policy
             // manager (keyed by the self-actorId, shared keyspace). An ungated
             // (full-owner) self costs no extra read.
-            let policy_target = if state.default_eoa_policy_type == 0 {
+            let policy_target = if state.default_eoa_scope & Eip8130Constants::SCOPE_POLICY == 0 {
                 Address::ZERO
             } else {
                 storage.get_policy_manager(account, recovered)?
@@ -158,7 +158,6 @@ impl ActorAuthorizer {
             return Ok(ResolvedActor {
                 actor_id: recovered,
                 scope: state.default_eoa_scope,
-                policy_type: state.default_eoa_policy_type,
                 policy_target,
             });
         }
@@ -167,7 +166,7 @@ impl ActorAuthorizer {
 
     /// Loads `actor_config[actor_id][account]`, requires it to be bound to
     /// `authenticator` and not expired, and returns the authorization surface
-    /// (`scope`, `policy_type`, resolved `policy_target`). Mirrors the shared tail
+    /// (`scope`, resolved `policy_target`). Mirrors the shared tail
     /// of `_authenticate` / `_authenticateK1`.
     fn resolve_bound(
         storage: &AccountConfigurationStorage<'_>,
@@ -191,17 +190,12 @@ impl ActorAuthorizer {
         // (never the signed commitment). Resolved from the `config` already in
         // hand so an ungated actor costs no extra read and a gated one reads only
         // the manager slot (no `actor_config` re-read).
-        let policy_target = if config.policy_type == 0 {
+        let policy_target = if config.scope & Eip8130Constants::SCOPE_POLICY == 0 {
             Address::ZERO
         } else {
             storage.get_policy_manager(account, actor_id)?
         };
-        Ok(ResolvedActor {
-            actor_id,
-            scope: config.scope,
-            policy_type: config.policy_type,
-            policy_target,
-        })
+        Ok(ResolvedActor { actor_id, scope: config.scope, policy_target })
     }
 }
 
@@ -222,20 +216,18 @@ mod tests {
 
     /// Canonical Solidity packing of `ActorConfig` (each field at its bit offset).
     fn pack(authenticator: Address, scope: u8, expiry: u64, policy_type: u8) -> U256 {
+        let scope = if policy_type == 0 { scope } else { scope | Eip8130Constants::SCOPE_POLICY };
         U256::from_be_slice(authenticator.as_slice())
             | (U256::from(scope) << 160)
             | (U256::from(expiry) << 168)
-            | (U256::from(policy_type) << 216)
     }
 
     /// Packs an `AccountState` word carrying the inline secp256k1 self config
     /// (each field at its bit offset; sequences/lock left zero).
     fn pack_self(scope: u8, policy_type: u8, expiry: u64, revoked: bool) -> U256 {
+        let scope = if policy_type == 0 { scope } else { scope | Eip8130Constants::SCOPE_POLICY };
         let flags = if revoked { Eip8130Constants::DEFAULT_EOA_REVOKED } else { 0 };
-        (U256::from(flags) << 184)
-            | (U256::from(scope) << 192)
-            | (U256::from(policy_type) << 200)
-            | (U256::from(expiry) << 208)
+        (U256::from(flags) << 184) | (U256::from(scope) << 192) | (U256::from(expiry) << 208)
     }
 
     fn actor_id(address: Address) -> B256 {
@@ -341,7 +333,6 @@ mod tests {
                 ActorAuthorizer::authenticate_actor(acc, account, HASH, &auth, NOW).unwrap();
             assert_eq!(resolved.actor_id, self_id);
             assert_eq!(resolved.scope, Eip8130Constants::SCOPE_SENDER);
-            assert_eq!(resolved.policy_type, 0);
             assert_eq!(resolved.policy_target, Address::ZERO);
         });
     }
@@ -369,14 +360,14 @@ mod tests {
         let manager = address!("0x00000000000000000000000000000000000000d4");
         let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
         with_storage(|acc| {
-            // Inline policy_type set: the self key is gated and resolves its policy
+            // Inline SCOPE_POLICY set: the self key is gated and resolves its policy
             // target from `policy_manager[self][account]`.
             acc.account_state.at_mut(&account).write(pack_self(0, 5, 0, false)).unwrap();
             acc.policy_manager.at_mut(&self_id).at_mut(&account).write(manager).unwrap();
             let resolved =
                 ActorAuthorizer::authenticate_actor(acc, account, HASH, &auth, NOW).unwrap();
             assert_eq!(resolved.actor_id, self_id);
-            assert_eq!(resolved.policy_type, 5);
+            assert!(resolved.is_policy_gated());
             assert_eq!(resolved.policy_target, manager);
         });
     }
@@ -413,12 +404,7 @@ mod tests {
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW).unwrap();
             assert_eq!(
                 resolved,
-                ResolvedActor {
-                    actor_id: id,
-                    scope: 0x04,
-                    policy_type: 0,
-                    policy_target: Address::ZERO
-                }
+                ResolvedActor { actor_id: id, scope: 0x04, policy_target: Address::ZERO }
             );
         });
     }
@@ -475,7 +461,7 @@ mod tests {
             acc.policy_manager.at_mut(&id).at_mut(&ACCOUNT).write(manager).unwrap();
             let resolved =
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW).unwrap();
-            assert_eq!(resolved.policy_type, 1);
+            assert!(resolved.is_policy_gated());
             assert_eq!(resolved.policy_target, manager);
         });
     }
@@ -495,12 +481,7 @@ mod tests {
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW).unwrap();
             assert_eq!(
                 resolved,
-                ResolvedActor {
-                    actor_id: id,
-                    scope: 0x02,
-                    policy_type: 0,
-                    policy_target: Address::ZERO
-                }
+                ResolvedActor { actor_id: id, scope: 0x02, policy_target: Address::ZERO }
             );
         });
     }
@@ -538,12 +519,7 @@ mod tests {
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW).unwrap();
             assert_eq!(
                 resolved,
-                ResolvedActor {
-                    actor_id: outer_id,
-                    scope: 0x08,
-                    policy_type: 0,
-                    policy_target: Address::ZERO
-                }
+                ResolvedActor { actor_id: outer_id, scope: 0x08, policy_target: Address::ZERO }
             );
         });
     }

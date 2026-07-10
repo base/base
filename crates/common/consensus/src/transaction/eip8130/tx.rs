@@ -279,6 +279,41 @@ impl TxEip8130 {
         keccak256(&buf)
     }
 
+    /// Returns the fee- and signature-invariant replay identifier.
+    ///
+    /// The resolved sender is encoded in place of the nullable wire sender:
+    /// `keccak256(REPLAY_ID_TYPE || rlp([chain_id, resolved_sender, nonce_key,
+    /// nonce_sequence, expiry, account_changes, calls, metadata, payer]))`.
+    #[must_use]
+    pub fn replay_id(&self, resolved_sender: Address) -> B256 {
+        let payload_length = self.chain_id.length()
+            + resolved_sender.length()
+            + self.nonce_key.length()
+            + self.nonce_sequence.length()
+            + self.expiry.length()
+            + self.account_changes.length()
+            + Self::calls_encoded_length(&self.calls)
+            + self.metadata.length()
+            + Self::address_opt_encoded_length(&self.payer);
+        let mut buf = Vec::with_capacity(
+            Eip8130Constants::REPLAY_ID_TYPE.len()
+                + length_of_length(payload_length)
+                + payload_length,
+        );
+        buf.put_slice(&Eip8130Constants::REPLAY_ID_TYPE);
+        Header { list: true, payload_length }.encode(&mut buf);
+        self.chain_id.encode(&mut buf);
+        resolved_sender.encode(&mut buf);
+        self.nonce_key.encode(&mut buf);
+        self.nonce_sequence.encode(&mut buf);
+        self.expiry.encode(&mut buf);
+        self.account_changes.encode(&mut buf);
+        Self::encode_calls(&self.calls, &mut buf);
+        self.metadata.encode(&mut buf);
+        Self::encode_address_opt(&self.payer, &mut buf);
+        keccak256(&buf)
+    }
+
     /// Signing-hash preimage for the payer, per [EIP-8130].
     ///
     /// `keccak256(EIP8130_PAYER_TYPE || rlp([all body fields through `payer`]))`
@@ -679,6 +714,35 @@ mod tests {
         let tx = sample_tx();
         let h = tx.sender_signature_hash();
         assert_ne!(h, B256::ZERO);
+    }
+
+    #[test]
+    fn replay_id_ignores_fee_fields() {
+        let tx = sample_tx();
+        let sender = tx.sender.unwrap();
+        let mut other = tx.clone();
+        other.max_priority_fee_per_gas += 1;
+        other.max_fee_per_gas += 2;
+        other.gas_limit += 3;
+        assert_eq!(tx.replay_id(sender), other.replay_id(sender));
+    }
+
+    #[test]
+    fn replay_id_commits_to_payer_calls_and_expiry() {
+        let tx = sample_tx();
+        let sender = tx.sender.unwrap();
+
+        let mut changed = tx.clone();
+        changed.payer = Some(address!("0x00000000000000000000000000000000000000dd"));
+        assert_ne!(tx.replay_id(sender), changed.replay_id(sender));
+
+        changed = tx.clone();
+        changed.calls[0][0].data = bytes!("01");
+        assert_ne!(tx.replay_id(sender), changed.replay_id(sender));
+
+        changed = tx.clone();
+        changed.expiry = 1;
+        assert_ne!(tx.replay_id(sender), changed.replay_id(sender));
     }
 
     #[test]

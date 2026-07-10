@@ -104,10 +104,10 @@ pub struct Eip8130Outcome {
     /// The authenticated sender actor's id (published to the transaction context
     /// and used as the policy-gate subject).
     pub sender_actor_id: B256,
-    /// The sender actor's policy type; `0` means ungated (no policy gate).
-    pub policy_type: u8,
+    /// Whether the authenticated sender actor has `SCOPE_POLICY`.
+    pub policy_gated: bool,
     /// The policy gate target (`policy_manager(sender, actorId)`) resolved once
-    /// at authorization; every `call.to` must equal this when `policy_type != 0`.
+    /// at authorization; every `call.to` must equal this when policy-gated.
     pub policy_target: Address,
     /// The transaction's `gas_limit` (the sender-signed budget for sender
     /// authentication, intrinsic costs, account changes, and call execution).
@@ -689,8 +689,21 @@ impl Eip8130Executor {
             let acc = AccountConfigurationStorage::new(sctx);
             let sender_actor_id = acting_actor_hint
                 .unwrap_or_else(|| AccountConfigurationStorage::self_actor_id(sender));
-            let (policy_type, policy_target, _) =
+            let (policy_target, _) =
                 acc.get_policy(sender, sender_actor_id).map_err(BaseTransactionError::eip8130)?;
+            let actor_config = acc
+                .get_actor_config(sender, sender_actor_id)
+                .map_err(BaseTransactionError::eip8130)?;
+            let actor_scope = if actor_config.authenticator.is_zero()
+                && sender_actor_id == AccountConfigurationStorage::self_actor_id(sender)
+            {
+                acc.get_account_state(sender)
+                    .map_err(BaseTransactionError::eip8130)?
+                    .default_eoa_scope
+            } else {
+                actor_config.scope
+            };
+            let policy_gated = actor_scope & Eip8130Constants::SCOPE_POLICY != 0;
 
             // 4. Auto-delegate a code-less sender to the default account. Unlike
             //    the verifying path this is unconditional on a code-less sender: a
@@ -718,7 +731,7 @@ impl Eip8130Executor {
                 sender,
                 payer,
                 sender_actor_id,
-                policy_type,
+                policy_gated,
                 policy_target,
                 gas_limit,
                 sender_intrinsic,
@@ -760,7 +773,6 @@ impl Eip8130Executor {
         let max_fee = tx.max_fee_per_gas;
         let max_priority = tx.max_priority_fee_per_gas;
         let expiry = tx.expiry;
-        let sender_sig_hash = tx.sender_signature_hash();
 
         let internals = EvmInternals::from_context(ctx);
         let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
@@ -785,6 +797,11 @@ impl Eip8130Executor {
             let sender_actor = applied_tx.actors.sender.resolved;
             let sender = applied_tx.actors.sender.account;
             let payer = applied_tx.actors.payer.as_ref().map_or(sender, |p| p.account);
+            if !sender_actor.allows_sequenced_nonce(nonce_key) {
+                return Err(BaseTransactionError::eip8130(
+                    "sender actor scope does not authorize sequenced nonces",
+                ));
+            }
 
             // 2. Install the deferred account-*code* effects (created-account
             //    bytecode, delegation indicator) the apply step surfaced.
@@ -816,7 +833,6 @@ impl Eip8130Executor {
             NonceValidator::validate(
                 tx,
                 sender,
-                sender_sig_hash,
                 protocol_nonce,
                 &nonce_mgr,
                 NonceMode::Inclusion,
@@ -827,7 +843,7 @@ impl Eip8130Executor {
             // 4. Advance the nonce. The protocol (basic-account) nonce is bumped
             //    in `prepay`; channel and expiring nonces are journal storage.
             let bump_protocol_nonce = if nonce_key == Eip8130Constants::NONCE_KEY_MAX {
-                let replay = NonceValidator::replay_hash(sender, sender_sig_hash);
+                let replay = NonceValidator::replay_hash(tx, sender);
                 nonce_mgr
                     .check_and_mark_expiring_nonce(replay, expiry)
                     .map_err(BaseTransactionError::eip8130)?;
@@ -879,7 +895,7 @@ impl Eip8130Executor {
                 sender,
                 payer,
                 sender_actor_id: sender_actor.actor_id,
-                policy_type: sender_actor.policy_type,
+                policy_gated: sender_actor.is_policy_gated(),
                 policy_target: sender_actor.policy_target,
                 gas_limit,
                 sender_intrinsic,
@@ -991,7 +1007,7 @@ impl Eip8130Executor {
                 // `call.to` must equal the resolved policy target. A mismatched
                 // call is not dispatched and fails the phase deterministically
                 // with `ActorPolicyViolation`, charging no call gas for it.
-                if outcome.policy_type != 0 && call.to != outcome.policy_target {
+                if outcome.policy_gated && call.to != outcome.policy_target {
                     phase_reverted = true;
                     phase_output =
                         Self::actor_policy_violation_data(outcome.sender_actor_id, call.to);
@@ -1915,7 +1931,6 @@ mod tests {
             address authenticator;
             uint8 scope;
             uint48 expiry;
-            uint8 policyType;
         }
     }
 
@@ -1925,14 +1940,12 @@ mod tests {
         authenticator: Address,
         scope: u8,
         expiry: u64,
-        policy_type: u8,
         policy_data: &[u8],
     ) -> Bytes {
         let abi = ActorConfigAbi {
             authenticator,
             scope,
             expiry: alloy_primitives::aliases::U48::from(expiry),
-            policyType: policy_type,
         };
         Bytes::from((abi, Bytes::copy_from_slice(policy_data)).abi_encode_params())
     }
@@ -1967,9 +1980,8 @@ mod tests {
                 actor_id: session_actor,
                 data: authorize_change_data(
                     Eip8130Constants::K1_AUTHENTICATOR,
-                    Eip8130Constants::SCOPE_SENDER,
+                    Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_POLICY,
                     0,
-                    1,
                     &policy_data,
                 ),
             }],
@@ -2409,11 +2421,10 @@ mod tests {
     }
 
     /// Canonical Solidity packing of an `ActorConfig` word.
-    fn pack_actor(authenticator: Address, scope: u8, expiry: u64, policy_type: u8) -> U256 {
+    fn pack_actor(authenticator: Address, scope: u8, expiry: u64) -> U256 {
         U256::from_be_slice(authenticator.as_slice())
             | (U256::from(scope) << 160)
             | (U256::from(expiry) << 168)
-            | (U256::from(policy_type) << 216)
     }
 
     /// Signs `tx` for a configured sender as `K1_AUTHENTICATOR || sig`.
@@ -2425,7 +2436,7 @@ mod tests {
         Eip8130Signed::new(tx, Bytes::from(auth), Bytes::new())
     }
 
-    /// Seeds a gated (`policy_type = 1`) `SENDER | PAYER` k1 actor for `account`,
+    /// Seeds a policy-gated `SENDER | PAYER` k1 actor for `account`,
     /// authorized to the `signer` key and gated to `target`, then commits it.
     fn seed_gated_sender(
         evm: &mut BaseEvm<InMemoryDB, NoOpInspector, PrecompilesMap>,
@@ -2446,9 +2457,10 @@ mod tests {
                     .at_mut(&account)
                     .write(pack_actor(
                         Eip8130Constants::K1_AUTHENTICATOR,
-                        Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_PAYER,
+                        Eip8130Constants::SCOPE_SENDER
+                            | Eip8130Constants::SCOPE_PAYER
+                            | Eip8130Constants::SCOPE_POLICY,
                         0,
-                        1,
                     ))
                     .unwrap();
                 acc.policy_manager.at_mut(&actor_id).at_mut(&account).write(target).unwrap();

@@ -172,7 +172,7 @@ impl IntrinsicGas {
                         .saturating_add(deposit);
                     // Each initial actor writes one fresh `actor_config` slot (an
                     // unrestricted owner: `scope = 0`, `expiry = 0`,
-                    // `policyType = 0`, so no policy slots). These slot writes are
+                    // no `SCOPE_POLICY`, so no policy slots). These slot writes are
                     // metered per actor, mirroring the `ConfigChange` per-slot
                     // accounting below — creation must not register actors for
                     // free relative to a later config change authorizing the same
@@ -354,11 +354,11 @@ impl IntrinsicGas {
         }
     }
 
-    /// Whether an authorize's ABI-encoded `(ActorConfig, bytes)` `data` carries a
-    /// non-zero `policyType`. `ActorConfig` is `(address, uint8 scope, uint48
-    /// expiry, uint8 policyType)`, so `policyType` is the fourth 32-byte word.
+    /// Whether an authorize's ABI-encoded `(ActorConfig, bytes)` `data` carries
+    /// `SCOPE_POLICY`. `ActorConfig` is `(address, uint8 scope, uint48 expiry)`,
+    /// so scope is the second 32-byte word.
     fn authorize_has_policy(data: &[u8]) -> bool {
-        data.len() >= 128 && data[96..128].iter().any(|&byte| byte != 0)
+        data.len() >= 64 && data[63] & Eip8130Constants::SCOPE_POLICY != 0
     }
 
     /// Worst-case extra cost for self-targeted actor changes in a config change.
@@ -433,25 +433,20 @@ mod tests {
             address authenticator;
             uint8 scope;
             uint48 expiry;
-            uint8 policyType;
         }
     }
 
     #[test]
-    fn authorize_has_policy_reads_the_policy_type_word() {
+    fn authorize_has_policy_reads_the_scope_word() {
         use alloy_sol_types::SolValue;
 
-        // Drift tripwire: `authorize_has_policy` decodes `policyType` at a hardcoded
-        // 32-byte offset (bytes 96..128) of the ABI-encoded `(ActorConfig, bytes)`
-        // authorize payload. If the `ActorConfig` field layout ever changes, this
-        // catches it: a non-zero `policyType` must be detected, and non-zero values
-        // in *every other* field (authenticator, scope, expiry) must not be.
+        // Drift tripwire: `authorize_has_policy` reads SCOPE_POLICY from the low
+        // byte of the second ABI word.
         let gated = (
             ActorConfigAbi {
                 authenticator: Address::ZERO,
-                scope: 0,
+                scope: Eip8130Constants::SCOPE_POLICY,
                 expiry: alloy_primitives::Uint::ZERO,
-                policyType: 7,
             },
             Bytes::new(),
         )
@@ -459,9 +454,8 @@ mod tests {
         let ungated = (
             ActorConfigAbi {
                 authenticator: address!("0xffffffffffffffffffffffffffffffffffffffff"),
-                scope: 0xff,
+                scope: Eip8130Constants::SCOPE_SENDER,
                 expiry: alloy_primitives::Uint::from(0xffff_ffff_ffffu64),
-                policyType: 0,
             },
             Bytes::new(),
         )
@@ -469,9 +463,7 @@ mod tests {
 
         assert!(IntrinsicGas::authorize_has_policy(&gated));
         assert!(!IntrinsicGas::authorize_has_policy(&ungated));
-        // `policyType = 7` lands in the low byte of the fourth word.
-        assert_eq!(gated[96..128].iter().rposition(|&b| b != 0), Some(31));
-        assert_eq!(gated[127], 7);
+        assert_eq!(gated[63], Eip8130Constants::SCOPE_POLICY);
     }
 
     #[test]
@@ -613,8 +605,8 @@ mod tests {
             + Eip8130GasSchedule::ACTOR_SLOT_RESET_COST;
         assert_eq!(gas.account_changes, expected);
 
-        // With a non-zero policyType, the authorize also writes the two policy slots.
-        authorize_data[127] = 0x01;
+        // With SCOPE_POLICY, the authorize also writes the two policy slots.
+        authorize_data[63] = Eip8130Constants::SCOPE_POLICY;
         let cc = ConfigChange {
             chain_id: 0,
             sequence: 0,

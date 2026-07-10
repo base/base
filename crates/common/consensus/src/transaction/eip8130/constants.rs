@@ -52,8 +52,14 @@ impl Eip8130Constants {
     /// Actor scope bit: `payer_auth` validation context.
     pub const SCOPE_PAYER: u8 = 0x04;
 
-    /// Actor scope bit: config change `auth` context.
-    pub const SCOPE_CONFIG: u8 = 0x08;
+    /// Actor scope bit: policy-gated sender context.
+    pub const SCOPE_POLICY: u8 = 0x10;
+
+    /// Actor scope bit: nonce authorization context.
+    pub const SCOPE_NONCE: u8 = 0x20;
+
+    /// Replay-ID type prefix.
+    pub const REPLAY_ID_TYPE: [u8; 2] = [0x7B, 0x01];
 
     /// Unrestricted scope value (actor is valid in all contexts).
     pub const SCOPE_UNRESTRICTED: u8 = 0x00;
@@ -190,7 +196,8 @@ mod tests {
             Eip8130Constants::SCOPE_SIGNATURE,
             Eip8130Constants::SCOPE_SENDER,
             Eip8130Constants::SCOPE_PAYER,
-            Eip8130Constants::SCOPE_CONFIG,
+            Eip8130Constants::SCOPE_POLICY,
+            Eip8130Constants::SCOPE_NONCE,
         ];
         let mut acc: u8 = 0;
         for b in bits {

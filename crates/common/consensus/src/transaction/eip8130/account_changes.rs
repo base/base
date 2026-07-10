@@ -66,9 +66,14 @@ impl Scope {
         self.0 & Eip8130Constants::SCOPE_PAYER != 0
     }
 
-    /// Returns true if the scope grants the `SCOPE_CONFIG` context.
-    pub const fn has_config(&self) -> bool {
-        self.0 & Eip8130Constants::SCOPE_CONFIG != 0
+    /// Returns true if the scope enables policy gating.
+    pub const fn has_policy(&self) -> bool {
+        self.0 & Eip8130Constants::SCOPE_POLICY != 0
+    }
+
+    /// Returns true if the scope grants the nonce context.
+    pub const fn has_nonce(&self) -> bool {
+        self.0 & Eip8130Constants::SCOPE_NONCE != 0
     }
 }
 
@@ -127,7 +132,7 @@ impl ActorChangeType {
 ///
 /// Per [EIP-8130], `data` is the operation-specific, contract-ABI-encoded blob:
 /// `abi.encode(ActorConfig, bytes policyData)` for an `Authorize` (carrying the
-/// new actor's authenticator, scope, expiry, policy type, and policy data), and
+/// new actor's authenticator, scope, expiry, and policy data), and
 /// empty for a `Revoke`. It is opaque at this layer — decoded only where the
 /// change is applied (native authorization or `applySignedActorChanges`) — and
 /// is the value hashed (`keccak256(data)`) in the config-change signature
@@ -218,7 +223,7 @@ pub struct ConfigChange {
     pub sequence: u64,
     /// Actor authorize/revoke operations applied in order.
     pub actor_changes: Vec<ActorChange>,
-    /// Authorization payload validated against an existing actor with `SCOPE_CONFIG`.
+    /// Authorization payload validated against an admin actor (`scope == 0`).
     pub auth: Bytes,
 }
 
@@ -321,12 +326,14 @@ mod tests {
             Eip8130Constants::SCOPE_SIGNATURE
                 | Eip8130Constants::SCOPE_SENDER
                 | Eip8130Constants::SCOPE_PAYER
-                | Eip8130Constants::SCOPE_CONFIG,
+                | Eip8130Constants::SCOPE_POLICY
+                | Eip8130Constants::SCOPE_NONCE,
         );
         assert!(s.has_signature());
         assert!(s.has_sender());
         assert!(s.has_payer());
-        assert!(s.has_config());
+        assert!(s.has_policy());
+        assert!(s.has_nonce());
         assert!(!Scope::UNRESTRICTED.has_signature());
     }
 

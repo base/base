@@ -113,6 +113,12 @@ impl ActorTxVerifier {
                 Operation::Sender,
                 now,
             )?;
+            if !resolved.allows_sequenced_nonce(signed.tx().nonce_key) {
+                return Err(TxAuthError::Scope {
+                    operation: Operation::Sender,
+                    scope: resolved.scope,
+                });
+            }
             return Ok(AuthorizedActor { account, resolved });
         }
 
@@ -135,6 +141,9 @@ impl ActorTxVerifier {
 
         let resolved = ActorAuthorizer::authorize_k1(storage, account, recovered, now)?;
         if !Operation::Sender.is_granted(&resolved) {
+            return Err(TxAuthError::Scope { operation: Operation::Sender, scope: resolved.scope });
+        }
+        if !resolved.allows_sequenced_nonce(signed.tx().nonce_key) {
             return Err(TxAuthError::Scope { operation: Operation::Sender, scope: resolved.scope });
         }
         Ok(AuthorizedActor { account, resolved })
@@ -202,11 +211,10 @@ mod tests {
     }
 
     /// Canonical Solidity packing of `ActorConfig`.
-    fn pack(authenticator: Address, scope: u8, expiry: u64, policy_type: u8) -> U256 {
+    fn pack(authenticator: Address, scope: u8, expiry: u64, _policy_type: u8) -> U256 {
         U256::from_be_slice(authenticator.as_slice())
             | (U256::from(scope) << 160)
             | (U256::from(expiry) << 168)
-            | (U256::from(policy_type) << 216)
     }
 
     fn base_tx(sender: Option<Address>, payer: Option<Address>) -> TxEip8130 {
@@ -260,7 +268,9 @@ mod tests {
                 .at_mut(&account)
                 .write(pack(
                     K1,
-                    Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_PAYER,
+                    Eip8130Constants::SCOPE_SENDER
+                        | Eip8130Constants::SCOPE_PAYER
+                        | Eip8130Constants::SCOPE_NONCE,
                     0,
                     0,
                 ))
@@ -269,7 +279,9 @@ mod tests {
             assert_eq!(actors.sender.account, account);
             assert_eq!(
                 actors.sender.resolved.scope,
-                Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_PAYER
+                Eip8130Constants::SCOPE_SENDER
+                    | Eip8130Constants::SCOPE_PAYER
+                    | Eip8130Constants::SCOPE_NONCE
             );
             assert!(actors.payer.is_none());
         });
@@ -287,13 +299,18 @@ mod tests {
             acc.actor_config
                 .at_mut(&id)
                 .at_mut(&account)
-                .write(pack(K1, Eip8130Constants::SCOPE_SENDER, 0, 0))
+                .write(pack(
+                    K1,
+                    Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_NONCE,
+                    0,
+                    0,
+                ))
                 .unwrap();
             assert_eq!(
                 ActorTxVerifier::verify(&signed, acc, NOW),
                 Err(TxAuthError::Scope {
                     operation: Operation::Payer,
-                    scope: Eip8130Constants::SCOPE_SENDER,
+                    scope: Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_NONCE,
                 }),
             );
         });
@@ -345,7 +362,12 @@ mod tests {
             acc.actor_config
                 .at_mut(&sid)
                 .at_mut(&sender_account)
-                .write(pack(K1, Eip8130Constants::SCOPE_SENDER, 0, 0))
+                .write(pack(
+                    K1,
+                    Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_NONCE,
+                    0,
+                    0,
+                ))
                 .unwrap();
             acc.actor_config
                 .at_mut(&pid)
@@ -450,7 +472,12 @@ mod tests {
             acc.actor_config
                 .at_mut(&sid)
                 .at_mut(&sender_account)
-                .write(pack(K1, Eip8130Constants::SCOPE_SENDER, 0, 0))
+                .write(pack(
+                    K1,
+                    Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_NONCE,
+                    0,
+                    0,
+                ))
                 .unwrap();
             // Payer actor bound but lacking SCOPE_PAYER.
             acc.actor_config
