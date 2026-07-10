@@ -171,8 +171,8 @@ mod tests {
     const COLLATERAL_NEXT_UPDATE_DATE: &str = "2035-01-01T00:00:00Z";
     const FIXTURE_HEX: &str = include_str!("testdata/verify_fixture.hex");
 
-    fn signing_key(byte: u8) -> SigningKey {
-        SigningKey::from_slice(&[byte; 32]).expect("fixture signing key must be valid")
+    fn signing_key() -> SigningKey {
+        SigningKey::from_slice(&[4; 32]).expect("fixture signing key must be valid")
     }
 
     fn secp256k1_public_key(scalar: u8) -> Bytes {
@@ -182,8 +182,8 @@ mod tests {
         Bytes::copy_from_slice(secret_key.public_key().to_encoded_point(false).as_bytes())
     }
 
-    fn sign(key: &SigningKey, message: &[u8]) -> Bytes {
-        let signature: Signature = key.sign(message);
+    fn sign(message: &[u8]) -> Bytes {
+        let signature: Signature = signing_key().sign(message);
         Bytes::copy_from_slice(&signature.to_bytes())
     }
 
@@ -211,7 +211,6 @@ mod tests {
     fn collateral(
         raw: &[u8],
         body_kind: TdxSignedCollateralBody,
-        signing_key: &SigningKey,
         signing_chain: Vec<TdxCertificate>,
     ) -> TdxSignedCollateral {
         let mut collateral = TdxSignedCollateral {
@@ -219,27 +218,18 @@ mod tests {
             signing_chain,
             signature: Bytes::new(),
         };
-        resign_collateral_body(&mut collateral, body_kind, signing_key);
+        resign_collateral_body(&mut collateral, body_kind);
         collateral
     }
 
     fn resign_collateral_body(
         collateral: &mut TdxSignedCollateral,
         body_kind: TdxSignedCollateralBody,
-        signing_key: &SigningKey,
     ) {
         let signed_body = collateral
             .signed_body_bytes(body_kind)
             .expect("fixture collateral body must serialize");
-        collateral.signature = sign(signing_key, &signed_body);
-    }
-
-    fn resign(input: &mut TdxVerifierInput, body_kind: TdxSignedCollateralBody) {
-        let collateral = match body_kind {
-            TdxSignedCollateralBody::TcbInfo => &mut input.collateral.tcb_info,
-            TdxSignedCollateralBody::QeIdentity => &mut input.collateral.qe_identity,
-        };
-        resign_collateral_body(collateral, body_kind, &signing_key(4));
+        collateral.signature = sign(&signed_body);
     }
 
     fn json_bytes(value: serde_json::Value) -> Vec<u8> {
@@ -298,7 +288,6 @@ mod tests {
     }
 
     fn fixture() -> TdxVerifierInput {
-        let collateral_key = signing_key(4);
         let root = fixture_cert("root");
         let intermediate = fixture_cert("intermediate");
         let pck_leaf = fixture_cert("pck_leaf");
@@ -310,13 +299,11 @@ mod tests {
         let tcb_info = collateral(
             &json_bytes(tcb_info_document()),
             TdxSignedCollateralBody::TcbInfo,
-            &collateral_key,
             collateral_chain.clone(),
         );
         let qe_identity = collateral(
             &json_bytes(qe_identity_document()),
             TdxSignedCollateralBody::QeIdentity,
-            &collateral_key,
             collateral_chain,
         );
         TdxVerifierInput {
@@ -339,22 +326,21 @@ mod tests {
         input.quote = Bytes::from(quote);
     }
 
-    fn flip_quote_byte(input: &mut TdxVerifierInput, offset: usize) {
-        edit_quote(input, |quote| quote[offset] ^= 0x01);
-    }
-
     fn edit_tcb_info(input: &mut TdxVerifierInput, mutate: impl FnOnce(&mut serde_json::Value)) {
         let mut document = tcb_info_document();
         mutate(&mut document);
         input.collateral.tcb_info.raw = Bytes::from(json_bytes(document));
-        resign(input, TdxSignedCollateralBody::TcbInfo);
+        resign_collateral_body(&mut input.collateral.tcb_info, TdxSignedCollateralBody::TcbInfo);
     }
 
     fn edit_qe_identity(input: &mut TdxVerifierInput, mutate: impl FnOnce(&mut serde_json::Value)) {
         let mut document = qe_identity_document();
         mutate(&mut document);
         input.collateral.qe_identity.raw = Bytes::from(json_bytes(document));
-        resign(input, TdxSignedCollateralBody::QeIdentity);
+        resign_collateral_body(
+            &mut input.collateral.qe_identity,
+            TdxSignedCollateralBody::QeIdentity,
+        );
     }
 
     #[test]
@@ -397,11 +383,11 @@ mod tests {
         let document: serde_json::Value =
             serde_json::from_slice(&input.collateral.tcb_info.raw).unwrap();
         input.collateral.tcb_info.raw = Bytes::from(serde_json::to_vec_pretty(&document).unwrap());
-        resign(&mut input, TdxSignedCollateralBody::TcbInfo);
+        resign_collateral_body(&mut input.collateral.tcb_info, TdxSignedCollateralBody::TcbInfo);
 
         TdxVerifier::verify(&input).expect("body-signed pretty collateral must verify");
 
-        input.collateral.tcb_info.signature = sign(&signing_key(4), &input.collateral.tcb_info.raw);
+        input.collateral.tcb_info.signature = sign(&input.collateral.tcb_info.raw);
         let error =
             TdxVerifier::verify(&input).expect_err("top-level collateral signature must fail");
         assert!(matches!(error, TdxVerifierError::TcbInfoInvalid(_)), "{error:?}");
@@ -424,7 +410,7 @@ mod tests {
             .tcb_info
             .signed_body_bytes(TdxSignedCollateralBody::TcbInfo)
             .expect("fixture collateral body must serialize");
-        input.collateral.qe_identity.signature = sign(&signing_key(4), &signed_tcb_body);
+        input.collateral.qe_identity.signature = sign(&signed_tcb_body);
 
         let error = TdxVerifier::verify(&input)
             .expect_err("QE identity collateral with multiple signed bodies must fail");
@@ -485,7 +471,7 @@ mod tests {
             "bad quote signature",
             |input| {
                 let signature_offset = TDX_QUOTE_HEADER_LEN + TDX_REPORT_BODY_LEN + 4;
-                flip_quote_byte(input, signature_offset);
+                edit_quote(input, |quote| quote[signature_offset] ^= 0x01);
             },
             TdxVerifierError::QuoteSignatureInvalid(_)
         );
@@ -508,7 +494,7 @@ mod tests {
                     + ECDSA_P256_PUBLIC_KEY_BODY_LEN
                     + CERTIFICATION_DATA_HEADER_LEN
                     + QE_REPORT_LEN;
-                flip_quote_byte(input, qe_report_signature_offset);
+                edit_quote(input, |quote| quote[qe_report_signature_offset] ^= 0x01);
             },
             TdxVerifierError::PckCertChainInvalid(_)
         );
