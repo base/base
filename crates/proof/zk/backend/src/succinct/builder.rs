@@ -1,9 +1,9 @@
 //! Backend construction for Succinct ZK provers.
 
-use std::{error::Error, future::Future, sync::Arc};
+use std::{collections::HashMap, error::Error, fmt, future::Future, sync::Arc, time::Duration};
 
 use base_proof_succinct_host_utils::fetcher::{OPSuccinctDataFetcher, RPCConfig};
-use base_proof_zk_host::ZkProver;
+use base_proof_zk_host::{ZkBackend, ZkProver};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
@@ -13,6 +13,8 @@ use crate::succinct::{
     ClusterZkProver, DryRunZkProver, MockZkProver, NetworkZkProver, OpSuccinctWitnessProvider,
     SuccinctClusterBackendConfig, SuccinctNetworkBackendConfig,
 };
+
+type BackendConfigs = (Vec<(ZkBackend, SuccinctZkBackendConfig)>, Option<SuccinctRpcConfig>);
 
 /// Errors raised while building a Succinct ZK prover backend.
 #[derive(Debug, Error)]
@@ -26,6 +28,15 @@ pub enum SuccinctZkProverBuildError {
         /// Failed initialization operation.
         context: &'static str,
         /// Underlying operation error.
+        #[source]
+        source: Box<dyn Error + Send + Sync + 'static>,
+    },
+    /// A configured backend failed to initialize.
+    #[error("failed to initialize {backend} zk proving backend")]
+    Backend {
+        /// Backend that failed to initialize.
+        backend: ZkBackend,
+        /// Underlying initialization error.
         #[source]
         source: Box<dyn Error + Send + Sync + 'static>,
     },
@@ -48,6 +59,11 @@ impl SuccinctZkProverBuildError {
         source: Box<dyn Error + Send + Sync + 'static>,
     ) -> Self {
         Self::Operation { context, source }
+    }
+
+    /// Adds the backend that failed to initialize.
+    pub fn backend(backend: ZkBackend, source: Self) -> Self {
+        Self::Backend { backend, source: Box::new(source) }
     }
 }
 
@@ -84,6 +100,232 @@ pub struct SuccinctRpcConfig {
     pub default_sequence_window: u64,
 }
 
+/// Configuration for all Succinct proving backends available to one worker.
+#[derive(Clone)]
+pub struct SuccinctZkProversConfig {
+    /// Enables the mock backend.
+    pub enable_mock: bool,
+    /// Base consensus node RPC URL.
+    pub base_consensus_rpc: Option<Url>,
+    /// L1 execution node RPC URL.
+    pub l1_rpc: Option<Url>,
+    /// L1 beacon node RPC URL.
+    pub l1_beacon_rpc: Option<Url>,
+    /// L2 execution node RPC URL.
+    pub l2_rpc: Option<Url>,
+    /// Default sequence window for L1 head calculations.
+    pub default_sequence_window: u64,
+    /// SP1 cluster gRPC endpoint.
+    pub cluster_rpc: Option<String>,
+    /// SP1 cluster proof timeout in hours.
+    pub cluster_timeout_hours: u64,
+    /// S3 artifact store bucket.
+    pub s3_bucket: Option<String>,
+    /// S3 artifact store region.
+    pub s3_region: Option<String>,
+    /// SP1 network requester private key or KMS key ARN.
+    pub network_private_key: Option<String>,
+    /// Whether the network requester key is an AWS KMS ARN.
+    pub use_kms_requester: bool,
+    /// SP1 network proof timeout in hours.
+    pub network_timeout_hours: u64,
+    /// Cycle limit for range proof requests.
+    pub range_cycle_limit: u64,
+    /// Gas limit for range proof requests.
+    pub range_gas_limit: u64,
+    /// Cycle limit for aggregation proof requests.
+    pub aggregation_cycle_limit: u64,
+    /// Gas limit for aggregation proof requests.
+    pub aggregation_gas_limit: u64,
+}
+
+impl fmt::Debug for SuccinctZkProversConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SuccinctZkProversConfig")
+            .field("enable_mock", &self.enable_mock)
+            .field("cluster_configured", &self.cluster_rpc.is_some())
+            .field("network_configured", &self.network_private_key.is_some())
+            .field("use_kms_requester", &self.use_kms_requester)
+            .finish_non_exhaustive()
+    }
+}
+
+impl SuccinctZkProversConfig {
+    /// Builds every configured prover unless cancellation is requested first.
+    pub async fn build_until_cancelled(
+        &self,
+        cancel: &CancellationToken,
+    ) -> Result<Option<HashMap<ZkBackend, Arc<dyn ZkProver>>>, SuccinctZkProverBuildError> {
+        let mut provers = HashMap::new();
+        let (configs, rpc) = self.backend_configs()?;
+        let witness_provider = if let Some(rpc) = rpc {
+            let Some(provider) =
+                Box::pin(SuccinctZkProverBuilder::build_witness_provider(rpc, cancel)).await?
+            else {
+                return Ok(None);
+            };
+            Some(provider)
+        } else {
+            None
+        };
+
+        for (backend, config) in configs {
+            let mut builder = SuccinctZkProverBuilder::new(config);
+            if let Some(provider) = &witness_provider {
+                builder = builder.with_witness_provider(provider.clone());
+            }
+            let prover = builder.build_until_cancelled(cancel);
+            let Some(prover) = Box::pin(prover)
+                .await
+                .map_err(|source| SuccinctZkProverBuildError::backend(backend, source))?
+            else {
+                return Ok(None);
+            };
+            provers.insert(backend, prover);
+        }
+
+        if provers.is_empty() {
+            return Err(SuccinctZkProverBuildError::config(
+                "no ZK backend enabled; configure RPC URLs or explicitly enable the mock backend",
+            ));
+        }
+
+        Ok(Some(provers))
+    }
+
+    fn optional_string(value: Option<&str>) -> Option<String> {
+        value.map(str::trim).filter(|value| !value.is_empty()).map(ToOwned::to_owned)
+    }
+
+    fn rpc_config(&self) -> Result<Option<SuccinctRpcConfig>, SuccinctZkProverBuildError> {
+        match (&self.base_consensus_rpc, &self.l1_rpc, &self.l1_beacon_rpc, &self.l2_rpc) {
+            (None, None, None, None) => Ok(None),
+            (Some(base_consensus_rpc), Some(l1_rpc), Some(l1_beacon_rpc), Some(l2_rpc)) => {
+                Ok(Some(SuccinctRpcConfig {
+                    base_consensus_rpc: base_consensus_rpc.clone(),
+                    l1_rpc: l1_rpc.clone(),
+                    l1_beacon_rpc: l1_beacon_rpc.clone(),
+                    l2_rpc: l2_rpc.clone(),
+                    default_sequence_window: self.default_sequence_window,
+                }))
+            }
+            _ => Err(SuccinctZkProverBuildError::config(
+                "BASE_CONSENSUS_ADDRESS, L1_NODE_ADDRESS, L1_BEACON_ADDRESS, and L2_NODE_ADDRESS must all be set to enable dry-run, cluster, or network backends",
+            )),
+        }
+    }
+
+    fn duration_from_hours(
+        hours: u64,
+        name: &'static str,
+    ) -> Result<Duration, SuccinctZkProverBuildError> {
+        let seconds = hours
+            .checked_mul(3600)
+            .ok_or_else(|| SuccinctZkProverBuildError::config(format!("{name} is too large")))?;
+        Ok(Duration::from_secs(seconds))
+    }
+
+    fn backend_configs(&self) -> Result<BackendConfigs, SuccinctZkProverBuildError> {
+        let mut configs = Vec::new();
+        if self.enable_mock {
+            configs.push((ZkBackend::Mock, SuccinctZkBackendConfig::Mock));
+        }
+        let cluster_rpc = Self::optional_string(self.cluster_rpc.as_deref());
+        let s3_bucket = Self::optional_string(self.s3_bucket.as_deref());
+        if cluster_rpc.is_none() && s3_bucket.is_some() {
+            return Err(SuccinctZkProverBuildError::config(
+                "cluster backend requires SP1_CLUSTER_API_ENDPOINT",
+            ));
+        }
+        let network_private_key = Self::optional_string(self.network_private_key.as_deref());
+        if self.use_kms_requester && network_private_key.is_none() {
+            return Err(SuccinctZkProverBuildError::config(
+                "USE_KMS_REQUESTER requires NETWORK_PRIVATE_KEY",
+            ));
+        }
+        let has_complete_rpc = matches!(
+            (&self.base_consensus_rpc, &self.l1_rpc, &self.l1_beacon_rpc, &self.l2_rpc),
+            (Some(_), Some(_), Some(_), Some(_))
+        );
+        let rpc = if self.enable_mock
+            && cluster_rpc.is_none()
+            && network_private_key.is_none()
+            && !has_complete_rpc
+        {
+            None
+        } else {
+            self.rpc_config()?
+        };
+
+        if let Some(rpc) = rpc.clone() {
+            configs.push((
+                ZkBackend::DryRun,
+                SuccinctZkBackendConfig::DryRun { rpc, range_cycle_limit: self.range_cycle_limit },
+            ));
+        }
+
+        if let Some(cluster_rpc) = cluster_rpc {
+            let Some(rpc) = rpc.clone() else {
+                return Err(SuccinctZkProverBuildError::config(
+                    "cluster backend requires all RPC URLs",
+                ));
+            };
+            let s3_bucket = s3_bucket.ok_or_else(|| {
+                SuccinctZkProverBuildError::config("cluster backend requires CLI_S3_BUCKET")
+            })?;
+            let s3_region = Self::optional_string(self.s3_region.as_deref()).ok_or_else(|| {
+                SuccinctZkProverBuildError::config("cluster backend requires CLI_S3_REGION")
+            })?;
+            configs.push((
+                ZkBackend::Cluster,
+                SuccinctZkBackendConfig::Cluster(SuccinctClusterBackendConfig {
+                    rpc,
+                    cluster_rpc,
+                    s3_bucket,
+                    s3_region,
+                    timeout: Self::duration_from_hours(
+                        self.cluster_timeout_hours,
+                        "SP1_CLUSTER_TIMEOUT_HOURS",
+                    )?,
+                    range_cycle_limit: self.range_cycle_limit,
+                    range_gas_limit: self.range_gas_limit,
+                    aggregation_cycle_limit: self.aggregation_cycle_limit,
+                    aggregation_gas_limit: self.aggregation_gas_limit,
+                }),
+            ));
+        }
+
+        match (network_private_key, rpc.clone()) {
+            (Some(network_private_key), Some(rpc)) => {
+                configs.push((
+                    ZkBackend::Network,
+                    SuccinctZkBackendConfig::Network(SuccinctNetworkBackendConfig {
+                        rpc,
+                        network_private_key,
+                        use_kms_requester: self.use_kms_requester,
+                        timeout: Self::duration_from_hours(
+                            self.network_timeout_hours,
+                            "SP1_NETWORK_TIMEOUT_HOURS",
+                        )?,
+                        range_cycle_limit: self.range_cycle_limit,
+                        range_gas_limit: self.range_gas_limit,
+                        aggregation_cycle_limit: self.aggregation_cycle_limit,
+                        aggregation_gas_limit: self.aggregation_gas_limit,
+                    }),
+                ));
+            }
+            (None, _) => {}
+            (Some(_), None) => {
+                return Err(SuccinctZkProverBuildError::config(
+                    "network backend requires all RPC URLs",
+                ));
+            }
+        }
+
+        Ok((configs, rpc))
+    }
+}
+
 /// Builds concrete Succinct ZK prover backends from config.
 #[derive(Clone, Debug)]
 pub struct SuccinctZkProverBuilder {
@@ -98,6 +340,8 @@ impl SuccinctZkProverBuilder {
     }
 
     /// Reuses an already initialized witness provider.
+    ///
+    /// The provider must use the same RPC endpoints as this builder's backend config.
     #[must_use]
     pub fn with_witness_provider(mut self, witness_provider: OpSuccinctWitnessProvider) -> Self {
         self.witness_provider = Some(witness_provider);
@@ -187,5 +431,79 @@ impl SuccinctZkProverBuilder {
             }
             result = operation => result.map(Some),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config() -> SuccinctZkProversConfig {
+        SuccinctZkProversConfig {
+            enable_mock: false,
+            base_consensus_rpc: None,
+            l1_rpc: None,
+            l1_beacon_rpc: None,
+            l2_rpc: None,
+            default_sequence_window: 50,
+            cluster_rpc: None,
+            cluster_timeout_hours: 24,
+            s3_bucket: None,
+            s3_region: None,
+            network_private_key: None,
+            use_kms_requester: false,
+            network_timeout_hours: 24,
+            range_cycle_limit: 1_000_000_000_000,
+            range_gas_limit: 1_000_000_000_000,
+            aggregation_cycle_limit: 1_000_000_000_000,
+            aggregation_gas_limit: 1_000_000_000_000,
+        }
+    }
+
+    fn set_rpc_config(config: &mut SuccinctZkProversConfig) {
+        config.base_consensus_rpc = Some(Url::parse("http://base-consensus").unwrap());
+        config.l1_rpc = Some(Url::parse("http://l1").unwrap());
+        config.l1_beacon_rpc = Some(Url::parse("http://l1-beacon").unwrap());
+        config.l2_rpc = Some(Url::parse("http://l2").unwrap());
+    }
+
+    #[test]
+    fn backend_enablement_is_presence_based() {
+        let mut config = config();
+        assert!(config.backend_configs().unwrap().0.is_empty());
+
+        config.enable_mock = true;
+        let (configs, _) = config.backend_configs().unwrap();
+        assert_eq!(configs.len(), 1);
+        assert_eq!(configs[0].0, ZkBackend::Mock);
+
+        config.enable_mock = false;
+        set_rpc_config(&mut config);
+        let (configs, _) = config.backend_configs().unwrap();
+        assert_eq!(configs.len(), 1);
+        assert_eq!(configs[0].0, ZkBackend::DryRun);
+
+        config.base_consensus_rpc = None;
+        assert!(config.backend_configs().is_err());
+
+        config.enable_mock = true;
+        let (configs, rpc) = config.backend_configs().unwrap();
+        assert_eq!(configs.len(), 1);
+        assert_eq!(configs[0].0, ZkBackend::Mock);
+        assert!(rpc.is_none());
+
+        config.s3_bucket = Some("bucket".to_owned());
+        assert!(config.backend_configs().is_err());
+
+        set_rpc_config(&mut config);
+        config.cluster_rpc = Some("http://cluster".to_owned());
+        config.s3_region = Some("region".to_owned());
+        config.network_private_key = Some("network-key".to_owned());
+        let (configs, rpc) = config.backend_configs().unwrap();
+        assert_eq!(
+            configs.iter().map(|(backend, _)| *backend).collect::<Vec<_>>(),
+            vec![ZkBackend::Mock, ZkBackend::DryRun, ZkBackend::Cluster, ZkBackend::Network]
+        );
+        assert!(rpc.is_some());
     }
 }

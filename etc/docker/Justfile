@@ -192,7 +192,7 @@ _up-devnet compose_profile zk:
         just --justfile {{ source_file() }} down
         just --justfile {{ source_file() }} _build-setup-image
         just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
-        ZK_BACKEND=dry_run docker compose {{ _env }} "${compose_files[@]}" up -d --no-build --remove-orphans
+        docker compose {{ _env }} "${compose_files[@]}" up -d --no-build --remove-orphans
         ;;
       cluster)
         if [ -z "${AWS_ACCESS_KEY_ID:-}" ] || [ -z "${AWS_SECRET_ACCESS_KEY:-}" ]; then
@@ -207,7 +207,6 @@ _up-devnet compose_profile zk:
           echo "  mkdir -p \"$(dirname "$cluster_config")\"" >&2
           echo "  cat > \"$cluster_config\" <<'EOF'" >&2
           echo "sp1:" >&2
-          echo "  prover: cluster" >&2
           echo "  cluster_api_endpoint: https://your-sp1-cluster.example" >&2
           echo "  cluster_timeout_hours: 24" >&2
           echo "artifact:" >&2
@@ -221,7 +220,6 @@ _up-devnet compose_profile zk:
         cluster_env="$(mktemp)"
         trap 'rm -f "$cluster_env"' EXIT
         python3 {{ _yaml_to_env }} "$cluster_config" "$cluster_env" \
-          --map sp1.prover=ZK_BACKEND \
           --map sp1.cluster_api_endpoint=SP1_CLUSTER_API_ENDPOINT \
           --map sp1.cluster_timeout_hours=SP1_CLUSTER_TIMEOUT_HOURS \
           --map artifact.s3_bucket=CLI_S3_BUCKET \
@@ -230,7 +228,6 @@ _up-devnet compose_profile zk:
           --map aws.default_region=AWS_DEFAULT_REGION \
           --map prover.default_sequence_window=DEFAULT_SEQUENCE_WINDOW \
           --map logging.rust_log=RUST_LOG \
-          --default ZK_BACKEND=cluster \
           --default SP1_CLUSTER_TIMEOUT_HOURS=24 \
           --default CLI_S3_REGION=us-east-1 \
           --default AWS_DEFAULT_REGION=us-east-1 \

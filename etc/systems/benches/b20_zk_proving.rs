@@ -6,8 +6,8 @@
 //! cargo bench -p base-system-tests --bench b20_zk_proving
 //! ```
 //!
-//! Requires local L2, rollup, and prover-service requester JSON-RPC endpoints with
-//! `ZK_BACKEND=dry_run` mode.
+//! Requires local L2, rollup, and prover-service requester JSON-RPC endpoints with a ZK host
+//! configured with all RPC URLs, which enables the dry-run backend.
 
 use std::time::Duration;
 

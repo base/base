@@ -8,7 +8,8 @@ pub use provider::{L1HeadSource, OpSuccinctWitnessProvider, WitnessError, Witnes
 
 mod builder;
 pub use builder::{
-    SuccinctRpcConfig, SuccinctZkBackendConfig, SuccinctZkProverBuildError, SuccinctZkProverBuilder,
+    SuccinctRpcConfig, SuccinctZkBackendConfig, SuccinctZkProverBuildError,
+    SuccinctZkProverBuilder, SuccinctZkProversConfig,
 };
 
 mod cluster;
