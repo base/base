@@ -23,6 +23,8 @@ use tracing::info;
 use url::Url;
 use uuid::Uuid;
 
+type BackendConfigs = (Vec<(ZkBackend, SuccinctZkBackendConfig)>, Option<SuccinctRpcConfig>);
+
 base_cli_utils::define_log_args!("BASE_PROVER_ZK_HOST");
 base_cli_utils::define_metrics_args!("BASE_PROVER_ZK_HOST", 7303);
 
@@ -200,12 +202,34 @@ impl WorkerArgs {
         Ok(Duration::from_secs(seconds))
     }
 
-    fn backend_configs(&self) -> eyre::Result<Vec<(ZkBackend, SuccinctZkBackendConfig)>> {
+    fn backend_configs(&self) -> eyre::Result<BackendConfigs> {
         let mut configs = Vec::new();
         if self.enable_mock_zk_backend {
             configs.push((ZkBackend::Mock, SuccinctZkBackendConfig::Mock));
         }
-        let rpc = self.rpc_config()?;
+        let cluster_rpc = Self::optional_string(&self.sp1_cluster_api_endpoint);
+        let network_private_key = Self::optional_string(&self.network_private_key);
+        if self.use_kms_requester && network_private_key.is_none() {
+            return Err(eyre!("USE_KMS_REQUESTER requires NETWORK_PRIVATE_KEY"));
+        }
+        let has_complete_rpc = matches!(
+            (
+                &self.base_consensus_address,
+                &self.l1_node_address,
+                &self.l1_beacon_address,
+                &self.l2_node_address,
+            ),
+            (Some(_), Some(_), Some(_), Some(_))
+        );
+        let rpc = if self.enable_mock_zk_backend
+            && cluster_rpc.is_none()
+            && network_private_key.is_none()
+            && !has_complete_rpc
+        {
+            None
+        } else {
+            self.rpc_config()?
+        };
 
         if let Some(rpc) = rpc.clone() {
             configs.push((
@@ -214,7 +238,7 @@ impl WorkerArgs {
             ));
         }
 
-        if let Some(cluster_rpc) = Self::optional_string(&self.sp1_cluster_api_endpoint) {
+        if let Some(cluster_rpc) = cluster_rpc {
             let Some(rpc) = rpc.clone() else {
                 return Err(eyre!("cluster backend requires all RPC URLs"));
             };
@@ -241,11 +265,7 @@ impl WorkerArgs {
             ));
         }
 
-        let network_private_key = Self::optional_string(&self.network_private_key);
-        if self.use_kms_requester && network_private_key.is_none() {
-            return Err(eyre!("USE_KMS_REQUESTER requires NETWORK_PRIVATE_KEY"));
-        }
-        match (network_private_key, rpc) {
+        match (network_private_key, rpc.clone()) {
             (Some(network_private_key), Some(rpc)) => {
                 configs.push((
                     ZkBackend::Network,
@@ -266,11 +286,11 @@ impl WorkerArgs {
             }
             (None, _) => {}
             (Some(_), None) => {
-                return Err(eyre!("network backend requires NETWORK_PRIVATE_KEY and all RPC URLs"));
+                return Err(eyre!("network backend requires all RPC URLs"));
             }
         }
 
-        Ok(configs)
+        Ok((configs, rpc))
     }
 
     async fn build_provers(
@@ -278,11 +298,8 @@ impl WorkerArgs {
         cancel: &CancellationToken,
     ) -> eyre::Result<Option<HashMap<ZkBackend, Arc<dyn ZkProver>>>> {
         let mut provers = HashMap::new();
-        let configs = self.backend_configs()?;
-        let witness_provider = if configs.iter().any(|(backend, _)| *backend != ZkBackend::Mock) {
-            let Some(rpc) = self.rpc_config()? else {
-                return Err(eyre!("non-mock backend requires RPC configuration"));
-            };
+        let (configs, rpc) = self.backend_configs()?;
+        let witness_provider = if let Some(rpc) = rpc {
             let Some(provider) =
                 SuccinctZkProverBuilder::build_witness_provider(rpc, cancel).await?
             else {
@@ -428,20 +445,26 @@ mod tests {
     #[test]
     fn backend_enablement_is_presence_based() {
         let mut args = args();
-        assert!(args.backend_configs().unwrap().is_empty());
+        assert!(args.backend_configs().unwrap().0.is_empty());
 
         args.enable_mock_zk_backend = true;
-        let configs = args.backend_configs().unwrap();
+        let (configs, _) = args.backend_configs().unwrap();
         assert_eq!(configs.len(), 1);
         assert_eq!(configs[0].0, ZkBackend::Mock);
 
         args.enable_mock_zk_backend = false;
         set_rpc_config(&mut args);
-        let configs = args.backend_configs().unwrap();
+        let (configs, _) = args.backend_configs().unwrap();
         assert_eq!(configs.len(), 1);
         assert_eq!(configs[0].0, ZkBackend::DryRun);
 
         args.base_consensus_address = None;
         assert!(args.backend_configs().is_err());
+
+        args.enable_mock_zk_backend = true;
+        let (configs, rpc) = args.backend_configs().unwrap();
+        assert_eq!(configs.len(), 1);
+        assert_eq!(configs[0].0, ZkBackend::Mock);
+        assert!(rpc.is_none());
     }
 }
