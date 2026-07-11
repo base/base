@@ -58,8 +58,15 @@ impl Eip8130Constants {
     /// Actor scope bit: nonce authorization context.
     pub const SCOPE_NONCE: u8 = 0x20;
 
-    /// Replay-ID type prefix.
-    pub const REPLAY_ID_TYPE: [u8; 2] = [0x7B, 0x01];
+    /// Domain-separation prefix for the `replay_id` preimage
+    /// (`keccak256(REPLAY_ID_TYPE || rlp([...])`).
+    ///
+    /// The first byte is the `AA_TX_TYPE` (`0x79`); the second byte (`0x01`) is a
+    /// discriminant that keeps the preimage disjoint from the sender/payer
+    /// signing hashes. Those hash `EIP8130_TX_TYPE`/`EIP8130_PAYER_TYPE` followed
+    /// by an RLP list header (always `>= 0xc0`), so the trailing `0x01` here can
+    /// never coincide with a valid list header and the two spaces cannot collide.
+    pub const REPLAY_ID_TYPE: [u8; 2] = [0x79, 0x01];
 
     /// Unrestricted scope value (actor is valid in all contexts).
     pub const SCOPE_UNRESTRICTED: u8 = 0x00;
