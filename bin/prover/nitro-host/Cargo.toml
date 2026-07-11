@@ -1,6 +1,6 @@
 [package]
 name = "base-prover-nitro-host"
-description = "TEE prover host server (AWS Nitro Enclaves)"
+description = "TEE prover host worker (AWS Nitro Enclaves)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -16,24 +16,32 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-eyre.workspace = true
-tracing.workspace = true
-base-cli-utils.workspace = true
-alloy-primitives.workspace = true
+# Workspace – Nitro host
 base-common-chains.workspace = true
 base-proof-tee-nitro-host.workspace = true
-tokio = { workspace = true, features = ["full"] }
-tokio-util = { workspace = true, optional = true }
+base-prover-service-client.workspace = true
+base-proof-host = { workspace = true, features = ["metrics"] }
+base-proof-tee-nitro-enclave = { workspace = true, optional = true }
+
+# CLI / errors
+eyre.workspace = true
+base-cli-utils.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 serde = { workspace = true, features = ["derive", "std"] }
-base-proof-host = { workspace = true, features = ["metrics"] }
-uuid = { workspace = true, features = ["v4"], optional = true }
-base-prover-service-client = { workspace = true, optional = true }
-base-proof-tee-nitro-enclave = { workspace = true, optional = true }
+
+# Async
+tokio-util.workspace = true
+tokio = { workspace = true, features = ["full"] }
+
+# Primitives / identifiers
+alloy-primitives.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+
+# Tracing
+tracing.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 base-proof-tee-nitro-enclave.workspace = true
 
 [features]
-local = [ "dep:base-proof-tee-nitro-enclave" ]
-worker = [ "dep:base-prover-service-client", "dep:tokio-util", "dep:uuid" ]
+local = ["dep:base-proof-tee-nitro-enclave"]

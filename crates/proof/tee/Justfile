@@ -18,34 +18,15 @@ linuxkit_required_version := "1.8.2"
 default:
     @just --list
 
-# Run the nitro JSON-RPC server on the host
-nitro-server *args:
-    RUST_LOG=info \
-        cargo run --package base-prover-nitro-host --bin base-prover-nitro-host -- server {{ args }}
-
 # Run the nitro enclave (Linux only)
 nitro-enclave *args:
     RUST_LOG=info \
         cargo run --package base-prover-nitro-enclave --bin base-prover-nitro-enclave {{ args }}
 
-# Run server and enclave in a single process for local development
-nitro-local *args:
-    RUST_LOG=info RUST_BACKTRACE=1 \
-        cargo run --package base-prover-nitro-host --bin base-prover-nitro-host --features local -- local \
-        --l1-eth-url "${L1_ETH_URL:-http://localhost:8545}" \
-        --l2-eth-url "${L2_ETH_URL:-http://localhost:9545}" \
-        --l1-beacon-url "${L1_BEACON_URL:-http://localhost:5052}" \
-        --l2-chain-id "${L2_CHAIN_ID:-8453}" \
-        --listen-addr "${LISTEN_ADDR:-0.0.0.0:8000}" \
-        --enable-experimental-witness-endpoint \
-        --metrics.enabled \
-        --logs.stdout.format json \
-        {{ args }}
-
 # Run worker and enclave in a single process for local development
 nitro-local-worker *args:
     RUST_LOG=info RUST_BACKTRACE=1 \
-        cargo run --package base-prover-nitro-host --bin base-prover-nitro-host --features local,worker -- local \
+        cargo run --package base-prover-nitro-host --bin base-prover-nitro-host --features local -- local \
         --l1-eth-url "${L1_ETH_URL:-http://localhost:8545}" \
         --l2-eth-url "${L2_ETH_URL:-http://localhost:9545}" \
         --l1-beacon-url "${L1_BEACON_URL:-http://localhost:5052}" \
@@ -56,7 +37,7 @@ nitro-local-worker *args:
         --logs.stdout.format json \
         {{ args }}
 
-# Build the nitro host Docker image (full runtime image)
+# Build the nitro host worker Docker image (full runtime image)
 build-host *args="":
     #!/usr/bin/env bash
     set -euo pipefail
