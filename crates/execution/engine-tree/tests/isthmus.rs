@@ -26,7 +26,9 @@ use reth_trie::{
 use revm::database::BundleState;
 
 #[test]
-fn legacy_isthmus_validation_errors_when_parent_is_only_in_memory() {
+fn legacy_isthmus_validation_skips_when_parent_is_only_in_memory() {
+    // Regression for #3701: the legacy PayloadValidator hook must not fail-closed (and
+    // permanently poison the block) when parent state is not yet visible via StateProviderFactory.
     let (chain_spec, provider, _genesis_hash, parent_executed_block, _parent_withdrawals_root) =
         isthmus_parent_overlay_fixture();
     let parent_hash = parent_executed_block.recovered_block().hash();
@@ -36,6 +38,11 @@ fn legacy_isthmus_validation_errors_when_parent_is_only_in_memory() {
         KeccakKeyHasher,
     >(Arc::clone(&chain_spec), provider.clone());
 
+    assert!(
+        provider.state_by_block_hash(parent_hash).is_err(),
+        "test setup requires the parent to exist only in memory"
+    );
+
     let legacy_result =
         PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
             &validator,
@@ -43,12 +50,8 @@ fn legacy_isthmus_validation_errors_when_parent_is_only_in_memory() {
             &child_block,
         );
     assert!(
-        legacy_result.is_err(),
-        "legacy validation should fail closed when the parent state is not canonical"
-    );
-    assert!(
-        provider.state_by_block_hash(parent_hash).is_err(),
-        "test setup requires the parent to exist only in memory"
+        legacy_result.is_ok(),
+        "legacy validation must skip (not poison) when parent state is unavailable: {legacy_result:?}"
     );
 }
 
