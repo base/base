@@ -215,14 +215,28 @@ where
             return Ok(());
         }
 
-        let parent_state =
-            self.provider.state_by_block_hash(block.parent_hash()).map_err(|err| {
-                ConsensusError::Other(Arc::from(Box::<dyn core::error::Error + Send + Sync>::from(
-                    format!(
-                        "failed to load parent state for Isthmus withdrawals root validation: {err}"
-                    ),
-                )))
-            })?;
+        // This trait hook is used by reth's BasicEngineValidator (no tree overlay). Prefer the
+        // overlay-aware path via [`BasePostExecutionValidator`] / base-engine-tree when available.
+        //
+        // #3701: after a parent is just canonicalized, `state_by_block_hash` can transiently fail
+        // even though the parent is valid. Returning `ConsensusError` here marks the child
+        // permanently invalid in reth's invalid-block cache, wedges the node until restart, and
+        // rejects every subsequent payload that builds on the poisoned ancestor. Skip the check
+        // only when parent state cannot be loaded; when state *is* available, still fail closed
+        // on a bad withdrawals root via `validate_block_post_execution_with_state`.
+        let parent_state = match self.provider.state_by_block_hash(block.parent_hash()) {
+            Ok(state) => state,
+            Err(err) => {
+                tracing::warn!(
+                    target: "base::engine",
+                    parent_hash = %block.parent_hash(),
+                    block_number = block.number(),
+                    error = %err,
+                    "parent state unavailable for Isthmus withdrawals-root validation;                      skipping check to avoid permanent invalid-block poison (see #3701)"
+                );
+                return Ok(());
+            }
+        };
 
         self.validate_block_post_execution_with_state(state_updates, parent_state, block.header())
     }
