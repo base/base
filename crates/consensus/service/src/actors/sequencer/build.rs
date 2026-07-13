@@ -168,7 +168,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
     ) -> Result<Option<AttributesWithParent>, SequencerActorError> {
         let mut attributes = match self
             .attributes_builder
-            .prepare_payload_attributes(unsafe_head, l1_origin.id())
+            .prepare_payload_attributes(unsafe_head, l1_origin.id(), None)
             .await
         {
             Ok(attrs) => attrs,

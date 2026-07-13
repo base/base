@@ -28,6 +28,7 @@ impl AttributesBuilder for TestAttributesBuilder {
         &mut self,
         _l2_parent: L2BlockInfo,
         _epoch: BlockNumHash,
+        _timestamp_millis_part: Option<u16>,
     ) -> PipelineResult<BasePayloadAttributes> {
         match self.attributes.pop() {
             Some(Ok(attrs)) => Ok(attrs),
