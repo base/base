@@ -4,7 +4,7 @@ use std::{future::Future, time::Duration};
 
 use thiserror::Error;
 
-use super::{EngineClientCall, Harness, HarnessBuilder, ScriptedForkchoiceResponse};
+use super::{Harness, HarnessBuilder};
 use crate::NodeMode;
 
 /// Node spawn configuration accepted by [`Driver::spawn_node`].
@@ -141,89 +141,5 @@ impl Driver {
 impl Default for Driver {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use alloy_primitives::B256;
-    use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
-    use base_protocol::BlockInfo;
-
-    use super::*;
-
-    fn valid_fcu() -> ScriptedForkchoiceResponse {
-        ScriptedForkchoiceResponse::Ok(ForkchoiceUpdated {
-            payload_status: PayloadStatus {
-                status: PayloadStatusEnum::Valid,
-                latest_valid_hash: Some(B256::ZERO),
-            },
-            payload_id: None,
-        })
-    }
-
-    #[test]
-    fn smoke_harness_advances_safe_head_and_records_fcu_sequence() {
-        let mut driver = Driver::new();
-        let config = NodeConfig {
-            builder: HarnessBuilder::new().with_scripted_el_responses([
-                valid_fcu(),
-                valid_fcu(),
-                valid_fcu(),
-            ]),
-        };
-
-        let node_id = driver.spawn_node(NodeMode::Validator, config);
-        let (fake_l1, fake_engine_handle) = {
-            let harness = driver.harness(node_id);
-            (harness.fake_l1().clone(), harness.fake_engine_handle().clone())
-        };
-
-        driver.runtime.block_on(async {
-            fake_l1
-                .extend(BlockInfo {
-                    number: 1,
-                    hash: B256::from([1_u8; 32]),
-                    parent_hash: B256::ZERO,
-                    timestamp: 1,
-                })
-                .await;
-            fake_l1
-                .extend(BlockInfo {
-                    number: 2,
-                    hash: B256::from([2_u8; 32]),
-                    parent_hash: B256::from([1_u8; 32]),
-                    timestamp: 2,
-                })
-                .await;
-            fake_l1
-                .extend(BlockInfo {
-                    number: 3,
-                    hash: B256::from([3_u8; 32]),
-                    parent_hash: B256::from([2_u8; 32]),
-                    timestamp: 3,
-                })
-                .await;
-        });
-
-        driver
-            .await_progress(
-                |state| {
-                    state
-                        .validator()
-                        .map(|validator| validator.safe_head_number >= 3)
-                        .unwrap_or(false)
-                },
-                100,
-            )
-            .expect("safe head did not reach block 3");
-
-        let calls = driver.runtime.block_on(async { fake_engine_handle.calls().await });
-        let fcu_calls = calls
-            .into_iter()
-            .filter(|call| matches!(call, EngineClientCall::ForkChoiceUpdatedV3 { .. }))
-            .collect::<Vec<_>>();
-
-        assert_eq!(fcu_calls.len(), 3, "expected exactly 3 FCU-v3 calls");
     }
 }

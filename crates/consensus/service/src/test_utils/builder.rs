@@ -2,8 +2,9 @@
 
 use std::sync::Arc;
 
-use alloy_eips::BlockNumberOrTag;
-use base_common_genesis::RollupConfig;
+use alloy_consensus::Header as ConsensusHeader;
+use alloy_eips::{BlockNumHash, BlockNumberOrTag};
+use base_common_genesis::{ChainGenesis, RollupConfig};
 use base_consensus_derive::test_utils::new_test_pipeline;
 use base_consensus_engine::{Engine, EngineState};
 use base_consensus_safedb::SafeHeadResponse;
@@ -83,7 +84,12 @@ impl Harness {
         self.engine_request_tx.clone()
     }
 
-    /// Returns the latest safe head number persisted in the fake safedb.
+    /// Returns the latest safe head number that has actually been committed through the actor
+    /// graph, taken as the max of the fake safedb and the engine's own safe head.
+    ///
+    /// Deliberately does NOT fall back to the L1 canonical chain length: doing so would report
+    /// progress the moment L1 blocks are enqueued rather than when they are committed by the
+    /// engine, masking exactly the safe-head-stall bugs this harness exists to catch.
     pub async fn latest_safe_head_number(&self) -> u64 {
         let safedb_number = self
             .fake_safedb_handle
@@ -91,8 +97,8 @@ impl Harness {
             .await
             .map(|entry| entry.safe_head.number)
             .unwrap_or_default();
-        let l1_number = self.fake_l1.state().await.canonical.len() as u64;
-        safedb_number.max(l1_number)
+        let engine_number = self.engine_state_rx.borrow().sync_state.safe_head().block_info.number;
+        safedb_number.max(engine_number)
     }
 
     /// Returns the latest engine state snapshot observed by the harness.
@@ -132,6 +138,7 @@ pub struct HarnessBuilder {
     scripted_el_responses: Vec<ScriptedForkchoiceResponse>,
     l1_chain: Vec<BlockInfo>,
     initial_safedb: Vec<SafeHeadResponse>,
+    reset_recovery_support: bool,
 }
 
 impl Default for HarnessBuilder {
@@ -141,6 +148,7 @@ impl Default for HarnessBuilder {
             scripted_el_responses: Vec::new(),
             l1_chain: Vec::new(),
             initial_safedb: Vec::new(),
+            reset_recovery_support: false,
         }
     }
 }
@@ -181,6 +189,18 @@ impl HarnessBuilder {
         self
     }
 
+    /// Configures the harness so that engine `reset()` can succeed against the fakes.
+    ///
+    /// Reset flows through `find_starting_forkchoice_with_checkpoint_reader`, which fetches
+    /// the `Latest` L2 block and validates its hash against `genesis.l2.hash`. To make that
+    /// succeed with the in-memory fakes, this seeds a default `Latest` L2 block and pins
+    /// `genesis.l2.hash` to the hash of a default consensus header (the hash the default L2
+    /// block resolves to). Off by default so unrelated tests keep the zero-hash genesis.
+    pub fn with_reset_recovery_support(mut self) -> Self {
+        self.reset_recovery_support = true;
+        self
+    }
+
     /// Builds a live actor harness with all seams replaced by deterministic fakes.
     pub async fn build(self) -> Harness {
         let cancellation = CancellationToken::new();
@@ -191,7 +211,22 @@ impl HarnessBuilder {
         let fake_safedb = FakeSafeDB::with_entries(self.initial_safedb).await;
         let fake_safedb_handle = fake_safedb.handle();
 
-        let config = Arc::new(RollupConfig::default());
+        // Build a RollupConfig whose genesis.l2.hash matches the hash_slow() of the default
+        // consensus header.  When reset() calls find_starting_forkchoice_with_checkpoint_reader
+        // it fetches the Latest L2 block (populated below as Block::default()) and verifies
+        // its hash against genesis.l2.hash.  A mismatch produces InvalidGenesisHash and the
+        // engine actor exits instead of recovering — defeating regression tests.
+        let config = Arc::new(if self.reset_recovery_support {
+            RollupConfig {
+                genesis: ChainGenesis {
+                    l2: BlockNumHash { number: 0, hash: ConsensusHeader::default().hash_slow() },
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        } else {
+            RollupConfig::default()
+        });
         let fake_engine_client = FakeEngineClient::new(Arc::clone(&config));
         let fake_engine_handle = fake_engine_client.handle();
         fake_engine_handle.push_scripted_fcu_v3(self.scripted_el_responses).await;
@@ -199,6 +234,11 @@ impl HarnessBuilder {
         fake_engine_client
             .set_l2_block_info_by_label(BlockNumberOrTag::Latest, L2BlockInfo::default())
             .await;
+        if self.reset_recovery_support {
+            fake_engine_handle
+                .set_l2_block_by_label(BlockNumberOrTag::Latest, Default::default())
+                .await;
+        }
 
         let initial_state = EngineState::default();
         let (engine_state_tx, engine_state_rx) = watch::channel(initial_state);

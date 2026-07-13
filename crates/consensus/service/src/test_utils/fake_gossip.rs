@@ -24,7 +24,6 @@ pub enum FakeGossipError {
 
 #[derive(Debug, Default)]
 struct FakeGossipState {
-    signer: Address,
     drop_next: usize,
     reorder_pattern: Vec<usize>,
     outbound: VecDeque<NetworkPayloadEnvelope>,
@@ -54,13 +53,19 @@ pub struct FakeGossipTransport {
     state: Arc<Mutex<FakeGossipState>>,
     inbound_rx: mpsc::Receiver<NetworkPayloadEnvelope>,
     inbound_tx: mpsc::Sender<NetworkPayloadEnvelope>,
+    signer: Address,
 }
 
 impl FakeGossipTransport {
     /// Creates a new in-memory gossip transport.
     pub fn new(buffer: usize) -> Self {
         let (inbound_tx, inbound_rx) = mpsc::channel(buffer);
-        Self { state: Arc::new(Mutex::new(FakeGossipState::default())), inbound_rx, inbound_tx }
+        Self {
+            state: Arc::new(Mutex::new(FakeGossipState::default())),
+            inbound_rx,
+            inbound_tx,
+            signer: Address::ZERO,
+        }
     }
 
     /// Returns a shared control handle.
@@ -72,26 +77,30 @@ impl FakeGossipTransport {
         &self,
         payload: NetworkPayloadEnvelope,
     ) -> Result<(), FakeGossipError> {
-        let mut state = self.state.lock().await;
-        if state.drop_next > 0 {
-            state.drop_next -= 1;
-            return Ok(());
-        }
-        state.outbound.push_back(payload);
-
-        if !state.reorder_pattern.is_empty() {
-            let source = state.outbound.iter().cloned().collect::<Vec<_>>();
-            let mut reordered = VecDeque::new();
-            for idx in &state.reorder_pattern {
-                if let Some(item) = source.get(*idx).cloned() {
-                    reordered.push_back(item);
-                }
+        let ready: Vec<NetworkPayloadEnvelope> = {
+            let mut state = self.state.lock().await;
+            if state.drop_next > 0 {
+                state.drop_next -= 1;
+                return Ok(());
             }
-            state.outbound = reordered;
-            state.reorder_pattern.clear();
-        }
+            state.outbound.push_back(payload);
 
-        while let Some(next) = state.outbound.pop_front() {
+            if !state.reorder_pattern.is_empty() {
+                let source = state.outbound.iter().cloned().collect::<Vec<_>>();
+                let mut reordered = VecDeque::new();
+                for idx in &state.reorder_pattern {
+                    if let Some(item) = source.get(*idx).cloned() {
+                        reordered.push_back(item);
+                    }
+                }
+                state.outbound = reordered;
+                state.reorder_pattern.clear();
+            }
+
+            state.outbound.drain(..).collect()
+        };
+
+        for next in ready {
             self.inbound_tx.send(next).await.map_err(|_| FakeGossipError::Closed)?;
         }
         Ok(())
@@ -117,10 +126,7 @@ impl GossipTransport for FakeGossipTransport {
     }
 
     fn set_block_signer(&mut self, address: Address) {
-        let state = Arc::clone(&self.state);
-        tokio::spawn(async move {
-            state.lock().await.signer = address;
-        });
+        self.signer = address;
     }
 
     fn clear_pending_connections(&mut self) -> usize {

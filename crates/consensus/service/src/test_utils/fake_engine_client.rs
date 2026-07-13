@@ -152,6 +152,15 @@ impl FakeEngineClientHandle {
     ) {
         self.state.blocking_lock().l2_blocks_by_label.insert(tag, block);
     }
+
+    /// Async variant of [`Self::set_l2_block_by_label_blocking`].
+    pub async fn set_l2_block_by_label(
+        &self,
+        tag: BlockNumberOrTag,
+        block: Block<BaseTransaction>,
+    ) {
+        self.state.lock().await.l2_blocks_by_label.insert(tag, block);
+    }
 }
 
 /// Deterministic in-memory `EngineClient` fake.
@@ -374,7 +383,11 @@ impl BaseEngineApi for FakeEngineClient {
             payload_attributes: Box::new(payload_attributes),
         });
         let response = state.scripted_fcu_v3.pop_front().unwrap_or_else(|| {
-            ScriptedForkchoiceResponse::Err("no scripted FCU-v3 response available".to_string())
+            ScriptedForkchoiceResponse::Err(
+                "FAKE_EXHAUSTED: no scripted FCU-v3 response available (test setup: preload more \
+                 responses)"
+                    .to_string(),
+            )
         });
         match response {
             ScriptedForkchoiceResponse::Ok(value) => Ok(value),

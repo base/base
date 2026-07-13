@@ -89,10 +89,8 @@ anyhow.workspace = true
 mockall.workspace = true
 tempfile.workspace = true
 arbitrary.workspace = true
-proptest.workspace = true
 alloy-network.workspace = true
 base-common-rpc-types.workspace = true
-proptest-state-machine = "0.3"
 tokio = { workspace = true, features = ["test-util"] }
 alloy-primitives = { workspace = true, features = ["k256"] }
 base-consensus-derive = { workspace = true, features = ["test-utils"] }

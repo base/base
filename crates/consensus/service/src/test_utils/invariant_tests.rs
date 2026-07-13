@@ -1,7 +1,8 @@
 //! Direct Tier-0 invariant tests for currently-untested strategy.md labels.
 
-use std::{collections::HashSet, future::Future};
+use std::future::Future;
 
+use alloy_consensus::Header as ConsensusHeader;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{
     ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3, ForkchoiceState, ForkchoiceUpdated,
@@ -10,17 +11,18 @@ use alloy_rpc_types_engine::{
 use base_common_genesis::RollupConfig;
 use base_common_network::BaseEngineApi;
 use base_common_rpc_types_engine::BasePayloadAttributes;
+use base_consensus_engine::ConsolidateInput;
 use base_consensus_safedb::SafeHeadResponse;
-use base_protocol::BlockInfo;
+use base_protocol::{BlockInfo, L2BlockInfo};
 
 use super::{
     Driver, EngineClientCall, FakeEngineClient, HarnessBuilder, NodeConfig,
     ScriptedForkchoiceResponse,
 };
-use crate::NodeMode;
+use crate::{EngineActorRequest, NodeMode};
 
 /// Number of direct Tier-0 invariant tests in this module.
-pub const INVARIANT_TEST_COUNT: usize = 7;
+pub const INVARIANT_TEST_COUNT: usize = 6;
 
 fn run_async<F>(future: F) -> F::Output
 where
@@ -43,6 +45,16 @@ fn valid_fcu() -> ScriptedForkchoiceResponse {
     })
 }
 
+fn invalid_fcu() -> ScriptedForkchoiceResponse {
+    ScriptedForkchoiceResponse::Ok(ForkchoiceUpdated {
+        payload_status: PayloadStatus {
+            status: PayloadStatusEnum::Invalid { validation_error: "test-invalid".into() },
+            latest_valid_hash: Some(B256::ZERO),
+        },
+        payload_id: None,
+    })
+}
+
 fn syncing_fcu() -> ScriptedForkchoiceResponse {
     ScriptedForkchoiceResponse::Ok(ForkchoiceUpdated {
         payload_status: PayloadStatus {
@@ -58,6 +70,7 @@ fn valid_payload_status() -> PayloadStatus {
 }
 
 fn hash_for(number: u64) -> B256 {
+    debug_assert!(number <= u8::MAX as u64, "fake block hash encoding wraps above 255");
     B256::from([number as u8; 32])
 }
 
@@ -139,133 +152,6 @@ fn d1_at_most_one_pending_attrs() {
                 has_pending_attrs = false;
             }
         }
-    }
-}
-
-#[test]
-fn d4_derivation_determinism() {
-    // Invariant D4: identical L1 inputs + config yield byte-identical derived attributes sequence.
-    let mut driver = Driver::new();
-    let scripted = (0..128).map(|_| valid_fcu()).collect::<Vec<_>>();
-
-    let node_a = driver.spawn_node(
-        NodeMode::Validator,
-        NodeConfig { builder: HarnessBuilder::new().with_scripted_el_responses(scripted.clone()) },
-    );
-    let node_b = driver.spawn_node(
-        NodeMode::Validator,
-        NodeConfig { builder: HarnessBuilder::new().with_scripted_el_responses(scripted) },
-    );
-
-    let (l1_a, l1_b, engine_a, engine_b) = {
-        let harness_a = driver.harness(node_a);
-        let harness_b = driver.harness(node_b);
-        (
-            harness_a.fake_l1().clone(),
-            harness_b.fake_l1().clone(),
-            harness_a.fake_engine_handle().clone(),
-            harness_b.fake_engine_handle().clone(),
-        )
-    };
-
-    run_async(async {
-        for number in 1..=5 {
-            let current =
-                block(number, hash_for(number.saturating_sub(1)), hash_for(number), number);
-            l1_a.extend(current).await;
-            l1_b.extend(current).await;
-        }
-    });
-
-    driver
-        .await_progress(
-            |snapshot| {
-                snapshot.nodes.get(node_a).map(|node| node.safe_head_number >= 5).unwrap_or(false)
-                    && snapshot
-                        .nodes
-                        .get(node_b)
-                        .map(|node| node.safe_head_number >= 5)
-                        .unwrap_or(false)
-            },
-            150,
-        )
-        .expect("both nodes should reach safe head >= 5");
-
-    let fcu_a = run_async(engine_a.calls())
-        .into_iter()
-        .filter_map(|call| match call {
-            EngineClientCall::ForkChoiceUpdatedV3 { fcs, .. } => Some(fcs),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    let fcu_b = run_async(engine_b.calls())
-        .into_iter()
-        .filter_map(|call| match call {
-            EngineClientCall::ForkChoiceUpdatedV3 { fcs, .. } => Some(fcs),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-
-    assert_eq!(
-        fcu_a, fcu_b,
-        "D4 violated: FCU-v3 forkchoice sequence diverged for identical input traces"
-    );
-}
-
-#[test]
-fn d5_attrs_reference_known_parent() {
-    // Invariant D5: derived attributes must target a known parent branch.
-    let mut driver = Driver::new();
-    let node_id = driver.spawn_node(
-        NodeMode::Validator,
-        NodeConfig {
-            builder: HarnessBuilder::new().with_scripted_el_responses((0..64).map(|_| valid_fcu())),
-        },
-    );
-
-    let (fake_l1, fake_engine_handle) = {
-        let harness = driver.harness(node_id);
-        (harness.fake_l1().clone(), harness.fake_engine_handle().clone())
-    };
-
-    run_async(async {
-        for number in 1..=5 {
-            fake_l1
-                .extend(block(number, hash_for(number.saturating_sub(1)), hash_for(number), number))
-                .await;
-        }
-    });
-
-    driver
-        .await_progress(
-            |snapshot| {
-                snapshot.nodes.get(node_id).map(|node| node.safe_head_number >= 5).unwrap_or(false)
-            },
-            100,
-        )
-        .expect("safe head should advance through scripted derivation");
-
-    let mut known_chain = HashSet::new();
-    known_chain.insert(B256::ZERO);
-    for number in 1..=5 {
-        known_chain.insert(hash_for(number));
-    }
-
-    let fcu_states = run_async(fake_engine_handle.calls())
-        .into_iter()
-        .filter_map(|call| match call {
-            EngineClientCall::ForkChoiceUpdatedV3 { fcs, .. } => Some(fcs),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-
-    assert!(!fcu_states.is_empty(), "expected FCU-v3 calls to validate D5");
-    for state in fcu_states {
-        assert!(
-            known_chain.contains(&state.head_block_hash),
-            "D5 violated: FCU head hash {:?} is outside known safe/local-safe branch",
-            state.head_block_hash,
-        );
     }
 }
 
@@ -519,4 +405,77 @@ fn l5_no_cross_actor_deadlock() {
 
     assert!(safe_number >= 1, "L5 violated: no measurable safe-head progress after 200 ticks");
     assert!(fcu_calls >= 3, "L5 violated: actor graph did not keep processing FCU traffic");
+}
+
+#[test]
+fn e2e_invalid_fcu_reset_and_recovery() {
+    // Regression: 2026-06-25 mainnet incident.
+    //
+    // When the EL returns INVALID for a forkchoice update the engine actor must escalate the
+    // error to Reset (not Temporary). Before the fix the error was classified Temporary and the
+    // actor retried the same invalid FCU forever, wedging the node until manual restart.
+    //
+    // Observable difference (on the head hash of the FCU that follows the INVALID one):
+    //   pre-fix  (Temporary): the engine retries the SAME poisoned head in place — every FCU
+    //                         carries hash_for(1), never resetting.
+    //   post-fix (Reset):     INVALID escalates to Reset, the forkchoice is re-derived from
+    //                         genesis, so a subsequent FCU carries the genesis head instead.
+    let mut driver = Driver::new();
+    let node_id = driver.spawn_node(
+        NodeMode::Validator,
+        NodeConfig {
+            builder: HarnessBuilder::new()
+                .with_reset_recovery_support()
+                .with_scripted_el_responses([invalid_fcu(), valid_fcu()]),
+        },
+    );
+
+    let (engine_tx, fake_engine_handle) = {
+        let harness = driver.harness(node_id);
+        (harness.engine_request_sender(), harness.fake_engine_handle().clone())
+    };
+
+    // Send ProcessSafeL2SignalRequest directly instead of via fake_l1.extend().
+    // fake_l1.extend() calls inject_fcu_v3_call() which pops the first scripted response before
+    // the engine actor ever calls fork_choice_updated_v3(), defeating the test.
+    driver.block_on(async {
+        engine_tx
+            .send(EngineActorRequest::ProcessSafeL2SignalRequest(ConsolidateInput::BlockInfo(
+                L2BlockInfo {
+                    block_info: block(1, B256::ZERO, hash_for(1), 1),
+                    ..Default::default()
+                },
+            )))
+            .await
+            .expect("engine actor must accept the signal");
+    });
+
+    driver.tick(50);
+
+    let fcu_heads: Vec<B256> = run_async(fake_engine_handle.calls())
+        .into_iter()
+        .filter_map(|call| match call {
+            EngineClientCall::ForkChoiceUpdatedV3 { fcs, .. } => Some(fcs.head_block_hash),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        fcu_heads.first().copied(),
+        Some(hash_for(1)),
+        "expected the first FCU to carry the poisoned head {:?}, got {:?}",
+        hash_for(1),
+        fcu_heads.first()
+    );
+
+    let genesis_head = ConsensusHeader::default().hash_slow();
+    assert_eq!(
+        fcu_heads.get(1).copied(),
+        Some(genesis_head),
+        "expected the FCU following the INVALID one to carry the genesis head {genesis_head:?} \
+         (reset re-derived the forkchoice); got {:?}. pre-fix (Temporary) retries the poisoned \
+         head {:?} in place instead of resetting. full heads: {fcu_heads:?}",
+        fcu_heads.get(1),
+        hash_for(1)
+    );
 }

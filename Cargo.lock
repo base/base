@@ -4272,8 +4272,6 @@ dependencies = [
  "metrics",
  "mockall",
  "opentelemetry 0.32.0",
- "proptest",
- "proptest-state-machine",
  "rand 0.9.5",
  "redb",
  "reqwest 0.13.4",
@@ -15470,15 +15468,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "proptest-state-machine"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e943d140e09d07740fb496487c51fb8eb31c70389ac4a2e9dcd8a0d9fdf228d4"
-dependencies = [
- "proptest",
 ]
 
 [[package]]

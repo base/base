@@ -89,24 +89,6 @@ impl FakeL1 {
         self.dispatch_safe_l2_for(block).await;
     }
 
-    /// Reorgs the chain by dropping `depth` blocks and appending `alt_blocks`.
-    pub async fn reorg(&self, depth: usize, alt_blocks: Vec<BlockInfo>) {
-        let mut state = self.state.lock().await;
-        let new_len = state.canonical.len().saturating_sub(depth);
-        state.canonical.truncate(new_len);
-        for block in &alt_blocks {
-            state.canonical.push(*block);
-        }
-        let stalled = state.stalled;
-        drop(state);
-
-        if !stalled {
-            for block in alt_blocks {
-                self.dispatch_safe_l2_for(block).await;
-            }
-        }
-    }
-
     /// Stalls chain delivery.
     pub async fn stall(&self) {
         self.state.lock().await.stalled = true;
@@ -124,6 +106,12 @@ impl FakeL1 {
         }
     }
 
+    /// Drives the engine/derivation actors for one safe-L2 signal.
+    ///
+    /// The injected FCU call-log entry sets head==safe==finalized to the same hash, which is a
+    /// deliberate simplification: the real protocol advances these three heads independently.
+    /// Tests must therefore drive progress via the `ProcessSafeL2SignalRequest` channel and must
+    /// NOT derive unsafe/finalized-head ordering from the call log.
     async fn dispatch_safe_l2_for(&self, block: BlockInfo) {
         assert!(
             block.number <= u8::MAX as u64,
@@ -145,16 +133,12 @@ impl FakeL1 {
             seq_num: block.number,
         };
 
-        let send_result = self
-            .engine_request_tx
+        self.engine_request_tx
             .send(EngineActorRequest::ProcessSafeL2SignalRequest(ConsolidateInput::BlockInfo(
                 safe_l2,
             )))
-            .await;
-
-        if let Err(error) = send_result {
-            warn!(target: "test_utils::fake_l1", error = ?error, "failed to dispatch safe l2 signal");
-        }
+            .await
+            .expect("engine actor request channel closed while dispatching safe l2 signal");
 
         if let Some(engine_handle) = &self.engine_handle {
             engine_handle
@@ -169,9 +153,9 @@ impl FakeL1 {
         if let Some(derivation_request_tx) = &self.derivation_request_tx {
             let update =
                 DerivationActorRequest::ProcessEngineSafeHeadUpdateRequest(Box::new(safe_l2));
-            if let Err(error) = derivation_request_tx.send(update).await {
-                warn!(target: "test_utils::fake_l1", error = ?error, "failed to dispatch derivation safe-head update");
-            }
+            derivation_request_tx.send(update).await.expect(
+                "derivation actor request channel closed while dispatching safe-head update",
+            );
         }
     }
 }
