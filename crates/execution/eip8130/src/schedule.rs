@@ -44,10 +44,10 @@ impl Eip8130GasSchedule {
     /// Base intrinsic cost for any AA transaction (`AA_BASE_COST`).
     pub const AA_BASE_COST: u64 = Eip8130Constants::EIP8130_BASE_COST;
     /// `nonce_key_cost` for nonce-free (`NONCE_KEY_MAX`) transactions: 13,000 gas
-    /// for the enshrined ring-buffer replay state — 2 cold SLOADs + 1 warm SLOAD
-    /// + 3 warm SSTORE resets. The ring pointer's SLOAD/SSTORE are amortized
-    /// across the block, so EIP-8130 prices this as a fixed composite rather than
-    /// metering the individual accesses (the raw per-op cost, e.g. an
+    /// for the enshrined ring-buffer replay state, composed of 2 cold SLOADs, 1
+    /// warm SLOAD, and 3 warm SSTORE resets. The ring pointer's SLOAD/SSTORE are
+    /// amortized across the block, so EIP-8130 prices this as a fixed composite
+    /// rather than metering the individual accesses (the raw per-op cost, e.g. an
     /// `SSTORE_SET` per insert, is far higher but amortized by the ring reclaiming
     /// a slot on each write).
     pub const NONCE_FREE_COST: u64 =

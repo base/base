@@ -58,12 +58,13 @@ pub enum AuthorizeError {
     },
 
     /// The nested actor in a delegate authentication is not admin on the
-    /// delegate account. Mirrors `DelegateAuthenticator` requiring
-    /// `verifySignature(delegate, ...)`, which is admin-only: signing authority
-    /// is the admin predicate (`scope == 0x00`), there is no signing grant bit.
+    /// delegate account. Mirrors `DelegateAuthenticator`, which calls
+    /// `authenticateActor(delegate, ...)` and explicitly requires the resolved
+    /// `scope == 0`. This is independent of `verifySignature` (operational
+    /// signing): a delegate vouch requires admin to preserve non-escalation.
     #[error("delegate nested actor {actor_id} is not admin on the delegate account")]
     NestedSignatureScope {
-        /// The nested actor id that failed the admin-only signing check.
+        /// The nested actor id that failed the admin-only delegate-vouch check.
         actor_id: B256,
     },
 }

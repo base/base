@@ -80,10 +80,14 @@ impl ActorAuthorizer {
                 // Discharge the nested actor against the delegated account's
                 // config and require it to be admin (`scope == 0`), then authorize
                 // the outer delegate actor against the originating account.
-                // Mirrors `DelegateAuthenticator` calling
-                // `verifySignature(delegate, ...)` — ERC-1271 signing is admin-only
-                // (`scope == 0x00`), there is no signing grant — followed by the
-                // outer `_actorConfig[bytes20(delegate)][account]` binding check.
+                // Mirrors `DelegateAuthenticator`, which calls
+                // `authenticateActor(delegate, ...)` and explicitly requires the
+                // resolved `scope == 0`. This admin requirement is independent of
+                // `verifySignature` (now operational: admin, or a SENDER actor
+                // without POLICY): an operational key may sign for its own account
+                // but MUST NOT vouch as a delegate, to preserve non-escalation.
+                // Followed by the outer `_actorConfig[bytes20(delegate)][account]`
+                // binding check.
                 let nested = Self::resolve_bound(
                     storage,
                     delegate_account,
@@ -533,8 +537,9 @@ mod tests {
         let outer_id = actor_id(delegate_account);
         let auth = delegate_auth(delegate_account, &nested_key);
         with_storage(|acc| {
-            // Nested actor is bound on B but scoped (non-admin), so
-            // `verifySignature(delegate, ...)` — which is admin-only — rejects it.
+            // Nested actor is bound on B but scoped (non-admin), so the delegate
+            // vouch — which `DelegateAuthenticator` requires to be admin
+            // (`scope == 0`) — rejects it.
             acc.actor_config
                 .at_mut(&nested_id)
                 .at_mut(&delegate_account)
@@ -568,8 +573,8 @@ mod tests {
         let outer_id = actor_id(delegate_account);
         let auth = delegate_auth(delegate_account, &nested_key);
         with_storage(|acc| {
-            // Nested actor is admin (`scope == 0`), which is the signing predicate,
-            // so it satisfies the delegate gate.
+            // Nested actor is admin (`scope == 0`), the predicate the delegate
+            // vouch requires, so it satisfies the delegate gate.
             acc.actor_config
                 .at_mut(&nested_id)
                 .at_mut(&delegate_account)

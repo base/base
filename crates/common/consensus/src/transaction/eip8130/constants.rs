@@ -63,9 +63,10 @@ impl Eip8130Constants {
     /// different sender (`payer != sender`).
     pub const SCOPE_SPONSOR_PAYER: u8 = 0x10;
 
-    // ERC-1271 signing is not a grant: it is authorized only for the admin
-    // (`scope == 0x00`). There is no `SCOPE_SIGNATURE` bit. Bits `0x20`, `0x40`,
-    // and `0x80` are spare, reserved for future pure grants.
+    // ERC-1271 signing rides on operational authority (admin `scope == 0x00`, or
+    // a SENDER actor without POLICY); it is not its own scope bit, so there is no
+    // `SCOPE_SIGNATURE`. Bits `0x20`, `0x40`, and `0x80` are spare, reserved for
+    // future pure grants.
 
     /// Domain-separation prefix for the `replay_id` preimage
     /// (`keccak256(REPLAY_ID_TYPE || rlp([...])`).
