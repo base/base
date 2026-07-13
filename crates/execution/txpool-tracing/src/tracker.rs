@@ -340,8 +340,9 @@ impl Tracker {
                     duration_ms = time_pending_to_fb_inclusion.as_millis(),
                     "Transaction included in flashblock"
                 );
+                event_log.push(Local::now(), TxEvent::FlashblockInclusion);
                 event_to_emit = Some((
-                    event_log.events.len(),
+                    event_log.events.len() - 1,
                     TxpoolEventData {
                         time_pending_to_flashblock_inclusion: Some(time_pending_to_fb_inclusion),
                         inclusion_signal: Some("flashblock_pending_block"),
@@ -503,10 +504,6 @@ impl Tracker {
         }
         if let Some(overflow_reason) = event_data.overflow_reason {
             data.insert("overflow_reason".to_string(), json!(overflow_reason));
-        }
-        if let Some(inclusion) = event_data.inclusion {
-            data.insert("block_hash".to_string(), json!(format!("{:#x}", inclusion.block_hash)));
-            data.insert("block_number".to_string(), json!(inclusion.block_number));
         }
         let event_time_ns = Local::now().timestamp_nanos_opt().unwrap_or_default();
 
@@ -993,6 +990,8 @@ mod tests {
         tracker.transaction_fb_included(tx_hash, first_received_at);
         let event_log = tracker.txs.get(&tx_hash).expect("tx should still be in cache");
         assert!(event_log.fb_included, "should be marked as fb-included after first call");
+        assert_eq!(event_log.events.len(), 2);
+        assert_eq!(event_log.events[1].1, TxEvent::FlashblockInclusion);
 
         // Simulate a later flashblock arriving — received_at is much later.
         let later_received_at = first_received_at + Duration::from_millis(500);
