@@ -361,7 +361,7 @@ impl<Tx: DbTx + Sync, S: BaseProofsStore + BaseProofsInitialStateStore + Send>
         if let Some(latest_key) = start_key {
             let latest_path = latest_key.0;
             start_cursor
-                .seek(A::AccountKey::from(latest_path.clone()))?
+                .seek(A::AccountKey::from(latest_path))?
                 .filter(|(key, _)| A::account_key_to_nibbles(key) == latest_path)
                 .ok_or(BaseProofsStorageError::InitializeStorageInconsistentState)?;
         }
@@ -401,10 +401,7 @@ impl<Tx: DbTx + Sync, S: BaseProofsStore + BaseProofsInitialStateStore + Send>
         if let Some(latest_key) = start_key {
             let latest_path = latest_key.path.0;
             start_cursor
-                .seek_by_key_subkey(
-                    latest_key.hashed_address,
-                    A::StorageSubKey::from(latest_path.clone()),
-                )?
+                .seek_by_key_subkey(latest_key.hashed_address, A::StorageSubKey::from(latest_path))?
                 .filter(|value| A::subkey_to_nibbles(value.nibbles()) == latest_path)
                 .ok_or(BaseProofsStorageError::InitializeStorageInconsistentState)?;
         }
