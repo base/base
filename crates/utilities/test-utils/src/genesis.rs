@@ -160,7 +160,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_genesis_contains_callable_base_time_proxy() {
+    fn test_genesis_contains_linked_base_time_proxy() {
         let genesis = build_test_genesis();
         let proxy = &genesis.alloc[&Predeploys::BASE_TIME];
         let storage = proxy.storage.as_ref().unwrap();

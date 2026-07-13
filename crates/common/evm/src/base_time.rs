@@ -69,9 +69,13 @@ impl BaseTime {
 
     /// Installs the `BaseTime` implementation and links its existing proxy before transactions.
     ///
-    /// The transition is staged behind the `Zombie` activation condition. The proxy's
-    /// implementation slot is the durable migration marker: any existing linkage is preserved so
-    /// later execution cannot rewrite the initial deployment or undo a governance upgrade.
+    /// Existing chains must already contain the reserved proxy runtime with
+    /// [`Predeploys::PROXY_ADMIN`] in its EIP-1967 admin slot. This transition asserts that
+    /// historical invariant; it does not install or repair proxy state.
+    ///
+    /// The transition is staged behind the `Zombie` activation condition. The implementation slot
+    /// is the durable migration marker: any existing linkage is preserved so later execution cannot
+    /// rewrite the initial deployment or undo a governance upgrade.
     pub fn ensure_predeploy<DB>(
         chain_spec: impl Upgrades,
         timestamp: u64,
@@ -91,6 +95,21 @@ impl BaseTime {
             return Ok(());
         }
 
+        let proxy_info = db
+            .basic(Predeploys::BASE_TIME)?
+            .expect("BaseTime activation requires the reserved proxy account");
+        assert!(
+            !proxy_info.is_empty_code_hash(),
+            "BaseTime activation requires existing proxy code"
+        );
+
+        let current_admin = db.storage(Predeploys::BASE_TIME, Self::ADMIN_SLOT)?;
+        assert_eq!(
+            current_admin,
+            U256::from_be_slice(Predeploys::PROXY_ADMIN.as_slice()),
+            "BaseTime activation requires the canonical proxy admin"
+        );
+
         let code = Bytecode::new_raw(Self::implementation_bytecode());
         let mut implementation_info = db.basic(Self::IMPLEMENTATION_ADDRESS)?.unwrap_or_default();
         implementation_info.code_hash = Self::IMPLEMENTATION_CODE_HASH;
@@ -99,7 +118,6 @@ impl BaseTime {
         let mut implementation_account: revm::state::Account = implementation_info.into();
         implementation_account.mark_touch();
 
-        let proxy_info = db.basic(Predeploys::BASE_TIME)?.unwrap_or_default();
         let mut proxy_account: revm::state::Account = proxy_info.into();
         proxy_account.storage.insert(
             Self::IMPLEMENTATION_SLOT,
@@ -275,19 +293,37 @@ mod tests {
     }
 
     #[test]
-    fn active_transition_initializes_unlinked_proxy_after_activation() {
+    #[should_panic(expected = "BaseTime activation requires the reserved proxy account")]
+    fn active_transition_rejects_missing_proxy() {
         let mut db = InMemoryDB::default();
 
         BaseTime::ensure_predeploy(TestUpgrades(true), 102, &mut db).unwrap();
+    }
 
-        assert_eq!(
-            db.basic(BaseTime::IMPLEMENTATION_ADDRESS).unwrap().unwrap().code_hash,
-            BaseTime::IMPLEMENTATION_CODE_HASH
+    #[test]
+    #[should_panic(expected = "BaseTime activation requires existing proxy code")]
+    fn active_transition_rejects_codeless_proxy() {
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(Predeploys::BASE_TIME, AccountInfo::default());
+
+        BaseTime::ensure_predeploy(TestUpgrades(true), 102, &mut db).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "BaseTime activation requires the canonical proxy admin")]
+    fn active_transition_rejects_unexpected_proxy_admin() {
+        let mut db = InMemoryDB::default();
+        let proxy_code = Bytecode::new_raw(BaseTime::proxy_bytecode());
+        db.insert_account_info(
+            Predeploys::BASE_TIME,
+            AccountInfo {
+                code_hash: proxy_code.hash_slow(),
+                code: Some(proxy_code),
+                ..Default::default()
+            },
         );
-        assert_eq!(
-            db.storage(Predeploys::BASE_TIME, BaseTime::IMPLEMENTATION_SLOT).unwrap(),
-            U256::from_be_slice(BaseTime::IMPLEMENTATION_ADDRESS.as_slice())
-        );
+
+        BaseTime::ensure_predeploy(TestUpgrades(true), 102, &mut db).unwrap();
     }
 
     #[test]
