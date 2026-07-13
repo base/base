@@ -209,13 +209,11 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
     /// Executes a single scan-validate-prove-submit cycle.
     ///
     /// First polls any in-flight proof sessions that are not in the current
-    /// scan batch, then discovers claimable bonds, advances bond lifecycle
-    /// claims, polls anchor updates, and finally scans for new candidates and
-    /// processes them.
+    /// scan batch, then scans recent games for claimable bonds, polls anchor
+    /// updates, and finally scans for new candidates and processes them.
     pub async fn step(&mut self) -> eyre::Result<()> {
         self.poll_pending_proofs().await;
         self.discover_claimable_bonds().await;
-        self.poll_bond_claims().await;
         self.anchor_updater.poll(&*self.verifier_client, &self.submitter).await;
 
         let candidates = self.scanner.scan().await?;
@@ -230,26 +228,15 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
         Ok(())
     }
 
-    /// Discovers new claimable games via incremental and periodic full
-    /// rescanning. Runs before [`poll_bond_claims`](Self::poll_bond_claims)
-    /// so that newly discovered games are immediately eligible for
-    /// advancement in the same tick.
+    /// Scans recent games from scratch and advances ready bond claims.
     async fn discover_claimable_bonds(&mut self) {
         let Some(ref mut bond_manager) = self.bond_manager else {
             return;
         };
 
-        match bond_manager.discover_claimable_games(&*self.verifier_client).await {
+        match bond_manager.discover_claimable_games(&*self.verifier_client, &self.submitter).await {
             Ok(_) => {}
             Err(e) => warn!(error = %e, "bond discovery scan failed"),
-        }
-    }
-
-    /// Polls the bond manager to advance tracked games through the bond
-    /// lifecycle (resolve → unlock → delay → withdraw).
-    async fn poll_bond_claims(&mut self) {
-        if let Some(ref mut bond_manager) = self.bond_manager {
-            bond_manager.poll(&*self.verifier_client, &self.submitter).await;
         }
     }
 
@@ -824,20 +811,6 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
         match result {
             Ok(_) => {
                 self.pending_proofs.remove(&game_address);
-
-                if intent == DisputeIntent::Challenge
-                    && let Some(ref mut bond_manager) = self.bond_manager
-                {
-                    let sender = self.submitter.sender_address();
-                    if !bond_manager.track_game(game_address, sender) {
-                        warn!(
-                            game = %game_address,
-                            sender = %sender,
-                            "bond will not be tracked — sender address is not \
-                             in --bond-claim-addresses; bond may go unclaimed"
-                        );
-                    }
-                }
             }
             Err(e) => {
                 let known_revert = match &e {

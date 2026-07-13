@@ -14,9 +14,8 @@ use base_challenger::{
     test_utils::{
         DEFAULT_L1_HEAD, DEFAULT_TEE_PROVER, MockAggregateVerifier, MockDisputeGameFactory,
         MockGameState, MockL1HeadProvider, MockL2Provider, MockTxManager, MockZkProofProvider,
-        MockZkProofState, TEST_DISCOVERY_INTERVAL, addr, build_test_header_and_account,
-        empty_factory, factory_game, mock_anchor_registry, mock_state, mock_state_with_tee,
-        receipt_with_status,
+        MockZkProofState, addr, build_test_header_and_account, factory_game, mock_anchor_registry,
+        mock_state, mock_state_with_tee, receipt_with_status,
     },
 };
 use base_proof_contracts::{
@@ -1426,51 +1425,6 @@ async fn test_step_dual_proof_tee_fails_falls_back_to_zk_nullify() {
         entry.intent,
         DisputeIntent::Nullify,
         "dual-proof TEE fallback must use Nullify intent, not Challenge"
-    );
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Bond tracking integration test
-// ──────────────────────────────────────────────────────────────────────────
-
-fn default_bond_manager(claim_addr: Address) -> BondManager<TokioRuntime> {
-    BondManager::new(
-        vec![claim_addr],
-        "http://localhost:8545".parse().unwrap(),
-        empty_factory(),
-        1000,
-        TEST_DISCOVERY_INTERVAL,
-        TokioRuntime::new(),
-    )
-}
-
-#[tokio::test]
-async fn test_driver_tracks_bond_after_successful_challenge() {
-    let (l2, factory, verifier) = invalid_game_mocks();
-    let sender_addr = Address::ZERO; // MockTxManager returns ZERO as sender_address
-
-    let zk = succeeded_zk_prover("bond-track", vec![0xDE, 0xAD]);
-
-    let tx_manager = default_tx_manager();
-
-    let mut driver = test_driver(factory, verifier, l2, zk, tx_manager);
-    driver.bond_manager = Some(default_bond_manager(sender_addr));
-
-    // Step 1: proof initiated, not yet polled.
-    driver.step().await.unwrap();
-    assert!(
-        driver.pending_proofs.contains_key(&addr(0)),
-        "proof should be pending after initiation"
-    );
-
-    // Step 2: proof polled → Succeeded → challenge tx submitted → bond tracked.
-    driver.step().await.unwrap();
-
-    let bond_mgr = driver.bond_manager.as_ref().expect("bond_manager should be Some");
-    assert_eq!(
-        bond_mgr.tracked_count(),
-        1,
-        "game should be tracked by bond manager after successful challenge"
     );
 }
 

@@ -196,28 +196,14 @@ impl ChallengerService {
         );
 
         let bond_manager = if !config.bond_claim_addresses.is_empty() {
-            let mut bm = BondManager::new(
+            Some(BondManager::new(
                 config.bond_claim_addresses,
                 l1_rpc_url,
                 Arc::clone(&factory_client) as Arc<dyn DisputeGameFactoryClient>,
                 config.bond_discovery_lookback_games,
                 config.bond_discovery_interval,
                 TokioRuntime::new(),
-            );
-            info!("starting bond recovery scan");
-            match bm.startup_scan(&*verifier_client).await {
-                Ok(_) => {}
-                Err(e) => {
-                    // On failure `bond_scan_head` stays at 0, so
-                    // `discover_claimable_games` will progressively scan the
-                    // factory over multiple ticks (capped at `lookback` games
-                    // per tick). This is intentional: progressive catch-up
-                    // is preferable to disabling bond claiming entirely.
-                    warn!(error = %e, "bond startup scan failed, continuing without recovery");
-                }
-            }
-            info!(tracked = bm.tracked_count(), "bond manager ready");
-            Some(bm)
+            ))
         } else {
             info!("bond claiming disabled (no --bond-claim-addresses)");
             None
