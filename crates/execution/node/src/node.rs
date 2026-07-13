@@ -1330,6 +1330,9 @@ where
     Node: FullNodeComponents<
         Types: NodeTypes<ChainSpec: Upgrades, Payload: PayloadTypes<ExecutionData = ExecutionData>>,
     >,
+    <<Node::Types as NodeTypes>::Payload as PayloadTypes>::PayloadAttributes: Attributes<
+        Transaction = <<Node::Types as NodeTypes>::Primitives as NodePrimitives>::SignedTx,
+    >,
 {
     type Validator = BaseEngineValidator<
         Node::Provider,
