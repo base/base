@@ -75,7 +75,7 @@ pub enum ZkProverError {
         backend_session_id: String,
     },
     /// The proving backend selected by the request is not configured on this host.
-    #[error("zk backend {backend:?} is not configured on this host")]
+    #[error("zk backend {backend} is not configured on this host")]
     UnsupportedBackend {
         /// Backend requested by the proof job.
         backend: ZkBackend,
