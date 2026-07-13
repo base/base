@@ -118,7 +118,14 @@ impl FakeEngineClientHandle {
         self.state.blocking_lock().scripted_new_payload_v3.extend(scripted);
     }
 
-    /// Injects an FCU-v3 call into the call log and consumes one scripted response.
+    /// Records a synthetic FCU-v3 call in the call log and consumes one scripted
+    /// response.
+    ///
+    /// This mirrors the real engine actor: when `dispatch_safe_l2_for` feeds a
+    /// safe-head signal it drives one real `fork_choice_updated_v3` on the engine
+    /// (which pops a scripted response). This synthetic call keeps the harness's
+    /// scripted-response budget in lockstep with that real consumption so tests
+    /// that script a fixed number of FCU responses stay accurate.
     pub async fn inject_fcu_v3_call(&self, fork_choice_state: ForkchoiceState) {
         let mut state = self.state.lock().await;
         state.calls.push(EngineClientCall::ForkChoiceUpdatedV3 {

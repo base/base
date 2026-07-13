@@ -78,6 +78,14 @@ impl Driver {
     }
 
     /// Advances simulated time by `ticks` deterministic steps.
+    ///
+    /// Each tick advances paused time by 1ms and yields to the runtime exactly
+    /// once. A single tick therefore lets each currently-ready task make one
+    /// step of progress; it does not drain a chain of dependent actor messages.
+    /// A message that must cross `N` actor hops (e.g. L1 watcher -> derivation
+    /// -> engine) needs at least `N` ticks to propagate end-to-end. Size tick
+    /// budgets accordingly: multi-hop choreography tests use large budgets such
+    /// as `tick(200)` to guarantee the whole chain settles.
     pub fn tick(&mut self, ticks: u64) {
         self.runtime.block_on(async {
             for _ in 0..ticks {

@@ -125,6 +125,10 @@ impl FakeL1 {
     }
 
     async fn dispatch_safe_l2_for(&self, block: BlockInfo) {
+        assert!(
+            block.number <= u8::MAX as u64,
+            "fake block hash encoding truncates the number into a single byte and wraps above 255"
+        );
         let parent_hash = if block.number == 0 {
             B256::ZERO
         } else {

@@ -225,6 +225,9 @@ impl HarnessBuilder {
             derivation_actor_request_rx,
             new_test_pipeline(),
             Arc::new(fake_safedb.clone()),
+            // The actor only needs the Sender half of this unsafe-head watch;
+            // the harness never observes the channel, so the Receiver is
+            // intentionally dropped here.
             watch::channel(None).0,
         );
         let derivation_handle = tokio::spawn(async move {
