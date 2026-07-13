@@ -1,9 +1,9 @@
 //! ABI dispatch for the `foo` reference precompile.
 //!
-//! The dispatcher decodes calldata, then routes each selector to the logic for
-//! the version resolved at install time. Routing is a plain `match` on
-//! [`FooVersion`] — no dynamic dispatch — so the per-call overhead is a single
-//! branch, per the execution-path constraints in the design.
+//! The dispatcher receives the active [`FooVersion`] and resolves it to a single
+//! implementation once, via [`FooVersion::logic`]. It then decodes calldata and
+//! routes each selector to that implementation — there is no per-selector match
+//! on the version, so adding a version touches only [`FooVersion::logic`].
 
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolCall;
@@ -11,7 +11,7 @@ use base_precompile_storage::{IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    FooLogic, FooStorage, FooV1, FooV2, FooVersion,
+    FooStorage, FooVersion,
     IFoo::{self, IFooCalls as C},
     macros::decode_precompile_call,
 };
@@ -46,20 +46,14 @@ impl FooStorage<'_> {
         calldata: &[u8],
         version: FooVersion,
     ) -> base_precompile_storage::Result<Bytes> {
+        // Resolve the version to its implementation once; route ABI calls to it.
+        let logic = version.logic();
         match decode_precompile_call!(calldata, IFoo::IFooCalls) {
             C::helloWorld(_) => {
-                let message = match version {
-                    FooVersion::V1 => FooV1.hello_world(),
-                    FooVersion::V2 => FooV2 { previous: FooV1 }.hello_world(),
-                };
-                Ok(IFoo::helloWorldCall::abi_encode_returns(&message).into())
+                Ok(IFoo::helloWorldCall::abi_encode_returns(&logic.hello_world()).into())
             }
             C::greet(call) => {
-                let caller = ctx.caller();
-                let greeting = match version {
-                    FooVersion::V1 => FooV1.greet(self, caller, call.name)?,
-                    FooVersion::V2 => FooV2 { previous: FooV1 }.greet(self, caller, call.name)?,
-                };
+                let greeting = logic.greet(self, ctx.caller(), call.name)?;
                 Ok(IFoo::greetCall::abi_encode_returns(&greeting).into())
             }
         }

@@ -1,16 +1,42 @@
 //! Central version manager for the `foo` precompile.
+//!
+//! This module is the single owner of both version mappings: which version is
+//! active at a given hardfork ([`FooVersions::resolve`]), and which concrete
+//! implementation backs a version ([`FooVersion::logic`]). Everything else —
+//! the entry point and the dispatcher — depends only on these two seams and
+//! never matches on the version itself.
 
 use base_common_genesis::BaseUpgrade;
 
+use crate::{FooLogic, FooV1, FooV2};
+
 /// An activated version of the `foo` precompile logic.
 ///
-/// Each variant maps to an immutable implementation in [`crate::logic`].
+/// Each variant maps to an immutable implementation via [`Self::logic`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FooVersion {
     /// Introduced at Beryl.
     V1,
     /// Introduced at Cobalt: changes `helloWorld` and adds `greet`.
     V2,
+}
+
+impl FooVersion {
+    /// Returns the immutable logic implementation for this version.
+    ///
+    /// This is the one place that maps a version to its concrete
+    /// implementation; callers route ABI calls through the returned
+    /// [`FooLogic`] without ever matching on the version themselves. The
+    /// implementations are zero-sized statics, so this is a pointer hand-back,
+    /// not an allocation.
+    pub fn logic(self) -> &'static dyn FooLogic {
+        static FOO_V1: FooV1 = FooV1;
+        static FOO_V2: FooV2 = FooV2 { previous: FooV1 };
+        match self {
+            Self::V1 => &FOO_V1,
+            Self::V2 => &FOO_V2,
+        }
+    }
 }
 
 /// Resolver that selects the `foo` version active at a given hardfork.
@@ -54,5 +80,11 @@ mod tests {
     #[test]
     fn resolves_v2_from_cobalt() {
         assert_eq!(FooVersions::resolve(BaseUpgrade::Cobalt), Some(FooVersion::V2));
+    }
+
+    #[test]
+    fn logic_hello_world_matches_version() {
+        assert_eq!(FooVersion::V1.logic().hello_world(), "Hello, World!");
+        assert_eq!(FooVersion::V2.logic().hello_world(), "Hello, World! Welcome to Base.");
     }
 }
