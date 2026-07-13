@@ -1,0 +1,59 @@
+# Codecov configuration.
+#
+# Coverage is informational only: no status check ever fails a PR. Reports are
+# uploaded from the coverage workflow (.github/workflows/coverage.yml) under
+# three flags matching the `just cov` tiers.
+
+codecov:
+  require_ci_to_pass: false
+
+coverage:
+  precision: 2
+  round: down
+  range: "50...90"
+  status:
+    project:
+      default:
+        informational: true
+        target: auto
+    patch:
+      default:
+        informational: true
+        target: auto
+
+github_checks:
+  annotations: false
+
+comment:
+  layout: "reach, diff, flags, files"
+  behavior: default
+  require_changes: false
+
+flag_management:
+  default_rules:
+    carryforward: true
+    statuses:
+      - type: project
+        informational: true
+      - type: patch
+        informational: true
+  individual_flags:
+    - name: unit
+      paths:
+        - "crates/"
+    - name: action
+      paths:
+        - "actions/"
+        - "crates/"
+    - name: system
+      paths:
+        - "etc/systems/"
+        - "crates/"
+
+ignore:
+  - "**/tests/**"
+  - "**/benches/**"
+  - "**/build.rs"
+  - "**/*.md"
+  - "etc/docker/**"
+  - "etc/scripts/**"

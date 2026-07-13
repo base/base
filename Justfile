@@ -22,6 +22,8 @@ mod build 'etc/just/build.just'
 mod succinct 'etc/just/succinct.just'
 # Prover-service JSON-RPC request helpers
 mod zk-prover 'etc/just/zk-prover.just'
+# Code coverage collection via cargo-llvm-cov
+mod cov 'etc/just/coverage.just'
 
 alias t := test
 alias f := fix
