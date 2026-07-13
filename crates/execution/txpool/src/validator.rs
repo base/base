@@ -1197,8 +1197,13 @@ where
     /// Validates `Create.initial_actors`: the slice length is bounded by
     /// [`Eip8130Constants::MAX_ACTORS_PER_ENTRY`] (anti-DoS cap on memory + work
     /// spent on duplicate detection), every `authenticator` is at or above the
-    /// `K1_AUTHENTICATOR` floor (i.e. not the `address(0)` empty sentinel), and no
-    /// two entries share the same `actor_id`.
+    /// `K1_AUTHENTICATOR` floor (i.e. not the `address(0)` empty sentinel), no
+    /// two entries share the same `actor_id`, and each entry's `policy_data` is
+    /// structurally consistent with its `scope`: empty unless `SCOPE_POLICY` is
+    /// set, otherwise exactly `manager (20) || commitment (32)` (52 bytes). The
+    /// same consistency is enforced downstream in `authorize_actor`/`slice_policy`;
+    /// checking it here rejects malformed creates before the expensive overlay
+    /// path runs.
     fn validate_initial_actors(actors: &[InitialActor]) -> Result<(), InvalidPoolTransactionError> {
         if actors.len() > Eip8130Constants::MAX_ACTORS_PER_ENTRY {
             return Err(InvalidTransactionError::TxTypeNotSupported.into());
@@ -1209,6 +1214,11 @@ where
                 return Err(InvalidTransactionError::TxTypeNotSupported.into());
             }
             if previous.is_some_and(|previous| actor.actor_id <= previous) {
+                return Err(InvalidTransactionError::TxTypeNotSupported.into());
+            }
+            let policy = actor.scope & Eip8130Constants::SCOPE_POLICY != 0;
+            let expected_policy_len = if policy { Eip8130Constants::POLICY_DATA_LEN } else { 0 };
+            if actor.policy_data.len() != expected_policy_len {
                 return Err(InvalidTransactionError::TxTypeNotSupported.into());
             }
             previous = Some(actor.actor_id);
@@ -1812,6 +1822,52 @@ mod tests {
             &sign_eoa_eip8130(tx),
             test_chain_id(),
         ));
+    }
+
+    #[test]
+    fn rejects_eip8130_create_with_policy_data_on_ungated_actor() {
+        let mut entry = make_valid_create_entry();
+        entry.initial_actors[0].scope = 0;
+        entry.initial_actors[0].policy_data = vec![0u8; Eip8130Constants::POLICY_DATA_LEN].into();
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::Create(entry)],
+            ..minimal_valid_eoa_tx()
+        };
+        assert_unsupported(TestValidator::validate_account_changes(
+            &sign_eoa_eip8130(tx),
+            test_chain_id(),
+        ));
+    }
+
+    #[test]
+    fn rejects_eip8130_create_with_wrong_length_policy_data() {
+        let mut entry = make_valid_create_entry();
+        entry.initial_actors[0].scope = Eip8130Constants::SCOPE_POLICY;
+        entry.initial_actors[0].policy_data =
+            vec![0u8; Eip8130Constants::POLICY_DATA_LEN - 1].into();
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::Create(entry)],
+            ..minimal_valid_eoa_tx()
+        };
+        assert_unsupported(TestValidator::validate_account_changes(
+            &sign_eoa_eip8130(tx),
+            test_chain_id(),
+        ));
+    }
+
+    #[test]
+    fn accepts_eip8130_create_with_well_formed_policy_data() {
+        let mut entry = make_valid_create_entry();
+        entry.initial_actors[0].scope = Eip8130Constants::SCOPE_POLICY;
+        entry.initial_actors[0].policy_data = vec![0u8; Eip8130Constants::POLICY_DATA_LEN].into();
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::Create(entry)],
+            ..minimal_valid_eoa_tx()
+        };
+        assert!(
+            TestValidator::validate_account_changes(&sign_eoa_eip8130(tx), test_chain_id(),)
+                .is_ok()
+        );
     }
 
     #[test]

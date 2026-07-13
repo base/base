@@ -381,12 +381,14 @@ impl AccountState {
         }
         if self.flags & Eip8130Constants::FLAG_UNLOCK_INITIATED == 0 {
             // Hard-locked: lock_union holds the configured delay; synthesize the
-            // max sentinel for `unlocks_at`.
+            // max sentinel for `unlocks_at`. The delay is stored in `uint16` range
+            // by the lock op; mask explicitly to make the truncation intentional
+            // and mirror the contract's `uint16(config.lockUnion)` cast.
             return LockStatus {
                 locked: true,
                 has_initiated_unlock: false,
                 unlocks_at: Self::UNLOCKS_AT_MAX,
-                unlock_delay: self.lock_union as u16,
+                unlock_delay: (self.lock_union & 0xFFFF) as u16,
             };
         }
         // Unlock initiated: lock_union holds the effective unlock timestamp.
@@ -669,10 +671,7 @@ mod tests {
             assert_eq!(status.unlocks_at, 2_000);
 
             // Never locked: no lock flags set.
-            acc.account_state
-                .at_mut(&ACCOUNT)
-                .write(pack_account_state(0, 1, 0, 0, 0, 0))
-                .unwrap();
+            acc.account_state.at_mut(&ACCOUNT).write(pack_account_state(0, 1, 0, 0, 0, 0)).unwrap();
             assert!(!acc.is_locked(ACCOUNT, 0).unwrap());
             assert!(!acc.get_lock_status(ACCOUNT, 0).unwrap().has_initiated_unlock);
         });

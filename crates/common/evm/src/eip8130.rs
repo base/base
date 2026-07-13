@@ -689,21 +689,32 @@ impl Eip8130Executor {
             let acc = AccountConfigurationStorage::new(sctx);
             let sender_actor_id = acting_actor_hint
                 .unwrap_or_else(|| AccountConfigurationStorage::self_actor_id(sender));
-            let (policy_target, _) =
-                acc.get_policy(sender, sender_actor_id).map_err(BaseTransactionError::eip8130)?;
+            // Resolve the acting scope with a single `actor_config` read (plus one
+            // `account_state` read only for the inline self-key path), then derive
+            // both the policy gate flag and target from it. Reading the target via
+            // `get_policy_manager` only when gated avoids `get_policy`'s extra
+            // `actor_config`/`account_state`/`policy_commitment` SLOADs on this
+            // estimation hot path (the commitment is unused here).
             let actor_config = acc
                 .get_actor_config(sender, sender_actor_id)
                 .map_err(BaseTransactionError::eip8130)?;
-            let actor_scope = if actor_config.authenticator.is_zero()
-                && sender_actor_id == AccountConfigurationStorage::self_actor_id(sender)
-            {
-                acc.get_account_state(sender)
-                    .map_err(BaseTransactionError::eip8130)?
-                    .default_eoa_scope
-            } else {
+            let actor_scope = if !actor_config.authenticator.is_zero() {
                 actor_config.scope
+            } else if sender_actor_id == AccountConfigurationStorage::self_actor_id(sender) {
+                // Inline secp256k1 self key: scope lives in `account_state`, and a
+                // revoked default EOA resolves as ungated (mirrors `get_policy`).
+                let state = acc.get_account_state(sender).map_err(BaseTransactionError::eip8130)?;
+                if state.default_eoa_revoked() { 0 } else { state.default_eoa_scope }
+            } else {
+                0
             };
             let policy_gated = actor_scope & Eip8130Constants::SCOPE_POLICY != 0;
+            let policy_target = if policy_gated {
+                acc.get_policy_manager(sender, sender_actor_id)
+                    .map_err(BaseTransactionError::eip8130)?
+            } else {
+                Address::ZERO
+            };
 
             // 4. Auto-delegate a code-less sender to the default account. Unlike
             //    the verifying path this is unconditional on a code-less sender: a

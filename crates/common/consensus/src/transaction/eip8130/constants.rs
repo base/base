@@ -145,6 +145,11 @@ impl Eip8130Constants {
     /// meaningful when [`Self::FLAG_LOCKED`] is set.
     pub const FLAG_UNLOCK_INITIATED: u8 = 0x04;
 
+    /// Exact byte length of a policy-bearing actor's `policyData`:
+    /// `manager (20) || commitment (32)`. Required when `scope & SCOPE_POLICY`
+    /// is set; `policyData` MUST be empty otherwise.
+    pub const POLICY_DATA_LEN: usize = 52;
+
     /// Maximum number of `ConfigChange` entries the mempool accepts in a single
     /// transaction. The spec marks this as a node policy ("Nodes SHOULD enforce
     /// a configurable per-transaction limit"); we pin a conservative default

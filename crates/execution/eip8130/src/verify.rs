@@ -308,11 +308,7 @@ mod tests {
             acc.actor_config
                 .at_mut(&id)
                 .at_mut(&account)
-                .write(pack(
-                    K1,
-                    Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_NONCE,
-                    0,
-                ))
+                .write(pack(K1, Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_NONCE, 0))
                 .unwrap();
             assert_eq!(
                 ActorTxVerifier::verify(&signed, acc, NOW),
@@ -370,11 +366,7 @@ mod tests {
             acc.actor_config
                 .at_mut(&sid)
                 .at_mut(&sender_account)
-                .write(pack(
-                    K1,
-                    Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_NONCE,
-                    0,
-                ))
+                .write(pack(K1, Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_NONCE, 0))
                 .unwrap();
             acc.actor_config
                 .at_mut(&pid)
@@ -479,11 +471,7 @@ mod tests {
             acc.actor_config
                 .at_mut(&sid)
                 .at_mut(&sender_account)
-                .write(pack(
-                    K1,
-                    Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_NONCE,
-                    0,
-                ))
+                .write(pack(K1, Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_NONCE, 0))
                 .unwrap();
             // Payer actor bound but lacking SCOPE_SPONSOR_PAYER.
             acc.actor_config

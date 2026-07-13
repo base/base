@@ -397,11 +397,11 @@ impl AccountChangeApplier {
             }
             return Ok((Address::ZERO, B256::ZERO));
         }
-        if policy_data.len() != 52 {
+        if policy_data.len() != Eip8130Constants::POLICY_DATA_LEN {
             return Err(ApplyError::MalformedPolicyData);
         }
         let manager = Address::from_slice(&policy_data[..20]);
-        let commitment = B256::from_slice(&policy_data[20..52]);
+        let commitment = B256::from_slice(&policy_data[20..Eip8130Constants::POLICY_DATA_LEN]);
         Ok((manager, commitment))
     }
 

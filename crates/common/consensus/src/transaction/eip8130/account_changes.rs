@@ -111,7 +111,7 @@ pub struct InitialActor {
 impl InitialActor {
     /// Constructs an unrestricted admin initial actor (`scope == 0x00`, no
     /// policy), the common owner case.
-    pub fn owner(actor_id: B256, authenticator: Address) -> Self {
+    pub const fn owner(actor_id: B256, authenticator: Address) -> Self {
         Self { actor_id, authenticator, scope: 0, policy_data: Bytes::new() }
     }
 }
