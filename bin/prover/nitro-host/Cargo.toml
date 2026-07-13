@@ -44,4 +44,4 @@ tracing.workspace = true
 base-proof-tee-nitro-enclave.workspace = true
 
 [features]
-local = ["dep:base-proof-tee-nitro-enclave"]
+local = [ "dep:base-proof-tee-nitro-enclave" ]
