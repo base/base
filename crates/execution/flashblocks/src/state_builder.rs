@@ -15,7 +15,7 @@ use alloy_rpc_types_eth::state::StateOverride;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BasePrimitives, BaseReceipt, BaseTxEnvelope, Predeploys};
 use base_common_evm::{
-    BaseHaltReason, BaseTime, L1BlockInfo, ensure_create2_deployer, ensure_eip8130_system_accounts,
+    BaseHaltReason, L1BlockInfo, ensure_create2_deployer, ensure_eip8130_system_accounts,
 };
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_common_rpc_types::{BaseTransactionReceipt, Transaction};
@@ -192,9 +192,6 @@ where
             .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?;
 
         ensure_create2_deployer(spec, self.pending_block.timestamp, self.evm.db_mut())
-            .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?;
-
-        BaseTime::ensure_predeploy(spec, self.pending_block.timestamp, self.evm.db_mut())
             .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?;
 
         // At the Cobalt (EIP-8130) transition, plant a code stub on the code-less
