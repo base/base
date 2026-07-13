@@ -1,6 +1,11 @@
 # `basectl`
 
-The Base infrastructure control CLI.
+`basectl` is the operator console for Base infrastructure. It combines interactive terminal
+dashboards with scriptable commands to inspect blocks, node sync, peers, transaction pools,
+Flashblocks, data availability, pods, upgrades, and proofs; diagnose node health; and safely
+operate HA conductor and sequencer clusters across mainnet, Sepolia, and local devnets.
+
+If you run, debug, or automate Base infrastructure, this README documents the RPC access each command needs, human and JSON output modes, configuration and discovery behavior, and the confirmation and partial-failure semantics of state-changing operations.
 
 ## Usage
 
@@ -10,10 +15,10 @@ basectl [OPTIONS] [COMMAND]
 
 Global options:
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-c, --config <CONFIG>` | `mainnet` | Chain config: `mainnet`, `sepolia`, `devnet`, or a path to a config file |
-| `--conductor-rpc <URL>` | | Bootstrap conductor JSON-RPC URL for runtime cluster discovery when the chain config has no hardcoded conductor list. Used by `basectl conductor` and `basectl sequencer`. If omitted, basectl uses `discovery.bootstrap_rpc` from config. Set via `BASECTL_CONDUCTOR_RPC`. |
+| Flag                    | Default   | Description                                                                                                                                                                                                                                                                 |
+| ----------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-c, --config <CONFIG>` | `mainnet` | Chain config: `mainnet`, `sepolia`, `devnet`, or a path to a config file                                                                                                                                                                                                    |
+| `--conductor-rpc <URL>` |           | Bootstrap conductor JSON-RPC URL for runtime cluster discovery when the chain config has no hardcoded conductor list. Used by `basectl conductor` and `basectl sequencer`. If omitted, basectl uses `discovery.bootstrap_rpc` from config. Set via `BASECTL_CONDUCTOR_RPC`. |
 
 ## Commands
 
@@ -21,15 +26,15 @@ Global options:
 
 Opens the interactive TUI. With no subcommand, opens the Home view.
 
-| Command | Alias | Description |
-|---------|-------|-------------|
-| `monitor` | | TUI Home view |
-| `monitor conductor` | `co` | HA conductor cluster monitor |
-| `monitor da` | `d` | DA backlog monitor |
-| `monitor flashblocks` | `f` | Flashblocks TUI monitor |
-| `monitor command-center` | `cc` | Combined command center view |
-| `monitor upgrades` | `u` | Network upgrade activation countdown and history |
-| `monitor config` | `c` | Chain configuration view |
+| Command                  | Alias | Description                                      |
+| ------------------------ | ----- | ------------------------------------------------ |
+| `monitor`                |       | TUI Home view                                    |
+| `monitor conductor`      | `co`  | HA conductor cluster monitor                     |
+| `monitor da`             | `d`   | DA backlog monitor                               |
+| `monitor flashblocks`    | `f`   | Flashblocks TUI monitor                          |
+| `monitor command-center` | `cc`  | Combined command center view                     |
+| `monitor upgrades`       | `u`   | Network upgrade activation countdown and history |
+| `monitor config`         | `c`   | Chain configuration view                         |
 
 ### `basectl block <REF>`
 
@@ -49,10 +54,10 @@ Hash lookups can return blocks regardless of canonical-chain status — orphans
 and reorged-out heads are also fetchable by hash. The `pending` tag is not
 supported (alloy's typed block can't deserialize null number/hash).
 
-| Flag | Description |
-|------|-------------|
-| `--json` | Emit humanized JSON (decoded numeric values, ISO + local timestamps, `network`/`reference` context fields) instead of the key-value table. |
-| `--raw` | With `--json`, emit the JSON-RPC wire format (camelCase field names, hex-string quantities, no `network`/`reference` wrapper) instead of the humanized form. Useful for round-tripping through `cast` or other JSON-RPC-aware tooling. Errors at parse time if used without `--json`. |
+| Flag     | Description                                                                                                                                                                                                                                                                           |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--json` | Emit humanized JSON (decoded numeric values, ISO + local timestamps, `network`/`reference` context fields) instead of the key-value table.                                                                                                                                            |
+| `--raw`  | With `--json`, emit the JSON-RPC wire format (camelCase field names, hex-string quantities, no `network`/`reference` wrapper) instead of the humanized form. Useful for round-tripping through `cast` or other JSON-RPC-aware tooling. Errors at parse time if used without `--json`. |
 
 Pretty mode converts hex quantities to decimal and Unix timestamps to
 `YYYY-MM-DD HH:MM:SS UTC`. Humanized JSON (`--json`) decodes numeric values
@@ -87,13 +92,13 @@ is one of `caught_up` (within ±N blocks of the reference, where N is the
 `--tip-tolerance` flag — default 5), `behind`, `ahead`, or `unavailable`
 (public RPC unreachable).
 
-| Flag | Description |
-|------|-------------|
-| `--el-rpc <URL>` | Override the execution-layer RPC URL. Defaults to the chain config's `rpc` field. |
-| `--cl-rpc <URL>` | Override the consensus-node RPC URL. The mainnet and sepolia presets ship `consensus_node_rpc` unset, so non-devnet users must pass this flag (or set the field in their YAML config). |
+| Flag                       | Description                                                                                                                                                                                                                                                                                           |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--el-rpc <URL>`           | Override the execution-layer RPC URL. Defaults to the chain config's `rpc` field.                                                                                                                                                                                                                     |
+| `--cl-rpc <URL>`           | Override the consensus-node RPC URL. The mainnet and sepolia presets ship `consensus_node_rpc` unset, so non-devnet users must pass this flag (or set the field in their YAML config).                                                                                                                |
 | `--tip-tolerance <BLOCKS>` | Block tolerance for the tip-reference `caught_up` classification. Within ±this many blocks of the public reference, the local node is reported as `caught_up`; otherwise `behind` or `ahead`. Default `5` ≈ ~10s at Base's 2s block time. Use `0` for strict alerting, larger values to dampen noise. |
-| `--json` | Emit humanized JSON (decoded numeric values, ISO + local timestamps, precomputed `safeLag*`, `tipReference` object, `elSyncInfo` with `processedBlocks` / `remainingBlocks`) instead of the key-value table. |
-| `--raw` | With `--json`, emit the alloy-typed `optimism_syncStatus` wire format instead of the humanized form. Errors at parse time if used without `--json`. |
+| `--json`                   | Emit humanized JSON (decoded numeric values, ISO + local timestamps, precomputed `safeLag*`, `tipReference` object, `elSyncInfo` with `processedBlocks` / `remainingBlocks`) instead of the key-value table.                                                                                          |
+| `--raw`                    | With `--json`, emit the alloy-typed `optimism_syncStatus` wire format instead of the humanized form. Errors at parse time if used without `--json`.                                                                                                                                                   |
 
 ### `basectl p2p`
 
@@ -118,30 +123,30 @@ consensus layers.
 
 Read-only p2p commands and `add-peer` / `remove-peer` support:
 
-| Flag | Description |
-|------|-------------|
-| `--el-rpc <URL>` | Override the execution-layer RPC URL. Defaults to the chain config's `rpc` field. |
+| Flag             | Description                                                                                                                                                                            |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--el-rpc <URL>` | Override the execution-layer RPC URL. Defaults to the chain config's `rpc` field.                                                                                                      |
 | `--cl-rpc <URL>` | Override the consensus-node RPC URL. The mainnet and sepolia presets ship `consensus_node_rpc` unset, so non-devnet users must pass this flag (or set the field in their YAML config). |
 
 CL-only ban/unban commands support:
 
-| Flag | Description |
-|------|-------------|
+| Flag             | Description                                                                                                                                                                            |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--cl-rpc <URL>` | Override the consensus-node RPC URL. The mainnet and sepolia presets ship `consensus_node_rpc` unset, so non-devnet users must pass this flag (or set the field in their YAML config). |
 
 Read-only p2p commands also support:
 
-| Flag | Description |
-|------|-------------|
-| `--json` | Emit humanized JSON instead of the pretty table output. |
-| `--raw` | With `--json`, emit raw nested RPC payloads instead of the humanized summary. Errors at parse time if used without `--json`. |
+| Flag     | Description                                                                                                                  |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `--json` | Emit humanized JSON instead of the pretty table output.                                                                      |
+| `--raw`  | With `--json`, emit raw nested RPC payloads instead of the humanized summary. Errors at parse time if used without `--json`. |
 
 Destructive p2p commands also support:
 
-| Flag | Description |
-|------|-------------|
-| `--yes` | Skip the interactive confirmation prompt. By default, destructive p2p commands print the exact action and wait for `y` or `yes`; empty input and every other answer abort without error. |
-| `--json` | Emit a structured action outcome instead of pretty text. Requires `--yes` so scripts do not hang on an interactive prompt. |
+| Flag     | Description                                                                                                                                                                              |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--yes`  | Skip the interactive confirmation prompt. By default, destructive p2p commands print the exact action and wait for `y` or `yes`; empty input and every other answer abort without error. |
+| `--json` | Emit a structured action outcome instead of pretty text. Requires `--yes` so scripts do not hang on an interactive prompt.                                                               |
 
 Important EL RPC note:
 
@@ -169,20 +174,20 @@ By default the command uses the selected config's `rpc` field. Pass
 
 Read-only txpool commands support:
 
-| Flag | Description |
-|------|-------------|
-| `--el-rpc <URL>` | Override the execution-layer RPC URL. Defaults to the chain config's `rpc` field. |
-| `--json` | Emit humanized JSON with `network`, `rpc`, `scope`, optional `sender`, counts, sender summaries, and decoded transaction rows. |
-| `--raw` | With `--json`, emit the txpool wire shape (`TxpoolContent` for unfiltered reads, `TxpoolContentFrom` for sender-filtered reads), scoped to the selected `pending`, `queued`, or `all` command. Errors at parse time if used without `--json`. |
+| Flag             | Description                                                                                                                                                                                                                                   |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--el-rpc <URL>` | Override the execution-layer RPC URL. Defaults to the chain config's `rpc` field.                                                                                                                                                             |
+| `--json`         | Emit humanized JSON with `network`, `rpc`, `scope`, optional `sender`, counts, sender summaries, and decoded transaction rows.                                                                                                                |
+| `--raw`          | With `--json`, emit the txpool wire shape (`TxpoolContent` for unfiltered reads, `TxpoolContentFrom` for sender-filtered reads), scoped to the selected `pending`, `queued`, or `all` command. Errors at parse time if used without `--json`. |
 
 Destructive txpool clearing supports:
 
-| Flag | Description |
-|------|-------------|
-| `--sender <ADDRESS>` | Drop only transactions from one sender instead of clearing the whole pool. |
-| `--el-rpc <URL>` | Override the execution-layer RPC URL. Destructive txpool calls usually require an admin-enabled node RPC. |
-| `--yes` | Skip the interactive confirmation prompt. By default, `clear` prints the exact target and waits for `y` or `yes`; empty input and every other answer abort without error. |
-| `--json` | Emit a structured action outcome instead of pretty text. Requires `--yes` so scripts do not hang on an interactive prompt. The `action` field is `clearTxpool` or `dropSenderTransactions`. |
+| Flag                 | Description                                                                                                                                                                                 |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--sender <ADDRESS>` | Drop only transactions from one sender instead of clearing the whole pool.                                                                                                                  |
+| `--el-rpc <URL>`     | Override the execution-layer RPC URL. Destructive txpool calls usually require an admin-enabled node RPC.                                                                                   |
+| `--yes`              | Skip the interactive confirmation prompt. By default, `clear` prints the exact target and waits for `y` or `yes`; empty input and every other answer abort without error.                   |
+| `--json`             | Emit a structured action outcome instead of pretty text. Requires `--yes` so scripts do not hang on an interactive prompt. The `action` field is `clearTxpool` or `dropSenderTransactions`. |
 
 `txpool pending`, `queued`, and `all` use Reth's `txpool_content` namespace, or
 `txpool_contentFrom` when a sender filter is provided. `clear` does not support
@@ -213,15 +218,15 @@ Conductor commands use the selected config's hardcoded `conductors` list when
 present. Otherwise they discover the cluster via the `--conductor-rpc` bootstrap
 URL or `discovery.bootstrap_rpc` in the config.
 
-| Flag | Description |
-|------|-------------|
+| Flag     | Description                                                                                |
+| -------- | ------------------------------------------------------------------------------------------ |
 | `--json` | For `status`, emit a structured cluster status summary instead of the pretty table output. |
 
 Destructive conductor commands also support:
 
-| Flag | Description |
-|------|-------------|
-| `--yes` | Skip the interactive confirmation prompt. |
+| Flag     | Description                                                                                                                   |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `--yes`  | Skip the interactive confirmation prompt.                                                                                     |
 | `--json` | Emit a structured action outcome instead of pretty text. Requires `--yes` so scripts do not hang on interactive confirmation. |
 
 Safety notes:
@@ -257,15 +262,15 @@ unsafe L2 hash. This matches the existing TUI behavior and the sequencer RPC's
 safety contract: the requested hash must match the node's current engine unsafe
 head.
 
-| Flag | Description |
-|------|-------------|
+| Flag     | Description                                                                             |
+| -------- | --------------------------------------------------------------------------------------- |
 | `--json` | For `status`, emit a structured JSON status summary instead of the pretty table output. |
 
 Destructive sequencer commands also support:
 
-| Flag | Description |
-|------|-------------|
-| `--yes` | Skip the interactive confirmation prompt. |
+| Flag     | Description                                                                                                                |
+| -------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `--yes`  | Skip the interactive confirmation prompt.                                                                                  |
 | `--json` | Emit a structured action outcome instead of pretty text. Requires `--yes` so scripts do not hang on an interactive prompt. |
 
 Safety notes:
@@ -296,17 +301,17 @@ mutate node state and does not prove advertised ports are reachable from the
 public internet; it reports what can be observed from local config and exposed
 RPC metadata.
 
-| Flag | Description |
-|------|-------------|
-| `--el-rpc <URL>` | Override the execution-layer RPC URL used for local-node checks. Defaults to the selected config's `rpc` field. |
-| `--cl-rpc <URL>` | Override the consensus-node RPC URL. If omitted and the selected config has no `consensus_node_rpc`, CL-dependent checks are skipped with hints. |
-| `--reth-config <PATH>` | Path to the local `reth.toml` file. If omitted, the reth limits check is skipped. |
-| `--peer-warn-threshold <COUNT>` | Connected peer count below which EL/CL peer checks warn. Default `5`. |
-| `--head-lag-warn-blocks <BLOCKS>` | EL head lag behind the public tip above which doctor warns. Default `10`. |
-| `--head-lag-fail-blocks <BLOCKS>` | EL head lag behind the public tip above which doctor fails. Default `20`. |
-| `--safe-recency-warn-blocks <BLOCKS>` | Safe-head lag behind unsafe head above which doctor warns. Default `150`. |
-| `--safe-recency-fail-blocks <BLOCKS>` | Safe-head lag behind unsafe head above which doctor fails. Default `300`. |
-| `--json` | Emit a humanized JSON report with `inputs`, `summary`, and `checks` instead of pretty text. |
+| Flag                                  | Description                                                                                                                                      |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--el-rpc <URL>`                      | Override the execution-layer RPC URL used for local-node checks. Defaults to the selected config's `rpc` field.                                  |
+| `--cl-rpc <URL>`                      | Override the consensus-node RPC URL. If omitted and the selected config has no `consensus_node_rpc`, CL-dependent checks are skipped with hints. |
+| `--reth-config <PATH>`                | Path to the local `reth.toml` file. If omitted, the reth limits check is skipped.                                                                |
+| `--peer-warn-threshold <COUNT>`       | Connected peer count below which EL/CL peer checks warn. Default `5`.                                                                            |
+| `--head-lag-warn-blocks <BLOCKS>`     | EL head lag behind the public tip above which doctor warns. Default `10`.                                                                        |
+| `--head-lag-fail-blocks <BLOCKS>`     | EL head lag behind the public tip above which doctor fails. Default `20`.                                                                        |
+| `--safe-recency-warn-blocks <BLOCKS>` | Safe-head lag behind unsafe head above which doctor warns. Default `150`.                                                                        |
+| `--safe-recency-fail-blocks <BLOCKS>` | Safe-head lag behind unsafe head above which doctor fails. Default `300`.                                                                        |
+| `--json`                              | Emit a humanized JSON report with `inputs`, `summary`, and `checks` instead of pretty text.                                                      |
 
 ### `basectl flashblocks`
 
@@ -314,6 +319,8 @@ Streams live flashblocks as newline-delimited JSON to stdout. For the
 interactive view, use `basectl monitor flashblocks`.
 
 ## Examples
+
+### `basectl monitor`
 
 ```sh
 # Open TUI on mainnet
@@ -324,10 +331,18 @@ basectl -c devnet monitor
 
 # Open the conductor view directly
 basectl monitor conductor
+```
 
+### `basectl flashblocks`
+
+```sh
 # Stream flashblocks as JSONL on sepolia
 basectl -c sepolia flashblocks
+```
 
+### `basectl block`
+
+```sh
 # Inspect the latest block on sepolia
 basectl -c sepolia block latest
 
@@ -349,7 +364,11 @@ basectl -c sepolia block --json latest | jq '{number, gasUsed, baseFeePerGasWei,
 
 # Raw (wire) JSON: same shape as `cast block --json`, useful for round-tripping
 basectl -c mainnet block --json --raw finalized | jq '{number, gasUsed, baseFeePerGas}'
+```
 
+### `basectl sync-status`
+
+```sh
 # Sync status against a devnet (consensus_node_rpc is set in the devnet preset)
 basectl -c devnet sync-status
 
@@ -358,7 +377,11 @@ basectl -c sepolia sync-status --cl-rpc https://your-rollup-node.example/
 
 # Humanized JSON shows precomputed safe-head lag for downstream tooling
 basectl -c sepolia sync-status --cl-rpc https://your-rollup-node.example/ --json | jq '{safeLagSeconds, safeLagBlocks, elActivelySyncing}'
+```
 
+### `basectl p2p`
+
+```sh
 # P2P endpoint summary for a node
 basectl -c sepolia p2p info --el-rpc https://your-el.example/ --cl-rpc https://your-cl.example/
 
@@ -388,7 +411,11 @@ basectl -c sepolia p2p unban-all --cl-rpc https://your-cl.example/ --yes
 
 # If the EL RPC is restricted, EL peer count still works but EL admin-backed fields may be unavailable
 basectl -c sepolia p2p info --el-rpc https://your-public-el.example/ --cl-rpc https://your-cl.example/
+```
 
+### `basectl conductor`
+
+```sh
 # Show devnet conductor cluster status
 basectl -c devnet conductor status
 
@@ -405,7 +432,11 @@ basectl -c devnet conductor unpause op-conductor-0 --yes --json | jq .
 # Cluster-wide conductor actions require typed confirmation, or --yes for scripts
 basectl -c devnet conductor pause-all
 basectl -c devnet conductor unpause-all --yes --json | jq .
+```
 
+### `basectl sequencer`
+
+```sh
 # Show sequencer state for every devnet conductor node
 basectl -c devnet sequencer status
 
@@ -420,7 +451,11 @@ basectl -c devnet sequencer start op-conductor-0 --yes
 
 # Start a sequencer node with an explicit unsafe head hash
 basectl -c devnet sequencer start op-conductor-0 0x1111111111111111111111111111111111111111111111111111111111111111 --yes --json | jq .
+```
 
+### `basectl doctor`
+
+```sh
 # Run doctor with values from the selected config
 basectl -c mainnet doctor
 
