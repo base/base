@@ -159,12 +159,9 @@ impl<C: Clock> BondManager<C> {
         };
         let game_address = game_at.proxy;
 
-        let (bond_recipient, zk_prover, resolved_at, bond_unlocked, bond_claimed) = match futures::try_join!(
+        let (bond_recipient, zk_prover) = match futures::try_join!(
             verifier_client.bond_recipient(game_address),
             verifier_client.zk_prover(game_address),
-            verifier_client.resolved_at(game_address),
-            verifier_client.bond_unlocked(game_address),
-            verifier_client.bond_claimed(game_address),
         ) {
             Ok(values) => values,
             Err(e) => {
@@ -177,13 +174,25 @@ impl<C: Clock> BondManager<C> {
             }
         };
 
-        if resolved_at == 0 {
-            if !self.claim_addresses.contains(&bond_recipient)
-                && !self.claim_addresses.contains(&zk_prover)
-            {
+        if !self.claim_addresses.contains(&bond_recipient)
+            && !self.claim_addresses.contains(&zk_prover)
+        {
+            return None;
+        }
+
+        let resolved_at = match verifier_client.resolved_at(game_address).await {
+            Ok(resolved_at) => resolved_at,
+            Err(e) => {
+                debug!(game = %game_address, error = %e, "failed to read bond state");
+                ChallengerMetrics::bond_evaluation_errors_total(
+                    ChallengerMetrics::EVAL_ERROR_BOND_READ,
+                )
+                .increment(1);
                 return None;
             }
+        };
 
+        if resolved_at == 0 {
             let game_over = match verifier_client.game_over(game_address).await {
                 Ok(game_over) => game_over,
                 Err(e) => {
@@ -199,7 +208,38 @@ impl<C: Clock> BondManager<C> {
             return game_over.then_some(BondAction::Resolve(game_address));
         }
 
-        if !self.claim_addresses.contains(&bond_recipient) || bond_claimed {
+        let bond_recipient = match verifier_client.bond_recipient(game_address).await {
+            Ok(bond_recipient) => bond_recipient,
+            Err(e) => {
+                debug!(game = %game_address, error = %e, "failed to read bond state");
+                ChallengerMetrics::bond_evaluation_errors_total(
+                    ChallengerMetrics::EVAL_ERROR_BOND_READ,
+                )
+                .increment(1);
+                return None;
+            }
+        };
+
+        if !self.claim_addresses.contains(&bond_recipient) {
+            return None;
+        }
+
+        let (bond_unlocked, bond_claimed) = match futures::try_join!(
+            verifier_client.bond_unlocked(game_address),
+            verifier_client.bond_claimed(game_address),
+        ) {
+            Ok(values) => values,
+            Err(e) => {
+                debug!(game = %game_address, error = %e, "failed to read bond state");
+                ChallengerMetrics::bond_evaluation_errors_total(
+                    ChallengerMetrics::EVAL_ERROR_BOND_READ,
+                )
+                .increment(1);
+                return None;
+            }
+        };
+
+        if bond_claimed {
             return None;
         }
 
@@ -266,10 +306,11 @@ impl<C: Clock> BondManager<C> {
         verifier_client: &dyn AggregateVerifierClient,
         submitter: &ChallengeSubmitter<T>,
     ) -> eyre::Result<()> {
-        let delay = self.ensure_weth_delay(verifier_client, game_address).await?;
+        let (weth_client, delay) =
+            self.weth_client_and_delay(verifier_client, game_address).await?;
 
         let delay_started_at =
-            self.withdrawal_timestamp(verifier_client, game_address, bond_recipient).await?;
+            weth_client.withdrawal_timestamp(game_address, bond_recipient).await?;
         if delay_started_at == 0 {
             debug!(game = %game_address, recipient = %bond_recipient, "bond marked unlocked without DelayedWETH withdrawal state");
             return Ok(());
@@ -317,32 +358,22 @@ impl<C: Clock> BondManager<C> {
         result.map(|_| ())
     }
 
-    async fn ensure_weth_delay(
+    async fn weth_client_and_delay(
         &mut self,
         verifier_client: &dyn AggregateVerifierClient,
         game_address: Address,
-    ) -> eyre::Result<Duration> {
-        if let Some(delay) = self.weth_delay {
-            return Ok(delay);
-        }
-
+    ) -> eyre::Result<(DelayedWETHContractClient, Duration)> {
         let weth_address = verifier_client.delayed_weth(game_address).await?;
         let weth_client = DelayedWETHContractClient::new(weth_address, self.l1_rpc_url.clone())?;
-        let delay = weth_client.delay().await?;
-        info!(delay_secs = delay.as_secs(), "DelayedWETH delay configured");
-        self.weth_delay = Some(delay);
-        Ok(delay)
-    }
 
-    async fn withdrawal_timestamp(
-        &self,
-        verifier_client: &dyn AggregateVerifierClient,
-        game_address: Address,
-        bond_recipient: Address,
-    ) -> eyre::Result<u64> {
-        let weth_address = verifier_client.delayed_weth(game_address).await?;
-        let weth_client = DelayedWETHContractClient::new(weth_address, self.l1_rpc_url.clone())?;
-        Ok(weth_client.withdrawal_timestamp(game_address, bond_recipient).await?)
+        let Some(delay) = self.weth_delay else {
+            let delay = weth_client.delay().await?;
+            info!(delay_secs = delay.as_secs(), "DelayedWETH delay configured");
+            self.weth_delay = Some(delay);
+            return Ok((weth_client, delay));
+        };
+
+        Ok((weth_client, delay))
     }
 }
 
@@ -559,6 +590,7 @@ mod tests {
         mgr.discover_claimable_games(&*verifier, &submitter).await.unwrap();
         handle.join().unwrap();
 
+        assert_eq!(verifier.delayed_weth_reads.lock().unwrap().len(), 1);
         assert!(tx_manager.recorded_calls().is_empty());
     }
 
@@ -576,6 +608,7 @@ mod tests {
         mgr.discover_claimable_games(&*verifier, &submitter).await.unwrap();
         handle.join().unwrap();
 
+        assert_eq!(verifier.delayed_weth_reads.lock().unwrap().len(), 1);
         assert_eq!(tx_manager.recorded_calls().len(), 1);
     }
 }
