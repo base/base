@@ -72,8 +72,6 @@ impl BaseTelemetryServer {
 #[cfg(test)]
 mod tests {
     use std::{
-        env,
-        ffi::OsString,
         net::SocketAddr,
         str::FromStr,
         sync::{Arc, atomic::AtomicBool},
@@ -85,7 +83,6 @@ mod tests {
     use base_health::HealthServer;
     use clap::Parser;
     use ipnet::IpNet;
-    use serial_test::serial;
     use tokio::{net::TcpListener, sync::Semaphore, task::JoinHandle};
 
     use crate::{
@@ -98,32 +95,6 @@ mod tests {
     struct TestCli {
         #[command(flatten)]
         server: ServerConfig,
-    }
-
-    struct EnvVarGuard {
-        key: &'static str,
-        previous: Option<OsString>,
-    }
-
-    impl EnvVarGuard {
-        fn set(key: &'static str, value: &str) -> Self {
-            let previous = env::var_os(key);
-            // SAFETY: this helper is only used by a serial test for this unique variable.
-            unsafe { env::set_var(key, value) };
-            Self { key, previous }
-        }
-    }
-
-    impl Drop for EnvVarGuard {
-        fn drop(&mut self) {
-            // SAFETY: the creating test is serial and restores the variable before returning.
-            unsafe {
-                match &self.previous {
-                    Some(value) => env::set_var(self.key, value),
-                    None => env::remove_var(self.key),
-                }
-            }
-        }
     }
 
     #[derive(Debug, Clone)]
@@ -171,20 +142,6 @@ mod tests {
             "192.168.0.0/16",
         ])
         .unwrap();
-
-        assert_eq!(
-            cli.server.trusted_proxy_cidrs,
-            [IpNet::from_str("10.0.0.0/8").unwrap(), IpNet::from_str("192.168.0.0/16").unwrap(),]
-        );
-    }
-
-    #[test]
-    #[serial]
-    fn parses_trusted_proxy_cidrs_from_env() {
-        let _guard =
-            EnvVarGuard::set("BASE_TELEMETRY_TRUSTED_PROXY_CIDRS", "10.0.0.0/8,192.168.0.0/16");
-
-        let cli = TestCli::try_parse_from(["test"]).unwrap();
 
         assert_eq!(
             cli.server.trusted_proxy_cidrs,

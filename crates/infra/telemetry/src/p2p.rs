@@ -188,7 +188,7 @@ impl ClientIpResolver {
         socket_peer: SocketAddr,
         headers: &HeaderMap,
     ) -> Result<IpAddr, ClientIpError> {
-        let socket_ip = Self::normalize(socket_peer.ip());
+        let socket_ip = socket_peer.ip().to_canonical();
         let forwarded_values = headers.get_all("x-forwarded-for").iter().collect::<Vec<_>>();
 
         if forwarded_values.is_empty() {
@@ -212,7 +212,7 @@ impl ClientIpResolver {
                 }
                 let hop = raw_hop
                     .parse::<IpAddr>()
-                    .map(Self::normalize)
+                    .map(|ip| ip.to_canonical())
                     .map_err(|_| ClientIpError::MalformedForwardedFor)?;
                 if hops.len() >= Self::MAX_FORWARDED_HOPS {
                     return Err(ClientIpError::MalformedForwardedFor);
@@ -234,14 +234,6 @@ impl ClientIpResolver {
     /// Returns whether an IP belongs to a configured trusted proxy network.
     pub fn is_trusted(&self, ip: IpAddr) -> bool {
         self.trusted_proxy_cidrs.iter().any(|network| network.contains(&ip))
-    }
-
-    /// Converts `IPv4`-mapped `IPv6` addresses to their canonical `IPv4` form.
-    pub fn normalize(ip: IpAddr) -> IpAddr {
-        match ip {
-            IpAddr::V6(ip) => ip.to_ipv4_mapped().map_or(IpAddr::V6(ip), IpAddr::V4),
-            IpAddr::V4(ip) => IpAddr::V4(ip),
-        }
     }
 
     /// Requires an address to be globally routable.
@@ -274,15 +266,8 @@ impl ClientIpResolver {
     }
 
     /// Returns whether an `IPv6` address is suitable for a public unicast TCP probe.
-    pub fn is_global_ipv6(ip: Ipv6Addr) -> bool {
+    pub const fn is_global_ipv6(ip: Ipv6Addr) -> bool {
         let segments = ip.segments();
-        let value = u128::from_be_bytes(ip.octets());
-        let ietf_protocol_assignment = matches!(segments, [0x2001, b, ..] if b < 0x200)
-            && !(value == 0x2001_0001_0000_0000_0000_0000_0000_0001
-                || value == 0x2001_0001_0000_0000_0000_0000_0000_0002
-                || matches!(segments, [0x2001, 3, ..])
-                || matches!(segments, [0x2001, 4, 0x112, ..])
-                || matches!(segments, [0x2001, b, ..] if (0x20..=0x3f).contains(&b)));
         let documentation = matches!(segments, [0x2001, 0xdb8, ..] | [0x3fff, 0x0000..=0x0fff, ..]);
 
         !(ip.is_unspecified()
@@ -290,7 +275,7 @@ impl ClientIpResolver {
             || matches!(segments, [0, 0, 0, 0, 0, 0xffff, _, _])
             || matches!(segments, [0x64, 0xff9b, 1, ..])
             || matches!(segments, [0x100, 0, 0, 0, ..])
-            || ietf_protocol_assignment
+            || matches!(segments, [0x2001, b, ..] if b < 0x200)
             || matches!(segments, [0x2002, ..])
             || documentation
             || matches!(segments, [0x5f00, ..])

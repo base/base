@@ -6411,7 +6411,6 @@ dependencies = [
  "reth-eth-wire",
  "secp256k1 0.30.0",
  "serde",
- "serial_test",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
