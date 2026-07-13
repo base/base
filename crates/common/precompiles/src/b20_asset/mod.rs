@@ -8,6 +8,12 @@ pub use accounting::AssetAccounting;
 
 mod dispatch;
 
+mod versions;
+pub use versions::{B20AssetVersion, B20AssetVersionId, B20AssetVersions};
+
+mod logic;
+pub use logic::B20AssetV1;
+
 mod precompile;
 pub use precompile::B20AssetPrecompile;
 
