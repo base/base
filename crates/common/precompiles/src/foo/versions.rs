@@ -8,7 +8,7 @@
 
 use base_common_genesis::BaseUpgrade;
 
-use crate::{FooLogic, FooV1, FooV2};
+use crate::{FooLogic, FooV1, FooV2, FooV3};
 
 /// An activated version of the `foo` precompile logic.
 ///
@@ -19,6 +19,8 @@ pub enum FooVersion {
     V1,
     /// Introduced at Cobalt: changes `helloWorld` and adds `greet`.
     V2,
+    /// Staged for the next hardfork: a self-contained copy that changes `greet`.
+    V3,
 }
 
 impl FooVersion {
@@ -32,9 +34,11 @@ impl FooVersion {
     pub fn logic(self) -> &'static dyn FooLogic {
         static FOO_V1: FooV1 = FooV1;
         static FOO_V2: FooV2 = FooV2 { previous: FooV1 };
+        static FOO_V3: FooV3 = FooV3;
         match self {
             Self::V1 => &FOO_V1,
             Self::V2 => &FOO_V2,
+            Self::V3 => &FOO_V3,
         }
     }
 }
@@ -51,7 +55,12 @@ impl FooVersions {
     /// Returns the version active at `upgrade`, or `None` before the
     /// introduction fork (Beryl), where `foo` is not installed at all.
     pub fn resolve(upgrade: BaseUpgrade) -> Option<FooVersion> {
-        if upgrade >= BaseUpgrade::Cobalt {
+        // V3 is staged behind the permanently-off `Zombie` gate: wired up and
+        // testable, but never selected on a live chain until this branch is
+        // repointed to a real, scheduled fork.
+        if upgrade >= BaseUpgrade::Zombie {
+            Some(FooVersion::V3)
+        } else if upgrade >= BaseUpgrade::Cobalt {
             Some(FooVersion::V2)
         } else if upgrade >= BaseUpgrade::Beryl {
             Some(FooVersion::V1)
@@ -83,8 +92,15 @@ mod tests {
     }
 
     #[test]
+    fn resolves_v3_at_zombie_gate() {
+        assert_eq!(FooVersions::resolve(BaseUpgrade::Zombie), Some(FooVersion::V3));
+    }
+
+    #[test]
     fn logic_hello_world_matches_version() {
         assert_eq!(FooVersion::V1.logic().hello_world(), "Hello, World!");
         assert_eq!(FooVersion::V2.logic().hello_world(), "Hello, World! Welcome to Base.");
+        // V3 copies V2's `helloWorld` value verbatim.
+        assert_eq!(FooVersion::V3.logic().hello_world(), "Hello, World! Welcome to Base.");
     }
 }

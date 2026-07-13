@@ -18,6 +18,9 @@ pub use v1::FooV1;
 mod v2;
 pub use v2::FooV2;
 
+mod v3;
+pub use v3::FooV3;
+
 /// Append-only business-logic interface shared by every `foo` version.
 pub trait FooLogic {
     /// Returns the greeting for `helloWorld()`.
