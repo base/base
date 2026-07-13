@@ -13,7 +13,7 @@ use base_proof_zk_backend::{
 use base_proof_zk_host::{
     DEFAULT_PROOF_GENERATOR_HEARTBEAT_LOCK_DURATION_SECONDS,
     DEFAULT_PROOF_GENERATOR_MAX_CONSECUTIVE_HEARTBEAT_FAILURES, ProofGeneratorHeartbeatConfig,
-    ZkHost, ZkHostConfig,
+    ZkBackend, ZkHost, ZkHostConfig,
 };
 use base_prover_service_client::{ProverServiceClientConfig, ProverWorkerClient};
 use clap::{Parser, ValueEnum};
@@ -201,14 +201,20 @@ enum ZkBackendArg {
     Network,
 }
 
+impl ZkBackendArg {
+    const fn protocol(self) -> ZkBackend {
+        match self {
+            Self::Mock => ZkBackend::Mock,
+            Self::DryRun => ZkBackend::DryRun,
+            Self::Cluster => ZkBackend::Cluster,
+            Self::Network => ZkBackend::Network,
+        }
+    }
+}
+
 impl AsRef<str> for ZkBackendArg {
     fn as_ref(&self) -> &str {
-        match self {
-            Self::Mock => "mock",
-            Self::DryRun => "dry_run",
-            Self::Cluster => "cluster",
-            Self::Network => "network",
-        }
+        self.protocol().as_str()
     }
 }
 
@@ -355,6 +361,7 @@ impl WorkerArgs {
         let worker_id =
             args.worker_id.clone().unwrap_or_else(|| format!("zk-host-{}", Uuid::new_v4()));
         let host_config = ZkHostConfig::sp1(worker_id.clone())
+            .with_zk_backend(args.backend.protocol())
             .with_job_discovery_poll_interval(Duration::from_millis(
                 args.job_discovery_poll_interval_ms,
             ))

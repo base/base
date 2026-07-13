@@ -52,12 +52,12 @@ pub enum JobClaimFilter {
         /// TEE kinds this worker can execute.
         tee_kinds: Vec<TeeKind>,
     },
-    /// Claim ZK proof jobs for the configured virtual machines and backends.
+    /// Claim ZK proof jobs for the configured virtual machines and backend.
     Zk {
         /// ZK virtual machines this worker can execute.
         zk_vms: Vec<ZkVm>,
-        /// ZK proving backends this worker can execute.
-        zk_backends: Vec<ZkBackend>,
+        /// ZK proving backend this worker can execute.
+        zk_backend: ZkBackend,
     },
 }
 
@@ -68,8 +68,8 @@ impl JobClaimFilter {
     }
 
     /// Creates a ZK claim filter.
-    pub fn zk(zk_vms: impl Into<Vec<ZkVm>>, zk_backends: impl Into<Vec<ZkBackend>>) -> Self {
-        Self::Zk { zk_vms: zk_vms.into(), zk_backends: zk_backends.into() }
+    pub fn zk(zk_vms: impl Into<Vec<ZkVm>>, zk_backend: ZkBackend) -> Self {
+        Self::Zk { zk_vms: zk_vms.into(), zk_backend }
     }
 
     /// Returns the prover-service proof types for this claim filter.
@@ -116,9 +116,8 @@ impl JobClaimFilter {
                 }),
                 None,
             ],
-            Self::Zk { zk_vms, zk_backends } => {
+            Self::Zk { zk_vms, zk_backend } => {
                 let zk_vms = zk_vms.clone();
-                let zk_backends = zk_backends.clone();
                 let proof_types = if proof_type_offset.is_multiple_of(ZK_PROOF_TYPES.len()) {
                     ZK_PROOF_TYPES
                 } else {
@@ -132,7 +131,7 @@ impl JobClaimFilter {
                         proof_type: first_proof_type,
                         tee_kinds: Vec::new(),
                         zk_vms: zk_vms.clone(),
-                        zk_backends: zk_backends.clone(),
+                        zk_backends: vec![*zk_backend],
                         lock_duration_seconds,
                     }),
                     Some(GetNextProofRequest {
@@ -140,7 +139,7 @@ impl JobClaimFilter {
                         proof_type: second_proof_type,
                         tee_kinds: Vec::new(),
                         zk_vms,
-                        zk_backends,
+                        zk_backends: vec![*zk_backend],
                         lock_duration_seconds,
                     }),
                 ]
@@ -171,9 +170,9 @@ impl JobDiscoveryConfig {
     pub fn zk(
         worker_id: impl Into<String>,
         zk_vms: impl Into<Vec<ZkVm>>,
-        zk_backends: impl Into<Vec<ZkBackend>>,
+        zk_backend: ZkBackend,
     ) -> Self {
-        Self::new(worker_id, JobClaimFilter::zk(zk_vms, zk_backends))
+        Self::new(worker_id, JobClaimFilter::zk(zk_vms, zk_backend))
     }
 
     /// Creates a job discovery config using default timings.
@@ -656,7 +655,7 @@ mod tests {
 
     #[test]
     fn config_builds_zk_claim_requests() {
-        let config = JobDiscoveryConfig::zk("worker-a", vec![ZkVm::Sp1], vec![ZkBackend::Cluster])
+        let config = JobDiscoveryConfig::zk("worker-a", vec![ZkVm::Sp1], ZkBackend::Network)
             .with_lock_duration_seconds(30)
             .with_max_concurrent_jobs(0);
 
@@ -667,13 +666,13 @@ mod tests {
         assert_eq!(requests[0].proof_type, ProofType::Compressed);
         assert!(requests[0].tee_kinds.is_empty());
         assert_eq!(requests[0].zk_vms, vec![ZkVm::Sp1]);
-        assert_eq!(requests[0].zk_backends, vec![ZkBackend::Cluster]);
+        assert_eq!(requests[0].zk_backends, vec![ZkBackend::Network]);
         assert_eq!(requests[0].lock_duration_seconds, 30);
         assert_eq!(requests[1].worker_id, "worker-a");
         assert_eq!(requests[1].proof_type, ProofType::SnarkGroth16);
         assert!(requests[1].tee_kinds.is_empty());
         assert_eq!(requests[1].zk_vms, vec![ZkVm::Sp1]);
-        assert_eq!(requests[1].zk_backends, vec![ZkBackend::Cluster]);
+        assert_eq!(requests[1].zk_backends, vec![ZkBackend::Network]);
         assert_eq!(requests[1].lock_duration_seconds, 30);
         assert_eq!(config.normalized_max_concurrent_jobs(), 1);
     }
@@ -701,7 +700,7 @@ mod tests {
         let discovery = JobDiscovery::new(
             client.clone(),
             generator,
-            JobDiscoveryConfig::zk("worker-a", vec![ZkVm::Sp1], vec![ZkBackend::Cluster]),
+            JobDiscoveryConfig::zk("worker-a", vec![ZkVm::Sp1], ZkBackend::Cluster),
         );
 
         let outcome = discovery.claim_once().await.expect("claim should succeed");
@@ -719,7 +718,7 @@ mod tests {
         let discovery = JobDiscovery::new(
             client.clone(),
             Arc::new(MockGenerator::default()),
-            JobDiscoveryConfig::zk("worker-a", vec![ZkVm::Sp1], vec![ZkBackend::Cluster]),
+            JobDiscoveryConfig::zk("worker-a", vec![ZkVm::Sp1], ZkBackend::Cluster),
         );
 
         let outcome = discovery.claim_once().await.expect("claim should succeed");
@@ -734,7 +733,7 @@ mod tests {
         let discovery = JobDiscovery::new(
             client.clone(),
             Arc::new(MockGenerator { can_claim: true, ..Default::default() }),
-            JobDiscoveryConfig::zk("worker-a", vec![ZkVm::Sp1], vec![ZkBackend::Cluster]),
+            JobDiscoveryConfig::zk("worker-a", vec![ZkVm::Sp1], ZkBackend::Cluster),
         );
         discovery.generator_permits.close();
 
@@ -752,7 +751,7 @@ mod tests {
         let discovery = JobDiscovery::new(
             client,
             generator,
-            JobDiscoveryConfig::zk("worker-a", vec![ZkVm::Sp1], vec![ZkBackend::Cluster]),
+            JobDiscoveryConfig::zk("worker-a", vec![ZkVm::Sp1], ZkBackend::Cluster),
         );
 
         let outcome = discovery.claim_once().await.expect("claim should succeed");
@@ -775,7 +774,7 @@ mod tests {
         let discovery = JobDiscovery::new(
             client.clone(),
             generator,
-            JobDiscoveryConfig::zk("worker-a", vec![ZkVm::Sp1], vec![ZkBackend::Cluster]),
+            JobDiscoveryConfig::zk("worker-a", vec![ZkVm::Sp1], ZkBackend::Cluster),
         );
         discovery.claim_offset.store(1, Ordering::Relaxed);
 
@@ -803,7 +802,7 @@ mod tests {
         let discovery = JobDiscovery::new(
             client.clone(),
             generator,
-            JobDiscoveryConfig::zk("worker-a", vec![ZkVm::Sp1], vec![ZkBackend::Cluster]),
+            JobDiscoveryConfig::zk("worker-a", vec![ZkVm::Sp1], ZkBackend::Cluster),
         );
 
         let error =

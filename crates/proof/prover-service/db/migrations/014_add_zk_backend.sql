@@ -15,33 +15,6 @@ SET zk_backend = COALESCE(zk_backend, 'cluster')
 WHERE api_proof_type IN ('compressed', 'snark_groth16')
    OR (api_proof_type IS NULL AND proof_type IS NOT NULL);
 
--- Backfill request_payload JSON so legacy rows deserialize with zk_backend.
-UPDATE proof_requests
-SET request_payload = CASE
-    WHEN request_payload -> 'request' ->> 'proof_type' = 'snark_groth16' THEN
-        jsonb_set(
-            request_payload,
-            '{request,payload,proof,zk_backend}',
-            '"cluster"'::jsonb,
-            true
-        )
-    WHEN request_payload -> 'request' ->> 'proof_type' = 'compressed' THEN
-        jsonb_set(
-            request_payload,
-            '{request,payload,zk_backend}',
-            '"cluster"'::jsonb,
-            true
-        )
-    ELSE request_payload
-END
-WHERE request_payload IS NOT NULL
-  AND (
-      (request_payload -> 'request' ->> 'proof_type' = 'compressed'
-          AND request_payload -> 'request' -> 'payload' ->> 'zk_backend' IS NULL)
-      OR (request_payload -> 'request' ->> 'proof_type' = 'snark_groth16'
-          AND request_payload -> 'request' -> 'payload' -> 'proof' ->> 'zk_backend' IS NULL)
-  );
-
 ALTER TABLE proof_requests ENABLE TRIGGER update_proof_requests_updated_at;
 
 -- Keep NULL equivalent to the compatibility default while legacy service

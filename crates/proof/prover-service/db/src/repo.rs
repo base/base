@@ -2388,17 +2388,26 @@ fn request_payload_matches(
     incoming: &serde_json::Value,
     mode: RequestMismatchMode,
 ) -> bool {
-    match mode {
-        RequestMismatchMode::Strict => existing == incoming,
-        RequestMismatchMode::AllowL1HeadReplacement => {
-            payload_without_l1_head_fields(existing) == payload_without_l1_head_fields(incoming)
-        }
-    }
+    comparable_request_payload(existing, mode) == comparable_request_payload(incoming, mode)
 }
 
-fn payload_without_l1_head_fields(value: &serde_json::Value) -> serde_json::Value {
+fn comparable_request_payload(
+    value: &serde_json::Value,
+    mode: RequestMismatchMode,
+) -> serde_json::Value {
     let mut value = value.clone();
-    remove_l1_head_fields(&mut value);
+    let zk_backend_path =
+        match value.pointer("/request/proof_type").and_then(serde_json::Value::as_str) {
+            Some("compressed") => Some("/request/payload"),
+            Some("snark_groth16") => Some("/request/payload/proof"),
+            _ => None,
+        };
+    if let Some(map) = zk_backend_path.and_then(|path| value.pointer_mut(path)?.as_object_mut()) {
+        map.entry("zk_backend").or_insert_with(|| serde_json::Value::String("cluster".to_owned()));
+    }
+    if mode == RequestMismatchMode::AllowL1HeadReplacement {
+        remove_l1_head_fields(&mut value);
+    }
     value
 }
 
@@ -2603,6 +2612,43 @@ mod tests {
             &new_unrelated_l1_head,
             RequestMismatchMode::AllowL1HeadReplacement,
         ));
+    }
+
+    #[test]
+    fn legacy_zk_payload_defaults_to_cluster_for_idempotency() {
+        let payloads = [
+            (
+                serde_json::json!({
+                    "request": {"proof_type": "compressed", "payload": {"start_block_number": 1}}
+                }),
+                serde_json::json!({
+                    "request": {
+                        "proof_type": "compressed",
+                        "payload": {"start_block_number": 1, "zk_backend": "cluster"}
+                    }
+                }),
+            ),
+            (
+                serde_json::json!({
+                    "request": {
+                        "proof_type": "snark_groth16",
+                        "payload": {"proof": {"start_block_number": 1}}
+                    }
+                }),
+                serde_json::json!({
+                    "request": {
+                        "proof_type": "snark_groth16",
+                        "payload": {
+                            "proof": {"start_block_number": 1, "zk_backend": "cluster"}
+                        }
+                    }
+                }),
+            ),
+        ];
+
+        for (legacy, current) in payloads {
+            assert!(request_payload_matches(&legacy, &current, RequestMismatchMode::Strict));
+        }
     }
 
     fn tee_protocol_request(session_id: &str) -> ProtocolProofRequest {

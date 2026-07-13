@@ -1,6 +1,6 @@
 #![doc = include_str!("../README.md")]
 
-pub use base_prover_service_protocol::ZkVm;
+pub use base_prover_service_protocol::{ZkBackend, ZkVm};
 
 mod prover;
 pub use prover::{

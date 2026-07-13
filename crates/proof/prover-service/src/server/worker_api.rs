@@ -8,7 +8,7 @@ use base_prover_service_protocol::{
     GetNextProofRequest, GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse,
     HeartbeatRequest, HeartbeatResponse, ProofJob as ProtocolProofJob, ProverWorkerApiServer,
     RecordProofSessionRequest, RecordProofSessionResponse, WorkerSubmitProofRequest,
-    WorkerSubmitProofResponse, ZkBackend,
+    WorkerSubmitProofResponse,
 };
 use jsonrpsee::{
     core::{RpcResult, async_trait},
@@ -77,17 +77,12 @@ impl ProverServiceServer {
         &self,
         request: GetNextProofRequest,
     ) -> RpcResult<GetNextProofResponse> {
-        let zk_backends = if request.zk_backends.is_empty() {
-            vec![ZkBackend::Cluster]
-        } else {
-            request.zk_backends
-        };
         let claim = ClaimProofJob {
             worker_id: request.worker_id,
             api_proof_type: request.proof_type.into(),
             tee_kinds: request.tee_kinds.into_iter().map(Into::into).collect(),
             zk_vms: request.zk_vms.into_iter().map(Into::into).collect(),
-            zk_backends,
+            zk_backends: request.zk_backends,
             lock_duration_seconds: resolve_lock_duration(
                 self.config.worker,
                 request.lock_duration_seconds,
