@@ -17,10 +17,11 @@ use crate::{
     upload::SnapshotUploader,
 };
 
-/// Orchestrates the full snapshot flow: stop EL → generate → upload → restart EL.
+/// Orchestrates the full snapshot flow: stop CL and EL → generate → upload → restart EL and CL.
 ///
-/// The EL container is always restarted, even if snapshot generation or upload
-/// fails. This prevents leaving the node in a stopped state on errors.
+/// Both containers are always restarted, even if snapshot generation or upload
+/// fails. This prevents leaving the node in a stopped state on errors and ensures
+/// the CL reconnects to the EL after the snapshot.
 pub struct Snapshotter<C: ContainerManager, T: TipChecker> {
     container_manager: C,
     tip_checker: T,
@@ -49,12 +50,12 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
     /// Executes the full snapshot lifecycle.
     ///
     /// 0. Verifies the EL is at chain tip; skips the run if it is not
-    /// 1. Stops the EL container
-    /// 2. Verifies the container is stopped
+    /// 1. Stops the CL and EL containers
+    /// 2. Verifies both containers are stopped
     /// 3. Generates snapshot archives
     /// 4. Uploads to S3/R2
     /// 5. Clears reth's persisted peer list (best effort)
-    /// 6. Restarts the EL container (always, even on failure)
+    /// 6. Restarts the EL and then the CL (always, even on failure)
     ///
     /// When `upload_existing_run_timestamp` is set, the snapshotter skips the
     /// container lifecycle entirely and uploads the existing `run-<timestamp>`
@@ -80,16 +81,21 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
         if !at_tip {
             warn!(
                 threshold_secs = self.config.tip_threshold_secs,
-                "EL is not at tip; skipping snapshot run and leaving container running"
+                "EL is not at tip; skipping snapshot run and leaving containers running"
             );
             return Ok(());
         }
 
-        let stop_result = self.container_manager.stop(&self.config.container_name).await;
-
-        let result = match stop_result {
-            Ok(()) => self.generate_and_upload().await,
-            Err(e) => Err(e).context("failed to stop EL container"),
+        // Stop the dependent CL first, then the EL. Restarting in the reverse
+        // order below ensures the EL is available when the CL reconnects.
+        let cl_stop_result =
+            self.container_manager.stop(&self.config.consensus_container_name).await;
+        let result = match cl_stop_result {
+            Ok(()) => match self.container_manager.stop(&self.config.container_name).await {
+                Ok(()) => self.generate_and_upload().await,
+                Err(e) => Err(e).context("failed to stop EL container"),
+            },
+            Err(e) => Err(e).context("failed to stop CL container"),
         };
 
         // Clear reth's persisted peer list before the EL restarts so the node
@@ -98,9 +104,9 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
         // never aborts the run or blocks the restart.
         self.clear_known_peers();
 
-        let restart_result = self.container_manager.start(&self.config.container_name).await;
+        let el_restart_result = self.container_manager.start(&self.config.container_name).await;
 
-        if let Err(ref restart_err) = restart_result {
+        if let Err(ref restart_err) = el_restart_result {
             error!(
                 error = %restart_err,
                 container = %self.config.container_name,
@@ -108,23 +114,43 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
             );
         }
 
+        let cl_restart_result =
+            self.container_manager.start(&self.config.consensus_container_name).await;
+
+        if let Err(ref restart_err) = cl_restart_result {
+            error!(
+                error = %restart_err,
+                container = %self.config.consensus_container_name,
+                "CRITICAL: failed to restart CL container after snapshot"
+            );
+        }
+
+        let restart_result = match (el_restart_result, cl_restart_result) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(el_err), Ok(())) => Err(el_err).context("failed to restart EL container"),
+            (Ok(()), Err(cl_err)) => Err(cl_err).context("failed to restart CL container"),
+            (Err(el_err), Err(cl_err)) => {
+                bail!("failed to restart EL container ({el_err}) and CL container ({cl_err})")
+            }
+        };
+
         match (result, restart_result) {
             (Ok(()), Ok(())) => {
                 info!("snapshot lifecycle complete");
                 Ok(())
             }
             (Err(snapshot_err), Ok(())) => {
-                Err(snapshot_err).context("snapshot failed but EL container was restarted")
+                Err(snapshot_err).context("snapshot failed but EL and CL containers were restarted")
             }
             (Ok(()), Err(restart_err)) => {
                 bail!(
-                    "snapshot succeeded but EL container restart failed: {restart_err}. \
+                    "snapshot succeeded but container restart failed: {restart_err}. \
                      MANUAL INTERVENTION REQUIRED."
                 )
             }
             (Err(snapshot_err), Err(restart_err)) => {
                 bail!(
-                    "snapshot failed ({snapshot_err}) AND EL container restart failed \
+                    "snapshot failed ({snapshot_err}) AND container restart failed \
                      ({restart_err}). MANUAL INTERVENTION REQUIRED."
                 )
             }

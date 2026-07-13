@@ -29,6 +29,10 @@ pub struct SnapshotterConfig {
     #[arg(long)]
     pub container_name: String,
 
+    /// Docker container name of the consensus layer node to stop/start.
+    #[arg(long)]
+    pub consensus_container_name: String,
+
     /// HTTP JSON-RPC URL of the execution layer node.
     ///
     /// Used to verify the EL is at tip (latest block is recent) before pausing
@@ -41,7 +45,7 @@ pub struct SnapshotterConfig {
     ///
     /// If the latest block's timestamp is older than this many seconds relative
     /// to the current wall-clock time, the snapshot run is skipped and the EL
-    /// container is left untouched.
+    /// and CL containers are left untouched.
     #[arg(long, env = "SNAPSHOTTER_TIP_THRESHOLD_SECS", default_value_t = DEFAULT_TIP_THRESHOLD_SECS)]
     pub tip_threshold_secs: u64,
 
