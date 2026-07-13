@@ -83,6 +83,7 @@ jobs:
             Only post new findings that haven't been raised before.
 
             WHAT TO LOOK FOR:
+            - PR description accuracy: compare the PR title and description against the actual diff, and flag claims about behavior, tests, migrations, documentation, or scope that are absent from or contradicted by the code changes
             - Error handling: .unwrap()/.expect() in non-test code, discarded error context (.map_err(|_| ...)), missing From impls
             - Memory & performance: unnecessary .clone() on large types in hot paths, unbounded collections from external input
             - Concurrency: locks held across .await, channel misuse (no backpressure, unhandled closed channels), cancellation safety in tokio::select!
