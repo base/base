@@ -126,6 +126,7 @@ impl<Client> ZkHost<Client> {
         provers: HashMap<ZkBackend, Arc<dyn ZkProver>>,
         config: ZkHostConfig,
     ) -> Self {
+        assert!(!provers.is_empty(), "ZK host requires at least one prover backend");
         Self { client, provers, config }
     }
 
@@ -142,7 +143,8 @@ where
     /// Runs the host until cancellation is requested.
     pub async fn run_until_cancelled(self, cancel: CancellationToken) {
         let Self { client, provers, config } = self;
-        let zk_backends = provers.keys().copied().collect::<Vec<_>>();
+        let mut zk_backends = provers.keys().copied().collect::<Vec<_>>();
+        zk_backends.sort_unstable_by_key(|backend| backend.as_str());
         let discovery_config = JobDiscoveryConfig::zk(config.worker_id, config.zk_vms, zk_backends)
             .with_poll_interval(config.job_discovery_poll_interval)
             .with_lock_duration_seconds(config.job_discovery_lock_duration_seconds)
