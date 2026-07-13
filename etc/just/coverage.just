@@ -40,22 +40,22 @@ clean:
 # Collects coverage for workspace unit + integration tests (excludes system tests)
 unit *args: _install-llvm-cov _install-nextest _build-contracts
     mkdir -p target/coverage
-    cargo llvm-cov nextest --workspace --all-features --exclude base-system-tests --lcov --output-path target/coverage/unit.lcov {{ args }}
+    cargo llvm-cov nextest --locked --workspace --all-features --exclude base-system-tests --lcov --output-path target/coverage/unit.lcov {{ args }}
 
 # Collects coverage for the action-test harness (base-action-harness)
 action *args: _install-llvm-cov _install-nextest _build-contracts
     mkdir -p target/coverage
-    cargo llvm-cov nextest -p base-action-harness --lcov --output-path target/coverage/action.lcov {{ args }}
+    cargo llvm-cov nextest --locked -p base-action-harness --lcov --output-path target/coverage/action.lcov {{ args }}
 
 # Collects coverage for the Docker-backed system tests (needs `just devnet pull-images`)
 system *args: _install-llvm-cov _install-nextest _build-contracts
     mkdir -p target/coverage
-    cargo llvm-cov nextest -p base-system-tests --lcov --output-path target/coverage/system.lcov {{ args }}
+    cargo llvm-cov nextest --locked -p base-system-tests --lcov --output-path target/coverage/system.lcov {{ args }}
 
 # Collects coverage for all three tiers
 all: unit action system
 
 # Generates a local HTML report for the workspace (excludes system tests)
 html: _install-llvm-cov _install-nextest _build-contracts
-    cargo llvm-cov nextest --workspace --all-features --exclude base-system-tests --html
+    cargo llvm-cov nextest --locked --workspace --all-features --exclude base-system-tests --html
     @echo "Open target/llvm-cov/html/index.html"
