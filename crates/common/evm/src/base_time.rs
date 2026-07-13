@@ -17,6 +17,26 @@ pub struct BaseTime {
     pub timestamp_millis_part: u16,
 }
 
+/// Errors produced while applying the `BaseTime` predeploy transition.
+#[derive(Debug, thiserror::Error)]
+pub enum BaseTimeTransitionError<DBError> {
+    /// A database operation failed.
+    #[error("BaseTime transition database error: {0}")]
+    Database(#[from] DBError),
+    /// The reserved proxy account is missing.
+    #[error("BaseTime activation requires the reserved proxy account")]
+    MissingProxy,
+    /// The reserved proxy account does not contain code.
+    #[error("BaseTime activation requires existing proxy code")]
+    CodelessProxy,
+    /// The reserved proxy does not have the canonical admin.
+    #[error("BaseTime activation requires the canonical proxy admin, found {actual:#x}")]
+    UnexpectedProxyAdmin {
+        /// The admin slot value found in state.
+        actual: U256,
+    },
+}
+
 impl BaseTime {
     /// The code-namespace address used by the canonical `BaseTime` proxy.
     pub const IMPLEMENTATION_ADDRESS: Address =
@@ -70,7 +90,7 @@ impl BaseTime {
     /// Installs the `BaseTime` implementation and links its existing proxy before transactions.
     ///
     /// Existing chains must already contain the reserved proxy runtime with
-    /// [`Predeploys::PROXY_ADMIN`] in its EIP-1967 admin slot. This transition asserts that
+    /// [`Predeploys::PROXY_ADMIN`] in its EIP-1967 admin slot. This transition validates that
     /// historical invariant; it does not install or repair proxy state.
     ///
     /// The transition is staged behind the `Zombie` activation condition. The implementation slot
@@ -80,7 +100,7 @@ impl BaseTime {
         chain_spec: impl Upgrades,
         timestamp: u64,
         db: &mut DB,
-    ) -> Result<(), DB::Error>
+    ) -> Result<(), BaseTimeTransitionError<DB::Error>>
     where
         DB: Database + DatabaseCommit,
     {
@@ -95,20 +115,16 @@ impl BaseTime {
             return Ok(());
         }
 
-        let proxy_info = db
-            .basic(Predeploys::BASE_TIME)?
-            .expect("BaseTime activation requires the reserved proxy account");
-        assert!(
-            !proxy_info.is_empty_code_hash(),
-            "BaseTime activation requires existing proxy code"
-        );
+        let proxy_info =
+            db.basic(Predeploys::BASE_TIME)?.ok_or(BaseTimeTransitionError::MissingProxy)?;
+        if proxy_info.is_empty_code_hash() {
+            return Err(BaseTimeTransitionError::CodelessProxy);
+        }
 
         let current_admin = db.storage(Predeploys::BASE_TIME, Self::ADMIN_SLOT)?;
-        assert_eq!(
-            current_admin,
-            U256::from_be_slice(Predeploys::PROXY_ADMIN.as_slice()),
-            "BaseTime activation requires the canonical proxy admin"
-        );
+        if current_admin != U256::from_be_slice(Predeploys::PROXY_ADMIN.as_slice()) {
+            return Err(BaseTimeTransitionError::UnexpectedProxyAdmin { actual: current_admin });
+        }
 
         let code = Bytecode::new_raw(Self::implementation_bytecode());
         let mut implementation_info = db.basic(Self::IMPLEMENTATION_ADDRESS)?.unwrap_or_default();
@@ -293,24 +309,25 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "BaseTime activation requires the reserved proxy account")]
     fn active_transition_rejects_missing_proxy() {
         let mut db = InMemoryDB::default();
 
-        BaseTime::ensure_predeploy(TestUpgrades(true), 102, &mut db).unwrap();
+        let error = BaseTime::ensure_predeploy(TestUpgrades(true), 102, &mut db).unwrap_err();
+
+        assert!(matches!(error, BaseTimeTransitionError::MissingProxy));
     }
 
     #[test]
-    #[should_panic(expected = "BaseTime activation requires existing proxy code")]
     fn active_transition_rejects_codeless_proxy() {
         let mut db = InMemoryDB::default();
         db.insert_account_info(Predeploys::BASE_TIME, AccountInfo::default());
 
-        BaseTime::ensure_predeploy(TestUpgrades(true), 102, &mut db).unwrap();
+        let error = BaseTime::ensure_predeploy(TestUpgrades(true), 102, &mut db).unwrap_err();
+
+        assert!(matches!(error, BaseTimeTransitionError::CodelessProxy));
     }
 
     #[test]
-    #[should_panic(expected = "BaseTime activation requires the canonical proxy admin")]
     fn active_transition_rejects_unexpected_proxy_admin() {
         let mut db = InMemoryDB::default();
         let proxy_code = Bytecode::new_raw(BaseTime::proxy_bytecode());
@@ -323,7 +340,12 @@ mod tests {
             },
         );
 
-        BaseTime::ensure_predeploy(TestUpgrades(true), 102, &mut db).unwrap();
+        let error = BaseTime::ensure_predeploy(TestUpgrades(true), 102, &mut db).unwrap_err();
+
+        assert!(matches!(
+            error,
+            BaseTimeTransitionError::UnexpectedProxyAdmin { actual: U256::ZERO }
+        ));
     }
 
     #[test]

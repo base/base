@@ -17,7 +17,7 @@ mod l1block;
 pub use l1block::L1BlockInfo;
 
 mod base_time;
-pub use base_time::BaseTime;
+pub use base_time::{BaseTime, BaseTimeTransitionError};
 
 mod transaction;
 pub use transaction::{
