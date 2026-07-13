@@ -174,7 +174,7 @@ impl<C: Clock> BondManager<C> {
         };
 
         if !self.claim_addresses.contains(&bond_recipient)
-            && !self.claim_addresses.contains(&zk_prover)
+            && (zk_prover == Address::ZERO || !self.claim_addresses.contains(&zk_prover))
         {
             return None;
         }
@@ -556,6 +556,22 @@ mod tests {
         mgr.discover_claimable_games(&*verifier, &submitter).await.unwrap();
 
         assert_eq!(tx_manager.recorded_calls().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn scan_ignores_zero_zk_prover_match() {
+        let state = game_state(Address::repeat_byte(0xDD), Address::ZERO, 0, false);
+        let verifier = verifier(state);
+        let (submitter, tx_manager) = bond_submitter(vec![]);
+        let mut mgr = manager(
+            Address::ZERO,
+            "http://localhost:8545".parse().unwrap(),
+            fixed_clock(2_000_000_000),
+        );
+
+        mgr.discover_claimable_games(&*verifier, &submitter).await.unwrap();
+
+        assert!(tx_manager.recorded_calls().is_empty());
     }
 
     #[tokio::test]
