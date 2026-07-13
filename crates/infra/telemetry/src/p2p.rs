@@ -63,7 +63,7 @@ impl P2pReachabilityRequest {
     pub fn parse_enode(enode: &str) -> Option<(B512, u16)> {
         let rest = enode.strip_prefix("enode://")?;
         // Drop any query string, e.g. `?discport=30301`.
-        let rest = rest.split('?').next().unwrap_or(rest);
+        let rest = rest.split_once('?').map_or(rest, |(before, _)| before);
         let (raw_node_id, endpoint) = rest.split_once('@')?;
         let node_id = B512::from_str(raw_node_id).ok()?;
 
