@@ -148,6 +148,19 @@ where
         transaction.eip8130_nonce_channel_key().is_some()
     }
 
+    /// Best-effort replay-id dedup lookup for the mempool admission path.
+    ///
+    /// This check and the subsequent [`Self::track_eip8130_replay_id`] insert are
+    /// deliberately **not** atomic: the index lock is released between them (and
+    /// between this check and the actual pool insert). Two concurrent admissions
+    /// of the same `(sender, replay_id)` can therefore both pass and enter the
+    /// pool. That is acceptable because the index is only a mempool optimization,
+    /// not a consensus control: identical transactions collapse by tx-hash in the
+    /// underlying pool, and any surviving nonce-free duplicate is rejected at
+    /// execution by the enshrined replay buffer. Holding the index lock across the
+    /// validate+insert would also serialize admission and reintroduce cross-lock
+    /// nesting, so the looser guarantee is intentional. A stale entry whose target
+    /// is no longer pooled is opportunistically evicted here.
     fn eip8130_replay_already_seen(&self, transaction: &T) -> Option<TxHash> {
         let key = (transaction.sender(), transaction.eip8130_replay_id()?);
         let hash = self.eip8130_replays.read().get(&key).copied()?;
@@ -168,17 +181,29 @@ where
 
     fn reconcile_eip8130_replays_if_needed(&self) {
         let pool_size = self.pool_size().total;
-        let mut index = self.eip8130_replays.write();
-        if index.len() <= pool_size {
+        // Fast path: bail while within bound, holding only the index read lock.
+        if self.eip8130_replays.read().len() <= pool_size {
             return;
         }
+        // Snapshot and rebuild the index from the live pool *without* holding the
+        // `eip8130_replays` lock. `pooled_transactions()` takes `nonce_pool.read()`,
+        // so acquiring the index write lock first (as the naive `write(); rebuild()`
+        // would) establishes an `eip8130_replays -> nonce_pool` lock order. Building
+        // the replacement outside the lock keeps the two locks strictly disjoint,
+        // avoiding a lock-order inversion with any path that touches the index after
+        // the nonce pool. Entries added between this snapshot and the write below are
+        // best-effort only (the index is a dedup optimization, not consensus state).
         let mut rebuilt = HashMap::new();
         for transaction in self.pooled_transactions() {
             if let Some(replay_id) = transaction.transaction.eip8130_replay_id() {
                 rebuilt.insert((transaction.transaction.sender(), replay_id), *transaction.hash());
             }
         }
-        *index = rebuilt;
+        let mut index = self.eip8130_replays.write();
+        // Re-check under the write lock: only overwrite while still oversized.
+        if index.len() > pool_size {
+            *index = rebuilt;
+        }
     }
 
     fn untrack_eip8130_replays(&self, transactions: &[Arc<ValidPoolTransaction<T>>]) {
