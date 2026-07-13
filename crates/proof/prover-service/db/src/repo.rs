@@ -2388,6 +2388,9 @@ fn request_payload_matches(
     incoming: &serde_json::Value,
     mode: RequestMismatchMode,
 ) -> bool {
+    if existing == incoming {
+        return true;
+    }
     comparable_request_payload(existing, mode) == comparable_request_payload(incoming, mode)
 }
 
