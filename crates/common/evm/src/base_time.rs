@@ -69,9 +69,9 @@ impl BaseTime {
 
     /// Installs the `BaseTime` implementation and links its existing proxy before transactions.
     ///
-    /// The transition is staged behind the `Zombie` activation condition. An existing
-    /// non-canonical proxy implementation is preserved so this transition cannot undo a governance
-    /// upgrade.
+    /// The transition is staged behind the `Zombie` activation condition. The proxy's
+    /// implementation slot is the durable migration marker: any existing linkage is preserved so
+    /// later execution cannot rewrite the initial deployment or undo a governance upgrade.
     pub fn ensure_predeploy<DB>(
         chain_spec: impl Upgrades,
         timestamp: u64,
@@ -80,53 +80,41 @@ impl BaseTime {
     where
         DB: Database + DatabaseCommit,
     {
-        if !chain_spec.is_zombie_active_at_timestamp(timestamp)
-            || chain_spec.is_zombie_active_at_timestamp(timestamp.saturating_sub(2))
-        {
+        if !chain_spec.is_zombie_active_at_timestamp(timestamp) {
             return Ok(());
         }
 
         let expected_implementation = U256::from_be_slice(Self::IMPLEMENTATION_ADDRESS.as_slice());
         let current_implementation =
             db.storage(Predeploys::BASE_TIME, Self::IMPLEMENTATION_SLOT)?;
-        if current_implementation != U256::ZERO && current_implementation != expected_implementation
-        {
+        if current_implementation != U256::ZERO {
             return Ok(());
         }
 
         let code = Bytecode::new_raw(Self::implementation_bytecode());
         let mut implementation_info = db.basic(Self::IMPLEMENTATION_ADDRESS)?.unwrap_or_default();
-        let code_is_current = implementation_info.code_hash == Self::IMPLEMENTATION_CODE_HASH;
-        if current_implementation == expected_implementation && code_is_current {
-            return Ok(());
-        }
+        implementation_info.code_hash = Self::IMPLEMENTATION_CODE_HASH;
+        implementation_info.code = Some(code);
 
-        let mut updates = HashMap::default();
-        if !code_is_current {
-            implementation_info.code_hash = Self::IMPLEMENTATION_CODE_HASH;
-            implementation_info.code = Some(code);
+        let mut implementation_account: revm::state::Account = implementation_info.into();
+        implementation_account.mark_touch();
 
-            let mut implementation_account: revm::state::Account = implementation_info.into();
-            implementation_account.mark_touch();
-            updates.insert(Self::IMPLEMENTATION_ADDRESS, implementation_account);
-        }
+        let proxy_info = db.basic(Predeploys::BASE_TIME)?.unwrap_or_default();
+        let mut proxy_account: revm::state::Account = proxy_info.into();
+        proxy_account.storage.insert(
+            Self::IMPLEMENTATION_SLOT,
+            EvmStorageSlot::new_changed(
+                current_implementation,
+                expected_implementation,
+                TransactionId::ZERO,
+            ),
+        );
+        proxy_account.mark_touch();
 
-        if current_implementation == U256::ZERO {
-            let proxy_info = db.basic(Predeploys::BASE_TIME)?.unwrap_or_default();
-            let mut proxy_account: revm::state::Account = proxy_info.into();
-            proxy_account.storage.insert(
-                Self::IMPLEMENTATION_SLOT,
-                EvmStorageSlot::new_changed(
-                    current_implementation,
-                    expected_implementation,
-                    TransactionId::ZERO,
-                ),
-            );
-            proxy_account.mark_touch();
-            updates.insert(Predeploys::BASE_TIME, proxy_account);
-        }
-
-        db.commit(updates);
+        db.commit(HashMap::from_iter([
+            (Self::IMPLEMENTATION_ADDRESS, implementation_account),
+            (Predeploys::BASE_TIME, proxy_account),
+        ]));
         Ok(())
     }
 
@@ -287,15 +275,46 @@ mod tests {
     }
 
     #[test]
-    fn transition_only_runs_at_activation() {
+    fn active_transition_initializes_unlinked_proxy_after_activation() {
         let mut db = InMemoryDB::default();
 
         BaseTime::ensure_predeploy(TestUpgrades(true), 102, &mut db).unwrap();
 
-        assert!(db.basic(BaseTime::IMPLEMENTATION_ADDRESS).unwrap().is_none());
+        assert_eq!(
+            db.basic(BaseTime::IMPLEMENTATION_ADDRESS).unwrap().unwrap().code_hash,
+            BaseTime::IMPLEMENTATION_CODE_HASH
+        );
         assert_eq!(
             db.storage(Predeploys::BASE_TIME, BaseTime::IMPLEMENTATION_SLOT).unwrap(),
-            U256::ZERO
+            U256::from_be_slice(BaseTime::IMPLEMENTATION_ADDRESS.as_slice())
+        );
+    }
+
+    #[test]
+    fn transition_preserves_linked_canonical_implementation() {
+        let mut db = InMemoryDB::default();
+        let existing_code = Bytecode::new_raw(Bytes::from_static(&[0x60, 0x00]));
+        let existing_code_hash = existing_code.hash_slow();
+        db.insert_account_info(
+            BaseTime::IMPLEMENTATION_ADDRESS,
+            AccountInfo {
+                code_hash: existing_code_hash,
+                code: Some(existing_code),
+                ..Default::default()
+            },
+        );
+        db.insert_account_storage(
+            Predeploys::BASE_TIME,
+            BaseTime::IMPLEMENTATION_SLOT,
+            U256::from_be_slice(BaseTime::IMPLEMENTATION_ADDRESS.as_slice()),
+        )
+        .unwrap();
+
+        BaseTime::ensure_predeploy(TestUpgrades(true), 100, &mut db).unwrap();
+
+        assert_eq!(
+            db.basic(BaseTime::IMPLEMENTATION_ADDRESS).unwrap().unwrap().code_hash,
+            existing_code_hash
         );
     }
 
