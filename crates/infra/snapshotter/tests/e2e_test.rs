@@ -4,7 +4,10 @@ use std::{
     collections::{BTreeMap, HashMap},
     num::NonZeroUsize,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use anyhow::Result;
@@ -31,6 +34,8 @@ struct MockContainerManager {
     running: AtomicBool,
     stop_called: AtomicBool,
     start_called: AtomicBool,
+    stopped_containers: Mutex<Vec<String>>,
+    started_containers: Mutex<Vec<String>>,
 }
 
 impl MockContainerManager {
@@ -39,6 +44,8 @@ impl MockContainerManager {
             running: AtomicBool::new(true),
             stop_called: AtomicBool::new(false),
             start_called: AtomicBool::new(false),
+            stopped_containers: Mutex::new(Vec::new()),
+            started_containers: Mutex::new(Vec::new()),
         }
     }
 
@@ -49,19 +56,43 @@ impl MockContainerManager {
     fn was_started(&self) -> bool {
         self.start_called.load(Ordering::Relaxed)
     }
+
+    fn stopped_container(&self, container_name: &str) -> bool {
+        self.stopped_containers
+            .lock()
+            .expect("lock should not be poisoned")
+            .iter()
+            .any(|name| name == container_name)
+    }
+
+    fn started_container(&self, container_name: &str) -> bool {
+        self.started_containers
+            .lock()
+            .expect("lock should not be poisoned")
+            .iter()
+            .any(|name| name == container_name)
+    }
 }
 
 #[async_trait]
 impl ContainerManager for MockContainerManager {
-    async fn stop(&self, _container_name: &str) -> Result<()> {
+    async fn stop(&self, container_name: &str) -> Result<()> {
         self.running.store(false, Ordering::Relaxed);
         self.stop_called.store(true, Ordering::Relaxed);
+        self.stopped_containers
+            .lock()
+            .expect("lock should not be poisoned")
+            .push(container_name.to_string());
         Ok(())
     }
 
-    async fn start(&self, _container_name: &str) -> Result<()> {
+    async fn start(&self, container_name: &str) -> Result<()> {
         self.running.store(true, Ordering::Relaxed);
         self.start_called.store(true, Ordering::Relaxed);
+        self.started_containers
+            .lock()
+            .expect("lock should not be poisoned")
+            .push(container_name.to_string());
         Ok(())
     }
 
@@ -93,6 +124,7 @@ impl TipChecker for MockTipChecker {
 fn test_config(bucket: &str, tmp: &Path) -> base_snapshotter::SnapshotterConfig {
     base_snapshotter::SnapshotterConfig {
         container_name: "fake-el".to_string(),
+        consensus_container_name: "fake-cl".to_string(),
         el_rpc_url: "http://127.0.0.1:8545".parse().expect("valid test URL"),
         tip_threshold_secs: base_snapshotter::DEFAULT_TIP_THRESHOLD_SECS,
         source_datadir: tmp.join("nonexistent-datadir"),
@@ -848,12 +880,16 @@ async fn orchestrator_always_restarts_on_failure() -> Result<()> {
     assert!(result.is_err(), "should fail because source_datadir doesn't exist");
     assert!(manager.was_stopped(), "container should have been stopped");
     assert!(manager.was_started(), "container should always be restarted even on failure");
+    assert!(manager.stopped_container("fake-el"), "EL container should have been stopped");
+    assert!(manager.stopped_container("fake-cl"), "CL container should have been stopped");
+    assert!(manager.started_container("fake-el"), "EL container should have been restarted");
+    assert!(manager.started_container("fake-cl"), "CL container should have been restarted");
 
     Ok(())
 }
 
-/// When the EL is not at tip, the run must be skipped entirely: the container is
-/// neither stopped nor started, and `run` returns `Ok`.
+/// When the EL is not at tip, the run must be skipped entirely: neither container
+/// is stopped or started, and `run` returns `Ok`.
 #[tokio::test]
 #[serial]
 async fn orchestrator_skips_when_not_at_tip() -> Result<()> {
@@ -948,6 +984,10 @@ async fn orchestrator_proceeds_when_at_tip() -> Result<()> {
     assert!(result.is_err(), "should fail downstream because source_datadir doesn't exist");
     assert!(manager.was_stopped(), "container should have been stopped when EL is at tip");
     assert!(manager.was_started(), "container should always be restarted");
+    assert!(manager.stopped_container("fake-el"), "EL container should have been stopped");
+    assert!(manager.stopped_container("fake-cl"), "CL container should have been stopped");
+    assert!(manager.started_container("fake-el"), "EL container should have been restarted");
+    assert!(manager.started_container("fake-cl"), "CL container should have been restarted");
 
     Ok(())
 }
