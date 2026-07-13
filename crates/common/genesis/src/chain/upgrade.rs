@@ -425,6 +425,34 @@ impl RuntimeUpgradeRegistry {
         Self::set_activation(chain_id, upgrade_id, UpgradeActivation::Timestamp(timestamp))
     }
 
+    /// Activates the permanently-off Zombie gate for a chain for the lifetime of the returned
+    /// test guard.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[must_use = "the guard must be held for the duration of the test activation"]
+    pub fn activate_zombie_for_testing(chain_id: u64, timestamp: u64) -> impl Drop {
+        struct ZombieActivationGuard {
+            chain_id: u64,
+            previous: Option<UpgradeActivationOverrides>,
+        }
+
+        impl Drop for ZombieActivationGuard {
+            fn drop(&mut self) {
+                let mut registry = RuntimeUpgradeRegistry::write_registry();
+                if let Some(previous) = self.previous.take() {
+                    registry.insert(self.chain_id, previous);
+                } else {
+                    registry.remove(&self.chain_id);
+                }
+            }
+        }
+
+        let mut registry = Self::write_registry();
+        let previous = registry.get(&chain_id).cloned();
+        let overrides = registry.entry(chain_id).or_default();
+        overrides.activations.insert(BaseUpgrade::Zombie, UpgradeActivation::Timestamp(timestamp));
+        ZombieActivationGuard { chain_id, previous }
+    }
+
     /// Sets one runtime override that clears a chain upgrade activation.
     pub fn clear_activation_timestamp(chain_id: u64, upgrade_id: BaseUpgrade) {
         Self::set_activation(chain_id, upgrade_id, UpgradeActivation::Never)

@@ -44,6 +44,7 @@ alloy-primitives = { workspace = true, features = ["rand", "arbitrary"] }
 
 [features]
 default = []
+test-utils = []
 std = [
 	"alloy-chains/std",
 	"alloy-consensus/std",

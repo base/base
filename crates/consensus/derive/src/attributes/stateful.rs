@@ -296,8 +296,10 @@ mod tests {
     use alloc::vec;
 
     use alloy_consensus::Header;
+    use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{B256, Log, LogData, U64, U256, address};
     use base_common_chains::Sepolia;
+    use base_common_consensus::{BaseTxEnvelope, SystemAddresses};
     use base_common_genesis::{SystemConfig, SystemConfigUpdate, UpgradeConfig};
     use base_protocol::{BlockInfo, DepositDecodeError};
 
@@ -537,6 +539,71 @@ mod tests {
         };
         assert_eq!(payload, expected);
         assert_eq!(payload.transactions.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_prepare_payload_inserts_base_time_update_at_tx_one() {
+        let block_time = 2;
+        let timestamp = 100;
+        let chain_id = 9_100_004;
+        let _activation =
+            base_common_genesis::RuntimeUpgradeRegistry::activate_zombie_for_testing(chain_id, 102);
+        let cfg = Arc::new(RollupConfig {
+            block_time,
+            l2_chain_id: chain_id.into(),
+            upgrades: UpgradeConfig { ecotone_time: Some(102), ..Default::default() },
+            ..Default::default()
+        });
+        let l1_cfg = Arc::new(Sepolia::l1_config());
+        let l2_number = 1;
+        let mut fetcher = TestSystemConfigL2Fetcher::default();
+        fetcher.insert(l2_number, SystemConfig::default());
+        let mut provider = TestChainProvider::default();
+        let header = Header { timestamp, ..Default::default() };
+        let hash = header.hash_slow();
+        provider.insert_header(hash, header);
+        let mut builder = StatefulAttributesBuilder::new(cfg, l1_cfg, fetcher, provider);
+        let epoch = BlockNumHash { hash, number: l2_number };
+        let l2_parent = L2BlockInfo {
+            block_info: BlockInfo {
+                hash: B256::ZERO,
+                number: l2_number,
+                timestamp,
+                parent_hash: hash,
+            },
+            l1_origin: BlockNumHash { hash, number: l2_number },
+            seq_num: 0,
+        };
+
+        let payload =
+            builder.prepare_payload_attributes(l2_parent, epoch, Some(400)).await.unwrap();
+        assert_eq!(payload.timestamp_millis_part, Some(400));
+        let transactions = payload.transactions.unwrap();
+        assert_eq!(transactions.len(), 8);
+        let envelope = BaseTxEnvelope::decode_2718_exact(&transactions[1]).unwrap();
+        let deposit = envelope.as_deposit().unwrap();
+        assert_eq!(deposit.from, SystemAddresses::DEPOSITOR_ACCOUNT);
+        assert_eq!(deposit.to, alloy_primitives::TxKind::Call(Predeploys::BASE_TIME));
+        assert_eq!(
+            BaseTimeUpdateTx::decode_calldata(&deposit.input).unwrap().timestamp_millis_part(),
+            400
+        );
+
+        let missing = builder.prepare_payload_attributes(l2_parent, epoch, None).await.unwrap_err();
+        assert_eq!(
+            missing,
+            PipelineErrorKind::Critical(PipelineError::AttributesBuilder(BuilderError::Custom(
+                "missing BaseTime timestamp millis part".to_string()
+            )))
+        );
+        let invalid =
+            builder.prepare_payload_attributes(l2_parent, epoch, Some(100)).await.unwrap_err();
+        assert_eq!(
+            invalid,
+            PipelineErrorKind::Critical(PipelineError::AttributesBuilder(BuilderError::Custom(
+                "invalid BaseTime timestamp millis part: 100".to_string()
+            )))
+        );
     }
 
     #[tokio::test]

@@ -195,9 +195,12 @@ macro_rules! rollup_fork_methods {
 impl RollupConfig {
     /// Returns this rollup config's runtime-aware activation for a contract upgrade ID.
     pub fn contract_upgrade_activation(&self, upgrade_id: BaseUpgrade) -> UpgradeActivation {
-        // Zombie is a permanently-off gate: it can never activate, not even via a runtime
-        // override, so short-circuit before consulting the registry or genesis config.
+        // Zombie is a permanently-off production gate: runtime overrides cannot activate it.
         if matches!(upgrade_id, BaseUpgrade::Zombie) {
+            #[cfg(any(test, feature = "test-utils"))]
+            return RuntimeUpgradeRegistry::activation(self.l2_chain_id.id(), upgrade_id)
+                .unwrap_or(UpgradeActivation::Never);
+            #[cfg(not(any(test, feature = "test-utils")))]
             return UpgradeActivation::Never;
         }
         RuntimeUpgradeRegistry::activation(self.l2_chain_id.id(), upgrade_id)
@@ -961,6 +964,27 @@ mod tests {
             UpgradeActivation::Never
         );
 
+        crate::RuntimeUpgradeRegistry::clear_chain(chain_id);
+    }
+
+    #[test]
+    fn zombie_activation_can_be_enabled_for_testing() {
+        let chain_id = 9_100_003;
+        crate::RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Azul, 21);
+        let cfg = RollupConfig { l2_chain_id: Chain::from_id(chain_id), ..Default::default() };
+        {
+            let _activation =
+                crate::RuntimeUpgradeRegistry::activate_zombie_for_testing(chain_id, 42);
+
+            assert!(!cfg.is_zombie_active(41));
+            assert!(cfg.is_zombie_active(42));
+            assert!(cfg.is_zombie_active(u64::MAX));
+        }
+        assert_eq!(
+            crate::RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Azul),
+            Some(UpgradeActivation::Timestamp(21))
+        );
+        assert_eq!(crate::RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Zombie), None);
         crate::RuntimeUpgradeRegistry::clear_chain(chain_id);
     }
 
