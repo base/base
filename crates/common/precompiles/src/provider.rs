@@ -15,7 +15,7 @@ use revm::{
 
 use crate::{
     ActivationAdminConfig, ActivationRegistry, B20Factory, BasePrecompileSpec, BerylLookup,
-    NonceManager, NoopPrecompileCallObserver, PolicyRegistryPrecompile, PrecompileCallObserver,
+    Foo, NonceManager, NoopPrecompileCallObserver, PolicyRegistryPrecompile, PrecompileCallObserver,
     TxContext, bls12_381, bn254_pair,
 };
 
@@ -220,6 +220,9 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
             TxContext::install(&mut precompiles);
             NonceManager::install(&mut precompiles);
         }
+        // The `foo` reference precompile self-gates by fork: `Foo::install`
+        // resolves the active version and binds its implementation.
+        Foo::install(&mut precompiles, self.spec.upgrade());
         precompiles
     }
 }

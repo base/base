@@ -83,3 +83,6 @@ pub use tx_context::{ITransactionContext, TxContext, TxContextStorage};
 
 mod nonce;
 pub use nonce::{INonceManager, NonceManager, NonceManagerStorage};
+
+mod foo;
+pub use foo::{Foo, FooStorage, FooV1, FooV2, FooVersion, FooVersions, IFoo};
