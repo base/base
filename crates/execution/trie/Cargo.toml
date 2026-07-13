@@ -23,6 +23,7 @@ reth-codecs.workspace = true
 reth-revm = { workspace = true, features = ["witness"] }
 reth-trie = { workspace = true, features = ["serde"] }
 reth-trie-common = { workspace = true, features = ["serde"] }
+reth-trie-db.workspace = true
 
 # workaround: reth-trie/serde-bincode-compat activates serde-bincode-compat on
 # reth-ethereum-primitives (a transitive dep) without also activating its serde feature,
