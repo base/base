@@ -449,19 +449,16 @@ where
                 reth_transaction_pool::error::PoolErrorKind::AlreadyImported,
             ));
         }
+        let replay_id = transaction.eip8130_replay_id();
+        let sender = transaction.sender();
+        let hash = *transaction.hash();
         if self.is_sidecar_transaction(&transaction) {
-            let replay_id = transaction.eip8130_replay_id();
-            let sender = transaction.sender();
-            let hash = *transaction.hash();
             let outcome = self.add_sidecar_transaction(origin, transaction).await?;
             if let Some(replay_id) = replay_id {
                 self.track_eip8130_replay_id(sender, replay_id, hash);
             }
             Ok(outcome)
         } else {
-            let replay_id = transaction.eip8130_replay_id();
-            let sender = transaction.sender();
-            let hash = *transaction.hash();
             let outcome = self.protocol_pool.add_transaction(origin, transaction).await?;
             if let Some(replay_id) = replay_id {
                 self.track_eip8130_replay_id(sender, replay_id, hash);
