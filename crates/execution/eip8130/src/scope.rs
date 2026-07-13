@@ -9,14 +9,16 @@ use crate::ResolvedActor;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Operation {
-    /// Authorizing the transaction sender (`SCOPE_SENDER`).
+    /// Authorizing the transaction sender (`SCOPE_SENDER` or `SCOPE_POLICY`).
     Sender,
-    /// Authorizing a gas payer (`SCOPE_PAYER`).
-    Payer,
-    /// Authorizing an account-configuration change (admin only).
+    /// Authorizing an actor to pay the account's own gas when `payer == sender`
+    /// (`SCOPE_SELF_PAYER`).
+    SelfPayer,
+    /// Authorizing an actor to sponsor a different sender's gas
+    /// (`payer != sender`, `SCOPE_SPONSOR_PAYER`).
+    SponsorPayer,
+    /// Authorizing an account-configuration change (admin only, `scope == 0`).
     Config,
-    /// Authorizing a message signature, ERC-1271 style (`SCOPE_SIGNATURE`).
-    Signature,
 }
 
 impl Operation {
@@ -26,9 +28,9 @@ impl Operation {
     pub const fn required_bit(self) -> u8 {
         match self {
             Self::Sender => Eip8130Constants::SCOPE_SENDER,
-            Self::Payer => Eip8130Constants::SCOPE_PAYER,
+            Self::SelfPayer => Eip8130Constants::SCOPE_SELF_PAYER,
+            Self::SponsorPayer => Eip8130Constants::SCOPE_SPONSOR_PAYER,
             Self::Config => Eip8130Constants::SCOPE_UNRESTRICTED,
-            Self::Signature => Eip8130Constants::SCOPE_SIGNATURE,
         }
     }
 
@@ -38,24 +40,17 @@ impl Operation {
         match self {
             Self::Config => scope == Eip8130Constants::SCOPE_UNRESTRICTED,
             Self::Sender => {
-                if scope == Eip8130Constants::SCOPE_UNRESTRICTED {
-                    return true;
-                }
-                if scope & Eip8130Constants::SCOPE_POLICY != 0
-                    && scope & Eip8130Constants::SCOPE_SIGNATURE != 0
-                {
-                    return false;
-                }
-                scope & Eip8130Constants::SCOPE_SENDER != 0
+                scope == Eip8130Constants::SCOPE_UNRESTRICTED
+                    || scope & Eip8130Constants::SCOPE_SENDER != 0
                     || scope & Eip8130Constants::SCOPE_POLICY != 0
             }
-            Self::Payer => {
+            Self::SelfPayer => {
                 scope == Eip8130Constants::SCOPE_UNRESTRICTED
-                    || scope & Eip8130Constants::SCOPE_PAYER != 0
+                    || scope & Eip8130Constants::SCOPE_SELF_PAYER != 0
             }
-            Self::Signature => {
+            Self::SponsorPayer => {
                 scope == Eip8130Constants::SCOPE_UNRESTRICTED
-                    || scope & Eip8130Constants::SCOPE_SIGNATURE != 0
+                    || scope & Eip8130Constants::SCOPE_SPONSOR_PAYER != 0
             }
         }
     }
@@ -79,13 +74,22 @@ mod tests {
     }
 
     #[test]
-    fn sender_accepts_sender_or_policy_except_policy_signature() {
+    fn sender_accepts_sender_or_policy() {
         assert!(Operation::Sender.is_granted_by(Eip8130Constants::SCOPE_UNRESTRICTED));
         assert!(Operation::Sender.is_granted_by(Eip8130Constants::SCOPE_SENDER));
         assert!(Operation::Sender.is_granted_by(Eip8130Constants::SCOPE_POLICY));
-        assert!(
-            !Operation::Sender
-                .is_granted_by(Eip8130Constants::SCOPE_POLICY | Eip8130Constants::SCOPE_SIGNATURE)
-        );
+        assert!(!Operation::Sender.is_granted_by(Eip8130Constants::SCOPE_SELF_PAYER));
+    }
+
+    #[test]
+    fn payer_grants_are_split_by_self_vs_sponsor() {
+        // Self-pay requires SELF_PAYER (or admin); sponsor requires SPONSOR_PAYER.
+        assert!(Operation::SelfPayer.is_granted_by(Eip8130Constants::SCOPE_UNRESTRICTED));
+        assert!(Operation::SelfPayer.is_granted_by(Eip8130Constants::SCOPE_SELF_PAYER));
+        assert!(!Operation::SelfPayer.is_granted_by(Eip8130Constants::SCOPE_SPONSOR_PAYER));
+
+        assert!(Operation::SponsorPayer.is_granted_by(Eip8130Constants::SCOPE_UNRESTRICTED));
+        assert!(Operation::SponsorPayer.is_granted_by(Eip8130Constants::SCOPE_SPONSOR_PAYER));
+        assert!(!Operation::SponsorPayer.is_granted_by(Eip8130Constants::SCOPE_SELF_PAYER));
     }
 }

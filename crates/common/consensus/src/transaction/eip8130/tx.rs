@@ -281,15 +281,16 @@ impl TxEip8130 {
 
     /// Returns the fee- and signature-invariant replay identifier.
     ///
-    /// The resolved sender is encoded in place of the nullable wire sender:
-    /// `keccak256(REPLAY_ID_TYPE || rlp([chain_id, resolved_sender, nonce_key,
-    /// nonce_sequence, expiry, account_changes, calls, metadata, payer]))`.
+    /// Used only for nonce-free (`nonce_key == NONCE_KEY_MAX`) transactions, which
+    /// always carry `(NONCE_KEY_MAX, 0)`; `nonce_key`/`nonce_sequence` therefore
+    /// carry no entropy and are omitted from the preimage. The resolved sender is
+    /// encoded in place of the nullable wire sender:
+    /// `keccak256(REPLAY_ID_TYPE || rlp([chain_id, resolved_sender, expiry,
+    /// account_changes, calls, metadata, payer]))`.
     #[must_use]
     pub fn replay_id(&self, resolved_sender: Address) -> B256 {
         let payload_length = self.chain_id.length()
             + resolved_sender.length()
-            + self.nonce_key.length()
-            + self.nonce_sequence.length()
             + self.expiry.length()
             + self.account_changes.length()
             + Self::calls_encoded_length(&self.calls)
@@ -304,8 +305,6 @@ impl TxEip8130 {
         Header { list: true, payload_length }.encode(&mut buf);
         self.chain_id.encode(&mut buf);
         resolved_sender.encode(&mut buf);
-        self.nonce_key.encode(&mut buf);
-        self.nonce_sequence.encode(&mut buf);
         self.expiry.encode(&mut buf);
         self.account_changes.encode(&mut buf);
         Self::encode_calls(&self.calls, &mut buf);
@@ -724,6 +723,18 @@ mod tests {
         other.max_priority_fee_per_gas += 1;
         other.max_fee_per_gas += 2;
         other.gas_limit += 3;
+        assert_eq!(tx.replay_id(sender), other.replay_id(sender));
+    }
+
+    #[test]
+    fn replay_id_ignores_nonce_fields() {
+        // Nonce-free txs always carry `(NONCE_KEY_MAX, 0)`, so `nonce_key` and
+        // `nonce_sequence` are omitted from the preimage and cannot alter identity.
+        let tx = sample_tx();
+        let sender = tx.sender.unwrap();
+        let mut other = tx.clone();
+        other.nonce_key = U256::from(7u64);
+        other.nonce_sequence = 42;
         assert_eq!(tx.replay_id(sender), other.replay_id(sender));
     }
 

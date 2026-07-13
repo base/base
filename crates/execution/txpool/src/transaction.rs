@@ -376,6 +376,15 @@ where
 
     fn eip8130_replay_id(&self) -> Option<B256> {
         let signed = self.as_eip8130()?;
+        // `replay_id` keys mempool dedup/replacement only for nonce-free
+        // (`nonce_key == NONCE_KEY_MAX`) transactions, which have no nonce slot.
+        // Standard and 2D transactions dedupe/replace on
+        // `(sender, nonce_key, nonce_sequence)` under the standard nonce rules,
+        // so they must not be tracked by `replay_id` (which excludes fees and
+        // would otherwise block legitimate replace-by-fee at the same sequence).
+        if signed.tx().nonce_key != Eip8130Constants::NONCE_KEY_MAX {
+            return None;
+        }
         Some(signed.tx().replay_id(self.sender()))
     }
 }

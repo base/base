@@ -208,18 +208,19 @@ mod tests {
     }
 
     /// Canonical Solidity packing of `ActorConfig`.
-    fn pack(authenticator: Address, scope: u8, expiry: u64, _policy_type: u8) -> U256 {
+    fn pack(authenticator: Address, scope: u8, expiry: u64) -> U256 {
         U256::from_be_slice(authenticator.as_slice())
             | (U256::from(scope) << 160)
             | (U256::from(expiry) << 168)
     }
 
-    /// Canonical Solidity packing of `AccountState`.
-    fn pack_state(multichain: u64, local: u64, unlocks_at: u64) -> U256 {
+    /// Canonical Solidity packing of `AccountState` (sequences + lock fields).
+    fn pack_state(multichain: u64, local: u64, flags: u8, lock_union: u64) -> U256 {
         let mut b = [0u8; 32];
         b[24..32].copy_from_slice(&multichain.to_be_bytes());
         b[16..24].copy_from_slice(&local.to_be_bytes());
-        b[11..16].copy_from_slice(&unlocks_at.to_be_bytes()[3..]);
+        b[15] = flags;
+        b[10..15].copy_from_slice(&lock_union.to_be_bytes()[3..]);
         U256::from_be_bytes(b)
     }
 
@@ -281,7 +282,7 @@ mod tests {
             acc.actor_config
                 .at_mut(&id)
                 .at_mut(&account)
-                .write(pack(K1, Eip8130Constants::SCOPE_UNRESTRICTED, 0, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_UNRESTRICTED, 0))
                 .unwrap();
             let resolved =
                 ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW).unwrap();
@@ -300,7 +301,7 @@ mod tests {
             acc.actor_config
                 .at_mut(&id)
                 .at_mut(&account)
-                .write(pack(K1, Eip8130Constants::SCOPE_SENDER, 0, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_SENDER, 0))
                 .unwrap();
             assert_eq!(
                 ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW),
@@ -318,8 +319,11 @@ mod tests {
         let account = addr(&k);
         let change = signed_change(account, K1, &k, 0, 0, vec![revoke(0x01)]);
         with_storage(|acc| {
-            // Locked until after `now`.
-            acc.account_state.at_mut(&account).write(pack_state(0, 0, NOW + 1)).unwrap();
+            // Hard-locked (FLAG_LOCKED, no unlock initiated): frozen regardless of `now`.
+            acc.account_state
+                .at_mut(&account)
+                .write(pack_state(0, 0, Eip8130Constants::FLAG_LOCKED, 0))
+                .unwrap();
             assert_eq!(
                 ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW),
                 Err(TxAuthError::AccountLocked),
@@ -361,7 +365,7 @@ mod tests {
         // Local channel (chain_id == LOCAL); the entry must match local_sequence.
         let change = signed_change(account, K1, &k, LOCAL, 3, vec![revoke(0x01)]);
         with_storage(|acc| {
-            acc.account_state.at_mut(&account).write(pack_state(0, 3, 0)).unwrap();
+            acc.account_state.at_mut(&account).write(pack_state(0, 3, 0, 0)).unwrap();
             let resolved =
                 ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW).unwrap();
             assert!(resolved.is_unrestricted());

@@ -215,19 +215,20 @@ mod tests {
     }
 
     /// Canonical Solidity packing of `ActorConfig`.
-    fn pack(authenticator: Address, scope: u8, expiry: u64, _policy_type: u8) -> U256 {
+    fn pack(authenticator: Address, scope: u8, expiry: u64) -> U256 {
         U256::from_be_slice(authenticator.as_slice())
             | (U256::from(scope) << 160)
             | (U256::from(expiry) << 168)
     }
 
     /// Canonical Solidity packing of `AccountState` (`multichain`, `local`
-    /// sequences and `unlocks_at`).
-    fn pack_state(multichain: u64, local: u64, unlocks_at: u64) -> U256 {
+    /// sequences, `flags`, and the `lock_union`).
+    fn pack_state(multichain: u64, local: u64, flags: u8, lock_union: u64) -> U256 {
         let mut b = [0u8; 32];
         b[24..32].copy_from_slice(&multichain.to_be_bytes());
         b[16..24].copy_from_slice(&local.to_be_bytes());
-        b[11..16].copy_from_slice(&unlocks_at.to_be_bytes()[3..]);
+        b[15] = flags;
+        b[10..15].copy_from_slice(&lock_union.to_be_bytes()[3..]);
         U256::from_be_bytes(b)
     }
 
@@ -393,7 +394,7 @@ mod tests {
         let at_max = signed_change(account, K1, &k, 0, u64::MAX, vec![]);
         let signed = eoa_signed(tx_with(None, None, vec![AccountChange::ConfigChange(at_max)]), &k);
         with_storage(|acc| {
-            acc.account_state.at_mut(&account).write(pack_state(u64::MAX, 0, 0)).unwrap();
+            acc.account_state.at_mut(&account).write(pack_state(u64::MAX, 0, 0, 0)).unwrap();
             assert_eq!(
                 TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW),
                 Err(TxAuthError::Apply(ApplyError::SequenceOverflow)),
@@ -415,7 +416,7 @@ mod tests {
             id[..20].copy_from_slice(signer_addr.as_slice());
             id
         });
-        let initial_actors = vec![InitialActor { actor_id: actor_id_k, authenticator: K1 }];
+        let initial_actors = vec![InitialActor::owner(actor_id_k, K1)];
         let create_entry = CreateEntry {
             user_salt: B256::ZERO,
             code: Bytes::from_static(&[0x60, 0x00]),
@@ -469,7 +470,7 @@ mod tests {
             id[..20].copy_from_slice(signer_addr.as_slice());
             id
         });
-        let initial_actors = vec![InitialActor { actor_id: actor_id_k, authenticator: K1 }];
+        let initial_actors = vec![InitialActor::owner(actor_id_k, K1)];
         let create_entry = CreateEntry {
             user_salt: B256::ZERO,
             code: Bytes::from_static(&[0x60, 0x00]),
@@ -526,7 +527,7 @@ mod tests {
             acc.actor_config
                 .at_mut(&sid)
                 .at_mut(&account)
-                .write(pack(K1, Eip8130Constants::SCOPE_UNRESTRICTED, 0, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_UNRESTRICTED, 0))
                 .unwrap();
             let out = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW).unwrap();
             assert!(out.config_changes[0].is_admin());
@@ -566,18 +567,17 @@ mod tests {
                     K1,
                     Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_NONCE,
                     0,
-                    0,
                 ))
                 .unwrap();
             acc.actor_config
                 .at_mut(&pid)
                 .at_mut(&payer_account)
-                .write(pack(K1, Eip8130Constants::SCOPE_PAYER, 0, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_SPONSOR_PAYER, 0))
                 .unwrap();
             acc.actor_config
                 .at_mut(&cid)
                 .at_mut(&sender_account)
-                .write(pack(K1, Eip8130Constants::SCOPE_UNRESTRICTED, 0, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_UNRESTRICTED, 0))
                 .unwrap();
             let out = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW).unwrap();
             assert_eq!(out.actors.sender.account, sender_account);
@@ -604,7 +604,7 @@ mod tests {
             id[..20].copy_from_slice(signer_addr.as_slice());
             id
         });
-        let initial_actors = vec![InitialActor { actor_id: actor_id_val, authenticator: K1 }];
+        let initial_actors = vec![InitialActor::owner(actor_id_val, K1)];
         // Non-empty runtime code so the derived CREATE2 address and code hash
         // match a production-admissible transaction: the structural validator
         // rejects an empty-code create before it reaches authorize_and_apply.
@@ -678,7 +678,7 @@ mod tests {
             id[..20].copy_from_slice(signer_addr.as_slice());
             id
         });
-        let initial_actors = vec![InitialActor { actor_id: actor_id_val, authenticator: K1 }];
+        let initial_actors = vec![InitialActor::owner(actor_id_val, K1)];
         let create = CreateEntry {
             user_salt: B256::ZERO,
             code: Bytes::new(),
@@ -735,7 +735,7 @@ mod tests {
             id[..20].copy_from_slice(attacker_addr.as_slice());
             id
         });
-        let initial_actors = vec![InitialActor { actor_id: actor_id_val, authenticator: K1 }];
+        let initial_actors = vec![InitialActor::owner(actor_id_val, K1)];
         let create = CreateEntry {
             user_salt: B256::ZERO,
             code: Bytes::new(),
@@ -788,7 +788,7 @@ mod tests {
             id[..20].copy_from_slice(signer_addr.as_slice());
             id
         });
-        let initial_actors = vec![InitialActor { actor_id: actor_id_val, authenticator: K1 }];
+        let initial_actors = vec![InitialActor::owner(actor_id_val, K1)];
         let create = CreateEntry { user_salt: B256::ZERO, code: Bytes::new(), initial_actors };
         let tx = TxEip8130 {
             chain_id: LOCAL,

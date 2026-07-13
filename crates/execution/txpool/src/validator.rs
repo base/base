@@ -1702,10 +1702,7 @@ mod tests {
     }
 
     fn make_initial_actor(actor_id_byte: u8) -> InitialActor {
-        InitialActor {
-            actor_id: B256::repeat_byte(actor_id_byte),
-            authenticator: ok_authenticator(),
-        }
+        InitialActor::owner(B256::repeat_byte(actor_id_byte), ok_authenticator())
     }
 
     /// Builds an `Authorize` actor-change whose ABI-encoded `data` carries
@@ -2276,7 +2273,7 @@ mod tests {
             B256::from_slice(&id)
         };
         let initial_actors =
-            vec![InitialActor { actor_id, authenticator: Eip8130Constants::K1_AUTHENTICATOR }];
+            vec![InitialActor::owner(actor_id, Eip8130Constants::K1_AUTHENTICATOR)];
         let create = CreateEntry {
             user_salt: B256::ZERO,
             // Non-empty code: the structural gate rejects create.code.is_empty(),

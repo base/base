@@ -170,18 +170,22 @@ impl IntrinsicGas {
                     bytecode = bytecode
                         .saturating_add(Eip8130GasSchedule::CREATE_BASE_COST)
                         .saturating_add(deposit);
-                    // Each initial actor writes one fresh `actor_config` slot (an
-                    // unrestricted owner: `scope = 0`, `expiry = 0`,
-                    // no `SCOPE_POLICY`, so no policy slots). These slot writes are
-                    // metered per actor, mirroring the `ConfigChange` per-slot
-                    // accounting below — creation must not register actors for
-                    // free relative to a later config change authorizing the same
-                    // set.
-                    let initial_actor_cost = Eip8130GasSchedule::ACTOR_SLOT_SET_COST
-                        .saturating_mul(
-                            u64::try_from(entry.initial_actors.len()).unwrap_or(u64::MAX),
-                        );
-                    account_changes = account_changes.saturating_add(initial_actor_cost);
+                    // Each initial actor writes one fresh `actor_config` slot, plus
+                    // the two policy slots (`policy_manager` + `policy_commitment`)
+                    // when it sets `SCOPE_POLICY` — a POLICY initial actor is 3
+                    // slot-sets versus 1 for a non-policy actor. These slot writes
+                    // are metered per actor, mirroring the `ConfigChange` per-slot
+                    // accounting below — creation must not register actors for free
+                    // relative to a later config change authorizing the same set.
+                    for actor in &entry.initial_actors {
+                        let mut cost = Eip8130GasSchedule::ACTOR_SLOT_SET_COST;
+                        if actor.scope & Eip8130Constants::SCOPE_POLICY != 0 {
+                            cost = cost.saturating_add(
+                                Eip8130GasSchedule::ACTOR_SLOT_SET_COST.saturating_mul(2),
+                            );
+                        }
+                        account_changes = account_changes.saturating_add(cost);
+                    }
                 }
                 AccountChange::ConfigChange(cc) => {
                     // `cfg.auth` is always `authenticator || data` (never a bare
@@ -522,14 +526,10 @@ mod tests {
     fn create_charges_bytecode_plus_per_initial_actor_slot() {
         // A create entry pays `bytecode_cost` (base + per-byte deposit) plus one
         // fresh `actor_config` slot write per initial actor — the same per-slot
-        // model as a config change authorizing the same actors (no policy slots,
-        // since initial actors are unrestricted owners).
+        // model as a config change authorizing the same actors.
         let code = vec![0x60u8; 4];
         let initial_actors = (0u8..3)
-            .map(|i| InitialActor {
-                actor_id: alloy_primitives::B256::repeat_byte(i + 1),
-                authenticator: K1,
-            })
+            .map(|i| InitialActor::owner(alloy_primitives::B256::repeat_byte(i + 1), K1))
             .collect();
         let tx = TxEip8130 {
             account_changes: vec![AccountChange::Create(CreateEntry {
@@ -545,6 +545,38 @@ mod tests {
             Eip8130GasSchedule::CREATE_BASE_COST + Eip8130GasSchedule::CODE_DEPOSIT_PER_BYTE * 4
         );
         assert_eq!(gas.account_changes, Eip8130GasSchedule::ACTOR_SLOT_SET_COST * 3);
+    }
+
+    #[test]
+    fn create_charges_three_slots_for_policy_initial_actor() {
+        // A POLICY initial actor also writes `policy_manager` and
+        // `policy_commitment`: 3 slot-sets versus 1 for a non-policy actor.
+        let policy_data = {
+            let mut d = vec![0u8; 52];
+            d[19] = 0xcc; // manager
+            d[51] = 0x44; // commitment
+            Bytes::from(d)
+        };
+        let actors = vec![
+            InitialActor::owner(alloy_primitives::B256::repeat_byte(1), K1),
+            InitialActor {
+                actor_id: alloy_primitives::B256::repeat_byte(2),
+                authenticator: K1,
+                scope: Eip8130Constants::SCOPE_POLICY,
+                policy_data,
+            },
+        ];
+        let tx = TxEip8130 {
+            account_changes: vec![AccountChange::Create(CreateEntry {
+                user_salt: Default::default(),
+                code: Bytes::from(vec![0x60u8; 4]),
+                initial_actors: actors,
+            })],
+            ..Default::default()
+        };
+        let gas = intrinsic(&signed(tx, vec![0; 65], vec![]), &EXISTING_KEY);
+        // 1 (non-policy) + 3 (policy) = 4 slot-sets.
+        assert_eq!(gas.account_changes, Eip8130GasSchedule::ACTOR_SLOT_SET_COST * 4);
     }
 
     #[test]

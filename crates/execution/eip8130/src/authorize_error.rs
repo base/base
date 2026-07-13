@@ -57,13 +57,13 @@ pub enum AuthorizeError {
         expiry: u64,
     },
 
-    /// The nested actor in a delegate authentication lacks `SCOPE_SIGNATURE` on
-    /// the delegate account. Mirrors `DelegateAuthenticator` requiring
-    /// `verifySignature(delegate, ...)`, which accepts only an unrestricted
-    /// (`scope == 0`) or `SCOPE_SIGNATURE` actor.
-    #[error("delegate nested actor {actor_id} lacks SIGNATURE scope on the delegate account")]
+    /// The nested actor in a delegate authentication is not admin on the
+    /// delegate account. Mirrors `DelegateAuthenticator` requiring
+    /// `verifySignature(delegate, ...)`, which is admin-only: signing authority
+    /// is the admin predicate (`scope == 0x00`), there is no signing grant bit.
+    #[error("delegate nested actor {actor_id} is not admin on the delegate account")]
     NestedSignatureScope {
-        /// The nested actor id that failed the SIGNATURE-scope check.
+        /// The nested actor id that failed the admin-only signing check.
         actor_id: B256,
     },
 }

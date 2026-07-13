@@ -78,12 +78,12 @@ impl ActorAuthorizer {
                 nested_actor_id,
             } => {
                 // Discharge the nested actor against the delegated account's
-                // config and require it to carry SIGNATURE scope, then authorize
+                // config and require it to be admin (`scope == 0`), then authorize
                 // the outer delegate actor against the originating account.
                 // Mirrors `DelegateAuthenticator` calling
-                // `verifySignature(delegate, ...)` (which accepts only an
-                // unrestricted or `SCOPE_SIGNATURE` actor) followed by the outer
-                // `_actorConfig[bytes20(delegate)][account]` binding check.
+                // `verifySignature(delegate, ...)` — ERC-1271 signing is admin-only
+                // (`scope == 0x00`), there is no signing grant — followed by the
+                // outer `_actorConfig[bytes20(delegate)][account]` binding check.
                 let nested = Self::resolve_bound(
                     storage,
                     delegate_account,
@@ -91,7 +91,7 @@ impl ActorAuthorizer {
                     nested_authenticator,
                     now,
                 )?;
-                if nested.scope != 0 && nested.scope & Eip8130Constants::SCOPE_SIGNATURE == 0 {
+                if nested.scope != 0 {
                     return Err(AuthorizeError::NestedSignatureScope { actor_id: nested_actor_id });
                 }
                 Self::resolve_bound(
@@ -215,8 +215,7 @@ mod tests {
     const ACCOUNT: Address = address!("0x00000000000000000000000000000000000000a1");
 
     /// Canonical Solidity packing of `ActorConfig` (each field at its bit offset).
-    fn pack(authenticator: Address, scope: u8, expiry: u64, policy_type: u8) -> U256 {
-        let scope = if policy_type == 0 { scope } else { scope | Eip8130Constants::SCOPE_POLICY };
+    fn pack(authenticator: Address, scope: u8, expiry: u64) -> U256 {
         U256::from_be_slice(authenticator.as_slice())
             | (U256::from(scope) << 160)
             | (U256::from(expiry) << 168)
@@ -224,10 +223,9 @@ mod tests {
 
     /// Packs an `AccountState` word carrying the inline secp256k1 self config
     /// (each field at its bit offset; sequences/lock left zero).
-    fn pack_self(scope: u8, policy_type: u8, expiry: u64, revoked: bool) -> U256 {
-        let scope = if policy_type == 0 { scope } else { scope | Eip8130Constants::SCOPE_POLICY };
+    fn pack_self(scope: u8, expiry: u64, revoked: bool) -> U256 {
         let flags = if revoked { Eip8130Constants::DEFAULT_EOA_REVOKED } else { 0 };
-        (U256::from(flags) << 184) | (U256::from(scope) << 192) | (U256::from(expiry) << 208)
+        (U256::from(flags) << 128) | (U256::from(scope) << 176) | (U256::from(expiry) << 184)
     }
 
     fn actor_id(address: Address) -> B256 {
@@ -308,7 +306,7 @@ mod tests {
             // DEFAULT_EOA_REVOKED set: the inline k1 self is disabled (revoked, or a
             // non-k1 self is the live self authenticator), so a k1 signature
             // recovering to the account is rejected outright.
-            acc.account_state.at_mut(&account).write(pack_self(0, 0, 0, true)).unwrap();
+            acc.account_state.at_mut(&account).write(pack_self(0, 0, true)).unwrap();
             assert_eq!(
                 ActorAuthorizer::authenticate_actor(acc, account, HASH, &auth, NOW),
                 Err(AuthorizeError::DefaultEoaRevoked { account }),
@@ -327,7 +325,7 @@ mod tests {
             // resolves from the account-state slot alone (no `actor_config` read).
             acc.account_state
                 .at_mut(&account)
-                .write(pack_self(Eip8130Constants::SCOPE_SENDER, 0, 0, false))
+                .write(pack_self(Eip8130Constants::SCOPE_SENDER, 0, false))
                 .unwrap();
             let resolved =
                 ActorAuthorizer::authenticate_actor(acc, account, HASH, &auth, NOW).unwrap();
@@ -344,7 +342,7 @@ mod tests {
         let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
         with_storage(|acc| {
             // Inline expiry in the past: the self key is no longer valid.
-            acc.account_state.at_mut(&account).write(pack_self(0, 0, NOW - 1, false)).unwrap();
+            acc.account_state.at_mut(&account).write(pack_self(0, NOW - 1, false)).unwrap();
             assert_eq!(
                 ActorAuthorizer::authenticate_actor(acc, account, HASH, &auth, NOW),
                 Err(AuthorizeError::Expired { actor_id: actor_id(account), expiry: NOW - 1 }),
@@ -362,7 +360,10 @@ mod tests {
         with_storage(|acc| {
             // Inline SCOPE_POLICY set: the self key is gated and resolves its policy
             // target from `policy_manager[self][account]`.
-            acc.account_state.at_mut(&account).write(pack_self(0, 5, 0, false)).unwrap();
+            acc.account_state
+                .at_mut(&account)
+                .write(pack_self(Eip8130Constants::SCOPE_POLICY, 0, false))
+                .unwrap();
             acc.policy_manager.at_mut(&self_id).at_mut(&account).write(manager).unwrap();
             let resolved =
                 ActorAuthorizer::authenticate_actor(acc, account, HASH, &auth, NOW).unwrap();
@@ -398,7 +399,7 @@ mod tests {
             acc.actor_config
                 .at_mut(&id)
                 .at_mut(&ACCOUNT)
-                .write(pack(Eip8130Constants::K1_AUTHENTICATOR, 0x04, 0, 0))
+                .write(pack(Eip8130Constants::K1_AUTHENTICATOR, 0x04, 0))
                 .unwrap();
             let resolved =
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW).unwrap();
@@ -434,7 +435,7 @@ mod tests {
             acc.actor_config
                 .at_mut(&id)
                 .at_mut(&ACCOUNT)
-                .write(pack(Eip8130Constants::K1_AUTHENTICATOR, 0, 500, 0))
+                .write(pack(Eip8130Constants::K1_AUTHENTICATOR, 0, 500))
                 .unwrap();
             // Valid at/under expiry.
             assert!(ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, 500).is_ok());
@@ -456,7 +457,7 @@ mod tests {
             acc.actor_config
                 .at_mut(&id)
                 .at_mut(&ACCOUNT)
-                .write(pack(Eip8130Constants::K1_AUTHENTICATOR, 0, 0, 1))
+                .write(pack(Eip8130Constants::K1_AUTHENTICATOR, Eip8130Constants::SCOPE_POLICY, 0))
                 .unwrap();
             acc.policy_manager.at_mut(&id).at_mut(&ACCOUNT).write(manager).unwrap();
             let resolved =
@@ -475,7 +476,7 @@ mod tests {
             acc.actor_config
                 .at_mut(&id)
                 .at_mut(&ACCOUNT)
-                .write(pack(Eip8130Contracts::P256_AUTHENTICATOR, 0x02, 0, 0))
+                .write(pack(Eip8130Contracts::P256_AUTHENTICATOR, 0x02, 0))
                 .unwrap();
             let resolved =
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW).unwrap();
@@ -507,13 +508,13 @@ mod tests {
             acc.actor_config
                 .at_mut(&nested_id)
                 .at_mut(&delegate_account)
-                .write(pack(Eip8130Constants::K1_AUTHENTICATOR, 0, 0, 0))
+                .write(pack(Eip8130Constants::K1_AUTHENTICATOR, 0, 0))
                 .unwrap();
             // Outer delegate actor on the originating account carries the surface.
             acc.actor_config
                 .at_mut(&outer_id)
                 .at_mut(&ACCOUNT)
-                .write(pack(Eip8130Contracts::DELEGATE_AUTHENTICATOR, 0x08, 0, 0))
+                .write(pack(Eip8130Contracts::DELEGATE_AUTHENTICATOR, 0x08, 0))
                 .unwrap();
             let resolved =
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW).unwrap();
@@ -532,15 +533,14 @@ mod tests {
         let outer_id = actor_id(delegate_account);
         let auth = delegate_auth(delegate_account, &nested_key);
         with_storage(|acc| {
-            // Nested actor is bound on B but scoped PAYER only (no SIGNATURE bit),
-            // so `verifySignature(delegate, ...)` would reject it on-chain.
+            // Nested actor is bound on B but scoped (non-admin), so
+            // `verifySignature(delegate, ...)` — which is admin-only — rejects it.
             acc.actor_config
                 .at_mut(&nested_id)
                 .at_mut(&delegate_account)
                 .write(pack(
                     Eip8130Constants::K1_AUTHENTICATOR,
-                    Eip8130Constants::SCOPE_PAYER,
-                    0,
+                    Eip8130Constants::SCOPE_SELF_PAYER,
                     0,
                 ))
                 .unwrap();
@@ -550,7 +550,6 @@ mod tests {
                 .write(pack(
                     Eip8130Contracts::DELEGATE_AUTHENTICATOR,
                     Eip8130Constants::SCOPE_SENDER,
-                    0,
                     0,
                 ))
                 .unwrap();
@@ -569,16 +568,12 @@ mod tests {
         let outer_id = actor_id(delegate_account);
         let auth = delegate_auth(delegate_account, &nested_key);
         with_storage(|acc| {
-            // Nested actor scoped exactly SIGNATURE satisfies the delegate gate.
+            // Nested actor is admin (`scope == 0`), which is the signing predicate,
+            // so it satisfies the delegate gate.
             acc.actor_config
                 .at_mut(&nested_id)
                 .at_mut(&delegate_account)
-                .write(pack(
-                    Eip8130Constants::K1_AUTHENTICATOR,
-                    Eip8130Constants::SCOPE_SIGNATURE,
-                    0,
-                    0,
-                ))
+                .write(pack(Eip8130Constants::K1_AUTHENTICATOR, 0, 0))
                 .unwrap();
             acc.actor_config
                 .at_mut(&outer_id)
@@ -586,7 +581,6 @@ mod tests {
                 .write(pack(
                     Eip8130Contracts::DELEGATE_AUTHENTICATOR,
                     Eip8130Constants::SCOPE_SENDER,
-                    0,
                     0,
                 ))
                 .unwrap();
@@ -609,7 +603,7 @@ mod tests {
             acc.actor_config
                 .at_mut(&outer_id)
                 .at_mut(&ACCOUNT)
-                .write(pack(Eip8130Contracts::DELEGATE_AUTHENTICATOR, 0x08, 0, 0))
+                .write(pack(Eip8130Contracts::DELEGATE_AUTHENTICATOR, 0x08, 0))
                 .unwrap();
             assert_eq!(
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
@@ -633,7 +627,7 @@ mod tests {
             acc.actor_config
                 .at_mut(&nested_id)
                 .at_mut(&delegate_account)
-                .write(pack(Eip8130Constants::K1_AUTHENTICATOR, 0, 0, 0))
+                .write(pack(Eip8130Constants::K1_AUTHENTICATOR, 0, 0))
                 .unwrap();
             assert_eq!(
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
@@ -657,7 +651,7 @@ mod tests {
             acc.actor_config
                 .at_mut(&nested_id)
                 .at_mut(&Address::ZERO)
-                .write(pack(Eip8130Constants::K1_AUTHENTICATOR, 0, 0, 0))
+                .write(pack(Eip8130Constants::K1_AUTHENTICATOR, 0, 0))
                 .unwrap();
             assert_eq!(
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),

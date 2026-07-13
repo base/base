@@ -2458,7 +2458,8 @@ mod tests {
                     .write(pack_actor(
                         Eip8130Constants::K1_AUTHENTICATOR,
                         Eip8130Constants::SCOPE_SENDER
-                            | Eip8130Constants::SCOPE_PAYER
+                            | Eip8130Constants::SCOPE_SELF_PAYER
+                            | Eip8130Constants::SCOPE_NONCE
                             | Eip8130Constants::SCOPE_POLICY,
                         0,
                     ))
@@ -2545,7 +2546,7 @@ mod tests {
             B256::from_slice(&id)
         };
         let initial_actors =
-            vec![InitialActor { actor_id, authenticator: Eip8130Constants::K1_AUTHENTICATOR }];
+            vec![InitialActor::owner(actor_id, Eip8130Constants::K1_AUTHENTICATOR)];
         let create = CreateEntry {
             user_salt: B256::ZERO,
             code: code.clone(),

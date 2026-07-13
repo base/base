@@ -51,19 +51,9 @@ impl Scope {
         self.0
     }
 
-    /// Returns true if the scope grants the `SCOPE_SIGNATURE` context.
-    pub const fn has_signature(&self) -> bool {
-        self.0 & Eip8130Constants::SCOPE_SIGNATURE != 0
-    }
-
-    /// Returns true if the scope grants the `SCOPE_SENDER` context.
+    /// Returns true if the scope grants the ungated `SCOPE_SENDER` context.
     pub const fn has_sender(&self) -> bool {
         self.0 & Eip8130Constants::SCOPE_SENDER != 0
-    }
-
-    /// Returns true if the scope grants the `SCOPE_PAYER` context.
-    pub const fn has_payer(&self) -> bool {
-        self.0 & Eip8130Constants::SCOPE_PAYER != 0
     }
 
     /// Returns true if the scope enables policy gating.
@@ -75,16 +65,31 @@ impl Scope {
     pub const fn has_nonce(&self) -> bool {
         self.0 & Eip8130Constants::SCOPE_NONCE != 0
     }
+
+    /// Returns true if the scope grants self-pay (`payer == sender`).
+    pub const fn has_self_payer(&self) -> bool {
+        self.0 & Eip8130Constants::SCOPE_SELF_PAYER != 0
+    }
+
+    /// Returns true if the scope grants sponsorship (`payer != sender`).
+    pub const fn has_sponsor_payer(&self) -> bool {
+        self.0 & Eip8130Constants::SCOPE_SPONSOR_PAYER != 0
+    }
 }
 
 /// Initial actor installed on a newly-created account.
 ///
-/// Per [EIP-8130], a create entry's initial actors are `[actorId, authenticator]`
-/// tuples, always registered as unrestricted owners (`scope = 0x00`, no expiry,
-/// no policy). Scope, expiry, and policy are deliberately not expressible here
-/// and default to their zero values; restricted keys are added afterwards via a
-/// [`ConfigChange`]. The field order matches the wire encoding and the
-/// address-derivation commitment (`actorId || authenticator`).
+/// Per [EIP-8130], a create entry's initial actors are
+/// `[actorId, authenticator, scope, policyData]` tuples. `scope` is stored
+/// verbatim (`0x00` = unrestricted admin; unknown bits allowed), and `policyData`
+/// is empty unless `scope` sets `POLICY`, in which case it is exactly
+/// `manager (20) || commitment (32)`. Two things are deliberately **not**
+/// expressible here and are added afterwards via a [`ConfigChange`]: `expiry`
+/// (initial actors are always non-expiring, committed as `0`) and a
+/// self-referential `manager = account` (the account address is not known at
+/// commitment time). The field order matches the wire encoding and the
+/// address-derivation commitment (`actorId || authenticator || scope ||
+/// policyData`).
 ///
 /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 #[derive(Debug, Clone, PartialEq, Eq, Hash, RlpEncodable, RlpDecodable)]
@@ -96,6 +101,19 @@ pub struct InitialActor {
     pub actor_id: B256,
     /// Address of the authenticator contract (e.g. an ERC-1271 authenticator).
     pub authenticator: Address,
+    /// Scope byte (`0x00` = unrestricted admin), stored verbatim.
+    pub scope: u8,
+    /// Policy data: empty unless `scope` sets `POLICY`, otherwise exactly
+    /// `manager (20) || commitment (32)`. Committed to the derived address.
+    pub policy_data: Bytes,
+}
+
+impl InitialActor {
+    /// Constructs an unrestricted admin initial actor (`scope == 0x00`, no
+    /// policy), the common owner case.
+    pub fn owner(actor_id: B256, authenticator: Address) -> Self {
+        Self { actor_id, authenticator, scope: 0, policy_data: Bytes::new() }
+    }
 }
 
 /// Operation performed by an [`ActorChange`] inside a [`ConfigChange`].
@@ -323,18 +341,18 @@ mod tests {
     #[test]
     fn scope_bit_helpers() {
         let s = Scope(
-            Eip8130Constants::SCOPE_SIGNATURE
-                | Eip8130Constants::SCOPE_SENDER
-                | Eip8130Constants::SCOPE_PAYER
+            Eip8130Constants::SCOPE_SENDER
                 | Eip8130Constants::SCOPE_POLICY
-                | Eip8130Constants::SCOPE_NONCE,
+                | Eip8130Constants::SCOPE_NONCE
+                | Eip8130Constants::SCOPE_SELF_PAYER
+                | Eip8130Constants::SCOPE_SPONSOR_PAYER,
         );
-        assert!(s.has_signature());
         assert!(s.has_sender());
-        assert!(s.has_payer());
         assert!(s.has_policy());
         assert!(s.has_nonce());
-        assert!(!Scope::UNRESTRICTED.has_signature());
+        assert!(s.has_self_payer());
+        assert!(s.has_sponsor_payer());
+        assert!(!Scope::UNRESTRICTED.has_sender());
     }
 
     #[test]
@@ -370,6 +388,10 @@ mod tests {
                     "0x3333333333333333333333333333333333333333333333333333333333333333"
                 ),
                 authenticator: address!("0x00000000000000000000000000000000000000bb"),
+                scope: Eip8130Constants::SCOPE_POLICY,
+                policy_data: bytes!(
+                    "00000000000000000000000000000000000000cc4444444444444444444444444444444444444444444444444444444444444444"
+                ),
             }],
         });
         let mut buf = Vec::new();

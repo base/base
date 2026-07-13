@@ -130,23 +130,18 @@ impl AccountConfigurationStorage<'_> {
         Ok(self.get_account_state(account)?.local_sequence > 0)
     }
 
-    /// Mirrors `AccountConfiguration.isLocked`: locked while `now < unlocks_at`.
+    /// Mirrors `AccountConfiguration._isLocked`: not locked unless `FLAG_LOCKED`
+    /// is set; hard-locked (frozen) while `FLAG_UNLOCK_INITIATED` is clear; once
+    /// an unlock is initiated, frozen only until `now >= lock_union` (`unlocks_at`).
     /// `now` is supplied by the caller (block timestamp at inclusion, wall-clock
     /// in the pool), since the reader has no block context.
     pub fn is_locked(&self, account: Address, now: u64) -> Result<bool> {
-        Ok(now < self.get_account_state(account)?.unlocks_at)
+        Ok(self.get_account_state(account)?.is_locked(now))
     }
 
     /// Mirrors `AccountConfiguration.getLockStatus`.
     pub fn get_lock_status(&self, account: Address, now: u64) -> Result<LockStatus> {
-        let state = self.get_account_state(account)?;
-        Ok(LockStatus {
-            locked: now < state.unlocks_at,
-            has_initiated_unlock: state.unlocks_at != 0
-                && state.unlocks_at != AccountState::UNLOCKS_AT_MAX,
-            unlocks_at: state.unlocks_at,
-            unlock_delay: state.unlock_delay,
-        })
+        Ok(self.get_account_state(account)?.lock_status(now))
     }
 
     /// The implicit-EOA self-actor id for `account`: `bytes32(bytes20(account))`,
@@ -270,14 +265,21 @@ impl ActorConfig {
 
 /// Decoded `AccountConfiguration.AccountState` (one packed storage slot).
 ///
-/// Solidity layout `{uint64 multichainSequence; uint64 localSequence; uint40
-/// unlocksAt; uint16 unlockDelay; uint8 flags; uint8 defaultEOAScope; uint8
-/// reserved; uint48 defaultEOAExpiry;}`, packed right-aligned,
-/// lowest-order field first, filling the slot to exactly 32 bytes:
+/// Solidity layout `{uint64 multichainSequence; uint64 localSequence; uint8
+/// flags; uint40 lockUnion; uint8 defaultEOAScope; uint48 defaultEOAExpiry;}`,
+/// packed right-aligned, lowest-order field first; the top 3 bytes of the slot
+/// are reserved padding that MUST stay zero:
 ///
 /// ```text
-/// bits (LSB-first): multichain 0..64 | local 64..128 | unlocksAt 128..168 | unlockDelay 168..184 | flags 184..192 | defaultEOAScope 192..200 | reserved 200..208 | defaultEOAExpiry 208..256
+/// bits (LSB-first): multichain 0..64 | local 64..128 | flags 128..136 | lock_union 136..176 | defaultEOAScope 176..184 | defaultEOAExpiry 184..232 | reserved 232..256
 /// ```
+///
+/// `lock_union` is a `uint40` union field (see [Account Lock] in the spec): while
+/// [`Eip8130Constants::FLAG_UNLOCK_INITIATED`] is clear it holds the configured
+/// `unlock_delay` (seconds, `uint16` range); while set it holds `unlocks_at` (the
+/// timestamp at which a pending unlock takes effect). Lock state is mutated only
+/// through the EVM `applySignedLockChanges` entry point; the native path only
+/// reads it (see [`Self::is_locked`]).
 ///
 /// The `default_eoa_*` fields are the inline home for the account's own
 /// secp256k1 ("self") key: when `DEFAULT_EOA_REVOKED` is unset, a k1 signature
@@ -287,6 +289,8 @@ impl ActorConfig {
 /// `actor_config(self)` slot is reserved for a *non*-k1 self authenticator
 /// (e.g. a post-quantum verifier returning the self-actorId); the inline k1
 /// self and a non-k1 self are mutually exclusive.
+///
+/// [Account Lock]: https://eips.ethereum.org/EIPS/eip-8130
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct AccountState {
@@ -295,15 +299,15 @@ pub struct AccountState {
     /// Sequence for local (`chain_id == block.chainid`) changes; `> 0` also marks
     /// the account initialized.
     pub local_sequence: u64,
-    /// Unlock timestamp (`uint40`). Locked while `now < unlocks_at`;
-    /// [`Self::UNLOCKS_AT_MAX`] means locked with no unlock initiated.
-    pub unlocks_at: u64,
-    /// Unlock delay in seconds.
-    pub unlock_delay: u16,
-    /// Account flags bitfield; bit 0 ([`Eip8130Constants::DEFAULT_EOA_REVOKED`])
-    /// disables the inline secp256k1 self key (both the implicit full owner and
-    /// any inline-scoped self).
+    /// Account flags bitfield: bit 0 ([`Eip8130Constants::DEFAULT_EOA_REVOKED`])
+    /// disables the inline secp256k1 self key; bit 1
+    /// ([`Eip8130Constants::FLAG_LOCKED`]) freezes actor configuration; bit 2
+    /// ([`Eip8130Constants::FLAG_UNLOCK_INITIATED`]) selects the `lock_union`
+    /// interpretation.
     pub flags: u8,
+    /// `uint40` lock union: `unlock_delay` (seconds) while `FLAG_UNLOCK_INITIATED`
+    /// is clear, else `unlocks_at` (Unix-seconds timestamp).
+    pub lock_union: u64,
     /// Inline self-key scope bitfield (`0` = unrestricted full owner). Governs
     /// only when the self key is live (`!default_eoa_revoked()`).
     pub default_eoa_scope: u8,
@@ -313,8 +317,10 @@ pub struct AccountState {
 }
 
 impl AccountState {
-    /// `type(uint40).max` — the sentinel `unlocks_at` written by `lock()` before
-    /// an unlock is initiated (locked indefinitely).
+    /// `type(uint40).max` — the `unlocks_at` value `getLockStatus` synthesizes for
+    /// a hard-locked account (`FLAG_LOCKED` set, `FLAG_UNLOCK_INITIATED` clear),
+    /// where `lock_union` actually stores the configured delay rather than a
+    /// timestamp. Not a stored sentinel.
     pub const UNLOCKS_AT_MAX: u64 = (1 << 40) - 1;
 
     /// Unpacks a raw `AccountState` storage word.
@@ -323,21 +329,18 @@ impl AccountState {
         let b = word.to_be_bytes::<32>();
         let mut multichain = [0u8; 8];
         let mut local = [0u8; 8];
-        let mut unlocks_at = [0u8; 8];
-        let mut unlock_delay = [0u8; 2];
+        let mut lock_union = [0u8; 8];
         let mut default_eoa_expiry = [0u8; 8];
-        multichain.copy_from_slice(&b[24..32]); // uint64
-        local.copy_from_slice(&b[16..24]); // uint64
-        unlocks_at[3..].copy_from_slice(&b[11..16]); // uint40: 5 bytes, big-endian
-        unlock_delay.copy_from_slice(&b[9..11]); // uint16
-        default_eoa_expiry[2..].copy_from_slice(&b[0..6]); // uint48: 6 bytes, big-endian
+        multichain.copy_from_slice(&b[24..32]); // uint64 at bits 0..64
+        local.copy_from_slice(&b[16..24]); // uint64 at bits 64..128
+        lock_union[3..].copy_from_slice(&b[10..15]); // uint40 at bits 136..176
+        default_eoa_expiry[2..].copy_from_slice(&b[3..9]); // uint48 at bits 184..232
         Self {
             multichain_sequence: u64::from_be_bytes(multichain),
             local_sequence: u64::from_be_bytes(local),
-            unlocks_at: u64::from_be_bytes(unlocks_at),
-            unlock_delay: u16::from_be_bytes(unlock_delay),
-            flags: b[8],             // uint8 at bits 184..192
-            default_eoa_scope: b[7], // uint8 at bits 192..200
+            flags: b[15], // uint8 at bits 128..136
+            lock_union: u64::from_be_bytes(lock_union),
+            default_eoa_scope: b[9], // uint8 at bits 176..184
             default_eoa_expiry: u64::from_be_bytes(default_eoa_expiry),
         }
     }
@@ -349,16 +352,62 @@ impl AccountState {
         self.flags & Eip8130Constants::DEFAULT_EOA_REVOKED != 0
     }
 
+    /// Mirrors `AccountConfiguration._isLocked`: configuration is frozen while
+    /// `FLAG_LOCKED` is set, except once an unlock has been initiated
+    /// (`FLAG_UNLOCK_INITIATED`), when it stays frozen only until `now` reaches
+    /// the stored `unlocks_at` (`lock_union`).
+    #[must_use]
+    pub const fn is_locked(&self, now: u64) -> bool {
+        if self.flags & Eip8130Constants::FLAG_LOCKED == 0 {
+            return false; // not locked
+        }
+        if self.flags & Eip8130Constants::FLAG_UNLOCK_INITIATED == 0 {
+            return true; // hard-locked, no pending unlock
+        }
+        now < self.lock_union // pending unlock: frozen until the timestamp elapses
+    }
+
+    /// Mirrors `AccountConfiguration.getLockStatus`, deriving the human-readable
+    /// lock view from the packed `flags`/`lock_union` union.
+    #[must_use]
+    pub const fn lock_status(&self, now: u64) -> LockStatus {
+        if self.flags & Eip8130Constants::FLAG_LOCKED == 0 {
+            return LockStatus {
+                locked: false,
+                has_initiated_unlock: false,
+                unlocks_at: 0,
+                unlock_delay: 0,
+            };
+        }
+        if self.flags & Eip8130Constants::FLAG_UNLOCK_INITIATED == 0 {
+            // Hard-locked: lock_union holds the configured delay; synthesize the
+            // max sentinel for `unlocks_at`.
+            return LockStatus {
+                locked: true,
+                has_initiated_unlock: false,
+                unlocks_at: Self::UNLOCKS_AT_MAX,
+                unlock_delay: self.lock_union as u16,
+            };
+        }
+        // Unlock initiated: lock_union holds the effective unlock timestamp.
+        LockStatus {
+            locked: now < self.lock_union,
+            has_initiated_unlock: true,
+            unlocks_at: self.lock_union,
+            unlock_delay: 0,
+        }
+    }
+
     /// Packs this state into its raw storage word — the exact inverse of
     /// [`Self::from_word`].
     ///
-    /// `unlocks_at` must fit in `uint40` and `default_eoa_expiry` in `uint48`
+    /// `lock_union` must fit in `uint40` and `default_eoa_expiry` in `uint48`
     /// (their storage field widths); higher bytes are dropped. Values sourced
     /// from [`Self::from_word`] or ABI decoding always satisfy this, so the
     /// `debug_assert!`s only guard hand-constructed misuse.
     #[must_use]
     pub fn to_word(&self) -> U256 {
-        debug_assert!(self.unlocks_at >> 40 == 0, "unlocks_at exceeds uint40 storage width");
+        debug_assert!(self.lock_union >> 40 == 0, "lock_union exceeds uint40 storage width");
         debug_assert!(
             self.default_eoa_expiry >> 48 == 0,
             "default_eoa_expiry exceeds uint48 storage width"
@@ -366,11 +415,10 @@ impl AccountState {
         let mut b = [0u8; 32];
         b[24..32].copy_from_slice(&self.multichain_sequence.to_be_bytes());
         b[16..24].copy_from_slice(&self.local_sequence.to_be_bytes());
-        b[11..16].copy_from_slice(&self.unlocks_at.to_be_bytes()[3..]); // uint40: low 5 bytes
-        b[9..11].copy_from_slice(&self.unlock_delay.to_be_bytes());
-        b[8] = self.flags;
-        b[7] = self.default_eoa_scope;
-        b[0..6].copy_from_slice(&self.default_eoa_expiry.to_be_bytes()[2..]); // uint48: low 6 bytes
+        b[15] = self.flags;
+        b[10..15].copy_from_slice(&self.lock_union.to_be_bytes()[3..]); // uint40: low 5 bytes
+        b[9] = self.default_eoa_scope;
+        b[3..9].copy_from_slice(&self.default_eoa_expiry.to_be_bytes()[2..]); // uint48 at bits 184..232
         U256::from_be_bytes(b)
     }
 }
@@ -379,14 +427,16 @@ impl AccountState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct LockStatus {
-    /// `true` while `now < unlocks_at`.
+    /// `true` while the account is frozen at the queried timestamp.
     pub locked: bool,
-    /// `true` once `initiateUnlock` has run (`unlocks_at` set to a real time, not
-    /// `0` and not [`AccountState::UNLOCKS_AT_MAX`]).
+    /// `true` once the `applySignedLockChanges` unlock op (`UNLOCK_OP`) has run
+    /// (`FLAG_UNLOCK_INITIATED` set), i.e. an unlock is pending.
     pub has_initiated_unlock: bool,
-    /// The stored unlock timestamp.
+    /// The effective unlock timestamp: the stored `unlocks_at` once an unlock is
+    /// initiated, or [`AccountState::UNLOCKS_AT_MAX`] synthesized while
+    /// hard-locked.
     pub unlocks_at: u64,
-    /// The stored unlock delay in seconds.
+    /// The configured unlock delay in seconds (reported only while hard-locked).
     pub unlock_delay: u16,
 }
 
@@ -409,23 +459,20 @@ mod tests {
             | (U256::from(expiry) << 168)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn pack_account_state(
         multichain: u64,
         local: u64,
-        unlocks_at: u64,
-        unlock_delay: u16,
         flags: u8,
+        lock_union: u64,
         default_eoa_scope: u8,
         default_eoa_expiry: u64,
     ) -> U256 {
         U256::from(multichain)
             | (U256::from(local) << 64)
-            | (U256::from(unlocks_at) << 128)
-            | (U256::from(unlock_delay) << 168)
-            | (U256::from(flags) << 184)
-            | (U256::from(default_eoa_scope) << 192)
-            | (U256::from(default_eoa_expiry) << 208)
+            | (U256::from(flags) << 128)
+            | (U256::from(lock_union) << 136)
+            | (U256::from(default_eoa_scope) << 176)
+            | (U256::from(default_eoa_expiry) << 184)
     }
 
     #[test]
@@ -477,7 +524,7 @@ mod tests {
             // Empty slot, self actor id, DEFAULT_EOA_REVOKED set -> not an actor.
             acc.account_state
                 .at_mut(&ACCOUNT)
-                .write(pack_account_state(0, 1, 0, 0, Eip8130Constants::DEFAULT_EOA_REVOKED, 0, 0))
+                .write(pack_account_state(0, 1, Eip8130Constants::DEFAULT_EOA_REVOKED, 0, 0, 0))
                 .unwrap();
             assert!(!acc.is_actor(ACCOUNT, self_id).unwrap());
 
@@ -528,14 +575,14 @@ mod tests {
             // Live scoped self with an inline gate -> (manager, commitment).
             acc.account_state
                 .at_mut(&ACCOUNT)
-                .write(pack_account_state(0, 1, 0, 0, 0, Eip8130Constants::SCOPE_POLICY, 0))
+                .write(pack_account_state(0, 1, 0, 0, Eip8130Constants::SCOPE_POLICY, 0))
                 .unwrap();
             assert_eq!(acc.get_policy(ACCOUNT, self_id).unwrap(), (manager, commitment));
 
             // Revoked self -> ungated regardless of the inline scope.
             acc.account_state
                 .at_mut(&ACCOUNT)
-                .write(pack_account_state(0, 1, 0, 0, Eip8130Constants::DEFAULT_EOA_REVOKED, 0, 0))
+                .write(pack_account_state(0, 1, Eip8130Constants::DEFAULT_EOA_REVOKED, 0, 0, 0))
                 .unwrap();
             assert_eq!(acc.get_policy(ACCOUNT, self_id).unwrap(), (Address::ZERO, B256::ZERO));
         });
@@ -556,12 +603,12 @@ mod tests {
     #[test]
     fn account_state_unpacks_sequences_and_lock_fields() {
         let expiry = (1u64 << 48) - 1; // full uint48
+        let lock_union = (1u64 << 40) - 1; // full uint40
         let word = pack_account_state(
             7,
             3,
-            (1u64 << 40) - 1,
-            0xBEEF,
-            Eip8130Constants::DEFAULT_EOA_REVOKED,
+            Eip8130Constants::DEFAULT_EOA_REVOKED | Eip8130Constants::FLAG_LOCKED,
+            lock_union,
             0xAB,
             expiry,
         );
@@ -573,8 +620,7 @@ mod tests {
             let state = acc.get_account_state(ACCOUNT).unwrap();
             assert_eq!(state.multichain_sequence, 7);
             assert_eq!(state.local_sequence, 3);
-            assert_eq!(state.unlocks_at, AccountState::UNLOCKS_AT_MAX);
-            assert_eq!(state.unlock_delay, 0xBEEF);
+            assert_eq!(state.lock_union, lock_union);
             assert!(state.default_eoa_revoked());
             assert_eq!(state.default_eoa_scope, 0xAB);
             assert_eq!(state.default_eoa_expiry, expiry);
@@ -590,21 +636,30 @@ mod tests {
         StorageCtx::enter(&mut storage, |ctx| {
             let mut acc = AccountConfigurationStorage::new(ctx);
 
-            // lock(): unlocks_at = max, delay set. Locked, no unlock initiated.
+            // LOCK_OP: FLAG_LOCKED set, lock_union holds the delay. Hard-locked,
+            // no unlock initiated — frozen regardless of `now`.
             acc.account_state
                 .at_mut(&ACCOUNT)
-                .write(pack_account_state(0, 1, AccountState::UNLOCKS_AT_MAX, delay, 0, 0, 0))
+                .write(pack_account_state(0, 1, Eip8130Constants::FLAG_LOCKED, delay as u64, 0, 0))
                 .unwrap();
             assert!(acc.is_locked(ACCOUNT, 1_000).unwrap());
             let status = acc.get_lock_status(ACCOUNT, 1_000).unwrap();
             assert!(status.locked);
             assert!(!status.has_initiated_unlock);
+            assert_eq!(status.unlocks_at, AccountState::UNLOCKS_AT_MAX);
             assert_eq!(status.unlock_delay, delay);
 
-            // initiateUnlock(): unlocks_at = real future time, delay cleared.
+            // UNLOCK_OP: FLAG_UNLOCK_INITIATED set, lock_union holds unlocks_at.
             acc.account_state
                 .at_mut(&ACCOUNT)
-                .write(pack_account_state(0, 1, 2_000, 0, 0, 0, 0))
+                .write(pack_account_state(
+                    0,
+                    1,
+                    Eip8130Constants::FLAG_LOCKED | Eip8130Constants::FLAG_UNLOCK_INITIATED,
+                    2_000,
+                    0,
+                    0,
+                ))
                 .unwrap();
             assert!(acc.is_locked(ACCOUNT, 1_000).unwrap()); // before unlocks_at
             assert!(!acc.is_locked(ACCOUNT, 2_000).unwrap()); // at/after unlocks_at
@@ -613,10 +668,10 @@ mod tests {
             assert!(status.has_initiated_unlock);
             assert_eq!(status.unlocks_at, 2_000);
 
-            // Never locked: unlocks_at = 0.
+            // Never locked: no lock flags set.
             acc.account_state
                 .at_mut(&ACCOUNT)
-                .write(pack_account_state(0, 1, 0, 0, 0, 0, 0))
+                .write(pack_account_state(0, 1, 0, 0, 0, 0))
                 .unwrap();
             assert!(!acc.is_locked(ACCOUNT, 0).unwrap());
             assert!(!acc.get_lock_status(ACCOUNT, 0).unwrap().has_initiated_unlock);
@@ -648,9 +703,8 @@ mod tests {
         let word = pack_account_state(
             7,
             3,
+            Eip8130Constants::DEFAULT_EOA_REVOKED | Eip8130Constants::FLAG_UNLOCK_INITIATED,
             (1u64 << 40) - 1,
-            0xBEEF,
-            Eip8130Constants::DEFAULT_EOA_REVOKED,
             0xAB,
             (1u64 << 48) - 1,
         );
