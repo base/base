@@ -2,6 +2,7 @@
 
 use alloy_evm::precompiles::DynPrecompile;
 use alloy_primitives::Address;
+use base_common_genesis::BaseUpgrade;
 
 use crate::{
     B20AssetStorage, B20AssetToken, NoopPrecompileCallObserver, PolicyHandle,
@@ -17,14 +18,22 @@ pub struct B20AssetPrecompile;
 
 impl B20AssetPrecompile {
     /// Returns a [`DynPrecompile`] that dispatches to [`B20AssetToken`] logic at
-    /// `token_address`.
-    pub fn create_precompile(token_address: Address) -> DynPrecompile {
-        Self::create_precompile_with_observer(token_address, NoopPrecompileCallObserver)
+    /// `token_address` for `upgrade`.
+    pub fn create_precompile(token_address: Address, upgrade: BaseUpgrade) -> DynPrecompile {
+        Self::create_precompile_with_observer(token_address, NoopPrecompileCallObserver, upgrade)
     }
 
     /// Returns a [`DynPrecompile`] that observes and dispatches to [`B20AssetToken`] logic at
-    /// `token_address`.
-    pub fn create_precompile_with_observer<O>(token_address: Address, observer: O) -> DynPrecompile
+    /// `token_address` for `upgrade`.
+    ///
+    /// The `_upgrade` fork signal is threaded here in Phase 0 but not yet used to
+    /// select execution logic; behavior is identical across forks. Phase 1 uses
+    /// it to resolve the active [`B20AssetToken`] version.
+    pub fn create_precompile_with_observer<O>(
+        token_address: Address,
+        observer: O,
+        _upgrade: BaseUpgrade,
+    ) -> DynPrecompile
     where
         O: PrecompileCallObserver,
     {
