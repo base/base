@@ -65,7 +65,7 @@ mod tests {
     use alloy_sol_types::SolCall;
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
-    use crate::{FooLogic, FooStorage, FooV1, FooV2, IFoo};
+    use crate::{FooLogic, FooStorage, FooV1, FooV2, FooV3, IFoo};
 
     const CALLER: Address = address!("0x1111111111111111111111111111111111111111");
 
@@ -116,6 +116,35 @@ mod tests {
 
         assert!(!output.is_revert());
         assert_eq!(IFoo::greetCall::abi_decode_returns(&output.bytes).unwrap(), "Hello, base!");
+    }
+
+    #[test]
+    fn greet_greeting_changes_in_v3() {
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_caller(CALLER);
+        let calldata = IFoo::greetCall { name: "base".into() }.abi_encode();
+
+        let output = dispatch(&mut storage, &calldata, &FooV3);
+
+        assert!(!output.is_revert());
+        assert_eq!(
+            IFoo::greetCall::abi_decode_returns(&output.bytes).unwrap(),
+            "Hey base, welcome to Base!"
+        );
+    }
+
+    #[test]
+    fn hello_world_is_unchanged_from_v2_in_v3() {
+        let mut storage = HashMapStorageProvider::new(1);
+        let calldata = IFoo::helloWorldCall {}.abi_encode();
+
+        let v2 = dispatch(&mut storage, &calldata, &FooV2);
+        let v3 = dispatch(&mut storage, &calldata, &FooV3);
+
+        assert_eq!(
+            IFoo::helloWorldCall::abi_decode_returns(&v2.bytes).unwrap(),
+            IFoo::helloWorldCall::abi_decode_returns(&v3.bytes).unwrap(),
+        );
     }
 
     #[test]

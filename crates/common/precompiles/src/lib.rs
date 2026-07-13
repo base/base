@@ -85,4 +85,4 @@ mod nonce;
 pub use nonce::{INonceManager, NonceManager, NonceManagerStorage};
 
 mod foo;
-pub use foo::{Foo, FooLogic, FooStorage, FooV1, FooV2, FooVersions, IFoo};
+pub use foo::{Foo, FooLogic, FooStorage, FooV1, FooV2, FooV3, FooVersions, IFoo};

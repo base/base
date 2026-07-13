@@ -27,7 +27,7 @@ mod versions;
 pub use versions::FooVersions;
 
 mod logic;
-pub use logic::{FooLogic, FooV1, FooV2};
+pub use logic::{FooLogic, FooV1, FooV2, FooV3};
 
 mod dispatch;
 
