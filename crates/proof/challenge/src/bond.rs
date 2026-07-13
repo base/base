@@ -80,7 +80,7 @@ impl<C: Clock> BondManager<C> {
         submitter: &ChallengeSubmitter<T>,
     ) -> eyre::Result<()> {
         if self.claim_addresses.is_empty() {
-            warn!("bond manager is disabled, skipping discovery scan");
+            debug!("bond manager is disabled, skipping discovery scan");
             return Ok(());
         }
 
@@ -113,7 +113,6 @@ impl<C: Clock> BondManager<C> {
         }
 
         self.last_scan = Some(now);
-        ChallengerMetrics::bonds_tracked().set(0.0);
 
         if action_count > 0 {
             ChallengerMetrics::bond_discovery_games_found_total().increment(action_count as u64);
@@ -323,7 +322,7 @@ impl<C: Clock> BondManager<C> {
                 game = %game_address,
                 ready_at = ready_at,
                 now = now,
-                remaining_secs = ready_at - now,
+                remaining_secs = ready_at.saturating_sub(now),
                 "waiting for DelayedWETH delay"
             );
             return Ok(());

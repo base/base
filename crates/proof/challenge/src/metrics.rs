@@ -101,14 +101,8 @@ base_metrics::define_metrics! {
     #[describe("Latency in seconds for bond transaction confirmation")]
     bond_tx_latency_seconds: histogram,
 
-    #[describe("Legacy gauge: stateless bond claiming keeps no per-game state")]
-    bonds_tracked: gauge,
-
     #[describe("Total number of bonds successfully claimed")]
     bonds_completed_total: counter,
-
-    #[describe("Total number of bonds dropped because recipient changed after resolve")]
-    bonds_not_claimable_total: counter,
 
     #[describe("Total bond discovery scans performed")]
     #[label(name = "scan_type", default = ["full"])]
