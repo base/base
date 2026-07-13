@@ -157,7 +157,6 @@ impl SuccinctZkProversConfig {
         &self,
         cancel: &CancellationToken,
     ) -> Result<Option<HashMap<ZkBackend, Arc<dyn ZkProver>>>, SuccinctZkProverBuildError> {
-        let mut provers = HashMap::new();
         let (configs, rpc) = self.backend_configs()?;
         let witness_provider = if let Some(rpc) = rpc {
             let Some(provider) =
@@ -186,6 +185,7 @@ impl SuccinctZkProversConfig {
             });
         }
 
+        let mut provers = HashMap::new();
         while let Some(result) = tasks.join_next().await {
             let result = result
                 .map_err(|source| {
@@ -207,12 +207,6 @@ impl SuccinctZkProversConfig {
                 return Ok(None);
             };
             provers.insert(backend, prover);
-        }
-
-        if provers.is_empty() {
-            return Err(SuccinctZkProverBuildError::config(
-                "no ZK backend enabled; configure RPC URLs or explicitly enable the mock backend",
-            ));
         }
 
         Ok(Some(provers))
@@ -266,10 +260,7 @@ impl SuccinctZkProversConfig {
         let s3_bucket = Self::optional_string(self.s3_bucket.as_deref());
         let s3_region = Self::optional_string(self.s3_region.as_deref());
         match (cluster_rpc, s3_bucket, s3_region, rpc) {
-            (None, None, None, _) => Ok(None),
-            (None, _, _, _) => Err(SuccinctZkProverBuildError::config(
-                "cluster backend requires SP1_CLUSTER_API_ENDPOINT",
-            )),
+            (None, _, _, _) => Ok(None),
             (Some(_), None, _, _) => {
                 Err(SuccinctZkProverBuildError::config("cluster backend requires CLI_S3_BUCKET"))
             }
@@ -370,6 +361,12 @@ impl SuccinctZkProversConfig {
 
         if let Some(config) = network {
             configs.push((ZkBackend::Network, SuccinctZkBackendConfig::Network(config)));
+        }
+
+        if configs.is_empty() {
+            return Err(SuccinctZkProverBuildError::config(
+                "no ZK backend enabled; configure RPC URLs or explicitly enable the mock backend",
+            ));
         }
 
         Ok((configs, rpc))
@@ -520,7 +517,10 @@ mod tests {
     #[test]
     fn backend_enablement_is_presence_based() {
         let mut config = config();
-        assert!(config.backend_configs().unwrap().0.is_empty());
+        assert_eq!(
+            config.backend_configs().unwrap_err().to_string(),
+            "configuration error: no ZK backend enabled; configure RPC URLs or explicitly enable the mock backend"
+        );
 
         config.use_kms_requester = true;
         assert!(config.backend_configs().is_err());
@@ -555,10 +555,9 @@ mod tests {
 
         config.s3_bucket = Some("bucket".to_owned());
         config.s3_region = Some("region".to_owned());
-        assert_eq!(
-            config.backend_configs().unwrap_err().to_string(),
-            "configuration error: cluster backend requires SP1_CLUSTER_API_ENDPOINT"
-        );
+        let (configs, _) = config.backend_configs().unwrap();
+        assert_eq!(configs.len(), 1);
+        assert_eq!(configs[0].0, ZkBackend::Mock);
 
         set_rpc_config(&mut config);
         config.cluster_rpc = Some("http://cluster".to_owned());
