@@ -14,9 +14,9 @@ use revm::{
 };
 
 use crate::{
-    ActivationAdminConfig, ActivationRegistry, B20Factory, BasePrecompileSpec, BerylLookup,
-    NonceManager, NoopPrecompileCallObserver, PolicyRegistryPrecompile, PrecompileCallObserver,
-    TxContext, bls12_381, bn254_pair,
+    ActivationAdminConfig, ActivationRegistry, B20Factory, BasePrecompileSpec, BerylLookup, Foo,
+    FooVersions, NonceManager, NoopPrecompileCallObserver, PolicyRegistryPrecompile,
+    PrecompileCallObserver, TxContext, bls12_381, bn254_pair,
 };
 
 /// Base precompile provider.
@@ -219,6 +219,11 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
         if self.spec.upgrade() >= BaseUpgrade::Cobalt {
             TxContext::install(&mut precompiles);
             NonceManager::install(&mut precompiles);
+        }
+        // The `foo` reference precompile resolves its version from the active
+        // fork: absent before Beryl, V1 from Beryl, V2 from Cobalt.
+        if let Some(version) = FooVersions::resolve(self.spec.upgrade()) {
+            Foo::install(&mut precompiles, version);
         }
         precompiles
     }
