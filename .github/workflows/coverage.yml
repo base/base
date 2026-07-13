@@ -36,13 +36,14 @@ jobs:
           free-disk: "true"
           native-deps: "true"
           foundry: "true"
+          sp1: "true"
           components: llvm-tools-preview
           tools: cargo-nextest,cargo-llvm-cov
           rust-cache-shared-key: "stable"
       - name: Collect unit coverage
         run: just cov::unit
       - name: Upload to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@18283e04ce6e62d37312384ff67231eb8fd56d24 # v5.4.3
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: target/coverage/unit.lcov
@@ -74,7 +75,7 @@ jobs:
       - name: Collect action-test coverage
         run: just cov::action
       - name: Upload to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@18283e04ce6e62d37312384ff67231eb8fd56d24 # v5.4.3
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: target/coverage/action.lcov
@@ -111,7 +112,7 @@ jobs:
       - name: Collect system-test coverage
         run: just cov::system
       - name: Upload to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@18283e04ce6e62d37312384ff67231eb8fd56d24 # v5.4.3
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: target/coverage/system.lcov
