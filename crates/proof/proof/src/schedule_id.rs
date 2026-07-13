@@ -6,7 +6,7 @@ use base_common_genesis::{RollupConfig, UpgradeConfig};
 pub struct ScheduleId;
 
 impl ScheduleId {
-    /// Derive the schedule ID from the hardfork timestamps embedded in a rollup config.
+    /// Derives the schedule ID from the hardfork timestamps in a rollup config.
     pub fn from_rollup_config(rollup_config: &RollupConfig) -> B256 {
         Self::from_upgrades(&rollup_config.upgrades)
     }

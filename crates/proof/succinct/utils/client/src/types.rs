@@ -28,8 +28,8 @@ sol! {
         uint64 endingL2SequenceNumber;
         bytes intermediateRoots;
         bytes32 rollupConfigHash;
-        bytes32 scheduleId;
         bytes32 imageHash;
+        bytes32 scheduleId;
     }
 }
 
@@ -80,10 +80,10 @@ impl AggregationOutputs {
         let rollup_config_hash = B256::from_slice(&data[off..off + 32]);
         off += 32;
 
-        let schedule_id = B256::from_slice(&data[off..off + 32]);
+        let image_hash = B256::from_slice(&data[off..off + 32]);
         off += 32;
 
-        let image_hash = B256::from_slice(&data[off..off + 32]);
+        let schedule_id = B256::from_slice(&data[off..off + 32]);
 
         Ok(Self {
             proverAddress: prover_address,
@@ -94,8 +94,8 @@ impl AggregationOutputs {
             endingL2SequenceNumber: ending_seq,
             intermediateRoots: intermediate_roots,
             rollupConfigHash: rollup_config_hash,
-            scheduleId: schedule_id,
             imageHash: image_hash,
+            scheduleId: schedule_id,
         })
     }
 }

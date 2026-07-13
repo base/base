@@ -715,10 +715,7 @@ mod tests {
                 "l2_block_number": aggregate_proposal.l2_block_number,
                 "prev_output_root": format!("{:#x}", aggregate_proposal.prev_output_root),
                 "config_hash": format!("{:#x}", aggregate_proposal.config_hash),
-                "schedule_id": format!(
-                    "{:#x}",
-                    aggregate_proposal.schedule_id
-                ),
+                "schedule_id": format!("{:#x}", aggregate_proposal.schedule_id),
             })
         );
         assert_eq!(
@@ -837,10 +834,7 @@ mod tests {
                 "l2_block_number": aggregate_proposal.l2_block_number,
                 "prev_output_root": format!("{:#x}", aggregate_proposal.prev_output_root),
                 "config_hash": format!("{:#x}", aggregate_proposal.config_hash),
-                "schedule_id": format!(
-                    "{:#x}",
-                    aggregate_proposal.schedule_id
-                ),
+                "schedule_id": format!("{:#x}", aggregate_proposal.schedule_id),
             })
         );
         assert_eq!(

@@ -1789,6 +1789,7 @@ mod metrics_emission {
                     l2_block_number: 20,
                     prev_output_root: B256::ZERO,
                     config_hash: B256::ZERO,
+                    schedule_id: B256::ZERO,
                 };
                 let zk = Arc::new(MockZkProofProvider {
                     session_id: "tee-bad-root-session".to_string(),

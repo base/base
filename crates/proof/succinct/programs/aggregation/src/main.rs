@@ -110,8 +110,8 @@ pub fn main() {
         endingL2SequenceNumber: final_boot_info.l2BlockNumber,
         intermediateRoots: final_boot_info.intermediateRoots,
         rollupConfigHash: final_boot_info.rollupConfigHash,
-        scheduleId: final_boot_info.scheduleId,
         imageHash: multi_block_vkey_b256,
+        scheduleId: final_boot_info.scheduleId,
     };
 
     // Commit keccak256 of the packed encoding to match the on-chain verifier's
