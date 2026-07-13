@@ -6427,6 +6427,8 @@ dependencies = [
  "alloy-signer-local 2.0.5",
  "alloy-sol-macro",
  "alloy-sol-types",
+ "base-common-consensus",
+ "base-common-evm",
  "base-common-rpc-types",
  "eyre",
  "serde_json",

@@ -23,8 +23,8 @@ use revm::{
 };
 
 use crate::{
-    BaseBlockExecutionCtx, BaseBlockExecutionError, BaseReceiptBuilder, BaseTxEnv, BaseTxResult,
-    DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, canyon,
+    BaseBlockExecutionCtx, BaseBlockExecutionError, BaseReceiptBuilder, BaseTime, BaseTxEnv,
+    BaseTxResult, DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, canyon,
 };
 
 /// Block executor for Base.
@@ -138,6 +138,15 @@ where
         // so we can safely assume that this will always be triggered upon the transition and that
         // the above check for empty blocks will never be hit on Base chains.
         canyon::ensure_create2_deployer(
+            &self.spec,
+            self.evm.block().timestamp().saturating_to(),
+            self.evm.db_mut(),
+        )
+        .map_err(BlockExecutionError::other)?;
+
+        // Install BaseTime before transactions so the activation block's metadata deposit can
+        // call it.
+        BaseTime::ensure_predeploy(
             &self.spec,
             self.evm.block().timestamp().saturating_to(),
             self.evm.db_mut(),

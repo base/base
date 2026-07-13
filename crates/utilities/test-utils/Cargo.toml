@@ -24,6 +24,8 @@ alloy-sol-macro = { workspace = true, features = ["json"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 
 # base-alloy
+base-common-evm.workspace = true
+base-common-consensus.workspace = true
 base-common-rpc-types.workspace = true
 
 # misc
