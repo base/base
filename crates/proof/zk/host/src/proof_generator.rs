@@ -154,7 +154,7 @@ where
             worker_id = %request.claim.worker_id,
             start_block = request.request.start_block_number(),
             block_count = request.request.number_of_blocks_to_prove(),
-            zk_backend = ?request.request.zk_backend(),
+            zk_backend = %request.request.zk_backend(),
             "starting zk proof generation"
         );
 
@@ -168,7 +168,7 @@ where
                     session_id = %request.claim.session_id,
                     lock_id = %request.claim.lock_id,
                     worker_id = %request.claim.worker_id,
-                    zk_backend = ?request.request.zk_backend(),
+                    zk_backend = %request.request.zk_backend(),
                     error = %source,
                     "zk proof generation failed"
                 );
@@ -180,7 +180,7 @@ where
                     session_id = %request.claim.session_id,
                     lock_id = %request.claim.lock_id,
                     worker_id = %request.claim.worker_id,
-                    zk_backend = ?request.request.zk_backend(),
+                    zk_backend = %request.request.zk_backend(),
                     error = %source,
                     "aborting zk proof generation due to heartbeat failure"
                 );
