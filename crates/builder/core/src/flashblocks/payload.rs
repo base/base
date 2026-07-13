@@ -921,6 +921,9 @@ where
         block_hash: Option<B256>,
         data: serde_json::Map<String, serde_json::Value>,
     ) {
+        if GlobalTransactionEventWriter::get().is_none() {
+            return;
+        }
         let event_ctx = BuilderTransactionEventContext {
             payload_id: payload_id.to_string(),
             block_number: ctx.block_number(),
