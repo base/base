@@ -6,8 +6,8 @@ use alloy_consensus::{BlockHeader, Header, SignableTransaction, TxEip2930, const
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, B256, TxKind, U256, keccak256};
 use base_execution_trie::{
-    BaseProofsStorage, BaseProofsStorageError, RocksdbProofsStorage, initialize::InitializationJob,
-    live::LiveTrieCollector,
+    BaseProofsStorage, BaseProofsStorageError, RethTrieStorageLayout, RocksdbProofsStorage,
+    initialize::InitializationJob, live::LiveTrieCollector,
 };
 use derive_more::Constructor;
 use reth_chainspec::{ChainSpec, ChainSpecBuilder, EthereumHardfork, MAINNET, MIN_TRANSACTION_GAS};
@@ -20,7 +20,7 @@ use reth_node_api::{NodePrimitives, NodeTypesWithDB};
 use reth_primitives_traits::{Block as _, RecoveredBlock, crypto::secp256k1::sign_message};
 use reth_provider::{
     BlockWriter as _, ExecutionOutcome, HashedPostStateProvider, LatestStateProviderRef,
-    ProviderFactory, StateRootProvider,
+    ProviderFactory, StateRootProvider, StorageSettingsCache,
     providers::{BlockchainProvider, ProviderNodeTypes},
     test_utils::create_test_provider_factory_with_chain_spec,
 };
@@ -250,9 +250,14 @@ where
     }
 
     {
+        let trie_layout = if provider_factory.cached_storage_settings().is_v2() {
+            RethTrieStorageLayout::Packed
+        } else {
+            RethTrieStorageLayout::Legacy
+        };
         let provider = provider_factory.db_ref();
         let tx = provider.tx()?;
-        let initialization_job = InitializationJob::new(storage.clone(), tx);
+        let initialization_job = InitializationJob::new(storage.clone(), tx, trie_layout);
         initialization_job.run(last_block_number, last_block_hash)?;
     }
 
