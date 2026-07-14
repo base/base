@@ -12,7 +12,7 @@ mod json;
 pub use json::{JsonOutput, TimestampJson};
 
 mod p2p;
-pub use p2p::{P2pInfoJson, P2pInfoTable, P2pLayerInfoJson};
+pub use p2p::{P2pClInfoJson, P2pElInfoJson, P2pInfoJson, P2pInfoTable};
 
 mod render;
 pub use render::{

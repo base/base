@@ -33,10 +33,11 @@ pub use l1::{
 
 mod p2p;
 pub use p2p::{
-    ClInfoReport, DiscoveryInfo, ElInfoReport, NodeEndpoint, NodeInfoReport, PeerListReport,
-    PeerStatsReport, PeerSummary, RawInfoReport, RawPeerCounts, RawPeersReport, add_peer, ban_peer,
-    connect_peer, disconnect_peer, fetch_cl_info, fetch_connected_peers, fetch_el_info, fetch_info,
-    fetch_raw_info, fetch_raw_peers, list_banned_peers, remove_peer, unban_peer,
+    ClInfoReport, ClNodeIdentity, DiscoveryInfo, ElInfoReport, ElNodeIdentity, NodeEndpoint,
+    NodeInfoReport, PeerListReport, PeerStatsReport, PeerSummary, RawInfoReport, RawPeerCounts,
+    RawPeersReport, add_peer, ban_peer, connect_peer, disconnect_peer, fetch_cl_info,
+    fetch_connected_peers, fetch_el_info, fetch_info, fetch_raw_info, fetch_raw_peers,
+    list_banned_peers, remove_peer, unban_peer,
 };
 
 mod pods;
