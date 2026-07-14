@@ -1,5 +1,4 @@
 //! Shared deterministic test harness utilities for actor-integration tests.
-#![cfg(test)]
 
 mod fake_engine_client;
 pub use fake_engine_client::{

@@ -43,6 +43,17 @@ pub struct Harness {
     _derivation_handle: JoinHandle<()>,
 }
 
+impl Drop for Harness {
+    fn drop(&mut self) {
+        // Shut down actor tasks immediately so test-scoped panics or dropped harnesses do not
+        // leave orphaned futures consuming ticks on the paused-time runtime and potentially
+        // interfering with assertions made by subsequent tests.
+        self._cancellation.cancel();
+        self._engine_handle.abort();
+        self._derivation_handle.abort();
+    }
+}
+
 impl Harness {
     /// Returns the node role configured for this harness.
     pub const fn role(&self) -> NodeMode {
