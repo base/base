@@ -979,10 +979,22 @@ mod tests {
             assert!(!cfg.is_zombie_active(41));
             assert!(cfg.is_zombie_active(42));
             assert!(cfg.is_zombie_active(u64::MAX));
+            crate::RuntimeUpgradeRegistry::set_activation_timestamp(
+                chain_id,
+                BaseUpgrade::Azul,
+                22,
+            );
+            {
+                let _nested =
+                    crate::RuntimeUpgradeRegistry::activate_zombie_for_testing(chain_id, 84);
+                assert!(!cfg.is_zombie_active(83));
+                assert!(cfg.is_zombie_active(84));
+            }
+            assert!(cfg.is_zombie_active(42));
         }
         assert_eq!(
             crate::RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Azul),
-            Some(UpgradeActivation::Timestamp(21))
+            Some(UpgradeActivation::Timestamp(22))
         );
         assert_eq!(crate::RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Zombie), None);
         crate::RuntimeUpgradeRegistry::clear_chain(chain_id);

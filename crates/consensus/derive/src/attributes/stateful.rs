@@ -183,10 +183,8 @@ where
 
         let base_time_update = if self.rollup_cfg.is_zombie_active(next_l2_time) {
             let timestamp_millis_part = timestamp_millis_part.ok_or_else(|| {
-                PipelineError::AttributesBuilder(BuilderError::Custom(
-                    "missing BaseTime timestamp millis part".to_string(),
-                ))
-                .crit()
+                PipelineError::AttributesBuilder(BuilderError::MissingBaseTimeTimestampMillisPart)
+                    .crit()
             })?;
             let (_, envelope) = BaseTimeUpdateTx::try_new_with_deposit_tx(
                 &self.rollup_cfg,
@@ -196,7 +194,7 @@ where
                 next_l2_time,
             )
             .map_err(|e| {
-                PipelineError::AttributesBuilder(BuilderError::Custom(e.to_string())).crit()
+                PipelineError::AttributesBuilder(BuilderError::BaseTimeUpdate(e)).crit()
             })?;
             let mut encoded = Vec::with_capacity(envelope.length());
             envelope.encode_2718(&mut encoded);
@@ -301,7 +299,7 @@ mod tests {
     use base_common_chains::Sepolia;
     use base_common_consensus::{BaseTxEnvelope, SystemAddresses};
     use base_common_genesis::{SystemConfig, SystemConfigUpdate, UpgradeConfig};
-    use base_protocol::{BlockInfo, DepositDecodeError};
+    use base_protocol::{BaseTimeUpdateError, BlockInfo, DepositDecodeError};
 
     use super::*;
     use crate::{
@@ -592,17 +590,17 @@ mod tests {
         let missing = builder.prepare_payload_attributes(l2_parent, epoch, None).await.unwrap_err();
         assert_eq!(
             missing,
-            PipelineErrorKind::Critical(PipelineError::AttributesBuilder(BuilderError::Custom(
-                "missing BaseTime timestamp millis part".to_string()
-            )))
+            PipelineErrorKind::Critical(PipelineError::AttributesBuilder(
+                BuilderError::MissingBaseTimeTimestampMillisPart
+            ))
         );
         let invalid =
             builder.prepare_payload_attributes(l2_parent, epoch, Some(100)).await.unwrap_err();
         assert_eq!(
             invalid,
-            PipelineErrorKind::Critical(PipelineError::AttributesBuilder(BuilderError::Custom(
-                "invalid BaseTime timestamp millis part: 100".to_string()
-            )))
+            PipelineErrorKind::Critical(PipelineError::AttributesBuilder(
+                BuilderError::BaseTimeUpdate(BaseTimeUpdateError::InvalidTimestampMillisPart(100))
+            ))
         );
     }
 
