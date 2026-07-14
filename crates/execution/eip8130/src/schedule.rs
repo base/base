@@ -27,6 +27,8 @@ impl Eip8130GasSchedule {
     // ── EIP-2929 storage access ──────────────────────────────────────────────
     /// Cold `SLOAD` (first access to a slot in the transaction).
     pub const COLD_SLOAD: u64 = 2_100;
+    /// Warm `SLOAD` (repeat access to an already-touched slot).
+    pub const WARM_SLOAD: u64 = 100;
     /// `SSTORE` of a zero slot to a non-zero value.
     pub const SSTORE_SET: u64 = 20_000;
     /// `SSTORE` of an already non-zero slot to another non-zero value.
@@ -41,14 +43,15 @@ impl Eip8130GasSchedule {
     // ── EIP-8130 table values ────────────────────────────────────────────────
     /// Base intrinsic cost for any AA transaction (`AA_BASE_COST`).
     pub const AA_BASE_COST: u64 = Eip8130Constants::EIP8130_BASE_COST;
-    /// `nonce_key_cost` for nonce-free (`NONCE_KEY_MAX`) transactions. A flat,
-    /// amortized charge for the enshrined expiring-nonce circular-buffer replay
-    /// set: a replay-check SLOAD, the ring pointer + ring-slot reads, reclaiming
-    /// one expired entry, recording the new entry, and advancing the pointer. The
-    /// raw per-op SSTORE cost is far higher (an `SSTORE_SET` per insert) but is
-    /// amortized by the ring reclaiming a slot on each write, so EIP-8130 prices
-    /// it as a fixed value rather than metering the individual accesses.
-    pub const NONCE_FREE_COST: u64 = 14_000;
+    /// `nonce_key_cost` for nonce-free (`NONCE_KEY_MAX`) transactions: 13,000 gas
+    /// for the enshrined ring-buffer replay state, composed of 2 cold SLOADs, 1
+    /// warm SLOAD, and 3 warm SSTORE resets. The ring pointer's SLOAD/SSTORE are
+    /// amortized across the block, so EIP-8130 prices this as a fixed composite
+    /// rather than metering the individual accesses (the raw per-op cost, e.g. an
+    /// `SSTORE_SET` per insert, is far higher but amortized by the ring reclaiming
+    /// a slot on each write).
+    pub const NONCE_FREE_COST: u64 =
+        2 * Self::COLD_SLOAD + Self::WARM_SLOAD + 3 * Self::SSTORE_RESET;
     /// `nonce_key_cost` for the first use of a sequence nonce key (cold SLOAD +
     /// SSTORE set).
     pub const NONCE_KEY_FIRST_USE_COST: u64 = Self::COLD_SLOAD + Self::SSTORE_SET;
@@ -133,6 +136,7 @@ mod tests {
     #[test]
     fn gas_primitives_match_evm_reference() {
         assert_eq!(Eip8130GasSchedule::COLD_SLOAD, gas::COLD_SLOAD_COST);
+        assert_eq!(Eip8130GasSchedule::WARM_SLOAD, gas::WARM_STORAGE_READ_COST);
         assert_eq!(Eip8130GasSchedule::SSTORE_SET, gas::SSTORE_SET);
         // revm's `SSTORE_RESET` (5,000) bundles the cold SLOAD; the warm-only
         // reset component is `WARM_SSTORE_RESET` (2,900), which the schedule's
@@ -154,5 +158,12 @@ mod tests {
             Eip8130GasSchedule::NONCE_KEY_EXISTING_COST,
             gas::COLD_SLOAD_COST + gas::WARM_SSTORE_RESET
         );
+        // Nonce-free ring-buffer cost: 2 cold SLOADs + 1 warm SLOAD + 3 warm
+        // SSTORE resets = 13,000 gas.
+        assert_eq!(
+            Eip8130GasSchedule::NONCE_FREE_COST,
+            2 * gas::COLD_SLOAD_COST + gas::WARM_STORAGE_READ_COST + 3 * gas::WARM_SSTORE_RESET
+        );
+        assert_eq!(Eip8130GasSchedule::NONCE_FREE_COST, 13_000);
     }
 }
