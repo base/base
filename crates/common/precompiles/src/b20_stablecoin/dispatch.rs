@@ -59,7 +59,7 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
         }
         // Gate by hardfork: resolve the active version once. `None` is unreachable in practice —
         // the precompile is only installed from Beryl — but we revert defensively.
-        let Some(version) = StablecoinVersions::resolve(upgrade) else {
+        let Some(version) = StablecoinVersions::from_base_upgrade(upgrade) else {
             return recorder
                 .record_base_error_result(ctx, BasePrecompileError::Revert(Bytes::new()));
         };
@@ -99,7 +99,7 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
     {
         // Gate by hardfork: resolve the active version once. `None` is unreachable in
         // practice — the precompile is only installed from Beryl — but we revert defensively.
-        let Some(version) = StablecoinVersions::resolve(upgrade) else {
+        let Some(version) = StablecoinVersions::from_base_upgrade(upgrade) else {
             return Err(BasePrecompileError::Revert(Bytes::new()));
         };
         self.route(ctx, calldata, version, false, observer)
@@ -119,6 +119,10 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
         self.route(ctx, calldata, StablecoinVersion::V1, privileged, NoopPrecompileCallObserver)
     }
 
+    /// Grants `role` to `account` without checking caller authorization.
+    ///
+    /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and the
+    /// authorized [`StablecoinLogic::grant_role`](crate::StablecoinLogic) path is not yet reachable.
     // TODO: When factory get's logic for threading fork, remove this and pull in versions into the factory to use that function
     pub fn grant_role_unchecked(
         &mut self,
