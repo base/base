@@ -313,6 +313,53 @@ RPC metadata.
 Streams live flashblocks as newline-delimited JSON to stdout. For the
 interactive view, use `basectl monitor flashblocks`.
 
+### `basectl proofs`
+
+Submits and inspects ZK proof requests on the internal prover service, used to
+speed up finality for a block range when required.
+
+- `basectl proofs finalize <START_BLOCK> <NUM_BLOCKS>` submits a proof request
+  for a consecutive L2 block range.
+- `basectl proofs status <SESSION_ID>` shows status and result data for a
+  submitted proof request.
+- `basectl proofs list` lists submitted proof requests.
+
+All proofs commands resolve the prover-service endpoint from the `--prover-rpc`
+flag, then the `BASECTL_PROVER_RPC` environment variable, then the selected
+config's `prover_rpc` field. The built-in presets ship without a `prover_rpc`
+because the prover service is internal, so one of the three must be provided.
+
+`proofs finalize` supports:
+
+| Flag | Description |
+|------|-------------|
+| `--session-id <ID>` | Explicit proof session ID (prover-service idempotency key). If omitted, basectl derives a deterministic session ID from the network name and block range, so re-running the same command resolves to the existing session instead of enqueueing a duplicate proof. |
+| `--l1-head <HASH>` | L1 head hash used for witness generation. If omitted, the prover service picks one. |
+| `--sequence-window <N>` | Sequencing window passed to the prover. |
+| `--intermediate-root-interval <N>` | Intermediate output root interval passed to the prover. |
+| `--wait` | Poll the prover service until the proof succeeds or fails. Exits non-zero when the proof fails or does not complete in time. |
+| `--prover-rpc <URL>` | Prover-service RPC URL. Also `BASECTL_PROVER_RPC` or config `prover_rpc`. |
+| `--yes` | Skip the interactive confirmation prompt. By default, `finalize` prints the exact target and waits for `y` or `yes`; every other answer aborts without error. |
+| `--json` | Emit a structured JSON action outcome instead of pretty text. Requires `--yes` so scripts do not hang on an interactive prompt. |
+
+`proofs status` supports:
+
+| Flag | Description |
+|------|-------------|
+| `--prover-rpc <URL>` | Prover-service RPC URL. Also `BASECTL_PROVER_RPC` or config `prover_rpc`. |
+| `--json` | Emit humanized JSON instead of pretty text. |
+| `--raw` | With `--json`, emit the prover-service wire shape instead of the humanized summary. Errors at parse time if used without `--json`. |
+
+`proofs list` supports:
+
+| Flag | Description |
+|------|-------------|
+| `--status <STATUS>` | Only list proofs with this status: `queued`, `running`, `succeeded`, or `failed`. |
+| `--offset <N>` | Number of rows to skip. Default `0`. |
+| `--limit <N>` | Maximum rows to return. Default `50`. |
+| `--prover-rpc <URL>` | Prover-service RPC URL. Also `BASECTL_PROVER_RPC` or config `prover_rpc`. |
+| `--json` | Emit humanized JSON instead of pretty text. |
+
 ## Examples
 
 ```sh
@@ -429,4 +476,16 @@ basectl -c mainnet doctor --el-rpc https://your-el.example/ --cl-rpc https://you
 
 # Include local reth headers/bodies limit validation and JSON output
 basectl -c mainnet doctor --el-rpc https://your-el.example/ --cl-rpc https://your-cl.example/ --reth-config /etc/reth/reth.toml --json
+
+# Submit a proof request for 10 blocks after confirmation
+basectl -c devnet proofs finalize 820122 10 --prover-rpc https://your-prover.example/
+
+# Submit a proof request non-interactively and poll until it succeeds or fails
+basectl -c devnet proofs finalize 820122 10 --prover-rpc https://your-prover.example/ --yes --wait
+
+# Check the status of a submitted proof request
+basectl -c devnet proofs status <SESSION_ID> --prover-rpc https://your-prover.example/
+
+# List running proof requests as JSON
+basectl -c devnet proofs list --status running --prover-rpc https://your-prover.example/ --json | jq .
 ```
