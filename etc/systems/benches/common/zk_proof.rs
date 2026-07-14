@@ -194,8 +194,8 @@ impl ZkProofBench {
                     "dry-run prover response for request {session_id} did not include execution_stats"
                 )
             }),
-            Some(ProofResult::SnarkGroth16(_)) => Err(eyre::eyre!(
-                "dry-run prover response for request {session_id} returned snark_groth16 result"
+            Some(ProofResult::SnarkPlonk(_)) => Err(eyre::eyre!(
+                "dry-run prover response for request {session_id} returned snark_plonk result"
             )),
             Some(ProofResult::Tee(_)) => Err(eyre::eyre!(
                 "dry-run prover response for request {session_id} returned tee result"

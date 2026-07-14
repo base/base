@@ -448,14 +448,14 @@ impl NetworkZkProver {
             witness_gen_duration_ms = witness_gen_duration_ms,
             aggregation_cycle_limit = self.config.aggregation_cycle_limit,
             aggregation_gas_limit = self.config.aggregation_gas_limit,
-            "aggregation witness generated, submitting Groth16 proof to SP1 Network"
+            "aggregation witness generated, submitting PLONK proof to SP1 Network"
         );
 
         let proof_id = self
             .config
             .network_prover
             .prove(self.config.aggregation_pk.as_ref(), stdin)
-            .groth16()
+            .plonk()
             .skip_simulation(true)
             .strategy(FulfillmentStrategy::Auction)
             .timeout(self.config.timeout)

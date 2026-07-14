@@ -63,12 +63,12 @@ prove start_block number_of_blocks='1' proof_type='compressed' session_id='' pro
           --argjson proof "$block_payload" \
           '{proof_type: "compressed", payload: $proof}')"
         ;;
-      snark|groth16|snark_groth16)
+      snark|plonk|snark_plonk)
         request="$(jq -n -c \
           --argjson proof "$block_payload" \
           --arg prover_address "$prover_address" \
           '{
-            proof_type: "snark_groth16",
+            proof_type: "snark_plonk",
             payload: {
               proof: $proof,
               prover_address: $prover_address
@@ -76,7 +76,7 @@ prove start_block number_of_blocks='1' proof_type='compressed' session_id='' pro
           }')"
         ;;
       *)
-        echo "unknown proof_type: $proof_type (use compressed or snark)" >&2
+        echo "unknown proof_type: $proof_type (use compressed, snark, or plonk)" >&2
         exit 1
         ;;
     esac

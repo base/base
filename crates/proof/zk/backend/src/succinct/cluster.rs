@@ -667,7 +667,7 @@ impl ClusterZkProver {
     }
 
     /// Upload the stage artifacts with the provided client and create the cluster request. The
-    /// `proof_mode` selects the stage: `Compressed` for the range proof, `Groth16` for aggregation.
+    /// `proof_mode` selects the stage: `Compressed` for the range proof, `Plonk` for aggregation.
     pub async fn create_cluster_request_with_client<A>(
         &self,
         artifact_client: A,
@@ -685,7 +685,7 @@ impl ClusterZkProver {
                 self.config.range_gas_limit,
                 "range",
             ),
-            ProofMode::Groth16 => (
+            ProofMode::Plonk => (
                 base_proof_succinct_elfs::AGGREGATION_ELF,
                 self.config.aggregation_cycle_limit,
                 self.config.aggregation_gas_limit,
@@ -806,7 +806,7 @@ impl ClusterZkProver {
             .map_err(|e| backend_error!("aggregation witness generation failed: {e}"))?;
         let witness_gen_duration_ms = witness_start.elapsed().as_secs_f64() * 1000.0;
 
-        let session = self.create_cluster_request(proof_id, stdin, ProofMode::Groth16).await?;
+        let session = self.create_cluster_request(proof_id, stdin, ProofMode::Plonk).await?;
         let backend_session_id = session.to_backend_session_id()?;
         info!(
             proof_id = %session.proof_id,

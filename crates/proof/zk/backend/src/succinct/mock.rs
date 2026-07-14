@@ -116,7 +116,7 @@ mod tests {
         assert_eq!(range_id, "mock-stark-session-1");
 
         let ZkProofRequestKind::SnarkPlonk(proof_request) = &request else {
-            unreachable!("request is Groth16");
+            unreachable!("request is PLONK");
         };
         let snark_id = prover.submit_next(proof_request, "session-1", &range_id).await.unwrap();
 

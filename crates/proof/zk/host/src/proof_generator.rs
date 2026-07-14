@@ -235,11 +235,11 @@ where
             request.claim.worker_id.clone(),
         );
 
-        // Every request begins with a range (STARK) proof. For a Groth16 job that is the compressed
+        // Every request begins with a range (STARK) proof. For a PLONK job that is the compressed
         // request nested in its SNARK request.
         let range_request = match &request.request {
             ZkProofRequestKind::Compressed(proof) => proof,
-            ZkProofRequestKind::SnarkGroth16(snark) => &snark.proof,
+            ZkProofRequestKind::SnarkPlonk(snark) => &snark.proof,
         };
         let range_session_id = self
             .drive_stage(
@@ -251,10 +251,10 @@ where
             )
             .await?;
 
-        // Groth16 requests aggregate the completed range proof into a SNARK; every other request
+        // PLONK requests aggregate the completed range proof into a SNARK; every other request
         // downloads the range proof directly.
         match &request.request {
-            ZkProofRequestKind::SnarkGroth16(proof_request) => {
+            ZkProofRequestKind::SnarkPlonk(proof_request) => {
                 let snark_session_id = self
                     .drive_stage(
                         request,
