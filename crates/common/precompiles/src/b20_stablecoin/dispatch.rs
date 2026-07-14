@@ -119,12 +119,7 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
         self.route(ctx, calldata, StablecoinVersion::V1, privileged, NoopPrecompileCallObserver)
     }
 
-    /// Grants `role` to `account` without checking caller authorization.
-    ///
-    /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and
-    /// the authorized [`StablecoinLogic::grant_role`](crate::StablecoinLogic) path is not yet
-    /// reachable. Delegated to the introduction version's logic ([`StablecoinVersion::V1`]); when a
-    /// second version is introduced, thread the creation-fork version here instead of pinning.
+    // TODO: When factory get's logic for threading fork, remove this and pull in versions into the factory to use that function
     pub fn grant_role_unchecked(
         &mut self,
         role: B256,
