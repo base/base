@@ -203,6 +203,7 @@ impl ChallengerService {
                 Arc::clone(&l2_client) as Arc<dyn L2Provider>,
                 config.bond_discovery_lookback_games,
                 config.bond_discovery_interval,
+                config.metrics.enabled,
                 TokioRuntime::new(),
             ))
         } else {
