@@ -2,7 +2,7 @@
 --
 -- Renames stored proof_type / api_proof_type labels and protocol-native JSON
 -- discriminators. Invalidates historical Groth16 SNARK receipts (bytes are not
--- convertible) and fails in-flight SNARK jobs so they are not served as PLONK.
+-- convertible) and fails affected SNARK jobs so they are not served as PLONK.
 
 BEGIN;
 
@@ -32,20 +32,22 @@ SET snark_receipt = NULL,
 WHERE api_proof_type = 'snark_plonk'
   AND (snark_receipt IS NOT NULL OR result_payload IS NOT NULL);
 
--- Fail non-terminal SNARK requests / worker jobs mid Groth16 aggregation.
+-- Fail in-flight and previously-succeeded SNARK requests whose Groth16 results
+-- were invalidated above (otherwise SUCCEEDED rows would report success with
+-- no receipt via getProof).
 UPDATE proof_requests
 SET status = 'FAILED',
     job_status = 'FAILED',
     error_message = 'invalidated by migration 015: SP1 SNARK hard-cutover from Groth16 to PLONK',
     completed_at = NOW()
 WHERE api_proof_type = 'snark_plonk'
-  AND status IN ('CREATED', 'PENDING', 'RUNNING');
+  AND status IN ('CREATED', 'PENDING', 'RUNNING', 'SUCCEEDED');
 
 UPDATE proof_sessions
 SET status = 'FAILED',
     error_message = 'invalidated by migration 015: SP1 SNARK hard-cutover from Groth16 to PLONK',
     completed_at = NOW()
-WHERE status IN ('SUBMITTING', 'RUNNING')
+WHERE status IN ('SUBMITTING', 'RUNNING', 'COMPLETED')
   AND proof_request_id IN (
       SELECT id
       FROM proof_requests
