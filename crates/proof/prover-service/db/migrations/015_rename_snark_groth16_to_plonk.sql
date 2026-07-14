@@ -1,4 +1,4 @@
--- Migration 014: Hard-cutover SP1 SNARK proof type from Groth16 to PLONK.
+-- Migration 015: Hard-cutover SP1 SNARK proof type from Groth16 to PLONK.
 --
 -- Renames stored proof_type / api_proof_type labels and protocol-native JSON
 -- discriminators. Invalidates historical Groth16 SNARK receipts (bytes are not
@@ -15,20 +15,12 @@ SET api_proof_type = 'snark_plonk'
 WHERE api_proof_type = 'snark_groth16';
 
 -- Rewrite protocol-native request JSON discriminators when present.
+-- jsonb::text is space-normalized (`"proof_type": "…"`), so match that form only.
 UPDATE proof_requests
 SET request_payload = replace(
         request_payload::text,
         '"proof_type": "snark_groth16"',
         '"proof_type": "snark_plonk"'
-    )::jsonb
-WHERE request_payload IS NOT NULL
-  AND request_payload::text LIKE '%snark_groth16%';
-
-UPDATE proof_requests
-SET request_payload = replace(
-        request_payload::text,
-        '"proof_type":"snark_groth16"',
-        '"proof_type":"snark_plonk"'
     )::jsonb
 WHERE request_payload IS NOT NULL
   AND request_payload::text LIKE '%snark_groth16%';
@@ -44,14 +36,14 @@ WHERE api_proof_type = 'snark_plonk'
 UPDATE proof_requests
 SET status = 'FAILED',
     job_status = 'FAILED',
-    error_message = 'invalidated by migration 014: SP1 SNARK hard-cutover from Groth16 to PLONK',
+    error_message = 'invalidated by migration 015: SP1 SNARK hard-cutover from Groth16 to PLONK',
     completed_at = NOW()
 WHERE api_proof_type = 'snark_plonk'
   AND status IN ('CREATED', 'PENDING', 'RUNNING');
 
 UPDATE proof_sessions
 SET status = 'FAILED',
-    error_message = 'invalidated by migration 014: SP1 SNARK hard-cutover from Groth16 to PLONK',
+    error_message = 'invalidated by migration 015: SP1 SNARK hard-cutover from Groth16 to PLONK',
     completed_at = NOW()
 WHERE status IN ('SUBMITTING', 'RUNNING')
   AND proof_request_id IN (
