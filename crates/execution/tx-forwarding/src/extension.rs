@@ -40,17 +40,15 @@ impl BaseNodeExtension for TxForwardingExtension {
             );
 
             let pool = ctx.pool().clone();
+            let consumer_config = config.to_consumer_config();
+            let forwarder_config = config.to_forwarder_config();
+
             let executor = ctx.task_executor;
-            let task_executor = executor.clone();
+            let consumer = SpawnedConsumer::spawn(pool, consumer_config, &executor);
+            let forwarder = SpawnedForwarder::spawn(&consumer.sender, forwarder_config, &executor);
 
             executor.spawn_with_graceful_shutdown_signal(|signal| {
                 Box::pin(async move {
-                    let consumer_config = config.to_consumer_config();
-                    let forwarder_config = config.to_forwarder_config();
-                    let consumer = SpawnedConsumer::spawn(pool, consumer_config, &task_executor);
-                    let forwarder =
-                        SpawnedForwarder::spawn(&consumer.sender, forwarder_config, &task_executor);
-
                     let _guard = signal.await;
                     consumer.shutdown();
                     forwarder.shutdown().await;
