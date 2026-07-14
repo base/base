@@ -3,7 +3,6 @@
 
 use std::{net::SocketAddr, str::FromStr, sync::Arc};
 
-use alloy_primitives::B512;
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, State, rejection::JsonRejection},
@@ -11,7 +10,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::post,
 };
-use secp256k1::PublicKey;
+use reth_network_peers::{NodeRecord, id2pk};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;
 use tracing::{debug, info};
@@ -40,30 +39,11 @@ pub struct P2pReachabilityRequest {
 impl P2pReachabilityRequest {
     /// Validates the request and returns its advertised `RLPx` target.
     pub fn target(&self) -> Option<RlpxProbeTarget> {
-        let (node_id, address) = Self::parse_enode(&self.enode)?;
-        if address.port() == 0 {
-            return None;
-        }
-
-        Some(RlpxProbeTarget { address, node_id })
-    }
-
-    /// Parses an `enode://` URL into a validated node identity and socket address.
-    /// Hostnames are rejected; only IP literals are accepted.
-    pub fn parse_enode(enode: &str) -> Option<(B512, SocketAddr)> {
-        let rest = enode.strip_prefix("enode://")?;
-        // Drop any query string, e.g. `?discport=30301`.
-        let rest = rest.split_once('?').map_or(rest, |(before, _)| before);
-        let (raw_node_id, endpoint) = rest.split_once('@')?;
-        let node_id = B512::from_str(raw_node_id).ok()?;
-
-        let mut encoded_public_key = [0_u8; 65];
-        encoded_public_key[0] = 4;
-        encoded_public_key[1..].copy_from_slice(node_id.as_slice());
-        PublicKey::from_slice(&encoded_public_key).ok()?;
-
-        let endpoint = endpoint.parse::<SocketAddr>().ok()?;
-        Some((node_id, endpoint))
+        self.enode.strip_prefix("enode://")?;
+        let record = NodeRecord::from_str(&self.enode).ok()?;
+        id2pk(record.id).ok()?;
+        let address = record.tcp_addr();
+        (address.port() != 0).then_some(RlpxProbeTarget { address, node_id: record.id })
     }
 }
 
@@ -287,6 +267,11 @@ mod tests {
             with_discport.target().unwrap().address,
             SocketAddr::from(([8, 8, 8, 8], 30303))
         );
+
+        let invalid_discport = P2pReachabilityRequest {
+            enode: format!("enode://{TEST_NODE_ID}@8.8.8.8:30303?discport=invalid"),
+        };
+        assert!(invalid_discport.target().is_none());
 
         let ipv6 = P2pReachabilityRequest {
             enode: format!("enode://{TEST_NODE_ID}@[2606:4700:4700::1111]:30303"),

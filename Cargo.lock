@@ -6408,6 +6408,7 @@ dependencies = [
  "reqwest 0.13.4",
  "reth-ecies",
  "reth-eth-wire",
+ "reth-network-peers",
  "secp256k1 0.30.0",
  "serde",
  "thiserror 2.0.18",
