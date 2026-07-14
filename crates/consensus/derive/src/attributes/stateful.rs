@@ -181,7 +181,15 @@ where
         let mut encoded_l1_info_tx = Vec::with_capacity(l1_info_tx_envelope.length());
         l1_info_tx_envelope.encode_2718(&mut encoded_l1_info_tx);
 
-        let base_time_update = if self.rollup_cfg.is_zombie_active(next_l2_time) {
+        let base_time_active = self.rollup_cfg.is_zombie_active(next_l2_time);
+        let mut txs = Vec::with_capacity(
+            1 + usize::from(base_time_active)
+                + deposit_transactions.len()
+                + upgrade_transactions.len(),
+        );
+        txs.push(encoded_l1_info_tx.into());
+
+        let payload_timestamp_millis_part = if base_time_active {
             let timestamp_millis_part = timestamp_millis_part.ok_or_else(|| {
                 PipelineError::AttributesBuilder(BuilderError::MissingBaseTimeTimestampMillisPart)
                     .crit()
@@ -198,22 +206,12 @@ where
             })?;
             let mut encoded = Vec::with_capacity(envelope.length());
             envelope.encode_2718(&mut encoded);
-            Some((timestamp_millis_part, Bytes::from(encoded)))
+            txs.push(encoded.into());
+            Some(timestamp_millis_part)
         } else {
             None
         };
 
-        let payload_timestamp_millis_part =
-            base_time_update.as_ref().map(|(timestamp_millis_part, _)| *timestamp_millis_part);
-        let mut txs = Vec::with_capacity(
-            1 + usize::from(base_time_update.is_some())
-                + deposit_transactions.len()
-                + upgrade_transactions.len(),
-        );
-        txs.push(encoded_l1_info_tx.into());
-        if let Some((_, tx)) = base_time_update {
-            txs.push(tx);
-        }
         txs.extend(deposit_transactions);
         txs.extend(upgrade_transactions);
 
