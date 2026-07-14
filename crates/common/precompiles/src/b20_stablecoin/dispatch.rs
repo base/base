@@ -1,31 +1,38 @@
 //! ABI dispatch for the stablecoin B-20 variant.
 //!
-//! Dispatches the full `IB20` selector set for stablecoin tokens.
-//! All logic mirrors `B20Token::inner_with_privilege` exactly; the only
-//! distinction is the `StablecoinAccounting` bound that provides `currency()`
-//! from the stablecoin extension namespace.
+//! The dispatcher owns everything that is *not* version-specific: it decodes the
+//! `IB20`/`IB20Stablecoin` selector set, charges gas, gates the call by hardfork
+//! (via [`StablecoinVersions`]), and routes each mutating operation to the active
+//! version's [`StablecoinLogic`] implementation. Pure reads and constant getters
+//! are answered inline here, since their behavior does not vary across versions.
 
 use alloc::string::ToString;
 
-use alloy_primitives::{Bytes, U256};
-use alloy_sol_types::{SolCall, SolInterface, SolValue};
+use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_sol_types::{SolCall, SolEvent, SolInterface, SolValue};
+use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    B20StablecoinToken, B20TokenRole, B20Variant, BerylCallRecorder, BerylMetricLabels,
-    BerylSelector, Burnable, Configurable,
+    B20PolicyType, B20StablecoinToken, B20TokenRole, B20Variant, BerylCallRecorder,
+    BerylMetricLabels, BerylSelector,
     IB20::{self, IB20Calls as C},
     IB20Stablecoin::{self, IB20StablecoinCalls as SC},
-    Mintable, NoopPrecompileCallObserver, Pausable, PermitArgs, Permittable, Policy,
-    PrecompileCallObserver, RoleManaged, StablecoinAccounting, Token, Transferable,
+    NoopPrecompileCallObserver, PermitArgs, Policy, PrecompileCallObserver, StablecoinAccounting,
+    StablecoinVersion, StablecoinVersions, Token,
     macros::decode_precompile_call,
 };
 
 impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
-    /// ABI-dispatches `calldata` to the appropriate `IB20` handler.
-    pub fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
-        self.dispatch_with_observer(ctx, calldata, NoopPrecompileCallObserver)
+    /// ABI-dispatches `calldata` to the appropriate `IB20` handler for `upgrade`.
+    pub fn dispatch(
+        &mut self,
+        ctx: StorageCtx<'_>,
+        calldata: &[u8],
+        upgrade: BaseUpgrade,
+    ) -> PrecompileResult {
+        self.dispatch_with_observer(ctx, calldata, upgrade, NoopPrecompileCallObserver)
     }
 
     /// ABI-dispatches `calldata` and observes the decoded stablecoin B-20 operation.
@@ -33,6 +40,7 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
         &mut self,
         ctx: StorageCtx<'_>,
         calldata: &[u8],
+        upgrade: BaseUpgrade,
         observer: O,
     ) -> PrecompileResult
     where
@@ -58,58 +66,98 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
             }
             Err(error) => return recorder.record_base_error_result(ctx, error),
         }
-        recorder.record_base_result(ctx, self.inner_with_observer(ctx, calldata, observer), |b| b)
+        recorder.record_base_result(
+            ctx,
+            self.inner_with_observer(ctx, calldata, upgrade, observer),
+            |b| b,
+        )
     }
 
-    /// Decodes calldata and executes the matching `IB20` operation.
+    /// Decodes calldata and executes the matching `IB20` operation for `upgrade`.
     pub fn inner(
         &mut self,
         ctx: StorageCtx<'_>,
         calldata: &[u8],
+        upgrade: BaseUpgrade,
     ) -> base_precompile_storage::Result<Bytes> {
-        self.inner_with_observer(ctx, calldata, NoopPrecompileCallObserver)
+        self.inner_with_observer(ctx, calldata, upgrade, NoopPrecompileCallObserver)
     }
 
-    /// Decodes calldata, observes the decoded operation, and executes the matching handler.
+    /// Decodes calldata, observes the decoded operation, and executes the matching handler
+    /// against the version active at `upgrade`.
     pub fn inner_with_observer<O>(
         &mut self,
         ctx: StorageCtx<'_>,
         calldata: &[u8],
+        upgrade: BaseUpgrade,
         observer: O,
     ) -> base_precompile_storage::Result<Bytes>
     where
         O: PrecompileCallObserver,
     {
-        self.inner_with_privilege_and_observer(ctx, calldata, false, observer)
+        // Gate by hardfork: resolve the active version once. `None` is unreachable in
+        // practice — the precompile is only installed from Beryl — but we revert defensively.
+        let Some(version) = StablecoinVersions::resolve(upgrade) else {
+            return Err(BasePrecompileError::Revert(Bytes::new()));
+        };
+        self.route(ctx, calldata, version, false, observer)
     }
 
-    /// Decodes calldata and executes it with optional factory-init privilege.
+    /// Decodes calldata and executes it with factory-init privilege.
+    ///
+    /// Used by the token factory to run creation-time initialization calls. These run at the
+    /// token's introduction version ([`StablecoinVersion::V1`]); when a second version is
+    /// introduced, thread the creation-fork version here instead of pinning.
     pub fn inner_with_privilege(
         &mut self,
         ctx: StorageCtx<'_>,
         calldata: &[u8],
         privileged: bool,
     ) -> base_precompile_storage::Result<Bytes> {
-        self.inner_with_privilege_and_observer(
-            ctx,
-            calldata,
-            privileged,
-            NoopPrecompileCallObserver,
-        )
+        self.route(ctx, calldata, StablecoinVersion::V1, privileged, NoopPrecompileCallObserver)
     }
 
-    /// Decodes calldata, observes the decoded operation, and executes it with optional
+    /// Grants `role` to `account` without checking caller authorization.
+    ///
+    /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and
+    /// the authorized [`StablecoinLogic::grant_role`](crate::StablecoinLogic) path is not yet
+    /// reachable. Mirrors that method's unchecked helper: bumps the admin member count and emits
+    /// `RoleGranted`.
+    pub fn grant_role_unchecked(
+        &mut self,
+        role: B256,
+        account: Address,
+        sender: Address,
+    ) -> base_precompile_storage::Result<()> {
+        if self.accounting().has_role(role, account)? {
+            return Ok(());
+        }
+        self.accounting_mut().set_role(role, account, true)?;
+        if role == B20TokenRole::DefaultAdmin.id() {
+            let current = self.accounting().role_member_count(role)?;
+            let next =
+                current.checked_add(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
+            self.accounting_mut().set_role_member_count(role, next)?;
+        }
+        self.accounting_mut()
+            .emit_event(IB20::RoleGranted { role, account, sender }.encode_log_data())
+    }
+
+    /// Decodes calldata, observes the decoded operation, and routes it to `version` with optional
     /// factory-init privilege.
-    pub fn inner_with_privilege_and_observer<O>(
+    fn route<O>(
         &mut self,
         ctx: StorageCtx<'_>,
         calldata: &[u8],
+        version: StablecoinVersion,
         privileged: bool,
         observer: O,
     ) -> base_precompile_storage::Result<Bytes>
     where
         O: PrecompileCallObserver,
     {
+        let logic = version.logic();
+
         if let Some(selector) = BerylSelector::selector(calldata)
             && IB20Stablecoin::IB20StablecoinCalls::valid_selector(selector)
         {
@@ -117,7 +165,12 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
                 |error| BasePrecompileError::AbiDecodeFailed { selector, error: error.to_string() },
             )?;
             let label = call.as_label();
-            return observer.observe(label, || self.handle_stablecoin_call(call));
+            return observer.observe(label, || {
+                let encoded: Bytes = match call {
+                    SC::currency(_) => logic.currency(self)?.abi_encode().into(),
+                };
+                Ok(encoded)
+            });
         }
 
         let call = decode_precompile_call!(calldata, IB20::IB20Calls);
@@ -153,27 +206,31 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
                 C::PAUSE_ROLE(_) => B20TokenRole::Pause.id().abi_encode().into(),
                 C::UNPAUSE_ROLE(_) => B20TokenRole::Unpause.id().abi_encode().into(),
                 C::METADATA_ROLE(_) => B20TokenRole::Metadata.id().abi_encode().into(),
-                C::TRANSFER_SENDER_POLICY(_) => Self::transfer_sender_policy().abi_encode().into(),
+                C::TRANSFER_SENDER_POLICY(_) => {
+                    B20PolicyType::TransferSender.id().abi_encode().into()
+                }
                 C::TRANSFER_RECEIVER_POLICY(_) => {
-                    Self::transfer_receiver_policy().abi_encode().into()
+                    B20PolicyType::TransferReceiver.id().abi_encode().into()
                 }
                 C::TRANSFER_EXECUTOR_POLICY(_) => {
-                    Self::transfer_executor_policy().abi_encode().into()
+                    B20PolicyType::TransferExecutor.id().abi_encode().into()
                 }
-                C::MINT_RECEIVER_POLICY(_) => Self::mint_receiver_policy().abi_encode().into(),
-                C::hasRole(c) => self.has_role(c.role, c.account)?.abi_encode().into(),
-                C::getRoleAdmin(c) => self.role_admin(c.role)?.abi_encode().into(),
-                C::pausedFeatures(_) => self.paused_features()?.abi_encode().into(),
-                C::policyId(c) => self.policy_id(c.policyScope)?.abi_encode().into(),
+                C::MINT_RECEIVER_POLICY(_) => {
+                    B20PolicyType::MintReceiver.id().abi_encode().into()
+                }
+                C::hasRole(c) => self.accounting().has_role(c.role, c.account)?.abi_encode().into(),
+                C::getRoleAdmin(c) => self.accounting().role_admin(c.role)?.abi_encode().into(),
+                C::pausedFeatures(_) => logic.paused_features(self)?.abi_encode().into(),
+                C::policyId(c) => logic.policy_id(self, c.policyScope)?.abi_encode().into(),
 
-                // --- Domain reads (light logic) ---
-                C::isPaused(c) => self.is_paused(c.feature)?.abi_encode().into(),
+                // --- Computed reads: routed to the active version's logic ---
+                C::isPaused(c) => logic.is_paused(self, c.feature)?.abi_encode().into(),
                 C::DOMAIN_SEPARATOR(_) => {
-                    self.domain_separator(ctx.chain_id())?.abi_encode().into()
+                    logic.domain_separator(self, ctx.chain_id())?.abi_encode().into()
                 }
                 C::eip712Domain(_) => {
                     let (fields, name, version, chain_id, verifying_contract, salt, extensions) =
-                        self.eip712_domain(ctx.chain_id())?;
+                        logic.eip712_domain(self, ctx.chain_id())?;
                     IB20::eip712DomainCall::abi_encode_returns(&IB20::eip712DomainReturn {
                         fields,
                         name,
@@ -186,135 +243,129 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
                     .into()
                 }
 
-                // --- ERC-20 mutating ---
+                // --- Mutating operations: routed to the active version's logic ---
                 C::transfer(c) => {
                     let caller = ctx.caller();
-                    self.transfer(caller, c.to, c.amount, privileged)?;
+                    logic.transfer(self, caller, c.to, c.amount, privileged)?;
                     true.abi_encode().into()
                 }
                 C::transferFrom(c) => {
                     let caller = ctx.caller();
-                    self.transfer_from(caller, c.from, c.to, c.amount, privileged)?;
+                    logic.transfer_from(self, caller, c.from, c.to, c.amount, privileged)?;
                     true.abi_encode().into()
                 }
                 C::approve(c) => {
                     let caller = ctx.caller();
-                    self.approve(caller, c.spender, c.amount)?;
+                    logic.approve(self, caller, c.spender, c.amount)?;
                     true.abi_encode().into()
                 }
                 C::transferWithMemo(c) => {
                     let caller = ctx.caller();
-                    self.transfer_with_memo(caller, c.to, c.amount, c.memo, privileged)?;
+                    logic.transfer(self, caller, c.to, c.amount, privileged)?;
+                    logic.emit_memo(self, caller, c.memo)?;
                     true.abi_encode().into()
                 }
                 C::transferFromWithMemo(c) => {
                     let caller = ctx.caller();
-                    self.transfer_from_with_memo(
-                        caller, c.from, c.to, c.amount, c.memo, privileged,
-                    )?;
+                    logic.transfer_from(self, caller, c.from, c.to, c.amount, privileged)?;
+                    logic.emit_memo(self, caller, c.memo)?;
                     true.abi_encode().into()
                 }
 
-                // --- Mint ---
                 C::mint(c) => {
                     let caller = ctx.caller();
-                    self.mint(caller, c.to, c.amount, privileged)?;
+                    logic.mint(self, caller, c.to, c.amount, privileged)?;
                     Bytes::new()
                 }
                 C::mintWithMemo(c) => {
                     let caller = ctx.caller();
-                    self.mint_with_memo(caller, c.to, c.amount, c.memo, privileged)?;
+                    logic.mint(self, caller, c.to, c.amount, privileged)?;
+                    logic.emit_memo(self, caller, c.memo)?;
                     Bytes::new()
                 }
 
-                // --- Burn ---
                 C::burn(c) => {
                     let caller = ctx.caller();
-                    // Self-burn operations are never factory-privileged: during init the caller is
-                    // the factory, not a token holder.
-                    self.burn(caller, caller, c.amount, false)?;
+                    logic.burn(self, caller, c.amount)?;
                     Bytes::new()
                 }
                 C::burnWithMemo(c) => {
                     let caller = ctx.caller();
-                    self.burn_with_memo(caller, caller, c.amount, c.memo, false)?;
+                    logic.burn(self, caller, c.amount)?;
+                    logic.emit_memo(self, caller, c.memo)?;
                     Bytes::new()
                 }
                 C::burnBlocked(c) => {
                     let caller = ctx.caller();
-                    self.burn_blocked(caller, c.from, c.amount, privileged)?;
+                    logic.burn_blocked(self, caller, c.from, c.amount, privileged)?;
                     Bytes::new()
                 }
 
-                // --- Pause ---
                 C::pause(c) => {
                     let caller = ctx.caller();
-                    self.pause(caller, c.features, privileged)?;
+                    logic.pause(self, caller, c.features, privileged)?;
                     Bytes::new()
                 }
                 C::unpause(c) => {
                     let caller = ctx.caller();
-                    self.unpause(caller, c.features, privileged)?;
+                    logic.unpause(self, caller, c.features, privileged)?;
                     Bytes::new()
                 }
 
-                // --- Admin ---
                 C::updateSupplyCap(c) => {
                     let caller = ctx.caller();
-                    Configurable::update_supply_cap(self, caller, c.newSupplyCap, privileged)?;
+                    logic.update_supply_cap(self, caller, c.newSupplyCap, privileged)?;
                     Bytes::new()
                 }
                 C::updateName(c) => {
                     let caller = ctx.caller();
-                    Configurable::update_name(self, caller, c.newName, privileged)?;
+                    logic.update_name(self, caller, c.newName, privileged)?;
                     Bytes::new()
                 }
                 C::updateSymbol(c) => {
                     let caller = ctx.caller();
-                    Configurable::update_symbol(self, caller, c.newSymbol, privileged)?;
+                    logic.update_symbol(self, caller, c.newSymbol, privileged)?;
                     Bytes::new()
                 }
                 C::updateContractURI(c) => {
                     let caller = ctx.caller();
-                    Configurable::update_contract_uri(self, caller, c.newURI, privileged)?;
+                    logic.update_contract_uri(self, caller, c.newURI, privileged)?;
                     Bytes::new()
                 }
                 C::grantRole(c) => {
                     let caller = ctx.caller();
-                    self.grant_role(caller, c.role, c.account, privileged)?;
+                    logic.grant_role(self, caller, c.role, c.account, privileged)?;
                     Bytes::new()
                 }
                 C::revokeRole(c) => {
                     let caller = ctx.caller();
-                    self.revoke_role(caller, c.role, c.account, privileged)?;
+                    logic.revoke_role(self, caller, c.role, c.account, privileged)?;
                     Bytes::new()
                 }
-                // Renounce operations are never factory-privileged: they are only meaningful for
-                // the role holder making the call after token creation.
                 C::renounceRole(c) => {
                     let caller = ctx.caller();
-                    self.renounce_role(caller, c.role, c.callerConfirmation)?;
+                    logic.renounce_role(self, caller, c.role, c.callerConfirmation)?;
                     Bytes::new()
                 }
                 C::renounceLastAdmin(_) => {
                     let caller = ctx.caller();
-                    self.renounce_last_admin(caller)?;
+                    logic.renounce_last_admin(self, caller)?;
                     Bytes::new()
                 }
                 C::setRoleAdmin(c) => {
                     let caller = ctx.caller();
-                    self.set_role_admin(caller, c.role, c.newAdminRole, privileged)?;
+                    logic.set_role_admin(self, caller, c.role, c.newAdminRole, privileged)?;
                     Bytes::new()
                 }
                 C::updatePolicy(c) => {
                     let caller = ctx.caller();
-                    self.update_policy(caller, c.policyScope, c.newPolicyId, privileged)?;
+                    logic.update_policy(self, caller, c.policyScope, c.newPolicyId, privileged)?;
                     Bytes::new()
                 }
 
-                // --- Permit ---
                 C::permit(c) => {
-                    self.permit(
+                    logic.permit(
+                        self,
                         ctx.chain_id(),
                         ctx.timestamp(),
                         PermitArgs {
@@ -333,19 +384,13 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
             Ok(encoded)
         })
     }
-
-    fn handle_stablecoin_call(&self, call: SC) -> base_precompile_storage::Result<Bytes> {
-        let encoded: Bytes = match call {
-            SC::currency(_) => self.accounting().currency()?.abi_encode().into(),
-        };
-        Ok(encoded)
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, Bytes, U256};
     use alloy_sol_types::{SolCall, SolError, SolValue};
+    use base_common_genesis::BaseUpgrade;
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
     use crate::{
@@ -364,7 +409,9 @@ mod tests {
     fn call_inner(token: &mut TestStablecoinToken, calldata: &[u8]) -> Vec<u8> {
         let mut storage = HashMapStorageProvider::new(1);
         storage.set_caller(TOKEN);
-        StorageCtx::enter(&mut storage, |ctx| token.inner(ctx, calldata)).unwrap().to_vec()
+        StorageCtx::enter(&mut storage, |ctx| token.inner(ctx, calldata, BaseUpgrade::Beryl))
+            .unwrap()
+            .to_vec()
     }
 
     fn make_token() -> B20StablecoinToken<InMemoryTokenAccounting, InMemoryPolicy> {
@@ -400,7 +447,12 @@ mod tests {
         storage.set_call_value(U256::from(1u64));
 
         let out = StorageCtx::enter(&mut storage, |ctx| {
-            token.dispatch_with_observer(ctx, &calldata, NoopPrecompileCallObserver)
+            token.dispatch_with_observer(
+                ctx,
+                &calldata,
+                BaseUpgrade::Beryl,
+                NoopPrecompileCallObserver,
+            )
         })
         .expect("dispatch must not fatally error");
 

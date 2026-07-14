@@ -2,6 +2,7 @@
 
 use alloy_evm::precompiles::DynPrecompile;
 use alloy_primitives::Address;
+use base_common_genesis::BaseUpgrade;
 
 use crate::{
     B20StablecoinStorage, B20StablecoinToken, NoopPrecompileCallObserver, PolicyHandle,
@@ -16,14 +17,18 @@ pub struct B20StablecoinPrecompile;
 
 impl B20StablecoinPrecompile {
     /// Returns a [`DynPrecompile`] that dispatches to [`B20StablecoinToken`] logic at
-    /// `token_address`.
-    pub fn create_precompile(token_address: Address) -> DynPrecompile {
-        Self::create_precompile_with_observer(token_address, NoopPrecompileCallObserver)
+    /// `token_address`, gated to the version active at `upgrade`.
+    pub fn create_precompile(token_address: Address, upgrade: BaseUpgrade) -> DynPrecompile {
+        Self::create_precompile_with_observer(token_address, upgrade, NoopPrecompileCallObserver)
     }
 
     /// Returns a [`DynPrecompile`] that observes and dispatches to [`B20StablecoinToken`] logic at
-    /// `token_address`.
-    pub fn create_precompile_with_observer<O>(token_address: Address, observer: O) -> DynPrecompile
+    /// `token_address`, gated to the version active at `upgrade`.
+    pub fn create_precompile_with_observer<O>(
+        token_address: Address,
+        upgrade: BaseUpgrade,
+        observer: O,
+    ) -> DynPrecompile
     where
         O: PrecompileCallObserver,
     {
@@ -33,7 +38,7 @@ impl B20StablecoinPrecompile {
                 B20StablecoinStorage::from_address(token_address, ctx),
                 PolicyHandle::new(ctx),
             )
-            .dispatch_with_observer(ctx, &calldata, observer)
+            .dispatch_with_observer(ctx, &calldata, upgrade, observer)
         })
     }
 }
