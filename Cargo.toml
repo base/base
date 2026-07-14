@@ -14,7 +14,6 @@ members = [
   "bin/*",
   "bin/prover/nitro-host",
   "bin/prover/nitro-enclave",
-  "bin/prover/zk",
   "bin/prover/zk-host",
   "bin/prover/service",
   "crates/consensus/*",
@@ -38,10 +37,6 @@ members = [
   "crates/proof/tee/nitro-attestation-prover",
   "crates/proof/zk/host",
   "crates/proof/zk/backend",
-  "crates/proof/zk/client",
-  "crates/proof/zk/db",
-  "crates/proof/zk/outbox",
-  "crates/proof/zk/service",
   "crates/proof/contracts",
   "crates/proof/submission",
   "crates/proof/rpc",
@@ -67,7 +62,7 @@ default-members = [
   "bin/*",
   "bin/prover/nitro-host",
   "bin/prover/nitro-enclave",
-  "bin/prover/zk",
+  "bin/prover/zk-host",
   "bin/prover/service",
   "bin/prover-registrar",
 ]
@@ -236,11 +231,7 @@ base-zk-benchmarks = { path = "crates/infra/zk-benchmarks" }
 # Proof
 base-proof-rpc = { path = "crates/proof/rpc" }
 base-proposer = { path = "crates/proof/proposer" }
-base-zk-client = { path = "crates/proof/zk/client" }
-base-zk-db = { path = "crates/proof/zk/db" }
-base-zk-outbox = { path = "crates/proof/zk/outbox" }
 base-proof-worker = { path = "crates/proof/worker" }
-base-zk-service = { path = "crates/proof/zk/service" }
 base-challenger = { path = "crates/proof/challenge" }
 base-proof-zk-host = { path = "crates/proof/zk/host" }
 base-proof-contracts = { path = "crates/proof/contracts" }
