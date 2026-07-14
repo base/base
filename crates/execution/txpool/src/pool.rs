@@ -164,8 +164,15 @@ where
     fn eip8130_replay_already_seen(&self, transaction: &T) -> Option<TxHash> {
         let key = (transaction.sender(), transaction.eip8130_replay_id()?);
         let hash = self.eip8130_replays.read().get(&key).copied()?;
-        // Only nonce-free transactions have replay IDs, and those live in the
-        // protocol pool; channelized transactions live in `nonce_pool`.
+        // Only nonce-free transactions have replay IDs, and those are only ever
+        // admitted to the protocol pool; channelized transactions live in
+        // `nonce_pool` and never carry a replay ID. Guard that routing invariant
+        // so the protocol-pool-only liveness check below stays sound if routing
+        // or replay-id derivation ever evolve independently.
+        debug_assert!(
+            !self.nonce_pool.read().contains(&hash),
+            "eip8130 replay index points at a sidecar-pool transaction",
+        );
         if self.protocol_pool.get(&hash).is_some() {
             return Some(hash);
         }
