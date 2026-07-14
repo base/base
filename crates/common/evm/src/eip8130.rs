@@ -784,7 +784,6 @@ impl Eip8130Executor {
         let max_fee = tx.max_fee_per_gas;
         let max_priority = tx.max_priority_fee_per_gas;
         let expiry = tx.expiry;
-        let sender_sig_hash = tx.sender_signature_hash();
 
         let internals = EvmInternals::from_context(ctx);
         let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
@@ -850,7 +849,6 @@ impl Eip8130Executor {
             NonceValidator::validate(
                 tx,
                 sender,
-                sender_sig_hash,
                 protocol_nonce,
                 &nonce_mgr,
                 NonceMode::Inclusion,
@@ -861,7 +859,7 @@ impl Eip8130Executor {
             // 4. Advance the nonce. The protocol (basic-account) nonce is bumped
             //    in `prepay`; channel and expiring nonces are journal storage.
             let bump_protocol_nonce = if nonce_key == Eip8130Constants::NONCE_KEY_MAX {
-                let replay = NonceValidator::replay_hash(sender, sender_sig_hash);
+                let replay = NonceValidator::replay_hash(tx, sender);
                 nonce_mgr
                     .check_and_mark_expiring_nonce(replay, expiry)
                     .map_err(BaseTransactionError::eip8130)?;

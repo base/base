@@ -68,6 +68,17 @@ impl Eip8130Constants {
     // `SCOPE_SIGNATURE`. Bits `0x20`, `0x40`, and `0x80` are spare, reserved for
     // future pure grants.
 
+    /// Domain-separation prefix for the `replay_id` preimage
+    /// (`keccak256(REPLAY_ID_TYPE || rlp([...])`).
+    ///
+    /// Pinned to the EIP-8130 constant-table value `REPLAY_ID_TYPE = 0x7901`. It
+    /// shares the `AA_TX_TYPE` first byte (`0x79`) but appends `0x01`: the
+    /// sender/payer signing hashes hash `EIP8130_TX_TYPE`/`EIP8130_PAYER_TYPE`
+    /// followed by an RLP list header (always `>= 0xc0`), so the trailing `0x01`
+    /// can never coincide with a valid list header and the preimage spaces cannot
+    /// collide.
+    pub const REPLAY_ID_TYPE: [u8; 2] = [0x79, 0x01];
+
     /// Unrestricted scope value (actor is valid in all contexts).
     pub const SCOPE_UNRESTRICTED: u8 = 0x00;
 

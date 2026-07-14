@@ -715,7 +715,6 @@ where
             NonceValidator::validate(
                 signed.tx(),
                 sender,
-                signed.tx().sender_signature_hash(),
                 protocol_nonce,
                 &nonce_storage,
                 NonceMode::Pool,

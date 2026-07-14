@@ -3,7 +3,7 @@
 
 use core::cmp::Ordering;
 
-use alloy_primitives::{Address, B256, Keccak256, U256};
+use alloy_primitives::{Address, B256, U256};
 use base_common_consensus::{Eip8130Constants, TxEip8130};
 use base_common_precompiles::NonceManagerStorage;
 
@@ -45,12 +45,6 @@ impl NonceValidator {
     /// Validates `tx`'s `(nonce_key, nonce_sequence)` for `account` (the resolved
     /// transaction sender).
     ///
-    /// `sender_signature_hash` is [`TxEip8130::sender_signature_hash`], taken as
-    /// a parameter because the earlier authenticate stage has already computed it
-    /// — recomputing it here (an RLP encode + keccak256) would be redundant work
-    /// on the nonce-free hot path. It is consulted only for the nonce-free
-    /// (`NONCE_KEY_MAX`) replay hash.
-    ///
     /// `protocol_nonce` is the account's current basic nonce, read by the caller
     /// from account state; it is consulted only for the protocol channel
     /// (`nonce_key == 0`). `storage` serves the 2D channels and the nonce-free
@@ -64,7 +58,6 @@ impl NonceValidator {
     pub fn validate(
         tx: &TxEip8130,
         account: Address,
-        sender_signature_hash: B256,
         protocol_nonce: u64,
         storage: &NonceManagerStorage<'_>,
         mode: NonceMode,
@@ -76,7 +69,7 @@ impl NonceValidator {
             // `Eip8130Signed::validate_timestamp`; the only stateful check is
             // that this logical transaction's replay hash is not already
             // recorded and unexpired.
-            let replay = Self::replay_hash(account, sender_signature_hash);
+            let replay = Self::replay_hash(tx, account);
             if storage.is_expiring_nonce_seen(replay, now)? {
                 return Err(NonceError::Replay);
             }
@@ -103,19 +96,14 @@ impl NonceValidator {
         }
     }
 
-    /// The signature-invariant nonce-free replay hash,
-    /// `keccak256(account ‖ sender_signature_hash)`, matching the value the nonce
-    /// manager records in its expiring-nonce set.
+    /// The transaction's signature- and fee-invariant replay identifier.
     ///
     /// Public so the execution layer can recompute the identical key when it
     /// records the nonce via `check_and_mark_expiring_nonce` at block inclusion,
     /// rather than duplicating the derivation and risking divergence.
     #[must_use]
-    pub fn replay_hash(account: Address, sender_signature_hash: B256) -> B256 {
-        let mut hasher = Keccak256::new();
-        hasher.update(account.as_slice());
-        hasher.update(sender_signature_hash.as_slice());
-        hasher.finalize()
+    pub fn replay_hash(tx: &TxEip8130, account: Address) -> B256 {
+        tx.replay_id(account)
     }
 }
 
@@ -146,15 +134,7 @@ mod tests {
         StorageCtx::enter(&mut storage, |ctx| {
             let mut mgr = NonceManagerStorage::new(ctx);
             seed(&mut mgr);
-            NonceValidator::validate(
-                tx,
-                ACCOUNT,
-                tx.sender_signature_hash(),
-                protocol_nonce,
-                &mgr,
-                mode,
-                now,
-            )
+            NonceValidator::validate(tx, ACCOUNT, protocol_nonce, &mgr, mode, now)
         })
     }
 
@@ -220,7 +200,7 @@ mod tests {
     fn nonce_free_replay_is_rejected() {
         let now = 1_000u64;
         let tx = tx_with(Eip8130Constants::NONCE_KEY_MAX, 0);
-        let replay = NonceValidator::replay_hash(ACCOUNT, tx.sender_signature_hash());
+        let replay = NonceValidator::replay_hash(&tx, ACCOUNT);
         let seed = |mgr: &mut NonceManagerStorage<'_>| {
             mgr.check_and_mark_expiring_nonce(replay, now + 20).unwrap();
         };

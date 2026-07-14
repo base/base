@@ -145,10 +145,11 @@ impl TxEip8130 {
         Ok(phases)
     }
 
-    /// Length of all RLP fields (no list header).
-    pub fn rlp_encoded_fields_length(&self) -> usize {
+    /// Length of all RLP fields (no list header), encoding `sender` in place of
+    /// the transaction's stored sender.
+    fn rlp_encoded_fields_length_with_sender(&self, sender: &Option<Address>) -> usize {
         self.chain_id.length()
-            + Self::address_opt_encoded_length(&self.sender)
+            + Self::address_opt_encoded_length(sender)
             + self.nonce_key.length()
             + self.nonce_sequence.length()
             + self.expiry.length()
@@ -161,10 +162,11 @@ impl TxEip8130 {
             + Self::address_opt_encoded_length(&self.payer)
     }
 
-    /// Encodes the RLP fields (no list header) in canonical order.
-    pub fn rlp_encode_fields(&self, out: &mut dyn BufMut) {
+    /// Encodes the RLP fields (no list header) in canonical order, encoding
+    /// `sender` in place of the transaction's stored sender.
+    fn rlp_encode_fields_with_sender(&self, sender: &Option<Address>, out: &mut dyn BufMut) {
         self.chain_id.encode(out);
-        Self::encode_address_opt(&self.sender, out);
+        Self::encode_address_opt(sender, out);
         self.nonce_key.encode(out);
         self.nonce_sequence.encode(out);
         self.expiry.encode(out);
@@ -175,6 +177,16 @@ impl TxEip8130 {
         Self::encode_calls(&self.calls, out);
         self.metadata.encode(out);
         Self::encode_address_opt(&self.payer, out);
+    }
+
+    /// Length of all RLP fields (no list header).
+    pub fn rlp_encoded_fields_length(&self) -> usize {
+        self.rlp_encoded_fields_length_with_sender(&self.sender)
+    }
+
+    /// Encodes the RLP fields (no list header) in canonical order.
+    pub fn rlp_encode_fields(&self, out: &mut dyn BufMut) {
+        self.rlp_encode_fields_with_sender(&self.sender, out);
     }
 
     /// Decodes the RLP fields (no list header) in canonical order.
@@ -279,6 +291,40 @@ impl TxEip8130 {
         keccak256(&buf)
     }
 
+    /// Returns the fee- and signature-invariant replay identifier.
+    ///
+    /// Used only for nonce-free (`nonce_key == NONCE_KEY_MAX`) transactions, which
+    /// always carry `(NONCE_KEY_MAX, 0)`; `nonce_key`/`nonce_sequence` therefore
+    /// carry no entropy and are omitted from the preimage. The resolved sender is
+    /// encoded in place of the nullable wire sender:
+    /// `keccak256(REPLAY_ID_TYPE || rlp([chain_id, resolved_sender, expiry,
+    /// account_changes, calls, metadata, payer]))`.
+    #[must_use]
+    pub fn replay_id(&self, resolved_sender: Address) -> B256 {
+        let payload_length = self.chain_id.length()
+            + resolved_sender.length()
+            + self.expiry.length()
+            + self.account_changes.length()
+            + Self::calls_encoded_length(&self.calls)
+            + self.metadata.length()
+            + Self::address_opt_encoded_length(&self.payer);
+        let mut buf = Vec::with_capacity(
+            Eip8130Constants::REPLAY_ID_TYPE.len()
+                + length_of_length(payload_length)
+                + payload_length,
+        );
+        buf.put_slice(&Eip8130Constants::REPLAY_ID_TYPE);
+        Header { list: true, payload_length }.encode(&mut buf);
+        self.chain_id.encode(&mut buf);
+        resolved_sender.encode(&mut buf);
+        self.expiry.encode(&mut buf);
+        self.account_changes.encode(&mut buf);
+        Self::encode_calls(&self.calls, &mut buf);
+        self.metadata.encode(&mut buf);
+        Self::encode_address_opt(&self.payer, &mut buf);
+        keccak256(&buf)
+    }
+
     /// Signing-hash preimage for the payer, per [EIP-8130].
     ///
     /// `keccak256(EIP8130_PAYER_TYPE || rlp([all body fields through `payer`]))`
@@ -289,10 +335,12 @@ impl TxEip8130 {
     ///
     /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
     pub fn payer_signature_hash(&self, resolved_sender: Address) -> B256 {
-        let with_resolved = Self { sender: Some(resolved_sender), ..self.clone() };
-        let mut buf = Vec::with_capacity(with_resolved.rlp_encoded_length() + 1);
+        let sender = Some(resolved_sender);
+        let payload_length = self.rlp_encoded_fields_length_with_sender(&sender);
+        let mut buf = Vec::with_capacity(1 + length_of_length(payload_length) + payload_length);
         buf.put_u8(Eip8130Constants::EIP8130_PAYER_TYPE);
-        with_resolved.rlp_encode(&mut buf);
+        Header { list: true, payload_length }.encode(&mut buf);
+        self.rlp_encode_fields_with_sender(&sender, &mut buf);
         keccak256(&buf)
     }
 
@@ -679,6 +727,47 @@ mod tests {
         let tx = sample_tx();
         let h = tx.sender_signature_hash();
         assert_ne!(h, B256::ZERO);
+    }
+
+    #[test]
+    fn replay_id_ignores_fee_fields() {
+        let tx = sample_tx();
+        let sender = tx.sender.unwrap();
+        let mut other = tx.clone();
+        other.max_priority_fee_per_gas += 1;
+        other.max_fee_per_gas += 2;
+        other.gas_limit += 3;
+        assert_eq!(tx.replay_id(sender), other.replay_id(sender));
+    }
+
+    #[test]
+    fn replay_id_ignores_nonce_fields() {
+        // Nonce-free txs always carry `(NONCE_KEY_MAX, 0)`, so `nonce_key` and
+        // `nonce_sequence` are omitted from the preimage and cannot alter identity.
+        let tx = sample_tx();
+        let sender = tx.sender.unwrap();
+        let mut other = tx.clone();
+        other.nonce_key = U256::from(7u64);
+        other.nonce_sequence = 42;
+        assert_eq!(tx.replay_id(sender), other.replay_id(sender));
+    }
+
+    #[test]
+    fn replay_id_commits_to_payer_calls_and_expiry() {
+        let tx = sample_tx();
+        let sender = tx.sender.unwrap();
+
+        let mut changed = tx.clone();
+        changed.payer = Some(address!("0x00000000000000000000000000000000000000dd"));
+        assert_ne!(tx.replay_id(sender), changed.replay_id(sender));
+
+        changed = tx.clone();
+        changed.calls[0][0].data = bytes!("01");
+        assert_ne!(tx.replay_id(sender), changed.replay_id(sender));
+
+        changed = tx.clone();
+        changed.expiry = 1;
+        assert_ne!(tx.replay_id(sender), changed.replay_id(sender));
     }
 
     #[test]
