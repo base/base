@@ -1,6 +1,6 @@
 //! Tests for `ConsolidateTask::execute`
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use alloy_consensus::transaction::Recovered;
 use alloy_eips::{BlockNumberOrTag, Encodable2718};
@@ -11,9 +11,11 @@ use base_common_consensus::{BaseTxEnvelope, TxDeposit};
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types::Transaction as BaseTransaction;
 use base_protocol::{AttributesWithParent, BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
+use tokio::{sync::watch, time::timeout};
 
 use crate::{
-    AttributesMatch, AttributesMismatch, ConsolidateTask, EngineTaskExt, SynchronizeTask,
+    AttributesMatch, AttributesMismatch, ConsolidateTask, Engine, EngineTask, EngineTaskError,
+    EngineTaskErrorSeverity, EngineTaskExt, SynchronizeTask,
     state::EngineSyncStateUpdate,
     task_queue::tasks::consolidate::task::ConsolidateInput,
     test_utils::{TestAttributesBuilder, TestEngineStateBuilder, test_engine_client_builder},
@@ -276,6 +278,70 @@ async fn consolidate_reconciles_unadvanced_unsafe_before_non_span_safe_attribute
             .all(|(_, has_attrs)| !has_attrs),
         "safe reconciliation must not start a stale FCU-with-attributes build"
     );
+}
+
+#[tokio::test]
+async fn consolidate_syncing_yields_until_a_later_drain() {
+    let cfg = Arc::new(RollupConfig::default());
+    let pinned_head = l2_block_info(
+        10,
+        b256!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        b256!("9999999999999999999999999999999999999999999999999999999999999999"),
+        20,
+    );
+    let safe_child = l2_block_info(
+        11,
+        b256!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+        pinned_head.block_info.hash,
+        22,
+    );
+    let attributes = TestAttributesBuilder::new()
+        .with_parent(pinned_head)
+        .with_timestamp(safe_child.block_info.timestamp)
+        .with_transactions(vec![encoded_l1_info_deposit_tx()])
+        .build();
+    let safe_child_block = matching_rpc_block(safe_child, &attributes);
+    let expected_safe_child = block_info_from_rpc_block(safe_child_block.clone(), &cfg);
+    let client = Arc::new(
+        test_engine_client_builder()
+            .with_l2_block_by_label(
+                BlockNumberOrTag::Number(safe_child.block_info.number),
+                safe_child_block,
+            )
+            .with_fork_choice_updated_v3_response(syncing_fcu())
+            .build(),
+    );
+    let initial_state = TestEngineStateBuilder::new()
+        .with_unsafe_head(pinned_head)
+        .with_safe_head(pinned_head)
+        .with_finalized_head(pinned_head)
+        .with_el_sync_finished(true)
+        .build();
+    let (state_tx, _) = watch::channel(initial_state);
+    let (queue_tx, queue_rx) = watch::channel(0usize);
+    let mut engine = Engine::new(initial_state, state_tx, queue_tx);
+    engine.enqueue(EngineTask::Consolidate(Box::new(ConsolidateTask::new(
+        Arc::clone(&client),
+        Arc::clone(&cfg),
+        ConsolidateInput::from(attributes),
+    ))));
+
+    let err = timeout(Duration::from_secs(1), engine.drain())
+        .await
+        .expect("a temporary consolidation failure must yield to the engine processor")
+        .expect_err("SYNCING must keep the consolidation task pending");
+
+    assert_eq!(err.severity(), EngineTaskErrorSeverity::Temporary);
+    assert_eq!(*queue_rx.borrow(), 1, "temporary task must remain queued");
+    assert_eq!(engine.state().sync_state.unsafe_head(), pinned_head);
+
+    client.set_fork_choice_updated_v3_response(valid_fcu()).await;
+    engine.drain().await.expect("a later drain should retry the pending consolidation");
+
+    assert_eq!(*queue_rx.borrow(), 0);
+    assert_eq!(engine.state().sync_state.unsafe_head(), expected_safe_child);
+    assert_eq!(engine.state().sync_state.local_safe_head(), expected_safe_child);
+    assert_eq!(engine.state().sync_state.safe_head(), expected_safe_child);
 }
 
 #[tokio::test]

@@ -204,8 +204,13 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
                 );
                 return Ok(false);
             }
-            Err(_) => {
-                warn!(target: "engine", block_num, "Failed to fetch derived L2 block before build fallback");
+            Err(err) => {
+                warn!(
+                    target: "engine",
+                    block_num,
+                    error = ?err,
+                    "Failed to fetch derived L2 block before build fallback"
+                );
                 return Err(ConsolidateTaskError::FailedToFetchUnsafeL2Block);
             }
         };

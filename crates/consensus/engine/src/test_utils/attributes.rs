@@ -79,7 +79,6 @@ impl TestAttributesBuilder {
     }
 
     /// Sets whether these attributes are the last block in the current span.
-    #[allow(dead_code)]
     pub const fn with_is_last_in_span(mut self, is_last_in_span: bool) -> Self {
         self.is_last_in_span = is_last_in_span;
         self

@@ -197,6 +197,18 @@ impl<EngineClient_: EngineClient> EngineTaskExt for EngineTask<EngineClient_> {
             Metrics::engine_task_failure(self.task_metrics_label(), severity.as_label())
                 .increment(1);
 
+            if matches!(
+                &e,
+                EngineTaskErrors::Consolidate(ConsolidateTaskError::ForkchoiceUpdateDidNotAdvance)
+            ) {
+                trace!(
+                    target: "engine",
+                    error = %e,
+                    "Deferring consolidation retry to the next engine drain"
+                );
+                return Err(e);
+            }
+
             match severity {
                 EngineTaskErrorSeverity::Temporary => {
                     trace!(target: "engine", error = %e, "Temporary engine error");
