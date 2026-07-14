@@ -6,7 +6,7 @@
 
 use std::{
     collections::{HashMap, VecDeque},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use alloy_eips::{BlockId, BlockNumberOrTag, eip1898::BlockNumberOrTag as Eip1898BlockNumberOrTag};
@@ -29,7 +29,6 @@ use base_common_rpc_types_engine::{
 };
 use base_consensus_engine::{EngineClient, EngineClientError};
 use base_protocol::L2BlockInfo;
-use tokio::sync::Mutex;
 
 /// Scripted response for an FCU-v3 call.
 #[derive(Clone, Debug)]
@@ -69,7 +68,6 @@ struct FakeEngineClientState {
     l2_blocks_by_label: HashMap<BlockNumberOrTag, Block<BaseTransaction>>,
     scripted_fcu_v3: VecDeque<ScriptedForkchoiceResponse>,
     scripted_new_payload_v3: VecDeque<PayloadStatus>,
-    scripted_get_payload_v3: VecDeque<Result<BaseExecutionPayloadEnvelopeV3, String>>,
     single_new_payload_v3: Option<PayloadStatus>,
     single_get_payload_v3: Option<Result<BaseExecutionPayloadEnvelopeV3, String>>,
 }
@@ -83,7 +81,7 @@ pub struct FakeEngineClientHandle {
 impl FakeEngineClientHandle {
     /// Returns all recorded calls in order.
     pub async fn calls(&self) -> Vec<EngineClientCall> {
-        self.state.lock().await.calls.clone()
+        self.state.lock().expect("FakeEngineClient state mutex poisoned").calls.clone()
     }
 
     /// Appends scripted FCU-v3 responses to be consumed in call order.
@@ -91,7 +89,11 @@ impl FakeEngineClientHandle {
         &self,
         scripted: impl IntoIterator<Item = ScriptedForkchoiceResponse>,
     ) {
-        self.state.lock().await.scripted_fcu_v3.extend(scripted);
+        self.state
+            .lock()
+            .expect("FakeEngineClient state mutex poisoned")
+            .scripted_fcu_v3
+            .extend(scripted);
     }
 
     /// Blocking variant of [`Self::push_scripted_fcu_v3`] for runtime-owned setup code.
@@ -99,7 +101,11 @@ impl FakeEngineClientHandle {
         &self,
         scripted: impl IntoIterator<Item = ScriptedForkchoiceResponse>,
     ) {
-        self.state.blocking_lock().scripted_fcu_v3.extend(scripted);
+        self.state
+            .lock()
+            .expect("FakeEngineClient state mutex poisoned")
+            .scripted_fcu_v3
+            .extend(scripted);
     }
 
     /// Appends scripted `new_payload_v3` responses to be consumed in call order.
@@ -107,7 +113,11 @@ impl FakeEngineClientHandle {
         &self,
         scripted: impl IntoIterator<Item = PayloadStatus>,
     ) {
-        self.state.lock().await.scripted_new_payload_v3.extend(scripted);
+        self.state
+            .lock()
+            .expect("FakeEngineClient state mutex poisoned")
+            .scripted_new_payload_v3
+            .extend(scripted);
     }
 
     /// Blocking variant of [`Self::push_scripted_new_payload_v3`] for runtime-owned setup code.
@@ -115,7 +125,11 @@ impl FakeEngineClientHandle {
         &self,
         scripted: impl IntoIterator<Item = PayloadStatus>,
     ) {
-        self.state.blocking_lock().scripted_new_payload_v3.extend(scripted);
+        self.state
+            .lock()
+            .expect("FakeEngineClient state mutex poisoned")
+            .scripted_new_payload_v3
+            .extend(scripted);
     }
 
     /// Records a synthetic FCU-v3 call in the call log and consumes one scripted
@@ -127,7 +141,7 @@ impl FakeEngineClientHandle {
     /// scripted-response budget in lockstep with that real consumption so tests
     /// that script a fixed number of FCU responses stay accurate.
     pub async fn inject_fcu_v3_call(&self, fork_choice_state: ForkchoiceState) {
-        let mut state = self.state.lock().await;
+        let mut state = self.state.lock().expect("FakeEngineClient state mutex poisoned");
         state.calls.push(EngineClientCall::ForkChoiceUpdatedV3 {
             fcs: fork_choice_state,
             payload_attributes: Box::new(None),
@@ -141,7 +155,11 @@ impl FakeEngineClientHandle {
         tag: Eip1898BlockNumberOrTag,
         block: L2BlockInfo,
     ) {
-        self.state.blocking_lock().l2_block_info_by_tag.insert(tag, block);
+        self.state
+            .lock()
+            .expect("FakeEngineClient state mutex poisoned")
+            .l2_block_info_by_tag
+            .insert(tag, block);
     }
 
     /// Sets the `l2_block_by_label` response for a specific tag.
@@ -150,7 +168,11 @@ impl FakeEngineClientHandle {
         tag: BlockNumberOrTag,
         block: Block<BaseTransaction>,
     ) {
-        self.state.blocking_lock().l2_blocks_by_label.insert(tag, block);
+        self.state
+            .lock()
+            .expect("FakeEngineClient state mutex poisoned")
+            .l2_blocks_by_label
+            .insert(tag, block);
     }
 
     /// Async variant of [`Self::set_l2_block_by_label_blocking`].
@@ -159,7 +181,11 @@ impl FakeEngineClientHandle {
         tag: BlockNumberOrTag,
         block: Block<BaseTransaction>,
     ) {
-        self.state.lock().await.l2_blocks_by_label.insert(tag, block);
+        self.state
+            .lock()
+            .expect("FakeEngineClient state mutex poisoned")
+            .l2_blocks_by_label
+            .insert(tag, block);
     }
 }
 
@@ -183,19 +209,9 @@ impl FakeEngineClient {
 
     /// Scripts one fallback `new_payload_v3` response.
     pub fn with_new_payload_v3_response(self, response: PayloadStatus) -> Self {
-        self.state.blocking_lock().single_new_payload_v3 = Some(response);
+        self.state.lock().expect("FakeEngineClient state mutex poisoned").single_new_payload_v3 =
+            Some(response);
         self
-    }
-
-    /// Scripts FIFO `new_payload_v3` responses consumed in call order.
-    pub fn with_new_payload_v3_responses(self, responses: Vec<PayloadStatus>) -> Self {
-        self.state.blocking_lock().scripted_new_payload_v3 = responses.into();
-        self
-    }
-
-    /// Scripts FIFO `new_payload_v3` responses consumed in call order.
-    pub fn with_scripted_new_payload_v3_responses(self, responses: Vec<PayloadStatus>) -> Self {
-        self.with_new_payload_v3_responses(responses)
     }
 
     /// Scripts one fallback `get_payload_v3` response.
@@ -203,35 +219,27 @@ impl FakeEngineClient {
         self,
         response: Result<BaseExecutionPayloadEnvelopeV3, String>,
     ) -> Self {
-        self.state.blocking_lock().single_get_payload_v3 = Some(response);
+        self.state.lock().expect("FakeEngineClient state mutex poisoned").single_get_payload_v3 =
+            Some(response);
         self
-    }
-
-    /// Scripts FIFO `get_payload_v3` responses consumed in call order.
-    pub fn with_get_payload_v3_responses(
-        self,
-        responses: Vec<Result<BaseExecutionPayloadEnvelopeV3, String>>,
-    ) -> Self {
-        self.state.blocking_lock().scripted_get_payload_v3 = responses.into();
-        self
-    }
-
-    /// Scripts FIFO `get_payload_v3` responses consumed in call order.
-    pub fn with_scripted_get_payload_v3_responses(
-        self,
-        responses: Vec<Result<BaseExecutionPayloadEnvelopeV3, String>>,
-    ) -> Self {
-        self.with_get_payload_v3_responses(responses)
     }
 
     /// Sets the `l2_block_info_by_label` response for a specific tag.
     pub async fn set_l2_block_info_by_label(&self, tag: BlockNumberOrTag, block: L2BlockInfo) {
-        self.state.lock().await.l2_block_info_by_tag.insert(tag, block);
+        self.state
+            .lock()
+            .expect("FakeEngineClient state mutex poisoned")
+            .l2_block_info_by_tag
+            .insert(tag, block);
     }
 
     /// Blocking variant of [`Self::set_l2_block_info_by_label`].
     pub fn set_l2_block_info_by_label_blocking(&self, tag: BlockNumberOrTag, block: L2BlockInfo) {
-        self.state.blocking_lock().l2_block_info_by_tag.insert(tag, block);
+        self.state
+            .lock()
+            .expect("FakeEngineClient state mutex poisoned")
+            .l2_block_info_by_tag
+            .insert(tag, block);
     }
 
     /// Sets the `l2_block_by_label` response for a specific tag.
@@ -240,7 +248,11 @@ impl FakeEngineClient {
         tag: BlockNumberOrTag,
         block: Block<BaseTransaction>,
     ) {
-        self.state.lock().await.l2_blocks_by_label.insert(tag, block);
+        self.state
+            .lock()
+            .expect("FakeEngineClient state mutex poisoned")
+            .l2_blocks_by_label
+            .insert(tag, block);
     }
 }
 
@@ -273,7 +285,7 @@ impl EngineClient for FakeEngineClient {
                 let state = Arc::clone(&state);
                 let numtag = numtag;
                 ProviderCall::BoxedFuture(Box::pin(async move {
-                    let mut state = state.lock().await;
+                    let mut state = state.lock().expect("FakeEngineClient state mutex poisoned");
                     let block = numtag.map_or_else(
                         || None,
                         |numtag| {
@@ -305,7 +317,7 @@ impl EngineClient for FakeEngineClient {
         &self,
         numtag: BlockNumberOrTag,
     ) -> Result<Option<Block<BaseTransaction>>, EngineClientError> {
-        let mut state = self.state.lock().await;
+        let mut state = self.state.lock().expect("FakeEngineClient state mutex poisoned");
         state.calls.push(EngineClientCall::L2BlockByLabel(numtag));
         Ok(state.l2_blocks_by_label.get(&numtag).cloned())
     }
@@ -314,7 +326,7 @@ impl EngineClient for FakeEngineClient {
         &self,
         numtag: BlockNumberOrTag,
     ) -> Result<Option<L2BlockInfo>, EngineClientError> {
-        let mut state = self.state.lock().await;
+        let mut state = self.state.lock().expect("FakeEngineClient state mutex poisoned");
         state.calls.push(EngineClientCall::L2BlockInfoByLabel(numtag));
         Ok(state.l2_block_info_by_tag.get(&numtag).copied())
     }
@@ -336,7 +348,7 @@ impl BaseEngineApi for FakeEngineClient {
         payload: ExecutionPayloadV3,
         _parent_beacon_block_root: B256,
     ) -> TransportResult<PayloadStatus> {
-        let mut state = self.state.lock().await;
+        let mut state = self.state.lock().expect("FakeEngineClient state mutex poisoned");
         state.calls.push(EngineClientCall::NewPayloadV3(Box::new(payload)));
         if let Some(response) = state.scripted_new_payload_v3.pop_front() {
             return Ok(response);
@@ -365,7 +377,7 @@ impl BaseEngineApi for FakeEngineClient {
         fork_choice_state: ForkchoiceState,
         _payload_attributes: Option<BasePayloadAttributes>,
     ) -> TransportResult<ForkchoiceUpdated> {
-        let mut state = self.state.lock().await;
+        let mut state = self.state.lock().expect("FakeEngineClient state mutex poisoned");
         state.calls.push(EngineClientCall::ForkChoiceUpdatedV2(fork_choice_state));
         Err(TransportError::from(TransportErrorKind::custom_str(
             "fork_choice_updated_v2 is not scripted in FakeEngineClient",
@@ -377,7 +389,7 @@ impl BaseEngineApi for FakeEngineClient {
         fork_choice_state: ForkchoiceState,
         payload_attributes: Option<BasePayloadAttributes>,
     ) -> TransportResult<ForkchoiceUpdated> {
-        let mut state = self.state.lock().await;
+        let mut state = self.state.lock().expect("FakeEngineClient state mutex poisoned");
         state.calls.push(EngineClientCall::ForkChoiceUpdatedV3 {
             fcs: fork_choice_state,
             payload_attributes: Box::new(payload_attributes),
@@ -410,12 +422,9 @@ impl BaseEngineApi for FakeEngineClient {
         &self,
         payload_id: PayloadId,
     ) -> TransportResult<BaseExecutionPayloadEnvelopeV3> {
-        let mut state = self.state.lock().await;
+        let mut state = self.state.lock().expect("FakeEngineClient state mutex poisoned");
         state.calls.push(EngineClientCall::GetPayloadV3(payload_id));
-        let response = state
-            .scripted_get_payload_v3
-            .pop_front()
-            .or_else(|| state.single_get_payload_v3.clone());
+        let response = state.single_get_payload_v3.clone();
         match response {
             Some(Ok(payload)) => Ok(payload),
             Some(Err(error)) => Err(TransportError::from(TransportErrorKind::custom_str(&error))),

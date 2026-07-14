@@ -282,8 +282,12 @@ impl HarnessBuilder {
             watch::channel(None).0,
         );
         let derivation_handle = tokio::spawn(async move {
+            // Cancellation exits via `Ok(())`, so any `Err` here is a genuine
+            // actor failure. Panic instead of logging so dependent tests fail
+            // fast with the real error rather than hanging until the tick budget
+            // expires and reporting a misleading `ProgressTimeout`.
             if let Err(error) = derivation_actor.start(()).await {
-                error!(target: "test_utils::builder", error = ?error, "derivation actor exited with error");
+                panic!("derivation actor exited with error: {error:?}");
             }
         });
 
