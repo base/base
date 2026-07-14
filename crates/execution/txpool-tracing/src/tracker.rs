@@ -278,17 +278,18 @@ impl Tracker {
 
             self.nonce_completed(&tx_hash, &event, received_at);
             self.log(&tx_hash, &event_log, &format!("Transaction {event}"));
-            // Block inclusion is journaled by the builder (`BUILDER_INCLUDED`).
-            // Tracer journal emits cover mempool lifecycle events only.
-            self.emit_transaction_event(
-                tx_hash,
-                event,
-                event_log.events.len() - 1,
-                TxpoolEventData {
-                    time_in_mempool: Some(time_in_mempool),
-                    ..Default::default()
-                },
-            );
+            // Inclusion is journaled by the builder; tracer emits cover mempool lifecycle only.
+            if event != TxEvent::BlockInclusion {
+                self.emit_transaction_event(
+                    tx_hash,
+                    event,
+                    event_log.events.len() - 1,
+                    TxpoolEventData {
+                        time_in_mempool: Some(time_in_mempool),
+                        ..Default::default()
+                    },
+                );
+            }
             Self::record_histogram(time_in_mempool, event);
         }
     }

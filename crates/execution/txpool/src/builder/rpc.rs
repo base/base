@@ -91,7 +91,7 @@ where
             Ok(_) => {
                 self.emit_validated_insert_event(
                     TransactionEventType::TxpoolValidatedInsertAccepted,
-                    Some(tx_hash),
+                    tx_hash,
                     Map::from_iter([("encoded_len".to_string(), json!(encoded_len))]),
                 );
                 debug!(sender = %sender, "inserted validated transaction");
@@ -101,7 +101,7 @@ where
             Err(e) => {
                 self.emit_validated_insert_event(
                     TransactionEventType::TxpoolValidatedInsertRejected,
-                    Some(tx_hash),
+                    tx_hash,
                     Map::from_iter([
                         ("rejection_stage".to_string(), json!("pool_insert")),
                         ("encoded_len".to_string(), json!(encoded_len)),
@@ -124,7 +124,7 @@ impl<P> BuilderApiImpl<P> {
     fn emit_validated_insert_event(
         &self,
         event_type: TransactionEventType,
-        tx_hash: Option<TxHash>,
+        tx_hash: TxHash,
         mut data: Map<String, serde_json::Value>,
     ) {
         data.entry("rpc_method".to_string())
@@ -133,9 +133,9 @@ impl<P> BuilderApiImpl<P> {
         let _ = transaction_event!(
             producer: TransactionEventProducer::BaseBuilder,
             event_type: event_type,
-            maybe_tx_hash: tx_hash,
+            tx_hash: tx_hash,
             id: {
-                "tx_hash" => tx_hash.map(|hash| format!("{hash:#x}")).unwrap_or_default(),
+                "tx_hash" => format!("{tx_hash:#x}"),
             },
             data: data,
         );
