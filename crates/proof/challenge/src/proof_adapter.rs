@@ -259,8 +259,7 @@ mod tests {
             },
         });
 
-        let proof_bytes =
-            ChallengerProofAdapter::snark_plonk_dispute_proof_bytes(result).unwrap();
+        let proof_bytes = ChallengerProofAdapter::snark_plonk_dispute_proof_bytes(result).unwrap();
 
         assert_eq!(proof_bytes.as_ref(), &[1, 0xab, 0xcd]);
     }

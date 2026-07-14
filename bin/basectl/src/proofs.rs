@@ -202,7 +202,7 @@ const fn proof_status_from_filter(filter: ProofStatusFilter) -> ProofStatus {
 const fn proof_type_label(proof_type: ProofType) -> &'static str {
     match proof_type {
         ProofType::Compressed => "compressed",
-        ProofType::SnarkGroth16 => "snark_groth16",
+        ProofType::SnarkPlonk => "snark_plonk",
         ProofType::Tee => "tee",
     }
 }
@@ -330,11 +330,11 @@ impl ProofResultJson {
                 tee_kind: None,
                 proof_bytes: Some(zk.proof.len()),
             },
-            ProofResult::SnarkGroth16(groth16) => Self {
-                proof_type: "snark_groth16",
-                zk_vm: Some(zk_vm_label(groth16.proof.zk_vm)),
+            ProofResult::SnarkPlonk(plonk) => Self {
+                proof_type: "snark_plonk",
+                zk_vm: Some(zk_vm_label(plonk.proof.zk_vm)),
                 tee_kind: None,
-                proof_bytes: Some(groth16.proof.proof.len()),
+                proof_bytes: Some(plonk.proof.proof.len()),
             },
             ProofResult::Tee(tee) => Self {
                 proof_type: "tee",
@@ -709,11 +709,11 @@ mod tests {
     }
 
     #[test]
-    fn snark_groth16_result_json_shape() {
-        use base_prover_service_protocol::SnarkGroth16ProofResult;
+    fn snark_plonk_result_json_shape() {
+        use base_prover_service_protocol::SnarkPlonkProofResult;
 
         let result =
-            ProofResultJson::from_result(&ProofResult::SnarkGroth16(SnarkGroth16ProofResult {
+            ProofResultJson::from_result(&ProofResult::SnarkPlonk(SnarkPlonkProofResult {
                 proof: ZkProofResult {
                     zk_vm: ZkVm::Sp1,
                     proof: vec![0xab, 0xcd, 0xef].into(),
@@ -722,7 +722,7 @@ mod tests {
             }));
         let value = serde_json::to_value(&result).unwrap();
 
-        assert_eq!(value["proofType"], "snark_groth16");
+        assert_eq!(value["proofType"], "snark_plonk");
         assert_eq!(value["zkVm"], "sp1");
         assert_eq!(value["proofBytes"], 3);
         assert!(value.get("teeKind").is_none());

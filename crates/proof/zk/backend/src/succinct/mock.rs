@@ -109,7 +109,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn submit_next_advances_groth16_to_snark_session() {
+    async fn submit_next_advances_plonk_to_snark_session() {
         let prover = MockZkProver;
         let request = snark_plonk();
         let range_id = prover.submit(&zk_request(), "session-1").await.unwrap();
