@@ -128,7 +128,7 @@ impl BaseTime {
 
         let code = Bytecode::new_raw(Self::implementation_bytecode());
         let mut implementation_info = db.basic(Self::IMPLEMENTATION_ADDRESS)?.unwrap_or_default();
-        implementation_info.code_hash = Self::IMPLEMENTATION_CODE_HASH;
+        implementation_info.code_hash = code.hash_slow();
         implementation_info.code = Some(code);
 
         let mut implementation_account: revm::state::Account = implementation_info.into();
