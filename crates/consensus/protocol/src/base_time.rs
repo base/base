@@ -19,15 +19,24 @@ pub struct BaseTimeUpdateTx {
 }
 
 impl BaseTimeUpdateTx {
+    /// Milliseconds between consecutive `BaseTime` slots.
+    pub const BLOCK_INTERVAL_MILLIS: u16 = 200;
+
     /// The selector for `setTimestampMillisPart(uint16)`.
     pub const SELECTOR: [u8; 4] = [0x86, 0xbd, 0xf3, 0x94];
 
     /// The ABI calldata length.
     pub const CALLDATA_LEN: usize = 4 + 32;
 
+    /// Returns whether a millisecond component is aligned to a `BaseTime` slot.
+    pub const fn is_valid_timestamp_millis_part(timestamp_millis_part: u16) -> bool {
+        timestamp_millis_part < 1_000
+            && timestamp_millis_part.is_multiple_of(Self::BLOCK_INTERVAL_MILLIS)
+    }
+
     /// Creates a new [`BaseTimeUpdateTx`].
     pub const fn new(timestamp_millis_part: u16) -> Result<Self, BaseTimeUpdateError> {
-        if !matches!(timestamp_millis_part, 0 | 200 | 400 | 600 | 800) {
+        if !Self::is_valid_timestamp_millis_part(timestamp_millis_part) {
             return Err(BaseTimeUpdateError::InvalidTimestampMillisPart(timestamp_millis_part));
         }
 
@@ -158,6 +167,17 @@ mod tests {
             BaseTimeUpdateTx::new(100),
             Err(BaseTimeUpdateError::InvalidTimestampMillisPart(100))
         );
+    }
+
+    #[test]
+    fn validates_timestamp_millis_lattice() {
+        for value in [0, 200, 400, 600, 800] {
+            assert!(BaseTimeUpdateTx::is_valid_timestamp_millis_part(value));
+        }
+
+        for value in [1, 100, 199, 201, 999, 1_000] {
+            assert!(!BaseTimeUpdateTx::is_valid_timestamp_millis_part(value));
+        }
     }
 
     #[test]

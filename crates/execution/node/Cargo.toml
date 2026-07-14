@@ -39,6 +39,7 @@ reth-payload-primitives.workspace = true
 reth-primitives-traits = { workspace = true, features = ["secp256k1", "rayon"] }
 
 # op-reth
+base-protocol.workspace = true
 base-execution-rpc.workspace = true
 base-execution-txpool.workspace = true
 base-execution-chainspec.workspace = true

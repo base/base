@@ -5150,6 +5150,7 @@ dependencies = [
  "base-execution-trie",
  "base-execution-txpool",
  "base-node-core",
+ "base-protocol",
  "base-upgrade-signal",
  "clap",
  "eyre",

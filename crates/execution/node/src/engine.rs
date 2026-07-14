@@ -13,6 +13,7 @@ use base_execution_consensus::isthmus;
 use base_execution_payload_builder::{
     Attributes, BaseExecutionPayloadValidator, BasePayloadBuilderAttributes, BasePayloadTypes,
 };
+use base_protocol::BaseTimeUpdateTx;
 use reth_consensus::ConsensusError;
 use reth_node_api::{
     BuiltPayload, EngineApiValidator, EngineTypes, NodePrimitives, PayloadValidator,
@@ -251,7 +252,7 @@ where
         let timestamp_millis_part = attributes
             .timestamp_millis_part()
             .ok_or(InvalidPayloadAttributesError::InvalidTimestamp)?;
-        if !matches!(timestamp_millis_part, 0 | 200 | 400 | 600 | 800) {
+        if !BaseTimeUpdateTx::is_valid_timestamp_millis_part(timestamp_millis_part) {
             return Err(InvalidPayloadAttributesError::InvalidTimestamp);
         }
 
@@ -367,7 +368,7 @@ where
                     "MissingTimestampMillisPartInPayloadAttributes".to_string().into(),
                 ));
             }
-            Some(value) if !matches!(value, 0 | 200 | 400 | 600 | 800) => {
+            Some(value) if !BaseTimeUpdateTx::is_valid_timestamp_millis_part(value) => {
                 return Err(EngineObjectValidationError::InvalidParams(
                     "InvalidTimestampMillisPartInPayloadAttributes".to_string().into(),
                 ));
