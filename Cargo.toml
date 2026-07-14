@@ -463,6 +463,7 @@ risc0-zkvm = { version = "^3.0", default-features = false }
 # SP1 v6.3.0 (Hypercube) — used by crates/proof/succinct
 sp1-prover-types = "=6.3.0"
 sp1-sdk = { version = "=6.3.0" }
+sp1-verifier = "=6.3.0"
 sp1-cluster-utils = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.5.1" }
 sp1-cluster-common = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.5.1" }
 sp1-cluster-artifact = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.5.1" }

@@ -136,7 +136,7 @@ mod tests {
             request_payload: serde_json::json!({}),
             api_proof_type: match proof_type {
                 ProofType::OpSuccinctSp1ClusterCompressed => ApiProofType::Compressed,
-                ProofType::OpSuccinctSp1ClusterSnarkGroth16 => ApiProofType::SnarkGroth16,
+                ProofType::OpSuccinctSp1ClusterSnarkPlonk => ApiProofType::SnarkPlonk,
             },
             zk_vm: Some(ZkVmKind::Sp1),
             tee_kind: None,

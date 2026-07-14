@@ -56,7 +56,7 @@ impl TryFrom<ProofJob> for ProofGeneratorRequest {
 
         let request = match job.request.request {
             ProofRequestKind::Compressed(request) => ZkProofRequestKind::Compressed(request),
-            ProofRequestKind::SnarkGroth16(request) => ZkProofRequestKind::SnarkGroth16(request),
+            ProofRequestKind::SnarkPlonk(request) => ZkProofRequestKind::SnarkPlonk(request),
             ProofRequestKind::Tee(_) => {
                 return Err(ProofGeneratorError::UnsupportedProofRequest {
                     session_id: claim.session_id,

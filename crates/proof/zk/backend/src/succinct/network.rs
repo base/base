@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
 use base_proof_zk_host::{ZkProver, ZkProverError, ZkSessionState};
 use base_prover_service_protocol::{
-    ProofResult, SessionType, SnarkGroth16ProofRequest, SnarkGroth16ProofResult, ZkProofRequest,
+    ProofResult, SessionType, SnarkPlonkProofRequest, SnarkPlonkProofResult, ZkProofRequest,
     ZkProofResult, ZkVm,
 };
 use sp1_sdk::{
@@ -400,7 +400,7 @@ impl NetworkZkProver {
         Ok(proof_id.to_string())
     }
 
-    /// Submit the Groth16 aggregation proof after the compressed range proof completes.
+    /// Submit the PLONK aggregation proof after the compressed range proof completes.
     ///
     /// Unlike the cluster backend, the SP1 Network assigns the proof id, so this submission
     /// cannot be made idempotent: a crash after the network accepts the request but before the
@@ -408,7 +408,7 @@ impl NetworkZkProver {
     /// resume. The orphaned proof only wastes proving resources; it does not affect correctness.
     pub async fn submit_aggregation_proof(
         &self,
-        request: &SnarkGroth16ProofRequest,
+        request: &SnarkPlonkProofRequest,
         request_session_id: &str,
         range_backend_session_id: &str,
     ) -> Result<String, ZkProverError> {
@@ -490,7 +490,7 @@ impl ZkProver for NetworkZkProver {
 
     async fn submit_next(
         &self,
-        request: &SnarkGroth16ProofRequest,
+        request: &SnarkPlonkProofRequest,
         request_session_id: &str,
         completed_backend_session_id: &str,
     ) -> Result<String, ZkProverError> {
@@ -531,7 +531,7 @@ impl ZkProver for NetworkZkProver {
 
         let proof = ZkProofResult { zk_vm: ZkVm::Sp1, proof: proof.into(), execution_stats: None };
         match session_type {
-            SessionType::Snark => Ok(ProofResult::SnarkGroth16(SnarkGroth16ProofResult { proof })),
+            SessionType::Snark => Ok(ProofResult::SnarkPlonk(SnarkPlonkProofResult { proof })),
             SessionType::Stark => Ok(ProofResult::Compressed(proof)),
         }
     }

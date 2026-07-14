@@ -21,7 +21,7 @@ impl TryFrom<ProofSubmitterRequest> for WorkerSubmitProofRequest {
 
     fn try_from(request: ProofSubmitterRequest) -> Result<Self, Self::Error> {
         match request.result {
-            ProofResult::Compressed(_) | ProofResult::SnarkGroth16(_) => Ok(Self {
+            ProofResult::Compressed(_) | ProofResult::SnarkPlonk(_) => Ok(Self {
                 session_id: request.session_id,
                 lock_id: request.lock_id,
                 worker_id: request.worker_id,

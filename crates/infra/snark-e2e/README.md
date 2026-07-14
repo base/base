@@ -1,6 +1,6 @@
 # `base-snark-e2e`
 
-SNARK Groth16 end-to-end prover verification library.
+SNARK PLONK end-to-end prover verification library.
 
 Submits a one-block SNARK prove request to the JSON-RPC prover-service requester
 API, polls until completion, and cryptographically verifies the receipt. Used by
@@ -34,5 +34,5 @@ SnarkE2e::run().await?;
 ## Integration test
 
 ```bash
-cargo nextest run --run-ignored all -p base-snark-e2e --test snark_groth16_e2e
+cargo nextest run --run-ignored all -p base-snark-e2e --test snark_plonk_e2e
 ```

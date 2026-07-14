@@ -329,22 +329,22 @@ pub enum ProofType {
     /// Compressed SP1 proof.
     #[sqlx(rename = "op_succinct_sp1_cluster_compressed")]
     OpSuccinctSp1ClusterCompressed,
-    /// Groth16 SNARK SP1 proof.
-    #[sqlx(rename = "op_succinct_sp1_cluster_snark_groth16")]
-    OpSuccinctSp1ClusterSnarkGroth16,
+    /// PLONK SNARK SP1 proof.
+    #[sqlx(rename = "op_succinct_sp1_cluster_snark_plonk")]
+    OpSuccinctSp1ClusterSnarkPlonk,
 }
 
 impl ProofType {
     /// Proto discriminant for `PROOF_TYPE_COMPRESSED`.
     pub const PROTO_COMPRESSED: i32 = 3;
-    /// Proto discriminant for `PROOF_TYPE_SNARK_GROTH16`.
-    pub const PROTO_SNARK_GROTH16: i32 = 4;
+    /// Proto discriminant for `PROOF_TYPE_SNARK_PLONK`.
+    pub const PROTO_SNARK_PLONK: i32 = 4;
 
     /// Returns the proto wire value for this proof type.
     pub const fn proto_i32(&self) -> i32 {
         match self {
             Self::OpSuccinctSp1ClusterCompressed => Self::PROTO_COMPRESSED,
-            Self::OpSuccinctSp1ClusterSnarkGroth16 => Self::PROTO_SNARK_GROTH16,
+            Self::OpSuccinctSp1ClusterSnarkPlonk => Self::PROTO_SNARK_PLONK,
         }
     }
 
@@ -352,7 +352,7 @@ impl ProofType {
     pub const fn as_str(&self) -> &'static str {
         match self {
             Self::OpSuccinctSp1ClusterCompressed => "op_succinct_sp1_cluster_compressed",
-            Self::OpSuccinctSp1ClusterSnarkGroth16 => "op_succinct_sp1_cluster_snark_groth16",
+            Self::OpSuccinctSp1ClusterSnarkPlonk => "op_succinct_sp1_cluster_snark_plonk",
         }
     }
 }
@@ -369,7 +369,7 @@ impl TryFrom<&str> for ProofType {
     fn try_from(s: &str) -> Result<Self, Self::Error> {
         match s {
             "op_succinct_sp1_cluster_compressed" => Ok(Self::OpSuccinctSp1ClusterCompressed),
-            "op_succinct_sp1_cluster_snark_groth16" => Ok(Self::OpSuccinctSp1ClusterSnarkGroth16),
+            "op_succinct_sp1_cluster_snark_plonk" => Ok(Self::OpSuccinctSp1ClusterSnarkPlonk),
             other => Err(format!("Unknown proof type: {other}")),
         }
     }
@@ -382,7 +382,7 @@ impl TryFrom<i32> for ProofType {
     fn try_from(value: i32) -> Result<Self, Self::Error> {
         match value {
             Self::PROTO_COMPRESSED => Ok(Self::OpSuccinctSp1ClusterCompressed),
-            Self::PROTO_SNARK_GROTH16 => Ok(Self::OpSuccinctSp1ClusterSnarkGroth16),
+            Self::PROTO_SNARK_PLONK => Ok(Self::OpSuccinctSp1ClusterSnarkPlonk),
             _ => Err(format!("Unknown proof type: {value}")),
         }
     }
@@ -395,9 +395,9 @@ pub enum ApiProofType {
     /// Compressed ZK proof.
     #[sqlx(rename = "compressed")]
     Compressed,
-    /// Groth16 SNARK proof.
-    #[sqlx(rename = "snark_groth16")]
-    SnarkGroth16,
+    /// PLONK SNARK proof.
+    #[sqlx(rename = "snark_plonk")]
+    SnarkPlonk,
     /// Trusted execution environment proof.
     #[sqlx(rename = "tee")]
     Tee,
@@ -408,7 +408,7 @@ impl ApiProofType {
     pub const fn as_str(&self) -> &'static str {
         match self {
             Self::Compressed => "compressed",
-            Self::SnarkGroth16 => "snark_groth16",
+            Self::SnarkPlonk => "snark_plonk",
             Self::Tee => "tee",
         }
     }
@@ -426,7 +426,7 @@ impl TryFrom<&str> for ApiProofType {
     fn try_from(s: &str) -> Result<Self, Self::Error> {
         match s {
             "compressed" => Ok(Self::Compressed),
-            "snark_groth16" => Ok(Self::SnarkGroth16),
+            "snark_plonk" => Ok(Self::SnarkPlonk),
             "tee" => Ok(Self::Tee),
             other => Err(format!("Unknown API proof type: {other}")),
         }
@@ -639,8 +639,8 @@ impl ProofJob {
                 self.check_api_proof_type(ApiProofType::Compressed)?;
                 self.check_zk_vm(ZkVmKind::from(zk.zk_vm))
             }
-            ProtocolProofResult::SnarkGroth16(snark) => {
-                self.check_api_proof_type(ApiProofType::SnarkGroth16)?;
+            ProtocolProofResult::SnarkPlonk(snark) => {
+                self.check_api_proof_type(ApiProofType::SnarkPlonk)?;
                 self.check_zk_vm(ZkVmKind::from(snark.proof.zk_vm))
             }
             ProtocolProofResult::Tee(tee) => {
@@ -761,7 +761,7 @@ pub struct CreateProofRequest {
     pub number_of_blocks_to_prove: u64,
     /// Optional sequence window.
     pub sequence_window: Option<u64>,
-    /// Ethereum address of the on-chain prover (required for SNARK Groth16 proofs).
+    /// Ethereum address of the on-chain prover (required for SNARK PLONK proofs).
     pub prover_address: Option<String>,
     /// Explicit L1 head hash for witness generation.
     pub l1_head: Option<String>,
@@ -898,12 +898,12 @@ impl DerivedProofRequestFields {
                 l1_head: proof.l1_head.map(|hash| format!("{hash:#x}")),
                 intermediate_root_interval: proof.intermediate_root_interval,
             }),
-            ProtocolProofRequestKind::SnarkGroth16(request) => Ok(Self {
-                api_proof_type: ApiProofType::SnarkGroth16,
+            ProtocolProofRequestKind::SnarkPlonk(request) => Ok(Self {
+                api_proof_type: ApiProofType::SnarkPlonk,
                 zk_vm: Some(protocol_zk_vm(request.proof.zk_vm)),
                 tee_kind: None,
                 zk_backend: Some(request.proof.zk_backend),
-                proof_type: Some(ProofType::OpSuccinctSp1ClusterSnarkGroth16),
+                proof_type: Some(ProofType::OpSuccinctSp1ClusterSnarkPlonk),
                 start_block_number: request.proof.start_block_number,
                 number_of_blocks_to_prove: request.proof.number_of_blocks_to_prove,
                 sequence_window: request.proof.sequence_window,
@@ -1225,7 +1225,7 @@ pub struct FailExpiredProofJobs<'a> {
 #[cfg(test)]
 mod tests {
     use base_prover_service_protocol::{
-        SnarkGroth16ProofResult, ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
+        SnarkPlonkProofResult, ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
     };
 
     use super::*;
@@ -1276,7 +1276,7 @@ mod tests {
     #[test]
     fn test_proof_type_try_from_proto() {
         assert_eq!(ProofType::try_from(3).unwrap(), ProofType::OpSuccinctSp1ClusterCompressed);
-        assert_eq!(ProofType::try_from(4).unwrap(), ProofType::OpSuccinctSp1ClusterSnarkGroth16);
+        assert_eq!(ProofType::try_from(4).unwrap(), ProofType::OpSuccinctSp1ClusterSnarkPlonk);
 
         assert!(ProofType::try_from(0).is_err());
         assert!(ProofType::try_from(1).is_err());
@@ -1337,7 +1337,7 @@ mod tests {
     #[test]
     fn validate_submitted_result_rejects_snark_for_compressed_job() {
         let job = proof_job_with(ApiProofType::Compressed, Some(ZkVmKind::Sp1), None);
-        let result = ProtocolProofResult::SnarkGroth16(SnarkGroth16ProofResult {
+        let result = ProtocolProofResult::SnarkPlonk(SnarkPlonkProofResult {
             proof: ZkProofResult {
                 zk_vm: ZkVm::Sp1,
                 proof: vec![0x01].into(),

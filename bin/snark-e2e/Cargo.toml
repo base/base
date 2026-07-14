@@ -1,6 +1,6 @@
 [package]
 name = "base-snark-e2e-bin"
-description = "Standalone SNARK Groth16 E2E test binary for K8s CronJob execution"
+description = "Standalone SNARK PLONK E2E test binary for K8s CronJob execution"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

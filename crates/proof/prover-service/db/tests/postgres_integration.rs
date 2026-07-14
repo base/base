@@ -25,7 +25,7 @@ use base_prover_service_db::{
 };
 use base_prover_service_protocol::{
     ProofRequest as ProtocolProofRequest, ProofRequestKind as ProtocolProofRequestKind,
-    ProofResult as ProtocolProofResult, SnarkGroth16ProofRequest, SnarkGroth16ProofResult,
+    ProofResult as ProtocolProofResult, SnarkPlonkProofRequest, SnarkPlonkProofResult,
     TeeKind as ProtocolTeeKind, TeeProofRequest, ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
 };
 use sqlx::{PgPool, postgres::PgPoolOptions};
@@ -97,7 +97,7 @@ fn compressed_request_with_l1_head(l1_head: &str) -> CreateProofRequest {
 fn snark_request() -> CreateProofRequest {
     CreateProofRequest::new(ProtocolProofRequest {
         session_id: Uuid::new_v4().to_string(),
-        request: ProtocolProofRequestKind::SnarkGroth16(SnarkGroth16ProofRequest {
+        request: ProtocolProofRequestKind::SnarkPlonk(SnarkPlonkProofRequest {
             proof: ZkProofRequest {
                 start_block_number: 200,
                 number_of_blocks_to_prove: 10,
@@ -199,7 +199,7 @@ async fn test_create_and_get_snark() {
 
     assert_eq!(req.start_block_number, 200);
     assert_eq!(req.number_of_blocks_to_prove, 10);
-    assert_eq!(req.proof_type, Some(ProofType::OpSuccinctSp1ClusterSnarkGroth16));
+    assert_eq!(req.proof_type, Some(ProofType::OpSuccinctSp1ClusterSnarkPlonk));
     assert_eq!(req.prover_address.as_deref(), Some("0x1234567890abcdef1234567890abcdef12345678"));
     assert_eq!(
         req.l1_head.as_deref(),
@@ -1488,7 +1488,7 @@ async fn test_full_snark_pipeline() {
         serde_json::from_value(result_payload).expect("SNARK result payload should deserialize");
     assert_eq!(
         result,
-        ProtocolProofResult::SnarkGroth16(SnarkGroth16ProofResult {
+        ProtocolProofResult::SnarkPlonk(SnarkPlonkProofResult {
             proof: ZkProofResult {
                 zk_vm: ZkVm::Sp1,
                 proof: snark_receipt.into(),
@@ -1934,7 +1934,7 @@ async fn test_complete_claimed_proof_job_rejects_mismatched_result() {
             session_id: claimed.session_id.clone(),
             lock_id: Uuid::new_v4(),
             worker_id: "non-owner".to_owned(),
-            result: ProtocolProofResult::SnarkGroth16(SnarkGroth16ProofResult {
+            result: ProtocolProofResult::SnarkPlonk(SnarkPlonkProofResult {
                 proof: ZkProofResult {
                     zk_vm: ZkVm::Sp1,
                     proof: vec![0x01].into(),
@@ -1952,7 +1952,7 @@ async fn test_complete_claimed_proof_job_rejects_mismatched_result() {
             session_id: claimed.session_id.clone(),
             lock_id,
             worker_id: "mismatch-worker".to_owned(),
-            result: ProtocolProofResult::SnarkGroth16(SnarkGroth16ProofResult {
+            result: ProtocolProofResult::SnarkPlonk(SnarkPlonkProofResult {
                 proof: ZkProofResult {
                     zk_vm: ZkVm::Sp1,
                     proof: vec![0x01].into(),

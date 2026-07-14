@@ -172,7 +172,7 @@ pub fn record_terminal_proof_job(status: &str, job: &ProofJob) {
 pub const fn proof_type_label(proof_type: ProofType) -> &'static str {
     match proof_type {
         ProofType::OpSuccinctSp1ClusterCompressed => "compressed",
-        ProofType::OpSuccinctSp1ClusterSnarkGroth16 => "snark_groth16",
+        ProofType::OpSuccinctSp1ClusterSnarkPlonk => "snark_plonk",
     }
 }
 
@@ -180,7 +180,7 @@ pub const fn proof_type_label(proof_type: ProofType) -> &'static str {
 pub const fn api_proof_type_label(proof_type: ApiProofType) -> &'static str {
     match proof_type {
         ApiProofType::Compressed => "compressed",
-        ApiProofType::SnarkGroth16 => "snark_groth16",
+        ApiProofType::SnarkPlonk => "snark_plonk",
         ApiProofType::Tee => "tee",
     }
 }

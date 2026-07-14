@@ -10,7 +10,7 @@ use base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL
 use base_proof_succinct_proof_utils::get_range_elf_embedded;
 use base_proof_zk_host::{ZkProver, ZkProverError, ZkSessionState};
 use base_prover_service_protocol::{
-    ExecutionStats, ProofResult, SessionType, SnarkGroth16ProofRequest, SnarkGroth16ProofResult,
+    ExecutionStats, ProofResult, SessionType, SnarkPlonkProofRequest, SnarkPlonkProofResult,
     ZkProofRequest, ZkProofResult, ZkVm,
 };
 use sp1_sdk::{
@@ -262,7 +262,7 @@ impl DryRunZkProver {
             ProofResult::Compressed(proof) => proof.execution_stats,
             _ => return Err(backend_error!("dry-run range result had unexpected proof type")),
         };
-        let result = ProofResult::SnarkGroth16(SnarkGroth16ProofResult {
+        let result = ProofResult::SnarkPlonk(SnarkPlonkProofResult {
             proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: Vec::new().into(), execution_stats },
         });
         store.insert(backend_session_id.clone(), result);
@@ -292,7 +292,7 @@ impl ZkProver for DryRunZkProver {
 
     async fn submit_next(
         &self,
-        _request: &SnarkGroth16ProofRequest,
+        _request: &SnarkPlonkProofRequest,
         request_session_id: &str,
         completed_backend_session_id: &str,
     ) -> Result<String, ZkProverError> {
@@ -333,7 +333,7 @@ impl ZkProver for DryRunZkProver {
 mod tests {
     use std::{collections::HashMap, sync::Mutex};
 
-    use base_prover_service_protocol::{ProofResult, SnarkGroth16ProofResult, ZkProofResult, ZkVm};
+    use base_prover_service_protocol::{ProofResult, SnarkPlonkProofResult, ZkProofResult, ZkVm};
 
     use super::{DRY_RUN_SNARK_PREFIX, DRY_RUN_STARK_PREFIX, DryRunZkProver};
 
@@ -364,7 +364,7 @@ mod tests {
         assert_eq!(snark_id, snark_key(session));
         let guard = store.lock().unwrap();
         assert!(!guard.contains_key(&stark_key(session)), "range result should be consumed");
-        assert!(matches!(guard.get(&snark_key(session)), Some(ProofResult::SnarkGroth16(_))));
+        assert!(matches!(guard.get(&snark_key(session)), Some(ProofResult::SnarkPlonk(_))));
     }
 
     #[test]
@@ -372,7 +372,7 @@ mod tests {
         let session = "session-1";
         let store = Mutex::new(HashMap::from([(
             snark_key(session),
-            ProofResult::SnarkGroth16(SnarkGroth16ProofResult { proof: empty_proof() }),
+            ProofResult::SnarkPlonk(SnarkPlonkProofResult { proof: empty_proof() }),
         )]));
 
         let snark_id =

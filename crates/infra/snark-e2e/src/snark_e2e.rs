@@ -1,6 +1,6 @@
-//! Shared SNARK Groth16 end-to-end test logic.
+//! Shared SNARK PLONK end-to-end test logic.
 //!
-//! Used by both the integration test (`tests/snark_groth16_e2e.rs`) and the
+//! Used by both the integration test (`tests/snark_plonk_e2e.rs`) and the
 //! standalone binary (`bin/snark-e2e`) that runs as a K8s `CronJob`.
 //!
 //! Talks to the JSON-RPC prover-service requester API (`prover_proveBlockRange`
@@ -15,7 +15,7 @@ use base_l1_head::L1HeadCalculator;
 use base_prover_service_client::{ProofRequesterClient, ProverServiceClientConfig};
 use base_prover_service_protocol::{
     GetProofRequest, ProofRequest, ProofRequestKind, ProofResult, ProofStatus,
-    ProveBlockRangeRequest, SnarkGroth16ProofRequest, ZkBackend, ZkProofRequest, ZkVm,
+    ProveBlockRangeRequest, SnarkPlonkProofRequest, ZkBackend, ZkProofRequest, ZkVm,
 };
 use sp1_sdk::{
     SP1ProofWithPublicValues, SP1VerifyingKey,
@@ -39,7 +39,7 @@ const L2_BLOCK_STEP_BACK: u64 = 10;
 /// Maximum number of times we step back before giving up.
 const MAX_STEP_BACKS: u64 = 300;
 
-/// SNARK Groth16 end-to-end test runner.
+/// SNARK PLONK end-to-end test runner.
 #[derive(Debug)]
 pub struct SnarkE2e;
 
@@ -58,7 +58,7 @@ impl SnarkE2e {
         snark_proof: SP1ProofWithPublicValues,
         agg_vk: SP1VerifyingKey,
     ) -> Result<()> {
-        info!("verifying SNARK Groth16 proof with CpuProver");
+        info!("verifying SNARK PLONK proof with CpuProver");
         let t = std::time::Instant::now();
         tokio::task::spawn_blocking(move || {
             info!("creating CpuProver");
@@ -66,10 +66,10 @@ impl SnarkE2e {
             info!("CpuProver created, running verify");
             prover
                 .verify(&snark_proof, &agg_vk, None)
-                .map_err(|e| anyhow::anyhow!("SNARK Groth16 proof verification failed: {e}"))
+                .map_err(|e| anyhow::anyhow!("SNARK PLONK proof verification failed: {e}"))
         })
         .await??;
-        info!(elapsed_secs = t.elapsed().as_secs_f64(), "SNARK Groth16 proof verified (CpuProver)");
+        info!(elapsed_secs = t.elapsed().as_secs_f64(), "SNARK PLONK proof verified (CpuProver)");
 
         Ok(())
     }
@@ -77,19 +77,19 @@ impl SnarkE2e {
     /// Extract SNARK receipt bytes from a successful getProof response.
     fn snark_receipt_bytes(result: ProofResult) -> Result<Vec<u8>> {
         match result {
-            ProofResult::SnarkGroth16(r) => Ok(r.proof.proof.to_vec()),
+            ProofResult::SnarkPlonk(r) => Ok(r.proof.proof.to_vec()),
             ProofResult::Compressed(_) => {
-                bail!("expected SnarkGroth16 proof result, got Compressed")
+                bail!("expected SnarkPlonk proof result, got Compressed")
             }
-            ProofResult::Tee(_) => bail!("expected SnarkGroth16 proof result, got Tee"),
+            ProofResult::Tee(_) => bail!("expected SnarkPlonk proof result, got Tee"),
         }
     }
 
-    /// Run the full SNARK Groth16 E2E test pipeline:
+    /// Run the full SNARK PLONK E2E test pipeline:
     ///
     /// 1. Query the L2 node for the safe head block (guaranteed derived from
     ///    L1)
-    /// 2. Submit a `prover_proveBlockRange` request for `SnarkGroth16`
+    /// 2. Submit a `prover_proveBlockRange` request for `SnarkPlonk`
     ///    - `l1_head` is omitted so the prover service calculates it via `SafeDB`
     /// 3. Poll `prover_getProof` until completion or timeout
     /// 4. Deserialize the SNARK receipt
@@ -194,7 +194,7 @@ impl SnarkE2e {
             safe_head = target_block - 1;
         };
 
-        // -- 2. Submit proveBlockRange (SnarkGroth16) -----------------------------
+        // -- 2. Submit proveBlockRange (SnarkPlonk) -----------------------------
         //
         // l1_head is omitted -- the prover service calculates it server-side
         // using SafeDB (optimism_safeHeadAtL1Block) with a sequence_window
@@ -206,7 +206,7 @@ impl SnarkE2e {
             .prove_block_range(ProveBlockRangeRequest {
                 proof: ProofRequest {
                     session_id: session_id.clone(),
-                    request: ProofRequestKind::SnarkGroth16(SnarkGroth16ProofRequest {
+                    request: ProofRequestKind::SnarkPlonk(SnarkPlonkProofRequest {
                         proof: ZkProofRequest {
                             start_block_number: safe_head,
                             number_of_blocks_to_prove: 1,
@@ -261,7 +261,7 @@ impl SnarkE2e {
 
             let error_message = resp.error_message.as_deref().unwrap_or("");
             let receipt_bytes = resp.result.as_ref().map(|r| match r {
-                ProofResult::SnarkGroth16(r) => r.proof.proof.len(),
+                ProofResult::SnarkPlonk(r) => r.proof.proof.len(),
                 ProofResult::Compressed(r) => r.proof.len(),
                 ProofResult::Tee(_) => 0,
             });

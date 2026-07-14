@@ -24,7 +24,7 @@ use base_proof_contracts::{
 use base_proof_primitives::Proposal;
 use base_protocol::OutputRoot;
 use base_prover_service_protocol::{
-    ProofResult as ApiProofResult, ProofStatus, SnarkGroth16ProofRequest, TeeKind, TeeProofResult,
+    ProofResult as ApiProofResult, ProofStatus, SnarkPlonkProofRequest, TeeKind, TeeProofResult,
     ZkBackend, ZkProofRequest, ZkVm,
 };
 use base_runtime::TokioRuntime;
@@ -149,7 +149,7 @@ const fn tee_api_result(aggregate_proposal: Proposal) -> ApiProofResult {
 }
 
 fn default_ready_proof(intent: DisputeIntent) -> PendingProof {
-    let request = SnarkGroth16ProofRequest {
+    let request = SnarkPlonkProofRequest {
         proof: ZkProofRequest {
             start_block_number: 15,
             number_of_blocks_to_prove: 5,
@@ -643,7 +643,7 @@ async fn test_step_proof_retry_reuses_deterministic_session_id() {
     let tx_manager = default_tx_manager();
     let mut driver = test_driver(factory, Arc::clone(&verifier), l2, Arc::clone(&zk), tx_manager);
 
-    let expected_session_id = ChallengerProofAdapter::snark_groth16_session_id(addr(0), 1);
+    let expected_session_id = ChallengerProofAdapter::snark_plonk_session_id(addr(0), 1);
 
     // Step 1: initial proveBlockRange call from initiate_zk_proof.
     driver.step().await.unwrap();
@@ -1474,8 +1474,8 @@ async fn test_step_checkpoint_count_mismatch_surfaces_error() {
     );
 }
 
-const fn minimal_prove_request() -> SnarkGroth16ProofRequest {
-    SnarkGroth16ProofRequest {
+const fn minimal_prove_request() -> SnarkPlonkProofRequest {
+    SnarkPlonkProofRequest {
         proof: ZkProofRequest {
             start_block_number: 0,
             number_of_blocks_to_prove: 1,

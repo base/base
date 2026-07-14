@@ -1,4 +1,4 @@
-//! End-to-end integration test for the SNARK Groth16 two-stage proving pipeline.
+//! End-to-end integration test for the SNARK PLONK two-stage proving pipeline.
 //!
 //! Delegates to [`SnarkE2e::run()`], which is also used by the standalone
 //! `base-snark-e2e` binary (K8s `CronJob`).
@@ -10,8 +10,8 @@
 //! Auto-skips when `L2_NODE_ADDRESS` is not set.
 //!
 #[tokio::test]
-#[ignore = "requires a running prover-service and L2_NODE_ADDRESS; run with `cargo nextest run --run-ignored all -p base-snark-e2e --test snark_groth16_e2e`"]
-async fn snark_groth16_e2e_prove_and_verify() {
+#[ignore = "requires a running prover-service and L2_NODE_ADDRESS; run with `cargo nextest run --run-ignored all -p base-snark-e2e --test snark_plonk_e2e`"]
+async fn snark_plonk_e2e_prove_and_verify() {
     if std::env::var("L2_NODE_ADDRESS").is_err() {
         println!("Skipping: L2_NODE_ADDRESS not set.");
         return;

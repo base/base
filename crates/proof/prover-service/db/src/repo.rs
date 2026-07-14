@@ -1,5 +1,5 @@
 use base_prover_service_protocol::{
-    ProofResult as ProtocolProofResult, SnarkGroth16ProofResult, ZkBackend, ZkProofResult, ZkVm,
+    ProofResult as ProtocolProofResult, SnarkPlonkProofResult, ZkBackend, ZkProofResult, ZkVm,
 };
 use chrono::Utc;
 use sqlx::{PgPool, Result, Row};
@@ -594,7 +594,7 @@ impl ProofRequestRepo {
                     .fetch_optional(&self.pool)
                     .await?
             }
-            ApiProofType::Compressed | ApiProofType::SnarkGroth16 => {
+            ApiProofType::Compressed | ApiProofType::SnarkPlonk => {
                 let zk_vms: Vec<String> =
                     req.zk_vms.iter().map(|vm| vm.as_str().to_owned()).collect();
                 let zk_backends: Vec<String> = req
@@ -1693,7 +1693,7 @@ impl ProofRequestRepo {
                     COALESCE(
                         api_proof_type,
                         CASE proof_type
-                            WHEN 'op_succinct_sp1_cluster_snark_groth16' THEN 'snark_groth16'
+                            WHEN 'op_succinct_sp1_cluster_snark_plonk' THEN 'snark_plonk'
                             ELSE 'compressed'
                         END
                     ) AS api_proof_type,
@@ -1702,10 +1702,10 @@ impl ProofRequestRepo {
                         WHEN COALESCE(
                             api_proof_type,
                             CASE proof_type
-                                WHEN 'op_succinct_sp1_cluster_snark_groth16' THEN 'snark_groth16'
+                                WHEN 'op_succinct_sp1_cluster_snark_plonk' THEN 'snark_plonk'
                                 ELSE 'compressed'
                             END
-                        ) IN ('compressed', 'snark_groth16') THEN 'sp1'
+                        ) IN ('compressed', 'snark_plonk') THEN 'sp1'
                         ELSE NULL
                     END AS zk_vm,
                     tee_kind,
@@ -1735,7 +1735,7 @@ impl ProofRequestRepo {
                     COALESCE(
                         api_proof_type,
                         CASE proof_type
-                            WHEN 'op_succinct_sp1_cluster_snark_groth16' THEN 'snark_groth16'
+                            WHEN 'op_succinct_sp1_cluster_snark_plonk' THEN 'snark_plonk'
                             ELSE 'compressed'
                         END
                     ) AS api_proof_type,
@@ -1744,10 +1744,10 @@ impl ProofRequestRepo {
                         WHEN COALESCE(
                             api_proof_type,
                             CASE proof_type
-                                WHEN 'op_succinct_sp1_cluster_snark_groth16' THEN 'snark_groth16'
+                                WHEN 'op_succinct_sp1_cluster_snark_plonk' THEN 'snark_plonk'
                                 ELSE 'compressed'
                             END
-                        ) IN ('compressed', 'snark_groth16') THEN 'sp1'
+                        ) IN ('compressed', 'snark_plonk') THEN 'sp1'
                         ELSE NULL
                     END AS zk_vm,
                     tee_kind,
@@ -1870,9 +1870,9 @@ const fn validate_backend_proof_type(
 ) -> std::result::Result<(), CreateProofRequestValidationError> {
     match (api_proof_type, proof_type) {
         (ApiProofType::Compressed, Some(ProofType::OpSuccinctSp1ClusterCompressed))
-        | (ApiProofType::SnarkGroth16, Some(ProofType::OpSuccinctSp1ClusterSnarkGroth16))
+        | (ApiProofType::SnarkPlonk, Some(ProofType::OpSuccinctSp1ClusterSnarkPlonk))
         | (ApiProofType::Tee, None) => Ok(()),
-        (ApiProofType::Compressed | ApiProofType::SnarkGroth16, None) => {
+        (ApiProofType::Compressed | ApiProofType::SnarkPlonk, None) => {
             Err(CreateProofRequestValidationError::MissingBackendProofType { api_proof_type })
         }
         (ApiProofType::Tee, Some(_)) => {
@@ -1901,7 +1901,7 @@ fn proof_result_from_receipt_update(update: &UpdateReceipt) -> Option<ProtocolPr
     // `UpdateReceipt` is the legacy OP Succinct receipt path, which currently only
     // stores SP1 receipts. Protocol-native completions carry their own ZK VM.
     if let Some(snark_receipt) = &update.snark_receipt {
-        return Some(ProtocolProofResult::SnarkGroth16(SnarkGroth16ProofResult {
+        return Some(ProtocolProofResult::SnarkPlonk(SnarkPlonkProofResult {
             proof: ZkProofResult {
                 zk_vm: ZkVm::Sp1,
                 proof: snark_receipt.clone().into(),
@@ -1924,7 +1924,7 @@ fn compatibility_receipts_for_result(
 ) -> (Option<Vec<u8>>, Option<Vec<u8>>) {
     match result {
         ProtocolProofResult::Compressed(proof) => (Some(proof.proof.to_vec()), None),
-        ProtocolProofResult::SnarkGroth16(proof) => (None, Some(proof.proof.proof.to_vec())),
+        ProtocolProofResult::SnarkPlonk(proof) => (None, Some(proof.proof.proof.to_vec())),
         ProtocolProofResult::Tee(_) => (None, None),
     }
 }
@@ -1937,20 +1937,20 @@ const ZERO_HASH: &str = "0x00000000000000000000000000000000000000000000000000000
 const fn api_proof_type_for_backend(proof_type: Option<ProofType>) -> ApiProofType {
     match proof_type {
         Some(ProofType::OpSuccinctSp1ClusterCompressed) | None => ApiProofType::Compressed,
-        Some(ProofType::OpSuccinctSp1ClusterSnarkGroth16) => ApiProofType::SnarkGroth16,
+        Some(ProofType::OpSuccinctSp1ClusterSnarkPlonk) => ApiProofType::SnarkPlonk,
     }
 }
 
 const fn fallback_zk_vm_for_request(api_proof_type: ApiProofType) -> Option<ZkVmKind> {
     match api_proof_type {
-        ApiProofType::Compressed | ApiProofType::SnarkGroth16 => Some(ZkVmKind::Sp1),
+        ApiProofType::Compressed | ApiProofType::SnarkPlonk => Some(ZkVmKind::Sp1),
         ApiProofType::Tee => None,
     }
 }
 
 const fn fallback_zk_backend_for_request(api_proof_type: ApiProofType) -> Option<ZkBackend> {
     match api_proof_type {
-        ApiProofType::Compressed | ApiProofType::SnarkGroth16 => Some(ZkBackend::Cluster),
+        ApiProofType::Compressed | ApiProofType::SnarkPlonk => Some(ZkBackend::Cluster),
         ApiProofType::Tee => None,
     }
 }
@@ -1991,10 +1991,10 @@ impl ProtocolRequestPayloadParams<'_> {
                     "payload": zk_payload,
                 },
             }),
-            ApiProofType::SnarkGroth16 => serde_json::json!({
+            ApiProofType::SnarkPlonk => serde_json::json!({
                 "session_id": self.session_id,
                 "request": {
-                    "proof_type": ApiProofType::SnarkGroth16.as_str(),
+                    "proof_type": ApiProofType::SnarkPlonk.as_str(),
                     "payload": {
                         "proof": zk_payload,
                         "prover_address": self.prover_address.unwrap_or(ZERO_ADDRESS),
@@ -2199,7 +2199,7 @@ fn claim_query(api_proof_type: ApiProofType) -> String {
             RETURNING {columns}
             "#,
         ),
-        ApiProofType::Compressed | ApiProofType::SnarkGroth16 => format!(
+        ApiProofType::Compressed | ApiProofType::SnarkPlonk => format!(
             r#"
             UPDATE proof_requests
             SET job_status = 'CLAIMED',
@@ -2363,7 +2363,7 @@ impl CreateRequestParams<'_> {
             return Some("tee_kind");
         }
         let stored_zk_backend = row.get::<Option<&str>, _>("zk_backend").or_else(|| {
-            matches!(self.api_proof_type, "compressed" | "snark_groth16").then_some("cluster")
+            matches!(self.api_proof_type, "compressed" | "snark_plonk").then_some("cluster")
         });
         if stored_zk_backend != self.zk_backend {
             return Some("zk_backend");
@@ -2402,7 +2402,7 @@ fn comparable_request_payload(
     let zk_backend_path =
         match value.pointer("/request/proof_type").and_then(serde_json::Value::as_str) {
             Some("compressed") => Some("/request/payload"),
-            Some("snark_groth16") => Some("/request/payload/proof"),
+            Some("snark_plonk") => Some("/request/payload/proof"),
             _ => None,
         };
     if let Some(map) = zk_backend_path.and_then(|path| value.pointer_mut(path)?.as_object_mut()) {
@@ -2634,13 +2634,13 @@ mod tests {
             (
                 serde_json::json!({
                     "request": {
-                        "proof_type": "snark_groth16",
+                        "proof_type": "snark_plonk",
                         "payload": {"proof": {"start_block_number": 1}}
                     }
                 }),
                 serde_json::json!({
                     "request": {
-                        "proof_type": "snark_groth16",
+                        "proof_type": "snark_plonk",
                         "payload": {
                             "proof": {"start_block_number": 1, "zk_backend": "cluster"}
                         }
@@ -2773,7 +2773,7 @@ mod tests {
 
         assert_eq!(
             result,
-            ProtocolProofResult::SnarkGroth16(SnarkGroth16ProofResult {
+            ProtocolProofResult::SnarkPlonk(SnarkPlonkProofResult {
                 proof: ZkProofResult {
                     zk_vm: ZkVm::Sp1,
                     proof: vec![4, 5, 6].into(),

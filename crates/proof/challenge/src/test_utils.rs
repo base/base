@@ -26,7 +26,7 @@ use base_proof_rpc::{L2Provider, RpcError, RpcResult};
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
 use base_prover_service_protocol::{
     DeleteProofRequest, GetProofRequest, GetProofResponse, ProofResult as ApiProofResult,
-    ProofStatus, ProveBlockRangeRequest, ProveBlockRangeResponse, SnarkGroth16ProofResult,
+    ProofStatus, ProveBlockRangeRequest, ProveBlockRangeResponse, SnarkPlonkProofResult,
     ZkProofResult, ZkVm,
 };
 use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager};
@@ -827,7 +827,7 @@ impl ProofRequesterProvider for MockZkProofProvider {
                 None
             } else {
                 state.result.or_else(|| {
-                    Some(ApiProofResult::SnarkGroth16(SnarkGroth16ProofResult {
+                    Some(ApiProofResult::SnarkPlonk(SnarkPlonkProofResult {
                         proof: ZkProofResult {
                             zk_vm: ZkVm::Sp1,
                             proof: state.proof.into(),

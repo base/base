@@ -14,7 +14,7 @@ use std::{
 
 use alloy_primitives::{Address, B256, Bytes};
 use base_prover_service_client::ProofRequesterProvider;
-use base_prover_service_protocol::{GetProofRequest, ProofStatus, SnarkGroth16ProofRequest};
+use base_prover_service_protocol::{GetProofRequest, ProofStatus, SnarkPlonkProofRequest};
 use tracing::warn;
 
 use crate::{ChallengerMetrics, ChallengerProofAdapter};
@@ -31,7 +31,7 @@ pub enum ProofKind {
     Tee {
         /// Pre-built ZK request for fallback if TEE submission fails.
         /// `None` when the fallback request could not be constructed.
-        zk_fallback_request: Option<SnarkGroth16ProofRequest>,
+        zk_fallback_request: Option<SnarkPlonkProofRequest>,
         /// The dispute intent to use for the ZK fallback path.
         /// `None` when the fallback request could not be constructed.
         zk_fallback_intent: Option<DisputeIntent>,
@@ -42,7 +42,7 @@ pub enum ProofKind {
     /// `proveBlockRange` on failure.
     Zk {
         /// Original request parameters for retry.
-        prove_request: SnarkGroth16ProofRequest,
+        prove_request: SnarkPlonkProofRequest,
     },
 }
 
@@ -118,7 +118,7 @@ impl PendingProof {
         session_id: String,
         invalid_index: u64,
         expected_root: B256,
-        prove_request: SnarkGroth16ProofRequest,
+        prove_request: SnarkPlonkProofRequest,
         intent: DisputeIntent,
     ) -> Self {
         Self {
@@ -137,7 +137,7 @@ impl PendingProof {
         session_id: String,
         invalid_index: u64,
         expected_root: B256,
-        zk_fallback_request: Option<SnarkGroth16ProofRequest>,
+        zk_fallback_request: Option<SnarkPlonkProofRequest>,
         zk_fallback_intent: Option<DisputeIntent>,
     ) -> Self {
         Self {
@@ -156,7 +156,7 @@ impl PendingProof {
         proof_bytes: Bytes,
         invalid_index: u64,
         expected_root: B256,
-        prove_request: SnarkGroth16ProofRequest,
+        prove_request: SnarkPlonkProofRequest,
         intent: DisputeIntent,
     ) -> Self {
         Self {
@@ -302,7 +302,7 @@ impl PendingProofs {
                 };
                 let proof_bytes = match &pending.kind {
                     ProofKind::Zk { .. } => {
-                        ChallengerProofAdapter::snark_groth16_dispute_proof_bytes(result)?
+                        ChallengerProofAdapter::snark_plonk_dispute_proof_bytes(result)?
                     }
                     ProofKind::Tee { .. } => {
                         match ChallengerProofAdapter::tee_dispute_proof_bytes(

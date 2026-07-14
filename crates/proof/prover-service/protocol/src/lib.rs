@@ -18,7 +18,7 @@ pub use types::{
     ListProofsResponse, PROOF_REQUEST_NOT_FOUND_MESSAGE, ProofJob, ProofJobStatus, ProofRequest,
     ProofRequestIdCollisionMessage, ProofRequestKind, ProofResult, ProofStatus, ProofSummary,
     ProofType, ProveBlockRangeRequest, ProveBlockRangeResponse, RecordProofSessionRequest,
-    RecordProofSessionResponse, SessionType, SnarkGroth16ProofRequest, SnarkGroth16ProofResult,
+    RecordProofSessionResponse, SessionType, SnarkPlonkProofRequest, SnarkPlonkProofResult,
     TeeKind, TeeProofRequest, TeeProofResult, WorkerSubmitProofRequest, WorkerSubmitProofResponse,
     ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
 };

@@ -27,8 +27,8 @@ impl ProofRequestIdCollisionMessage {
 pub enum ProofType {
     /// Compressed ZK proof.
     Compressed,
-    /// Groth16 SNARK proof.
-    SnarkGroth16,
+    /// PLONK SNARK proof.
+    SnarkPlonk,
     /// Trusted execution environment proof.
     Tee,
 }
@@ -160,8 +160,8 @@ pub struct ProofRequest {
 pub enum ProofRequestKind {
     /// Request a compressed ZK proof.
     Compressed(ZkProofRequest),
-    /// Request a Groth16 SNARK proof.
-    SnarkGroth16(SnarkGroth16ProofRequest),
+    /// Request a PLONK SNARK proof.
+    SnarkPlonk(SnarkPlonkProofRequest),
     /// Request a TEE proof.
     Tee(TeeProofRequest),
 }
@@ -191,9 +191,9 @@ pub struct ZkProofRequest {
     pub zk_backend: ZkBackend,
 }
 
-/// Groth16 SNARK proof request parameters.
+/// PLONK SNARK proof request parameters.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SnarkGroth16ProofRequest {
+pub struct SnarkPlonkProofRequest {
     /// Underlying ZK proof request.
     pub proof: ZkProofRequest,
     /// On-chain prover address.
@@ -215,8 +215,8 @@ pub struct TeeProofRequest {
 pub enum ProofResult {
     /// Compressed ZK proof result.
     Compressed(ZkProofResult),
-    /// Groth16 SNARK proof result.
-    SnarkGroth16(SnarkGroth16ProofResult),
+    /// PLONK SNARK proof result.
+    SnarkPlonk(SnarkPlonkProofResult),
     /// TEE proof result.
     Tee(TeeProofResult),
 }
@@ -248,9 +248,9 @@ pub struct ExecutionStats {
     pub execution_ms: u64,
 }
 
-/// Groth16 SNARK proof result.
+/// PLONK SNARK proof result.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SnarkGroth16ProofResult {
+pub struct SnarkPlonkProofResult {
     /// Wrapped ZK proof result.
     pub proof: ZkProofResult,
 }

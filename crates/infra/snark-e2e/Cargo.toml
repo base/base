@@ -1,6 +1,6 @@
 [package]
 name = "base-snark-e2e"
-description = "SNARK Groth16 end-to-end prover verification for K8s CronJob execution"
+description = "SNARK PLONK end-to-end prover verification for K8s CronJob execution"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

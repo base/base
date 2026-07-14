@@ -125,7 +125,7 @@ fn validate_intermediate_root_interval(
 ) -> RpcResult<()> {
     match api_proof_type {
         ApiProofType::Tee => return Ok(()),
-        ApiProofType::Compressed | ApiProofType::SnarkGroth16 => {}
+        ApiProofType::Compressed | ApiProofType::SnarkPlonk => {}
     }
 
     if let Some(interval) = intermediate_root_interval {
@@ -161,10 +161,10 @@ mod tests {
     }
 
     #[test]
-    fn test_proof_type_label_snark_groth16() {
+    fn test_proof_type_label_snark_plonk() {
         assert_eq!(
-            metrics::proof_type_label(ProofType::OpSuccinctSp1ClusterSnarkGroth16),
-            "snark_groth16"
+            metrics::proof_type_label(ProofType::OpSuccinctSp1ClusterSnarkPlonk),
+            "snark_plonk"
         );
     }
 
@@ -174,8 +174,8 @@ mod tests {
     }
 
     #[test]
-    fn test_api_proof_type_label_snark_groth16() {
-        assert_eq!(metrics::api_proof_type_label(ApiProofType::SnarkGroth16), "snark_groth16");
+    fn test_api_proof_type_label_snark_plonk() {
+        assert_eq!(metrics::api_proof_type_label(ApiProofType::SnarkPlonk), "snark_plonk");
     }
 
     #[test]

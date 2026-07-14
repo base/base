@@ -28,7 +28,7 @@ use base_proof_rpc::L2Provider;
 use base_proof_submission::KnownRevert;
 use base_prover_service_client::ProofRequesterProvider;
 use base_prover_service_protocol::{
-    SnarkGroth16ProofRequest, TeeKind, ZkBackend, ZkProofRequest, ZkVm,
+    SnarkPlonkProofRequest, TeeKind, ZkBackend, ZkProofRequest, ZkVm,
 };
 use base_runtime::{Clock, TokioRuntime};
 use base_tx_manager::{TxManager, TxManagerError};
@@ -635,15 +635,15 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
         })
     }
 
-    /// Builds a [`SnarkGroth16ProofRequest`] for the given candidate and invalid index.
+    /// Builds a [`SnarkPlonkProofRequest`] for the given candidate and invalid index.
     fn build_zk_request(
         &self,
         candidate: &CandidateGame,
         invalid_index: u64,
-    ) -> eyre::Result<SnarkGroth16ProofRequest> {
+    ) -> eyre::Result<SnarkPlonkProofRequest> {
         let start_block_number = candidate.checkpoint_start_block(invalid_index)?;
 
-        Ok(SnarkGroth16ProofRequest {
+        Ok(SnarkPlonkProofRequest {
             proof: ZkProofRequest {
                 start_block_number,
                 number_of_blocks_to_prove: candidate.intermediate_block_interval,
@@ -672,7 +672,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
         // needs to cover the single interval that contains the invalid
         // checkpoint: [prior_checkpoint .. invalid_checkpoint].
         let proof_request = self.build_zk_request(&candidate, invalid_index)?;
-        let request = crate::ChallengerProofAdapter::snark_groth16_prove_block_range_request(
+        let request = crate::ChallengerProofAdapter::snark_plonk_prove_block_range_request(
             game_address,
             invalid_index,
             proof_request.clone(),
@@ -1009,7 +1009,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager, C: Clock> Driver<L
 
         ChallengerMetrics::proof_retries_total().increment(1);
 
-        let prove_request = crate::ChallengerProofAdapter::snark_groth16_prove_block_range_request(
+        let prove_request = crate::ChallengerProofAdapter::snark_plonk_prove_block_range_request(
             game_address,
             invalid_index,
             request,
@@ -1054,7 +1054,7 @@ mod tests {
 
     use alloy_primitives::{Address, B256, Bytes};
     use base_proof_contracts::l1_origin_too_old_selector;
-    use base_prover_service_protocol::{SnarkGroth16ProofRequest, ZkProofRequest, ZkVm};
+    use base_prover_service_protocol::{SnarkPlonkProofRequest, ZkProofRequest, ZkVm};
     use base_tx_manager::TxManagerError;
     use tokio_util::sync::CancellationToken;
 
@@ -1065,8 +1065,8 @@ mod tests {
         receipt_with_status,
     };
 
-    fn proof_request() -> SnarkGroth16ProofRequest {
-        SnarkGroth16ProofRequest {
+    fn proof_request() -> SnarkPlonkProofRequest {
+        SnarkPlonkProofRequest {
             proof: ZkProofRequest {
                 start_block_number: 100,
                 number_of_blocks_to_prove: 10,

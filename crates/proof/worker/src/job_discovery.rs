@@ -42,7 +42,7 @@ pub const DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS: usize = 1;
 pub type JobDiscoveryTask = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
 
 /// ZK proof types claimed by every ZK host.
-pub const ZK_PROOF_TYPES: [ProofType; 2] = [ProofType::Compressed, ProofType::SnarkGroth16];
+pub const ZK_PROOF_TYPES: [ProofType; 2] = [ProofType::Compressed, ProofType::SnarkPlonk];
 
 /// Prover-service claim filter for a worker host.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -122,7 +122,7 @@ impl JobClaimFilter {
                 let proof_types = if proof_type_offset.is_multiple_of(ZK_PROOF_TYPES.len()) {
                     ZK_PROOF_TYPES
                 } else {
-                    [ProofType::SnarkGroth16, ProofType::Compressed]
+                    [ProofType::SnarkPlonk, ProofType::Compressed]
                 };
                 let [first_proof_type, second_proof_type] = proof_types;
 
@@ -485,7 +485,7 @@ mod tests {
     use base_prover_service_protocol::{
         GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse, HeartbeatRequest,
         HeartbeatResponse, ProofJob, ProofJobStatus, ProofRequest, ProofRequestKind,
-        RecordProofSessionRequest, RecordProofSessionResponse, SnarkGroth16ProofRequest,
+        RecordProofSessionRequest, RecordProofSessionResponse, SnarkPlonkProofRequest,
         WorkerSubmitProofRequest, WorkerSubmitProofResponse, ZkProofRequest,
     };
     use chrono::Utc;
@@ -609,7 +609,7 @@ mod tests {
     }
 
     fn snark_job() -> ProofJob {
-        proof_job(ProofRequestKind::SnarkGroth16(SnarkGroth16ProofRequest {
+        proof_job(ProofRequestKind::SnarkPlonk(SnarkPlonkProofRequest {
             proof: zk_request(),
             prover_address: Default::default(),
         }))
@@ -649,7 +649,7 @@ mod tests {
     fn job_proof_type(job: &ProofJob) -> ProofType {
         match job.request.request {
             ProofRequestKind::Compressed(_) => ProofType::Compressed,
-            ProofRequestKind::SnarkGroth16(_) => ProofType::SnarkGroth16,
+            ProofRequestKind::SnarkPlonk(_) => ProofType::SnarkPlonk,
             ProofRequestKind::Tee(_) => ProofType::Tee,
         }
     }
@@ -674,7 +674,7 @@ mod tests {
         assert_eq!(requests[0].zk_backends, vec![ZkBackend::Cluster, ZkBackend::Network]);
         assert_eq!(requests[0].lock_duration_seconds, 30);
         assert_eq!(requests[1].worker_id, "worker-a");
-        assert_eq!(requests[1].proof_type, ProofType::SnarkGroth16);
+        assert_eq!(requests[1].proof_type, ProofType::SnarkPlonk);
         assert!(requests[1].tee_kinds.is_empty());
         assert_eq!(requests[1].zk_vms, vec![ZkVm::Sp1]);
         assert_eq!(requests[1].zk_backends, vec![ZkBackend::Cluster, ZkBackend::Network]);
@@ -714,7 +714,7 @@ mod tests {
         let requests = client.get_next_requests();
         assert_eq!(requests.len(), 2);
         assert_eq!(requests[0].proof_type, ProofType::Compressed);
-        assert_eq!(requests[1].proof_type, ProofType::SnarkGroth16);
+        assert_eq!(requests[1].proof_type, ProofType::SnarkPlonk);
     }
 
     #[tokio::test]
@@ -791,7 +791,7 @@ mod tests {
         timeout(Duration::from_secs(1), task).await.expect("proof generator task should finish");
         let requests = client.get_next_requests();
         assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].proof_type, ProofType::SnarkGroth16);
+        assert_eq!(requests[0].proof_type, ProofType::SnarkPlonk);
         assert_eq!(
             *generated.lock().expect("generated jobs lock should not be poisoned"),
             vec!["session-1".to_string()]

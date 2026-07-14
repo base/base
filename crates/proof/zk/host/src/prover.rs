@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use base_prover_service_protocol::{
-    ProofResult, SessionType, SnarkGroth16ProofRequest, ZkBackend, ZkProofRequest,
+    ProofResult, SessionType, SnarkPlonkProofRequest, ZkBackend, ZkProofRequest,
 };
 use thiserror::Error;
 
@@ -11,8 +11,8 @@ use thiserror::Error;
 pub enum ZkProofRequestKind {
     /// Request for a compressed ZK proof.
     Compressed(ZkProofRequest),
-    /// Request for a Groth16 SNARK proof.
-    SnarkGroth16(SnarkGroth16ProofRequest),
+    /// Request for a PLONK SNARK proof.
+    SnarkPlonk(SnarkPlonkProofRequest),
 }
 
 impl ZkProofRequestKind {
@@ -20,7 +20,7 @@ impl ZkProofRequestKind {
     pub const fn start_block_number(&self) -> u64 {
         match self {
             Self::Compressed(request) => request.start_block_number,
-            Self::SnarkGroth16(request) => request.proof.start_block_number,
+            Self::SnarkPlonk(request) => request.proof.start_block_number,
         }
     }
 
@@ -28,7 +28,7 @@ impl ZkProofRequestKind {
     pub const fn number_of_blocks_to_prove(&self) -> u64 {
         match self {
             Self::Compressed(request) => request.number_of_blocks_to_prove,
-            Self::SnarkGroth16(request) => request.proof.number_of_blocks_to_prove,
+            Self::SnarkPlonk(request) => request.proof.number_of_blocks_to_prove,
         }
     }
 
@@ -36,7 +36,7 @@ impl ZkProofRequestKind {
     pub const fn zk_backend(&self) -> ZkBackend {
         match self {
             Self::Compressed(request) => request.zk_backend,
-            Self::SnarkGroth16(request) => request.proof.zk_backend,
+            Self::SnarkPlonk(request) => request.proof.zk_backend,
         }
     }
 }
@@ -108,7 +108,7 @@ pub trait ZkProver: Send + Sync + std::fmt::Debug {
     /// assigns the session id (e.g. the SP1 Network) cannot, and document the deviation.
     async fn submit_next(
         &self,
-        _request: &SnarkGroth16ProofRequest,
+        _request: &SnarkPlonkProofRequest,
         _request_session_id: &str,
         _completed_backend_session_id: &str,
     ) -> Result<String, ZkProverError> {
@@ -177,7 +177,7 @@ mod tests {
         assert_eq!(compressed.start_block_number(), 100);
         assert_eq!(compressed.number_of_blocks_to_prove(), 5);
 
-        let snark = ZkProofRequestKind::SnarkGroth16(SnarkGroth16ProofRequest {
+        let snark = ZkProofRequestKind::SnarkPlonk(SnarkPlonkProofRequest {
             proof: zk_request(),
             prover_address: alloy_primitives::Address::ZERO,
         });

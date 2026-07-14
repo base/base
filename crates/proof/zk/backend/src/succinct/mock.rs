@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use base_proof_zk_host::{ZkProver, ZkProverError, ZkSessionState};
 use base_prover_service_protocol::{
-    ProofResult, SessionType, SnarkGroth16ProofRequest, SnarkGroth16ProofResult, ZkProofRequest,
+    ProofResult, SessionType, SnarkPlonkProofRequest, SnarkPlonkProofResult, ZkProofRequest,
     ZkProofResult, ZkVm,
 };
 
@@ -29,7 +29,7 @@ impl ZkProver for MockZkProver {
 
     async fn submit_next(
         &self,
-        _request: &SnarkGroth16ProofRequest,
+        _request: &SnarkPlonkProofRequest,
         request_session_id: &str,
         _completed_backend_session_id: &str,
     ) -> Result<String, ZkProverError> {
@@ -53,7 +53,7 @@ impl ZkProver for MockZkProver {
 
         match session_type {
             SessionType::Snark => {
-                Ok(ProofResult::SnarkGroth16(SnarkGroth16ProofResult { proof: zk_proof }))
+                Ok(ProofResult::SnarkPlonk(SnarkPlonkProofResult { proof: zk_proof }))
             }
             SessionType::Stark => Ok(ProofResult::Compressed(zk_proof)),
         }
@@ -63,7 +63,7 @@ impl ZkProver for MockZkProver {
 #[cfg(test)]
 mod tests {
     use base_proof_zk_host::ZkProofRequestKind;
-    use base_prover_service_protocol::{SnarkGroth16ProofRequest, ZkBackend, ZkProofRequest, ZkVm};
+    use base_prover_service_protocol::{SnarkPlonkProofRequest, ZkBackend, ZkProofRequest, ZkVm};
 
     use super::*;
 
@@ -79,8 +79,8 @@ mod tests {
         }
     }
 
-    fn snark_groth16() -> ZkProofRequestKind {
-        ZkProofRequestKind::SnarkGroth16(SnarkGroth16ProofRequest {
+    fn snark_plonk() -> ZkProofRequestKind {
+        ZkProofRequestKind::SnarkPlonk(SnarkPlonkProofRequest {
             proof: zk_request(),
             prover_address: Default::default(),
         })
@@ -111,11 +111,11 @@ mod tests {
     #[tokio::test]
     async fn submit_next_advances_groth16_to_snark_session() {
         let prover = MockZkProver;
-        let request = snark_groth16();
+        let request = snark_plonk();
         let range_id = prover.submit(&zk_request(), "session-1").await.unwrap();
         assert_eq!(range_id, "mock-stark-session-1");
 
-        let ZkProofRequestKind::SnarkGroth16(proof_request) = &request else {
+        let ZkProofRequestKind::SnarkPlonk(proof_request) = &request else {
             unreachable!("request is Groth16");
         };
         let snark_id = prover.submit_next(proof_request, "session-1", &range_id).await.unwrap();
@@ -123,7 +123,7 @@ mod tests {
         assert_eq!(snark_id, "mock-snark-session-1");
         assert!(matches!(
             prover.download(SessionType::Snark, &snark_id).await.unwrap(),
-            ProofResult::SnarkGroth16(_)
+            ProofResult::SnarkPlonk(_)
         ));
     }
 }

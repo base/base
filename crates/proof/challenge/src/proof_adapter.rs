@@ -4,7 +4,7 @@ use alloy_primitives::{Address, B256, Bytes};
 use base_proof_primitives::{ProofEncoder, ProofRequest as PrimitiveProofRequest};
 use base_prover_service_protocol::{
     ProofRequest, ProofRequestKind, ProofResult, ProofSessionId, ProveBlockRangeRequest,
-    SnarkGroth16ProofRequest, TeeKind, TeeProofRequest,
+    SnarkPlonkProofRequest, TeeKind, TeeProofRequest,
 };
 use eyre::{Result, WrapErr, bail};
 
@@ -17,8 +17,8 @@ impl ChallengerProofAdapter {
     pub const SESSION_NAMESPACE: &'static [u8] = b"base/challenger/proof-session/v1";
 
     /// Returns the session-ID proof subtype label for challenger SNARK proofs.
-    pub const fn snark_groth16_session_label() -> &'static str {
-        "zk/sp1/snark_groth16"
+    pub const fn snark_plonk_session_label() -> &'static str {
+        "zk/sp1/snark_plonk"
     }
 
     /// Returns the session-ID proof subtype label for a TEE implementation.
@@ -29,11 +29,11 @@ impl ChallengerProofAdapter {
     }
 
     /// Derives an idempotent challenger SNARK proof session ID.
-    pub fn snark_groth16_session_id(game_address: Address, invalid_index: u64) -> String {
+    pub fn snark_plonk_session_id(game_address: Address, invalid_index: u64) -> String {
         let invalid_index = invalid_index.to_be_bytes();
         ProofSessionId::derive_from_components(
             Self::SESSION_NAMESPACE,
-            Self::snark_groth16_session_label(),
+            Self::snark_plonk_session_label(),
             &[game_address.as_slice(), &invalid_index],
         )
     }
@@ -49,14 +49,14 @@ impl ChallengerProofAdapter {
     }
 
     /// Builds a prover-service request for a challenger SNARK proof.
-    pub fn snark_groth16_prove_block_range_request(
+    pub fn snark_plonk_prove_block_range_request(
         game_address: Address,
         invalid_index: u64,
-        request: SnarkGroth16ProofRequest,
+        request: SnarkPlonkProofRequest,
     ) -> ProveBlockRangeRequest {
-        let session_id = Self::snark_groth16_session_id(game_address, invalid_index);
+        let session_id = Self::snark_plonk_session_id(game_address, invalid_index);
         ProveBlockRangeRequest {
-            proof: ProofRequest { session_id, request: ProofRequestKind::SnarkGroth16(request) },
+            proof: ProofRequest { session_id, request: ProofRequestKind::SnarkPlonk(request) },
         }
     }
 
@@ -77,14 +77,14 @@ impl ChallengerProofAdapter {
     }
 
     /// Converts a prover-service SNARK result into bytes accepted by `submit_dispute`.
-    pub fn snark_groth16_dispute_proof_bytes(result: ProofResult) -> Result<Bytes> {
+    pub fn snark_plonk_dispute_proof_bytes(result: ProofResult) -> Result<Bytes> {
         let proof = match result {
-            ProofResult::SnarkGroth16(result) => result.proof.proof,
+            ProofResult::SnarkPlonk(result) => result.proof.proof,
             ProofResult::Compressed(_) => {
-                bail!("expected SNARK_GROTH16 proof result, got Compressed")
+                bail!("expected SNARK_PLONK proof result, got Compressed")
             }
             ProofResult::Tee(_) => {
-                bail!("expected SNARK_GROTH16 proof result, got Tee")
+                bail!("expected SNARK_PLONK proof result, got Tee")
             }
         };
 
@@ -98,8 +98,8 @@ impl ChallengerProofAdapter {
             ProofResult::Compressed(_) => {
                 bail!("expected TEE proof result, got Compressed")
             }
-            ProofResult::SnarkGroth16(_) => {
-                bail!("expected TEE proof result, got SnarkGroth16")
+            ProofResult::SnarkPlonk(_) => {
+                bail!("expected TEE proof result, got SnarkPlonk")
             }
         };
 
@@ -120,7 +120,7 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes};
     use base_proof_primitives::{PROOF_TYPE_TEE, Proposal};
     use base_prover_service_protocol::{
-        ProofRequestKind, ProofResult, SnarkGroth16ProofRequest, SnarkGroth16ProofResult, TeeKind,
+        ProofRequestKind, ProofResult, SnarkPlonkProofRequest, SnarkPlonkProofResult, TeeKind,
         TeeProofResult, ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
     };
 
@@ -160,11 +160,11 @@ mod tests {
         let invalid_index = 1;
 
         assert_eq!(
-            ChallengerProofAdapter::snark_groth16_session_id(game_address, invalid_index),
-            ChallengerProofAdapter::snark_groth16_session_id(game_address, invalid_index)
+            ChallengerProofAdapter::snark_plonk_session_id(game_address, invalid_index),
+            ChallengerProofAdapter::snark_plonk_session_id(game_address, invalid_index)
         );
         assert_ne!(
-            ChallengerProofAdapter::snark_groth16_session_id(game_address, invalid_index),
+            ChallengerProofAdapter::snark_plonk_session_id(game_address, invalid_index),
             ChallengerProofAdapter::tee_session_id(game_address, invalid_index, TeeKind::AwsNitro)
         );
     }
@@ -174,21 +174,21 @@ mod tests {
         let game_address = Address::repeat_byte(0xaa);
 
         assert_ne!(
-            ChallengerProofAdapter::snark_groth16_session_id(game_address, 1),
-            ChallengerProofAdapter::snark_groth16_session_id(game_address, 2)
+            ChallengerProofAdapter::snark_plonk_session_id(game_address, 1),
+            ChallengerProofAdapter::snark_plonk_session_id(game_address, 2)
         );
         assert_ne!(
-            ChallengerProofAdapter::snark_groth16_session_id(game_address, 1),
-            ChallengerProofAdapter::snark_groth16_session_id(Address::repeat_byte(0xbb), 1)
+            ChallengerProofAdapter::snark_plonk_session_id(game_address, 1),
+            ChallengerProofAdapter::snark_plonk_session_id(Address::repeat_byte(0xbb), 1)
         );
     }
 
     #[test]
-    fn snark_groth16_prove_block_range_request_converts_zk_request() {
+    fn snark_plonk_prove_block_range_request_converts_zk_request() {
         let game_address = Address::repeat_byte(0xaa);
         let invalid_index = 1;
         let session_id =
-            ChallengerProofAdapter::snark_groth16_session_id(game_address, invalid_index);
+            ChallengerProofAdapter::snark_plonk_session_id(game_address, invalid_index);
         let prover_address = Address::repeat_byte(0x11);
         let l1_head = B256::repeat_byte(0x22);
         let proof = ZkProofRequest {
@@ -200,9 +200,9 @@ mod tests {
             zk_vm: ZkVm::Sp1,
             zk_backend: ZkBackend::Cluster,
         };
-        let request = SnarkGroth16ProofRequest { proof, prover_address };
+        let request = SnarkPlonkProofRequest { proof, prover_address };
 
-        let wrapped = ChallengerProofAdapter::snark_groth16_prove_block_range_request(
+        let wrapped = ChallengerProofAdapter::snark_plonk_prove_block_range_request(
             game_address,
             invalid_index,
             request,
@@ -210,7 +210,7 @@ mod tests {
 
         assert_eq!(wrapped.proof.session_id, session_id);
         match wrapped.proof.request {
-            ProofRequestKind::SnarkGroth16(snark) => {
+            ProofRequestKind::SnarkPlonk(snark) => {
                 assert_eq!(snark.prover_address, prover_address);
                 assert_eq!(snark.proof.start_block_number, 100);
                 assert_eq!(snark.proof.number_of_blocks_to_prove, 300);
@@ -250,8 +250,8 @@ mod tests {
     }
 
     #[test]
-    fn snark_groth16_dispute_proof_bytes_prefixes_zk_type() {
-        let result = ProofResult::SnarkGroth16(SnarkGroth16ProofResult {
+    fn snark_plonk_dispute_proof_bytes_prefixes_zk_type() {
+        let result = ProofResult::SnarkPlonk(SnarkPlonkProofResult {
             proof: ZkProofResult {
                 zk_vm: ZkVm::Sp1,
                 proof: Bytes::from_static(&[0xab, 0xcd]),
@@ -260,7 +260,7 @@ mod tests {
         });
 
         let proof_bytes =
-            ChallengerProofAdapter::snark_groth16_dispute_proof_bytes(result).unwrap();
+            ChallengerProofAdapter::snark_plonk_dispute_proof_bytes(result).unwrap();
 
         assert_eq!(proof_bytes.as_ref(), &[1, 0xab, 0xcd]);
     }

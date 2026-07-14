@@ -56,9 +56,9 @@ impl ProposerProofAdapter {
                     "expected TEE proof result, got Compressed".into(),
                 ));
             }
-            ProofResult::SnarkGroth16(_) => {
+            ProofResult::SnarkPlonk(_) => {
                 return Err(ProposerError::Prover(
-                    "expected TEE proof result, got SnarkGroth16".into(),
+                    "expected TEE proof result, got SnarkPlonk".into(),
                 ));
             }
         };
@@ -77,7 +77,7 @@ impl ProposerProofAdapter {
 mod tests {
     use alloy_primitives::{Address, B256, Bytes};
     use base_prover_service_protocol::{
-        ProofRequestKind, ProofResult, SnarkGroth16ProofResult, TeeKind, TeeProofResult,
+        ProofRequestKind, ProofResult, SnarkPlonkProofResult, TeeKind, TeeProofResult,
         ZkProofResult, ZkVm,
     };
 
@@ -143,14 +143,14 @@ mod tests {
                 "expected TEE proof result, got Compressed",
             ),
             (
-                ProofResult::SnarkGroth16(SnarkGroth16ProofResult {
+                ProofResult::SnarkPlonk(SnarkPlonkProofResult {
                     proof: ZkProofResult {
                         zk_vm: ZkVm::Sp1,
                         proof: Bytes::from(vec![]),
                         execution_stats: None,
                     },
                 }),
-                "expected TEE proof result, got SnarkGroth16",
+                "expected TEE proof result, got SnarkPlonk",
             ),
         ] {
             let err = ProposerProofAdapter::tee_proof_result(result).unwrap_err();
