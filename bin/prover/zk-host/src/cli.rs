@@ -226,12 +226,7 @@ impl fmt::Display for ZkBackendArg {
 
 impl From<ZkBackendArg> for ZkBackend {
     fn from(backend: ZkBackendArg) -> Self {
-        match backend {
-            ZkBackendArg::Mock => Self::Mock,
-            ZkBackendArg::DryRun => Self::DryRun,
-            ZkBackendArg::Cluster => Self::Cluster,
-            ZkBackendArg::Network => Self::Network,
-        }
+        backend.protocol()
     }
 }
 
@@ -372,7 +367,6 @@ impl WorkerArgs {
         let worker_id =
             args.worker_id.clone().unwrap_or_else(|| format!("zk-host-{}", Uuid::new_v4()));
         let host_config = ZkHostConfig::sp1(worker_id.clone())
-            .with_zk_backend(args.backend.protocol())
             .with_job_discovery_poll_interval(Duration::from_millis(
                 args.job_discovery_poll_interval_ms,
             ))

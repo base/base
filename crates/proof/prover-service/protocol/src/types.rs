@@ -50,7 +50,7 @@ pub enum ZkVm {
 }
 
 /// ZK proving backend that executes a proof request.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ZkBackend {
     /// Instant placeholder proofs for tests and local smoke checks.
