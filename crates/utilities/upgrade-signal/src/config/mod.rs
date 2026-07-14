@@ -30,12 +30,26 @@ impl UpgradeSignalDefaults {
     /// Default backoff between L1 upgrade signal schedule read attempts.
     pub const READ_BACKOFF: Duration = Duration::from_secs(2);
 
-    /// Node protocol version supported by this binary for contract-backed upgrade signals
-    /// (packed semver `1.1.0`).
+    /// Node protocol version supported by this binary for contract-backed upgrade signals.
     ///
-    /// Contract schedules with a higher minimum protocol version are rejected before any timestamp is
-    /// applied. Bump this with the node software that fully implements the next dynamic upgrade.
-    pub const NODE_PROTOCOL_VERSION: U256 = Self::packed_protocol_version(1, 1, 0);
+    /// Release branches sync the Cargo package version to the `GitHub` release tag, so release
+    /// binaries advertise the release semver as their supported protocol version. Dev builds
+    /// (workspace `0.0.0`) advertise `U256::MAX` so no contract minimum rejects them.
+    pub fn node_protocol_version() -> U256 {
+        let cargo_version = Self::packed_protocol_version(
+            env!("CARGO_PKG_VERSION_MAJOR")
+                .parse::<u32>()
+                .expect("Cargo package major version is numeric"),
+            env!("CARGO_PKG_VERSION_MINOR")
+                .parse::<u32>()
+                .expect("Cargo package minor version is numeric"),
+            env!("CARGO_PKG_VERSION_PATCH")
+                .parse::<u32>()
+                .expect("Cargo package patch version is numeric"),
+        );
+
+        if cargo_version == U256::ZERO { U256::MAX } else { cargo_version }
+    }
 
     /// Encodes a `major.minor.patch` version into the packed-semver `uint256` layout used by the
     /// L1 `ProtocolVersions` contract: `major << 96 | minor << 64 | patch << 32`, with the

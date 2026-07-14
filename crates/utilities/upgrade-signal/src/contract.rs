@@ -157,7 +157,7 @@ impl AlloyUpgradeSignalReader {
             );
         }
 
-        let signals: Vec<UpgradeSignal> = BaseUpgrade::CONTRACT_VARIANTS
+        let signals: Vec<_> = BaseUpgrade::CONTRACT_VARIANTS
             .iter()
             .zip(timestamps.iter())
             .filter(|(upgrade_id, _)| upgrade_ids.contains(upgrade_id))

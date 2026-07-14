@@ -20,8 +20,9 @@ The contract exposes one global `minimumProtocolVersion()` as a packed-semver `u
 every signal in a schedule.
 
 The node advertises its supported level with
-[`UpgradeSignalDefaults::NODE_PROTOCOL_VERSION`](src/config/mod.rs) (packed semver `1.1.0`). A
-signal is supported when:
+[`UpgradeSignalDefaults::node_protocol_version()`](src/config/mod.rs), which packs the Cargo
+package semver synced from the `GitHub` release tag on release branches. Mainline `0.0.0` builds use
+the latest protocol version implemented on main. A signal is supported when:
 
 - the activation timestamp is positive
 - the contract provides a non-zero minimum protocol version

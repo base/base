@@ -108,21 +108,15 @@ impl UpgradeSignalMetrics {
             .increment(1);
     }
 
-    /// Converts a protocol version to a compact metric gauge value.
+    /// Converts a packed-semver protocol version to a compact metric gauge value.
     ///
-    /// Packed-semver versions are decoded to `major * 1_000_000 + minor * 1_000 + patch` so the
-    /// gauge stays readable (raw packed values exceed `f64` integer precision). Values without
-    /// packed `major.minor.patch` fields (e.g. legacy plain integers) are emitted as-is.
+    /// Decoded as `major * 1_000_000 + minor * 1_000 + patch` so the gauge stays readable
+    /// (raw packed values exceed `f64` integer precision).
     pub fn protocol_version_to_f64(protocol_version: U256) -> f64 {
         let limbs = protocol_version.as_limbs();
         let major = limbs[1] >> 32;
         let minor = limbs[1] & u64::from(u32::MAX);
         let patch = limbs[0] >> 32;
-
-        if major == 0 && minor == 0 && patch == 0 {
-            return protocol_version.to_string().parse::<f64>().unwrap_or(-1.0);
-        }
-
         (major * 1_000_000 + minor * 1_000 + patch) as f64
     }
 }
@@ -132,14 +126,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn converts_plain_protocol_version_to_metric_value() {
-        assert_eq!(UpgradeSignalMetrics::protocol_version_to_f64(U256::from(7)), 7.0);
-    }
-
-    #[test]
     fn converts_packed_semver_protocol_version_to_metric_value() {
         let version = crate::UpgradeSignalDefaults::packed_protocol_version(1, 1, 0);
-
         assert_eq!(UpgradeSignalMetrics::protocol_version_to_f64(version), 1_001_000.0);
     }
 }

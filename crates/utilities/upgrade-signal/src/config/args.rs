@@ -62,7 +62,7 @@ impl UpgradeSignalArgs {
             upgrade_ids,
             mode: self.mode,
             l1_block_tag: self.l1_block_tag.block_number_or_tag(),
-            node_protocol_version: UpgradeSignalDefaults::NODE_PROTOCOL_VERSION,
+            node_protocol_version: UpgradeSignalDefaults::node_protocol_version(),
         }))
     }
 
@@ -267,7 +267,7 @@ mod tests {
         assert_eq!(config.contract_address, contract);
         assert_eq!(config.upgrade_ids, [BaseUpgrade::Azul]);
         assert_eq!(config.mode, UpgradeSignalMode::StartupApply);
-        assert_eq!(config.node_protocol_version, UpgradeSignalDefaults::NODE_PROTOCOL_VERSION);
+        assert_eq!(config.node_protocol_version, UpgradeSignalDefaults::node_protocol_version());
     }
 
     #[test]
