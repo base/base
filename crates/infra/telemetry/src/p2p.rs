@@ -24,8 +24,8 @@ pub const P2P_REACHABILITY_PATH: &str = "/v1/p2p/reachability/el";
 pub const P2P_REACHABILITY_MAX_REQUEST_BYTES: usize = 1024;
 /// Maximum number of reachability probes allowed in flight globally.
 pub const P2P_REACHABILITY_MAX_CONCURRENT_PROBES: usize = 32;
-#[cfg(test)]
 /// Valid execution-layer node identity shared by reachability tests.
+#[cfg(test)]
 pub const TEST_NODE_ID: &str = "2bd2e657bb3c8efffb8ff6db9071d9eb7be70d7c6d7d980ff80fc93b2629675c5f750bc0a5ef27cd788c2e491b8795a7e9a4a6e72178c14acc6753c0e5d77ae4";
 
 /// JSON request for an execution-layer reachability check.

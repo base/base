@@ -19,11 +19,11 @@ alloy-primitives.workspace = true
 anyhow = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
+secp256k1 = { workspace = true, features = ["rand"] }
 serde = { workspace = true, features = ["derive", "std"] }
 base-health = { workspace = true, features = ["axum-server"] }
 clap = { workspace = true, features = ["derive", "env", "std"] }
 axum = { workspace = true, features = ["tokio", "http1", "json"] }
-secp256k1 = { workspace = true, features = ["rand"] }
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 
 [dev-dependencies]

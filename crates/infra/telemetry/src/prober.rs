@@ -162,8 +162,8 @@ impl RlpxProber {
         Self { secret_key, local_node_id, timeout: RLPX_PROBE_TIMEOUT }
     }
 
-    #[cfg(test)]
     /// Creates an ephemeral prober with a test-specific timeout.
+    #[cfg(test)]
     pub fn ephemeral_with_timeout(timeout: Duration) -> Self {
         Self { timeout, ..Self::ephemeral() }
     }
