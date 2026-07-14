@@ -181,8 +181,8 @@ impl SnarkE2e {
             let l1_origin = L1HeadCalculator::get_l1_origin_num(&op_provider, target_block)
                 .await
                 .with_context(|| {
-                    format!("failed to fetch L1 origin for target L2 block {target_block}")
-                })?;
+                format!("failed to fetch L1 origin for target L2 block {target_block}")
+            })?;
 
             if l1_origin + SEQUENCE_WINDOW <= finalized_l1 {
                 info!(
@@ -279,7 +279,9 @@ impl SnarkE2e {
             let resp = client
                 .get_proof(GetProofRequest { session_id: session_id.clone() })
                 .await
-                .with_context(|| format!("failed to poll getProof for session_id={session_id}"))?;
+                .with_context(|| {
+                format!("failed to poll getProof for session_id={session_id}")
+            })?;
 
             let error_message = resp.error_message.as_deref().unwrap_or("");
             let receipt_bytes = resp.result.as_ref().map(|r| match r {
