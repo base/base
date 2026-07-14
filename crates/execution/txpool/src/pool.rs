@@ -164,7 +164,9 @@ where
     fn eip8130_replay_already_seen(&self, transaction: &T) -> Option<TxHash> {
         let key = (transaction.sender(), transaction.eip8130_replay_id()?);
         let hash = self.eip8130_replays.read().get(&key).copied()?;
-        if self.protocol_pool.get(&hash).is_some() || self.nonce_pool.read().contains(&hash) {
+        // Only nonce-free transactions have replay IDs, and those live in the
+        // protocol pool; channelized transactions live in `nonce_pool`.
+        if self.protocol_pool.get(&hash).is_some() {
             return Some(hash);
         }
         self.eip8130_replays.write().remove(&key);
@@ -422,16 +424,11 @@ where
             return Ok(events);
         }
 
-        let replay_id = transaction.eip8130_replay_id();
-        let sender = transaction.sender();
         let hash = *transaction.hash();
         let (events, listener) = self.listeners.write().subscribe_hash(hash);
         if let Err(error) = self.add_sidecar_transaction(origin, transaction).await {
             self.listeners.write().unsubscribe_hash_listener(&hash, &listener);
             return Err(error);
-        }
-        if let Some(replay_id) = replay_id {
-            self.track_eip8130_replay_id(sender, replay_id, hash);
         }
         Ok(events)
     }
@@ -449,16 +446,12 @@ where
                 reth_transaction_pool::error::PoolErrorKind::AlreadyImported,
             ));
         }
-        let replay_id = transaction.eip8130_replay_id();
-        let sender = transaction.sender();
-        let hash = *transaction.hash();
         if self.is_sidecar_transaction(&transaction) {
-            let outcome = self.add_sidecar_transaction(origin, transaction).await?;
-            if let Some(replay_id) = replay_id {
-                self.track_eip8130_replay_id(sender, replay_id, hash);
-            }
-            Ok(outcome)
+            self.add_sidecar_transaction(origin, transaction).await
         } else {
+            let replay_id = transaction.eip8130_replay_id();
+            let sender = transaction.sender();
+            let hash = *transaction.hash();
             let outcome = self.protocol_pool.add_transaction(origin, transaction).await?;
             if let Some(replay_id) = replay_id {
                 self.track_eip8130_replay_id(sender, replay_id, hash);

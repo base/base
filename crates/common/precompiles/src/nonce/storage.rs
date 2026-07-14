@@ -164,9 +164,11 @@ impl NonceManagerStorage<'_> {
     /// Validates and records an expiring-nonce transaction, providing replay
     /// protection for nonce-free EIP-8130 transactions.
     ///
-    /// `expiring_nonce_hash` is the signature-invariant replay hash
-    /// (`keccak256(resolved_sender || sender_signature_hash)`), so re-signed
-    /// fee-payer variants of one logical transaction collapse to a single entry.
+    /// `expiring_nonce_hash` is the canonical `TxEip8130::replay_id`:
+    /// `keccak256(REPLAY_ID_TYPE || rlp([chain_id, resolved_sender, expiry,
+    /// account_changes, calls, metadata, payer]))`. Fees, nonce fields, and
+    /// authentication blobs are omitted, so fee-bumped or re-signed variants of
+    /// one logical transaction collapse to a single entry.
     /// The hash is recorded in a circular buffer that reclaims expired slots as
     /// the write pointer advances.
     ///
