@@ -9,7 +9,7 @@
 use alloc::string::ToString;
 
 use alloy_primitives::{Address, B256, Bytes, U256};
-use alloy_sol_types::{SolCall, SolEvent, SolInterface, SolValue};
+use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
@@ -20,7 +20,7 @@ use crate::{
     IB20::{self, IB20Calls as C},
     IB20Stablecoin::{self, IB20StablecoinCalls as SC},
     NoopPrecompileCallObserver, PermitArgs, Policy, PrecompileCallObserver, StablecoinAccounting,
-    StablecoinVersion, StablecoinVersions, Token,
+    StablecoinVersion, StablecoinVersions,
     macros::decode_precompile_call,
 };
 
@@ -57,8 +57,14 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
         if let Err(error) = recorder.deduct_calldata_gas(ctx, calldata) {
             return recorder.record_base_error_result(ctx, error);
         }
+        // Gate by hardfork: resolve the active version once. `None` is unreachable in practice —
+        // the precompile is only installed from Beryl — but we revert defensively.
+        let Some(version) = StablecoinVersions::resolve(upgrade) else {
+            return recorder
+                .record_base_error_result(ctx, BasePrecompileError::Revert(Bytes::new()));
+        };
         // Ensure the token has been deployed (has bytecode at its address).
-        match self.accounting().is_initialized() {
+        match version.logic().is_initialized(self) {
             Ok(true) => {}
             Ok(false) => {
                 return recorder
@@ -66,11 +72,7 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
             }
             Err(error) => return recorder.record_base_error_result(ctx, error),
         }
-        recorder.record_base_result(
-            ctx,
-            self.inner_with_observer(ctx, calldata, upgrade, observer),
-            |b| b,
-        )
+        recorder.record_base_result(ctx, self.route(ctx, calldata, version, false, observer), |b| b)
     }
 
     /// Decodes calldata and executes the matching `IB20` operation for `upgrade`.
@@ -121,26 +123,15 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
     ///
     /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and
     /// the authorized [`StablecoinLogic::grant_role`](crate::StablecoinLogic) path is not yet
-    /// reachable. Mirrors that method's unchecked helper: bumps the admin member count and emits
-    /// `RoleGranted`.
+    /// reachable. Delegated to the introduction version's logic ([`StablecoinVersion::V1`]); when a
+    /// second version is introduced, thread the creation-fork version here instead of pinning.
     pub fn grant_role_unchecked(
         &mut self,
         role: B256,
         account: Address,
         sender: Address,
     ) -> base_precompile_storage::Result<()> {
-        if self.accounting().has_role(role, account)? {
-            return Ok(());
-        }
-        self.accounting_mut().set_role(role, account, true)?;
-        if role == B20TokenRole::DefaultAdmin.id() {
-            let current = self.accounting().role_member_count(role)?;
-            let next =
-                current.checked_add(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
-            self.accounting_mut().set_role_member_count(role, next)?;
-        }
-        self.accounting_mut()
-            .emit_event(IB20::RoleGranted { role, account, sender }.encode_log_data())
+        StablecoinVersion::V1.logic().grant_role_unchecked(self, role, account, sender)
     }
 
     /// Decodes calldata, observes the decoded operation, and routes it to `version` with optional
@@ -179,8 +170,8 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
         observer.observe(label, || {
             let encoded: Bytes = match call {
                 // --- Pure reads: direct to accounting ---
-                C::name(_) => self.accounting().name()?.abi_encode().into(),
-                C::symbol(_) => self.accounting().symbol()?.abi_encode().into(),
+                C::name(_) => logic.name(self)?.abi_encode().into(),
+                C::symbol(_) => logic.symbol(self)?.abi_encode().into(),
                 // Stablecoin precision is fixed at 6 by the protocol spec; never read from
                 // storage to avoid the zero-return window during the factory bootstrap
                 // (BOP-349/PSRC-27).
@@ -191,14 +182,14 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
                 )
                 .abi_encode()
                 .into(),
-                C::totalSupply(_) => self.accounting().total_supply()?.abi_encode().into(),
-                C::balanceOf(c) => self.accounting().balance_of(c.account)?.abi_encode().into(),
+                C::totalSupply(_) => logic.total_supply(self)?.abi_encode().into(),
+                C::balanceOf(c) => logic.balance_of(self, c.account)?.abi_encode().into(),
                 C::allowance(c) => {
-                    self.accounting().allowance(c.owner, c.spender)?.abi_encode().into()
+                    logic.allowance(self, c.owner, c.spender)?.abi_encode().into()
                 }
-                C::supplyCap(_) => self.accounting().supply_cap()?.abi_encode().into(),
-                C::nonces(c) => self.accounting().nonce(c.owner)?.abi_encode().into(),
-                C::contractURI(_) => self.accounting().contract_uri()?.abi_encode().into(),
+                C::supplyCap(_) => logic.supply_cap(self)?.abi_encode().into(),
+                C::nonces(c) => logic.nonce(self, c.owner)?.abi_encode().into(),
+                C::contractURI(_) => logic.contract_uri(self)?.abi_encode().into(),
                 C::DEFAULT_ADMIN_ROLE(_) => B20TokenRole::DefaultAdmin.id().abi_encode().into(),
                 C::MINT_ROLE(_) => B20TokenRole::Mint.id().abi_encode().into(),
                 C::BURN_ROLE(_) => B20TokenRole::Burn.id().abi_encode().into(),
@@ -218,8 +209,8 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
                 C::MINT_RECEIVER_POLICY(_) => {
                     B20PolicyType::MintReceiver.id().abi_encode().into()
                 }
-                C::hasRole(c) => self.accounting().has_role(c.role, c.account)?.abi_encode().into(),
-                C::getRoleAdmin(c) => self.accounting().role_admin(c.role)?.abi_encode().into(),
+                C::hasRole(c) => logic.has_role(self, c.role, c.account)?.abi_encode().into(),
+                C::getRoleAdmin(c) => logic.role_admin(self, c.role)?.abi_encode().into(),
                 C::pausedFeatures(_) => logic.paused_features(self)?.abi_encode().into(),
                 C::policyId(c) => logic.policy_id(self, c.policyScope)?.abi_encode().into(),
 

@@ -14,9 +14,13 @@
 use alloc::{string::String, vec::Vec};
 
 use alloy_primitives::{Address, B256, U256};
-use base_precompile_storage::Result;
+use alloy_sol_types::SolEvent;
+use base_precompile_storage::{BasePrecompileError, Result};
 
-use crate::{B20StablecoinToken, Eip712Domain, IB20, PermitArgs, Policy, StablecoinAccounting};
+use crate::{
+    B20StablecoinToken, B20TokenRole, Eip712Domain, IB20, PermitArgs, Policy, StablecoinAccounting,
+    Token,
+};
 
 /// Append-only business-logic interface shared by every stablecoin version.
 ///
@@ -213,6 +217,102 @@ pub trait StablecoinLogic<S: StablecoinAccounting, P: Policy> {
         now: U256,
         args: PermitArgs,
     ) -> Result<()>;
+
+    // --- Direct reads: version-invariant pass-throughs to the storage port, so the
+    //     dispatcher never touches token storage directly. Defaulted here and shared by
+    //     every version; a version overrides one only if its read semantics change. ---
+
+    /// Returns whether marker bytecode is deployed at this token's address.
+    fn is_initialized(&self, token: &B20StablecoinToken<S, P>) -> Result<bool> {
+        token.accounting().is_initialized()
+    }
+
+    /// Returns the token name.
+    fn name(&self, token: &B20StablecoinToken<S, P>) -> Result<String> {
+        token.accounting().name()
+    }
+
+    /// Returns the token symbol.
+    fn symbol(&self, token: &B20StablecoinToken<S, P>) -> Result<String> {
+        token.accounting().symbol()
+    }
+
+    /// Returns the total token supply currently in circulation.
+    fn total_supply(&self, token: &B20StablecoinToken<S, P>) -> Result<U256> {
+        token.accounting().total_supply()
+    }
+
+    /// Returns the token balance of `account`.
+    fn balance_of(&self, token: &B20StablecoinToken<S, P>, account: Address) -> Result<U256> {
+        token.accounting().balance_of(account)
+    }
+
+    /// Returns the allowance granted by `owner` to `spender`.
+    fn allowance(
+        &self,
+        token: &B20StablecoinToken<S, P>,
+        owner: Address,
+        spender: Address,
+    ) -> Result<U256> {
+        token.accounting().allowance(owner, spender)
+    }
+
+    /// Returns the maximum total supply enforced on mint.
+    fn supply_cap(&self, token: &B20StablecoinToken<S, P>) -> Result<U256> {
+        token.accounting().supply_cap()
+    }
+
+    /// Returns the current EIP-2612 permit nonce for `owner`.
+    fn nonce(&self, token: &B20StablecoinToken<S, P>, owner: Address) -> Result<U256> {
+        token.accounting().nonce(owner)
+    }
+
+    /// Returns the off-chain metadata URI for this token (ERC-7572).
+    fn contract_uri(&self, token: &B20StablecoinToken<S, P>) -> Result<String> {
+        token.accounting().contract_uri()
+    }
+
+    /// Returns whether `account` has `role`.
+    fn has_role(
+        &self,
+        token: &B20StablecoinToken<S, P>,
+        role: B256,
+        account: Address,
+    ) -> Result<bool> {
+        token.accounting().has_role(role, account)
+    }
+
+    /// Returns the admin role for `role`.
+    fn role_admin(&self, token: &B20StablecoinToken<S, P>, role: B256) -> Result<B256> {
+        token.accounting().role_admin(role)
+    }
+
+    /// Grants `role` to `account` without checking caller authorization.
+    ///
+    /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and
+    /// the authorized [`grant_role`](Self::grant_role) path is not reachable. Bumps the
+    /// `DefaultAdmin` member count and emits `RoleGranted`.
+    fn grant_role_unchecked(
+        &self,
+        token: &mut B20StablecoinToken<S, P>,
+        role: B256,
+        account: Address,
+        sender: Address,
+    ) -> Result<()> {
+        if token.accounting().has_role(role, account)? {
+            return Ok(());
+        }
+        token.accounting_mut().set_role(role, account, true)?;
+        if role == B20TokenRole::DefaultAdmin.id() {
+            let current = token.accounting().role_member_count(role)?;
+            let next =
+                current.checked_add(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
+            token.accounting_mut().set_role_member_count(role, next)?;
+        }
+        token
+            .accounting_mut()
+            .emit_event(IB20::RoleGranted { role, account, sender }.encode_log_data())
+    }
 
     // --- Computed reads: derive from storage but encode version-defined semantics ---
 
