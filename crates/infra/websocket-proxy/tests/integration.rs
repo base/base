@@ -18,7 +18,7 @@ use tokio::{
 use tokio_tungstenite::connect_async;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
-use websocket_proxy::{Authentication, InMemoryRateLimit, Registry, Server};
+use websocket_proxy::{Authentication, InMemoryRateLimit, Registry, Server, TrustedProxyConfig};
 
 struct TestHarness {
     received_messages: Arc<Mutex<HashMap<usize, Vec<String>>>>,
@@ -52,7 +52,14 @@ impl TestHarness {
             clients_failed_to_connect: Arc::new(Mutex::new(HashMap::new())),
             current_client_id: 0,
             cancel_token: CancellationToken::new(),
-            server: Server::new(addr, registry, rate_limited, auth, "header".to_string(), false),
+            server: Server::new(
+                addr,
+                registry,
+                rate_limited,
+                auth,
+                TrustedProxyConfig::new("header".to_string(), Vec::new()),
+                false,
+            ),
             server_addr: addr,
             client_id_to_handle: HashMap::new(),
             sender,
@@ -366,7 +373,14 @@ async fn test_ping_timeout_disconnects_client() {
         clients_failed_to_connect: Arc::new(Mutex::new(HashMap::new())),
         current_client_id: 0,
         cancel_token: CancellationToken::new(),
-        server: Server::new(addr, registry, rate_limited, None, "header".to_string(), false),
+        server: Server::new(
+            addr,
+            registry,
+            rate_limited,
+            None,
+            TrustedProxyConfig::new("header".to_string(), Vec::new()),
+            false,
+        ),
         server_addr: addr,
         client_id_to_handle: HashMap::new(),
         sender,

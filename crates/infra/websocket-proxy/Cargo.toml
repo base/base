@@ -16,6 +16,7 @@ workspace = true
 
 [dependencies]
 http.workspace = true
+ipnet.workspace = true
 futures.workspace = true
 backoff.workspace = true
 tokio-util.workspace = true
