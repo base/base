@@ -1,25 +1,19 @@
-//! HTTP API for execution-layer P2P reachability checks: request validation,
-//! trusted-proxy client IP resolution, and probe concurrency limits.
+//! HTTP API for execution-layer P2P reachability checks: request validation
+//! and probe concurrency limits.
 
-use std::{
-    collections::HashSet,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
-    str::FromStr,
-    sync::{Arc, Mutex, PoisonError},
-};
+use std::{net::SocketAddr, str::FromStr, sync::Arc};
 
 use alloy_primitives::B512;
 use axum::{
     Json, Router,
-    extract::{ConnectInfo, DefaultBodyLimit, State, rejection::JsonRejection},
-    http::{HeaderMap, StatusCode},
+    extract::{DefaultBodyLimit, State, rejection::JsonRejection},
+    http::StatusCode,
     response::{IntoResponse, Response},
     routing::post,
 };
-use ipnet::IpNet;
 use secp256k1::PublicKey;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::Semaphore;
 use tracing::{debug, info};
 
 use crate::prober::{ReachabilityProber, RlpxProbeOutcome, RlpxProbeStage, RlpxProbeTarget};
@@ -44,23 +38,19 @@ pub struct P2pReachabilityRequest {
 }
 
 impl P2pReachabilityRequest {
-    /// Validates the request and combines it with the observed source IP.
-    ///
-    /// Only the node identity and TCP port are taken from the enode URL. The
-    /// embedded IP is never used as the probe target, so the endpoint cannot
-    /// probe arbitrary hosts.
-    pub fn target(&self, source_ip: IpAddr) -> Option<RlpxProbeTarget> {
-        let (node_id, tcp_port) = Self::parse_enode(&self.enode)?;
-        if tcp_port == 0 {
+    /// Validates the request and returns its advertised `RLPx` target.
+    pub fn target(&self) -> Option<RlpxProbeTarget> {
+        let (node_id, address) = Self::parse_enode(&self.enode)?;
+        if address.port() == 0 {
             return None;
         }
 
-        Some(RlpxProbeTarget { address: SocketAddr::new(source_ip, tcp_port), node_id })
+        Some(RlpxProbeTarget { address, node_id })
     }
 
-    /// Parses an `enode://` URL into a validated node identity and TCP port.
+    /// Parses an `enode://` URL into a validated node identity and socket address.
     /// Hostnames are rejected; only IP literals are accepted.
-    pub fn parse_enode(enode: &str) -> Option<(B512, u16)> {
+    pub fn parse_enode(enode: &str) -> Option<(B512, SocketAddr)> {
         let rest = enode.strip_prefix("enode://")?;
         // Drop any query string, e.g. `?discport=30301`.
         let rest = rest.split_once('?').map_or(rest, |(before, _)| before);
@@ -73,7 +63,7 @@ impl P2pReachabilityRequest {
         PublicKey::from_slice(&encoded_public_key).ok()?;
 
         let endpoint = endpoint.parse::<SocketAddr>().ok()?;
-        Some((node_id, endpoint.port()))
+        Some((node_id, endpoint))
     }
 }
 
@@ -85,7 +75,7 @@ pub struct P2pReachabilityResponse {
     pub outcome: RlpxProbeOutcome,
     /// Protocol stage reached by the probe.
     pub stage: RlpxProbeStage,
-    /// Public source address and requested TCP port probed by the service.
+    /// Advertised address probed by the service.
     pub observed_address: SocketAddr,
     /// Total probe duration in milliseconds.
     pub elapsed_ms: u64,
@@ -105,10 +95,8 @@ pub struct P2pErrorResponse {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum P2pApiError {
-    /// The JSON body, node identity, or port was invalid.
+    /// The JSON body, node identity, address, or port was invalid.
     InvalidRequest,
-    /// The request source or forwarding information was invalid.
-    InvalidSource,
     /// The JSON body exceeded the route limit.
     PayloadTooLarge,
     /// Probe capacity was exhausted.
@@ -128,7 +116,7 @@ impl P2pApiError {
     /// Returns the HTTP status for this error.
     pub const fn status(&self) -> StatusCode {
         match self {
-            Self::InvalidRequest | Self::InvalidSource => StatusCode::BAD_REQUEST,
+            Self::InvalidRequest => StatusCode::BAD_REQUEST,
             Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::Saturated => StatusCode::TOO_MANY_REQUESTS,
         }
@@ -141,218 +129,20 @@ impl IntoResponse for P2pApiError {
     }
 }
 
-impl From<ClientIpError> for P2pApiError {
-    fn from(_: ClientIpError) -> Self {
-        Self::InvalidSource
-    }
-}
-
-/// Error resolving the public client IP for a probe request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum ClientIpError {
-    /// An untrusted client supplied `X-Forwarded-For`.
-    #[error("untrusted peer supplied X-Forwarded-For")]
-    UntrustedForwardedFor,
-    /// A trusted proxy did not supply `X-Forwarded-For`.
-    #[error("trusted proxy omitted X-Forwarded-For")]
-    MissingForwardedFor,
-    /// A forwarded hop was empty, non-UTF-8, or not an IP address.
-    #[error("malformed X-Forwarded-For chain")]
-    MalformedForwardedFor,
-    /// Every forwarded hop belonged to a trusted proxy network.
-    #[error("X-Forwarded-For chain contains only trusted proxies")]
-    AllHopsTrusted,
-    /// The resolved client IP was not globally routable.
-    #[error("resolved client IP is not globally routable")]
-    NonGlobalClientIp,
-}
-
-/// Resolves a probe target IP from the socket peer and trusted proxy chain.
-#[derive(Debug, Clone)]
-pub struct ClientIpResolver {
-    trusted_proxy_cidrs: Arc<[IpNet]>,
-}
-
-impl ClientIpResolver {
-    /// Maximum number of forwarded hops accepted from a trusted proxy.
-    pub const MAX_FORWARDED_HOPS: usize = 32;
-
-    /// Creates a resolver with the supplied trusted proxy networks.
-    pub fn new(trusted_proxy_cidrs: Vec<IpNet>) -> Self {
-        Self { trusted_proxy_cidrs: trusted_proxy_cidrs.into() }
-    }
-
-    /// Resolves and validates the public client IP for one request.
-    pub fn resolve(
-        &self,
-        socket_peer: SocketAddr,
-        headers: &HeaderMap,
-    ) -> Result<IpAddr, ClientIpError> {
-        let socket_ip = socket_peer.ip().to_canonical();
-        let forwarded_values = headers.get_all("x-forwarded-for").iter().collect::<Vec<_>>();
-
-        if forwarded_values.is_empty() {
-            if self.is_trusted(socket_ip) {
-                return Err(ClientIpError::MissingForwardedFor);
-            }
-            return Self::require_global(socket_ip);
-        }
-
-        if !self.is_trusted(socket_ip) {
-            return Err(ClientIpError::UntrustedForwardedFor);
-        }
-
-        let mut hops = Vec::new();
-        for value in forwarded_values {
-            let value = value.to_str().map_err(|_| ClientIpError::MalformedForwardedFor)?;
-            for raw_hop in value.split(',') {
-                let raw_hop = raw_hop.trim();
-                if raw_hop.is_empty() {
-                    return Err(ClientIpError::MalformedForwardedFor);
-                }
-                let hop = raw_hop
-                    .parse::<IpAddr>()
-                    .map(|ip| ip.to_canonical())
-                    .map_err(|_| ClientIpError::MalformedForwardedFor)?;
-                if hops.len() >= Self::MAX_FORWARDED_HOPS {
-                    return Err(ClientIpError::MalformedForwardedFor);
-                }
-                hops.push(hop);
-            }
-        }
-        hops.push(socket_ip);
-
-        for hop in hops.into_iter().rev() {
-            if !self.is_trusted(hop) {
-                return Self::require_global(hop);
-            }
-        }
-
-        Err(ClientIpError::AllHopsTrusted)
-    }
-
-    /// Returns whether an IP belongs to a configured trusted proxy network.
-    pub fn is_trusted(&self, ip: IpAddr) -> bool {
-        self.trusted_proxy_cidrs.iter().any(|network| network.contains(&ip))
-    }
-
-    /// Requires an address to be globally routable.
-    pub fn require_global(ip: IpAddr) -> Result<IpAddr, ClientIpError> {
-        if Self::is_global(ip) { Ok(ip) } else { Err(ClientIpError::NonGlobalClientIp) }
-    }
-
-    /// Returns whether an address is suitable for a public unicast TCP probe.
-    pub fn is_global(ip: IpAddr) -> bool {
-        match ip {
-            IpAddr::V4(ip) => Self::is_global_ipv4(ip),
-            IpAddr::V6(ip) => Self::is_global_ipv6(ip),
-        }
-    }
-
-    /// Returns whether an `IPv4` address is suitable for a public unicast TCP probe.
-    pub fn is_global_ipv4(ip: Ipv4Addr) -> bool {
-        let [a, b, c, d] = ip.octets();
-        !(a == 0
-            || ip.is_private()
-            || (a == 100 && (64..=127).contains(&b))
-            || ip.is_loopback()
-            || ip.is_link_local()
-            || (a == 192 && b == 0 && c == 0 && d != 9 && d != 10)
-            || ip.is_documentation()
-            || (a == 198 && matches!(b, 18 | 19))
-            || (a & 240) == 240
-            || ip.is_broadcast()
-            || ip.is_multicast())
-    }
-
-    /// Returns whether an `IPv6` address is suitable for a public unicast TCP probe.
-    pub const fn is_global_ipv6(ip: Ipv6Addr) -> bool {
-        let segments = ip.segments();
-        let documentation = matches!(segments, [0x2001, 0xdb8, ..] | [0x3fff, 0x0000..=0x0fff, ..]);
-
-        !(ip.is_unspecified()
-            || ip.is_loopback()
-            || matches!(segments, [0, 0, 0, 0, 0, 0xffff, _, _])
-            || matches!(segments, [0x64, 0xff9b, 1, ..])
-            || matches!(segments, [0x100, 0, 0, 0, ..])
-            || matches!(segments, [0x2001, b, ..] if b < 0x200)
-            || matches!(segments, [0x2002, ..])
-            || documentation
-            || matches!(segments, [0x5f00, ..])
-            || ip.is_unique_local()
-            || ip.is_unicast_link_local()
-            || ip.is_multicast())
-    }
-}
-
-/// In-memory global and per-source concurrency limiter for probes.
-#[derive(Debug)]
-pub struct ProbeLimiter {
-    global: Arc<Semaphore>,
-    active_sources: Arc<Mutex<HashSet<IpAddr>>>,
-}
-
-impl ProbeLimiter {
-    /// Creates a limiter with the supplied global capacity and one probe per source.
-    pub fn new(global_capacity: usize) -> Self {
-        Self {
-            global: Arc::new(Semaphore::new(global_capacity)),
-            active_sources: Arc::new(Mutex::new(HashSet::new())),
-        }
-    }
-
-    /// Attempts to reserve global and per-source probe capacity.
-    pub fn try_acquire(&self, source_ip: IpAddr) -> Option<ProbePermit> {
-        if !self.active_sources.lock().unwrap_or_else(PoisonError::into_inner).insert(source_ip) {
-            return None;
-        }
-
-        let Ok(global_permit) = Arc::clone(&self.global).try_acquire_owned() else {
-            self.active_sources.lock().unwrap_or_else(PoisonError::into_inner).remove(&source_ip);
-            return None;
-        };
-
-        Some(ProbePermit {
-            source_ip,
-            _global_permit: global_permit,
-            active_sources: Arc::clone(&self.active_sources),
-        })
-    }
-}
-
-/// Capacity reservation held for the lifetime of one probe.
-#[derive(Debug)]
-pub struct ProbePermit {
-    source_ip: IpAddr,
-    _global_permit: OwnedSemaphorePermit,
-    active_sources: Arc<Mutex<HashSet<IpAddr>>>,
-}
-
-impl Drop for ProbePermit {
-    fn drop(&mut self) {
-        self.active_sources.lock().unwrap_or_else(PoisonError::into_inner).remove(&self.source_ip);
-    }
-}
-
 /// State shared by execution-layer reachability handlers.
 #[derive(Debug, Clone)]
 pub struct P2pState {
-    resolver: ClientIpResolver,
-    limiter: Arc<ProbeLimiter>,
+    limiter: Arc<Semaphore>,
     prober: Arc<dyn ReachabilityProber>,
 }
 
 impl P2pState {
-    /// Creates handler state with default probe capacity limits.
-    pub fn new<P>(trusted_proxy_cidrs: Vec<IpNet>, prober: Arc<P>) -> Self
+    /// Creates handler state with the supplied global probe capacity.
+    pub fn new<P>(global_capacity: usize, prober: Arc<P>) -> Self
     where
         P: ReachabilityProber + 'static,
     {
-        Self {
-            resolver: ClientIpResolver::new(trusted_proxy_cidrs),
-            limiter: Arc::new(ProbeLimiter::new(P2P_REACHABILITY_MAX_CONCURRENT_PROBES)),
-            prober,
-        }
+        Self { limiter: Arc::new(Semaphore::new(global_capacity)), prober }
     }
 }
 
@@ -362,36 +152,31 @@ pub struct P2pRoutes;
 
 impl P2pRoutes {
     /// Returns a reachability router using an injected prober.
-    pub fn router_with_prober<P>(trusted_proxy_cidrs: Vec<IpNet>, prober: Arc<P>) -> Router
+    pub fn router_with_prober<P>(global_capacity: usize, prober: Arc<P>) -> Router
     where
         P: ReachabilityProber + 'static,
     {
         Router::new()
             .route(P2P_REACHABILITY_PATH, post(Self::check))
             .layer(DefaultBodyLimit::max(P2P_REACHABILITY_MAX_REQUEST_BYTES))
-            .with_state(P2pState::new(trusted_proxy_cidrs, prober))
+            .with_state(P2pState::new(global_capacity, prober))
     }
 
     /// Handles one execution-layer P2P reachability check.
     pub async fn check(
         State(state): State<P2pState>,
-        ConnectInfo(socket_peer): ConnectInfo<SocketAddr>,
-        headers: HeaderMap,
         body: Result<Json<P2pReachabilityRequest>, JsonRejection>,
     ) -> Result<Json<P2pReachabilityResponse>, P2pApiError> {
-        let source_ip = state.resolver.resolve(socket_peer, &headers).inspect_err(|error| {
-            debug!(error = %error, "reachability request source rejected");
-        })?;
         let Json(request) = body.map_err(|rejection| {
             debug!(status = %rejection.status(), "reachability request body rejected");
             P2pApiError::from_json_rejection(rejection)
         })?;
-        let target = request.target(source_ip).ok_or_else(|| {
+        let target = request.target().ok_or_else(|| {
             debug!("reachability request target validation failed");
             P2pApiError::InvalidRequest
         })?;
-        let _permit = state.limiter.try_acquire(source_ip).ok_or_else(|| {
-            debug!(source = %source_ip, "reachability probe capacity exhausted");
+        let _permit = Arc::clone(&state.limiter).try_acquire_owned().map_err(|_| {
+            debug!("reachability probe capacity exhausted");
             P2pApiError::Saturated
         })?;
         let result = state.prober.probe(target).await;
@@ -418,7 +203,7 @@ impl P2pRoutes {
 #[cfg(test)]
 mod tests {
     use std::{
-        net::{IpAddr, Ipv4Addr, SocketAddr},
+        net::SocketAddr,
         str::FromStr,
         sync::{Arc, Mutex, PoisonError},
         time::Duration,
@@ -426,16 +211,12 @@ mod tests {
 
     use alloy_primitives::B512;
     use async_trait::async_trait;
-    use axum::{
-        Router,
-        http::{HeaderMap, HeaderValue, StatusCode},
-    };
-    use ipnet::IpNet;
+    use axum::{Router, http::StatusCode};
     use tokio::{net::TcpListener, sync::Semaphore, task::JoinHandle};
 
     use super::{
-        ClientIpError, ClientIpResolver, P2P_REACHABILITY_PATH, P2pErrorResponse,
-        P2pReachabilityRequest, P2pReachabilityResponse, P2pRoutes, ProbeLimiter, TEST_NODE_ID,
+        P2P_REACHABILITY_MAX_CONCURRENT_PROBES, P2P_REACHABILITY_PATH, P2pReachabilityRequest,
+        P2pReachabilityResponse, P2pRoutes, TEST_NODE_ID,
     };
     use crate::{
         ReachabilityProber, RlpxProbeOutcome, RlpxProbeResult, RlpxProbeStage, RlpxProbeTarget,
@@ -483,15 +264,9 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let handle = tokio::spawn(async move {
-            axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
-                .await
-                .unwrap();
+            axum::serve(listener, router).await.unwrap();
         });
         (address, handle)
-    }
-
-    fn trusted_loopback() -> Vec<IpNet> {
-        vec![IpNet::from_str("127.0.0.1/32").unwrap()]
     }
 
     fn test_request() -> P2pReachabilityRequest {
@@ -499,171 +274,69 @@ mod tests {
     }
 
     #[test]
-    fn resolves_direct_global_client() {
-        let resolver = ClientIpResolver::new(Vec::new());
-        let resolved =
-            resolver.resolve(SocketAddr::from(([8, 8, 8, 8], 1234)), &HeaderMap::new()).unwrap();
-        assert_eq!(resolved, IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)));
-    }
-
-    #[test]
-    fn walks_forwarded_chain_from_right_to_left() {
-        let resolver = ClientIpResolver::new(vec![IpNet::from_str("10.0.0.0/8").unwrap()]);
-        let mut headers = HeaderMap::new();
-        headers.insert("x-forwarded-for", HeaderValue::from_static("1.1.1.1, 9.9.9.9, 10.0.0.3"));
-
-        let resolved = resolver.resolve(SocketAddr::from(([10, 0, 0, 2], 443)), &headers).unwrap();
-
-        assert_eq!(resolved, IpAddr::V4(Ipv4Addr::new(9, 9, 9, 9)));
-    }
-
-    #[test]
-    fn rejects_forwarding_header_from_untrusted_peer() {
-        let resolver = ClientIpResolver::new(Vec::new());
-        let mut headers = HeaderMap::new();
-        headers.insert("x-forwarded-for", HeaderValue::from_static("8.8.8.8"));
-
-        let error = resolver.resolve(SocketAddr::from(([1, 1, 1, 1], 443)), &headers).unwrap_err();
-
-        assert_eq!(error, ClientIpError::UntrustedForwardedFor);
-    }
-
-    #[test]
-    fn rejects_trusted_proxy_without_forwarding_header() {
-        let resolver = ClientIpResolver::new(vec![IpNet::from_str("10.0.0.0/8").unwrap()]);
-
-        let error = resolver
-            .resolve(SocketAddr::from(([10, 0, 0, 2], 443)), &HeaderMap::new())
-            .unwrap_err();
-
-        assert_eq!(error, ClientIpError::MissingForwardedFor);
-    }
-
-    #[test]
-    fn rejects_malformed_forwarding_chain() {
-        let resolver = ClientIpResolver::new(vec![IpNet::from_str("10.0.0.0/8").unwrap()]);
-        let mut headers = HeaderMap::new();
-        headers.insert("x-forwarded-for", HeaderValue::from_static("8.8.8.8,not-an-ip"));
-
-        let error = resolver.resolve(SocketAddr::from(([10, 0, 0, 2], 443)), &headers).unwrap_err();
-
-        assert_eq!(error, ClientIpError::MalformedForwardedFor);
-    }
-
-    #[test]
-    fn rejects_forwarding_chain_over_hop_limit() {
-        let resolver = ClientIpResolver::new(vec![IpNet::from_str("10.0.0.0/8").unwrap()]);
-        let forwarded = vec!["8.8.8.8"; ClientIpResolver::MAX_FORWARDED_HOPS + 1].join(",");
-        let mut headers = HeaderMap::new();
-        headers.insert("x-forwarded-for", HeaderValue::from_str(&forwarded).unwrap());
-
-        let error = resolver.resolve(SocketAddr::from(([10, 0, 0, 2], 443)), &headers).unwrap_err();
-
-        assert_eq!(error, ClientIpError::MalformedForwardedFor);
-    }
-
-    #[test]
-    fn rejects_forwarding_chain_with_only_trusted_hops() {
-        let resolver = ClientIpResolver::new(vec![IpNet::from_str("10.0.0.0/8").unwrap()]);
-        let mut headers = HeaderMap::new();
-        headers.insert("x-forwarded-for", HeaderValue::from_static("10.0.0.3"));
-
-        let error = resolver.resolve(SocketAddr::from(([10, 0, 0, 2], 443)), &headers).unwrap_err();
-
-        assert_eq!(error, ClientIpError::AllHopsTrusted);
-    }
-
-    #[test]
-    fn rejects_non_global_direct_client() {
-        let resolver = ClientIpResolver::new(Vec::new());
-
-        let error = resolver
-            .resolve(SocketAddr::from(([127, 0, 0, 1], 1234)), &HeaderMap::new())
-            .unwrap_err();
-
-        assert_eq!(error, ClientIpError::NonGlobalClientIp);
-    }
-
-    #[test]
-    fn rejects_non_public_special_use_ranges() {
-        assert!(!ClientIpResolver::is_global(IpAddr::V4(Ipv4Addr::new(100, 64, 0, 1))));
-        assert!(!ClientIpResolver::is_global(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 1))));
-        assert!(!ClientIpResolver::is_global(IpAddr::from_str("2001:db8::1").unwrap()));
-        assert!(!ClientIpResolver::is_global(IpAddr::from_str("ff02::1").unwrap()));
-    }
-
-    #[test]
-    fn validates_enode_identity_and_port() {
-        let source = IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8));
-
-        assert!(test_request().target(source).is_some());
+    fn validates_enode_identity_address_and_port() {
+        assert_eq!(
+            test_request().target().unwrap().address,
+            SocketAddr::from(([8, 8, 8, 8], 30303))
+        );
 
         let with_discport = P2pReachabilityRequest {
             enode: format!("enode://{TEST_NODE_ID}@8.8.8.8:30303?discport=30301"),
         };
-        assert!(with_discport.target(source).is_some());
+        assert_eq!(
+            with_discport.target().unwrap().address,
+            SocketAddr::from(([8, 8, 8, 8], 30303))
+        );
+
+        let ipv6 = P2pReachabilityRequest {
+            enode: format!("enode://{TEST_NODE_ID}@[2606:4700:4700::1111]:30303"),
+        };
+        assert_eq!(ipv6.target().unwrap().address, "[2606:4700:4700::1111]:30303".parse().unwrap());
 
         let zero_port =
             P2pReachabilityRequest { enode: format!("enode://{TEST_NODE_ID}@8.8.8.8:0") };
-        assert!(zero_port.target(source).is_none());
+        assert!(zero_port.target().is_none());
 
         let invalid_identity =
             P2pReachabilityRequest { enode: format!("enode://{}@8.8.8.8:30303", "00".repeat(64)) };
-        assert!(invalid_identity.target(source).is_none());
+        assert!(invalid_identity.target().is_none());
 
         let missing_scheme =
             P2pReachabilityRequest { enode: format!("{TEST_NODE_ID}@8.8.8.8:30303") };
-        assert!(missing_scheme.target(source).is_none());
+        assert!(missing_scheme.target().is_none());
 
         let hostname =
             P2pReachabilityRequest { enode: format!("enode://{TEST_NODE_ID}@example.com:30303") };
-        assert!(hostname.target(source).is_none());
+        assert!(hostname.target().is_none());
+
+        let private =
+            P2pReachabilityRequest { enode: format!("enode://{TEST_NODE_ID}@10.0.0.1:30303") };
+        assert_eq!(private.target().unwrap().address, SocketAddr::from(([10, 0, 0, 1], 30303)));
     }
 
     #[test]
-    fn probes_source_ip_instead_of_advertised_ip() {
-        let source = IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8));
+    fn probes_advertised_enode_address() {
         let request =
             P2pReachabilityRequest { enode: format!("enode://{TEST_NODE_ID}@9.9.9.9:30303") };
 
-        let target = request.target(source).unwrap();
+        let target = request.target().unwrap();
 
-        assert_eq!(target.address, SocketAddr::from(([8, 8, 8, 8], 30303)));
-    }
-
-    #[test]
-    fn duplicate_source_does_not_consume_global_capacity() {
-        let limiter = ProbeLimiter::new(2);
-        let source = IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8));
-        let other = IpAddr::V4(Ipv4Addr::new(9, 9, 9, 9));
-        let _source_permit = limiter.try_acquire(source).unwrap();
-
-        assert!(limiter.try_acquire(source).is_none());
-        assert!(limiter.try_acquire(other).is_some());
-    }
-
-    #[test]
-    fn global_rejection_does_not_reserve_source() {
-        let limiter = ProbeLimiter::new(1);
-        let first = IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8));
-        let waiting = IpAddr::V4(Ipv4Addr::new(9, 9, 9, 9));
-        let first_permit = limiter.try_acquire(first).unwrap();
-
-        assert!(limiter.try_acquire(waiting).is_none());
-        drop(first_permit);
-        assert!(limiter.try_acquire(waiting).is_some());
+        assert_eq!(target.address, SocketAddr::from(([9, 9, 9, 9], 30303)));
     }
 
     #[tokio::test]
-    async fn returns_completed_probe_as_json() {
+    async fn ignores_forwarded_header_and_probes_enode_address() {
         let prober = Arc::new(FakeProber::default());
-        let router = P2pRoutes::router_with_prober(trusted_loopback(), Arc::clone(&prober));
+        let router = P2pRoutes::router_with_prober(
+            P2P_REACHABILITY_MAX_CONCURRENT_PROBES,
+            Arc::clone(&prober),
+        );
         let (address, handle) = start_test_server(router).await;
         let request = test_request();
 
         let response = reqwest::Client::new()
             .post(format!("http://{address}{P2P_REACHABILITY_PATH}"))
-            .header("x-forwarded-for", "8.8.8.8")
+            .header("x-forwarded-for", "1.1.1.1")
             .json(&request)
             .send()
             .await
@@ -686,34 +359,41 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_spoofed_forwarding_header() {
-        let router = P2pRoutes::router_with_prober(Vec::new(), Arc::new(FakeProber::default()));
+    async fn probes_private_target() {
+        let prober = Arc::new(FakeProber::default());
+        let router = P2pRoutes::router_with_prober(
+            P2P_REACHABILITY_MAX_CONCURRENT_PROBES,
+            Arc::clone(&prober),
+        );
         let (address, handle) = start_test_server(router).await;
-        let request = test_request();
+        let request =
+            P2pReachabilityRequest { enode: format!("enode://{TEST_NODE_ID}@10.0.0.1:30303") };
 
         let response = reqwest::Client::new()
             .post(format!("http://{address}{P2P_REACHABILITY_PATH}"))
-            .header("x-forwarded-for", "8.8.8.8")
             .json(&request)
             .send()
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let error = response.json::<P2pErrorResponse>().await.unwrap();
-        assert_eq!(error.error, super::P2pApiError::InvalidSource);
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            prober.targets.lock().unwrap_or_else(PoisonError::into_inner)[0].address,
+            SocketAddr::from(([10, 0, 0, 1], 30303))
+        );
         handle.abort();
     }
 
     #[tokio::test]
     async fn rejects_oversized_body() {
-        let router =
-            P2pRoutes::router_with_prober(trusted_loopback(), Arc::new(FakeProber::default()));
+        let router = P2pRoutes::router_with_prober(
+            P2P_REACHABILITY_MAX_CONCURRENT_PROBES,
+            Arc::new(FakeProber::default()),
+        );
         let (address, handle) = start_test_server(router).await;
 
         let response = reqwest::Client::new()
             .post(format!("http://{address}{P2P_REACHABILITY_PATH}"))
-            .header("x-forwarded-for", "8.8.8.8")
             .header("content-type", "application/json")
             .body("x".repeat(2048))
             .send()
@@ -725,12 +405,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_second_probe_from_same_source() {
+    async fn rejects_probe_when_global_capacity_is_exhausted() {
         let prober = Arc::new(BlockingProber {
             entered: Arc::new(Semaphore::new(0)),
             release: Arc::new(Semaphore::new(0)),
         });
-        let router = P2pRoutes::router_with_prober(trusted_loopback(), Arc::clone(&prober));
+        let router = P2pRoutes::router_with_prober(1, Arc::clone(&prober));
         let (address, handle) = start_test_server(router).await;
         let request = test_request();
         let client = reqwest::Client::new();
@@ -740,7 +420,6 @@ mod tests {
         let first = tokio::spawn(async move {
             first_client
                 .post(format!("http://{address}{P2P_REACHABILITY_PATH}"))
-                .header("x-forwarded-for", "8.8.8.8")
                 .json(&first_request)
                 .send()
                 .await
@@ -750,7 +429,6 @@ mod tests {
 
         let second = client
             .post(format!("http://{address}{P2P_REACHABILITY_PATH}"))
-            .header("x-forwarded-for", "8.8.8.8")
             .json(&request)
             .send()
             .await

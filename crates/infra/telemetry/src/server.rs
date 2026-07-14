@@ -10,12 +10,11 @@ use anyhow::Context;
 use axum::Router;
 use base_health::HealthServer;
 use clap::Args;
-use ipnet::IpNet;
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use crate::{P2pRoutes, RlpxProber};
+use crate::{P2P_REACHABILITY_MAX_CONCURRENT_PROBES, P2pRoutes, RlpxProber};
 
 /// Configuration for the Base telemetry HTTP server.
 #[derive(Args, Debug, Clone)]
@@ -23,13 +22,6 @@ pub struct ServerConfig {
     /// Socket address to bind the HTTP server to.
     #[arg(long, env = "BASE_TELEMETRY_LISTEN_ADDR", default_value = "0.0.0.0:8080")]
     pub listen_addr: SocketAddr,
-    /// Proxy networks trusted to supply the `X-Forwarded-For` client chain.
-    #[arg(
-        long = "trusted-proxy-cidr",
-        env = "BASE_TELEMETRY_TRUSTED_PROXY_CIDRS",
-        value_delimiter = ','
-    )]
-    pub trusted_proxy_cidrs: Vec<IpNet>,
 }
 
 /// Base telemetry Axum server scaffold.
@@ -38,18 +30,18 @@ pub struct BaseTelemetryServer;
 
 impl BaseTelemetryServer {
     /// Returns the application router for the telemetry service.
-    pub fn router(ready: Arc<AtomicBool>, trusted_proxy_cidrs: Vec<IpNet>) -> Router {
+    pub fn router(ready: Arc<AtomicBool>) -> Router {
         HealthServer::router(ready).merge(P2pRoutes::router_with_prober(
-            trusted_proxy_cidrs,
+            P2P_REACHABILITY_MAX_CONCURRENT_PROBES,
             Arc::new(RlpxProber::ephemeral()),
         ))
     }
 
     /// Starts the telemetry service with the provided configuration.
     pub async fn serve(config: ServerConfig, cancel: CancellationToken) -> anyhow::Result<()> {
-        let ServerConfig { listen_addr, trusted_proxy_cidrs } = config;
+        let ServerConfig { listen_addr } = config;
         let ready = Arc::new(AtomicBool::new(false));
-        let app = Self::router(Arc::clone(&ready), trusted_proxy_cidrs);
+        let app = Self::router(Arc::clone(&ready));
         let listener = TcpListener::bind(listen_addr)
             .await
             .with_context(|| format!("failed to bind base telemetry server to {listen_addr}"))?;
@@ -60,7 +52,7 @@ impl BaseTelemetryServer {
 
         info!(listen_addr = %listen_addr, "base telemetry server started");
 
-        axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
+        axum::serve(listener, app)
             .with_graceful_shutdown(async move { cancel.cancelled().await })
             .await
             .context("base telemetry server exited unexpectedly")?;
@@ -73,7 +65,6 @@ impl BaseTelemetryServer {
 mod tests {
     use std::{
         net::SocketAddr,
-        str::FromStr,
         sync::{Arc, atomic::AtomicBool},
         time::Duration,
     };
@@ -81,21 +72,13 @@ mod tests {
     use async_trait::async_trait;
     use axum::{Router, http::StatusCode};
     use base_health::HealthServer;
-    use clap::Parser;
-    use ipnet::IpNet;
     use tokio::{net::TcpListener, sync::Semaphore, task::JoinHandle};
 
     use crate::{
         BaseTelemetryServer, P2P_REACHABILITY_PATH, P2pReachabilityRequest, P2pRoutes,
         ReachabilityProber, RlpxProbeOutcome, RlpxProbeResult, RlpxProbeStage, RlpxProbeTarget,
-        ServerConfig, TEST_NODE_ID,
+        TEST_NODE_ID,
     };
-
-    #[derive(Debug, Parser)]
-    struct TestCli {
-        #[command(flatten)]
-        server: ServerConfig,
-    }
 
     #[derive(Debug, Clone)]
     struct BlockingProber {
@@ -121,32 +104,13 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let handle = tokio::spawn(async move {
-            axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
-                .await
-                .unwrap();
+            axum::serve(listener, router).await.unwrap();
         });
         (addr, handle)
     }
 
     async fn start_test_server() -> (SocketAddr, JoinHandle<()>) {
-        start_router(BaseTelemetryServer::router(Arc::new(AtomicBool::new(true)), Vec::new())).await
-    }
-
-    #[test]
-    fn parses_repeated_trusted_proxy_arguments() {
-        let cli = TestCli::try_parse_from([
-            "test",
-            "--trusted-proxy-cidr",
-            "10.0.0.0/8",
-            "--trusted-proxy-cidr",
-            "192.168.0.0/16",
-        ])
-        .unwrap();
-
-        assert_eq!(
-            cli.server.trusted_proxy_cidrs,
-            [IpNet::from_str("10.0.0.0/8").unwrap(), IpNet::from_str("192.168.0.0/16").unwrap(),]
-        );
+        start_router(BaseTelemetryServer::router(Arc::new(AtomicBool::new(true)))).await
     }
 
     #[tokio::test]
@@ -177,12 +141,8 @@ mod tests {
             entered: Arc::new(Semaphore::new(0)),
             release: Arc::new(Semaphore::new(0)),
         });
-        let router = HealthServer::router(Arc::new(AtomicBool::new(true))).merge(
-            P2pRoutes::router_with_prober(
-                vec![IpNet::from_str("127.0.0.1/32").unwrap()],
-                Arc::clone(&prober),
-            ),
-        );
+        let router = HealthServer::router(Arc::new(AtomicBool::new(true)))
+            .merge(P2pRoutes::router_with_prober(1, Arc::clone(&prober)));
         let (addr, handle) = start_router(router).await;
         let request =
             P2pReachabilityRequest { enode: format!("enode://{TEST_NODE_ID}@8.8.8.8:30303") };
@@ -192,7 +152,6 @@ mod tests {
         let probe = tokio::spawn(async move {
             probe_client
                 .post(format!("http://{addr}{P2P_REACHABILITY_PATH}"))
-                .header("x-forwarded-for", "8.8.8.8")
                 .json(&request)
                 .send()
                 .await

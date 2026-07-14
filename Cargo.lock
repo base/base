@@ -6405,7 +6405,6 @@ dependencies = [
  "axum 0.8.9",
  "base-health",
  "clap",
- "ipnet",
  "reqwest 0.13.4",
  "reth-ecies",
  "reth-eth-wire",
