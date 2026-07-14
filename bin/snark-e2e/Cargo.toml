@@ -16,9 +16,7 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-base-snark-e2e = { workspace = true }
-
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true, features = ["fmt", "json", "env-filter"] }
-
+base-snark-e2e = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+tracing-subscriber = { workspace = true, features = ["fmt", "json", "env-filter"] }
