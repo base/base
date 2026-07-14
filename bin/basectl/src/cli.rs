@@ -2,9 +2,9 @@
 
 use std::path::PathBuf;
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use basectl_cli::ViewId;
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use url::Url;
 
 /// Base infrastructure control CLI.
@@ -109,6 +109,11 @@ pub(crate) enum Commands {
     },
     /// Run read-only diagnostics for a single node.
     Doctor(DoctorArgs),
+    /// Request and inspect ZK proofs on the internal prover service.
+    Proofs {
+        #[command(subcommand)]
+        command: ProofsCommands,
+    },
     /// Stream flashblocks as JSON lines.
     #[command(after_help = "Use `basectl monitor flashblocks` for the TUI.")]
     Flashblocks,
@@ -150,6 +155,111 @@ pub(crate) struct DoctorArgs {
     /// Emit a humanized JSON report instead of pretty text.
     #[arg(long)]
     pub(crate) json: bool,
+}
+
+/// Prover-service proof request and inspection commands.
+#[derive(Debug, Subcommand)]
+pub(crate) enum ProofsCommands {
+    /// Submit a compressed ZK proof request for a block range to speed up finality.
+    Finalize(ProofsFinalizeArgs),
+    /// Show status and result data for a submitted proof request.
+    Status(ProofsStatusArgs),
+    /// List submitted proof requests.
+    List(ProofsListArgs),
+}
+
+/// Flags for `basectl proofs finalize`.
+#[derive(Debug, Args)]
+pub(crate) struct ProofsFinalizeArgs {
+    /// First L2 block number to prove.
+    #[arg(value_name = "START_BLOCK")]
+    pub(crate) start_block: u64,
+    /// Number of consecutive L2 blocks to prove.
+    #[arg(value_name = "NUM_BLOCKS", value_parser = clap::value_parser!(u64).range(1..))]
+    pub(crate) num_blocks: u64,
+    /// Explicit proof session ID (prover-service idempotency key).
+    ///
+    /// If omitted, basectl derives a deterministic session ID from the
+    /// network name and block range, so re-running the same command resolves
+    /// to the existing prover-service session instead of enqueueing a
+    /// duplicate proof.
+    #[arg(long = "session-id", value_name = "ID")]
+    pub(crate) session_id: Option<String>,
+    /// L1 head hash used for witness generation.
+    ///
+    /// If omitted, the prover service picks one.
+    #[arg(long = "l1-head", value_name = "HASH")]
+    pub(crate) l1_head: Option<B256>,
+    /// Sequencing window passed to the prover.
+    #[arg(long = "sequence-window", value_name = "N")]
+    pub(crate) sequence_window: Option<u64>,
+    /// Intermediate output root interval passed to the prover.
+    #[arg(long = "intermediate-root-interval", value_name = "N")]
+    pub(crate) intermediate_root_interval: Option<u64>,
+    /// Poll the prover service until the proof succeeds or fails.
+    ///
+    /// Exits non-zero when the proof fails or does not complete in time.
+    #[arg(long)]
+    pub(crate) wait: bool,
+    /// Prover-service RPC URL (also `BASECTL_PROVER_RPC` or config `prover_rpc`).
+    #[arg(long = "prover-rpc", env = "BASECTL_PROVER_RPC", value_name = "URL")]
+    pub(crate) prover_rpc: Option<Url>,
+    /// Skip the interactive confirmation prompt.
+    #[arg(long)]
+    pub(crate) yes: bool,
+    /// Emit a structured JSON action outcome instead of pretty text.
+    #[arg(long, requires = "yes")]
+    pub(crate) json: bool,
+}
+
+/// Flags for `basectl proofs status`.
+#[derive(Debug, Args)]
+pub(crate) struct ProofsStatusArgs {
+    /// Proof session ID returned by `basectl proofs finalize`.
+    #[arg(value_name = "SESSION_ID")]
+    pub(crate) session_id: String,
+    /// Prover-service RPC URL (also `BASECTL_PROVER_RPC` or config `prover_rpc`).
+    #[arg(long = "prover-rpc", env = "BASECTL_PROVER_RPC", value_name = "URL")]
+    pub(crate) prover_rpc: Option<Url>,
+    /// Emit humanized JSON instead of pretty text.
+    #[arg(long)]
+    pub(crate) json: bool,
+    /// With `--json`, emit the prover-service wire shape instead of the humanized summary.
+    #[arg(long, requires = "json")]
+    pub(crate) raw: bool,
+}
+
+/// Flags for `basectl proofs list`.
+#[derive(Debug, Args)]
+pub(crate) struct ProofsListArgs {
+    /// Only list proofs with this status.
+    #[arg(long, value_enum, value_name = "STATUS")]
+    pub(crate) status: Option<ProofStatusFilter>,
+    /// Number of rows to skip.
+    #[arg(long, value_name = "N", default_value_t = 0)]
+    pub(crate) offset: u64,
+    /// Maximum rows to return.
+    #[arg(long, value_name = "N", default_value_t = 50)]
+    pub(crate) limit: u32,
+    /// Prover-service RPC URL (also `BASECTL_PROVER_RPC` or config `prover_rpc`).
+    #[arg(long = "prover-rpc", env = "BASECTL_PROVER_RPC", value_name = "URL")]
+    pub(crate) prover_rpc: Option<Url>,
+    /// Emit humanized JSON instead of pretty text.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+/// Proof status filter accepted by `basectl proofs list`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(crate) enum ProofStatusFilter {
+    /// Proof request is queued.
+    Queued,
+    /// Proof request is running.
+    Running,
+    /// Proof request completed successfully.
+    Succeeded,
+    /// Proof request failed.
+    Failed,
 }
 
 /// P2P inspection and peer-management commands.
@@ -705,6 +815,88 @@ mod tests {
         assert!(try_parse(["basectl", "conductor", "unpause-all", "--json"]).is_err());
         assert!(try_parse(["basectl", "conductor", "pause-all", "--yes", "--json"]).is_ok());
         assert!(try_parse(["basectl", "conductor", "unpause-all", "--yes", "--json"]).is_ok());
+    }
+
+    #[test]
+    fn proofs_commands_parse() {
+        assert!(try_parse(["basectl", "proofs", "finalize", "100", "5", "--yes"]).is_ok());
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "finalize",
+                "100",
+                "5",
+                "--session-id",
+                "custom-session",
+                "--l1-head",
+                "0x1111111111111111111111111111111111111111111111111111111111111111",
+                "--sequence-window",
+                "3600",
+                "--intermediate-root-interval",
+                "10",
+                "--wait",
+                "--prover-rpc",
+                "http://127.0.0.1:9000",
+                "--yes",
+                "--json",
+            ])
+            .is_ok()
+        );
+        assert!(try_parse(["basectl", "proofs", "status", "session-1"]).is_ok());
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "status",
+                "session-1",
+                "--prover-rpc",
+                "http://127.0.0.1:9000",
+                "--json",
+                "--raw",
+            ])
+            .is_ok()
+        );
+        assert!(try_parse(["basectl", "proofs", "list"]).is_ok());
+        assert!(
+            try_parse([
+                "basectl",
+                "proofs",
+                "list",
+                "--status",
+                "succeeded",
+                "--offset",
+                "10",
+                "--limit",
+                "5",
+                "--json",
+            ])
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn proofs_finalize_rejects_zero_blocks() {
+        assert!(try_parse(["basectl", "proofs", "finalize", "100", "0", "--yes"]).is_err());
+    }
+
+    #[test]
+    fn proofs_finalize_json_requires_yes() {
+        assert!(try_parse(["basectl", "proofs", "finalize", "100", "5", "--json"]).is_err());
+        assert!(
+            try_parse(["basectl", "proofs", "finalize", "100", "5", "--yes", "--json"]).is_ok()
+        );
+    }
+
+    #[test]
+    fn proofs_status_raw_requires_json() {
+        assert!(try_parse(["basectl", "proofs", "status", "session-1", "--raw"]).is_err());
+        assert!(try_parse(["basectl", "proofs", "status", "session-1", "--json", "--raw"]).is_ok());
+    }
+
+    #[test]
+    fn proofs_list_rejects_unknown_status() {
+        assert!(try_parse(["basectl", "proofs", "list", "--status", "unknown"]).is_err());
     }
 
     #[test]

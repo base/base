@@ -42,6 +42,9 @@ pub use p2p::{
 mod pods;
 pub use pods::{PodGroupStatus, PodStatus, PodsPoller, PodsSnapshot, run_pods_poller};
 
+mod prover;
+pub use prover::{ProofFinalizeRequest, ProofsClient};
+
 mod rollup;
 pub use rollup::{
     LatestProposal, ProofsSnapshot, SyncStatusReport, ValidatorNodeStatus, fetch_safe_and_latest,

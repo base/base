@@ -7,6 +7,7 @@ mod confirm;
 mod doctor;
 mod helpers;
 mod p2p;
+mod proofs;
 mod sequencer;
 mod sync_status;
 mod txpool;
@@ -75,6 +76,12 @@ async fn main() -> anyhow::Result<()> {
                 .await?
                 .has_failures()
             {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+        Some(cli::Commands::Proofs { command }) => {
+            if proofs::run(MonitoringConfig::load(config).await?, command).await?.has_failures() {
                 std::process::exit(1);
             }
             Ok(())

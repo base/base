@@ -345,6 +345,13 @@ pub struct MonitoringConfig {
     /// Optional Base consensus node JSON-RPC endpoint URL.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub consensus_node_rpc: Option<Url>,
+    /// Optional internal prover-service requester JSON-RPC endpoint URL.
+    ///
+    /// Used by the `basectl proofs` command group. The built-in presets leave
+    /// this unset because the prover service is internal; set it in your YAML
+    /// config, via `BASECTL_PROVER_RPC`, or with `--prover-rpc`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prover_rpc: Option<Url>,
     /// Live rollup upgrade configuration fetched from the consensus node when available.
     #[serde(default, skip_serializing_if = "Option::is_none", alias = "hardforks")]
     pub upgrades: Option<UpgradeConfig>,
@@ -471,6 +478,7 @@ struct MonitoringConfigOverride {
     flashblocks_ws: Option<Url>,
     l1_rpc: Option<Url>,
     consensus_node_rpc: Option<Url>,
+    prover_rpc: Option<Url>,
     #[serde(alias = "hardforks")]
     upgrades: Option<UpgradeConfig>,
     #[serde(default)]
@@ -519,6 +527,7 @@ impl MonitoringConfig {
             flashblocks_ws: Url::parse("wss://mainnet.flashblocks.base.org/ws").unwrap(),
             l1_rpc: Url::parse("https://ethereum-rpc.publicnode.com").unwrap(),
             consensus_node_rpc: None,
+            prover_rpc: None,
             upgrades: Some(rollup.upgrades),
             system_config: rollup.l1_system_config_address,
             batcher_address: Some("0x5050F69a9786F081509234F1a7F4684b5E5b76C9".parse().unwrap()),
@@ -543,6 +552,7 @@ impl MonitoringConfig {
             flashblocks_ws: Url::parse("wss://sepolia.flashblocks.base.org/ws").unwrap(),
             l1_rpc: Url::parse("https://ethereum-sepolia-rpc.publicnode.com").unwrap(),
             consensus_node_rpc: None,
+            prover_rpc: None,
             upgrades: Some(rollup.upgrades),
             system_config: rollup.l1_system_config_address,
             batcher_address: Some("0xfc56E7272EEBBBA5bC6c544e159483C4a38f8bA3".parse().unwrap()),
@@ -573,6 +583,7 @@ impl MonitoringConfig {
             flashblocks_ws: Url::parse("ws://localhost:7111").unwrap(),
             l1_rpc: Url::parse("http://localhost:4545").unwrap(),
             consensus_node_rpc: Some(Url::parse("http://localhost:7549").unwrap()),
+            prover_rpc: None,
             upgrades: None,
             // These will be populated by fetch_rollup_config
             system_config: Address::ZERO,
@@ -747,6 +758,7 @@ impl MonitoringConfig {
             flashblocks_ws: overrides.flashblocks_ws.unwrap_or(base.flashblocks_ws),
             l1_rpc: overrides.l1_rpc.unwrap_or(base.l1_rpc),
             consensus_node_rpc: overrides.consensus_node_rpc.or(base.consensus_node_rpc),
+            prover_rpc: overrides.prover_rpc.or(base.prover_rpc),
             upgrades: overrides.upgrades.or(base.upgrades),
             system_config: overrides.system_config.unwrap_or(base.system_config),
             batcher_address: overrides.batcher_address.or(base.batcher_address),

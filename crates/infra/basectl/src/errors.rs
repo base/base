@@ -179,6 +179,54 @@ pub enum P2pCommandError {
     },
 }
 
+/// Error returned by the `proofs` command group.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[non_exhaustive]
+pub enum ProofsCommandError {
+    /// The command could not resolve a prover-service RPC URL from flags or config.
+    #[error(
+        "proofs commands need a prover-service RPC URL.\n\
+         The '{config_name}' config does not set `prover_rpc`.\n\
+         Override with `--prover-rpc <url>`, set `BASECTL_PROVER_RPC`, \
+         or set `prover_rpc` in your YAML config."
+    )]
+    MissingProverRpc {
+        /// The config name selected for the command.
+        config_name: String,
+    },
+    /// The prover-service HTTP client could not be built.
+    #[error("failed to build prover-service client for {endpoint}: {message}")]
+    BuildClient {
+        /// The prover-service RPC URL selected for the command.
+        endpoint: String,
+        /// The client construction error message.
+        message: String,
+    },
+    /// A prover-service JSON-RPC request failed.
+    #[error("prover-service request `{method}` failed against {endpoint}: {message}")]
+    Rpc {
+        /// The prover-service RPC URL selected for the command.
+        endpoint: String,
+        /// The prover-service JSON-RPC method that failed.
+        method: &'static str,
+        /// The underlying client error message.
+        message: String,
+    },
+    /// The proof did not reach a terminal status within the wait window.
+    #[error(
+        "proof session {session_id} did not complete within {waited:?}; \
+         last observed status: {last_status}"
+    )]
+    WaitTimeout {
+        /// The proof session identifier being waited on.
+        session_id: String,
+        /// The time spent waiting before giving up.
+        waited: Duration,
+        /// The last proof status observed before the timeout.
+        last_status: String,
+    },
+}
+
 /// Error returned by the `sync-status` command.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]

@@ -27,6 +27,8 @@ base-consensus-gossip = { workspace = true }
 alloy-rpc-types-txpool = { workspace = true }
 base-common-precompiles = { workspace = true }
 base-common-flashblocks = { workspace = true }
+base-prover-service-client = { workspace = true }
+base-prover-service-protocol = { workspace = true }
 toml = { workspace = true, features = ["parse", "serde"] }
 url = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["std"] }
@@ -46,3 +48,8 @@ alloy-consensus = { workspace = true, features = ["std", "k256"] }
 base-common-genesis = { workspace = true, features = ["serde", "std"] }
 tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 alloy-provider = { workspace = true, features = ["admin-api", "net-api", "pubsub", "txpool-api", "ws"] }
+
+[dev-dependencies]
+jsonrpsee = { workspace = true, features = ["server"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+base-prover-service-protocol = { workspace = true, features = ["rpc-server"] }
