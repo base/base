@@ -1,6 +1,4 @@
-//! Stablecoin variant of the B-20 token, structured as a hardfork-versioned
-//! precompile: a dispatcher, an append-only ABI, a version manager, shared
-//! storage, and per-version self-contained logic implementations.
+//! `B20StablecoinToken` native precompile — stablecoin variant of the B-20 token.
 
 mod abi;
 pub use abi::IB20Stablecoin;
