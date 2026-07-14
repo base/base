@@ -1,13 +1,13 @@
 //! TDX signer attestation payload encoding.
 
-use alloy_primitives::Bytes;
+use alloy_primitives::{B256, Bytes};
 use thiserror::Error;
 
 /// Magic prefix for encoded TDX signer attestations returned by JSON-RPC.
-const TDX_SIGNER_ATTESTATION_MAGIC: &[u8; 8] = b"BASETDX2";
+const TDX_SIGNER_ATTESTATION_MAGIC: &[u8; 8] = b"BASETDX3";
 
-/// Encoded TDX signer attestation header length: magic + timestamp + 2 lengths.
-const TDX_SIGNER_ATTESTATION_HEADER_LEN: usize = TDX_SIGNER_ATTESTATION_MAGIC.len() + 8 + 8 + 8;
+/// Encoded TDX signer attestation header length: magic + timestamp + 3 lengths.
+const TDX_SIGNER_ATTESTATION_HEADER_LEN: usize = TDX_SIGNER_ATTESTATION_MAGIC.len() + 8 + 8 + 8 + 8;
 
 /// Self-contained TDX signer attestation returned by `enclave_signerAttestation`.
 ///
@@ -16,6 +16,8 @@ const TDX_SIGNER_ATTESTATION_HEADER_LEN: usize = TDX_SIGNER_ATTESTATION_MAGIC.le
 /// - 8 bytes: quote timestamp in little-endian milliseconds
 /// - 8 bytes: signer public key byte length in little-endian
 /// - 8 bytes: quote byte length in little-endian
+/// - 8 bytes: registrar nonce byte length in little-endian
+/// - registrar nonce bytes: empty or a 32-byte deterministic registrar nonce
 /// - public key bytes: expected uncompressed secp256k1 signer public key
 /// - quote bytes: raw TDX quote
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,18 +31,26 @@ pub struct TdxSignerAttestation {
     /// This value is committed into `TDREPORT.REPORTDATA` by
     /// `base-proof-tee-tdx-runtime` and must be supplied to the verifier.
     pub quote_timestamp_millis: u64,
+    /// Optional deterministic registrar nonce bound into `TDREPORT.REPORTDATA`.
+    pub attestation_nonce: Option<B256>,
 }
 
 impl TdxSignerAttestation {
     /// Encodes this attestation into the JSON-RPC byte payload format.
     pub fn encode(&self) -> Vec<u8> {
+        let nonce = self.attestation_nonce.map_or_else(Vec::new, |nonce| nonce.to_vec());
         let mut encoded = Vec::with_capacity(
-            TDX_SIGNER_ATTESTATION_HEADER_LEN + self.signer_public_key.len() + self.quote.len(),
+            TDX_SIGNER_ATTESTATION_HEADER_LEN
+                + nonce.len()
+                + self.signer_public_key.len()
+                + self.quote.len(),
         );
         encoded.extend_from_slice(TDX_SIGNER_ATTESTATION_MAGIC);
         encoded.extend_from_slice(&self.quote_timestamp_millis.to_le_bytes());
         encoded.extend_from_slice(&(self.signer_public_key.len() as u64).to_le_bytes());
         encoded.extend_from_slice(&(self.quote.len() as u64).to_le_bytes());
+        encoded.extend_from_slice(&(nonce.len() as u64).to_le_bytes());
+        encoded.extend_from_slice(&nonce);
         encoded.extend_from_slice(&self.signer_public_key);
         encoded.extend_from_slice(&self.quote);
         encoded
@@ -58,6 +68,7 @@ impl TdxSignerAttestation {
         let quote_timestamp_millis = Self::read_le_u64(&encoded[8..16]);
         let public_key_len_u64 = Self::read_le_u64(&encoded[16..24]);
         let quote_len_u64 = Self::read_le_u64(&encoded[24..32]);
+        let nonce_len_u64 = Self::read_le_u64(&encoded[32..40]);
 
         let public_key_len = usize::try_from(public_key_len_u64).map_err(|_| {
             TdxSignerAttestationDecodeError::LengthOverflow {
@@ -68,13 +79,18 @@ impl TdxSignerAttestation {
         let quote_len = usize::try_from(quote_len_u64).map_err(|_| {
             TdxSignerAttestationDecodeError::LengthOverflow { field: "quote", len: quote_len_u64 }
         })?;
+        let nonce_len = usize::try_from(nonce_len_u64).map_err(|_| {
+            TdxSignerAttestationDecodeError::LengthOverflow { field: "nonce", len: nonce_len_u64 }
+        })?;
 
         let expected_len = TDX_SIGNER_ATTESTATION_HEADER_LEN
-            .checked_add(public_key_len)
+            .checked_add(nonce_len)
+            .and_then(|len| len.checked_add(public_key_len))
             .and_then(|len| len.checked_add(quote_len))
             .ok_or_else(|| TdxSignerAttestationDecodeError::LengthOverflow {
                 field: "payload",
                 len: (TDX_SIGNER_ATTESTATION_HEADER_LEN as u64)
+                    .saturating_add(nonce_len_u64)
                     .saturating_add(public_key_len_u64)
                     .saturating_add(quote_len_u64),
             })?;
@@ -85,12 +101,21 @@ impl TdxSignerAttestation {
             });
         }
 
-        let public_key_start = TDX_SIGNER_ATTESTATION_HEADER_LEN;
+        let nonce_start = TDX_SIGNER_ATTESTATION_HEADER_LEN;
+        let public_key_start = nonce_start + nonce_len;
         let quote_start = public_key_start + public_key_len;
+        let attestation_nonce = match nonce_len {
+            0 => None,
+            32 => Some(B256::from_slice(&encoded[nonce_start..public_key_start])),
+            _ => {
+                return Err(TdxSignerAttestationDecodeError::InvalidNonceLength { len: nonce_len });
+            }
+        };
         Ok(Self {
             signer_public_key: Bytes::copy_from_slice(&encoded[public_key_start..quote_start]),
             quote: Bytes::copy_from_slice(&encoded[quote_start..]),
             quote_timestamp_millis,
+            attestation_nonce,
         })
     }
 
@@ -119,6 +144,12 @@ pub enum TdxSignerAttestationDecodeError {
         /// Encoded field length.
         len: u64,
     },
+    /// The encoded registrar nonce was neither absent nor 32 bytes.
+    #[error("TDX signer attestation nonce length must be 0 or 32 bytes, got {len}")]
+    InvalidNonceLength {
+        /// Invalid nonce length.
+        len: usize,
+    },
     /// Encoded payload length does not match the embedded quote length.
     #[error("TDX signer attestation length mismatch: expected {expected} bytes, got {actual}")]
     LengthMismatch {
@@ -140,6 +171,7 @@ mod tests {
             signer_public_key: Bytes::from_static(b"fixture-public-key"),
             quote: Bytes::from_static(b"fixture-quote"),
             quote_timestamp_millis: 1_711_111_111_000,
+            attestation_nonce: Some(B256::repeat_byte(0x11)),
         }
     }
 
@@ -173,6 +205,18 @@ mod tests {
         assert_eq!(
             TdxSignerAttestation::decode(&encoded).unwrap_err(),
             TdxSignerAttestationDecodeError::LengthMismatch { expected, actual: encoded.len() }
+        );
+    }
+
+    #[test]
+    fn signer_attestation_decode_rejects_invalid_nonce_length() {
+        let mut encoded = fixture_attestation().encode();
+        encoded[32..40].copy_from_slice(&1u64.to_le_bytes());
+        encoded.drain(41..72);
+
+        assert_eq!(
+            TdxSignerAttestation::decode(&encoded).unwrap_err(),
+            TdxSignerAttestationDecodeError::InvalidNonceLength { len: 1 }
         );
     }
 }

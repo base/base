@@ -46,7 +46,7 @@ impl ProverBackend for TdxBackend {
                 Some(per_chain.hash())
             })
             .ok_or(TdxProverError::UnsupportedChain(boot_info.chain_id))?;
-        let quote = TdxQuote::parse(&self.runtime.signer_quote()?.quote)?;
+        let quote = TdxQuote::parse(&self.runtime.signer_quote(None)?.quote)?;
         let tee_image_hash = quote.image_hash();
         let (epilogue, block_results) =
             driver.execute_with_intermediates().await.map_err(pipeline_err)?;

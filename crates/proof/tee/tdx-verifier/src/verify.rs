@@ -26,6 +26,8 @@ pub struct TdxVerifierInput {
     pub trusted_root_ca_hash: B256,
     /// Expected uncompressed secp256k1 signer public key: `0x04 || x || y`.
     pub expected_public_key: Bytes,
+    /// Optional deterministic registrar nonce bound into the quote report data.
+    pub attestation_nonce: Option<B256>,
     /// Quote collection timestamp in milliseconds since Unix epoch.
     ///
     /// This value must match the timestamp commitment in `TDREPORT.REPORTDATA`.
@@ -95,12 +97,12 @@ impl TdxVerifier {
 
         let public_key_hash = Self::validate_public_key(&input.expected_public_key)?;
         let signer = Address::from_slice(&public_key_hash.as_slice()[12..]);
-        if quote.report_data_prefix() != public_key_hash
-            || quote.report_data_suffix()
-                != Self::timestamp_report_data_suffix(input.quote_timestamp_millis)
-        {
-            return Err(TdxVerifierError::ReportDataMismatch);
-        }
+        Self::verify_report_data(
+            &quote,
+            public_key_hash,
+            input.quote_timestamp_millis,
+            input.attestation_nonce,
+        )?;
         let collateral_expiration = pck_expiration.min(tcb_expiration).min(qe_expiration);
 
         Ok(TDXVerifierJournal {
@@ -130,11 +132,33 @@ impl TdxVerifier {
         Ok(keccak256(&public_key[1..]))
     }
 
-    /// Computes the expected signed `TDREPORT.REPORTDATA` suffix for a quote timestamp.
-    pub fn timestamp_report_data_suffix(timestamp_millis: u64) -> B256 {
-        let mut preimage = [0u8; 30];
-        preimage[..REPORT_DATA_CONTEXT.len()].copy_from_slice(REPORT_DATA_CONTEXT);
-        preimage[REPORT_DATA_CONTEXT.len()..].copy_from_slice(&timestamp_millis.to_le_bytes());
+    /// Validates that quote report data binds the signer public key, quote
+    /// timestamp, and optional registrar nonce.
+    pub fn verify_report_data(
+        quote: &crate::ParsedTdxQuote,
+        public_key_hash: B256,
+        timestamp_millis: u64,
+        attestation_nonce: Option<B256>,
+    ) -> Result<()> {
+        if quote.report_data_prefix() != public_key_hash
+            || quote.report_data_suffix()
+                != Self::timestamp_report_data_suffix(timestamp_millis, attestation_nonce)
+        {
+            return Err(TdxVerifierError::ReportDataMismatch);
+        }
+        Ok(())
+    }
+
+    /// Computes the expected signed `TDREPORT.REPORTDATA` suffix for a quote
+    /// timestamp and optional registrar nonce.
+    pub fn timestamp_report_data_suffix(
+        timestamp_millis: u64,
+        attestation_nonce: Option<B256>,
+    ) -> B256 {
+        let mut preimage = [&REPORT_DATA_CONTEXT[..], &timestamp_millis.to_le_bytes()].concat();
+        if let Some(nonce) = attestation_nonce {
+            preimage.extend_from_slice(nonce.as_slice());
+        }
         keccak256(preimage)
     }
 }
@@ -236,6 +260,7 @@ mod tests {
             revocation: revocation_evidence("intermediate_crl"),
             trusted_root_ca_hash: root_hash,
             expected_public_key: secp256k1_public_key(1),
+            attestation_nonce: None,
             quote_timestamp_millis: QUOTE_TIMESTAMP_MILLIS,
             verification_time: VERIFICATION_TIME,
             max_quote_age_seconds: MAX_QUOTE_AGE_SECONDS,
@@ -282,7 +307,7 @@ mod tests {
         assert_eq!(journal.signer, address!("7e5f4552091a69125d5dfcb7b8c2659029395bdf"));
         assert_eq!(
             journal.reportDataSuffix,
-            TdxVerifier::timestamp_report_data_suffix(QUOTE_TIMESTAMP_MILLIS)
+            TdxVerifier::timestamp_report_data_suffix(QUOTE_TIMESTAMP_MILLIS, None)
         );
         assert_eq!(
             journal.collateralExpiration, 2_051_222_400,
@@ -360,6 +385,17 @@ mod tests {
 
         let error = TdxVerifier::verify(&input)
             .expect_err("fresh input timestamp must not replay an older signed quote");
+
+        assert!(matches!(error, TdxVerifierError::ReportDataMismatch));
+    }
+
+    #[test]
+    fn registrar_nonce_must_match_signed_report_data() {
+        let mut input = fixture();
+        input.attestation_nonce = Some(B256::repeat_byte(0x11));
+
+        let error = TdxVerifier::verify(&input)
+            .expect_err("quote without the expected registrar nonce must fail");
 
         assert!(matches!(error, TdxVerifierError::ReportDataMismatch));
     }

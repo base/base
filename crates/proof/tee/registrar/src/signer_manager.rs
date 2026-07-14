@@ -9,12 +9,12 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use alloy_primitives::{Address, Bytes, keccak256};
+use alloy_primitives::{Address, B256, Bytes, keccak256};
 use alloy_sol_types::{SolCall, SolValue};
 use base_proof_contracts::{ITEEProverRegistry, TEEProverRegistryClient};
 use base_proof_tee_attestation::TeeAttestationKind;
 use base_proof_tee_nitro_verifier::VerifierJournal;
-use base_proof_tee_tdx_verifier::TDXVerifierJournal;
+use base_proof_tee_tdx_verifier::{TDXVerifierJournal, TdxVerifier};
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use tokio::{
     sync::Semaphore,
@@ -336,18 +336,33 @@ where
                         journal.signer
                     )));
                 }
+                let expected_report_data_suffix = TdxVerifier::timestamp_report_data_suffix(
+                    journal.timestamp,
+                    Some(B256::from(self.attestation_nonce(signer_address))),
+                );
+                if journal.reportDataSuffix != expected_report_data_suffix {
+                    self.proof_provider.block_recovery_for_signer(attestation_kind, signer_address);
+                    return Err(RegistrarError::InvalidAttestationProof(format!(
+                        "TDX registrar nonce mismatch for signer {signer_address}"
+                    )));
+                }
                 journal.timestamp
             }
         };
         drop(proof_permit);
 
-        let calldata = Bytes::from(
-            ITEEProverRegistry::registerSignerCall {
+        let calldata = Bytes::from(match attestation_kind {
+            TeeAttestationKind::Nitro => ITEEProverRegistry::registerSignerCall {
                 output: proof.output,
                 proofBytes: proof.proof_bytes,
             }
             .abi_encode(),
-        );
+            TeeAttestationKind::Tdx => ITEEProverRegistry::registerTDXSignerCall {
+                output: proof.output,
+                proofBytes: proof.proof_bytes,
+            }
+            .abi_encode(),
+        });
 
         let candidate = TxCandidate {
             tx_data: calldata,
@@ -673,6 +688,7 @@ mod tests {
     use async_trait::async_trait;
     use base_proof_tee_attestation::{TeeAttestationProof, TeeAttestationProofProvider};
     use base_proof_tee_nitro_verifier::VerificationResult;
+    use base_proof_tee_tdx_verifier::{TDXTcbStatus, TDXVerificationResult};
     use base_tx_manager::{SendHandle, TxManagerError};
     use tokio::sync::Notify;
 
@@ -682,7 +698,7 @@ mod tests {
         RegisterableSigner, RegistrarError,
         test_utils::{
             EP1, EP2, HARDHAT_KEY_0, HARDHAT_KEY_1, TEST_REGISTRY_ADDRESS, healthy_prover_instance,
-            signer_from_private_key, stub_receipt_with_status,
+            public_key_from_private, signer_from_private_key, stub_receipt_with_status,
         },
     };
 
@@ -850,6 +866,33 @@ mod tests {
         )
     }
 
+    fn tdx_proof_output(signer: Address, nonce: B256) -> Bytes {
+        let public_key = public_key_from_private(&HARDHAT_KEY_0);
+        let timestamp = u64::try_from(
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis(),
+        )
+        .unwrap_or(u64::MAX);
+        Bytes::from(
+            TDXVerifierJournal {
+                result: TDXVerificationResult::Success,
+                tcbStatus: TDXTcbStatus::UpToDate,
+                timestamp,
+                collateralExpiration: u64::MAX,
+                rootCaHash: B256::ZERO,
+                pckCertHash: B256::ZERO,
+                tcbInfoHash: B256::ZERO,
+                qeIdentityHash: B256::ZERO,
+                publicKey: Bytes::from(public_key.clone()),
+                signer,
+                imageHash: B256::ZERO,
+                mrTdHash: B256::ZERO,
+                reportDataPrefix: TdxVerifier::validate_public_key(&public_key).unwrap(),
+                reportDataSuffix: TdxVerifier::timestamp_report_data_suffix(timestamp, Some(nonce)),
+            }
+            .abi_encode(),
+        )
+    }
+
     #[async_trait]
     impl TeeAttestationProofProvider for RecordingProofProvider {
         async fn generate_proof_for_signer(
@@ -926,6 +969,22 @@ mod tests {
                 TEST_PENDING_INSTANCE_ID,
                 TeeAttestationKind::Nitro,
                 SIGNER_A,
+                ATTESTATION,
+                cancel,
+            )
+            .await
+    }
+
+    async fn register_tdx(
+        manager: &SignerManager<PlatformProofProvider, MockRegistry, RecordingTxManager>,
+        signer: Address,
+        cancel: &CancellationToken,
+    ) -> Result<()> {
+        manager
+            .register_signer(
+                TEST_PENDING_INSTANCE_ID,
+                TeeAttestationKind::Tdx,
+                signer,
                 ATTESTATION,
                 cancel,
             )
@@ -1141,6 +1200,48 @@ mod tests {
         );
         assert_eq!(manager.tx_manager.send_count(), 0, "nonce mismatch must not submit a tx");
         assert_eq!(*proof_provider.blocked_signers.lock().unwrap(), vec![SIGNER_A]);
+    }
+
+    #[tokio::test]
+    async fn register_tdx_signer_rejects_registrar_nonce_mismatch_before_tx() {
+        let signer = signer_from_private_key(&HARDHAT_KEY_0);
+        let proof_provider = RecordingProofProvider {
+            proof_output: Some(tdx_proof_output(signer, B256::repeat_byte(0x11))),
+            ..Default::default()
+        };
+        let manager = manager_with(
+            proof_provider.clone(),
+            MockRegistry::default(),
+            RecordingTxManager::default(),
+        );
+
+        let result = register_tdx(&manager, signer, &CancellationToken::new()).await;
+
+        assert!(
+            matches!(result, Err(RegistrarError::InvalidAttestationProof(_))),
+            "mismatched TDX nonce should fail before submission: {result:?}"
+        );
+        assert_eq!(manager.tx_manager.send_count(), 0, "nonce mismatch must not submit a tx");
+        assert_eq!(*proof_provider.blocked_signers.lock().unwrap(), vec![signer]);
+    }
+
+    #[tokio::test]
+    async fn register_tdx_signer_uses_tdx_registry_entrypoint() {
+        let signer = signer_from_private_key(&HARDHAT_KEY_0);
+        let manager = manager_with(
+            RecordingProofProvider {
+                proof_output: Some(tdx_proof_output(signer, B256::from(expected_nonce(signer)))),
+                ..Default::default()
+            },
+            MockRegistry::default(),
+            RecordingTxManager::default(),
+        );
+
+        register_tdx(&manager, signer, &CancellationToken::new()).await.unwrap();
+
+        let sent = manager.tx_manager.take_sent();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(&sent[0].1[..4], &ITEEProverRegistry::registerTDXSignerCall::SELECTOR);
     }
 
     #[tokio::test]

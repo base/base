@@ -1,6 +1,6 @@
 //! ABI-compatible host and guest input encoding for TDX verification.
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use alloy_sol_types::{SolValue, sol};
 
 use crate::{
@@ -41,6 +41,10 @@ sol! {
         bytes32 trustedRootCaHash;
         /// Expected uncompressed secp256k1 signer public key.
         bytes expectedPublicKey;
+        /// Whether the quote binds a registrar nonce.
+        bool hasAttestationNonce;
+        /// Registrar nonce expected in the quote report data.
+        bytes32 attestationNonce;
         /// Quote collection timestamp in milliseconds since Unix epoch.
         uint64 quoteTimestampMillis;
         /// Verification time in seconds since Unix epoch.
@@ -101,6 +105,8 @@ impl TdxVerifierInput {
             certificateCrls: self.revocation.certificate_crls.clone(),
             trustedRootCaHash: self.trusted_root_ca_hash,
             expectedPublicKey: self.expected_public_key.clone(),
+            hasAttestationNonce: self.attestation_nonce.is_some(),
+            attestationNonce: self.attestation_nonce.unwrap_or(B256::ZERO),
             quoteTimestampMillis: self.quote_timestamp_millis,
             verificationTime: self.verification_time,
             maxQuoteAgeSeconds: self.max_quote_age_seconds,
@@ -138,6 +144,7 @@ impl TdxVerifierInput {
             revocation: TdxRevocationEvidence { certificate_crls: input.certificateCrls },
             trusted_root_ca_hash: input.trustedRootCaHash,
             expected_public_key: input.expectedPublicKey,
+            attestation_nonce: input.hasAttestationNonce.then_some(input.attestationNonce),
             quote_timestamp_millis: input.quoteTimestampMillis,
             verification_time: input.verificationTime,
             max_quote_age_seconds: input.maxQuoteAgeSeconds,
@@ -194,6 +201,7 @@ mod tests {
             },
             trusted_root_ca_hash: B256::repeat_byte(0x55),
             expected_public_key: public_key(),
+            attestation_nonce: Some(B256::repeat_byte(0x66)),
             quote_timestamp_millis: 1_711_111_111_000,
             verification_time: 1_711_111_222,
             max_quote_age_seconds: 300,

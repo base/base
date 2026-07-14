@@ -84,9 +84,9 @@ sol! {
         bytes32 imageHash;
         /// Keccak256 hash of the MRTD measurement.
         bytes32 mrTdHash;
-        /// First 32 bytes of `TDREPORT.REPORTDATA`.
+        /// First 32 bytes of `TDREPORT.REPORTDATA`, binding the signer public key.
         bytes32 reportDataPrefix;
-        /// Last 32 bytes of `TDREPORT.REPORTDATA`.
+        /// Last 32 bytes of `TDREPORT.REPORTDATA`, binding the timestamp and registrar nonce.
         bytes32 reportDataSuffix;
     }
 

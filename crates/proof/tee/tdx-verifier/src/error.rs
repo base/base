@@ -50,8 +50,8 @@ pub enum TdxVerifierError {
     #[error("expected secp256k1 public key is malformed")]
     MalformedPublicKey,
 
-    /// TD report data does not bind the expected public key.
-    #[error("TD report data does not match expected public key binding")]
+    /// TD report data does not bind the expected signer or registrar nonce.
+    #[error("TD report data does not match expected signer binding")]
     ReportDataMismatch,
 
     /// Decoded input signer does not match the signer being registered.

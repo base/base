@@ -1,6 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use alloy_primitives::Bytes;
+use alloy_primitives::{B256, Bytes};
 
 use crate::{Result, TdxQuoteProvider, TdxReportData, TdxSigner};
 
@@ -36,11 +36,12 @@ impl TdxRuntime {
     }
 
     /// Collects a fresh quote using the current system time.
-    pub fn signer_quote(&self) -> Result<TdxSignerQuote> {
+    pub fn signer_quote(&self, attestation_nonce: Option<B256>) -> Result<TdxSignerQuote> {
         let quote_timestamp_millis =
             SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
         let public_key = self.signer.public_key();
-        let report_data = TdxReportData::for_public_key(&public_key, quote_timestamp_millis)?;
+        let report_data =
+            TdxReportData::for_public_key(&public_key, attestation_nonce, quote_timestamp_millis)?;
         let quote = self.quote_provider.quote(&report_data)?;
 
         Ok(TdxSignerQuote { quote, quote_timestamp_millis })
@@ -71,7 +72,7 @@ mod tests {
     #[test]
     fn runtime_returns_quote_and_timestamp() {
         let runtime = TdxRuntime::new(TestQuoteProvider(Bytes::from_static(b"fixture-tdx-quote")));
-        let signer_quote = runtime.signer_quote().unwrap();
+        let signer_quote = runtime.signer_quote(Some(B256::repeat_byte(0x11))).unwrap();
 
         assert_eq!(signer_quote.quote, Bytes::from_static(b"fixture-tdx-quote"));
         assert!(signer_quote.quote_timestamp_millis > 0);

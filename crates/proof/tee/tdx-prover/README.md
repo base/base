@@ -8,7 +8,6 @@ guest signer. Its HTTP server exposes only health and registrar-facing
 `enclave_*` methods.
 
 `enclave_signerAttestation` returns encoded `TdxSignerAttestation` payloads:
-each payload includes the signer public key, the raw TDX quote, and the quote
-timestamp committed into `TDREPORT.REPORTDATA`. TDX attestations currently
-reject `user_data` and `nonce` parameters because the runtime does not bind
-those challenge fields into report data.
+each payload includes the signer public key, raw TDX quote, quote timestamp,
+and optional registrar nonce. When supplied, the nonce is bound with the quote
+timestamp in `TDREPORT.REPORTDATA`. TDX attestations reject `user_data`.

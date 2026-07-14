@@ -259,12 +259,12 @@ where
             return Ok(outcome);
         }
 
-        let nonces = (instance.attestation_kind == TeeAttestationKind::Nitro).then(|| {
+        let nonces = Some(
             addresses
                 .iter()
                 .map(|signer| self.signer_manager.attestation_nonce(*signer).to_vec())
-                .collect::<Vec<_>>()
-        });
+                .collect::<Vec<_>>(),
+        );
         info!(
             signer_count = addresses.len(),
             instance = %instance.instance_id,
@@ -706,7 +706,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn discover_and_resolve_requests_tdx_attestation_without_nonce() {
+    async fn discover_and_resolve_requests_tdx_attestation_with_deterministic_nonce() {
+        let signer = signer_from_private_key(&HARDHAT_KEY_0);
         let signer_client = MockEnclaveEndpointClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
         let requested_nonces = Arc::clone(&signer_client.requested_nonces);
         let mut instance = healthy_prover_instance(EP1);
@@ -718,7 +719,13 @@ mod tests {
 
         assert_eq!(resolution.registerable.len(), 1);
         assert_eq!(resolution.registerable[0].instance.attestation_kind, TeeAttestationKind::Tdx);
-        assert_eq!(*requested_nonces.lock().unwrap(), vec![None]);
+        let nonce =
+            SignerManager::<MockEnclaveEndpointClient, (), NoopTxManager>::attestation_nonce_for(
+                TEST_REGISTRY_ADDRESS,
+                signer,
+            )
+            .to_vec();
+        assert_eq!(*requested_nonces.lock().unwrap(), vec![Some(vec![nonce])]);
     }
 
     #[tokio::test]

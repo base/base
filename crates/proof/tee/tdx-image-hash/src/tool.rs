@@ -57,8 +57,9 @@ impl TdxImageHashTool {
             &parsed_quote,
             public_key_hash,
             attestation.quote_timestamp_millis,
+            attestation.attestation_nonce,
         )
-        .wrap_err("TDX quote report data does not bind the signer and quote timestamp")?;
+        .wrap_err("TDX quote report data does not bind the signer, timestamp, and nonce")?;
 
         let measurement_report = TdxMeasurementsReport {
             mr_td_hash: keccak256(parsed_quote.mrtd),
@@ -144,6 +145,7 @@ impl TdxImageHashTool {
             revocation: collateral.revocation,
             trusted_root_ca_hash: attestation_config.trusted_root_ca_hash,
             expected_public_key: attestation.signer_public_key.clone(),
+            attestation_nonce: attestation.attestation_nonce,
             quote_timestamp_millis: attestation.quote_timestamp_millis,
             verification_time: UNIX_EPOCH
                 .elapsed()
@@ -236,7 +238,10 @@ mod tests {
         assert_eq!(report.measurements.image_hash, quote.image_hash());
         assert_eq!(
             report.measurements.report_data_suffix,
-            TdxVerifier::timestamp_report_data_suffix(report.measurements.quote_timestamp_millis)
+            TdxVerifier::timestamp_report_data_suffix(
+                report.measurements.quote_timestamp_millis,
+                None
+            )
         );
     }
 }
