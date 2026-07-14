@@ -261,7 +261,7 @@ mod tests {
             Predeploys::BASE_TIME,
             AccountInfo {
                 code_hash: proxy_code.hash_slow(),
-                code: Some(proxy_code.clone()),
+                code: Some(proxy_code),
                 ..Default::default()
             },
         );
