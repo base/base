@@ -340,9 +340,22 @@ impl TokenCreateParams {
     }
 
     /// Validates stablecoin initialization fields.
-    pub const fn validate_stablecoin(_init: &B20StablecoinInit) -> Result<()> {
-        // Currency validation is delegated to `B20StablecoinStorage::initialize`, which rejects
-        // empty values with `MissingRequiredField` and non-A-Z values with `InvalidCurrency`.
+    ///
+    /// Returns `MissingRequiredField` for an empty `currency` and `InvalidCurrency` for
+    /// a value that contains any character outside `A-Z`. Validating here ensures that
+    /// currency errors are returned before the token existence check, so callers cannot
+    /// infer address occupancy from which error they receive.
+    pub fn validate_stablecoin(init: &B20StablecoinInit) -> Result<()> {
+        if init.currency.is_empty() {
+            return Err(BasePrecompileError::revert(IB20Factory::MissingRequiredField {
+                field: "currency".to_string(),
+            }));
+        }
+        if !init.currency.bytes().all(|b| b.is_ascii_uppercase()) {
+            return Err(BasePrecompileError::revert(IB20Factory::InvalidCurrency {
+                code: init.currency.clone(),
+            }));
+        }
         Ok(())
     }
 
@@ -759,6 +772,79 @@ mod tests {
         };
 
         StorageCtx::enter(&mut storage, |ctx| {
+            assert_output(
+                dispatch_factory_revert(ctx, call),
+                IB20Factory::InvalidCurrency { code: "usd".to_string() }.abi_encode(),
+            );
+        });
+    }
+
+    /// Regression test for BOP-393: currency validation must fire before the token existence
+    /// check so callers cannot infer address occupancy from which error they receive.
+    #[test]
+    fn test_invalid_currency_errors_take_precedence_over_token_already_exists() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
+        let caller = Address::repeat_byte(0x55);
+        let salt = B256::repeat_byte(0xF1);
+
+        // Create a valid stablecoin at (caller, salt).
+        StorageCtx::enter(&mut storage, |ctx| {
+            let valid_params = IB20Factory::B20StablecoinCreateParams {
+                version: B20Variant::Stablecoin.supported_version(),
+                name: "Stablecoin".to_string(),
+                symbol: "STB".to_string(),
+                initialAdmin: Address::repeat_byte(0xAB),
+                currency: "USD".to_string(),
+            };
+            let call = IB20Factory::createB20Call {
+                variant: IB20Factory::B20Variant::STABLECOIN,
+                salt,
+                params: valid_params.abi_encode().into(),
+                initCalls: Vec::new(),
+            };
+            let mut factory = B20FactoryStorage::new(ctx);
+            factory.create_b20(caller, call).unwrap();
+        });
+
+        // Retry with empty currency at the same (caller, salt): must return MissingRequiredField,
+        // not TokenAlreadyExists.
+        StorageCtx::enter(&mut storage, |ctx| {
+            let params = IB20Factory::B20StablecoinCreateParams {
+                version: B20Variant::Stablecoin.supported_version(),
+                name: "Stablecoin".to_string(),
+                symbol: "STB".to_string(),
+                initialAdmin: Address::repeat_byte(0xAB),
+                currency: "".to_string(),
+            };
+            let call = IB20Factory::createB20Call {
+                variant: IB20Factory::B20Variant::STABLECOIN,
+                salt,
+                params: params.abi_encode().into(),
+                initCalls: Vec::new(),
+            };
+            assert_output(
+                dispatch_factory_revert(ctx, call),
+                IB20Factory::MissingRequiredField { field: "currency".to_string() }.abi_encode(),
+            );
+        });
+
+        // Retry with non-uppercase currency at the same (caller, salt): must return
+        // InvalidCurrency, not TokenAlreadyExists.
+        StorageCtx::enter(&mut storage, |ctx| {
+            let params = IB20Factory::B20StablecoinCreateParams {
+                version: B20Variant::Stablecoin.supported_version(),
+                name: "Stablecoin".to_string(),
+                symbol: "STB".to_string(),
+                initialAdmin: Address::repeat_byte(0xAB),
+                currency: "usd".to_string(),
+            };
+            let call = IB20Factory::createB20Call {
+                variant: IB20Factory::B20Variant::STABLECOIN,
+                salt,
+                params: params.abi_encode().into(),
+                initCalls: Vec::new(),
+            };
             assert_output(
                 dispatch_factory_revert(ctx, call),
                 IB20Factory::InvalidCurrency { code: "usd".to_string() }.abi_encode(),
