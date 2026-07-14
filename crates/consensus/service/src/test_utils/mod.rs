@@ -21,4 +21,3 @@ mod driver;
 pub use driver::{Driver, DriverProgressSnapshot, NodeConfig, NodeSnapshot, ProgressTimeout};
 
 mod invariant_tests;
-pub use invariant_tests::INVARIANT_TEST_COUNT;

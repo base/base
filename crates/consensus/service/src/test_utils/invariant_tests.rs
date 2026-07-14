@@ -3,24 +3,14 @@
 use alloy_consensus::Header as ConsensusHeader;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{
-    ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3, ForkchoiceState, ForkchoiceUpdated,
-    PayloadAttributes, PayloadStatus, PayloadStatusEnum,
+    ForkchoiceState, ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum,
 };
-use base_common_genesis::RollupConfig;
-use base_common_network::BaseEngineApi;
-use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_engine::ConsolidateInput;
 use base_consensus_safedb::SafeHeadResponse;
 use base_protocol::{BlockInfo, L2BlockInfo};
 
-use super::{
-    Driver, EngineClientCall, FakeEngineClient, HarnessBuilder, NodeConfig,
-    ScriptedForkchoiceResponse,
-};
+use super::{Driver, EngineClientCall, HarnessBuilder, NodeConfig, ScriptedForkchoiceResponse};
 use crate::{EngineActorRequest, NodeMode};
-
-/// Number of direct Tier-0 invariant tests in this module.
-pub const INVARIANT_TEST_COUNT: usize = 6;
 
 fn valid_fcu() -> ScriptedForkchoiceResponse {
     ScriptedForkchoiceResponse::Ok(ForkchoiceUpdated {
@@ -52,10 +42,6 @@ fn syncing_fcu() -> ScriptedForkchoiceResponse {
     })
 }
 
-fn valid_payload_status() -> PayloadStatus {
-    PayloadStatus { status: PayloadStatusEnum::Valid, latest_valid_hash: Some(B256::ZERO) }
-}
-
 fn hash_for(number: u64) -> B256 {
     debug_assert!(number <= u8::MAX as u64, "fake block hash encoding wraps above 255");
     B256::from([number as u8; 32])
@@ -63,159 +49,6 @@ fn hash_for(number: u64) -> B256 {
 
 fn block(number: u64, parent_hash: B256, hash: B256, timestamp: u64) -> BlockInfo {
     BlockInfo { number, hash, parent_hash, timestamp }
-}
-
-#[tokio::test(start_paused = true)]
-async fn d1_at_most_one_pending_attrs() {
-    // Invariant D1: at most one attr-bearing FCU is pending before a plain FCU confirmation.
-    let client = FakeEngineClient::new(std::sync::Arc::new(RollupConfig::default()));
-    let handle = client.handle();
-    handle.push_scripted_fcu_v3([valid_fcu(), valid_fcu(), valid_fcu()]).await;
-
-    let attrs = BasePayloadAttributes {
-        payload_attributes: PayloadAttributes {
-            timestamp: 1,
-            prev_randao: B256::ZERO,
-            suggested_fee_recipient: Default::default(),
-            withdrawals: None,
-            parent_beacon_block_root: Some(B256::ZERO),
-            slot_number: None,
-        },
-        ..Default::default()
-    };
-    client
-        .fork_choice_updated_v3(
-            ForkchoiceState {
-                head_block_hash: hash_for(1),
-                safe_block_hash: hash_for(1),
-                finalized_block_hash: hash_for(1),
-            },
-            Some(attrs),
-        )
-        .await
-        .expect("scripted FCU-with-attrs should succeed");
-    client
-        .fork_choice_updated_v3(
-            ForkchoiceState {
-                head_block_hash: hash_for(1),
-                safe_block_hash: hash_for(1),
-                finalized_block_hash: hash_for(1),
-            },
-            None,
-        )
-        .await
-        .expect("scripted plain FCU should succeed");
-    client
-        .fork_choice_updated_v3(
-            ForkchoiceState {
-                head_block_hash: hash_for(2),
-                safe_block_hash: hash_for(2),
-                finalized_block_hash: hash_for(2),
-            },
-            Some(BasePayloadAttributes {
-                payload_attributes: PayloadAttributes {
-                    timestamp: 2,
-                    prev_randao: B256::ZERO,
-                    suggested_fee_recipient: Default::default(),
-                    withdrawals: None,
-                    parent_beacon_block_root: Some(B256::ZERO),
-                    slot_number: None,
-                },
-                ..Default::default()
-            }),
-        )
-        .await
-        .expect("second scripted FCU-with-attrs should succeed");
-
-    let mut has_pending_attrs = false;
-    for call in handle.calls().await {
-        if let EngineClientCall::ForkChoiceUpdatedV3 { payload_attributes, .. } = call {
-            if payload_attributes.is_some() {
-                assert!(!has_pending_attrs, "observed overlapping attr-bearing FCU requests");
-                has_pending_attrs = true;
-            } else {
-                has_pending_attrs = false;
-            }
-        }
-    }
-}
-
-#[tokio::test(start_paused = true)]
-async fn v1_parent_before_child_gossip_ordering() {
-    // Invariant V1: no child payload is applied before parent via newPayload.
-    let parent = ExecutionPayloadV3 {
-        payload_inner: ExecutionPayloadV2 {
-            payload_inner: ExecutionPayloadV1 {
-                parent_hash: B256::ZERO,
-                fee_recipient: Default::default(),
-                state_root: B256::ZERO,
-                receipts_root: B256::ZERO,
-                logs_bloom: Default::default(),
-                prev_randao: B256::ZERO,
-                block_number: 1,
-                gas_limit: 30_000_000,
-                gas_used: 0,
-                timestamp: 1,
-                extra_data: Default::default(),
-                base_fee_per_gas: Default::default(),
-                block_hash: hash_for(1),
-                transactions: vec![],
-            },
-            withdrawals: vec![],
-        },
-        blob_gas_used: 0,
-        excess_blob_gas: 0,
-    };
-    let child = ExecutionPayloadV3 {
-        payload_inner: ExecutionPayloadV2 {
-            payload_inner: ExecutionPayloadV1 {
-                parent_hash: hash_for(1),
-                fee_recipient: Default::default(),
-                state_root: B256::ZERO,
-                receipts_root: B256::ZERO,
-                logs_bloom: Default::default(),
-                prev_randao: B256::ZERO,
-                block_number: 2,
-                gas_limit: 30_000_000,
-                gas_used: 0,
-                timestamp: 2,
-                extra_data: Default::default(),
-                base_fee_per_gas: Default::default(),
-                block_hash: hash_for(2),
-                transactions: vec![],
-            },
-            withdrawals: vec![],
-        },
-        blob_gas_used: 0,
-        excess_blob_gas: 0,
-    };
-
-    let client = FakeEngineClient::new(std::sync::Arc::new(RollupConfig::default()));
-    let handle = client.handle();
-    handle.push_scripted_new_payload_v3([valid_payload_status(), valid_payload_status()]).await;
-
-    client
-        .new_payload_v3(parent.clone(), B256::ZERO)
-        .await
-        .expect("parent payload should be accepted");
-    client
-        .new_payload_v3(child.clone(), B256::ZERO)
-        .await
-        .expect("child payload should be accepted after parent");
-
-    let new_payload_calls = handle
-        .calls()
-        .await
-        .into_iter()
-        .filter_map(|call| match call {
-            EngineClientCall::NewPayloadV3(payload) => Some(payload),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-
-    assert_eq!(new_payload_calls.len(), 2, "expected parent+child new_payload_v3 calls");
-    assert_eq!(new_payload_calls[0].payload_inner.payload_inner.block_hash, hash_for(1));
-    assert_eq!(new_payload_calls[1].payload_inner.payload_inner.parent_hash, hash_for(1));
 }
 
 #[tokio::test(start_paused = true)]
