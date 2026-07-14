@@ -81,7 +81,7 @@ pub enum RlpxProbeError {
     Ecies(#[from] ECIESError),
     /// The devp2p Hello exchange failed.
     #[error("rlpx hello exchange failed: {0}")]
-    Rlpx(P2PStreamError),
+    Rlpx(#[source] P2PStreamError),
     /// The probe deadline elapsed at the given stage.
     #[error("probe timed out at {0} stage")]
     TimedOut(RlpxProbeStage),
@@ -141,6 +141,7 @@ pub trait ReachabilityProber: fmt::Debug + Send + Sync {
 #[derive(Clone)]
 pub struct RlpxProber {
     secret_key: SecretKey,
+    local_node_id: B512,
     timeout: Duration,
 }
 
@@ -153,16 +154,17 @@ impl fmt::Debug for RlpxProber {
 impl RlpxProber {
     /// Creates a prober with a fresh ephemeral node identity.
     pub fn ephemeral() -> Self {
-        Self {
-            secret_key: SecretKey::new(&mut secp256k1::rand::thread_rng()),
-            timeout: RLPX_PROBE_TIMEOUT,
-        }
+        let secret_key = SecretKey::new(&mut secp256k1::rand::thread_rng());
+        let public_key = PublicKey::from_secret_key(SECP256K1, &secret_key);
+        let local_node_id = B512::from_slice(&public_key.serialize_uncompressed()[1..]);
+
+        Self { secret_key, local_node_id, timeout: RLPX_PROBE_TIMEOUT }
     }
 
     #[cfg(test)]
     /// Creates an ephemeral prober with a test-specific timeout.
     pub fn ephemeral_with_timeout(timeout: Duration) -> Self {
-        Self { secret_key: SecretKey::new(&mut secp256k1::rand::thread_rng()), timeout }
+        Self { timeout, ..Self::ephemeral() }
     }
 
     /// Runs one probe attempt against the deadline and returns the remote
@@ -183,9 +185,7 @@ impl RlpxProber {
         .await
         .map_err(|_| RlpxProbeError::TimedOut(RlpxProbeStage::Ecies))??;
 
-        let public_key = PublicKey::from_secret_key(SECP256K1, &self.secret_key);
-        let local_node_id = B512::from_slice(&public_key.serialize_uncompressed()[1..]);
-        let hello = HelloMessage::builder(local_node_id)
+        let hello = HelloMessage::builder(self.local_node_id)
             .client_version(format!("base-telemetry/{}", env!("CARGO_PKG_VERSION")))
             .port(0)
             .build();
@@ -245,16 +245,17 @@ impl ReachabilityProber for RlpxProber {
 
 #[cfg(test)]
 mod tests {
-    use std::{future, time::Duration};
+    use std::{error::Error as _, future, time::Duration};
 
     use alloy_primitives::B512;
     use reth_ecies::stream::ECIESStream;
     use reth_eth_wire::{DisconnectReason, HelloMessage, UnauthedP2PStream};
     use secp256k1::{PublicKey, SECP256K1, SecretKey};
-    use tokio::{net::TcpListener, sync::oneshot};
+    use tokio::{net::TcpListener, sync::oneshot, time::Instant};
 
     use super::{
-        ReachabilityProber, RlpxProbeOutcome, RlpxProbeStage, RlpxProbeTarget, RlpxProber,
+        RLPX_PROBE_TIMEOUT, ReachabilityProber, RlpxProbeOutcome, RlpxProbeStage, RlpxProbeTarget,
+        RlpxProber,
     };
 
     const TEST_TIMEOUT: Duration = Duration::from_millis(100);
@@ -342,11 +343,17 @@ mod tests {
             drop(ecies);
         });
 
-        let result =
-            RlpxProber::ephemeral().probe(RlpxProbeTarget { address, node_id: remote_id }).await;
+        let error = RlpxProber::ephemeral()
+            .try_probe(
+                RlpxProbeTarget { address, node_id: remote_id },
+                Instant::now() + RLPX_PROBE_TIMEOUT,
+            )
+            .await
+            .unwrap_err();
 
-        assert_eq!(result.outcome, RlpxProbeOutcome::HandshakeFailed);
-        assert_eq!(result.stage, RlpxProbeStage::Rlpx);
+        assert_eq!(error.outcome(), RlpxProbeOutcome::HandshakeFailed);
+        assert_eq!(error.stage(), RlpxProbeStage::Rlpx);
+        assert!(error.source().is_some());
         server.await.unwrap();
     }
 
