@@ -45,11 +45,7 @@ impl StablecoinVersions {
     /// Returns the version active at `upgrade`, or `None` before the introduction
     /// fork (Beryl), where the stablecoin precompile is not installed at all.
     pub fn from_base_upgrade(upgrade: BaseUpgrade) -> Option<StablecoinVersion> {
-        if upgrade >= BaseUpgrade::Beryl {
-            Some(StablecoinVersion::V1)
-        } else {
-            None
-        }
+        if upgrade >= BaseUpgrade::Beryl { Some(StablecoinVersion::V1) } else { None }
     }
 }
 

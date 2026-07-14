@@ -177,9 +177,7 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
                 .into(),
                 C::totalSupply(_) => logic.total_supply(self)?.abi_encode().into(),
                 C::balanceOf(c) => logic.balance_of(self, c.account)?.abi_encode().into(),
-                C::allowance(c) => {
-                    logic.allowance(self, c.owner, c.spender)?.abi_encode().into()
-                }
+                C::allowance(c) => logic.allowance(self, c.owner, c.spender)?.abi_encode().into(),
                 C::supplyCap(_) => logic.supply_cap(self)?.abi_encode().into(),
                 C::nonces(c) => logic.nonce(self, c.owner)?.abi_encode().into(),
                 C::contractURI(_) => logic.contract_uri(self)?.abi_encode().into(),
@@ -199,9 +197,7 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
                 C::TRANSFER_EXECUTOR_POLICY(_) => {
                     B20PolicyType::TransferExecutor.id().abi_encode().into()
                 }
-                C::MINT_RECEIVER_POLICY(_) => {
-                    B20PolicyType::MintReceiver.id().abi_encode().into()
-                }
+                C::MINT_RECEIVER_POLICY(_) => B20PolicyType::MintReceiver.id().abi_encode().into(),
                 C::hasRole(c) => logic.has_role(self, c.role, c.account)?.abi_encode().into(),
                 C::getRoleAdmin(c) => logic.role_admin(self, c.role)?.abi_encode().into(),
                 C::pausedFeatures(_) => logic.paused_features(self)?.abi_encode().into(),

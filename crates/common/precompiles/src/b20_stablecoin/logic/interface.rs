@@ -1,6 +1,5 @@
 //! Append-only business-logic interface for the stablecoin B-20 precompile.
 
-
 use alloc::{string::String, vec::Vec};
 
 use alloy_primitives::{Address, B256, U256};

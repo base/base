@@ -11,9 +11,9 @@ use alloy_sol_types::{SolEvent, SolValue};
 use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
-    B20Guards, B20PausableFeature, B20PolicyType, B20StablecoinToken, B20TokenRole,
-    B20_MAX_SUPPLY_CAP, Eip712Domain, IB20, PermitArgs, Policy, StablecoinAccounting,
-    StablecoinLogic, Token,
+    B20_MAX_SUPPLY_CAP, B20Guards, B20PausableFeature, B20PolicyType, B20StablecoinToken,
+    B20TokenRole, Eip712Domain, IB20, PermitArgs, Policy, StablecoinAccounting, StablecoinLogic,
+    Token,
 };
 
 /// `keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)")`
@@ -592,14 +592,9 @@ impl<S: StablecoinAccounting, P: Policy> StablecoinLogic<S, P> for StablecoinV1 
         let name = token.accounting().name()?;
         let name_hash = keccak256(name.as_bytes());
         let version_hash = keccak256(VERSION);
-        let encoded = (
-            DOMAIN_TYPEHASH,
-            name_hash,
-            version_hash,
-            U256::from(chain_id),
-            token.token_address(),
-        )
-            .abi_encode();
+        let encoded =
+            (DOMAIN_TYPEHASH, name_hash, version_hash, U256::from(chain_id), token.token_address())
+                .abi_encode();
         Ok(keccak256(&encoded))
     }
 
@@ -641,7 +636,7 @@ mod tests {
     use k256::ecdsa::SigningKey;
 
     use crate::{
-        B20PolicyType, B20StablecoinToken, B20TokenRole, B20_MAX_SUPPLY_CAP, IB20, PermitArgs,
+        B20_MAX_SUPPLY_CAP, B20PolicyType, B20StablecoinToken, B20TokenRole, IB20, PermitArgs,
         Policy, StablecoinAccounting, StablecoinLogic, StablecoinV1, Token, TokenAccounting,
     };
 
@@ -913,8 +908,12 @@ mod tests {
     fn transfer_reverts_on_zero_receiver() {
         let mut tok = token();
         fund(&mut tok, ALICE, U256::from(10u64));
-        let err = LOGIC.transfer(&mut tok, ALICE, Address::ZERO, U256::from(1u64), true).unwrap_err();
-        assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO }));
+        let err =
+            LOGIC.transfer(&mut tok, ALICE, Address::ZERO, U256::from(1u64), true).unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO })
+        );
     }
 
     #[test]
@@ -1011,7 +1010,10 @@ mod tests {
     fn approve_reverts_on_zero_spender() {
         let mut tok = token();
         let err = LOGIC.approve(&mut tok, ALICE, Address::ZERO, U256::from(1u64)).unwrap_err();
-        assert_eq!(err, BasePrecompileError::revert(IB20::InvalidSpender { spender: Address::ZERO }));
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::InvalidSpender { spender: Address::ZERO })
+        );
     }
 
     // --- mint ---
@@ -1212,10 +1214,7 @@ mod tests {
         let mut tok = token();
         tok.policy_mut().existing.insert(7);
         LOGIC.update_policy(&mut tok, ADMIN, B20PolicyType::TransferSender.id(), 7, true).unwrap();
-        assert_eq!(
-            tok.accounting().policy_id(B20PolicyType::TransferSender.id()).unwrap(),
-            7
-        );
+        assert_eq!(tok.accounting().policy_id(B20PolicyType::TransferSender.id()).unwrap(), 7);
     }
 
     #[test]
@@ -1232,7 +1231,10 @@ mod tests {
         let tok = token();
         let scope = B256::repeat_byte(0xEE);
         let err = LOGIC.policy_id(&tok, scope).unwrap_err();
-        assert_eq!(err, BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyScope: scope }));
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IB20::UnsupportedPolicyType { policyScope: scope })
+        );
     }
 
     // --- permit ---

@@ -49,9 +49,11 @@ impl BerylLookup {
         O: PrecompileCallObserver,
     {
         match B20Variant::from_address(*address)? {
-            B20Variant::Stablecoin => Some(B20StablecoinPrecompile::create_precompile_with_observer(
-                *address, upgrade, observer,
-            )),
+            B20Variant::Stablecoin => {
+                Some(B20StablecoinPrecompile::create_precompile_with_observer(
+                    *address, upgrade, observer,
+                ))
+            }
             B20Variant::Asset => {
                 Some(B20AssetPrecompile::create_precompile_with_observer(*address, observer))
             }
