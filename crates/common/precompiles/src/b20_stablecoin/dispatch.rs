@@ -1,10 +1,10 @@
 //! ABI dispatch for the stablecoin B-20 variant.
 //!
 //! The dispatcher owns everything that is *not* version-specific: it decodes the
-//! `IB20`/`IB20Stablecoin` selector set, charges gas, gates the call by hardfork
-//! (via [`StablecoinVersions`]), and routes each mutating operation to the active
-//! version's [`StablecoinLogic`] implementation. Pure reads and constant getters
-//! are answered inline here, since their behavior does not vary across versions.
+//! (via [`StablecoinVersions`]), and routes each operation — including reads — to
+//! the active version's [`StablecoinLogic`] implementation. Only constant getters
+//! (role IDs, policy type IDs, `decimals`) that are invariant across all versions
+//! are answered inline.
 
 use alloc::string::ToString;
 
