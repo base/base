@@ -503,7 +503,7 @@ const fn transaction_event_type(event: TxEvent) -> Option<TransactionEventType> 
         TxEvent::Dropped => Some(TransactionEventType::Dropped),
         TxEvent::Replaced => Some(TransactionEventType::Replaced),
         // Inclusion is journaled by the builder, not the txpool tracer.
-        TxEvent::BlockInclusion | TxEvent::FlashblockInclusion => None,
+        TxEvent::BlockInclusion => None,
         TxEvent::PendingToQueued => Some(TransactionEventType::PendingToQueued),
         TxEvent::QueuedToPending => Some(TransactionEventType::QueuedToPending),
         TxEvent::Overflowed => Some(TransactionEventType::Overflowed),
@@ -552,7 +552,6 @@ mod tests {
             Some(TransactionEventType::Replaced)
         );
         assert_eq!(transaction_event_type(TxEvent::BlockInclusion), None);
-        assert_eq!(transaction_event_type(TxEvent::FlashblockInclusion), None);
         assert_eq!(
             transaction_event_type(TxEvent::PendingToQueued),
             Some(TransactionEventType::PendingToQueued)

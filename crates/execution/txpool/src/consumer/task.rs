@@ -63,6 +63,7 @@ where
                     return;
                 }
 
+                let iterator_index = txs_read;
                 txs_read += 1;
                 let hash = *tx.hash();
 
@@ -74,7 +75,7 @@ where
                 if self.sender.send(tx).is_ok() {
                     self.recently_sent.mark_sent(hash);
                     txs_sent += 1;
-                    self.emit_builder_consumed_event(hash, txs_read);
+                    self.emit_builder_consumed_event(hash, iterator_index);
                 }
             }
 

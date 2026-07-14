@@ -24,9 +24,6 @@ pub enum TxEvent {
     /// Transaction included on chain.
     #[display("block_inclusion")]
     BlockInclusion,
-    /// Transaction included in a pending flashblock.
-    #[display("flashblock_inclusion")]
-    FlashblockInclusion,
     /// Transaction moved from pending -> queued.
     #[display("pending_to_queued")]
     PendingToQueued,
