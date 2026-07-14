@@ -6302,7 +6302,28 @@ dependencies = [
 name = "base-snark-e2e"
 version = "0.0.0"
 dependencies = [
- "base-zk-service",
+ "alloy-primitives",
+ "alloy-provider 2.0.5",
+ "alloy-rpc-types 2.0.5",
+ "anyhow",
+ "base-common-network",
+ "base-l1-head",
+ "base-proof-succinct-proof-utils",
+ "base-prover-service-client",
+ "base-prover-service-protocol",
+ "bincode 2.0.1",
+ "sp1-sdk",
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.23",
+ "uuid",
+]
+
+[[package]]
+name = "base-snark-e2e-bin"
+version = "0.0.0"
+dependencies = [
+ "base-snark-e2e",
  "tokio",
  "tracing",
  "tracing-subscriber 0.3.23",
@@ -6661,7 +6682,6 @@ dependencies = [
  "tower 0.5.3",
  "tower-http",
  "tracing",
- "tracing-subscriber 0.3.23",
  "uuid",
 ]
 

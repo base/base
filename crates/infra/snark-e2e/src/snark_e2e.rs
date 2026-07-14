@@ -1,28 +1,28 @@
 //! Shared SNARK Groth16 end-to-end test logic.
 //!
 //! Used by both the integration test (`tests/snark_groth16_e2e.rs`) and the
-//! standalone binary (`bin/prover/zk/src/bin/snark_e2e.rs`) that runs as a K8s
-//! `CronJob`.
+//! standalone binary (`bin/snark-e2e`) that runs as a K8s `CronJob`.
+//!
+//! Talks to the JSON-RPC prover-service requester API (`prover_proveBlockRange`
+//! / `prover_getProof`), not the legacy zk gRPC service.
 
+use alloy_primitives::Address;
 use alloy_provider::{Identity, Provider, ProviderBuilder};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use anyhow::{Context, Result, bail};
 use base_common_network::Base;
-use base_zk_client::{
-    GetProofRequest, ProveBlockRequest, get_proof_response,
-    prover_service_client::ProverServiceClient,
+use base_l1_head::L1HeadCalculator;
+use base_prover_service_client::{ProofRequesterClient, ProverServiceClientConfig};
+use base_prover_service_protocol::{
+    GetProofRequest, ProofRequest, ProofRequestKind, ProofResult, ProofStatus,
+    ProveBlockRangeRequest, SnarkGroth16ProofRequest, ZkProofRequest, ZkVm,
 };
 use sp1_sdk::{
     SP1ProofWithPublicValues, SP1VerifyingKey,
     blocking::{CpuProver, MockProver, Prover as BlockingProver},
 };
-use tonic::transport::Channel;
 use tracing::{info, warn};
-
-use crate::L1HeadCalculator;
-
-const PROOF_TYPE_SNARK_GROTH16: i32 = 4;
-const RECEIPT_TYPE_SNARK: i32 = 2; // ReceiptType::Snark
+use uuid::Uuid;
 
 const POLL_INTERVAL_SECS: u64 = 30;
 const POLL_TIMEOUT_SECS: u64 = 14400; // 4 hours
@@ -44,15 +44,13 @@ const MAX_STEP_BACKS: u64 = 300;
 pub struct SnarkE2e;
 
 impl SnarkE2e {
-    async fn connect() -> Result<ProverServiceClient<Channel>> {
-        let addr = std::env::var("PROVER_GRPC_ADDR")
-            .unwrap_or_else(|_| "http://localhost:9090".to_string());
+    fn connect() -> Result<ProofRequesterClient> {
+        let addr = std::env::var("PROVER_RPC_ADDR")
+            .unwrap_or_else(|_| "http://localhost:9000".to_string());
 
         info!(addr = %addr, "connecting to prover-service");
-        let client = ProverServiceClient::connect(addr)
-            .await
-            .context("failed to connect to prover-service")?;
-        Ok(client)
+        let config = ProverServiceClientConfig::new(&addr);
+        ProofRequesterClient::connect(&config).context("failed to connect to prover-service")
     }
 
     /// Verify the SNARK proof using the appropriate prover for the backend.
@@ -101,13 +99,24 @@ impl SnarkE2e {
         Ok(())
     }
 
+    /// Extract SNARK receipt bytes from a successful getProof response.
+    fn snark_receipt_bytes(result: ProofResult) -> Result<Vec<u8>> {
+        match result {
+            ProofResult::SnarkGroth16(r) => Ok(r.proof.proof.to_vec()),
+            ProofResult::Compressed(_) => {
+                bail!("expected SnarkGroth16 proof result, got Compressed")
+            }
+            ProofResult::Tee(_) => bail!("expected SnarkGroth16 proof result, got Tee"),
+        }
+    }
+
     /// Run the full SNARK Groth16 E2E test pipeline:
     ///
     /// 1. Query the L2 node for the safe head block (guaranteed derived from
     ///    L1)
-    /// 2. Submit a `ProveBlock` request with `proof_type=4` (SNARK Groth16)
+    /// 2. Submit a `prover_proveBlockRange` request for `SnarkGroth16`
     ///    - `l1_head` is omitted so the prover service calculates it via `SafeDB`
-    /// 3. Poll `GetProof` with `receipt_type=SNARK` until completion or timeout
+    /// 3. Poll `prover_getProof` until completion or timeout
     /// 4. Deserialize the SNARK receipt
     /// 5. Compute the aggregation verifying key
     /// 6. Verify the SNARK proof (`MockProver` or `CpuProver` based on BACKEND)
@@ -172,8 +181,8 @@ impl SnarkE2e {
             let l1_origin = L1HeadCalculator::get_l1_origin_num(&op_provider, target_block)
                 .await
                 .with_context(|| {
-                format!("failed to fetch L1 origin for target L2 block {target_block}")
-            })?;
+                    format!("failed to fetch L1 origin for target L2 block {target_block}")
+                })?;
 
             if l1_origin + SEQUENCE_WINDOW <= finalized_l1 {
                 info!(
@@ -210,30 +219,40 @@ impl SnarkE2e {
             safe_head = target_block - 1;
         };
 
-        // -- 2. Submit ProveBlock with proof_type=4 (SNARK Groth16) ---------------
+        // -- 2. Submit proveBlockRange (SnarkGroth16) -----------------------------
         //
         // l1_head is omitted -- the prover service calculates it server-side
         // using SafeDB (optimism_safeHeadAtL1Block) with a sequence_window
         // fallback, which is more robust than the client-side l1_origin + 50
         // heuristic.
-        let mut client = Self::connect().await?;
+        let client = Self::connect()?;
+        let session_id = Uuid::new_v4().to_string();
         let prove_resp = client
-            .prove_block(ProveBlockRequest {
-                start_block_number: safe_head,
-                number_of_blocks_to_prove: 1,
-                sequence_window: Some(SEQUENCE_WINDOW),
-                proof_type: PROOF_TYPE_SNARK_GROTH16,
-                session_id: None,
-                prover_address: Some("0x0000000000000000000000000000000000000000".to_string()),
-                l1_head: None,
-                intermediate_root_interval: None,
+            .prove_block_range(ProveBlockRangeRequest {
+                proof: ProofRequest {
+                    session_id: session_id.clone(),
+                    request: ProofRequestKind::SnarkGroth16(SnarkGroth16ProofRequest {
+                        proof: ZkProofRequest {
+                            start_block_number: safe_head,
+                            number_of_blocks_to_prove: 1,
+                            sequence_window: Some(SEQUENCE_WINDOW),
+                            l1_head: None,
+                            intermediate_root_interval: None,
+                            zk_vm: ZkVm::Sp1,
+                        },
+                        prover_address: Address::ZERO,
+                    }),
+                },
             })
             .await
             .with_context(|| {
-                format!("failed to submit ProveBlock for start_block={safe_head}, target_block={target_block}")
+                format!(
+                    "failed to submit proveBlockRange for start_block={safe_head}, \
+                     target_block={target_block}"
+                )
             })?;
 
-        let session_id = prove_resp.into_inner().session_id;
+        let session_id = prove_resp.session_id;
         info!(
             session_id = %session_id,
             start_block = safe_head,
@@ -242,10 +261,10 @@ impl SnarkE2e {
             finalized_l1,
             sequence_window = SEQUENCE_WINDOW,
             step_back_attempts = attempts,
-            "ProveBlock submitted"
+            "proveBlockRange submitted"
         );
 
-        // -- 3. Poll GetProof until SUCCEEDED or timeout --------------------------
+        // -- 3. Poll getProof until Succeeded or timeout --------------------------
         let start = std::time::Instant::now();
         let snark_receipt_bytes = loop {
             if start.elapsed().as_secs() > POLL_TIMEOUT_SECS {
@@ -258,40 +277,48 @@ impl SnarkE2e {
             tokio::time::sleep(std::time::Duration::from_secs(POLL_INTERVAL_SECS)).await;
 
             let resp = client
-                .get_proof(GetProofRequest {
-                    session_id: session_id.clone(),
-                    receipt_type: Some(RECEIPT_TYPE_SNARK),
-                })
+                .get_proof(GetProofRequest { session_id: session_id.clone() })
                 .await
-                .with_context(|| format!("failed to poll GetProof for session_id={session_id}"))?;
+                .with_context(|| format!("failed to poll getProof for session_id={session_id}"))?;
 
-            let inner = resp.into_inner();
-            let status = get_proof_response::Status::try_from(inner.status)
-                .unwrap_or(get_proof_response::Status::Unspecified);
-            let error_message = inner.error_message.as_deref().unwrap_or("");
+            let error_message = resp.error_message.as_deref().unwrap_or("");
+            let receipt_bytes = resp.result.as_ref().map(|r| match r {
+                ProofResult::SnarkGroth16(r) => r.proof.proof.len(),
+                ProofResult::Compressed(r) => r.proof.len(),
+                ProofResult::Tee(_) => 0,
+            });
 
             info!(
                 session_id = %session_id,
                 start_block = safe_head,
                 target_block,
                 elapsed_secs = start.elapsed().as_secs(),
-                status = ?status,
-                receipt_bytes = inner.receipt.len(),
+                status = ?resp.status,
+                receipt_bytes,
                 error_message,
                 "poll status"
             );
 
-            match status {
-                get_proof_response::Status::Succeeded => {
-                    if inner.receipt.is_empty() {
+            match resp.status {
+                ProofStatus::Succeeded => {
+                    let result = resp.result.with_context(|| {
+                        format!(
+                            "SNARK result missing on Succeeded status: \
+                             session_id={session_id}, start_block={safe_head}, \
+                             target_block={target_block}"
+                        )
+                    })?;
+                    let bytes = Self::snark_receipt_bytes(result)?;
+                    if bytes.is_empty() {
                         bail!(
-                            "SNARK receipt is empty on SUCCEEDED status: \
-                             session_id={session_id}, start_block={safe_head}, target_block={target_block}"
+                            "SNARK receipt is empty on Succeeded status: \
+                             session_id={session_id}, start_block={safe_head}, \
+                             target_block={target_block}"
                         );
                     }
-                    break inner.receipt;
+                    break bytes;
                 }
-                get_proof_response::Status::Failed => {
+                ProofStatus::Failed => {
                     let prover_error = if error_message.is_empty() {
                         "no error_message returned by prover"
                     } else {
@@ -304,10 +331,7 @@ impl SnarkE2e {
                         start.elapsed().as_secs()
                     );
                 }
-                get_proof_response::Status::Created
-                | get_proof_response::Status::Pending
-                | get_proof_response::Status::Running
-                | get_proof_response::Status::Unspecified => {
+                ProofStatus::Queued | ProofStatus::Running => {
                     // Still in progress, continue polling
                 }
             }

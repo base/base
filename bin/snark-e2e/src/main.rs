@@ -8,7 +8,7 @@ async fn main() {
 
     tracing::info!("starting SNARK Groth16 E2E test");
 
-    if let Err(e) = base_zk_service::SnarkE2e::run().await {
+    if let Err(e) = base_snark_e2e::SnarkE2e::run().await {
         tracing::error!(error = %e, error_debug = ?e, "SNARK E2E test failed");
         std::process::exit(1);
     }

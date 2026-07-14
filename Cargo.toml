@@ -14,7 +14,6 @@ members = [
   "bin/*",
   "bin/prover/nitro-host",
   "bin/prover/nitro-enclave",
-  "bin/prover/snark-e2e",
   "bin/prover/zk",
   "bin/prover/zk-host",
   "bin/prover/service",
@@ -69,7 +68,6 @@ default-members = [
   "bin/prover/nitro-host",
   "bin/prover/nitro-enclave",
   "bin/prover/zk",
-  "bin/prover/snark-e2e",
   "bin/prover/service",
   "bin/prover-registrar",
 ]
@@ -227,6 +225,7 @@ base-execution-eip8130-rpc-node = { path = "crates/execution/eip8130-rpc-node" }
 basectl-cli = { path = "crates/infra/basectl" }
 base-sidecrush = { path = "crates/infra/sidecrush" }
 audit-archiver-lib = { path = "crates/infra/audit" }
+base-snark-e2e = { path = "crates/infra/snark-e2e" }
 base-load-tests = { path = "crates/infra/load-tests" }
 ingress-rpc-lib = { path = "crates/infra/ingress-rpc" }
 base-snapshotter = { path = "crates/infra/snapshotter" }
