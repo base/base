@@ -58,9 +58,7 @@ pub trait Attributes: PayloadAttributes {
     fn payload_job_id(&self) -> PayloadId;
 
     /// Returns the millisecond component of the payload timestamp.
-    fn timestamp_millis_part(&self) -> Option<u16> {
-        None
-    }
+    fn timestamp_millis_part(&self) -> Option<u16>;
 
     /// Whether to use the transaction pool for the payload.
     fn no_tx_pool(&self) -> bool;

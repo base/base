@@ -248,9 +248,15 @@ where
                 .ok_or(InvalidPayloadAttributesError::InvalidTimestamp);
         }
 
-        attributes
+        let timestamp_millis_part = attributes
             .timestamp_millis_part()
             .ok_or(InvalidPayloadAttributesError::InvalidTimestamp)?;
+        if !matches!(timestamp_millis_part, 0 | 200 | 400 | 600 | 800) {
+            return Err(InvalidPayloadAttributesError::InvalidTimestamp);
+        }
+
+        // The parent header does not contain its millisecond component. Exact 200ms progression is
+        // enforced against committed BaseTime state during post-execution validation.
         (timestamp >= header.timestamp())
             .then_some(())
             .ok_or(InvalidPayloadAttributesError::InvalidTimestamp)
@@ -737,6 +743,16 @@ mod tests {
 
         assert!(matches!(
             validate_against_parent(&validator, 42, None, 42),
+            Err(InvalidPayloadAttributesError::InvalidTimestamp)
+        ));
+    }
+
+    #[test]
+    fn test_payload_attributes_post_zombie_reject_invalid_millis_part() {
+        let validator = zombie_validator();
+
+        assert!(matches!(
+            validate_against_parent(&validator, 42, Some(999), 42),
             Err(InvalidPayloadAttributesError::InvalidTimestamp)
         ));
     }
