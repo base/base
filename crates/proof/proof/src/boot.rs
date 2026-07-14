@@ -268,6 +268,10 @@ impl BootInfo {
             });
         }
 
+        // The activation registry is installed at Beryl. The admin address is sourced from the
+        // trusted binary keyed by the committed chain ID, never from the node-served rollup config,
+        // so a Beryl-enabled chain without a built-in admin address is rejected rather than trusting
+        // an admin from unverified config.
         if activation_admin_address.is_none() && rollup_config.upgrades.base.beryl.is_some() {
             return Err(OracleProviderError::MissingActivationAdminAddress { chain_id });
         }

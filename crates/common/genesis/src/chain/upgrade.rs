@@ -126,6 +126,12 @@ impl BaseUpgrade {
     /// These are the upgrades addressable by the L1 upgrade-signal contract and stored in the
     /// genesis [`UpgradeConfig`]. Excludes block-activated [`Bedrock`](Self::Bedrock) and the
     /// [`Zombie`](Self::Zombie) gate, which is never signaled or configured.
+    ///
+    /// Order is load-bearing: `map_schedule` and `ScheduleId::from_upgrades` attribute onchain
+    /// schedule entries to hardforks *by position*, and the `ProtocolVersions` contract keys
+    /// upgrades by ascending append-only registration id with names kept offchain. This order MUST
+    /// match the contract's registration order — reordering silently misattributes every
+    /// activation timestamp. Only ever append.
     pub const CONTRACT_VARIANTS: [Self; 13] = [
         Self::Regolith,
         Self::Canyon,

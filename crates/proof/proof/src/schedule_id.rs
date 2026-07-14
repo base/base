@@ -1,4 +1,4 @@
-use alloy_primitives::{B256, keccak256};
+use alloy_primitives::{B256, U256, keccak256};
 use base_common_genesis::{RollupConfig, UpgradeConfig};
 
 /// Computes the locally derived schedule ID for the effective hardfork activation schedule.
@@ -27,15 +27,9 @@ impl ScheduleId {
     fn next_link(previous: B256, index: u64, timestamp: u64) -> B256 {
         let mut buf = [0u8; 96];
         buf[..32].copy_from_slice(previous.as_slice());
-        buf[32..64].copy_from_slice(&Self::encode_u256(index));
-        buf[64..].copy_from_slice(&Self::encode_u256(timestamp));
+        buf[32..64].copy_from_slice(&U256::from(index).to_be_bytes::<32>());
+        buf[64..].copy_from_slice(&U256::from(timestamp).to_be_bytes::<32>());
         keccak256(buf)
-    }
-
-    fn encode_u256(value: u64) -> [u8; 32] {
-        let mut encoded = [0u8; 32];
-        encoded[24..].copy_from_slice(&value.to_be_bytes());
-        encoded
     }
 }
 
