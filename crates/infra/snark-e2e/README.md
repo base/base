@@ -17,7 +17,6 @@ claims SNARK jobs.
 | `L1_NODE_ADDRESS` | Yes | L1 execution RPC (finalized check) |
 | `BASE_CONSENSUS_ADDRESS` | Yes | Op-node / consensus RPC (L1 origin) |
 | `PROVER_RPC_ADDR` | No (default `http://localhost:9000`) | Prover-service requester JSON-RPC |
-| `BACKEND` | No | Set to `mock` for `MockProver` verification |
 
 ## Usage
 

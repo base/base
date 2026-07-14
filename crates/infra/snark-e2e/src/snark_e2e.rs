@@ -15,11 +15,11 @@ use base_l1_head::L1HeadCalculator;
 use base_prover_service_client::{ProofRequesterClient, ProverServiceClientConfig};
 use base_prover_service_protocol::{
     GetProofRequest, ProofRequest, ProofRequestKind, ProofResult, ProofStatus,
-    ProveBlockRangeRequest, SnarkGroth16ProofRequest, ZkProofRequest, ZkVm,
+    ProveBlockRangeRequest, SnarkGroth16ProofRequest, ZkBackend, ZkProofRequest, ZkVm,
 };
 use sp1_sdk::{
     SP1ProofWithPublicValues, SP1VerifyingKey,
-    blocking::{CpuProver, MockProver, Prover as BlockingProver},
+    blocking::{CpuProver, Prover as BlockingProver},
 };
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -53,48 +53,26 @@ impl SnarkE2e {
         ProofRequesterClient::connect(&config).context("failed to connect to prover-service")
     }
 
-    /// Verify the SNARK proof using the appropriate prover for the backend.
-    ///
-    /// - Mock backend: uses `MockProver::verify()` (checks public input hashes
-    ///   only)
-    /// - Cluster backend: uses `CpuProver::verify()` (full cryptographic
-    ///   verification)
+    /// Verify the SNARK proof with `CpuProver` (full cryptographic verification).
     async fn verify_snark_proof(
         snark_proof: SP1ProofWithPublicValues,
         agg_vk: SP1VerifyingKey,
-        is_mock: bool,
     ) -> Result<()> {
-        if is_mock {
-            info!("verifying SNARK Groth16 proof with MockProver (BACKEND=mock)");
-            let t = std::time::Instant::now();
-            tokio::task::spawn_blocking(move || {
-                let prover = MockProver::new();
-                prover.verify(&snark_proof, &agg_vk, None).map_err(|e| {
-                    anyhow::anyhow!("SNARK Groth16 mock proof verification failed: {e}")
-                })
-            })
-            .await??;
-            info!(
-                elapsed_secs = t.elapsed().as_secs_f64(),
-                "SNARK Groth16 proof verified (MockProver)"
-            );
-        } else {
-            info!("verifying SNARK Groth16 proof with CpuProver (BACKEND=cluster)");
-            let t = std::time::Instant::now();
-            tokio::task::spawn_blocking(move || {
-                info!("creating CpuProver");
-                let prover = CpuProver::new();
-                info!("CpuProver created, running verify");
-                prover
-                    .verify(&snark_proof, &agg_vk, None)
-                    .map_err(|e| anyhow::anyhow!("SNARK Groth16 proof verification failed: {e}"))
-            })
-            .await??;
-            info!(
-                elapsed_secs = t.elapsed().as_secs_f64(),
-                "SNARK Groth16 proof verified (CpuProver)"
-            );
-        }
+        info!("verifying SNARK Groth16 proof with CpuProver");
+        let t = std::time::Instant::now();
+        tokio::task::spawn_blocking(move || {
+            info!("creating CpuProver");
+            let prover = CpuProver::new();
+            info!("CpuProver created, running verify");
+            prover
+                .verify(&snark_proof, &agg_vk, None)
+                .map_err(|e| anyhow::anyhow!("SNARK Groth16 proof verification failed: {e}"))
+        })
+        .await??;
+        info!(
+            elapsed_secs = t.elapsed().as_secs_f64(),
+            "SNARK Groth16 proof verified (CpuProver)"
+        );
 
         Ok(())
     }
@@ -119,7 +97,7 @@ impl SnarkE2e {
     /// 3. Poll `prover_getProof` until completion or timeout
     /// 4. Deserialize the SNARK receipt
     /// 5. Compute the aggregation verifying key
-    /// 6. Verify the SNARK proof (`MockProver` or `CpuProver` based on BACKEND)
+    /// 6. Verify the SNARK proof with `CpuProver`
     pub async fn run() -> Result<()> {
         let l2_rpc = std::env::var("L2_NODE_ADDRESS").context("L2_NODE_ADDRESS must be set")?;
 
@@ -239,6 +217,7 @@ impl SnarkE2e {
                             l1_head: None,
                             intermediate_root_interval: None,
                             zk_vm: ZkVm::Sp1,
+                            zk_backend: ZkBackend::Cluster,
                         },
                         prover_address: Address::ZERO,
                     }),
@@ -370,9 +349,7 @@ impl SnarkE2e {
         info!(elapsed_secs = t.elapsed().as_secs_f64(), "aggregation verifying key computed");
 
         // -- 6. Verify SNARK proof ------------------------------------------------
-        let is_mock = std::env::var("BACKEND").map(|v| v == "mock").unwrap_or(false);
-
-        Self::verify_snark_proof(snark_proof, agg_vk, is_mock)
+        Self::verify_snark_proof(snark_proof, agg_vk)
             .await
             .with_context(|| format!("failed to verify SNARK proof for session_id={session_id}"))?;
 
