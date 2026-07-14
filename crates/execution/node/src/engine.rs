@@ -5,7 +5,6 @@ use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_engine::{ExecutionPayloadEnvelopeV2, ExecutionPayloadV1};
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseBlock, Predeploys};
-use base_common_evm::BaseTime;
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
     ExecutionData,
@@ -121,27 +120,6 @@ where
     #[inline]
     pub fn chain_spec(&self) -> &ChainSpec {
         self.inner.chain_spec()
-    }
-
-    /// Validates a payload attribute's full millisecond timestamp against its parent.
-    pub fn validate_timestamp_millis_progression(
-        timestamp: u64,
-        timestamp_millis_part: u16,
-        parent_timestamp: u64,
-        parent_timestamp_millis_part: u16,
-        parent_is_post_activation: bool,
-    ) -> Result<(), InvalidPayloadAttributesError> {
-        let timestamp_ms = u128::from(timestamp) * 1_000 + u128::from(timestamp_millis_part);
-        let parent_timestamp_ms =
-            u128::from(parent_timestamp) * 1_000 + u128::from(parent_timestamp_millis_part);
-
-        if timestamp_ms <= parent_timestamp_ms
-            || (parent_is_post_activation && timestamp_ms != parent_timestamp_ms + 200)
-        {
-            return Err(InvalidPayloadAttributesError::InvalidTimestamp);
-        }
-
-        Ok(())
     }
 
     /// Verifies upgrade-gated post-execution rules against the supplied parent state.
@@ -270,32 +248,12 @@ where
                 .ok_or(InvalidPayloadAttributesError::InvalidTimestamp);
         }
 
-        let timestamp_millis_part = attributes
+        attributes
             .timestamp_millis_part()
             .ok_or(InvalidPayloadAttributesError::InvalidTimestamp)?;
-        let parent_is_post_activation =
-            self.chain_spec().is_zombie_active_at_timestamp(header.timestamp());
-        let parent_timestamp_millis_part = if parent_is_post_activation {
-            self.provider
-                .state_by_block_hash(header.hash_slow())
-                .map_err(|err| InvalidPayloadAttributesError::InvalidParams(Box::new(err)))?
-                .storage(Predeploys::BASE_TIME, BaseTime::TIMESTAMP_MILLIS_PART_SLOT.into())
-                .map_err(|err| InvalidPayloadAttributesError::InvalidParams(Box::new(err)))?
-                .map(u16::try_from)
-                .transpose()
-                .map_err(|_| InvalidPayloadAttributesError::InvalidTimestamp)?
-                .unwrap_or_default()
-        } else {
-            0
-        };
-
-        Self::validate_timestamp_millis_progression(
-            timestamp,
-            timestamp_millis_part,
-            header.timestamp(),
-            parent_timestamp_millis_part,
-            parent_is_post_activation,
-        )
+        (timestamp >= header.timestamp())
+            .then_some(())
+            .ok_or(InvalidPayloadAttributesError::InvalidTimestamp)
     }
 }
 
@@ -464,17 +422,14 @@ pub fn validate_withdrawals_presence(
 #[cfg(test)]
 mod tests {
     use alloy_consensus::Header;
-    use alloy_primitives::{Address, B64, B256, U256, b64};
+    use alloy_primitives::{Address, B64, B256, b64};
     use alloy_rpc_types_engine::PayloadAttributes;
     use base_common_chains::{BaseUpgrade, ChainConfig};
-    use base_common_consensus::{BasePrimitives, BaseTxEnvelope};
+    use base_common_consensus::BaseTxEnvelope;
     use base_common_rpc_types_engine::BasePayloadAttributes;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use reth_ethereum_forks::ForkCondition;
-    use reth_provider::{
-        noop::NoopProvider,
-        test_utils::{ExtendedAccount, MockEthProvider},
-    };
+    use reth_provider::noop::NoopProvider;
     use reth_trie_common::KeccakKeyHasher;
 
     use super::*;
@@ -738,92 +693,51 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[test]
-    fn test_timestamp_millis_progression_from_pre_zombie_parent_is_strictly_increasing() {
-        assert!(
-            BaseEngineValidator::<NoopProvider, BaseTxEnvelope, BaseChainSpec>::
-                validate_timestamp_millis_progression(42, 0, 41, 0, false)
-                .is_ok()
-        );
-        assert!(
-            BaseEngineValidator::<NoopProvider, BaseTxEnvelope, BaseChainSpec>::
-                validate_timestamp_millis_progression(42, 0, 42, 0, false)
-                .is_err()
-        );
+    fn validate_against_parent(
+        validator: &BaseEngineValidator<NoopProvider, BaseTxEnvelope, BaseChainSpec>,
+        timestamp: u64,
+        timestamp_millis_part: Option<u16>,
+        parent_timestamp: u64,
+    ) -> Result<(), InvalidPayloadAttributesError> {
+        let mut attributes = get_attributes(None, None, timestamp);
+        attributes.timestamp_millis_part = timestamp_millis_part;
+        let header = Header { timestamp: parent_timestamp, ..Default::default() };
+
+        <engine::BaseEngineValidator<_, _, _> as PayloadValidator<BaseEngineTypes>>::
+            validate_payload_attributes_against_header(validator, &attributes, &header)
     }
 
     #[test]
-    fn test_timestamp_millis_progression_between_post_zombie_blocks_is_exactly_200ms() {
-        assert!(
-            BaseEngineValidator::<NoopProvider, BaseTxEnvelope, BaseChainSpec>::
-                validate_timestamp_millis_progression(42, 400, 42, 200, true)
-                .is_ok()
-        );
-        assert!(
-            BaseEngineValidator::<NoopProvider, BaseTxEnvelope, BaseChainSpec>::
-                validate_timestamp_millis_progression(42, 600, 42, 200, true)
-                .is_err()
-        );
-        assert!(
-            BaseEngineValidator::<NoopProvider, BaseTxEnvelope, BaseChainSpec>::
-                validate_timestamp_millis_progression(43, 0, 42, 800, true)
-                .is_ok()
-        );
+    fn test_payload_attributes_post_zombie_accept_same_second() {
+        let validator = zombie_validator();
+
+        assert!(validate_against_parent(&validator, 42, Some(200), 42).is_ok());
     }
 
     #[test]
-    fn test_payload_attributes_validate_against_parent_base_time_state() {
-        let chain_spec = BaseChainSpecBuilder::base_mainnet()
-            .ecotone_activated()
-            .with_fork(BaseUpgrade::Zombie, ForkCondition::Timestamp(42))
-            .build();
-        let provider = MockEthProvider::<BasePrimitives>::new().with_chain_spec(chain_spec.clone());
-        provider.add_account(
-            Predeploys::BASE_TIME,
-            ExtendedAccount::new(0, U256::ZERO)
-                .extend_storage([(BaseTime::TIMESTAMP_MILLIS_PART_SLOT.into(), U256::from(200))]),
-        );
-        let validator = BaseEngineValidator::<_, BaseTxEnvelope, _>::new::<KeccakKeyHasher>(
-            Arc::new(chain_spec),
-            provider,
-        );
-        let mut attributes = get_attributes(None, None, 42);
-        attributes.timestamp_millis_part = Some(400);
-        let header = Header { timestamp: 42, ..Default::default() };
+    fn test_payload_attributes_post_zombie_accept_next_second() {
+        let validator = zombie_validator();
 
-        let result = <engine::BaseEngineValidator<_, _, _> as PayloadValidator<
-            BaseEngineTypes,
-        >>::validate_payload_attributes_against_header(&validator, &attributes, &header);
-
-        assert!(result.is_ok());
+        assert!(validate_against_parent(&validator, 43, Some(0), 42).is_ok());
     }
 
     #[test]
-    fn test_payload_attributes_reject_oversized_parent_base_time_state() {
-        let chain_spec = BaseChainSpecBuilder::base_mainnet()
-            .ecotone_activated()
-            .with_fork(BaseUpgrade::Zombie, ForkCondition::Timestamp(42))
-            .build();
-        let provider = MockEthProvider::<BasePrimitives>::new().with_chain_spec(chain_spec.clone());
-        provider.add_account(
-            Predeploys::BASE_TIME,
-            ExtendedAccount::new(0, U256::ZERO).extend_storage([(
-                BaseTime::TIMESTAMP_MILLIS_PART_SLOT.into(),
-                U256::from(u16::MAX) + U256::from(1),
-            )]),
-        );
-        let validator = BaseEngineValidator::<_, BaseTxEnvelope, _>::new::<KeccakKeyHasher>(
-            Arc::new(chain_spec),
-            provider,
-        );
-        let mut attributes = get_attributes(None, None, 42);
-        attributes.timestamp_millis_part = Some(400);
-        let header = Header { timestamp: 42, ..Default::default() };
+    fn test_payload_attributes_post_zombie_reject_backwards_seconds() {
+        let validator = zombie_validator();
 
-        let result = <engine::BaseEngineValidator<_, _, _> as PayloadValidator<
-            BaseEngineTypes,
-        >>::validate_payload_attributes_against_header(&validator, &attributes, &header);
+        assert!(matches!(
+            validate_against_parent(&validator, 42, Some(800), 43),
+            Err(InvalidPayloadAttributesError::InvalidTimestamp)
+        ));
+    }
 
-        assert!(matches!(result, Err(InvalidPayloadAttributesError::InvalidTimestamp)));
+    #[test]
+    fn test_payload_attributes_post_zombie_require_millis_part() {
+        let validator = zombie_validator();
+
+        assert!(matches!(
+            validate_against_parent(&validator, 42, None, 42),
+            Err(InvalidPayloadAttributesError::InvalidTimestamp)
+        ));
     }
 }
