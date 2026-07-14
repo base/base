@@ -674,10 +674,10 @@ mod tests {
                 AccountChange::Create(CreateEntry {
                     user_salt: B256::repeat_byte(0x01),
                     code: bytes!("60006000fd"),
-                    initial_actors: vec![InitialActor {
-                        actor_id: B256::repeat_byte(0x02),
-                        authenticator: address!("00000000000000000000000000000000000000cc"),
-                    }],
+                    initial_actors: vec![InitialActor::owner(
+                        B256::repeat_byte(0x02),
+                        address!("00000000000000000000000000000000000000cc"),
+                    )],
                 }),
                 AccountChange::ConfigChange(ConfigChange {
                     chain_id: EIP8130_CHAIN_ID,

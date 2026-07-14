@@ -534,10 +534,7 @@ mod tests {
         // since initial actors are unrestricted owners).
         let code = vec![0x60u8; 4];
         let initial_actors = (0u8..3)
-            .map(|i| InitialActor {
-                actor_id: alloy_primitives::B256::repeat_byte(i + 1),
-                authenticator: K1,
-            })
+            .map(|i| InitialActor::owner(alloy_primitives::B256::repeat_byte(i + 1), K1))
             .collect();
         let tx = TxEip8130 {
             account_changes: vec![AccountChange::Create(CreateEntry {

@@ -1,4 +1,4 @@
-//! Account-configuration change authorization — the `SCOPE_CONFIG` path of the
+//! Account-configuration change authorization — the admin-only path of the
 //! EIP-8130 validation flow.
 
 use alloy_primitives::{Address, B256, Keccak256, b256, keccak256};
@@ -13,10 +13,10 @@ use crate::{
 /// struct, identical to the one hashed by `AccountConfiguration` (the trailing
 /// `ActorChange(...)` is the referenced struct's type, per the EIP-712 encoding
 /// rules):
-/// `keccak256("SignedActorChanges(address account,uint64 chainId,uint64 sequence,ActorChange[] actorChanges)ActorChange(uint8 changeType,bytes32 actorId,bytes data)")`.
+/// `keccak256("SignedActorChanges(address account,uint256 chainId,uint64 sequence,ActorChange[] actorChanges)ActorChange(uint8 changeType,bytes32 actorId,bytes data)")`.
 /// Pinned to its preimage by `typehashes_match_their_preimages`.
 const SIGNED_ACTOR_CHANGES_TYPEHASH: B256 =
-    b256!("3528344db25dddc3f16dbdc7302aacb555665c0af1beedc07d5fe28e8512bb3f");
+    b256!("57a5948eb1eec1ba33786cd9cf803674888bd5b4d3588347ba1bef0bd8c5ba53");
 /// Precomputed `keccak256` typehash for the per-change `ActorChange` leaves:
 /// `keccak256("ActorChange(uint8 changeType,bytes32 actorId,bytes data)")`.
 /// Pinned to its preimage by `typehashes_match_their_preimages`.
@@ -29,7 +29,7 @@ const ACTOR_CHANGE_TYPEHASH: B256 =
 /// Native mirror of `AccountConfiguration.applySignedActorChanges`'s
 /// authorization tail: it reconstructs the `SignedActorChanges` digest, runs the
 /// entry's `auth` through the stateful [`ActorAuthorizer`], and enforces the
-/// `SCOPE_CONFIG` gate, the account lock, the chain binding, and the sequence
+/// admin (`scope == 0`) gate, the account lock, the chain binding, and the sequence
 /// channel. It does **not** apply the actor changes (decode `data`, mutate
 /// `actor_config`) — that is the consuming validator's responsibility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,7 +77,7 @@ impl ConfigChangeAuthorizer {
     /// order.
     ///
     /// Performs every check `authorize` does (lock, chain binding, sequence,
-    /// digest reconstruction, actor authorization, `SCOPE_CONFIG` gate) except
+    /// digest reconstruction, actor authorization, admin gate) except
     /// that the sequence is compared against `expected_sequence`.
     pub fn authorize_at_sequence(
         storage: &AccountConfigurationStorage<'_>,
@@ -107,7 +107,7 @@ impl ConfigChangeAuthorizer {
             });
         }
 
-        // Reconstruct the digest, authorize the entry's auth, and require CONFIG scope.
+        // Reconstruct the digest, authorize the entry's auth, and require admin scope.
         let digest = Self::signed_actor_changes_digest(account, change);
         let resolved =
             ActorAuthorizer::authenticate_actor(storage, account, digest, &change.auth, now)?;
@@ -139,7 +139,7 @@ impl ConfigChangeAuthorizer {
         }
         let actor_changes_hash = packed.finalize();
 
-        // abi.encode(bytes32, address, uint64, uint64, bytes32): five right-aligned words.
+        // abi.encode(bytes32, address, uint256, uint64, bytes32): five words.
         let mut outer = [0u8; 160];
         outer[..32].copy_from_slice(SIGNED_ACTOR_CHANGES_TYPEHASH.as_slice());
         outer[44..64].copy_from_slice(account.as_slice());
@@ -168,7 +168,7 @@ mod tests {
         assert_eq!(
             SIGNED_ACTOR_CHANGES_TYPEHASH,
             keccak256(
-                b"SignedActorChanges(address account,uint64 chainId,uint64 sequence,ActorChange[] actorChanges)ActorChange(uint8 changeType,bytes32 actorId,bytes data)"
+                b"SignedActorChanges(address account,uint256 chainId,uint64 sequence,ActorChange[] actorChanges)ActorChange(uint8 changeType,bytes32 actorId,bytes data)"
             )
         );
         assert_eq!(
@@ -208,19 +208,19 @@ mod tests {
     }
 
     /// Canonical Solidity packing of `ActorConfig`.
-    fn pack(authenticator: Address, scope: u8, expiry: u64, policy_type: u8) -> U256 {
+    fn pack(authenticator: Address, scope: u8, expiry: u64) -> U256 {
         U256::from_be_slice(authenticator.as_slice())
             | (U256::from(scope) << 160)
             | (U256::from(expiry) << 168)
-            | (U256::from(policy_type) << 216)
     }
 
-    /// Canonical Solidity packing of `AccountState`.
-    fn pack_state(multichain: u64, local: u64, unlocks_at: u64) -> U256 {
+    /// Canonical Solidity packing of `AccountState` (sequences + lock fields).
+    fn pack_state(multichain: u64, local: u64, flags: u8, lock_union: u64) -> U256 {
         let mut b = [0u8; 32];
         b[24..32].copy_from_slice(&multichain.to_be_bytes());
         b[16..24].copy_from_slice(&local.to_be_bytes());
-        b[11..16].copy_from_slice(&unlocks_at.to_be_bytes()[3..]);
+        b[15] = flags;
+        b[10..15].copy_from_slice(&lock_union.to_be_bytes()[3..]);
         U256::from_be_bytes(b)
     }
 
@@ -268,12 +268,12 @@ mod tests {
         with_storage(|acc| {
             let resolved =
                 ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW).unwrap();
-            assert!(resolved.is_unrestricted());
+            assert!(resolved.is_admin());
         });
     }
 
     #[test]
-    fn configured_config_actor_authorizes() {
+    fn configured_admin_actor_authorizes() {
         let k = key(0x22);
         let account = address!("0x00000000000000000000000000000000000000aa");
         let id = actor_id(addr(&k));
@@ -282,11 +282,11 @@ mod tests {
             acc.actor_config
                 .at_mut(&id)
                 .at_mut(&account)
-                .write(pack(K1, Eip8130Constants::SCOPE_CONFIG, 0, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_UNRESTRICTED, 0))
                 .unwrap();
             let resolved =
                 ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW).unwrap();
-            assert_eq!(resolved.scope, Eip8130Constants::SCOPE_CONFIG);
+            assert!(resolved.is_admin());
         });
     }
 
@@ -301,7 +301,7 @@ mod tests {
             acc.actor_config
                 .at_mut(&id)
                 .at_mut(&account)
-                .write(pack(K1, Eip8130Constants::SCOPE_SENDER, 0, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_SENDER, 0))
                 .unwrap();
             assert_eq!(
                 ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW),
@@ -319,8 +319,11 @@ mod tests {
         let account = addr(&k);
         let change = signed_change(account, K1, &k, 0, 0, vec![revoke(0x01)]);
         with_storage(|acc| {
-            // Locked until after `now`.
-            acc.account_state.at_mut(&account).write(pack_state(0, 0, NOW + 1)).unwrap();
+            // Hard-locked (FLAG_LOCKED, no unlock initiated): frozen regardless of `now`.
+            acc.account_state
+                .at_mut(&account)
+                .write(pack_state(0, 0, Eip8130Constants::FLAG_LOCKED, 0))
+                .unwrap();
             assert_eq!(
                 ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW),
                 Err(TxAuthError::AccountLocked),
@@ -362,10 +365,10 @@ mod tests {
         // Local channel (chain_id == LOCAL); the entry must match local_sequence.
         let change = signed_change(account, K1, &k, LOCAL, 3, vec![revoke(0x01)]);
         with_storage(|acc| {
-            acc.account_state.at_mut(&account).write(pack_state(0, 3, 0)).unwrap();
+            acc.account_state.at_mut(&account).write(pack_state(0, 3, 0, 0)).unwrap();
             let resolved =
                 ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW).unwrap();
-            assert!(resolved.is_unrestricted());
+            assert!(resolved.is_admin());
         });
     }
 

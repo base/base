@@ -104,10 +104,10 @@ pub struct Eip8130Outcome {
     /// The authenticated sender actor's id (published to the transaction context
     /// and used as the policy-gate subject).
     pub sender_actor_id: B256,
-    /// The sender actor's policy type; `0` means ungated (no policy gate).
-    pub policy_type: u8,
+    /// Whether the authenticated sender actor has `SCOPE_POLICY`.
+    pub policy_gated: bool,
     /// The policy gate target (`policy_manager(sender, actorId)`) resolved once
-    /// at authorization; every `call.to` must equal this when `policy_type != 0`.
+    /// at authorization; every `call.to` must equal this when policy-gated.
     pub policy_target: Address,
     /// The transaction's `gas_limit` (the sender-signed budget for sender
     /// authentication, intrinsic costs, account changes, and call execution).
@@ -689,8 +689,32 @@ impl Eip8130Executor {
             let acc = AccountConfigurationStorage::new(sctx);
             let sender_actor_id = acting_actor_hint
                 .unwrap_or_else(|| AccountConfigurationStorage::self_actor_id(sender));
-            let (policy_type, policy_target, _) =
-                acc.get_policy(sender, sender_actor_id).map_err(BaseTransactionError::eip8130)?;
+            // Resolve the acting scope with a single `actor_config` read (plus one
+            // `account_state` read only for the inline self-key path), then derive
+            // both the policy gate flag and target from it. Reading the target via
+            // `get_policy_manager` only when gated avoids `get_policy`'s extra
+            // `actor_config`/`account_state`/`policy_commitment` SLOADs on this
+            // estimation hot path (the commitment is unused here).
+            let actor_config = acc
+                .get_actor_config(sender, sender_actor_id)
+                .map_err(BaseTransactionError::eip8130)?;
+            let actor_scope = if !actor_config.authenticator.is_zero() {
+                actor_config.scope
+            } else if sender_actor_id == AccountConfigurationStorage::self_actor_id(sender) {
+                // Inline secp256k1 self key: scope lives in `account_state`, and a
+                // revoked default EOA resolves as ungated (mirrors `get_policy`).
+                let state = acc.get_account_state(sender).map_err(BaseTransactionError::eip8130)?;
+                if state.default_eoa_revoked() { 0 } else { state.default_eoa_scope }
+            } else {
+                0
+            };
+            let policy_gated = actor_scope & Eip8130Constants::SCOPE_POLICY != 0;
+            let policy_target = if policy_gated {
+                acc.get_policy_manager(sender, sender_actor_id)
+                    .map_err(BaseTransactionError::eip8130)?
+            } else {
+                Address::ZERO
+            };
 
             // 4. Auto-delegate a code-less sender to the default account. Unlike
             //    the verifying path this is unconditional on a code-less sender: a
@@ -718,7 +742,7 @@ impl Eip8130Executor {
                 sender,
                 payer,
                 sender_actor_id,
-                policy_type,
+                policy_gated,
                 policy_target,
                 gas_limit,
                 sender_intrinsic,
@@ -785,6 +809,16 @@ impl Eip8130Executor {
             let sender_actor = applied_tx.actors.sender.resolved;
             let sender = applied_tx.actors.sender.account;
             let payer = applied_tx.actors.payer.as_ref().map_or(sender, |p| p.account);
+            // Defense-in-depth: `authorize_and_apply` -> `verify_sender` already
+            // gates `allows_sequenced_nonce(nonce_key)` on both the configured and
+            // EOA sender paths, so this is redundant on the current call graph. It
+            // is kept as a local guard so this execution entry point stays sound if
+            // the sender-resolution path is ever refactored to skip that check.
+            if !sender_actor.allows_sequenced_nonce(nonce_key) {
+                return Err(BaseTransactionError::eip8130(
+                    "sender actor scope does not authorize sequenced nonces",
+                ));
+            }
 
             // 2. Install the deferred account-*code* effects (created-account
             //    bytecode, delegation indicator) the apply step surfaced.
@@ -879,7 +913,7 @@ impl Eip8130Executor {
                 sender,
                 payer,
                 sender_actor_id: sender_actor.actor_id,
-                policy_type: sender_actor.policy_type,
+                policy_gated: sender_actor.is_policy_gated(),
                 policy_target: sender_actor.policy_target,
                 gas_limit,
                 sender_intrinsic,
@@ -991,7 +1025,7 @@ impl Eip8130Executor {
                 // `call.to` must equal the resolved policy target. A mismatched
                 // call is not dispatched and fails the phase deterministically
                 // with `ActorPolicyViolation`, charging no call gas for it.
-                if outcome.policy_type != 0 && call.to != outcome.policy_target {
+                if outcome.policy_gated && call.to != outcome.policy_target {
                     phase_reverted = true;
                     phase_output =
                         Self::actor_policy_violation_data(outcome.sender_actor_id, call.to);
@@ -1915,7 +1949,6 @@ mod tests {
             address authenticator;
             uint8 scope;
             uint48 expiry;
-            uint8 policyType;
         }
     }
 
@@ -1925,14 +1958,12 @@ mod tests {
         authenticator: Address,
         scope: u8,
         expiry: u64,
-        policy_type: u8,
         policy_data: &[u8],
     ) -> Bytes {
         let abi = ActorConfigAbi {
             authenticator,
             scope,
             expiry: alloy_primitives::aliases::U48::from(expiry),
-            policyType: policy_type,
         };
         Bytes::from((abi, Bytes::copy_from_slice(policy_data)).abi_encode_params())
     }
@@ -1967,9 +1998,8 @@ mod tests {
                 actor_id: session_actor,
                 data: authorize_change_data(
                     Eip8130Constants::K1_AUTHENTICATOR,
-                    Eip8130Constants::SCOPE_SENDER,
+                    Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_POLICY,
                     0,
-                    1,
                     &policy_data,
                 ),
             }],
@@ -2409,11 +2439,10 @@ mod tests {
     }
 
     /// Canonical Solidity packing of an `ActorConfig` word.
-    fn pack_actor(authenticator: Address, scope: u8, expiry: u64, policy_type: u8) -> U256 {
+    fn pack_actor(authenticator: Address, scope: u8, expiry: u64) -> U256 {
         U256::from_be_slice(authenticator.as_slice())
             | (U256::from(scope) << 160)
             | (U256::from(expiry) << 168)
-            | (U256::from(policy_type) << 216)
     }
 
     /// Signs `tx` for a configured sender as `K1_AUTHENTICATOR || sig`.
@@ -2425,7 +2454,7 @@ mod tests {
         Eip8130Signed::new(tx, Bytes::from(auth), Bytes::new())
     }
 
-    /// Seeds a gated (`policy_type = 1`) `SENDER | PAYER` k1 actor for `account`,
+    /// Seeds a policy-gated `SENDER | PAYER` k1 actor for `account`,
     /// authorized to the `signer` key and gated to `target`, then commits it.
     fn seed_gated_sender(
         evm: &mut BaseEvm<InMemoryDB, NoOpInspector, PrecompilesMap>,
@@ -2446,9 +2475,11 @@ mod tests {
                     .at_mut(&account)
                     .write(pack_actor(
                         Eip8130Constants::K1_AUTHENTICATOR,
-                        Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_PAYER,
+                        Eip8130Constants::SCOPE_SENDER
+                            | Eip8130Constants::SCOPE_SELF_PAYER
+                            | Eip8130Constants::SCOPE_NONCE
+                            | Eip8130Constants::SCOPE_POLICY,
                         0,
-                        1,
                     ))
                     .unwrap();
                 acc.policy_manager.at_mut(&actor_id).at_mut(&account).write(target).unwrap();
@@ -2533,7 +2564,7 @@ mod tests {
             B256::from_slice(&id)
         };
         let initial_actors =
-            vec![InitialActor { actor_id, authenticator: Eip8130Constants::K1_AUTHENTICATOR }];
+            vec![InitialActor::owner(actor_id, Eip8130Constants::K1_AUTHENTICATOR)];
         let create = CreateEntry {
             user_salt: B256::ZERO,
             code: code.clone(),

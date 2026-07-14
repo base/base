@@ -43,17 +43,30 @@ impl Eip8130Constants {
     /// and replay protection relies on `expiry` (which must be non-zero).
     pub const NONCE_KEY_MAX: U256 = U256::MAX;
 
-    /// Actor scope bit: ERC-1271 `verifySignature()` context.
-    pub const SCOPE_SIGNATURE: u8 = 0x01;
+    /// Actor scope bit: ungated `sender_auth` validation context; may originate
+    /// transactions to any `call.to`.
+    pub const SCOPE_SENDER: u8 = 0x01;
 
-    /// Actor scope bit: `sender_auth` validation context.
-    pub const SCOPE_SENDER: u8 = 0x02;
+    /// Actor scope bit: policy-gated sender context; may originate transactions
+    /// only to the actor's `policy_manager`.
+    pub const SCOPE_POLICY: u8 = 0x02;
 
-    /// Actor scope bit: `payer_auth` validation context.
-    pub const SCOPE_PAYER: u8 = 0x04;
+    /// Actor scope bit: nonce authorization context; permits a restricted actor
+    /// to use sequenced `nonce_key`s (otherwise nonceless-only).
+    pub const SCOPE_NONCE: u8 = 0x04;
 
-    /// Actor scope bit: config change `auth` context.
-    pub const SCOPE_CONFIG: u8 = 0x08;
+    /// Actor scope bit: self-pay gas; authorizes paying the account's own gas
+    /// when `payer == sender`.
+    pub const SCOPE_SELF_PAYER: u8 = 0x08;
+
+    /// Actor scope bit: sponsor gas; authorizes acting as `payer_auth` for a
+    /// different sender (`payer != sender`).
+    pub const SCOPE_SPONSOR_PAYER: u8 = 0x10;
+
+    // ERC-1271 signing rides on operational authority (admin `scope == 0x00`, or
+    // a SENDER actor without POLICY); it is not its own scope bit, so there is no
+    // `SCOPE_SIGNATURE`. Bits `0x20`, `0x40`, and `0x80` are spare, reserved for
+    // future pure grants.
 
     /// Unrestricted scope value (actor is valid in all contexts).
     pub const SCOPE_UNRESTRICTED: u8 = 0x00;
@@ -107,6 +120,25 @@ impl Eip8130Constants {
     /// or revoking the self-actor; once set it is never cleared (monotonic), so
     /// an explicit self-actor entry always implies the flag is set.
     pub const DEFAULT_EOA_REVOKED: u8 = 0x01;
+
+    /// `AccountState.flags` bit (spec `LOCKED`): when set, actor configuration is
+    /// frozen — every config change and delegation is rejected on both the native
+    /// and EVM paths. The only permitted operation is `applySignedLockChanges`'s
+    /// unlock op. Set/cleared exclusively through the EVM `applySignedLockChanges`
+    /// entry point.
+    pub const FLAG_LOCKED: u8 = 0x02;
+
+    /// `AccountState.flags` bit (spec `UNLOCK_INITIATED`): selects how the packed
+    /// `lock_union` field is interpreted. While clear, `lock_union` holds the
+    /// configured `unlock_delay` (seconds, `uint16` range); while set, it holds
+    /// `unlocks_at` (the timestamp at which the pending unlock takes effect). Only
+    /// meaningful when [`Self::FLAG_LOCKED`] is set.
+    pub const FLAG_UNLOCK_INITIATED: u8 = 0x04;
+
+    /// Exact byte length of a policy-bearing actor's `policyData`:
+    /// `manager (20) || commitment (32)`. Required when `scope & SCOPE_POLICY`
+    /// is set; `policyData` MUST be empty otherwise.
+    pub const POLICY_DATA_LEN: usize = 52;
 
     /// Maximum number of `ConfigChange` entries the mempool accepts in a single
     /// transaction. The spec marks this as a node policy ("Nodes SHOULD enforce
@@ -187,10 +219,11 @@ mod tests {
     #[test]
     fn scope_bits_are_orthogonal() {
         let bits = [
-            Eip8130Constants::SCOPE_SIGNATURE,
             Eip8130Constants::SCOPE_SENDER,
-            Eip8130Constants::SCOPE_PAYER,
-            Eip8130Constants::SCOPE_CONFIG,
+            Eip8130Constants::SCOPE_POLICY,
+            Eip8130Constants::SCOPE_NONCE,
+            Eip8130Constants::SCOPE_SELF_PAYER,
+            Eip8130Constants::SCOPE_SPONSOR_PAYER,
         ];
         let mut acc: u8 = 0;
         for b in bits {

@@ -26,8 +26,9 @@ pub struct AuthorizedActor {
 pub struct TxActors {
     /// The transaction sender, scope-gated for [`Operation::Sender`].
     pub sender: AuthorizedActor,
-    /// The gas payer, scope-gated for [`Operation::Payer`], or `None` when the
-    /// sender pays (`tx.payer == None`).
+    /// The gas payer, scope-gated for [`Operation::SelfPayer`] (explicit
+    /// self-pay) or [`Operation::SponsorPayer`] (distinct sponsor), or `None`
+    /// when the sender implicitly pays (`tx.payer == None`).
     pub payer: Option<AuthorizedActor>,
 }
 
@@ -69,9 +70,11 @@ impl ActorTxVerifier {
 
         let payer = match tx.payer {
             None => {
-                if !Operation::Payer.is_granted(&sender.resolved) {
+                // Implicit self-pay: the sender covers its own gas, so its actor
+                // must be granted SELF_PAYER (or be admin).
+                if !Operation::SelfPayer.is_granted(&sender.resolved) {
                     return Err(TxAuthError::Scope {
-                        operation: Operation::Payer,
+                        operation: Operation::SelfPayer,
                         scope: sender.resolved.scope,
                     });
                 }
@@ -80,12 +83,19 @@ impl ActorTxVerifier {
             Some(account) => {
                 // The payer digest binds to the resolved sender account.
                 let hash = tx.payer_signature_hash(sender.account);
+                // `payer == sender` is explicit self-pay (SELF_PAYER); a distinct
+                // payer is sponsorship (SPONSOR_PAYER).
+                let operation = if account == sender.account {
+                    Operation::SelfPayer
+                } else {
+                    Operation::SponsorPayer
+                };
                 let resolved = Self::authorize_scoped(
                     storage,
                     account,
                     hash,
                     signed.payer_auth(),
-                    Operation::Payer,
+                    operation,
                     now,
                 )?;
                 Some(AuthorizedActor { account, resolved })
@@ -113,6 +123,12 @@ impl ActorTxVerifier {
                 Operation::Sender,
                 now,
             )?;
+            if !resolved.allows_sequenced_nonce(signed.tx().nonce_key) {
+                return Err(TxAuthError::Scope {
+                    operation: Operation::Sender,
+                    scope: resolved.scope,
+                });
+            }
             return Ok(AuthorizedActor { account, resolved });
         }
 
@@ -135,6 +151,9 @@ impl ActorTxVerifier {
 
         let resolved = ActorAuthorizer::authorize_k1(storage, account, recovered, now)?;
         if !Operation::Sender.is_granted(&resolved) {
+            return Err(TxAuthError::Scope { operation: Operation::Sender, scope: resolved.scope });
+        }
+        if !resolved.allows_sequenced_nonce(signed.tx().nonce_key) {
             return Err(TxAuthError::Scope { operation: Operation::Sender, scope: resolved.scope });
         }
         Ok(AuthorizedActor { account, resolved })
@@ -202,11 +221,10 @@ mod tests {
     }
 
     /// Canonical Solidity packing of `ActorConfig`.
-    fn pack(authenticator: Address, scope: u8, expiry: u64, policy_type: u8) -> U256 {
+    fn pack(authenticator: Address, scope: u8, expiry: u64) -> U256 {
         U256::from_be_slice(authenticator.as_slice())
             | (U256::from(scope) << 160)
             | (U256::from(expiry) << 168)
-            | (U256::from(policy_type) << 216)
     }
 
     fn base_tx(sender: Option<Address>, payer: Option<Address>) -> TxEip8130 {
@@ -241,7 +259,7 @@ mod tests {
         with_storage(|acc| {
             let actors = ActorTxVerifier::verify(&signed, acc, NOW).unwrap();
             assert_eq!(actors.sender.account, account);
-            assert!(actors.sender.resolved.is_unrestricted());
+            assert!(actors.sender.resolved.is_admin());
             assert!(actors.payer.is_none());
         });
     }
@@ -260,8 +278,9 @@ mod tests {
                 .at_mut(&account)
                 .write(pack(
                     K1,
-                    Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_PAYER,
-                    0,
+                    Eip8130Constants::SCOPE_SENDER
+                        | Eip8130Constants::SCOPE_SELF_PAYER
+                        | Eip8130Constants::SCOPE_NONCE,
                     0,
                 ))
                 .unwrap();
@@ -269,7 +288,9 @@ mod tests {
             assert_eq!(actors.sender.account, account);
             assert_eq!(
                 actors.sender.resolved.scope,
-                Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_PAYER
+                Eip8130Constants::SCOPE_SENDER
+                    | Eip8130Constants::SCOPE_SELF_PAYER
+                    | Eip8130Constants::SCOPE_NONCE
             );
             assert!(actors.payer.is_none());
         });
@@ -287,13 +308,13 @@ mod tests {
             acc.actor_config
                 .at_mut(&id)
                 .at_mut(&account)
-                .write(pack(K1, Eip8130Constants::SCOPE_SENDER, 0, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_NONCE, 0))
                 .unwrap();
             assert_eq!(
                 ActorTxVerifier::verify(&signed, acc, NOW),
                 Err(TxAuthError::Scope {
-                    operation: Operation::Payer,
-                    scope: Eip8130Constants::SCOPE_SENDER,
+                    operation: Operation::SelfPayer,
+                    scope: Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_NONCE,
                 }),
             );
         });
@@ -312,13 +333,13 @@ mod tests {
             acc.actor_config
                 .at_mut(&id)
                 .at_mut(&account)
-                .write(pack(K1, Eip8130Constants::SCOPE_PAYER, 0, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_SELF_PAYER, 0))
                 .unwrap();
             assert_eq!(
                 ActorTxVerifier::verify(&signed, acc, NOW),
                 Err(TxAuthError::Scope {
                     operation: Operation::Sender,
-                    scope: Eip8130Constants::SCOPE_PAYER,
+                    scope: Eip8130Constants::SCOPE_SELF_PAYER,
                 }),
             );
         });
@@ -345,17 +366,17 @@ mod tests {
             acc.actor_config
                 .at_mut(&sid)
                 .at_mut(&sender_account)
-                .write(pack(K1, Eip8130Constants::SCOPE_SENDER, 0, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_NONCE, 0))
                 .unwrap();
             acc.actor_config
                 .at_mut(&pid)
                 .at_mut(&payer_account)
-                .write(pack(K1, Eip8130Constants::SCOPE_PAYER, 0, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_SPONSOR_PAYER, 0))
                 .unwrap();
             let actors = ActorTxVerifier::verify(&signed, acc, NOW).unwrap();
             let payer = actors.payer.expect("payer present");
             assert_eq!(payer.account, payer_account);
-            assert_eq!(payer.resolved.scope, Eip8130Constants::SCOPE_PAYER);
+            assert_eq!(payer.resolved.scope, Eip8130Constants::SCOPE_SPONSOR_PAYER);
         });
     }
 
@@ -384,14 +405,14 @@ mod tests {
             acc.actor_config
                 .at_mut(&pid)
                 .at_mut(&payer_account)
-                .write(pack(K1, Eip8130Constants::SCOPE_PAYER, 0, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_SPONSOR_PAYER, 0))
                 .unwrap();
             let actors = ActorTxVerifier::verify(&signed, acc, NOW).unwrap();
             assert_eq!(actors.sender.account, sender_account);
-            assert!(actors.sender.resolved.is_unrestricted());
+            assert!(actors.sender.resolved.is_admin());
             let payer = actors.payer.expect("payer present");
             assert_eq!(payer.account, payer_account);
-            assert_eq!(payer.resolved.scope, Eip8130Constants::SCOPE_PAYER);
+            assert_eq!(payer.resolved.scope, Eip8130Constants::SCOPE_SPONSOR_PAYER);
         });
     }
 
@@ -418,7 +439,7 @@ mod tests {
             acc.actor_config
                 .at_mut(&pid)
                 .at_mut(&payer_account)
-                .write(pack(K1, Eip8130Constants::SCOPE_PAYER, 0, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_SPONSOR_PAYER, 0))
                 .unwrap();
             // The payer signs the wrong digest, so it recovers a different actor
             // that is not bound on the payer account.
@@ -450,18 +471,18 @@ mod tests {
             acc.actor_config
                 .at_mut(&sid)
                 .at_mut(&sender_account)
-                .write(pack(K1, Eip8130Constants::SCOPE_SENDER, 0, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_SENDER | Eip8130Constants::SCOPE_NONCE, 0))
                 .unwrap();
-            // Payer actor bound but lacking SCOPE_PAYER.
+            // Payer actor bound but lacking SCOPE_SPONSOR_PAYER.
             acc.actor_config
                 .at_mut(&pid)
                 .at_mut(&payer_account)
-                .write(pack(K1, Eip8130Constants::SCOPE_SENDER, 0, 0))
+                .write(pack(K1, Eip8130Constants::SCOPE_SENDER, 0))
                 .unwrap();
             assert_eq!(
                 ActorTxVerifier::verify(&signed, acc, NOW),
                 Err(TxAuthError::Scope {
-                    operation: Operation::Payer,
+                    operation: Operation::SponsorPayer,
                     scope: Eip8130Constants::SCOPE_SENDER,
                 }),
             );
