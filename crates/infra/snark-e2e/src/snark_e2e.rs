@@ -69,10 +69,7 @@ impl SnarkE2e {
                 .map_err(|e| anyhow::anyhow!("SNARK Groth16 proof verification failed: {e}"))
         })
         .await??;
-        info!(
-            elapsed_secs = t.elapsed().as_secs_f64(),
-            "SNARK Groth16 proof verified (CpuProver)"
-        );
+        info!(elapsed_secs = t.elapsed().as_secs_f64(), "SNARK Groth16 proof verified (CpuProver)");
 
         Ok(())
     }
