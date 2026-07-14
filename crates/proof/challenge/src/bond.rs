@@ -23,6 +23,8 @@ enum BondAction {
     WithdrawIfReady { game_address: Address, bond_recipient: Address },
 }
 
+const FINALITY_METRIC_TIMEOUT: Duration = Duration::from_secs(5);
+
 impl BondAction {
     const fn game_address(self) -> Address {
         match self {
@@ -115,11 +117,15 @@ impl<C: Clock> BondManager<C> {
         ChallengerMetrics::bond_discovery_scans_total("full").increment(1);
         let actions = self.bond_actions(start_index..game_count, verifier_client).await;
         let action_count = actions.len();
+        let mut finality_metric_records = Vec::new();
 
         for action in actions {
-            self.process_action(action, verifier_client, submitter).await;
+            if let Some(record) = self.process_action(action, verifier_client, submitter).await {
+                finality_metric_records.push(record);
+            }
         }
 
+        self.record_finality_metrics(finality_metric_records, verifier_client).await;
         self.last_scan = Some(now);
 
         if action_count > 0 {
@@ -262,35 +268,41 @@ impl<C: Clock> BondManager<C> {
         action: BondAction,
         verifier_client: &dyn AggregateVerifierClient,
         submitter: &ChallengeSubmitter<T>,
-    ) {
+    ) -> Option<(Address, u64)> {
         let game_address = action.game_address();
         let result = match action {
             BondAction::Resolve(game_address) => self
-                .try_resolve(game_address, verifier_client, submitter)
+                .try_resolve(game_address, submitter)
                 .await
+                .map(Some)
                 .map_err(|e| eyre::eyre!(e)),
             BondAction::Unlock(game_address) => {
                 Self::send_claim_credit(game_address, "unlock", submitter)
                     .await
+                    .map(|()| None)
                     .map_err(|e| eyre::eyre!(e))
             }
-            BondAction::WithdrawIfReady { game_address, bond_recipient } => {
-                self.try_withdraw_if_ready(game_address, bond_recipient, verifier_client, submitter)
-                    .await
-            }
+            BondAction::WithdrawIfReady { game_address, bond_recipient } => self
+                .try_withdraw_if_ready(game_address, bond_recipient, verifier_client, submitter)
+                .await
+                .map(|()| None),
         };
 
-        if let Err(e) = result {
-            warn!(game = %game_address, error = %e, "failed to advance bond claim");
+        match result {
+            Ok(Some(confirmed_at)) if self.metrics_enabled => Some((game_address, confirmed_at)),
+            Ok(_) => None,
+            Err(e) => {
+                warn!(game = %game_address, error = %e, "failed to advance bond claim");
+                None
+            }
         }
     }
 
     async fn try_resolve<T: TxManager>(
         &self,
         game_address: Address,
-        verifier_client: &dyn AggregateVerifierClient,
         submitter: &ChallengeSubmitter<T>,
-    ) -> Result<(), ChallengeSubmitError> {
+    ) -> Result<u64, ChallengeSubmitError> {
         let calldata = encode_resolve_calldata();
         info!(game = %game_address, "submitting resolve transaction");
         match submitter.send_bond_tx(game_address, game_address, calldata).await {
@@ -299,16 +311,32 @@ impl<C: Clock> BondManager<C> {
                 info!(game = %game_address, tx_hash = %tx_hash, "resolve transaction confirmed");
                 ChallengerMetrics::resolve_tx_outcome_total(ChallengerMetrics::STATUS_SUCCESS)
                     .increment(1);
-                if self.metrics_enabled {
-                    self.record_finality_time(game_address, verifier_client, confirmed_at).await;
-                }
-                Ok(())
+                Ok(confirmed_at)
             }
             Err(e) => {
                 ChallengerMetrics::resolve_tx_outcome_total(ChallengerMetrics::STATUS_ERROR)
                     .increment(1);
                 Err(e)
             }
+        }
+    }
+
+    async fn record_finality_metrics(
+        &self,
+        records: Vec<(Address, u64)>,
+        verifier_client: &dyn AggregateVerifierClient,
+    ) {
+        let collection = stream::iter(records).for_each_concurrent(
+            GameScanner::SCAN_CONCURRENCY,
+            |(game_address, confirmed_at)| async move {
+                self.record_finality_time(game_address, verifier_client, confirmed_at).await;
+            },
+        );
+        if tokio::time::timeout(FINALITY_METRIC_TIMEOUT, collection).await.is_err() {
+            warn!(
+                timeout_secs = FINALITY_METRIC_TIMEOUT.as_secs(),
+                "timed out collecting finality metrics"
+            );
         }
     }
 
@@ -665,6 +693,46 @@ mod tests {
         });
         assert_eq!(finality_time, Some(&DebugValue::Histogram(vec![2_000_000_000.0.into()])),);
         assert_eq!(verifier.game_info_read_count(addr(0)), 1);
+    }
+
+    #[cfg(feature = "metrics")]
+    #[tokio::test(start_paused = true)]
+    async fn scan_advances_all_bonds_before_waiting_for_finality_metrics() {
+        let claim_addr = claim_addr();
+        let state = game_state(Address::repeat_byte(0xDD), claim_addr, 0, false);
+        let verifier = Arc::new(MockAggregateVerifier::new(HashMap::from([
+            (addr(0), state.clone()),
+            (addr(1), state),
+        ])));
+        let factory =
+            Arc::new(MockDisputeGameFactory::new(vec![factory_game(0, 0), factory_game(1, 0)]));
+        let mut l2_provider = MockL2Provider::new();
+        let (header, account) = build_test_header_and_account(100, B256::ZERO);
+        l2_provider.insert_block(100, header, account);
+        l2_provider.header_delay = Some(FINALITY_METRIC_TIMEOUT + Duration::from_secs(1));
+        let mut mgr = BondManager::new(
+            vec![claim_addr],
+            "http://localhost:8545".parse().unwrap(),
+            factory,
+            Arc::new(l2_provider),
+            1000,
+            TEST_DISCOVERY_INTERVAL,
+            true,
+            fixed_clock(2_000_000_000),
+        );
+        let (submitter, tx_manager) = bond_submitter(vec![
+            Ok(receipt_with_status(true, B256::ZERO)),
+            Ok(receipt_with_status(true, B256::ZERO)),
+        ]);
+
+        let scan =
+            tokio::spawn(async move { mgr.discover_claimable_games(&*verifier, &submitter).await });
+        tokio::task::yield_now().await;
+
+        assert_eq!(tx_manager.recorded_calls().len(), 2);
+
+        tokio::time::advance(FINALITY_METRIC_TIMEOUT).await;
+        scan.await.unwrap().unwrap();
     }
 
     #[tokio::test]
