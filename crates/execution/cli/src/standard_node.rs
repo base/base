@@ -351,14 +351,13 @@ impl StandardBaseRethNode {
         let transaction_event_env = TransactionEventEnv::read();
         let transaction_event_writer_config =
             transaction_event_writer_config(&args.rpc, &transaction_event_env)?;
-        runner.add_started_callback(move || {
-            if let Some(config) = transaction_event_writer_config
-                && let Err(err) = GlobalTransactionEventWriter::init(Some(config))
-            {
-                tracing::warn!(error = %err, "transaction event journal disabled");
-            }
-            Ok(())
-        });
+        // Initialize before installing extensions so node-started hooks that emit
+        // transaction events (e.g. tx forwarding) see a ready writer.
+        if let Some(config) = transaction_event_writer_config
+            && let Err(err) = GlobalTransactionEventWriter::init(Some(config))
+        {
+            tracing::warn!(error = %err, "transaction event journal disabled");
+        }
 
         // Feature extensions. Several use `replace_configured` (which is overwrite,
         // not compose) on overlapping RPC methods, so install order would otherwise
