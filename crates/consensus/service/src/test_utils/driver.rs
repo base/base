@@ -1,6 +1,6 @@
 //! Deterministic runtime driver for actor-integration harnesses.
 
-use std::{future::Future, time::Duration};
+use std::time::Duration;
 
 use thiserror::Error;
 
@@ -47,27 +47,27 @@ pub struct ProgressTimeout {
     pub snapshot: DriverProgressSnapshot,
 }
 
-/// Deterministic single-thread runtime driver with paused Tokio time.
+/// Deterministic driver for actor-integration harnesses.
+///
+/// The driver is runtime-agnostic: it drives its harnesses on the ambient Tokio
+/// runtime of the calling test. Tests MUST run on a current-thread runtime with
+/// paused time (`#[tokio::test(start_paused = true)]`) because [`Driver::tick`]
+/// advances the mock clock via [`tokio::time::advance`], which panics unless
+/// time is paused.
 #[derive(Debug)]
 pub struct Driver {
-    runtime: tokio::runtime::Runtime,
     harnesses: Vec<Harness>,
 }
 
 impl Driver {
-    /// Creates a new driver with a current-thread runtime and paused time.
+    /// Creates a new driver with no harnesses.
     pub fn new() -> Self {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .start_paused(true)
-            .build()
-            .expect("failed to build test runtime");
-        Self { runtime, harnesses: Vec::new() }
+        Self { harnesses: Vec::new() }
     }
 
     /// Spawns one node harness in the provided role.
-    pub fn spawn_node(&mut self, mode: NodeMode, config: NodeConfig) -> usize {
-        let harness = self.runtime.block_on(async { config.builder.with_role(mode).build().await });
+    pub async fn spawn_node(&mut self, mode: NodeMode, config: NodeConfig) -> usize {
+        let harness = config.builder.with_role(mode).build().await;
         self.harnesses.push(harness);
         self.harnesses.len() - 1
     }
@@ -86,22 +86,15 @@ impl Driver {
     /// -> engine) needs at least `N` ticks to propagate end-to-end. Size tick
     /// budgets accordingly: multi-hop choreography tests use large budgets such
     /// as `tick(200)` to guarantee the whole chain settles.
-    pub fn tick(&mut self, ticks: u64) {
-        self.runtime.block_on(async {
-            for _ in 0..ticks {
-                tokio::time::advance(Duration::from_millis(1)).await;
-                tokio::task::yield_now().await;
-            }
-        });
-    }
-
-    /// Executes a future on the driver's internal runtime.
-    pub fn block_on<F: Future>(&self, future: F) -> F::Output {
-        self.runtime.block_on(future)
+    pub async fn tick(&mut self, ticks: u64) {
+        for _ in 0..ticks {
+            tokio::time::advance(Duration::from_millis(1)).await;
+            tokio::task::yield_now().await;
+        }
     }
 
     /// Waits until `condition` is true or `timeout_ticks` expires.
-    pub fn await_progress<F>(
+    pub async fn await_progress<F>(
         &mut self,
         condition: F,
         timeout_ticks: u64,
@@ -110,30 +103,27 @@ impl Driver {
         F: Fn(&DriverProgressSnapshot) -> bool,
     {
         for _ in 0..=timeout_ticks {
-            let snapshot = self.snapshot();
+            let snapshot = self.snapshot().await;
             if condition(&snapshot) {
                 return Ok(());
             }
-            self.tick(1);
+            self.tick(1).await;
         }
 
-        let snapshot = self.snapshot();
+        let snapshot = self.snapshot().await;
         Err(ProgressTimeout { timeout_ticks, snapshot })
     }
 
     /// Builds a snapshot for all managed harnesses.
-    pub fn snapshot(&self) -> DriverProgressSnapshot {
-        let nodes = self.runtime.block_on(async {
-            let mut nodes = Vec::with_capacity(self.harnesses.len());
-            for harness in &self.harnesses {
-                let engine_state = harness.latest_engine_state();
-                nodes.push(NodeSnapshot {
-                    safe_head_number: harness.latest_safe_head_number().await,
-                    unsafe_head_number: engine_state.sync_state.unsafe_head().block_info.number,
-                });
-            }
-            nodes
-        });
+    pub async fn snapshot(&self) -> DriverProgressSnapshot {
+        let mut nodes = Vec::with_capacity(self.harnesses.len());
+        for harness in &self.harnesses {
+            let engine_state = harness.latest_engine_state();
+            nodes.push(NodeSnapshot {
+                safe_head_number: harness.latest_safe_head_number().await,
+                unsafe_head_number: engine_state.sync_state.unsafe_head().block_info.number,
+            });
+        }
         DriverProgressSnapshot { nodes }
     }
 }
