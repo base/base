@@ -123,7 +123,7 @@ impl ActorTxVerifier {
                 Operation::Sender,
                 now,
             )?;
-            if !resolved.allows_sequenced_nonce(signed.tx().nonce_key) {
+            if !resolved.can_use_nonce_key(signed.tx().nonce_key) {
                 return Err(TxAuthError::Scope {
                     operation: Operation::Sender,
                     scope: resolved.scope,
@@ -153,7 +153,7 @@ impl ActorTxVerifier {
         if !Operation::Sender.is_granted(&resolved) {
             return Err(TxAuthError::Scope { operation: Operation::Sender, scope: resolved.scope });
         }
-        if !resolved.allows_sequenced_nonce(signed.tx().nonce_key) {
+        if !resolved.can_use_nonce_key(signed.tx().nonce_key) {
             return Err(TxAuthError::Scope { operation: Operation::Sender, scope: resolved.scope });
         }
         Ok(AuthorizedActor { account, resolved })

@@ -52,7 +52,7 @@ impl ResolvedActor {
     /// Unrestricted actors and nonce-free transactions are always allowed;
     /// scoped actors need `SCOPE_NONCE` for sequenced nonce channels.
     #[must_use]
-    pub fn allows_sequenced_nonce(&self, nonce_key: U256) -> bool {
+    pub fn can_use_nonce_key(&self, nonce_key: U256) -> bool {
         self.scope == Eip8130Constants::SCOPE_UNRESTRICTED
             || nonce_key == Eip8130Constants::NONCE_KEY_MAX
             || self.scope & Eip8130Constants::SCOPE_NONCE != 0
@@ -69,12 +69,12 @@ mod tests {
 
     #[test]
     fn nonce_scope_allows_expected_keys() {
-        assert!(actor(0).allows_sequenced_nonce(U256::ZERO));
+        assert!(actor(0).can_use_nonce_key(U256::ZERO));
         assert!(
             actor(Eip8130Constants::SCOPE_SENDER)
-                .allows_sequenced_nonce(Eip8130Constants::NONCE_KEY_MAX)
+                .can_use_nonce_key(Eip8130Constants::NONCE_KEY_MAX)
         );
-        assert!(actor(Eip8130Constants::SCOPE_NONCE).allows_sequenced_nonce(U256::from(1)));
-        assert!(!actor(Eip8130Constants::SCOPE_SENDER).allows_sequenced_nonce(U256::ZERO));
+        assert!(actor(Eip8130Constants::SCOPE_NONCE).can_use_nonce_key(U256::from(1)));
+        assert!(!actor(Eip8130Constants::SCOPE_SENDER).can_use_nonce_key(U256::ZERO));
     }
 }

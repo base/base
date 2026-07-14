@@ -810,11 +810,11 @@ impl Eip8130Executor {
             let sender = applied_tx.actors.sender.account;
             let payer = applied_tx.actors.payer.as_ref().map_or(sender, |p| p.account);
             // Defense-in-depth: `authorize_and_apply` -> `verify_sender` already
-            // gates `allows_sequenced_nonce(nonce_key)` on both the configured and
+            // gates `can_use_nonce_key(nonce_key)` on both the configured and
             // EOA sender paths, so this is redundant on the current call graph. It
             // is kept as a local guard so this execution entry point stays sound if
             // the sender-resolution path is ever refactored to skip that check.
-            if !sender_actor.allows_sequenced_nonce(nonce_key) {
+            if !sender_actor.can_use_nonce_key(nonce_key) {
                 return Err(BaseTransactionError::eip8130(
                     "sender actor scope does not authorize sequenced nonces",
                 ));
