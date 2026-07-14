@@ -259,7 +259,7 @@ mod tests {
         with_storage(|acc| {
             let actors = ActorTxVerifier::verify(&signed, acc, NOW).unwrap();
             assert_eq!(actors.sender.account, account);
-            assert!(actors.sender.resolved.is_unrestricted());
+            assert!(actors.sender.resolved.is_admin());
             assert!(actors.payer.is_none());
         });
     }
@@ -409,7 +409,7 @@ mod tests {
                 .unwrap();
             let actors = ActorTxVerifier::verify(&signed, acc, NOW).unwrap();
             assert_eq!(actors.sender.account, sender_account);
-            assert!(actors.sender.resolved.is_unrestricted());
+            assert!(actors.sender.resolved.is_admin());
             let payer = actors.payer.expect("payer present");
             assert_eq!(payer.account, payer_account);
             assert_eq!(payer.resolved.scope, Eip8130Constants::SCOPE_SPONSOR_PAYER);

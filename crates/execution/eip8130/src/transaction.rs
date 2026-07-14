@@ -301,7 +301,7 @@ mod tests {
             assert_eq!(out.actors.sender.account, account);
             assert!(out.actors.payer.is_none());
             assert_eq!(out.config_changes.len(), 2);
-            assert!(out.config_changes.iter().all(ResolvedActor::is_unrestricted));
+            assert!(out.config_changes.iter().all(ResolvedActor::is_admin));
             // Both entries applied: the multichain channel advanced by two.
             assert_eq!(acc.get_change_sequences(account).unwrap(), (2, 0));
         });
@@ -651,10 +651,7 @@ mod tests {
             let out = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW)
                 .expect("create tx on empty account must authorize");
             assert_eq!(out.actors.sender.account, derived);
-            assert!(
-                out.actors.sender.resolved.is_unrestricted(),
-                "create sender must be unrestricted"
-            );
+            assert!(out.actors.sender.resolved.is_admin(), "create sender must be unrestricted");
             assert!(out.actors.payer.is_none());
             assert!(out.config_changes.is_empty());
         });

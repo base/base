@@ -268,7 +268,7 @@ mod tests {
         with_storage(|acc| {
             let resolved =
                 ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW).unwrap();
-            assert!(resolved.is_unrestricted());
+            assert!(resolved.is_admin());
         });
     }
 
@@ -368,7 +368,7 @@ mod tests {
             acc.account_state.at_mut(&account).write(pack_state(0, 3, 0, 0)).unwrap();
             let resolved =
                 ConfigChangeAuthorizer::authorize(acc, account, LOCAL, &change, NOW).unwrap();
-            assert!(resolved.is_unrestricted());
+            assert!(resolved.is_admin());
         });
     }
 

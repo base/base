@@ -32,13 +32,10 @@ impl ResolvedActor {
         Self { actor_id, scope: 0, policy_target: Address::ZERO }
     }
 
-    /// `true` if the actor carries no elevated scope (`scope == 0`).
-    #[must_use]
-    pub const fn is_unrestricted(&self) -> bool {
-        self.scope == 0
-    }
-
-    /// `true` if the actor is an administrator (`scope == 0`).
+    /// `true` if the actor is an unrestricted administrator (`scope == 0`).
+    ///
+    /// EIP-8130 defines these as the same concept: there is no separate admin
+    /// grant bit and no restricted administrator.
     #[must_use]
     pub const fn is_admin(&self) -> bool {
         self.scope == 0

@@ -145,10 +145,11 @@ impl TxEip8130 {
         Ok(phases)
     }
 
-    /// Length of all RLP fields (no list header).
-    pub fn rlp_encoded_fields_length(&self) -> usize {
+    /// Length of all RLP fields (no list header), encoding `sender` in place of
+    /// the transaction's stored sender.
+    fn rlp_encoded_fields_length_with_sender(&self, sender: &Option<Address>) -> usize {
         self.chain_id.length()
-            + Self::address_opt_encoded_length(&self.sender)
+            + Self::address_opt_encoded_length(sender)
             + self.nonce_key.length()
             + self.nonce_sequence.length()
             + self.expiry.length()
@@ -161,10 +162,11 @@ impl TxEip8130 {
             + Self::address_opt_encoded_length(&self.payer)
     }
 
-    /// Encodes the RLP fields (no list header) in canonical order.
-    pub fn rlp_encode_fields(&self, out: &mut dyn BufMut) {
+    /// Encodes the RLP fields (no list header) in canonical order, encoding
+    /// `sender` in place of the transaction's stored sender.
+    fn rlp_encode_fields_with_sender(&self, sender: &Option<Address>, out: &mut dyn BufMut) {
         self.chain_id.encode(out);
-        Self::encode_address_opt(&self.sender, out);
+        Self::encode_address_opt(sender, out);
         self.nonce_key.encode(out);
         self.nonce_sequence.encode(out);
         self.expiry.encode(out);
@@ -175,6 +177,16 @@ impl TxEip8130 {
         Self::encode_calls(&self.calls, out);
         self.metadata.encode(out);
         Self::encode_address_opt(&self.payer, out);
+    }
+
+    /// Length of all RLP fields (no list header).
+    pub fn rlp_encoded_fields_length(&self) -> usize {
+        self.rlp_encoded_fields_length_with_sender(&self.sender)
+    }
+
+    /// Encodes the RLP fields (no list header) in canonical order.
+    pub fn rlp_encode_fields(&self, out: &mut dyn BufMut) {
+        self.rlp_encode_fields_with_sender(&self.sender, out);
     }
 
     /// Decodes the RLP fields (no list header) in canonical order.
@@ -323,10 +335,12 @@ impl TxEip8130 {
     ///
     /// [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
     pub fn payer_signature_hash(&self, resolved_sender: Address) -> B256 {
-        let with_resolved = Self { sender: Some(resolved_sender), ..self.clone() };
-        let mut buf = Vec::with_capacity(with_resolved.rlp_encoded_length() + 1);
+        let sender = Some(resolved_sender);
+        let payload_length = self.rlp_encoded_fields_length_with_sender(&sender);
+        let mut buf = Vec::with_capacity(1 + length_of_length(payload_length) + payload_length);
         buf.put_u8(Eip8130Constants::EIP8130_PAYER_TYPE);
-        with_resolved.rlp_encode(&mut buf);
+        Header { list: true, payload_length }.encode(&mut buf);
+        self.rlp_encode_fields_with_sender(&sender, &mut buf);
         keccak256(&buf)
     }
 
