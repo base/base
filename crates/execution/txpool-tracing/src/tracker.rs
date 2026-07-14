@@ -278,19 +278,17 @@ impl Tracker {
 
             self.nonce_completed(&tx_hash, &event, received_at);
             self.log(&tx_hash, &event_log, &format!("Transaction {event}"));
-            // Block/flashblock inclusion is journaled by the builder. Keep tracer emits
-            // for mempool lifecycle events that the builder does not observe.
-            if event != TxEvent::BlockInclusion {
-                self.emit_transaction_event(
-                    tx_hash,
-                    event,
-                    event_log.events.len() - 1,
-                    TxpoolEventData {
-                        time_in_mempool: Some(time_in_mempool),
-                        ..Default::default()
-                    },
-                );
-            }
+            // Block inclusion is journaled by the builder (`BUILDER_INCLUDED`).
+            // Tracer journal emits cover mempool lifecycle events only.
+            self.emit_transaction_event(
+                tx_hash,
+                event,
+                event_log.events.len() - 1,
+                TxpoolEventData {
+                    time_in_mempool: Some(time_in_mempool),
+                    ..Default::default()
+                },
+            );
             Self::record_histogram(time_in_mempool, event);
         }
     }
@@ -442,7 +440,9 @@ impl Tracker {
         event_index: usize,
         event_data: TxpoolEventData,
     ) {
-        let event_type = transaction_event_type(txpool_event);
+        let Some(event_type) = transaction_event_type(txpool_event) else {
+            return;
+        };
         let mut data = Map::from_iter([
             ("event_source".to_string(), json!(Self::EVENT_SOURCE)),
             ("txpool_event".to_string(), json!(txpool_event.to_string())),
@@ -496,17 +496,17 @@ impl Pool {
     }
 }
 
-const fn transaction_event_type(event: TxEvent) -> TransactionEventType {
+const fn transaction_event_type(event: TxEvent) -> Option<TransactionEventType> {
     match event {
-        TxEvent::Pending => TransactionEventType::Pending,
-        TxEvent::Queued => TransactionEventType::Queued,
-        TxEvent::Dropped => TransactionEventType::Dropped,
-        TxEvent::Replaced => TransactionEventType::Replaced,
-        TxEvent::BlockInclusion => TransactionEventType::Included,
-        TxEvent::FlashblockInclusion => TransactionEventType::FlashblockIncluded,
-        TxEvent::PendingToQueued => TransactionEventType::PendingToQueued,
-        TxEvent::QueuedToPending => TransactionEventType::QueuedToPending,
-        TxEvent::Overflowed => TransactionEventType::Overflowed,
+        TxEvent::Pending => Some(TransactionEventType::Pending),
+        TxEvent::Queued => Some(TransactionEventType::Queued),
+        TxEvent::Dropped => Some(TransactionEventType::Dropped),
+        TxEvent::Replaced => Some(TransactionEventType::Replaced),
+        // Inclusion is journaled by the builder, not the txpool tracer.
+        TxEvent::BlockInclusion | TxEvent::FlashblockInclusion => None,
+        TxEvent::PendingToQueued => Some(TransactionEventType::PendingToQueued),
+        TxEvent::QueuedToPending => Some(TransactionEventType::QueuedToPending),
+        TxEvent::Overflowed => Some(TransactionEventType::Overflowed),
     }
 }
 
@@ -544,24 +544,27 @@ mod tests {
 
     #[test]
     fn maps_txpool_events_to_shared_transaction_event_types() {
-        assert_eq!(transaction_event_type(TxEvent::Pending), TransactionEventType::Pending);
-        assert_eq!(transaction_event_type(TxEvent::Queued), TransactionEventType::Queued);
-        assert_eq!(transaction_event_type(TxEvent::Dropped), TransactionEventType::Dropped);
-        assert_eq!(transaction_event_type(TxEvent::Replaced), TransactionEventType::Replaced);
-        assert_eq!(transaction_event_type(TxEvent::BlockInclusion), TransactionEventType::Included);
+        assert_eq!(transaction_event_type(TxEvent::Pending), Some(TransactionEventType::Pending));
+        assert_eq!(transaction_event_type(TxEvent::Queued), Some(TransactionEventType::Queued));
+        assert_eq!(transaction_event_type(TxEvent::Dropped), Some(TransactionEventType::Dropped));
         assert_eq!(
-            transaction_event_type(TxEvent::FlashblockInclusion),
-            TransactionEventType::FlashblockIncluded
+            transaction_event_type(TxEvent::Replaced),
+            Some(TransactionEventType::Replaced)
         );
+        assert_eq!(transaction_event_type(TxEvent::BlockInclusion), None);
+        assert_eq!(transaction_event_type(TxEvent::FlashblockInclusion), None);
         assert_eq!(
             transaction_event_type(TxEvent::PendingToQueued),
-            TransactionEventType::PendingToQueued
+            Some(TransactionEventType::PendingToQueued)
         );
         assert_eq!(
             transaction_event_type(TxEvent::QueuedToPending),
-            TransactionEventType::QueuedToPending
+            Some(TransactionEventType::QueuedToPending)
         );
-        assert_eq!(transaction_event_type(TxEvent::Overflowed), TransactionEventType::Overflowed);
+        assert_eq!(
+            transaction_event_type(TxEvent::Overflowed),
+            Some(TransactionEventType::Overflowed)
+        );
     }
 
     #[test]
