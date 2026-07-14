@@ -2,7 +2,7 @@
 //!
 //! The dispatcher owns everything that is *not* version-specific: it decodes the
 //! (via [`StablecoinVersions`]), and routes each operation — including reads — to
-//! the active version's [`StablecoinLogic`] implementation. Only constant getters
+//! the active version's [`Stablecoin`] implementation. Only constant getters
 //! (role IDs, policy type IDs, `decimals`) that are invariant across all versions
 //! are answered inline.
 
@@ -64,7 +64,7 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
                 .record_base_error_result(ctx, BasePrecompileError::Revert(Bytes::new()));
         };
         // Ensure the token has been deployed (has bytecode at its address).
-        match version.logic().is_initialized(self) {
+        match version.implementation().is_initialized(self) {
             Ok(true) => {}
             Ok(false) => {
                 return recorder
@@ -116,7 +116,7 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
     /// Grants `role` to `account` without checking caller authorization.
     ///
     /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and the
-    /// authorized [`StablecoinLogic::grant_role`](crate::StablecoinLogic) path is not yet reachable.
+    /// authorized [`Stablecoin::grant_role`](crate::Stablecoin) path is not yet reachable.
     // TODO: When factory get's logic for threading fork, remove this and pull in versions into the factory to use that function
     pub fn grant_role_unchecked(
         &mut self,
@@ -124,7 +124,7 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
         account: Address,
         sender: Address,
     ) -> base_precompile_storage::Result<()> {
-        StablecoinVersion::V1.logic().grant_role_unchecked(self, role, account, sender)
+        StablecoinVersion::V1.implementation().grant_role_unchecked(self, role, account, sender)
     }
 
     /// Decodes calldata, observes the decoded operation, and routes it to `version` with optional
@@ -140,7 +140,7 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
     where
         O: PrecompileCallObserver,
     {
-        let logic = version.logic();
+        let logic = version.implementation();
 
         if let Some(selector) = BerylSelector::selector(calldata)
             && IB20Stablecoin::IB20StablecoinCalls::valid_selector(selector)

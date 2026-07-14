@@ -12,8 +12,7 @@ use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
     B20_MAX_SUPPLY_CAP, B20Guards, B20PausableFeature, B20PolicyType, B20StablecoinToken,
-    B20TokenRole, Eip712Domain, IB20, PermitArgs, Policy, StablecoinAccounting, StablecoinLogic,
-    Token,
+    B20TokenRole, Eip712Domain, IB20, PermitArgs, Policy, Stablecoin, StablecoinAccounting, Token,
 };
 
 /// `keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)")`
@@ -141,7 +140,7 @@ impl StablecoinV1 {
     }
 }
 
-impl<S: StablecoinAccounting, P: Policy> StablecoinLogic<S, P> for StablecoinV1 {
+impl<S: StablecoinAccounting, P: Policy> Stablecoin<S, P> for StablecoinV1 {
     fn transfer(
         &self,
         token: &mut B20StablecoinToken<S, P>,
@@ -637,7 +636,7 @@ mod tests {
 
     use crate::{
         B20_MAX_SUPPLY_CAP, B20PolicyType, B20StablecoinToken, B20TokenRole, IB20, PermitArgs,
-        Policy, StablecoinAccounting, StablecoinLogic, StablecoinV1, Token, TokenAccounting,
+        Policy, Stablecoin, StablecoinAccounting, StablecoinV1, Token, TokenAccounting,
     };
 
     // --- Self-contained in-memory fakes (no dependency on `common::test_utils`, so shared test

@@ -1,6 +1,6 @@
 //! Versioned business logic for the stablecoin B-20 precompile.
 //!
-//! [`StablecoinLogic`] (in [`interface`](self)) is the append-only business-logic
+//! [`Stablecoin`] (in [`interface`](self)) is the append-only business-logic
 //! interface each version implements; [`B20StablecoinToken`] is the minimal
 //! storage + policy holder the logic operates on; and [`StablecoinV1`] is the
 //! first frozen implementation.
@@ -10,7 +10,7 @@ use alloy_primitives::Address;
 use crate::{Policy, StablecoinAccounting, Token};
 
 mod interface;
-pub use interface::StablecoinLogic;
+pub use interface::Stablecoin;
 
 mod v1;
 pub use v1::StablecoinV1;

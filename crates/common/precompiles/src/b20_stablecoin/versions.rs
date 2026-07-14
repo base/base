@@ -2,18 +2,18 @@
 //!
 //! This module is the single owner of both version mappings: which version is
 //! active at a given hardfork ([`StablecoinVersions::from_base_upgrade`]), and which
-//! concrete implementation backs a version ([`StablecoinVersion::logic`]).
+//! concrete implementation backs a version ([`StablecoinVersion::implementation`]).
 //! Centralizing fork routing here keeps hardfork logic auditable and off the
 //! execution path, and lets the dispatcher route calls without ever matching on
 //! the version itself.
 
 use base_common_genesis::BaseUpgrade;
 
-use crate::{Policy, StablecoinAccounting, StablecoinLogic, StablecoinV1};
+use crate::{Policy, Stablecoin, StablecoinAccounting, StablecoinV1};
 
 /// An activated version of the stablecoin B-20 precompile logic.
 ///
-/// Each variant maps to an immutable implementation via [`Self::logic`].
+/// Each variant maps to an immutable implementation via [`Self::implementation`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StablecoinVersion {
     /// Introduced at Beryl, the stablecoin's activation fork.
@@ -22,7 +22,7 @@ pub enum StablecoinVersion {
 
 impl StablecoinVersion {
     /// Returns the immutable logic implementation for this version.
-    pub fn logic<'l, S, P>(self) -> &'l dyn StablecoinLogic<S, P>
+    pub fn implementation<'l, S, P>(self) -> &'l dyn Stablecoin<S, P>
     where
         S: StablecoinAccounting + 'l,
         P: Policy + 'l,

@@ -12,7 +12,7 @@ use crate::{
 };
 
 /// The stablecoin logic interface.
-pub trait StablecoinLogic<S: StablecoinAccounting, P: Policy> {
+pub trait Stablecoin<S: StablecoinAccounting, P: Policy> {
     /// ERC-20 `transfer`.
     fn transfer(
         &self,
