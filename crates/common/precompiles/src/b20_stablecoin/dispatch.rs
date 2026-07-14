@@ -97,8 +97,6 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
     where
         O: PrecompileCallObserver,
     {
-        // Gate by hardfork: resolve the active version once. `None` is unreachable in
-        // practice — the precompile is only installed from Beryl — but we revert defensively.
         let Some(version) = StablecoinVersions::from_base_upgrade(upgrade) else {
             return Err(BasePrecompileError::Revert(Bytes::new()));
         };
@@ -106,10 +104,6 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
     }
 
     /// Decodes calldata and executes it with factory-init privilege.
-    ///
-    /// Used by the token factory to run creation-time initialization calls. These run at the
-    /// token's introduction version ([`StablecoinVersion::V1`]); when a second version is
-    /// introduced, thread the creation-fork version here instead of pinning.
     pub fn inner_with_privilege(
         &mut self,
         ctx: StorageCtx<'_>,

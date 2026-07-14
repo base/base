@@ -1,15 +1,5 @@
 //! Append-only business-logic interface for the stablecoin B-20 precompile.
-//!
-//! [`StablecoinLogic`] defines the mutating operations and computed reads the
-//! stablecoin supports, expressed in domain terms (addresses, amounts, roles)
-//! rather than ABI encodings. The dispatcher owns selector decoding and result
-//! encoding; each version owns only the business rules.
-//!
-//! Each version is a distinct type implementing this interface (see
-//! [`crate::StablecoinV1`]). Once a version is activated at a hardfork it is
-//! frozen (open/closed principle): new behavior is introduced by a new version,
-//! and new operations are added as new trait methods so existing versions stay
-//! unchanged.
+
 
 use alloc::{string::String, vec::Vec};
 
@@ -22,12 +12,7 @@ use crate::{
     Token,
 };
 
-/// Append-only business-logic interface shared by every stablecoin version.
-///
-/// Methods operate directly on the token's storage and policy layer via the
-/// supplied [`B20StablecoinToken`]. The trait is parameterized by the storage
-/// (`S`) and policy (`P`) adapters so tests can inject in-memory backends; the
-/// production path uses the EVM-backed storage.
+/// The stablecoin logic interface.
 pub trait StablecoinLogic<S: StablecoinAccounting, P: Policy> {
     /// ERC-20 `transfer`.
     fn transfer(

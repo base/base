@@ -22,16 +22,6 @@ pub enum StablecoinVersion {
 
 impl StablecoinVersion {
     /// Returns the immutable logic implementation for this version.
-    ///
-    /// This is the one place that maps a version to its concrete implementation;
-    /// callers route ABI calls through the returned [`StablecoinLogic`] without
-    /// ever matching on the version themselves. The implementations are
-    /// zero-sized statics, so this is a pointer hand-back, not an allocation.
-    ///
-    /// The returned reference is bound to `'l` rather than `'static` because the
-    /// token's storage (`S`) and policy (`P`) adapters borrow the EVM context;
-    /// the implementation itself holds no state, so any `'l` that outlives the
-    /// call is sound.
     pub fn logic<'l, S, P>(self) -> &'l dyn StablecoinLogic<S, P>
     where
         S: StablecoinAccounting + 'l,
