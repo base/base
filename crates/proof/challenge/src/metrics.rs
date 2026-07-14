@@ -127,6 +127,11 @@ base_metrics::define_metrics! {
     #[no_zero]
     anchor_l2_block_number: gauge,
 
+    #[describe(
+        "Elapsed time in seconds from a resolved game's L2 block timestamp to resolve transaction confirmation"
+    )]
+    game_finality_time_seconds: histogram,
+
     #[describe("Challenger account balance in wei")]
     account_balance_wei: gauge,
 }

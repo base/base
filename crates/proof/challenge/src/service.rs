@@ -200,6 +200,7 @@ impl ChallengerService {
                 config.bond_claim_addresses,
                 l1_rpc_url,
                 Arc::clone(&factory_client) as Arc<dyn DisputeGameFactoryClient>,
+                Arc::clone(&l2_client) as Arc<dyn L2Provider>,
                 config.bond_discovery_lookback_games,
                 config.bond_discovery_interval,
                 TokioRuntime::new(),
