@@ -192,14 +192,14 @@ impl ProofsClient {
                 waited_secs = waited.as_secs(),
                 "proof not complete; polling again"
             );
-            if waited + self.poll_interval > self.max_wait {
+            if waited >= self.max_wait {
                 return Err(ProofsCommandError::WaitTimeout {
                     session_id: session_id.to_string(),
                     waited,
                     last_status: Self::status_label(response.status).to_string(),
                 });
             }
-            sleep(self.poll_interval).await;
+            sleep(self.poll_interval.min(self.max_wait - waited)).await;
         }
     }
 
@@ -398,6 +398,24 @@ mod tests {
             .wait_for_completion("session-wait")
             .await
             .expect("wait should reach terminal status");
+
+        assert_eq!(response.status, ProofStatus::Succeeded);
+        shutdown(handle).await;
+    }
+
+    #[tokio::test]
+    async fn wait_polls_at_deadline_when_max_wait_is_shorter_than_poll_interval() {
+        let api = MockRequesterApi::scripted([ProofStatus::Running], ProofStatus::Succeeded);
+        let (client, handle) = spawn_mock(api).await;
+        let client = client.with_wait_config(Duration::from_millis(100), Duration::from_millis(10));
+
+        let response = tokio::time::timeout(
+            Duration::from_millis(50),
+            client.wait_for_completion("session-short-wait"),
+        )
+        .await
+        .expect("wait should clamp the poll interval to the deadline")
+        .expect("wait should make a final poll at the deadline");
 
         assert_eq!(response.status, ProofStatus::Succeeded);
         shutdown(handle).await;
