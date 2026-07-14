@@ -46,6 +46,14 @@ signer_from_rpc() {
 
 start_worker() {
     local name="$1" binary="$2" listen_addr="$3"
+    local -a tdx_args=()
+    if [ "$name" = "tdx" ]; then
+        tdx_args=(
+            --tee-tdx-image-hash "$tdx_image_hash"
+            --l1-chain-id 11155111
+            --tee-prover-registry-address "$registry"
+        )
+    fi
     echo "Starting $name worker"
     "$binary" local \
         --l1-eth-url "$l1_rpc" \
@@ -54,7 +62,8 @@ start_worker() {
         --l2-chain-id "$l2_chain_id" \
         --listen-addr "$listen_addr" \
         --prover-service-endpoint "http://$worker_rpc" \
-        --enable-experimental-witness-endpoint &
+        --enable-experimental-witness-endpoint \
+        "${tdx_args[@]}" &
     wait_rpc "http://$listen_addr" "$name-signer-rpc" enclave_signerPublicKey
 }
 

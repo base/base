@@ -465,6 +465,9 @@ mod tests {
             mrTdHash: B256::repeat_byte(0x66),
             reportDataPrefix: B256::repeat_byte(0x77),
             reportDataSuffix: B256::repeat_byte(0x88),
+            tdAttributes: 0,
+            chainId: 11_155_111,
+            registryAddress: Address::repeat_byte(0x99),
         };
         TeeAttestationProof {
             output: Bytes::from(SolValue::abi_encode(&journal)),

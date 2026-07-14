@@ -1,19 +1,23 @@
 //! TDX signer attestation payload encoding.
 
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::{Address, B256, Bytes};
 use thiserror::Error;
 
 /// Magic prefix for encoded TDX signer attestations returned by JSON-RPC.
-const TDX_SIGNER_ATTESTATION_MAGIC: &[u8; 8] = b"BASETDX3";
+const TDX_SIGNER_ATTESTATION_MAGIC: &[u8; 8] = b"BASETDX4";
 
-/// Encoded TDX signer attestation header length: magic + timestamp + 3 lengths.
-const TDX_SIGNER_ATTESTATION_HEADER_LEN: usize = TDX_SIGNER_ATTESTATION_MAGIC.len() + 8 + 8 + 8 + 8;
+/// Encoded TDX signer attestation header length.
+const TDX_SIGNER_ATTESTATION_HEADER_LEN: usize =
+    TDX_SIGNER_ATTESTATION_MAGIC.len() + 8 + 32 + 8 + 20 + 8 + 8 + 8;
 
 /// Self-contained TDX signer attestation returned by `enclave_signerAttestation`.
 ///
 /// Wire format:
 /// - 8 bytes: [`TDX_SIGNER_ATTESTATION_MAGIC`]
 /// - 8 bytes: quote timestamp in little-endian milliseconds
+/// - 32 bytes: CI-derived OCI manifest digest
+/// - 8 bytes: L1 chain ID in little-endian
+/// - 20 bytes: `TEEProverRegistry` address
 /// - 8 bytes: signer public key byte length in little-endian
 /// - 8 bytes: quote byte length in little-endian
 /// - 8 bytes: registrar nonce byte length in little-endian
@@ -33,6 +37,12 @@ pub struct TdxSignerAttestation {
     pub quote_timestamp_millis: u64,
     /// Optional deterministic registrar nonce bound into `TDREPORT.REPORTDATA`.
     pub attestation_nonce: Option<B256>,
+    /// CI-derived OCI manifest digest bound into `TDREPORT.REPORTDATA`.
+    pub workload_digest: B256,
+    /// L1 chain ID bound into `TDREPORT.REPORTDATA`.
+    pub chain_id: u64,
+    /// `TEEProverRegistry` address bound into `TDREPORT.REPORTDATA`.
+    pub registry_address: Address,
 }
 
 impl TdxSignerAttestation {
@@ -47,6 +57,9 @@ impl TdxSignerAttestation {
         );
         encoded.extend_from_slice(TDX_SIGNER_ATTESTATION_MAGIC);
         encoded.extend_from_slice(&self.quote_timestamp_millis.to_le_bytes());
+        encoded.extend_from_slice(self.workload_digest.as_slice());
+        encoded.extend_from_slice(&self.chain_id.to_le_bytes());
+        encoded.extend_from_slice(self.registry_address.as_slice());
         encoded.extend_from_slice(&(self.signer_public_key.len() as u64).to_le_bytes());
         encoded.extend_from_slice(&(self.quote.len() as u64).to_le_bytes());
         encoded.extend_from_slice(&(nonce.len() as u64).to_le_bytes());
@@ -66,9 +79,12 @@ impl TdxSignerAttestation {
         }
 
         let quote_timestamp_millis = Self::read_le_u64(&encoded[8..16]);
-        let public_key_len_u64 = Self::read_le_u64(&encoded[16..24]);
-        let quote_len_u64 = Self::read_le_u64(&encoded[24..32]);
-        let nonce_len_u64 = Self::read_le_u64(&encoded[32..40]);
+        let workload_digest = B256::from_slice(&encoded[16..48]);
+        let chain_id = Self::read_le_u64(&encoded[48..56]);
+        let registry_address = Address::from_slice(&encoded[56..76]);
+        let public_key_len_u64 = Self::read_le_u64(&encoded[76..84]);
+        let quote_len_u64 = Self::read_le_u64(&encoded[84..92]);
+        let nonce_len_u64 = Self::read_le_u64(&encoded[92..100]);
 
         let public_key_len = usize::try_from(public_key_len_u64).map_err(|_| {
             TdxSignerAttestationDecodeError::LengthOverflow {
@@ -116,6 +132,9 @@ impl TdxSignerAttestation {
             quote: Bytes::copy_from_slice(&encoded[quote_start..]),
             quote_timestamp_millis,
             attestation_nonce,
+            workload_digest,
+            chain_id,
+            registry_address,
         })
     }
 
@@ -172,6 +191,9 @@ mod tests {
             quote: Bytes::from_static(b"fixture-quote"),
             quote_timestamp_millis: 1_711_111_111_000,
             attestation_nonce: Some(B256::repeat_byte(0x11)),
+            workload_digest: B256::repeat_byte(0x22),
+            chain_id: 11_155_111,
+            registry_address: Address::repeat_byte(0x33),
         }
     }
 
@@ -211,8 +233,8 @@ mod tests {
     #[test]
     fn signer_attestation_decode_rejects_invalid_nonce_length() {
         let mut encoded = fixture_attestation().encode();
-        encoded[32..40].copy_from_slice(&1u64.to_le_bytes());
-        encoded.drain(41..72);
+        encoded[92..100].copy_from_slice(&1u64.to_le_bytes());
+        encoded.drain(101..132);
 
         assert_eq!(
             TdxSignerAttestation::decode(&encoded).unwrap_err(),

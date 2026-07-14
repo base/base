@@ -41,7 +41,6 @@ members = [
   "crates/proof/tee/tdx-verifier",
   "crates/proof/tee/tdx-collateral",
   "crates/proof/tee/tdx-runtime",
-  "crates/proof/tee/tdx-image-hash",
   "crates/proof/tee/nitro-attestation-prover",
   "crates/proof/tee/tdx-attestation-prover",
   "crates/proof/zk/host",

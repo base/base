@@ -80,7 +80,7 @@ sol! {
         bytes publicKey;
         /// Ethereum address derived from `publicKey`.
         address signer;
-        /// Multiproof-compatible image hash derived from MRTD and RTMR0-3.
+        /// CI-derived OCI manifest digest for the verified prover workload.
         bytes32 imageHash;
         /// Keccak256 hash of the MRTD measurement.
         bytes32 mrTdHash;
@@ -88,6 +88,12 @@ sol! {
         bytes32 reportDataPrefix;
         /// Last 32 bytes of `TDREPORT.REPORTDATA`, binding the timestamp and registrar nonce.
         bytes32 reportDataSuffix;
+        /// Raw TD attributes. Bit zero is the debug bit and must be unset.
+        uint64 tdAttributes;
+        /// L1 chain ID bound into `TDREPORT.REPORTDATA`.
+        uint64 chainId;
+        /// `TEEProverRegistry` address bound into `TDREPORT.REPORTDATA`.
+        address registryAddress;
     }
 
 }

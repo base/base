@@ -20,6 +20,7 @@ eyre.workspace = true
 serde.workspace = true
 tracing.workspace = true
 tokio-util.workspace = true
+alloy-primitives.workspace = true
 base-cli-utils.workspace = true
 base-proof-worker.workspace = true
 base-common-chains.workspace = true

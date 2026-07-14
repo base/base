@@ -6,7 +6,6 @@ use base_common_evm::BaseEvmFactory;
 use base_proof_client::{Prologue, TeeProposals};
 use base_proof_primitives::{PerChainConfig, ProofResult, ProverBackend};
 use base_proof_tee_tdx_runtime::TdxRuntime;
-use base_proof_tee_tdx_verifier::TdxQuote;
 
 use crate::{Oracle, Result, TdxProverError};
 
@@ -46,8 +45,6 @@ impl ProverBackend for TdxBackend {
                 Some(per_chain.hash())
             })
             .ok_or(TdxProverError::UnsupportedChain(boot_info.chain_id))?;
-        let quote = TdxQuote::parse(&self.runtime.signer_quote(None)?.quote)?;
-        let tee_image_hash = quote.image_hash();
         let (epilogue, block_results) =
             driver.execute_with_intermediates().await.map_err(pipeline_err)?;
 
@@ -57,7 +54,7 @@ impl ProverBackend for TdxBackend {
             &boot_info,
             &block_results,
             config_hash,
-            tee_image_hash,
+            self.runtime.workload_digest(),
             |data| self.runtime.sign(data).map_err(TdxProverError::from),
             pipeline_err,
         )

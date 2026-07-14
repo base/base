@@ -26,7 +26,7 @@ mod prover;
 pub use prover::ProverClient;
 
 mod proof_provider;
-pub use proof_provider::PlatformProofProvider;
+pub use proof_provider::{HydratedTdxProofProvider, PlatformProofProvider};
 
 mod signer_manager;
 pub use signer_manager::{

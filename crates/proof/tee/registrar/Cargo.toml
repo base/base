@@ -36,6 +36,7 @@ base-proof-contracts.workspace = true
 
 # Proving
 base-proof-tee-attestation.workspace = true
+base-proof-tee-tdx-collateral.workspace = true
 base-proof-tee-tdx-verifier.workspace = true
 base-proof-tee-nitro-verifier.workspace = true
 
@@ -48,6 +49,7 @@ base-proof-primitives = { workspace = true, features = ["rpc-client"] }
 
 # Async
 futures.workspace = true
+async-trait.workspace = true
 tokio-util.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "net", "time", "macros"] }
 
@@ -79,7 +81,6 @@ serde = { workspace = true, features = ["derive", "std"] }
 
 [dev-dependencies]
 hex-literal.workspace = true
-async-trait.workspace = true
 alloy-consensus.workspace = true
 alloy-rpc-types-eth.workspace = true
 tokio = { workspace = true, features = ["rt", "macros", "test-util"] }

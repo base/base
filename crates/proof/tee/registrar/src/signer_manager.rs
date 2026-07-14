@@ -337,8 +337,11 @@ where
                     )));
                 }
                 let expected_report_data_suffix = TdxVerifier::timestamp_report_data_suffix(
+                    journal.imageHash,
                     journal.timestamp,
                     Some(B256::from(self.attestation_nonce(signer_address))),
+                    journal.chainId,
+                    journal.registryAddress,
                 );
                 if journal.reportDataSuffix != expected_report_data_suffix {
                     self.proof_provider.block_recovery_for_signer(attestation_kind, signer_address);
@@ -887,7 +890,16 @@ mod tests {
                 imageHash: B256::ZERO,
                 mrTdHash: B256::ZERO,
                 reportDataPrefix: TdxVerifier::validate_public_key(&public_key).unwrap(),
-                reportDataSuffix: TdxVerifier::timestamp_report_data_suffix(timestamp, Some(nonce)),
+                reportDataSuffix: TdxVerifier::timestamp_report_data_suffix(
+                    B256::ZERO,
+                    timestamp,
+                    Some(nonce),
+                    11_155_111,
+                    TEST_REGISTRY_ADDRESS,
+                ),
+                tdAttributes: 0,
+                chainId: 11_155_111,
+                registryAddress: TEST_REGISTRY_ADDRESS,
             }
             .abi_encode(),
         )

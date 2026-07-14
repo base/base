@@ -1,6 +1,6 @@
 //! TDX quote parsing and signature verification.
 
-use alloy_primitives::{B256, Bytes, keccak256};
+use alloy_primitives::{B256, Bytes};
 use sha2::{Digest, Sha256};
 
 use crate::{Result, TdxVerifierError, collateral::CollateralVerifier};
@@ -26,6 +26,9 @@ pub const MRTD_OFFSET: usize = 136;
 pub(crate) const MRSIGNERSEAM_OFFSET: usize = 64;
 
 pub(crate) const SEAM_ATTRIBUTES_OFFSET: usize = 112;
+
+/// Offset of TD attributes inside the TDX report body.
+pub const TD_ATTRIBUTES_OFFSET: usize = 120;
 
 /// Offset of RTMR measurements inside the TDX report body.
 pub const RTMR_OFFSET: usize = 328;
@@ -107,6 +110,8 @@ pub struct ParsedTdxQuote {
     pub mrsigner_seam: [u8; TDX_MEASUREMENT_LEN],
     /// SEAM attributes for the loaded TDX module.
     pub seam_attributes: [u8; TDX_SEAM_ATTRIBUTES_LEN],
+    /// TD attributes, including the debug bit.
+    pub td_attributes: [u8; TDX_SEAM_ATTRIBUTES_LEN],
     /// MRTD measurement.
     pub mrtd: [u8; TDX_MEASUREMENT_LEN],
     /// RTMR0 measurement.
@@ -146,12 +151,9 @@ impl ParsedTdxQuote {
         B256::from_slice(&self.report_data[32..])
     }
 
-    /// Computes the contract-compatible TDX image hash.
-    pub fn image_hash(&self) -> B256 {
-        keccak256(
-            [&self.mrtd[..], &self.rtmr0[..], &self.rtmr1[..], &self.rtmr2[..], &self.rtmr3[..]]
-                .concat(),
-        )
+    /// Returns whether the TD was launched in debug mode.
+    pub fn is_debug(&self) -> bool {
+        self.td_attributes[0] & 1 != 0
     }
 }
 
@@ -266,6 +268,7 @@ impl TdxQuote {
             tee_tcb_svn: Self::read_array(report_body, 0)?,
             mrsigner_seam: Self::read_array(report_body, MRSIGNERSEAM_OFFSET)?,
             seam_attributes: Self::read_array(report_body, SEAM_ATTRIBUTES_OFFSET)?,
+            td_attributes: Self::read_array(report_body, TD_ATTRIBUTES_OFFSET)?,
             mrtd: Self::read_array(report_body, MRTD_OFFSET)?,
             rtmr0: Self::read_array(report_body, RTMR_OFFSET)?,
             rtmr1: Self::read_array(report_body, RTMR_OFFSET + TDX_MEASUREMENT_LEN)?,

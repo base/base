@@ -5836,6 +5836,7 @@ dependencies = [
  "base-proof-primitives",
  "base-proof-tee-attestation",
  "base-proof-tee-nitro-verifier",
+ "base-proof-tee-tdx-collateral",
  "base-proof-tee-tdx-verifier",
  "base-tx-manager",
  "futures",
@@ -5904,26 +5905,6 @@ dependencies = [
  "reqwest 0.13.4",
  "tokio",
  "x509-parser",
-]
-
-[[package]]
-name = "base-proof-tee-tdx-image-hash"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "alloy-provider 2.0.5",
- "base-proof-contracts",
- "base-proof-primitives",
- "base-proof-tee-tdx-collateral",
- "base-proof-tee-tdx-prover",
- "base-proof-tee-tdx-runtime",
- "base-proof-tee-tdx-verifier",
- "clap",
- "eyre",
- "hex",
- "jsonrpsee",
- "tokio",
- "url",
 ]
 
 [[package]]
@@ -6265,6 +6246,7 @@ dependencies = [
 name = "base-prover-tdx"
 version = "0.0.0"
 dependencies = [
+ "alloy-primitives",
  "base-cli-utils",
  "base-common-chains",
  "base-proof-host",

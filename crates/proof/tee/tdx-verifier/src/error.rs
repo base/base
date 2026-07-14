@@ -38,6 +38,10 @@ pub enum TdxVerifierError {
     #[error("TCB status is not allowed")]
     TcbStatusNotAllowed,
 
+    /// TD debug mode is not allowed.
+    #[error("TDX debug mode is not allowed")]
+    DebugTdNotAllowed,
+
     /// Required quote collateral is expired.
     #[error("TDX collateral is expired")]
     CollateralExpired,

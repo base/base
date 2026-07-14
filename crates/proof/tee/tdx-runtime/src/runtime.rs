@@ -2,7 +2,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use alloy_primitives::{B256, Bytes};
 
-use crate::{Result, TdxQuoteProvider, TdxReportData, TdxSigner};
+use crate::{Result, TdxAttestationContext, TdxQuoteProvider, TdxReportData, TdxSigner};
 
 /// TDX signer quote response.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -17,12 +17,22 @@ pub struct TdxSignerQuote {
 pub struct TdxRuntime {
     signer: TdxSigner,
     quote_provider: Box<dyn TdxQuoteProvider>,
+    workload_digest: B256,
 }
 
 impl TdxRuntime {
     /// Creates a runtime with a fresh signer and quote provider.
-    pub fn new(quote_provider: impl TdxQuoteProvider + 'static) -> Self {
-        Self { signer: TdxSigner::generate(), quote_provider: Box::new(quote_provider) }
+    pub fn new(quote_provider: impl TdxQuoteProvider + 'static, workload_digest: B256) -> Self {
+        Self {
+            signer: TdxSigner::generate(),
+            quote_provider: Box::new(quote_provider),
+            workload_digest,
+        }
+    }
+
+    /// Returns the CI-derived OCI manifest digest used as the TDX workload identity.
+    pub const fn workload_digest(&self) -> B256 {
+        self.workload_digest
     }
 
     /// Returns the signer's public key.
@@ -36,12 +46,21 @@ impl TdxRuntime {
     }
 
     /// Collects a fresh quote using the current system time.
-    pub fn signer_quote(&self, attestation_nonce: Option<B256>) -> Result<TdxSignerQuote> {
+    pub fn signer_quote(
+        &self,
+        attestation_nonce: Option<B256>,
+        context: TdxAttestationContext,
+    ) -> Result<TdxSignerQuote> {
         let quote_timestamp_millis =
             SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
         let public_key = self.signer.public_key();
-        let report_data =
-            TdxReportData::for_public_key(&public_key, attestation_nonce, quote_timestamp_millis)?;
+        let report_data = TdxReportData::for_public_key(
+            &public_key,
+            self.workload_digest,
+            attestation_nonce,
+            quote_timestamp_millis,
+            context,
+        )?;
         let quote = self.quote_provider.quote(&report_data)?;
 
         Ok(TdxSignerQuote { quote, quote_timestamp_millis })
@@ -71,8 +90,19 @@ mod tests {
 
     #[test]
     fn runtime_returns_quote_and_timestamp() {
-        let runtime = TdxRuntime::new(TestQuoteProvider(Bytes::from_static(b"fixture-tdx-quote")));
-        let signer_quote = runtime.signer_quote(Some(B256::repeat_byte(0x11))).unwrap();
+        let runtime = TdxRuntime::new(
+            TestQuoteProvider(Bytes::from_static(b"fixture-tdx-quote")),
+            B256::ZERO,
+        );
+        let signer_quote = runtime
+            .signer_quote(
+                Some(B256::repeat_byte(0x11)),
+                TdxAttestationContext {
+                    chain_id: 11_155_111,
+                    registry_address: alloy_primitives::Address::repeat_byte(0x22),
+                },
+            )
+            .unwrap();
 
         assert_eq!(signer_quote.quote, Bytes::from_static(b"fixture-tdx-quote"));
         assert!(signer_quote.quote_timestamp_millis > 0);

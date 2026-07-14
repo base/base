@@ -295,10 +295,6 @@ tdx-verifier-image-id:
         target/riscv32im-risc0-zkvm-elf/release/base-proof-tee-tdx-attestation-prover-guest \
         --output target/base-proof-tee-tdx-attestation-prover-guest.r0bf
 
-# Inspect a TDX prover's signer and contract-compatible image hash
-tdx-image-hash endpoint *args="":
-    cargo run -q -p base-proof-tee-tdx-image-hash -- --endpoint "{{ endpoint }}" --verify-quote {{ args }}
-
 # Build twice and compare to verify reproducibility
 verify-reproducible:
     #!/usr/bin/env bash

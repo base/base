@@ -6,8 +6,8 @@ use alloy_primitives::{Address, hex::FromHex};
 use base_proof_tee_nitro_attestation_prover::BoundlessProver as NitroBoundlessProver;
 use base_proof_tee_registrar::{
     DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
-    DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, INSTANCE_CACHE_TTL_CYCLES, PlatformProofProvider,
-    RegistrarConfig, RegistrarError,
+    DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, HydratedTdxProofProvider,
+    INSTANCE_CACHE_TTL_CYCLES, PlatformProofProvider, RegistrarConfig, RegistrarError,
 };
 use base_proof_tee_tdx_attestation_prover::BoundlessProver as TdxBoundlessProver;
 use base_tx_manager::{SignerConfig, TxManagerConfig};
@@ -256,7 +256,7 @@ impl Cli {
                     self.boundless_max_recovery_attempts,
                     max_attestation_age,
                 ),
-                TdxBoundlessProver::new(
+                HydratedTdxProofProvider::new(TdxBoundlessProver::new(
                     boundless_rpc_url.clone(),
                     boundless_signer,
                     self.boundless_tdx_verifier_program_url,
@@ -264,7 +264,7 @@ impl Cli {
                     boundless_timing,
                     self.boundless_max_recovery_attempts,
                     max_attestation_age,
-                ),
+                )),
             ),
             boundless_rpc_url,
             boundless_signer_address,

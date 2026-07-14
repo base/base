@@ -45,8 +45,14 @@ sol! {
         bool hasAttestationNonce;
         /// Registrar nonce expected in the quote report data.
         bytes32 attestationNonce;
+        /// CI-derived OCI manifest digest expected in the quote report data.
+        bytes32 workloadDigest;
         /// Quote collection timestamp in milliseconds since Unix epoch.
         uint64 quoteTimestampMillis;
+        /// L1 chain ID expected in the quote report data.
+        uint64 chainId;
+        /// `TEEProverRegistry` address expected in the quote report data.
+        address registryAddress;
         /// Verification time in seconds since Unix epoch.
         uint64 verificationTime;
         /// Maximum accepted quote age in seconds.
@@ -107,7 +113,10 @@ impl TdxVerifierInput {
             expectedPublicKey: self.expected_public_key.clone(),
             hasAttestationNonce: self.attestation_nonce.is_some(),
             attestationNonce: self.attestation_nonce.unwrap_or(B256::ZERO),
+            workloadDigest: self.workload_digest,
             quoteTimestampMillis: self.quote_timestamp_millis,
+            chainId: self.chain_id,
+            registryAddress: self.registry_address,
             verificationTime: self.verification_time,
             maxQuoteAgeSeconds: self.max_quote_age_seconds,
             allowedTcbStatuses: self
@@ -145,7 +154,10 @@ impl TdxVerifierInput {
             trusted_root_ca_hash: input.trustedRootCaHash,
             expected_public_key: input.expectedPublicKey,
             attestation_nonce: input.hasAttestationNonce.then_some(input.attestationNonce),
+            workload_digest: input.workloadDigest,
             quote_timestamp_millis: input.quoteTimestampMillis,
+            chain_id: input.chainId,
+            registry_address: input.registryAddress,
             verification_time: input.verificationTime,
             max_quote_age_seconds: input.maxQuoteAgeSeconds,
             allowed_tcb_statuses: input
@@ -202,7 +214,10 @@ mod tests {
             trusted_root_ca_hash: B256::repeat_byte(0x55),
             expected_public_key: public_key(),
             attestation_nonce: Some(B256::repeat_byte(0x66)),
+            workload_digest: B256::repeat_byte(0x77),
             quote_timestamp_millis: 1_711_111_111_000,
+            chain_id: 11_155_111,
+            registry_address: Address::repeat_byte(0x88),
             verification_time: 1_711_111_222,
             max_quote_age_seconds: 300,
             allowed_tcb_statuses: vec![TDXTcbStatus::UpToDate, TDXTcbStatus::SwHardeningNeeded],

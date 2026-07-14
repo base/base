@@ -11,6 +11,6 @@ logic can be compiled into a ZK guest and tested natively.
 
 `TDREPORT.REPORTDATA` must bind the expected signer key hash in its first 32
 bytes. Its last 32 bytes are
-`keccak256("base-tdx-tee-prover-v1" || quote_timestamp_millis_le || registrar_nonce)`.
-This keeps nonce and timestamp checks tied to signed quote data instead of
-trusting unauthenticated verifier input.
+`keccak256("base-tdx-workload-v2" || workload_digest || registrar_nonce || quote_timestamp_millis_le || chain_id_le || registry_address)`.
+The verifier rejects quotes from debug TDs and emits the signed workload digest
+as `TDXVerifierJournal.imageHash`.

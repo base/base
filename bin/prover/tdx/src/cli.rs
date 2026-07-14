@@ -2,13 +2,14 @@
 
 use std::{net::SocketAddr, sync::Arc};
 
+use alloy_primitives::{Address, B256};
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_chains::rollup_config;
 use base_proof_host::{ProverConfig, ProverService};
 #[cfg(feature = "local")]
 use base_proof_tee_tdx_prover::TdxMeasurements;
 use base_proof_tee_tdx_prover::{ProofGenerator, TdxBackend, TdxProverServer};
-use base_proof_tee_tdx_runtime::{ConfigfsTdxQuoteProvider, TdxRuntime};
+use base_proof_tee_tdx_runtime::{ConfigfsTdxQuoteProvider, TdxAttestationContext, TdxRuntime};
 use base_proof_worker::{JobDiscovery, JobDiscoveryConfig, ProofSubmitter, WorkerHeartbeatConfig};
 use base_prover_service_client::{ProverServiceClientConfig, ProverWorkerClient};
 use base_prover_service_protocol::TeeKind;
@@ -62,6 +63,18 @@ pub(crate) struct Cli {
     #[arg(long, env = "TDX_REPORT_NAME", default_value = "base-tdx-prover")]
     report_name: String,
 
+    /// CI-derived linux/amd64 OCI manifest digest for this prover workload.
+    #[arg(long, env = "TEE_TDX_IMAGE_HASH")]
+    tee_tdx_image_hash: B256,
+
+    /// L1 chain ID used when registering this signer.
+    #[arg(long, env = "L1_CHAIN_ID")]
+    l1_chain_id: Option<u64>,
+
+    /// `TEEProverRegistry` receiving this signer's registration.
+    #[arg(long, env = "TEE_PROVER_REGISTRY_ADDRESS")]
+    tee_prover_registry_address: Option<Address>,
+
     /// Logging arguments.
     #[command(flatten)]
     logging: LogArgs,
@@ -102,6 +115,9 @@ impl Cli {
             enable_experimental_witness_endpoint,
             prover_service_endpoint,
             report_name,
+            tee_tdx_image_hash,
+            l1_chain_id,
+            tee_prover_registry_address,
             #[cfg(feature = "local")]
             mode,
             ..
@@ -124,18 +140,32 @@ impl Cli {
         info!(
             addr = %listen_addr,
             report_name = %report_name,
+            workload_digest = %tee_tdx_image_hash,
             "starting tdx prover worker"
         );
         #[cfg(feature = "local")]
         let runtime = if mode == Some(LocalMode::Local) {
             info!("using deterministic local TDX quote fixture");
-            Arc::new(TdxRuntime::new(TdxMeasurements))
+            Arc::new(TdxRuntime::new(TdxMeasurements, tee_tdx_image_hash))
         } else {
-            Arc::new(TdxRuntime::new(ConfigfsTdxQuoteProvider::new(&report_name)))
+            Arc::new(TdxRuntime::new(
+                ConfigfsTdxQuoteProvider::new(&report_name),
+                tee_tdx_image_hash,
+            ))
         };
         #[cfg(not(feature = "local"))]
-        let runtime = Arc::new(TdxRuntime::new(ConfigfsTdxQuoteProvider::new(&report_name)));
-        let registrar_handle = TdxProverServer::new(Arc::clone(&runtime)).run(listen_addr).await?;
+        let runtime = Arc::new(TdxRuntime::new(
+            ConfigfsTdxQuoteProvider::new(&report_name),
+            tee_tdx_image_hash,
+        ));
+        let registrar_handle = TdxProverServer::new(
+            Arc::clone(&runtime),
+            l1_chain_id.zip(tee_prover_registry_address).map(|(chain_id, registry_address)| {
+                TdxAttestationContext { chain_id, registry_address }
+            }),
+        )
+        .run(listen_addr)
+        .await?;
         let prover = ProverService::new(config, TdxBackend::new(runtime));
 
         let prover_service = ProverServiceClientConfig::new(prover_service_endpoint.clone());

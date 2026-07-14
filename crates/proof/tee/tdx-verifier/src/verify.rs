@@ -9,7 +9,7 @@ use crate::{
     TdxVerifierError, collateral::CollateralVerifier,
 };
 
-const REPORT_DATA_CONTEXT: &[u8] = b"base-tdx-tee-prover-v1";
+const REPORT_DATA_CONTEXT: &[u8] = b"base-tdx-workload-v2";
 
 /// Complete explicit input to the pure TDX verifier.
 #[derive(Debug)]
@@ -28,10 +28,16 @@ pub struct TdxVerifierInput {
     pub expected_public_key: Bytes,
     /// Optional deterministic registrar nonce bound into the quote report data.
     pub attestation_nonce: Option<B256>,
+    /// CI-derived OCI manifest digest expected in the quote report data.
+    pub workload_digest: B256,
     /// Quote collection timestamp in milliseconds since Unix epoch.
     ///
     /// This value must match the timestamp commitment in `TDREPORT.REPORTDATA`.
     pub quote_timestamp_millis: u64,
+    /// L1 chain ID expected in the quote report data.
+    pub chain_id: u64,
+    /// `TEEProverRegistry` address expected in the quote report data.
+    pub registry_address: Address,
     /// Verification time in seconds since Unix epoch.
     pub verification_time: u64,
     /// Maximum accepted quote age in seconds.
@@ -48,6 +54,9 @@ impl TdxVerifier {
     /// Verifies a TDX quote and collateral bundle into an onchain journal.
     pub fn verify(input: &TdxVerifierInput) -> Result<TDXVerifierJournal> {
         let quote = TdxQuote::parse(&input.quote)?;
+        if quote.is_debug() {
+            return Err(TdxVerifierError::DebugTdNotAllowed);
+        }
 
         let (pck_leaf_key, pck_expiration) = CollateralVerifier::verify_certificate_chain(
             &input.pck_certificate_chain,
@@ -100,8 +109,11 @@ impl TdxVerifier {
         Self::verify_report_data(
             &quote,
             public_key_hash,
+            input.workload_digest,
             input.quote_timestamp_millis,
             input.attestation_nonce,
+            input.chain_id,
+            input.registry_address,
         )?;
         let collateral_expiration = pck_expiration.min(tcb_expiration).min(qe_expiration);
 
@@ -116,10 +128,13 @@ impl TdxVerifier {
             qeIdentityHash: input.collateral.qe_identity.hash(),
             publicKey: input.expected_public_key.clone(),
             signer,
-            imageHash: quote.image_hash(),
+            imageHash: input.workload_digest,
             mrTdHash: keccak256(quote.mrtd),
             reportDataPrefix: quote.report_data_prefix(),
             reportDataSuffix: quote.report_data_suffix(),
+            tdAttributes: u64::from_le_bytes(quote.td_attributes),
+            chainId: input.chain_id,
+            registryAddress: input.registry_address,
         })
     }
 
@@ -133,16 +148,25 @@ impl TdxVerifier {
     }
 
     /// Validates that quote report data binds the signer public key, quote
-    /// timestamp, and optional registrar nonce.
+    /// workload digest, timestamp, registrar nonce, chain, and registry.
     pub fn verify_report_data(
         quote: &crate::ParsedTdxQuote,
         public_key_hash: B256,
+        workload_digest: B256,
         timestamp_millis: u64,
         attestation_nonce: Option<B256>,
+        chain_id: u64,
+        registry_address: Address,
     ) -> Result<()> {
         if quote.report_data_prefix() != public_key_hash
             || quote.report_data_suffix()
-                != Self::timestamp_report_data_suffix(timestamp_millis, attestation_nonce)
+                != Self::timestamp_report_data_suffix(
+                    workload_digest,
+                    timestamp_millis,
+                    attestation_nonce,
+                    chain_id,
+                    registry_address,
+                )
         {
             return Err(TdxVerifierError::ReportDataMismatch);
         }
@@ -150,15 +174,22 @@ impl TdxVerifier {
     }
 
     /// Computes the expected signed `TDREPORT.REPORTDATA` suffix for a quote
-    /// timestamp and optional registrar nonce.
+    /// workload digest, timestamp, optional registrar nonce, chain, and
+    /// registry address.
     pub fn timestamp_report_data_suffix(
+        workload_digest: B256,
         timestamp_millis: u64,
         attestation_nonce: Option<B256>,
+        chain_id: u64,
+        registry_address: Address,
     ) -> B256 {
-        let mut preimage = [&REPORT_DATA_CONTEXT[..], &timestamp_millis.to_le_bytes()].concat();
+        let mut preimage = [&REPORT_DATA_CONTEXT[..], workload_digest.as_slice()].concat();
         if let Some(nonce) = attestation_nonce {
             preimage.extend_from_slice(nonce.as_slice());
         }
+        preimage.extend_from_slice(&timestamp_millis.to_le_bytes());
+        preimage.extend_from_slice(&chain_id.to_le_bytes());
+        preimage.extend_from_slice(registry_address.as_slice());
         keccak256(preimage)
     }
 }
@@ -172,18 +203,23 @@ mod tests {
 
     use super::*;
     use crate::{
-        TdxCertificate, TdxCollateral, TdxRevocationEvidence, TdxSignedCollateral,
+        TDX_REPORT_DATA_LEN, TdxCertificate, TdxCollateral, TdxRevocationEvidence,
+        TdxSignedCollateral,
         TdxSignedCollateralBody::{QeIdentity, TcbInfo},
         quote::{
             CERTIFICATION_DATA_HEADER_LEN, ECDSA_P256_PUBLIC_KEY_BODY_LEN,
-            ECDSA_P256_SIGNATURE_LEN, QE_REPORT_LEN, TDX_MEASUREMENT_LEN, TDX_QUOTE_HEADER_LEN,
-            TDX_REPORT_BODY_LEN, TDX_TEE_TCB_SVN_LEN,
+            ECDSA_P256_SIGNATURE_LEN, QE_REPORT_LEN, REPORT_DATA_OFFSET,
+            SIGNATURE_DATA_LEN_PREFIX_LEN, TD_ATTRIBUTES_OFFSET, TDX_MEASUREMENT_LEN,
+            TDX_QUOTE_HEADER_LEN, TDX_REPORT_BODY_LEN, TDX_TEE_TCB_SVN_LEN,
         },
     };
 
     const VERIFICATION_TIME: u64 = 1_711_111_111;
     const QUOTE_TIMESTAMP_MILLIS: u64 = 1_711_111_000_000;
     const MAX_QUOTE_AGE_SECONDS: u64 = 300;
+    const WORKLOAD_DIGEST: B256 = B256::repeat_byte(0xAA);
+    const CHAIN_ID: u64 = 11_155_111;
+    const REGISTRY_ADDRESS: Address = Address::repeat_byte(0xBB);
     const FIXTURE_HEX: &str = include_str!("testdata/verify_fixture.hex");
 
     fn secp256k1_public_key(scalar: u8) -> Bytes {
@@ -195,6 +231,13 @@ mod tests {
 
     fn sign(message: &[u8]) -> Bytes {
         let signature: Signature = SigningKey::from_slice(&[4; 32])
+            .expect("fixture signing key must be valid")
+            .sign(message);
+        Bytes::copy_from_slice(&signature.to_bytes())
+    }
+
+    fn sign_quote(message: &[u8]) -> Bytes {
+        let signature: Signature = SigningKey::from_slice(&[3; 32])
             .expect("fixture signing key must be valid")
             .sign(message);
         Bytes::copy_from_slice(&signature.to_bytes())
@@ -253,7 +296,7 @@ mod tests {
         let tcb_info = collateral(fixture_bytes("tcb_info_raw"), TcbInfo, collateral_chain.clone());
         let qe_identity =
             collateral(fixture_bytes("qe_identity_raw"), QeIdentity, collateral_chain);
-        TdxVerifierInput {
+        let mut input = TdxVerifierInput {
             quote: fixture_bytes("quote"),
             pck_certificate_chain: pck_chain,
             collateral: TdxCollateral { tcb_info, qe_identity },
@@ -261,16 +304,45 @@ mod tests {
             trusted_root_ca_hash: root_hash,
             expected_public_key: secp256k1_public_key(1),
             attestation_nonce: None,
+            workload_digest: WORKLOAD_DIGEST,
             quote_timestamp_millis: QUOTE_TIMESTAMP_MILLIS,
+            chain_id: CHAIN_ID,
+            registry_address: REGISTRY_ADDRESS,
             verification_time: VERIFICATION_TIME,
             max_quote_age_seconds: MAX_QUOTE_AGE_SECONDS,
             allowed_tcb_statuses: vec![TDXTcbStatus::UpToDate],
-        }
+        };
+        rebind_report_data(&mut input);
+        input
     }
 
     fn edit_quote(input: &mut TdxVerifierInput, mutate: impl FnOnce(&mut [u8])) {
         let mut quote = input.quote.to_vec();
         mutate(&mut quote);
+        input.quote = Bytes::from(quote);
+    }
+
+    fn rebind_report_data(input: &mut TdxVerifierInput) {
+        let public_key_hash = TdxVerifier::validate_public_key(&input.expected_public_key).unwrap();
+        let mut quote = input.quote.to_vec();
+        let report_data = &mut quote[TDX_QUOTE_HEADER_LEN + REPORT_DATA_OFFSET
+            ..TDX_QUOTE_HEADER_LEN + REPORT_DATA_OFFSET + TDX_REPORT_DATA_LEN];
+        report_data[..32].copy_from_slice(public_key_hash.as_slice());
+        report_data[32..].copy_from_slice(
+            TdxVerifier::timestamp_report_data_suffix(
+                input.workload_digest,
+                input.quote_timestamp_millis,
+                input.attestation_nonce,
+                input.chain_id,
+                input.registry_address,
+            )
+            .as_slice(),
+        );
+        let signature = sign_quote(&quote[..TDX_QUOTE_HEADER_LEN + TDX_REPORT_BODY_LEN]);
+        let signature_offset =
+            TDX_QUOTE_HEADER_LEN + TDX_REPORT_BODY_LEN + SIGNATURE_DATA_LEN_PREFIX_LEN;
+        quote[signature_offset..signature_offset + ECDSA_P256_SIGNATURE_LEN]
+            .copy_from_slice(&signature);
         input.quote = Bytes::from(quote);
     }
 
@@ -305,10 +377,20 @@ mod tests {
         assert_eq!(journal.qeIdentityHash, input.collateral.qe_identity.hash());
         assert_eq!(journal.publicKey, input.expected_public_key);
         assert_eq!(journal.signer, address!("7e5f4552091a69125d5dfcb7b8c2659029395bdf"));
+        assert_eq!(journal.imageHash, WORKLOAD_DIGEST);
         assert_eq!(
             journal.reportDataSuffix,
-            TdxVerifier::timestamp_report_data_suffix(QUOTE_TIMESTAMP_MILLIS, None)
+            TdxVerifier::timestamp_report_data_suffix(
+                WORKLOAD_DIGEST,
+                QUOTE_TIMESTAMP_MILLIS,
+                None,
+                CHAIN_ID,
+                REGISTRY_ADDRESS,
+            )
         );
+        assert_eq!(journal.tdAttributes, 0);
+        assert_eq!(journal.chainId, CHAIN_ID);
+        assert_eq!(journal.registryAddress, REGISTRY_ADDRESS);
         assert_eq!(
             journal.collateralExpiration, 2_051_222_400,
             "earliest collateral/cert expiration must be journaled",
@@ -526,6 +608,14 @@ mod tests {
         assert_failure!(
             |input| input.expected_public_key = secp256k1_public_key(2),
             TdxVerifierError::ReportDataMismatch
+        );
+        assert_failure!(
+            |input| {
+                edit_quote(input, |quote| {
+                    quote[TDX_QUOTE_HEADER_LEN + TD_ATTRIBUTES_OFFSET] = 1;
+                });
+            },
+            TdxVerifierError::DebugTdNotAllowed
         );
         assert_failure!(
             |input| input.revocation = revocation_evidence("intermediate_crl_revoked_03"),

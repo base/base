@@ -3,7 +3,7 @@ use std::{net::SocketAddr, sync::Arc};
 use alloy_primitives::B256;
 use base_health::{HealthzApiServer, HealthzRpc};
 use base_proof_primitives::EnclaveApiServer;
-use base_proof_tee_tdx_runtime::TdxRuntime;
+use base_proof_tee_tdx_runtime::{TdxAttestationContext, TdxRuntime};
 use jsonrpsee::{
     RpcModule,
     core::{RpcResult, async_trait},
@@ -17,12 +17,13 @@ use crate::TdxSignerAttestation;
 #[derive(Debug)]
 pub struct TdxProverServer {
     runtime: Arc<TdxRuntime>,
+    context: Option<TdxAttestationContext>,
 }
 
 impl TdxProverServer {
     /// Create a registrar-facing server for one TDX runtime.
-    pub const fn new(runtime: Arc<TdxRuntime>) -> Self {
-        Self { runtime }
+    pub const fn new(runtime: Arc<TdxRuntime>, context: Option<TdxAttestationContext>) -> Self {
+        Self { runtime, context }
     }
 
     /// Start the registrar-facing JSON-RPC HTTP server on the given address.
@@ -87,7 +88,14 @@ impl EnclaveApiServer for TdxProverServer {
             }
         };
 
-        let quote = self.runtime.signer_quote(attestation_nonce).map_err(|error| {
+        let context = self.context.ok_or_else(|| {
+            jsonrpsee::types::ErrorObjectOwned::owned(
+                -32001,
+                "TDX signer registration context is not configured",
+                None::<()>,
+            )
+        })?;
+        let quote = self.runtime.signer_quote(attestation_nonce, context).map_err(|error| {
             jsonrpsee::types::ErrorObjectOwned::owned(-32001, error.to_string(), None::<()>)
         })?;
         Ok(vec![
@@ -96,6 +104,9 @@ impl EnclaveApiServer for TdxProverServer {
                 quote: quote.quote,
                 quote_timestamp_millis: quote.quote_timestamp_millis,
                 attestation_nonce,
+                workload_digest: self.runtime.workload_digest(),
+                chain_id: context.chain_id,
+                registry_address: context.registry_address,
             }
             .encode(),
         ])
@@ -110,7 +121,13 @@ mod tests {
     use crate::TdxMeasurements;
 
     fn test_rpc() -> TdxProverServer {
-        TdxProverServer::new(Arc::new(TdxRuntime::new(TdxMeasurements)))
+        TdxProverServer::new(
+            Arc::new(TdxRuntime::new(TdxMeasurements, B256::repeat_byte(0x22))),
+            Some(TdxAttestationContext {
+                chain_id: 11_155_111,
+                registry_address: alloy_primitives::Address::repeat_byte(0x33),
+            }),
+        )
     }
 
     #[tokio::test]
@@ -126,6 +143,9 @@ mod tests {
         let quote = base_proof_tee_tdx_verifier::TdxQuote::parse(&attestation.quote).unwrap();
         assert_eq!(attestation.signer_public_key, rpc.runtime.signer_public_key().to_vec());
         assert_eq!(attestation.attestation_nonce, Some(B256::from([0x11; 32])));
+        assert_eq!(attestation.workload_digest, B256::repeat_byte(0x22));
+        assert_eq!(attestation.chain_id, 11_155_111);
+        assert_eq!(attestation.registry_address, alloy_primitives::Address::repeat_byte(0x33));
         assert_eq!(
             quote.report_data_prefix(),
             base_proof_tee_tdx_verifier::TdxVerifier::validate_public_key(
@@ -136,8 +156,11 @@ mod tests {
         assert_eq!(
             quote.report_data_suffix(),
             base_proof_tee_tdx_verifier::TdxVerifier::timestamp_report_data_suffix(
+                attestation.workload_digest,
                 attestation.quote_timestamp_millis,
-                attestation.attestation_nonce
+                attestation.attestation_nonce,
+                attestation.chain_id,
+                attestation.registry_address,
             )
         );
     }
@@ -156,6 +179,18 @@ mod tests {
 
             assert_eq!(err.code(), -32602);
         }
+    }
+
+    #[tokio::test]
+    async fn signer_attestation_requires_registration_context() {
+        let rpc = TdxProverServer::new(
+            Arc::new(TdxRuntime::new(TdxMeasurements, B256::repeat_byte(0x22))),
+            None,
+        );
+
+        let error = EnclaveApiServer::signer_attestation(&rpc, None, None).await.unwrap_err();
+
+        assert_eq!(error.code(), -32001);
     }
 
     #[test]
