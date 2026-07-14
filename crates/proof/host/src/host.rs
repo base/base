@@ -191,9 +191,20 @@ impl Host {
     }
 
     async fn resolve_online_config(&self, providers: &HostProviders) -> Result<HostConfig> {
-        let mut config = self.config.clone();
         let rollup_config: RollupConfig =
             serde_json::from_value(providers.l2.optimism_rollup_config().await?)?;
+
+        // Fail fast if the L2 RPC serves a config for the wrong chain; the guest re-checks this,
+        // but a host-side error is clearer and avoids wasted work.
+        let rpc_chain_id = rollup_config.l2_chain_id.id();
+        if rpc_chain_id != self.config.prover.l2_chain_id {
+            return Err(HostError::Custom(format!(
+                "L2 RPC returned rollup config for chain {rpc_chain_id} but host is configured for chain {}",
+                self.config.prover.l2_chain_id,
+            )));
+        }
+
+        let mut config = self.config.clone();
         config.prover.rollup_config = rollup_config;
         Ok(config)
     }

@@ -35,9 +35,34 @@ impl ScheduleId {
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::b256;
     use base_common_genesis::{BaseUpgradeConfig, UpgradeConfig};
 
     use super::*;
+
+    #[test]
+    fn schedule_id_matches_golden_values() {
+        // Pin the hash against encoding/order drift; MUST equal the onchain
+        // `ProtocolVersions.scheduleId()` for the same schedule.
+
+        // All unscheduled: still 13 links of `(index, 0)`, a fixed non-zero hash.
+        assert_eq!(
+            ScheduleId::from_upgrades(&UpgradeConfig::default()),
+            b256!("c61ddfdfe1ff9422919909549df660a43d53127a318e01274a0448443e54146d")
+        );
+
+        // A representative partial schedule.
+        let upgrades = UpgradeConfig {
+            regolith_time: Some(10),
+            canyon_time: Some(20),
+            base: BaseUpgradeConfig { azul: Some(30), beryl: None, cobalt: None },
+            ..Default::default()
+        };
+        assert_eq!(
+            ScheduleId::from_upgrades(&upgrades),
+            b256!("8701f0422d18caf7dbd5d2d00321a16c44e9dfa706dd4b0b4ea3c66fbe776f42")
+        );
+    }
 
     #[test]
     fn schedule_id_changes_when_schedule_changes() {

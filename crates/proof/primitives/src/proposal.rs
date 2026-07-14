@@ -87,7 +87,8 @@ pub struct Proposal {
     pub prev_output_root: B256,
     /// The config hash.
     pub config_hash: B256,
-    /// The schedule ID.
+    /// The schedule ID. Defaults to zero for payloads stored before this field existed.
+    #[cfg_attr(feature = "serde", serde(default))]
     pub schedule_id: B256,
 }
 
@@ -180,13 +181,14 @@ mod tests {
 
     #[test]
     #[cfg(feature = "serde")]
-    fn test_proposal_missing_schedule_id_rejected() {
+    fn test_proposal_missing_schedule_id_defaults_to_zero() {
+        // Payloads stored before schedule_id existed must still deserialize; the field defaults.
         let proposal = sample_proposal();
         let mut json = serde_json::to_value(&proposal).unwrap();
         json.as_object_mut().unwrap().remove("schedule_id");
 
-        let err = serde_json::from_value::<Proposal>(json).unwrap_err();
-        assert!(err.to_string().contains("schedule_id"));
+        let parsed: Proposal = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.schedule_id, B256::ZERO);
     }
 
     #[test]
