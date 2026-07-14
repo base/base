@@ -112,6 +112,8 @@ impl UpgradeSignalMetrics {
     ///
     /// Decoded as `major * 1_000_000 + minor * 1_000 + patch` so the gauge stays readable
     /// (raw packed values exceed `f64` integer precision).
+    ///
+    /// Expects a contract-read packed semver value; non-semver inputs decode to garbage.
     pub fn protocol_version_to_f64(protocol_version: U256) -> f64 {
         let limbs = protocol_version.as_limbs();
         let major = limbs[1] >> 32;

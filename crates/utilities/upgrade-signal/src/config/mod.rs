@@ -36,19 +36,11 @@ impl UpgradeSignalDefaults {
     /// binaries advertise the release semver as their supported protocol version. Dev builds
     /// (workspace `0.0.0`) advertise `U256::MAX` so no contract minimum rejects them.
     pub fn node_protocol_version() -> U256 {
-        let cargo_version = Self::packed_protocol_version(
-            env!("CARGO_PKG_VERSION_MAJOR")
-                .parse::<u32>()
-                .expect("Cargo package major version is numeric"),
-            env!("CARGO_PKG_VERSION_MINOR")
-                .parse::<u32>()
-                .expect("Cargo package minor version is numeric"),
-            env!("CARGO_PKG_VERSION_PATCH")
-                .parse::<u32>()
-                .expect("Cargo package patch version is numeric"),
-        );
-
-        if cargo_version == U256::ZERO { U256::MAX } else { cargo_version }
+        Self::advertised_protocol_version(Self::packed_protocol_version(
+            env!("CARGO_PKG_VERSION_MAJOR").parse::<u32>().expect("Cargo package major is numeric"),
+            env!("CARGO_PKG_VERSION_MINOR").parse::<u32>().expect("Cargo package minor is numeric"),
+            env!("CARGO_PKG_VERSION_PATCH").parse::<u32>().expect("Cargo package patch is numeric"),
+        ))
     }
 
     /// Encodes a `major.minor.patch` version into the packed-semver `uint256` layout used by the
@@ -56,5 +48,29 @@ impl UpgradeSignalDefaults {
     /// prerelease field left zero.
     pub const fn packed_protocol_version(major: u32, minor: u32, patch: u32) -> U256 {
         U256::from_limbs([(patch as u64) << 32, ((major as u64) << 32) | minor as u64, 0, 0])
+    }
+
+    /// Maps a packed Cargo version to the advertised node protocol version, promoting the
+    /// dev-build `0.0.0` (zero) to `U256::MAX` so no contract minimum can reject a dev build.
+    pub fn advertised_protocol_version(cargo_version: U256) -> U256 {
+        if cargo_version == U256::ZERO { U256::MAX } else { cargo_version }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dev_build_advertises_max_protocol_version() {
+        // Dev builds (0.0.0 -> zero) must bypass any contract minimum-version check.
+        let zero = UpgradeSignalDefaults::packed_protocol_version(0, 0, 0);
+        assert_eq!(UpgradeSignalDefaults::advertised_protocol_version(zero), U256::MAX);
+    }
+
+    #[test]
+    fn release_build_advertises_its_own_version() {
+        let version = UpgradeSignalDefaults::packed_protocol_version(1, 2, 0);
+        assert_eq!(UpgradeSignalDefaults::advertised_protocol_version(version), version);
     }
 }
