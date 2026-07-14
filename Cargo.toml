@@ -39,7 +39,6 @@ members = [
   "crates/proof/tee/registrar",
   "crates/proof/tee/nitro-verifier",
   "crates/proof/tee/tdx-verifier",
-  "crates/proof/tee/tdx-collateral",
   "crates/proof/tee/tdx-runtime",
   "crates/proof/tee/nitro-attestation-prover",
   "crates/proof/tee/tdx-attestation-prover",
@@ -266,7 +265,6 @@ base-proof-mpt = { path = "crates/proof/mpt", default-features = false }
 base-proof-tee-tdx-verifier = { path = "crates/proof/tee/tdx-verifier" }
 base-proof-tee-nitro-enclave = { path = "crates/proof/tee/nitro-enclave" }
 base-proof-host = { path = "crates/proof/host", default-features = false }
-base-proof-tee-tdx-collateral = { path = "crates/proof/tee/tdx-collateral" }
 base-prover-service-client = { path = "crates/proof/prover-service/client" }
 base-proof-tee-nitro-verifier = { path = "crates/proof/tee/nitro-verifier" }
 base-proof-client = { path = "crates/proof/client", default-features = false }
@@ -495,6 +493,7 @@ sha3 = "0.10"
 k256 = "0.13"
 p256 = "0.13"
 p384 = "0.13"
+rsa = "0.9"
 ciborium = "0.2"
 rustls = "0.23.35"
 secp256k1 = "0.30"

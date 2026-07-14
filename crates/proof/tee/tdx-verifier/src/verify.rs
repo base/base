@@ -1,138 +1,132 @@
-//! End-to-end TDX quote, collateral, policy, and journal verification.
+//! Confidential Space token verification and Solidity journal generation.
 
-use alloy_primitives::{Address, B256, Bytes, keccak256};
+use alloy_primitives::{Address, B256, hex, keccak256};
+use base64::{
+    Engine,
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+};
 use k256::PublicKey;
+use rsa::{
+    RsaPublicKey,
+    pkcs1::DecodeRsaPublicKey,
+    pkcs1v15::{Signature as RsaSignature, VerifyingKey as RsaVerifyingKey},
+    signature::Verifier,
+};
+use serde::Deserialize;
+use serde_json::Value;
+use sha2::Sha256;
+use x509_parser::{certificate::X509Certificate, prelude::FromDer};
 
 use crate::{
-    Result, TDXTcbStatus, TDXVerificationResult, TDXVerifierJournal, TdxCertificate, TdxCollateral,
-    TdxPlatformIdentity, TdxQuote, TdxRevocationEvidence, TdxSignedCollateralBody,
-    TdxVerifierError, collateral::CollateralVerifier,
+    Result, TDXVerificationResult, TDXVerifierJournal, TdxVerifierError, TdxVerifierInput,
 };
 
-const REPORT_DATA_CONTEXT: &[u8] = b"base-tdx-workload-v2";
+/// Google Cloud Attestation issuer for Confidential Space tokens.
+const GOOGLE_CLOUD_ATTESTATION_ISSUER: &str = "https://confidentialcomputing.googleapis.com";
 
-/// Complete explicit input to the pure TDX verifier.
-#[derive(Debug)]
-pub struct TdxVerifierInput {
-    /// Raw Intel TDX quote bytes.
-    pub quote: Bytes,
-    /// Root-to-leaf PCK certificate chain for the quote attestation key.
-    pub pck_certificate_chain: Vec<TdxCertificate>,
-    /// TCB info collateral and QE identity collateral.
-    pub collateral: TdxCollateral,
-    /// CRLs or equivalent revocation evidence.
-    pub revocation: TdxRevocationEvidence,
-    /// Trusted Intel root CA hash expected by the onchain verifier.
-    pub trusted_root_ca_hash: B256,
-    /// Expected uncompressed secp256k1 signer public key: `0x04 || x || y`.
-    pub expected_public_key: Bytes,
-    /// Optional deterministic registrar nonce bound into the quote report data.
-    pub attestation_nonce: Option<B256>,
-    /// CI-derived OCI manifest digest expected in the quote report data.
-    pub workload_digest: B256,
-    /// Quote collection timestamp in milliseconds since Unix epoch.
-    ///
-    /// This value must match the timestamp commitment in `TDREPORT.REPORTDATA`.
-    pub quote_timestamp_millis: u64,
-    /// L1 chain ID expected in the quote report data.
-    pub chain_id: u64,
-    /// `TEEProverRegistry` address expected in the quote report data.
-    pub registry_address: Address,
-    /// Verification time in seconds since Unix epoch.
-    pub verification_time: u64,
-    /// Maximum accepted quote age in seconds.
-    pub max_quote_age_seconds: u64,
-    /// Contract TCB statuses accepted by verifier policy.
-    pub allowed_tcb_statuses: Vec<TDXTcbStatus>,
+const TOKEN_NONCE_DOMAIN: &[u8] = b"base-tdx-confidential-space-token-nonce:v1";
+const GCP_INTEL_TDX: &str = "GCP_INTEL_TDX";
+const CONFIDENTIAL_SPACE: &str = "CONFIDENTIAL_SPACE";
+const DEBUG_DISABLED_SINCE_BOOT: &str = "disabled-since-boot";
+const STABLE_SUPPORT_ATTRIBUTE: &str = "STABLE";
+const SHA256_WITH_RSA_OID: &str = "1.2.840.113549.1.1.11";
+
+#[derive(Debug, Deserialize)]
+struct JwtHeader {
+    alg: String,
+    #[serde(default)]
+    x5c: Vec<String>,
 }
 
-/// Stateless TDX attestation verifier.
+#[derive(Debug, Deserialize)]
+struct TokenClaims {
+    aud: String,
+    dbgstat: String,
+    #[serde(default)]
+    eat_nonce: Vec<String>,
+    exp: u64,
+    hwmodel: String,
+    iat: u64,
+    iss: String,
+    nbf: u64,
+    secboot: bool,
+    swname: String,
+    submods: TokenSubmodules,
+}
+
+#[derive(Debug, Deserialize)]
+struct TokenSubmodules {
+    confidential_space: ConfidentialSpaceClaims,
+    container: ContainerClaims,
+}
+
+#[derive(Debug, Deserialize)]
+struct ConfidentialSpaceClaims {
+    #[serde(default)]
+    support_attributes: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ContainerClaims {
+    image_digest: String,
+    #[serde(default)]
+    cmd_override: Option<Value>,
+    #[serde(default)]
+    env_override: Option<Value>,
+}
+
+/// Stateless Confidential Space TDX attestation verifier.
 #[derive(Debug)]
 pub struct TdxVerifier;
 
 impl TdxVerifier {
-    /// Verifies a TDX quote and collateral bundle into an onchain journal.
+    /// Verifies a Google Cloud Attestation PKI token into an onchain journal.
     pub fn verify(input: &TdxVerifierInput) -> Result<TDXVerifierJournal> {
-        let quote = TdxQuote::parse(&input.quote)?;
-        if quote.is_debug() {
-            return Err(TdxVerifierError::DebugTdNotAllowed);
-        }
-
-        let (pck_leaf_key, pck_expiration) = CollateralVerifier::verify_certificate_chain(
-            &input.pck_certificate_chain,
+        let (header, claims, signing_input, signature) = Self::decode_token(&input.token)?;
+        let leaf_key = Self::verify_token_certificates(
+            &header.x5c,
             input.trusted_root_ca_hash,
             input.verification_time,
-            &input.revocation,
         )?;
-        TdxQuote::verify_qe_report(&quote, &pck_leaf_key)?;
-        TdxQuote::verify_signature(&quote)?;
-
-        let tcb_expiration = CollateralVerifier::verify_signed_collateral(
-            &input.collateral.tcb_info,
-            TdxSignedCollateralBody::TcbInfo,
-            input.trusted_root_ca_hash,
-            input.verification_time,
-            &input.revocation,
-        )?;
-        let qe_expiration = CollateralVerifier::verify_signed_collateral(
-            &input.collateral.qe_identity,
-            TdxSignedCollateralBody::QeIdentity,
-            input.trusted_root_ca_hash,
-            input.verification_time,
-            &input.revocation,
-        )?;
-        let pck_leaf =
-            input.pck_certificate_chain.last().expect("verified certificate chain is non-empty");
-        let (pck_platform, pck_tcb) =
-            TdxPlatformIdentity::platform_and_tcb_from_pck_certificate_der(&pck_leaf.raw)?;
-        let tcb_info_document = input.collateral.tcb_info.tcb_info_document()?;
-        tcb_info_document.tcb_info.verify_platform(&pck_platform)?;
-        let qe_identity_document = input.collateral.qe_identity.qe_identity_document()?;
-        qe_identity_document.enclave_identity.verify_qe_report(&quote)?;
-
-        let tcb_status =
-            tcb_info_document.tcb_info.tcb_status_for_quote(&quote, &pck_tcb)?.to_contract_status();
-        if tcb_status == TDXTcbStatus::Unknown || !input.allowed_tcb_statuses.contains(&tcb_status)
-        {
-            return Err(TdxVerifierError::TcbStatusNotAllowed);
-        }
-
-        let timestamp_seconds = input.quote_timestamp_millis / 1_000;
-        if timestamp_seconds >= input.verification_time
-            || input.verification_time - timestamp_seconds >= input.max_quote_age_seconds
-        {
-            return Err(TdxVerifierError::InvalidTimestamp);
-        }
+        Self::verify_token_signature(&header, &leaf_key, &signing_input, &signature)?;
+        Self::verify_claims(&claims, input)?;
 
         let public_key_hash = Self::validate_public_key(&input.expected_public_key)?;
         let signer = Address::from_slice(&public_key_hash.as_slice()[12..]);
-        Self::verify_report_data(
-            &quote,
-            public_key_hash,
-            input.workload_digest,
-            input.quote_timestamp_millis,
-            input.attestation_nonce,
+        let image_hash = Self::parse_image_hash(&claims.submods.container.image_digest)?;
+        let token_nonce = input.attestation_nonce.ok_or(TdxVerifierError::TokenNonceMismatch)?;
+        let expected_token_nonce = Self::token_nonce(
+            &input.expected_public_key,
+            token_nonce,
             input.chain_id,
             input.registry_address,
         )?;
-        let collateral_expiration = pck_expiration.min(tcb_expiration).min(qe_expiration);
+        let expected_token_nonce_text = hex::encode(expected_token_nonce);
+        if !claims.eat_nonce.iter().any(|nonce| nonce == &expected_token_nonce_text) {
+            return Err(TdxVerifierError::TokenNonceMismatch);
+        }
+
+        let leaf_certificate = header.x5c.first().expect("verified non-empty x5c chain");
+        let leaf_certificate = STANDARD
+            .decode(leaf_certificate)
+            .map_err(|error| TdxVerifierError::TokenMalformed(error.to_string()))?;
 
         Ok(TDXVerifierJournal {
             result: TDXVerificationResult::Success,
-            tcbStatus: tcb_status,
-            timestamp: input.quote_timestamp_millis,
-            collateralExpiration: collateral_expiration,
+            issuedAt: claims.iat,
+            expiration: claims.exp,
             rootCaHash: input.trusted_root_ca_hash,
-            pckCertHash: pck_leaf.hash(),
-            tcbInfoHash: input.collateral.tcb_info.hash(),
-            qeIdentityHash: input.collateral.qe_identity.hash(),
+            tokenLeafCertHash: keccak256(leaf_certificate),
             publicKey: input.expected_public_key.clone(),
             signer,
-            imageHash: input.workload_digest,
-            mrTdHash: keccak256(quote.mrtd),
-            reportDataPrefix: quote.report_data_prefix(),
-            reportDataSuffix: quote.report_data_suffix(),
-            tdAttributes: u64::from_le_bytes(quote.td_attributes),
+            imageHash: image_hash,
+            audienceHash: keccak256(input.expected_audience.as_bytes()),
+            tokenNonceHash: expected_token_nonce,
+            hardwareModelHash: keccak256(claims.hwmodel.as_bytes()),
+            secureBoot: claims.secboot,
+            debugDisabled: claims.dbgstat == DEBUG_DISABLED_SINCE_BOOT,
+            commandOverride: Self::has_override(claims.submods.container.cmd_override.as_ref()),
+            environmentOverride: Self::has_override(claims.submods.container.env_override.as_ref()),
             chainId: input.chain_id,
             registryAddress: input.registry_address,
         })
@@ -147,554 +141,396 @@ impl TdxVerifier {
         Ok(keccak256(&public_key[1..]))
     }
 
-    /// Validates that quote report data binds the signer public key, quote
-    /// workload digest, timestamp, registrar nonce, chain, and registry.
-    pub fn verify_report_data(
-        quote: &crate::ParsedTdxQuote,
-        public_key_hash: B256,
-        workload_digest: B256,
-        timestamp_millis: u64,
-        attestation_nonce: Option<B256>,
+    /// Derives the token nonce that binds a signer to one registrar challenge.
+    pub fn token_nonce(
+        public_key: &[u8],
+        registrar_nonce: B256,
         chain_id: u64,
         registry_address: Address,
+    ) -> Result<B256> {
+        let public_key_hash = Self::validate_public_key(public_key)?;
+        Ok(keccak256(
+            [
+                TOKEN_NONCE_DOMAIN,
+                public_key_hash.as_slice(),
+                registrar_nonce.as_slice(),
+                &chain_id.to_le_bytes(),
+                registry_address.as_slice(),
+            ]
+            .concat(),
+        ))
+    }
+
+    /// Extracts the OCI image digest from a token without trusting its signature.
+    ///
+    /// The prover uses this only to construct proof journals. Signer registration
+    /// validates the complete token before the digest can become trusted onchain.
+    pub fn image_hash_from_token(token: &[u8]) -> Result<B256> {
+        let (_, claims, _, _) = Self::decode_token(token)?;
+        Self::parse_image_hash(&claims.submods.container.image_digest)
+    }
+
+    fn decode_token(token: &[u8]) -> Result<(JwtHeader, TokenClaims, Vec<u8>, Vec<u8>)> {
+        let token = std::str::from_utf8(token)
+            .map_err(|error| TdxVerifierError::TokenMalformed(error.to_string()))?;
+        let mut parts = token.split('.');
+        let header_segment =
+            parts.next().ok_or(TdxVerifierError::TokenMalformed("missing header".into()))?;
+        let claims_segment =
+            parts.next().ok_or(TdxVerifierError::TokenMalformed("missing claims".into()))?;
+        let signature =
+            parts.next().ok_or(TdxVerifierError::TokenMalformed("missing signature".into()))?;
+        if parts.next().is_some() {
+            return Err(TdxVerifierError::TokenMalformed("too many JWT segments".into()));
+        }
+
+        let header = serde_json::from_slice(&Self::decode_url_base64(header_segment)?)
+            .map_err(|error| TdxVerifierError::TokenMalformed(error.to_string()))?;
+        let claims = serde_json::from_slice(&Self::decode_url_base64(claims_segment)?)
+            .map_err(|error| TdxVerifierError::TokenMalformed(error.to_string()))?;
+        let signature = Self::decode_url_base64(signature)?;
+
+        Ok((header, claims, format!("{header_segment}.{claims_segment}").into_bytes(), signature))
+    }
+
+    fn decode_url_base64(value: &str) -> Result<Vec<u8>> {
+        URL_SAFE_NO_PAD
+            .decode(value)
+            .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(value))
+            .map_err(|error| TdxVerifierError::TokenMalformed(error.to_string()))
+    }
+
+    fn verify_token_certificates(
+        certificates: &[String],
+        trusted_root_ca_hash: B256,
+        verification_time: u64,
+    ) -> Result<RsaPublicKey> {
+        if certificates.is_empty() {
+            return Err(TdxVerifierError::TokenMalformed("token x5c chain is empty".into()));
+        }
+        let raw_certificates = certificates
+            .iter()
+            .map(|certificate| {
+                STANDARD
+                    .decode(certificate)
+                    .map_err(|error| TdxVerifierError::TokenMalformed(error.to_string()))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let root = raw_certificates.last().expect("checked non-empty certificate chain");
+        if keccak256(root) != trusted_root_ca_hash {
+            return Err(TdxVerifierError::RootCaNotTrusted);
+        }
+
+        let certificates = raw_certificates
+            .iter()
+            .map(|raw| {
+                let (remaining, certificate) = X509Certificate::from_der(raw)
+                    .map_err(|error| TdxVerifierError::TokenSignatureInvalid(error.to_string()))?;
+                if !remaining.is_empty() {
+                    return Err(TdxVerifierError::TokenSignatureInvalid(
+                        "certificate has trailing bytes".into(),
+                    ));
+                }
+                let not_before = u64::try_from(certificate.validity().not_before.timestamp())
+                    .map_err(|_| {
+                        TdxVerifierError::TokenSignatureInvalid("negative notBefore".into())
+                    })?;
+                let not_after = u64::try_from(certificate.validity().not_after.timestamp())
+                    .map_err(|_| {
+                        TdxVerifierError::TokenSignatureInvalid("negative notAfter".into())
+                    })?;
+                if verification_time < not_before || verification_time >= not_after {
+                    return Err(TdxVerifierError::TokenExpired);
+                }
+                Ok(certificate)
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        for pair in certificates.windows(2) {
+            let [certificate, issuer] = pair else {
+                unreachable!("windows(2) produces pairs");
+            };
+            if certificate.issuer() != issuer.subject() {
+                return Err(TdxVerifierError::TokenSignatureInvalid(
+                    "certificate issuer does not match parent subject".into(),
+                ));
+            }
+            let basic_constraints = issuer
+                .basic_constraints()
+                .map_err(|error| TdxVerifierError::TokenSignatureInvalid(error.to_string()))?
+                .ok_or_else(|| {
+                    TdxVerifierError::TokenSignatureInvalid(
+                        "token certificate issuer is not a certificate authority".into(),
+                    )
+                })?;
+            if !basic_constraints.value.ca {
+                return Err(TdxVerifierError::TokenSignatureInvalid(
+                    "token certificate issuer is not a certificate authority".into(),
+                ));
+            }
+            Self::verify_rsa_sha256_signature(
+                issuer.public_key().subject_public_key.data.as_ref(),
+                certificate.tbs_certificate.as_ref(),
+                certificate.signature_value.data.as_ref(),
+                certificate.signature_algorithm.algorithm.to_id_string().as_str(),
+            )?;
+        }
+
+        Self::rsa_public_key(certificates[0].public_key().subject_public_key.data.as_ref())
+    }
+
+    fn verify_token_signature(
+        header: &JwtHeader,
+        key: &RsaPublicKey,
+        signing_input: &[u8],
+        signature: &[u8],
     ) -> Result<()> {
-        if quote.report_data_prefix() != public_key_hash
-            || quote.report_data_suffix()
-                != Self::timestamp_report_data_suffix(
-                    workload_digest,
-                    timestamp_millis,
-                    attestation_nonce,
-                    chain_id,
-                    registry_address,
-                )
+        if header.alg != "RS256" {
+            return Err(TdxVerifierError::TokenSignatureInvalid(format!(
+                "unsupported JWT algorithm {}",
+                header.alg
+            )));
+        }
+        Self::verify_rsa_sha256_signature_from_key(key, signing_input, signature)
+    }
+
+    fn verify_rsa_sha256_signature(
+        public_key: &[u8],
+        message: &[u8],
+        signature: &[u8],
+        signature_algorithm: &str,
+    ) -> Result<()> {
+        if signature_algorithm != SHA256_WITH_RSA_OID {
+            return Err(TdxVerifierError::TokenSignatureInvalid(format!(
+                "unsupported certificate signature algorithm {signature_algorithm}"
+            )));
+        }
+        let key = Self::rsa_public_key(public_key)?;
+        Self::verify_rsa_sha256_signature_from_key(&key, message, signature)
+    }
+
+    fn verify_rsa_sha256_signature_from_key(
+        key: &RsaPublicKey,
+        message: &[u8],
+        signature: &[u8],
+    ) -> Result<()> {
+        let signature = RsaSignature::try_from(signature)
+            .map_err(|error| TdxVerifierError::TokenSignatureInvalid(error.to_string()))?;
+        RsaVerifyingKey::<Sha256>::new(key.clone())
+            .verify(message, &signature)
+            .map_err(|error| TdxVerifierError::TokenSignatureInvalid(error.to_string()))
+    }
+
+    fn rsa_public_key(public_key: &[u8]) -> Result<RsaPublicKey> {
+        RsaPublicKey::from_pkcs1_der(public_key)
+            .map_err(|error| TdxVerifierError::TokenSignatureInvalid(error.to_string()))
+    }
+
+    fn verify_claims(claims: &TokenClaims, input: &TdxVerifierInput) -> Result<()> {
+        if claims.iss != GOOGLE_CLOUD_ATTESTATION_ISSUER
+            || claims.aud != input.expected_audience
+            || claims.swname != CONFIDENTIAL_SPACE
+            || claims.hwmodel != GCP_INTEL_TDX
+            || claims.dbgstat != DEBUG_DISABLED_SINCE_BOOT
+            || !claims.secboot
+            || !claims
+                .submods
+                .confidential_space
+                .support_attributes
+                .iter()
+                .any(|attribute| attribute == STABLE_SUPPORT_ATTRIBUTE)
+            || Self::has_override(claims.submods.container.cmd_override.as_ref())
+            || Self::has_override(claims.submods.container.env_override.as_ref())
         {
-            return Err(TdxVerifierError::ReportDataMismatch);
+            return Err(TdxVerifierError::TokenClaimsInvalid);
+        }
+        if claims.nbf > input.verification_time
+            || claims.iat > input.verification_time
+            || claims.exp <= input.verification_time
+            || input.verification_time.saturating_sub(claims.iat) >= input.max_token_age_seconds
+        {
+            return Err(TdxVerifierError::TokenExpired);
         }
         Ok(())
     }
 
-    /// Computes the expected signed `TDREPORT.REPORTDATA` suffix for a quote
-    /// workload digest, timestamp, optional registrar nonce, chain, and
-    /// registry address.
-    pub fn timestamp_report_data_suffix(
-        workload_digest: B256,
-        timestamp_millis: u64,
-        attestation_nonce: Option<B256>,
-        chain_id: u64,
-        registry_address: Address,
-    ) -> B256 {
-        let mut preimage = [&REPORT_DATA_CONTEXT[..], workload_digest.as_slice()].concat();
-        if let Some(nonce) = attestation_nonce {
-            preimage.extend_from_slice(nonce.as_slice());
+    fn parse_image_hash(image_digest: &str) -> Result<B256> {
+        let digest = image_digest
+            .strip_prefix("sha256:")
+            .ok_or_else(|| TdxVerifierError::TokenClaimsInvalid)?;
+        let digest = hex::decode(digest).map_err(|_| TdxVerifierError::TokenClaimsInvalid)?;
+        if digest.len() != 32 {
+            return Err(TdxVerifierError::TokenClaimsInvalid);
         }
-        preimage.extend_from_slice(&timestamp_millis.to_le_bytes());
-        preimage.extend_from_slice(&chain_id.to_le_bytes());
-        preimage.extend_from_slice(registry_address.as_slice());
-        keccak256(preimage)
+        Ok(B256::from_slice(&digest))
+    }
+
+    fn has_override(value: Option<&Value>) -> bool {
+        match value {
+            None | Some(Value::Null) => false,
+            Some(Value::Array(values)) => !values.is_empty(),
+            Some(Value::Object(values)) => !values.is_empty(),
+            Some(_) => true,
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{B256, Bytes, address, hex};
-    use k256::{SecretKey, elliptic_curve::sec1::ToEncodedPoint};
-    use p256::ecdsa::{Signature, SigningKey, signature::Signer};
-    use serde_json::json;
-
-    use super::*;
-    use crate::{
-        TDX_REPORT_DATA_LEN, TdxCertificate, TdxCollateral, TdxRevocationEvidence,
-        TdxSignedCollateral,
-        TdxSignedCollateralBody::{QeIdentity, TcbInfo},
-        quote::{
-            CERTIFICATION_DATA_HEADER_LEN, ECDSA_P256_PUBLIC_KEY_BODY_LEN,
-            ECDSA_P256_SIGNATURE_LEN, QE_REPORT_LEN, REPORT_DATA_OFFSET,
-            SIGNATURE_DATA_LEN_PREFIX_LEN, TD_ATTRIBUTES_OFFSET, TDX_MEASUREMENT_LEN,
-            TDX_QUOTE_HEADER_LEN, TDX_REPORT_BODY_LEN, TDX_TEE_TCB_SVN_LEN,
-        },
+    use alloy_primitives::Bytes;
+    use rsa::{
+        RsaPrivateKey,
+        pkcs1::DecodeRsaPrivateKey,
+        pkcs1v15::SigningKey as RsaSigningKey,
+        signature::{SignatureEncoding, Signer},
     };
 
-    const VERIFICATION_TIME: u64 = 1_711_111_111;
-    const QUOTE_TIMESTAMP_MILLIS: u64 = 1_711_111_000_000;
-    const MAX_QUOTE_AGE_SECONDS: u64 = 300;
-    const WORKLOAD_DIGEST: B256 = B256::repeat_byte(0xAA);
-    const CHAIN_ID: u64 = 11_155_111;
-    const REGISTRY_ADDRESS: Address = Address::repeat_byte(0xBB);
-    const FIXTURE_HEX: &str = include_str!("testdata/verify_fixture.hex");
+    use super::*;
 
-    fn secp256k1_public_key(scalar: u8) -> Bytes {
-        let mut bytes = [0; 32];
-        bytes[31] = scalar;
-        let secret_key = SecretKey::from_slice(&bytes).expect("fixture secret key must be valid");
-        Bytes::copy_from_slice(secret_key.public_key().to_encoded_point(false).as_bytes())
-    }
+    const PUBLIC_KEY: [u8; 65] = [
+        0x04, 0x1b, 0x84, 0xc5, 0x56, 0x7b, 0x12, 0x64, 0x40, 0x99, 0x5d, 0x3e, 0xd5, 0xaa, 0xba,
+        0x05, 0x65, 0xd7, 0x1e, 0x18, 0x34, 0x60, 0x48, 0x19, 0xff, 0x9c, 0x17, 0xf5, 0xe9, 0xd5,
+        0xdd, 0x07, 0x8f, 0x70, 0xbe, 0xaf, 0x8f, 0x58, 0x8b, 0x54, 0x15, 0x07, 0xfe, 0xd6, 0xa6,
+        0x42, 0xc5, 0xab, 0x42, 0xdf, 0xdf, 0x81, 0x20, 0xa7, 0xf6, 0x39, 0xde, 0x51, 0x22, 0xd4,
+        0x7a, 0x69, 0xa8, 0xe8, 0xd1,
+    ];
+    const TEST_CERTIFICATE_B64: &str = "MIIDOTCCAiGgAwIBAgIUNYDlLPEcP+YVn4A5ms895irtNtcwDQYJKoZIhvcNAQELBQAwLDEqMCgGA1UEAwwhQmFzZSBDb25maWRlbnRpYWwgU3BhY2UgVGVzdCBSb290MB4XDTI2MDcxNDIwMzIwMloXDTM2MDcxMTIwMzIwMlowLDEqMCgGA1UEAwwhQmFzZSBDb25maWRlbnRpYWwgU3BhY2UgVGVzdCBSb290MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmHEtBJK4Crft6tWyI0QDgKJ+u88Cf+oItrJ26fhoqYFzhjDlL6wivw7gMhtKFvFwbZWZMqzX6dEiJOVqybItJDeNWWQ+BMPpTw0w73bt+89rlq7Xb2WuoCHEJtua8XzJ2eTjSNYL86jwb3qjo5SIsnA1bBhS2Adxa28At43p7oUjM++gxYF1IQnr8JHDu0QZM2QdXoKUkBNIAEGUM7d4LafkY/qT67CHCxN2fPy7cMAnvPx7t5z4IDCr97AVPiEY+nkmcbE8S10JL01HXnT9UPfL9lzoMmTWqtMEwMWpOzZHmplb0i1b3uTthQ+bQwEt8yD6OzJ9vyK+r0hzeBWAWQIDAQABo1MwUTAdBgNVHQ4EFgQUvQ5FwgXxyFLlR3xkcMXo3LeMAKEwHwYDVR0jBBgwFoAUvQ5FwgXxyFLlR3xkcMXo3LeMAKEwDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEADEiMKpzgm/cnfWdC8g5seUGLuc8pUL1DWPUu6QAfWuBh92uZWt7/9vB8xTvT9eychwuZzEW8n4T1c/JXYRJ3gqThDeWKZELYgGPoK62ATCEL1nr6kdAGI7lNGU4yLruzNO8lIzXasIt55Vy2rr/nl2fHNjK8CU1GrmPybmL9nzJfUvInfFcOZttqwc+iRyR2ji07WehS1V8wBRDZ0UC8ZYBjiDWay6TRrrrsImTpdGHur1hMwKeB461xP5+HsuXDDzlKegJ/tdAQhicJGsriTpiglyiahtiGv75LsXedQGk8LuF7Ydf35PwbOBlPSM54a/oftoV42aG2ZfXOSapEWQ==";
+    const TEST_ROOT_KEY: &str = include_str!("testdata/confidential_space_test_root.key.pem");
+    const VERIFICATION_TIME: u64 = 1_800_000_000;
 
-    fn sign(message: &[u8]) -> Bytes {
-        let signature: Signature = SigningKey::from_slice(&[4; 32])
-            .expect("fixture signing key must be valid")
-            .sign(message);
-        Bytes::copy_from_slice(&signature.to_bytes())
-    }
+    #[test]
+    fn token_nonce_binds_signer_and_registration_context() {
+        let nonce = B256::repeat_byte(0x11);
+        let context = (11_155_111, Address::repeat_byte(0x22));
+        let expected = TdxVerifier::token_nonce(&PUBLIC_KEY, nonce, context.0, context.1).unwrap();
 
-    fn sign_quote(message: &[u8]) -> Bytes {
-        let signature: Signature = SigningKey::from_slice(&[3; 32])
-            .expect("fixture signing key must be valid")
-            .sign(message);
-        Bytes::copy_from_slice(&signature.to_bytes())
-    }
-
-    fn fixture_bytes(name: &str) -> Bytes {
-        FIXTURE_HEX
-            .lines()
-            .filter_map(|line| line.split_once(':'))
-            .find_map(|(key, value)| {
-                (key == name)
-                    .then(|| Bytes::from(hex::decode(value).expect("static hex fixture decodes")))
-            })
-            .unwrap_or_else(|| panic!("missing static hex fixture {name}"))
-    }
-
-    fn fixture_cert(name: &str) -> TdxCertificate {
-        TdxCertificate { raw: fixture_bytes(name) }
-    }
-
-    fn revocation_evidence(intermediate_crl: &str) -> TdxRevocationEvidence {
-        TdxRevocationEvidence {
-            certificate_crls: vec![fixture_bytes("root_crl"), fixture_bytes(intermediate_crl)],
-        }
-    }
-
-    fn collateral(
-        raw: Bytes,
-        body_kind: TdxSignedCollateralBody,
-        signing_chain: Vec<TdxCertificate>,
-    ) -> TdxSignedCollateral {
-        let mut collateral = TdxSignedCollateral { raw, signing_chain, signature: Bytes::new() };
-        resign_collateral_body(&mut collateral, body_kind);
-        collateral
-    }
-
-    fn resign_collateral_body(
-        collateral: &mut TdxSignedCollateral,
-        body_kind: TdxSignedCollateralBody,
-    ) {
-        let signed_body = collateral
-            .signed_body_bytes(body_kind)
-            .expect("fixture collateral body must serialize");
-        collateral.signature = sign(&signed_body);
-    }
-
-    fn fixture() -> TdxVerifierInput {
-        let root = fixture_cert("root");
-        let intermediate = fixture_cert("intermediate");
-        let pck_leaf = fixture_cert("pck_leaf");
-        let collateral_leaf = fixture_cert("collateral_leaf");
-
-        let root_hash = root.hash();
-        let pck_chain = vec![root.clone(), intermediate.clone(), pck_leaf];
-        let collateral_chain = vec![root, intermediate, collateral_leaf];
-        let tcb_info = collateral(fixture_bytes("tcb_info_raw"), TcbInfo, collateral_chain.clone());
-        let qe_identity =
-            collateral(fixture_bytes("qe_identity_raw"), QeIdentity, collateral_chain);
-        let mut input = TdxVerifierInput {
-            quote: fixture_bytes("quote"),
-            pck_certificate_chain: pck_chain,
-            collateral: TdxCollateral { tcb_info, qe_identity },
-            revocation: revocation_evidence("intermediate_crl"),
-            trusted_root_ca_hash: root_hash,
-            expected_public_key: secp256k1_public_key(1),
-            attestation_nonce: None,
-            workload_digest: WORKLOAD_DIGEST,
-            quote_timestamp_millis: QUOTE_TIMESTAMP_MILLIS,
-            chain_id: CHAIN_ID,
-            registry_address: REGISTRY_ADDRESS,
-            verification_time: VERIFICATION_TIME,
-            max_quote_age_seconds: MAX_QUOTE_AGE_SECONDS,
-            allowed_tcb_statuses: vec![TDXTcbStatus::UpToDate],
-        };
-        rebind_report_data(&mut input);
-        input
-    }
-
-    fn edit_quote(input: &mut TdxVerifierInput, mutate: impl FnOnce(&mut [u8])) {
-        let mut quote = input.quote.to_vec();
-        mutate(&mut quote);
-        input.quote = Bytes::from(quote);
-    }
-
-    fn rebind_report_data(input: &mut TdxVerifierInput) {
-        let public_key_hash = TdxVerifier::validate_public_key(&input.expected_public_key).unwrap();
-        let mut quote = input.quote.to_vec();
-        let report_data = &mut quote[TDX_QUOTE_HEADER_LEN + REPORT_DATA_OFFSET
-            ..TDX_QUOTE_HEADER_LEN + REPORT_DATA_OFFSET + TDX_REPORT_DATA_LEN];
-        report_data[..32].copy_from_slice(public_key_hash.as_slice());
-        report_data[32..].copy_from_slice(
-            TdxVerifier::timestamp_report_data_suffix(
-                input.workload_digest,
-                input.quote_timestamp_millis,
-                input.attestation_nonce,
-                input.chain_id,
-                input.registry_address,
-            )
-            .as_slice(),
+        assert_ne!(
+            expected,
+            TdxVerifier::token_nonce(&PUBLIC_KEY, B256::repeat_byte(0x12), context.0, context.1)
+                .unwrap()
         );
-        let signature = sign_quote(&quote[..TDX_QUOTE_HEADER_LEN + TDX_REPORT_BODY_LEN]);
-        let signature_offset =
-            TDX_QUOTE_HEADER_LEN + TDX_REPORT_BODY_LEN + SIGNATURE_DATA_LEN_PREFIX_LEN;
-        quote[signature_offset..signature_offset + ECDSA_P256_SIGNATURE_LEN]
-            .copy_from_slice(&signature);
-        input.quote = Bytes::from(quote);
-    }
-
-    fn edit_collateral(
-        input: &mut TdxVerifierInput,
-        body_kind: TdxSignedCollateralBody,
-        mutate: impl FnOnce(&mut serde_json::Value),
-    ) {
-        let collateral = match body_kind {
-            TcbInfo => &mut input.collateral.tcb_info,
-            QeIdentity => &mut input.collateral.qe_identity,
-        };
-        let mut document =
-            serde_json::from_slice(&collateral.raw).expect("fixture JSON must parse");
-        mutate(&mut document);
-        collateral.raw =
-            Bytes::from(serde_json::to_vec(&document).expect("fixture JSON must serialize"));
-        resign_collateral_body(collateral, body_kind);
+        assert_ne!(
+            expected,
+            TdxVerifier::token_nonce(&PUBLIC_KEY, nonce, context.0 + 1, context.1).unwrap()
+        );
+        assert_ne!(
+            expected,
+            TdxVerifier::token_nonce(&PUBLIC_KEY, nonce, context.0, Address::repeat_byte(0x23))
+                .unwrap()
+        );
     }
 
     #[test]
-    fn verifies_known_good_tdx_quote_fixture_and_emits_solidity_journal() {
-        let input = fixture();
-        let journal = TdxVerifier::verify(&input).unwrap();
+    fn image_hash_requires_a_sha256_oci_digest() {
+        assert_eq!(
+            TdxVerifier::parse_image_hash(
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            )
+            .unwrap(),
+            B256::repeat_byte(0xaa)
+        );
+        assert!(TdxVerifier::parse_image_hash("sha512:00").is_err());
+    }
+
+    #[test]
+    fn verifies_signed_confidential_space_token_and_emits_solidity_journal() {
+        let registrar_nonce = B256::repeat_byte(0x11);
+        let registry_address = Address::repeat_byte(0x22);
+        let token_nonce =
+            TdxVerifier::token_nonce(&PUBLIC_KEY, registrar_nonce, 11_155_111, registry_address)
+                .unwrap();
+        let claims = serde_json::json!({
+            "aud": "base-tdx-prover",
+            "dbgstat": "disabled-since-boot",
+            "eat_nonce": [hex::encode(token_nonce)],
+            "exp": VERIFICATION_TIME + 60,
+            "hwmodel": "GCP_INTEL_TDX",
+            "iat": VERIFICATION_TIME - 1,
+            "iss": GOOGLE_CLOUD_ATTESTATION_ISSUER,
+            "nbf": VERIFICATION_TIME - 1,
+            "secboot": true,
+            "swname": "CONFIDENTIAL_SPACE",
+            "submods": {
+                "confidential_space": { "support_attributes": ["STABLE"] },
+                "container": {
+                    "image_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+            }
+        });
+        let token = signed_test_token(claims);
+        let root = STANDARD.decode(TEST_CERTIFICATE_B64).unwrap();
+        let journal = TdxVerifier::verify(&TdxVerifierInput {
+            token: Bytes::from(token),
+            trusted_root_ca_hash: keccak256(root),
+            expected_audience: "base-tdx-prover".into(),
+            expected_public_key: Bytes::from_static(&PUBLIC_KEY),
+            attestation_nonce: Some(registrar_nonce),
+            chain_id: 11_155_111,
+            registry_address,
+            verification_time: VERIFICATION_TIME,
+            max_token_age_seconds: 300,
+        })
+        .unwrap();
 
         assert_eq!(journal.result, TDXVerificationResult::Success);
-        assert_eq!(journal.tcbStatus, TDXTcbStatus::UpToDate);
-        assert_eq!(journal.timestamp, QUOTE_TIMESTAMP_MILLIS);
-        assert_eq!(journal.rootCaHash, input.trusted_root_ca_hash);
-        assert_eq!(journal.pckCertHash, input.pck_certificate_chain[2].hash());
-        assert_eq!(journal.tcbInfoHash, input.collateral.tcb_info.hash());
-        assert_eq!(journal.qeIdentityHash, input.collateral.qe_identity.hash());
-        assert_eq!(journal.publicKey, input.expected_public_key);
-        assert_eq!(journal.signer, address!("7e5f4552091a69125d5dfcb7b8c2659029395bdf"));
-        assert_eq!(journal.imageHash, WORKLOAD_DIGEST);
-        assert_eq!(
-            journal.reportDataSuffix,
-            TdxVerifier::timestamp_report_data_suffix(
-                WORKLOAD_DIGEST,
-                QUOTE_TIMESTAMP_MILLIS,
-                None,
-                CHAIN_ID,
-                REGISTRY_ADDRESS,
-            )
-        );
-        assert_eq!(journal.tdAttributes, 0);
-        assert_eq!(journal.chainId, CHAIN_ID);
-        assert_eq!(journal.registryAddress, REGISTRY_ADDRESS);
-        assert_eq!(
-            journal.collateralExpiration, 2_051_222_400,
-            "earliest collateral/cert expiration must be journaled",
-        );
+        assert_eq!(journal.imageHash, B256::repeat_byte(0xaa));
+        assert_eq!(journal.tokenNonceHash, token_nonce);
+        assert!(journal.secureBoot);
+        assert!(journal.debugDisabled);
+        assert!(!journal.commandOverride);
+        assert!(!journal.environmentOverride);
     }
 
     #[test]
-    fn verifies_tdx_tcb_info_without_tee_type() {
-        let mut input = fixture();
-        edit_collateral(&mut input, TcbInfo, |document| {
-            document["tcbInfo"].as_object_mut().unwrap().remove("teeType");
+    fn rejects_non_production_confidential_space_token() {
+        let registrar_nonce = B256::repeat_byte(0x11);
+        let registry_address = Address::repeat_byte(0x22);
+        let token_nonce =
+            TdxVerifier::token_nonce(&PUBLIC_KEY, registrar_nonce, 11_155_111, registry_address)
+                .unwrap();
+        let claims = serde_json::json!({
+            "aud": "base-tdx-prover",
+            "dbgstat": "enabled",
+            "eat_nonce": [hex::encode(token_nonce)],
+            "exp": VERIFICATION_TIME + 60,
+            "hwmodel": "GCP_INTEL_TDX",
+            "iat": VERIFICATION_TIME - 1,
+            "iss": GOOGLE_CLOUD_ATTESTATION_ISSUER,
+            "nbf": VERIFICATION_TIME - 1,
+            "secboot": true,
+            "swname": "CONFIDENTIAL_SPACE",
+            "submods": {
+                "confidential_space": { "support_attributes": ["STABLE"] },
+                "container": {
+                    "image_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+            }
         });
+        let root = STANDARD.decode(TEST_CERTIFICATE_B64).unwrap();
 
-        TdxVerifier::verify(&input).unwrap();
+        assert!(matches!(
+            TdxVerifier::verify(&TdxVerifierInput {
+                token: Bytes::from(signed_test_token(claims)),
+                trusted_root_ca_hash: keccak256(root),
+                expected_audience: "base-tdx-prover".into(),
+                expected_public_key: Bytes::from_static(&PUBLIC_KEY),
+                attestation_nonce: Some(registrar_nonce),
+                chain_id: 11_155_111,
+                registry_address,
+                verification_time: VERIFICATION_TIME,
+                max_token_age_seconds: 300,
+            }),
+            Err(TdxVerifierError::TokenClaimsInvalid)
+        ));
     }
 
-    #[test]
-    fn collateral_signature_covers_signed_json_body() {
-        let mut input = fixture();
-        let document: serde_json::Value =
-            serde_json::from_slice(&input.collateral.tcb_info.raw).unwrap();
-        input.collateral.tcb_info.raw = Bytes::from(serde_json::to_vec_pretty(&document).unwrap());
-        resign_collateral_body(&mut input.collateral.tcb_info, TcbInfo);
-
-        TdxVerifier::verify(&input).expect("body-signed pretty collateral must verify");
-
-        input.collateral.tcb_info.signature = sign(&input.collateral.tcb_info.raw);
-        let error =
-            TdxVerifier::verify(&input).expect_err("top-level collateral signature must fail");
-        assert!(matches!(error, TdxVerifierError::TcbInfoInvalid(_)), "{error:?}");
-    }
-
-    #[test]
-    fn qe_identity_signature_must_not_be_bound_to_tcb_info_body() {
-        let mut input = fixture();
-        let tcb_document: serde_json::Value =
-            serde_json::from_slice(&input.collateral.tcb_info.raw).unwrap();
-        let qe_document: serde_json::Value =
-            serde_json::from_slice(&input.collateral.qe_identity.raw).unwrap();
-        input.collateral.qe_identity.raw = Bytes::from(
-            serde_json::to_vec(&json!({
-                "tcbInfo": tcb_document["tcbInfo"].clone(),
-                "enclaveIdentity": qe_document["enclaveIdentity"].clone(),
-            }))
-            .expect("fixture JSON must serialize"),
-        );
-
-        let signed_tcb_body = input
-            .collateral
-            .tcb_info
-            .signed_body_bytes(TcbInfo)
-            .expect("fixture collateral body must serialize");
-        input.collateral.qe_identity.signature = sign(&signed_tcb_body);
-
-        let error = TdxVerifier::verify(&input)
-            .expect_err("QE identity collateral with multiple signed bodies must fail");
-        assert!(matches!(error, TdxVerifierError::QeIdentityInvalid(_)), "{error:?}");
-    }
-
-    #[test]
-    fn malformed_signer_public_key_must_be_on_secp256k1_curve() {
-        let mut public_key = vec![0x04];
-        public_key.extend_from_slice(&[0; 64]);
-
-        let error =
-            TdxVerifier::validate_public_key(&public_key).expect_err("off-curve key must fail");
-        assert!(matches!(error, TdxVerifierError::MalformedPublicKey));
-    }
-
-    #[test]
-    fn quote_timestamp_must_match_signed_report_data() {
-        let mut input = fixture();
-        input.quote_timestamp_millis = (VERIFICATION_TIME - 1) * 1_000;
-
-        let error = TdxVerifier::verify(&input)
-            .expect_err("fresh input timestamp must not replay an older signed quote");
-
-        assert!(matches!(error, TdxVerifierError::ReportDataMismatch));
-    }
-
-    #[test]
-    fn registrar_nonce_must_match_signed_report_data() {
-        let mut input = fixture();
-        input.attestation_nonce = Some(B256::repeat_byte(0x11));
-
-        let error = TdxVerifier::verify(&input)
-            .expect_err("quote without the expected registrar nonce must fail");
-
-        assert!(matches!(error, TdxVerifierError::ReportDataMismatch));
-    }
-
-    #[test]
-    fn collateral_expiration_includes_earliest_crl_next_update() {
-        let mut input = fixture();
-        input.revocation = TdxRevocationEvidence {
-            certificate_crls: vec![
-                fixture_bytes("root_crl_early"),
-                fixture_bytes("intermediate_crl_early"),
-            ],
-        };
-
-        let journal = TdxVerifier::verify(&input).unwrap();
-
-        assert_eq!(journal.collateralExpiration, 1_893_456_000);
-    }
-
-    macro_rules! assert_failure {
-        (|$input:ident| $mutate:expr, $pattern:pat) => {{
-            let mut verifier_input = fixture();
-            let $input = &mut verifier_input;
-            $mutate;
-            assert!(matches!(
-                TdxVerifier::verify(&verifier_input).expect_err("verification must fail"),
-                $pattern
-            ));
-        }};
-    }
-
-    #[test]
-    fn failure_cases_return_expected_error() {
-        assert_failure!(
-            |input| {
-                let signature_offset = TDX_QUOTE_HEADER_LEN + TDX_REPORT_BODY_LEN + 4;
-                edit_quote(input, |quote| quote[signature_offset] ^= 0x01);
-            },
-            TdxVerifierError::QuoteSignatureInvalid(_)
-        );
-        assert_failure!(
-            |input| edit_quote(input, |quote| quote[4..8].copy_from_slice(&0u32.to_le_bytes())),
-            TdxVerifierError::InvalidQuote(_)
-        );
-        assert_failure!(
-            |input| edit_quote(input, |quote| quote[2..4].copy_from_slice(&1u16.to_le_bytes())),
-            TdxVerifierError::InvalidQuote(_)
-        );
-        assert_failure!(
-            |input| {
-                let signature_data_offset = TDX_QUOTE_HEADER_LEN + TDX_REPORT_BODY_LEN + 4;
-                let qe_report_signature_offset = signature_data_offset
-                    + ECDSA_P256_SIGNATURE_LEN
-                    + ECDSA_P256_PUBLIC_KEY_BODY_LEN
-                    + CERTIFICATION_DATA_HEADER_LEN
-                    + QE_REPORT_LEN;
-                edit_quote(input, |quote| quote[qe_report_signature_offset] ^= 0x01);
-            },
-            TdxVerifierError::PckCertChainInvalid(_)
-        );
-        assert_failure!(
-            |input| input.trusted_root_ca_hash = B256::repeat_byte(0xEF),
-            TdxVerifierError::RootCaNotTrusted
-        );
-        assert_failure!(
-            |input| edit_collateral(input, TcbInfo, |document| {
-                document["tcbInfo"]["nextUpdate"] = json!("2024-03-01T00:00:00Z");
-            }),
-            TdxVerifierError::CollateralExpired
-        );
-        assert_failure!(
-            |input| input.revocation = revocation_evidence("intermediate_crl_revoked_04"),
-            TdxVerifierError::TcbInfoInvalid(_)
-        );
-        assert_failure!(
-            |input| input.verification_time = VERIFICATION_TIME + MAX_QUOTE_AGE_SECONDS + 1,
-            TdxVerifierError::InvalidTimestamp
-        );
-        assert_failure!(
-            |input| edit_collateral(input, TcbInfo, |document| {
-                document["tcbInfo"]["tcbLevels"][0]["tcbStatus"] = json!("Revoked");
-            }),
-            TdxVerifierError::TcbStatusNotAllowed
-        );
-        assert_failure!(
-            |input| edit_collateral(input, TcbInfo, |document| {
-                document["tcbInfo"]["id"] = json!("SGX");
-                document["tcbInfo"]["teeType"] = json!("00000000");
-            }),
-            TdxVerifierError::TcbInfoInvalid(_)
-        );
-        assert_failure!(
-            |input| input.collateral.tcb_info.signature = Bytes::from(vec![0]),
-            TdxVerifierError::TcbInfoInvalid(_)
-        );
-        assert_failure!(
-            |input| input.collateral.qe_identity.signature = Bytes::from(vec![0]),
-            TdxVerifierError::QeIdentityInvalid(_)
-        );
-        assert_failure!(
-            |input| edit_collateral(input, QeIdentity, |document| {
-                document["enclaveIdentity"]["tcbLevels"][0]["tcbStatus"] = json!("Revoked");
-            }),
-            TdxVerifierError::QeIdentityInvalid(_)
-        );
-        assert_failure!(
-            |input| edit_collateral(input, QeIdentity, |document| {
-                document["enclaveIdentity"]["id"] = json!("QE");
-            }),
-            TdxVerifierError::QeIdentityInvalid(_)
-        );
-        assert_failure!(
-            |input| edit_collateral(input, QeIdentity, |document| {
-                document["enclaveIdentity"]["id"] = json!("QVE");
-            }),
-            TdxVerifierError::QeIdentityInvalid(_)
-        );
-        assert_failure!(
-            |input| edit_collateral(input, QeIdentity, |document| {
-                document["enclaveIdentity"]["version"] = json!(1);
-            }),
-            TdxVerifierError::QeIdentityInvalid(_)
-        );
-        assert_failure!(
-            |input| input.expected_public_key = Bytes::from(vec![0x04; 64]),
-            TdxVerifierError::MalformedPublicKey
-        );
-        assert_failure!(
-            |input| input.expected_public_key = secp256k1_public_key(2),
-            TdxVerifierError::ReportDataMismatch
-        );
-        assert_failure!(
-            |input| {
-                edit_quote(input, |quote| {
-                    quote[TDX_QUOTE_HEADER_LEN + TD_ATTRIBUTES_OFFSET] = 1;
-                });
-            },
-            TdxVerifierError::DebugTdNotAllowed
-        );
-        assert_failure!(
-            |input| input.revocation = revocation_evidence("intermediate_crl_revoked_03"),
-            TdxVerifierError::PckCertChainInvalid(_)
-        );
-        assert_failure!(
-            |input| {
-                input.pck_certificate_chain[2] = fixture_cert("pck_leaf_downgraded_tcb");
-                edit_collateral(input, TcbInfo, |document| {
-                    document["tcbInfo"]["tcbLevels"] = json!([{
-                        "tcb": {
-                            "pcesvn": 8,
-                            "sgxtcbcomponents": vec![json!({ "svn": 2 }); TDX_TEE_TCB_SVN_LEN],
-                            "tdxtcbcomponents": vec![json!({ "svn": 3 }); TDX_TEE_TCB_SVN_LEN],
-                        },
-                        "tcbStatus": "OutOfDate",
-                    }]);
-                });
-            },
-            TdxVerifierError::TcbStatusNotAllowed
-        );
-        assert_failure!(
-            |input| edit_collateral(input, TcbInfo, |document| {
-                document["tcbInfo"]["tdxModuleIdentities"][0]["tcbLevels"][0]["tcbStatus"] =
-                    json!("OutOfDate");
-            }),
-            TdxVerifierError::TcbStatusNotAllowed
-        );
-        assert_failure!(
-            |input| edit_collateral(input, TcbInfo, |document| {
-                document["tcbInfo"]["tdxModuleIdentities"][0]["id"] = json!("TDX_04");
-            }),
-            TdxVerifierError::TcbInfoInvalid(_)
-        );
-        assert_failure!(
-            |input| edit_collateral(input, TcbInfo, |document| {
-                document["tcbInfo"]["tdxModuleIdentities"][0]["mrsigner"] =
-                    json!("11".repeat(TDX_MEASUREMENT_LEN));
-            }),
-            TdxVerifierError::TcbInfoInvalid(_)
-        );
-        assert_failure!(
-            |input| {
-                input.pck_certificate_chain[2] = fixture_cert("pck_leaf_serial_80");
-                input.revocation = revocation_evidence("intermediate_crl_revoked_80");
-            },
-            TdxVerifierError::PckCertChainInvalid(_)
-        );
-        assert_failure!(
-            |input| {
-                input.collateral.tcb_info.signing_chain[2] =
-                    fixture_cert("collateral_leaf_wrong_subject");
-            },
-            TdxVerifierError::TcbInfoInvalid(_)
-        );
-        assert_failure!(
-            |input| {
-                input.collateral.tcb_info.signing_chain[2] =
-                    fixture_cert("collateral_leaf_key_usage_20");
-            },
-            TdxVerifierError::TcbInfoInvalid(_)
-        );
-        assert_failure!(
-            |input| input.revocation = TdxRevocationEvidence::default(),
-            TdxVerifierError::PckCertChainInvalid(_)
-        );
-        assert_failure!(
-            |input| edit_collateral(input, TcbInfo, |document| {
-                document["tcbInfo"]["fmspc"] = json!("060504030201");
-            }),
-            TdxVerifierError::TcbInfoInvalid(_)
-        );
-        assert_failure!(
-            |input| {
-                let mut signature = input.collateral.qe_identity.signature.to_vec();
-                signature[0] ^= 0x01;
-                input.collateral.qe_identity.signature = Bytes::from(signature);
-            },
-            TdxVerifierError::QeIdentityInvalid(_)
-        );
+    fn signed_test_token(claims: Value) -> Vec<u8> {
+        let header = serde_json::json!({ "alg": "RS256", "x5c": [TEST_CERTIFICATE_B64] });
+        let header = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&header).unwrap());
+        let claims = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
+        let signing_input = format!("{header}.{claims}");
+        let key = RsaPrivateKey::from_pkcs1_pem(TEST_ROOT_KEY).unwrap();
+        let signature = RsaSigningKey::<Sha256>::new(key).sign(signing_input.as_bytes());
+        format!("{signing_input}.{}", URL_SAFE_NO_PAD.encode(signature.to_bytes())).into_bytes()
     }
 }

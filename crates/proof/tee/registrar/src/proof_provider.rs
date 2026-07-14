@@ -6,22 +6,25 @@ use std::{
     time::UNIX_EPOCH,
 };
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, b256};
 use base_proof_tee_attestation::{
     Result, TeeAttestationKind, TeeAttestationProof, TeeAttestationProofProvider,
 };
-use base_proof_tee_tdx_collateral::{TdxAttestationConfig, TdxAttestationHydrator};
 use base_proof_tee_tdx_verifier::{TdxSignerAttestation, TdxVerifier, TdxVerifierInput};
 
-/// Hydrates a prover's compact TDX attestation into the verifier input required
-/// by a TDX proof provider.
+const GOOGLE_CONFIDENTIAL_SPACE_ROOT_CA_HASH: alloy_primitives::B256 =
+    b256!("159fdd80ad24be89628ca32e5cf64826e3d20d56b669acd3d7610e46c6bae1a3");
+const CONFIDENTIAL_SPACE_AUDIENCE: &str = "base-tdx-prover";
+const MAX_TOKEN_AGE_SECONDS: u64 = 3600;
+
+/// Converts a Confidential Space signer attestation into verifier input.
 #[derive(Debug)]
 pub struct HydratedTdxProofProvider<P> {
     provider: P,
 }
 
 impl<P> HydratedTdxProofProvider<P> {
-    /// Creates a TDX proof provider that fetches the required Intel collateral.
+    /// Creates a TDX proof provider for Google Confidential Space attestations.
     pub const fn new(provider: P) -> Self {
         Self { provider }
     }
@@ -42,31 +45,19 @@ impl<P> HydratedTdxProofProvider<P> {
             )));
         }
 
-        let config = TdxAttestationConfig::intel_pcs();
-        let hydrator = TdxAttestationHydrator::new(config.clone())
-            .map_err(|error| Error::other(error.to_string()))?;
-        let collateral = hydrator
-            .fetch_collateral(&attestation.quote)
-            .await
-            .map_err(|error| Error::other(error.to_string()))?;
         let verification_time =
             UNIX_EPOCH.elapsed().map_err(|error| Error::other(error.to_string()))?.as_secs();
 
         Ok(TdxVerifierInput {
-            quote: attestation.quote,
-            pck_certificate_chain: collateral.pck_certificate_chain,
-            collateral: collateral.collateral,
-            revocation: collateral.revocation,
-            trusted_root_ca_hash: config.trusted_root_ca_hash,
+            token: attestation.token,
+            trusted_root_ca_hash: GOOGLE_CONFIDENTIAL_SPACE_ROOT_CA_HASH,
+            expected_audience: CONFIDENTIAL_SPACE_AUDIENCE.into(),
             expected_public_key: attestation.signer_public_key,
             attestation_nonce: attestation.attestation_nonce,
-            workload_digest: attestation.workload_digest,
-            quote_timestamp_millis: attestation.quote_timestamp_millis,
             chain_id: attestation.chain_id,
             registry_address: attestation.registry_address,
             verification_time,
-            max_quote_age_seconds: config.max_quote_age.as_secs(),
-            allowed_tcb_statuses: config.allowed_tcb_statuses,
+            max_token_age_seconds: MAX_TOKEN_AGE_SECONDS,
         })
     }
 }
@@ -158,7 +149,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tdx_rejects_malformed_attestation_before_fetching_collateral() {
+    async fn tdx_rejects_malformed_confidential_space_attestation_before_proving() {
         let provider = HydratedTdxProofProvider::new(NoopProvider);
 
         assert!(provider.generate_proof_for_signer(b"malformed", Address::ZERO).await.is_err());

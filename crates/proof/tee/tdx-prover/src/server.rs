@@ -4,6 +4,7 @@ use alloy_primitives::B256;
 use base_health::{HealthzApiServer, HealthzRpc};
 use base_proof_primitives::EnclaveApiServer;
 use base_proof_tee_tdx_runtime::{TdxAttestationContext, TdxRuntime};
+use base_proof_tee_tdx_verifier::TdxVerifier;
 use jsonrpsee::{
     RpcModule,
     core::{RpcResult, async_trait},
@@ -67,26 +68,28 @@ impl EnclaveApiServer for TdxProverServer {
             ));
         }
 
-        let attestation_nonce = match nonces {
-            None => None,
-            Some(nonces) => {
-                let [nonce] = nonces.as_slice() else {
-                    return Err(jsonrpsee::types::ErrorObjectOwned::owned(
-                        -32602,
-                        "TDX signer attestations require exactly one nonce",
-                        None::<()>,
-                    ));
-                };
-                let nonce: [u8; 32] = nonce.as_slice().try_into().map_err(|_| {
-                    jsonrpsee::types::ErrorObjectOwned::owned(
-                        -32602,
-                        "TDX signer attestation nonce must be 32 bytes",
-                        None::<()>,
-                    )
-                })?;
-                Some(B256::from(nonce))
-            }
+        let Some(nonces) = nonces else {
+            return Err(jsonrpsee::types::ErrorObjectOwned::owned(
+                -32602,
+                "TDX signer attestations require exactly one nonce",
+                None::<()>,
+            ));
         };
+        let [nonce] = nonces.as_slice() else {
+            return Err(jsonrpsee::types::ErrorObjectOwned::owned(
+                -32602,
+                "TDX signer attestations require exactly one nonce",
+                None::<()>,
+            ));
+        };
+        let nonce: [u8; 32] = nonce.as_slice().try_into().map_err(|_| {
+            jsonrpsee::types::ErrorObjectOwned::owned(
+                -32602,
+                "TDX signer attestation nonce must be 32 bytes",
+                None::<()>,
+            )
+        })?;
+        let attestation_nonce = Some(B256::from(nonce));
 
         let context = self.context.ok_or_else(|| {
             jsonrpsee::types::ErrorObjectOwned::owned(
@@ -95,16 +98,28 @@ impl EnclaveApiServer for TdxProverServer {
                 None::<()>,
             )
         })?;
-        let quote = self.runtime.signer_quote(attestation_nonce, context).map_err(|error| {
+        let signer_public_key = self.runtime.signer_public_key();
+        let token_nonce = attestation_nonce
+            .map(|nonce| {
+                TdxVerifier::token_nonce(
+                    &signer_public_key,
+                    nonce,
+                    context.chain_id,
+                    context.registry_address,
+                )
+            })
+            .transpose()
+            .map_err(|error| {
+                jsonrpsee::types::ErrorObjectOwned::owned(-32001, error.to_string(), None::<()>)
+            })?;
+        let token = self.runtime.attestation_token(token_nonce).map_err(|error| {
             jsonrpsee::types::ErrorObjectOwned::owned(-32001, error.to_string(), None::<()>)
         })?;
         Ok(vec![
             TdxSignerAttestation {
-                signer_public_key: self.runtime.signer_public_key(),
-                quote: quote.quote,
-                quote_timestamp_millis: quote.quote_timestamp_millis,
+                signer_public_key,
+                token,
                 attestation_nonce,
-                workload_digest: self.runtime.workload_digest(),
                 chain_id: context.chain_id,
                 registry_address: context.registry_address,
             }
@@ -115,24 +130,42 @@ impl EnclaveApiServer for TdxProverServer {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
+    use alloy_primitives::Bytes;
     use base_proof_primitives::EnclaveApiServer;
+    use base_proof_tee_tdx_runtime::{Result as RuntimeResult, TdxAttestationTokenProvider};
 
     use super::*;
-    use crate::TdxMeasurements;
 
-    fn test_rpc() -> TdxProverServer {
-        TdxProverServer::new(
-            Arc::new(TdxRuntime::new(TdxMeasurements, B256::repeat_byte(0x22))),
+    #[derive(Debug, Default)]
+    struct TestTokenProvider {
+        nonces: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl TdxAttestationTokenProvider for TestTokenProvider {
+        fn token(&self, _audience: &str, nonces: &[String]) -> RuntimeResult<Bytes> {
+            *self.nonces.lock().unwrap() = nonces.to_vec();
+            Ok(Bytes::from_static(b"fixture-token"))
+        }
+    }
+
+    fn test_rpc() -> (TdxProverServer, Arc<Mutex<Vec<String>>>) {
+        let token_provider = TestTokenProvider::default();
+        let nonces = Arc::clone(&token_provider.nonces);
+        let server = TdxProverServer::new(
+            Arc::new(TdxRuntime::new(token_provider, "base-tdx-prover")),
             Some(TdxAttestationContext {
                 chain_id: 11_155_111,
                 registry_address: alloy_primitives::Address::repeat_byte(0x33),
             }),
-        )
+        );
+        (server, nonces)
     }
 
     #[tokio::test]
     async fn signer_attestation_binds_registrar_nonce() {
-        let rpc = test_rpc();
+        let (rpc, token_nonces) = test_rpc();
         let nonce = vec![0x11; 32];
         let result = EnclaveApiServer::signer_attestation(&rpc, None, Some(vec![nonce.clone()]))
             .await
@@ -140,28 +173,22 @@ mod tests {
 
         assert_eq!(result.len(), 1);
         let attestation = TdxSignerAttestation::decode(&result[0]).unwrap();
-        let quote = base_proof_tee_tdx_verifier::TdxQuote::parse(&attestation.quote).unwrap();
         assert_eq!(attestation.signer_public_key, rpc.runtime.signer_public_key().to_vec());
         assert_eq!(attestation.attestation_nonce, Some(B256::from([0x11; 32])));
-        assert_eq!(attestation.workload_digest, B256::repeat_byte(0x22));
+        assert_eq!(attestation.token, Bytes::from_static(b"fixture-token"));
         assert_eq!(attestation.chain_id, 11_155_111);
         assert_eq!(attestation.registry_address, alloy_primitives::Address::repeat_byte(0x33));
         assert_eq!(
-            quote.report_data_prefix(),
-            base_proof_tee_tdx_verifier::TdxVerifier::validate_public_key(
-                &attestation.signer_public_key
-            )
-            .unwrap()
-        );
-        assert_eq!(
-            quote.report_data_suffix(),
-            base_proof_tee_tdx_verifier::TdxVerifier::timestamp_report_data_suffix(
-                attestation.workload_digest,
-                attestation.quote_timestamp_millis,
-                attestation.attestation_nonce,
-                attestation.chain_id,
-                attestation.registry_address,
-            )
+            *token_nonces.lock().unwrap(),
+            vec![alloy_primitives::hex::encode(
+                TdxVerifier::token_nonce(
+                    &attestation.signer_public_key,
+                    B256::from([0x11; 32]),
+                    attestation.chain_id,
+                    attestation.registry_address,
+                )
+                .unwrap()
+            )]
         );
     }
 
@@ -173,9 +200,9 @@ mod tests {
             (None, Some(vec![vec![1; 31]])),
             (None, Some(vec![vec![1; 32], vec![2; 32]])),
         ] {
-            let err = EnclaveApiServer::signer_attestation(&test_rpc(), user_data, nonces)
-                .await
-                .unwrap_err();
+            let (rpc, _) = test_rpc();
+            let err =
+                EnclaveApiServer::signer_attestation(&rpc, user_data, nonces).await.unwrap_err();
 
             assert_eq!(err.code(), -32602);
         }
@@ -183,19 +210,23 @@ mod tests {
 
     #[tokio::test]
     async fn signer_attestation_requires_registration_context() {
+        let token_provider = TestTokenProvider::default();
         let rpc = TdxProverServer::new(
-            Arc::new(TdxRuntime::new(TdxMeasurements, B256::repeat_byte(0x22))),
+            Arc::new(TdxRuntime::new(token_provider, "base-tdx-prover")),
             None,
         );
 
-        let error = EnclaveApiServer::signer_attestation(&rpc, None, None).await.unwrap_err();
+        let error = EnclaveApiServer::signer_attestation(&rpc, None, Some(vec![vec![0x11; 32]]))
+            .await
+            .unwrap_err();
 
         assert_eq!(error.code(), -32001);
     }
 
     #[test]
     fn rpc_module_exposes_registrar_methods_only() {
-        let module = test_rpc().into_rpc_module().unwrap();
+        let (rpc, _) = test_rpc();
+        let module = rpc.into_rpc_module().unwrap();
         let methods: Vec<_> = module.method_names().collect();
 
         assert!(methods.contains(&"healthz"));

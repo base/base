@@ -6,11 +6,11 @@ pub use error::{Result, TdxRuntimeError};
 mod signer;
 pub use signer::TdxSigner;
 
-mod report_data;
-pub use report_data::{TDX_REPORT_DATA_LEN, TdxAttestationContext, TdxReportData};
-
-mod quote;
-pub use quote::{ConfigfsTdxQuoteProvider, TdxQuoteProvider};
+mod token;
+pub use token::{
+    CONFIDENTIAL_SPACE_AUDIENCE, ConfidentialSpaceTokenProvider, StaticTokenProvider,
+    TdxAttestationTokenProvider,
+};
 
 mod runtime;
-pub use runtime::{TdxRuntime, TdxSignerQuote};
+pub use runtime::{TdxAttestationContext, TdxRuntime};

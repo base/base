@@ -23,6 +23,7 @@ rustfmt.toml
 etc/docker/
 !etc/docker/nitro-enclave/
 !etc/docker/nitro-host/
+!etc/docker/tdx-prover-workload-hash.sh
 
 # Devnet tooling not needed in container builds
 etc/scripts/devnet/grafana/

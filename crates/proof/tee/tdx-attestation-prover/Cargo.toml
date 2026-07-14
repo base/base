@@ -1,6 +1,6 @@
 [package]
 name = "base-proof-tee-tdx-attestation-prover"
-description = "ZK attestation prover for Intel TDX quote registration journals"
+description = "ZK attestation prover for Confidential Space TDX registration journals"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

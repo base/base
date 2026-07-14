@@ -1,64 +1,56 @@
-//! ABI-compatible host and guest input encoding for TDX verification.
+//! ABI-compatible host and guest input encoding for Confidential Space verification.
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{Address, B256, Bytes};
 use alloy_sol_types::{SolValue, sol};
 
-use crate::{
-    Result, TDXTcbStatus, TdxCertificate, TdxCollateral, TdxRevocationEvidence,
-    TdxSignedCollateral, TdxVerifier, TdxVerifierError, TdxVerifierInput,
-};
+use crate::{Result, TdxVerifier, TdxVerifierError};
+
+/// Complete explicit Confidential Space verifier input.
+#[derive(Debug)]
+pub struct TdxVerifierInput {
+    /// Google Cloud Attestation PKI token from the Confidential Space launcher.
+    pub token: Bytes,
+    /// Keccak256 hash of the accepted Google Confidential Space root certificate.
+    pub trusted_root_ca_hash: B256,
+    /// Token audience expected by the relying party.
+    pub expected_audience: String,
+    /// Expected uncompressed secp256k1 signer public key.
+    pub expected_public_key: Bytes,
+    /// Optional registrar nonce used to derive the expected token nonce.
+    pub attestation_nonce: Option<B256>,
+    /// L1 chain ID bound into the token nonce.
+    pub chain_id: u64,
+    /// `TEEProverRegistry` address bound into the token nonce.
+    pub registry_address: Address,
+    /// Verification time in seconds since Unix epoch.
+    pub verification_time: u64,
+    /// Maximum accepted token age in seconds.
+    pub max_token_age_seconds: u64,
+}
 
 sol! {
-    /// ABI mirror of `TdxSignedCollateral`.
-    struct TdxSignedCollateralInput {
-        /// Raw collateral document bytes.
-        bytes raw;
-        /// Root-to-leaf signing certificate chain.
-        bytes[] signingChain;
-        /// P-256 ECDSA signature over the signed collateral body.
-        bytes signature;
-    }
-
-    /// ABI mirror of `TdxCollateral`.
-    struct TdxCollateralInput {
-        /// TCB info collateral and signing chain.
-        TdxSignedCollateralInput tcbInfo;
-        /// QE identity collateral and signing chain.
-        TdxSignedCollateralInput qeIdentity;
-    }
-
-    /// Complete explicit TDX verifier input encoded for a RISC Zero guest.
+    /// Complete explicit Confidential Space verifier input encoded for a RISC Zero guest.
     struct TdxVerifierInputAbi {
-        /// Raw Intel TDX quote bytes.
-        bytes quote;
-        /// Root-to-leaf PCK certificate chain.
-        bytes[] pckCertificateChain;
-        /// TCB info and QE identity collateral.
-        TdxCollateralInput collateral;
-        /// DER X.509 CRLs for all non-root certificate issuers.
-        bytes[] certificateCrls;
-        /// Trusted Intel root CA hash.
+        /// Google Cloud Attestation PKI token from the Confidential Space launcher.
+        bytes token;
+        /// Keccak256 hash of the accepted Google Confidential Space root certificate.
         bytes32 trustedRootCaHash;
+        /// Token audience expected by the relying party.
+        string expectedAudience;
         /// Expected uncompressed secp256k1 signer public key.
         bytes expectedPublicKey;
-        /// Whether the quote binds a registrar nonce.
+        /// Whether the token binds a registrar nonce.
         bool hasAttestationNonce;
-        /// Registrar nonce expected in the quote report data.
+        /// Registrar nonce used to derive the expected token nonce.
         bytes32 attestationNonce;
-        /// CI-derived OCI manifest digest expected in the quote report data.
-        bytes32 workloadDigest;
-        /// Quote collection timestamp in milliseconds since Unix epoch.
-        uint64 quoteTimestampMillis;
-        /// L1 chain ID expected in the quote report data.
+        /// L1 chain ID bound into the token nonce.
         uint64 chainId;
-        /// `TEEProverRegistry` address expected in the quote report data.
+        /// `TEEProverRegistry` address bound into the token nonce.
         address registryAddress;
         /// Verification time in seconds since Unix epoch.
         uint64 verificationTime;
-        /// Maximum accepted quote age in seconds.
-        uint64 maxQuoteAgeSeconds;
-        /// Contract TCB statuses accepted by verifier policy.
-        uint8[] allowedTcbStatuses;
+        /// Maximum accepted token age in seconds.
+        uint64 maxTokenAgeSeconds;
     }
 }
 
@@ -68,127 +60,56 @@ impl TdxVerifierInput {
         SolValue::abi_encode(&self.to_abi_input())
     }
 
-    /// ABI-decodes a host-to-guest TDX verifier input.
+    /// ABI-decodes a verifier input.
     pub fn decode(buf: &[u8]) -> Result<Self> {
         let abi = <TdxVerifierInputAbi as SolValue>::abi_decode_validate(buf)
-            .map_err(|e| TdxVerifierError::InputDecode(e.to_string()))?;
-        Self::try_from_abi_input(abi)
+            .map_err(|error| TdxVerifierError::InputDecode(error.to_string()))?;
+        Ok(Self {
+            token: abi.token,
+            trusted_root_ca_hash: abi.trustedRootCaHash,
+            expected_audience: abi.expectedAudience,
+            expected_public_key: abi.expectedPublicKey,
+            attestation_nonce: abi.hasAttestationNonce.then_some(abi.attestationNonce),
+            chain_id: abi.chainId,
+            registry_address: abi.registryAddress,
+            verification_time: abi.verificationTime,
+            max_token_age_seconds: abi.maxTokenAgeSeconds,
+        })
     }
 
     /// ABI-decodes a verifier input and verifies it targets `signer_address`.
     pub fn decode_for_signer(buf: &[u8], signer_address: Address) -> Result<Self> {
         let input = Self::decode(buf)?;
-        let hash = TdxVerifier::validate_public_key(&input.expected_public_key)?;
-        let actual = Address::from_slice(&hash.as_slice()[12..]);
-        if actual != signer_address {
-            return Err(TdxVerifierError::SignerMismatch { expected: signer_address, actual });
+        let public_key_hash = TdxVerifier::validate_public_key(&input.expected_public_key)?;
+        let actual_signer = Address::from_slice(&public_key_hash.as_slice()[12..]);
+        if actual_signer != signer_address {
+            return Err(TdxVerifierError::SignerMismatch {
+                expected: signer_address,
+                actual: actual_signer,
+            });
         }
         Ok(input)
     }
 
     fn to_abi_input(&self) -> TdxVerifierInputAbi {
-        let signed_collateral = |collateral: &TdxSignedCollateral| TdxSignedCollateralInput {
-            raw: collateral.raw.clone(),
-            signingChain: collateral
-                .signing_chain
-                .iter()
-                .map(|certificate| certificate.raw.clone())
-                .collect(),
-            signature: collateral.signature.clone(),
-        };
-
         TdxVerifierInputAbi {
-            quote: self.quote.clone(),
-            pckCertificateChain: self
-                .pck_certificate_chain
-                .iter()
-                .map(|certificate| certificate.raw.clone())
-                .collect(),
-            collateral: TdxCollateralInput {
-                tcbInfo: signed_collateral(&self.collateral.tcb_info),
-                qeIdentity: signed_collateral(&self.collateral.qe_identity),
-            },
-            certificateCrls: self.revocation.certificate_crls.clone(),
+            token: self.token.clone(),
             trustedRootCaHash: self.trusted_root_ca_hash,
+            expectedAudience: self.expected_audience.clone(),
             expectedPublicKey: self.expected_public_key.clone(),
             hasAttestationNonce: self.attestation_nonce.is_some(),
             attestationNonce: self.attestation_nonce.unwrap_or(B256::ZERO),
-            workloadDigest: self.workload_digest,
-            quoteTimestampMillis: self.quote_timestamp_millis,
             chainId: self.chain_id,
             registryAddress: self.registry_address,
             verificationTime: self.verification_time,
-            maxQuoteAgeSeconds: self.max_quote_age_seconds,
-            allowedTcbStatuses: self
-                .allowed_tcb_statuses
-                .iter()
-                .map(|status| *status as u8)
-                .collect(),
+            maxTokenAgeSeconds: self.max_token_age_seconds,
         }
-    }
-
-    fn try_from_abi_input(input: TdxVerifierInputAbi) -> Result<Self> {
-        let signed_collateral = |collateral: TdxSignedCollateralInput| TdxSignedCollateral {
-            raw: collateral.raw,
-            signing_chain: collateral
-                .signingChain
-                .into_iter()
-                .map(|raw| TdxCertificate { raw })
-                .collect(),
-            signature: collateral.signature,
-        };
-        let collateral = input.collateral;
-
-        Ok(Self {
-            quote: input.quote,
-            pck_certificate_chain: input
-                .pckCertificateChain
-                .into_iter()
-                .map(|raw| TdxCertificate { raw })
-                .collect(),
-            collateral: TdxCollateral {
-                tcb_info: signed_collateral(collateral.tcbInfo),
-                qe_identity: signed_collateral(collateral.qeIdentity),
-            },
-            revocation: TdxRevocationEvidence { certificate_crls: input.certificateCrls },
-            trusted_root_ca_hash: input.trustedRootCaHash,
-            expected_public_key: input.expectedPublicKey,
-            attestation_nonce: input.hasAttestationNonce.then_some(input.attestationNonce),
-            workload_digest: input.workloadDigest,
-            quote_timestamp_millis: input.quoteTimestampMillis,
-            chain_id: input.chainId,
-            registry_address: input.registryAddress,
-            verification_time: input.verificationTime,
-            max_quote_age_seconds: input.maxQuoteAgeSeconds,
-            allowed_tcb_statuses: input
-                .allowedTcbStatuses
-                .into_iter()
-                .map(|status| {
-                    TDXTcbStatus::try_from(status)
-                        .map_err(|e| TdxVerifierError::InputDecode(e.to_string()))
-                })
-                .collect::<Result<Vec<_>>>()?,
-        })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{B256, Bytes};
-
     use super::*;
-
-    fn certificate(byte: u8) -> TdxCertificate {
-        TdxCertificate { raw: Bytes::from(vec![byte; 3]) }
-    }
-
-    fn signed_collateral(byte: u8) -> TdxSignedCollateral {
-        TdxSignedCollateral {
-            raw: Bytes::from(vec![byte; 5]),
-            signing_chain: vec![certificate(byte)],
-            signature: Bytes::from(vec![byte; 64]),
-        }
-    }
 
     fn public_key() -> Bytes {
         Bytes::from_static(&[
@@ -202,25 +123,15 @@ mod tests {
 
     fn verifier_input() -> TdxVerifierInput {
         TdxVerifierInput {
-            quote: Bytes::from_static(b"quote"),
-            pck_certificate_chain: vec![certificate(0x11), certificate(0x22)],
-            collateral: TdxCollateral {
-                tcb_info: signed_collateral(0x33),
-                qe_identity: signed_collateral(0x44),
-            },
-            revocation: TdxRevocationEvidence {
-                certificate_crls: vec![Bytes::from_static(b"crl")],
-            },
+            token: Bytes::from_static(b"header.claims.signature"),
             trusted_root_ca_hash: B256::repeat_byte(0x55),
+            expected_audience: "base-tdx-prover".into(),
             expected_public_key: public_key(),
             attestation_nonce: Some(B256::repeat_byte(0x66)),
-            workload_digest: B256::repeat_byte(0x77),
-            quote_timestamp_millis: 1_711_111_111_000,
             chain_id: 11_155_111,
             registry_address: Address::repeat_byte(0x88),
             verification_time: 1_711_111_222,
-            max_quote_age_seconds: 300,
-            allowed_tcb_statuses: vec![TDXTcbStatus::UpToDate, TDXTcbStatus::SwHardeningNeeded],
+            max_token_age_seconds: 300,
         }
     }
 
@@ -231,18 +142,6 @@ mod tests {
         let decoded = TdxVerifierInput::decode(&encoded).unwrap();
 
         assert_eq!(decoded.encode(), encoded);
-    }
-
-    #[test]
-    fn decode_rejects_invalid_status() {
-        let mut abi = verifier_input().to_abi_input();
-        abi.allowedTcbStatuses = vec![200];
-        let encoded = SolValue::abi_encode(&abi);
-
-        assert!(matches!(
-            TdxVerifierInput::decode(&encoded),
-            Err(TdxVerifierError::InputDecode(_))
-        ));
     }
 
     #[test]

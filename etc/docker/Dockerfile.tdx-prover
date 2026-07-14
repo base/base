@@ -1,0 +1,46 @@
+# syntax=docker/dockerfile:1.7
+# check=skip=FromPlatformFlagConstDisallowed
+
+# Builds the OCI workload launched and attested by Confidential Space.
+FROM --platform=linux/amd64 rust:1.93-trixie@sha256:51c04d7a2b38418ba23ecbfb373c40d3bd493dec1ddfae00ab5669527320195e AS builder
+
+WORKDIR /app
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      build-essential \
+      ca-certificates \
+      clang \
+      cmake \
+      git \
+      libclang-dev \
+      libssl-dev \
+      mold \
+      pkg-config && \
+    rm -rf /var/lib/apt/lists/*
+
+ARG BASE_REPO=https://github.com/base/base.git
+ARG BASE_COMMIT=0e161f57a63360e0e838c0b3a49a9ffe2d6b5b5a
+RUN git init && \
+    git remote add origin "$BASE_REPO" && \
+    git fetch --depth=1 origin "$BASE_COMMIT" && \
+    git reset --hard FETCH_HEAD
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry,id=tdx-prover-registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,id=tdx-prover-git,sharing=locked \
+    --mount=type=cache,target=/app/target,id=tdx-prover-target,sharing=locked \
+    mkdir -p /out && \
+    cargo build --locked --release -p base-prover-tdx && \
+    cp /app/target/release/base-prover-tdx /out/base-prover-tdx
+
+FROM --platform=linux/amd64 debian:trixie-slim@sha256:1d3c811171a08a5adaa4a163fbafd96b61b87aa871bbc7aa15431ac275d3d430
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates libssl3t64 && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=builder /out/base-prover-tdx /app/base-prover-tdx
+
+EXPOSE 7310
+ENTRYPOINT ["/app/base-prover-tdx"]

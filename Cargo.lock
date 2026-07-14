@@ -5836,7 +5836,6 @@ dependencies = [
  "base-proof-primitives",
  "base-proof-tee-attestation",
  "base-proof-tee-nitro-verifier",
- "base-proof-tee-tdx-collateral",
  "base-proof-tee-tdx-verifier",
  "base-tx-manager",
  "futures",
@@ -5896,18 +5895,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-proof-tee-tdx-collateral"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "base-proof-tee-tdx-verifier",
- "percent-encoding",
- "reqwest 0.13.4",
- "tokio",
- "x509-parser",
-]
-
-[[package]]
 name = "base-proof-tee-tdx-prover"
 version = "0.0.0"
 dependencies = [
@@ -5942,7 +5929,10 @@ dependencies = [
  "alloy-primitives",
  "alloy-signer 2.0.5",
  "alloy-signer-local 2.0.5",
+ "base64 0.22.1",
  "hex",
+ "serde",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.18",
 ]
@@ -5953,13 +5943,13 @@ version = "0.0.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "base64 0.22.1",
  "k256",
- "p256",
+ "rsa",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.18",
- "time",
  "x509-parser",
 ]
 

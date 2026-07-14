@@ -1,38 +1,39 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use alloy_primitives::{Address, B256, Bytes, hex};
+use base64::{
+    Engine,
+    engine::general_purpose::{URL_SAFE, URL_SAFE_NO_PAD},
+};
+use serde::Deserialize;
 
-use alloy_primitives::{B256, Bytes};
+use crate::{Result, TdxAttestationTokenProvider, TdxRuntimeError, TdxSigner};
 
-use crate::{Result, TdxAttestationContext, TdxQuoteProvider, TdxReportData, TdxSigner};
-
-/// TDX signer quote response.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TdxSignerQuote {
-    /// Raw TDX quote bytes.
-    pub quote: Bytes,
-    /// Quote collection timestamp in milliseconds.
-    pub quote_timestamp_millis: u64,
+/// Chain-specific context bound into a signer registration token nonce.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TdxAttestationContext {
+    /// L1 chain ID for the signer registry.
+    pub chain_id: u64,
+    /// `TEEProverRegistry` address receiving the signer registration.
+    pub registry_address: Address,
 }
 
-/// TDX runtime owning signer identity and quote collection.
+/// TDX runtime owning signer identity and Confidential Space token collection.
 pub struct TdxRuntime {
     signer: TdxSigner,
-    quote_provider: Box<dyn TdxQuoteProvider>,
-    workload_digest: B256,
+    token_provider: Box<dyn TdxAttestationTokenProvider>,
+    audience: String,
 }
 
 impl TdxRuntime {
-    /// Creates a runtime with a fresh signer and quote provider.
-    pub fn new(quote_provider: impl TdxQuoteProvider + 'static, workload_digest: B256) -> Self {
+    /// Creates a runtime with a fresh signer and Confidential Space token provider.
+    pub fn new(
+        token_provider: impl TdxAttestationTokenProvider + 'static,
+        audience: impl Into<String>,
+    ) -> Self {
         Self {
             signer: TdxSigner::generate(),
-            quote_provider: Box::new(quote_provider),
-            workload_digest,
+            token_provider: Box::new(token_provider),
+            audience: audience.into(),
         }
-    }
-
-    /// Returns the CI-derived OCI manifest digest used as the TDX workload identity.
-    pub const fn workload_digest(&self) -> B256 {
-        self.workload_digest
     }
 
     /// Returns the signer's public key.
@@ -45,25 +46,48 @@ impl TdxRuntime {
         self.signer.sign(data)
     }
 
-    /// Collects a fresh quote using the current system time.
-    pub fn signer_quote(
-        &self,
-        attestation_nonce: Option<B256>,
-        context: TdxAttestationContext,
-    ) -> Result<TdxSignerQuote> {
-        let quote_timestamp_millis =
-            SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
-        let public_key = self.signer.public_key();
-        let report_data = TdxReportData::for_public_key(
-            &public_key,
-            self.workload_digest,
-            attestation_nonce,
-            quote_timestamp_millis,
-            context,
-        )?;
-        let quote = self.quote_provider.quote(&report_data)?;
+    /// Requests a fresh Confidential Space PKI token.
+    pub fn attestation_token(&self, nonce: Option<B256>) -> Result<Bytes> {
+        let nonces = nonce.map_or_else(Vec::new, |nonce| vec![hex::encode(nonce)]);
+        self.token_provider.token(&self.audience, &nonces)
+    }
 
-        Ok(TdxSignerQuote { quote, quote_timestamp_millis })
+    /// Returns the OCI image digest asserted by a fresh Confidential Space token.
+    pub fn workload_digest(&self) -> Result<B256> {
+        let token = self.attestation_token(None)?;
+        Self::workload_digest_from_token(&token)
+    }
+
+    /// Reads the OCI image digest claim from a token without validating its signature.
+    ///
+    /// Signer registration validates the complete token before this value becomes
+    /// trusted onchain.
+    pub fn workload_digest_from_token(token: &[u8]) -> Result<B256> {
+        let token = std::str::from_utf8(token)
+            .map_err(|error| TdxRuntimeError::AttestationTokenResponse(error.to_string()))?;
+        let claims = token.split('.').nth(1).ok_or_else(|| {
+            TdxRuntimeError::AttestationTokenResponse("token has no claims".into())
+        })?;
+        let claims = URL_SAFE_NO_PAD
+            .decode(claims)
+            .or_else(|_| URL_SAFE.decode(claims))
+            .map_err(|error| TdxRuntimeError::AttestationTokenResponse(error.to_string()))?;
+        let claims: TokenClaims = serde_json::from_slice(&claims)
+            .map_err(|error| TdxRuntimeError::AttestationTokenResponse(error.to_string()))?;
+        let digest =
+            claims.submods.container.image_digest.strip_prefix("sha256:").ok_or_else(|| {
+                TdxRuntimeError::AttestationTokenResponse(
+                    "workload token image digest is not sha256".into(),
+                )
+            })?;
+        let digest = hex::decode(digest)
+            .map_err(|error| TdxRuntimeError::AttestationTokenResponse(error.to_string()))?;
+        if digest.len() != 32 {
+            return Err(TdxRuntimeError::AttestationTokenResponse(
+                "workload token image digest is not 32 bytes".into(),
+            ));
+        }
+        Ok(B256::from_slice(&digest))
     }
 }
 
@@ -73,38 +97,45 @@ impl std::fmt::Debug for TdxRuntime {
     }
 }
 
+#[derive(Deserialize)]
+struct TokenClaims {
+    submods: TokenSubmodules,
+}
+
+#[derive(Deserialize)]
+struct TokenSubmodules {
+    container: ContainerClaims,
+}
+
+#[derive(Deserialize)]
+struct ContainerClaims {
+    image_digest: String,
+}
+
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Bytes;
 
     use super::*;
-    use crate::TDX_REPORT_DATA_LEN;
 
-    struct TestQuoteProvider(Bytes);
+    #[derive(Debug)]
+    struct StaticTokenProvider(Bytes);
 
-    impl TdxQuoteProvider for TestQuoteProvider {
-        fn quote(&self, _report_data: &[u8; TDX_REPORT_DATA_LEN]) -> Result<Bytes> {
+    impl TdxAttestationTokenProvider for StaticTokenProvider {
+        fn token(&self, _audience: &str, _nonces: &[String]) -> Result<Bytes> {
             Ok(self.0.clone())
         }
     }
 
     #[test]
-    fn runtime_returns_quote_and_timestamp() {
+    fn runtime_reads_oci_digest_from_launcher_token() {
+        let claims = r#"{"submods":{"container":{"image_digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222"}}}"#;
+        let token = format!("header.{}.signature", URL_SAFE_NO_PAD.encode(claims.as_bytes()));
         let runtime = TdxRuntime::new(
-            TestQuoteProvider(Bytes::from_static(b"fixture-tdx-quote")),
-            B256::ZERO,
+            StaticTokenProvider(Bytes::from(token.into_bytes())),
+            "base-tdx-prover",
         );
-        let signer_quote = runtime
-            .signer_quote(
-                Some(B256::repeat_byte(0x11)),
-                TdxAttestationContext {
-                    chain_id: 11_155_111,
-                    registry_address: alloy_primitives::Address::repeat_byte(0x22),
-                },
-            )
-            .unwrap();
 
-        assert_eq!(signer_quote.quote, Bytes::from_static(b"fixture-tdx-quote"));
-        assert!(signer_quote.quote_timestamp_millis > 0);
+        assert_eq!(runtime.workload_digest().unwrap(), B256::repeat_byte(0x22));
     }
 }

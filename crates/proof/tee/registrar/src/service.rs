@@ -22,7 +22,7 @@ use tracing::{info, warn};
 use url::Url;
 
 use crate::{
-    AwsTargetGroupDiscovery, CertManager, DriverConfig, GcpNodePoolDiscovery,
+    AwsTargetGroupDiscovery, CertManager, DriverConfig, GcpInstanceGroupDiscovery,
     PlatformProofProvider, ProverClient, RegistrarError, RegistrarMetrics, RegistrationDriver,
     Result, SignerManager, SignerManagerConfig,
 };
@@ -39,14 +39,12 @@ pub struct RegistrarConfig {
     pub target_group_arn: String,
     /// AWS region.
     pub aws_region: String,
-    /// GCP project ID for TDX prover node pool discovery.
+    /// GCP project ID for Confidential Space TDX prover discovery.
     pub gcp_project: String,
-    /// GCP location for the GKE cluster.
-    pub gcp_location: String,
-    /// GKE cluster name containing the TDX prover node pool.
-    pub gcp_cluster: String,
-    /// GKE node pool name for TDX prover node discovery.
-    pub gcp_node_pool: String,
+    /// GCP zone containing the Confidential Space TDX prover managed instance group.
+    pub gcp_zone: String,
+    /// Compute Engine managed instance group for Confidential Space TDX prover VMs.
+    pub gcp_instance_group: String,
     /// Optional GCP `OAuth` access token. If unset, the GCP metadata server is used.
     pub gcp_access_token: Option<String>,
     /// JSON-RPC port to poll on each prover instance.
@@ -95,9 +93,8 @@ impl fmt::Debug for RegistrarConfig {
             .field("target_group_arn", &self.target_group_arn)
             .field("aws_region", &self.aws_region)
             .field("gcp_project", &self.gcp_project)
-            .field("gcp_location", &self.gcp_location)
-            .field("gcp_cluster", &self.gcp_cluster)
-            .field("gcp_node_pool", &self.gcp_node_pool)
+            .field("gcp_zone", &self.gcp_zone)
+            .field("gcp_instance_group", &self.gcp_instance_group)
             .field("gcp_access_token", &self.gcp_access_token.as_ref().map(|_| "<redacted>"))
             .field("prover_port", &self.prover_port)
             .field("signing", &self.signing)
@@ -226,11 +223,10 @@ impl RegistrarConfig {
             .await;
         let discovery = (
             AwsTargetGroupDiscovery::new(&aws_config, self.target_group_arn, self.prover_port),
-            GcpNodePoolDiscovery::new(
+            GcpInstanceGroupDiscovery::new(
                 self.gcp_project,
-                self.gcp_location,
-                self.gcp_cluster,
-                self.gcp_node_pool,
+                self.gcp_zone,
+                self.gcp_instance_group,
                 self.prover_port,
                 self.gcp_access_token,
             ),
@@ -349,9 +345,8 @@ mod tests {
                 .to_string(),
             aws_region: "us-east-1".to_string(),
             gcp_project: "base-project".to_string(),
-            gcp_location: "us-central1".to_string(),
-            gcp_cluster: "tee-provers".to_string(),
-            gcp_node_pool: "tdx-provers".to_string(),
+            gcp_zone: "us-central1-a".to_string(),
+            gcp_instance_group: "tdx-provers".to_string(),
             gcp_access_token: Some("GCP_SECRET".to_string()),
             prover_port: 8000,
             signing: SignerConfig::local(

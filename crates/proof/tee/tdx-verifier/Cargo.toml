@@ -1,6 +1,6 @@
 [package]
 name = "base-proof-tee-tdx-verifier"
-description = "Pure verification logic for Intel TDX quote registration journals"
+description = "Pure verification logic for Confidential Space TDX registration journals"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -15,17 +15,17 @@ workspace = true
 # Parsing
 x509-parser.workspace = true
 serde = { workspace = true, features = ["derive"] }
-time = { workspace = true, features = ["parsing"] }
 serde_json = { workspace = true, features = ["preserve_order"] }
 
 # Crypto
-sha2.workspace = true
+sha2 = { workspace = true, features = ["oid"] }
 k256.workspace = true
-p256 = { workspace = true, features = ["ecdsa"] }
+rsa.workspace = true
 
 # Types
 alloy-sol-types.workspace = true
 alloy-primitives = { workspace = true, default-features = false }
+base64.workspace = true
 
 # Error
 thiserror.workspace = true

@@ -1,6 +1,6 @@
 [package]
 name = "base-proof-tee-tdx-runtime"
-description = "Intel TDX runtime support for signer identity and quote collection"
+description = "Intel TDX runtime support for signer identity and Confidential Space tokens"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -16,6 +16,9 @@ workspace = true
 alloy-signer.workspace = true
 alloy-signer-local.workspace = true
 alloy-primitives = { workspace = true, default-features = false }
+base64.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
 
 # Error
 thiserror.workspace = true

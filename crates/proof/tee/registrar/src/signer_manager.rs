@@ -336,20 +336,22 @@ where
                         journal.signer
                     )));
                 }
-                let expected_report_data_suffix = TdxVerifier::timestamp_report_data_suffix(
-                    journal.imageHash,
-                    journal.timestamp,
-                    Some(B256::from(self.attestation_nonce(signer_address))),
+                let expected_token_nonce = TdxVerifier::token_nonce(
+                    &journal.publicKey,
+                    B256::from(self.attestation_nonce(signer_address)),
                     journal.chainId,
                     journal.registryAddress,
-                );
-                if journal.reportDataSuffix != expected_report_data_suffix {
+                )
+                .map_err(|error| RegistrarError::InvalidProofJournal {
+                    reason: error.to_string(),
+                })?;
+                if journal.tokenNonceHash != expected_token_nonce {
                     self.proof_provider.block_recovery_for_signer(attestation_kind, signer_address);
                     return Err(RegistrarError::InvalidAttestationProof(format!(
                         "TDX registrar nonce mismatch for signer {signer_address}"
                     )));
                 }
-                journal.timestamp
+                journal.issuedAt.saturating_mul(1000)
             }
         };
         drop(proof_permit);
@@ -687,11 +689,11 @@ mod tests {
         time::Duration,
     };
 
-    use alloy_primitives::{Address, B256};
+    use alloy_primitives::{Address, B256, keccak256};
     use async_trait::async_trait;
     use base_proof_tee_attestation::{TeeAttestationProof, TeeAttestationProofProvider};
     use base_proof_tee_nitro_verifier::VerificationResult;
-    use base_proof_tee_tdx_verifier::{TDXTcbStatus, TDXVerificationResult};
+    use base_proof_tee_tdx_verifier::TDXVerificationResult;
     use base_tx_manager::{SendHandle, TxManagerError};
     use tokio::sync::Notify;
 
@@ -871,33 +873,33 @@ mod tests {
 
     fn tdx_proof_output(signer: Address, nonce: B256) -> Bytes {
         let public_key = public_key_from_private(&HARDHAT_KEY_0);
-        let timestamp = u64::try_from(
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis(),
+        let issued_at = u64::try_from(
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
         )
         .unwrap_or(u64::MAX);
         Bytes::from(
             TDXVerifierJournal {
                 result: TDXVerificationResult::Success,
-                tcbStatus: TDXTcbStatus::UpToDate,
-                timestamp,
-                collateralExpiration: u64::MAX,
+                issuedAt: issued_at,
+                expiration: issued_at.saturating_add(3600),
                 rootCaHash: B256::ZERO,
-                pckCertHash: B256::ZERO,
-                tcbInfoHash: B256::ZERO,
-                qeIdentityHash: B256::ZERO,
+                tokenLeafCertHash: B256::ZERO,
                 publicKey: Bytes::from(public_key.clone()),
                 signer,
                 imageHash: B256::ZERO,
-                mrTdHash: B256::ZERO,
-                reportDataPrefix: TdxVerifier::validate_public_key(&public_key).unwrap(),
-                reportDataSuffix: TdxVerifier::timestamp_report_data_suffix(
-                    B256::ZERO,
-                    timestamp,
-                    Some(nonce),
+                audienceHash: keccak256("base-tdx-prover"),
+                tokenNonceHash: TdxVerifier::token_nonce(
+                    &public_key,
+                    nonce,
                     11_155_111,
                     TEST_REGISTRY_ADDRESS,
-                ),
-                tdAttributes: 0,
+                )
+                .unwrap(),
+                hardwareModelHash: keccak256("GCP_INTEL_TDX"),
+                secureBoot: true,
+                debugDisabled: true,
+                commandOverride: false,
+                environmentOverride: false,
                 chainId: 11_155_111,
                 registryAddress: TEST_REGISTRY_ADDRESS,
             }

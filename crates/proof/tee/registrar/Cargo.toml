@@ -36,7 +36,6 @@ base-proof-contracts.workspace = true
 
 # Proving
 base-proof-tee-attestation.workspace = true
-base-proof-tee-tdx-collateral.workspace = true
 base-proof-tee-tdx-verifier.workspace = true
 base-proof-tee-nitro-verifier.workspace = true
 

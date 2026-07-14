@@ -1,98 +1,65 @@
-//! Solidity-aligned types for the TDX verifier onchain interface.
-//!
-//! Mirrors the TDX ABI surface staged in the contracts branch so offchain
-//! verification code can encode and decode TDX attestation verifier journals.
-//!
-//! Enums put `Unknown` at discriminant 0 so uninitialized values fail closed.
+//! Solidity-aligned types for Confidential Space TDX registration journals.
 
 use alloy_sol_types::sol;
 
 sol! {
     #![sol(extra_derives(Debug, PartialEq, Eq))]
 
-    /// Statuses emitted by the TDX quote/collateral verifier.
+    /// Statuses emitted by the Confidential Space token verifier.
     enum TDXVerificationResult {
         /// Unknown / unset.
         Unknown,
-        /// TDX quote and collateral verification succeeded.
+        /// Confidential Space token verification succeeded.
         Success,
-        /// Quote parsing or structural validation failed.
-        InvalidQuote,
-        /// Quote signature validation failed.
-        QuoteSignatureInvalid,
-        /// Intel root CA was not trusted.
+        /// The token did not have the expected JWT structure.
+        TokenMalformed,
+        /// The token signature did not verify.
+        TokenSignatureInvalid,
+        /// The token's certificate chain did not terminate at the trusted root.
         RootCaNotTrusted,
-        /// PCK certificate chain validation failed.
-        PckCertChainInvalid,
-        /// TCB info collateral validation failed.
-        TcbInfoInvalid,
-        /// QE identity collateral validation failed.
-        QeIdentityInvalid,
-        /// TCB status was not accepted by verifier policy.
-        TcbStatusNotAllowed,
-        /// Required quote collateral had expired.
-        CollateralExpired,
-        /// Quote timestamp was outside the configured policy window.
-        InvalidTimestamp,
-        /// TD report data did not match the expected signer binding.
-        ReportDataMismatch,
+        /// The token claims did not satisfy the workload policy.
+        TokenClaimsInvalid,
+        /// The token was expired, issued in the future, or too old.
+        TokenExpired,
+        /// The token nonce did not bind the signer and registration context.
+        TokenNonceMismatch,
     }
 
-    /// Intel TDX TCB status reduced to the contract policy statuses.
-    enum TDXTcbStatus {
-        /// Unknown / unset.
-        Unknown,
-        /// Platform TCB is up to date.
-        UpToDate,
-        /// Platform needs software hardening.
-        SwHardeningNeeded,
-        /// Platform needs configuration hardening.
-        ConfigurationNeeded,
-        /// Platform needs configuration and software hardening.
-        ConfigurationAndSwHardeningNeeded,
-        /// Platform TCB is out of date.
-        OutOfDate,
-        /// Platform TCB is out of date and needs configuration hardening.
-        OutOfDateConfigurationNeeded,
-        /// Platform TCB has been revoked.
-        Revoked,
-    }
-
-    /// Public journal emitted by the offchain/ZK TDX DCAP verifier.
+    /// Public journal emitted by the Confidential Space verifier guest.
     struct TDXVerifierJournal {
-        /// Overall verification result after quote and collateral validation.
+        /// Overall verification result after token validation.
         TDXVerificationResult result;
-        /// Intel TDX TCB status for the platform.
-        TDXTcbStatus tcbStatus;
-        /// Quote timestamp in milliseconds since Unix epoch.
-        uint64 timestamp;
-        /// Earliest expiration timestamp in seconds across accepted collateral.
-        uint64 collateralExpiration;
-        /// Hash of the Intel root CA used for validation.
+        /// Token issuance time in seconds since Unix epoch.
+        uint64 issuedAt;
+        /// Token expiration time in seconds since Unix epoch.
+        uint64 expiration;
+        /// Hash of the Google Confidential Space root CA used for validation.
         bytes32 rootCaHash;
-        /// Hash of the PCK leaf certificate.
-        bytes32 pckCertHash;
-        /// Hash of the TCB info collateral.
-        bytes32 tcbInfoHash;
-        /// Hash of the QE identity collateral.
-        bytes32 qeIdentityHash;
+        /// Hash of the token leaf certificate.
+        bytes32 tokenLeafCertHash;
         /// Uncompressed secp256k1 public key: `0x04 || x || y`.
         bytes publicKey;
         /// Ethereum address derived from `publicKey`.
         address signer;
-        /// CI-derived OCI manifest digest for the verified prover workload.
+        /// OCI manifest SHA-256 digest for the verified prover workload.
         bytes32 imageHash;
-        /// Keccak256 hash of the MRTD measurement.
-        bytes32 mrTdHash;
-        /// First 32 bytes of `TDREPORT.REPORTDATA`, binding the signer public key.
-        bytes32 reportDataPrefix;
-        /// Last 32 bytes of `TDREPORT.REPORTDATA`, binding the timestamp and registrar nonce.
-        bytes32 reportDataSuffix;
-        /// Raw TD attributes. Bit zero is the debug bit and must be unset.
-        uint64 tdAttributes;
-        /// L1 chain ID bound into `TDREPORT.REPORTDATA`.
+        /// Hash of the expected token audience.
+        bytes32 audienceHash;
+        /// Hash of the signer-bound registrar nonce in the token.
+        bytes32 tokenNonceHash;
+        /// Hash of the token's hardware model claim.
+        bytes32 hardwareModelHash;
+        /// Whether Secure Boot was enabled for the Confidential Space VM.
+        bool secureBoot;
+        /// Whether the Confidential Space image has been debug-disabled since boot.
+        bool debugDisabled;
+        /// Whether the workload command was overridden.
+        bool commandOverride;
+        /// Whether the workload environment was overridden.
+        bool environmentOverride;
+        /// L1 chain ID bound into the token nonce.
         uint64 chainId;
-        /// `TEEProverRegistry` address bound into `TDREPORT.REPORTDATA`.
+        /// `TEEProverRegistry` address bound into the token nonce.
         address registryAddress;
     }
 
@@ -107,24 +74,12 @@ mod tests {
         for (actual, expected) in [
             (TDXVerificationResult::Unknown as u8, 0),
             (TDXVerificationResult::Success as u8, 1),
-            (TDXVerificationResult::InvalidQuote as u8, 2),
-            (TDXVerificationResult::QuoteSignatureInvalid as u8, 3),
+            (TDXVerificationResult::TokenMalformed as u8, 2),
+            (TDXVerificationResult::TokenSignatureInvalid as u8, 3),
             (TDXVerificationResult::RootCaNotTrusted as u8, 4),
-            (TDXVerificationResult::PckCertChainInvalid as u8, 5),
-            (TDXVerificationResult::TcbInfoInvalid as u8, 6),
-            (TDXVerificationResult::QeIdentityInvalid as u8, 7),
-            (TDXVerificationResult::TcbStatusNotAllowed as u8, 8),
-            (TDXVerificationResult::CollateralExpired as u8, 9),
-            (TDXVerificationResult::InvalidTimestamp as u8, 10),
-            (TDXVerificationResult::ReportDataMismatch as u8, 11),
-            (TDXTcbStatus::Unknown as u8, 0),
-            (TDXTcbStatus::UpToDate as u8, 1),
-            (TDXTcbStatus::SwHardeningNeeded as u8, 2),
-            (TDXTcbStatus::ConfigurationNeeded as u8, 3),
-            (TDXTcbStatus::ConfigurationAndSwHardeningNeeded as u8, 4),
-            (TDXTcbStatus::OutOfDate as u8, 5),
-            (TDXTcbStatus::OutOfDateConfigurationNeeded as u8, 6),
-            (TDXTcbStatus::Revoked as u8, 7),
+            (TDXVerificationResult::TokenClaimsInvalid as u8, 5),
+            (TDXVerificationResult::TokenExpired as u8, 6),
+            (TDXVerificationResult::TokenNonceMismatch as u8, 7),
         ] {
             assert_eq!(actual, expected);
         }

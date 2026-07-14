@@ -1,10 +1,10 @@
 #![doc = include_str!("../README.md")]
 
-// RISC Zero guest program for TDX attestation verification.
+// RISC Zero guest program for Confidential Space TDX attestation verification.
 //
-// The host supplies an ABI-encoded `TdxVerifierInput`. The guest
-// verifies the quote and collateral, then commits the ABI-encoded
-// `TDXVerifierJournal` expected by the onchain TDX verifier.
+// The host supplies an ABI-encoded `TdxVerifierInput`. The guest verifies the
+// Google Cloud Attestation PKI token and its workload claims, then commits the
+// ABI-encoded `TDXVerifierJournal` expected by the onchain TDX verifier.
 
 #[path = "../../../atomic_shims.rs"]
 mod atomic_shims;

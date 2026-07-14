@@ -2,14 +2,18 @@
 
 use std::{net::SocketAddr, sync::Arc};
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::Address;
+#[cfg(feature = "local")]
+use alloy_primitives::B256;
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_chains::rollup_config;
 use base_proof_host::{ProverConfig, ProverService};
-#[cfg(feature = "local")]
-use base_proof_tee_tdx_prover::TdxMeasurements;
 use base_proof_tee_tdx_prover::{ProofGenerator, TdxBackend, TdxProverServer};
-use base_proof_tee_tdx_runtime::{ConfigfsTdxQuoteProvider, TdxAttestationContext, TdxRuntime};
+#[cfg(feature = "local")]
+use base_proof_tee_tdx_runtime::StaticTokenProvider;
+use base_proof_tee_tdx_runtime::{
+    CONFIDENTIAL_SPACE_AUDIENCE, ConfidentialSpaceTokenProvider, TdxAttestationContext, TdxRuntime,
+};
 use base_proof_worker::{JobDiscovery, JobDiscoveryConfig, ProofSubmitter, WorkerHeartbeatConfig};
 use base_prover_service_client::{ProverServiceClientConfig, ProverWorkerClient};
 use base_prover_service_protocol::TeeKind;
@@ -26,7 +30,7 @@ base_cli_utils::define_metrics_args!("BASE_PROVER_TDX", 7310);
 #[derive(Parser)]
 #[command(author, version)]
 pub(crate) struct Cli {
-    /// Run with deterministic local TDX quote fixtures.
+    /// Run with a deterministic local Confidential Space token fixture.
     #[cfg(feature = "local")]
     #[arg(value_name = "MODE", hide = true)]
     mode: Option<LocalMode>,
@@ -59,13 +63,10 @@ pub(crate) struct Cli {
     #[arg(long, env = "PROVER_SERVICE_ENDPOINT")]
     prover_service_endpoint: String,
 
-    /// Configfs report name below `/sys/kernel/config/tsm/report`.
-    #[arg(long, env = "TDX_REPORT_NAME", default_value = "base-tdx-prover")]
-    report_name: String,
-
-    /// CI-derived linux/amd64 OCI manifest digest for this prover workload.
+    /// OCI image digest used only by deterministic local development tokens.
+    #[cfg(feature = "local")]
     #[arg(long, env = "TEE_TDX_IMAGE_HASH")]
-    tee_tdx_image_hash: B256,
+    tee_tdx_image_hash: Option<B256>,
 
     /// L1 chain ID used when registering this signer.
     #[arg(long, env = "L1_CHAIN_ID")]
@@ -114,12 +115,12 @@ impl Cli {
             listen_addr,
             enable_experimental_witness_endpoint,
             prover_service_endpoint,
-            report_name,
+            #[cfg(feature = "local")]
+            mode,
+            #[cfg(feature = "local")]
             tee_tdx_image_hash,
             l1_chain_id,
             tee_prover_registry_address,
-            #[cfg(feature = "local")]
-            mode,
             ..
         } = self;
         let rollup_config = rollup_config!(l2_chain_id)
@@ -139,24 +140,28 @@ impl Cli {
         };
         info!(
             addr = %listen_addr,
-            report_name = %report_name,
-            workload_digest = %tee_tdx_image_hash,
+            attestation_audience = CONFIDENTIAL_SPACE_AUDIENCE,
             "starting tdx prover worker"
         );
         #[cfg(feature = "local")]
         let runtime = if mode == Some(LocalMode::Local) {
-            info!("using deterministic local TDX quote fixture");
-            Arc::new(TdxRuntime::new(TdxMeasurements, tee_tdx_image_hash))
+            let image_hash = tee_tdx_image_hash
+                .ok_or_else(|| eyre!("TEE_TDX_IMAGE_HASH is required for local TDX prover mode"))?;
+            info!(image_hash = %image_hash, "using deterministic local Confidential Space token");
+            Arc::new(TdxRuntime::new(
+                StaticTokenProvider::for_image_hash(image_hash),
+                CONFIDENTIAL_SPACE_AUDIENCE,
+            ))
         } else {
             Arc::new(TdxRuntime::new(
-                ConfigfsTdxQuoteProvider::new(&report_name),
-                tee_tdx_image_hash,
+                ConfidentialSpaceTokenProvider::new(),
+                CONFIDENTIAL_SPACE_AUDIENCE,
             ))
         };
         #[cfg(not(feature = "local"))]
         let runtime = Arc::new(TdxRuntime::new(
-            ConfigfsTdxQuoteProvider::new(&report_name),
-            tee_tdx_image_hash,
+            ConfidentialSpaceTokenProvider::new(),
+            CONFIDENTIAL_SPACE_AUDIENCE,
         ));
         let registrar_handle = TdxProverServer::new(
             Arc::clone(&runtime),

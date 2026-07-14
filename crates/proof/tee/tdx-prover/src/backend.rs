@@ -49,12 +49,13 @@ impl ProverBackend for TdxBackend {
             driver.execute_with_intermediates().await.map_err(pipeline_err)?;
 
         epilogue.validate().map_err(pipeline_err)?;
+        let workload_digest = self.runtime.workload_digest().map_err(TdxProverError::from)?;
 
         TeeProposals::build(
             &boot_info,
             &block_results,
             config_hash,
-            self.runtime.workload_digest(),
+            workload_digest,
             |data| self.runtime.sign(data).map_err(TdxProverError::from),
             pipeline_err,
         )

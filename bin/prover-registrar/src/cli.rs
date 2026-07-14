@@ -43,21 +43,17 @@ pub(crate) struct Cli {
     #[arg(long, env = cli_env!("AWS_REGION"))]
     aws_region: String,
 
-    /// GCP project ID containing the TDX prover GKE cluster.
+    /// GCP project ID containing the Confidential Space TDX prover VMs.
     #[arg(long, env = cli_env!("GCP_PROJECT"))]
     gcp_project: String,
 
-    /// GCP location containing the TDX prover GKE cluster.
-    #[arg(long, env = cli_env!("GCP_LOCATION"))]
-    gcp_location: String,
+    /// GCP zone containing the Confidential Space TDX prover managed instance group.
+    #[arg(long, env = cli_env!("GCP_ZONE"))]
+    gcp_zone: String,
 
-    /// GKE cluster name containing the TDX prover node pool.
-    #[arg(long, env = cli_env!("GCP_CLUSTER"))]
-    gcp_cluster: String,
-
-    /// GKE node pool name for TDX prover nodes.
-    #[arg(long, env = cli_env!("GCP_NODE_POOL"))]
-    gcp_node_pool: String,
+    /// Compute Engine managed instance group for Confidential Space TDX prover VMs.
+    #[arg(long, env = cli_env!("GCP_INSTANCE_GROUP"))]
+    gcp_instance_group: String,
 
     /// Optional GCP `OAuth` access token. If unset, the GCP metadata server is used.
     #[arg(long, env = cli_env!("GCP_ACCESS_TOKEN"))]
@@ -237,9 +233,8 @@ impl Cli {
             target_group_arn: self.target_group_arn,
             aws_region: self.aws_region,
             gcp_project: self.gcp_project,
-            gcp_location: self.gcp_location,
-            gcp_cluster: self.gcp_cluster,
-            gcp_node_pool: self.gcp_node_pool,
+            gcp_zone: self.gcp_zone,
+            gcp_instance_group: self.gcp_instance_group,
             gcp_access_token: self.gcp_access_token,
             prover_port: self.prover_port,
             signing: SignerConfig::try_from(self.signer)
@@ -312,11 +307,9 @@ mod tests {
             "us-east-1",
             "--gcp-project",
             "base-project",
-            "--gcp-location",
-            "us-central1",
-            "--gcp-cluster",
-            "tee-provers",
-            "--gcp-node-pool",
+            "--gcp-zone",
+            "us-central1-a",
+            "--gcp-instance-group",
             "tdx-provers",
             "--private-key",
             "0x0101010101010101010101010101010101010101010101010101010101010101",

@@ -1,62 +1,42 @@
-//! Error types for TDX quote and collateral verification.
+//! Error types for Confidential Space TDX token verification.
 
 use alloy_primitives::Address;
 use thiserror::Error;
 
-/// Errors that can occur during TDX quote and collateral verification.
+/// Errors that can occur during Confidential Space token verification.
 #[derive(Debug, Error)]
 pub enum TdxVerifierError {
     /// ABI-encoded TDX verifier input was malformed.
     #[error("input decode error: {0}")]
     InputDecode(String),
 
-    /// Raw TDX quote bytes were malformed or incomplete.
-    #[error("invalid TDX quote: {0}")]
-    InvalidQuote(String),
+    /// Confidential Space token was malformed.
+    #[error("Confidential Space token is malformed: {0}")]
+    TokenMalformed(String),
 
-    /// TDX quote signature validation failed.
-    #[error("TDX quote signature is invalid: {0}")]
-    QuoteSignatureInvalid(String),
+    /// Confidential Space token signature validation failed.
+    #[error("Confidential Space token signature is invalid: {0}")]
+    TokenSignatureInvalid(String),
 
-    /// Trusted Intel root CA hash did not match the provided root chain.
-    #[error("trusted Intel root CA hash mismatch")]
+    /// Trusted Confidential Space root CA hash did not match the token chain.
+    #[error("trusted Confidential Space root CA hash mismatch")]
     RootCaNotTrusted,
 
-    /// PCK certificate chain validation failed.
-    #[error("PCK certificate chain is invalid: {0}")]
-    PckCertChainInvalid(String),
+    /// Confidential Space token claims did not satisfy policy.
+    #[error("Confidential Space token claims are not allowed")]
+    TokenClaimsInvalid,
 
-    /// TCB info collateral validation failed.
-    #[error("TCB info collateral is invalid: {0}")]
-    TcbInfoInvalid(String),
-
-    /// QE identity collateral validation failed.
-    #[error("QE identity collateral is invalid: {0}")]
-    QeIdentityInvalid(String),
-
-    /// Intel TCB status is not allowed by verifier policy.
-    #[error("TCB status is not allowed")]
-    TcbStatusNotAllowed,
-
-    /// TD debug mode is not allowed.
-    #[error("TDX debug mode is not allowed")]
-    DebugTdNotAllowed,
-
-    /// Required quote collateral is expired.
-    #[error("TDX collateral is expired")]
-    CollateralExpired,
-
-    /// Quote timestamp is outside verifier policy.
-    #[error("TDX quote timestamp is outside verifier policy")]
-    InvalidTimestamp,
+    /// Token issuance or expiration time is outside verifier policy.
+    #[error("Confidential Space token time is outside verifier policy")]
+    TokenExpired,
 
     /// Expected signer public key is malformed.
     #[error("expected secp256k1 public key is malformed")]
     MalformedPublicKey,
 
-    /// TD report data does not bind the expected signer or registrar nonce.
-    #[error("TD report data does not match expected signer binding")]
-    ReportDataMismatch,
+    /// Token nonce does not bind the expected signer and registrar context.
+    #[error("Confidential Space token nonce does not match expected signer binding")]
+    TokenNonceMismatch,
 
     /// Decoded input signer does not match the signer being registered.
     #[error("signer mismatch: expected {expected}, got {actual}")]

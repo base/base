@@ -6,10 +6,10 @@ use thiserror::Error;
 /// Errors that can occur while serving TDX proofs.
 #[derive(Debug, Error)]
 pub enum TdxProverError {
-    /// TDX runtime quote or signer operation failed.
+    /// TDX runtime attestation-token or signer operation failed.
     #[error(transparent)]
     Runtime(#[from] TdxRuntimeError),
-    /// TDX quote parsing or measurement extraction failed.
+    /// Confidential Space token validation failed.
     #[error(transparent)]
     Verifier(#[from] TdxVerifierError),
     /// The proof execution pipeline failed.

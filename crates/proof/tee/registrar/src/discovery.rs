@@ -152,7 +152,7 @@ impl InstanceDiscovery for AwsTargetGroupDiscovery {
     }
 }
 
-impl InstanceDiscovery for (AwsTargetGroupDiscovery, GcpNodePoolDiscovery) {
+impl InstanceDiscovery for (AwsTargetGroupDiscovery, GcpInstanceGroupDiscovery) {
     async fn discover_instances(&self) -> Result<Vec<ProverInstance>> {
         let (mut aws, gcp) =
             tokio::try_join!(self.0.discover_instances(), self.1.discover_instances())?;
@@ -161,37 +161,27 @@ impl InstanceDiscovery for (AwsTargetGroupDiscovery, GcpNodePoolDiscovery) {
     }
 }
 
-/// Discovers TDX prover instances from a GKE node pool.
+/// Discovers Confidential Space TDX prover instances from a Compute Engine managed instance group.
 #[derive(Debug)]
-pub struct GcpNodePoolDiscovery {
+pub struct GcpInstanceGroupDiscovery {
     http_client: HttpClient,
     project: String,
-    location: String,
-    cluster: String,
-    node_pool: String,
+    zone: String,
+    instance_group: String,
     port: u16,
     access_token: Option<String>,
 }
 
-impl GcpNodePoolDiscovery {
-    /// Creates a GCP node pool discovery client.
+impl GcpInstanceGroupDiscovery {
+    /// Creates a Compute Engine managed instance group discovery client.
     pub fn new(
         project: String,
-        location: String,
-        cluster: String,
-        node_pool: String,
+        zone: String,
+        instance_group: String,
         port: u16,
         access_token: Option<String>,
     ) -> Self {
-        Self {
-            http_client: HttpClient::new(),
-            project,
-            location,
-            cluster,
-            node_pool,
-            port,
-            access_token,
-        }
+        Self { http_client: HttpClient::new(), project, zone, instance_group, port, access_token }
     }
 
     async fn bearer_token(&self) -> Result<String> {
@@ -222,66 +212,60 @@ impl GcpNodePoolDiscovery {
     }
 }
 
-impl InstanceDiscovery for GcpNodePoolDiscovery {
+impl InstanceDiscovery for GcpInstanceGroupDiscovery {
     async fn discover_instances(&self) -> Result<Vec<ProverInstance>> {
         let token = self.bearer_token().await?;
-        let node_pool_url = format!(
-            "https://container.googleapis.com/v1/projects/{}/locations/{}/clusters/{}/nodePools/{}",
-            self.project, self.location, self.cluster, self.node_pool
+        let instance_group_url = format!(
+            "https://compute.googleapis.com/compute/v1/projects/{}/zones/{}/instanceGroupManagers/{}",
+            self.project, self.zone, self.instance_group
         );
-        let node_pool: GcpNodePool =
-            Self::request(self.http_client.get(&node_pool_url).bearer_auth(&token)).await?;
         let mut instances = Vec::new();
-        for instance_group_url in &node_pool.instance_group_urls {
-            let url = format!("{instance_group_url}/listManagedInstances");
-            let mut page_token = None;
+        let url = format!("{instance_group_url}/listManagedInstances");
+        let mut page_token = None;
 
-            loop {
-                let body = page_token.as_ref().map_or_else(
-                    || serde_json::json!({}),
-                    |page_token| serde_json::json!({ "pageToken": page_token }),
+        loop {
+            let body = page_token.as_ref().map_or_else(
+                || serde_json::json!({}),
+                |page_token| serde_json::json!({ "pageToken": page_token }),
+            );
+            let page: GcpManagedInstancesPage =
+                Self::request(self.http_client.post(&url).bearer_auth(&token).json(&body)).await?;
+            for instance_url in page
+                .managed_instances
+                .into_iter()
+                .filter(|instance| instance.instance_status.as_deref() == Some("RUNNING"))
+                .filter_map(|instance| instance.instance)
+            {
+                let instance: GcpInstance =
+                    Self::request(self.http_client.get(instance_url).bearer_auth(&token)).await?;
+                let Some(private_ip) = instance
+                    .network_interfaces
+                    .iter()
+                    .find_map(|interface| interface.network_ip.as_deref())
+                else {
+                    warn!(instance = %instance.name, "GCE instance missing private IP");
+                    continue;
+                };
+                let endpoint = Url::parse(&format!("http://{private_ip}:{}", self.port))
+                    .map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
+
+                debug!(
+                    instance_id = %instance.name,
+                    endpoint = %endpoint,
+                    "discovered Confidential Space TDX prover instance"
                 );
-                let page: GcpManagedInstancesPage =
-                    Self::request(self.http_client.post(&url).bearer_auth(&token).json(&body))
-                        .await?;
-                for instance_url in page
-                    .managed_instances
-                    .into_iter()
-                    .filter(|instance| instance.instance_status.as_deref() == Some("RUNNING"))
-                    .filter_map(|instance| instance.instance)
-                {
-                    let instance: GcpInstance =
-                        Self::request(self.http_client.get(instance_url).bearer_auth(&token))
-                            .await?;
-                    let Some(private_ip) = instance
-                        .network_interfaces
-                        .iter()
-                        .find_map(|interface| interface.network_ip.as_deref())
-                    else {
-                        warn!(instance = %instance.name, "GCE instance missing private IP");
-                        continue;
-                    };
-                    let endpoint = Url::parse(&format!("http://{private_ip}:{}", self.port))
-                        .map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
-
-                    debug!(
-                        instance_id = %instance.name,
-                        endpoint = %endpoint,
-                        "discovered GCP TDX prover instance"
-                    );
-                    instances.push(ProverInstance {
-                        instance_id: format!("gcp/{}", instance.name),
-                        endpoint,
-                        attestation_kind: TeeAttestationKind::Tdx,
-                        health_status: InstanceHealthStatus::Healthy,
-                        launch_time: None,
-                    });
-                }
-                if page.next_page_token.is_none() {
-                    break;
-                }
-                page_token = page.next_page_token;
+                instances.push(ProverInstance {
+                    instance_id: format!("gcp/{}", instance.name),
+                    endpoint,
+                    attestation_kind: TeeAttestationKind::Tdx,
+                    health_status: InstanceHealthStatus::Healthy,
+                    launch_time: None,
+                });
             }
+            if page.next_page_token.is_none() {
+                break;
+            }
+            page_token = page.next_page_token;
         }
         Ok(instances)
     }
@@ -290,12 +274,6 @@ impl InstanceDiscovery for GcpNodePoolDiscovery {
 #[derive(Deserialize)]
 struct GcpMetadataToken {
     access_token: String,
-}
-
-#[derive(Deserialize)]
-struct GcpNodePool {
-    #[serde(default, rename = "instanceGroupUrls")]
-    instance_group_urls: Vec<String>,
 }
 
 #[derive(Deserialize)]

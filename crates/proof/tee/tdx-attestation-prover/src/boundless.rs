@@ -51,8 +51,8 @@ pub struct BoundlessProver {
     pub timeout: Duration,
     /// Maximum number of deterministic request-ID slots to probe.
     pub max_recovery_attempts: u32,
-    /// Maximum recovered quote age accepted before submitting onchain.
-    pub max_recovered_quote_age: Duration,
+    /// Maximum recovered token age accepted before submitting onchain.
+    pub max_recovered_token_age: Duration,
     /// Serializes Boundless onchain request submission by wallet nonce.
     pub submit_lock: Arc<Mutex<()>>,
     /// Signers whose recovered proofs have already been rejected onchain.
@@ -72,7 +72,7 @@ impl fmt::Debug for BoundlessProver {
             .field("poll_interval", &self.poll_interval)
             .field("timeout", &self.timeout)
             .field("max_recovery_attempts", &self.max_recovery_attempts)
-            .field("max_recovered_quote_age", &self.max_recovered_quote_age)
+            .field("max_recovered_token_age", &self.max_recovered_token_age)
             .finish()
     }
 }
@@ -86,7 +86,7 @@ impl BoundlessProver {
         image_id: [u32; 8],
         timing: (Duration, Duration),
         max_recovery_attempts: u32,
-        max_recovered_quote_age: Duration,
+        max_recovered_token_age: Duration,
     ) -> Self {
         let (poll_interval, timeout) = timing;
 
@@ -98,7 +98,7 @@ impl BoundlessProver {
             poll_interval,
             timeout,
             max_recovery_attempts,
-            max_recovered_quote_age,
+            max_recovered_token_age,
             submit_lock: Arc::new(Mutex::new(())),
             recovery_blocked: Arc::new(std::sync::Mutex::new(HashSet::new())),
         }
@@ -130,7 +130,7 @@ impl BoundlessProver {
         info!(
             image_id = ?self.image_id,
             input_len = input_bytes.len(),
-            quote_timestamp_millis = input.quote_timestamp_millis,
+            max_token_age_seconds = input.max_token_age_seconds,
             rpc_url = %self.rpc_url.origin().unicode_serialization(),
             boundless_wallet = %self.signer.address(),
             program_url = %self.verifier_program_url.origin().unicode_serialization(),
@@ -317,16 +317,18 @@ impl BoundlessProver {
             return false;
         };
 
-        if journal.timestamp <= now_millis
-            && Duration::from_millis(now_millis - journal.timestamp) <= self.max_recovered_quote_age
+        let now_seconds = now_millis / 1000;
+        if journal.expiration > now_seconds
+            && journal.issuedAt <= now_seconds
+            && Duration::from_secs(now_seconds - journal.issuedAt) <= self.max_recovered_token_age
         {
             return true;
         }
         info!(
-            max_recovered_quote_age_secs = self.max_recovered_quote_age.as_secs(),
-            quote_timestamp_millis = journal.timestamp,
+            max_recovered_token_age_secs = self.max_recovered_token_age.as_secs(),
+            token_issued_at = journal.issuedAt,
             target_signer = %signer_address,
-            "recovered TDX proof quote timestamp is too old, skipping"
+            "recovered TDX proof token is too old, skipping"
         );
         false
     }
@@ -420,7 +422,7 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use base_proof_tee_tdx_verifier::{TDXTcbStatus, TDXVerificationResult};
+    use base_proof_tee_tdx_verifier::TDXVerificationResult;
 
     use super::*;
 
@@ -439,33 +441,33 @@ mod tests {
             poll_interval: Duration::from_secs(5),
             timeout: Duration::from_secs(300),
             max_recovery_attempts: 5,
-            max_recovered_quote_age: Duration::from_secs(300),
+            max_recovered_token_age: Duration::from_secs(300),
             submit_lock: Arc::new(Mutex::new(())),
             recovery_blocked: Arc::new(std::sync::Mutex::new(HashSet::new())),
         }
     }
 
-    fn now_millis() -> u64 {
-        u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis()).unwrap()
+    fn now_seconds() -> u64 {
+        u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()).unwrap()
     }
 
     fn proof_for_signer(signer: Address) -> TeeAttestationProof {
         let journal = TDXVerifierJournal {
             result: TDXVerificationResult::Success,
-            tcbStatus: TDXTcbStatus::UpToDate,
-            timestamp: now_millis(),
-            collateralExpiration: 1_711_222_222,
+            issuedAt: now_seconds(),
+            expiration: now_seconds() + 3600,
             rootCaHash: B256::repeat_byte(0x11),
-            pckCertHash: B256::repeat_byte(0x22),
-            tcbInfoHash: B256::repeat_byte(0x33),
-            qeIdentityHash: B256::repeat_byte(0x44),
+            tokenLeafCertHash: B256::repeat_byte(0x22),
             publicKey: Bytes::from(vec![0x04; 65]),
             signer,
             imageHash: B256::repeat_byte(0x55),
-            mrTdHash: B256::repeat_byte(0x66),
-            reportDataPrefix: B256::repeat_byte(0x77),
-            reportDataSuffix: B256::repeat_byte(0x88),
-            tdAttributes: 0,
+            audienceHash: B256::repeat_byte(0x66),
+            tokenNonceHash: B256::repeat_byte(0x77),
+            hardwareModelHash: B256::repeat_byte(0x88),
+            secureBoot: true,
+            debugDisabled: true,
+            commandOverride: false,
+            environmentOverride: false,
             chainId: 11_155_111,
             registryAddress: Address::repeat_byte(0x99),
         };
@@ -502,13 +504,13 @@ mod tests {
     }
 
     #[test]
-    fn recovered_proof_with_old_quote_is_skipped() {
+    fn recovered_proof_with_old_token_is_skipped() {
         let prover = prover();
         let signer = Address::repeat_byte(0x11);
         let mut proof = proof_for_signer(signer);
         let mut journal =
             <TDXVerifierJournal as SolValue>::abi_decode_validate(&proof.output).unwrap();
-        journal.timestamp = now_millis() - 301_000;
+        journal.issuedAt = now_seconds() - 301;
         proof.output = Bytes::from(SolValue::abi_encode(&journal));
 
         assert!(!prover.recovered_proof_is_usable(&proof, signer));
