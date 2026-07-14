@@ -52,7 +52,7 @@ pub struct BaseTransactionPool<
         Pool<TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>>, O, S>,
     ordering: O,
     nonce_pool: Arc<RwLock<TwoDNoncePool<T>>>,
-    eip8130_replays: Arc<RwLock<HashMap<(Address, B256), TxHash>>>,
+    eip8130_replays: Arc<RwLock<HashMap<B256, TxHash>>>,
     listeners: Arc<RwLock<SidecarListeners<T>>>,
 }
 
@@ -153,7 +153,7 @@ where
     /// This check and the subsequent [`Self::track_eip8130_replay_id`] insert are
     /// deliberately **not** atomic: the index lock is released between them (and
     /// between this check and the actual pool insert). Two concurrent admissions
-    /// of the same `(sender, replay_id)` can therefore both pass and enter the
+    /// of the same `replay_id` can therefore both pass and enter the
     /// pool. That is acceptable because the index is only a mempool optimization,
     /// not a consensus control: identical transactions collapse by tx-hash in the
     /// underlying pool, and any surviving nonce-free duplicate is rejected at
@@ -162,8 +162,10 @@ where
     /// nesting, so the looser guarantee is intentional. A stale entry whose target
     /// is no longer pooled is opportunistically evicted here.
     fn eip8130_replay_already_seen(&self, transaction: &T) -> Option<TxHash> {
-        let key = (transaction.sender(), transaction.eip8130_replay_id()?);
-        let hash = self.eip8130_replays.read().get(&key).copied()?;
+        // `replay_id` already commits to the resolved sender, so it alone keys the
+        // index (matching the enshrined replay buffer, which keys by `replay_id`).
+        let replay_id = transaction.eip8130_replay_id()?;
+        let hash = self.eip8130_replays.read().get(&replay_id).copied()?;
         // Only nonce-free transactions have replay IDs, and those are only ever
         // admitted to the protocol pool; channelized transactions live in
         // `nonce_pool` and never carry a replay ID. Guard that routing invariant
@@ -176,14 +178,14 @@ where
         if self.protocol_pool.get(&hash).is_some() {
             return Some(hash);
         }
-        self.eip8130_replays.write().remove(&key);
+        self.eip8130_replays.write().remove(&replay_id);
         None
     }
 
-    fn track_eip8130_replay_id(&self, sender: Address, replay_id: B256, hash: TxHash) {
+    fn track_eip8130_replay_id(&self, replay_id: B256, hash: TxHash) {
         {
             let mut index = self.eip8130_replays.write();
-            index.insert((sender, replay_id), hash);
+            index.insert(replay_id, hash);
         }
         self.reconcile_eip8130_replays_if_needed();
     }
@@ -205,7 +207,7 @@ where
         let mut rebuilt = HashMap::new();
         for transaction in self.pooled_transactions() {
             if let Some(replay_id) = transaction.transaction.eip8130_replay_id() {
-                rebuilt.insert((transaction.transaction.sender(), replay_id), *transaction.hash());
+                rebuilt.insert(replay_id, *transaction.hash());
             }
         }
         let mut index = self.eip8130_replays.write();
@@ -219,7 +221,7 @@ where
         let mut index = self.eip8130_replays.write();
         for transaction in transactions {
             if let Some(replay_id) = transaction.transaction.eip8130_replay_id() {
-                index.remove(&(transaction.transaction.sender(), replay_id));
+                index.remove(&replay_id);
             }
         }
     }
@@ -421,12 +423,11 @@ where
         }
         if !self.is_sidecar_transaction(&transaction) {
             let replay_id = transaction.eip8130_replay_id();
-            let sender = transaction.sender();
             let hash = *transaction.hash();
             let events =
                 self.protocol_pool.add_transaction_and_subscribe(origin, transaction).await?;
             if let Some(replay_id) = replay_id {
-                self.track_eip8130_replay_id(sender, replay_id, hash);
+                self.track_eip8130_replay_id(replay_id, hash);
             }
             return Ok(events);
         }
@@ -457,11 +458,10 @@ where
             self.add_sidecar_transaction(origin, transaction).await
         } else {
             let replay_id = transaction.eip8130_replay_id();
-            let sender = transaction.sender();
             let hash = *transaction.hash();
             let outcome = self.protocol_pool.add_transaction(origin, transaction).await?;
             if let Some(replay_id) = replay_id {
-                self.track_eip8130_replay_id(sender, replay_id, hash);
+                self.track_eip8130_replay_id(replay_id, hash);
             }
             Ok(outcome)
         }
