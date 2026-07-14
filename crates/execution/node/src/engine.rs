@@ -458,7 +458,7 @@ mod tests {
     fn zombie_validator() -> BaseEngineValidator<NoopProvider, BaseTxEnvelope, BaseChainSpec> {
         validator_with_chain_spec(
             BaseChainSpecBuilder::base_mainnet()
-                .ecotone_activated()
+                .cobalt_activated()
                 .with_fork(BaseUpgrade::Zombie, ForkCondition::Timestamp(42))
                 .build(),
         )
@@ -502,6 +502,10 @@ mod tests {
             3,
         )
         .expect("valid test payload attributes")
+    }
+
+    fn zombie_attributes(timestamp: u64) -> BasePayloadBuilderAttributes<BaseTxEnvelope> {
+        get_attributes(Some(b64!("0000000000000000")), Some(1), timestamp)
     }
 
     #[test]
@@ -662,7 +666,7 @@ mod tests {
     #[test]
     fn test_malformed_attributes_post_zombie_without_timestamp_millis_part() {
         let validator = zombie_validator();
-        let attributes = get_attributes(None, None, 42);
+        let attributes = zombie_attributes(42);
 
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
             BaseEngineTypes,
@@ -675,7 +679,7 @@ mod tests {
     #[test]
     fn test_malformed_attributes_post_zombie_with_invalid_timestamp_millis_part() {
         let validator = zombie_validator();
-        let mut attributes = get_attributes(None, None, 42);
+        let mut attributes = zombie_attributes(42);
         attributes.timestamp_millis_part = Some(100);
 
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
@@ -689,7 +693,7 @@ mod tests {
     #[test]
     fn test_well_formed_attributes_post_zombie_with_valid_timestamp_millis_part() {
         let validator = zombie_validator();
-        let mut attributes = get_attributes(None, None, 42);
+        let mut attributes = zombie_attributes(42);
         attributes.timestamp_millis_part = Some(200);
 
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
@@ -706,7 +710,7 @@ mod tests {
         timestamp_millis_part: Option<u16>,
         parent_timestamp: u64,
     ) -> Result<(), InvalidPayloadAttributesError> {
-        let mut attributes = get_attributes(None, None, timestamp);
+        let mut attributes = zombie_attributes(timestamp);
         attributes.timestamp_millis_part = timestamp_millis_part;
         let header = Header { timestamp: parent_timestamp, ..Default::default() };
 
