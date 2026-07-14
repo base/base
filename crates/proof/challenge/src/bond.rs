@@ -25,6 +25,21 @@ enum BondAction {
 
 const FINALITY_METRIC_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Configuration for bond discovery and claiming.
+#[derive(Debug)]
+pub struct BondManagerConfig {
+    /// Addresses whose bonds can be claimed.
+    pub claim_addresses: Vec<Address>,
+    /// L1 RPC endpoint used to read the delayed WETH contract.
+    pub l1_rpc_url: url::Url,
+    /// Number of recent factory games to scan.
+    pub lookback: u64,
+    /// Minimum interval between full discovery scans.
+    pub discovery_interval: Duration,
+    /// Whether finality metrics are recorded.
+    pub metrics_enabled: bool,
+}
+
 impl BondAction {
     const fn game_address(self) -> Address {
         match self {
@@ -56,30 +71,26 @@ impl<C: Clock> std::fmt::Debug for BondManager<C> {
 }
 
 impl<C: Clock> BondManager<C> {
-    /// Creates a new bond manager for the given set of claim addresses.
+    /// Creates a new bond manager from its configuration and contract clients.
     pub fn new(
-        claim_addresses: Vec<Address>,
-        l1_rpc_url: url::Url,
+        config: BondManagerConfig,
         factory_client: Arc<dyn DisputeGameFactoryClient>,
         l2_provider: Arc<dyn L2Provider>,
-        lookback: u64,
-        discovery_interval: Duration,
-        metrics_enabled: bool,
         clock: C,
     ) -> Self {
-        let set: HashSet<Address> = claim_addresses.into_iter().collect();
+        let set: HashSet<Address> = config.claim_addresses.into_iter().collect();
         info!(count = set.len(), "bond manager initialized with claim addresses");
         Self {
             claim_addresses: set,
             weth_delay: None,
-            l1_rpc_url,
+            l1_rpc_url: config.l1_rpc_url,
             clock,
             factory_client,
             l2_provider,
             last_scan: None,
-            lookback,
-            discovery_interval,
-            metrics_enabled,
+            lookback: config.lookback,
+            discovery_interval: config.discovery_interval,
+            metrics_enabled: config.metrics_enabled,
         }
     }
 
@@ -544,13 +555,15 @@ mod tests {
         let (header, account) = build_test_header_and_account(100, B256::ZERO);
         l2_provider.insert_block(100, header, account);
         BondManager::new(
-            vec![claim_addr],
-            rpc_url,
+            BondManagerConfig {
+                claim_addresses: vec![claim_addr],
+                l1_rpc_url: rpc_url,
+                lookback: 1000,
+                discovery_interval: TEST_DISCOVERY_INTERVAL,
+                metrics_enabled,
+            },
             factory,
             Arc::new(l2_provider),
-            1000,
-            TEST_DISCOVERY_INTERVAL,
-            metrics_enabled,
             clock,
         )
     }
@@ -711,13 +724,15 @@ mod tests {
         l2_provider.insert_block(100, header, account);
         l2_provider.header_delay = Some(FINALITY_METRIC_TIMEOUT + Duration::from_secs(1));
         let mut mgr = BondManager::new(
-            vec![claim_addr],
-            "http://localhost:8545".parse().unwrap(),
+            BondManagerConfig {
+                claim_addresses: vec![claim_addr],
+                l1_rpc_url: "http://localhost:8545".parse().unwrap(),
+                lookback: 1000,
+                discovery_interval: TEST_DISCOVERY_INTERVAL,
+                metrics_enabled: true,
+            },
             factory,
             Arc::new(l2_provider),
-            1000,
-            TEST_DISCOVERY_INTERVAL,
-            true,
             fixed_clock(2_000_000_000),
         );
         let (submitter, tx_manager) = bond_submitter(vec![

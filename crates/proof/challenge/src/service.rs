@@ -23,8 +23,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::{
-    AnchorUpdater, BondManager, ChallengeSubmitter, ChallengerConfig, ChallengerMetrics, Driver,
-    DriverComponents, DriverConfig, GameScanner, OutputValidator,
+    AnchorUpdater, BondManager, BondManagerConfig, ChallengeSubmitter, ChallengerConfig,
+    ChallengerMetrics, Driver, DriverComponents, DriverConfig, GameScanner, OutputValidator,
 };
 
 /// Top-level challenger service.
@@ -197,13 +197,15 @@ impl ChallengerService {
 
         let bond_manager = if !config.bond_claim_addresses.is_empty() {
             Some(BondManager::new(
-                config.bond_claim_addresses,
-                l1_rpc_url,
+                BondManagerConfig {
+                    claim_addresses: config.bond_claim_addresses,
+                    l1_rpc_url,
+                    lookback: config.bond_discovery_lookback_games,
+                    discovery_interval: config.bond_discovery_interval,
+                    metrics_enabled: config.metrics.enabled,
+                },
                 Arc::clone(&factory_client) as Arc<dyn DisputeGameFactoryClient>,
                 Arc::clone(&l2_client) as Arc<dyn L2Provider>,
-                config.bond_discovery_lookback_games,
-                config.bond_discovery_interval,
-                config.metrics.enabled,
                 TokioRuntime::new(),
             ))
         } else {

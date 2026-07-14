@@ -51,7 +51,7 @@ mod verify;
 pub use verify::{AccountProofError, AccountProofVerifier};
 
 mod bond;
-pub use bond::BondManager;
+pub use bond::{BondManager, BondManagerConfig};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
