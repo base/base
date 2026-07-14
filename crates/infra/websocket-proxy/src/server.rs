@@ -62,7 +62,20 @@ impl TrustedProxyConfig {
         header_value
             .split(',')
             .next_back()
-            .and_then(|ip| ip.trim().parse::<IpAddr>().ok())
+            .and_then(|ip| {
+                let trimmed = ip.trim();
+                match trimmed.parse::<IpAddr>() {
+                    Ok(addr) => Some(addr),
+                    Err(error) => {
+                        warn!(
+                            error = %error,
+                            value = %trimmed,
+                            "Failed to parse forwarded client IP"
+                        );
+                        None
+                    }
+                }
+            })
             .unwrap_or(connect_addr)
     }
 }
