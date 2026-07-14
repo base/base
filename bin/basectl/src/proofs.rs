@@ -70,7 +70,7 @@ async fn run_finalize(
         intermediate_root_interval,
     };
     let session_id = request.effective_session_id(&config.name);
-    let end_block = start_block.saturating_add(num_blocks - 1);
+    let end_block = start_block.saturating_add(num_blocks.saturating_sub(1));
     info!(
         network = %config.name,
         prover_rpc = %endpoint,
@@ -251,7 +251,7 @@ impl ProofsFinalizeJson {
             prover_rpc: prover_rpc.to_string(),
             session_id: session_id.to_string(),
             start_block,
-            end_block: start_block.saturating_add(num_blocks - 1),
+            end_block: start_block.saturating_add(num_blocks.saturating_sub(1)),
             num_blocks,
             status: "submitted",
             error_message: None,
