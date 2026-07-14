@@ -69,14 +69,14 @@ async fn run_finalize(
         sequence_window,
         intermediate_root_interval,
     };
-    let session_id = request.effective_session_id(&config.name);
+    let request = request.to_prove_request(&config.name);
     let end_block = start_block.saturating_add(num_blocks.saturating_sub(1));
     info!(
         network = %config.name,
         prover_rpc = %endpoint,
         start_block,
         end_block,
-        session_id = %session_id,
+        session_id = %request.proof.session_id,
         wait,
         "running proofs finalize command"
     );
@@ -90,7 +90,7 @@ async fn run_finalize(
     }
 
     let client = ProofsClient::connect(&endpoint)?;
-    let accepted_session_id = client.submit(request.to_prove_request(session_id.clone())).await?;
+    let accepted_session_id = client.submit(request).await?;
 
     if !wait {
         let outcome = ProofsFinalizeJson::submitted(

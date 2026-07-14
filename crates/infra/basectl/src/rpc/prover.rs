@@ -60,12 +60,12 @@ impl ProofFinalizeRequest {
         })
     }
 
-    /// Builds the prover-service prove-block-range request for `session_id`,
-    /// typically obtained from [`Self::effective_session_id`].
-    pub const fn to_prove_request(&self, session_id: String) -> ProveBlockRangeRequest {
+    /// Builds the prover-service prove-block-range request for `network`, deriving
+    /// its effective session ID with [`Self::effective_session_id`].
+    pub fn to_prove_request(&self, network: &str) -> ProveBlockRangeRequest {
         ProveBlockRangeRequest {
             proof: ProofRequest {
-                session_id,
+                session_id: self.effective_session_id(network),
                 request: ProofRequestKind::Compressed(ZkProofRequest {
                     start_block_number: self.start_block,
                     number_of_blocks_to_prove: self.num_blocks,
@@ -288,7 +288,7 @@ mod tests {
             intermediate_root_interval: Some(10),
         };
 
-        let prove = request.to_prove_request(request.effective_session_id("devnet"));
+        let prove = request.to_prove_request("devnet");
         assert_eq!(prove.proof.session_id, "session-map");
         match prove.proof.request {
             ProofRequestKind::Compressed(zk) => {
@@ -377,10 +377,8 @@ mod tests {
         let (client, handle) = spawn_mock(api).await;
 
         let request = finalize_request();
-        let session_id = client
-            .submit(request.to_prove_request(request.effective_session_id("devnet")))
-            .await
-            .expect("submit should succeed");
+        let session_id =
+            client.submit(request.to_prove_request("devnet")).await.expect("submit should succeed");
 
         assert_eq!(session_id, finalize_request().effective_session_id("devnet"));
         shutdown(handle).await;
