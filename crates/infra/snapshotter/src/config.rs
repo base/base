@@ -83,7 +83,10 @@ pub struct SnapshotterConfig {
     #[arg(long, default_value = "8453")]
     pub chain_id: u64,
 
-    /// Block number for the snapshot. Auto-inferred from the DB if omitted.
+    /// Block number for the snapshot. Defaults to the latest block fetched from the EL before
+    /// stopping its container.
+    ///
+    /// This override is primarily intended for manually snapshotting an earlier block.
     #[arg(long)]
     pub block: Option<u64>,
 

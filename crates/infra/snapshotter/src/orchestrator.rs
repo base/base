@@ -49,7 +49,7 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
 
     /// Executes the full snapshot lifecycle.
     ///
-    /// 0. Verifies the EL is at chain tip; skips the run if it is not
+    /// 0. Captures the EL's latest block and verifies it is at chain tip; skips the run if it is not
     /// 1. Stops the CL and EL containers
     /// 2. Verifies both containers are stopped
     /// 3. Generates snapshot archives
@@ -76,9 +76,9 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
         // This is acceptable for the default 10s threshold on a 2s block-time
         // chain, but callers tightening the threshold should keep this in mind.
         let threshold = Duration::from_secs(self.config.tip_threshold_secs);
-        let at_tip =
-            self.tip_checker.is_at_tip(threshold).await.context("failed to check EL tip status")?;
-        if !at_tip {
+        let tip =
+            self.tip_checker.check_tip(threshold).await.context("failed to check EL tip status")?;
+        if !tip.at_tip {
             warn!(
                 threshold_secs = self.config.tip_threshold_secs,
                 "EL is not at tip; skipping snapshot run and leaving containers running"
@@ -92,7 +92,7 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
             self.container_manager.stop(&self.config.consensus_container_name).await;
         let result = match cl_stop_result {
             Ok(()) => match self.container_manager.stop(&self.config.container_name).await {
-                Ok(()) => self.generate_and_upload().await,
+                Ok(()) => self.generate_and_upload(tip.block_number).await,
                 Err(e) => Err(e).context("failed to stop EL container"),
             },
             Err(e) => Err(e).context("failed to stop CL container"),
@@ -159,7 +159,7 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
 
     /// Generates snapshot archives and uploads them. Separated from `run` so
     /// the restart guard logic stays clean.
-    async fn generate_and_upload(&self) -> Result<()> {
+    async fn generate_and_upload(&self, latest_block: u64) -> Result<()> {
         let run_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
         let run_output_dir = create_run_output_dir(&self.config.output_dir, run_timestamp)?;
@@ -191,7 +191,7 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
         let source_datadir = self.config.source_datadir.clone();
         let output_dir_for_gen = run_output_dir.clone();
         let chain_id = self.config.chain_id;
-        let block = self.config.block;
+        let block = Some(self.config.block.unwrap_or(latest_block));
         let blocks_per_file = self.config.blocks_per_file;
         let remote_for_gen = remote_static_files;
         let previous_chunk_output_files_for_gen = previous_chunk_output_files;
