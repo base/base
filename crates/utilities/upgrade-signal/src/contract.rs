@@ -130,9 +130,10 @@ impl AlloyUpgradeSignalReader {
     /// Maps the contract's id-ordered activation timestamps onto the node's hardfork ladder.
     ///
     /// The contract keys upgrades by ascending numeric registration id and keeps names offchain,
-    /// so entries are aligned with [`BaseUpgrade::CONTRACT_VARIANTS`] in activation (timestamp)
-    /// order: id `0` (the lowest timestamp) maps to the oldest contract-backed hardfork, and each
-    /// following id maps to the next hardfork in the ladder. Contract entries beyond the ladder
+    /// so entries are aligned with [`BaseUpgrade::CONTRACT_VARIANTS`] by registration id: id `0`
+    /// maps to the oldest contract-backed hardfork, and each following id maps to the next
+    /// hardfork in the ladder. This is a positional mapping by id, not a sort by timestamp, so the
+    /// timestamps need not be monotonic. Contract entries beyond the ladder
     /// belong to upgrades newer than this binary knows and are logged and ignored, hardforks
     /// without a contract entry produce no signal, and only upgrades in `upgrade_ids` produce
     /// signals. Every signal carries the contract's global minimum protocol version.

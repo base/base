@@ -33,10 +33,11 @@ the latest protocol version implemented on main. A signal is supported when:
 
 The contract's `getSchedule()` returns one `uint64` activation timestamp per registered upgrade,
 ordered by ascending numeric upgrade id. Upgrade names are kept offchain: the node maps schedule
-entries onto its known hardfork ladder in activation (timestamp) order, aligning id `0` (the
-lowest timestamp) with the oldest contract-backed hardfork. Contract entries beyond the ladder
-belong to upgrades newer than this binary knows and are logged and ignored, and hardforks without
-a contract entry produce no signal.
+entries onto its known hardfork ladder by registration id, aligning id `0` with the oldest
+contract-backed hardfork. This is a positional mapping by id, not a sort by timestamp, so the
+timestamps need not be monotonic. Contract entries beyond the ladder belong to upgrades newer than
+this binary knows and are logged and ignored, and hardforks without a contract entry produce no
+signal.
 
 The timestamp semantics are:
 

@@ -1,6 +1,7 @@
 //! Upgrade signal configuration and CLI arguments.
 
 use core::time::Duration;
+use std::sync::LazyLock;
 
 use alloy_primitives::U256;
 
@@ -36,11 +37,7 @@ impl UpgradeSignalDefaults {
     /// binaries advertise the release semver as their supported protocol version. Dev builds
     /// (workspace `0.0.0`) advertise `U256::MAX` so no contract minimum rejects them.
     pub fn node_protocol_version() -> U256 {
-        Self::advertised_protocol_version(Self::packed_protocol_version(
-            env!("CARGO_PKG_VERSION_MAJOR").parse::<u32>().expect("Cargo package major is numeric"),
-            env!("CARGO_PKG_VERSION_MINOR").parse::<u32>().expect("Cargo package minor is numeric"),
-            env!("CARGO_PKG_VERSION_PATCH").parse::<u32>().expect("Cargo package patch is numeric"),
-        ))
+        *NODE_PROTOCOL_VERSION
     }
 
     /// Encodes a `major.minor.patch` version into the packed-semver `uint256` layout used by the
@@ -56,6 +53,17 @@ impl UpgradeSignalDefaults {
         if cargo_version == U256::ZERO { U256::MAX } else { cargo_version }
     }
 }
+
+/// Node protocol version derived from the compile-time Cargo package version, computed once.
+static NODE_PROTOCOL_VERSION: LazyLock<U256> = LazyLock::new(|| {
+    UpgradeSignalDefaults::advertised_protocol_version(
+        UpgradeSignalDefaults::packed_protocol_version(
+            env!("CARGO_PKG_VERSION_MAJOR").parse::<u32>().expect("Cargo package major is numeric"),
+            env!("CARGO_PKG_VERSION_MINOR").parse::<u32>().expect("Cargo package minor is numeric"),
+            env!("CARGO_PKG_VERSION_PATCH").parse::<u32>().expect("Cargo package patch is numeric"),
+        ),
+    )
+});
 
 #[cfg(test)]
 mod tests {
