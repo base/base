@@ -89,15 +89,6 @@ impl BaseTimeUpdateTx {
         let deposit = transaction.as_deposit().ok_or(BaseTimeMetadataError::NotDeposit)?;
         let base_time = Self::validate_deposit(deposit, block_number)?;
 
-        if transactions[2..].iter().any(|transaction| {
-            transaction.as_deposit().is_some_and(|deposit| {
-                deposit.from == SystemAddresses::DEPOSITOR_ACCOUNT
-                    && deposit.to == TxKind::Call(Predeploys::BASE_TIME)
-            })
-        }) {
-            return Err(BaseTimeMetadataError::Duplicate);
-        }
-
         Ok(base_time)
     }
 

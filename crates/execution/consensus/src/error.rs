@@ -7,9 +7,9 @@ use reth_storage_errors::provider::ProviderError;
 /// Base consensus error.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum BaseConsensusError {
-    /// Generic post-execution validation cannot inspect the canonical `BaseBlock` body.
-    #[error("Zombie BaseTime validation requires a recovered BaseBlock body")]
-    BaseTimeBlockBodyRequired,
+    /// Generic post-execution validation lacks the context required to validate `BaseTime`.
+    #[error("Zombie BaseTime post-execution validation requires parent and block context")]
+    BaseTimeValidationContextRequired,
     /// The parent's committed `BaseTime` value is not a valid 200ms slot.
     #[error("invalid parent committed BaseTime millis part: {0}")]
     InvalidParentBaseTimeMillis(u16),

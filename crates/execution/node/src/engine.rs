@@ -278,7 +278,9 @@ where
         block: &RecoveredBlock<Self::Block>,
     ) -> Result<(), ConsensusError> {
         if self.chain_spec().is_zombie_active_at_timestamp(block.timestamp()) {
-            return Err(ConsensusError::other(BaseConsensusError::BaseTimeBlockBodyRequired));
+            return Err(ConsensusError::other(
+                BaseConsensusError::BaseTimeValidationContextRequired,
+            ));
         }
         if !self.chain_spec().is_isthmus_active_at_timestamp(block.timestamp()) {
             return Ok(());
@@ -997,7 +999,7 @@ mod tests {
             ConsensusError::Other(error)
                 if matches!(
                     error.downcast_ref::<BaseConsensusError>(),
-                    Some(BaseConsensusError::BaseTimeBlockBodyRequired)
+                    Some(BaseConsensusError::BaseTimeValidationContextRequired)
                 )
         ));
     }
