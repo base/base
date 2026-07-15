@@ -4068,6 +4068,7 @@ dependencies = [
  "base-common-network",
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
+ "base-consensus-providers",
  "base-metrics",
  "base-protocol",
  "derive_more 2.1.1",
