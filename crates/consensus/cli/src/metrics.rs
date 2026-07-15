@@ -290,6 +290,7 @@ const UPGRADE_METRIC_LABELS: [(BaseUpgrade, &str); BaseUpgrade::CONTRACT_VARIANT
     (BaseUpgrade::Azul, "Azul"),
     (BaseUpgrade::Beryl, "Beryl"),
     (BaseUpgrade::Cobalt, "Cobalt"),
+    (BaseUpgrade::Zombie, "Zombie"),
 ];
 
 fn upgrade_metric_label(upgrade: BaseUpgrade) -> Option<&'static str> {

@@ -40,9 +40,11 @@ pub use actors::{
     QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
     QueuedSequencerEngineClient, QueuedUnsafePayloadGossipClient, RecoveryModeGuard, ResetRequest,
     RpcActor, RpcActorError, RpcContext, ScheduledTicker, SealState, SealStepError,
-    SealStepOutcome, SequencerActor, SequencerActorError, SequencerAdminQuery, SequencerConfig,
-    SequencerEngineClient, UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
-    UnsealedPayloadHandle, UpgradeSignalMetricsActor, UpgradeSignalNodeConfig,
+    SealStepOutcome, SequencerActor, SequencerActorError, SequencerAdminQuery,
+    SequencerCadenceConfig, SequencerConfig, SequencerEngineClient, SequencerTimestamp,
+    SequencerTimestampPlanner, SequencerTimestampPlannerError, UnsafePayloadGossipClient,
+    UnsafePayloadGossipClientError, UnsealedPayloadHandle, UpgradeSignalMetricsActor,
+    UpgradeSignalNodeConfig,
 };
 
 mod metrics;
