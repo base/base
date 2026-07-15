@@ -40,8 +40,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Level, debug, span, trace, warn};
 
 use crate::{
-    BuilderConfig, BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded, PayloadTxsBounds,
-    ResourceLimits, TxResources, TxnExecutionError, TxnOutcome,
+    BuilderConfig, BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded, MeteredCandidate,
+    MeteringBuildPolicy, MeteringEstimate, PayloadTxsBounds, ResourceLimits, TxnExecutionError,
+    TxnOutcome,
 };
 
 /// Records the priority fee of a rejected transaction with the given reason as a label.
@@ -662,6 +663,13 @@ impl BasePayloadBuilderCtx {
         let base_fee = self.base_fee();
         let mut diag = FlashblockDiagnostics::default();
 
+        let metering_policy = MeteringBuildPolicy::new(
+            Arc::clone(&self.builder_config.metering_provider),
+            self.builder_config.state_root_gas_coefficient,
+            self.builder_config.state_root_gas_anchor_us,
+            self.builder_config.metering_wait_duration,
+        );
+
         let min_tx_index = info.executed_transactions.len() as u64;
         let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
 
@@ -740,54 +748,29 @@ impl BasePayloadBuilderCtx {
 
             num_txs_considered += 1;
 
-            let resource_usage = self.builder_config.metering_provider.get(&tx_hash);
-
-            // Skip transactions that are too young and don't have metering data yet
-            if self.builder_config.metering_provider.is_enabled()
-                && resource_usage.is_none()
-                && let Some(wait_duration) = self.builder_config.metering_wait_duration
-            {
-                let now_ms = SystemTime::now()
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .map(|d| d.as_millis())
-                    .unwrap_or(0);
-                let tx_age_ms = now_ms.saturating_sub(tx_received_at_ms);
-                if tx_age_ms < wait_duration.as_millis() {
-                    log_txn(Err(TxnExecutionError::MeteringDataPending));
-                    BuilderMetrics::metering_data_pending_skip().increment(1);
-                    self.builder_config.metering_provider.skip(&tx_hash);
-                    best_txs.mark_invalid(tx.signer(), tx.nonce());
-                    continue;
-                }
-            }
-
-            // Extract predicted execution time from metering data
-            let predicted_execution_time_us =
-                resource_usage.as_ref().map(|m| m.total_execution_time_us);
-            let predicted_state_root_time_us =
-                resource_usage.as_ref().map(|m| m.state_root_time_us);
-
-            // Compute state root gas from metering data:
-            // sr_gas = gas_used × (1 + K × max(0, SR_ms - anchor_ms))
-            let state_root_gas = resource_usage.as_ref().map(|m| {
-                let gas_used = m.total_gas_used;
-                let sr_us = m.state_root_time_us;
-                let anchor_us = self.builder_config.state_root_gas_anchor_us;
-                let k = self.builder_config.state_root_gas_coefficient;
-                let excess_us = sr_us.saturating_sub(anchor_us);
-                let excess_ms = excess_us as f64 / 1000.0;
-                let multiplier = 1.0 + k * excess_ms;
-                (gas_used as f64 * multiplier) as u64
-            });
-
-            // Build tx resources struct
-            let tx_resources = TxResources {
-                da_size: tx_da_size,
-                gas_limit: tx.gas_limit(),
-                execution_time_us: predicted_execution_time_us,
-                state_root_gas,
-                uncompressed_size: tx_uncompressed_size,
-            };
+            // Consult the metering policy for this candidate's resource estimate. It owns the
+            // skip-if-pending wait and the metering-derived resource computation; the loop keeps
+            // only the generic, metering-agnostic limit check below.
+            let (tx_resources, resource_usage, predicted_execution_time_us, predicted_state_root_time_us) =
+                match metering_policy.estimate_resources(
+                    tx_hash,
+                    tx_da_size,
+                    tx.gas_limit(),
+                    tx_uncompressed_size,
+                    tx_received_at_ms,
+                ) {
+                    MeteringEstimate::Pending => {
+                        log_txn(Err(TxnExecutionError::MeteringDataPending));
+                        best_txs.mark_invalid(tx.signer(), tx.nonce());
+                        continue;
+                    }
+                    MeteringEstimate::Ready(candidate) => {
+                        let MeteredCandidate { resources, metering, predicted_state_root_time_us } =
+                            *candidate;
+                        let predicted_execution_time_us = resources.execution_time_us;
+                        (resources, metering, predicted_execution_time_us, predicted_state_root_time_us)
+                    }
+                };
 
             // ensure we still have capacity for this transaction
             if let Err(err) = info.is_tx_over_limits(&tx_resources, limits) {
@@ -996,7 +979,7 @@ impl BasePayloadBuilderCtx {
                 info.flashblock_execution_time_us += execution_time;
             }
             // record state root gas (only from predictions)
-            if let Some(sr_gas) = state_root_gas {
+            if let Some(sr_gas) = tx_resources.state_root_gas {
                 info.cumulative_state_root_gas += sr_gas;
                 BuilderMetrics::tx_state_root_gas().record(sr_gas as f64);
             }

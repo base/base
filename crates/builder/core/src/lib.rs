@@ -28,6 +28,9 @@ pub use traits::{ClientBounds, NodeBounds, PayloadTxsBounds, PoolBounds};
 mod metering;
 pub use metering::{MeteringProvider, NoopMeteringProvider, SharedMeteringProvider};
 
+mod build_policy;
+pub use build_policy::{MeteredCandidate, MeteringBuildPolicy, MeteringEstimate};
+
 mod rejected_tx_forwarder;
 pub use rejected_tx_forwarder::RejectedTxForwarder;
 
