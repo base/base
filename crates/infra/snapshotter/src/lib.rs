@@ -20,7 +20,7 @@ mod container;
 pub use container::{ContainerManager, DockerContainerManager};
 
 mod tip;
-pub use tip::{RpcTipChecker, TipChecker};
+pub use tip::{RpcTipChecker, TipChecker, TipStatus};
 
 mod snapshot;
 pub use snapshot::{

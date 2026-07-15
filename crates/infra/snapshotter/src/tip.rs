@@ -9,15 +9,24 @@ use async_trait::async_trait;
 use tracing::info;
 use url::Url;
 
-/// Checks whether an execution layer node is at chain tip.
+/// Result of checking an execution layer node's latest block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TipStatus {
+    /// Number of the latest block returned by the EL.
+    pub block_number: u64,
+    /// Whether the latest block is within the configured freshness threshold.
+    pub at_tip: bool,
+}
+
+/// Checks whether an execution layer node is at chain tip and reports its block height.
 ///
 /// Abstracted behind a trait (like [`crate::ContainerManager`]) so the
 /// orchestrator can be exercised in tests without a live RPC endpoint.
 #[async_trait]
 pub trait TipChecker: Send + Sync {
-    /// Returns `true` if the EL's latest block is within `threshold` of the
-    /// current wall-clock time.
-    async fn is_at_tip(&self, threshold: Duration) -> Result<bool>;
+    /// Returns the EL's latest block number and whether it is within `threshold`
+    /// of the current wall-clock time.
+    async fn check_tip(&self, threshold: Duration) -> Result<TipStatus>;
 }
 
 /// [`TipChecker`] backed by an execution layer JSON-RPC endpoint.
@@ -39,7 +48,7 @@ impl RpcTipChecker {
 
 #[async_trait]
 impl TipChecker for RpcTipChecker {
-    async fn is_at_tip(&self, threshold: Duration) -> Result<bool> {
+    async fn check_tip(&self, threshold: Duration) -> Result<TipStatus> {
         let provider = ProviderBuilder::new()
             .disable_recommended_fillers()
             .connect(self.rpc_url.as_str())
@@ -73,6 +82,6 @@ impl TipChecker for RpcTipChecker {
             "checked EL tip status"
         );
 
-        Ok(at_tip)
+        Ok(TipStatus { block_number: block.header.number, at_tip })
     }
 }
