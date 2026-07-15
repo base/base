@@ -7,6 +7,20 @@ use reth_storage_errors::provider::ProviderError;
 /// Base consensus error.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum BaseConsensusError {
+    /// Generic post-execution validation cannot inspect the canonical `BaseBlock` body.
+    #[error("Zombie BaseTime validation requires a recovered BaseBlock body")]
+    BaseTimeBlockBodyRequired,
+    /// The parent's committed `BaseTime` value is not a valid 200ms slot.
+    #[error("invalid parent committed BaseTime millis part: {0}")]
+    InvalidParentBaseTimeMillis(u16),
+    /// The canonical metadata claim does not match the post-execution committed value.
+    #[error("BaseTime metadata claim {claim} does not match committed value {committed}")]
+    BaseTimeClaimCommittedMismatch {
+        /// Millisecond component claimed by the canonical metadata transaction.
+        claim: u16,
+        /// Millisecond component committed in post-execution state.
+        committed: u16,
+    },
     /// Block body has non-empty withdrawals list (l1 withdrawals).
     #[error("non-empty block body withdrawals list")]
     WithdrawalsNonEmpty,

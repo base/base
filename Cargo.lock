@@ -4448,6 +4448,7 @@ dependencies = [
  "base-common-genesis",
  "base-execution-chainspec",
  "base-node-core",
+ "base-protocol",
  "reth-chainspec",
  "reth-consensus",
  "reth-consensus-common",
