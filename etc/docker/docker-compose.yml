@@ -169,6 +169,7 @@ services:
       - L2_BASE_AZUL_BLOCK=${L2_BASE_AZUL_BLOCK-}
       - L2_BASE_BERYL_BLOCK=${L2_BASE_BERYL_BLOCK-}
       - L2_BASE_COBALT_BLOCK=${L2_BASE_COBALT_BLOCK-}
+      - L2_BASE_ZOMBIE_BLOCK=${L2_BASE_ZOMBIE_BLOCK-}
       - OUTPUT_DIR=/devnet/l2/configs
       - L2_DATA_DIR=/data
       - DEPLOYER_ADDR=${DEPLOYER_ADDR}
@@ -349,6 +350,8 @@ services:
       - "${L2_CL_BOOTNODE_ENR_PATH}"
       - --sequencer.l1-confs
       - "0"
+      - --sequencer.block-time
+      - 200ms
       - --p2p.sequencer.key
       - ${SEQUENCER_KEY}
       - --p2p.scoring

@@ -326,6 +326,41 @@ else
   echo "Base Cobalt activation block is unset; leaving base.cobalt unchanged"
 fi
 
+if [ -n "$L2_BASE_ZOMBIE_BLOCK" ]; then
+  L2_BASE_ZOMBIE_TIME=$((L2_GENESIS_TIME + L2_BLOCK_TIME * L2_BASE_ZOMBIE_BLOCK))
+
+  echo ""
+  echo "=== Configuring Base Zombie Activation ==="
+  echo "L2 genesis time: $L2_GENESIS_TIME"
+  echo "L2 block time: $L2_BLOCK_TIME"
+  echo "Base Zombie activation block: $L2_BASE_ZOMBIE_BLOCK"
+  echo "Derived Base Zombie activation timestamp: $L2_BASE_ZOMBIE_TIME"
+
+  TMP_ROLLUP=$(mktemp)
+  jq \
+    --argjson zombie_time "$L2_BASE_ZOMBIE_TIME" \
+    '.base = ((.base // {}) + {zombie: $zombie_time})' \
+    "$OUTPUT_DIR/rollup.json" \
+    >"$TMP_ROLLUP"
+  replace_output_file "$TMP_ROLLUP" "$OUTPUT_DIR/rollup.json"
+
+  TMP_GENESIS=$(mktemp)
+  jq \
+    --argjson zombie_time "$L2_BASE_ZOMBIE_TIME" \
+    '.config.base = ((.config.base // {}) + {zombie: $zombie_time})' \
+    "$OUTPUT_DIR/genesis.json" \
+    >"$TMP_GENESIS"
+  replace_output_file "$TMP_GENESIS" "$OUTPUT_DIR/genesis.json"
+
+  echo "Patched Base Zombie activation into rollup and genesis configs"
+else
+  echo ""
+  echo "=== Configuring Base Zombie Activation ==="
+  echo "L2 genesis time: $L2_GENESIS_TIME"
+  echo "L2 block time: $L2_BLOCK_TIME"
+  echo "Base Zombie activation block is unset; leaving base.zombie unchanged"
+fi
+
 echo "Writing rollup-conductor.json (base fields stripped for op-conductor compatibility)..."
 jq 'del(.base)' "$OUTPUT_DIR/rollup.json" >"$OUTPUT_DIR/rollup-conductor.json"
 echo "rollup-conductor.json written to $OUTPUT_DIR/rollup-conductor.json"

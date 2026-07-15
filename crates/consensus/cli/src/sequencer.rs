@@ -58,13 +58,14 @@ pub struct SequencerArgs {
 
     /// Block-production interval override (e.g. `200ms`, `2s`). Defaults to rollup config block_time.
     #[arg(
+        id = "sequencer_block_interval",
         long = "sequencer.block-time",
         env = "BASE_NODE_SEQUENCER_BLOCK_TIME",
         value_parser = |arg: &str| -> Result<Duration, String> {
             humantime::parse_duration(arg).map_err(|e| e.to_string())
         }
     )]
-    pub block_time: Option<Duration>,
+    pub sequencer_block_interval: Option<Duration>,
 }
 
 impl Default for SequencerArgs {
@@ -85,7 +86,7 @@ impl SequencerArgs {
             conductor_binary_commit: self.conductor_binary_commit,
             conductor_rpc_timeout: self.conductor_rpc_timeout,
             l1_conf_delay: self.l1_confs,
-            block_interval: self.block_time,
+            block_interval: self.sequencer_block_interval,
         }
     }
 }
