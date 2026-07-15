@@ -1396,3 +1396,46 @@ fn dispatch_reverts_when_uninitialized() {
     assert!(out.is_revert());
     assert!(out.bytes.is_empty());
 }
+
+// ============================================================================
+// meta: op coverage guard
+// ============================================================================
+
+/// Extracts op identifiers from `C::<op>(` / `SC::<op>(` dispatch match arms.
+///
+/// The dispatcher's `match` over `IB20Calls` / `IB20StablecoinCalls` is a
+/// compiler-exhaustive list of every routable op, so this is the authoritative
+/// method surface.
+fn dispatch_ops(src: &str) -> std::collections::BTreeSet<String> {
+    let mut ops = std::collections::BTreeSet::new();
+    for (idx, _) in src.match_indices("C::") {
+        let rest = &src[idx + "C::".len()..];
+        let ident: String =
+            rest.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+        if !ident.is_empty() && rest[ident.len()..].starts_with('(') {
+            ops.insert(ident);
+        }
+    }
+    ops
+}
+
+/// Meta-coverage guard: every op the dispatcher routes must be constructed by at
+/// least one golden case above. Fails if a new op is wired into `dispatch.rs`
+/// without a corresponding golden case in this suite.
+#[test]
+fn every_dispatch_op_has_a_golden_case() {
+    const DISPATCH: &str = include_str!("../src/b20_stablecoin/dispatch.rs");
+    const SUITE: &str = include_str!("b20_stablecoin_v1_golden.rs");
+
+    let ops = dispatch_ops(DISPATCH);
+    assert!(
+        ops.len() >= 40,
+        "parser found too few dispatch ops ({}) — did the format change?",
+        ops.len()
+    );
+
+    // Golden cases construct each op as `IB20::<op>Call` / `IB20Stablecoin::<op>Call`.
+    let missing: Vec<&String> =
+        ops.iter().filter(|op| !SUITE.contains(&format!("::{op}Call"))).collect();
+    assert!(missing.is_empty(), "dispatch ops with no golden case: {missing:?}");
+}
