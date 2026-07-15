@@ -41,17 +41,6 @@ pub struct MeteringArgs {
     )]
     pub metering_gas_limit: Option<u64>,
 
-    /// Per-flashblock execution time budget in microseconds for priority fee estimation.
-    #[arg(long = "metering.execution-time-us", requires = "enable_metering")]
-    pub metering_execution_time_us: Option<u64>,
-
-    /// Whole-block state root computation budget in microseconds for priority fee estimation.
-    #[arg(
-        long = "metering.state-root-time-us",
-        requires_all = ["enable_metering", "metering_target_flashblocks_per_block"]
-    )]
-    pub metering_state_root_time_us: Option<u64>,
-
     /// Whole-block data availability byte budget for priority fee estimation.
     #[arg(
         long = "metering.da-bytes",
@@ -61,8 +50,8 @@ pub struct MeteringArgs {
 
     /// Target number of tx-pool flashblocks the builder budgets per block.
     ///
-    /// This excludes the base flashblock at index `0` and is required when gas, state root
-    /// time, or DA estimation is enabled.
+    /// This excludes the base flashblock at index `0` and is required when gas or DA
+    /// estimation is enabled.
     #[arg(long = "metering.target-flashblocks-per-block", requires = "enable_metering")]
     pub metering_target_flashblocks_per_block: Option<usize>,
 
@@ -384,8 +373,6 @@ impl StandardBaseRethNode {
 
         let resource_limits = MeteringResourceLimits {
             gas_limit: args.metering.metering_gas_limit,
-            execution_time_us: args.metering.metering_execution_time_us,
-            state_root_time_us: args.metering.metering_state_root_time_us,
             da_bytes: args.metering.metering_da_bytes,
         };
         let metering_config = if args.metering.enable_metering {
@@ -707,13 +694,13 @@ mod tests {
         let args = CommandParser::<StandardNodeArgs>::parse_from([
             "reth",
             "--enable-metering",
-            "--metering.execution-time-us",
-            "5000000",
+            "--metering.gas-limit",
+            "30000000",
         ])
         .args;
 
         assert!(args.metering.enable_metering);
-        assert_eq!(args.metering.metering_execution_time_us, Some(5_000_000));
+        assert_eq!(args.metering.metering_gas_limit, Some(30_000_000));
     }
 
     #[test]

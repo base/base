@@ -5,7 +5,7 @@ use base_bundles::MeterBundleResponse;
 use serde::{Deserialize, Serialize};
 
 /// Response for block metering RPC calls.
-/// Contains the block hash plus timing information for EVM execution and state root calculation.
+/// Contains the block hash plus timing information for signer recovery and EVM execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MeterBlockResponse {
@@ -17,12 +17,7 @@ pub struct MeterBlockResponse {
     pub signer_recovery_time_us: u128,
     /// Duration of EVM execution in microseconds
     pub execution_time_us: u128,
-    /// Duration of state root calculation in microseconds.
-    ///
-    /// Note: This timing is most accurate for recent blocks where state tries are cached.
-    /// For older blocks, trie nodes may not be cached, which can significantly inflate this value.
-    pub state_root_time_us: u128,
-    /// Total duration (signer recovery + EVM execution + state root calculation) in microseconds
+    /// Total duration (signer recovery + EVM execution) in microseconds
     pub total_time_us: u128,
     /// Per-transaction metering data
     pub transactions: Vec<MeterBlockTransactions>,
@@ -46,7 +41,7 @@ pub struct MeterBlockTransactions {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourceFeeEstimateResponse {
-    /// Resource name (gasUsed, executionTime, etc).
+    /// Resource name (gasUsed or dataAvailability).
     pub resource: String,
     /// Minimum fee to displace enough capacity.
     pub threshold_priority_fee: U256,

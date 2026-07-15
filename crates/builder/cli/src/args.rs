@@ -137,22 +137,6 @@ pub struct Args {
     #[arg(long = "builder.max-execution-time-per-tx-us")]
     pub max_execution_time_per_tx_us: Option<u128>,
 
-    /// Flashblock-level execution time budget in microseconds (requires resource metering)
-    #[arg(long = "builder.flashblock-execution-time-budget-us")]
-    pub flashblock_execution_time_budget_us: Option<u128>,
-
-    /// Block-level state root gas limit (requires resource metering)
-    #[arg(long = "builder.block-state-root-gas-limit")]
-    pub block_state_root_gas_limit: Option<u64>,
-
-    /// State root gas coefficient (K): controls how excess SR time inflates `sr_gas` cost
-    #[arg(long = "builder.state-root-gas-coefficient", default_value = "0.02")]
-    pub state_root_gas_coefficient: f64,
-
-    /// State root gas anchor in microseconds: SR below this produces no penalty
-    #[arg(long = "builder.state-root-gas-anchor-us", default_value = "5000")]
-    pub state_root_gas_anchor_us: u128,
-
     /// Execution metering mode: off, dry-run, or enforce
     #[arg(long = "builder.execution-metering-mode", value_enum, default_value = "off")]
     pub execution_metering_mode: ExecutionMeteringMode,
@@ -234,10 +218,6 @@ impl Default for Args {
             chain_block_time: 1000,
             max_gas_per_txn: None,
             max_execution_time_per_tx_us: None,
-            flashblock_execution_time_budget_us: None,
-            block_state_root_gas_limit: None,
-            state_root_gas_coefficient: 0.02,
-            state_root_gas_anchor_us: 5000,
             execution_metering_mode: ExecutionMeteringMode::Off,
             extra_block_deadline_secs: 20,
             enable_resource_metering: false,
@@ -283,10 +263,6 @@ impl Args {
             ),
             max_gas_per_txn: self.max_gas_per_txn,
             max_execution_time_per_tx_us: self.max_execution_time_per_tx_us,
-            flashblock_execution_time_budget_us: self.flashblock_execution_time_budget_us,
-            block_state_root_gas_limit: self.block_state_root_gas_limit,
-            state_root_gas_coefficient: self.state_root_gas_coefficient,
-            state_root_gas_anchor_us: self.state_root_gas_anchor_us,
             execution_metering_mode: self.execution_metering_mode,
             max_uncompressed_block_size: self.max_uncompressed_block_size,
             metering_wait_duration: self.metering_wait_duration_ms.map(Duration::from_millis),
@@ -391,11 +367,6 @@ mod tests {
                 state_flashblock_index: None,
                 total_gas_used: 21000,
                 total_execution_time_us: 500,
-                state_root_time_us: 100,
-                state_root_account_leaf_count: 0,
-                state_root_account_branch_count: 0,
-                state_root_storage_leaf_count: 0,
-                state_root_storage_branch_count: 0,
             },
         );
 
@@ -438,11 +409,6 @@ mod tests {
                 state_flashblock_index: None,
                 total_gas_used: 21000,
                 total_execution_time_us: 0,
-                state_root_time_us: 0,
-                state_root_account_leaf_count: 0,
-                state_root_account_branch_count: 0,
-                state_root_storage_leaf_count: 0,
-                state_root_storage_branch_count: 0,
             },
         );
         assert!(store.get(&tx_hash).is_some(), "entry should be present within TTL");
@@ -459,6 +425,8 @@ mod tests {
         let args = Args {
             chain_block_time: 2000,
             max_gas_per_txn: Some(100000),
+            max_execution_time_per_tx_us: Some(5000),
+            execution_metering_mode: ExecutionMeteringMode::Enforce,
             extra_block_deadline_secs: 10,
             flashblocks: FlashblocksArgs {
                 flashblocks_block_time: 200,
@@ -471,6 +439,8 @@ mod tests {
 
         assert_eq!(config.block_time, Duration::from_millis(2000));
         assert_eq!(config.max_gas_per_txn, Some(100000));
+        assert_eq!(config.max_execution_time_per_tx_us, Some(5000));
+        assert_eq!(config.execution_metering_mode, ExecutionMeteringMode::Enforce);
         assert_eq!(config.block_time_leeway, Duration::from_secs(10));
         assert_eq!(config.flashblocks_interval, Duration::from_millis(200));
         assert_eq!(config.flashblocks_leeway_time, Duration::from_millis(50));

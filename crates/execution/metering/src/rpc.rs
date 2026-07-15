@@ -1,13 +1,10 @@
 //! Implementation of the metering RPC API.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::Arc;
 
 use alloy_consensus::{BlockHeader, Header, Sealed};
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::{B256, TxHash, U256};
+use alloy_primitives::{B256, U256};
 use base_bundles::{Bundle, MeterBundleResponse, ParsedBundle};
 use base_common_consensus::BaseBlock;
 use base_common_evm::L1BlockInfo;
@@ -16,7 +13,6 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::extract_l1_info_from_tx;
 use base_flashblocks::{FlashblocksAPI, PendingBlocksAPI};
 use jsonrpsee::core::{RpcResult, async_trait};
-use parking_lot::RwLock;
 use reth_primitives_traits::SealedHeader;
 use reth_provider::{
     BlockReader, BlockReaderIdExt, ChainSpecProvider, HeaderProvider, StateProviderFactory,
@@ -24,8 +20,8 @@ use reth_provider::{
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    MeterBlockResponse, MeteredPriorityFeeResponse, PendingState, PendingStateRootTimes,
-    PendingTrieCache, PriorityFeeEstimator, ResourceDemand, ResourceFeeEstimateResponse,
+    MeterBlockResponse, MeteredPriorityFeeResponse, PendingState, PriorityFeeEstimator,
+    ResourceDemand, ResourceFeeEstimateResponse,
     block::meter_block,
     meter::{MeterBundleInput, meter_bundle},
     traits::MeteringApiServer,
@@ -35,15 +31,8 @@ use crate::{
 pub struct MeteringApiImpl<Provider, FB> {
     provider: Provider,
     flashblocks_api: Arc<FB>,
-    /// Cache for pending trie input, ensuring each bundle's state root
-    /// calculation only measures the bundle's incremental I/O.
-    pending_trie_cache: PendingTrieCache,
     /// Optional priority fee estimator for `meteredPriorityFeePerGas`.
     priority_fee_estimator: Option<Arc<PriorityFeeEstimator>>,
-    /// Shared cache for externally-submitted state root times.
-    state_root_cache: Option<Arc<RwLock<PendingStateRootTimes>>>,
-    /// Whether metering data collection is enabled.
-    metering_enabled: Arc<AtomicBool>,
     /// Opcodes and precompiles to track for gas metering. When non-empty, a
     /// `MeteringInspector` is attached during bundle execution.
     metered_opcodes: Arc<crate::MeteredOpcodes>,
@@ -51,9 +40,7 @@ pub struct MeteringApiImpl<Provider, FB> {
 
 impl<Provider, FB> std::fmt::Debug for MeteringApiImpl<Provider, FB> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MeteringApiImpl")
-            .field("metering_enabled", &self.metering_enabled.load(Ordering::Relaxed))
-            .finish_non_exhaustive()
+        f.debug_struct("MeteringApiImpl").finish_non_exhaustive()
     }
 }
 
@@ -68,39 +55,22 @@ where
     FB: FlashblocksAPI,
 {
     /// Creates a new instance of `MeteringApi` without priority fee estimation.
-    pub fn new(
+    pub const fn new(
         provider: Provider,
         flashblocks_api: Arc<FB>,
         metered_opcodes: Arc<crate::MeteredOpcodes>,
     ) -> Self {
-        Self {
-            provider,
-            flashblocks_api,
-            pending_trie_cache: PendingTrieCache::new(),
-            priority_fee_estimator: None,
-            state_root_cache: None,
-            metering_enabled: Arc::new(AtomicBool::new(true)),
-            metered_opcodes,
-        }
+        Self { provider, flashblocks_api, priority_fee_estimator: None, metered_opcodes }
     }
 
     /// Creates a new instance with priority fee estimation enabled.
-    pub fn with_estimator(
+    pub const fn with_estimator(
         provider: Provider,
         flashblocks_api: Arc<FB>,
         estimator: Arc<PriorityFeeEstimator>,
-        state_root_cache: Arc<RwLock<PendingStateRootTimes>>,
         metered_opcodes: Arc<crate::MeteredOpcodes>,
     ) -> Self {
-        Self {
-            provider,
-            flashblocks_api,
-            pending_trie_cache: PendingTrieCache::new(),
-            priority_fee_estimator: Some(estimator),
-            state_root_cache: Some(state_root_cache),
-            metering_enabled: Arc::new(AtomicBool::new(true)),
-            metered_opcodes,
-        }
+        Self { provider, flashblocks_api, priority_fee_estimator: Some(estimator), metered_opcodes }
     }
 }
 
@@ -196,28 +166,8 @@ where
             })?;
 
         // If we have pending blocks, extract the pending state for metering
-        let pending_state = if let Some(pb) = pending_blocks.as_ref() {
-            let bundle_state = pb.get_bundle_state();
-
-            // Ensure the pending trie input is cached for reuse across bundle simulations
-            let payload_id = pb.payload_id();
-            let fb_index = flashblock_index;
-            let trie_input = self
-                .pending_trie_cache
-                .ensure_cached(payload_id, fb_index, &bundle_state, &*state_provider)
-                .map_err(|e| {
-                    error!(error = %e, "Failed to cache pending trie input");
-                    jsonrpsee::types::ErrorObjectOwned::owned(
-                        jsonrpsee::types::ErrorCode::InternalError.code(),
-                        format!("Failed to cache pending trie input: {e}"),
-                        None::<()>,
-                    )
-                })?;
-
-            Some(PendingState { bundle_state, trie_input: Some(trie_input) })
-        } else {
-            None
-        };
+        let pending_state =
+            pending_blocks.as_ref().map(|pb| PendingState { bundle_state: pb.get_bundle_state() });
 
         // Pending flashblock headers can omit parent_beacon_block_root; prefer the CL-provided
         // value from the flashblock base payload when available, otherwise fall back to the header.
@@ -291,11 +241,6 @@ where
             state_flashblock_index: pending_blocks.as_ref().map(|pb| pb.latest_flashblock_index()),
             total_gas_used: output.total_gas_used,
             total_execution_time_us,
-            state_root_time_us: output.state_root_time_us,
-            state_root_account_leaf_count: output.state_root_account_leaf_count,
-            state_root_account_branch_count: output.state_root_account_branch_count,
-            state_root_storage_leaf_count: output.state_root_storage_leaf_count,
-            state_root_storage_branch_count: output.state_root_storage_branch_count,
         })
     }
 
@@ -327,7 +272,6 @@ where
             block_hash = %hash,
             signer_recovery_time_us = response.signer_recovery_time_us,
             execution_time_us = response.execution_time_us,
-            state_root_time_us = response.state_root_time_us,
             total_time_us = response.total_time_us,
             "Block metering completed successfully"
         );
@@ -367,7 +311,6 @@ where
             block_hash = %response.block_hash,
             signer_recovery_time_us = response.signer_recovery_time_us,
             execution_time_us = response.execution_time_us,
-            state_root_time_us = response.state_root_time_us,
             total_time_us = response.total_time_us,
             "Block metering completed successfully"
         );
@@ -446,84 +389,6 @@ where
             resource_estimates,
         })
     }
-
-    async fn set_metering_information(
-        &self,
-        tx_hash: TxHash,
-        meter: MeterBundleResponse,
-    ) -> RpcResult<()> {
-        // Check if metering is enabled
-        if !self.metering_enabled.load(Ordering::Relaxed) {
-            debug!(tx_hash = %tx_hash, "Ignoring metering info - metering disabled");
-            return Ok(());
-        }
-
-        let Some(cache) = &self.state_root_cache else {
-            warn!("set_metering_information called but no collector configured");
-            return Err(jsonrpsee::types::ErrorObjectOwned::owned(
-                jsonrpsee::types::ErrorCode::InternalError.code(),
-                "Metering data collection not configured".to_string(),
-                None::<()>,
-            ));
-        };
-
-        // Store state root time for the collector to pick up when
-        // the transaction appears in a flashblock.
-        if meter.state_root_time_us > 0 {
-            let evicted_tx_hash = cache.write().push(tx_hash, meter.state_root_time_us).and_then(
-                |(evicted_tx_hash, _)| (evicted_tx_hash != tx_hash).then_some(evicted_tx_hash),
-            );
-
-            if let Some(evicted_tx_hash) = evicted_tx_hash {
-                warn!(
-                    evicted_tx_hash = %evicted_tx_hash,
-                    "Evicted pending state root time due to cache capacity"
-                );
-            }
-            debug!(
-                tx_hash = %tx_hash,
-                state_root_time_us = meter.state_root_time_us,
-                "Stored external metering info"
-            );
-        }
-        Ok(())
-    }
-
-    async fn set_metering_enabled(&self, enabled: bool) -> RpcResult<()> {
-        if self.state_root_cache.is_none() {
-            warn!("set_metering_enabled called but no collector configured");
-            return Err(jsonrpsee::types::ErrorObjectOwned::owned(
-                jsonrpsee::types::ErrorCode::InternalError.code(),
-                "Metering data collection not configured".to_string(),
-                None::<()>,
-            ));
-        }
-
-        self.metering_enabled.store(enabled, Ordering::Relaxed);
-        info!(enabled = enabled, "Metering data collection enabled state changed");
-        Ok(())
-    }
-
-    async fn clear_metering_information(&self) -> RpcResult<()> {
-        let Some(cache) = &self.state_root_cache else {
-            warn!("clear_metering_information called but no collector configured");
-            return Err(jsonrpsee::types::ErrorObjectOwned::owned(
-                jsonrpsee::types::ErrorCode::InternalError.code(),
-                "Metering data collection not configured".to_string(),
-                None::<()>,
-            ));
-        };
-
-        let count = {
-            let mut c = cache.write();
-            let len = c.len();
-            c.clear();
-            len
-        };
-
-        info!(cleared = count, "Cleared pending state root cache");
-        Ok(())
-    }
 }
 
 /// Computes resource demand from bundle metering results.
@@ -534,8 +399,6 @@ fn compute_resource_demand(bundle: &Bundle, meter_result: &MeterBundleResponse) 
 
     ResourceDemand {
         gas_used: Some(meter_result.total_gas_used),
-        execution_time_us: Some(meter_result.total_execution_time_us),
-        state_root_time_us: Some(meter_result.state_root_time_us),
         data_availability_bytes: Some(da_bytes),
     }
 }
@@ -1091,8 +954,6 @@ mod tests {
         let config = MeteringConfig::enabled()
             .with_resource_limits(MeteringResourceLimits {
                 gas_limit: Some(30_000_000),
-                execution_time_us: Some(1_000_000),
-                state_root_time_us: None,
                 da_bytes: Some(1_000_000),
             })
             .with_target_flashblocks_per_block(4);
@@ -1102,25 +963,14 @@ mod tests {
     }
 
     #[test]
-    fn compute_resource_demand_preserves_execution_and_state_root_dimensions() {
+    fn compute_resource_demand_preserves_gas_and_da_dimensions() {
         let tx = Bytes::from_static(&[0x02, 0x01, 0x02, 0x03]);
         let bundle = create_bundle(vec![tx.clone()], 0, None);
-        let meter_result = MeterBundleResponse {
-            total_gas_used: 21_000,
-            total_execution_time_us: 123,
-            state_root_time_us: 45,
-            state_root_account_leaf_count: 3,
-            state_root_account_branch_count: 4,
-            state_root_storage_leaf_count: 6,
-            state_root_storage_branch_count: 5,
-            ..Default::default()
-        };
+        let meter_result = MeterBundleResponse { total_gas_used: 21_000, ..Default::default() };
 
         let demand = compute_resource_demand(&bundle, &meter_result);
 
         assert_eq!(demand.gas_used, Some(21_000));
-        assert_eq!(demand.execution_time_us, Some(123));
-        assert_eq!(demand.state_root_time_us, Some(45));
         assert_eq!(demand.data_availability_bytes, Some(flz_compress_len(&tx) as u64));
     }
 
