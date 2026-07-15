@@ -7,14 +7,14 @@
 //!   1. exact returned ABI bytes (or the typed revert),
 //!   2. resulting state (balances / supply / roles / allowances / storage),
 //!   3. emitted events, and
-//!   4. a per-case keccak storage **state-root** snapshot (the frozen-manifest baseline).
+//!   4. a per-case keccak storage **hash** snapshot (the frozen-manifest baseline).
 //!
 //! Because the per-op suite resolves the version via `StablecoinVersions::from_base_upgrade`,
 //! it breaks if dispatch ever routes to the wrong version. Privileged behavior is exercised via
 //! `inner_with_privilege`; the guard envelope (nonpayable / uninitialized / pre-Beryl) via the
 //! full `dispatch_with_observer`.
 //!
-//! ## Blessing state-roots
+//! ## Blessing storage hashes
 //! State-root constants below are pinned. To (re)generate them after an intentional change, run:
 //! `BLESS_GOLDEN=1 cargo test -p base-common-precompiles --features test-utils \
 //!    --test b20_stablecoin_v1_golden -- --nocapture` and copy the printed `GOLDEN_ROOT` values.
@@ -53,7 +53,7 @@ const POLICY_ID: u64 = 7;
 const PRIVATE_KEY: [u8; 32] =
     alloy_primitives::hex!("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
 
-// --- pinned state-roots (bless with BLESS_GOLDEN=1; see module docs) --------
+// --- pinned storage hashes (bless with BLESS_GOLDEN=1; see module docs) --------
 
 const ROOT_FRESH: B256 = b256!("7f52ac593dc5c5de5e040f65148db8c081010c85db757516d9eb2c19e8903951");
 const ROOT_TRANSFER_PRIV: B256 =
@@ -190,8 +190,10 @@ fn last_topic0(storage: &HashMapStorageProvider) -> B256 {
     storage.get_events(TOKEN).last().expect("an emitted event").topics()[0]
 }
 
-/// Deterministic keccak state-root over the sorted `(address, slot, value)` storage triples.
-fn state_root(storage: HashMapStorageProvider) -> B256 {
+/// Deterministic keccak hash over the sorted `(address, slot, value)` storage triples.
+///
+/// This is a plain content hash of the KV pairs, not an MPT state root.
+fn hash_state(storage: HashMapStorageProvider) -> B256 {
     let mut triples: Vec<(Address, U256, U256)> = storage.into_storage().collect();
     triples.sort();
     let mut buf = Vec::with_capacity(triples.len() * 84);
@@ -203,15 +205,15 @@ fn state_root(storage: HashMapStorageProvider) -> B256 {
     keccak256(&buf)
 }
 
-/// Asserts the storage state-root, or prints it under `BLESS_GOLDEN` for (re)pinning.
+/// Asserts the storage hash, or prints it under `BLESS_GOLDEN` for (re)pinning.
 #[track_caller]
 fn assert_root(label: &str, storage: HashMapStorageProvider, expected: B256) {
-    let got = state_root(storage);
+    let got = hash_state(storage);
     if std::env::var_os("BLESS_GOLDEN").is_some() {
         println!("GOLDEN_ROOT {label} = {got:#x}");
         return;
     }
-    assert_eq!(got, expected, "V1 storage state-root drift for `{label}`");
+    assert_eq!(got, expected, "V1 storage hash drift for `{label}`");
 }
 
 /// Grants `role` to `who` and bumps the role member count (setup only).
