@@ -1,9 +1,4 @@
 //! Append-only business-logic interface for the `PolicyRegistry` precompile.
-//!
-//! New versions add methods; existing signatures are never removed or changed. Every
-//! method — including the reads — is required: each policy read encodes consensus
-//! semantics (built-in fast-paths, malformed-ID handling) that a future version could
-//! redefine, so none are defaulted pass-throughs.
 
 use alloc::vec::Vec;
 

@@ -3,16 +3,7 @@
 use alloy_primitives::{Address, LogData, U256};
 use base_precompile_storage::Result;
 
-/// Raw storage port the versioned policy-registry logic operates on.
-///
-/// This abstracts every storage primitive the business logic needs so that a frozen
-/// [`crate::PolicyRegistryLogic`] version never touches concrete EVM storage directly.
-/// The production adapter is [`crate::PolicyRegistryStorage`]; tests use in-memory fakes.
-///
-/// Policy words are exchanged as raw [`U256`]; [`crate::PackedPolicy`] is the shared value
-/// type versions use to interpret and produce them. Membership and pending-admin removals
-/// are distinct `delete_*` methods so they lower to `Mapping::delete` (a slot zeroing),
-/// matching the original storage semantics exactly rather than writing a zero value.
+/// Raw storage port the policy-registry logic operates on.
 pub trait PolicyAccounting {
     /// Returns the singleton registry address these slots are rooted at.
     fn registry_address(&self) -> Address;
