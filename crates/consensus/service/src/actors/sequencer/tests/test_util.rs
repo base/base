@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::test_utils::TestAttributesBuilder;
@@ -10,7 +10,7 @@ use crate::{
     actors::{
         MockConductor, MockOriginSelector, MockSequencerEngineClient,
         MockUnsafePayloadGossipClient,
-        sequencer::{PayloadBuilder, RecoveryModeGuard, SequencerCadenceConfig},
+        sequencer::{PayloadBuilder, RecoveryModeGuard},
     },
 };
 
@@ -42,8 +42,8 @@ pub(super) fn test_actor() -> SequencerActor<
         engine_client,
         is_active: true,
         recovery_mode,
+        block_interval: Duration::from_secs(rollup_config.block_time.max(1)),
         rollup_config,
-        cadence: SequencerCadenceConfig::default(),
         unsafe_payload_gossip_client: MockUnsafePayloadGossipClient::new(),
         sealer: None,
         pending_stop: None,

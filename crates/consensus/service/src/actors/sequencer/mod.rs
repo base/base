@@ -4,7 +4,7 @@ mod build;
 pub use build::{PayloadBuilder, UnsealedPayloadHandle};
 
 mod config;
-pub use config::{SequencerCadenceConfig, SequencerConfig};
+pub use config::SequencerConfig;
 
 mod origin_selector;
 #[cfg(test)]

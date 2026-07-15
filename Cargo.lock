@@ -3972,6 +3972,7 @@ dependencies = [
  "dirs 6.0.0",
  "discv5 0.10.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "eyre",
+ "humantime",
  "libp2p",
  "metrics",
  "reqwest 0.13.4",

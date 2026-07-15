@@ -34,8 +34,8 @@ use crate::{
     NodeActor, NodeMode, PayloadBuilder, QueuedDerivationEngineClient,
     QueuedEngineDerivationClient, QueuedEngineRpcClient, QueuedL1WatcherDerivationClient,
     QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient,
-    RecoveryModeGuard, RpcActor, RpcContext, SequencerActor, SequencerCadenceConfig,
-    SequencerConfig, UpgradeSignalNodeConfig,
+    RecoveryModeGuard, RpcActor, RpcContext, SequencerActor, SequencerConfig,
+    UpgradeSignalNodeConfig,
     actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
 };
 
@@ -578,11 +578,10 @@ impl RollupNode {
                     is_active: self.sequencer_config.sequencer_stopped.not(),
                     recovery_mode,
                     rollup_config: Arc::clone(&self.config),
-                    cadence: if self.config.is_zombie_active(u64::MAX) {
-                        SequencerCadenceConfig::zombie_200ms()
-                    } else {
-                        SequencerCadenceConfig::from_legacy_block_time(self.config.block_time)
-                    },
+                    block_interval: self
+                        .sequencer_config
+                        .block_interval
+                        .unwrap_or_else(|| Duration::from_secs(self.config.block_time)),
                     unsafe_payload_gossip_client: queued_gossip_client,
                     sealer: None,
                     pending_stop: None,

@@ -63,6 +63,7 @@ strum.workspace = true
 metrics.workspace = true
 serde.workspace = true
 
+humantime.workspace = true
 thiserror = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 

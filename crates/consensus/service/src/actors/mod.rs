@@ -62,7 +62,7 @@ pub use sequencer::{
     L1OriginSelectorError, L1OriginSelectorProvider, OriginSelector, PayloadBuilder, PayloadSealer,
     PendingStopSender, PoolActivation, QueuedSequencerEngineClient, RecoveryModeGuard,
     ScheduledTicker, SealState, SealStepError, SealStepOutcome, SequencerActor,
-    SequencerActorError, SequencerAdminQuery, SequencerCadenceConfig, SequencerConfig,
+    SequencerActorError, SequencerAdminQuery, SequencerConfig,
     SequencerEngineClient, SequencerTimestamp, SequencerTimestampPlanner,
     SequencerTimestampPlannerError, UnsealedPayloadHandle,
 };

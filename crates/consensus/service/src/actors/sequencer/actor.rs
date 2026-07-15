@@ -8,7 +8,6 @@ use std::{
 use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
-use super::config::BASE_BLOCK_TIME_MILLIS;
 use base_consensus_derive::AttributesBuilder;
 use base_consensus_rpc::SequencerAdminAPIError;
 use tokio::{
@@ -23,7 +22,7 @@ use crate::{
         SequencerEngineClient,
         engine::EngineClientError,
         sequencer::{
-            ScheduledTicker, SequencerCadenceConfig,
+            ScheduledTicker,
             build::{PayloadBuilder, UnsealedPayloadHandle},
             conductor::Conductor,
             error::SequencerActorError,
@@ -70,8 +69,8 @@ pub struct SequencerActor<
     pub recovery_mode: RecoveryModeGuard,
     /// The rollup configuration.
     pub rollup_config: Arc<RollupConfig>,
-    /// The block-production cadence. Whole-second block time before Zombie, 200ms after.
-    pub cadence: SequencerCadenceConfig,
+    /// Wall-clock interval between consecutive block builds.
+    pub block_interval: Duration,
     /// A client to asynchronously sign and gossip built payloads to the network actor.
     pub unsafe_payload_gossip_client: UnsafePayloadGossipClient_,
     /// In-flight seal pipeline. [`Some`] while a sealed payload is being committed,
@@ -222,7 +221,7 @@ where
             }
             // Wait one block time before retrying the reset, but service admin queries
             // and honour cancellation throughout the backoff window.
-            let sleep = tokio::time::sleep(self.cadence.block_interval);
+            let sleep = tokio::time::sleep(self.block_interval);
             tokio::pin!(sleep);
             loop {
                 select! {
@@ -261,13 +260,10 @@ where
                 UNIX_EPOCH + Duration::from_millis(millis)
             },
         );
-        let compensation = last_seal_duration.min(self.cadence.block_interval / 2);
+        let compensation = last_seal_duration.min(self.block_interval / 2);
         target - compensation
     }
 
-    /// Seal target for the block immediately following the one described by the arguments,
-    /// advancing by one cadence interval: 200ms when a `timestamp_millis_part` is present
-    /// (Zombie), otherwise the legacy whole-second block time.
     fn next_block_seal_target(
         &self,
         timestamp: u64,
@@ -286,7 +282,7 @@ where
                 let millis = timestamp
                     .saturating_mul(1_000)
                     .saturating_add(part as u64)
-                    .saturating_add(BASE_BLOCK_TIME_MILLIS as u64);
+                    .saturating_add(self.block_interval.as_millis() as u64);
                 self.block_seal_target(
                     millis / 1_000,
                     Some((millis % 1_000) as u16),
@@ -323,7 +319,7 @@ where
     type StartData = ();
 
     async fn start(mut self, _: Self::StartData) -> Result<(), Self::Error> {
-        let mut build_ticker = ScheduledTicker::new(self.cadence.block_interval);
+        let mut build_ticker = ScheduledTicker::new(self.block_interval);
 
         self.update_metrics();
 
