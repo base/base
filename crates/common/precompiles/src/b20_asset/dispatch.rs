@@ -382,7 +382,6 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
         let logic = version.implementation();
         let caller = ctx.caller();
         let encoded: Bytes = match call {
-
             SC::OPERATOR_ROLE(_) => logic.operator_role().abi_encode().into(),
             SC::WAD_PRECISION(_) => B20AssetStorage::WAD.abi_encode().into(),
 
