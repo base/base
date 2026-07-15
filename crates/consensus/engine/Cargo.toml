@@ -66,4 +66,4 @@ base-common-rpc-types = {workspace = true, features = ["arbitrary", "k256"]}
 
 [features]
 metrics = [ "base-metrics/metrics", "dep:metrics" ]
-test-utils = [ "base-protocol/test-utils" ]
+test-utils = [ "base-common-genesis/test-utils", "base-protocol/test-utils" ]

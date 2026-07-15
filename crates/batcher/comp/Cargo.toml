@@ -52,7 +52,11 @@ std = [
 	"rand/std",
 	"thiserror/std",
 ]
-test-utils = [ "base-protocol/test-utils", "dep:alloy-primitives" ]
+test-utils = [
+	"base-common-genesis/test-utils",
+	"base-protocol/test-utils",
+	"dep:alloy-primitives",
+]
 serde = [
 	"alloy-eips/serde",
 	"alloy-primitives?/serde",
