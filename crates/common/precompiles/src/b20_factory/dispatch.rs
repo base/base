@@ -202,7 +202,7 @@ mod tests {
 
     fn dispatch_b20_success(ctx: StorageCtx<'_>, token_addr: Address, call: impl SolCall) -> Bytes {
         let mut token = token_at(token_addr, ctx);
-        let output = token.dispatch(ctx, &call.abi_encode()).unwrap();
+        let output = token.dispatch(ctx, &call.abi_encode(), BaseUpgrade::Beryl).unwrap();
         assert!(!output.is_revert(), "token call reverted: {:?}", output.bytes);
         output.bytes
     }
@@ -505,7 +505,8 @@ mod tests {
             assert!(!ctx.has_bytecode(token_addr).unwrap());
 
             let mut token = token_at(token_addr, ctx);
-            let result = token.dispatch(ctx, &IB20::nameCall {}.abi_encode()).unwrap();
+            let result =
+                token.dispatch(ctx, &IB20::nameCall {}.abi_encode(), BaseUpgrade::Beryl).unwrap();
 
             assert!(result.is_revert());
             assert!(result.bytes.is_empty());
