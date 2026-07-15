@@ -130,6 +130,13 @@ impl P2pInfoTable {
             "unavailable (`opp2p_peerStats` not exposed by this RPC; cannot read max peer count)"
                 .to_string()
         };
+        let cl_missing = |specific: &str| {
+            if report.cl_identity.peer_id.is_some() {
+                specific.to_string()
+            } else {
+                unavailable_cl_self()
+            }
+        };
 
         let el_discovery = report.el.map(|endpoint| {
             format_discovery_flags(endpoint.discovery.v4_enabled, endpoint.discovery.v5_enabled)
@@ -229,11 +236,7 @@ impl P2pInfoTable {
             .row(
                 "cl_enr",
                 report.cl_identity.enr.clone().unwrap_or_else(|| {
-                    if report.cl_identity.peer_id.is_some() {
-                        "unavailable (CL node did not advertise an ENR)".to_string()
-                    } else {
-                        unavailable_cl_self()
-                    }
+                    cl_missing("unavailable (CL node did not advertise an ENR)")
                 }),
             )
             .row(
@@ -243,11 +246,7 @@ impl P2pInfoTable {
             .row(
                 "cl_addresses",
                 if report.cl_identity.addresses.is_empty() {
-                    if report.cl_identity.peer_id.is_some() {
-                        "unavailable (CL node did not report listen addresses)".to_string()
-                    } else {
-                        unavailable_cl_self()
-                    }
+                    cl_missing("unavailable (CL node did not report listen addresses)")
                 } else {
                     report.cl_identity.addresses.join(", ")
                 },

@@ -50,8 +50,8 @@ pub struct NodeEndpoint {
 ///
 /// These are the verbatim strings the node advertises, kept alongside the
 /// parsed [`NodeEndpoint`] so operators can copy-paste them into commands like
-/// `basectl p2p add` — and so they stay visible even when endpoint parsing
-/// fails.
+/// `basectl p2p add-peer` — and so they stay visible even when endpoint
+/// parsing fails.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ElNodeIdentity {
@@ -76,8 +76,8 @@ impl ElNodeIdentity {
 ///
 /// These are the verbatim values the node advertises, kept alongside the
 /// parsed [`NodeEndpoint`] so operators can copy-paste them into commands like
-/// `basectl p2p add` (multiaddr) or `basectl p2p remove` (peer ID) — and so
-/// they stay visible even when endpoint parsing fails.
+/// `basectl p2p add-peer` (multiaddr) or `basectl p2p remove-peer` (peer ID) —
+/// and so they stay visible even when endpoint parsing fails.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClNodeIdentity {
@@ -332,8 +332,7 @@ pub async fn list_banned_peers(cl_rpc: &Url) -> Result<Vec<String>> {
 pub async fn fetch_el_info(rpc: &Url) -> Result<ElInfoReport> {
     let el_provider = connect_el(rpc).await?;
 
-    type ElEndpointAndIdentity = (Option<NodeEndpoint>, ElNodeIdentity);
-    let (endpoint_and_identity, peer_count) = tokio::join!(
+    let ((endpoint, identity), peer_count) = tokio::join!(
         async {
             match el_provider.node_info().await {
                 Ok(info) => {
@@ -351,14 +350,12 @@ pub async fn fetch_el_info(rpc: &Url) -> Result<ElInfoReport> {
                             None
                         }
                     };
-                    Ok::<ElEndpointAndIdentity, anyhow::Error>((endpoint, identity))
+                    (endpoint, identity)
                 }
-                Err(err) if is_method_not_found(&err) => {
-                    Ok::<ElEndpointAndIdentity, anyhow::Error>((None, ElNodeIdentity::default()))
-                }
+                Err(err) if is_method_not_found(&err) => (None, ElNodeIdentity::default()),
                 Err(err) => {
                     warn!(error = %err, "failed to fetch EL node endpoint; reporting EL endpoint as unavailable");
-                    Ok::<ElEndpointAndIdentity, anyhow::Error>((None, ElNodeIdentity::default()))
+                    (None, ElNodeIdentity::default())
                 }
             }
         },
@@ -375,7 +372,6 @@ pub async fn fetch_el_info(rpc: &Url) -> Result<ElInfoReport> {
             }
         },
     );
-    let (endpoint, identity) = endpoint_and_identity?;
     Ok(ElInfoReport {
         endpoint,
         identity,
