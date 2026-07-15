@@ -4593,6 +4593,7 @@ dependencies = [
  "base-common-rpc-types-engine",
  "base-execution-chainspec",
  "base-execution-consensus",
+ "base-protocol",
  "reth-chainspec",
  "reth-evm",
  "reth-execution-errors",
