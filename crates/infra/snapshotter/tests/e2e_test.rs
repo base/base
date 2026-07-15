@@ -15,6 +15,7 @@ use async_trait::async_trait;
 use base_snapshotter::{
     ChunkedArchive, ComponentManifest, ContainerManager, DockerContainerManager,
     OutputFileChecksum, SnapshotGenerator, SnapshotManifest, SnapshotUploader, TipChecker,
+    TipStatus,
 };
 use bollard::{
     Docker,
@@ -114,8 +115,8 @@ impl MockTipChecker {
 
 #[async_trait]
 impl TipChecker for MockTipChecker {
-    async fn is_at_tip(&self, _threshold: std::time::Duration) -> Result<bool> {
-        Ok(self.at_tip)
+    async fn check_tip(&self, _threshold: std::time::Duration) -> Result<TipStatus> {
+        Ok(TipStatus { block_number: 100, at_tip: self.at_tip })
     }
 }
 
@@ -133,7 +134,7 @@ fn test_config(bucket: &str, tmp: &Path) -> base_snapshotter::SnapshotterConfig 
         bucket: bucket.to_string(),
         prefix: "test".to_string(),
         chain_id: 8453,
-        block: Some(100),
+        block: None,
         blocks_per_file: Some(500_000),
         snapshot_threads: None,
         retain_runs: NonZeroUsize::new(3).expect("retain runs should be non-zero"),
