@@ -347,4 +347,7 @@ pub trait Asset<S: AssetAccounting, P: Policy> {
 
     /// Returns the scaled balance for `account`.
     fn scaled_balance_of(&self, token: &B20AssetToken<S, P>, account: Address) -> Result<U256>;
+
+    /// Returns the asset operator role identifier (required for `announce` / `updateMultiplier`).
+    fn operator_role(&self) -> B256;
 }

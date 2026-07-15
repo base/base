@@ -382,8 +382,8 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
         let logic = version.implementation();
         let caller = ctx.caller();
         let encoded: Bytes = match call {
-            // --- Role / precision constants (invariant across versions) ---
-            SC::OPERATOR_ROLE(_) => AssetV1::OPERATOR_ROLE.abi_encode().into(),
+
+            SC::OPERATOR_ROLE(_) => logic.operator_role().abi_encode().into(),
             SC::WAD_PRECISION(_) => B20AssetStorage::WAD.abi_encode().into(),
 
             // --- Multiplier reads ---
@@ -510,7 +510,7 @@ mod tests {
 
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
-        B20AssetStorage, B20AssetToken, B20TokenRole, BerylErrorKind, IB20, IB20Asset,
+        AssetV1, B20AssetStorage, B20AssetToken, B20TokenRole, BerylErrorKind, IB20, IB20Asset,
         InMemoryPolicy, InMemoryTokenAccounting, NoopPrecompileCallObserver, PrecompileCallMetric,
         PrecompileCallObserver, PrecompileCallOutcome, PrecompileCallStatus, Token,
         TokenAccounting,
@@ -673,7 +673,7 @@ mod tests {
         let mut token = make_token();
         // Any balance > 1 overflows when multiplied by this multiplier.
         token.accounting_mut().multiplier = U256::MAX / U256::from(2u64) + U256::ONE;
-        token.accounting_mut().roles.insert((crate::AssetV1::OPERATOR_ROLE, ALICE), true);
+        token.accounting_mut().roles.insert((AssetV1::OPERATOR_ROLE, ALICE), true);
 
         let inner_call = Bytes::from(
             IB20Asset::toScaledBalanceCall { rawBalance: U256::from(2u64) }.abi_encode(),
@@ -697,7 +697,7 @@ mod tests {
     fn announce_inner_ordinary_revert_wraps_as_internal_call_failed() {
         let mut token = make_token();
         // ALICE has OPERATOR_ROLE (needed for announce) but not MINT_ROLE (needed for mint).
-        token.accounting_mut().roles.insert((crate::AssetV1::OPERATOR_ROLE, ALICE), true);
+        token.accounting_mut().roles.insert((AssetV1::OPERATOR_ROLE, ALICE), true);
 
         let inner_call = Bytes::from(IB20::mintCall { to: BOB, amount: U256::ONE }.abi_encode());
         let calldata = IB20Asset::announceCall {

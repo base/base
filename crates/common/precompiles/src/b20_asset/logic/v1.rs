@@ -770,6 +770,10 @@ impl<S: AssetAccounting, P: Policy> Asset<S, P> for AssetV1 {
         let balance = token.accounting().balance_of(account)?;
         self.to_scaled_balance(token, balance)
     }
+
+    fn operator_role(&self) -> B256 {
+        Self::OPERATOR_ROLE
+    }
 }
 
 #[cfg(test)]
