@@ -46,29 +46,24 @@ pub struct NodeEndpoint {
     pub discovery: DiscoveryInfo,
 }
 
-/// Raw advertised execution-layer node identity records from `admin_nodeInfo`.
+/// Raw advertised execution-layer node identity from `admin_nodeInfo`.
 ///
-/// These are the verbatim strings the node advertises, kept alongside the
-/// parsed [`NodeEndpoint`] so operators can copy-paste them into commands like
-/// `basectl p2p add-peer` — and so they stay visible even when endpoint
-/// parsing fails.
+/// The verbatim enode is kept alongside the parsed [`NodeEndpoint`] so
+/// operators can copy-paste it into commands like `basectl p2p add-peer` — and
+/// so it stays visible even when endpoint parsing fails.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ElNodeIdentity {
     /// Full `enode://` URL advertised by the EL node. `None` when the EL RPC
     /// does not expose `admin_nodeInfo`.
     pub enode: Option<String>,
-    /// Full `enr:` record advertised by the EL node. `None` when
-    /// `admin_nodeInfo` is unavailable or the node did not advertise an ENR.
-    pub enr: Option<String>,
 }
 
 impl ElNodeIdentity {
-    /// Builds the identity from raw `admin_nodeInfo` strings, treating empty
-    /// strings as absent.
-    pub fn from_admin_node_info(enode: &str, enr: &str) -> Self {
-        let non_empty = |raw: &str| (!raw.trim().is_empty()).then(|| raw.to_string());
-        Self { enode: non_empty(enode), enr: non_empty(enr) }
+    /// Builds the identity from the raw `admin_nodeInfo` enode string, treating
+    /// an empty string as absent.
+    pub fn from_admin_node_info(enode: &str) -> Self {
+        Self { enode: (!enode.trim().is_empty()).then(|| enode.to_string()) }
     }
 }
 
@@ -110,7 +105,7 @@ pub struct NodeInfoReport {
     /// Execution-layer advertised endpoint. `None` when the EL RPC does not
     /// expose `admin_nodeInfo` or its enode/ENR could not be parsed.
     pub el: Option<NodeEndpoint>,
-    /// Raw execution-layer enode/ENR records from `admin_nodeInfo`.
+    /// Raw execution-layer enode record from `admin_nodeInfo`.
     pub el_identity: ElNodeIdentity,
     /// Consensus-layer advertised endpoint. `None` when the `opp2p_self` ENR
     /// was missing or could not be parsed.
@@ -139,7 +134,7 @@ pub struct ElInfoReport {
     /// Execution-layer advertised endpoint. `None` when the EL RPC does not
     /// expose `admin_nodeInfo` or its enode/ENR could not be parsed.
     pub endpoint: Option<NodeEndpoint>,
-    /// Raw execution-layer enode/ENR records from `admin_nodeInfo`.
+    /// Raw execution-layer enode record from `admin_nodeInfo`.
     pub identity: ElNodeIdentity,
     /// Connected EL peer count from `net_peerCount`.
     pub peer_count: Option<u32>,
@@ -336,7 +331,7 @@ pub async fn fetch_el_info(rpc: &Url) -> Result<ElInfoReport> {
         async {
             match el_provider.node_info().await {
                 Ok(info) => {
-                    let identity = ElNodeIdentity::from_admin_node_info(&info.enode, &info.enr);
+                    let identity = ElNodeIdentity::from_admin_node_info(&info.enode);
                     let endpoint = match parse_el_node_endpoint(
                         &info.enode,
                         &info.enr,
@@ -754,20 +749,14 @@ mod tests {
     }
 
     #[test]
-    fn el_identity_keeps_raw_records_and_treats_empty_as_absent() {
-        let identity = ElNodeIdentity::from_admin_node_info(
-            "enode://abc@203.0.113.10:30303",
-            "enr:-el-record",
-        );
+    fn el_identity_keeps_raw_enode_and_treats_empty_as_absent() {
+        let identity = ElNodeIdentity::from_admin_node_info("enode://abc@203.0.113.10:30303");
         assert_eq!(
             identity,
-            ElNodeIdentity {
-                enode: Some("enode://abc@203.0.113.10:30303".to_string()),
-                enr: Some("enr:-el-record".to_string()),
-            }
+            ElNodeIdentity { enode: Some("enode://abc@203.0.113.10:30303".to_string()) }
         );
 
-        assert_eq!(ElNodeIdentity::from_admin_node_info("", "  "), ElNodeIdentity::default());
+        assert_eq!(ElNodeIdentity::from_admin_node_info("  "), ElNodeIdentity::default());
     }
 
     #[test]

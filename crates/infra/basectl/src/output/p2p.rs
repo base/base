@@ -17,8 +17,6 @@ pub struct P2pElInfoJson {
     pub discovery: Option<DiscoveryInfo>,
     /// Full `enode://` URL advertised by the node.
     pub enode: Option<String>,
-    /// Full `enr:` record advertised by the node.
-    pub enr: Option<String>,
     /// Connected peer count.
     pub peer_count: Option<u32>,
 }
@@ -78,7 +76,6 @@ impl P2pInfoJson {
                 tcp_port: el_tcp_port,
                 discovery: el_discovery,
                 enode: report.el_identity.enode.clone(),
-                enr: report.el_identity.enr.clone(),
                 peer_count: peer_stats.el_count,
             },
             cl: P2pClInfoJson {
@@ -193,16 +190,6 @@ impl P2pInfoTable {
                     .enode
                     .clone()
                     .unwrap_or_else(|| unavailable_admin_method("admin_nodeInfo")),
-            )
-            .row(
-                "el_enr",
-                report.el_identity.enr.clone().unwrap_or_else(|| {
-                    if report.el_identity.enode.is_some() {
-                        "unavailable (EL node did not advertise an ENR)".to_string()
-                    } else {
-                        unavailable_admin_method("admin_nodeInfo")
-                    }
-                }),
             )
             .row(
                 "el_peer_count",
@@ -377,7 +364,6 @@ mod tests {
         let report = NodeInfoReport {
             el_identity: ElNodeIdentity {
                 enode: Some("enode://abc@203.0.113.10:30303".to_string()),
-                enr: Some("enr:-el-record".to_string()),
             },
             cl_identity: ClNodeIdentity {
                 enr: Some("enr:-cl-record".to_string()),
@@ -392,7 +378,7 @@ mod tests {
             serde_json::to_value(P2pInfoJson::from_report("devnet", &report, &peer_stats)).unwrap();
 
         assert_eq!(info["el"]["enode"], json!("enode://abc@203.0.113.10:30303"));
-        assert_eq!(info["el"]["enr"], json!("enr:-el-record"));
+        assert!(!info["el"].as_object().unwrap().contains_key("enr"));
         assert_eq!(info["cl"]["enr"], json!("enr:-cl-record"));
         assert_eq!(info["cl"]["peerId"], json!("16Uiu2HAmTestPeerId"));
         assert_eq!(info["cl"]["addresses"], json!(["/ip4/203.0.113.10/tcp/9222"]));
@@ -403,7 +389,6 @@ mod tests {
         let report = NodeInfoReport {
             el_identity: ElNodeIdentity {
                 enode: Some("enode://abc@203.0.113.10:30303".to_string()),
-                enr: Some("enr:-el-record".to_string()),
             },
             cl_identity: ClNodeIdentity {
                 enr: Some("enr:-cl-record".to_string()),
@@ -431,7 +416,6 @@ mod tests {
                 .to_string()
         };
         assert_eq!(row_value("el_enode"), "enode://abc@203.0.113.10:30303");
-        assert_eq!(row_value("el_enr"), "enr:-el-record");
         assert_eq!(row_value("cl_enr"), "enr:-cl-record");
         assert_eq!(row_value("cl_peer_id"), "16Uiu2HAmTestPeerId");
         assert_eq!(
@@ -452,7 +436,6 @@ mod tests {
                 .to_string()
         };
         assert!(row_line("el_enode").contains("admin_nodeInfo"));
-        assert!(row_line("el_enr").contains("admin_nodeInfo"));
         assert!(row_line("cl_enr").contains("opp2p_self"));
         assert!(row_line("cl_peer_id").contains("opp2p_self"));
         assert!(row_line("cl_addresses").contains("opp2p_self"));
