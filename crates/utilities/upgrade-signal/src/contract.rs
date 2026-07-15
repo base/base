@@ -21,12 +21,6 @@ sol! {
     ///
     /// The address can be a proxy. Nodes only depend on this read interface.
     interface IProtocolVersions {
-        /// Emitted when an upgrade's activation timestamp is set, cleared, or delayed.
-        event TimestampSet(uint256 indexed id, uint256 timestamp);
-
-        /// Emitted when the minimum protocol version clients must run is updated.
-        event MinimumProtocolVersionUpdated(uint256 indexed protocolVersion);
-
         /// Returns the activation timestamp for every registered upgrade, ordered by ascending
         /// upgrade id (`0` = not scheduled).
         function getSchedule() external view returns (uint64[] memory);
