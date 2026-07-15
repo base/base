@@ -25,6 +25,7 @@ use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
     BaseExecutionPayloadV4, BasePayloadAttributes,
 };
+use base_consensus_providers::L1RpcProvider;
 use base_protocol::{FromBlockError, L2BlockInfo};
 use http_body_util::Full;
 use thiserror::Error;
@@ -186,7 +187,7 @@ impl EngineClientBuilder {
         )
         .await?;
 
-        let l1_provider = RootProvider::new_http(self.l1_rpc);
+        let l1_provider = L1RpcProvider::new_http(self.l1_rpc);
 
         Ok(BaseEngineClient { engine, l1_provider, cfg: self.cfg })
     }

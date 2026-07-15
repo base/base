@@ -140,6 +140,8 @@ pub struct OnlineBeaconClient {
 
 impl OnlineBeaconClient {
     /// Creates a new [`OnlineBeaconClient`] from the provided base URL string.
+    ///
+    /// Requests use the shared [`crate::L1_RPC_TIMEOUT`] deadline.
     pub fn new_http(mut base: String) -> Self {
         // If base ends with a slash, remove it
         if base.ends_with('/') {
@@ -147,7 +149,10 @@ impl OnlineBeaconClient {
         }
         Self {
             base,
-            inner: Client::builder().build().expect("Failed to create beacon client"),
+            inner: Client::builder()
+                .timeout(crate::L1_RPC_TIMEOUT)
+                .build()
+                .expect("Failed to create beacon client"),
             l1_slot_duration: None,
         }
     }
