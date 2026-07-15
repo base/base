@@ -5594,7 +5594,6 @@ dependencies = [
  "base-proof-host",
  "base-proof-preimage",
  "base-proof-primitives",
- "base-proof-rpc",
  "base-proof-succinct-client-utils",
  "base-protocol",
  "bincode 2.0.1",
@@ -6031,7 +6030,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
- "tracing-subscriber 0.3.23",
  "uuid",
 ]
 
@@ -6302,7 +6300,6 @@ dependencies = [
  "base-node-core",
  "base-node-runner",
  "base-optimism-rpc",
- "base-proof-rpc",
  "base-protocol",
  "base-prover-service-client",
  "base-prover-service-protocol",

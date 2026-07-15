@@ -194,16 +194,10 @@ where
                 PipelineError::AttributesBuilder(BuilderError::MissingBaseTimeTimestampMillisPart)
                     .crit()
             })?;
-            let (_, envelope) = BaseTimeUpdateTx::try_new_with_deposit_tx(
-                &self.rollup_cfg,
-                l2_parent.block_info.number + 1,
-                timestamp_millis_part,
-                l2_parent.block_info.timestamp,
-                next_l2_time,
-            )
-            .map_err(|e| {
+            let base_time = BaseTimeUpdateTx::new(timestamp_millis_part).map_err(|e| {
                 PipelineError::AttributesBuilder(BuilderError::BaseTimeUpdate(e)).crit()
             })?;
+            let envelope = base_time.into_deposit_tx(l2_parent.block_info.number + 1);
             let mut encoded = Vec::with_capacity(envelope.length());
             envelope.encode_2718(&mut encoded);
             txs.push(encoded.into());

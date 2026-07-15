@@ -189,7 +189,7 @@ where
             .map_err(ConsensusError::other)
     }
 
-    /// Verifies the BaseTime claim, committed state, and block-to-block progression after block
+    /// Verifies the `BaseTime` claim, committed state, and block-to-block progression after block
     /// execution.
     pub fn validate_base_time_post_execution<DB>(
         &self,
