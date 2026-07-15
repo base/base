@@ -20,6 +20,9 @@ use crate::{
             error::SequencerActorError,
             origin_selector::{L1OriginSelectorError, OriginSelector},
             recovery::RecoveryModeGuard,
+            timestamp::{
+                SequencerTimestamp, SequencerTimestampPlanner, SequencerTimestampPlannerError,
+            },
         },
     },
 };
@@ -61,7 +64,11 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
     /// next tick.
     pub async fn build(&mut self) -> Result<Option<UnsealedPayloadHandle>, SequencerActorError> {
         let unsafe_head = self.engine_client.get_unsafe_head().await?;
-        self.build_on(unsafe_head).await
+        // The watch-channel unsafe head is an `L2BlockInfo`, which records only whole
+        // seconds, so no sub-second remainder is available here. Zombie timestamp planning
+        // derives both seconds and millis from the deterministic child-block-number formula,
+        // so this path safely passes `None`.
+        self.build_on(unsafe_head, None).await
     }
 
     /// Starts building the next L2 block on top of an explicit `parent`, returning a handle to
@@ -76,6 +83,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
     pub async fn build_on(
         &mut self,
         parent: L2BlockInfo,
+        parent_timestamp_millis_part: Option<u16>,
     ) -> Result<Option<UnsealedPayloadHandle>, SequencerActorError> {
         let Some(l1_origin) = self.get_next_payload_l1_origin(parent).await? else {
             return Ok(None);
@@ -91,7 +99,9 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
 
         let attributes_build_start = Instant::now();
 
-        let Some(attributes_with_parent) = self.build_attributes(parent, l1_origin).await? else {
+        let Some(attributes_with_parent) =
+            self.build_attributes(parent, l1_origin, parent_timestamp_millis_part).await?
+        else {
             return Ok(None);
         };
 
@@ -157,6 +167,37 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
         Ok(Some(l1_origin))
     }
 
+    /// Plans the next block's timestamp.
+    ///
+    /// After Zombie activation, derives the `(seconds, millis_part)` pair from
+    /// `zombie_block_timestamp` using the child block number; otherwise advances
+    /// the parent by the whole-second `block_time` via `SequencerTimestampPlanner::legacy`.
+    // `SequencerActorError` intentionally carries rich context from upstream pipeline errors.
+    #[allow(clippy::result_large_err)]
+    fn plan_next_timestamp(
+        &self,
+        parent: L2BlockInfo,
+        _parent_timestamp_millis_part: Option<u16>,
+    ) -> Result<SequencerTimestamp, SequencerActorError> {
+        let parent_timestamp = parent.block_info.timestamp;
+        let child_block_number = parent.block_info.number.saturating_add(1);
+        if let Some((timestamp, timestamp_millis_part)) =
+            self.rollup_config.zombie_block_timestamp(child_block_number)
+        {
+            let timestamp_millis = timestamp
+                .checked_mul(RollupConfig::MILLIS_PER_SECOND)
+                .and_then(|seconds| seconds.checked_add(u64::from(timestamp_millis_part)))
+                .ok_or(SequencerTimestampPlannerError::TimestampOverflow)?;
+            Ok(SequencerTimestamp {
+                timestamp,
+                timestamp_millis_part: Some(timestamp_millis_part),
+                timestamp_millis,
+            })
+        } else {
+            Ok(SequencerTimestampPlanner::legacy(parent_timestamp, self.rollup_config.block_time)?)
+        }
+    }
+
     /// Builds the `AttributesWithParent` for the next block.
     ///
     /// Returns `Ok(None)` if no attributes could be built at this time but future
@@ -165,10 +206,13 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
         &mut self,
         unsafe_head: L2BlockInfo,
         l1_origin: BlockInfo,
+        unsafe_head_timestamp_millis_part: Option<u16>,
     ) -> Result<Option<AttributesWithParent>, SequencerActorError> {
+        let planned = self.plan_next_timestamp(unsafe_head, unsafe_head_timestamp_millis_part)?;
+
         let mut attributes = match self
             .attributes_builder
-            .prepare_payload_attributes(unsafe_head, l1_origin.id(), None)
+            .prepare_payload_attributes(unsafe_head, l1_origin.id(), planned.timestamp_millis_part)
             .await
         {
             Ok(attrs) => attrs,

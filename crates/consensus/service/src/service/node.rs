@@ -23,6 +23,7 @@ use base_consensus_safedb::{DisabledSafeDB, SafeDB, SafeDBReader, SafeHeadListen
 use base_protocol::L2BlockInfo;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
+use tracing::warn;
 
 use crate::{
     AlloyL1BlockFetcher, CheckpointActor, CheckpointClient, CheckpointDB, CheckpointWriter,
@@ -33,8 +34,8 @@ use crate::{
     NodeActor, NodeMode, PayloadBuilder, QueuedDerivationEngineClient,
     QueuedEngineDerivationClient, QueuedEngineRpcClient, QueuedL1WatcherDerivationClient,
     QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient,
-    RecoveryModeGuard, RpcActor, RpcContext, SequencerActor, SequencerConfig,
-    UpgradeSignalNodeConfig,
+    RecoveryModeGuard, RpcActor, RpcContext, SequencerActor, SequencerCadenceConfig,
+    SequencerConfig, UpgradeSignalNodeConfig,
     actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
 };
 
@@ -369,6 +370,10 @@ impl RollupNode {
         DerivationActor<QueuedDerivationEngineClient, P>:
             NodeActor<StartData = (), Error = DerivationError>,
     {
+        if self.config.is_zombie_active(u64::MAX) {
+            warn!("Zombie hardfork (200ms block support) is enabled and experimental; do not use on production networks");
+        }
+
         // Build the safe head DB pair. Both actors share the same underlying DB via Arc.
         //
         // In delegate mode the local derivation actor is replaced by a `DelegateDerivationActor`
@@ -535,11 +540,13 @@ impl RollupNode {
             derivation_origin_rx,
             cancellation.clone(),
         );
+
         let upgrade_signal_metrics_actor =
             self.upgrade_signal_config.as_ref().map(|c| c.metrics_actor(cancellation.clone()));
         let upgrade_signal_refresher =
             self.upgrade_signal_config.as_ref().and_then(|c| c.refresher());
         let node_mode = self.mode();
+
         // Create the sequencer if needed
         let (sequencer_actor, sequencer_admin_client) = if node_mode.is_sequencer() {
             let sequencer_engine_client = QueuedSequencerEngineClient {
@@ -571,6 +578,11 @@ impl RollupNode {
                     is_active: self.sequencer_config.sequencer_stopped.not(),
                     recovery_mode,
                     rollup_config: Arc::clone(&self.config),
+                    cadence: if self.config.is_zombie_active(u64::MAX) {
+                        SequencerCadenceConfig::zombie_200ms()
+                    } else {
+                        SequencerCadenceConfig::from_legacy_block_time(self.config.block_time)
+                    },
                     unsafe_payload_gossip_client: queued_gossip_client,
                     sealer: None,
                     pending_stop: None,

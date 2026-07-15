@@ -11,7 +11,7 @@ use base_common_genesis::RollupConfig;
 use base_consensus_derive::StatefulAttributesBuilder;
 use base_consensus_node::{
     Conductor, L1OriginSelector, NodeActor, PayloadBuilder, RecoveryModeGuard, SequencerActor,
-    SequencerActorError, SequencerAdminQuery,
+    SequencerActorError, SequencerAdminQuery, SequencerCadenceConfig,
 };
 use base_consensus_rpc::SequencerAdminAPIError;
 use base_protocol::{BlockInfo, L2BlockInfo};
@@ -278,6 +278,9 @@ impl L2Sequencer {
             is_active: false,
             recovery_mode: RecoveryModeGuard::new(false),
             rollup_config: self.actor_rollup_config(),
+            cadence: SequencerCadenceConfig::from_legacy_block_time(
+                self.actor_rollup_config().block_time,
+            ),
             unsafe_payload_gossip_client: ActionUnsafePayloadGossipClient,
             sealer: None,
             pending_stop: None,
