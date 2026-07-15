@@ -39,7 +39,9 @@ pub struct P2pReachabilityRequest {
 impl P2pReachabilityRequest {
     /// Validates the request and returns its advertised `RLPx` target.
     pub fn target(&self) -> Option<RlpxProbeTarget> {
-        self.enode.strip_prefix("enode://")?;
+        if !self.enode.starts_with("enode://") {
+            return None;
+        }
         let record = NodeRecord::from_str(&self.enode).ok()?;
         id2pk(record.id).ok()?;
         let address = record.tcp_addr();
