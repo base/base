@@ -55,6 +55,9 @@ pub struct AccountStateDiff {
     /// Whether the account's protocol (EOA) nonce changed this block. An
     /// exact-match drop for transactions watching it.
     pub nonce_changed: bool,
+    /// Whether the account's bytecode hash changed this block. An exact-match
+    /// drop for trusted-payer transactions relying on its delegation target.
+    pub code_changed: bool,
     /// Storage slots in this account's contract whose value changed this block
     /// (e.g. actor-config, account-lock, or channel-nonce slots). Each is an
     /// exact-match drop for transactions watching it.
@@ -69,10 +72,13 @@ impl AccountStateDiff {
     }
 
     /// Appends this account's exact-match invalidation keys (changed protocol
-    /// nonce and changed storage slots) to `out`.
+    /// nonce, code hash, and storage slots) to `out`.
     fn push_exact_keys(&self, out: &mut Vec<InvalidationKey>) {
         if self.nonce_changed {
             out.push(InvalidationKey::ProtocolNonce(self.address));
+        }
+        if self.code_changed {
+            out.push(InvalidationKey::CodeHash(self.address));
         }
         for slot in &self.changed_slots {
             out.push(InvalidationKey::Slot { address: self.address, slot: *slot });
@@ -99,6 +105,7 @@ where
         sender: class.sender,
         payer: class.payer,
         sender_locked: class.sender_locked,
+        payer_locked: class.payer_locked,
         payer_trusted: class.payer_trusted,
         payer_balance: class.payer_balance,
         max_cost: class.max_cost,
@@ -136,9 +143,10 @@ pub struct BaseTransactionPool<
     /// them. Count drift from reth-internal evictions/replacements is bounded by
     /// the per-block reconcile in [`Self::reconcile_guard`].
     guard: Arc<RwLock<MempoolGuard>>,
-    /// Highest expiry bucket already fired (`None` until the first canonical
-    /// update). Each block fires only the newly-due bucket(s) — typically one —
-    /// in `(last + 1 ..= horizon)`, so expiry eviction never rescans the index.
+    /// Highest expiry bucket reached (`None` until the first canonical update).
+    /// Each block re-fires a short sliding window through the current horizon,
+    /// catching transactions admitted just after a recent bucket fired without
+    /// rescanning unrelated index entries.
     last_fired_expiry_bucket: Arc<RwLock<Option<u64>>>,
 }
 
@@ -259,8 +267,9 @@ where
     ) -> reth_transaction_pool::error::PoolError {
         GuardMetrics::admission_rejected(GuardMetrics::rejection_reason(rejection)).increment(1);
         let reason = match rejection {
-            LimitRejection::SenderLimit => "sender EIP-8130 mempool limit reached",
-            LimitRejection::PayerLimit => "payer EIP-8130 mempool limit reached",
+            LimitRejection::SenderLimit => "sender EIP-8130 signature limit reached",
+            LimitRejection::PayerLimit => "payer EIP-8130 signature limit reached",
+            LimitRejection::PaymentLimit => "payer EIP-8130 payment limit reached",
             LimitRejection::PayerBalance => {
                 "payer balance cannot fund another sponsored EIP-8130 transaction"
             }
@@ -290,6 +299,8 @@ where
         &self,
         diffs: &[AccountStateDiff],
     ) -> Vec<Arc<ValidPoolTransaction<T>>> {
+        self.validator().validator().invalidate_limit_class_cache(diffs);
+
         let mut exact = Vec::new();
         for diff in diffs {
             diff.push_exact_keys(&mut exact);
@@ -315,6 +326,19 @@ where
         if !removed.is_empty() {
             debug!(count = removed.len(), "EIP-8130 transactions invalidated by state diff");
         }
+        removed
+    }
+
+    /// Invalidates every transaction tracked by the mempool guard.
+    ///
+    /// This is intentionally broader than [`Self::apply_state_diff`] and is
+    /// reserved for state-feed gaps, where the exact keys changed in one or
+    /// more missed updates are unknowable. Returns the removed transactions.
+    pub fn invalidate_all_tracked(&self) -> Vec<Arc<ValidPoolTransaction<T>>> {
+        self.validator().validator().clear_limit_class_cache();
+        let dropped = self.guard.write().invalidate_all();
+        let removed = self.remove_dropped_across_pools(dropped);
+        GuardMetrics::record_state_diff_invalidations(removed.len());
         removed
     }
 
@@ -354,11 +378,14 @@ where
     ///
     /// Uses a one-block lookahead (`now + EXPIRY_BUCKET_SECS`) so transactions
     /// that cannot survive into the next block are evicted while the current
-    /// block is built. Only the newly-due bucket(s) — typically one — are fired,
-    /// tracked by `last_fired_expiry_bucket`, so this never rescans the index.
+    /// block is built. A short window starting one bucket before the current
+    /// timestamp is re-fired to catch near-term expiries admitted immediately
+    /// after their bucket last fired; otherwise only newly-due buckets are
+    /// touched, so this never rescans the full index.
     fn expire_due_buckets(&self, now: u64) {
         let horizon_bucket = now.saturating_add(InvalidationKey::EXPIRY_BUCKET_SECS)
             / InvalidationKey::EXPIRY_BUCKET_SECS;
+        let recent_floor = (now / InvalidationKey::EXPIRY_BUCKET_SECS).saturating_sub(1);
         let keys: Vec<InvalidationKey> = {
             let mut last = self.last_fired_expiry_bucket.write();
             // On the first canonical update `last` is `None`, so `start` equals
@@ -366,13 +393,11 @@ where
             // admitted during initial sync with expiries in earlier (already-past)
             // buckets are not eagerly evicted here. This is intentional: the node
             // is still syncing at that point and such transactions are stale by
-            // construction; the builder's manifest pre-check and the per-block
-            // reconcile will catch them before they can be included.
-            let start = last.map_or(horizon_bucket, |prev| prev.saturating_add(1));
+            // construction; the builder's manifest pre-check catches them before
+            // they can be included.
+            let start =
+                last.map_or(horizon_bucket, |prev| prev.min(recent_floor).min(horizon_bucket));
             *last = Some(last.map_or(horizon_bucket, |prev| prev.max(horizon_bucket)));
-            if start > horizon_bucket {
-                return;
-            }
             (start..=horizon_bucket).map(InvalidationKey::ExpiryBucket).collect()
         };
 
@@ -513,7 +538,22 @@ where
         let Some(admission) = admission_for(&validated.transaction) else {
             return Ok(());
         };
-        if let Err(rejection) = self.guard.write().try_admit(admission) {
+        let mut guard = self.guard.write();
+        let class_is_current = validated.transaction.limit_class().is_some_and(|class| {
+            class.classification_generation
+                == self.validator().validator().limit_class_cache_generation()
+        });
+        if !class_is_current {
+            drop(guard);
+            let removed = self.protocol_pool.remove_transactions(vec![hash]);
+            self.untrack_eip8130_replays(&removed);
+            return Err(reth_transaction_pool::error::PoolError::other(
+                hash,
+                "EIP-8130 admission classification changed during validation",
+            ));
+        }
+        if let Err(rejection) = guard.try_admit(admission) {
+            drop(guard);
             let removed = self.protocol_pool.remove_transactions(vec![hash]);
             self.untrack_eip8130_replays(&removed);
             return Err(Self::limit_rejection_error(hash, rejection));
@@ -611,6 +651,10 @@ where
                     authorities,
                     &mut nonce_pool,
                 );
+                let classification_generation = validated
+                    .transaction
+                    .limit_class()
+                    .map(|class| class.classification_generation);
                 let admission = admission_for(&validated.transaction);
                 let outcome = nonce_pool.insert_validated(validated, state_nonce)?;
                 // Apply admission limits while still holding the nonce-pool lock
@@ -618,6 +662,18 @@ where
                 // guard before notifying listeners to keep the lock order acyclic.
                 {
                     let mut guard = self.guard.write();
+                    let class_is_current = classification_generation.is_none_or(|generation| {
+                        generation == self.validator().validator().limit_class_cache_generation()
+                    });
+                    if !class_is_current {
+                        drop(guard);
+                        let hash = outcome.outcome.hash;
+                        nonce_pool.remove_transactions(&[hash]);
+                        return Err(reth_transaction_pool::error::PoolError::other(
+                            hash,
+                            "EIP-8130 admission classification changed during validation",
+                        ));
+                    }
                     match (&outcome.replaced, admission) {
                         // A replacement (fee-bump of an existing channel nonce) is
                         // net-neutral on the count dimensions: release the old and
@@ -750,6 +806,10 @@ where
 {
     fn invalidate_from_state_diff(&self, diffs: &[AccountStateDiff]) -> usize {
         self.apply_state_diff(diffs).len()
+    }
+
+    fn invalidate_all_tracked(&self) -> usize {
+        self.invalidate_all_tracked().len()
     }
 }
 
@@ -1778,6 +1838,7 @@ mod tests {
             address,
             balance: Some(U256::from(5u64)),
             nonce_changed: true,
+            code_changed: true,
             changed_slots: vec![slot_a, slot_b],
         };
 
@@ -1790,6 +1851,7 @@ mod tests {
             keys,
             vec![
                 InvalidationKey::ProtocolNonce(address),
+                InvalidationKey::CodeHash(address),
                 InvalidationKey::Slot { address, slot: slot_a },
                 InvalidationKey::Slot { address, slot: slot_b },
             ]
@@ -1909,7 +1971,9 @@ mod tests {
         transaction.set_limit_class(LimitClass {
             sender,
             payer,
+            classification_generation: 0,
             sender_locked: false,
+            payer_locked: payer_trusted,
             payer_trusted,
             payer_balance: U256::from(1_000_000u64),
             max_cost: U256::from(1_000u64),
@@ -2028,6 +2092,31 @@ mod tests {
         (BaseTransactionPool::new(pool, ordering).with_guard_limits(GuardLimits::default()), client)
     }
 
+    #[test]
+    fn expiry_refires_bucket_below_previous_horizon() {
+        let (pool, _) = build_integration_pool();
+        let now = 1_000;
+        pool.expire_due_buckets(now);
+
+        // This is valid when admitted after the update above, but integer
+        // bucketing places it one bucket below that update's lookahead horizon.
+        let expiry = now + 1;
+        let transaction = classified_eip8130(
+            Eip8130Constants::NONCE_KEY_MAX,
+            0,
+            Address::repeat_byte(0xA1),
+            Address::repeat_byte(0xA1),
+            false,
+            Some(expiry),
+        );
+        pool.guard.write().try_admit(admission_for(&transaction).unwrap()).unwrap();
+        assert_eq!(pool.guard.read().len(), 1);
+
+        pool.expire_due_buckets(now + InvalidationKey::EXPIRY_BUCKET_SECS);
+
+        assert!(pool.guard.read().is_empty());
+    }
+
     fn fund(client: &MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>, account: Address) {
         client.add_account(
             account,
@@ -2115,7 +2204,7 @@ mod tests {
         let result = pool.add_transaction(TransactionOrigin::Local, over).await;
         let err = result.expect_err("over-cap 8130 tx must be rejected by the guard");
         assert!(
-            err.to_string().contains("sender EIP-8130 mempool limit"),
+            err.to_string().contains("sender EIP-8130 signature limit"),
             "unexpected rejection: {err}"
         );
         // Rollback leaves no trace: the rejected tx is not in the pool.

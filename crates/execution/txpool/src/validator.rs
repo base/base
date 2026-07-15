@@ -1,6 +1,6 @@
 use std::{
     any::Any,
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -20,7 +20,7 @@ use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_common_genesis::DaFootprintGasScalarUpdate;
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_eip8130::{
-    AccountConfigurationStorage, ApplyError, AuthorizeError, FeeCheck, IntrinsicGas,
+    AccountConfigurationStorage, AccountState, ApplyError, AuthorizeError, FeeCheck, IntrinsicGas,
     IntrinsicGasInput, NonceError, NonceMode, NonceValidator, Operation, ResolvedActor,
     TransactionAuthorizer, TxAuthError,
 };
@@ -77,6 +77,11 @@ pub enum BaseTxPoolError {
 struct Eip8130ValidationState {
     sender: Address,
     payer: Address,
+    /// Limit-class cache generation observed when validation began.
+    classification_generation: u64,
+    /// Payer balance read from the validation state, before any conceptual
+    /// payer-authentication charge used by reth's validity outcome.
+    payer_balance: U256,
     payer_balance_after_auth: U256,
     sender_nonce: u64,
     sender_bytecode_hash: Option<B256>,
@@ -91,6 +96,9 @@ struct Eip8130ValidationState {
     /// Whether the sender's owner config is locked (`now < unlocks_at`), giving
     /// a stable auth surface and an unlimited sender admission dimension.
     sender_locked: bool,
+    /// Whether the payer's owner config is locked, giving a stable sponsorship
+    /// signature surface. Equals `sender_locked` for self-pay transactions.
+    payer_locked: bool,
     /// Whether the payer is balance-bounded ("trusted"): locked **and**
     /// delegated to the high-rate account implementation, which blocks ETH
     /// transfers while locked so `Σ max_cost ≤ balance` is a true drain bound.
@@ -108,6 +116,11 @@ struct Eip8130ValidationState {
 /// first in the contract's sequential layout. Mirrors
 /// [`AccountConfigurationStorage`].
 const ACCOUNT_CONFIG_ACTOR_CONFIG_BASE_SLOT: u64 = 0;
+/// Maximum number of account classifications retained between admissions.
+const LIMIT_CLASS_CACHE_CAPACITY: usize = 100_000;
+
+/// Cached lock state and trusted-delegation classification by account.
+pub type LimitClassCache = HashMap<Address, (Option<AccountState>, Option<bool>)>;
 
 /// Base storage slot of the `AccountConfiguration` `_accountState` mapping
 /// (`mapping(address account => AccountState)`), fourth in the contract's
@@ -556,6 +569,17 @@ pub struct BaseTransactionValidator<Client, Tx, Evm> {
     /// Seeded with [`Eip8130Contracts::DEFAULT_HIGH_RATE_ACCOUNT`]; operators may
     /// extend it as new trusted wallet implementations ship.
     trusted_delegation_targets: Arc<AddressSet>,
+    /// Cached account-state words and trusted-delegation decisions, keyed by
+    /// account. Entries are invalidated from the same state-diff feed as pooled
+    /// transactions.
+    limit_class_cache: Arc<RwLock<LimitClassCache>>,
+    /// Reverse mapping from cached account-state storage slot to account, used
+    /// for exact cache invalidation without scanning the cache.
+    limit_class_cache_slots: Arc<RwLock<HashMap<B256, Address>>>,
+    /// Advances whenever a state diff can invalidate a cached classification.
+    /// Admission compares this with the generation captured during validation,
+    /// closing the validation/invalidation TOCTOU window.
+    limit_class_cache_generation: Arc<AtomicU64>,
 }
 
 impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
@@ -628,7 +652,72 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
         }
         let mut merged = (*self.trusted_delegation_targets).clone();
         merged.extend(targets);
-        Self { trusted_delegation_targets: Arc::new(merged), ..self }
+        Self {
+            trusted_delegation_targets: Arc::new(merged),
+            limit_class_cache: Arc::default(),
+            limit_class_cache_slots: Arc::default(),
+            limit_class_cache_generation: Arc::default(),
+            ..self
+        }
+    }
+
+    /// Returns the current lock/trusted-classification cache generation.
+    pub fn limit_class_cache_generation(&self) -> u64 {
+        self.limit_class_cache_generation.load(Ordering::Acquire)
+    }
+
+    /// Invalidates cached lock/trusted classifications affected by executed
+    /// state changes.
+    ///
+    /// Account-state writes are matched through their concrete mapping slots;
+    /// bytecode changes clear the trusted-delegation decision for that account.
+    pub fn invalidate_limit_class_cache(&self, diffs: &[crate::AccountStateDiff]) {
+        let mut cache = self.limit_class_cache.write();
+        let mut slots = self.limit_class_cache_slots.write();
+        let mut changed = false;
+
+        for diff in diffs {
+            if diff.code_changed {
+                changed = true;
+                let remove = cache.get_mut(&diff.address).is_some_and(|entry| {
+                    entry.1 = None;
+                    entry.0.is_none()
+                });
+                if remove {
+                    cache.remove(&diff.address);
+                }
+            }
+
+            if diff.address != AccountConfigurationStorage::ADDRESS {
+                continue;
+            }
+            for slot in &diff.changed_slots {
+                changed = true;
+                let Some(account) = slots.remove(slot) else {
+                    continue;
+                };
+                let remove = cache.get_mut(&account).is_some_and(|entry| {
+                    entry.0 = None;
+                    entry.1.is_none()
+                });
+                if remove {
+                    cache.remove(&account);
+                }
+            }
+        }
+        if changed {
+            self.limit_class_cache_generation.fetch_add(1, Ordering::Release);
+        }
+    }
+
+    /// Clears every cached lock/trusted classification after a gap in the
+    /// state-diff feed.
+    pub fn clear_limit_class_cache(&self) {
+        let mut cache = self.limit_class_cache.write();
+        let mut slots = self.limit_class_cache_slots.write();
+        cache.clear();
+        slots.clear();
+        self.limit_class_cache_generation.fetch_add(1, Ordering::Release);
     }
 }
 
@@ -666,6 +755,9 @@ where
             block_info: Arc::new(block_info),
             require_l1_data_gas_fee: true,
             trusted_delegation_targets: Arc::new(Self::default_trusted_delegation_targets()),
+            limit_class_cache: Arc::default(),
+            limit_class_cache_slots: Arc::default(),
+            limit_class_cache_generation: Arc::default(),
         }
     }
 
@@ -760,9 +852,11 @@ where
             transaction.set_limit_class(LimitClass {
                 sender: state.sender,
                 payer: state.payer,
+                classification_generation: state.classification_generation,
                 sender_locked: state.sender_locked,
+                payer_locked: state.payer_locked,
                 payer_trusted: state.payer_trusted,
-                payer_balance: state.payer_balance_after_auth,
+                payer_balance: state.payer_balance,
                 max_cost: state.payer_max_cost,
             });
             let outcome = TransactionValidationOutcome::Valid {
@@ -837,6 +931,7 @@ where
         &self,
         signed: &Eip8130Signed,
     ) -> Result<Eip8130ValidationState, InvalidPoolTransactionError> {
+        let classification_generation = self.limit_class_cache_generation();
         let local_chain_id = self.inner.chain_spec().chain().id();
         let now = self.block_timestamp();
         let state = self.client().latest().map_err(|error| Self::provider_unavailable(error))?;
@@ -962,9 +1057,10 @@ where
         // if execution finds the sender already has code, `auto_delegate_codeless_sender`
         // is a no-op and the reserved gas flows into execution gas instead.
         let sender_auto_delegated = Self::sender_auto_delegated(&signed.tx().account_changes);
+        let encoded = self.eip8130_encoded(signed);
         let intrinsic = IntrinsicGas::compute(
             signed,
-            self.eip8130_encoded(signed).as_ref(),
+            encoded.as_ref(),
             &IntrinsicGasInput::new(nonce_key_first_use, sender_auto_delegated),
         )
         .map_err(|_| Self::eip8130_error("intrinsic gas computation failed"))?;
@@ -1036,22 +1132,75 @@ where
         // Admission-limit classification. Both reads degrade to the strictest
         // interpretation on failure (not locked / not trusted) so a flaky read
         // can never *grant* elevated mempool access.
-        let sender_locked = Self::is_account_locked(&*state, local_chain_id, now, sender);
-        let payer_trusted = (payer == sender && sender_locked
-            || Self::is_account_locked(&*state, local_chain_id, now, payer))
-            && self.is_high_rate_account(&*state, payer);
+        let (sender_locked_now, sender_unlocks_at) =
+            self.account_lock(&*state, local_chain_id, now, sender, classification_generation);
+        let (payer_locked_now, payer_unlocks_at) = if payer == sender {
+            (sender_locked_now, sender_unlocks_at)
+        } else {
+            self.account_lock(&*state, local_chain_id, now, payer, classification_generation)
+        };
+        // Do not grant an exemption whose unlock bucket may already have fired.
+        // Charging the normal count for near-term unlocks is conservative and
+        // avoids retaining an unbounded set after a time-only state transition.
+        let lock_horizon = now.saturating_add(2 * InvalidationKey::EXPIRY_BUCKET_SECS);
+        let sender_locked = sender_locked_now
+            && sender_unlocks_at.is_none_or(|unlocks_at| unlocks_at > lock_horizon);
+        let payer_locked =
+            payer_locked_now && payer_unlocks_at.is_none_or(|unlocks_at| unlocks_at > lock_horizon);
+        let payer_trusted =
+            payer_locked && self.is_high_rate_account(&*state, payer, classification_generation);
+
+        // Transactions admitted through a lock exemption must be removed if the
+        // lock state changes or a pending unlock reaches its timestamp. Without
+        // these keys, an account could retain an unbounded set after its config
+        // becomes mutable again.
+        if sender_locked {
+            watch_set.push(InvalidationKey::Slot {
+                address: AccountConfigurationStorage::ADDRESS,
+                slot: Self::account_state_slot(sender),
+            });
+            if let Some(unlocks_at) = sender_unlocks_at {
+                watch_set.push(InvalidationKey::expiry_bucket(unlocks_at));
+            }
+        }
+        if payer != sender && payer_locked {
+            watch_set.push(InvalidationKey::Slot {
+                address: AccountConfigurationStorage::ADDRESS,
+                slot: Self::account_state_slot(payer),
+            });
+            if let Some(unlocks_at) = payer_unlocks_at {
+                watch_set.push(InvalidationKey::expiry_bucket(unlocks_at));
+            }
+        }
+        if payer_trusted {
+            watch_set.push(InvalidationKey::CodeHash(payer));
+        }
 
         let gas_charge = FeeCheck::max_fee_charge(
             signed.tx().gas_limit,
             intrinsic.payer_auth,
             signed.tx().max_fee_per_gas,
         );
+        let additional_fee_charge = if self.requires_l1_data_gas_fee() {
+            let mut l1_block_info = self.block_info.l1_block_info.read().clone();
+            let spec_id = BaseSpecId::from_timestamp(self.chain_spec(), self.block_timestamp());
+            l1_block_info.tx_cost(
+                &encoded,
+                U256::from(FeeCheck::max_chargeable_gas(
+                    signed.tx().gas_limit,
+                    intrinsic.payer_auth,
+                )),
+                spec_id,
+            )
+        } else {
+            U256::ZERO
+        };
         // A self-paying payer is also charged the transaction's value; a distinct
         // sponsor pays gas only (the sender funds value).
         let payer_max_cost = if payer == sender {
-            gas_charge.saturating_add(signed.tx().value())
+            gas_charge.saturating_add(additional_fee_charge).saturating_add(signed.tx().value())
         } else {
-            gas_charge
+            gas_charge.saturating_add(additional_fee_charge)
         };
 
         let manifest = WatchManifest::new(config_reads, payer, payer_max_cost, effective_expiry);
@@ -1059,42 +1208,95 @@ where
         Ok(Eip8130ValidationState {
             sender,
             payer,
+            classification_generation,
+            payer_balance: payer_account.balance,
             payer_balance_after_auth: payer_account.balance.saturating_sub(payer_auth_charge),
             sender_nonce,
             sender_bytecode_hash: sender_account.bytecode_hash,
             payer_auth: intrinsic.payer_auth,
             watch_set,
             sender_locked,
+            payer_locked,
             payer_trusted,
             payer_max_cost,
             manifest,
         })
     }
 
-    /// Returns whether `account` is owner-locked in the `AccountConfiguration`
-    /// system contract (`now < unlocks_at`). Any read failure is treated as
-    /// **not locked** (the strict default for admission limits).
-    fn is_account_locked(
+    /// Returns whether `account` is owner-locked and, for a pending unlock, the
+    /// timestamp at which the lock exemption expires. Any read failure is
+    /// treated as **not locked** (the strict default for admission limits).
+    fn account_lock(
+        &self,
         state: &dyn StateProvider,
         local_chain_id: u64,
         now: u64,
         account: Address,
-    ) -> bool {
-        let mut storage = StateProviderPrecompileStorage::new(state, local_chain_id, now);
-        StorageCtx::enter(&mut storage, |ctx| {
-            AccountConfigurationStorage::new(ctx).is_locked(account, now).unwrap_or(false)
-        })
+        classification_generation: u64,
+    ) -> (bool, Option<u64>) {
+        let account_state = if let Some(account_state) =
+            self.limit_class_cache.read().get(&account).and_then(|entry| entry.0)
+        {
+            account_state
+        } else {
+            let mut storage = StateProviderPrecompileStorage::new(state, local_chain_id, now);
+            let Some(account_state) = StorageCtx::enter(&mut storage, |ctx| {
+                AccountConfigurationStorage::new(ctx).get_account_state(account).ok()
+            }) else {
+                return (false, None);
+            };
+
+            let mut cache = self.limit_class_cache.write();
+            let mut slots = self.limit_class_cache_slots.write();
+            if classification_generation == self.limit_class_cache_generation() {
+                if !cache.contains_key(&account) && cache.len() >= LIMIT_CLASS_CACHE_CAPACITY {
+                    cache.clear();
+                    slots.clear();
+                }
+                cache.entry(account).or_default().0 = Some(account_state);
+                slots.insert(Self::account_state_slot(account), account);
+            }
+            account_state
+        };
+
+        let locked = account_state.is_locked(now);
+        let unlocks_at = (locked
+            && account_state.flags & Eip8130Constants::FLAG_UNLOCK_INITIATED != 0)
+            .then_some(account_state.lock_union);
+        (locked, unlocks_at)
     }
 
     /// Returns whether `account`'s code delegates to a trusted high-rate account
     /// implementation (one of [`Self::trusted_delegation_targets`]), whose
     /// bytecode blocks ETH transfers while locked. Any read failure or a
     /// non-delegated / differently-delegated account returns `false`.
-    fn is_high_rate_account(&self, state: &dyn StateProvider, account: Address) -> bool {
-        Self::delegation_target(state, account)
-            .ok()
-            .flatten()
-            .is_some_and(|target| self.trusted_delegation_targets.contains(&target))
+    fn is_high_rate_account(
+        &self,
+        state: &dyn StateProvider,
+        account: Address,
+        classification_generation: u64,
+    ) -> bool {
+        if let Some(trusted) = self.limit_class_cache.read().get(&account).and_then(|entry| entry.1)
+        {
+            return trusted;
+        }
+
+        let Ok(target) = Self::delegation_target(state, account) else {
+            return false;
+        };
+        let trusted =
+            target.is_some_and(|target| self.trusted_delegation_targets.contains(&target));
+
+        let mut cache = self.limit_class_cache.write();
+        let mut slots = self.limit_class_cache_slots.write();
+        if classification_generation == self.limit_class_cache_generation() {
+            if !cache.contains_key(&account) && cache.len() >= LIMIT_CLASS_CACHE_CAPACITY {
+                cache.clear();
+                slots.clear();
+            }
+            cache.entry(account).or_default().1 = Some(trusted);
+        }
+        trusted
     }
 
     /// Reads the EIP-7702/8130 delegation target of `account`
@@ -1847,6 +2049,7 @@ mod tests {
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_eip8130::{AccountChangeApplier, ConfigChangeAuthorizer};
     use base_execution_evm::BaseEvmConfig;
+    use base_precompile_storage::StorageKey;
     use base_test_utils::Account;
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
     use reth_transaction_pool::{
@@ -2799,6 +3002,65 @@ mod tests {
         }
     }
 
+    #[test]
+    fn eip8130_payer_max_cost_includes_l1_and_operator_fees() {
+        let chain_config = ChainConfig::mainnet();
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().cobalt_activated().build());
+        let signer = PrivateKeySigner::random();
+        let sender = signer.address();
+        let tx = minimal_valid_eoa_tx();
+        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let signed =
+            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+
+        let client = MockEthProvider::<BasePrimitives>::new()
+            .with_chain_spec(Arc::clone(&chain_spec))
+            .with_genesis_block();
+        client
+            .add_account(sender, ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64)));
+        let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
+        let inner = EthTransactionValidatorBuilder::new(client, evm_config)
+            .no_shanghai()
+            .no_cancun()
+            .build(InMemoryBlobStore::default());
+        let validator: TestValidator =
+            BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default());
+
+        let isthmus_data = decode(ISTHMUS_L1_INFO_DATA_HEX).expect("valid hex fixture");
+        let header = alloy_consensus::Header {
+            timestamp: chain_config.isthmus_timestamp,
+            ..Default::default()
+        };
+        let l1_info_tx: BaseTransactionSigned = TxDeposit {
+            source_hash: Default::default(),
+            from: Address::ZERO,
+            to: TxKind::Create,
+            mint: 0,
+            value: U256::ZERO,
+            gas_limit: 0,
+            is_system_transaction: false,
+            input: isthmus_data.clone().into(),
+        }
+        .into();
+        validator.update_l1_block_info(&header, Some(&l1_info_tx));
+
+        let state = validator.validate_eip8130_full(&signed).expect("valid funded EIP-8130 tx");
+        let encoded = validator.eip8130_encoded(&signed);
+        let max_gas = FeeCheck::max_chargeable_gas(signed.tx().gas_limit, state.payer_auth);
+        let gas_charge = FeeCheck::max_fee_charge(
+            signed.tx().gas_limit,
+            state.payer_auth,
+            signed.tx().max_fee_per_gas,
+        );
+        let spec_id = BaseSpecId::from_timestamp(&chain_spec, chain_config.isthmus_timestamp);
+        let mut l1_block_info = base_execution_evm::parse_l1_info(&isthmus_data).unwrap();
+        let additional_fees = l1_block_info.tx_cost(&encoded, U256::from(max_gas), spec_id);
+
+        assert!(!additional_fees.is_zero(), "fixture must charge L1/operator fees");
+        assert_eq!(state.payer_max_cost, gas_charge.saturating_add(additional_fees));
+        assert_eq!(state.manifest.payer_max_cost(), state.payer_max_cost);
+    }
+
     /// Builds a K1 authenticator-prefixed auth blob (`K1(20) || r || s || v`,
     /// `v` in `{27, 28}`, low-s) over `hash` for the configured-actor wire form.
     fn k1_auth_blob(signer: &PrivateKeySigner, hash: B256) -> Bytes {
@@ -2950,8 +3212,6 @@ mod tests {
 
     #[test]
     fn actor_config_slot_matches_canonical_nested_mapping_slot() {
-        use base_precompile_storage::StorageKey;
-
         let account = Address::repeat_byte(0xAB);
         let actor_id = B256::repeat_byte(0xCD);
 
@@ -2965,13 +3225,39 @@ mod tests {
 
     #[test]
     fn account_state_slot_matches_canonical_mapping_slot() {
-        use base_precompile_storage::StorageKey;
-
         let account = Address::repeat_byte(0x11);
         let expected = b256_from_u256(
             account.mapping_slot(U256::from(ACCOUNT_CONFIG_ACCOUNT_STATE_BASE_SLOT)),
         );
         assert_eq!(TestValidator::account_state_slot(account), expected);
+    }
+
+    #[test]
+    fn state_diff_invalidates_lock_and_trusted_cache_dimensions() {
+        let validator = build_test_validator();
+        let account = Address::repeat_byte(0x12);
+        let account_state_slot = TestValidator::account_state_slot(account);
+        validator
+            .limit_class_cache
+            .write()
+            .insert(account, (Some(AccountState::from_word(U256::ZERO)), Some(true)));
+        validator.limit_class_cache_slots.write().insert(account_state_slot, account);
+
+        validator.invalidate_limit_class_cache(&[crate::AccountStateDiff {
+            address: AccountConfigurationStorage::ADDRESS,
+            changed_slots: vec![account_state_slot],
+            ..Default::default()
+        }]);
+        assert_eq!(validator.limit_class_cache.read().get(&account), Some(&(None, Some(true))));
+        assert!(!validator.limit_class_cache_slots.read().contains_key(&account_state_slot));
+
+        validator.invalidate_limit_class_cache(&[crate::AccountStateDiff {
+            address: account,
+            code_changed: true,
+            ..Default::default()
+        }]);
+        assert!(!validator.limit_class_cache.read().contains_key(&account));
+        assert_eq!(validator.limit_class_cache_generation(), 2);
     }
 
     #[test]

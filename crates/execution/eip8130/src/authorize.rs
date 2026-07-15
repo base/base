@@ -200,12 +200,7 @@ impl ActorAuthorizer {
         } else {
             storage.get_policy_manager(account, actor_id)?
         };
-        Ok(ResolvedActor {
-            actor_id,
-            scope: config.scope,
-            policy_target,
-            expiry: config.expiry,
-        })
+        Ok(ResolvedActor { actor_id, scope: config.scope, policy_target, expiry: config.expiry })
     }
 }
 

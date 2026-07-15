@@ -10,9 +10,9 @@
 //! Keys carry one of two invalidation semantics:
 //!
 //! * **Exact-match** ([`InvalidationKey::ProtocolNonce`],
-//!   [`InvalidationKey::Slot`]): the transaction validated against a specific
-//!   value; the instant that value changes the transaction is dead and is
-//!   dropped unconditionally.
+//!   [`InvalidationKey::CodeHash`], [`InvalidationKey::Slot`]): the transaction
+//!   validated against a specific value; the instant that value changes the
+//!   transaction is dead and is dropped unconditionally.
 //! * **Threshold** ([`InvalidationKey::Balance`]): balance moves every block, so
 //!   a change triggers a re-evaluation against a running reservation rather than
 //!   an automatic drop. The threshold policy itself lives in the payer
@@ -38,6 +38,9 @@ pub enum InvalidationKey {
     Balance(Address),
     /// Protocol (EOA) nonce of an account. Exact-match semantics.
     ProtocolNonce(Address),
+    /// Account bytecode hash. Exact-match semantics; used when admission relies
+    /// on a payer remaining delegated to a trusted implementation.
+    CodeHash(Address),
     /// A raw storage slot `(contract address, slot)` — e.g. an actor-config or
     /// account-state/lock slot in the EIP-8130 `AccountConfiguration` contract,
     /// or a 2D nonce-manager channel slot. Exact-match semantics.

@@ -8,7 +8,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod validator;
-pub use validator::{BaseL1BlockInfo, BaseTransactionValidator, BaseTxPoolError};
+pub use validator::{BaseL1BlockInfo, BaseTransactionValidator, BaseTxPoolError, LimitClassCache};
 
 mod best;
 
