@@ -204,9 +204,6 @@ pub enum BaseTimeMetadataError {
     /// The transaction at `tx[1]` is not a deposit transaction.
     #[error("BaseTime metadata transaction is not a deposit")]
     NotDeposit,
-    /// Another authorized depositor deposit targets `BaseTime` after the canonical transaction.
-    #[error("duplicate BaseTime metadata deposit after tx[1]")]
-    Duplicate,
     /// The deposit source hash does not commit to the block number and `BaseTime` domain.
     #[error("invalid BaseTime metadata source hash")]
     InvalidSourceHash,
@@ -364,29 +361,6 @@ mod tests {
             BaseTimeUpdateTx::extract_from_transactions(&transactions, 9),
             Err(BaseTimeMetadataError::NotDeposit)
         );
-    }
-
-    #[test]
-    fn rejects_duplicate_authorized_base_time_deposit_after_tx_one() {
-        let transactions = vec![
-            TxDeposit::default().seal_slow().into(),
-            base_time_deposit(9, 600).seal_slow().into(),
-            base_time_deposit(9, 800).seal_slow().into(),
-        ];
-
-        assert_eq!(
-            BaseTimeUpdateTx::extract_from_transactions(&transactions, 9),
-            Err(BaseTimeMetadataError::Duplicate)
-        );
-
-        let mut unauthorized = base_time_deposit(9, 800);
-        unauthorized.from = Address::ZERO;
-        let transactions = vec![
-            TxDeposit::default().seal_slow().into(),
-            base_time_deposit(9, 600).seal_slow().into(),
-            unauthorized.seal_slow().into(),
-        ];
-        assert!(BaseTimeUpdateTx::extract_from_transactions(&transactions, 9).is_ok());
     }
 
     #[test]
