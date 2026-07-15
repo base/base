@@ -313,9 +313,7 @@ impl AccountChange {
     /// RLP-encoded, e.g. `0x00` -> `0x80`).
     fn rlp_payload_length(&self) -> usize {
         let fields_len = match self {
-            Self::Create(b) => {
-                b.user_salt.length() + b.code.length() + b.initial_actors.length()
-            }
+            Self::Create(b) => b.user_salt.length() + b.code.length() + b.initial_actors.length(),
             Self::ConfigChange(b) => {
                 b.chain_id.length()
                     + b.sequence.length()
@@ -457,7 +455,10 @@ mod tests {
         });
         let mut buf = Vec::new();
         ac.encode(&mut buf);
-        assert_eq!(first_list_element_type_byte(&buf), Eip8130Constants::ACCOUNT_CHANGE_TYPE_CREATE);
+        assert_eq!(
+            first_list_element_type_byte(&buf),
+            Eip8130Constants::ACCOUNT_CHANGE_TYPE_CREATE
+        );
         assert_eq!(buf.len(), ac.length());
         let decoded = AccountChange::decode(&mut buf.as_slice()).unwrap();
         assert_eq!(ac, decoded);
@@ -479,7 +480,10 @@ mod tests {
         });
         let mut buf = Vec::new();
         ac.encode(&mut buf);
-        assert_eq!(first_list_element_type_byte(&buf), Eip8130Constants::ACCOUNT_CHANGE_TYPE_CONFIG);
+        assert_eq!(
+            first_list_element_type_byte(&buf),
+            Eip8130Constants::ACCOUNT_CHANGE_TYPE_CONFIG
+        );
         assert_eq!(buf.len(), ac.length());
         let decoded = AccountChange::decode(&mut buf.as_slice()).unwrap();
         assert_eq!(ac, decoded);
