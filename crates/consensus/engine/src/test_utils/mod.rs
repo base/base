@@ -5,8 +5,8 @@ pub use attributes::TestAttributesBuilder;
 
 mod engine_client;
 pub use engine_client::{
-    MockEngineClient, MockEngineClientBuilder, MockEngineStorage, MockL2BlockError,
-    StatefulEl, test_engine_client_builder,
+    MockEngineClient, MockEngineClientBuilder, MockEngineStorage, MockL2BlockError, StatefulEl,
+    test_engine_client_builder,
 };
 
 mod engine_state;

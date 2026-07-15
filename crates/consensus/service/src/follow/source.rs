@@ -48,6 +48,12 @@ pub trait RemoteClient: Debug + Send + Sync {
         &self,
         number: u64,
     ) -> Result<BaseExecutionPayloadEnvelope, RemoteL2ClientError>;
+
+    /// Fetches a block by hash and converts it to an [`BaseExecutionPayloadEnvelope`].
+    async fn get_payload_by_hash(
+        &self,
+        hash: B256,
+    ) -> Result<BaseExecutionPayloadEnvelope, RemoteL2ClientError>;
 }
 
 /// Client that polls a source L2 execution layer node for block data and
@@ -115,6 +121,42 @@ impl RemoteClient for RemoteL2Client {
             .map_err(|e| RemoteL2ClientError::FetchBlock { tag: format!("{number}"), source: e })?
             .ok_or_else(|| RemoteL2ClientError::BlockNotFound(format!("{number}")))?;
         let rpc_block = rpc_block.map_header(|header| header.into_inner());
+
+        let block_hash = rpc_block.header.hash;
+        let parent_beacon_block_root = rpc_block.header.parent_beacon_block_root;
+
+        let txs: Vec<BaseTxEnvelope> = rpc_block
+            .transactions
+            .into_transactions()
+            .map(|tx| tx.inner.inner.into_inner())
+            .collect();
+
+        let consensus_block: Block<BaseTxEnvelope> = Block {
+            header: rpc_block.header.inner,
+            body: alloy_consensus::BlockBody {
+                transactions: txs,
+                ommers: vec![],
+                withdrawals: rpc_block.withdrawals,
+            },
+        };
+
+        let (execution_payload, _sidecar) =
+            BaseExecutionPayload::from_block_unchecked(block_hash, &consensus_block);
+
+        Ok(BaseExecutionPayloadEnvelope { parent_beacon_block_root, execution_payload })
+    }
+
+    async fn get_payload_by_hash(
+        &self,
+        hash: B256,
+    ) -> Result<BaseExecutionPayloadEnvelope, RemoteL2ClientError> {
+        let rpc_block = self
+            .provider
+            .get_block_by_hash(hash)
+            .full()
+            .await
+            .map_err(|e| RemoteL2ClientError::FetchBlock { tag: format!("{hash}"), source: e })?
+            .ok_or_else(|| RemoteL2ClientError::BlockNotFound(format!("{hash}")))?;
 
         let block_hash = rpc_block.header.hash;
         let parent_beacon_block_root = rpc_block.header.parent_beacon_block_root;

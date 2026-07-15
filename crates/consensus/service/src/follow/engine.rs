@@ -4,11 +4,11 @@ use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_engine::{
-    EngineClient, EngineState, EngineSyncStateUpdate, EngineTask, EngineTaskExt, InsertTask,
-    SynchronizeTask,
+    EngineClient, EngineState, EngineSyncStateUpdate, EngineTask, EngineTaskError,
+    EngineTaskErrorSeverity, EngineTaskExt, InsertTask, SynchronizeTask,
 };
 use base_protocol::L2BlockInfo;
-use tokio::sync::Mutex;
+use tokio::{sync::Mutex, task::yield_now};
 
 use crate::follow::error::FollowError;
 
@@ -17,7 +17,7 @@ pub(super) trait FollowEngine: Debug + Send + Sync {
     async fn insert_payload(
         &self,
         envelope: BaseExecutionPayloadEnvelope,
-    ) -> Result<(), FollowError>;
+    ) -> Result<L2BlockInfo, FollowError>;
 
     async fn update_safe_finalized_blocks(
         &self,
@@ -62,16 +62,18 @@ impl<E: EngineClient + Debug + 'static> FollowEngine for EngineApiFollowEngine<E
     async fn insert_payload(
         &self,
         envelope: BaseExecutionPayloadEnvelope,
-    ) -> Result<(), FollowError> {
+    ) -> Result<L2BlockInfo, FollowError> {
         let task = InsertTask::unsafe_payload(
             Arc::clone(&self.client),
             Arc::clone(&self.rollup_config),
             envelope,
         );
+        let mut state = self.state.lock().await;
         EngineTask::Insert(Box::new(task))
-            .execute(&mut *self.state.lock().await)
+            .execute(&mut state)
             .await
-            .map_err(FollowError::engine_task)
+            .map_err(FollowError::engine_task)?;
+        Ok(state.sync_state.unsafe_head())
     }
 
     async fn update_safe_finalized_blocks(
@@ -121,7 +123,18 @@ impl<E: EngineClient + Debug + 'static> FollowEngine for EngineApiFollowEngine<E
                 ..Default::default()
             },
         );
-        task.execute(&mut state).await.map_err(FollowError::engine_task)?;
+        loop {
+            match task.execute(&mut state).await {
+                Ok(()) => break,
+                Err(error) if error.severity() == EngineTaskErrorSeverity::Temporary => {
+                    // A transport error may mean the EL applied the FCU but the response was
+                    // lost. Repeating the same FCU reconciles the in-memory state once the EL
+                    // responds again.
+                    yield_now().await;
+                }
+                Err(error) => return Err(FollowError::engine_task(error)),
+            }
+        }
 
         if state.sync_state.unsafe_head().block_info.hash != ancestor.block_info.hash {
             return Err(FollowError::ResetToAncestorUnconfirmed {
@@ -272,6 +285,32 @@ mod tests {
             .expect("insert should finish after temporary error clears")
             .expect("insert task should not panic")
             .expect("temporary engine error should be retried");
+    }
+
+    #[tokio::test]
+    async fn reset_to_ancestor_retries_temporary_forkchoice_errors() {
+        let rollup_config = Arc::new(RollupConfig::default());
+        let client =
+            Arc::new(test_engine_client_builder().with_config(Arc::clone(&rollup_config)).build());
+        let ancestor = l2_block_info(1);
+        let engine = Arc::new(EngineApiFollowEngine::new(
+            Arc::clone(&client),
+            rollup_config,
+            l2_block_info(2),
+            ancestor,
+            ancestor,
+        ));
+
+        let reset_engine = Arc::clone(&engine);
+        let reset = tokio::spawn(async move { reset_engine.reset_to_ancestor(ancestor).await });
+        time::sleep(Duration::from_millis(10)).await;
+        client.set_fork_choice_updated_v3_response(valid_forkchoice_updated()).await;
+
+        time::timeout(Duration::from_secs(1), reset)
+            .await
+            .expect("reset should finish after temporary error clears")
+            .expect("reset task should not panic")
+            .expect("temporary forkchoice error should be retried");
     }
 
     #[tokio::test]
