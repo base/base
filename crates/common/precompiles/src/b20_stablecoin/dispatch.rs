@@ -20,7 +20,7 @@ use crate::{
     IB20::{self, IB20Calls as C},
     IB20Stablecoin::{self, IB20StablecoinCalls as SC},
     NoopPrecompileCallObserver, PermitArgs, Policy, PrecompileCallObserver, StablecoinAccounting,
-    StablecoinVersion, StablecoinVersions,
+    StablecoinV1, StablecoinVersion, StablecoinVersions,
     macros::decode_precompile_call,
 };
 
@@ -124,7 +124,7 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
         account: Address,
         sender: Address,
     ) -> base_precompile_storage::Result<()> {
-        StablecoinVersion::V1.implementation().grant_role_unchecked(self, role, account, sender)
+        StablecoinV1.grant_role_unchecked(self, role, account, sender)
     }
 
     /// Decodes calldata, observes the decoded operation, and routes it to `version` with optional

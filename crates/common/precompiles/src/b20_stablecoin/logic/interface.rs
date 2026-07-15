@@ -3,12 +3,10 @@
 use alloc::{string::String, vec::Vec};
 
 use alloy_primitives::{Address, B256, U256};
-use alloy_sol_types::SolEvent;
-use base_precompile_storage::{BasePrecompileError, Result};
+use base_precompile_storage::Result;
 
 use crate::{
-    B20StablecoinToken, B20TokenRole, Eip712Domain, IB20, PermitArgs, Policy, StablecoinAccounting,
-    Token,
+    B20StablecoinToken, Eip712Domain, IB20, PermitArgs, Policy, StablecoinAccounting, Token,
 };
 
 /// The stablecoin logic interface.
@@ -269,33 +267,6 @@ pub trait Stablecoin<S: StablecoinAccounting, P: Policy> {
     /// Returns the admin role for `role`.
     fn role_admin(&self, token: &B20StablecoinToken<S, P>, role: B256) -> Result<B256> {
         token.accounting().role_admin(role)
-    }
-
-    /// Grants `role` to `account` without checking caller authorization.
-    ///
-    /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and
-    /// the authorized [`grant_role`](Self::grant_role) path is not reachable. Bumps the
-    /// `DefaultAdmin` member count and emits `RoleGranted`.
-    fn grant_role_unchecked(
-        &self,
-        token: &mut B20StablecoinToken<S, P>,
-        role: B256,
-        account: Address,
-        sender: Address,
-    ) -> Result<()> {
-        if token.accounting().has_role(role, account)? {
-            return Ok(());
-        }
-        token.accounting_mut().set_role(role, account, true)?;
-        if role == B20TokenRole::DefaultAdmin.id() {
-            let current = token.accounting().role_member_count(role)?;
-            let next =
-                current.checked_add(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
-            token.accounting_mut().set_role_member_count(role, next)?;
-        }
-        token
-            .accounting_mut()
-            .emit_event(IB20::RoleGranted { role, account, sender }.encode_log_data())
     }
 
     // --- Computed reads: derive from storage but encode version-defined semantics ---
