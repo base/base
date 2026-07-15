@@ -1,7 +1,7 @@
 use std::{marker::PhantomData, sync::Arc};
 
 use alloy_consensus::BlockHeader;
-use alloy_primitives::{B256, Bytes, U256};
+use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_engine::{ExecutionPayloadEnvelopeV2, ExecutionPayloadV1};
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseBlock, Predeploys};
@@ -136,9 +136,8 @@ where
     /// Verifies upgrade-gated post-execution rules against the supplied parent state.
     ///
     /// Authoritative implementation of all Base-specific post-execution checks that require
-    /// access to parent state (currently: Isthmus' L2-to-L1 message-passer storage root).
-    /// Callers supply `parent_state` explicitly so engine pipelines can pass in-memory-aware
-    /// overlay providers when the parent block isn't canonical yet.
+    /// access to parent state. Callers supply `parent_state` explicitly so engine pipelines can
+    /// pass in-memory-aware overlay providers when the parent block isn't canonical yet.
     ///
     /// To add a check for a future upgrade, extend the body with another
     /// `if chain_spec.is_<X>_active_at_timestamp(...)` arm.
@@ -152,66 +151,100 @@ where
     where
         DB: StateProvider,
     {
-        if self.chain_spec().is_zombie_active_at_timestamp(block.timestamp()) {
-            let claim = BaseTimeUpdateTx::extract_from_transactions(
-                &block.body().transactions,
-                block.number(),
-            )
-            .map_err(ConsensusError::other)?;
-            let storage_updates = state_updates.storages.get(&self.hashed_addr_base_time);
-            let committed_word = if let Some(value) = storage_updates.and_then(|storage| {
-                storage.storage.get(&self.hashed_slot_base_time_millis).copied()
-            }) {
-                value
-            } else if storage_updates.is_some_and(|storage| storage.wiped) {
-                U256::ZERO
-            } else {
-                parent_state
-                    .storage(Predeploys::BASE_TIME, BaseTime::TIMESTAMP_MILLIS_PART_SLOT.into())
-                    .map_err(ConsensusError::other)?
-                    .unwrap_or_default()
-            };
-            let committed = BaseTime::decode_timestamp_millis_part(committed_word);
-            if claim.timestamp_millis_part() != committed {
-                return Err(ConsensusError::other(
-                    BaseConsensusError::BaseTimeClaimCommittedMismatch {
-                        claim: claim.timestamp_millis_part(),
-                        committed,
-                    },
-                ));
-            }
+        let timestamp = block.timestamp();
 
-            if self.chain_spec().is_zombie_active_at_timestamp(parent_timestamp) {
-                let parent_word = parent_state
-                    .storage(Predeploys::BASE_TIME, BaseTime::TIMESTAMP_MILLIS_PART_SLOT.into())
-                    .map_err(ConsensusError::other)?
-                    .unwrap_or_default();
-                let parent_millis = BaseTime::decode_timestamp_millis_part(parent_word);
-                let parent = BaseTimeUpdateTx::new(parent_millis).map_err(|_| {
-                    ConsensusError::other(BaseConsensusError::InvalidParentBaseTimeMillis(
-                        parent_millis,
-                    ))
-                })?;
-                BaseTimeUpdateTx::validate_progression(
-                    parent_timestamp,
-                    &parent,
-                    block.timestamp(),
-                    &claim,
-                )
-                .map_err(ConsensusError::other)?;
-            }
+        if self.chain_spec().is_isthmus_active_at_timestamp(timestamp) {
+            self.validate_isthmus_post_execution(state_updates, &parent_state, block.header())?;
         }
 
-        if self.chain_spec().is_isthmus_active_at_timestamp(block.timestamp()) {
-            let predeploy_storage_updates = state_updates
-                .storages
-                .get(&self.hashed_addr_l2tol1_msg_passer)
-                .cloned()
-                .unwrap_or_default();
-            isthmus::verify_withdrawals_root_prehashed(
-                predeploy_storage_updates,
-                parent_state,
-                block.header(),
+        if self.chain_spec().is_zombie_active_at_timestamp(timestamp) {
+            self.validate_base_time_post_execution(
+                state_updates,
+                &parent_state,
+                parent_timestamp,
+                block,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// Verifies the Isthmus L2-to-L1 message-passer storage root after block execution.
+    pub fn validate_isthmus_post_execution<DB, H>(
+        &self,
+        state_updates: &HashedPostState,
+        parent_state: &DB,
+        header: H,
+    ) -> Result<(), ConsensusError>
+    where
+        DB: StateProvider + ?Sized,
+        H: BlockHeader,
+    {
+        let predeploy_storage_updates = state_updates
+            .storages
+            .get(&self.hashed_addr_l2tol1_msg_passer)
+            .cloned()
+            .unwrap_or_default();
+        isthmus::verify_withdrawals_root_prehashed(predeploy_storage_updates, parent_state, header)
+            .map_err(ConsensusError::other)
+    }
+
+    /// Verifies the BaseTime claim, committed state, and block-to-block progression after block
+    /// execution.
+    pub fn validate_base_time_post_execution<DB>(
+        &self,
+        state_updates: &HashedPostState,
+        parent_state: &DB,
+        parent_timestamp: u64,
+        block: &RecoveredBlock<BaseBlock>,
+    ) -> Result<(), ConsensusError>
+    where
+        DB: StateProvider + ?Sized,
+    {
+        let claimed_base_time =
+            BaseTimeUpdateTx::extract_from_transactions(&block.body().transactions, block.number())
+                .map_err(ConsensusError::other)?;
+        let claimed_millis_part = claimed_base_time.timestamp_millis_part();
+
+        let read_parent_millis_part = || {
+            parent_state
+                .storage(Predeploys::BASE_TIME, BaseTime::TIMESTAMP_MILLIS_PART_SLOT.into())
+                .map(|word| BaseTime::decode_timestamp_millis_part(word.unwrap_or_default()))
+                .map_err(ConsensusError::other)
+        };
+
+        let storage_updates = state_updates.storages.get(&self.hashed_addr_base_time);
+        let updated_word = storage_updates
+            .and_then(|storage| storage.storage.get(&self.hashed_slot_base_time_millis));
+        let committed_millis_part = match updated_word {
+            Some(word) => BaseTime::decode_timestamp_millis_part(*word),
+            None if storage_updates.is_some_and(|storage| storage.wiped) => 0,
+            None => read_parent_millis_part()?,
+        };
+
+        if claimed_millis_part != committed_millis_part {
+            return Err(ConsensusError::other(
+                BaseConsensusError::BaseTimeClaimCommittedMismatch {
+                    claim: claimed_millis_part,
+                    committed: committed_millis_part,
+                },
+            ));
+        }
+
+        // A parent at the activation second is itself Zombie-active; its committed millis part
+        // distinguishes same-second slots. Skip progression only when the parent predates Zombie.
+        if self.chain_spec().is_zombie_active_at_timestamp(parent_timestamp) {
+            let parent_millis_part = read_parent_millis_part()?;
+            let parent_base_time = BaseTimeUpdateTx::new(parent_millis_part).map_err(|_| {
+                ConsensusError::other(BaseConsensusError::InvalidParentBaseTimeMillis(
+                    parent_millis_part,
+                ))
+            })?;
+            BaseTimeUpdateTx::validate_progression(
+                parent_timestamp,
+                &parent_base_time,
+                block.timestamp(),
+                &claimed_base_time,
             )
             .map_err(ConsensusError::other)?;
         }
@@ -277,35 +310,27 @@ where
         state_updates: &HashedPostState,
         block: &RecoveredBlock<Self::Block>,
     ) -> Result<(), ConsensusError> {
-        if self.chain_spec().is_zombie_active_at_timestamp(block.timestamp()) {
+        let timestamp = block.timestamp();
+        if self.chain_spec().is_isthmus_active_at_timestamp(timestamp) {
+            let parent_state =
+                self.provider.state_by_block_hash(block.parent_hash()).map_err(|err| {
+                    ConsensusError::Other(Arc::from(Box::<dyn core::error::Error + Send + Sync>::from(
+                        format!(
+                            "failed to load parent state for Isthmus withdrawals root validation: {err}"
+                        ),
+                    )))
+                })?;
+
+            self.validate_isthmus_post_execution(state_updates, &parent_state, block.header())?;
+        }
+
+        if self.chain_spec().is_zombie_active_at_timestamp(timestamp) {
             return Err(ConsensusError::other(
                 BaseConsensusError::BaseTimeValidationContextRequired,
             ));
         }
-        if !self.chain_spec().is_isthmus_active_at_timestamp(block.timestamp()) {
-            return Ok(());
-        }
 
-        let parent_state =
-            self.provider.state_by_block_hash(block.parent_hash()).map_err(|err| {
-                ConsensusError::Other(Arc::from(Box::<dyn core::error::Error + Send + Sync>::from(
-                    format!(
-                        "failed to load parent state for Isthmus withdrawals root validation: {err}"
-                    ),
-                )))
-            })?;
-
-        let predeploy_storage_updates = state_updates
-            .storages
-            .get(&self.hashed_addr_l2tol1_msg_passer)
-            .cloned()
-            .unwrap_or_default();
-        isthmus::verify_withdrawals_root_prehashed(
-            predeploy_storage_updates,
-            parent_state,
-            block.header(),
-        )
-        .map_err(ConsensusError::other)
+        Ok(())
     }
 
     fn convert_payload_to_block(
@@ -870,7 +895,12 @@ mod tests {
         state
     }
 
-    fn base_time_block(number: u64, timestamp: u64, millis_part: u16) -> RecoveredBlock<BaseBlock> {
+    fn base_time_block(
+        number: u64,
+        timestamp: u64,
+        millis_part: u16,
+        withdrawals_root: B256,
+    ) -> RecoveredBlock<BaseBlock> {
         let metadata = BaseTimeUpdateTx::new(millis_part)
             .expect("valid BaseTime metadata")
             .into_deposit_tx(number);
@@ -878,7 +908,7 @@ mod tests {
             header: Header {
                 number,
                 timestamp,
-                withdrawals_root: Some(EMPTY_ROOT_HASH),
+                withdrawals_root: Some(withdrawals_root),
                 ..Default::default()
             },
             body: BlockBody {
@@ -904,7 +934,7 @@ mod tests {
             &state_updates(committed_millis_part, wiped),
             parent_state(parent_millis_part),
             parent_timestamp,
-            &base_time_block(9, child_timestamp, claimed_millis_part),
+            &base_time_block(9, child_timestamp, claimed_millis_part, EMPTY_ROOT_HASH),
         )
     }
 
@@ -984,8 +1014,29 @@ mod tests {
     }
 
     #[test]
-    fn generic_post_execution_validation_fails_closed_after_zombie() {
-        let block = base_time_block(9, 42, 200);
+    fn generic_post_execution_validation_checks_isthmus_before_zombie() {
+        let block = base_time_block(9, 42, 200, EMPTY_ROOT_HASH);
+        let error =
+            PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
+                &zombie_validator(),
+                &HashedPostState::default(),
+                &block,
+            )
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            ConsensusError::Other(error)
+                if matches!(
+                    error.downcast_ref::<BaseConsensusError>(),
+                    Some(BaseConsensusError::L2WithdrawalsRootMismatch { .. })
+                )
+        ));
+    }
+
+    #[test]
+    fn generic_post_execution_validation_fails_closed_after_valid_isthmus() {
+        let block = base_time_block(9, 42, 200, B256::ZERO);
         let error =
             PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
                 &zombie_validator(),
