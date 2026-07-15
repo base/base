@@ -29,7 +29,7 @@ pub struct BaseUpgradeConfig {
     pub cobalt: Option<u64>,
     /// `zombie` sets the activation time for the Zombie network upgrade (200ms block support).
     /// Active if `zombie` != None && L2 block timestamp >= `Some(zombie)`, inactive otherwise.
-    #[cfg_attr(feature = "serde", serde(alias = "v4", skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(feature = "serde", serde(alias = "future", skip_serializing_if = "Option::is_none"))]
     pub zombie: Option<u64>,
 }
 
@@ -94,7 +94,7 @@ hardfork!(
         Beryl,
         /// Cobalt: Third Base-specific network upgrade.
         Cobalt,
-        /// Zombie: 200ms block support network upgrade.
+        /// Zombie: hardfork for future experimental features.
         Zombie,
     }
 );
@@ -175,7 +175,7 @@ impl BaseUpgrade {
             Self::Azul => 9,
             Self::Beryl => 10,
             Self::Cobalt => 11,
-            Self::Zombie => 12,
+            Self::Zombie => Self::EXECUTION_VARIANTS.len() - 1,
             Self::Delta | Self::PectraBlobSchedule => return None,
         })
     }
@@ -244,8 +244,6 @@ impl BaseUpgrade {
             "osaka" | "azul" | "baseazul" | "v1" => Self::Azul,
             "beryl" | "baseberyl" | "v2" => Self::Beryl,
             "cobalt" | "basecobalt" | "v3" => Self::Cobalt,
-            // Zombie is not yet L1-contract-backed; it cannot be addressed via the signal
-            // contract. Add "zombie" | "basezombie" | "v4" here when the L1 contract ships.
             _ => return None,
         };
         Some(upgrade)
