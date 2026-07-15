@@ -4,7 +4,7 @@ mod build;
 pub use build::{PayloadBuilder, UnsealedPayloadHandle};
 
 mod config;
-pub use config::SequencerConfig;
+pub use config::{SequencerCadenceConfig, SequencerConfig};
 
 mod origin_selector;
 #[cfg(test)]
@@ -22,6 +22,11 @@ pub use seal::{PayloadSealer, SealState, SealStepError, SealStepOutcome};
 
 mod ticker;
 pub use ticker::ScheduledTicker;
+
+mod timestamp;
+pub use timestamp::{
+    SequencerTimestamp, SequencerTimestampPlanner, SequencerTimestampPlannerError,
+};
 
 mod pool;
 pub use pool::PoolActivation;
