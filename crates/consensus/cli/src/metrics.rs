@@ -317,6 +317,7 @@ mod tests {
                     azul: Some(1_000),
                     beryl: Some(2_000),
                     cobalt: Some(3_000),
+                    zombie: None,
                 },
                 ..Default::default()
             },
@@ -370,6 +371,7 @@ mod tests {
                     azul: Some(1_000),
                     beryl: Some(1_000),
                     cobalt: Some(2_000),
+                    zombie: None,
                 },
                 ..Default::default()
             },
@@ -426,8 +428,11 @@ mod tests {
         let labels = upgrade_metric_labels();
         assert_eq!(labels.len(), BaseUpgrade::CONTRACT_VARIANTS.len());
 
-        let config_labels =
-            UpgradeConfig::default().iter().map(|(label, _)| label).collect::<Vec<_>>();
+        let config_labels = UpgradeConfig::default()
+            .iter()
+            .filter(|(label, _)| BaseUpgrade::from_contract_fork_name(label).is_some())
+            .map(|(label, _)| label)
+            .collect::<Vec<_>>();
 
         assert_eq!(labels.iter().map(|(_, label)| *label).collect::<Vec<_>>(), config_labels);
     }
