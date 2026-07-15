@@ -54,9 +54,9 @@ impl BerylLookup {
                     *address, upgrade, observer,
                 ))
             }
-            B20Variant::Asset => {
-                Some(B20AssetPrecompile::create_precompile_with_observer(*address, observer))
-            }
+            B20Variant::Asset => Some(B20AssetPrecompile::create_precompile_with_observer(
+                *address, upgrade, observer,
+            )),
         }
     }
 }

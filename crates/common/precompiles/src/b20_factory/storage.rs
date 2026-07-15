@@ -10,7 +10,7 @@ use crate::{
     ActivationRegistryStorage, B20_MAX_SUPPLY_CAP, B20AssetInit, B20AssetStorage, B20AssetToken,
     B20StablecoinInit, B20StablecoinStorage, B20StablecoinToken, B20TokenRole, B20Variant,
     BerylAuxiliaryMetrics, IB20Factory, NoopPrecompileCallObserver, PolicyHandle,
-    PrecompileCallObserver, RoleManaged, Token,
+    PrecompileCallObserver, Token,
 };
 
 /// Version byte for `B20StablecoinEventParams` inside `B20Created.variantParams`.
@@ -373,16 +373,20 @@ mod tests {
 
     use alloy_primitives::{Address, B256, Bytes, U256, address};
     use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
+    use base_common_genesis::BaseUpgrade;
     use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
     use revm::state::Bytecode;
 
     use super::FACTORY_MARKER_CODE_HASH;
     use crate::{
-        ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
-        B20_MAX_SUPPLY_CAP, B20AssetStorage, B20AssetToken, B20FactoryStorage,
-        B20StablecoinStorage, B20TokenRole, B20Variant, IB20, IB20Factory, Mintable, Permittable,
-        PolicyHandle, RoleManaged, Token, TokenAccounting, Transferable,
+        ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, Asset,
+        AssetAccounting, AssetV1, B20_MAX_SUPPLY_CAP, B20AssetStorage, B20AssetToken,
+        B20FactoryStorage, B20StablecoinStorage, B20TokenRole, B20Variant, IB20, IB20Factory,
+        PolicyHandle, Token, TokenAccounting,
     };
+
+    /// Upgrade at which the asset precompile is active for factory dispatch tests.
+    const TEST_UPGRADE: BaseUpgrade = BaseUpgrade::Beryl;
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
     const ACTIVATION_ADMIN_CONFIG: ActivationAdminConfig =
@@ -462,7 +466,7 @@ mod tests {
 
     fn dispatch_b20_success(ctx: StorageCtx<'_>, token_addr: Address, call: impl SolCall) -> Bytes {
         let mut token = token_at(token_addr, ctx);
-        let output = token.dispatch(ctx, &call.abi_encode()).unwrap();
+        let output = token.dispatch(ctx, &call.abi_encode(), TEST_UPGRADE).unwrap();
         assert!(!output.is_revert(), "token call reverted: {:?}", output.bytes);
         output.bytes
     }
@@ -974,9 +978,9 @@ mod tests {
             let bob = Address::repeat_byte(0xBB);
             let mut token = token_at(token_addr, ctx);
 
-            token.mint(alice, alice, U256::from(1_000u64), true).unwrap();
-            token.transfer(alice, bob, U256::from(300u64), false).unwrap();
-            token.mint(alice, alice, U256::from(200u64), true).unwrap();
+            AssetV1.mint(&mut token, alice, alice, U256::from(1_000u64), true).unwrap();
+            AssetV1.transfer(&mut token, alice, bob, U256::from(300u64), false).unwrap();
+            AssetV1.mint(&mut token, alice, alice, U256::from(200u64), true).unwrap();
 
             assert_eq!(token.accounting().balance_of(alice).unwrap(), U256::from(900u64));
             assert_eq!(token.accounting().balance_of(bob).unwrap(), U256::from(300u64));
@@ -1006,15 +1010,15 @@ mod tests {
             assert_eq!(second_token.token_address(), second);
 
             let (_, _, _, _, first_domain_address, _, _) =
-                first_token.eip712_domain(ctx.chain_id()).unwrap();
+                AssetV1.eip712_domain(&first_token, ctx.chain_id()).unwrap();
             let (_, _, _, _, second_domain_address, _, _) =
-                second_token.eip712_domain(ctx.chain_id()).unwrap();
+                AssetV1.eip712_domain(&second_token, ctx.chain_id()).unwrap();
 
             assert_eq!(first_domain_address, first);
             assert_eq!(second_domain_address, second);
             assert_ne!(
-                first_token.domain_separator(ctx.chain_id()).unwrap(),
-                second_token.domain_separator(ctx.chain_id()).unwrap()
+                AssetV1.domain_separator(&first_token, ctx.chain_id()).unwrap(),
+                AssetV1.domain_separator(&second_token, ctx.chain_id()).unwrap()
             );
         });
     }
@@ -1110,7 +1114,8 @@ mod tests {
             assert!(!ctx.has_bytecode(token_addr).unwrap());
 
             let mut token = token_at(token_addr, ctx);
-            let result = token.dispatch(ctx, &IB20::nameCall {}.abi_encode()).unwrap();
+            let result =
+                token.dispatch(ctx, &IB20::nameCall {}.abi_encode(), TEST_UPGRADE).unwrap();
 
             assert!(result.is_revert());
             assert!(result.bytes.is_empty());
@@ -1226,8 +1231,12 @@ mod tests {
                 B20AssetStorage::from_address(token_addr, ctx),
                 PolicyHandle::new(ctx),
             );
-            assert!(token.has_role(B20TokenRole::DefaultAdmin.id(), initial_admin).unwrap());
-            assert!(!token.has_role(B20TokenRole::DefaultAdmin.id(), Address::ZERO).unwrap());
+            assert!(
+                AssetV1.has_role(&token, B20TokenRole::DefaultAdmin.id(), initial_admin).unwrap()
+            );
+            assert!(
+                !AssetV1.has_role(&token, B20TokenRole::DefaultAdmin.id(), Address::ZERO).unwrap()
+            );
         });
 
         // Zero initialAdmin grants no role.
@@ -1253,8 +1262,12 @@ mod tests {
                 B20AssetStorage::from_address(token_addr, ctx),
                 PolicyHandle::new(ctx),
             );
-            assert!(!token.has_role(B20TokenRole::DefaultAdmin.id(), initial_admin).unwrap());
-            assert!(!token.has_role(B20TokenRole::DefaultAdmin.id(), Address::ZERO).unwrap());
+            assert!(
+                !AssetV1.has_role(&token, B20TokenRole::DefaultAdmin.id(), initial_admin).unwrap()
+            );
+            assert!(
+                !AssetV1.has_role(&token, B20TokenRole::DefaultAdmin.id(), Address::ZERO).unwrap()
+            );
         });
     }
 
