@@ -9,7 +9,7 @@ use alloy_eips::{Encodable2718, Typed2718};
 use alloy_evm::Database;
 #[cfg(any(test, feature = "test-utils"))]
 use alloy_primitives::B256;
-use alloy_primitives::{BlockHash, Bytes, TxHash, U256};
+use alloy_primitives::{Address, BlockHash, Bytes, TxHash, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use base_bundles::{MeterBundleResponse, RejectedTransaction, RejectionReason};
 use base_common_chains::Upgrades;
@@ -40,10 +40,92 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Level, debug, span, trace, warn};
 
 use crate::{
-    BuilderConfig, BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded, MeteredCandidate,
-    MeteringBuildPolicy, MeteringEstimate, PayloadTxsBounds, ResourceLimits, TxnExecutionError,
-    TxnOutcome,
+    BuildBudget, BuildPolicy, BuilderConfig, BuilderMetrics, CandidateOutcome, CandidateSource,
+    ExecutionInfo, ExecutionMeteringLimitExceeded, FlashblockCtx, MeteringBuildPolicy,
+    NextCandidate, PayloadTxsBounds, PolicyStep, RejectedCandidate,
+    ResourceLimits, SourcedCandidate, TxnExecutionError, TxnOutcome,
 };
+
+/// Adapts the transaction pool's best-transactions iterator to a [`CandidateSource`], applying
+/// bundle-window gating (target block, expiry, not-yet-valid) before yielding each candidate so
+/// bundle-invalid transactions are skipped without being materialized.
+pub struct PoolCandidateSource<'a, T> {
+    best_txs: &'a mut T,
+    block_number: u64,
+    block_timestamp: u64,
+}
+
+impl<'a, T> PoolCandidateSource<'a, T> {
+    /// Wraps a best-transactions iterator for the given block context.
+    pub const fn new(best_txs: &'a mut T, block_number: u64, block_timestamp: u64) -> Self {
+        Self { best_txs, block_number, block_timestamp }
+    }
+}
+
+impl<T> core::fmt::Debug for PoolCandidateSource<'_, T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("PoolCandidateSource")
+            .field("block_number", &self.block_number)
+            .field("block_timestamp", &self.block_timestamp)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<T: PayloadTxsBounds> CandidateSource for PoolCandidateSource<'_, T> {
+    fn next_candidate(&mut self) -> Option<SourcedCandidate> {
+        while let Some(tx) = self.best_txs.next(()) {
+            if let Some(target) = tx.target_block_number()
+                && target != self.block_number
+            {
+                trace!(
+                    target: "payload_builder",
+                    tx_hash = ?tx.hash(),
+                    target_block = target,
+                    current_block = self.block_number,
+                    "skipping bundle tx: wrong target block"
+                );
+                self.best_txs.mark_invalid(tx.sender(), tx.nonce());
+                continue;
+            }
+
+            if tx.is_bundle_expired(self.block_number, self.block_timestamp) {
+                trace!(
+                    target: "payload_builder",
+                    tx_hash = ?tx.hash(),
+                    block = self.block_number,
+                    timestamp = self.block_timestamp,
+                    "skipping bundle tx: expired"
+                );
+                self.best_txs.mark_invalid(tx.sender(), tx.nonce());
+                continue;
+            }
+
+            if tx.is_bundle_not_yet_valid(self.block_timestamp) {
+                trace!(
+                    target: "payload_builder",
+                    tx_hash = ?tx.hash(),
+                    block = self.block_number,
+                    timestamp = self.block_timestamp,
+                    "skipping bundle tx: not yet valid"
+                );
+                self.best_txs.mark_invalid(tx.sender(), tx.nonce());
+                continue;
+            }
+
+            let da_size = tx.estimated_da_size();
+            let received_at_ms = tx.received_at();
+            let tx = tx.into_consensus();
+            let tx_hash = tx.tx_hash();
+            let uncompressed_size = tx.encode_2718_len() as u64;
+            return Some(SourcedCandidate { tx, tx_hash, da_size, uncompressed_size, received_at_ms });
+        }
+        None
+    }
+
+    fn mark_invalid(&mut self, sender: Address, nonce: u64) {
+        self.best_txs.mark_invalid(sender, nonce);
+    }
+}
 
 /// Records the priority fee of a rejected transaction with the given reason as a label.
 fn record_rejected_tx_priority_fee(reason: &TxnExecutionError, priority_fee: f64) {
@@ -668,6 +750,7 @@ impl BasePayloadBuilderCtx {
             self.builder_config.state_root_gas_coefficient,
             self.builder_config.state_root_gas_anchor_us,
             self.builder_config.metering_wait_duration,
+            self.builder_config.execution_metering_mode,
         );
 
         let min_tx_index = info.executed_transactions.len() as u64;
@@ -687,50 +770,40 @@ impl BasePayloadBuilderCtx {
         let block_number = as_u64_saturated!(self.evm_env.block_env.number);
         let block_timestamp = self.attributes().timestamp();
 
-        while let Some(tx) = best_txs.next(()) {
-            if let Some(target) = tx.target_block_number()
-                && target != block_number
-            {
-                trace!(
-                    target: "payload_builder",
-                    tx_hash = ?tx.hash(),
-                    target_block = target,
-                    current_block = block_number,
-                    "skipping bundle tx: wrong target block"
-                );
-                best_txs.mark_invalid(tx.sender(), tx.nonce());
-                continue;
-            }
+        let source = PoolCandidateSource::new(&mut *best_txs, block_number, block_timestamp);
+        let fb_ctx = FlashblockCtx { block_number, block_timestamp, base_fee };
+        let mut policy = metering_policy.begin_flashblock(Box::new(source), &fb_ctx);
 
-            if tx.is_bundle_expired(block_number, block_timestamp) {
-                trace!(
-                    target: "payload_builder",
-                    tx_hash = ?tx.hash(),
-                    block = block_number,
-                    timestamp = block_timestamp,
-                    "skipping bundle tx: expired"
-                );
-                best_txs.mark_invalid(tx.sender(), tx.nonce());
-                continue;
-            }
+        loop {
+            // The policy owns candidate sourcing (pool iterator + bundle-window gating) and its
+            // admission decisions. It invalidates rejected candidates on its own source and
+            // surfaces them so the loop records diagnostics; the loop re-checks admitted
+            // candidates against the hard limits before committing.
+            let step = policy.next(&BuildBudget { info: &*info, limits });
+            let candidate = match step {
+                PolicyStep::Done => break,
+                PolicyStep::Reject(rejected) => {
+                    num_txs_considered += 1;
+                    self.record_rejected_candidate(&mut diag, info, base_fee, *rejected);
+                    continue;
+                }
+                PolicyStep::Admit(candidate) => {
+                    num_txs_considered += 1;
+                    *candidate
+                }
+            };
 
-            if tx.is_bundle_not_yet_valid(block_timestamp) {
-                trace!(
-                    target: "payload_builder",
-                    tx_hash = ?tx.hash(),
-                    block = block_number,
-                    timestamp = block_timestamp,
-                    "skipping bundle tx: not yet valid"
-                );
-                best_txs.mark_invalid(tx.sender(), tx.nonce());
-                continue;
-            }
-
-            let tx_da_size = tx.estimated_da_size();
-            let tx_received_at_ms = tx.received_at();
-            let tx = tx.into_consensus();
-            let tx_hash = tx.tx_hash();
-            let tx_uncompressed_size = tx.encode_2718_len() as u64;
+            let NextCandidate {
+                tx,
+                tx_hash,
+                resources: tx_resources,
+                metering: resource_usage,
+                predicted_state_root_time_us,
+                shadow_limit,
+            } = candidate;
+            let tx_da_size = tx_resources.da_size;
+            let tx_uncompressed_size = tx_resources.uncompressed_size;
+            let predicted_execution_time_us = tx_resources.execution_time_us;
 
             let log_txn = |result: Result<TxnOutcome, TxnExecutionError>| {
                 let result_str = match &result {
@@ -746,99 +819,19 @@ impl BasePayloadBuilderCtx {
                 );
             };
 
-            num_txs_considered += 1;
-
-            // Consult the metering policy for this candidate's resource estimate. It owns the
-            // skip-if-pending wait and the metering-derived resource computation; the loop keeps
-            // only the generic, metering-agnostic limit check below.
-            let (tx_resources, resource_usage, predicted_execution_time_us, predicted_state_root_time_us) =
-                match metering_policy.estimate_resources(
-                    tx_hash,
-                    tx_da_size,
-                    tx.gas_limit(),
-                    tx_uncompressed_size,
-                    tx_received_at_ms,
-                ) {
-                    MeteringEstimate::Pending => {
-                        log_txn(Err(TxnExecutionError::MeteringDataPending));
-                        best_txs.mark_invalid(tx.signer(), tx.nonce());
-                        continue;
-                    }
-                    MeteringEstimate::Ready(candidate) => {
-                        let MeteredCandidate { resources, metering, predicted_state_root_time_us } =
-                            *candidate;
-                        let predicted_execution_time_us = resources.execution_time_us;
-                        (resources, metering, predicted_execution_time_us, predicted_state_root_time_us)
-                    }
-                };
-
-            // ensure we still have capacity for this transaction
-            if let Err(err) = info.is_tx_over_limits(&tx_resources, limits) {
-                // Check if this is an execution metering limit that should be handled
-                // according to the metering mode (dry-run vs enforce)
-                if let TxnExecutionError::ExecutionMeteringLimitExceeded(ref limit_err) = err {
-                    // Record metrics for the exceeded limit
-                    self.record_execution_metering_limit_exceeded(limit_err);
-
-                    let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
-                    let dry_run = self.builder_config.execution_metering_mode.is_dry_run();
-
-                    warn!(
-                        target: "payload_builder",
-                        message = if dry_run {
-                            "Metering throttle: transaction would be rejected (dry-run)"
-                        } else {
-                            "Metering throttle: transaction rejected"
-                        },
-                        tx_hash = ?tx_hash,
-                        limit = %limit_err,
-                        priority_fee,
-                        dry_run,
-                    );
-
-                    if !dry_run {
-                        diag.record_rejection(&err);
-                        record_rejected_tx_priority_fee(&err, priority_fee);
-                        if err.is_permanent() {
-                            diag.permanently_rejected_txs.push(tx_hash);
-                        }
-
-                        if let ExecutionMeteringLimitExceeded::TransactionExecutionTime(
-                            tx_time_us,
-                            limit_us,
-                        ) = limit_err
-                        {
-                            // Only record per-tx execution time limits for the audit trail for now
-                            self.record_rejected_tx(
-                                info,
-                                tx_hash,
-                                RejectionReason::ExecutionTimeExceeded {
-                                    tx_time_us: *tx_time_us,
-                                    limit_us: *limit_us,
-                                },
-                                resource_usage.unwrap_or_default(),
-                            );
-                        }
-
-                        log_txn(Err(err));
-                        best_txs.mark_invalid(tx.signer(), tx.nonce());
-                        continue;
-                    }
-                } else {
-                    // DA size limits, DA footprint, and gas limits are always enforced
-                    diag.record_rejection(&err);
-                    self.record_static_limit_exceeded(&err);
-
-                    let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
-                    record_rejected_tx_priority_fee(&err, priority_fee);
-                    if err.is_permanent() {
-                        diag.permanently_rejected_txs.push(tx_hash);
-                    }
-
-                    log_txn(Err(err));
-                    best_txs.mark_invalid(tx.signer(), tx.nonce());
-                    continue;
-                }
+            // Dry-run metering throttle: the policy admitted a candidate that exceeds a metering
+            // limit; record the shadow rejection metric and warning but include it anyway.
+            if let Some(limit_err) = &shadow_limit {
+                self.record_execution_metering_limit_exceeded(limit_err);
+                let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
+                warn!(
+                    target: "payload_builder",
+                    message = "Metering throttle: transaction would be rejected (dry-run)",
+                    tx_hash = ?tx_hash,
+                    limit = %limit_err,
+                    priority_fee,
+                    dry_run = true,
+                );
             }
 
             // Record execution time prediction accuracy metrics
@@ -856,7 +849,7 @@ impl BasePayloadBuilderCtx {
                 let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
                 record_rejected_tx_priority_fee(&err, priority_fee);
                 log_txn(Err(err));
-                best_txs.mark_invalid(tx.signer(), tx.nonce());
+                policy.observe(CandidateOutcome::DroppedInvalidate);
                 continue;
             }
 
@@ -901,7 +894,7 @@ impl BasePayloadBuilderCtx {
                             record_rejected_tx_priority_fee(&diag_err, priority_fee);
                             log_txn(Err(diag_err));
                             trace!(target: "payload_builder", %err, ?tx, "skipping invalid transaction and its descendants");
-                            best_txs.mark_invalid(tx.signer(), tx.nonce());
+                            policy.observe(CandidateOutcome::DroppedInvalidate);
                         }
 
                         continue;
@@ -965,7 +958,7 @@ impl BasePayloadBuilderCtx {
                     diag.permanently_rejected_txs.push(tx_hash);
                 }
                 log_txn(Err(err));
-                best_txs.mark_invalid(tx.signer(), tx.nonce());
+                policy.observe(CandidateOutcome::DroppedInvalidate);
                 continue;
             }
 
@@ -1028,7 +1021,10 @@ impl BasePayloadBuilderCtx {
             // append sender and transaction to the respective lists
             info.executed_senders.push(tx.signer());
             info.executed_transactions.push(tx.into_inner());
+            policy.observe(CandidateOutcome::Committed);
         }
+
+        policy.finish();
 
         // Record cumulative state root gas for the block
         if info.cumulative_state_root_gas > 0 {
@@ -1056,6 +1052,79 @@ impl BasePayloadBuilderCtx {
             txs_rejected = num_txs_simulated_fail,
         );
         Ok(diag)
+    }
+
+    /// Records the diagnostics, metrics, and audit trail for a candidate the policy rejected
+    /// before execution, reproducing the loop's per-reason recording. The policy has already
+    /// invalidated the candidate on its source.
+    fn record_rejected_candidate(
+        &self,
+        diag: &mut FlashblockDiagnostics,
+        info: &mut ExecutionInfo,
+        base_fee: u64,
+        rejected: RejectedCandidate,
+    ) {
+        let RejectedCandidate { tx, tx_hash, da_size, error, metering } = rejected;
+
+        let log_txn = |err: &TxnExecutionError| {
+            debug!(
+                target: "payload_builder",
+                message = "Considering transaction",
+                tx_hash = ?tx_hash,
+                tx_da_size = ?da_size,
+                result = %err.to_string(),
+            );
+        };
+
+        match &error {
+            // Metering data pending: the skip metric and provider.skip already fired inside
+            // `estimate_resources`; the policy invalidated the source. Only the log remains.
+            TxnExecutionError::MeteringDataPending => log_txn(&error),
+            // Metering (soft) limit exceeded in enforce mode.
+            TxnExecutionError::ExecutionMeteringLimitExceeded(limit_err) => {
+                self.record_execution_metering_limit_exceeded(limit_err);
+                let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
+                warn!(
+                    target: "payload_builder",
+                    message = "Metering throttle: transaction rejected",
+                    tx_hash = ?tx_hash,
+                    limit = %limit_err,
+                    priority_fee,
+                    dry_run = false,
+                );
+                diag.record_rejection(&error);
+                record_rejected_tx_priority_fee(&error, priority_fee);
+                if error.is_permanent() {
+                    diag.permanently_rejected_txs.push(tx_hash);
+                }
+                if let ExecutionMeteringLimitExceeded::TransactionExecutionTime(tx_time_us, limit_us) =
+                    limit_err
+                {
+                    // Only record per-tx execution time limits for the audit trail for now
+                    self.record_rejected_tx(
+                        info,
+                        tx_hash,
+                        RejectionReason::ExecutionTimeExceeded {
+                            tx_time_us: *tx_time_us,
+                            limit_us: *limit_us,
+                        },
+                        metering.unwrap_or_default(),
+                    );
+                }
+                log_txn(&error);
+            }
+            // DA size limits, DA footprint, and gas limits are always enforced.
+            _ => {
+                diag.record_rejection(&error);
+                self.record_static_limit_exceeded(&error);
+                let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
+                record_rejected_tx_priority_fee(&error, priority_fee);
+                if error.is_permanent() {
+                    diag.permanently_rejected_txs.push(tx_hash);
+                }
+                log_txn(&error);
+            }
+        }
     }
 
     /// Record metrics for a limit that can be evaluated via static analysis (always enforced).

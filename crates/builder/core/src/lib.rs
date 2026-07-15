@@ -29,7 +29,11 @@ mod metering;
 pub use metering::{MeteringProvider, NoopMeteringProvider, SharedMeteringProvider};
 
 mod build_policy;
-pub use build_policy::{MeteredCandidate, MeteringBuildPolicy, MeteringEstimate};
+pub use build_policy::{
+    BuildBudget, BuildPolicy, CandidateOutcome, CandidateSource, FlashblockBuilderPolicy,
+    FlashblockCtx, MeteredCandidate, MeteringBuildPolicy, MeteringEstimate,
+    MeteringFlashblockPolicy, NextCandidate, PolicyStep, RejectedCandidate, SourcedCandidate,
+};
 
 mod rejected_tx_forwarder;
 pub use rejected_tx_forwarder::RejectedTxForwarder;
@@ -41,8 +45,8 @@ mod flashblocks;
 pub use flashblocks::{
     BasePayloadBuilderCtx, BestFlashblocksTxs, BlockCell, BlockPayloadJob,
     BlockPayloadJobGenerator, BuildArguments, FlashblockDiagnostics, FlashblockSelectionOutcome,
-    FlashblocksExtraCtx, FlashblocksServiceBuilder, PayloadBuilder, PayloadHandler, ResolvePayload,
-    WaitForValue,
+    FlashblocksExtraCtx, FlashblocksServiceBuilder, PayloadBuilder, PayloadHandler,
+    PoolCandidateSource, ResolvePayload, WaitForValue,
 };
 
 mod extension;

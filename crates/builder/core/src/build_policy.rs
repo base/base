@@ -7,13 +7,19 @@
 //! metering-agnostic limit check consumes. This is the default build behaviour; the loop stays
 //! oblivious to how resources are estimated.
 
-use core::time::Duration;
+use core::{fmt::Debug, time::Duration};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use alloy_primitives::TxHash;
+use alloy_consensus::Transaction;
+use alloy_primitives::{Address, TxHash};
 use base_bundles::MeterBundleResponse;
+use base_common_consensus::BaseTransactionSigned;
+use reth_primitives_traits::Recovered;
 
-use crate::{BuilderMetrics, SharedMeteringProvider, TxResources};
+use crate::{
+    BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded, ExecutionMeteringMode,
+    ResourceLimits, SharedMeteringProvider, TxResources, TxnExecutionError,
+};
 
 /// Default build policy: estimates per-candidate resource usage from metering data.
 ///
@@ -26,6 +32,7 @@ pub struct MeteringBuildPolicy {
     state_root_gas_coefficient: f64,
     state_root_gas_anchor_us: u128,
     metering_wait_duration: Option<Duration>,
+    metering_mode: ExecutionMeteringMode,
 }
 
 /// Outcome of consulting a [`MeteringBuildPolicy`] for a single candidate.
@@ -58,12 +65,14 @@ impl MeteringBuildPolicy {
         state_root_gas_coefficient: f64,
         state_root_gas_anchor_us: u128,
         metering_wait_duration: Option<Duration>,
+        metering_mode: ExecutionMeteringMode,
     ) -> Self {
         Self {
             metering_provider,
             state_root_gas_coefficient,
             state_root_gas_anchor_us,
             metering_wait_duration,
+            metering_mode,
         }
     }
 
@@ -130,6 +139,259 @@ impl MeteringBuildPolicy {
     }
 }
 
+/// Immutable per-flashblock context handed to a [`BuildPolicy`] when a flashblock begins.
+#[derive(Debug, Clone)]
+pub struct FlashblockCtx {
+    /// Number of the block being built.
+    pub block_number: u64,
+    /// Timestamp of the block being built, in seconds.
+    pub block_timestamp: u64,
+    /// Base fee of the block being built.
+    pub base_fee: u64,
+}
+
+/// Live cumulative block state a [`FlashblockBuilderPolicy`] consults to admit candidates.
+///
+/// Borrows the loop's accumulated [`ExecutionInfo`] and the block [`ResourceLimits`] so the policy
+/// can apply the same hard-limit filter the loop enforces authoritatively before committing.
+#[derive(Debug)]
+pub struct BuildBudget<'a> {
+    /// Accumulated execution state for the block so far.
+    pub info: &'a ExecutionInfo,
+    /// Resource limits for the block.
+    pub limits: &'a ResourceLimits,
+}
+
+/// A validated candidate produced by a [`CandidateSource`].
+///
+/// The source has already applied bundle-window gating (target block, expiry, not-yet-valid), so
+/// every `SourcedCandidate` is within its bundle window; the recovered transaction and its sizes
+/// are materialized for the policy's resource estimate.
+#[derive(Debug, Clone)]
+pub struct SourcedCandidate {
+    /// Recovered consensus transaction.
+    pub tx: Recovered<BaseTransactionSigned>,
+    /// Transaction hash.
+    pub tx_hash: TxHash,
+    /// Estimated DA size.
+    pub da_size: u64,
+    /// Raw EIP-2718 encoded size in bytes.
+    pub uncompressed_size: u64,
+    /// Time the transaction was received, in milliseconds since the Unix epoch.
+    pub received_at_ms: u128,
+}
+
+/// Object-safe stream of candidates a policy drains during a flashblock.
+///
+/// The open adapter drains the transaction pool's best-transactions iterator, applying
+/// bundle-window gating before yielding so bundle-invalid transactions are skipped without being
+/// materialized. A closed policy can layer additional candidate sources (e.g. a bundle service)
+/// behind the same interface.
+pub trait CandidateSource: Debug {
+    /// Returns the next validated candidate, or `None` when the stream is exhausted.
+    fn next_candidate(&mut self) -> Option<SourcedCandidate>;
+
+    /// Marks the given sender/nonce invalid so its descendants are skipped by the source.
+    fn mark_invalid(&mut self, sender: Address, nonce: u64);
+}
+
+/// A candidate a policy has admitted for the build loop to execute.
+#[derive(Debug, Clone)]
+pub struct NextCandidate {
+    /// Recovered consensus transaction to execute.
+    pub tx: Recovered<BaseTransactionSigned>,
+    /// Transaction hash.
+    pub tx_hash: TxHash,
+    /// Resource estimate; the loop re-checks it against the hard limits before committing.
+    pub resources: TxResources,
+    /// Raw metering response, if any, for prediction metrics and inclusion accounting.
+    pub metering: Option<MeterBundleResponse>,
+    /// Predicted state root time in microseconds, if metering data was available.
+    pub predicted_state_root_time_us: Option<u128>,
+    /// Set when the candidate exceeded a metering limit but was admitted anyway under dry-run
+    /// mode; the loop records the shadow rejection metric and warning.
+    pub shadow_limit: Option<ExecutionMeteringLimitExceeded>,
+}
+
+/// A candidate the policy rejected before execution, surfaced so the loop records diagnostics.
+///
+/// The policy has already marked the candidate invalid on its source; this carries what the loop
+/// needs to reproduce its diagnostic, metric, and audit recording for the rejection.
+#[derive(Debug, Clone)]
+pub struct RejectedCandidate {
+    /// Recovered consensus transaction (for the effective priority-fee metric label).
+    pub tx: Recovered<BaseTransactionSigned>,
+    /// Transaction hash.
+    pub tx_hash: TxHash,
+    /// Estimated DA size (for diagnostic logging).
+    pub da_size: u64,
+    /// The rejection reason.
+    pub error: TxnExecutionError,
+    /// Raw metering response, if any, for the rejected-transaction audit trail.
+    pub metering: Option<MeterBundleResponse>,
+}
+
+/// One step of draining a flashblock's candidates.
+#[derive(Debug)]
+pub enum PolicyStep {
+    /// A candidate admitted for the loop to execute.
+    Admit(Box<NextCandidate>),
+    /// A candidate the policy rejected before execution; the loop records diagnostics and
+    /// continues. The policy has already invalidated it on its source.
+    Reject(Box<RejectedCandidate>),
+    /// The policy has no more candidates for this flashblock.
+    Done,
+}
+
+/// Outcome of a candidate the loop executed, reported back so the policy can update its source.
+#[derive(Debug, Clone, Copy)]
+pub enum CandidateOutcome {
+    /// The candidate was committed to the block.
+    Committed,
+    /// The candidate was dropped and its sender's descendants should be skipped (e.g. an invalid
+    /// transaction or an over-gas rejection).
+    DroppedInvalidate,
+    /// The candidate was dropped but its descendants remain valid (e.g. nonce too low).
+    DroppedRetainDescendants,
+}
+
+/// A build policy: supplies and gates the candidates the build loop attempts, per flashblock.
+///
+/// Injected on the builder configuration as `Arc<dyn BuildPolicy>`, mirroring the metering
+/// provider seam. [`begin_flashblock`](Self::begin_flashblock) produces a per-flashblock driver
+/// that owns candidate sourcing, so a closed implementation can source from a bundle service in
+/// addition to the pool without the open loop naming any of it.
+pub trait BuildPolicy: Send + Sync + 'static {
+    /// Begins a flashblock, taking ownership of the candidate stream for its duration.
+    fn begin_flashblock<'a>(
+        &self,
+        source: Box<dyn CandidateSource + 'a>,
+        ctx: &FlashblockCtx,
+    ) -> Box<dyn FlashblockBuilderPolicy + 'a>;
+}
+
+/// Per-flashblock driver returned by [`BuildPolicy::begin_flashblock`].
+pub trait FlashblockBuilderPolicy {
+    /// Advances the candidate stream: yields the next admitted candidate, a rejection for the
+    /// loop to record, or [`PolicyStep::Done`] when the flashblock is exhausted. The policy
+    /// invalidates rejected candidates on its own source; the loop re-checks admitted candidates
+    /// against the hard limits before committing, remaining authoritative on block limits.
+    fn next(&mut self, budget: &BuildBudget<'_>) -> PolicyStep;
+
+    /// Reports the outcome of the last admitted candidate so the policy can invalidate its
+    /// source when a post-execution rejection drops the sender's descendants.
+    fn observe(&mut self, outcome: CandidateOutcome);
+
+    /// End-of-flashblock hook for final policy bookkeeping.
+    fn finish(&mut self) {}
+}
+
+impl BuildPolicy for MeteringBuildPolicy {
+    fn begin_flashblock<'a>(
+        &self,
+        source: Box<dyn CandidateSource + 'a>,
+        _ctx: &FlashblockCtx,
+    ) -> Box<dyn FlashblockBuilderPolicy + 'a> {
+        Box::new(MeteringFlashblockPolicy { metering: self.clone(), source, last: None })
+    }
+}
+
+/// Per-flashblock driver for [`MeteringBuildPolicy`].
+///
+/// Drains its [`CandidateSource`], applies the metering-free hard-limit filter, estimates
+/// resources from metering data, and applies the soft metering limits (rejecting in enforce mode,
+/// admitting with a shadow marker in dry-run) before yielding a [`NextCandidate`].
+#[derive(Debug)]
+pub struct MeteringFlashblockPolicy<'a> {
+    metering: MeteringBuildPolicy,
+    source: Box<dyn CandidateSource + 'a>,
+    /// Sender/nonce of the last yielded candidate, for `observe`'s descendant invalidation.
+    last: Option<(Address, u64)>,
+}
+
+impl FlashblockBuilderPolicy for MeteringFlashblockPolicy<'_> {
+    fn next(&mut self, budget: &BuildBudget<'_>) -> PolicyStep {
+        let Some(cand) = self.source.next_candidate() else { return PolicyStep::Done };
+        let sender = cand.tx.signer();
+        let nonce = cand.tx.nonce();
+        self.last = Some((sender, nonce));
+        let gas_limit = cand.tx.gas_limit();
+
+        // Hard limits: cheap, metering-free. Reject before taking the metering lock.
+        let hard = TxResources {
+            da_size: cand.da_size,
+            gas_limit,
+            uncompressed_size: cand.uncompressed_size,
+            ..Default::default()
+        };
+        if let Err(error) = budget.info.is_tx_over_hard_limits(&hard, budget.limits) {
+            self.source.mark_invalid(sender, nonce);
+            return PolicyStep::Reject(Box::new(RejectedCandidate {
+                tx: cand.tx,
+                tx_hash: cand.tx_hash,
+                da_size: cand.da_size,
+                error,
+                metering: None,
+            }));
+        }
+
+        // Metering estimate — only for candidates that pass the hard limits.
+        let candidate = match self.metering.estimate_resources(
+            cand.tx_hash,
+            cand.da_size,
+            gas_limit,
+            cand.uncompressed_size,
+            cand.received_at_ms,
+        ) {
+            MeteringEstimate::Pending => {
+                self.source.mark_invalid(sender, nonce);
+                return PolicyStep::Reject(Box::new(RejectedCandidate {
+                    tx: cand.tx,
+                    tx_hash: cand.tx_hash,
+                    da_size: cand.da_size,
+                    error: TxnExecutionError::MeteringDataPending,
+                    metering: None,
+                }));
+            }
+            MeteringEstimate::Ready(candidate) => *candidate,
+        };
+
+        // Soft metering limits: reject in enforce mode; admit with a shadow marker in dry-run.
+        let shadow_limit =
+            match budget.info.is_tx_over_metering_limits(&candidate.resources, budget.limits) {
+                Ok(()) => None,
+                Err(limit_err) if self.metering.metering_mode.is_dry_run() => Some(limit_err),
+                Err(limit_err) => {
+                    self.source.mark_invalid(sender, nonce);
+                    return PolicyStep::Reject(Box::new(RejectedCandidate {
+                        tx: cand.tx,
+                        tx_hash: cand.tx_hash,
+                        da_size: cand.da_size,
+                        error: TxnExecutionError::from(limit_err),
+                        metering: candidate.metering,
+                    }));
+                }
+            };
+
+        PolicyStep::Admit(Box::new(NextCandidate {
+            tx: cand.tx,
+            tx_hash: cand.tx_hash,
+            resources: candidate.resources,
+            metering: candidate.metering,
+            predicted_state_root_time_us: candidate.predicted_state_root_time_us,
+            shadow_limit,
+        }))
+    }
+
+    fn observe(&mut self, outcome: CandidateOutcome) {
+        if matches!(outcome, CandidateOutcome::DroppedInvalidate)
+            && let Some((sender, nonce)) = self.last
+        {
+            self.source.mark_invalid(sender, nonce);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -169,7 +431,7 @@ mod tests {
     #[test]
     fn no_metering_data_yields_empty_estimate() {
         let policy =
-            MeteringBuildPolicy::new(Arc::new(NoopMeteringProvider), 0.02, 5_000, None);
+            MeteringBuildPolicy::new(Arc::new(NoopMeteringProvider), 0.02, 5_000, None, ExecutionMeteringMode::Off);
 
         let candidate = ready(policy.estimate_resources(TxHash::default(), 100, 21_000, 120, 0));
 
@@ -192,7 +454,7 @@ mod tests {
             ..Default::default()
         };
         let provider = FixedMeteringProvider { enabled: true, response: Some(response) };
-        let policy = MeteringBuildPolicy::new(Arc::new(provider), 0.02, 5_000, None);
+        let policy = MeteringBuildPolicy::new(Arc::new(provider), 0.02, 5_000, None, ExecutionMeteringMode::Off);
 
         let candidate = ready(policy.estimate_resources(TxHash::default(), 0, 1_000_000, 0, 0));
 
@@ -210,7 +472,7 @@ mod tests {
             ..Default::default()
         };
         let provider = FixedMeteringProvider { enabled: true, response: Some(response) };
-        let policy = MeteringBuildPolicy::new(Arc::new(provider), 0.02, 5_000, None);
+        let policy = MeteringBuildPolicy::new(Arc::new(provider), 0.02, 5_000, None, ExecutionMeteringMode::Off);
 
         let candidate = ready(policy.estimate_resources(TxHash::default(), 0, 500_000, 0, 0));
 
@@ -225,6 +487,7 @@ mod tests {
             0.02,
             5_000,
             Some(Duration::from_secs(60)),
+            ExecutionMeteringMode::Off,
         );
 
         let estimate = policy.estimate_resources(TxHash::default(), 0, 21_000, 0, now_ms());
@@ -240,6 +503,7 @@ mod tests {
             0.02,
             5_000,
             Some(Duration::from_millis(1)),
+            ExecutionMeteringMode::Off,
         );
 
         // received_at = 0 => effectively ancient => past the wait window.
@@ -257,6 +521,7 @@ mod tests {
             0.02,
             5_000,
             Some(Duration::from_secs(60)),
+            ExecutionMeteringMode::Off,
         );
 
         let estimate = policy.estimate_resources(TxHash::default(), 0, 21_000, 0, now_ms());
