@@ -299,6 +299,7 @@ impl ChainConfig {
                 azul: self.azul_timestamp,
                 beryl: self.beryl_timestamp,
                 cobalt: self.cobalt_timestamp,
+                zombie: None,
             },
         }
     }
