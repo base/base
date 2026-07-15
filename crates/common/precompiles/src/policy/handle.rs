@@ -1,7 +1,9 @@
-//! Business logic for the `PolicyRegistry` precompile.
+//! Consumer-facing handle for the `PolicyRegistry` precompile.
 //!
-//! [`PolicyHandle`] is the concrete type the token holds. It wraps [`PolicyRegistryStorage`]
-//! and implements [`Policy`] (for authorization checks) and [`PolicyRegistry`] (for admin ops).
+//! [`PolicyHandle`] is the concrete type B-20 tokens hold as their `Policy` source. It
+//! binds the registry storage into a [`PolicyRegistryRuntime`] and implements the outward
+//! [`Policy`] (authorization reads) and [`PolicyRegistry`] (admin ops) traits by delegating
+//! to the frozen [`PolicyRegistryV1`] logic.
 
 use alloc::vec::Vec;
 use core::fmt;
@@ -9,18 +11,26 @@ use core::fmt;
 use alloy_primitives::Address;
 use base_precompile_storage::{Result, StorageCtx};
 
-use crate::{IPolicyRegistry::PolicyType, Policy, PolicyRegistry, PolicyRegistryStorage};
+use crate::{
+    IPolicyRegistry::PolicyType, Policy, PolicyRegistry, PolicyRegistryLogic,
+    PolicyRegistryRuntime, PolicyRegistryStorage, PolicyRegistryV1,
+};
 
-/// Wraps [`PolicyRegistryStorage`] and implements [`Policy`] and [`PolicyRegistry`],
-/// separating authorization decisions from raw storage reads.
+/// Binds [`PolicyRegistryStorage`] into a runtime and exposes the outward [`Policy`] and
+/// [`PolicyRegistry`] traits, delegating to the version-frozen [`PolicyRegistryV1`] logic.
+///
+// TODO: Pin to V1 until the consumer call path (B20Guards reads, factory/admin setup)
+// threads the active fork. Once it does, resolve the version via
+// `crate::PolicyVersions::from_base_upgrade` instead of hard-coding `PolicyRegistryV1`,
+// mirroring the fork-threaded token dispatchers.
 pub struct PolicyHandle<'a> {
-    inner: PolicyRegistryStorage<'a>,
+    runtime: PolicyRegistryRuntime<PolicyRegistryStorage<'a>>,
 }
 
 impl<'a> PolicyHandle<'a> {
     /// Creates a `PolicyHandle` backed by the registry storage at its singleton address.
     pub fn new(ctx: StorageCtx<'a>) -> Self {
-        Self { inner: PolicyRegistryStorage::new(ctx) }
+        Self { runtime: PolicyRegistryRuntime::with_storage(PolicyRegistryStorage::new(ctx)) }
     }
 }
 
@@ -32,17 +42,17 @@ impl fmt::Debug for PolicyHandle<'_> {
 
 impl Policy for PolicyHandle<'_> {
     fn is_authorized(&self, policy_id: u64, account: Address) -> Result<bool> {
-        self.inner.is_authorized(policy_id, account)
+        PolicyRegistryV1.is_authorized(&self.runtime, policy_id, account)
     }
 
     fn policy_exists(&self, policy_id: u64) -> Result<bool> {
-        self.inner.policy_exists(policy_id)
+        PolicyRegistryV1.policy_exists(&self.runtime, policy_id)
     }
 }
 
 impl PolicyRegistry for PolicyHandle<'_> {
     fn create_policy(&mut self, admin: Address, policy_type: PolicyType) -> Result<u64> {
-        self.inner.create_policy(admin, policy_type)
+        PolicyRegistryV1.create_policy(&mut self.runtime, admin, policy_type)
     }
 
     fn create_policy_with_accounts(
@@ -51,19 +61,24 @@ impl PolicyRegistry for PolicyHandle<'_> {
         policy_type: PolicyType,
         accounts: Vec<Address>,
     ) -> Result<u64> {
-        self.inner.create_policy_with_accounts(admin, policy_type, accounts)
+        PolicyRegistryV1.create_policy_with_accounts(
+            &mut self.runtime,
+            admin,
+            policy_type,
+            accounts,
+        )
     }
 
     fn stage_update_admin(&mut self, policy_id: u64, new_admin: Address) -> Result<()> {
-        self.inner.stage_update_admin(policy_id, new_admin)
+        PolicyRegistryV1.stage_update_admin(&mut self.runtime, policy_id, new_admin)
     }
 
     fn finalize_update_admin(&mut self, policy_id: u64) -> Result<()> {
-        self.inner.finalize_update_admin(policy_id)
+        PolicyRegistryV1.finalize_update_admin(&mut self.runtime, policy_id)
     }
 
     fn renounce_admin(&mut self, policy_id: u64) -> Result<()> {
-        self.inner.renounce_admin(policy_id)
+        PolicyRegistryV1.renounce_admin(&mut self.runtime, policy_id)
     }
 
     fn update_allowlist(
@@ -72,7 +87,7 @@ impl PolicyRegistry for PolicyHandle<'_> {
         allowed: bool,
         accounts: Vec<Address>,
     ) -> Result<()> {
-        self.inner.update_allowlist(policy_id, allowed, accounts)
+        PolicyRegistryV1.update_allowlist(&mut self.runtime, policy_id, allowed, accounts)
     }
 
     fn update_blocklist(
@@ -81,15 +96,15 @@ impl PolicyRegistry for PolicyHandle<'_> {
         blocked: bool,
         accounts: Vec<Address>,
     ) -> Result<()> {
-        self.inner.update_blocklist(policy_id, blocked, accounts)
+        PolicyRegistryV1.update_blocklist(&mut self.runtime, policy_id, blocked, accounts)
     }
 
     fn get_policy_admin(&self, policy_id: u64) -> Result<Address> {
-        self.inner.get_policy_admin(policy_id)
+        PolicyRegistryV1.get_policy_admin(&self.runtime, policy_id)
     }
 
     fn pending_policy_admin(&self, policy_id: u64) -> Result<Address> {
-        self.inner.pending_policy_admin(policy_id)
+        PolicyRegistryV1.pending_policy_admin(&self.runtime, policy_id)
     }
 }
 
@@ -98,17 +113,22 @@ mod tests {
     use alloy_primitives::{Address, address};
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
-    use crate::{IPolicyRegistry, Policy, PolicyHandle, PolicyRegistry, PolicyRegistryStorage};
+    use crate::{
+        IPolicyRegistry, Policy, PolicyHandle, PolicyRegistry, PolicyRegistryRuntime,
+        PolicyRegistryStorage, PolicyRegistryV1,
+    };
 
     const ADMIN: Address = address!("0x1000000000000000000000000000000000000001");
     const ALICE: Address = address!("0xA000000000000000000000000000000000000001");
     const NEW_ADMIN: Address = address!("0x2000000000000000000000000000000000000002");
 
+    /// Storage with both built-in policies pre-seeded (via the pinned V1 bootstrap).
     fn storage() -> HashMapStorageProvider {
         let mut s = HashMapStorageProvider::new(1);
         s.set_caller(ADMIN);
         StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).ensure_initialized_and_get_counter()
+            let mut rt = PolicyRegistryRuntime::with_storage(PolicyRegistryStorage::new(ctx));
+            PolicyRegistryV1.ensure_initialized_and_get_counter(&mut rt)
         })
         .unwrap();
         s
@@ -119,8 +139,8 @@ mod tests {
         let mut s = storage();
         StorageCtx::enter(&mut s, |ctx| {
             let handle = PolicyHandle::new(ctx);
-            assert!(handle.is_authorized(PolicyRegistryStorage::ALWAYS_ALLOW_ID, ALICE).unwrap());
-            assert!(!handle.is_authorized(PolicyRegistryStorage::ALWAYS_BLOCK_ID, ALICE).unwrap());
+            assert!(handle.is_authorized(PolicyRegistryV1::ALWAYS_ALLOW_ID, ALICE).unwrap());
+            assert!(!handle.is_authorized(PolicyRegistryV1::ALWAYS_BLOCK_ID, ALICE).unwrap());
         });
     }
 
@@ -149,8 +169,8 @@ mod tests {
         let mut s = storage();
         StorageCtx::enter(&mut s, |ctx| {
             let handle = PolicyHandle::new(ctx);
-            assert!(handle.policy_exists(PolicyRegistryStorage::ALWAYS_ALLOW_ID).unwrap());
-            assert!(handle.policy_exists(PolicyRegistryStorage::ALWAYS_BLOCK_ID).unwrap());
+            assert!(handle.policy_exists(PolicyRegistryV1::ALWAYS_ALLOW_ID).unwrap());
+            assert!(handle.policy_exists(PolicyRegistryV1::ALWAYS_BLOCK_ID).unwrap());
             assert!(!handle.policy_exists(0xdeadbeef).unwrap());
         });
     }
