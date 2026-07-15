@@ -315,7 +315,7 @@ mod tests {
             serde_json::to_value(P2pInfoJson::from_report("devnet", &report, &peer_stats)).unwrap();
 
         assert_eq!(info["cl"]["maxPeerCount"], json!(100));
-        assert_eq!(info["el"]["maxPeerCount"], serde_json::Value::Null);
+        assert!(!info["el"].as_object().unwrap().contains_key("maxPeerCount"));
     }
 
     #[test]
