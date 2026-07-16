@@ -71,32 +71,24 @@ impl ActorAuthorizer {
             DispatchOutcome::Authenticated { actor_id } => {
                 Self::resolve_bound(storage, account, actor_id, authenticator, now)
             }
-            DispatchOutcome::Delegated {
-                actor_id,
-                delegate_account,
-                nested_authenticator,
-                nested_actor_id,
-            } => {
-                // Discharge the nested actor against the delegated account's
-                // config and require it to be admin (`scope == 0`), then authorize
-                // the outer delegate actor against the originating account.
-                // Mirrors `DelegateAuthenticator`, which calls
-                // `authenticateActor(delegate, ...)` and explicitly requires the
-                // resolved `scope == 0`. This admin requirement is independent of
-                // `verifySignature` (now operational: admin, or a SENDER actor
-                // without POLICY): an operational key may sign for its own account
-                // but MUST NOT vouch as a delegate, to preserve non-escalation.
-                // Followed by the outer `_actorConfig[bytes20(delegate)][account]`
-                // binding check.
-                let nested = Self::resolve_bound(
-                    storage,
-                    delegate_account,
-                    nested_actor_id,
-                    nested_authenticator,
-                    now,
-                )?;
+            DispatchOutcome::Delegated { actor_id, delegate_account, .. } => {
+                // `data` = delegate_account(20) || nested_auth. Mirror
+                // `DelegateAuthenticator`, which calls
+                // `authenticateActor(delegate, hash, nestedAuth)` — the *full*
+                // auth path (inline default-EOA k1 self *or* explicit
+                // `actor_config`), then requires admin (`scope == 0`). Nested
+                // discharge must not skip to `resolve_bound`: that would reject a
+                // live default EOA whose key lives only in `AccountState`, the
+                // common 7702-EOA-as-parent case. The admin gate is independent
+                // of `verifySignature` (now operational: admin, or a SENDER
+                // actor without POLICY): an operational key may sign for its own
+                // account but MUST NOT vouch as a delegate, to preserve
+                // non-escalation. Followed by the outer
+                // `_actorConfig[bytes20(delegate)][account]` binding check.
+                let nested =
+                    Self::authenticate_actor(storage, delegate_account, hash, &data[20..], now)?;
                 if nested.scope != 0 {
-                    return Err(AuthorizeError::NestedSignatureScope { actor_id: nested_actor_id });
+                    return Err(AuthorizeError::NestedSignatureScope { actor_id: nested.actor_id });
                 }
                 Self::resolve_bound(
                     storage,
@@ -616,6 +608,80 @@ mod tests {
                     actor_id: nested_id,
                     authenticator: Eip8130Constants::K1_AUTHENTICATOR,
                 }),
+            );
+        });
+    }
+
+    #[test]
+    fn delegate_accepts_nested_default_eoa_self() {
+        // 7702 EOA as parent: nested k1 recovers to the delegate account itself,
+        // with no `actor_config` entry — only the live inline default EOA.
+        // `DelegateAuthenticator` → `authenticateActor` must honor that path;
+        // bare `resolve_bound` would incorrectly return NotBound.
+        let nested_key = k1_key(0x55);
+        let delegate_account = k1_address(&nested_key);
+        let outer_id = actor_id(delegate_account);
+        let auth = delegate_auth(delegate_account, &nested_key);
+        with_storage(|acc| {
+            acc.actor_config
+                .at_mut(&outer_id)
+                .at_mut(&ACCOUNT)
+                .write(pack(Eip8130Contracts::DELEGATE_AUTHENTICATOR, 0x08, 0))
+                .unwrap();
+            let resolved =
+                ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW).unwrap();
+            assert_eq!(
+                resolved,
+                ResolvedActor { actor_id: outer_id, scope: 0x08, policy_target: Address::ZERO }
+            );
+        });
+    }
+
+    #[test]
+    fn delegate_rejects_nested_default_eoa_when_revoked() {
+        let nested_key = k1_key(0x56);
+        let delegate_account = k1_address(&nested_key);
+        let outer_id = actor_id(delegate_account);
+        let auth = delegate_auth(delegate_account, &nested_key);
+        with_storage(|acc| {
+            acc.account_state
+                .at_mut(&delegate_account)
+                .write(pack_self(0, 0, true))
+                .unwrap();
+            acc.actor_config
+                .at_mut(&outer_id)
+                .at_mut(&ACCOUNT)
+                .write(pack(Eip8130Contracts::DELEGATE_AUTHENTICATOR, 0x08, 0))
+                .unwrap();
+            assert_eq!(
+                ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
+                Err(AuthorizeError::DefaultEoaRevoked { account: delegate_account }),
+            );
+        });
+    }
+
+    #[test]
+    fn delegate_rejects_nested_scoped_default_eoa() {
+        // Live but scoped (non-admin) default EOA may sign for its own account,
+        // yet must not vouch as a delegate.
+        let nested_key = k1_key(0x57);
+        let delegate_account = k1_address(&nested_key);
+        let nested_id = actor_id(delegate_account);
+        let outer_id = actor_id(delegate_account);
+        let auth = delegate_auth(delegate_account, &nested_key);
+        with_storage(|acc| {
+            acc.account_state
+                .at_mut(&delegate_account)
+                .write(pack_self(Eip8130Constants::SCOPE_SENDER, 0, false))
+                .unwrap();
+            acc.actor_config
+                .at_mut(&outer_id)
+                .at_mut(&ACCOUNT)
+                .write(pack(Eip8130Contracts::DELEGATE_AUTHENTICATOR, 0x08, 0))
+                .unwrap();
+            assert_eq!(
+                ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
+                Err(AuthorizeError::NestedSignatureScope { actor_id: nested_id }),
             );
         });
     }
