@@ -124,10 +124,18 @@ impl AccountConfigurationStorage<'_> {
         Ok((state.multichain_sequence, state.local_sequence))
     }
 
-    /// `true` once the account is initialized (created or imported); the contract
-    /// uses `local_sequence > 0` as the initialized flag.
+    /// Mirrors `AccountConfiguration._isInitialized`: `true` once the account has
+    /// any EIP-8130 state. `local_sequence > 0` is set at bootstrap
+    /// (created/imported) and doubles as the initialized flag, but it is not the
+    /// only channel: a never-bootstrapped account can establish state through a
+    /// `chain_id == 0` (multichain) `applySignedActorChanges` — authenticated by
+    /// its still-live implicit default EOA — which bumps `multichain_sequence`
+    /// while leaving `local_sequence` at 0. The contract treats that account as
+    /// initialized (blocking a later create/import from clobbering the
+    /// multichain-established state), so both counters must be checked.
     pub fn is_initialized(&self, account: Address) -> Result<bool> {
-        Ok(self.get_account_state(account)?.local_sequence > 0)
+        let state = self.get_account_state(account)?;
+        Ok(state.local_sequence > 0 || state.multichain_sequence > 0)
     }
 
     /// Mirrors `AccountConfiguration._isLocked`: not locked unless `FLAG_LOCKED`
@@ -627,6 +635,28 @@ mod tests {
             assert_eq!(state.default_eoa_scope, 0xAB);
             assert_eq!(state.default_eoa_expiry, expiry);
             assert_eq!(acc.get_change_sequences(ACCOUNT).unwrap(), (7, 3));
+            assert!(acc.is_initialized(ACCOUNT).unwrap());
+        });
+    }
+
+    #[test]
+    fn is_initialized_covers_both_sequence_channels() {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut acc = AccountConfigurationStorage::new(ctx);
+
+            // Fresh account: neither channel set -> uninitialized.
+            assert!(!acc.is_initialized(ACCOUNT).unwrap());
+
+            // Multichain-only: a chain_id == 0 change bumped `multichain_sequence`
+            // on a never-bootstrapped account, `local_sequence` still 0. The
+            // contract's `_isInitialized` (local || multichain) treats this as
+            // initialized, so the native mirror must too.
+            acc.account_state.at_mut(&ACCOUNT).write(pack_account_state(1, 0, 0, 0, 0, 0)).unwrap();
+            assert!(acc.is_initialized(ACCOUNT).unwrap());
+
+            // Local-only: the bootstrap (create/import) channel.
+            acc.account_state.at_mut(&ACCOUNT).write(pack_account_state(0, 1, 0, 0, 0, 0)).unwrap();
             assert!(acc.is_initialized(ACCOUNT).unwrap());
         });
     }
