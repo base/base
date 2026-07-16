@@ -128,6 +128,32 @@ base_metrics::define_metrics! {
     resource_limit_would_reject_total: counter,
     #[describe("Transactions that exceeded per-tx execution time limit")]
     tx_execution_time_exceeded_total: counter,
+    #[describe("Transactions that exceeded flashblock execution time budget")]
+    flashblock_execution_time_exceeded_total: counter,
+    #[describe("Transactions that exceeded block state root gas limit")]
+    block_state_root_gas_exceeded_total: counter,
+    #[describe("Transactions that exceeded a resource-throttle budget")]
+    #[label(dimension)]
+    #[label(scope)]
+    resource_throttle_limit_exceeded_total: counter,
+    #[describe("Transactions rejected by a resource-throttle budget")]
+    #[label(dimension)]
+    #[label(scope)]
+    resource_throttle_rejected_total: counter,
+    #[describe("Resource-throttle units used by included transactions")]
+    #[label(dimension)]
+    #[label(scope)]
+    resource_throttle_usage: histogram,
+    #[describe("Cumulative resource-throttle units used per block")]
+    #[label(dimension)]
+    resource_throttle_block_usage: histogram,
+    #[describe("Resource-throttle units remaining per block")]
+    #[label(dimension)]
+    resource_throttle_block_headroom: histogram,
+    #[describe("Resource-throttle schedule replacements")]
+    resource_throttle_schedule_updates_total: counter,
+    #[describe("Active resource-throttle schedule revision")]
+    resource_throttle_schedule_revision: gauge,
     #[describe("Histogram of (predicted - actual) execution time per transaction in microseconds")]
     execution_time_prediction_error_us: histogram,
     #[describe("Distribution of predicted execution times from metering service (microseconds)")]
@@ -247,6 +273,34 @@ impl BuilderMetrics {
         if let Some(block_data_limit) = limits.block_data_limit {
             Self::flashblock_da_headroom_bytes(flashblock_index.clone())
                 .record(block_data_limit.saturating_sub(info.cumulative_da_bytes_used) as f64);
+        }
+
+        Self::flashblock_execution_time_used_us(flashblock_index.clone())
+            .record(info.flashblock_execution_time_us as f64);
+        if let Some(flashblock_execution_time_limit_us) = limits.flashblock_execution_time_limit_us
+        {
+            Self::flashblock_execution_time_headroom_us(flashblock_index.clone()).record(
+                flashblock_execution_time_limit_us.saturating_sub(info.flashblock_execution_time_us)
+                    as f64,
+            );
+        }
+
+        Self::flashblock_state_root_gas_used(flashblock_index.clone())
+            .record(info.cumulative_state_root_gas as f64);
+        if let Some(block_state_root_gas_limit) = limits.block_state_root_gas_limit {
+            Self::flashblock_state_root_gas_headroom(flashblock_index.clone())
+                .record(block_state_root_gas_limit.saturating_sub(info.cumulative_state_root_gas)
+                    as f64);
+        }
+
+        if let Some(schedule) = limits.resource_throttle_schedule.as_ref() {
+            for (index, dimension) in schedule.dimensions.iter().enumerate() {
+                let used =
+                    info.cumulative_resource_throttle.get(index).copied().unwrap_or_default();
+                Self::resource_throttle_block_usage(dimension.name.clone()).record(used as f64);
+                Self::resource_throttle_block_headroom(dimension.name.clone())
+                    .record(u128::from(dimension.block_limit).saturating_sub(used) as f64);
+            }
         }
 
         for (reason, count) in diag.rejection_counts() {

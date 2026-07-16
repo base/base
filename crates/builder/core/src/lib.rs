@@ -28,6 +28,15 @@ pub use traits::{ClientBounds, NodeBounds, PayloadTxsBounds, PoolBounds};
 mod metering;
 pub use metering::{MeteringProvider, NoopMeteringProvider, SharedMeteringProvider};
 
+mod resource_throttle;
+pub use resource_throttle::{
+    CompiledResourceThrottleDimension, CompiledResourceThrottleSchedule,
+    ResourceThrottleCheckError, ResourceThrottleDimension, ResourceThrottleError,
+    ResourceThrottleLimitExceeded, ResourceThrottleLimitScope, ResourceThrottleOperation,
+    ResourceThrottleSchedule, ResourceThrottleStore, ResourceThrottleStoreError,
+    ResourceThrottleUsage, SharedResourceThrottleStore, VersionedResourceThrottleSchedule,
+};
+
 mod rejected_tx_forwarder;
 pub use rejected_tx_forwarder::RejectedTxForwarder;
 

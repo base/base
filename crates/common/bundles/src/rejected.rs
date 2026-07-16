@@ -16,6 +16,20 @@ pub enum RejectionReason {
         /// Per-transaction limit in microseconds.
         limit_us: u128,
     },
+    /// Transaction's predicted resource-throttle usage exceeded a dimension budget.
+    ResourceThrottleExceeded {
+        /// Resource-throttle dimension.
+        dimension: String,
+        /// Resource-throttle schedule revision used for the decision.
+        revision: u64,
+        /// Resource units charged by the transaction.
+        transaction_cost: u128,
+        /// Resource units used after adding the transaction, or transaction usage for a
+        /// transaction-level budget.
+        used: u128,
+        /// Configured resource-unit budget.
+        limit: u64,
+    },
 }
 
 /// A transaction that was rejected during block building.

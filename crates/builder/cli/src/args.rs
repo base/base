@@ -1,10 +1,11 @@
 //! Builder CLI arguments and config conversion helpers.
 
 use core::{net::SocketAddr, time::Duration};
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use base_builder_core::{
-    BuilderConfig, ExecutionMeteringMode, RejectionCache, SharedMeteringProvider,
+    BuilderConfig, ExecutionMeteringMode, RejectionCache, ResourceThrottleStore,
+    SharedMeteringProvider,
 };
 use base_builder_metering::MeteringStore;
 use base_node_core::args::RollupArgs;
@@ -134,18 +135,19 @@ pub struct Args {
     #[arg(long = "builder.max_gas_per_txn")]
     pub max_gas_per_txn: Option<u64>,
 
-    /// Maximum execution time per transaction in microseconds (requires resource metering)
+    /// Legacy maximum execution time per transaction in microseconds; evaluated alongside
+    /// resource-throttle limits during rollout.
     #[arg(long = "builder.max-execution-time-per-tx-us")]
     pub max_execution_time_per_tx_us: Option<u128>,
 
-    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
-    /// Scheduled for removal in v1.4.0 after rolling deployments have migrated.
-    #[arg(long = "builder.flashblock-execution-time-budget-us", hide = true)]
+    /// Legacy flashblock-level execution time budget in microseconds; evaluated alongside
+    /// resource-throttle limits during rollout.
+    #[arg(long = "builder.flashblock-execution-time-budget-us")]
     pub flashblock_execution_time_budget_us: Option<u128>,
 
-    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
-    /// Scheduled for removal in v1.4.0 after rolling deployments have migrated.
-    #[arg(long = "builder.block-state-root-gas-limit", hide = true)]
+    /// Legacy block-level state root gas limit; evaluated alongside resource-throttle limits during
+    /// rollout.
+    #[arg(long = "builder.block-state-root-gas-limit")]
     pub block_state_root_gas_limit: Option<u64>,
 
     /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
@@ -178,6 +180,10 @@ pub struct Args {
     /// Transactions younger than this without metering data will be skipped.
     #[arg(long = "builder.metering-wait-duration-ms")]
     pub metering_wait_duration_ms: Option<u64>,
+
+    /// JSON file containing the startup resource-throttle schedule.
+    #[arg(long = "builder.resource-throttle-schedule", env = "BUILDER_RESOURCE_THROTTLE_SCHEDULE")]
+    pub resource_throttle_schedule: Option<PathBuf>,
 
     /// URL of the audit-archiver RPC endpoint for forwarding rejected transactions
     #[arg(long = "builder.audit-archiver-url", env = "BUILDER_AUDIT_ARCHIVER_URL")]
@@ -248,6 +254,7 @@ impl Default for Args {
             enable_resource_metering: false,
             max_uncompressed_block_size: None,
             metering_wait_duration_ms: None,
+            resource_throttle_schedule: None,
             audit_archiver_url: None,
             rejected_tx_channel_size: 500,
             max_rejected_txs_per_block: 500,
@@ -282,6 +289,10 @@ impl Args {
             self.flashblocks.flashblocks_addr.parse()?,
             self.flashblocks.flashblocks_port,
         );
+        let resource_throttle_store = match self.resource_throttle_schedule.as_deref() {
+            Some(path) => Arc::new(ResourceThrottleStore::from_file(path)?),
+            None => Arc::new(ResourceThrottleStore::default()),
+        };
 
         Ok(BuilderConfig {
             block_time: Duration::from_millis(self.chain_block_time),
@@ -300,6 +311,7 @@ impl Args {
             max_uncompressed_block_size: self.max_uncompressed_block_size,
             metering_wait_duration: self.metering_wait_duration_ms.map(Duration::from_millis),
             metering_provider,
+            resource_throttle_store,
             rejection_cache: RejectionCache::new(
                 self.rejection_cache_max_capacity,
                 Duration::from_secs(self.rejection_cache_ttl_secs),

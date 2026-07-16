@@ -1,19 +1,19 @@
 use clap::ValueEnum;
 
-/// Mode for per-transaction execution-time metering limits.
+/// Mode for execution and resource-throttle metering limits.
 ///
 /// Controls how the builder handles execution metering limits that depend on
-/// metering service predictions. These limits can be gradually rolled out
-/// via dry-run mode before enforcement.
+/// metering service predictions. These limits can be gradually rolled out via
+/// dry-run mode before enforcement.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
 pub enum ExecutionMeteringMode {
-    /// Execution metering limits are disabled. No time limit checks are performed.
+    /// Metering limits are disabled.
     #[default]
     Off,
-    /// Dry-run mode: collect metrics about transactions that would exceed time limits,
-    /// but don't actually reject them. Useful for gathering data before enforcement.
+    /// Dry-run mode: collect metrics about transactions that would exceed metering limits,
+    /// but don't actually reject them.
     DryRun,
-    /// Enforce mode: reject transactions that exceed time limits.
+    /// Enforce mode: reject transactions that exceed metering limits.
     Enforce,
 }
 

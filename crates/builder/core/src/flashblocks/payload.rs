@@ -238,6 +238,7 @@ where
             cancel,
             extra,
             builder_config: self.config.clone(),
+            resource_throttle_schedule: self.config.resource_throttle_store.snapshot(),
             rejected_tx_sender: self.rejected_tx_sender.clone(),
         })
     }
@@ -564,6 +565,10 @@ where
             da_used = info.cumulative_da_bytes_used,
             block_gas_used = ctx.block_gas_limit(),
             target_da_footprint = target_da_footprint_for_batch,
+            flashblock_execution_time_limit_us = ?flashblock_execution_time_limit_us,
+            target_state_root_gas_for_batch = ?target_state_root_gas_for_batch,
+            resource_throttle_revision = ctx.resource_throttle_schedule.revision,
+            resource_throttle_dimensions = ctx.resource_throttle_schedule.dimensions.len(),
             "Building flashblock",
         );
         let flashblock_build_start_time = Instant::now();
@@ -622,6 +627,9 @@ where
             block_da_footprint_limit: target_da_footprint_for_batch,
             tx_execution_time_limit_us: ctx.builder_config.max_execution_time_per_tx_us,
             block_uncompressed_size_limit: ctx.builder_config.max_uncompressed_block_size,
+            resource_throttle_schedule: (ctx.builder_config.execution_metering_mode.is_enabled()
+                && !ctx.resource_throttle_schedule.is_empty())
+            .then(|| Arc::clone(&ctx.resource_throttle_schedule)),
         };
         let diag = ctx
             .execute_best_transactions(info, state, best_txs, &limits)

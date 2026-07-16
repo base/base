@@ -8,10 +8,10 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod ext;
-pub use ext::{BaseApiExtServer, MeteringStoreExt};
+pub use ext::{BaseApiExtServer, MeteringStoreExt, ResourceThrottleApiServer, ResourceThrottleExt};
 
 mod extension;
-pub use extension::MeteringStoreExtension;
+pub use extension::{MeteringStoreExtension, MeteringStoreExtensionConfig};
 
 mod store;
 pub use store::MeteringStore;

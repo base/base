@@ -3,8 +3,11 @@
 //! Heavily influenced by [reth](https://github.com/paradigmxyz/reth/blob/1e965caf5fa176f244a31c0d2662ba1b590938db/crates/optimism/payload/src/builder.rs#L570)
 
 use core::fmt::Debug;
+use std::sync::Arc;
 
-use ExecutionMeteringLimitExceeded::TransactionExecutionTime;
+use ExecutionMeteringLimitExceeded::{
+    BlockStateRootGas, FlashblockExecutionTime, ResourceThrottle, TransactionExecutionTime,
+};
 use alloy_primitives::{Address, U256};
 use base_bundles::RejectedTransaction;
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned};
@@ -12,11 +15,16 @@ use base_common_evm::BaseTransactionError;
 use derive_more::Display;
 use thiserror::Error;
 
+use crate::{
+    CompiledResourceThrottleSchedule, ResourceThrottleCheckError, ResourceThrottleLimitExceeded,
+    ResourceThrottleLimitScope, ResourceThrottleUsage,
+};
+
 /// Resource limits configuration for transaction and block constraints.
 ///
 /// This struct encapsulates all the resource limit parameters used to determine
 /// whether a transaction can be included in a block without exceeding various
-/// resource budgets (gas, DA, and per-transaction execution time).
+/// resource budgets (gas, DA, execution time, or resource-throttle units).
 #[derive(Debug, Clone, Default)]
 pub struct ResourceLimits {
     /// The block gas limit.
@@ -33,6 +41,8 @@ pub struct ResourceLimits {
     pub tx_execution_time_limit_us: Option<u128>,
     /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes (optional).
     pub block_uncompressed_size_limit: Option<u64>,
+    /// Snapshot of the resource-throttle schedule for the current block.
+    pub resource_throttle_schedule: Option<Arc<CompiledResourceThrottleSchedule>>,
 }
 
 /// Resource usage for a single transaction.
@@ -49,6 +59,9 @@ pub struct TxResources {
     pub execution_time_us: Option<u128>,
     /// Raw EIP-2718 encoded transaction size in bytes.
     pub uncompressed_size: u64,
+    /// Resource-throttle usage derived from the transaction's metering response, aligned with the
+    /// block schedule snapshot.
+    pub resource_throttle_usage: Option<ResourceThrottleUsage>,
 }
 
 /// Execution metering limits that depend on metering service predictions.
@@ -58,6 +71,17 @@ pub enum ExecutionMeteringLimitExceeded {
     /// A single transaction's predicted execution time exceeded its per-tx limit.
     #[error("transaction execution time exceeded: tx_time_us={0} limit_us={1}")]
     TransactionExecutionTime(u128, u128),
+    /// Cumulative flashblock execution time would exceed the per-flashblock limit.
+    #[error(
+        "flashblock execution time exceeded: flashblock_used_us={0} tx_time_us={1} limit_us={2}"
+    )]
+    FlashblockExecutionTime(u128, u128, u128),
+    /// Cumulative state root gas would exceed the per-block limit.
+    #[error("block state root gas exceeded: cumulative={0} tx_sr_gas={1} block_limit={2}")]
+    BlockStateRootGas(u64, u64, u64),
+    /// A resource-throttle dimension would exceed its transaction or block budget.
+    #[error("{0}")]
+    ResourceThrottle(ResourceThrottleLimitExceeded),
 }
 
 /// Error returned when a transaction fails execution or exceeds block limits.
@@ -122,7 +146,7 @@ pub enum TxnExecutionError {
     },
 
     // Execution metering limits (optionally enforced, depend on metering service predictions)
-    /// Execution metering limit exceeded.
+    /// Execution metering limit exceeded (legacy time/state-root or resource throttle).
     #[error("{0}")]
     ExecutionMeteringLimitExceeded(ExecutionMeteringLimitExceeded),
 
@@ -150,6 +174,10 @@ pub enum TxnExecutionError {
     /// Metering data has not yet arrived for this transaction.
     #[error("metering data pending")]
     MeteringDataPending,
+
+    /// Resource-throttle usage could not be calculated safely.
+    #[error("resource throttle usage calculation failed")]
+    ResourceThrottleCalculationFailed,
 }
 
 impl TxnExecutionError {
@@ -160,14 +188,18 @@ impl TxnExecutionError {
     /// Transient rejections depend on cumulative block state (gas used, DA used, etc.) and may
     /// succeed in a future block or flashblock with different cumulative values.
     pub const fn is_permanent(&self) -> bool {
-        matches!(
-            self,
+        match self {
             Self::TransactionDASizeExceeded(_, _)
-                | Self::ExecutionMeteringLimitExceeded(
-                    ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _),
-                )
-                | Self::MaxGasUsageExceeded
-        )
+            | Self::ExecutionMeteringLimitExceeded(
+                ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _),
+            )
+            | Self::ResourceThrottleCalculationFailed
+            | Self::MaxGasUsageExceeded => true,
+            Self::ExecutionMeteringLimitExceeded(
+                ExecutionMeteringLimitExceeded::ResourceThrottle(error),
+            ) => matches!(error.scope, ResourceThrottleLimitScope::Transaction),
+            _ => false,
+        }
     }
 }
 
@@ -210,6 +242,14 @@ pub struct ExecutionInfo {
     pub cumulative_gas_used: u64,
     /// Estimated DA size
     pub cumulative_da_bytes_used: u64,
+    /// Execution time used in the current flashblock in microseconds.
+    /// Reset at the start of each flashblock (see [`ResourceLimits::flashblock_execution_time_limit_us`]).
+    pub flashblock_execution_time_us: u128,
+    /// Cumulative state root gas across the block
+    /// (see [`ResourceLimits::block_state_root_gas_limit`]).
+    pub cumulative_state_root_gas: u64,
+    /// Cumulative resource-throttle usage across the block.
+    pub cumulative_resource_throttle: Vec<u128>,
     /// Cumulative uncompressed (EIP-2718 encoded) bytes used in the block
     pub cumulative_uncompressed_bytes: u64,
     /// Tracks fees from executed mempool transactions
@@ -231,6 +271,9 @@ impl ExecutionInfo {
             receipts: Vec::with_capacity(capacity),
             cumulative_gas_used: 0,
             cumulative_da_bytes_used: 0,
+            flashblock_execution_time_us: 0,
+            cumulative_state_root_gas: 0,
+            cumulative_resource_throttle: Vec::new(),
             cumulative_uncompressed_bytes: 0,
             total_fees: U256::ZERO,
             extra: Default::default(),
@@ -315,12 +358,29 @@ impl ExecutionInfo {
             }
         }
 
+        // Check block-scoped resource-throttle limits (if metering data is available).
+        if let Some(schedule) = limits.resource_throttle_schedule.as_ref()
+            && let Some(usage) = tx.resource_throttle_usage.as_ref()
+        {
+            match schedule.check(usage, &self.cumulative_resource_throttle) {
+                Ok(()) => {}
+                Err(ResourceThrottleCheckError::LimitExceeded(error)) => {
+                    return Err(ResourceThrottle(error).into());
+                }
+                Err(ResourceThrottleCheckError::ArithmeticOverflow) => {
+                    return Err(TxnExecutionError::ResourceThrottleCalculationFailed);
+                }
+            }
+        }
+
         Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::{ResourceThrottleDimension, ResourceThrottleSchedule};
+
     use super::*;
 
     /// Helper to create default limits with block gas limit set
@@ -468,6 +528,7 @@ mod tests {
             gas_limit: 21_000,
             execution_time_us: Some(2_000_000),
             uncompressed_size: 0,
+            ..Default::default()
         };
 
         let result = info.is_tx_over_limits(&tx, &limits);
@@ -491,6 +552,7 @@ mod tests {
             gas_limit: 100_000,
             execution_time_us: Some(100_000),
             uncompressed_size: 0,
+            ..Default::default()
         };
 
         assert!(info.is_tx_over_limits(&tx, &limits).is_ok());
@@ -568,5 +630,82 @@ mod tests {
             TxResources { gas_limit: 21_000, uncompressed_size: 1_000_000, ..Default::default() };
 
         assert!(info.is_tx_over_limits(&tx, &limits).is_ok());
+    }
+
+    #[test]
+    fn test_resource_throttle_transaction_limit_is_permanent() {
+        let schedule = ResourceThrottleSchedule {
+            dimensions: vec![ResourceThrottleDimension {
+                name: "cpu".to_string(),
+                block_limit: 100,
+                transaction_limit: Some(10),
+                base_gas_weight: 1,
+                operations: Vec::new(),
+            }],
+            ..Default::default()
+        };
+        let limits = ResourceLimits {
+            resource_throttle_schedule: Some(Arc::new(
+                CompiledResourceThrottleSchedule::compile(schedule, 3).unwrap(),
+            )),
+            ..default_limits()
+        };
+        let tx = TxResources {
+            gas_limit: 21_000,
+            resource_throttle_usage: Some(ResourceThrottleUsage { values: vec![11] }),
+            ..Default::default()
+        };
+
+        let error = ExecutionInfo::with_capacity(10).is_tx_over_limits(&tx, &limits).unwrap_err();
+        assert!(error.is_permanent());
+        assert!(matches!(
+            error,
+            TxnExecutionError::ExecutionMeteringLimitExceeded(
+                ExecutionMeteringLimitExceeded::ResourceThrottle(ResourceThrottleLimitExceeded {
+                    scope: ResourceThrottleLimitScope::Transaction,
+                    ..
+                })
+            )
+        ));
+    }
+
+    #[test]
+    fn test_resource_throttle_block_limit_is_transient_and_cumulative() {
+        let schedule = ResourceThrottleSchedule {
+            dimensions: vec![ResourceThrottleDimension {
+                name: "proof".to_string(),
+                block_limit: 100,
+                transaction_limit: None,
+                base_gas_weight: 1,
+                operations: Vec::new(),
+            }],
+            ..Default::default()
+        };
+        let limits = ResourceLimits {
+            resource_throttle_schedule: Some(Arc::new(
+                CompiledResourceThrottleSchedule::compile(schedule, 4).unwrap(),
+            )),
+            ..default_limits()
+        };
+        let tx = TxResources {
+            gas_limit: 21_000,
+            resource_throttle_usage: Some(ResourceThrottleUsage { values: vec![60] }),
+            ..Default::default()
+        };
+        let mut info = ExecutionInfo::with_capacity(10);
+
+        assert!(info.is_tx_over_limits(&tx, &limits).is_ok());
+        info.cumulative_resource_throttle = vec![60];
+        let error = info.is_tx_over_limits(&tx, &limits).unwrap_err();
+        assert!(matches!(
+            error,
+            TxnExecutionError::ExecutionMeteringLimitExceeded(
+                ExecutionMeteringLimitExceeded::ResourceThrottle(ResourceThrottleLimitExceeded {
+                    scope: ResourceThrottleLimitScope::Block,
+                    ..
+                })
+            )
+        ));
+        assert!(!error.is_permanent());
     }
 }

@@ -8,7 +8,10 @@ use std::sync::Arc;
 
 use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
 
-use crate::{ExecutionMeteringMode, NoopMeteringProvider, RejectionCache, SharedMeteringProvider};
+use crate::{
+    ExecutionMeteringMode, NoopMeteringProvider, RejectionCache, ResourceThrottleStore,
+    SharedMeteringProvider, SharedResourceThrottleStore,
+};
 
 /// Configuration values for the flashblocks builder.
 #[derive(Clone)]
@@ -45,8 +48,33 @@ pub struct BuilderConfig {
     /// Maximum gas a transaction can use before being excluded.
     pub max_gas_per_txn: Option<u64>,
 
-    /// Maximum execution time per transaction in microseconds.
+    /// Legacy maximum execution time per transaction in microseconds.
+    ///
+    /// Retained for rollout compatibility and evaluated alongside resource-throttle limits.
     pub max_execution_time_per_tx_us: Option<u128>,
+
+    /// Legacy flashblock-level execution time budget in microseconds.
+    ///
+    /// Retained for rollout compatibility and evaluated alongside resource-throttle limits.
+    pub flashblock_execution_time_budget_us: Option<u128>,
+
+    /// Legacy block-level state root gas limit.
+    ///
+    /// State root gas is a synthetic resource that accumulates like gas but penalizes
+    /// transactions whose simulated state root cost is disproportionate to their gas usage.
+    /// For each metered transaction: `sr_gas = gas_used × (1 + K × max(0, SR_ms - anchor))`.
+    /// Normal transactions (SR ≤ anchor) pay 1:1. State-heavy transactions pay more.
+    ///
+    /// Retained for rollout compatibility and evaluated alongside resource-throttle limits.
+    pub block_state_root_gas_limit: Option<u64>,
+
+    /// State root gas coefficient (K). Controls how aggressively excess SR time
+    /// inflates the state root gas cost. Default: 0.02.
+    pub state_root_gas_coefficient: f64,
+
+    /// State root gas anchor in microseconds. SR time below this threshold
+    /// produces no penalty (multiplier = 1). Default: 5000 (5ms).
+    pub state_root_gas_anchor_us: u128,
 
     /// Execution metering mode: off, dry-run, or enforce.
     pub execution_metering_mode: ExecutionMeteringMode,
@@ -60,6 +88,9 @@ pub struct BuilderConfig {
 
     /// Resource metering provider
     pub metering_provider: SharedMeteringProvider,
+
+    /// Versioned resource-throttle schedule shared with the runtime RPC.
+    pub resource_throttle_store: SharedResourceThrottleStore,
 
     /// Cache of permanently rejected transaction hashes, shared across blocks.
     /// Transactions in this cache are skipped by the iterator without re-evaluation.
@@ -105,6 +136,7 @@ impl core::fmt::Debug for BuilderConfig {
             .field("max_uncompressed_block_size", &self.max_uncompressed_block_size)
             .field("metering_wait_duration", &self.metering_wait_duration)
             .field("metering_provider", &self.metering_provider)
+            .field("resource_throttle_revision", &self.resource_throttle_store.revision())
             .field("rejection_cache_size", &self.rejection_cache.entry_count())
             .field("audit_archiver_url", &self.audit_archiver_url)
             .field("rejected_tx_channel_size", &self.rejected_tx_channel_size)
@@ -130,6 +162,7 @@ impl Default for BuilderConfig {
             max_uncompressed_block_size: None,
             metering_wait_duration: None,
             metering_provider: Arc::new(NoopMeteringProvider),
+            resource_throttle_store: Arc::new(ResourceThrottleStore::default()),
             rejection_cache: RejectionCache::new(100_000, Duration::from_secs(1800)),
             audit_archiver_url: None,
             rejected_tx_channel_size: 500,

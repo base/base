@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use base_builder_cli::Args;
 use base_builder_core::{BuilderApiExtension, FlashblocksServiceBuilder};
-use base_builder_metering::MeteringStoreExtension;
+use base_builder_metering::{MeteringStoreExtension, MeteringStoreExtensionConfig};
 use base_execution_cli::{Cli, StandardBaseRethNode};
 use base_node_runner::BaseNodeRunner;
 use base_observability_events::GlobalTransactionEventWriter;
@@ -40,9 +40,8 @@ fn main() {
             transaction_events_enabled.then(|| builder_args.transaction_events.writer_config()),
         )?;
 
-        let builder_config = builder_args
-            .into_builder_config(Arc::clone(&metering_provider))
-            .expect("Failed to convert rollup args to builder config");
+        let builder_config = builder_args.into_builder_config(Arc::clone(&metering_provider))?;
+        let resource_throttle_store = Arc::clone(&builder_config.resource_throttle_store);
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
 
@@ -50,7 +49,10 @@ fn main() {
             .with_da_config(da_config)
             .with_gas_limit_config(gas_limit_config)
             .with_service_builder(FlashblocksServiceBuilder(builder_config));
-        runner.install_ext::<MeteringStoreExtension>(metering_provider);
+        runner.install_ext::<MeteringStoreExtension>(MeteringStoreExtensionConfig {
+            metering_provider,
+            resource_throttle_store,
+        });
         runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());
         runner.install_ext::<BuilderApiExtension>(());
         StandardBaseRethNode::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;

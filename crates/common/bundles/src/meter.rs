@@ -3,14 +3,14 @@
 use alloy_primitives::{Address, B256, TxHash, U256};
 use serde::{Deserialize, Serialize};
 
-/// Per-opcode or precompile gas usage for a single item.
+/// Per-opcode, precompile, or pseudo-opcode gas usage for a single item.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct OpcodeGas {
     /// Address of the contract/precompile whose execution consumed this gas.
     #[serde(default)]
     pub contract_address: Address,
-    /// Opcode or precompile name (e.g., "SSTORE", "BLAKE2F").
+    /// Opcode, precompile, or pseudo-opcode name (e.g., "SSTORE", "BLAKE2F").
     pub opcode: String,
     /// Number of times this opcode/precompile was executed in the transaction.
     pub count: u64,
@@ -77,6 +77,19 @@ pub struct MeterBundleResponse {
     pub total_gas_used: u64,
     /// Total execution time in microseconds.
     pub total_execution_time_us: u128,
+}
+
+impl MeterBundleResponse {
+    /// Returns the result for a transaction in this response.
+    ///
+    /// Single-transaction metering responses are allowed to omit a matching hash in
+    /// compatibility paths, so a response with exactly one result is also accepted.
+    pub fn result_for_transaction(&self, tx_hash: &TxHash) -> Option<&TransactionResult> {
+        self.results
+            .iter()
+            .find(|result| &result.tx_hash == tx_hash)
+            .or_else(|| (self.results.len() == 1).then(|| &self.results[0]))
+    }
 }
 
 #[cfg(test)]

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use base_builder_cli::Args as BuilderArgs;
 use base_builder_core::{BuilderApiExtension, FlashblocksServiceBuilder};
-use base_builder_metering::MeteringStoreExtension;
+use base_builder_metering::{MeteringStoreExtension, MeteringStoreExtensionConfig};
 use base_consensus_cli::{
     CliMetrics, ConsensusNodeArgs, ConsensusNodeConfigArgs, ConsensusNodeOverrides,
     ConsensusNodeStartOptions, EmbeddedSequencerConsensusNodeConfigArgs,
@@ -69,6 +69,7 @@ impl SequencerCommand {
         let metering_provider: base_builder_core::SharedMeteringProvider =
             Arc::new(builder.build_metering_store());
         let builder_config = builder.into_builder_config(Arc::clone(&metering_provider))?;
+        let resource_throttle_store = Arc::clone(&builder_config.resource_throttle_store);
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
 
@@ -107,7 +108,10 @@ impl SequencerCommand {
                 .with_da_config(da_config)
                 .with_gas_limit_config(gas_limit_config)
                 .with_service_builder(FlashblocksServiceBuilder(builder_config));
-            runner.install_ext::<MeteringStoreExtension>(metering_provider);
+            runner.install_ext::<MeteringStoreExtension>(MeteringStoreExtensionConfig {
+                metering_provider,
+                resource_throttle_store,
+            });
             runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig { sequencer_rpc });
             runner.install_ext::<BuilderApiExtension>(());
             StandardBaseRethNode::install_upgrade_signal_runtime_extension(

@@ -10,6 +10,8 @@ Block builder library for Base. Provides flashblocks payload building infrastruc
 - **`flashblocks`**: Progressive block builder that produces block chunks at short intervals, publishing them via WebSocket before merging into full blocks.
 - **`launcher`**: Node launcher utilities for starting the builder.
 - **`metering`**: Resource metering provider trait and types.
+- **`resource_throttle`**: Versioned multidimensional schedules, compiled pricing, and atomic
+  runtime-replacement storage.
 
 ## Features
 
@@ -27,6 +29,12 @@ base-builder-core = { git = "https://github.com/base/base" }
 ```
 
 To run the builder, use the [`base-builder`](../../../bin/builder/) binary.
+
+Resource-throttle dimensions are builder-local budgets. They price the gas and selectively collected
+operation counts delivered by `meterBundle`; they do not change protocol gas prices or gas limits.
+Use `--builder.resource-throttle-schedule` for startup configuration and the JWT-authenticated
+`base_getResourceThrottleSchedule`/`base_replaceResourceThrottleSchedule` methods for atomic
+next-block updates.
 
 ## License
 

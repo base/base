@@ -42,17 +42,44 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Level, debug, span, trace, warn};
 
 use crate::{
-    BuilderConfig, BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded, PayloadTxsBounds,
-    ResourceLimits, TxResources, TxnExecutionError, TxnOutcome,
-    transaction_events::{
-        BuilderAcceptedEventData, BuilderConsideredEventData, BuilderRejectedEventData,
-        BuilderTransactionEventContext, emit_builder_transaction_event, rejection_reason_code,
-    },
+    BuilderConfig, BuilderMetrics, CompiledResourceThrottleSchedule, ExecutionInfo,
+    ExecutionMeteringLimitExceeded, PayloadTxsBounds, ResourceLimits, ResourceThrottleLimitScope,
+    TxResources, TxnExecutionError, TxnOutcome,
 };
 
 /// Records the priority fee of a rejected transaction with the given reason as a label.
 fn record_rejected_tx_priority_fee(reason: &TxnExecutionError, priority_fee: f64) {
-    BuilderMetrics::rejected_tx_priority_fee(rejection_reason_code(reason)).record(priority_fee);
+    let r = match reason {
+        TxnExecutionError::TransactionDASizeExceeded(_, _) => "tx_da_size_exceeded",
+        TxnExecutionError::BlockDASizeExceeded { .. } => "block_da_size_exceeded",
+        TxnExecutionError::DAFootprintLimitExceeded { .. } => "da_footprint_limit_exceeded",
+        TxnExecutionError::TransactionGasLimitExceeded { .. } => "transaction_gas_limit_exceeded",
+        TxnExecutionError::BlockUncompressedSizeExceeded { .. } => {
+            "block_uncompressed_size_exceeded"
+        }
+        TxnExecutionError::MeteringDataPending => "metering_data_pending",
+        TxnExecutionError::ExecutionMeteringLimitExceeded(inner) => match inner {
+            ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _) => {
+                "tx_execution_time_exceeded"
+            }
+            ExecutionMeteringLimitExceeded::FlashblockExecutionTime(_, _, _) => {
+                "flashblock_execution_time_exceeded"
+            }
+            ExecutionMeteringLimitExceeded::BlockStateRootGas(_, _, _) => {
+                "block_state_root_gas_exceeded"
+            }
+            ExecutionMeteringLimitExceeded::ResourceThrottle(_) => "resource_throttle_exceeded",
+        },
+        TxnExecutionError::ResourceThrottleCalculationFailed => {
+            "resource_throttle_calculation_failed"
+        }
+        TxnExecutionError::SequencerTransaction => "sequencer_transaction",
+        TxnExecutionError::NonceTooLow => "nonce_too_low",
+        TxnExecutionError::InternalError(_) => "internal_error",
+        TxnExecutionError::EvmError => "evm_error",
+        TxnExecutionError::MaxGasUsageExceeded => "max_gas_usage_exceeded",
+    };
+    BuilderMetrics::rejected_tx_priority_fee(r).record(priority_fee);
 }
 
 /// Diagnostics captured during a single flashblock's transaction execution.
@@ -97,6 +124,10 @@ pub struct FlashblockDiagnostics {
     pub txs_rejected_da_footprint: u64,
     /// Number rejected by the per-transaction execution time limit.
     pub txs_rejected_execution_time: u64,
+    /// Number rejected by state root time limits (tx or block).
+    pub txs_rejected_state_root_time: u64,
+    /// Number rejected by resource-throttle budgets.
+    pub txs_rejected_resource_throttle: u64,
     /// Number rejected by uncompressed size limit.
     pub txs_rejected_uncompressed_size: u64,
     /// Number skipped because metering data has not yet arrived.
@@ -122,12 +153,14 @@ impl FlashblockDiagnostics {
     }
 
     /// Returns the rejection counts keyed by their metric/log reason labels.
-    pub const fn rejection_counts(&self) -> [(&'static str, u64); 7] {
+    pub const fn rejection_counts(&self) -> [(&'static str, u64); 9] {
         [
             ("gas_limit", self.txs_rejected_gas),
             ("da_size", self.txs_rejected_da),
             ("da_footprint", self.txs_rejected_da_footprint),
             ("execution_time", self.txs_rejected_execution_time),
+            ("state_root_time", self.txs_rejected_state_root_time),
+            ("resource_throttle", self.txs_rejected_resource_throttle),
             ("uncompressed_size", self.txs_rejected_uncompressed_size),
             ("metering_data_pending", self.txs_rejected_metering_data_pending),
             ("other", self.txs_rejected_other),
@@ -148,6 +181,8 @@ impl FlashblockDiagnostics {
             + self.txs_rejected_da
             + self.txs_rejected_da_footprint
             + self.txs_rejected_execution_time
+            + self.txs_rejected_state_root_time
+            + self.txs_rejected_resource_throttle
             + self.txs_rejected_uncompressed_size
             + self.txs_rejected_metering_data_pending
             + self.txs_rejected_other
@@ -169,10 +204,18 @@ impl FlashblockDiagnostics {
             TxnExecutionError::BlockUncompressedSizeExceeded { .. } => {
                 self.txs_rejected_uncompressed_size += 1;
             }
-            TxnExecutionError::ExecutionMeteringLimitExceeded(inner) => {
-                let ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _) = inner;
-                self.txs_rejected_execution_time += 1;
-            }
+            TxnExecutionError::ExecutionMeteringLimitExceeded(inner) => match inner {
+                ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _)
+                | ExecutionMeteringLimitExceeded::FlashblockExecutionTime(_, _, _) => {
+                    self.txs_rejected_execution_time += 1;
+                }
+                ExecutionMeteringLimitExceeded::BlockStateRootGas(_, _, _) => {
+                    self.txs_rejected_state_root_time += 1;
+                }
+                ExecutionMeteringLimitExceeded::ResourceThrottle(_) => {
+                    self.txs_rejected_resource_throttle += 1;
+                }
+            },
             TxnExecutionError::MeteringDataPending => {
                 self.txs_rejected_metering_data_pending += 1;
             }
@@ -180,7 +223,8 @@ impl FlashblockDiagnostics {
             | TxnExecutionError::NonceTooLow
             | TxnExecutionError::InternalError(_)
             | TxnExecutionError::EvmError
-            | TxnExecutionError::MaxGasUsageExceeded => {
+            | TxnExecutionError::MaxGasUsageExceeded
+            | TxnExecutionError::ResourceThrottleCalculationFailed => {
                 self.txs_rejected_other += 1;
             }
         }
@@ -251,6 +295,8 @@ pub struct BasePayloadBuilderCtx {
     pub extra: FlashblocksExtraCtx,
     /// Builder configuration containing limits and metering settings.
     pub builder_config: BuilderConfig,
+    /// Immutable resource-throttle schedule snapshot for this payload job.
+    pub resource_throttle_schedule: Arc<CompiledResourceThrottleSchedule>,
     /// Sender for forwarding per-block batches of rejected transactions to the audit-archiver.
     pub rejected_tx_sender: Option<mpsc::Sender<Vec<RejectedTransaction>>>,
 }
@@ -879,12 +925,47 @@ impl BasePayloadBuilderCtx {
             let predicted_execution_time_us =
                 resource_usage.as_ref().map(|m| m.total_execution_time_us);
 
+            let resource_throttle_usage =
+                if !self.builder_config.execution_metering_mode.is_enabled()
+                    || self.resource_throttle_schedule.is_empty()
+                {
+                    None
+                } else if let Some(meter) = resource_usage.as_ref() {
+                    let result = meter.result_for_transaction(&tx_hash);
+                    let gas_used = result.map_or(meter.total_gas_used, |result| result.gas_used);
+                    let opcode_gas = result.map_or(&[][..], |result| result.opcode_gas.as_slice());
+                    match self.resource_throttle_schedule.evaluate(gas_used, opcode_gas) {
+                        Ok(usage) => Some(usage),
+                        Err(error) => {
+                            let err = TxnExecutionError::ResourceThrottleCalculationFailed;
+                            diag.record_rejection(&err);
+                            record_rejected_tx_priority_fee(
+                                &err,
+                                tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64,
+                            );
+                            diag.permanently_rejected_txs.push(tx_hash);
+                            warn!(
+                                target: "payload_builder",
+                                tx_hash = ?tx_hash,
+                                error = %error,
+                                "resource throttle usage calculation failed",
+                            );
+                            log_txn(Err(err));
+                            best_txs.mark_invalid(tx.signer(), tx.nonce());
+                            continue;
+                        }
+                    }
+                } else {
+                    None
+                };
+
             // Build tx resources struct
             let tx_resources = TxResources {
                 da_size: tx_da_size,
                 gas_limit: tx.gas_limit(),
                 execution_time_us: predicted_execution_time_us,
                 uncompressed_size: tx_uncompressed_size,
+                resource_throttle_usage,
             };
             self.emit_builder_decision_event(
                 &payload_id,
@@ -925,20 +1006,51 @@ impl BasePayloadBuilderCtx {
                             diag.permanently_rejected_txs.push(tx_hash);
                         }
 
-                        let ExecutionMeteringLimitExceeded::TransactionExecutionTime(
-                            tx_time_us,
-                            limit_us,
-                        ) = limit_err;
-                        // Only record per-tx execution time limits for the audit trail for now
-                        self.record_rejected_tx(
-                            info,
-                            tx_hash,
-                            RejectionReason::ExecutionTimeExceeded {
-                                tx_time_us: *tx_time_us,
-                                limit_us: *limit_us,
-                            },
-                            resource_usage.unwrap_or_default(),
-                        );
+                        match limit_err {
+                            ExecutionMeteringLimitExceeded::TransactionExecutionTime(
+                                tx_time_us,
+                                limit_us,
+                            ) => {
+                                self.record_rejected_tx(
+                                    info,
+                                    tx_hash,
+                                    RejectionReason::ExecutionTimeExceeded {
+                                        tx_time_us: *tx_time_us,
+                                        limit_us: *limit_us,
+                                    },
+                                    resource_usage.unwrap_or_default(),
+                                );
+                            }
+                            ExecutionMeteringLimitExceeded::ResourceThrottle(error)
+                                if error.scope == ResourceThrottleLimitScope::Transaction =>
+                            {
+                                BuilderMetrics::resource_throttle_rejected_total(
+                                    error.dimension.clone(),
+                                    error.scope.to_string(),
+                                )
+                                .increment(1);
+                                self.record_rejected_tx(
+                                    info,
+                                    tx_hash,
+                                    RejectionReason::ResourceThrottleExceeded {
+                                        dimension: error.dimension.clone(),
+                                        revision: error.revision,
+                                        transaction_cost: error.transaction_cost,
+                                        used: error.used,
+                                        limit: error.limit,
+                                    },
+                                    resource_usage.unwrap_or_default(),
+                                );
+                            }
+                            ExecutionMeteringLimitExceeded::ResourceThrottle(error) => {
+                                BuilderMetrics::resource_throttle_rejected_total(
+                                    error.dimension.clone(),
+                                    error.scope.to_string(),
+                                )
+                                .increment(1);
+                            }
+                            _ => {}
+                        }
 
                         self.emit_builder_decision_event(
                             &payload_id,
@@ -1175,6 +1287,36 @@ impl BasePayloadBuilderCtx {
             info.cumulative_da_bytes_used += tx_da_size;
             // record uncompressed tx size
             info.cumulative_uncompressed_bytes += tx_uncompressed_size;
+            // record execution time (only from predictions; unmetered txs count as zero)
+            if let Some(execution_time) = predicted_execution_time_us {
+                info.flashblock_execution_time_us += execution_time;
+            }
+            // record state root gas (only from predictions)
+            if let Some(sr_gas) = state_root_gas {
+                info.cumulative_state_root_gas += sr_gas;
+                BuilderMetrics::tx_state_root_gas().record(sr_gas as f64);
+            }
+            if let Some(usage) = tx_resources.resource_throttle_usage.as_ref() {
+                usage
+                    .add_to(&mut info.cumulative_resource_throttle)
+                    .map_err(PayloadBuilderError::other)?;
+                for (dimension, value) in
+                    self.resource_throttle_schedule.dimensions.iter().zip(usage.values.iter())
+                {
+                    BuilderMetrics::resource_throttle_usage(
+                        dimension.name.clone(),
+                        "transaction".to_string(),
+                    )
+                    .record(*value as f64);
+                }
+            }
+            // record state root time / gas ratio for anomaly detection
+            if let Some(state_root_time) = predicted_state_root_time_us
+                && gas_used > 0
+            {
+                let ratio = state_root_time as f64 / gas_used as f64;
+                BuilderMetrics::state_root_time_per_gas_ratio().record(ratio);
+            }
 
             self.emit_builder_decision_event(
                 &payload_id,
@@ -1282,6 +1424,19 @@ impl BasePayloadBuilderCtx {
             ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _) => {
                 BuilderMetrics::tx_execution_time_exceeded_total().increment(1);
             }
+            ExecutionMeteringLimitExceeded::FlashblockExecutionTime(_, _, _) => {
+                BuilderMetrics::flashblock_execution_time_exceeded_total().increment(1);
+            }
+            ExecutionMeteringLimitExceeded::BlockStateRootGas(_, _, _) => {
+                BuilderMetrics::block_state_root_gas_exceeded_total().increment(1);
+            }
+            ExecutionMeteringLimitExceeded::ResourceThrottle(error) => {
+                BuilderMetrics::resource_throttle_limit_exceeded_total(
+                    error.dimension.clone(),
+                    error.scope.to_string(),
+                )
+                .increment(1);
+            }
         }
     }
 }
@@ -1336,6 +1491,7 @@ impl BasePayloadBuilderCtx {
             cancel: CancellationToken::new(),
             extra: FlashblocksExtraCtx::default(),
             builder_config: crate::BuilderConfig::default(),
+            resource_throttle_schedule: crate::ResourceThrottleStore::default().snapshot(),
             rejected_tx_sender: None,
         }
     }
@@ -1355,7 +1511,7 @@ mod tests {
     use reth_revm::{State, database::StateProviderDatabase};
 
     use super::*;
-    use crate::test_utils::sign_base_tx;
+    use crate::{ResourceThrottleLimitExceeded, test_utils::sign_base_tx};
 
     #[test]
     fn diagnostics_report_selection_outcome() {
@@ -1394,6 +1550,8 @@ mod tests {
                 ("da_size", 0),
                 ("da_footprint", 0),
                 ("execution_time", 0),
+                ("state_root_time", 1),
+                ("resource_throttle", 0),
                 ("uncompressed_size", 0),
                 ("metering_data_pending", 0),
                 ("other", 0),
@@ -1412,6 +1570,27 @@ mod tests {
         assert_eq!(diag.txs_rejected_metering_data_pending, 1);
         assert_eq!(diag.txs_rejected_other, 3);
         assert_eq!(diag.txs_rejected_total(), 4);
+    }
+
+    #[test]
+    fn diagnostics_bucket_resource_throttle_rejections() {
+        let mut diag = FlashblockDiagnostics::default();
+        let error = TxnExecutionError::ExecutionMeteringLimitExceeded(
+            ExecutionMeteringLimitExceeded::ResourceThrottle(ResourceThrottleLimitExceeded {
+                dimension: "proof".to_string(),
+                scope: ResourceThrottleLimitScope::Block,
+                used: 101,
+                transaction_cost: 10,
+                limit: 100,
+                revision: 1,
+            }),
+        );
+
+        diag.record_rejection(&error);
+
+        assert_eq!(diag.txs_rejected_resource_throttle, 1);
+        assert_eq!(diag.txs_rejected_total(), 1);
+        assert_eq!(diag.rejection_reasons(), vec!["resource_throttle"]);
     }
 
     #[test]
