@@ -114,6 +114,12 @@ const ROOT_BATCH_MINT: B256 =
     b256!("abeeb4354269e4994a293dc1decc3c33a61c566f8d8b8479a018c8a03bd744b0");
 const ROOT_ANNOUNCE: B256 =
     b256!("18badab132a0ba9de303e277d69816df82091fdc024322ea600bdbd3a6147068");
+const ROOT_GRANT_DEFAULT_ADMIN: B256 =
+    b256!("df78d6e3c794391187702ecd8f74b31c027363c342984bb972e7583b69a03f2f");
+const ROOT_GRANT_IDEMPOTENT: B256 =
+    b256!("39658b6dcaf82dc5e146d5d44fed26ba96b03220e92aa1fe9bd7cecb23437e22");
+const ROOT_GRANT_UNCHECKED: B256 =
+    b256!("6cdfdb30b62a059f71f67cec831aa1e1ddc44750e483bcd02c641b030cc4b8f4");
 
 // --- harness ----------------------------------------------------------------
 
@@ -1734,6 +1740,482 @@ fn dispatch_reverts_when_uninitialized() {
 }
 
 // ============================================================================
+// additional branch coverage: unprivileged auth guards + revert edges
+// ============================================================================
+
+#[test]
+fn golden_transfer_reverts_zero_sender() {
+    let mut s = fresh();
+    let err = op_privileged(
+        &mut s,
+        Address::ZERO,
+        InMemoryPolicy::new(),
+        IB20::transferCall { to: BOB, amount: u(1) }.abi_encode(),
+    )
+    .unwrap_err();
+    assert_eq!(err, BasePrecompileError::revert(IB20::InvalidSender { sender: Address::ZERO }));
+}
+
+#[test]
+fn golden_transfer_from_reverts_zero_receiver() {
+    let mut s = fresh();
+    let err = op_privileged(
+        &mut s,
+        BOB,
+        InMemoryPolicy::new(),
+        IB20::transferFromCall { from: ALICE, to: Address::ZERO, amount: u(1) }.abi_encode(),
+    )
+    .unwrap_err();
+    assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO }));
+}
+
+#[test]
+fn golden_transfer_from_reverts_zero_sender() {
+    let mut s = fresh();
+    let err = op_privileged(
+        &mut s,
+        BOB,
+        InMemoryPolicy::new(),
+        IB20::transferFromCall { from: Address::ZERO, to: CAROL, amount: u(1) }.abi_encode(),
+    )
+    .unwrap_err();
+    assert_eq!(err, BasePrecompileError::revert(IB20::InvalidSender { sender: Address::ZERO }));
+}
+
+#[test]
+fn golden_approve_reverts_zero_approver() {
+    let mut s = fresh();
+    let err = op(
+        &mut s,
+        Address::ZERO,
+        InMemoryPolicy::new(),
+        IB20::approveCall { spender: BOB, amount: u(1) }.abi_encode(),
+    )
+    .unwrap_err();
+    assert_eq!(err, BasePrecompileError::revert(IB20::InvalidApprover { approver: Address::ZERO }));
+}
+
+#[test]
+fn golden_mint_reverts_zero_receiver() {
+    let mut s = fresh();
+    let err = op_privileged(
+        &mut s,
+        ADMIN,
+        InMemoryPolicy::new(),
+        IB20::mintCall { to: Address::ZERO, amount: u(1) }.abi_encode(),
+    )
+    .unwrap_err();
+    assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO }));
+}
+
+#[test]
+fn golden_burn_reverts_insufficient_balance() {
+    let mut s = fresh();
+    seed(&mut s, |t| {
+        fund(t, ALICE, u(10));
+        give_role(t, B20TokenRole::Burn.id(), ALICE);
+    });
+    let err =
+        op(&mut s, ALICE, InMemoryPolicy::new(), IB20::burnCall { amount: u(50) }.abi_encode())
+            .unwrap_err();
+    assert_eq!(
+        err,
+        BasePrecompileError::revert(IB20::InsufficientBalance {
+            sender: ALICE,
+            balance: u(10),
+            needed: u(50),
+        })
+    );
+}
+
+#[test]
+fn golden_burn_blocked_unprivileged_requires_role() {
+    let mut s = fresh();
+    seed(&mut s, |t| fund(t, ALICE, u(100)));
+    let err = op(
+        &mut s,
+        ALICE,
+        InMemoryPolicy::new(),
+        IB20::burnBlockedCall { from: BOB, amount: u(1) }.abi_encode(),
+    )
+    .unwrap_err();
+    assert_eq!(
+        err,
+        BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+            account: ALICE,
+            neededRole: B20TokenRole::BurnBlocked.id(),
+        })
+    );
+}
+
+#[test]
+fn golden_unpause_reverts_empty_feature_set() {
+    let mut s = fresh();
+    let err = op_privileged(
+        &mut s,
+        ADMIN,
+        InMemoryPolicy::new(),
+        IB20::unpauseCall { features: vec![] }.abi_encode(),
+    )
+    .unwrap_err();
+    assert_eq!(err, BasePrecompileError::revert(IB20::EmptyFeatureSet {}));
+}
+
+#[test]
+fn golden_unpause_unprivileged_requires_role() {
+    let mut s = fresh();
+    let err = op(
+        &mut s,
+        ALICE,
+        InMemoryPolicy::new(),
+        IB20::unpauseCall { features: vec![IB20::PausableFeature::MINT] }.abi_encode(),
+    )
+    .unwrap_err();
+    assert_eq!(
+        err,
+        BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+            account: ALICE,
+            neededRole: B20TokenRole::Unpause.id(),
+        })
+    );
+}
+
+/// Asserts an unprivileged metadata/admin op reverts for a caller lacking `role`.
+fn assert_unprivileged_requires_role(calldata: Vec<u8>, role: B256) {
+    let mut s = fresh();
+    let err = op(&mut s, ALICE, InMemoryPolicy::new(), calldata).unwrap_err();
+    assert_eq!(
+        err,
+        BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+            account: ALICE,
+            neededRole: role,
+        })
+    );
+}
+
+#[test]
+fn golden_update_supply_cap_unprivileged_requires_role() {
+    assert_unprivileged_requires_role(
+        IB20::updateSupplyCapCall { newSupplyCap: u(1) }.abi_encode(),
+        B20TokenRole::DefaultAdmin.id(),
+    );
+}
+
+#[test]
+fn golden_update_name_unprivileged_requires_role() {
+    assert_unprivileged_requires_role(
+        IB20::updateNameCall { newName: "x".into() }.abi_encode(),
+        B20TokenRole::Metadata.id(),
+    );
+}
+
+#[test]
+fn golden_update_symbol_unprivileged_requires_role() {
+    assert_unprivileged_requires_role(
+        IB20::updateSymbolCall { newSymbol: "x".into() }.abi_encode(),
+        B20TokenRole::Metadata.id(),
+    );
+}
+
+#[test]
+fn golden_update_contract_uri_unprivileged_requires_role() {
+    assert_unprivileged_requires_role(
+        IB20::updateContractURICall { newURI: "x".into() }.abi_encode(),
+        B20TokenRole::Metadata.id(),
+    );
+}
+
+#[test]
+fn golden_update_policy_unprivileged_requires_role() {
+    assert_unprivileged_requires_role(
+        IB20::updatePolicyCall { policyScope: B20PolicyType::TransferSender.id(), newPolicyId: 1 }
+            .abi_encode(),
+        B20TokenRole::DefaultAdmin.id(),
+    );
+}
+
+#[test]
+fn golden_update_multiplier_unprivileged_is_requires_operator_role() {
+    // Covered by golden_update_multiplier_requires_operator_role; kept for symmetry.
+    assert_unprivileged_requires_role(
+        IB20Asset::updateMultiplierCall { newMultiplier: wad() }.abi_encode(),
+        operator_role(),
+    );
+}
+
+#[test]
+fn golden_batch_mint_unprivileged_requires_role() {
+    let mut s = fresh();
+    let err = op(
+        &mut s,
+        ALICE,
+        InMemoryPolicy::new(),
+        IB20Asset::batchMintCall { recipients: vec![BOB], amounts: vec![u(1)] }.abi_encode(),
+    )
+    .unwrap_err();
+    assert_eq!(
+        err,
+        BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+            account: ALICE,
+            neededRole: B20TokenRole::Mint.id(),
+        })
+    );
+}
+
+#[test]
+fn golden_update_extra_metadata_unprivileged_requires_role() {
+    let mut s = fresh();
+    let err = op(
+        &mut s,
+        ALICE,
+        InMemoryPolicy::new(),
+        IB20Asset::updateExtraMetadataCall { key: "k".into(), value: "v".into() }.abi_encode(),
+    )
+    .unwrap_err();
+    assert_eq!(
+        err,
+        BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+            account: ALICE,
+            neededRole: B20TokenRole::Metadata.id(),
+        })
+    );
+}
+
+#[test]
+fn golden_announce_unprivileged_requires_operator_role() {
+    let mut s = fresh();
+    let err = op(
+        &mut s,
+        ALICE,
+        InMemoryPolicy::new(),
+        IB20Asset::announceCall {
+            internalCalls: vec![],
+            id: "x".into(),
+            description: String::new(),
+            uri: String::new(),
+        }
+        .abi_encode(),
+    )
+    .unwrap_err();
+    assert_eq!(
+        err,
+        BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+            account: ALICE,
+            neededRole: operator_role(),
+        })
+    );
+}
+
+#[test]
+fn golden_grant_role_unprivileged_no_admin_reverts() {
+    let mut s = fresh();
+    let err = op(
+        &mut s,
+        ALICE,
+        InMemoryPolicy::new(),
+        IB20::grantRoleCall { role: B20TokenRole::Mint.id(), account: BOB }.abi_encode(),
+    )
+    .unwrap_err();
+    assert_eq!(
+        err,
+        BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+            account: ALICE,
+            neededRole: B20TokenRole::DefaultAdmin.id(),
+        })
+    );
+}
+
+#[test]
+fn golden_grant_role_unprivileged_non_admin_caller_reverts() {
+    let mut s = fresh();
+    seed(&mut s, |t| give_role(t, B20TokenRole::DefaultAdmin.id(), ADMIN));
+    let err = op(
+        &mut s,
+        ALICE,
+        InMemoryPolicy::new(),
+        IB20::grantRoleCall { role: B20TokenRole::Mint.id(), account: BOB }.abi_encode(),
+    )
+    .unwrap_err();
+    assert_eq!(
+        err,
+        BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+            account: ALICE,
+            neededRole: B20TokenRole::DefaultAdmin.id(),
+        })
+    );
+}
+
+#[test]
+fn golden_revoke_role_unprivileged_non_admin_caller_reverts() {
+    let mut s = fresh();
+    seed(&mut s, |t| give_role(t, B20TokenRole::DefaultAdmin.id(), ADMIN));
+    let err = op(
+        &mut s,
+        BOB,
+        InMemoryPolicy::new(),
+        IB20::revokeRoleCall { role: B20TokenRole::Mint.id(), account: ALICE }.abi_encode(),
+    )
+    .unwrap_err();
+    assert_eq!(
+        err,
+        BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+            account: BOB,
+            neededRole: B20TokenRole::DefaultAdmin.id(),
+        })
+    );
+}
+
+#[test]
+fn golden_set_role_admin_unprivileged_non_admin_caller_reverts() {
+    let mut s = fresh();
+    seed(&mut s, |t| give_role(t, B20TokenRole::DefaultAdmin.id(), ADMIN));
+    let err = op(
+        &mut s,
+        BOB,
+        InMemoryPolicy::new(),
+        IB20::setRoleAdminCall {
+            role: B20TokenRole::Mint.id(),
+            newAdminRole: B20TokenRole::Metadata.id(),
+        }
+        .abi_encode(),
+    )
+    .unwrap_err();
+    assert_eq!(
+        err,
+        BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
+            account: BOB,
+            neededRole: B20TokenRole::DefaultAdmin.id(),
+        })
+    );
+}
+
+#[test]
+fn golden_renounce_role_reverts_last_admin() {
+    let mut s = fresh();
+    seed(&mut s, |t| give_role(t, B20TokenRole::DefaultAdmin.id(), ADMIN));
+    let err = op(
+        &mut s,
+        ADMIN,
+        InMemoryPolicy::new(),
+        IB20::renounceRoleCall { role: B20TokenRole::DefaultAdmin.id(), callerConfirmation: ADMIN }
+            .abi_encode(),
+    )
+    .unwrap_err();
+    assert_eq!(err, BasePrecompileError::revert(IB20::LastAdminCannotRenounce {}));
+}
+
+#[test]
+fn golden_grant_default_admin_bumps_member_count() {
+    let mut s = fresh();
+    seed(&mut s, |t| give_role(t, B20TokenRole::DefaultAdmin.id(), ADMIN));
+    let out = op_privileged(
+        &mut s,
+        ADMIN,
+        InMemoryPolicy::new(),
+        IB20::grantRoleCall { role: B20TokenRole::DefaultAdmin.id(), account: ALICE }.abi_encode(),
+    )
+    .unwrap();
+
+    assert!(out.is_empty());
+    read(&mut s, |t| {
+        assert!(t.has_role(B20TokenRole::DefaultAdmin.id(), ALICE).unwrap());
+        assert_eq!(t.role_member_count(B20TokenRole::DefaultAdmin.id()).unwrap(), u(2));
+    });
+    assert_eq!(last_topic0(&s), IB20::RoleGranted::SIGNATURE_HASH);
+    assert_root("grant_default_admin", s, ROOT_GRANT_DEFAULT_ADMIN);
+}
+
+#[test]
+fn golden_grant_role_idempotent_when_already_held() {
+    let mut s = fresh();
+    seed(&mut s, |t| {
+        give_role(t, B20TokenRole::DefaultAdmin.id(), ADMIN);
+        give_role(t, B20TokenRole::Mint.id(), ALICE);
+    });
+    let out = op_privileged(
+        &mut s,
+        ADMIN,
+        InMemoryPolicy::new(),
+        IB20::grantRoleCall { role: B20TokenRole::Mint.id(), account: ALICE }.abi_encode(),
+    )
+    .unwrap();
+
+    assert!(out.is_empty());
+    read(&mut s, |t| assert!(t.has_role(B20TokenRole::Mint.id(), ALICE).unwrap()));
+    assert_root("grant_idempotent", s, ROOT_GRANT_IDEMPOTENT);
+}
+
+#[test]
+fn golden_revoke_role_noop_when_not_held() {
+    let mut s = fresh();
+    let out = op_privileged(
+        &mut s,
+        ADMIN,
+        InMemoryPolicy::new(),
+        IB20::revokeRoleCall { role: B20TokenRole::Mint.id(), account: ALICE }.abi_encode(),
+    )
+    .unwrap();
+
+    assert!(out.is_empty());
+    read(&mut s, |t| assert!(!t.has_role(B20TokenRole::Mint.id(), ALICE).unwrap()));
+    assert_root("revoke_noop", s, ROOT_FRESH);
+}
+
+// ============================================================================
+// dispatch harness wrappers (no-observer dispatch, inner gating, factory bootstrap)
+// ============================================================================
+
+#[test]
+fn golden_dispatch_no_observer_wrapper_reverts_uninitialized() {
+    let mut s = HashMapStorageProvider::new(CHAIN_ID);
+    s.set_caller(ALICE);
+    let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
+    let out = StorageCtx::enter(&mut s, |ctx| {
+        B20AssetToken::with_storage_and_policy(
+            B20AssetStorage::from_address(TOKEN, ctx),
+            InMemoryPolicy::new(),
+        )
+        .dispatch(ctx, &calldata, BaseUpgrade::Beryl)
+    })
+    .expect("dispatch must not fatally error");
+    assert!(out.is_revert());
+}
+
+#[test]
+fn golden_inner_reverts_before_beryl() {
+    let mut s = fresh();
+    let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
+    let err = StorageCtx::enter(&mut s, |ctx| {
+        B20AssetToken::with_storage_and_policy(
+            B20AssetStorage::from_address(TOKEN, ctx),
+            InMemoryPolicy::new(),
+        )
+        .inner(ctx, &calldata, BaseUpgrade::Azul)
+    })
+    .unwrap_err();
+    assert_eq!(err, BasePrecompileError::Revert(Bytes::new()));
+}
+
+#[test]
+fn golden_grant_role_unchecked_bootstraps_first_admin() {
+    let mut s = fresh();
+    s.set_caller(TOKEN);
+    StorageCtx::enter(&mut s, |ctx| {
+        let mut token = B20AssetToken::with_storage_and_policy(
+            B20AssetStorage::from_address(TOKEN, ctx),
+            InMemoryPolicy::new(),
+        );
+        token.grant_role_unchecked(B20TokenRole::DefaultAdmin.id(), ADMIN, TOKEN).unwrap();
+    });
+    read(&mut s, |t| {
+        assert!(t.has_role(B20TokenRole::DefaultAdmin.id(), ADMIN).unwrap());
+        assert_eq!(t.role_member_count(B20TokenRole::DefaultAdmin.id()).unwrap(), U256::ONE);
+    });
+    assert_eq!(last_topic0(&s), IB20::RoleGranted::SIGNATURE_HASH);
+    assert_root("grant_unchecked", s, ROOT_GRANT_UNCHECKED);
+}
+
+// ============================================================================
 // meta: op coverage checklist
 // ============================================================================
 
@@ -1766,16 +2248,21 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
             golden_transfer_reverts_zero_receiver,
             golden_transfer_reverts_insufficient_balance,
             golden_transfer_reverts_when_paused,
+            golden_transfer_reverts_zero_sender,
         ]),
         C::transferFrom(_) => covered(&[
             golden_transfer_from_finite_allowance_decrements,
             golden_transfer_from_infinite_allowance_not_decremented,
             golden_transfer_from_reverts_insufficient_allowance,
             golden_transfer_from_unprivileged_enforces_executor_policy,
+            golden_transfer_from_reverts_zero_receiver,
+            golden_transfer_from_reverts_zero_sender,
         ]),
-        C::approve(_) => {
-            covered(&[golden_approve_sets_allowance_and_emits, golden_approve_reverts_zero_spender])
-        }
+        C::approve(_) => covered(&[
+            golden_approve_sets_allowance_and_emits,
+            golden_approve_reverts_zero_spender,
+            golden_approve_reverts_zero_approver,
+        ]),
         C::transferWithMemo(_) => covered(&[golden_transfer_with_memo_emits_transfer_then_memo]),
         C::transferFromWithMemo(_) => covered(&[golden_transfer_from_with_memo]),
 
@@ -1784,13 +2271,18 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
             golden_mint_privileged_still_enforces_receiver_policy,
             golden_mint_unprivileged_requires_role_and_policy,
             golden_mint_reverts_over_supply_cap,
+            golden_mint_reverts_zero_receiver,
         ]),
         C::mintWithMemo(_) => covered(&[golden_mint_with_memo]),
-        C::burn(_) => covered(&[golden_burn_requires_role_then_reduces_supply]),
+        C::burn(_) => covered(&[
+            golden_burn_requires_role_then_reduces_supply,
+            golden_burn_reverts_insufficient_balance,
+        ]),
         C::burnWithMemo(_) => covered(&[golden_burn_with_memo]),
         C::burnBlocked(_) => covered(&[
             golden_burn_blocked_destroys_from_blocked_account,
             golden_burn_blocked_reverts_when_not_blocked,
+            golden_burn_blocked_unprivileged_requires_role,
         ]),
 
         // pause / config / roles / policy / permit
@@ -1799,25 +2291,57 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
             golden_pause_reverts_empty_feature_set,
             golden_pause_unprivileged_requires_role,
         ]),
-        C::unpause(_) => covered(&[golden_unpause_clears_feature_bit]),
-        C::updateSupplyCap(_) => {
-            covered(&[golden_update_supply_cap, golden_update_supply_cap_reverts_below_supply])
+        C::unpause(_) => covered(&[
+            golden_unpause_clears_feature_bit,
+            golden_unpause_reverts_empty_feature_set,
+            golden_unpause_unprivileged_requires_role,
+        ]),
+        C::updateSupplyCap(_) => covered(&[
+            golden_update_supply_cap,
+            golden_update_supply_cap_reverts_below_supply,
+            golden_update_supply_cap_unprivileged_requires_role,
+        ]),
+        C::updateName(_) => covered(&[
+            golden_update_name_emits_name_and_domain_changed,
+            golden_update_name_unprivileged_requires_role,
+        ]),
+        C::updateSymbol(_) => {
+            covered(&[golden_update_symbol, golden_update_symbol_unprivileged_requires_role])
         }
-        C::updateName(_) => covered(&[golden_update_name_emits_name_and_domain_changed]),
-        C::updateSymbol(_) => covered(&[golden_update_symbol]),
-        C::updateContractURI(_) => covered(&[golden_update_contract_uri]),
-        C::grantRole(_) => covered(&[golden_grant_role]),
-        C::revokeRole(_) => covered(&[golden_revoke_role, golden_revoke_last_admin_rejected]),
-        C::renounceRole(_) => {
-            covered(&[golden_renounce_role, golden_renounce_role_bad_confirmation])
-        }
+        C::updateContractURI(_) => covered(&[
+            golden_update_contract_uri,
+            golden_update_contract_uri_unprivileged_requires_role,
+        ]),
+        C::grantRole(_) => covered(&[
+            golden_grant_role,
+            golden_grant_role_unprivileged_no_admin_reverts,
+            golden_grant_role_unprivileged_non_admin_caller_reverts,
+            golden_grant_default_admin_bumps_member_count,
+            golden_grant_role_idempotent_when_already_held,
+        ]),
+        C::revokeRole(_) => covered(&[
+            golden_revoke_role,
+            golden_revoke_last_admin_rejected,
+            golden_revoke_role_unprivileged_non_admin_caller_reverts,
+            golden_revoke_role_noop_when_not_held,
+        ]),
+        C::renounceRole(_) => covered(&[
+            golden_renounce_role,
+            golden_renounce_role_bad_confirmation,
+            golden_renounce_role_reverts_last_admin,
+        ]),
         C::renounceLastAdmin(_) => {
             covered(&[golden_renounce_last_admin, golden_renounce_last_admin_reverts_when_not_sole])
         }
-        C::setRoleAdmin(_) => covered(&[golden_set_role_admin]),
-        C::updatePolicy(_) => {
-            covered(&[golden_update_policy, golden_update_policy_reverts_missing_policy])
-        }
+        C::setRoleAdmin(_) => covered(&[
+            golden_set_role_admin,
+            golden_set_role_admin_unprivileged_non_admin_caller_reverts,
+        ]),
+        C::updatePolicy(_) => covered(&[
+            golden_update_policy,
+            golden_update_policy_reverts_missing_policy,
+            golden_update_policy_unprivileged_requires_role,
+        ]),
         C::permit(_) => covered(&[
             golden_permit_sets_allowance_and_increments_nonce,
             golden_permit_reverts_when_expired,
@@ -1871,21 +2395,26 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
             golden_update_multiplier,
             golden_update_multiplier_requires_operator_role,
             golden_update_multiplier_rejects_zero,
+            golden_update_multiplier_unprivileged_is_requires_operator_role,
         ]),
         SC::batchMint(_) => covered(&[
             golden_batch_mint,
             golden_batch_mint_reverts_length_mismatch,
             golden_batch_mint_reverts_empty_batch,
+            golden_batch_mint_unprivileged_requires_role,
         ]),
-        SC::updateExtraMetadata(_) => {
-            covered(&[golden_update_extra_metadata, golden_update_extra_metadata_rejects_empty_key])
-        }
+        SC::updateExtraMetadata(_) => covered(&[
+            golden_update_extra_metadata,
+            golden_update_extra_metadata_rejects_empty_key,
+            golden_update_extra_metadata_unprivileged_requires_role,
+        ]),
         SC::announce(_) => covered(&[
             golden_announce_runs_internal_calls_and_brackets_events,
             golden_announce_reverts_on_reused_id,
             golden_announce_reverts_on_nested_announce,
             golden_announce_wraps_failing_internal_call,
             golden_announce_reverts_on_malformed_internal_call,
+            golden_announce_unprivileged_requires_operator_role,
         ]),
     }
 }
