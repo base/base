@@ -91,6 +91,25 @@ impl<'a> StorageCtx<'a> {
         })
     }
 
+    /// Executes a closure with full account bytecode, returning the closure's result.
+    pub fn with_account_code<T>(
+        &self,
+        address: Address,
+        mut f: impl FnMut(&Bytecode) -> Result<T>,
+    ) -> Result<T> {
+        let mut result: Option<Result<T>> = None;
+        self.try_with_storage(|s| {
+            s.with_account_code(address, &mut |code| {
+                result = Some(f(code));
+            })
+        })?;
+        result.unwrap_or_else(|| {
+            Err(BasePrecompileError::Fatal(
+                "with_account_code callback was not invoked".to_string(),
+            ))
+        })
+    }
+
     /// Returns the current chain ID.
     pub fn chain_id(&self) -> u64 {
         self.with_storage(|s| s.chain_id())
