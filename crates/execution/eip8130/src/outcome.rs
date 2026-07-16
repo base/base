@@ -16,13 +16,13 @@ pub enum DispatchOutcome {
         actor_id: B256,
     },
 
-    /// The delegate authenticator: the nested signature has been cryptographically
-    /// verified, but the protocol must still **authorize** the nested actor against
-    /// the delegated account via the full `authenticateActor` path (inline
-    /// default-EOA k1 self *or* an explicit `actor_config` entry) and require
-    /// admin (`scope == 0`). That stateful check is performed by the authorize
-    /// stage; dispatch only proves the nested signature is valid and surfaces
-    /// the obligation here.
+    /// The delegate authenticator: dispatch has only *structurally* parsed the
+    /// blob (delegate account + single-hop check). The nested signature is **not**
+    /// verified here; the authorize stage must run the full `authenticateActor`
+    /// path against the delegated account (inline default-EOA k1 self *or* an
+    /// explicit `actor_config` entry) and require admin (`scope == 0`). This
+    /// mirrors the deployed `DelegateAuthenticator`, which itself only calls
+    /// `ACCOUNT_CONFIGURATION.authenticateActor(delegate, ...)`.
     Delegated {
         /// Outer actor id registered on the originating account:
         /// `bytes32(bytes20(delegate_account))`.
@@ -30,10 +30,5 @@ pub enum DispatchOutcome {
         /// The delegated account (B) whose config the nested actor must be
         /// authorized against via `authenticateActor`.
         delegate_account: Address,
-        /// The nested (canonical, non-delegate) authenticator that verified the
-        /// nested signature.
-        nested_authenticator: Address,
-        /// The nested actor id resolved by the nested authenticator.
-        nested_actor_id: B256,
     },
 }

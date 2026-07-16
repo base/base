@@ -71,7 +71,7 @@ impl ActorAuthorizer {
             DispatchOutcome::Authenticated { actor_id } => {
                 Self::resolve_bound(storage, account, actor_id, authenticator, now)
             }
-            DispatchOutcome::Delegated { actor_id, delegate_account, .. } => {
+            DispatchOutcome::Delegated { actor_id, delegate_account } => {
                 // `data` = delegate_account(20) || nested_auth. Mirror
                 // `DelegateAuthenticator`, which calls
                 // `authenticateActor(delegate, hash, nestedAuth)` — the *full*
@@ -79,10 +79,12 @@ impl ActorAuthorizer {
                 // `actor_config`), then requires admin (`scope == 0`). Nested
                 // discharge must not skip to `resolve_bound`: that would reject a
                 // live default EOA whose key lives only in `AccountState`, the
-                // common 7702-EOA-as-parent case. The admin gate is independent
-                // of `verifySignature` (now operational: admin, or a SENDER
-                // actor without POLICY): an operational key may sign for its own
-                // account but MUST NOT vouch as a delegate, to preserve
+                // common 7702-EOA-as-parent case. This is also the single nested
+                // signature verification (dispatch's delegate step is structural
+                // only), so there is no redundant ecrecover. The admin gate is
+                // independent of `verifySignature` (now operational: admin, or a
+                // SENDER actor without POLICY): an operational key may sign for
+                // its own account but MUST NOT vouch as a delegate, to preserve
                 // non-escalation. Followed by the outer
                 // `_actorConfig[bytes20(delegate)][account]` binding check.
                 let nested =

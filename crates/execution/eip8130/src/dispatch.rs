@@ -94,7 +94,7 @@ impl AuthenticatorDispatch {
             if !allow_delegate {
                 return Err(AuthError::NestedDelegate);
             }
-            return Self::delegate(hash, data);
+            return Self::delegate(data);
         }
         Err(AuthError::NotCanonical(authenticator))
     }
@@ -228,32 +228,32 @@ impl AuthenticatorDispatch {
     }
 
     /// Delegate authenticator. `data = delegate_account(20) || nested_auth`, where
-    /// `nested_auth = nested_authenticator(20) || nested_data`. Verifies the nested
-    /// signature (canonical, non-delegate) and surfaces the nested actor as a
-    /// [`DispatchOutcome::Delegated`] obligation.
-    fn delegate(hash: B256, data: &[u8]) -> Result<DispatchOutcome, AuthError> {
+    /// `nested_auth = nested_authenticator(20) || nested_data`.
+    ///
+    /// Structural only, mirroring the deployed `DelegateAuthenticator`: it derives
+    /// `actorId = bytes32(bytes20(delegate))`, enforces the single-hop rule
+    /// (`nested_authenticator != DELEGATE_AUTHENTICATOR`), and surfaces a
+    /// [`DispatchOutcome::Delegated`] obligation. It does **not** verify the nested
+    /// signature or resolve the nested actor — the deployed contract likewise only
+    /// calls `ACCOUNT_CONFIGURATION.authenticateActor(delegate, ...)`, which the
+    /// authorize stage mirrors by re-entering the full auth path against the
+    /// delegate account. Verifying here would be a redundant second ecrecover and
+    /// would skip the delegate account's inline default-EOA key.
+    fn delegate(data: &[u8]) -> Result<DispatchOutcome, AuthError> {
         if data.len() < 40 {
             return Err(AuthError::MalformedAuth);
         }
         let delegate_account = Address::from_slice(&data[..20]);
-        let nested = &data[20..];
-        let nested_authenticator = Address::from_slice(&nested[..20]);
-        let nested_data = &nested[20..];
+        let nested_authenticator = Address::from_slice(&data[20..40]);
 
+        // Only one delegation hop is permitted (depth-1).
         if nested_authenticator == Eip8130Contracts::DELEGATE_AUTHENTICATOR {
             return Err(AuthError::NestedDelegate);
         }
-        let nested_actor_id =
-            match Self::authenticate_inner(hash, nested_authenticator, nested_data, false)? {
-                DispatchOutcome::Authenticated { actor_id } => actor_id,
-                DispatchOutcome::Delegated { .. } => return Err(AuthError::NestedDelegate),
-            };
 
         Ok(DispatchOutcome::Delegated {
             actor_id: Self::address_actor_id(delegate_account),
             delegate_account,
-            nested_authenticator,
-            nested_actor_id,
         })
     }
 }
@@ -470,14 +470,18 @@ mod tests {
     }
 
     #[test]
-    fn delegate_surfaces_nested_obligation() {
-        let nested_key = k1_key();
+    fn delegate_surfaces_obligation_without_verifying_nested() {
+        // Dispatch is structural only: it surfaces the delegate account without
+        // verifying the nested signature (the authorize stage does that via the
+        // full `authenticateActor` path). A garbage nested signature still yields
+        // the obligation here — a canonical nested authenticator is all that is
+        // structurally required.
         let delegate_account = address!("0x00000000000000000000000000000000000000bb");
 
         let mut data = Vec::new();
         data.extend_from_slice(delegate_account.as_slice());
         data.extend_from_slice(Eip8130Constants::K1_AUTHENTICATOR.as_slice());
-        data.extend_from_slice(&k1_sig(&nested_key, HASH));
+        data.extend_from_slice(&[0u8; 65]);
 
         let out = AuthenticatorDispatch::authenticate(
             HASH,
@@ -490,8 +494,6 @@ mod tests {
             DispatchOutcome::Delegated {
                 actor_id: AuthenticatorDispatch::address_actor_id(delegate_account),
                 delegate_account,
-                nested_authenticator: Eip8130Constants::K1_AUTHENTICATOR,
-                nested_actor_id: AuthenticatorDispatch::address_actor_id(k1_address(&nested_key)),
             }
         );
     }
@@ -515,20 +517,17 @@ mod tests {
     }
 
     #[test]
-    fn delegate_rejects_non_canonical_nested() {
-        let delegate_account = address!("0x00000000000000000000000000000000000000bb");
-        let mut data = Vec::new();
-        data.extend_from_slice(delegate_account.as_slice());
-        data.extend_from_slice(address!("0x00000000000000000000000000000000deadbeef").as_slice());
-        data.extend_from_slice(&[0u8; 65]);
-        assert!(matches!(
+    fn delegate_rejects_short_data() {
+        // Below the 40-byte delegate(20) || nested_authenticator(20) prefix.
+        let data = [0u8; 39];
+        assert_eq!(
             AuthenticatorDispatch::authenticate(
                 HASH,
                 Eip8130Contracts::DELEGATE_AUTHENTICATOR,
                 &data,
             ),
-            Err(AuthError::NotCanonical(_)),
-        ));
+            Err(AuthError::MalformedAuth),
+        );
     }
 
     #[test]
