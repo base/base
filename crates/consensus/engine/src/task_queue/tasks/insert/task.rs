@@ -322,7 +322,7 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
         if (self.result_tx.is_some() || self.payload_policy.is_authoritative())
             && state.sync_state.unsafe_head() != new_block_ref
         {
-            return Err(InsertTaskError::ForkchoiceUpdateDidNotAdvance);
+            return Err(InsertTaskError::ForkchoiceUpdateDidNotApply);
         }
 
         if self.payload_policy.is_authoritative() {

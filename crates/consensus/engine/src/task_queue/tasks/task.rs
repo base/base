@@ -199,7 +199,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for EngineTask<EngineClient_> {
 
             if matches!(
                 &e,
-                EngineTaskErrors::Consolidate(ConsolidateTaskError::ForkchoiceUpdateDidNotAdvance)
+                EngineTaskErrors::Consolidate(ConsolidateTaskError::ForkchoiceUpdateDidNotApply)
             ) {
                 trace!(
                     target: "engine",

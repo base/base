@@ -78,7 +78,7 @@ impl SealTaskError {
                 | InsertTaskError::L2BlockInfoConstruction(_) => true,
                 InsertTaskError::InsertFailed(_)
                 | InsertTaskError::UnexpectedPayloadStatus(_)
-                | InsertTaskError::ForkchoiceUpdateDidNotAdvance => false,
+                | InsertTaskError::ForkchoiceUpdateDidNotApply => false,
             },
             Self::GetPayloadFailed(_)
             | Self::HoloceneInvalidFlush

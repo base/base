@@ -25,9 +25,9 @@ pub enum ConsolidateTaskError {
     /// The consolidation forkchoice update call to the engine api failed.
     #[error(transparent)]
     ForkchoiceUpdateFailed(#[from] SynchronizeTaskError),
-    /// The forkchoice update completed without advancing to the safe head.
-    #[error("Forkchoice update did not advance to the safe head")]
-    ForkchoiceUpdateDidNotAdvance,
+    /// The forkchoice update completed without applying the requested heads.
+    #[error("Forkchoice update did not apply the requested heads")]
+    ForkchoiceUpdateDidNotApply,
 }
 
 impl From<BuildAndSealError> for ConsolidateTaskError {
@@ -43,7 +43,7 @@ impl EngineTaskError for ConsolidateTaskError {
     fn severity(&self) -> EngineTaskErrorSeverity {
         match self {
             Self::MissingUnsafeL2Block(_) => EngineTaskErrorSeverity::Reset,
-            Self::FailedToFetchUnsafeL2Block | Self::ForkchoiceUpdateDidNotAdvance => {
+            Self::FailedToFetchUnsafeL2Block | Self::ForkchoiceUpdateDidNotApply => {
                 EngineTaskErrorSeverity::Temporary
             }
             Self::BuildTaskFailed(inner) => inner.severity(),

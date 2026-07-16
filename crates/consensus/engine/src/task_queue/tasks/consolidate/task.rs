@@ -150,7 +150,7 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
                 safe_head = %state.sync_state.safe_head(),
                 "Apply safe head did not advance engine state"
             );
-            return Err(ConsolidateTaskError::ForkchoiceUpdateDidNotAdvance);
+            return Err(ConsolidateTaskError::ForkchoiceUpdateDidNotApply);
         }
 
         let fcu_duration = fcu_start.elapsed();
@@ -378,27 +378,17 @@ impl<EngineClient_: EngineClient> EngineTaskExt for ConsolidateTask<EngineClient
     //   injected safe head is ahead of the EngineActor's unsafe head, we reconcile the unsafe chain
     //   up to the safe head instead of consolidating.
     async fn execute(&self, state: &mut EngineState) -> Result<(), ConsolidateTaskError> {
-        match &self.input {
-            ConsolidateInput::Attributes { .. }
-                if state.sync_state.safe_head().block_info.number
-                    < state.sync_state.unsafe_head().block_info.number =>
-            {
-                self.consolidate(state).await
-            }
-            ConsolidateInput::Attributes { .. } => {
-                if self.reconcile_existing_derived_block(state).await? {
-                    Ok(())
-                } else {
-                    self.reconcile_unsafe_to_safe(state).await
-                }
-            }
-            ConsolidateInput::BlockInfo(safe_block_info)
-                if safe_block_info.block_info.number
-                    < state.sync_state.unsafe_head().block_info.number =>
-            {
-                self.consolidate(state).await
-            }
-            ConsolidateInput::BlockInfo { .. } => self.reconcile_unsafe_to_safe(state).await,
+        let safe_head_number = match &self.input {
+            ConsolidateInput::Attributes { .. } => state.sync_state.safe_head().block_info.number,
+            ConsolidateInput::BlockInfo(safe_block_info) => safe_block_info.block_info.number,
+        };
+
+        if safe_head_number < state.sync_state.unsafe_head().block_info.number {
+            self.consolidate(state).await
+        } else if self.reconcile_existing_derived_block(state).await? {
+            Ok(())
+        } else {
+            self.reconcile_unsafe_to_safe(state).await
         }
     }
 }
