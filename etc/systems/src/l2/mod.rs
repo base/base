@@ -18,5 +18,8 @@ pub use in_process_consensus::{InProcessConsensus, InProcessConsensusConfig};
 mod in_process_follow_consensus;
 pub use in_process_follow_consensus::{InProcessFollowConsensus, InProcessFollowConsensusConfig};
 
+mod shadow_sequencer;
+pub use shadow_sequencer::{ShadowSequencer, ShadowSequencerConfig};
+
 mod stack;
 pub use stack::{L2ClientConsensus, L2ClientConsensusMode, L2Stack, L2StackConfig};
