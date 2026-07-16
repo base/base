@@ -26,7 +26,6 @@ use crate::{
     macros::decode_precompile_call,
 };
 
-
 impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
     /// ABI-dispatches `calldata` to the appropriate handler for `upgrade`.
     pub fn dispatch(
@@ -510,8 +509,8 @@ mod tests {
 
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
-        AssetV1, B20AssetStorage, B20AssetToken, B20TokenRole, BerylErrorKind, IB20, IB20Asset,
-        FakePolicyAccounting, InMemoryTokenAccounting, NoopPrecompileCallObserver,
+        AssetV1, B20AssetStorage, B20AssetToken, B20TokenRole, BerylErrorKind,
+        FakePolicyAccounting, IB20, IB20Asset, InMemoryTokenAccounting, NoopPrecompileCallObserver,
         PolicyVersion, PrecompileCallMetric, PrecompileCallObserver, PrecompileCallOutcome,
         PrecompileCallStatus, Token, TokenAccounting,
     };
