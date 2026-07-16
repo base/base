@@ -1,6 +1,11 @@
 use std::{fmt, sync::Arc};
 
+use alloy_primitives::TxHash;
+use base_observability_events::{
+    TransactionEventProducer, TransactionEventType, transaction_event,
+};
 use reth_transaction_pool::{PoolTransaction, TransactionPool, ValidPoolTransaction};
+use serde_json::{Map, json};
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, trace};
@@ -58,6 +63,7 @@ where
                     return;
                 }
 
+                let iterator_index = txs_read;
                 txs_read += 1;
                 let hash = *tx.hash();
 
@@ -69,6 +75,7 @@ where
                 if self.sender.send(tx).is_ok() {
                     self.recently_sent.mark_sent(hash);
                     txs_sent += 1;
+                    self.emit_builder_consumed_event(hash, iterator_index);
                 }
             }
 
@@ -95,6 +102,26 @@ where
         }
 
         info!("consumer cancelled, shutting down");
+    }
+
+    fn emit_builder_consumed_event(&self, tx_hash: TxHash, iterator_index: u64) {
+        let event_type = TransactionEventType::TxpoolBuilderConsumed;
+        let data = Map::from_iter([
+            ("source".to_string(), json!("best_transactions")),
+            ("target".to_string(), json!("builder_forwarder")),
+            ("iterator_index".to_string(), json!(iterator_index)),
+            ("resend_after_ms".to_string(), json!(self.config.resend_after.as_millis() as u64)),
+        ]);
+        let _ = transaction_event!(
+            producer: TransactionEventProducer::BaseRethNode,
+            event_type: event_type,
+            tx_hash: tx_hash,
+            id: {
+                "tx_hash" => format!("{tx_hash:#x}"),
+                "iterator_index" => iterator_index,
+            },
+            data: data,
+        );
     }
 }
 

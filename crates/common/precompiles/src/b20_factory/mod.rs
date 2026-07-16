@@ -5,11 +5,17 @@ pub use abi::IB20Factory;
 
 mod dispatch;
 
+mod logic;
+pub use logic::{CommonParams, Factory, FactoryV1, TokenCreateParams};
+
 mod precompile;
 pub use precompile::B20Factory;
 
 mod storage;
-pub use storage::{B20FactoryStorage, CommonParams, TokenCreateParams};
+pub use storage::B20FactoryStorage;
 
 mod variant;
 pub use variant::B20Variant;
+
+mod versions;
+pub use versions::{FactoryVersion, FactoryVersions};

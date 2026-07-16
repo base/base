@@ -120,12 +120,6 @@ pub enum TransactionEventType {
     /// Txpool tracking overflowed before all events could be retained.
     #[serde(rename = "TXPOOL_TRACKING_OVERFLOWED")]
     Overflowed,
-    /// A txpool transaction was included in a finalized block payload.
-    #[serde(rename = "TXPOOL_BLOCK_INCLUDED")]
-    Included,
-    /// A txpool transaction was included in a flashblock.
-    #[serde(rename = "TXPOOL_FLASHBLOCK_INCLUDED")]
-    FlashblockIncluded,
     /// Txpool attempted to forward a transaction to the builder.
     #[serde(rename = "TXPOOL_BUILDER_FORWARD_ATTEMPT")]
     TxpoolBuilderForwardAttempt,
@@ -201,8 +195,6 @@ impl fmt::Display for TransactionEventType {
             Self::Dropped => "TXPOOL_DROPPED",
             Self::Replaced => "TXPOOL_REPLACED",
             Self::Overflowed => "TXPOOL_TRACKING_OVERFLOWED",
-            Self::Included => "TXPOOL_BLOCK_INCLUDED",
-            Self::FlashblockIncluded => "TXPOOL_FLASHBLOCK_INCLUDED",
             Self::TxpoolBuilderForwardAttempt => "TXPOOL_BUILDER_FORWARD_ATTEMPT",
             Self::TxpoolBuilderForwardSuccess => "TXPOOL_BUILDER_FORWARD_SUCCESS",
             Self::TxpoolBuilderForwardFailure => "TXPOOL_BUILDER_FORWARD_FAILURE",

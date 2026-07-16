@@ -12,12 +12,20 @@ workspace = true
 
 [dependencies]
 tokio-util.workspace = true
+async-trait.workspace = true
+reth-ecies.workspace = true
+reth-eth-wire.workspace = true
+alloy-primitives.workspace = true
 anyhow = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
+secp256k1 = { workspace = true, features = ["rand"] }
+serde = { workspace = true, features = ["derive", "std"] }
 base-health = { workspace = true, features = ["axum-server"] }
 clap = { workspace = true, features = ["derive", "env", "std"] }
 axum = { workspace = true, features = ["tokio", "http1", "json"] }
-tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread"] }
+reth-network-peers = { workspace = true, features = ["secp256k1"] }
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 
 [dev-dependencies]
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["json"] }
