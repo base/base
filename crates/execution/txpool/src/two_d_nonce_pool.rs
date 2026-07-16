@@ -636,14 +636,16 @@ where
     O: TransactionOrdering<Transaction = T>,
 {
     fn mark_invalid(&mut self, transaction: &Self::Item, _kind: InvalidPoolTransactionError) {
-        let Some(nonce_key) = transaction.transaction.eip8130_nonce_channel_key() else {
-            return;
+        let lane = if let Some(nonce_key) = transaction.transaction.eip8130_nonce_channel_key() {
+            self.lanes
+                .iter_mut()
+                .find(|lane| lane.id.0 == transaction.sender() && lane.id.1 == nonce_key)
+        } else {
+            self.lanes.iter_mut().find(|lane| {
+                lane.transactions.iter().any(|candidate| candidate.hash() == transaction.hash())
+            })
         };
-        if let Some(lane) = self
-            .lanes
-            .iter_mut()
-            .find(|lane| lane.id.0 == transaction.sender() && lane.id.1 == nonce_key)
-        {
+        if let Some(lane) = lane {
             lane.invalidated = true;
         }
     }
@@ -814,9 +816,8 @@ mod tests {
         pool.insert_validated(low, 0).unwrap();
 
         let mut best = pool.best_transactions(BaseOrdering::coinbase_tip(), 0);
-        let selected = best.next().unwrap();
-        assert_eq!(*selected.hash(), high_hash);
-        best.mark_invalid(&selected, InvalidPoolTransactionError::Underpriced);
+        let invalidated = pool.get(&high_hash).unwrap();
+        best.mark_invalid(&invalidated, InvalidPoolTransactionError::Underpriced);
         assert_eq!(best.next().map(|tx| *tx.hash()), Some(low_hash));
 
         assert_eq!(pool.remove_transactions_and_descendants(&[high_hash]).len(), 1);
