@@ -3,7 +3,7 @@
 use alloy_evm::precompiles::DynPrecompile;
 use alloy_primitives::{Address, Bytes};
 use base_common_genesis::BaseUpgrade;
-use base_precompile_storage::BasePrecompileError;
+use base_precompile_storage::{BasePrecompileError, StorageSemantics};
 
 use crate::{
     B20AssetStorage, B20AssetToken, NoopPrecompileCallObserver, PolicyRegistryStorage,
@@ -34,7 +34,32 @@ impl B20AssetPrecompile {
     where
         O: PrecompileCallObserver,
     {
-        base_precompile!(alloc::format!("B20AssetToken@{token_address}"), |ctx, calldata| {
+        Self::create_precompile_with_observer_and_storage_semantics(
+            token_address,
+            upgrade,
+            observer,
+            if upgrade >= BaseUpgrade::Cobalt {
+                StorageSemantics::Cobalt
+            } else {
+                StorageSemantics::Legacy
+            },
+        )
+    }
+
+    /// Returns an observed [`DynPrecompile`] with storage semantics.
+    pub fn create_precompile_with_observer_and_storage_semantics<O>(
+        token_address: Address,
+        upgrade: BaseUpgrade,
+        observer: O,
+        storage_semantics: StorageSemantics,
+    ) -> DynPrecompile
+    where
+        O: PrecompileCallObserver,
+    {
+        base_precompile!(
+            alloc::format!("B20AssetToken@{token_address}"),
+            storage_semantics: storage_semantics,
+            |ctx, calldata| {
             let observer = observer.clone();
             let Some(version) = PolicyVersions::from_base_upgrade(upgrade) else {
                 return BasePrecompileError::Revert(Bytes::new()).into_precompile_result(0, 0);
@@ -45,6 +70,7 @@ impl B20AssetPrecompile {
                 version,
             )
             .dispatch_with_observer(ctx, &calldata, upgrade, observer)
-        })
+            }
+        )
     }
 }

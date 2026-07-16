@@ -19,7 +19,7 @@ use revm::{
 
 use crate::{
     error::{BasePrecompileError, IntoPrecompileResult, Result},
-    provider::PrecompileStorageProvider,
+    provider::{PrecompileStorageProvider, StorageSemantics},
 };
 
 type ScopedProvider<'a> = dyn PrecompileStorageProvider + 'a;
@@ -151,6 +151,11 @@ impl<'a> StorageCtx<'a> {
         self.try_with_storage(|s| s.sstore(address, key, value))
     }
 
+    /// Checks whether the current call context permits storage writes.
+    pub fn ensure_writable(&self) -> Result<()> {
+        if self.is_static() { Err(BasePrecompileError::StaticCallViolation) } else { Ok(()) }
+    }
+
     /// Performs a TSTORE (transient storage write).
     pub fn tstore(&self, address: Address, key: U256, value: U256) -> Result<()> {
         self.try_with_storage(|s| s.tstore(address, key, value))
@@ -184,6 +189,10 @@ impl<'a> StorageCtx<'a> {
     /// Returns the remaining EIP-8037 state-gas reservoir.
     pub fn reservoir(&self) -> u64 {
         self.with_storage(|s| s.reservoir())
+    }
+    /// Returns the active persistent-storage semantics.
+    pub fn storage_semantics(&self) -> StorageSemantics {
+        self.with_storage(|s| s.storage_semantics())
     }
     /// Returns whether the current call context is static.
     pub fn is_static(&self) -> bool {

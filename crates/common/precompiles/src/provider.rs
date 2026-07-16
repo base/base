@@ -4,6 +4,7 @@ use alloy_evm::precompiles::PrecompilesMap;
 use alloy_primitives::Address;
 use base_common_chains::BaseUpgradeExt;
 use base_common_genesis::BaseUpgrade;
+use base_precompile_storage::StorageSemantics;
 use revm::{
     context::Cfg,
     context_interface::ContextTr,
@@ -74,6 +75,15 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
     /// Returns the activation registry admin address.
     pub const fn activation_admin_address(&self) -> Option<Address> {
         self.activation_admin_address
+    }
+
+    /// Returns the persistent-storage semantics selected by this Base upgrade.
+    pub fn storage_semantics(&self) -> StorageSemantics {
+        if self.spec.upgrade() >= BaseUpgrade::Cobalt {
+            StorageSemantics::Cobalt
+        } else {
+            StorageSemantics::Legacy
+        }
     }
 
     /// Converts a Base upgrade into its Ethereum precompile spec.
@@ -203,29 +213,34 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
         // installed precompile below — Beryl's factory/registries and Cobalt's
         // EIP-8130 precompiles alike — uses plain `install`; none is observed, by
         // design, since metrics are scoped to the B-20 token call path.
+        let storage_semantics = self.storage_semantics();
         if self.spec.upgrade() >= BaseUpgrade::Beryl {
-            B20Factory::install_with_observer(
+            B20Factory::install_with_observer_and_storage_semantics(
                 &mut precompiles,
                 self.spec.upgrade(),
                 observer.clone(),
+                storage_semantics,
             );
-            BerylLookup::install_with_observer(
+            BerylLookup::install_with_observer_and_storage_semantics(
                 &mut precompiles,
                 self.spec.upgrade(),
                 observer.clone(),
+                storage_semantics,
             );
-            PolicyRegistryPrecompile::install_with_observer(
+            PolicyRegistryPrecompile::install_with_observer_and_storage_semantics(
                 &mut precompiles,
                 self.spec.upgrade(),
                 observer.clone(),
+                storage_semantics,
             );
-            ActivationRegistry::install_with_observer(
+            ActivationRegistry::install_with_observer_and_storage_semantics(
                 &mut precompiles,
                 ActivationAdminConfig::new(
                     self.activation_admin_address,
                     self.spec.upgrade() >= BaseUpgrade::Cobalt,
                 ),
                 observer,
+                storage_semantics,
             );
         }
         if self.spec.upgrade() >= BaseUpgrade::Cobalt {
@@ -285,6 +300,7 @@ mod tests {
 
     use alloy_primitives::{Address, B256};
     use base_common_genesis::BaseUpgrade;
+    use base_precompile_storage::StorageSemantics;
     use revm::{
         precompile::{Precompiles, bls12_381_const, bn254, modexp, secp256r1},
         primitives::eip7823,
@@ -579,6 +595,16 @@ mod tests {
         assert_eq!(precompiles.get(&B20FactoryStorage::ADDRESS).is_some(), expected);
         assert_eq!(precompiles.get(&token).is_some(), expected);
         assert!(precompiles.get(&Address::repeat_byte(0x42)).is_none());
+    }
+
+    #[rstest]
+    #[case::beryl(BaseUpgrade::Beryl, StorageSemantics::Legacy)]
+    #[case::cobalt(BaseUpgrade::Cobalt, StorageSemantics::Cobalt)]
+    fn storage_semantics_activate_at_cobalt(
+        #[case] spec: BaseUpgrade,
+        #[case] expected: StorageSemantics,
+    ) {
+        assert_eq!(BasePrecompiles::new_with_spec(spec).storage_semantics(), expected);
     }
 
     #[test]

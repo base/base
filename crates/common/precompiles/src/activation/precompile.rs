@@ -3,6 +3,7 @@
 use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
 use alloy_primitives::Address;
 use base_precompile_macros::precompile;
+use base_precompile_storage::StorageSemantics;
 
 use crate::{
     ActivationAdminConfig, ActivationRegistryStorage, PrecompileCallObserver,
@@ -42,9 +43,30 @@ impl ActivationRegistry {
     ) where
         O: PrecompileCallObserver,
     {
+        Self::install_with_observer_and_storage_semantics(
+            precompiles,
+            admin_config,
+            observer,
+            StorageSemantics::Legacy,
+        );
+    }
+
+    /// Installs the activation registry precompile with storage semantics.
+    pub fn install_with_observer_and_storage_semantics<O>(
+        precompiles: &mut PrecompilesMap,
+        admin_config: ActivationAdminConfig,
+        observer: O,
+        storage_semantics: StorageSemantics,
+    ) where
+        O: PrecompileCallObserver,
+    {
         precompiles.extend_precompiles(core::iter::once((
             ActivationRegistryStorage::ADDRESS,
-            Self::precompile_with_observer(admin_config, observer),
+            Self::precompile_with_observer_and_storage_semantics(
+                admin_config,
+                observer,
+                storage_semantics,
+            ),
         )));
     }
 
@@ -56,7 +78,26 @@ impl ActivationRegistry {
     where
         O: PrecompileCallObserver,
     {
-        base_precompile!("ActivationRegistry", |ctx, calldata| {
+        Self::precompile_with_observer_and_storage_semantics(
+            admin_config,
+            observer,
+            StorageSemantics::Legacy,
+        )
+    }
+
+    /// Creates the EVM precompile wrapper for the activation registry with storage semantics.
+    pub fn precompile_with_observer_and_storage_semantics<O>(
+        admin_config: ActivationAdminConfig,
+        observer: O,
+        storage_semantics: StorageSemantics,
+    ) -> DynPrecompile
+    where
+        O: PrecompileCallObserver,
+    {
+        base_precompile!(
+            "ActivationRegistry",
+            storage_semantics: storage_semantics,
+            |ctx, calldata| {
             let observer = observer.clone();
             ActivationRegistryStorage::new(ctx).dispatch_with_observer(
                 ctx,
@@ -64,7 +105,8 @@ impl ActivationRegistry {
                 admin_config,
                 observer,
             )
-        })
+            }
+        )
     }
 }
 

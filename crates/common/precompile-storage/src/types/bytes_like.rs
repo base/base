@@ -118,19 +118,19 @@ impl<T: Storable> Handler<T> for BytesLikeHandler<'_, T> {
 impl Storable for Bytes {
     #[inline]
     fn load<S: StorageOps>(storage: &S, slot: U256, ctx: LayoutCtx) -> Result<Self> {
-        debug_assert_eq!(ctx, LayoutCtx::FULL, "Bytes cannot be packed");
+        debug_assert!(ctx.is_full(), "Bytes cannot be packed");
         load_bytes_like(storage, slot, |data| Ok(Self::from(data)))
     }
 
     #[inline]
     fn store<S: StorageOps>(&self, storage: &mut S, slot: U256, ctx: LayoutCtx) -> Result<()> {
-        debug_assert_eq!(ctx, LayoutCtx::FULL, "Bytes cannot be packed");
+        debug_assert!(ctx.is_full(), "Bytes cannot be packed");
         store_bytes_like(self.as_ref(), storage, slot)
     }
 
     #[inline]
     fn delete<S: StorageOps>(storage: &mut S, slot: U256, ctx: LayoutCtx) -> Result<()> {
-        debug_assert_eq!(ctx, LayoutCtx::FULL, "Bytes cannot be packed");
+        debug_assert!(ctx.is_full(), "Bytes cannot be packed");
         delete_bytes_like(storage, slot)
     }
 }
@@ -138,7 +138,7 @@ impl Storable for Bytes {
 impl Storable for String {
     #[inline]
     fn load<S: StorageOps>(storage: &S, slot: U256, ctx: LayoutCtx) -> Result<Self> {
-        debug_assert_eq!(ctx, LayoutCtx::FULL, "String cannot be packed");
+        debug_assert!(ctx.is_full(), "String cannot be packed");
         load_bytes_like(storage, slot, |data| {
             Self::from_utf8(data).map_err(|e| {
                 BasePrecompileError::Fatal(format!("Invalid UTF-8 in stored string: {e}"))
@@ -148,13 +148,13 @@ impl Storable for String {
 
     #[inline]
     fn store<S: StorageOps>(&self, storage: &mut S, slot: U256, ctx: LayoutCtx) -> Result<()> {
-        debug_assert_eq!(ctx, LayoutCtx::FULL, "String cannot be packed");
+        debug_assert!(ctx.is_full(), "String cannot be packed");
         store_bytes_like(self.as_bytes(), storage, slot)
     }
 
     #[inline]
     fn delete<S: StorageOps>(storage: &mut S, slot: U256, ctx: LayoutCtx) -> Result<()> {
-        debug_assert_eq!(ctx, LayoutCtx::FULL, "String cannot be packed");
+        debug_assert!(ctx.is_full(), "String cannot be packed");
         delete_bytes_like(storage, slot)
     }
 }
@@ -211,19 +211,25 @@ where
 
 #[inline]
 fn store_bytes_like<S: StorageOps>(bytes: &[u8], storage: &mut S, base_slot: U256) -> Result<()> {
-    let length = bytes.len();
-    if length <= 31 {
+    let new_length = bytes.len();
+    let new_chunks = if new_length <= 31 { 0 } else { calc_chunks(new_length) };
+
+    if storage.storage_semantics().clears_dynamic_storage_tail() {
+        storage.ensure_writable()?;
+        clear_stale_long_tail(storage, base_slot, new_chunks)?;
+    }
+
+    if new_length <= 31 {
         storage.store(base_slot, encode_short_string(bytes))
     } else {
-        storage.store(base_slot, encode_long_string_length(length))?;
+        storage.store(base_slot, encode_long_string_length(new_length))?;
         let slot_start = calc_data_slot(base_slot);
-        let chunks = calc_chunks(length);
 
-        for i in 0..chunks {
+        for i in 0..new_chunks {
             let slot =
                 slot_start.checked_add(U256::from(i)).ok_or(BasePrecompileError::SlotOverflow)?;
             let chunk_start = i * 32;
-            let chunk_end = (chunk_start + 32).min(length);
+            let chunk_end = (chunk_start + 32).min(new_length);
             let chunk = &bytes[chunk_start..chunk_end];
             let mut chunk_bytes = [0u8; 32];
             chunk_bytes[..chunk.len()].copy_from_slice(chunk);
@@ -232,6 +238,32 @@ fn store_bytes_like<S: StorageOps>(bytes: &[u8], storage: &mut S, base_slot: U25
 
         Ok(())
     }
+}
+
+#[inline]
+fn clear_stale_long_tail<S: StorageOps>(
+    storage: &mut S,
+    base_slot: U256,
+    new_chunks: usize,
+) -> Result<()> {
+    let previous = storage.load(base_slot)?;
+    if !is_long_string(previous) {
+        return Ok(());
+    }
+
+    let old_length = calc_string_length(previous, true)?;
+    let old_chunks = calc_chunks(old_length);
+    if new_chunks >= old_chunks {
+        return Ok(());
+    }
+
+    let slot_start = calc_data_slot(base_slot);
+    for i in new_chunks..old_chunks {
+        let slot =
+            slot_start.checked_add(U256::from(i)).ok_or(BasePrecompileError::SlotOverflow)?;
+        storage.store(slot, U256::ZERO)?;
+    }
+    Ok(())
 }
 
 #[inline]
@@ -308,7 +340,9 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
-    use crate::{hashmap::setup_storage, provider::Handler, storage_ctx::StorageCtx};
+    use crate::{
+        StorageSemantics, hashmap::setup_storage, provider::Handler, storage_ctx::StorageCtx,
+    };
 
     fn arb_safe_slot() -> impl Strategy<Value = U256> {
         any::<[u64; 4]>()
@@ -387,6 +421,106 @@ mod tests {
         let malicious_short = U256::from(0xFEu64);
         assert!(!is_long_string(malicious_short));
         assert!(calc_string_length(malicious_short, false).is_err());
+    }
+
+    #[test]
+    fn store_short_keeps_stale_long_tail_when_cleanup_disabled() {
+        let (mut storage, address) = setup_storage();
+        StorageCtx::enter(&mut storage, |ctx| {
+            let base_slot = U256::from(5000u64);
+            let mut slot = BytesLikeHandler::<Bytes>::new(base_slot, address, ctx);
+            slot.write(Bytes::from(vec![0x11; 65])).unwrap();
+            slot.write(Bytes::from(vec![0x22; 5])).unwrap();
+
+            let data_start = calc_data_slot(base_slot);
+            let stale_tail = Slot::<U256>::new(data_start, address, ctx).read().unwrap();
+            assert_ne!(stale_tail, U256::ZERO, "pre-Cobalt shrink overwrite preserves tail slots");
+            assert_eq!(ctx.gas_refunded(), 0, "pre-Cobalt overwrite does not clear slots");
+        });
+    }
+
+    #[test]
+    fn store_short_clears_stale_long_tail_when_cleanup_enabled() {
+        let (mut storage, address) = setup_storage();
+        storage.set_storage_semantics(StorageSemantics::Cobalt);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let base_slot = U256::from(5001u64);
+            let mut slot = BytesLikeHandler::<Bytes>::new(base_slot, address, ctx);
+            slot.write(Bytes::from(vec![0x11; 65])).unwrap();
+            slot.write(Bytes::from(vec![0x22; 5])).unwrap();
+
+            let data_start = calc_data_slot(base_slot);
+            for i in 0..3 {
+                let tail =
+                    Slot::<U256>::new(data_start + U256::from(i), address, ctx).read().unwrap();
+                assert_eq!(tail, U256::ZERO, "Cobalt shrink overwrite clears stale tail slot {i}");
+            }
+            assert!(ctx.gas_refunded() > 0, "clearing non-zero tail slots earns gas refund");
+        });
+    }
+
+    #[test]
+    fn store_shorter_long_clears_only_retired_chunks_when_cleanup_enabled() {
+        let (mut storage, address) = setup_storage();
+        storage.set_storage_semantics(StorageSemantics::Cobalt);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let base_slot = U256::from(5002u64);
+            let mut slot = BytesLikeHandler::<Bytes>::new(base_slot, address, ctx);
+            slot.write(Bytes::from(vec![0x11; 65])).unwrap();
+            slot.write(Bytes::from(vec![0x22; 33])).unwrap();
+
+            let data_start = calc_data_slot(base_slot);
+            let kept_chunk =
+                Slot::<U256>::new(data_start + U256::from(1), address, ctx).read().unwrap();
+            let retired_chunk =
+                Slot::<U256>::new(data_start + U256::from(2), address, ctx).read().unwrap();
+            assert_ne!(kept_chunk, U256::ZERO, "new logical data chunk is retained");
+            assert_eq!(retired_chunk, U256::ZERO, "old extra chunk is cleared");
+        });
+    }
+
+    #[test]
+    fn malformed_previous_length_fails_before_overwrite() {
+        let (mut storage, address) = setup_storage();
+        storage.set_storage_semantics(StorageSemantics::Cobalt);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let base_slot = U256::from(5003u64);
+            let malformed = U256::from(0x0008000000000001u64);
+            Slot::<U256>::new(base_slot, address, ctx).write(malformed).unwrap();
+
+            let mut slot = BytesLikeHandler::<Bytes>::new(base_slot, address, ctx);
+            assert_eq!(
+                slot.write(Bytes::from_static(b"replacement")),
+                Err(BasePrecompileError::under_overflow())
+            );
+            assert_eq!(Slot::<U256>::new(base_slot, address, ctx).read().unwrap(), malformed);
+        });
+    }
+
+    #[test]
+    fn static_write_fails_before_cobalt_cleanup_load() {
+        let (mut storage, address) = setup_storage();
+        let base_slot = U256::from(5004u64);
+        StorageCtx::enter(&mut storage, |ctx| {
+            BytesLikeHandler::<Bytes>::new(base_slot, address, ctx)
+                .write(Bytes::from(vec![0x11; 64]))
+                .unwrap();
+        });
+        storage.set_storage_semantics(StorageSemantics::Cobalt);
+        storage.set_static(true);
+        storage.reset_counters();
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut slot = BytesLikeHandler::<Bytes>::new(base_slot, address, ctx);
+            assert_eq!(
+                slot.write(Bytes::from_static(b"short")),
+                Err(BasePrecompileError::StaticCallViolation)
+            );
+            assert_eq!(ctx.counter_sload(), 0, "static rejection must precede cleanup SLOAD");
+        });
     }
 
     proptest! {

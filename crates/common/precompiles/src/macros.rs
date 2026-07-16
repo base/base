@@ -3,6 +3,13 @@
 /// Wraps a stateful native precompile body in the Base storage-provider setup.
 macro_rules! base_precompile {
     ($id:expr, |$ctx:ident, $calldata:ident| $impl:expr $(,)?) => {{
+        $crate::macros::base_precompile!(
+            $id,
+            storage_semantics: ::base_precompile_storage::StorageSemantics::Legacy,
+            |$ctx, $calldata| $impl,
+        )
+    }};
+    ($id:expr, storage_semantics: $storage_semantics:expr, |$ctx:ident, $calldata:ident| $impl:expr $(,)?) => {{
         ::alloy_evm::precompiles::DynPrecompile::new_stateful(
             ::revm::precompile::PrecompileId::Custom($id.into()),
             move |input| {
@@ -14,9 +21,10 @@ macro_rules! base_precompile {
                 }
 
                 let $calldata: ::alloy_primitives::Bytes = input.data.to_vec().into();
-                let mut provider = ::base_precompile_storage::EvmPrecompileStorageProvider::new(
+                let mut provider = ::base_precompile_storage::EvmPrecompileStorageProvider::new_with_storage_semantics(
                     input,
                     ::revm::context_interface::cfg::GasParams::default(),
+                    $storage_semantics,
                 );
 
                 ::base_precompile_storage::StorageCtx::enter(&mut provider, |$ctx| $impl)
