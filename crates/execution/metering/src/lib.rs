@@ -31,7 +31,9 @@ pub use extension::{MeteringConfig, MeteringExtension, MeteringResourceLimits};
 mod inspector;
 
 mod meter;
-pub use meter::{MeterBundleInput, MeterBundleOutput, MeteredOpcodes, PendingState, meter_bundle};
+pub use meter::{
+    MeterBundleInput, MeterBundleOutput, MeteredOpcodes, PendingState, PseudoOpcode, meter_bundle,
+};
 
 mod rpc;
 pub use rpc::MeteringApiImpl;

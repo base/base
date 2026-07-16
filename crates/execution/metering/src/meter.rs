@@ -76,6 +76,93 @@ pub struct MeterBundleOutput {
     pub total_time_us: u128,
 }
 
+/// Transaction-level pseudo-opcodes exposed by bundle metering.
+///
+/// The string representation is the stable CLI/RPC name. Internally, metering
+/// uses this enum so comparisons do not depend on repeated string literals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PseudoOpcode {
+    /// Aggregate of the active transaction intrinsic components.
+    IntrinsicTotal,
+    /// EIP-2028/EIP-7623 zero-byte transaction data cost.
+    IntrinsicTxDataZeroByteCost,
+    /// EIP-2028/EIP-7623 non-zero-byte transaction data cost.
+    IntrinsicTxDataNonZeroByteCost,
+    /// EIP-2930 prepaid access-list address cost.
+    IntrinsicAccessListAddressCost,
+    /// EIP-2930 prepaid access-list storage-key cost.
+    IntrinsicAccessListStorageKeyCost,
+    /// EIP-3860 transaction initcode word cost.
+    IntrinsicInitcodeWordCost,
+    /// EIP-7623 transaction floor-gas candidate.
+    TxFloorGas,
+    /// Pre-Amsterdam legacy transaction base cost.
+    IntrinsicLegacyTxBaseCost,
+    /// Pre-Amsterdam legacy contract-creation cost.
+    IntrinsicLegacyCreateCost,
+    /// EIP-7702 legacy authorization-list empty-account cost.
+    IntrinsicPerEmptyAccountCost,
+    /// EIP-2780 resource-based transaction base cost.
+    IntrinsicTxBaseCost,
+    /// EIP-2780 cold account access cost.
+    IntrinsicColdAccountAccess,
+    /// EIP-2780 transaction value cost.
+    IntrinsicTxValueCost,
+    /// EIP-2780/EIP-7708 transfer-log cost.
+    IntrinsicTransferLogCost,
+    /// EIP-2780 account-creation access cost.
+    IntrinsicCreateAccess,
+    /// EIP-2780 regular authorization base cost.
+    IntrinsicRegularPerAuthBaseCost,
+    /// Successful top-level ETH transfer to a nonexistent account.
+    TxEffectEthTransferToNonexistentAccount,
+    /// Successful top-level ETH transfer to an existing account.
+    TxEffectEthTransferToExistingAccount,
+    /// Successful top-level ETH self-transfer.
+    TxEffectEthSelfTransfer,
+}
+
+impl PseudoOpcode {
+    /// Returns the stable CLI/RPC name for this pseudo-opcode.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::IntrinsicTotal => "INTRINSIC_TOTAL",
+            Self::IntrinsicTxDataZeroByteCost => "INTRINSIC_TX_DATA_ZERO_BYTE_COST",
+            Self::IntrinsicTxDataNonZeroByteCost => "INTRINSIC_TX_DATA_NON_ZERO_BYTE_COST",
+            Self::IntrinsicAccessListAddressCost => "INTRINSIC_ACCESS_LIST_ADDRESS_COST",
+            Self::IntrinsicAccessListStorageKeyCost => "INTRINSIC_ACCESS_LIST_STORAGE_KEY_COST",
+            Self::IntrinsicInitcodeWordCost => "INTRINSIC_INITCODE_WORD_COST",
+            Self::TxFloorGas => "TX_FLOOR_GAS",
+            Self::IntrinsicLegacyTxBaseCost => "INTRINSIC_LEGACY_TX_BASE_COST",
+            Self::IntrinsicLegacyCreateCost => "INTRINSIC_LEGACY_CREATE_COST",
+            Self::IntrinsicPerEmptyAccountCost => "INTRINSIC_PER_EMPTY_ACCOUNT_COST",
+            Self::IntrinsicTxBaseCost => "INTRINSIC_TX_BASE_COST",
+            Self::IntrinsicColdAccountAccess => "INTRINSIC_COLD_ACCOUNT_ACCESS",
+            Self::IntrinsicTxValueCost => "INTRINSIC_TX_VALUE_COST",
+            Self::IntrinsicTransferLogCost => "INTRINSIC_TRANSFER_LOG_COST",
+            Self::IntrinsicCreateAccess => "INTRINSIC_CREATE_ACCESS",
+            Self::IntrinsicRegularPerAuthBaseCost => "INTRINSIC_REGULAR_PER_AUTH_BASE_COST",
+            Self::TxEffectEthTransferToNonexistentAccount => {
+                "TX_EFFECT_ETH_TRANSFER_TO_NONEXISTENT_ACCOUNT"
+            }
+            Self::TxEffectEthTransferToExistingAccount => {
+                "TX_EFFECT_ETH_TRANSFER_TO_EXISTING_ACCOUNT"
+            }
+            Self::TxEffectEthSelfTransfer => "TX_EFFECT_ETH_SELF_TRANSFER",
+        }
+    }
+
+    /// Returns whether this pseudo-opcode classifies a top-level ETH transfer.
+    pub const fn is_eth_transfer_effect(self) -> bool {
+        matches!(
+            self,
+            Self::TxEffectEthTransferToNonexistentAccount
+                | Self::TxEffectEthTransferToExistingAccount
+                | Self::TxEffectEthSelfTransfer
+        )
+    }
+}
+
 /// Opcodes and precompiles to track during bundle metering.
 ///
 /// This is for targeted transaction and bundle simulation. It is not the primary production
@@ -91,7 +178,7 @@ pub struct MeteredOpcodes {
     /// Whether to track dynamic Beryl B-20 stablecoin-token precompile addresses.
     pub beryl_b20_stablecoin_precompiles: bool,
     /// Synthetic transaction-level gas buckets to track.
-    pub pseudo_opcodes: HashSet<&'static str>,
+    pub pseudo_opcodes: HashSet<PseudoOpcode>,
 }
 
 /// Constructs a precompile address from a `u16` value.
@@ -137,35 +224,35 @@ const BERYL_PRECOMPILES: &[(&str, Address)] = &[
     (BERYL_POLICY_REGISTRY_PRECOMPILE, PolicyRegistryStorage::ADDRESS),
 ];
 
-const PSEUDO_OPCODES: &[&str] = &[
+const PSEUDO_OPCODES: &[PseudoOpcode] = &[
     // EIP-2780: aggregate of the active transaction intrinsic components.
-    "INTRINSIC_TOTAL",
+    PseudoOpcode::IntrinsicTotal,
     // EIP-2028 and EIP-7623: transaction data cost.
-    "INTRINSIC_TX_DATA_ZERO_BYTE_COST",
-    "INTRINSIC_TX_DATA_NON_ZERO_BYTE_COST",
+    PseudoOpcode::IntrinsicTxDataZeroByteCost,
+    PseudoOpcode::IntrinsicTxDataNonZeroByteCost,
     // EIP-2930: prepaid access-list entry costs.
-    "INTRINSIC_ACCESS_LIST_ADDRESS_COST",
-    "INTRINSIC_ACCESS_LIST_STORAGE_KEY_COST",
+    PseudoOpcode::IntrinsicAccessListAddressCost,
+    PseudoOpcode::IntrinsicAccessListStorageKeyCost,
     // EIP-3860: transaction initcode jumpdest-analysis cost.
-    "INTRINSIC_INITCODE_WORD_COST",
+    PseudoOpcode::IntrinsicInitcodeWordCost,
     // EIP-7623: floor candidate, separate from intrinsic gas.
-    "TX_FLOOR_GAS",
+    PseudoOpcode::TxFloorGas,
     // Pre-Amsterdam legacy aggregates. These are not EIP-2780 primitives.
-    "INTRINSIC_LEGACY_TX_BASE_COST",
-    "INTRINSIC_LEGACY_CREATE_COST",
+    PseudoOpcode::IntrinsicLegacyTxBaseCost,
+    PseudoOpcode::IntrinsicLegacyCreateCost,
     // EIP-7702: legacy authorization-list charge.
-    "INTRINSIC_PER_EMPTY_ACCOUNT_COST",
+    PseudoOpcode::IntrinsicPerEmptyAccountCost,
     // EIP-2780: resource-based intrinsic transaction primitives.
-    "INTRINSIC_TX_BASE_COST",
-    "INTRINSIC_COLD_ACCOUNT_ACCESS",
-    "INTRINSIC_TX_VALUE_COST",
-    "INTRINSIC_TRANSFER_LOG_COST",
-    "INTRINSIC_CREATE_ACCESS",
-    "INTRINSIC_REGULAR_PER_AUTH_BASE_COST",
+    PseudoOpcode::IntrinsicTxBaseCost,
+    PseudoOpcode::IntrinsicColdAccountAccess,
+    PseudoOpcode::IntrinsicTxValueCost,
+    PseudoOpcode::IntrinsicTransferLogCost,
+    PseudoOpcode::IntrinsicCreateAccess,
+    PseudoOpcode::IntrinsicRegularPerAuthBaseCost,
     // EIP-2780/EIP-7708: zero-gas top-level ETH-transfer classifiers.
-    "TX_EFFECT_ETH_TRANSFER_TO_NONEXISTENT_ACCOUNT",
-    "TX_EFFECT_ETH_TRANSFER_TO_EXISTING_ACCOUNT",
-    "TX_EFFECT_ETH_SELF_TRANSFER",
+    PseudoOpcode::TxEffectEthTransferToNonexistentAccount,
+    PseudoOpcode::TxEffectEthTransferToExistingAccount,
+    PseudoOpcode::TxEffectEthSelfTransfer,
 ];
 
 impl MeteredOpcodes {
@@ -253,8 +340,8 @@ impl MeteredOpcodes {
             .chain(BERYL_PRECOMPILES.iter())
             .map(|&(name, addr)| (name, (addr, name)))
             .collect();
-        let pseudo_lookup: HashMap<&str, &'static str> =
-            PSEUDO_OPCODES.iter().copied().map(|name| (name, name)).collect();
+        let pseudo_lookup: HashMap<&str, PseudoOpcode> =
+            PSEUDO_OPCODES.iter().map(|&opcode| (opcode.as_str(), opcode)).collect();
 
         let mut result = Self::default();
         for name in names {
@@ -315,7 +402,7 @@ fn intrinsic_gas_entries<T: alloy_consensus::Transaction>(
         return Vec::new();
     }
 
-    let requested = |name: &str| metered.pseudo_opcodes.contains(name);
+    let requested = |opcode: PseudoOpcode| metered.pseudo_opcodes.contains(&opcode);
     let mut entries = Vec::new();
     let gas_params = GasParams::new_spec(spec.into());
 
@@ -366,82 +453,82 @@ fn intrinsic_gas_entries<T: alloy_consensus::Transaction>(
     let intrinsic_gas = initial_gas.initial_total_gas();
     let floor_gas = initial_gas.floor_gas();
 
-    if requested("INTRINSIC_TOTAL") {
+    if requested(PseudoOpcode::IntrinsicTotal) {
         entries.push(OpcodeGas {
             contract_address: Address::ZERO,
-            opcode: "INTRINSIC_TOTAL".to_string(),
+            opcode: PseudoOpcode::IntrinsicTotal.as_str().to_string(),
             count: 1,
             gas_used: intrinsic_gas,
         });
     }
-    if requested("INTRINSIC_TX_DATA_ZERO_BYTE_COST") && zero_bytes > 0 {
+    if requested(PseudoOpcode::IntrinsicTxDataZeroByteCost) && zero_bytes > 0 {
         entries.push(OpcodeGas {
             contract_address: Address::ZERO,
-            opcode: "INTRINSIC_TX_DATA_ZERO_BYTE_COST".to_string(),
+            opcode: PseudoOpcode::IntrinsicTxDataZeroByteCost.as_str().to_string(),
             count: zero_bytes,
             gas_used: calldata_zero_gas,
         });
     }
-    if requested("INTRINSIC_TX_DATA_NON_ZERO_BYTE_COST") && non_zero_bytes > 0 {
+    if requested(PseudoOpcode::IntrinsicTxDataNonZeroByteCost) && non_zero_bytes > 0 {
         entries.push(OpcodeGas {
             contract_address: Address::ZERO,
-            opcode: "INTRINSIC_TX_DATA_NON_ZERO_BYTE_COST".to_string(),
+            opcode: PseudoOpcode::IntrinsicTxDataNonZeroByteCost.as_str().to_string(),
             count: non_zero_bytes,
             gas_used: calldata_non_zero_gas,
         });
     }
-    if requested("INTRINSIC_INITCODE_WORD_COST") && initcode_words > 0 {
+    if requested(PseudoOpcode::IntrinsicInitcodeWordCost) && initcode_words > 0 {
         entries.push(OpcodeGas {
             contract_address: Address::ZERO,
-            opcode: "INTRINSIC_INITCODE_WORD_COST".to_string(),
+            opcode: PseudoOpcode::IntrinsicInitcodeWordCost.as_str().to_string(),
             count: initcode_words,
             gas_used: initcode_gas,
         });
     }
-    if requested("INTRINSIC_ACCESS_LIST_ADDRESS_COST") && access_list_addresses > 0 {
+    if requested(PseudoOpcode::IntrinsicAccessListAddressCost) && access_list_addresses > 0 {
         entries.push(OpcodeGas {
             contract_address: Address::ZERO,
-            opcode: "INTRINSIC_ACCESS_LIST_ADDRESS_COST".to_string(),
+            opcode: PseudoOpcode::IntrinsicAccessListAddressCost.as_str().to_string(),
             count: access_list_addresses,
             gas_used: access_list_address_gas,
         });
     }
-    if requested("INTRINSIC_ACCESS_LIST_STORAGE_KEY_COST") && access_list_storage_keys > 0 {
+    if requested(PseudoOpcode::IntrinsicAccessListStorageKeyCost) && access_list_storage_keys > 0 {
         entries.push(OpcodeGas {
             contract_address: Address::ZERO,
-            opcode: "INTRINSIC_ACCESS_LIST_STORAGE_KEY_COST".to_string(),
+            opcode: PseudoOpcode::IntrinsicAccessListStorageKeyCost.as_str().to_string(),
             count: access_list_storage_keys,
             gas_used: access_list_storage_key_gas,
         });
     }
-    if requested("INTRINSIC_LEGACY_TX_BASE_COST") {
+    if requested(PseudoOpcode::IntrinsicLegacyTxBaseCost) {
         entries.push(OpcodeGas {
             contract_address: Address::ZERO,
-            opcode: "INTRINSIC_LEGACY_TX_BASE_COST".to_string(),
+            opcode: PseudoOpcode::IntrinsicLegacyTxBaseCost.as_str().to_string(),
             count: 1,
             gas_used: legacy_tx_base_gas,
         });
     }
-    if requested("INTRINSIC_LEGACY_CREATE_COST") && is_create {
+    if requested(PseudoOpcode::IntrinsicLegacyCreateCost) && is_create {
         entries.push(OpcodeGas {
             contract_address: Address::ZERO,
-            opcode: "INTRINSIC_LEGACY_CREATE_COST".to_string(),
+            opcode: PseudoOpcode::IntrinsicLegacyCreateCost.as_str().to_string(),
             count: 1,
             gas_used: legacy_create_gas,
         });
     }
-    if requested("INTRINSIC_PER_EMPTY_ACCOUNT_COST") && authorization_count > 0 {
+    if requested(PseudoOpcode::IntrinsicPerEmptyAccountCost) && authorization_count > 0 {
         entries.push(OpcodeGas {
             contract_address: Address::ZERO,
-            opcode: "INTRINSIC_PER_EMPTY_ACCOUNT_COST".to_string(),
+            opcode: PseudoOpcode::IntrinsicPerEmptyAccountCost.as_str().to_string(),
             count: authorization_count,
             gas_used: authorization_gas,
         });
     }
-    if requested("TX_FLOOR_GAS") && floor_gas > 0 {
+    if requested(PseudoOpcode::TxFloorGas) && floor_gas > 0 {
         entries.push(OpcodeGas {
             contract_address: Address::ZERO,
-            opcode: "TX_FLOOR_GAS".to_string(),
+            opcode: PseudoOpcode::TxFloorGas.as_str().to_string(),
             count: 1,
             gas_used: floor_gas,
         });
@@ -452,16 +539,16 @@ fn intrinsic_gas_entries<T: alloy_consensus::Transaction>(
         && let Some(to) = tx.to()
     {
         let opcode = if to == tx.signer() {
-            "TX_EFFECT_ETH_SELF_TRANSFER"
+            PseudoOpcode::TxEffectEthSelfTransfer
         } else if recipient_is_dead {
-            "TX_EFFECT_ETH_TRANSFER_TO_NONEXISTENT_ACCOUNT"
+            PseudoOpcode::TxEffectEthTransferToNonexistentAccount
         } else {
-            "TX_EFFECT_ETH_TRANSFER_TO_EXISTING_ACCOUNT"
+            PseudoOpcode::TxEffectEthTransferToExistingAccount
         };
         if requested(opcode) {
             entries.push(OpcodeGas {
                 contract_address: Address::ZERO,
-                opcode: opcode.to_string(),
+                opcode: opcode.as_str().to_string(),
                 count: 1,
                 gas_used: 0,
             });
@@ -521,7 +608,7 @@ where
     let bundle_hash = bundle.bundle_hash();
 
     let meters_value_transfer_effects =
-        metered_opcodes.pseudo_opcodes.iter().any(|opcode| opcode.starts_with("TX_EFFECT_ETH_"));
+        metered_opcodes.pseudo_opcodes.iter().any(|opcode| opcode.is_eth_transfer_effect());
     let mut initial_value_recipient_is_dead: HashMap<Address, bool> = HashMap::default();
     if meters_value_transfer_effects {
         for tx in bundle.transactions() {
@@ -1849,25 +1936,29 @@ mod tests {
             "tx_effect_eth_self_transfer".to_string(),
         ])
         .unwrap();
-        assert!(result.pseudo_opcodes.contains("INTRINSIC_TOTAL"));
-        assert!(result.pseudo_opcodes.contains("INTRINSIC_TX_DATA_ZERO_BYTE_COST"));
-        assert!(result.pseudo_opcodes.contains("INTRINSIC_TX_DATA_NON_ZERO_BYTE_COST"));
-        assert!(result.pseudo_opcodes.contains("INTRINSIC_ACCESS_LIST_ADDRESS_COST"));
-        assert!(result.pseudo_opcodes.contains("INTRINSIC_ACCESS_LIST_STORAGE_KEY_COST"));
-        assert!(result.pseudo_opcodes.contains("INTRINSIC_INITCODE_WORD_COST"));
-        assert!(result.pseudo_opcodes.contains("TX_FLOOR_GAS"));
-        assert!(result.pseudo_opcodes.contains("INTRINSIC_LEGACY_TX_BASE_COST"));
-        assert!(result.pseudo_opcodes.contains("INTRINSIC_LEGACY_CREATE_COST"));
-        assert!(result.pseudo_opcodes.contains("INTRINSIC_PER_EMPTY_ACCOUNT_COST"));
-        assert!(result.pseudo_opcodes.contains("INTRINSIC_TX_BASE_COST"));
-        assert!(result.pseudo_opcodes.contains("INTRINSIC_COLD_ACCOUNT_ACCESS"));
-        assert!(result.pseudo_opcodes.contains("INTRINSIC_TX_VALUE_COST"));
-        assert!(result.pseudo_opcodes.contains("INTRINSIC_TRANSFER_LOG_COST"));
-        assert!(result.pseudo_opcodes.contains("INTRINSIC_CREATE_ACCESS"));
-        assert!(result.pseudo_opcodes.contains("INTRINSIC_REGULAR_PER_AUTH_BASE_COST"));
-        assert!(result.pseudo_opcodes.contains("TX_EFFECT_ETH_TRANSFER_TO_NONEXISTENT_ACCOUNT"));
-        assert!(result.pseudo_opcodes.contains("TX_EFFECT_ETH_TRANSFER_TO_EXISTING_ACCOUNT"));
-        assert!(result.pseudo_opcodes.contains("TX_EFFECT_ETH_SELF_TRANSFER"));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicTotal));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicTxDataZeroByteCost));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicTxDataNonZeroByteCost));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicAccessListAddressCost));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicAccessListStorageKeyCost));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicInitcodeWordCost));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::TxFloorGas));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicLegacyTxBaseCost));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicLegacyCreateCost));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicPerEmptyAccountCost));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicTxBaseCost));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicColdAccountAccess));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicTxValueCost));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicTransferLogCost));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicCreateAccess));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicRegularPerAuthBaseCost));
+        assert!(
+            result.pseudo_opcodes.contains(&PseudoOpcode::TxEffectEthTransferToNonexistentAccount)
+        );
+        assert!(
+            result.pseudo_opcodes.contains(&PseudoOpcode::TxEffectEthTransferToExistingAccount)
+        );
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::TxEffectEthSelfTransfer));
     }
 
     #[test]
