@@ -1,0 +1,33 @@
+# CODEOWNERS
+#
+# Scope: ONLY hardfork-frozen precompile logic and versions.rs, which pins
+# each frozen file's hash at compile time (see versions.rs) - not the
+# precompiles crate as a whole, and not dispatch/precompile entrypoints
+# (those change routinely as versions/precompiles are added and carry no
+# freeze guarantee).
+#
+# This is a review-gate and audit trail, not cryptographic immutability: a PR
+# that edits a frozen file can also edit the pinned hash in versions.rs in the
+# same commit - the compile-time assert only proves the two are consistent
+# with each other, not that the pinned hash is the "right" one. The real
+# control is "a named owner below must approve."
+#
+# Trade-off, by design: gating versions.rs means every new hardfork's version
+# addition (routine, frequent) requires the same sign-off as tampering with an
+# existing frozen arm or its pinned hash (rare, dangerous) - accepted because
+# versions.rs is the single source of truth for both, and path-based
+# CODEOWNERS can't distinguish the two.
+#
+# Forward-looking: `*` matches one path segment, so this also covers any
+# future precompile solidified via /solidify-precompile (e.g. b20_asset,
+# b20_factory) once it gains its own logic/ + versions.rs, with no further
+# edits needed here.
+#
+# ACTION REQUIRED (not delivered by this file): a repo admin must enable
+# "Require review from Code Owners" in branch protection settings for main.
+# Until that toggle is flipped, this file is purely advisory - GitHub will
+# not block merges on it. No Terraform/IaC manages branch protection in this
+# repo today, so this cannot be done as a code change.
+
+/crates/common/precompiles/src/*/logic/v*.rs   @rayyan224 @eric-ships @refcell
+/crates/common/precompiles/src/*/versions.rs   @rayyan224 @eric-ships @refcell

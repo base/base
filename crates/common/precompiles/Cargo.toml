@@ -24,6 +24,10 @@ base-common-genesis.workspace = true
 base-precompile-macros.workspace = true
 base-precompile-storage.workspace = true
 
+# crypto
+hex-literal.workspace = true
+sha2-const-stable.workspace = true
+
 # revm
 revm.workspace = true
 

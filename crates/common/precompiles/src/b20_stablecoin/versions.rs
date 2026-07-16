@@ -8,8 +8,34 @@
 //! the version itself.
 
 use base_common_genesis::BaseUpgrade;
+use sha2_const_stable::Sha256;
 
 use crate::{Policy, Stablecoin, StablecoinAccounting, StablecoinV1};
+
+const V1_LOGIC_SOURCE: &[u8] = include_bytes!("logic/v1.rs");
+
+/// Pinned at Beryl activation. Recompute only as a deliberate, reviewed change
+/// alongside whatever edit to `logic/v1.rs` this hash is meant to gate.
+const V1_LOGIC_HASH: [u8; 32] =
+    hex_literal::hex!("acfcb78949da613764339f58a89f60b8049ed9d3681dbc9a2db78f5aacbb13d8");
+
+const fn hashes_eq(a: &[u8; 32], b: &[u8; 32]) -> bool {
+    let mut i = 0;
+    while i < 32 {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+#[allow(long_running_const_eval)]
+const _: () = assert!(
+    hashes_eq(&Sha256::new().update(V1_LOGIC_SOURCE).finalize(), &V1_LOGIC_HASH),
+    "logic/v1.rs changed since it was frozen at Beryl - if intentional, recompute its hash and \
+     update V1_LOGIC_HASH as a deliberate, CODEOWNERS-reviewed change",
+);
 
 /// An activated version of the stablecoin B-20 precompile logic.
 ///
