@@ -87,6 +87,19 @@ impl ActorAuthorizer {
                 // its own account but MUST NOT vouch as a delegate, to preserve
                 // non-escalation. Followed by the outer
                 // `_actorConfig[bytes20(delegate)][account]` binding check.
+                //
+                // Independent depth-1 guard: `authenticate_actor` re-enters the
+                // public dispatch with `allow_delegate = true`, so reject a nested
+                // delegate here before re-entry. `AuthenticatorDispatch::delegate`
+                // already enforces this structurally; this second, layer-local
+                // check keeps single-hop intact even if either layer is later
+                // refactored. (`data` is `delegate_account(20) || nested_auth`, so
+                // `data[20..40]` is the nested authenticator; the outer dispatch
+                // guarantees `data.len() >= 40`.)
+                let nested_authenticator = Address::from_slice(&data[20..40]);
+                if nested_authenticator == Eip8130Contracts::DELEGATE_AUTHENTICATOR {
+                    return Err(AuthError::NestedDelegate.into());
+                }
                 let nested =
                     Self::authenticate_actor(storage, delegate_account, hash, &data[20..], now)?;
                 if nested.scope != 0 {
@@ -610,6 +623,25 @@ mod tests {
                     actor_id: nested_id,
                     authenticator: Eip8130Constants::K1_AUTHENTICATOR,
                 }),
+            );
+        });
+    }
+
+    #[test]
+    fn delegate_rejects_nested_delegate_at_authorize_layer() {
+        // Depth-2: DELEGATE || delegate_account(20) || DELEGATE || .... The
+        // authorize layer's independent guard rejects the nested delegate before
+        // re-entering `authenticate_actor`, mirroring the dispatch-level check.
+        let delegate_account = address!("0x00000000000000000000000000000000000000bb");
+        let mut data = Vec::new();
+        data.extend_from_slice(delegate_account.as_slice());
+        data.extend_from_slice(Eip8130Contracts::DELEGATE_AUTHENTICATOR.as_slice());
+        data.extend_from_slice(&[0u8; 65]);
+        let auth = blob(Eip8130Contracts::DELEGATE_AUTHENTICATOR, &data);
+        with_storage(|acc| {
+            assert_eq!(
+                ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW),
+                Err(AuthorizeError::Authenticate(AuthError::NestedDelegate)),
             );
         });
     }
