@@ -55,7 +55,6 @@ pub struct ShadowSequencerConfig {
 #[derive(Debug)]
 pub struct ShadowSequencer {
     index: usize,
-    sequencer_key: B256,
     builder: InProcessBuilder,
     consensus: InProcessConsensus,
 }
@@ -117,17 +116,12 @@ impl ShadowSequencer {
 
         consensus.start_sequencer().await.wrap_err("Failed to start shadow sequencer")?;
 
-        Ok(Self { index: config.index, sequencer_key: config.sequencer_key, builder, consensus })
+        Ok(Self { index: config.index, builder, consensus })
     }
 
     /// Returns the zero-based index of this shadow sequencer.
     pub const fn index(&self) -> usize {
         self.index
-    }
-
-    /// Returns the signing key used by this shadow sequencer.
-    pub const fn sequencer_key(&self) -> B256 {
-        self.sequencer_key
     }
 
     /// Returns a reference to the shadow's builder execution layer.
