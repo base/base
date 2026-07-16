@@ -21,7 +21,7 @@
 //!    --test b20_asset_v1_golden -- --nocapture` and copy the printed `GOLDEN_ROOT` values.
 
 use alloy_primitives::{Address, B256, Bytes, U256, b256, keccak256};
-use alloy_sol_types::{SolCall, SolError, SolEvent, SolInterface, SolValue};
+use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
 use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
     Asset, AssetAccounting, AssetV1, AssetVersion, AssetVersions, B20_MAX_SUPPLY_CAP, B20AssetInit,
@@ -1734,23 +1734,158 @@ fn dispatch_reverts_when_uninitialized() {
 }
 
 // ============================================================================
-// meta: op coverage tripwire
+// meta: op coverage checklist
 // ============================================================================
 
-// Compile-time coverage tripwire.
-//
-// The dispatcher's `match` over `IB20Calls` / `IB20AssetCalls` is compiler-exhaustive,
-// so `SolInterface::COUNT` (a compile-time constant on the generated interface) is the
-// authoritative op count. Pinning it here fails the build whenever the ABI op surface
-// changes — forcing a golden case to be added above and this count bumped. Every op
-// counted here has a golden case in this suite (audited at review time).
-const _: () = {
-    assert!(
-        <IB20::IB20Calls as SolInterface>::COUNT == 50,
-        "inherited IB20 op surface changed: add golden case(s) above and update this count",
-    );
-    assert!(
-        <IB20Asset::IB20AssetCalls as SolInterface>::COUNT == 12,
-        "IB20Asset op surface changed: add golden case(s) above and update this count",
-    );
-};
+/// Compile-time coverage checklist — never called; it exists only for its two
+/// exhaustive `match`es (no `_` arm), each arm naming the golden `#[test]` fn(s) that
+/// pin the op via [`covered`].
+///
+/// This gives two compile-time guarantees:
+///   * add an op to the ABI (a new `IB20Calls` / `IB20AssetCalls` variant) → the
+///     wildcard-free match fails to build until an arm (and thus a golden) is added;
+///   * rename or remove a golden `#[test]` fn → the `covered(&[...])` reference fails
+///     to build.
+///
+/// Because Asset V1 is **frozen**, this checklist is NOT expected to ever be updated:
+/// a compile error here means the frozen V1 op surface changed, which must be reviewed.
+#[allow(dead_code)]
+fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCalls) {
+    use IB20::IB20Calls as C;
+    use IB20Asset::IB20AssetCalls as SC;
+
+    // No-op: forces each arm to name real golden `#[test]` fns by path.
+    fn covered(_goldens: &[fn()]) {}
+
+    match call {
+        // ERC-20 core
+        C::transfer(_) => covered(&[
+            golden_transfer_privileged,
+            golden_transfer_unprivileged_allowed,
+            golden_transfer_unprivileged_blocked_sender_reverts,
+            golden_transfer_reverts_zero_receiver,
+            golden_transfer_reverts_insufficient_balance,
+            golden_transfer_reverts_when_paused,
+        ]),
+        C::transferFrom(_) => covered(&[
+            golden_transfer_from_finite_allowance_decrements,
+            golden_transfer_from_infinite_allowance_not_decremented,
+            golden_transfer_from_reverts_insufficient_allowance,
+            golden_transfer_from_unprivileged_enforces_executor_policy,
+        ]),
+        C::approve(_) => {
+            covered(&[golden_approve_sets_allowance_and_emits, golden_approve_reverts_zero_spender])
+        }
+        C::transferWithMemo(_) => covered(&[golden_transfer_with_memo_emits_transfer_then_memo]),
+        C::transferFromWithMemo(_) => covered(&[golden_transfer_from_with_memo]),
+
+        // mint / burn
+        C::mint(_) => covered(&[
+            golden_mint_privileged_still_enforces_receiver_policy,
+            golden_mint_unprivileged_requires_role_and_policy,
+            golden_mint_reverts_over_supply_cap,
+        ]),
+        C::mintWithMemo(_) => covered(&[golden_mint_with_memo]),
+        C::burn(_) => covered(&[golden_burn_requires_role_then_reduces_supply]),
+        C::burnWithMemo(_) => covered(&[golden_burn_with_memo]),
+        C::burnBlocked(_) => covered(&[
+            golden_burn_blocked_destroys_from_blocked_account,
+            golden_burn_blocked_reverts_when_not_blocked,
+        ]),
+
+        // pause / config / roles / policy / permit
+        C::pause(_) => covered(&[
+            golden_pause_sets_feature_bit,
+            golden_pause_reverts_empty_feature_set,
+            golden_pause_unprivileged_requires_role,
+        ]),
+        C::unpause(_) => covered(&[golden_unpause_clears_feature_bit]),
+        C::updateSupplyCap(_) => {
+            covered(&[golden_update_supply_cap, golden_update_supply_cap_reverts_below_supply])
+        }
+        C::updateName(_) => covered(&[golden_update_name_emits_name_and_domain_changed]),
+        C::updateSymbol(_) => covered(&[golden_update_symbol]),
+        C::updateContractURI(_) => covered(&[golden_update_contract_uri]),
+        C::grantRole(_) => covered(&[golden_grant_role]),
+        C::revokeRole(_) => covered(&[golden_revoke_role, golden_revoke_last_admin_rejected]),
+        C::renounceRole(_) => {
+            covered(&[golden_renounce_role, golden_renounce_role_bad_confirmation])
+        }
+        C::renounceLastAdmin(_) => {
+            covered(&[golden_renounce_last_admin, golden_renounce_last_admin_reverts_when_not_sole])
+        }
+        C::setRoleAdmin(_) => covered(&[golden_set_role_admin]),
+        C::updatePolicy(_) => {
+            covered(&[golden_update_policy, golden_update_policy_reverts_missing_policy])
+        }
+        C::permit(_) => covered(&[
+            golden_permit_sets_allowance_and_increments_nonce,
+            golden_permit_reverts_when_expired,
+        ]),
+
+        // computed reads
+        C::isPaused(_) | C::pausedFeatures(_) => {
+            covered(&[golden_read_is_paused_and_paused_features])
+        }
+        C::policyId(_) => covered(&[golden_read_policy_id_and_unsupported_scope]),
+        C::DOMAIN_SEPARATOR(_) => covered(&[golden_read_domain_separator]),
+        C::eip712Domain(_) => covered(&[golden_read_eip712_domain]),
+
+        // direct reads
+        C::name(_)
+        | C::symbol(_)
+        | C::decimals(_)
+        | C::totalSupply(_)
+        | C::balanceOf(_)
+        | C::allowance(_)
+        | C::supplyCap(_)
+        | C::nonces(_)
+        | C::contractURI(_)
+        | C::hasRole(_)
+        | C::getRoleAdmin(_) => covered(&[golden_read_metadata_and_supply]),
+
+        // role / policy-id constants
+        C::DEFAULT_ADMIN_ROLE(_)
+        | C::MINT_ROLE(_)
+        | C::BURN_ROLE(_)
+        | C::BURN_BLOCKED_ROLE(_)
+        | C::PAUSE_ROLE(_)
+        | C::UNPAUSE_ROLE(_)
+        | C::METADATA_ROLE(_)
+        | C::TRANSFER_SENDER_POLICY(_)
+        | C::TRANSFER_RECEIVER_POLICY(_)
+        | C::TRANSFER_EXECUTOR_POLICY(_)
+        | C::MINT_RECEIVER_POLICY(_) => covered(&[golden_read_role_and_policy_constants]),
+    }
+
+    match ext {
+        SC::OPERATOR_ROLE(_)
+        | SC::WAD_PRECISION(_)
+        | SC::multiplier(_)
+        | SC::extraMetadata(_)
+        | SC::isAnnouncementIdUsed(_) => covered(&[golden_read_asset_constants_and_multiplier]),
+        SC::toScaledBalance(_) | SC::toRawBalance(_) | SC::scaledBalanceOf(_) => {
+            covered(&[golden_read_scaled_balances_with_multiplier])
+        }
+        SC::updateMultiplier(_) => covered(&[
+            golden_update_multiplier,
+            golden_update_multiplier_requires_operator_role,
+            golden_update_multiplier_rejects_zero,
+        ]),
+        SC::batchMint(_) => covered(&[
+            golden_batch_mint,
+            golden_batch_mint_reverts_length_mismatch,
+            golden_batch_mint_reverts_empty_batch,
+        ]),
+        SC::updateExtraMetadata(_) => {
+            covered(&[golden_update_extra_metadata, golden_update_extra_metadata_rejects_empty_key])
+        }
+        SC::announce(_) => covered(&[
+            golden_announce_runs_internal_calls_and_brackets_events,
+            golden_announce_reverts_on_reused_id,
+            golden_announce_reverts_on_nested_announce,
+            golden_announce_wraps_failing_internal_call,
+            golden_announce_reverts_on_malformed_internal_call,
+        ]),
+    }
+}
