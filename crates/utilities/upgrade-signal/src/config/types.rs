@@ -8,7 +8,8 @@ pub enum UpgradeSignalMode {
     MetricsOnly,
     /// Apply the L1 signal once before startup; live polling remains metrics-only.
     StartupApply,
-    /// Apply the L1 signal before startup and expose manual runtime admin refresh.
+    /// Apply the L1 signal before startup, automatically re-apply observed live L1 changes,
+    /// and expose manual runtime admin refresh.
     RuntimeAdmin,
 }
 

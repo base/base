@@ -535,10 +535,14 @@ impl RollupNode {
             derivation_origin_rx,
             cancellation.clone(),
         );
-        let upgrade_signal_metrics_actor =
-            self.upgrade_signal_config.as_ref().map(|c| c.metrics_actor(cancellation.clone()));
+        // One refresher instance is shared between the metrics actor (live auto-apply) and the
+        // sequencer admin RPC.
         let upgrade_signal_refresher =
             self.upgrade_signal_config.as_ref().and_then(|c| c.refresher());
+        let upgrade_signal_metrics_actor = self
+            .upgrade_signal_config
+            .as_ref()
+            .map(|c| c.metrics_actor(upgrade_signal_refresher.clone(), cancellation.clone()));
         let node_mode = self.mode();
         // Create the sequencer if needed
         let (sequencer_actor, sequencer_admin_client) = if node_mode.is_sequencer() {
