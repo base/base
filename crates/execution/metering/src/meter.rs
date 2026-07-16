@@ -1911,14 +1911,8 @@ mod tests {
 
         // Azul is Base's Osaka execution schedule. EIP-2780 is not active, so its
         // primitive names must not be populated with legacy gas values.
-        let entries = intrinsic_gas_entries(
-            &tx,
-            false,
-            true,
-            &metered,
-            BaseSpecId::new(BaseUpgrade::Azul),
-            None,
-        );
+        let entries =
+            intrinsic_gas_entries(&tx, false, true, &metered, BaseSpecId::new(BaseUpgrade::Azul));
         assert!(entries.iter().any(|entry| entry.opcode == "INTRINSIC_LEGACY_TX_BASE_COST"));
         for name in [
             "INTRINSIC_TX_BASE_COST",
