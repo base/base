@@ -1402,54 +1402,99 @@ fn dispatch_reverts_when_uninitialized() {
 // ============================================================================
 
 /// Compile-time coverage checklist — never called; it exists only for its two
-/// exhaustive `match`es, which have no `_` arm.
+/// exhaustive `match`es (no `_` arm), each arm naming the golden `#[test]` fn(s) that
+/// pin the op via [`covered`].
 ///
-/// Every op the dispatcher routes appears here exactly once, mapped (in comments) to
-/// the golden case(s) that pin it. Because Stablecoin V1 is **frozen**, this match is
-/// NOT expected to ever be updated: a compile error here means the V1 ABI op surface
-/// changed — which for a frozen version should not happen. Treat any such failure as a
-/// signal to review the change and pair every new op with a golden case before adding
-/// its arm.
+/// This gives two compile-time guarantees:
+///   * add an op to the ABI (a new `IB20Calls` / `IB20StablecoinCalls` variant) → the
+///     wildcard-free match fails to build until an arm (and thus a golden) is added;
+///   * rename or remove a golden `#[test]` fn → the `covered(&[...])` reference fails
+///     to build.
+///
+/// Because Stablecoin V1 is **frozen**, this checklist is NOT expected to ever be
+/// updated: a compile error here means the frozen V1 op surface changed, which must be
+/// reviewed.
 #[allow(dead_code)]
 fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Stablecoin::IB20StablecoinCalls) {
     use IB20::IB20Calls as C;
     use IB20Stablecoin::IB20StablecoinCalls as SC;
 
+    // No-op: forces each arm to name real golden `#[test]` fns by path.
+    fn covered(_goldens: &[fn()]) {}
+
     match call {
         // ERC-20 core
-        C::transfer(_) => (), // golden_transfer_privileged / _unprivileged_allowed / _reverts_*
-        C::transferFrom(_) => (), // golden_transfer_from_finite / _infinite / _insufficient / _executor_policy
-        C::approve(_) => (),      // golden_approve_sets_allowance_and_emits / _reverts_zero_spender
-        C::transferWithMemo(_) => (), // golden_transfer_with_memo_emits_transfer_then_memo
-        C::transferFromWithMemo(_) => (), // golden_transfer_from_with_memo
+        C::transfer(_) => covered(&[
+            golden_transfer_privileged,
+            golden_transfer_unprivileged_allowed,
+            golden_transfer_unprivileged_blocked_sender_reverts,
+            golden_transfer_reverts_zero_receiver,
+            golden_transfer_reverts_insufficient_balance,
+            golden_transfer_reverts_when_paused,
+        ]),
+        C::transferFrom(_) => covered(&[
+            golden_transfer_from_finite_allowance_decrements,
+            golden_transfer_from_infinite_allowance_not_decremented,
+            golden_transfer_from_reverts_insufficient_allowance,
+            golden_transfer_from_unprivileged_enforces_executor_policy,
+        ]),
+        C::approve(_) => {
+            covered(&[golden_approve_sets_allowance_and_emits, golden_approve_reverts_zero_spender])
+        }
+        C::transferWithMemo(_) => covered(&[golden_transfer_with_memo_emits_transfer_then_memo]),
+        C::transferFromWithMemo(_) => covered(&[golden_transfer_from_with_memo]),
 
         // mint / burn
-        C::mint(_) => (), // golden_mint_privileged_* / _unprivileged_* / _reverts_over_supply_cap
-        C::mintWithMemo(_) => (), // golden_mint_with_memo
-        C::burn(_) => (), // golden_burn_requires_role_then_reduces_supply
-        C::burnWithMemo(_) => (), // golden_burn_with_memo
-        C::burnBlocked(_) => (), // golden_burn_blocked_destroys_* / _reverts_when_not_blocked
+        C::mint(_) => covered(&[
+            golden_mint_privileged_still_enforces_receiver_policy,
+            golden_mint_unprivileged_requires_role_and_policy,
+            golden_mint_reverts_over_supply_cap,
+        ]),
+        C::mintWithMemo(_) => covered(&[golden_mint_with_memo]),
+        C::burn(_) => covered(&[golden_burn_requires_role_then_reduces_supply]),
+        C::burnWithMemo(_) => covered(&[golden_burn_with_memo]),
+        C::burnBlocked(_) => covered(&[
+            golden_burn_blocked_destroys_from_blocked_account,
+            golden_burn_blocked_reverts_when_not_blocked,
+        ]),
 
         // pause / config / roles / policy / permit
-        C::pause(_) => (), // golden_pause_* / _reverts_empty_feature_set / _unprivileged_requires_role
-        C::unpause(_) => (), // golden_unpause_clears_feature_bit
-        C::updateSupplyCap(_) => (), // golden_update_supply_cap / _reverts_below_supply
-        C::updateName(_) => (), // golden_update_name_emits_name_and_domain_changed
-        C::updateSymbol(_) => (), // golden_update_symbol
-        C::updateContractURI(_) => (), // golden_update_contract_uri
-        C::grantRole(_) => (), // golden_grant_role
-        C::revokeRole(_) => (), // golden_revoke_role / _revoke_last_admin_rejected
-        C::renounceRole(_) => (), // golden_renounce_role / _bad_confirmation
-        C::renounceLastAdmin(_) => (), // golden_renounce_last_admin / _reverts_when_not_sole
-        C::setRoleAdmin(_) => (), // golden_set_role_admin
-        C::updatePolicy(_) => (), // golden_update_policy / _reverts_missing_policy
-        C::permit(_) => (), // golden_permit_sets_allowance_* / _reverts_when_expired
+        C::pause(_) => covered(&[
+            golden_pause_sets_feature_bit,
+            golden_pause_reverts_empty_feature_set,
+            golden_pause_unprivileged_requires_role,
+        ]),
+        C::unpause(_) => covered(&[golden_unpause_clears_feature_bit]),
+        C::updateSupplyCap(_) => {
+            covered(&[golden_update_supply_cap, golden_update_supply_cap_reverts_below_supply])
+        }
+        C::updateName(_) => covered(&[golden_update_name_emits_name_and_domain_changed]),
+        C::updateSymbol(_) => covered(&[golden_update_symbol]),
+        C::updateContractURI(_) => covered(&[golden_update_contract_uri]),
+        C::grantRole(_) => covered(&[golden_grant_role]),
+        C::revokeRole(_) => covered(&[golden_revoke_role, golden_revoke_last_admin_rejected]),
+        C::renounceRole(_) => {
+            covered(&[golden_renounce_role, golden_renounce_role_bad_confirmation])
+        }
+        C::renounceLastAdmin(_) => {
+            covered(&[golden_renounce_last_admin, golden_renounce_last_admin_reverts_when_not_sole])
+        }
+        C::setRoleAdmin(_) => covered(&[golden_set_role_admin]),
+        C::updatePolicy(_) => {
+            covered(&[golden_update_policy, golden_update_policy_reverts_missing_policy])
+        }
+        C::permit(_) => covered(&[
+            golden_permit_sets_allowance_and_increments_nonce,
+            golden_permit_reverts_when_expired,
+        ]),
 
         // computed reads
-        C::isPaused(_) | C::pausedFeatures(_) => (), // golden_read_is_paused_and_paused_features
-        C::policyId(_) => (),                        // golden_read_policy_id_and_unsupported_scope
-        C::DOMAIN_SEPARATOR(_) => (),                // golden_read_domain_separator
-        C::eip712Domain(_) => (),                    // golden_read_eip712_domain
+        C::isPaused(_) | C::pausedFeatures(_) => {
+            covered(&[golden_read_is_paused_and_paused_features])
+        }
+        C::policyId(_) => covered(&[golden_read_policy_id_and_unsupported_scope]),
+        C::DOMAIN_SEPARATOR(_) => covered(&[golden_read_domain_separator]),
+        C::eip712Domain(_) => covered(&[golden_read_eip712_domain]),
 
         // direct reads
         C::name(_)
@@ -1462,7 +1507,7 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Stablecoin::IB20Stab
         | C::nonces(_)
         | C::contractURI(_)
         | C::hasRole(_)
-        | C::getRoleAdmin(_) => (), // golden_read_metadata_and_supply
+        | C::getRoleAdmin(_) => covered(&[golden_read_metadata_and_supply]),
 
         // role / policy-id constants
         C::DEFAULT_ADMIN_ROLE(_)
@@ -1475,10 +1520,10 @@ fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Stablecoin::IB20Stab
         | C::TRANSFER_SENDER_POLICY(_)
         | C::TRANSFER_RECEIVER_POLICY(_)
         | C::TRANSFER_EXECUTOR_POLICY(_)
-        | C::MINT_RECEIVER_POLICY(_) => (), // golden_read_role_and_policy_constants
+        | C::MINT_RECEIVER_POLICY(_) => covered(&[golden_read_role_and_policy_constants]),
     }
 
     match ext {
-        SC::currency(_) => (), // golden_read_currency
+        SC::currency(_) => covered(&[golden_read_currency]),
     }
 }
