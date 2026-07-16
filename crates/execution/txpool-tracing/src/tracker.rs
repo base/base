@@ -548,10 +548,7 @@ mod tests {
         assert_eq!(transaction_event_type(TxEvent::Pending), Some(TransactionEventType::Pending));
         assert_eq!(transaction_event_type(TxEvent::Queued), Some(TransactionEventType::Queued));
         assert_eq!(transaction_event_type(TxEvent::Dropped), Some(TransactionEventType::Dropped));
-        assert_eq!(
-            transaction_event_type(TxEvent::Replaced),
-            Some(TransactionEventType::Replaced)
-        );
+        assert_eq!(transaction_event_type(TxEvent::Replaced), Some(TransactionEventType::Replaced));
         assert_eq!(transaction_event_type(TxEvent::BlockInclusion), None);
         assert_eq!(
             transaction_event_type(TxEvent::PendingToQueued),
