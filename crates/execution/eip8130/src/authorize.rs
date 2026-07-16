@@ -79,7 +79,7 @@ impl ActorAuthorizer {
                 // `actor_config`), then requires admin (`scope == 0`). Nested
                 // discharge must not skip to `resolve_bound`: that would reject a
                 // live default EOA whose key lives only in `AccountState`, the
-                // common 7702-EOA-as-parent case. This is also the single nested
+                // common EOA-as-parent case. This is also the single nested
                 // signature verification (dispatch's delegate step is structural
                 // only), so there is no redundant ecrecover. The admin gate is
                 // independent of `verifySignature` (now operational: admin, or a
@@ -652,7 +652,7 @@ mod tests {
 
     #[test]
     fn delegate_accepts_nested_default_eoa_self() {
-        // 7702 EOA as parent: nested k1 recovers to the delegate account itself,
+        // EOA as parent: nested k1 recovers to the delegate account itself,
         // with no `actor_config` entry — only the live inline default EOA.
         // `DelegateAuthenticator` → `authenticateActor` must honor that path;
         // bare `resolve_bound` would incorrectly return NotBound.
