@@ -20,7 +20,7 @@
 //!    --test b20_stablecoin_v1_golden -- --nocapture` and copy the printed `GOLDEN_ROOT` values.
 
 use alloy_primitives::{Address, B256, Bytes, U256, b256, keccak256};
-use alloy_sol_types::{SolCall, SolError, SolEvent, SolInterface, SolValue};
+use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
 use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
     B20_MAX_SUPPLY_CAP, B20PolicyType, B20StablecoinInit, B20StablecoinStorage, B20StablecoinToken,
@@ -1398,23 +1398,87 @@ fn dispatch_reverts_when_uninitialized() {
 }
 
 // ============================================================================
-// meta: op coverage tripwire
+// meta: op coverage checklist
 // ============================================================================
 
-// Compile-time coverage tripwire.
-//
-// The dispatcher's `match` over `IB20Calls` / `IB20StablecoinCalls` is compiler-exhaustive,
-// so `SolInterface::COUNT` (a compile-time constant on the generated interface) is the
-// authoritative op count. Pinning it here fails the build whenever the ABI op surface
-// changes — forcing a golden case to be added above and this count bumped. Every op
-// counted here has a golden case in this suite (audited at review time).
-const _: () = {
-    assert!(
-        <IB20::IB20Calls as SolInterface>::COUNT == 50,
-        "inherited IB20 op surface changed: add golden case(s) above and update this count",
-    );
-    assert!(
-        <IB20Stablecoin::IB20StablecoinCalls as SolInterface>::COUNT == 1,
-        "IB20Stablecoin op surface changed: add golden case(s) above and update this count",
-    );
-};
+/// Compile-time coverage checklist — never called; it exists only for its two
+/// exhaustive `match`es, which have no `_` arm.
+///
+/// Every op the dispatcher routes appears here exactly once, mapped (in comments) to
+/// the golden case(s) that pin it. Because Stablecoin V1 is **frozen**, this match is
+/// NOT expected to ever be updated: a compile error here means the V1 ABI op surface
+/// changed — which for a frozen version should not happen. Treat any such failure as a
+/// signal to review the change and pair every new op with a golden case before adding
+/// its arm.
+#[allow(dead_code)]
+fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Stablecoin::IB20StablecoinCalls) {
+    use IB20::IB20Calls as C;
+    use IB20Stablecoin::IB20StablecoinCalls as SC;
+
+    match call {
+        // ERC-20 core
+        C::transfer(_) => (), // golden_transfer_privileged / _unprivileged_allowed / _reverts_*
+        C::transferFrom(_) => (), // golden_transfer_from_finite / _infinite / _insufficient / _executor_policy
+        C::approve(_) => (),      // golden_approve_sets_allowance_and_emits / _reverts_zero_spender
+        C::transferWithMemo(_) => (), // golden_transfer_with_memo_emits_transfer_then_memo
+        C::transferFromWithMemo(_) => (), // golden_transfer_from_with_memo
+
+        // mint / burn
+        C::mint(_) => (), // golden_mint_privileged_* / _unprivileged_* / _reverts_over_supply_cap
+        C::mintWithMemo(_) => (), // golden_mint_with_memo
+        C::burn(_) => (), // golden_burn_requires_role_then_reduces_supply
+        C::burnWithMemo(_) => (), // golden_burn_with_memo
+        C::burnBlocked(_) => (), // golden_burn_blocked_destroys_* / _reverts_when_not_blocked
+
+        // pause / config / roles / policy / permit
+        C::pause(_) => (), // golden_pause_* / _reverts_empty_feature_set / _unprivileged_requires_role
+        C::unpause(_) => (), // golden_unpause_clears_feature_bit
+        C::updateSupplyCap(_) => (), // golden_update_supply_cap / _reverts_below_supply
+        C::updateName(_) => (), // golden_update_name_emits_name_and_domain_changed
+        C::updateSymbol(_) => (), // golden_update_symbol
+        C::updateContractURI(_) => (), // golden_update_contract_uri
+        C::grantRole(_) => (), // golden_grant_role
+        C::revokeRole(_) => (), // golden_revoke_role / _revoke_last_admin_rejected
+        C::renounceRole(_) => (), // golden_renounce_role / _bad_confirmation
+        C::renounceLastAdmin(_) => (), // golden_renounce_last_admin / _reverts_when_not_sole
+        C::setRoleAdmin(_) => (), // golden_set_role_admin
+        C::updatePolicy(_) => (), // golden_update_policy / _reverts_missing_policy
+        C::permit(_) => (), // golden_permit_sets_allowance_* / _reverts_when_expired
+
+        // computed reads
+        C::isPaused(_) | C::pausedFeatures(_) => (), // golden_read_is_paused_and_paused_features
+        C::policyId(_) => (),                        // golden_read_policy_id_and_unsupported_scope
+        C::DOMAIN_SEPARATOR(_) => (),                // golden_read_domain_separator
+        C::eip712Domain(_) => (),                    // golden_read_eip712_domain
+
+        // direct reads
+        C::name(_)
+        | C::symbol(_)
+        | C::decimals(_)
+        | C::totalSupply(_)
+        | C::balanceOf(_)
+        | C::allowance(_)
+        | C::supplyCap(_)
+        | C::nonces(_)
+        | C::contractURI(_)
+        | C::hasRole(_)
+        | C::getRoleAdmin(_) => (), // golden_read_metadata_and_supply
+
+        // role / policy-id constants
+        C::DEFAULT_ADMIN_ROLE(_)
+        | C::MINT_ROLE(_)
+        | C::BURN_ROLE(_)
+        | C::BURN_BLOCKED_ROLE(_)
+        | C::PAUSE_ROLE(_)
+        | C::UNPAUSE_ROLE(_)
+        | C::METADATA_ROLE(_)
+        | C::TRANSFER_SENDER_POLICY(_)
+        | C::TRANSFER_RECEIVER_POLICY(_)
+        | C::TRANSFER_EXECUTOR_POLICY(_)
+        | C::MINT_RECEIVER_POLICY(_) => (), // golden_read_role_and_policy_constants
+    }
+
+    match ext {
+        SC::currency(_) => (), // golden_read_currency
+    }
+}
