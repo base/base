@@ -40,29 +40,59 @@ impl AccountConfigurationStorage<'_> {
     /// reference contract's bytecode (see the crate docs).
     pub const ADDRESS: Address = Eip8130Contracts::ACCOUNT_CONFIG;
 
-    /// Returns the [`ActorConfig`] for `(account, actor_id)`. An absent actor
-    /// reads back as an all-zero word, i.e. [`ActorConfig::EMPTY`].
-    pub fn get_actor_config(&self, account: Address, actor_id: B256) -> Result<ActorConfig> {
+    /// Reads the raw `actor_config[actor_id][account]` storage slot verbatim,
+    /// with **no** inline-self blend. An absent entry reads back as an all-zero
+    /// word, i.e. [`ActorConfig::EMPTY`].
+    ///
+    /// This is the contract's internal `_actorConfig[actorId][account]` read, not
+    /// its public `getActorConfig` view — the live inline k1 self has no entry
+    /// here (its config lives in [`AccountState`]). For the effective config that
+    /// blends the inline self (the `getActorConfig` mirror), use
+    /// [`Self::resolve_actor_config`].
+    pub fn actor_config_slot(&self, account: Address, actor_id: B256) -> Result<ActorConfig> {
         Ok(ActorConfig::from_word(self.actor_config.at(&actor_id).at(&account).read()?))
     }
 
-    /// Mirrors `AccountConfiguration.isActor`: `true` for any explicit
-    /// `actor_config` entry (a non-empty authenticator), or the secp256k1 self
-    /// key (the `actor_id` is the account, with no explicit entry) while its
-    /// `DEFAULT_EOA_REVOKED` flag is unset. A live *scoped* self has no explicit
-    /// entry — its config lives inline in `AccountState` — and so resolves
-    /// through this same self path.
-    pub fn is_actor(&self, account: Address, actor_id: B256) -> Result<bool> {
-        // An explicit entry (any non-empty authenticator) is always a live actor.
-        if self.get_actor_config(account, actor_id)?.authenticator != Address::ZERO {
-            return Ok(true);
+    /// Resolves the *effective* [`ActorConfig`] for `(account, actor_id)`,
+    /// mirroring the contract's `getActorConfig`: an explicit `actor_config`
+    /// entry wins; otherwise, for the self-actorId, the live inline secp256k1
+    /// self is returned as a synthesized k1 config
+    /// (`{K1_AUTHENTICATOR, default_eoa_scope, default_eoa_expiry}`); a revoked
+    /// self or an unknown actor resolves to [`ActorConfig::EMPTY`].
+    ///
+    /// This is the single home for the "explicit entry vs inline k1 self" branch:
+    /// a live inline self is modelled as what it is — a k1 actor whose bytes live
+    /// inline rather than in an `actor_config` slot — so downstream readers
+    /// ([`Self::is_actor`], [`Self::get_policy`]) need no self-key special-casing.
+    /// `DEFAULT_EOA_REVOKED` gates only the inline self; an explicit non-k1 self
+    /// entry is unaffected and wins here regardless of the flag.
+    pub fn resolve_actor_config(&self, account: Address, actor_id: B256) -> Result<ActorConfig> {
+        let stored = self.actor_config_slot(account, actor_id)?;
+        if !stored.is_empty() {
+            return Ok(stored);
         }
-        // No explicit entry: the self-actor is the secp256k1 self key (full owner
-        // or inline-scoped), live unless the `DEFAULT_EOA_REVOKED` flag is set.
         if actor_id == Self::self_actor_id(account) {
-            return Ok(!self.get_account_state(account)?.default_eoa_revoked());
+            let state = self.get_account_state(account)?;
+            if !state.default_eoa_revoked() {
+                return Ok(ActorConfig {
+                    authenticator: Eip8130Constants::K1_AUTHENTICATOR,
+                    scope: state.default_eoa_scope,
+                    expiry: state.default_eoa_expiry,
+                });
+            }
         }
-        Ok(false)
+        Ok(ActorConfig::EMPTY)
+    }
+
+    /// Mirrors `AccountConfiguration.isActor`: `true` for any live actor — an
+    /// explicit `actor_config` entry, or the inline secp256k1 self while its
+    /// `DEFAULT_EOA_REVOKED` flag is unset. Both cases collapse to "the resolved
+    /// effective config is non-empty".
+    ///
+    /// Like the contract, this does **not** check expiry: an expired-but-not-
+    /// revoked actor still reports as an actor (the revoke path relies on it).
+    pub fn is_actor(&self, account: Address, actor_id: B256) -> Result<bool> {
+        Ok(!self.resolve_actor_config(account, actor_id)?.is_empty())
     }
 
     /// Resolves an actor's effective policy gate target and signed commitment.
@@ -70,35 +100,13 @@ impl AccountConfigurationStorage<'_> {
     /// `(manager, commitment)`.
     ///
     /// Unlike the contract's `getPolicy` — a pure two-slot raw read — this gates
-    /// on the actor's live scope. The result matches `getPolicy` for every state
-    /// the contract can produce (the write-time invariant keeps the slots
-    /// non-zero iff `scope & SCOPE_POLICY`), but this is a resolver, not a 1:1
-    /// mirror; for the raw reads use [`Self::get_policy_manager`] /
-    /// [`Self::get_policy_commitment`].
-    ///
-    /// The self-actorId is a shared keyspace with two mutually exclusive homes:
-    /// an explicit `actor_config` entry (a non-k1 self) takes precedence and its
-    /// policy resolves normally — even while `DEFAULT_EOA_REVOKED` is set, since
-    /// that flag disables only the *inline k1* self, not the actorId. Only when
-    /// no explicit entry exists does the inline k1 self govern, and a revoked one
-    /// resolves as ungated (its slots are always already zeroed by then).
+    /// on the actor's live scope (via [`Self::resolve_actor_config`]). The result
+    /// matches `getPolicy` for every state the contract can produce, since the
+    /// write-time invariant keeps the slots non-zero iff `scope & SCOPE_POLICY`;
+    /// this is a resolver, not a 1:1 mirror, so for the raw reads use
+    /// [`Self::get_policy_manager`] / [`Self::get_policy_commitment`].
     pub fn get_policy(&self, account: Address, actor_id: B256) -> Result<(Address, B256)> {
-        let stored = self.get_actor_config(account, actor_id)?;
-        let scope = if stored.authenticator != Address::ZERO {
-            // Explicit entry (any non-self actor, or a non-k1 self): its scope
-            // governs regardless of the inline-self `DEFAULT_EOA_REVOKED` flag.
-            stored.scope
-        } else if actor_id == Self::self_actor_id(account) {
-            // No explicit entry: the inline k1 self. A revoked one is ungated;
-            // its policy slots are guaranteed zero, so this matches `getPolicy`.
-            let state = self.get_account_state(account)?;
-            if state.default_eoa_revoked() {
-                return Ok((Address::ZERO, B256::ZERO));
-            }
-            state.default_eoa_scope
-        } else {
-            return Ok((Address::ZERO, B256::ZERO));
-        };
+        let scope = self.resolve_actor_config(account, actor_id)?.scope;
         if scope & Eip8130Constants::SCOPE_POLICY == 0 {
             return Ok((Address::ZERO, B256::ZERO));
         }
@@ -512,7 +520,7 @@ mod tests {
         StorageCtx::enter(&mut storage, |ctx| {
             let mut acc = AccountConfigurationStorage::new(ctx);
             acc.actor_config.at_mut(&ACTOR).at_mut(&ACCOUNT).write(word).unwrap();
-            let config = acc.get_actor_config(ACCOUNT, ACTOR).unwrap();
+            let config = acc.actor_config_slot(ACCOUNT, ACTOR).unwrap();
             assert_eq!(config.authenticator, authenticator);
             assert_eq!(config.scope, 0xAB);
             assert_eq!(config.expiry, expiry);
@@ -524,8 +532,56 @@ mod tests {
     fn absent_actor_reads_back_empty() {
         let mut storage = HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, |ctx| {
-            let config = AccountConfigurationStorage::new(ctx).get_actor_config(ACCOUNT, ACTOR);
+            let config = AccountConfigurationStorage::new(ctx).actor_config_slot(ACCOUNT, ACTOR);
             assert_eq!(config.unwrap(), ActorConfig::EMPTY);
+        });
+    }
+
+    #[test]
+    fn resolve_actor_config_blends_inline_self() {
+        let bound = address!("0x00000000000000000000000000000000000000ff");
+        let self_id = AccountConfigurationStorage::self_actor_id(ACCOUNT);
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut acc = AccountConfigurationStorage::new(ctx);
+
+            // Unknown non-self actor, empty slot -> empty.
+            assert_eq!(acc.resolve_actor_config(ACCOUNT, ACTOR).unwrap(), ActorConfig::EMPTY);
+
+            // Explicit entry wins verbatim.
+            acc.actor_config.at_mut(&ACTOR).at_mut(&ACCOUNT).write(pack(bound)).unwrap();
+            assert_eq!(
+                acc.resolve_actor_config(ACCOUNT, ACTOR).unwrap(),
+                ActorConfig { authenticator: bound, scope: 0, expiry: 0 }
+            );
+
+            // Live inline self (no explicit entry) -> synthesized k1 config.
+            acc.account_state
+                .at_mut(&ACCOUNT)
+                .write(pack_account_state(0, 1, 0, 0, Eip8130Constants::SCOPE_SENDER, 42))
+                .unwrap();
+            assert_eq!(
+                acc.resolve_actor_config(ACCOUNT, self_id).unwrap(),
+                ActorConfig {
+                    authenticator: Eip8130Constants::K1_AUTHENTICATOR,
+                    scope: Eip8130Constants::SCOPE_SENDER,
+                    expiry: 42,
+                }
+            );
+
+            // Revoked inline self -> empty.
+            acc.account_state
+                .at_mut(&ACCOUNT)
+                .write(pack_account_state(0, 1, Eip8130Constants::DEFAULT_EOA_REVOKED, 0, 0, 0))
+                .unwrap();
+            assert_eq!(acc.resolve_actor_config(ACCOUNT, self_id).unwrap(), ActorConfig::EMPTY);
+
+            // Explicit (non-k1) self entry wins even while the revoked flag is set.
+            acc.actor_config.at_mut(&self_id).at_mut(&ACCOUNT).write(pack(bound)).unwrap();
+            assert_eq!(
+                acc.resolve_actor_config(ACCOUNT, self_id).unwrap(),
+                ActorConfig { authenticator: bound, scope: 0, expiry: 0 }
+            );
         });
     }
 
