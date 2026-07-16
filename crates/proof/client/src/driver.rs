@@ -3,7 +3,7 @@ use core::fmt::Debug;
 
 use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded, revm::context::BlockEnv};
 use alloy_primitives::B256;
-use base_common_evm::{BaseSpecId, BaseTxEnv};
+use base_common_evm::{BaseEvmExecutionFactory, BaseSpecId, BaseTxEnv};
 use base_consensus_derive::EthereumDataSource;
 use base_proof::{
     BaseExecutor, CachingOracle, OracleBlobProvider, OracleL1ChainProvider, OracleL2ChainProvider,
@@ -32,7 +32,12 @@ pub struct FaultProofDriver<P, H, F>
 where
     P: PreimageOracleClient + Send + Sync + Clone + Debug + 'static,
     H: HintWriterClient + Send + Sync + Clone + Debug + 'static,
-    F: EvmFactory<Spec = BaseSpecId, BlockEnv = BlockEnv> + Send + Sync + Clone + 'static,
+    F: EvmFactory<Spec = BaseSpecId, BlockEnv = BlockEnv>
+        + BaseEvmExecutionFactory
+        + Send
+        + Sync
+        + Clone
+        + 'static,
 {
     rollup_config: Arc<base_common_genesis::RollupConfig>,
     claimed_l2_block_number: u64,
@@ -47,7 +52,13 @@ impl<P, H, F> FaultProofDriver<P, H, F>
 where
     P: PreimageOracleClient + Send + Sync + Clone + Debug + 'static,
     H: HintWriterClient + Send + Sync + Clone + Debug + 'static,
-    F: EvmFactory<Spec = BaseSpecId, BlockEnv = BlockEnv> + Send + Sync + Clone + Debug + 'static,
+    F: EvmFactory<Spec = BaseSpecId, BlockEnv = BlockEnv>
+        + BaseEvmExecutionFactory
+        + Send
+        + Sync
+        + Clone
+        + Debug
+        + 'static,
     F::Tx: FromTxWithEncoded<base_common_consensus::BaseTxEnvelope>
         + FromRecoveredTx<base_common_consensus::BaseTxEnvelope>
         + BaseTxEnv,
