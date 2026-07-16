@@ -172,38 +172,38 @@ where
 
         // TODO: Validate against the parent timestamp once BasicEngineValidatorBuilder provides it.
         let chain_id = self.chain_spec().chain().id();
-        let unavailable = || {
+        let unavailable = |reason| {
             ConsensusError::other(BaseConsensusError::BaseTimeTimestampUnavailable {
                 chain_id,
                 block_number: block.number(),
+                reason,
             })
         };
-        let config = ChainConfig::by_chain_id(chain_id).ok_or_else(unavailable)?;
+        let config = ChainConfig::by_chain_id(chain_id)
+            .ok_or_else(|| unavailable("unknown chain configuration"))?;
         let ForkCondition::Timestamp(activation_timestamp) =
             self.chain_spec().upgrade_activation(BaseUpgrade::Zombie)
         else {
-            return Err(unavailable());
+            return Err(unavailable("non-timestamp activation"));
         };
-        let activation_offset =
-            activation_timestamp.checked_sub(config.genesis_l2_time).ok_or_else(unavailable)?;
-        if config.block_time == 0 || !activation_offset.is_multiple_of(config.block_time) {
-            return Err(unavailable());
+        let activation_offset = activation_timestamp
+            .checked_sub(config.genesis_l2_time)
+            .ok_or_else(|| unavailable("activation before genesis"))?;
+        if config.block_time == 0 {
+            return Err(unavailable("zero block time"));
+        }
+        if !activation_offset.is_multiple_of(config.block_time) {
+            return Err(unavailable("misaligned activation"));
         }
         let activation_block = activation_offset / config.block_time;
-        let elapsed_millis = block
+        let elapsed_blocks = block
             .number()
             .checked_sub(activation_block)
-            .and_then(|slots| slots.checked_mul(u64::from(BaseTimeUpdateTx::BLOCK_INTERVAL_MILLIS)))
-            .ok_or_else(unavailable)?;
-        let expected_timestamp_ms = activation_timestamp
-            .checked_mul(1_000)
-            .and_then(|timestamp| timestamp.checked_add(elapsed_millis))
-            .ok_or_else(unavailable)?;
-        let actual_timestamp_ms = block
-            .timestamp()
-            .checked_mul(1_000)
-            .and_then(|timestamp| timestamp.checked_add(u64::from(claimed_millis_part)))
-            .ok_or_else(unavailable)?;
+            .ok_or_else(|| unavailable("block before activation"))?;
+        let expected_timestamp_ms = u128::from(activation_timestamp) * 1_000
+            + u128::from(elapsed_blocks) * u128::from(BaseTimeUpdateTx::BLOCK_INTERVAL_MILLIS);
+        let actual_timestamp_ms =
+            u128::from(block.timestamp()) * 1_000 + u128::from(claimed_millis_part);
         if actual_timestamp_ms != expected_timestamp_ms {
             return Err(ConsensusError::other(BaseConsensusError::BaseTimeTimestampMismatch {
                 expected_timestamp_ms,
@@ -912,6 +912,13 @@ mod tests {
         )
     }
 
+    fn base_consensus_error(error: &ConsensusError) -> Option<&BaseConsensusError> {
+        let ConsensusError::Other(error) = error else {
+            return None;
+        };
+        error.downcast_ref()
+    }
+
     #[test]
     fn base_time_post_execution_accepts_first_scheduled_slot_without_storage_update() {
         validate_base_time(ZOMBIE_ACTIVATION_BLOCK, 0, ZOMBIE_TIMESTAMP, 0, None, false).unwrap();
@@ -955,15 +962,11 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(
-            error,
-            ConsensusError::Other(error)
-                if matches!(
-                    error.downcast_ref::<BaseConsensusError>(),
-                    Some(BaseConsensusError::BaseTimeTimestampMismatch {
-                        expected_timestamp_ms: 1_800_000_001_400,
-                        actual_timestamp_ms: 1_800_000_001_600,
-                    })
-                )
+            base_consensus_error(&error),
+            Some(BaseConsensusError::BaseTimeTimestampMismatch {
+                expected_timestamp_ms: 1_800_000_001_400,
+                actual_timestamp_ms: 1_800_000_001_600,
+            })
         ));
     }
 
@@ -988,15 +991,12 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(
-            error,
-            ConsensusError::Other(error)
-                if matches!(
-                    error.downcast_ref::<BaseConsensusError>(),
-                    Some(BaseConsensusError::BaseTimeTimestampUnavailable {
-                        block_number: ZOMBIE_ACTIVATION_BLOCK,
-                        ..
-                    })
-                )
+            base_consensus_error(&error),
+            Some(BaseConsensusError::BaseTimeTimestampUnavailable {
+                block_number: ZOMBIE_ACTIVATION_BLOCK,
+                reason: "unknown chain configuration",
+                ..
+            })
         ));
     }
 
@@ -1019,15 +1019,12 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(
-            error,
-            ConsensusError::Other(error)
-                if matches!(
-                    error.downcast_ref::<BaseConsensusError>(),
-                    Some(BaseConsensusError::BaseTimeTimestampUnavailable {
-                        chain_id: 8453,
-                        block_number: ZOMBIE_ACTIVATION_BLOCK,
-                    })
-                )
+            base_consensus_error(&error),
+            Some(BaseConsensusError::BaseTimeTimestampUnavailable {
+                chain_id: 8453,
+                block_number: ZOMBIE_ACTIVATION_BLOCK,
+                reason: "misaligned activation",
+            })
         ));
     }
 
@@ -1043,15 +1040,8 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(
-            error,
-            ConsensusError::Other(error)
-                if matches!(
-                    error.downcast_ref::<BaseConsensusError>(),
-                    Some(BaseConsensusError::BaseTimeClaimCommittedMismatch {
-                        claim: 400,
-                        committed: 600,
-                    })
-                )
+            base_consensus_error(&error),
+            Some(BaseConsensusError::BaseTimeClaimCommittedMismatch { claim: 400, committed: 600 })
         ));
     }
 
@@ -1067,15 +1057,8 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(
-            error,
-            ConsensusError::Other(error)
-                if matches!(
-                    error.downcast_ref::<BaseConsensusError>(),
-                    Some(BaseConsensusError::BaseTimeClaimCommittedMismatch {
-                        claim: 400,
-                        committed: 200,
-                    })
-                )
+            base_consensus_error(&error),
+            Some(BaseConsensusError::BaseTimeClaimCommittedMismatch { claim: 400, committed: 200 })
         ));
     }
 
@@ -1097,12 +1080,8 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(
-            error,
-            ConsensusError::Other(error)
-                if matches!(
-                    error.downcast_ref::<BaseConsensusError>(),
-                    Some(BaseConsensusError::L2WithdrawalsRootMismatch { .. })
-                )
+            base_consensus_error(&error),
+            Some(BaseConsensusError::L2WithdrawalsRootMismatch { .. })
         ));
     }
 
@@ -1131,15 +1110,11 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(
-            error,
-            ConsensusError::Other(error)
-                if matches!(
-                    error.downcast_ref::<BaseConsensusError>(),
-                    Some(BaseConsensusError::BaseTimeTimestampMismatch {
-                        expected_timestamp_ms: 1_800_000_001_200,
-                        actual_timestamp_ms: 1_800_000_002_200,
-                    })
-                )
+            base_consensus_error(&error),
+            Some(BaseConsensusError::BaseTimeTimestampMismatch {
+                expected_timestamp_ms: 1_800_000_001_200,
+                actual_timestamp_ms: 1_800_000_002_200,
+            })
         ));
     }
 }

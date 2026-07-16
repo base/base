@@ -17,11 +17,9 @@ use alloy_consensus::{
 };
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_primitives::{B64, B256};
-use alloy_trie::EMPTY_ROOT_HASH;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseTxEnvelope, DepositReceiptExt};
 use base_execution_chainspec::BaseChainSpec;
-use base_protocol::BaseTimeMetadataError;
 use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator, ReceiptRootBloom};
 use reth_consensus_common::validation::{
     validate_against_parent_eip1559_base_fee, validate_against_parent_hash_number,
@@ -219,14 +217,6 @@ impl HeaderValidator<Header> for BaseBeaconConsensus {
             }
         } else if header.requests_hash().is_some() {
             return Err(ConsensusError::RequestsHashUnexpected);
-        }
-
-        // Reject a trivially empty body early; `validate_base_time_metadata` performs the
-        // authoritative check once the transactions are available.
-        if self.chain_spec.is_zombie_active_at_timestamp(header.timestamp())
-            && header.transactions_root() == EMPTY_ROOT_HASH
-        {
-            return Err(ConsensusError::other(BaseTimeMetadataError::Missing));
         }
 
         Ok(())
