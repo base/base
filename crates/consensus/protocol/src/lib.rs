@@ -53,8 +53,7 @@ pub use deposits::{DepositDecodeError, Deposits};
 
 mod base_time;
 pub use base_time::{
-    BaseTimeMetadataError, BaseTimeProgressionError, BaseTimeUpdateDecodeError,
-    BaseTimeUpdateError, BaseTimeUpdateTx,
+    BaseTimeMetadataError, BaseTimeUpdateDecodeError, BaseTimeUpdateError, BaseTimeUpdateTx,
 };
 
 mod info;

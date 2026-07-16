@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use alloy_primitives::{Bytes, Sealable, Sealed, TxKind, U256};
 use base_common_consensus::{
-    BaseTimeDepositSource, BaseTxEnvelope, DepositSourceDomain, Predeploys, SystemAddresses,
+    BaseTimeDepositSource, BaseTransaction, DepositSourceDomain, Predeploys, SystemAddresses,
     TxDeposit,
 };
 
@@ -81,8 +81,8 @@ impl BaseTimeUpdateTx {
     }
 
     /// Extracts and validates the `BaseTime` metadata deposit at `tx[1]`.
-    pub fn extract_from_transactions(
-        transactions: &[BaseTxEnvelope],
+    pub fn extract_from_transactions<T: BaseTransaction>(
+        transactions: &[T],
         block_number: u64,
     ) -> Result<Self, BaseTimeMetadataError> {
         let transaction = transactions.get(1).ok_or(BaseTimeMetadataError::Missing)?;
@@ -122,25 +122,6 @@ impl BaseTimeUpdateTx {
         }
 
         Self::decode_calldata(&deposit.input).map_err(BaseTimeMetadataError::InvalidCalldata)
-    }
-
-    /// Validates that consecutive activated blocks advance by exactly one `BaseTime` slot.
-    pub fn validate_progression(
-        parent_timestamp: u64,
-        parent: &Self,
-        child_timestamp: u64,
-        child: &Self,
-    ) -> Result<(), BaseTimeProgressionError> {
-        let parent_timestamp_ms =
-            u128::from(parent_timestamp) * 1_000 + u128::from(parent.timestamp_millis_part);
-        let child_timestamp_ms =
-            u128::from(child_timestamp) * 1_000 + u128::from(child.timestamp_millis_part);
-
-        if child_timestamp_ms != parent_timestamp_ms + u128::from(Self::BLOCK_INTERVAL_MILLIS) {
-            return Err(BaseTimeProgressionError { parent_timestamp_ms, child_timestamp_ms });
-        }
-
-        Ok(())
     }
 
     /// Converts this update into a typed deposit transaction for inclusion at `tx[1]`.
@@ -230,18 +211,6 @@ pub enum BaseTimeMetadataError {
     InvalidCalldata(BaseTimeUpdateDecodeError),
 }
 
-/// An error validating full-millisecond timestamp progression.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error(
-    "invalid BaseTime progression from {parent_timestamp_ms}ms to {child_timestamp_ms}ms; expected exactly 200ms"
-)]
-pub struct BaseTimeProgressionError {
-    /// The parent's full-millisecond timestamp.
-    pub parent_timestamp_ms: u128,
-    /// The child's full-millisecond timestamp.
-    pub child_timestamp_ms: u128,
-}
-
 #[cfg(test)]
 mod tests {
     use alloy_consensus::{Sealable, TxLegacy};
@@ -251,8 +220,7 @@ mod tests {
     };
 
     use super::{
-        BaseTimeMetadataError, BaseTimeProgressionError, BaseTimeUpdateDecodeError,
-        BaseTimeUpdateError, BaseTimeUpdateTx,
+        BaseTimeMetadataError, BaseTimeUpdateDecodeError, BaseTimeUpdateError, BaseTimeUpdateTx,
     };
     use crate::REGOLITH_SYSTEM_TX_GAS;
 
@@ -334,7 +302,7 @@ mod tests {
 
     #[test]
     fn extracts_valid_base_time_metadata_at_tx_one() {
-        let transactions = vec![
+        let transactions: Vec<BaseTransactionSigned> = vec![
             TxDeposit::default().seal_slow().into(),
             base_time_deposit(9, 600).seal_slow().into(),
         ];
@@ -346,7 +314,7 @@ mod tests {
 
     #[test]
     fn rejects_missing_or_mispositioned_base_time_metadata() {
-        let l1_info = TxDeposit::default().seal_slow().into();
+        let l1_info: BaseTransactionSigned = TxDeposit::default().seal_slow().into();
         assert_eq!(
             BaseTimeUpdateTx::extract_from_transactions(&[l1_info], 9),
             Err(BaseTimeMetadataError::Missing)
@@ -455,26 +423,6 @@ mod tests {
             Err(BaseTimeMetadataError::InvalidCalldata(BaseTimeUpdateDecodeError::InvalidLength(
                 36, 37
             )))
-        );
-    }
-
-    #[test]
-    fn validates_exact_200ms_progression() {
-        let parent = BaseTimeUpdateTx::new(200).unwrap();
-        let same_second_child = BaseTimeUpdateTx::new(400).unwrap();
-        BaseTimeUpdateTx::validate_progression(10, &parent, 10, &same_second_child).unwrap();
-
-        let boundary_parent = BaseTimeUpdateTx::new(800).unwrap();
-        let boundary_child = BaseTimeUpdateTx::new(0).unwrap();
-        BaseTimeUpdateTx::validate_progression(10, &boundary_parent, 11, &boundary_child).unwrap();
-
-        let skipped_slot = BaseTimeUpdateTx::new(600).unwrap();
-        assert_eq!(
-            BaseTimeUpdateTx::validate_progression(10, &parent, 10, &skipped_slot),
-            Err(BaseTimeProgressionError {
-                parent_timestamp_ms: 10_200,
-                child_timestamp_ms: 10_600,
-            })
         );
     }
 }

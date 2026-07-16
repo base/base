@@ -3,8 +3,8 @@ use std::{marker::PhantomData, sync::Arc};
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_engine::{ExecutionPayloadEnvelopeV2, ExecutionPayloadV1};
-use base_common_chains::Upgrades;
-use base_common_consensus::{BaseBlock, Predeploys};
+use base_common_chains::{BaseUpgrade, ChainConfig, Upgrades};
+use base_common_consensus::{BaseBlock, BaseTransaction, Predeploys};
 use base_common_evm::BaseTime;
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
@@ -15,6 +15,7 @@ use base_execution_payload_builder::{
     Attributes, BaseExecutionPayloadValidator, BasePayloadBuilderAttributes, BasePayloadTypes,
 };
 use base_protocol::BaseTimeUpdateTx;
+use reth_chainspec::{EthChainSpec, ForkCondition};
 use reth_consensus::ConsensusError;
 use reth_node_api::{
     BuiltPayload, EngineApiValidator, EngineTypes, NodePrimitives, PayloadValidator,
@@ -125,48 +126,12 @@ where
 
 impl<P, Tx, ChainSpec> BaseEngineValidator<P, Tx, ChainSpec>
 where
-    ChainSpec: Upgrades,
+    ChainSpec: EthChainSpec + Upgrades,
 {
     /// Returns the chain spec used by the validator.
     #[inline]
     pub fn chain_spec(&self) -> &ChainSpec {
         self.inner.chain_spec()
-    }
-
-    /// Verifies upgrade-gated post-execution rules against the supplied parent state.
-    ///
-    /// Authoritative implementation of all Base-specific post-execution checks that require
-    /// access to parent state. Callers supply `parent_state` explicitly so engine pipelines can
-    /// pass in-memory-aware overlay providers when the parent block isn't canonical yet.
-    ///
-    /// To add a check for a future upgrade, extend the body with another
-    /// `if chain_spec.is_<X>_active_at_timestamp(...)` arm.
-    pub fn validate_block_post_execution_with_state<DB>(
-        &self,
-        state_updates: &HashedPostState,
-        parent_state: DB,
-        parent_timestamp: u64,
-        block: &RecoveredBlock<BaseBlock>,
-    ) -> Result<(), ConsensusError>
-    where
-        DB: StateProvider,
-    {
-        let timestamp = block.timestamp();
-
-        if self.chain_spec().is_isthmus_active_at_timestamp(timestamp) {
-            self.validate_isthmus_post_execution(state_updates, &parent_state, block.header())?;
-        }
-
-        if self.chain_spec().is_zombie_active_at_timestamp(timestamp) {
-            self.validate_base_time_post_execution(
-                state_updates,
-                &parent_state,
-                parent_timestamp,
-                block,
-            )?;
-        }
-
-        Ok(())
     }
 
     /// Verifies the Isthmus L2-to-L1 message-passer storage root after block execution.
@@ -189,22 +154,62 @@ where
             .map_err(ConsensusError::other)
     }
 
-    /// Verifies the `BaseTime` claim, committed state, and block-to-block progression after block
-    /// execution.
+    /// Verifies the `BaseTime` claim, committed state, and expected timestamp after block execution.
     pub fn validate_base_time_post_execution<DB>(
         &self,
         state_updates: &HashedPostState,
         parent_state: &DB,
-        parent_timestamp: u64,
-        block: &RecoveredBlock<BaseBlock>,
+        block: &RecoveredBlock<alloy_consensus::Block<Tx>>,
     ) -> Result<(), ConsensusError>
     where
         DB: StateProvider + ?Sized,
+        Tx: BaseTransaction + SignedTransaction,
     {
         let claimed_base_time =
             BaseTimeUpdateTx::extract_from_transactions(&block.body().transactions, block.number())
                 .map_err(ConsensusError::other)?;
         let claimed_millis_part = claimed_base_time.timestamp_millis_part();
+
+        // TODO: Validate against the parent timestamp once BasicEngineValidatorBuilder provides it.
+        let chain_id = self.chain_spec().chain().id();
+        let unavailable = || {
+            ConsensusError::other(BaseConsensusError::BaseTimeTimestampUnavailable {
+                chain_id,
+                block_number: block.number(),
+            })
+        };
+        let config = ChainConfig::by_chain_id(chain_id).ok_or_else(unavailable)?;
+        let ForkCondition::Timestamp(activation_timestamp) =
+            self.chain_spec().upgrade_activation(BaseUpgrade::Zombie)
+        else {
+            return Err(unavailable());
+        };
+        let activation_offset =
+            activation_timestamp.checked_sub(config.genesis_l2_time).ok_or_else(unavailable)?;
+        if config.block_time == 0 || !activation_offset.is_multiple_of(config.block_time) {
+            return Err(unavailable());
+        }
+        let activation_block = activation_offset / config.block_time;
+        let elapsed_millis = block
+            .number()
+            .checked_sub(activation_block)
+            .and_then(|slots| slots.checked_mul(u64::from(BaseTimeUpdateTx::BLOCK_INTERVAL_MILLIS)))
+            .ok_or_else(unavailable)?;
+        let expected_timestamp_ms = activation_timestamp
+            .checked_mul(1_000)
+            .and_then(|timestamp| timestamp.checked_add(elapsed_millis))
+            .ok_or_else(unavailable)?;
+        let actual_timestamp_ms = block
+            .timestamp()
+            .checked_mul(1_000)
+            .and_then(|timestamp| timestamp.checked_add(u64::from(claimed_millis_part)))
+            .ok_or_else(unavailable)?;
+        if actual_timestamp_ms != expected_timestamp_ms {
+            return Err(ConsensusError::other(BaseConsensusError::BaseTimeTimestampMismatch {
+                expected_timestamp_ms,
+                actual_timestamp_ms,
+            }));
+        }
 
         let read_parent_millis_part = || {
             parent_state
@@ -231,75 +236,15 @@ where
             ));
         }
 
-        // A parent at the activation second is itself Zombie-active; its committed millis part
-        // distinguishes same-second slots. Skip progression only when the parent predates Zombie.
-        if self.chain_spec().is_zombie_active_at_timestamp(parent_timestamp) {
-            let parent_millis_part = read_parent_millis_part()?;
-            let parent_base_time = BaseTimeUpdateTx::new(parent_millis_part).map_err(|_| {
-                ConsensusError::other(BaseConsensusError::InvalidParentBaseTimeMillis(
-                    parent_millis_part,
-                ))
-            })?;
-            BaseTimeUpdateTx::validate_progression(
-                parent_timestamp,
-                &parent_base_time,
-                block.timestamp(),
-                &claimed_base_time,
-            )
-            .map_err(ConsensusError::other)?;
-        }
-
         Ok(())
-    }
-}
-
-/// Extension trait that exposes [`BaseEngineValidator::validate_block_post_execution_with_state`]
-/// through generic engine pipelines.
-///
-/// The inherent method on [`BaseEngineValidator`] is the source of truth; this trait is just a
-/// dispatch surface so callers that don't know the concrete validator type can still invoke it.
-pub trait BasePostExecutionValidator<Types: PayloadTypes>:
-    PayloadValidator<Types, Block = BaseBlock>
-{
-    /// See [`BaseEngineValidator::validate_block_post_execution_with_state`].
-    fn validate_block_post_execution_with_parent_state<DB: StateProvider>(
-        &self,
-        state_updates: &HashedPostState,
-        parent_state: DB,
-        parent_timestamp: u64,
-        block: &RecoveredBlock<BaseBlock>,
-    ) -> Result<(), ConsensusError>;
-}
-
-impl<Types, P, Tx, ChainSpec> BasePostExecutionValidator<Types>
-    for BaseEngineValidator<P, Tx, ChainSpec>
-where
-    Types: PayloadTypes,
-    Self: PayloadValidator<Types, Block = BaseBlock>,
-    ChainSpec: Upgrades,
-{
-    fn validate_block_post_execution_with_parent_state<DB: StateProvider>(
-        &self,
-        state_updates: &HashedPostState,
-        parent_state: DB,
-        parent_timestamp: u64,
-        block: &RecoveredBlock<BaseBlock>,
-    ) -> Result<(), ConsensusError> {
-        Self::validate_block_post_execution_with_state(
-            self,
-            state_updates,
-            parent_state,
-            parent_timestamp,
-            block,
-        )
     }
 }
 
 impl<P, Tx, ChainSpec, Types> PayloadValidator<Types> for BaseEngineValidator<P, Tx, ChainSpec>
 where
     P: StateProviderFactory + Unpin + 'static,
-    Tx: SignedTransaction + Unpin + 'static,
-    ChainSpec: Upgrades + Send + Sync + 'static,
+    Tx: BaseTransaction + SignedTransaction + Unpin + 'static,
+    ChainSpec: EthChainSpec + Upgrades + Send + Sync + 'static,
     Types: PayloadTypes<ExecutionData = ExecutionData>,
     Types::PayloadAttributes: Attributes<Transaction = Tx>,
 {
@@ -311,23 +256,22 @@ where
         block: &RecoveredBlock<Self::Block>,
     ) -> Result<(), ConsensusError> {
         let timestamp = block.timestamp();
-        if self.chain_spec().is_isthmus_active_at_timestamp(timestamp) {
-            let parent_state =
-                self.provider.state_by_block_hash(block.parent_hash()).map_err(|err| {
-                    ConsensusError::Other(Arc::from(Box::<dyn core::error::Error + Send + Sync>::from(
-                        format!(
-                            "failed to load parent state for Isthmus withdrawals root validation: {err}"
-                        ),
-                    )))
-                })?;
 
-            self.validate_isthmus_post_execution(state_updates, &parent_state, block.header())?;
+        if !self.chain_spec().is_isthmus_active_at_timestamp(timestamp) {
+            return Ok(());
         }
 
+        let parent_state =
+            self.provider.state_by_block_hash(block.parent_hash()).map_err(|err| {
+                ConsensusError::Other(Arc::from(Box::<dyn core::error::Error + Send + Sync>::from(
+                    format!("failed to load parent state for post-execution validation: {err}"),
+                )))
+            })?;
+
+        self.validate_isthmus_post_execution(state_updates, &parent_state, block.header())?;
+
         if self.chain_spec().is_zombie_active_at_timestamp(timestamp) {
-            return Err(ConsensusError::other(
-                BaseConsensusError::BaseTimeValidationContextRequired,
-            ));
+            self.validate_base_time_post_execution(state_updates, &parent_state, block)?;
         }
 
         Ok(())
@@ -359,8 +303,8 @@ where
             return Err(InvalidPayloadAttributesError::InvalidTimestamp);
         }
 
-        // The parent header does not contain its millisecond component. Exact 200ms progression is
-        // enforced against committed BaseTime state during post-execution validation.
+        // The parent header does not contain its millisecond component. The exact 200ms slot is
+        // enforced against the hardfork schedule during post-execution validation.
         (timestamp >= header.timestamp())
             .then_some(())
             .ok_or(InvalidPayloadAttributesError::InvalidTimestamp)
@@ -376,7 +320,7 @@ where
         >,
     P: StateProviderFactory + Unpin + 'static,
     Tx: SignedTransaction + Unpin + 'static,
-    ChainSpec: Upgrades + Send + Sync + 'static,
+    ChainSpec: EthChainSpec + Upgrades + Send + Sync + 'static,
 {
     fn validate_version_specific_fields(
         &self,
@@ -548,6 +492,9 @@ mod tests {
     use super::*;
     use crate::engine;
 
+    const ZOMBIE_TIMESTAMP: u64 = 1_800_000_001;
+    const ZOMBIE_ACTIVATION_BLOCK: u64 = 56_605_327;
+
     fn validator_with_chain_spec(
         chain_spec: BaseChainSpec,
     ) -> BaseEngineValidator<NoopProvider, BaseTxEnvelope, BaseChainSpec> {
@@ -564,8 +511,7 @@ mod tests {
     fn zombie_validator() -> BaseEngineValidator<NoopProvider, BaseTxEnvelope, BaseChainSpec> {
         validator_with_chain_spec(
             BaseChainSpecBuilder::base_mainnet()
-                .cobalt_activated()
-                .with_fork(BaseUpgrade::Zombie, ForkCondition::Timestamp(42))
+                .with_fork(BaseUpgrade::Zombie, ForkCondition::Timestamp(ZOMBIE_TIMESTAMP))
                 .build(),
         )
     }
@@ -772,7 +718,7 @@ mod tests {
     #[test]
     fn test_malformed_attributes_post_zombie_without_timestamp_millis_part() {
         let validator = zombie_validator();
-        let attributes = zombie_attributes(42);
+        let attributes = zombie_attributes(ZOMBIE_TIMESTAMP);
 
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
             BaseEngineTypes,
@@ -785,7 +731,7 @@ mod tests {
     #[test]
     fn test_malformed_attributes_post_zombie_with_invalid_timestamp_millis_part() {
         let validator = zombie_validator();
-        let mut attributes = zombie_attributes(42);
+        let mut attributes = zombie_attributes(ZOMBIE_TIMESTAMP);
         attributes.timestamp_millis_part = Some(100);
 
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
@@ -799,7 +745,7 @@ mod tests {
     #[test]
     fn test_well_formed_attributes_post_zombie_with_valid_timestamp_millis_part() {
         let validator = zombie_validator();
-        let mut attributes = zombie_attributes(42);
+        let mut attributes = zombie_attributes(ZOMBIE_TIMESTAMP);
         attributes.timestamp_millis_part = Some(200);
 
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
@@ -828,14 +774,20 @@ mod tests {
     fn test_payload_attributes_post_zombie_accept_same_second() {
         let validator = zombie_validator();
 
-        assert!(validate_against_parent(&validator, 42, Some(200), 42).is_ok());
+        assert!(
+            validate_against_parent(&validator, ZOMBIE_TIMESTAMP, Some(200), ZOMBIE_TIMESTAMP,)
+                .is_ok()
+        );
     }
 
     #[test]
     fn test_payload_attributes_post_zombie_accept_next_second() {
         let validator = zombie_validator();
 
-        assert!(validate_against_parent(&validator, 43, Some(0), 42).is_ok());
+        assert!(
+            validate_against_parent(&validator, ZOMBIE_TIMESTAMP + 1, Some(0), ZOMBIE_TIMESTAMP,)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -843,7 +795,7 @@ mod tests {
         let validator = zombie_validator();
 
         assert!(matches!(
-            validate_against_parent(&validator, 42, Some(800), 43),
+            validate_against_parent(&validator, ZOMBIE_TIMESTAMP, Some(800), ZOMBIE_TIMESTAMP + 1,),
             Err(InvalidPayloadAttributesError::InvalidTimestamp)
         ));
     }
@@ -853,7 +805,7 @@ mod tests {
         let validator = zombie_validator();
 
         assert!(matches!(
-            validate_against_parent(&validator, 42, None, 42),
+            validate_against_parent(&validator, ZOMBIE_TIMESTAMP, None, ZOMBIE_TIMESTAMP),
             Err(InvalidPayloadAttributesError::InvalidTimestamp)
         ));
     }
@@ -863,7 +815,7 @@ mod tests {
         let validator = zombie_validator();
 
         assert!(matches!(
-            validate_against_parent(&validator, 42, Some(999), 42),
+            validate_against_parent(&validator, ZOMBIE_TIMESTAMP, Some(999), ZOMBIE_TIMESTAMP,),
             Err(InvalidPayloadAttributesError::InvalidTimestamp)
         ));
     }
@@ -882,6 +834,9 @@ mod tests {
 
     fn state_updates(millis_part: Option<u16>, wiped: bool) -> HashedPostState {
         let mut state = HashedPostState::default();
+        if millis_part.is_none() && !wiped {
+            return state;
+        }
         let storage = HashedStorage::from_iter(
             wiped,
             millis_part.into_iter().map(|millis_part| {
@@ -922,50 +877,171 @@ mod tests {
         )
     }
 
-    fn validate_base_time(
-        parent_timestamp: u64,
+    fn validate_base_time_with(
+        validator: &BaseEngineValidator<NoopProvider, BaseTxEnvelope, BaseChainSpec>,
+        block_number: u64,
         parent_millis_part: u16,
         child_timestamp: u64,
         claimed_millis_part: u16,
         committed_millis_part: Option<u16>,
         wiped: bool,
     ) -> Result<(), ConsensusError> {
-        zombie_validator().validate_block_post_execution_with_state(
+        validator.validate_base_time_post_execution(
             &state_updates(committed_millis_part, wiped),
-            parent_state(parent_millis_part),
-            parent_timestamp,
-            &base_time_block(9, child_timestamp, claimed_millis_part, EMPTY_ROOT_HASH),
+            &parent_state(parent_millis_part),
+            &base_time_block(block_number, child_timestamp, claimed_millis_part, EMPTY_ROOT_HASH),
+        )
+    }
+
+    fn validate_base_time(
+        block_number: u64,
+        parent_millis_part: u16,
+        child_timestamp: u64,
+        claimed_millis_part: u16,
+        committed_millis_part: Option<u16>,
+        wiped: bool,
+    ) -> Result<(), ConsensusError> {
+        validate_base_time_with(
+            &zombie_validator(),
+            block_number,
+            parent_millis_part,
+            child_timestamp,
+            claimed_millis_part,
+            committed_millis_part,
+            wiped,
         )
     }
 
     #[test]
-    fn base_time_post_execution_accepts_first_active_child() {
-        validate_base_time(41, 0, 42, 600, Some(600), false).unwrap();
+    fn base_time_post_execution_accepts_first_scheduled_slot_without_storage_update() {
+        validate_base_time(ZOMBIE_ACTIVATION_BLOCK, 0, ZOMBIE_TIMESTAMP, 0, None, false).unwrap();
     }
 
     #[test]
-    fn base_time_post_execution_accepts_same_second_200ms_progression() {
-        validate_base_time(42, 200, 42, 400, Some(400), false).unwrap();
+    fn base_time_post_execution_accepts_scheduled_same_second_slot() {
+        validate_base_time(
+            ZOMBIE_ACTIVATION_BLOCK + 2,
+            200,
+            ZOMBIE_TIMESTAMP,
+            400,
+            Some(400),
+            false,
+        )
+        .unwrap();
     }
 
     #[test]
-    fn base_time_post_execution_accepts_second_boundary_progression() {
-        validate_base_time(42, 800, 43, 0, Some(0), false).unwrap();
+    fn base_time_post_execution_accepts_scheduled_second_boundary() {
+        validate_base_time(
+            ZOMBIE_ACTIVATION_BLOCK + 5,
+            800,
+            ZOMBIE_TIMESTAMP + 1,
+            0,
+            Some(0),
+            false,
+        )
+        .unwrap();
     }
 
     #[test]
-    fn base_time_post_execution_rejects_skipped_slot() {
-        let error = validate_base_time(42, 200, 42, 600, Some(600), false).unwrap_err();
+    fn base_time_post_execution_rejects_millis_not_scheduled_for_block_number() {
+        let error = validate_base_time(
+            ZOMBIE_ACTIVATION_BLOCK + 2,
+            200,
+            ZOMBIE_TIMESTAMP,
+            600,
+            Some(600),
+            false,
+        )
+        .unwrap_err();
         assert!(matches!(
             error,
             ConsensusError::Other(error)
-                if error.downcast_ref::<base_protocol::BaseTimeProgressionError>().is_some()
+                if matches!(
+                    error.downcast_ref::<BaseConsensusError>(),
+                    Some(BaseConsensusError::BaseTimeTimestampMismatch {
+                        expected_timestamp_ms: 1_800_000_001_400,
+                        actual_timestamp_ms: 1_800_000_001_600,
+                    })
+                )
+        ));
+    }
+
+    #[test]
+    fn base_time_post_execution_rejects_unknown_chain_config() {
+        let chain_spec = BaseChainSpecBuilder::base_mainnet()
+            .chain(Default::default())
+            .with_fork(BaseUpgrade::Zombie, ForkCondition::Timestamp(ZOMBIE_TIMESTAMP))
+            .build();
+        assert!(ChainConfig::by_chain_id(chain_spec.chain().id()).is_none());
+
+        let validator = validator_with_chain_spec(chain_spec);
+        let error = validate_base_time_with(
+            &validator,
+            ZOMBIE_ACTIVATION_BLOCK,
+            0,
+            ZOMBIE_TIMESTAMP,
+            0,
+            None,
+            false,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            ConsensusError::Other(error)
+                if matches!(
+                    error.downcast_ref::<BaseConsensusError>(),
+                    Some(BaseConsensusError::BaseTimeTimestampUnavailable {
+                        block_number: ZOMBIE_ACTIVATION_BLOCK,
+                        ..
+                    })
+                )
+        ));
+    }
+
+    #[test]
+    fn base_time_post_execution_rejects_misaligned_zombie_activation() {
+        let validator = validator_with_chain_spec(
+            BaseChainSpecBuilder::base_mainnet()
+                .with_fork(BaseUpgrade::Zombie, ForkCondition::Timestamp(ZOMBIE_TIMESTAMP + 1))
+                .build(),
+        );
+        let error = validate_base_time_with(
+            &validator,
+            ZOMBIE_ACTIVATION_BLOCK,
+            0,
+            ZOMBIE_TIMESTAMP + 1,
+            0,
+            None,
+            false,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            ConsensusError::Other(error)
+                if matches!(
+                    error.downcast_ref::<BaseConsensusError>(),
+                    Some(BaseConsensusError::BaseTimeTimestampUnavailable {
+                        chain_id: 8453,
+                        block_number: ZOMBIE_ACTIVATION_BLOCK,
+                    })
+                )
         ));
     }
 
     #[test]
     fn base_time_post_execution_rejects_claim_committed_mismatch() {
-        let error = validate_base_time(42, 200, 42, 400, Some(600), false).unwrap_err();
+        let error = validate_base_time(
+            ZOMBIE_ACTIVATION_BLOCK + 2,
+            200,
+            ZOMBIE_TIMESTAMP,
+            400,
+            Some(600),
+            false,
+        )
+        .unwrap_err();
         assert!(matches!(
             error,
             ConsensusError::Other(error)
@@ -981,7 +1057,15 @@ mod tests {
 
     #[test]
     fn base_time_post_execution_uses_parent_when_child_slot_is_absent() {
-        let error = validate_base_time(42, 200, 42, 400, None, false).unwrap_err();
+        let error = validate_base_time(
+            ZOMBIE_ACTIVATION_BLOCK + 2,
+            200,
+            ZOMBIE_TIMESTAMP,
+            400,
+            None,
+            false,
+        )
+        .unwrap_err();
         assert!(matches!(
             error,
             ConsensusError::Other(error)
@@ -997,25 +1081,13 @@ mod tests {
 
     #[test]
     fn base_time_post_execution_treats_wiped_storage_as_zero() {
-        validate_base_time(42, 800, 43, 0, None, true).unwrap();
-    }
-
-    #[test]
-    fn base_time_post_execution_rejects_invalid_parent_state() {
-        let error = validate_base_time(42, 100, 42, 200, Some(200), false).unwrap_err();
-        assert!(matches!(
-            error,
-            ConsensusError::Other(error)
-                if matches!(
-                    error.downcast_ref::<BaseConsensusError>(),
-                    Some(BaseConsensusError::InvalidParentBaseTimeMillis(100))
-                )
-        ));
+        validate_base_time(ZOMBIE_ACTIVATION_BLOCK + 5, 800, ZOMBIE_TIMESTAMP + 1, 0, None, true)
+            .unwrap();
     }
 
     #[test]
     fn generic_post_execution_validation_checks_isthmus_before_zombie() {
-        let block = base_time_block(9, 42, 200, EMPTY_ROOT_HASH);
+        let block = base_time_block(ZOMBIE_ACTIVATION_BLOCK, ZOMBIE_TIMESTAMP, 0, EMPTY_ROOT_HASH);
         let error =
             PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
                 &zombie_validator(),
@@ -1035,12 +1107,25 @@ mod tests {
     }
 
     #[test]
-    fn generic_post_execution_validation_fails_closed_after_valid_isthmus() {
-        let block = base_time_block(9, 42, 200, B256::ZERO);
+    fn generic_post_execution_validation_accepts_derived_child_timestamp() {
+        let block = base_time_block(ZOMBIE_ACTIVATION_BLOCK + 1, ZOMBIE_TIMESTAMP, 200, B256::ZERO);
+
+        PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
+            &zombie_validator(),
+            &state_updates(Some(200), false),
+            &block,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn generic_post_execution_validation_rejects_inexact_derived_child_timestamp() {
+        let block =
+            base_time_block(ZOMBIE_ACTIVATION_BLOCK + 1, ZOMBIE_TIMESTAMP + 1, 200, B256::ZERO);
         let error =
             PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
                 &zombie_validator(),
-                &HashedPostState::default(),
+                &state_updates(Some(200), false),
                 &block,
             )
             .unwrap_err();
@@ -1050,7 +1135,10 @@ mod tests {
             ConsensusError::Other(error)
                 if matches!(
                     error.downcast_ref::<BaseConsensusError>(),
-                    Some(BaseConsensusError::BaseTimeValidationContextRequired)
+                    Some(BaseConsensusError::BaseTimeTimestampMismatch {
+                        expected_timestamp_ms: 1_800_000_001_200,
+                        actual_timestamp_ms: 1_800_000_002_200,
+                    })
                 )
         ));
     }

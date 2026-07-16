@@ -7,12 +7,24 @@ use reth_storage_errors::provider::ProviderError;
 /// Base consensus error.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum BaseConsensusError {
-    /// Generic post-execution validation lacks the context required to validate `BaseTime`.
-    #[error("Zombie BaseTime post-execution validation requires parent and block context")]
-    BaseTimeValidationContextRequired,
-    /// The parent's committed `BaseTime` value is not a valid 200ms slot.
-    #[error("invalid parent committed BaseTime millis part: {0}")]
-    InvalidParentBaseTimeMillis(u16),
+    /// The expected `BaseTime` timestamp cannot be derived from the chain configuration.
+    #[error("cannot derive BaseTime timestamp for block {block_number} on chain {chain_id}")]
+    BaseTimeTimestampUnavailable {
+        /// L2 chain ID.
+        chain_id: u64,
+        /// L2 block number.
+        block_number: u64,
+    },
+    /// The block's full-millisecond timestamp does not match the hardfork schedule.
+    #[error(
+        "BaseTime timestamp {actual_timestamp_ms}ms does not match expected {expected_timestamp_ms}ms"
+    )]
+    BaseTimeTimestampMismatch {
+        /// Full-millisecond timestamp derived from the hardfork schedule and block number.
+        expected_timestamp_ms: u64,
+        /// Full-millisecond timestamp encoded by the header and `BaseTime` metadata.
+        actual_timestamp_ms: u64,
+    },
     /// The canonical metadata claim does not match the post-execution committed value.
     #[error("BaseTime metadata claim {claim} does not match committed value {committed}")]
     BaseTimeClaimCommittedMismatch {
