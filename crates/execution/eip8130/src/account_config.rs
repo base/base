@@ -65,17 +65,32 @@ impl AccountConfigurationStorage<'_> {
         Ok(false)
     }
 
-    /// Mirrors `AccountConfiguration.getPolicy`: resolves an actor's policy
-    /// gate target and signed commitment. An ungated actor resolves to
-    /// `(address(0), bytes32(0))`; a gated one to `(manager, commitment)`.
-    /// The secp256k1 self key's policy scope lives inline in
-    /// `AccountState` (read only while the self key is live); a non-k1 self and
-    /// every other actor resolve from `actor_config`.
+    /// Resolves an actor's effective policy gate target and signed commitment.
+    /// An ungated actor resolves to `(address(0), bytes32(0))`; a gated one to
+    /// `(manager, commitment)`.
+    ///
+    /// Unlike the contract's `getPolicy` — a pure two-slot raw read — this gates
+    /// on the actor's live scope. The result matches `getPolicy` for every state
+    /// the contract can produce (the write-time invariant keeps the slots
+    /// non-zero iff `scope & SCOPE_POLICY`), but this is a resolver, not a 1:1
+    /// mirror; for the raw reads use [`Self::get_policy_manager`] /
+    /// [`Self::get_policy_commitment`].
+    ///
+    /// The self-actorId is a shared keyspace with two mutually exclusive homes:
+    /// an explicit `actor_config` entry (a non-k1 self) takes precedence and its
+    /// policy resolves normally — even while `DEFAULT_EOA_REVOKED` is set, since
+    /// that flag disables only the *inline k1* self, not the actorId. Only when
+    /// no explicit entry exists does the inline k1 self govern, and a revoked one
+    /// resolves as ungated (its slots are always already zeroed by then).
     pub fn get_policy(&self, account: Address, actor_id: B256) -> Result<(Address, B256)> {
         let stored = self.get_actor_config(account, actor_id)?;
         let scope = if stored.authenticator != Address::ZERO {
+            // Explicit entry (any non-self actor, or a non-k1 self): its scope
+            // governs regardless of the inline-self `DEFAULT_EOA_REVOKED` flag.
             stored.scope
         } else if actor_id == Self::self_actor_id(account) {
+            // No explicit entry: the inline k1 self. A revoked one is ungated;
+            // its policy slots are guaranteed zero, so this matches `getPolicy`.
             let state = self.get_account_state(account)?;
             if state.default_eoa_revoked() {
                 return Ok((Address::ZERO, B256::ZERO));
@@ -302,10 +317,12 @@ impl ActorConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct AccountState {
-    /// Sequence for `chain_id == 0` (multichain) signed actor changes.
+    /// Sequence for `chain_id == 0` (multichain) signed actor changes. A non-zero
+    /// value also marks the account initialized (see [`Self`] / `is_initialized`).
     pub multichain_sequence: u64,
-    /// Sequence for local (`chain_id == block.chainid`) changes; `> 0` also marks
-    /// the account initialized.
+    /// Sequence for local (`chain_id == block.chainid`) changes. Set to 1 at
+    /// bootstrap (create/import); a non-zero value also marks the account
+    /// initialized (see [`Self`] / `is_initialized`).
     pub local_sequence: u64,
     /// Account flags bitfield: bit 0 ([`Eip8130Constants::DEFAULT_EOA_REVOKED`])
     /// disables the inline secp256k1 self key; bit 1
@@ -595,6 +612,33 @@ mod tests {
                 .write(pack_account_state(0, 1, Eip8130Constants::DEFAULT_EOA_REVOKED, 0, 0, 0))
                 .unwrap();
             assert_eq!(acc.get_policy(ACCOUNT, self_id).unwrap(), (Address::ZERO, B256::ZERO));
+        });
+    }
+
+    #[test]
+    fn get_policy_resolves_non_k1_self_while_default_eoa_revoked() {
+        // A non-k1 self authenticator homed at the self-actorId coexists with
+        // DEFAULT_EOA_REVOKED (authorizing it *sets* that flag via mutual
+        // exclusion). The flag disables only the inline k1 self, so an explicit
+        // entry's policy must still resolve — the explicit-entry branch wins.
+        let authenticator = address!("0x00000000000000000000000000000000000000e5");
+        let manager = address!("0x00000000000000000000000000000000000000d4");
+        let commitment =
+            b256!("0x3333333333333333333333333333333333333333333333333333333333333333");
+        let self_id = AccountConfigurationStorage::self_actor_id(ACCOUNT);
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut acc = AccountConfigurationStorage::new(ctx);
+            let gated = pack_actor_config(authenticator, Eip8130Constants::SCOPE_POLICY, 0);
+            acc.actor_config.at_mut(&self_id).at_mut(&ACCOUNT).write(gated).unwrap();
+            acc.policy_manager.at_mut(&self_id).at_mut(&ACCOUNT).write(manager).unwrap();
+            acc.policy_commitment.at_mut(&self_id).at_mut(&ACCOUNT).write(commitment).unwrap();
+            acc.account_state
+                .at_mut(&ACCOUNT)
+                .write(pack_account_state(0, 1, Eip8130Constants::DEFAULT_EOA_REVOKED, 0, 0, 0))
+                .unwrap();
+
+            assert_eq!(acc.get_policy(ACCOUNT, self_id).unwrap(), (manager, commitment));
         });
     }
 
