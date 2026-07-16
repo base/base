@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use alloy_consensus::{BlockHeader, Header, Sealed};
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::{B256, TxHash, U256};
+use alloy_primitives::{B256, U256};
 use base_bundles::{Bundle, MeterBundleResponse, ParsedBundle};
 use base_common_consensus::BaseBlock;
 use base_common_evm::L1BlockInfo;
@@ -389,22 +389,6 @@ where
             resource_estimates,
         })
     }
-
-    async fn set_metering_information(
-        &self,
-        _tx_hash: TxHash,
-        _meter: MeterBundleResponse,
-    ) -> RpcResult<()> {
-        Ok(())
-    }
-
-    async fn set_metering_enabled(&self, _enabled: bool) -> RpcResult<()> {
-        Ok(())
-    }
-
-    async fn clear_metering_information(&self) -> RpcResult<()> {
-        Ok(())
-    }
 }
 
 /// Computes resource demand from bundle metering results.
@@ -533,22 +517,6 @@ mod tests {
             .await?;
         let client = harness.rpc_client()?;
         Ok((harness, client))
-    }
-
-    #[tokio::test]
-    async fn deprecated_ingestion_methods_remain_available() -> eyre::Result<()> {
-        let (_harness, client) = setup().await?;
-
-        client
-            .request::<(), _>(
-                "base_setMeteringInformation",
-                (B256::ZERO, MeterBundleResponse::default()),
-            )
-            .await?;
-        client.request::<(), _>("base_setMeteringEnabled", (true,)).await?;
-        client.request::<(), _>("base_clearMeteringInformation", ()).await?;
-
-        Ok(())
     }
 
     async fn generate_txs_for_block(chain_id: u64) -> Vec<Bytes> {

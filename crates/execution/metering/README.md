@@ -127,13 +127,6 @@ The ingestion pipeline works as follows:
 Note: flashblock diffs must include raw transaction bytes for accurate DA-based priority fee
 estimation. These bytes are used to compute compressed transaction size via `flz_compress_len`.
 
-## Deprecated compatibility methods
-
-The execution node still accepts `base_setMeteringInformation`, `base_setMeteringEnabled`, and
-`base_clearMeteringInformation` for rolling-deployment compatibility. These methods are no-ops;
-the execution node no longer stores externally submitted metering data. Metering ingestion should
-target the builder's corresponding RPC methods.
-
 ## License
 
 Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).
