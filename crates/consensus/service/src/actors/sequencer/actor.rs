@@ -279,6 +279,7 @@ where
         self.update_metrics();
 
         let mut next_payload_to_seal: Option<UnsealedPayloadHandle> = None;
+        // Acknowledged parent whose child build is gated on the parent's timestamp.
         let mut pending_build_parent = None;
 
         // Reset the engine state prior to beginning block building.
@@ -349,6 +350,10 @@ where
                                 }
                             }
                             if self.is_active {
+                                // Queue the acknowledged parent instead of starting its child
+                                // here. Its timestamp is a hard lower bound for the steady-state
+                                // child build because variable getPayload durations can make
+                                // insertion complete early.
                                 let parent_timestamp = inserted_head.block_info.timestamp;
                                 pending_build_parent = Some(inserted_head);
                                 build_ticker.reset_at_unix_timestamp(parent_timestamp);
@@ -369,6 +374,8 @@ where
                 // next block starts, so the canonical head actually advances.
                 _ = build_ticker.tick(), if self.is_active && self.sealer.is_none() => {
                     if let Some(parent) = pending_build_parent.take() {
+                        // Do not start a steady-state child build before its inserted parent's
+                        // timestamp. If it is already past, the ticker is immediately runnable.
                         next_payload_to_seal = self.builder.build_on(parent).await?;
                         if let Some(ref payload) = next_payload_to_seal {
                             let next_block_seconds = payload
