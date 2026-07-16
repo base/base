@@ -27,6 +27,7 @@ use base_common_precompiles::{
     B20TokenRole, IB20, IB20Stablecoin, InMemoryPolicy, NoopPrecompileCallObserver, PermitArgs,
     Stablecoin, StablecoinV1, StablecoinVersion, StablecoinVersions, TokenAccounting,
 };
+use base_common_precompiles::{IB20::IB20Calls as C, IB20Stablecoin::IB20StablecoinCalls as SC};
 use base_precompile_storage::{BasePrecompileError, HashMapStorageProvider, StorageCtx};
 use k256::ecdsa::SigningKey;
 
@@ -2072,9 +2073,6 @@ fn golden_gas_footprints() {
 /// reviewed.
 #[allow(dead_code)]
 fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Stablecoin::IB20StablecoinCalls) {
-    use IB20::IB20Calls as C;
-    use IB20Stablecoin::IB20StablecoinCalls as SC;
-
     // No-op: forces each arm to name real golden `#[test]` fns by path.
     fn covered(_goldens: &[fn()]) {}
 
