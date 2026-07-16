@@ -352,7 +352,7 @@ mod tests {
     type BoxedBlockStream = Pin<Box<dyn Stream<Item = BlockInfo> + Unpin + Send>>;
 
     // ---------------------------------------------------------------------------
-    // Mock L1BlockFetcher used by LogRetrier tests (unchanged)
+    // Mock L1BlockFetcher used by LogRetrier tests.
     // ---------------------------------------------------------------------------
 
     struct MockFetcher {
@@ -404,11 +404,14 @@ mod tests {
         None,
         /// Always return an error.
         Err,
+        /// Return an error once, then a default [`Block`].
+        ErrorOnceThenDefault,
     }
 
     struct ConfigurableFetcher {
         get_block_behavior: GetBlockBehavior,
         get_block_requested_ids: Arc<Mutex<Vec<BlockId>>>,
+        get_block_call_count: Arc<AtomicU32>,
     }
 
     impl ConfigurableFetcher {
@@ -416,6 +419,7 @@ mod tests {
             Self {
                 get_block_behavior: GetBlockBehavior::Default,
                 get_block_requested_ids: Arc::new(Mutex::new(Vec::new())),
+                get_block_call_count: Arc::new(AtomicU32::new(0)),
             }
         }
 
@@ -423,6 +427,7 @@ mod tests {
             Self {
                 get_block_behavior: GetBlockBehavior::None,
                 get_block_requested_ids: Arc::new(Mutex::new(Vec::new())),
+                get_block_call_count: Arc::new(AtomicU32::new(0)),
             }
         }
 
@@ -430,6 +435,15 @@ mod tests {
             Self {
                 get_block_behavior: GetBlockBehavior::Err,
                 get_block_requested_ids: Arc::new(Mutex::new(Vec::new())),
+                get_block_call_count: Arc::new(AtomicU32::new(0)),
+            }
+        }
+
+        fn error_once_then_default() -> Self {
+            Self {
+                get_block_behavior: GetBlockBehavior::ErrorOnceThenDefault,
+                get_block_requested_ids: Arc::new(Mutex::new(Vec::new())),
+                get_block_call_count: Arc::new(AtomicU32::new(0)),
             }
         }
     }
@@ -444,8 +458,14 @@ mod tests {
 
         async fn get_block(&self, id: BlockId) -> Result<Option<Block>, Self::Error> {
             self.get_block_requested_ids.lock().unwrap().push(id);
+            let call_count = self.get_block_call_count.fetch_add(1, Ordering::SeqCst);
             match self.get_block_behavior {
-                GetBlockBehavior::Default => Ok(Some(Block::default())),
+                GetBlockBehavior::ErrorOnceThenDefault if call_count == 0 => {
+                    Err("provider request timed out".to_string())
+                }
+                GetBlockBehavior::Default | GetBlockBehavior::ErrorOnceThenDefault => {
+                    Ok(Some(Block::default()))
+                }
                 GetBlockBehavior::None => Ok(None),
                 GetBlockBehavior::Err => Err("provider error".to_string()),
             }
@@ -568,8 +588,10 @@ mod tests {
     #[tokio::test]
     async fn fetch_logs_exhausted_retries_returns_error() {
         let cancel = CancellationToken::new();
+        let fetcher = MockFetcher::always_fail();
+        let call_count = Arc::clone(&fetcher.call_count);
         let result = LogRetrier::fetch_logs_with_retry(
-            &MockFetcher::always_fail(),
+            &fetcher,
             Filter::new(),
             &cancel,
             dummy_block(),
@@ -578,6 +600,7 @@ mod tests {
         )
         .await;
         assert!(matches!(result, Err(L1WatcherActorError::RetriesExhausted)));
+        assert_eq!(call_count.load(Ordering::SeqCst), 10);
     }
 
     #[tokio::test]
@@ -698,6 +721,23 @@ mod tests {
 
         // Watch channel still has the real head.
         assert_eq!(rx.borrow().unwrap().number, 100);
+    }
+
+    #[tokio::test]
+    async fn confs_delayed_block_timeout_skips_head_and_continues() {
+        let fetcher = ConfigurableFetcher::error_once_then_default();
+        let ids = Arc::clone(&fetcher.get_block_requested_ids);
+        let (client, rx, _) = run_actor(fetcher, vec![block_at(100), block_at(104)], 4).await;
+
+        let heads = client.sent_heads();
+        assert_eq!(heads.len(), 1);
+        // The first provider timeout is skipped. The second request succeeds with
+        // Block::default().
+        assert_eq!(heads[0].number, 0);
+        assert_eq!(rx.borrow().unwrap().number, 104);
+
+        let requested = ids.lock().unwrap().clone();
+        assert_eq!(requested, vec![BlockId::Number(96u64.into()), BlockId::Number(100u64.into())]);
     }
 
     #[tokio::test]

@@ -4241,6 +4241,7 @@ dependencies = [
  "alloy-rpc-client 2.0.5",
  "alloy-rpc-types-beacon",
  "alloy-rpc-types-engine",
+ "alloy-rpc-types-eth 2.0.5",
  "alloy-serde 2.0.5",
  "alloy-transport 2.0.5",
  "alloy-transport-http 2.0.5",
