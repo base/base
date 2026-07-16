@@ -3,8 +3,8 @@
 use alloy_evm::{Database, EvmEnv, EvmFactory};
 use alloy_primitives::Address;
 use base_common_evm::{
-    BaseContext, BaseEvm, BaseHaltReason, BaseSpecId, BaseTransaction, BaseTransactionError,
-    Builder, DefaultBase,
+    BaseContext, BaseEvm, BaseEvmExecutionFactory, BaseEvmExecutionResult, BaseHaltReason,
+    BaseSpecId, BaseTransaction, BaseTransactionError, Builder, DefaultBase,
 };
 use revm::{
     Context, Inspector,
@@ -90,5 +90,18 @@ impl EvmFactory for ZkvmBaseEvmFactory {
             .with_block(input.block_env)
             .with_cfg(input.cfg_env)
             .build_with_inspector_and_precompiles(inspector, precompiles)
+    }
+}
+
+impl BaseEvmExecutionFactory for ZkvmBaseEvmFactory {
+    fn transact_raw_with_metadata<DB, I>(
+        evm: &mut Self::Evm<DB, I>,
+        tx: Self::Tx,
+    ) -> Result<BaseEvmExecutionResult<Self::HaltReason>, Self::Error<DB::Error>>
+    where
+        DB: Database,
+        I: Inspector<Self::Context<DB>>,
+    {
+        BaseEvm::transact_raw_with_metadata(evm, tx)
     }
 }

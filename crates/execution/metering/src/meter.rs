@@ -3,17 +3,21 @@
 use std::{sync::Arc, time::Instant};
 
 use alloy_consensus::{BlockHeader, Transaction as _};
+use alloy_eips::Typed2718;
 use alloy_evm::block::TxResult as _;
 use alloy_primitives::{
     Address, B256, U256,
     map::{HashMap, HashSet},
 };
 use base_bundles::{BundleExtensions, BundleTxs, OpcodeGas, ParsedBundle, TransactionResult};
-use base_common_evm::{BaseSpecId, BaseUpgrade, L1BlockInfo};
+use base_common_evm::{
+    BaseSpecId, BaseUpgrade, EIP8130_TRANSACTION_TYPE, Eip8130IntrinsicGas, L1BlockInfo,
+};
 use base_common_precompiles::{
     ActivationRegistryStorage, B20FactoryStorage, B20Variant, PolicyRegistryStorage,
 };
 use base_execution_chainspec::BaseChainSpec;
+use base_execution_eip8130 as _;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use eyre::{Result as EyreResult, eyre};
 use reth_evm::{ConfigureEvm, Evm as _, execute::BlockBuilder};
@@ -114,6 +118,22 @@ pub enum PseudoOpcode {
     IntrinsicCreateAccess,
     /// EIP-2780 regular authorization base cost.
     IntrinsicRegularPerAuthBaseCost,
+    /// EIP-8130 account-abstraction base cost.
+    IntrinsicAaBaseCost,
+    /// EIP-8130 transaction payload cost.
+    IntrinsicTxPayloadCost,
+    /// EIP-8130 nonce-key cost.
+    IntrinsicNonceKeyCost,
+    /// EIP-8130 bytecode cost.
+    IntrinsicBytecodeCost,
+    /// EIP-8130 account-changes cost.
+    IntrinsicAccountChangesCost,
+    /// EIP-8130 automatic-delegation cost.
+    IntrinsicAutoDelegationCost,
+    /// EIP-8130 sender-authentication cost.
+    IntrinsicSenderAuthCost,
+    /// EIP-8130 payer-authentication cost.
+    IntrinsicPayerAuthCost,
     /// Successful top-level ETH transfer to a nonexistent account.
     TxEffectEthTransferToNonexistentAccount,
     /// Successful top-level ETH transfer to an existing account.
@@ -142,6 +162,14 @@ impl PseudoOpcode {
             Self::IntrinsicTransferLogCost => "INTRINSIC_TRANSFER_LOG_COST",
             Self::IntrinsicCreateAccess => "INTRINSIC_CREATE_ACCESS",
             Self::IntrinsicRegularPerAuthBaseCost => "INTRINSIC_REGULAR_PER_AUTH_BASE_COST",
+            Self::IntrinsicAaBaseCost => "INTRINSIC_AA_BASE_COST",
+            Self::IntrinsicTxPayloadCost => "INTRINSIC_TX_PAYLOAD_COST",
+            Self::IntrinsicNonceKeyCost => "INTRINSIC_NONCE_KEY_COST",
+            Self::IntrinsicBytecodeCost => "INTRINSIC_BYTECODE_COST",
+            Self::IntrinsicAccountChangesCost => "INTRINSIC_ACCOUNT_CHANGES_COST",
+            Self::IntrinsicAutoDelegationCost => "INTRINSIC_AUTO_DELEGATION_COST",
+            Self::IntrinsicSenderAuthCost => "INTRINSIC_SENDER_AUTH_COST",
+            Self::IntrinsicPayerAuthCost => "INTRINSIC_PAYER_AUTH_COST",
             Self::TxEffectEthTransferToNonexistentAccount => {
                 "TX_EFFECT_ETH_TRANSFER_TO_NONEXISTENT_ACCOUNT"
             }
@@ -249,6 +277,15 @@ const PSEUDO_OPCODES: &[PseudoOpcode] = &[
     PseudoOpcode::IntrinsicTransferLogCost,
     PseudoOpcode::IntrinsicCreateAccess,
     PseudoOpcode::IntrinsicRegularPerAuthBaseCost,
+    // EIP-8130: account-abstraction intrinsic components.
+    PseudoOpcode::IntrinsicAaBaseCost,
+    PseudoOpcode::IntrinsicTxPayloadCost,
+    PseudoOpcode::IntrinsicNonceKeyCost,
+    PseudoOpcode::IntrinsicBytecodeCost,
+    PseudoOpcode::IntrinsicAccountChangesCost,
+    PseudoOpcode::IntrinsicAutoDelegationCost,
+    PseudoOpcode::IntrinsicSenderAuthCost,
+    PseudoOpcode::IntrinsicPayerAuthCost,
     // EIP-2780/EIP-7708: zero-gas top-level ETH-transfer classifiers.
     PseudoOpcode::TxEffectEthTransferToNonexistentAccount,
     PseudoOpcode::TxEffectEthTransferToExistingAccount,
@@ -397,8 +434,20 @@ fn intrinsic_gas_entries<T: alloy_consensus::Transaction>(
     tx_succeeded: bool,
     metered: &MeteredOpcodes,
     spec: BaseSpecId,
+    eip8130_intrinsic: Option<&Eip8130IntrinsicGas>,
 ) -> Vec<OpcodeGas> {
     if metered.pseudo_opcodes.is_empty() {
+        return Vec::new();
+    }
+
+    // EIP-8130 has no standard-transaction projection: its `TxEnv` input, value,
+    // and nonce are placeholders. Use the intrinsic schedule returned by the
+    // executor; if it is unexpectedly absent, return no intrinsic entries
+    // rather than misreporting the placeholder projection.
+    if let Some(intrinsic) = eip8130_intrinsic {
+        return eip8130_intrinsic_gas_entries(intrinsic, metered);
+    }
+    if tx.is_type(EIP8130_TRANSACTION_TYPE) {
         return Vec::new();
     }
 
@@ -553,6 +602,48 @@ fn intrinsic_gas_entries<T: alloy_consensus::Transaction>(
                 gas_used: 0,
             });
         }
+    }
+
+    entries
+}
+
+fn eip8130_intrinsic_gas_entries(
+    intrinsic: &Eip8130IntrinsicGas,
+    metered: &MeteredOpcodes,
+) -> Vec<OpcodeGas> {
+    let gas = intrinsic.gas;
+    let requested = |opcode: PseudoOpcode| metered.pseudo_opcodes.contains(&opcode);
+    let mut entries = Vec::new();
+
+    // EIP-8130's canonical intrinsic fields are transaction-level components.
+    // Keep one entry per requested component, including zero-valued payer-auth
+    // for self-pay transactions, so the report describes the full schedule.
+    for (opcode, gas_used) in [
+        (PseudoOpcode::IntrinsicAaBaseCost, gas.base),
+        (PseudoOpcode::IntrinsicTxPayloadCost, gas.payload),
+        (PseudoOpcode::IntrinsicNonceKeyCost, gas.nonce_key),
+        (PseudoOpcode::IntrinsicBytecodeCost, gas.bytecode),
+        (PseudoOpcode::IntrinsicAccountChangesCost, gas.account_changes),
+        (PseudoOpcode::IntrinsicAutoDelegationCost, gas.auto_delegation),
+        (PseudoOpcode::IntrinsicSenderAuthCost, gas.sender_auth),
+        (PseudoOpcode::IntrinsicPayerAuthCost, gas.payer_auth),
+    ] {
+        if requested(opcode) {
+            entries.push(OpcodeGas {
+                contract_address: Address::ZERO,
+                opcode: opcode.as_str().to_string(),
+                count: 1,
+                gas_used,
+            });
+        }
+    }
+    if requested(PseudoOpcode::IntrinsicTotal) {
+        entries.push(OpcodeGas {
+            contract_address: Address::ZERO,
+            opcode: PseudoOpcode::IntrinsicTotal.as_str().to_string(),
+            count: 1,
+            gas_used: gas.total(),
+        });
     }
 
     entries
@@ -746,9 +837,12 @@ where
                 .map_err(|e| eyre!("Transaction {tx_hash} validation failed: {e}"))?;
 
             let mut tx_succeeded = false;
+            let mut eip8130_intrinsic = None;
             let gas_used = builder
                 .execute_transaction_with_result_closure(tx.clone(), |result| {
                     tx_succeeded = result.result().result.is_success();
+                    eip8130_intrinsic =
+                        result.eip8130.as_ref().map(|metadata| metadata.intrinsic_gas);
                 })
                 .map_err(|e| eyre!("Transaction {tx_hash} execution failed: {e}"))?
                 .tx_gas_used();
@@ -768,8 +862,14 @@ where
             let opcode_data = inspector.take_opcode_gas();
             let precompile_data = inspector.take_precompile_gas();
 
-            let mut opcode_gas =
-                intrinsic_gas_entries(tx, recipient_is_dead, tx_succeeded, &metered_opcodes, spec);
+            let mut opcode_gas = intrinsic_gas_entries(
+                tx,
+                recipient_is_dead,
+                tx_succeeded,
+                &metered_opcodes,
+                spec,
+                eip8130_intrinsic.as_ref(),
+            );
             opcode_gas.extend(opcode_data.iter().filter(|(_, usage)| usage.count > 0).map(
                 |(&(contract_address, opcode), usage)| OpcodeGas {
                     contract_address,
@@ -828,6 +928,7 @@ mod tests {
         ActivationFeature, IActivationRegistry, IB20, IB20Factory, IB20Stablecoin, IPolicyRegistry,
     };
     use base_execution_chainspec::BaseChainSpecBuilder;
+    use base_execution_eip8130::{IntrinsicGas, IntrinsicGasInput};
     use base_node_runner::test_utils::TestHarness;
     use base_test_utils::{
         Account, ContractFactory, DEVNET_CHAIN_ID, SimpleStorage, build_test_genesis,
@@ -1931,6 +2032,14 @@ mod tests {
             "intrinsic_transfer_log_cost".to_string(),
             "intrinsic_create_access".to_string(),
             "intrinsic_regular_per_auth_base_cost".to_string(),
+            "intrinsic_aa_base_cost".to_string(),
+            "intrinsic_tx_payload_cost".to_string(),
+            "intrinsic_nonce_key_cost".to_string(),
+            "intrinsic_bytecode_cost".to_string(),
+            "intrinsic_account_changes_cost".to_string(),
+            "intrinsic_auto_delegation_cost".to_string(),
+            "intrinsic_sender_auth_cost".to_string(),
+            "intrinsic_payer_auth_cost".to_string(),
             "tx_effect_eth_transfer_to_nonexistent_account".to_string(),
             "tx_effect_eth_transfer_to_existing_account".to_string(),
             "tx_effect_eth_self_transfer".to_string(),
@@ -1959,6 +2068,68 @@ mod tests {
             result.pseudo_opcodes.contains(&PseudoOpcode::TxEffectEthTransferToExistingAccount)
         );
         assert!(result.pseudo_opcodes.contains(&PseudoOpcode::TxEffectEthSelfTransfer));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicAaBaseCost));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicTxPayloadCost));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicNonceKeyCost));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicBytecodeCost));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicAccountChangesCost));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicAutoDelegationCost));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicSenderAuthCost));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicPayerAuthCost));
+    }
+
+    #[test]
+    fn eip8130_intrinsic_entries_use_canonical_breakdown() {
+        let mut gas = IntrinsicGas::default();
+        gas.base = 100;
+        gas.payload = 200;
+        gas.nonce_key = 300;
+        gas.bytecode = 400;
+        gas.account_changes = 500;
+        gas.auto_delegation = 600;
+        gas.sender_auth = 700;
+        gas.payer_auth = 800;
+
+        let intrinsic = Eip8130IntrinsicGas::new(gas, IntrinsicGasInput::new(true, true));
+        assert!(intrinsic.input.nonce_key_first_use);
+        assert!(intrinsic.input.sender_auto_delegated);
+
+        let metered = MeteredOpcodes::parse(&[
+            "INTRINSIC_TOTAL".to_string(),
+            "INTRINSIC_AA_BASE_COST".to_string(),
+            "INTRINSIC_TX_PAYLOAD_COST".to_string(),
+            "INTRINSIC_NONCE_KEY_COST".to_string(),
+            "INTRINSIC_BYTECODE_COST".to_string(),
+            "INTRINSIC_ACCOUNT_CHANGES_COST".to_string(),
+            "INTRINSIC_AUTO_DELEGATION_COST".to_string(),
+            "INTRINSIC_SENDER_AUTH_COST".to_string(),
+            "INTRINSIC_PAYER_AUTH_COST".to_string(),
+        ])
+        .unwrap();
+
+        let entries = eip8130_intrinsic_gas_entries(&intrinsic, &metered);
+        for (opcode, gas_used) in [
+            ("INTRINSIC_AA_BASE_COST", 100),
+            ("INTRINSIC_TX_PAYLOAD_COST", 200),
+            ("INTRINSIC_NONCE_KEY_COST", 300),
+            ("INTRINSIC_BYTECODE_COST", 400),
+            ("INTRINSIC_ACCOUNT_CHANGES_COST", 500),
+            ("INTRINSIC_AUTO_DELEGATION_COST", 600),
+            ("INTRINSIC_SENDER_AUTH_COST", 700),
+            ("INTRINSIC_PAYER_AUTH_COST", 800),
+        ] {
+            assert_eq!(
+                entries.iter().find(|entry| entry.opcode == opcode).map(|entry| entry.gas_used),
+                Some(gas_used)
+            );
+        }
+        assert_eq!(
+            entries
+                .iter()
+                .find(|entry| entry.opcode == "INTRINSIC_TOTAL")
+                .map(|entry| entry.gas_used),
+            Some(gas.total())
+        );
     }
 
     #[test]

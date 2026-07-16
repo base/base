@@ -1,6 +1,6 @@
 use core::ops::{Deref, DerefMut};
 
-use alloy_evm::{Database as AlloyDatabase, Evm, EvmEnv};
+use alloy_evm::{Database as AlloyDatabase, Evm, EvmEnv, EvmFactory};
 use alloy_primitives::{Address, Bytes};
 use revm::{
     Database as RevmDatabase, DatabaseCommit, ExecuteCommitEvm, ExecuteEvm, InspectCommitEvm,
@@ -22,12 +22,12 @@ use revm::{
     state::EvmState,
 };
 
-#[cfg(feature = "std")]
-use crate::Eip8130Executor;
 use crate::{
     BaseContext, BaseHaltReason, BasePrecompiles, BaseSpecId, BaseTransaction,
     BaseTransactionError, BaseTxTr, handler::BaseHandler,
 };
+#[cfg(feature = "std")]
+use crate::{Eip8130ExecutionMetadata, Eip8130Executor};
 
 /// Type alias for the inner [`RevmEvm`] parameterized with Base-specific context and fixed
 /// [`EthInstructions`] / [`EthFrame`], keeping [`BaseEvm`] field and constructor signatures tidy.
@@ -38,6 +38,33 @@ type InnerEvm<DB, I, P> = RevmEvm<
     P,
     EthFrame<EthInterpreter>,
 >;
+
+/// Result of executing a transaction through the Base-specific EVM path.
+///
+/// The upstream [`Evm::transact_raw`] API projects this into its standard
+/// [`ResultAndState`] return type. Base block execution can use this richer
+/// result to retain EIP-8130 metadata without a side channel.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct BaseEvmExecutionResult<H> {
+    /// Standard execution result and state changes.
+    pub result: ResultAndState<H>,
+    /// Additional EIP-8130 data, present only for verified EIP-8130 execution.
+    #[cfg(feature = "std")]
+    pub eip8130: Option<Eip8130ExecutionMetadata>,
+}
+
+/// Factory-side hook for obtaining the Base-specific typed execution result.
+pub trait BaseEvmExecutionFactory: EvmFactory {
+    /// Executes a transaction through the typed Base EVM path.
+    fn transact_raw_with_metadata<DB, I>(
+        evm: &mut Self::Evm<DB, I>,
+        tx: Self::Tx,
+    ) -> Result<BaseEvmExecutionResult<Self::HaltReason>, Self::Error<DB::Error>>
+    where
+        DB: AlloyDatabase,
+        I: Inspector<Self::Context<DB>>;
+}
 
 /// The Base EVM, wrapping [`RevmEvm`] with a [`BaseContext`] and an optional [`Inspector`].
 ///
@@ -113,6 +140,81 @@ impl<DB: RevmDatabase, I, P> DerefMut for BaseEvm<DB, I, P> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.ctx_mut()
+    }
+}
+
+#[cfg(feature = "std")]
+impl<DB: RevmDatabase, I, P> BaseEvm<DB, I, P> {
+    /// Executes a transaction and retains any Base-specific EIP-8130 metadata.
+    pub fn transact_raw_with_metadata(
+        &mut self,
+        tx: BaseTransaction<TxEnv>,
+    ) -> Result<BaseEvmExecutionResult<BaseHaltReason>, EVMError<DB::Error, BaseTransactionError>>
+    where
+        DB: AlloyDatabase,
+        I: Inspector<BaseContext<DB>>,
+        P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
+        BaseContext<DB>: crate::BaseContextTr
+            + ContextSetters
+            + ContextTr<
+                Db = DB,
+                Tx = BaseTransaction<TxEnv>,
+                Block = BlockEnv,
+                Journal: JournalExt + core::fmt::Debug,
+            >,
+    {
+        if tx.is_eip8130() {
+            // Read-only RPC simulation uses the existing simulation path and
+            // intentionally produces no returned execution metadata.
+            let simulate = tx.is_eip8130_simulate();
+            self.inner.ctx.set_tx(tx);
+            if simulate {
+                let result = Eip8130Executor::simulate(self)?;
+                return Ok(BaseEvmExecutionResult {
+                    result: ResultAndState::new(result, EvmState::default()),
+                    eip8130: None,
+                });
+            }
+
+            let output = Eip8130Executor::execute_with_metadata(self)?;
+            let state = self.inner.ctx.journal_mut().finalize();
+            return Ok(BaseEvmExecutionResult {
+                result: ResultAndState::new(output.result, state),
+                eip8130: Some(output.metadata),
+            });
+        }
+
+        let result = if self.inspect {
+            InspectEvm::inspect_tx(self, tx)?
+        } else {
+            ExecuteEvm::transact(self, tx)?
+        };
+        Ok(BaseEvmExecutionResult { result, eip8130: None })
+    }
+}
+
+#[cfg(not(feature = "std"))]
+impl<DB: RevmDatabase, I, P> BaseEvm<DB, I, P> {
+    /// Executes a transaction through the standard EVM path in `no_std`
+    /// builds, where EIP-8130 execution is unavailable.
+    pub fn transact_raw_with_metadata(
+        &mut self,
+        tx: BaseTransaction<TxEnv>,
+    ) -> Result<BaseEvmExecutionResult<BaseHaltReason>, EVMError<DB::Error, BaseTransactionError>>
+    where
+        DB: AlloyDatabase,
+        I: Inspector<BaseContext<DB>>,
+        P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
+        BaseContext<DB>: crate::BaseContextTr
+            + ContextSetters
+            + ContextTr<
+                Db = DB,
+                Tx = BaseTransaction<TxEnv>,
+                Block = BlockEnv,
+                Journal: JournalExt + core::fmt::Debug,
+            >,
+    {
+        Evm::transact_raw(self, tx).map(|result| BaseEvmExecutionResult { result })
     }
 }
 
@@ -410,44 +512,36 @@ where
         &mut self,
         tx: Self::Tx,
     ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
-        // EIP-8130 transactions are executed by the enshrined pre-call pipeline,
-        // around (not inside) an EVM call frame, so they bypass both the mainnet
-        // single-frame handler and the inspector frame loop. The pipeline lives
-        // behind the `std` feature; `no_std` builds reject 8130 transactions
-        // rather than mis-executing the placeholder `TxEnv`.
-        //
-        // The inspector is intentionally not driven here: there is no call frame
-        // to step through, and the `Inspector` trait has no transaction-level
-        // start/end hook to emit instead. Tracing integration for 8130 is
-        // deferred until the path is reachable via RPC; until then 8130 txns
-        // produce no inspector output.
-        if tx.is_eip8130() {
-            #[cfg(feature = "std")]
-            {
-                // Read-only RPC simulation (`eth_estimateGas` / `eth_call`):
-                // route to the unverified `simulate` path, which reverts all
-                // state internally, so report no committed state changes. This
-                // branch is reachable only when the parts were built on the RPC
-                // call path; the consensus/block path never sets the flag.
-                let simulate = tx.is_eip8130_simulate();
-                self.inner.ctx.set_tx(tx);
-                if simulate {
-                    let result = Eip8130Executor::simulate(self)?;
-                    return Ok(ResultAndState::new(result, EvmState::default()));
-                }
-                let result = Eip8130Executor::execute(self)?;
-                let state = self.inner.ctx.journal_mut().finalize();
-                return Ok(ResultAndState::new(result, state));
-            }
-            #[cfg(not(feature = "std"))]
-            {
+        #[cfg(feature = "std")]
+        {
+            self.transact_raw_with_metadata(tx).map(|output| output.result)
+        }
+
+        #[cfg(not(feature = "std"))]
+        {
+            // EIP-8130 transactions are executed by the enshrined pre-call pipeline,
+            // around (not inside) an EVM call frame, so they bypass both the mainnet
+            // single-frame handler and the inspector frame loop. The pipeline lives
+            // behind the `std` feature; `no_std` builds reject 8130 transactions
+            // rather than mis-executing the placeholder `TxEnv`.
+            //
+            // The inspector is intentionally not driven here: there is no call frame
+            // to step through, and the `Inspector` trait has no transaction-level
+            // start/end hook to emit instead. Tracing integration for 8130 is
+            // deferred until the path is reachable via RPC; until then 8130 txns
+            // produce no inspector output.
+            if tx.is_eip8130() {
                 let _ = tx;
                 return Err(EVMError::Transaction(BaseTransactionError::eip8130(
                     "EIP-8130 execution is unavailable in no_std builds",
                 )));
             }
+            if self.inspect {
+                InspectEvm::inspect_tx(self, tx)
+            } else {
+                ExecuteEvm::transact(self, tx)
+            }
         }
-        if self.inspect { InspectEvm::inspect_tx(self, tx) } else { ExecuteEvm::transact(self, tx) }
     }
 
     fn transact_system_call(

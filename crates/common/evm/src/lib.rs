@@ -39,12 +39,15 @@ mod api;
 pub use api::{BaseContext, BaseContextTr, BaseError, Builder, DefaultBase};
 
 mod evm;
-pub use evm::BaseEvm;
+pub use evm::{BaseEvm, BaseEvmExecutionFactory, BaseEvmExecutionResult};
 
 #[cfg(feature = "std")]
 mod eip8130;
 #[cfg(feature = "std")]
-pub use eip8130::{Eip8130Executor, Eip8130Outcome};
+pub use eip8130::{
+    Eip8130ExecutionMetadata, Eip8130ExecutionResult, Eip8130Executor, Eip8130IntrinsicGas,
+    Eip8130Outcome,
+};
 
 mod eip8130_phase_statuses;
 pub use eip8130_phase_statuses::Eip8130PhaseStatuses;

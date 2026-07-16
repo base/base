@@ -10,8 +10,8 @@ use alloy_primitives::Bytes;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BasePrimitives, DepositReceiptExt, EIP1559ParamError};
 use base_common_evm::{
-    BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseEvmFactory, BaseReceiptBuilder,
-    BaseSpecId, BaseTransaction, BaseTxEnv,
+    BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseEvmExecutionFactory, BaseEvmFactory,
+    BaseReceiptBuilder, BaseSpecId, BaseTransaction, BaseTxEnv,
 };
 #[cfg(not(feature = "std"))]
 use base_common_rpc_types_engine as _;
@@ -149,7 +149,8 @@ where
         >,
     BaseTransaction<TxEnv>: FromRecoveredTx<N::SignedTx> + FromTxWithEncoded<N::SignedTx>,
     R: BaseReceiptBuilder<Receipt: DepositReceiptExt, Transaction: SignedTransaction> + Clone,
-    EvmF: EvmFactory<
+    EvmF: BaseEvmExecutionFactory
+        + EvmFactory<
             Tx: FromRecoveredTx<R::Transaction>
                     + FromTxWithEncoded<R::Transaction>
                     + TransactionEnvMut

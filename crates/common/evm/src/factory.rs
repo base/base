@@ -8,8 +8,8 @@ use revm::{
 };
 
 use crate::{
-    BaseContext, BaseEvm, BaseHaltReason, BaseSpecId, BaseTransaction, BaseTransactionError,
-    Builder, DefaultBase,
+    BaseContext, BaseEvm, BaseEvmExecutionFactory, BaseEvmExecutionResult, BaseHaltReason,
+    BaseSpecId, BaseTransaction, BaseTransactionError, Builder, DefaultBase,
 };
 
 /// Factory that produces [`BaseEvm`] instances backed by a [`PrecompilesMap`].
@@ -96,6 +96,19 @@ impl EvmFactory for BaseEvmFactory {
                 inspector,
                 self.activation_admin_address,
             )
+    }
+}
+
+impl BaseEvmExecutionFactory for BaseEvmFactory {
+    fn transact_raw_with_metadata<DB, I>(
+        evm: &mut Self::Evm<DB, I>,
+        tx: Self::Tx,
+    ) -> Result<BaseEvmExecutionResult<Self::HaltReason>, Self::Error<DB::Error>>
+    where
+        DB: Database,
+        I: Inspector<Self::Context<DB>>,
+    {
+        BaseEvm::transact_raw_with_metadata(evm, tx)
     }
 }
 

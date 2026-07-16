@@ -10,8 +10,8 @@ use base_common_chains::{ChainUpgrades, Upgrades};
 use revm::Inspector;
 
 use crate::{
-    AlloyReceiptBuilder, BaseBlockExecutionCtx, BaseBlockExecutor, BaseEvmFactory,
-    BaseReceiptBuilder, BaseTxEnv, BaseTxResult,
+    AlloyReceiptBuilder, BaseBlockExecutionCtx, BaseBlockExecutor, BaseEvmExecutionFactory,
+    BaseEvmFactory, BaseReceiptBuilder, BaseTxEnv, BaseTxResult,
 };
 
 /// Ethereum block executor factory.
@@ -59,9 +59,10 @@ where
             Receipt: TxReceipt,
         > + Clone,
     Spec: Upgrades + Clone,
-    EvmF: EvmFactory<
-        Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction> + BaseTxEnv,
-    >,
+    EvmF: BaseEvmExecutionFactory
+        + EvmFactory<
+            Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction> + BaseTxEnv,
+        >,
     Self: 'static,
 {
     type EvmFactory = EvmF;
@@ -73,7 +74,7 @@ where
         <R::Transaction as TransactionEnvelope>::TxType,
     >;
     type Executor<'a, DB: StateDB, I: Inspector<EvmF::Context<DB>>> =
-        BaseBlockExecutor<EvmF::Evm<DB, I>, R, Spec>;
+        BaseBlockExecutor<EvmF, DB, I, R, Spec>;
 
     fn evm_factory(&self) -> &Self::EvmFactory {
         &self.evm_factory

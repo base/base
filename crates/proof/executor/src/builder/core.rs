@@ -14,7 +14,8 @@ use alloy_evm::{
 };
 use base_common_consensus::{BaseReceiptEnvelope, BaseTxEnvelope};
 use base_common_evm::{
-    AlloyReceiptBuilder, BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseSpecId, BaseTxEnv,
+    AlloyReceiptBuilder, BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseEvmExecutionFactory,
+    BaseSpecId, BaseTxEnv,
 };
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;
@@ -42,7 +43,7 @@ pub struct StatelessL2Builder<'a, P, H, Evm>
 where
     P: TrieDBProvider,
     H: TrieHinter,
-    Evm: EvmFactory,
+    Evm: EvmFactory + BaseEvmExecutionFactory,
 {
     /// The rollup configuration containing chain parameters and activation heights.
     pub(crate) config: &'a RollupConfig,
@@ -56,7 +57,7 @@ impl<'a, P, H, Evm> StatelessL2Builder<'a, P, H, Evm>
 where
     P: TrieDBProvider + Debug,
     H: TrieHinter + Debug,
-    Evm: EvmFactory<Spec = BaseSpecId, BlockEnv = BlockEnv> + 'static,
+    Evm: EvmFactory<Spec = BaseSpecId, BlockEnv = BlockEnv> + BaseEvmExecutionFactory + 'static,
     <Evm as EvmFactory>::Tx:
         FromTxWithEncoded<BaseTxEnvelope> + FromRecoveredTx<BaseTxEnvelope> + BaseTxEnv,
 {

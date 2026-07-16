@@ -612,7 +612,8 @@ impl PendingBlocks {
             })
             .flatten();
 
-        let base_tx_result = BaseTxResult { inner: eth_tx_result, is_deposit, sender, depositor };
+        let base_tx_result =
+            BaseTxResult { inner: eth_tx_result, is_deposit, sender, depositor, eip8130: None };
 
         Some(base_tx_result)
     }

@@ -24,6 +24,7 @@ reth-revm.workspace = true
 reth-provider.workspace = true
 base-common-evm.workspace = true
 base-execution-evm.workspace = true
+base-execution-eip8130.workspace = true
 reth-primitives-traits.workspace = true
 base-execution-chainspec.workspace = true
 

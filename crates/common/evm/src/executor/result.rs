@@ -4,6 +4,9 @@ use alloy_evm::{block::TxResult as TxResultTrait, eth::EthTxResult};
 use alloy_primitives::Address;
 use revm::{context::result::ResultAndState, state::AccountInfo};
 
+#[cfg(feature = "std")]
+use crate::Eip8130ExecutionMetadata;
+
 /// The result of executing a Base transaction.
 #[derive(Debug)]
 pub struct BaseTxResult<H, T> {
@@ -15,6 +18,9 @@ pub struct BaseTxResult<H, T> {
     pub sender: Address,
     /// The depositor account info, fetched during execution for post-Regolith deposit nonce.
     pub depositor: Option<AccountInfo>,
+    /// Additional metadata returned by verified EIP-8130 execution.
+    #[cfg(feature = "std")]
+    pub eip8130: Option<Eip8130ExecutionMetadata>,
 }
 
 impl<H: Send + 'static, T: Send + 'static> TxResultTrait for BaseTxResult<H, T> {

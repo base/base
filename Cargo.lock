@@ -5042,6 +5042,7 @@ dependencies = [
  "base-common-precompiles",
  "base-common-rpc-types",
  "base-execution-chainspec",
+ "base-execution-eip8130",
  "base-execution-evm",
  "base-flashblocks",
  "base-node-core",

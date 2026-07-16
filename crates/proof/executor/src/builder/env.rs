@@ -4,7 +4,7 @@ use alloy_consensus::{BlockHeader, Header};
 use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams};
 use alloy_evm::{EvmEnv, EvmFactory};
 use alloy_primitives::U256;
-use base_common_evm::{BaseSpecId, BaseUpgrade};
+use base_common_evm::{BaseEvmExecutionFactory, BaseSpecId, BaseUpgrade};
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_proof_mpt::TrieHinter;
@@ -25,7 +25,7 @@ impl<P, H, Evm> StatelessL2Builder<'_, P, H, Evm>
 where
     P: TrieDBProvider,
     H: TrieHinter,
-    Evm: EvmFactory,
+    Evm: EvmFactory + BaseEvmExecutionFactory,
 {
     /// Returns the active [`EvmEnv`] for the executor.
     pub(crate) fn evm_env(

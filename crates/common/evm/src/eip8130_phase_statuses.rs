@@ -52,11 +52,15 @@ impl Eip8130PhaseStatuses {
     /// Clears any statuses left in the slot, called at the start of `execute` so a
     /// value leaked by an earlier transaction (e.g. a panic caught between a prior
     /// [`Self::set`] and its [`Self::take`]) can never be misattributed to the
-    /// current transaction's receipt. No-op in `no_std` builds.
+    /// current transaction's receipt.
+    #[cfg(feature = "std")]
     pub fn clear() {
-        #[cfg(feature = "std")]
         PHASE_STATUSES.with(|cell| cell.borrow_mut().clear());
     }
+
+    /// No-op in `no_std` builds.
+    #[cfg(not(feature = "std"))]
+    pub const fn clear() {}
 
     /// Records the per-phase statuses of the EIP-8130 transaction just executed
     /// on this thread, to be consumed by the next [`Self::take`] when its receipt
@@ -79,15 +83,15 @@ impl Eip8130PhaseStatuses {
     }
 
     /// Takes (and clears) the per-phase statuses recorded by the most recent
-    /// [`Self::set`] on this thread. Returns an empty vector in `no_std` builds.
+    /// [`Self::set`] on this thread.
+    #[cfg(feature = "std")]
     pub fn take() -> Vec<u8> {
-        #[cfg(feature = "std")]
-        {
-            PHASE_STATUSES.with(|cell| core::mem::take(&mut *cell.borrow_mut()))
-        }
-        #[cfg(not(feature = "std"))]
-        {
-            Vec::new()
-        }
+        PHASE_STATUSES.with(|cell| core::mem::take(&mut *cell.borrow_mut()))
+    }
+
+    /// Returns an empty vector in `no_std` builds.
+    #[cfg(not(feature = "std"))]
+    pub const fn take() -> Vec<u8> {
+        Vec::new()
     }
 }

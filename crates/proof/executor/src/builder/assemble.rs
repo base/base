@@ -8,6 +8,7 @@ use alloy_evm::{EvmFactory, block::BlockExecutionResult};
 use alloy_primitives::{B256, Sealable, U256, logs_bloom};
 use alloy_trie::EMPTY_ROOT_HASH;
 use base_common_consensus::{BaseReceiptEnvelope, Predeploys};
+use base_common_evm::BaseEvmExecutionFactory;
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_proof_mpt::{TrieHinter, ordered_trie_with_encoder};
@@ -24,7 +25,7 @@ impl<P, H, Evm> StatelessL2Builder<'_, P, H, Evm>
 where
     P: TrieDBProvider,
     H: TrieHinter,
-    Evm: EvmFactory,
+    Evm: EvmFactory + BaseEvmExecutionFactory,
 {
     /// Seals the block executed from the given [`BasePayloadAttributes`] and [`BlockEnv`], returning
     /// the computed [Header].

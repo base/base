@@ -94,6 +94,51 @@ const POOL_SEARCH_MAX_ITERS: u32 = 16;
 /// reth/geth estimator's 1.5% `ESTIMATE_GAS_ERROR_RATIO`.
 const POOL_SEARCH_TOLERANCE_PER_MILLE: u64 = 15;
 
+/// Canonical intrinsic-gas metadata produced while executing an EIP-8130
+/// transaction.
+///
+/// The component values already include the state-derived nonce-channel and
+/// auto-delegation decisions made by the executor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Eip8130IntrinsicGas {
+    /// The eight-component EIP-8130 intrinsic-gas breakdown.
+    pub gas: IntrinsicGas,
+    /// State-derived inputs used to select the nonce and auto-delegation costs.
+    pub input: IntrinsicGasInput,
+}
+
+impl Eip8130IntrinsicGas {
+    /// Creates canonical EIP-8130 intrinsic-gas metadata.
+    pub const fn new(gas: IntrinsicGas, input: IntrinsicGasInput) -> Self {
+        Self { gas, input }
+    }
+}
+
+/// Additional execution data produced for an EIP-8130 transaction.
+///
+/// `phase_statuses` is also published through [`Eip8130PhaseStatuses`] for the
+/// existing receipt path. The returned copy is available to typed Base
+/// execution consumers without changing that path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Eip8130ExecutionMetadata {
+    /// Canonical intrinsic-gas components and their state-derived inputs.
+    pub intrinsic_gas: Eip8130IntrinsicGas,
+    /// Per-phase execution status values.
+    pub phase_statuses: Vec<u8>,
+}
+
+/// Result of executing an EIP-8130 transaction with its typed metadata.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct Eip8130ExecutionResult {
+    /// The ordinary EVM execution result.
+    pub result: ExecutionResult<BaseHaltReason>,
+    /// Additional EIP-8130 execution data.
+    pub metadata: Eip8130ExecutionMetadata,
+}
+
 /// The resolved pre-call context of an EIP-8130 transaction: the authorized
 /// actors, the policy gate target, and the gas/fee parameters needed to dispatch
 /// `calls` and settle the fee.
@@ -128,6 +173,9 @@ pub struct Eip8130Outcome {
     /// Whether the sender's protocol (basic) account nonce must be bumped
     /// (`nonce_key == 0`).
     pub bump_protocol_nonce: bool,
+    /// Canonical EIP-8130 intrinsic-gas components, including the state-derived
+    /// nonce-channel and auto-delegation decisions used to compute them.
+    pub intrinsic_gas: Eip8130IntrinsicGas,
 }
 
 /// The result of dispatching an EIP-8130 transaction's `calls`.
@@ -163,15 +211,53 @@ struct CallsResult {
 pub struct Eip8130Executor;
 
 impl Eip8130Executor {
-    /// Executes the EIP-8130 transaction currently set on `evm`, mutating the
-    /// journal in place and returning the [`ExecutionResult`]. A success result
-    /// is returned for an included transaction whether or not its `calls`
-    /// reverted ([`ExecutionResult::Revert`] reports a phase revert); only a
-    /// *validity* failure surfaces an [`EVMError`], reverting all journal writes
-    /// via a checkpoint so the transaction is not included.
+    /// Executes an EIP-8130 transaction and returns its typed execution metadata.
+    pub fn execute_with_metadata<DB, I, P>(
+        evm: &mut BaseEvm<DB, I, P>,
+    ) -> Result<Eip8130ExecutionResult, EVMError<DB::Error, BaseTransactionError>>
+    where
+        DB: AlloyDatabase,
+        P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
+        BaseContext<DB>: BaseContextTr
+            + ContextTr<
+                Db = DB,
+                Tx = BaseTransaction<TxEnv>,
+                Block = BlockEnv,
+                Journal: core::fmt::Debug,
+            >,
+    {
+        Self::execute_with_metadata_impl(evm)
+    }
+
+    /// Executes an EIP-8130 transaction and returns only its ordinary EVM
+    /// result. The phase-status thread-local is populated exactly as it was
+    /// before typed metadata was added.
     pub fn execute<DB, I, P>(
         evm: &mut BaseEvm<DB, I, P>,
     ) -> Result<ExecutionResult<BaseHaltReason>, EVMError<DB::Error, BaseTransactionError>>
+    where
+        DB: AlloyDatabase,
+        P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
+        BaseContext<DB>: BaseContextTr
+            + ContextTr<
+                Db = DB,
+                Tx = BaseTransaction<TxEnv>,
+                Block = BlockEnv,
+                Journal: core::fmt::Debug,
+            >,
+    {
+        Self::execute_with_metadata(evm).map(|output| output.result)
+    }
+
+    /// Executes the EIP-8130 transaction currently set on `evm`, mutating the
+    /// journal in place and returning the typed execution result. A success
+    /// result is returned for an included transaction whether or not its
+    /// `calls` reverted ([`ExecutionResult::Revert`] reports a phase revert);
+    /// only a *validity* failure surfaces an [`EVMError`], reverting all journal
+    /// writes via a checkpoint so the transaction is not included.
+    fn execute_with_metadata_impl<DB, I, P>(
+        evm: &mut BaseEvm<DB, I, P>,
+    ) -> Result<Eip8130ExecutionResult, EVMError<DB::Error, BaseTransactionError>>
     where
         DB: AlloyDatabase,
         P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
@@ -300,33 +386,34 @@ impl Eip8130Executor {
         evm.ctx().local_mut().clear();
         evm.frame_stack().clear();
 
-        // Hand the per-phase statuses to the receipt builder, which runs on this
-        // same thread immediately after execution (see [`Eip8130PhaseStatuses`]).
-        // This is the only channel available: the receipt builder is generic over
-        // the EVM and the `ExecutionResult`'s `output` already carries the
-        // transaction's revert data. Published as the last step before returning —
-        // after the transaction is fully settled and committed — so neither a
-        // `settle_fees` error nor a panic in the journal teardown above can leave
-        // stale statuses in the slot for the next transaction; only the
-        // allocation-free result construction below runs before the builder's
-        // `take`.
-        Eip8130PhaseStatuses::set(core::mem::take(&mut calls.phase_statuses));
-
         // The gas refund is already folded into `gas_used` (via `net_used` in
         // `settle_fees`), so the `refunded` counter is left 0.
         let result_gas = ResultGas::new_with_state_gas(gas_used, 0, 0, 0);
-        if calls.reverted {
+        let result = if calls.reverted {
             // The transaction is still included (nonce consumed, fee paid). Logs
             // from phases that committed before the reverting phase survive.
-            Ok(ExecutionResult::Revert { gas: result_gas, logs, output: calls.output })
+            ExecutionResult::Revert { gas: result_gas, logs, output: calls.output }
         } else {
-            Ok(ExecutionResult::Success {
+            ExecutionResult::Success {
                 reason: SuccessReason::Return,
                 gas: result_gas,
                 logs,
                 output: Output::Call(calls.output),
-            })
-        }
+            }
+        };
+
+        // Preserve the existing receipt handoff while also returning the same
+        // statuses through the typed Base execution result.
+        let phase_statuses = core::mem::take(&mut calls.phase_statuses);
+        Eip8130PhaseStatuses::set(phase_statuses.clone());
+
+        Ok(Eip8130ExecutionResult {
+            result,
+            metadata: Eip8130ExecutionMetadata {
+                intrinsic_gas: outcome.intrinsic_gas,
+                phase_statuses,
+            },
+        })
     }
 
     /// Read-only gas estimation for an EIP-8130 transaction — the
@@ -729,7 +816,7 @@ impl Eip8130Executor {
 
             // 5. Intrinsic gas (auth gas is priced from the auth-blob shape, so a
             //    stub signature of the right authenticator type estimates exactly).
-            let (sender_intrinsic, payer_auth, execution_gas_available) =
+            let (intrinsic_gas, sender_intrinsic, payer_auth, execution_gas_available) =
                 Self::resolve_execution_gas(
                     signed,
                     encoded,
@@ -756,6 +843,7 @@ impl Eip8130Executor {
                 effective: FeeCheck::effective_gas_price(max_fee, max_priority, base_fee),
                 base_fee,
                 bump_protocol_nonce: false,
+                intrinsic_gas,
             })
         })
     }
@@ -885,7 +973,7 @@ impl Eip8130Executor {
             };
 
             // 6. Intrinsic gas under the EIP-8130 schedule.
-            let (sender_intrinsic, payer_auth, execution_gas_available) =
+            let (intrinsic_gas, sender_intrinsic, payer_auth, execution_gas_available) =
                 Self::resolve_execution_gas(
                     signed,
                     encoded,
@@ -922,6 +1010,7 @@ impl Eip8130Executor {
                 effective: FeeCheck::effective_gas_price(max_fee, max_priority, base_fee),
                 base_fee,
                 bump_protocol_nonce,
+                intrinsic_gas,
             })
         })
     }
@@ -1442,27 +1531,30 @@ impl Eip8130Executor {
     }
 
     /// Computes the EIP-8130 intrinsic gas and the gas left for `calls`, returning
-    /// `(sender_intrinsic, payer_auth, execution_gas_available)`. Shared by both
-    /// pipelines so intrinsic pricing is computed identically for execution and
-    /// estimation. Errors when sender-intrinsic gas exceeds the gas limit.
+    /// `(intrinsic_gas, sender_intrinsic, payer_auth, execution_gas_available)`.
+    /// Shared by both pipelines so intrinsic pricing is computed identically for
+    /// execution and estimation. Errors when sender-intrinsic gas exceeds the gas
+    /// limit.
     fn resolve_execution_gas(
         signed: &base_common_consensus::Eip8130Signed,
         encoded: &[u8],
         nonce_key_first_use: bool,
         sender_auto_delegated: bool,
         gas_limit: u64,
-    ) -> Result<(u64, u64, u64), BaseTransactionError> {
-        let intrinsic = IntrinsicGas::compute(
-            signed,
-            encoded,
-            &IntrinsicGasInput::new(nonce_key_first_use, sender_auto_delegated),
-        )
-        .map_err(BaseTransactionError::eip8130)?;
+    ) -> Result<(Eip8130IntrinsicGas, u64, u64, u64), BaseTransactionError> {
+        let input = IntrinsicGasInput::new(nonce_key_first_use, sender_auto_delegated);
+        let intrinsic = IntrinsicGas::compute(signed, encoded, &input)
+            .map_err(BaseTransactionError::eip8130)?;
         let execution_gas_available =
             intrinsic.execution_gas_available(gas_limit).ok_or_else(|| {
                 BaseTransactionError::eip8130("EIP-8130 sender-intrinsic gas exceeds the gas limit")
             })?;
-        Ok((intrinsic.sender_intrinsic(), intrinsic.payer_auth, execution_gas_available))
+        Ok((
+            Eip8130IntrinsicGas::new(intrinsic, input),
+            intrinsic.sender_intrinsic(),
+            intrinsic.payer_auth,
+            execution_gas_available,
+        ))
     }
 
     /// ABI-encodes the `ActorPolicyViolation(bytes32 actorId, address target)`
@@ -1490,7 +1582,9 @@ mod tests {
         AccountChange, ActorChange, ActorChangeType, BaseTxEnvelope, Call, ConfigChange,
         CreateEntry, Eip8130Signed, InitialActor, Predeploys, TxEip8130,
     };
-    use base_execution_eip8130::{AccountChangeApplier, DelegationApplied};
+    use base_execution_eip8130::{
+        AccountChangeApplier, DelegationApplied, IntrinsicGas, IntrinsicGasInput,
+    };
     use k256::ecdsa::SigningKey;
     use revm::{
         Database,
@@ -1760,6 +1854,52 @@ mod tests {
     }
 
     #[test]
+    fn execute_with_metadata_returns_canonical_intrinsic_and_phase_statuses() {
+        let key = signing_key(0x23);
+        let sender = eoa_address(&key);
+        let mut tx = base_tx();
+        let target = address!("0x00000000000000000000000000000000000000c2");
+        tx.calls = vec![vec![Call { to: target, data: Bytes::new() }]];
+        let signed = eoa_signed(tx, &key);
+
+        let mut evm = evm_with_accounts(
+            U256::from(10u64).pow(U256::from(18u64)),
+            sender,
+            &[(target, bytes!("00"))],
+        );
+        let tx_env = into_base_tx(&signed);
+        let encoded = tx_env.enveloped_tx.clone().expect("encoded EIP-8130 transaction");
+
+        let expected_input = IntrinsicGasInput::new(true, true);
+        let expected_gas =
+            IntrinsicGas::compute(&signed, &encoded, &expected_input).expect("intrinsic gas");
+        let output = evm.transact_raw_with_metadata(tx_env).expect("8130 execution should succeed");
+        let metadata = output.eip8130.expect("verified 8130 execution metadata");
+
+        assert!(output.result.result.is_success());
+        assert_eq!(metadata.intrinsic_gas.gas, expected_gas);
+        assert_eq!(metadata.intrinsic_gas.input, expected_input);
+        assert_eq!(metadata.phase_statuses, vec![1]);
+        assert_eq!(Eip8130PhaseStatuses::take(), metadata.phase_statuses);
+    }
+
+    #[test]
+    fn transact_raw_with_metadata_omits_metadata_for_standard_transactions() {
+        let sender = address!("0x0000000000000000000000000000000000000022");
+        let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), sender);
+        let mut tx = BaseTransaction::default();
+        tx.base.caller = sender;
+        tx.base.chain_id = Some(CHAIN_ID);
+        tx.base.gas_price = BASE_FEE.into();
+        tx.base.gas_limit = 21_000;
+
+        let output =
+            evm.transact_raw_with_metadata(tx).expect("standard transaction should execute");
+
+        assert!(output.eip8130.is_none());
+    }
+
+    #[test]
     fn simulate_estimate_covers_execution_gas_without_a_signature() {
         let key = signing_key(0x77);
         let sender = eoa_address(&key);
@@ -1782,10 +1922,13 @@ mod tests {
         // Estimate over the same shape with the sender supplied as `from` (the
         // signature is never recovered on the simulate path).
         let mut evm_sim = evm_with_accounts(initial, sender, &[(target, bytes!("00"))]);
-        evm_sim.ctx_mut().tx = into_base_tx(&signed);
-        evm_sim.ctx_mut().tx.base.caller = sender;
-        let sim_result =
-            Eip8130Executor::simulate(&mut evm_sim).expect("estimation should succeed");
+        let mut sim_tx = into_base_tx(&signed);
+        sim_tx.base.caller = sender;
+        sim_tx.eip8130.as_mut().expect("EIP-8130 parts").mode = Eip8130ExecutionMode::Simulate;
+        let sim_output =
+            evm_sim.transact_raw_with_metadata(sim_tx).expect("estimation should succeed");
+        assert!(sim_output.eip8130.is_none());
+        let sim_result = sim_output.result.result;
         let sim_gas = sim_result.tx_gas_used();
 
         assert!(sim_result.is_success(), "estimation should report success");

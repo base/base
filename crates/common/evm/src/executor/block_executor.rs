@@ -1,11 +1,12 @@
 //! Contains the block executor for base.
 
 use alloc::{boxed::Box, vec::Vec};
+use core::marker::PhantomData;
 
 use alloy_consensus::{Eip658Value, Header, Transaction, TransactionEnvelope, TxReceipt};
 use alloy_eips::{Encodable2718, Typed2718};
 use alloy_evm::{
-    Database, Evm, FromRecoveredTx, FromTxWithEncoded, RecoveredTx,
+    Database, Evm, EvmFactory, FromRecoveredTx, FromTxWithEncoded, RecoveredTx,
     block::{
         BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockValidationError,
         ExecutableTx, GasOutput, StateDB, SystemCaller,
@@ -17,19 +18,24 @@ use base_common_chains::Upgrades;
 use base_common_consensus::{DepositReceipt, Predeploys};
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use revm::{
-    Database as _, DatabaseCommit,
+    DatabaseCommit, Inspector,
     context::{Block, result::ResultAndState},
     database::DatabaseCommitExt,
 };
 
 use crate::{
-    BaseBlockExecutionCtx, BaseBlockExecutionError, BaseReceiptBuilder, BaseTime, BaseTxEnv,
-    BaseTxResult, DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, canyon,
+    BaseBlockExecutionCtx, BaseBlockExecutionError, BaseEvmExecutionFactory, BaseReceiptBuilder,
+    BaseTime, BaseTxEnv, BaseTxResult, DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, canyon,
 };
 
 /// Block executor for Base.
 #[derive(Debug)]
-pub struct BaseBlockExecutor<Evm, R: BaseReceiptBuilder, Spec> {
+pub struct BaseBlockExecutor<F, DB, I, R: BaseReceiptBuilder, Spec>
+where
+    F: EvmFactory,
+    DB: Database,
+    I: Inspector<F::Context<DB>>,
+{
     /// Spec.
     pub spec: Spec,
     /// Receipt builder.
@@ -37,7 +43,7 @@ pub struct BaseBlockExecutor<Evm, R: BaseReceiptBuilder, Spec> {
     /// Context for block execution.
     pub ctx: BaseBlockExecutionCtx,
     /// The EVM used by executor.
-    pub evm: Evm,
+    pub evm: F::Evm<DB, I>,
     /// Receipts of executed transactions.
     pub receipts: Vec<R::Receipt>,
     /// Total gas used by executed transactions.
@@ -51,16 +57,25 @@ pub struct BaseBlockExecutor<Evm, R: BaseReceiptBuilder, Spec> {
     pub is_regolith: bool,
     /// Utility to call system smart contracts.
     pub system_caller: SystemCaller<Spec>,
+    /// Factory marker used to route execution through the Base-specific result path.
+    pub _factory: PhantomData<F>,
 }
 
-impl<E, R, Spec> BaseBlockExecutor<E, R, Spec>
+impl<F, DB, I, R, Spec> BaseBlockExecutor<F, DB, I, R, Spec>
 where
-    E: Evm,
+    F: BaseEvmExecutionFactory,
+    DB: Database + DatabaseCommit + StateDB,
+    I: Inspector<F::Context<DB>>,
     R: BaseReceiptBuilder,
     Spec: Upgrades + Clone,
 {
     /// Creates a new [`BaseBlockExecutor`].
-    pub fn new(evm: E, ctx: BaseBlockExecutionCtx, spec: Spec, receipt_builder: R) -> Self {
+    pub fn new(
+        evm: F::Evm<DB, I>,
+        ctx: BaseBlockExecutionCtx,
+        spec: Spec,
+        receipt_builder: R,
+    ) -> Self {
         Self {
             is_regolith: spec
                 .is_regolith_active_at_timestamp(evm.block().timestamp().saturating_to()),
@@ -72,22 +87,24 @@ where
             gas_used: 0,
             da_footprint_used: 0,
             ctx,
+            _factory: PhantomData,
         }
     }
 }
 
-impl<E, R, Spec> BaseBlockExecutor<E, R, Spec>
+impl<F, DB, I, R, Spec> BaseBlockExecutor<F, DB, I, R, Spec>
 where
-    E: Evm<
-            DB: Database + DatabaseCommit + StateDB,
-            Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction> + BaseTxEnv,
-        >,
+    F: BaseEvmExecutionFactory,
+    DB: Database + DatabaseCommit + StateDB,
+    I: Inspector<F::Context<DB>>,
+    F::Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction> + BaseTxEnv,
+    F::Evm<DB, I>: Evm<DB: Database + DatabaseCommit + StateDB>,
     R: BaseReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt>,
     Spec: Upgrades,
 {
     fn jovian_da_footprint_estimation(
         &mut self,
-        tx_env: &E::Tx,
+        tx_env: &<F::Evm<DB, I> as Evm>::Tx,
         tx: impl RecoveredTx<R::Transaction>,
     ) -> Result<u64, BlockExecutionError> {
         // Try to use the enveloped tx if it exists, otherwise use the encoded 2718 bytes
@@ -111,12 +128,13 @@ where
     }
 }
 
-impl<E, R, Spec> BlockExecutor for BaseBlockExecutor<E, R, Spec>
+impl<F, DB, I, R, Spec> BlockExecutor for BaseBlockExecutor<F, DB, I, R, Spec>
 where
-    E: Evm<
-            DB: Database + DatabaseCommit + StateDB,
-            Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction> + BaseTxEnv,
-        >,
+    F: BaseEvmExecutionFactory,
+    DB: Database + DatabaseCommit + StateDB,
+    I: Inspector<F::Context<DB>>,
+    F::Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction> + BaseTxEnv,
+    F::Evm<DB, I>: Evm<DB: Database + DatabaseCommit + StateDB>,
     R: BaseReceiptBuilder<
             Transaction: Transaction + Encodable2718 + TransactionEnvelope<TxType: Send + 'static>,
             Receipt: TxReceipt,
@@ -125,8 +143,11 @@ where
 {
     type Transaction = R::Transaction;
     type Receipt = R::Receipt;
-    type Evm = E;
-    type Result = BaseTxResult<E::HaltReason, <R::Transaction as TransactionEnvelope>::TxType>;
+    type Evm = F::Evm<DB, I>;
+    type Result = BaseTxResult<
+        <Self::Evm as Evm>::HaltReason,
+        <R::Transaction as TransactionEnvelope>::TxType,
+    >;
 
     fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
         self.system_caller.apply_blockhashes_contract_call(self.ctx.parent_hash, &mut self.evm)?;
@@ -210,10 +231,13 @@ where
         };
 
         // Execute transaction and return the result
-        let result = self.evm.transact(tx_env).map_err(|err| {
+        let output = F::transact_raw_with_metadata(&mut self.evm, tx_env).map_err(|err| {
             let hash = tx.tx().trie_hash();
             BlockExecutionError::evm(err, hash)
         })?;
+        let result = output.result;
+        #[cfg(feature = "std")]
+        let eip8130 = output.eip8130;
 
         // Fetch the depositor account from the database for the deposit nonce.
         // This *only* needs to be done post-Regolith for deposit transactions.
@@ -231,6 +255,8 @@ where
             is_deposit,
             sender: *tx.signer(),
             depositor,
+            #[cfg(feature = "std")]
+            eip8130,
         })
     }
 
@@ -240,6 +266,7 @@ where
             is_deposit,
             sender: _,
             depositor,
+            ..
         } = output;
 
         let tx_gas_used = result.tx_gas_used();
@@ -331,9 +358,7 @@ mod tests {
 
     use alloy_consensus::{SignableTransaction, TxLegacy, transaction::Recovered};
     use alloy_eips::eip2718::WithEncoded;
-    use alloy_evm::{
-        EvmEnv, EvmFactory, ToTxEnv, block::BlockExecutorFactory, precompiles::PrecompilesMap,
-    };
+    use alloy_evm::{EvmEnv, EvmFactory, ToTxEnv, block::BlockExecutorFactory};
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Address, Signature, U256, uint};
     use base_common_chains::{BaseUpgradeExt, ChainUpgrades};
@@ -350,8 +375,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        AlloyReceiptBuilder, BaseBlockExecutorFactory, BaseEvm, BaseEvmFactory, BaseSpecId,
-        Builder, DefaultBase, L1BlockInfo,
+        AlloyReceiptBuilder, BaseBlockExecutorFactory, BaseEvmFactory, BaseSpecId, Builder,
+        DefaultBase, L1BlockInfo,
     };
 
     #[test]
@@ -430,7 +455,9 @@ mod tests {
         gas_limit: u64,
         jovian_timestamp: u64,
     ) -> BaseBlockExecutor<
-        BaseEvm<&'a mut revm::database::State<InMemoryDB>, NoOpInspector, PrecompilesMap>,
+        BaseEvmFactory,
+        &'a mut revm::database::State<InMemoryDB>,
+        NoOpInspector,
         &'a AlloyReceiptBuilder,
         &'a ChainUpgrades,
     > {
@@ -497,8 +524,12 @@ mod tests {
         let expected_da_footprint = executor.jovian_da_footprint_estimation(&tx_env, &tx).unwrap();
 
         // make sure we can use both `WithEncoded` and transaction itself as inputs.
-        let res = executor.execute_transaction(&tx);
-        assert!(res.is_ok());
+        let res = executor
+            .execute_transaction_without_commit(&tx)
+            .expect("legacy transaction should execute");
+        #[cfg(feature = "std")]
+        assert!(res.eip8130.is_none());
+        executor.commit_transaction(res);
 
         assert!(executor.da_footprint_used == expected_da_footprint);
     }
