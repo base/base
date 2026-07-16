@@ -21,6 +21,7 @@ use base_tx_forwarding::{
 use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
 use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
 use base_upgrade_signal::UpgradeSignalStartupMode;
+use tracing::warn;
 use url::Url;
 
 use crate::upgrade_signal::{
@@ -40,6 +41,18 @@ pub struct MeteringArgs {
         requires_all = ["enable_metering", "metering_target_flashblocks_per_block"]
     )]
     pub metering_gas_limit: Option<u64>,
+
+    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
+    #[arg(long = "metering.execution-time-us", requires = "enable_metering", hide = true)]
+    pub metering_execution_time_us: Option<u64>,
+
+    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
+    #[arg(
+        long = "metering.state-root-time-us",
+        requires_all = ["enable_metering", "metering_target_flashblocks_per_block"],
+        hide = true
+    )]
+    pub metering_state_root_time_us: Option<u64>,
 
     /// Whole-block data availability byte budget for priority fee estimation.
     #[arg(
@@ -370,6 +383,12 @@ impl StandardBaseRethNode {
             transaction_event_node_role: transaction_event_node_role(),
             flashblocks_config: flashblocks_config.clone(),
         });
+
+        if args.metering.metering_execution_time_us.is_some()
+            || args.metering.metering_state_root_time_us.is_some()
+        {
+            warn!("deprecated metering resource limit flags are ignored");
+        }
 
         let resource_limits = MeteringResourceLimits {
             gas_limit: args.metering.metering_gas_limit,
@@ -732,5 +751,23 @@ mod tests {
 
         assert_eq!(config.file_path, PathBuf::from("/tmp/env-events.jsonl"));
         assert_eq!(config.network, "base-devnet");
+    }
+
+    #[test]
+    fn test_standard_node_args_accepts_deprecated_metering_flags() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "reth",
+            "--enable-metering",
+            "--metering.execution-time-us",
+            "5000000",
+            "--metering.state-root-time-us",
+            "1000000",
+            "--metering.target-flashblocks-per-block",
+            "4",
+        ])
+        .args;
+
+        assert_eq!(args.metering.metering_execution_time_us, Some(5_000_000));
+        assert_eq!(args.metering.metering_state_root_time_us, Some(1_000_000));
     }
 }

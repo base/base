@@ -17,6 +17,12 @@ pub struct MeterBlockResponse {
     pub signer_recovery_time_us: u128,
     /// Duration of EVM execution in microseconds
     pub execution_time_us: u128,
+    /// Deprecated state-root calculation duration in microseconds.
+    ///
+    /// State-root simulation was removed from this profiling path. The field is retained for
+    /// response compatibility and is always serialized as zero by this version.
+    #[serde(default)]
+    pub state_root_time_us: u128,
     /// Total duration (signer recovery + EVM execution) in microseconds
     pub total_time_us: u128,
     /// Per-transaction metering data
@@ -68,4 +74,32 @@ pub struct MeteredPriorityFeeResponse {
     pub blocks_sampled: u64,
     /// Per-resource estimates.
     pub resource_estimates: Vec<ResourceFeeEstimateResponse>,
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::B256;
+
+    use super::{MeterBlockResponse, MeterBlockTransactions};
+
+    #[test]
+    fn meter_block_response_serializes_deprecated_state_root_time_as_zero() {
+        let response = MeterBlockResponse {
+            block_hash: B256::ZERO,
+            block_number: 1,
+            signer_recovery_time_us: 2,
+            execution_time_us: 3,
+            state_root_time_us: 0,
+            total_time_us: 5,
+            transactions: vec![MeterBlockTransactions {
+                tx_hash: B256::ZERO,
+                gas_used: 21_000,
+                execution_time_us: 3,
+            }],
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+
+        assert!(json.contains("\"stateRootTimeUs\":0"));
+    }
 }

@@ -116,6 +116,7 @@ where
         block_number,
         signer_recovery_time_us: signer_recovery_time,
         execution_time_us: execution_time,
+        state_root_time_us: 0,
         total_time_us: total_time,
         transactions: transaction_times,
     })
@@ -171,6 +172,7 @@ mod tests {
             response.execution_time_us > 0,
             "execution time should be non-zero due to EVM setup"
         );
+        assert_eq!(response.state_root_time_us, 0);
         assert_eq!(
             response.total_time_us,
             response.signer_recovery_time_us + response.execution_time_us

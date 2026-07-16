@@ -11,6 +11,7 @@ use base_node_core::args::RollupArgs;
 use base_observability_events::{
     DEFAULT_QUEUE_CAPACITY, TransactionEventProducer, TransactionEventWriterConfig,
 };
+use tracing::warn;
 
 /// Parameters for Flashblocks configuration.
 ///
@@ -137,6 +138,22 @@ pub struct Args {
     #[arg(long = "builder.max-execution-time-per-tx-us")]
     pub max_execution_time_per_tx_us: Option<u128>,
 
+    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
+    #[arg(long = "builder.flashblock-execution-time-budget-us", hide = true)]
+    pub flashblock_execution_time_budget_us: Option<u128>,
+
+    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
+    #[arg(long = "builder.block-state-root-gas-limit", hide = true)]
+    pub block_state_root_gas_limit: Option<u64>,
+
+    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
+    #[arg(long = "builder.state-root-gas-coefficient", default_value = "0.02", hide = true)]
+    pub state_root_gas_coefficient: f64,
+
+    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
+    #[arg(long = "builder.state-root-gas-anchor-us", default_value = "5000", hide = true)]
+    pub state_root_gas_anchor_us: u128,
+
     /// Execution metering mode: off, dry-run, or enforce
     #[arg(long = "builder.execution-metering-mode", value_enum, default_value = "off")]
     pub execution_metering_mode: ExecutionMeteringMode,
@@ -218,6 +235,10 @@ impl Default for Args {
             chain_block_time: 1000,
             max_gas_per_txn: None,
             max_execution_time_per_tx_us: None,
+            flashblock_execution_time_budget_us: None,
+            block_state_root_gas_limit: None,
+            state_root_gas_coefficient: 0.02,
+            state_root_gas_anchor_us: 5000,
             execution_metering_mode: ExecutionMeteringMode::Off,
             extra_block_deadline_secs: 20,
             enable_resource_metering: false,
@@ -245,6 +266,14 @@ impl Args {
         self,
         metering_provider: SharedMeteringProvider,
     ) -> eyre::Result<BuilderConfig> {
+        if self.flashblock_execution_time_budget_us.is_some()
+            || self.block_state_root_gas_limit.is_some()
+            || self.state_root_gas_coefficient != 0.02
+            || self.state_root_gas_anchor_us != 5_000
+        {
+            warn!("deprecated builder resource limit flags are ignored");
+        }
+
         let flashblocks_ws_addr = SocketAddr::new(
             self.flashblocks.flashblocks_addr.parse()?,
             self.flashblocks.flashblocks_port,
@@ -285,9 +314,16 @@ mod tests {
     use alloy_primitives::{B256, TxHash, U256};
     use base_builder_core::{MeteringProvider, NoopMeteringProvider};
     use base_bundles::MeterBundleResponse;
+    use clap::Parser;
     use rstest::rstest;
 
     use super::*;
+
+    #[derive(Debug, Parser)]
+    struct CommandParser {
+        #[command(flatten)]
+        args: Args,
+    }
 
     fn convert(args: Args) -> BuilderConfig {
         let metering_provider: SharedMeteringProvider = Arc::new(NoopMeteringProvider);
@@ -418,6 +454,27 @@ mod tests {
     fn metering_store_ttl_defaults_to_30s() {
         let args = Args::default();
         assert_eq!(args.metering_store_ttl_secs, 30);
+    }
+
+    #[test]
+    fn deprecated_resource_limit_flags_remain_accepted() {
+        let args = CommandParser::parse_from([
+            "builder",
+            "--builder.flashblock-execution-time-budget-us",
+            "5000000",
+            "--builder.block-state-root-gas-limit",
+            "1000000",
+            "--builder.state-root-gas-coefficient",
+            "0.1",
+            "--builder.state-root-gas-anchor-us",
+            "5000",
+        ])
+        .args;
+
+        assert_eq!(args.flashblock_execution_time_budget_us, Some(5_000_000));
+        assert_eq!(args.block_state_root_gas_limit, Some(1_000_000));
+        assert_eq!(args.state_root_gas_coefficient, 0.1);
+        assert_eq!(args.state_root_gas_anchor_us, 5_000);
     }
 
     #[test]

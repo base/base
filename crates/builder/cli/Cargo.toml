@@ -23,6 +23,7 @@ clap = { workspace = true, features = ["derive", "env"] }
 
 # misc
 eyre.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 # workspace

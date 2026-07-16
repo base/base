@@ -3411,6 +3411,7 @@ dependencies = [
  "clap",
  "eyre",
  "rstest",
+ "tracing",
 ]
 
 [[package]]

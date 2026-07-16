@@ -1,7 +1,7 @@
 //! Traits for the metering RPC module.
 
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::B256;
+use alloy_primitives::{B256, TxHash};
 use base_bundles::{Bundle, MeterBundleResponse};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 
@@ -60,4 +60,24 @@ pub trait MeteringApi {
         &self,
         bundle: Bundle,
     ) -> RpcResult<MeteredPriorityFeeResponse>;
+
+    /// Deprecated compatibility shim for externally submitted metering data.
+    ///
+    /// The execution node no longer stores this data or uses it for priority fee estimation.
+    #[method(name = "setMeteringInformation")]
+    async fn set_metering_information(
+        &self,
+        tx_hash: TxHash,
+        meter: MeterBundleResponse,
+    ) -> RpcResult<()>;
+
+    /// Deprecated compatibility shim. The execution node no longer has an external metering
+    /// collection switch.
+    #[method(name = "setMeteringEnabled")]
+    async fn set_metering_enabled(&self, enabled: bool) -> RpcResult<()>;
+
+    /// Deprecated compatibility shim. The execution node no longer stores external metering
+    /// information.
+    #[method(name = "clearMeteringInformation")]
+    async fn clear_metering_information(&self) -> RpcResult<()>;
 }
