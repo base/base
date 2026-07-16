@@ -4,13 +4,14 @@ use alloc::{string::ToString, vec::Vec};
 
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
+use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, ContractStorage, Result};
 use revm::state::Bytecode;
 
 use crate::{
     ActivationRegistryStorage, B20AssetInit, B20AssetStorage, B20AssetToken, B20FactoryStorage,
     B20StablecoinInit, B20StablecoinStorage, B20StablecoinToken, B20TokenRole, B20Variant, Factory,
-    IB20Factory, PolicyHandle, Token,
+    IB20Factory, PolicyRegistryStorage, PolicyVersions, Token,
 };
 
 /// Version byte for `B20StablecoinEventParams` inside `B20Created.variantParams`.
@@ -42,10 +43,14 @@ impl FactoryV1 {
         common: CommonParams,
         init: B20StablecoinInit,
         init_calls: Vec<Bytes>,
+        upgrade: BaseUpgrade,
     ) -> Result<()> {
+        let policy_version = PolicyVersions::from_base_upgrade(upgrade)
+            .ok_or_else(|| BasePrecompileError::Revert(Bytes::new()))?;
         let mut token = B20StablecoinToken::with_storage_and_policy(
             B20StablecoinStorage::from_address(token_address, storage.storage()),
-            PolicyHandle::new(storage.storage()),
+            PolicyRegistryStorage::new(storage.storage()),
+            policy_version,
         );
         let (name, symbol, currency) =
             (init.name.clone(), init.symbol.clone(), init.currency.clone());
@@ -92,10 +97,14 @@ impl FactoryV1 {
         common: CommonParams,
         init: B20AssetInit,
         init_calls: Vec<Bytes>,
+        upgrade: BaseUpgrade,
     ) -> Result<()> {
+        let policy_version = PolicyVersions::from_base_upgrade(upgrade)
+            .ok_or_else(|| BasePrecompileError::Revert(Bytes::new()))?;
         let mut token = B20AssetToken::with_storage_and_policy(
             B20AssetStorage::from_address(token_address, storage.storage()),
-            PolicyHandle::new(storage.storage()),
+            PolicyRegistryStorage::new(storage.storage()),
+            policy_version,
         );
         let (name, symbol, decimals) = (init.name.clone(), init.symbol.clone(), init.decimals);
         token.accounting_mut().initialize(init)?;
@@ -161,6 +170,7 @@ impl Factory for FactoryV1 {
         storage: &mut B20FactoryStorage<'_>,
         call: IB20Factory::createB20Call,
         address_hash: B256,
+        upgrade: BaseUpgrade,
     ) -> Result<Address> {
         let variant = B20Variant::from_abi(call.variant)
             .ok_or_else(|| BasePrecompileError::revert(IB20Factory::InvalidVariant {}))?;
@@ -187,10 +197,10 @@ impl Factory for FactoryV1 {
         let init_calls = call.initCalls;
         match params {
             TokenCreateParams::Stablecoin { common, init } => {
-                self.init_stablecoin(storage, token_address, common, init, init_calls)?;
+                self.init_stablecoin(storage, token_address, common, init, init_calls, upgrade)?;
             }
             TokenCreateParams::Asset { common, init } => {
-                self.init_asset_token(storage, token_address, common, init, init_calls)?;
+                self.init_asset_token(storage, token_address, common, init, init_calls, upgrade)?;
             }
         }
 
