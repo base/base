@@ -219,6 +219,7 @@ mod tests {
         ProverConfig {
             l1_eth_url: "http://127.0.0.1:1".to_string(),
             l2_eth_url: "http://127.0.0.1:1".to_string(),
+            l2_node_url: "http://127.0.0.1:1".to_string(),
             l1_beacon_url: "http://127.0.0.1:1".to_string(),
             l2_chain_id: 0,
             rollup_config: RollupConfig::default(),

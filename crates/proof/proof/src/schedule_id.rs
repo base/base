@@ -18,6 +18,8 @@ impl ScheduleId {
     pub fn from_upgrades(upgrades: &UpgradeConfig) -> B256 {
         let mut schedule_id = B256::ZERO;
         for (index, (_, timestamp)) in upgrades.iter().enumerate() {
+            // unwrap_or_default() maps None (unscheduled) to 0, matching the onchain
+            // ProtocolVersions.scheduleId() which uses 0 for unscheduled entries.
             schedule_id = Self::next_link(schedule_id, index as u64, timestamp.unwrap_or_default());
         }
 

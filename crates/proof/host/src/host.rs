@@ -192,7 +192,7 @@ impl Host {
 
     async fn resolve_online_config(&self, providers: &HostProviders) -> Result<HostConfig> {
         let rollup_config: RollupConfig =
-            serde_json::from_value(providers.l2.optimism_rollup_config().await?)?;
+            serde_json::from_value(providers.l2_node.optimism_rollup_config().await?)?;
 
         // Fail fast if the L2 RPC serves a config for the wrong chain; the guest re-checks this,
         // but a host-side error is clearer and avoids wasted work.
@@ -243,8 +243,14 @@ impl Host {
         ))
         .await;
         let l2_provider = rpc_provider::<Base>(&self.config.prover.l2_eth_url).await?;
+        let l2_node_provider = rpc_provider(&self.config.prover.l2_node_url).await?;
 
-        Ok(HostProviders { l1: l1_provider, blobs: blob_provider, l2: l2_provider })
+        Ok(HostProviders {
+            l1: l1_provider,
+            blobs: blob_provider,
+            l2: l2_provider,
+            l2_node: l2_node_provider,
+        })
     }
 }
 
