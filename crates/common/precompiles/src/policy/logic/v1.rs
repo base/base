@@ -7,7 +7,8 @@ use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
-    IPolicyRegistry, IPolicyRegistry::PolicyType, PackedPolicy, PolicyAccounting, PolicyRegistryLogic,
+    IPolicyRegistry, IPolicyRegistry::PolicyType, PackedPolicy, PolicyAccounting,
+    PolicyRegistryLogic,
 };
 
 /// First `PolicyRegistry` implementation. Frozen as of its activation at Beryl.
@@ -278,11 +279,7 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryV1 {
         Ok(())
     }
 
-    fn finalize_update_admin(
-        &self,
-        storage: &mut S,
-        policy_id: u64,
-    ) -> Result<()> {
+    fn finalize_update_admin(&self, storage: &mut S, policy_id: u64) -> Result<()> {
         let packed = self.require_custom(storage, policy_id)?;
         let pending = storage.read_pending_admin(policy_id)?;
         if pending == Address::ZERO {
@@ -361,12 +358,7 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryV1 {
         )
     }
 
-    fn is_authorized(
-        &self,
-        storage: &S,
-        policy_id: u64,
-        account: Address,
-    ) -> Result<bool> {
+    fn is_authorized(&self, storage: &S, policy_id: u64, account: Address) -> Result<bool> {
         // Malformed IDs (type byte > 1) are treated as unauthorized rather than reverting.
         if Self::policy_id_type(policy_id) > PolicyType::ALLOWLIST as u8 {
             return Ok(false);
@@ -414,11 +406,7 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryV1 {
         Ok(packed.admin())
     }
 
-    fn pending_policy_admin(
-        &self,
-        storage: &S,
-        policy_id: u64,
-    ) -> Result<Address> {
+    fn pending_policy_admin(&self, storage: &S, policy_id: u64) -> Result<Address> {
         if Self::policy_id_type(policy_id) > PolicyType::ALLOWLIST as u8 {
             return Ok(Address::ZERO);
         }
@@ -688,10 +676,8 @@ mod tests {
         let mut rt = initialized();
         let id = create_allowlist(&mut rt);
         LOGIC.update_allowlist(&mut rt, id, true, vec![ALICE]).unwrap();
-        let updated = IPolicyRegistry::AllowlistUpdated::decode_log_data(
-            rt.events.last().unwrap(),
-        )
-        .unwrap();
+        let updated =
+            IPolicyRegistry::AllowlistUpdated::decode_log_data(rt.events.last().unwrap()).unwrap();
         assert_eq!(updated.policyId, id);
         assert_eq!(updated.updater, ADMIN);
         assert!(updated.allowed);

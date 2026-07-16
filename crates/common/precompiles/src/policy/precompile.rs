@@ -4,8 +4,8 @@ use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
 use base_common_genesis::BaseUpgrade;
 
 use crate::{
-    NoopPrecompileCallObserver, PolicyRegistryStorage,
-    PrecompileCallObserver, macros::base_precompile,
+    NoopPrecompileCallObserver, PolicyRegistryStorage, PrecompileCallObserver,
+    macros::base_precompile,
 };
 
 /// EVM entry point for the `PolicyRegistry` precompile.

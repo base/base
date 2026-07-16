@@ -172,8 +172,8 @@ mod tests {
     use k256::ecdsa::SigningKey;
 
     use crate::{
-        IB20, FakePolicyAccounting, InMemoryTokenAccounting, PermitArgs, Permittable, TestToken, Token,
-        TokenAccounting,
+        FakePolicyAccounting, IB20, InMemoryTokenAccounting, PermitArgs, Permittable, TestToken,
+        Token, TokenAccounting,
         common::ops::permittable::{DOMAIN_TYPEHASH, VERSION},
     };
 

@@ -3,9 +3,7 @@
 use alloy_primitives::{Address, B256, U256};
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use crate::{
-    B20PausableFeature, B20PolicyType, B20TokenRole, IB20, Token, TokenAccounting,
-};
+use crate::{B20PausableFeature, B20PolicyType, B20TokenRole, IB20, Token, TokenAccounting};
 
 /// Authorization and policy guard helpers for B-20 operations.
 #[derive(Debug, Clone, Copy)]
@@ -93,7 +91,7 @@ mod tests {
     use base_precompile_storage::BasePrecompileError;
 
     use crate::{
-        B20Guards, B20PolicyType, IB20, FakePolicyAccounting, InMemoryTokenAccounting,
+        B20Guards, B20PolicyType, FakePolicyAccounting, IB20, InMemoryTokenAccounting,
         PolicyRegistryStorage, TestToken,
     };
 

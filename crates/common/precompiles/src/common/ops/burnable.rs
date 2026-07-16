@@ -85,7 +85,7 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        B20PausableFeature, B20PolicyType, B20TokenRole, Burnable, IB20, FakePolicyAccounting,
+        B20PausableFeature, B20PolicyType, B20TokenRole, Burnable, FakePolicyAccounting, IB20,
         InMemoryTokenAccounting, PolicyRegistryStorage, TestToken, Token, TokenAccounting,
     };
 

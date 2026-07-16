@@ -20,8 +20,7 @@ use crate::{
     IB20::{self, IB20Calls as C},
     IB20Stablecoin::{self, IB20StablecoinCalls as SC},
     NoopPrecompileCallObserver, PermitArgs, PolicyAccounting, PrecompileCallObserver,
-    StablecoinAccounting,
-    StablecoinV1, StablecoinVersion, StablecoinVersions,
+    StablecoinAccounting, StablecoinV1, StablecoinVersion, StablecoinVersions,
     macros::decode_precompile_call,
 };
 

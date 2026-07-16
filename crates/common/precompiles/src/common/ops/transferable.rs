@@ -155,7 +155,7 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        B20PausableFeature, B20PolicyType, IB20, FakePolicyAccounting, InMemoryTokenAccounting,
+        B20PausableFeature, B20PolicyType, FakePolicyAccounting, IB20, InMemoryTokenAccounting,
         PolicyRegistryStorage, TestToken, Token, TokenAccounting, Transferable,
     };
 
@@ -165,7 +165,9 @@ mod tests {
     const TOKEN_ADDR: Address = Address::repeat_byte(1);
 
     fn make_token() -> TestToken {
-        TestToken::with_storage_and_policy(InMemoryTokenAccounting::new(TOKEN_ADDR), FakePolicyAccounting::new(),
+        TestToken::with_storage_and_policy(
+            InMemoryTokenAccounting::new(TOKEN_ADDR),
+            FakePolicyAccounting::new(),
         )
     }
 

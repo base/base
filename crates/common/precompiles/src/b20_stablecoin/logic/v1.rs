@@ -845,7 +845,6 @@ mod tests {
         }
     }
 
-
     /// Minimal [`PolicyAccounting`] backed by in-memory maps.
     #[derive(Debug)]
     struct FakePolicyAccounting {
@@ -934,11 +933,14 @@ mod tests {
         }
     }
 
-
     type Tok = B20StablecoinToken<FakeAccounting, FakePolicyAccounting>;
 
     fn token() -> Tok {
-        B20StablecoinToken::with_storage_and_policy(FakeAccounting::new(), FakePolicyAccounting::new(), PolicyVersion::V1)
+        B20StablecoinToken::with_storage_and_policy(
+            FakeAccounting::new(),
+            FakePolicyAccounting::new(),
+            PolicyVersion::V1,
+        )
     }
 
     /// Grants `role` to `account` and keeps the admin member-count consistent.
@@ -1047,12 +1049,8 @@ mod tests {
         fund(&mut tok, ALICE, U256::from(100u64));
         // ALLOWLIST with no members → sender/receiver policy checks revert.
         const POLICY: u64 = (1u64 << 56) | 7;
-        tok.accounting_mut()
-            .set_policy_id(B20PolicyType::TransferSender.id(), POLICY)
-            .unwrap();
-        tok.accounting_mut()
-            .set_policy_id(B20PolicyType::TransferReceiver.id(), POLICY)
-            .unwrap();
+        tok.accounting_mut().set_policy_id(B20PolicyType::TransferSender.id(), POLICY).unwrap();
+        tok.accounting_mut().set_policy_id(B20PolicyType::TransferReceiver.id(), POLICY).unwrap();
         tok.policy_storage_mut().create_existing_policy(POLICY);
         assert!(LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(10u64), false).is_err());
         // Authorize both parties → transfer succeeds through the guard path.
@@ -1186,7 +1184,10 @@ mod tests {
         fund(&mut tok, ALICE, U256::from(100u64));
         // ALWAYS_BLOCK => ALICE is unauthorized/blocked; privileged skips the role check.
         tok.accounting_mut()
-            .set_policy_id(B20PolicyType::TransferSender.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID)
+            .set_policy_id(
+                B20PolicyType::TransferSender.id(),
+                PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+            )
             .unwrap();
         LOGIC.burn_blocked(&mut tok, ADMIN, ALICE, U256::from(40u64), true).unwrap();
         assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(60u64));

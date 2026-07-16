@@ -139,7 +139,8 @@ impl<'a> B20FactoryStorage<'a> {
     {
         let version = PolicyVersions::from_base_upgrade(upgrade)
             .ok_or_else(|| BasePrecompileError::Revert(Bytes::new()))?;
-        let mut token = B20StablecoinToken::with_storage_and_policy(B20StablecoinStorage::from_address(token_address, self.storage),
+        let mut token = B20StablecoinToken::with_storage_and_policy(
+            B20StablecoinStorage::from_address(token_address, self.storage),
             PolicyRegistryStorage::new(self.storage),
             version,
         );
@@ -199,7 +200,8 @@ impl<'a> B20FactoryStorage<'a> {
     {
         let version = PolicyVersions::from_base_upgrade(upgrade)
             .ok_or_else(|| BasePrecompileError::Revert(Bytes::new()))?;
-        let mut token = B20AssetToken::with_storage_and_policy(B20AssetStorage::from_address(token_address, self.storage),
+        let mut token = B20AssetToken::with_storage_and_policy(
+            B20AssetStorage::from_address(token_address, self.storage),
             PolicyRegistryStorage::new(self.storage),
             version,
         );
@@ -449,7 +451,8 @@ mod tests {
         addr: Address,
         ctx: StorageCtx<'a>,
     ) -> B20AssetToken<B20AssetStorage<'a>, PolicyRegistryStorage<'a>> {
-        B20AssetToken::with_storage_and_policy(B20AssetStorage::from_address(addr, ctx),
+        B20AssetToken::with_storage_and_policy(
+            B20AssetStorage::from_address(addr, ctx),
             PolicyRegistryStorage::new(ctx),
             PolicyVersion::V1,
         )
@@ -1005,10 +1008,18 @@ mod tests {
         StorageCtx::enter(&mut storage, |ctx| {
             let mut factory = B20FactoryStorage::new(ctx);
             let first = factory
-                .create_b20(Address::repeat_byte(0xCA), b20_call(B256::repeat_byte(0x07)), TEST_UPGRADE)
+                .create_b20(
+                    Address::repeat_byte(0xCA),
+                    b20_call(B256::repeat_byte(0x07)),
+                    TEST_UPGRADE,
+                )
                 .unwrap();
             let second = factory
-                .create_b20(Address::repeat_byte(0xCA), b20_call(B256::repeat_byte(0x08)), TEST_UPGRADE)
+                .create_b20(
+                    Address::repeat_byte(0xCA),
+                    b20_call(B256::repeat_byte(0x08)),
+                    TEST_UPGRADE,
+                )
                 .unwrap();
 
             assert_ne!(first, second);
@@ -1237,7 +1248,8 @@ mod tests {
             let mut factory = B20FactoryStorage::new(ctx);
             let token_addr = factory.create_b20(caller, call, TEST_UPGRADE).unwrap();
 
-            let token = B20AssetToken::with_storage_and_policy(B20AssetStorage::from_address(token_addr, ctx),
+            let token = B20AssetToken::with_storage_and_policy(
+                B20AssetStorage::from_address(token_addr, ctx),
                 PolicyRegistryStorage::new(ctx),
                 PolicyVersion::V1,
             );
@@ -1268,7 +1280,8 @@ mod tests {
             let mut factory = B20FactoryStorage::new(ctx);
             let token_addr = factory.create_b20(caller, call_no_admin, TEST_UPGRADE).unwrap();
 
-            let token = B20AssetToken::with_storage_and_policy(B20AssetStorage::from_address(token_addr, ctx),
+            let token = B20AssetToken::with_storage_and_policy(
+                B20AssetStorage::from_address(token_addr, ctx),
                 PolicyRegistryStorage::new(ctx),
                 PolicyVersion::V1,
             );

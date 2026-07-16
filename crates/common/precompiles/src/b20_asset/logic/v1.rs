@@ -999,7 +999,6 @@ mod tests {
         }
     }
 
-
     /// Minimal [`PolicyAccounting`] backed by in-memory maps.
     #[derive(Debug)]
     struct FakePolicyAccounting {
@@ -1083,11 +1082,14 @@ mod tests {
         }
     }
 
-
     type Tok = B20AssetToken<FakeAccounting, FakePolicyAccounting>;
 
     fn token() -> Tok {
-        B20AssetToken::with_storage_and_policy(FakeAccounting::new(), FakePolicyAccounting::new(), PolicyVersion::V1)
+        B20AssetToken::with_storage_and_policy(
+            FakeAccounting::new(),
+            FakePolicyAccounting::new(),
+            PolicyVersion::V1,
+        )
     }
 
     /// Grants `role` to `account` and keeps the admin member-count consistent.
@@ -1275,7 +1277,10 @@ mod tests {
         let mut tok = token();
         fund(&mut tok, ALICE, U256::from(100u64));
         tok.accounting_mut()
-            .set_policy_id(B20PolicyType::TransferSender.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID)
+            .set_policy_id(
+                B20PolicyType::TransferSender.id(),
+                PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+            )
             .unwrap();
         LOGIC.burn_blocked(&mut tok, ADMIN, ALICE, U256::from(40u64), true).unwrap();
         assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(60u64));

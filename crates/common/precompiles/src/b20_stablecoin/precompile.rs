@@ -38,7 +38,8 @@ impl B20StablecoinPrecompile {
             let Some(version) = PolicyVersions::from_base_upgrade(upgrade) else {
                 return BasePrecompileError::Revert(Bytes::new()).into_precompile_result(0, 0);
             };
-            B20StablecoinToken::with_storage_and_policy(B20StablecoinStorage::from_address(token_address, ctx),
+            B20StablecoinToken::with_storage_and_policy(
+                B20StablecoinStorage::from_address(token_address, ctx),
                 PolicyRegistryStorage::new(ctx),
                 version,
             )

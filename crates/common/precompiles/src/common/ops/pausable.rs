@@ -93,15 +93,17 @@ mod tests {
     use base_precompile_storage::BasePrecompileError;
 
     use crate::{
-        B20PausableFeature, B20TokenRole, IB20, FakePolicyAccounting, InMemoryTokenAccounting, Pausable,
-        TestToken, Token,
+        B20PausableFeature, B20TokenRole, FakePolicyAccounting, IB20, InMemoryTokenAccounting,
+        Pausable, TestToken, Token,
     };
 
     const CALLER: Address = Address::repeat_byte(0xaa);
     const TOKEN_ADDR: Address = Address::repeat_byte(1);
 
     fn make_token() -> TestToken {
-        TestToken::with_storage_and_policy(InMemoryTokenAccounting::new(TOKEN_ADDR), FakePolicyAccounting::new(),
+        TestToken::with_storage_and_policy(
+            InMemoryTokenAccounting::new(TOKEN_ADDR),
+            FakePolicyAccounting::new(),
         )
     }
 

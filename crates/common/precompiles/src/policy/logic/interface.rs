@@ -33,12 +33,8 @@ pub trait PolicyRegistryLogic<S: PolicyAccounting> {
     ///
     /// Passing `Address::ZERO` clears a previously staged transfer without nominating a
     /// replacement.
-    fn stage_update_admin(
-        &self,
-        storage: &mut S,
-        policy_id: u64,
-        new_admin: Address,
-    ) -> Result<()>;
+    fn stage_update_admin(&self, storage: &mut S, policy_id: u64, new_admin: Address)
+    -> Result<()>;
 
     /// Completes a pending admin transfer; caller must be the staged pending admin.
     fn finalize_update_admin(&self, storage: &mut S, policy_id: u64) -> Result<()>;

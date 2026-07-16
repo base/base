@@ -5,7 +5,9 @@ use alloc::{string::String, vec::Vec};
 use alloy_primitives::{Address, B256, U256};
 use base_precompile_storage::Result;
 
-use crate::{AssetAccounting, B20AssetToken, Eip712Domain, IB20, PermitArgs, PolicyAccounting, Token};
+use crate::{
+    AssetAccounting, B20AssetToken, Eip712Domain, IB20, PermitArgs, PolicyAccounting, Token,
+};
 
 /// The asset logic interface.
 pub trait Asset<S: AssetAccounting, A: PolicyAccounting> {

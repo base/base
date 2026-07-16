@@ -300,10 +300,14 @@ mod tests {
         StorageCtx::enter(&mut s, |ctx| {
             let storage = PolicyRegistryStorage::new(ctx);
             assert!(
-                PolicyRegistryV1.policy_exists(&storage, PolicyRegistryV1::ALWAYS_ALLOW_ID).unwrap()
+                PolicyRegistryV1
+                    .policy_exists(&storage, PolicyRegistryV1::ALWAYS_ALLOW_ID)
+                    .unwrap()
             );
             assert!(
-                PolicyRegistryV1.policy_exists(&storage, PolicyRegistryV1::ALWAYS_BLOCK_ID).unwrap()
+                PolicyRegistryV1
+                    .policy_exists(&storage, PolicyRegistryV1::ALWAYS_BLOCK_ID)
+                    .unwrap()
             );
         });
     }

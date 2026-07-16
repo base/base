@@ -175,8 +175,8 @@ mod tests {
 
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, BerylErrorKind,
-        IPolicyRegistry, PolicyRegistryStorage, PolicyRegistryV1,
-        PrecompileCallMetric, PrecompileCallObserver, PrecompileCallOutcome, PrecompileCallStatus,
+        IPolicyRegistry, PolicyRegistryStorage, PolicyRegistryV1, PrecompileCallMetric,
+        PrecompileCallObserver, PrecompileCallOutcome, PrecompileCallStatus,
     };
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
@@ -227,11 +227,7 @@ mod tests {
     /// Dispatches `calldata` against a Beryl runtime, expecting no fatal error.
     fn run(storage: &mut HashMapStorageProvider, calldata: &[u8]) -> PrecompileOutput {
         StorageCtx::enter(storage, |ctx| {
-            PolicyRegistryStorage::new(ctx).dispatch(
-                ctx,
-                calldata,
-                BaseUpgrade::Beryl,
-            )
+            PolicyRegistryStorage::new(ctx).dispatch(ctx, calldata, BaseUpgrade::Beryl)
         })
         .expect("dispatch should not fatally error")
     }
@@ -243,8 +239,12 @@ mod tests {
         observer: RecordingObserver,
     ) -> PrecompileOutput {
         StorageCtx::enter(storage, |ctx| {
-            PolicyRegistryStorage::new(ctx)
-                .dispatch_with_observer(ctx, calldata, BaseUpgrade::Beryl, observer)
+            PolicyRegistryStorage::new(ctx).dispatch_with_observer(
+                ctx,
+                calldata,
+                BaseUpgrade::Beryl,
+                observer,
+            )
         })
         .expect("dispatch should not fatally error")
     }

@@ -79,7 +79,7 @@ mod tests {
     use base_precompile_storage::BasePrecompileError;
 
     use crate::{
-        B20_MAX_SUPPLY_CAP, B20TokenRole, Configurable, IB20, FakePolicyAccounting,
+        B20_MAX_SUPPLY_CAP, B20TokenRole, Configurable, FakePolicyAccounting, IB20,
         InMemoryTokenAccounting, TestToken, Token, TokenAccounting,
     };
 
@@ -87,7 +87,9 @@ mod tests {
     const TOKEN_ADDR: Address = Address::repeat_byte(1);
 
     fn make_token() -> TestToken {
-        TestToken::with_storage_and_policy(InMemoryTokenAccounting::new(TOKEN_ADDR), FakePolicyAccounting::new(),
+        TestToken::with_storage_and_policy(
+            InMemoryTokenAccounting::new(TOKEN_ADDR),
+            FakePolicyAccounting::new(),
         )
     }
 
