@@ -1818,6 +1818,242 @@ fn golden_grant_role_unchecked_bootstraps_first_admin() {
 }
 
 // ============================================================================
+// gas: storage-access footprint per op
+// ============================================================================
+//
+// `gas_deducted` is 0 under the test gas schedule, so we pin the deterministic,
+// schedule-independent signal instead: the SLOAD / SSTORE / KECCAK256 op counts a
+// call performs. These are the storage-access footprint that drives real gas, so a
+// change here (e.g. an extra SLOAD in V1) is caught even when bytes/state/events match.
+
+/// Runs `calldata` privileged after `setup`, returning `(sload, sstore, keccak256)` counts.
+fn gas(
+    setup: impl FnOnce(&mut B20StablecoinStorage<'_>),
+    caller: Address,
+    policy: InMemoryPolicy,
+    calldata: Vec<u8>,
+) -> (u64, u64, u64) {
+    let mut s = fresh();
+    seed(&mut s, setup);
+    s.set_caller(caller);
+    s.reset_counters();
+    StorageCtx::enter(&mut s, |ctx| {
+        B20StablecoinToken::with_storage_and_policy(
+            B20StablecoinStorage::from_address(TOKEN, ctx),
+            policy,
+        )
+        .inner_with_privilege(ctx, &calldata, true)
+    })
+    .expect("gas-footprint op must succeed");
+    (s.counter_sload(), s.counter_sstore(), s.counter_keccak256())
+}
+
+/// An `InMemoryPolicy` authorizing `who` under the default (0) scope.
+fn allow0(who: Address) -> InMemoryPolicy {
+    let mut p = InMemoryPolicy::new();
+    p.allow(0, who);
+    p
+}
+
+#[test]
+fn golden_gas_footprints() {
+    let actual: Vec<(&str, (u64, u64, u64))> = vec![
+        (
+            "transfer",
+            gas(
+                |t| fund(t, ALICE, u(100)),
+                ALICE,
+                InMemoryPolicy::new(),
+                IB20::transferCall { to: BOB, amount: u(30) }.abi_encode(),
+            ),
+        ),
+        (
+            "transfer_from",
+            gas(
+                |t| {
+                    fund(t, ALICE, u(100));
+                    t.set_allowance(ALICE, BOB, u(40)).unwrap();
+                },
+                BOB,
+                InMemoryPolicy::new(),
+                IB20::transferFromCall { from: ALICE, to: BOB, amount: u(30) }.abi_encode(),
+            ),
+        ),
+        (
+            "approve",
+            gas(
+                |_t| {},
+                ALICE,
+                InMemoryPolicy::new(),
+                IB20::approveCall { spender: BOB, amount: u(50) }.abi_encode(),
+            ),
+        ),
+        (
+            "mint",
+            gas(
+                |_t| {},
+                ADMIN,
+                allow0(BOB),
+                IB20::mintCall { to: BOB, amount: u(100) }.abi_encode(),
+            ),
+        ),
+        (
+            "burn",
+            gas(
+                |t| {
+                    fund(t, ALICE, u(100));
+                    give_role(t, B20TokenRole::Burn.id(), ALICE);
+                },
+                ALICE,
+                InMemoryPolicy::new(),
+                IB20::burnCall { amount: u(40) }.abi_encode(),
+            ),
+        ),
+        (
+            "burn_blocked",
+            gas(
+                |t| {
+                    fund(t, ALICE, u(100));
+                    t.set_policy_id(B20PolicyType::TransferSender.id(), POLICY_ID).unwrap();
+                },
+                ADMIN,
+                InMemoryPolicy::new(),
+                IB20::burnBlockedCall { from: ALICE, amount: u(40) }.abi_encode(),
+            ),
+        ),
+        (
+            "pause",
+            gas(
+                |_t| {},
+                ADMIN,
+                InMemoryPolicy::new(),
+                IB20::pauseCall { features: vec![IB20::PausableFeature::MINT] }.abi_encode(),
+            ),
+        ),
+        (
+            "unpause",
+            gas(
+                |_t| {},
+                ADMIN,
+                InMemoryPolicy::new(),
+                IB20::unpauseCall { features: vec![IB20::PausableFeature::MINT] }.abi_encode(),
+            ),
+        ),
+        (
+            "update_supply_cap",
+            gas(
+                |_t| {},
+                ADMIN,
+                InMemoryPolicy::new(),
+                IB20::updateSupplyCapCall { newSupplyCap: u(1_000) }.abi_encode(),
+            ),
+        ),
+        (
+            "update_name",
+            gas(
+                |_t| {},
+                ADMIN,
+                InMemoryPolicy::new(),
+                IB20::updateNameCall { newName: "New Name".into() }.abi_encode(),
+            ),
+        ),
+        (
+            "update_symbol",
+            gas(
+                |_t| {},
+                ADMIN,
+                InMemoryPolicy::new(),
+                IB20::updateSymbolCall { newSymbol: "USDX".into() }.abi_encode(),
+            ),
+        ),
+        (
+            "update_contract_uri",
+            gas(
+                |_t| {},
+                ADMIN,
+                InMemoryPolicy::new(),
+                IB20::updateContractURICall { newURI: "ipfs://x".into() }.abi_encode(),
+            ),
+        ),
+        (
+            "grant_role",
+            gas(
+                |_t| {},
+                ADMIN,
+                InMemoryPolicy::new(),
+                IB20::grantRoleCall { role: B20TokenRole::Mint.id(), account: ALICE }.abi_encode(),
+            ),
+        ),
+        (
+            "revoke_role",
+            gas(
+                |t| give_role(t, B20TokenRole::Mint.id(), ALICE),
+                ADMIN,
+                InMemoryPolicy::new(),
+                IB20::revokeRoleCall { role: B20TokenRole::Mint.id(), account: ALICE }.abi_encode(),
+            ),
+        ),
+        (
+            "set_role_admin",
+            gas(
+                |_t| {},
+                ADMIN,
+                InMemoryPolicy::new(),
+                IB20::setRoleAdminCall {
+                    role: B20TokenRole::Mint.id(),
+                    newAdminRole: B20TokenRole::Metadata.id(),
+                }
+                .abi_encode(),
+            ),
+        ),
+        (
+            "update_policy",
+            gas(
+                |_t| {},
+                ADMIN,
+                {
+                    let mut p = InMemoryPolicy::new();
+                    p.create_existing_policy(7);
+                    p
+                },
+                IB20::updatePolicyCall {
+                    policyScope: B20PolicyType::TransferSender.id(),
+                    newPolicyId: 7,
+                }
+                .abi_encode(),
+            ),
+        ),
+    ];
+
+    let expected: &[(&str, (u64, u64, u64))] = &[
+        ("transfer", (3, 2, 0)),
+        ("transfer_from", (4, 3, 0)),
+        ("approve", (0, 1, 0)),
+        ("mint", (5, 2, 0)),
+        ("burn", (4, 2, 0)),
+        ("burn_blocked", (4, 2, 0)),
+        ("pause", (1, 1, 0)),
+        ("unpause", (1, 1, 0)),
+        ("update_supply_cap", (2, 1, 0)),
+        ("update_name", (0, 1, 0)),
+        ("update_symbol", (0, 1, 0)),
+        ("update_contract_uri", (0, 1, 0)),
+        ("grant_role", (1, 1, 0)),
+        ("revoke_role", (1, 1, 0)),
+        ("set_role_admin", (1, 1, 0)),
+        ("update_policy", (2, 1, 0)),
+    ];
+
+    if std::env::var_os("BLESS_GOLDEN").is_some() {
+        for (label, counts) in &actual {
+            println!("GAS {label} = {counts:?}");
+        }
+        return;
+    }
+    assert_eq!(actual, expected, "storage-access footprint (sload, sstore, keccak256) drift");
+}
+
+// ============================================================================
 // meta: op coverage checklist
 // ============================================================================
 
