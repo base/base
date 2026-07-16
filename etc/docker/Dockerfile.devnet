@@ -1,3 +1,6 @@
+# Global ARG: overridable base binary image – must be declared before first FROM
+ARG BASE_IMAGE=base:local
+
 FROM public.ecr.aws/docker/library/golang:1.26-alpine AS builder
 
 # Install build dependencies for CGO (required for BLS library)
@@ -33,14 +36,19 @@ RUN git clone https://github.com/protolambda/eth2-val-tools.git --branch "${ETH2
     test "$(git rev-parse HEAD)" = "${ETH2_VAL_TOOLS_COMMIT}"
 RUN go build -o /go/bin/eth2-val-tools .
 
+# Pull in the base binary so setup-l2.sh can probe the actual genesis hash from reth
+FROM ${BASE_IMAGE} AS base-probe
+
 FROM public.ecr.aws/docker/library/alpine:3.21.3
 
-RUN apk add --no-cache bash jq openssl curl gettext
+RUN apk add --no-cache bash jq openssl curl gettext gcompat libc6-compat libstdc++
 
 # Copy the built binaries
 COPY --from=builder /go/bin/eth-genesis-state-generator /usr/local/bin/
 COPY --from=builder /go/bin/eth2-val-tools /usr/local/bin/
 COPY --from=builder /go/bin/op-deployer /usr/local/bin/
+# base binary – used by setup-l2.sh to probe the reth-computed genesis hash
+COPY --from=base-probe /app/base /usr/local/bin/base
 
 # Create working directories
 RUN mkdir -p /config /output /shared /templates

@@ -34,9 +34,6 @@ impl TryFrom<&OtherFields> for ChainInfo {
 }
 
 /// Base-specific upgrade configuration in a genesis file.
-///
-/// `deny_unknown_fields` ensures a genesis cannot smuggle in a `zombie` (or any other unknown)
-/// activation time: Zombie is a permanently-off gate and is not configurable.
 #[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UpgradeInfo {
@@ -49,6 +46,9 @@ pub struct UpgradeInfo {
     /// Cobalt upgrade timestamp.
     #[serde(alias = "v3")]
     pub cobalt: Option<u64>,
+    /// Zombie upgrade timestamp.
+    #[serde(alias = "future")]
+    pub zombie: Option<u64>,
 }
 
 /// The Base chain-specific genesis block specification.

@@ -190,8 +190,8 @@ _up-devnet compose_profile zk:
     case "$zk_mode" in
       dry-run)
         just --justfile {{ source_file() }} down
-        just --justfile {{ source_file() }} _build-setup-image
         just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
+        just --justfile {{ source_file() }} _build-setup-image
         docker compose {{ _env }} "${compose_files[@]}" up -d --no-build --remove-orphans
         ;;
       cluster)

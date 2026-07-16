@@ -361,6 +361,72 @@ else
   echo "Base Zombie activation block is unset; leaving base.zombie unchanged"
 fi
 
+# =============================================================================
+# Probe actual L2 genesis hash from reth
+#
+# op-deployer computes the genesis hash using its own EVM. When reth imports
+# the same genesis.json it may compute a different hash (e.g. due to EIP-8130
+# or other Base-specific genesis mutations).  We start a temporary reth node
+# to get the authoritative hash and patch rollup.json before anything else
+# reads it.  The CL will fail to bootstrap (wrong hash in the initial
+# rollup.json) but the EL HTTP port opens independently — we only need that.
+# =============================================================================
+echo ""
+echo "=== Probing Actual L2 Genesis Hash from reth ==="
+PROBE_DIR=$(mktemp -d)
+PROBE_LOG=$(mktemp)
+
+base rpc \
+  --chain dev \
+  --execution-chain "$OUTPUT_DIR/genesis.json" \
+  --datadir "$PROBE_DIR" \
+  --http \
+  --http.addr 127.0.0.1 \
+  --http.port 19191 \
+  --no-discovery \
+  --l2-config-file "$OUTPUT_DIR/rollup.json" \
+  --l1-eth-rpc http://127.0.0.1:1 \
+  --l1-beacon http://127.0.0.1:1 \
+  --rpc.port 19192 \
+  --color=never \
+  >"$PROBE_LOG" 2>&1 &
+PROBE_PID=$!
+
+echo "Waiting for probe EL HTTP port (up to 30 s)..."
+PROBE_OK=0
+for i in $(seq 1 300); do
+  if curl -sf \
+      -H 'Content-Type: application/json' \
+      -d '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' \
+      http://127.0.0.1:19191 >/dev/null 2>&1; then
+    PROBE_OK=1
+    break
+  fi
+  sleep 0.1
+done
+
+if [ "$PROBE_OK" = "1" ]; then
+  ACTUAL_L2_HASH=$(curl -sf \
+      -H 'Content-Type: application/json' \
+      -d '{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["0x0",false],"id":1}' \
+      http://127.0.0.1:19191 | jq -r '.result.hash')
+  echo "Actual L2 genesis hash from reth: $ACTUAL_L2_HASH"
+
+  TMP_ROLLUP=$(mktemp)
+  jq --arg h "$ACTUAL_L2_HASH" '.genesis.l2.hash = $h' \
+    "$OUTPUT_DIR/rollup.json" >"$TMP_ROLLUP"
+  replace_output_file "$TMP_ROLLUP" "$OUTPUT_DIR/rollup.json"
+  echo "Patched rollup.json genesis.l2.hash → $ACTUAL_L2_HASH"
+else
+  echo "WARNING: Probe EL did not start within 30 s — genesis hash not patched."
+  echo "The devnet may fail to bootstrap. Probe log:"
+  tail -30 "$PROBE_LOG" || true
+fi
+
+kill "$PROBE_PID" 2>/dev/null || true
+wait "$PROBE_PID" 2>/dev/null || true
+rm -rf "$PROBE_DIR" "$PROBE_LOG"
+
 echo "Writing rollup-conductor.json (base fields stripped for op-conductor compatibility)..."
 jq 'del(.base)' "$OUTPUT_DIR/rollup.json" >"$OUTPUT_DIR/rollup-conductor.json"
 echo "rollup-conductor.json written to $OUTPUT_DIR/rollup-conductor.json"

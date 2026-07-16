@@ -175,6 +175,7 @@ impl BaseChainSpec {
         let azul_time = genesis_info.base.azul;
         let beryl_time = genesis_info.base.beryl;
         let cobalt_time = genesis_info.base.cobalt;
+        let zombie_time = genesis_info.base.zombie;
         let time_upgrade_opts = [
             (BaseUpgrade::Regolith.boxed(), genesis_info.regolith_time),
             (EthereumHardfork::Shanghai.boxed(), genesis_info.canyon_time),
@@ -191,6 +192,7 @@ impl BaseChainSpec {
             (BaseUpgrade::Azul.boxed(), azul_time),
             (BaseUpgrade::Beryl.boxed(), beryl_time),
             (BaseUpgrade::Cobalt.boxed(), cobalt_time),
+            (BaseUpgrade::Zombie.boxed(), zombie_time),
         ];
 
         let mut time_upgrades = time_upgrade_opts
