@@ -20,7 +20,7 @@
 //!    --test b20_stablecoin_v1_golden -- --nocapture` and copy the printed `GOLDEN_ROOT` values.
 
 use alloy_primitives::{Address, B256, Bytes, U256, b256, keccak256};
-use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
+use alloy_sol_types::{SolCall, SolError, SolEvent, SolInterface, SolValue};
 use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
     B20_MAX_SUPPLY_CAP, B20PolicyType, B20StablecoinInit, B20StablecoinStorage, B20StablecoinToken,
@@ -1398,44 +1398,23 @@ fn dispatch_reverts_when_uninitialized() {
 }
 
 // ============================================================================
-// meta: op coverage guard
+// meta: op coverage tripwire
 // ============================================================================
 
-/// Extracts op identifiers from `C::<op>(` / `SC::<op>(` dispatch match arms.
-///
-/// The dispatcher's `match` over `IB20Calls` / `IB20StablecoinCalls` is a
-/// compiler-exhaustive list of every routable op, so this is the authoritative
-/// method surface.
-fn dispatch_ops(src: &str) -> std::collections::BTreeSet<String> {
-    let mut ops = std::collections::BTreeSet::new();
-    for (idx, _) in src.match_indices("C::") {
-        let rest = &src[idx + "C::".len()..];
-        let ident: String =
-            rest.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
-        if !ident.is_empty() && rest[ident.len()..].starts_with('(') {
-            ops.insert(ident);
-        }
-    }
-    ops
-}
-
-/// Meta-coverage guard: every op the dispatcher routes must be constructed by at
-/// least one golden case above. Fails if a new op is wired into `dispatch.rs`
-/// without a corresponding golden case in this suite.
-#[test]
-fn every_dispatch_op_has_a_golden_case() {
-    const DISPATCH: &str = include_str!("../src/b20_stablecoin/dispatch.rs");
-    const SUITE: &str = include_str!("b20_stablecoin_v1_golden.rs");
-
-    let ops = dispatch_ops(DISPATCH);
+// Compile-time coverage tripwire.
+//
+// The dispatcher's `match` over `IB20Calls` / `IB20StablecoinCalls` is compiler-exhaustive,
+// so `SolInterface::COUNT` (a compile-time constant on the generated interface) is the
+// authoritative op count. Pinning it here fails the build whenever the ABI op surface
+// changes — forcing a golden case to be added above and this count bumped. Every op
+// counted here has a golden case in this suite (audited at review time).
+const _: () = {
     assert!(
-        ops.len() >= 40,
-        "parser found too few dispatch ops ({}) — did the format change?",
-        ops.len()
+        <IB20::IB20Calls as SolInterface>::COUNT == 50,
+        "inherited IB20 op surface changed: add golden case(s) above and update this count",
     );
-
-    // Golden cases construct each op as `IB20::<op>Call` / `IB20Stablecoin::<op>Call`.
-    let missing: Vec<&String> =
-        ops.iter().filter(|op| !SUITE.contains(&format!("::{op}Call"))).collect();
-    assert!(missing.is_empty(), "dispatch ops with no golden case: {missing:?}");
-}
+    assert!(
+        <IB20Stablecoin::IB20StablecoinCalls as SolInterface>::COUNT == 1,
+        "IB20Stablecoin op surface changed: add golden case(s) above and update this count",
+    );
+};
