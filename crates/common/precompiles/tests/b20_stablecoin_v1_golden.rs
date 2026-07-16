@@ -19,7 +19,7 @@
 //! `BLESS_GOLDEN=1 cargo test -p base-common-precompiles --features test-utils \
 //!    --test b20_stablecoin_v1_golden -- --nocapture` and copy the printed `GOLDEN_ROOT` values.
 
-use alloy_primitives::{Address, B256, Bytes, U256, b256, keccak256};
+use alloy_primitives::{Address, B256, Bytes, LogData, U256, b256, keccak256};
 use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
 use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
@@ -57,60 +57,60 @@ const PRIVATE_KEY: [u8; 32] =
 
 const ROOT_FRESH: B256 = b256!("7f52ac593dc5c5de5e040f65148db8c081010c85db757516d9eb2c19e8903951");
 const ROOT_TRANSFER_PRIV: B256 =
-    b256!("06c9e5c97d78de291043d014d28fd06cbae669f89e9021641578c3c46847156e");
+    b256!("55bdd0b008a5e28bd9dee4572766a7bce75b0147fb614c9b4874963fc18ef390");
 const ROOT_TRANSFER_UNPRIV: B256 =
-    b256!("4de3ffde84663c7e17831da0c503c853b88d6966fdd03df4d85f32f7d8bae984");
+    b256!("77c291321163d01cb51fb226b7f25efd68819c8a60cc463f4863dbfccae49c03");
 const ROOT_TRANSFER_WITH_MEMO: B256 =
-    b256!("06c9e5c97d78de291043d014d28fd06cbae669f89e9021641578c3c46847156e");
+    b256!("8c9923a10e52e0dd795aed030a844bcff443ee66d4908caf897a525e1de4f867");
 const ROOT_TRANSFER_FROM_FINITE: B256 =
-    b256!("68e45af85b6c0db1aa8e19bb972265c0df12fa616f309fd47056f12e24228d0d");
+    b256!("9f644119a7130cd4fabba18dae6980e4b9a48f5416819c1954e9e932e514e6e7");
 const ROOT_TRANSFER_FROM_INFINITE: B256 =
-    b256!("eeb065605013e46ea9338e844aac0439c86b037eb8e3ca984c826ed09f0650ae");
+    b256!("82e62dc5394bea0ebfe17dd63a093c52b4ceae8facf063b44ccc0597480cc49c");
 const ROOT_TRANSFER_FROM_WITH_MEMO: B256 =
-    b256!("096a3bb890bbc13903680673532a72835730616eb6f9cc4b94b963c58dad465f");
+    b256!("982762526afaf9b37c8bc0090352cb27d2150603791690d7344ea19ae7143269");
 const ROOT_APPROVE: B256 =
-    b256!("6d1e28637ee0afb37d6c3b19b499676369bc9c5a9e2acbfd07d8114b1e2ef5a2");
+    b256!("9837570caf42d864a0bac32087df15d3666a0de714567d951564b145b2b5a41e");
 const ROOT_MINT_PRIV: B256 =
-    b256!("e80930a7844722dbf292f4160ab9abc6ea5ccdb2ad1d088d286bd396e292a52e");
+    b256!("749a0f706e60853de51cd87c7312c104b0783c731b39d34016be07f9c76c0c50");
 const ROOT_MINT_UNPRIV: B256 =
-    b256!("6eeb2b3564bb60a793f6069b826ee348eb54e6dc9e9cc47c801aee075bd97b5f");
+    b256!("1d5cf40eb04aafe96b4a32c9734f58a94ee0eca0ddbffbc3d6ab9f45db9cc587");
 const ROOT_MINT_WITH_MEMO: B256 =
-    b256!("266f28453d2534b5d6d7fd478f6d38787171ab33b3b0bd810465b63f85242d83");
-const ROOT_BURN: B256 = b256!("c99a583eeef96b421f341f4dde8fd6d5237d586cc108d1e6553c414a958901a8");
+    b256!("aea0744daa897ae140dc5fdabbd66bd520815e87c75086f1caf5bd5d8db45455");
+const ROOT_BURN: B256 = b256!("e292d12852ea52c48bf7869feac153e12aff28fdc301d0c641fa3629d258dcef");
 const ROOT_BURN_WITH_MEMO: B256 =
-    b256!("c99a583eeef96b421f341f4dde8fd6d5237d586cc108d1e6553c414a958901a8");
+    b256!("a261f181fb9c7b7143307339be3844de4584275bac4bc002a1cdbc2547757898");
 const ROOT_BURN_BLOCKED: B256 =
-    b256!("92f8d0634c3ce6eb4c5b417614361fd85dd5ef15fd1cebfc209a4f11651bd495");
-const ROOT_PAUSE: B256 = b256!("468c4ec500b424440b02f1813e861edfff76edb71f787788a0c1cc0477924805");
+    b256!("9908f1eb41cd484b52fd364415296117e80ffb86c8222973f921032f28c85cbf");
+const ROOT_PAUSE: B256 = b256!("8fc4e227c8dcc72faebe02a2f0154ff0834d5a99cf472e15ea6e49d742c299ef");
 const ROOT_UNPAUSE: B256 =
-    b256!("a48995232d4eb365f52064350824e35ffd776e8674300165535c029203314dca");
+    b256!("67f1ec70420578aafb490cdc86a5e450211342259aa79b0fb18944bffe3de1e8");
 const ROOT_UPDATE_SUPPLY_CAP: B256 =
-    b256!("88e1dc8cbc0f9eba94ebfaa105ffe2166d702922dfb7264d4ec5eb79ee89d55d");
+    b256!("18b9e262e9471a0013e0600b698ef9c74bcfccefcfcad83a46251c9f8e817e27");
 const ROOT_UPDATE_NAME: B256 =
-    b256!("17c8c8f42ae4ef7af13cb3bbbb9b56dceb3e5b9eb529eb700c6815ad73586dba");
+    b256!("a9b4b1d35935031022f5f9da53db1b75cca0f290cd0c477d88452806abfb802c");
 const ROOT_UPDATE_SYMBOL: B256 =
-    b256!("d63536d279278f6aa85598f428baf6b425d90f87aa5aedcbb9cfa51f440a0d3b");
+    b256!("aad153e419c17753d3bf730d6183164458c858379a81e4eb35687b08005617ad");
 const ROOT_UPDATE_CONTRACT_URI: B256 =
-    b256!("91042f991db377f639da5c00caeaabacc28ba96b5c3e5b6885ef9937ae3e10ad");
+    b256!("2678f67a192fd017125a2b1b9616a894a156018956e7bb99a15ac8bdf475a7a1");
 const ROOT_GRANT_ROLE: B256 =
-    b256!("d6481f3a484d4d2a7590ef1f40a789882a16be061d07f46578f62504ba56a1e4");
+    b256!("e8ec8239f7b10e736151fc068e82a2d0940a4f6ebf184bf71616d9058467570f");
 const ROOT_REVOKE_ROLE: B256 =
-    b256!("310d78b59529c70048a08be6b681b7af6874dd445eaa3c121680ffa251a5fe1c");
+    b256!("9cd346a450843658a0d04ec37a78709b1faf2a973cbdcf796b44f03643243bad");
 const ROOT_RENOUNCE_ROLE: B256 =
-    b256!("310d78b59529c70048a08be6b681b7af6874dd445eaa3c121680ffa251a5fe1c");
+    b256!("4de44c01372b636686247aea8724576df6e778f2a94535a2efd71b6b81625441");
 const ROOT_RENOUNCE_LAST_ADMIN: B256 =
-    b256!("d3433639f43ec842f8f61faffc77238f527fc0d28481383f8d6c805bb3a6d57a");
+    b256!("143ade4c83f79a0ebc2bbc75c7d6e8a4ce7ace0235c0ffce003e5f6518276826");
 const ROOT_SET_ROLE_ADMIN: B256 =
-    b256!("eed1a72d00c56a0a5fa4d462e6bbad9dc588254ad6385bb7b8747fab08ac0161");
+    b256!("fd229bb98a9695f489f482515f62a4389565473c86517c76de97e7731a60c5fe");
 const ROOT_UPDATE_POLICY: B256 =
-    b256!("e9a943343bd8d2cd66a14ef06d0906d36ef2eb5437b05f72965cf7b5bc5c484c");
-const ROOT_PERMIT: B256 = b256!("22aa049f4d081579f74ba12a99ba91eedbe0cde1d9fee038bbb0c8a4143a29db");
+    b256!("b2c704ab3f2d4cb586548ef9374a83d1727515c33d599295904056fcecd97775");
+const ROOT_PERMIT: B256 = b256!("7c710860355d6a906d9342a724549a59f7359b2d8aff6bf8b5039562c93c71a6");
 const ROOT_GRANT_DEFAULT_ADMIN: B256 =
-    b256!("4e068706fbdc2d2846ac2ca05aca3401b9b6ffb653235efe7ab8d2e0a67b35eb");
+    b256!("c828bb784b6ca1d7a3a255a7e5264350ce4293acc38820a57bcc93853abea9f4");
 const ROOT_GRANT_IDEMPOTENT: B256 =
     b256!("76f5d7e14530b4534e18e2e3c4a3a3035da857704c314ccfc7f9445ecfe90da8");
 const ROOT_GRANT_UNCHECKED: B256 =
-    b256!("d6af2b533e3a0da2dc164612a4976057cb4306e7006a9225da3dd94411b2ea1c");
+    b256!("c83dd3df2a6f62c0775fb908d7a921f65c8e0e735bdb9b0adf7d1e489b657688");
 
 // --- harness ----------------------------------------------------------------
 
@@ -196,13 +196,23 @@ fn last_topic0(storage: &HashMapStorageProvider) -> B256 {
     storage.get_events(TOKEN).last().expect("an emitted event").topics()[0]
 }
 
-/// Deterministic keccak hash over the sorted `(address, slot, value)` storage triples.
+/// Deterministic keccak hash of the per-case snapshot: the token's emitted events
+/// (topics + data) followed by its sorted `(address, slot, value)` storage triples.
 ///
-/// This is a plain content hash of the KV pairs, not an MPT state root.
+/// A plain content hash (not an MPT state root). Events are included so a regression in
+/// an event's payload — indexed args or data not otherwise reflected in storage, e.g. a
+/// `Memo`'s bytes — is pinned here even though logs are not storage.
 fn hash_state(storage: HashMapStorageProvider) -> B256 {
+    let events: Vec<LogData> = storage.get_events(TOKEN).clone();
     let mut triples: Vec<(Address, U256, U256)> = storage.into_storage().collect();
     triples.sort();
-    let mut buf = Vec::with_capacity(triples.len() * 84);
+    let mut buf = Vec::with_capacity(triples.len() * 84 + events.len() * 64);
+    for log in &events {
+        for topic in log.topics() {
+            buf.extend_from_slice(topic.as_slice());
+        }
+        buf.extend_from_slice(&log.data);
+    }
     for (addr, slot, value) in triples {
         buf.extend_from_slice(addr.as_slice());
         buf.extend_from_slice(&slot.to_be_bytes::<32>());
@@ -215,7 +225,7 @@ fn hash_state(storage: HashMapStorageProvider) -> B256 {
 #[track_caller]
 fn assert_root(label: &str, storage: HashMapStorageProvider, expected: B256) {
     let got = hash_state(storage);
-    if std::env::var_os("BLESS_GOLDEN").is_some() {
+    if std::env::var("BLESS_GOLDEN").ok().as_deref() == Some("1") {
         println!("GOLDEN_ROOT {label} = {got:#x}");
         return;
     }
@@ -2045,7 +2055,7 @@ fn golden_gas_footprints() {
         ("update_policy", (2, 1, 0)),
     ];
 
-    if std::env::var_os("BLESS_GOLDEN").is_some() {
+    if std::env::var("BLESS_GOLDEN").ok().as_deref() == Some("1") {
         for (label, counts) in &actual {
             println!("GAS {label} = {counts:?}");
         }
