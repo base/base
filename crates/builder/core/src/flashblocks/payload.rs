@@ -590,8 +590,6 @@ where
                     target_da_for_batch,
                     info.cumulative_da_bytes_used,
                     target_da_footprint_for_batch,
-                    target_state_root_gas_for_batch,
-                    flashblock_execution_time_limit_us,
                 )
             },
         );

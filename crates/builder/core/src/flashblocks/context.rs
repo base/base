@@ -841,7 +841,6 @@ impl BasePayloadBuilderCtx {
                         da_size: tx_da_size,
                         gas_limit: tx.gas_limit(),
                         execution_time_us: None,
-                        state_root_gas: None,
                         uncompressed_size: tx_uncompressed_size,
                     };
                     self.emit_builder_decision_event(
