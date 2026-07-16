@@ -16,7 +16,7 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use base_common_network::Base;
-use base_common_rpc_types::BaseTransactionRequest;
+use base_common_rpc_types::{BaseTransactionReceipt, BaseTransactionRequest};
 use base_system_tests::{ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, SystemTestStackBuilder};
 use eyre::{Result, WrapErr};
 use tokio::time::{sleep, timeout};
@@ -26,6 +26,7 @@ const L2_CHAIN_ID: u64 = 84538453;
 const BLOCK_PRODUCTION_TIMEOUT: Duration = Duration::from_secs(30);
 const BLOCK_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const TX_RECEIPT_TIMEOUT: Duration = Duration::from_secs(60);
+const BALANCE_SYNC_TIMEOUT: Duration = Duration::from_secs(30);
 const NON_CANONICAL_OBSERVATION_WINDOW: Duration = Duration::from_secs(15);
 const SHADOW_REORG_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -121,7 +122,9 @@ async fn send_transfer(
         .with_chain_id(L2_CHAIN_ID)
         .with_nonce(nonce);
 
-    let tx = tx_request.build_typed_tx().map_err(|_| eyre::eyre!("invalid transaction request"))?;
+    let tx = tx_request
+        .build_typed_tx()
+        .map_err(|e| eyre::eyre!("invalid transaction request: {e:?}"))?;
     let signature = signer.sign_hash_sync(&tx.signature_hash())?;
     let signed_tx = tx.into_signed(signature);
     let raw_tx: Bytes = signed_tx.encoded_2718().into();
@@ -147,7 +150,7 @@ async fn wait_for_block(provider: &RootProvider<Base>, min_block: u64) -> Result
 }
 
 async fn wait_for_balance(provider: &RootProvider<Base>, address: Address) -> Result<()> {
-    timeout(Duration::from_secs(30), async {
+    timeout(BALANCE_SYNC_TIMEOUT, async {
         loop {
             if provider.get_balance(address).await? > U256::ZERO {
                 return Ok::<_, eyre::Error>(());
@@ -163,7 +166,7 @@ async fn wait_for_receipt(
     provider: &RootProvider<Base>,
     tx_hash: B256,
     within: Duration,
-) -> Result<base_common_rpc_types::BaseTransactionReceipt> {
+) -> Result<BaseTransactionReceipt> {
     timeout(within, async {
         loop {
             if let Some(receipt) = provider.get_transaction_receipt(tx_hash).await? {
