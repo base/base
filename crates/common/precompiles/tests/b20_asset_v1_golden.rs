@@ -25,10 +25,10 @@ use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
 use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
     Asset, AssetAccounting, AssetV1, AssetVersion, AssetVersions, B20_MAX_SUPPLY_CAP, B20AssetInit,
-    B20AssetStorage, B20AssetToken, B20PolicyType, B20TokenRole, IB20, IB20Asset, InMemoryPolicy,
-    NoopPrecompileCallObserver, PermitArgs, TokenAccounting,
+    B20AssetStorage, B20AssetToken, B20PolicyType, B20TokenRole, IB20, IB20::IB20Calls as C,
+    IB20Asset, IB20Asset::IB20AssetCalls as SC, InMemoryPolicy, NoopPrecompileCallObserver,
+    PermitArgs, TokenAccounting,
 };
-use base_common_precompiles::{IB20::IB20Calls as C, IB20Asset::IB20AssetCalls as SC};
 use base_precompile_storage::{BasePrecompileError, HashMapStorageProvider, StorageCtx};
 use k256::ecdsa::SigningKey;
 
