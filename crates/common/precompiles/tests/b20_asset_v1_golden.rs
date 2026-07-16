@@ -20,7 +20,7 @@
 //! `BLESS_GOLDEN=1 cargo test -p base-common-precompiles --features test-utils \
 //!    --test b20_asset_v1_golden -- --nocapture` and copy the printed `GOLDEN_ROOT` values.
 
-use alloy_primitives::{Address, B256, Bytes, U256, b256, keccak256};
+use alloy_primitives::{Address, B256, Bytes, LogData, U256, b256, keccak256};
 use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
 use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
@@ -59,68 +59,68 @@ const PRIVATE_KEY: [u8; 32] =
 
 const ROOT_FRESH: B256 = b256!("ecd76a0f8f4f5c3d735866149f7ff14fd5df8dc68f646d16f57985b13aaceeda");
 const ROOT_TRANSFER_PRIV: B256 =
-    b256!("96136372a76712e6d2b146058285317ecbfe4ed254edfa9027cceb76b6f48c62");
+    b256!("bd55f18f8eb0aff72d53288be7c9c7bb8d9f21f938b4fa70f5bb64679eff1235");
 const ROOT_TRANSFER_UNPRIV: B256 =
-    b256!("481488b45b52011f054573a761b0bd97e30328f286acf8da4853478f8b7345bc");
+    b256!("4e4bed68e9a048e18f0f74a689dc9349dde084ff280aaeb7af62a3a08bb444e7");
 const ROOT_TRANSFER_WITH_MEMO: B256 =
-    b256!("96136372a76712e6d2b146058285317ecbfe4ed254edfa9027cceb76b6f48c62");
+    b256!("77694c1634ce0f20315fa6f8ae798a150e4762a39e3d1f76fe71dfac86c13a1f");
 const ROOT_TRANSFER_FROM_FINITE: B256 =
-    b256!("2cd788a8aff3e96627ea1d461f7c35af8064e09491e4a8f4332de3de001e6d15");
+    b256!("930f9451df79bdb8f93ced37a0cc1150e33023cdf12880d98c7cdb8125e84c97");
 const ROOT_TRANSFER_FROM_INFINITE: B256 =
-    b256!("863cfb8676e127c8a26f595029bb78ba24914925bc064275fb659b69fe882cd8");
+    b256!("c46b2107a45a3316224ff2ddaf5cf7d21cef77c1edc81e773007155fbd712ea2");
 const ROOT_TRANSFER_FROM_WITH_MEMO: B256 =
-    b256!("40faf2e88c394b7f0de368b3e7bb9040b4ba8be83e482ec04be05da65739f275");
+    b256!("d63918245e6c33af1d37d212bbedd02ef0942ed779759d44a9323087a394df98");
 const ROOT_APPROVE: B256 =
-    b256!("da80ed7616e0890f42d85f49c7aabced174bafb7a0a019c76432ba855ec8b185");
+    b256!("457affc6597cc95beaff5de5e4803ffa95094d5204ffcd791b5130dcad9922bc");
 const ROOT_MINT_PRIV: B256 =
-    b256!("4e1ee427e3c44b48a6f87b7a49c2c770fcb75e2d2adbfbe4e590940a2066fdbd");
+    b256!("567e558c4f349d16ad67942738e26e4e791b955226842560b80faa491d9ed4f7");
 const ROOT_MINT_UNPRIV: B256 =
-    b256!("9f2dc6d3b0f77e513ea7c500bb3b08235efcd95254bdcbb1058f29382b4646a0");
+    b256!("0afb28dd855b7e7bb1f3b75303e231795a61246504a9a79775853d4d038f7027");
 const ROOT_MINT_WITH_MEMO: B256 =
-    b256!("54c114db87fb17d73e11b586fc68c213841f947675eee2d18afbf712eddb0e2c");
-const ROOT_BURN: B256 = b256!("44d6f01a44eaf4649175dca71b8c7e361ae6b63206c3fbb60a8e1dddc4ad2564");
+    b256!("c2fd04e62d5be7071fc051204c4472a92ad0a5ff2794d1ea4962485cd9dadcd8");
+const ROOT_BURN: B256 = b256!("85cee0ea4d722ce67f83150ffcafbf23fb3045c90f5043b2764f3ed91daefafb");
 const ROOT_BURN_WITH_MEMO: B256 =
-    b256!("44d6f01a44eaf4649175dca71b8c7e361ae6b63206c3fbb60a8e1dddc4ad2564");
+    b256!("bdcac1ddc9013662761b897ff953d954bafdab086181e0a6965ae5f1ee9d9ae2");
 const ROOT_BURN_BLOCKED: B256 =
-    b256!("177e7b581f34fe13c680fbd3006195c47476eb7c00ac83c6ae05f823254be604");
-const ROOT_PAUSE: B256 = b256!("5db18b351d26832b17e7c5e087e839d7b1c3f33ea940271790eff58aa9754eb6");
+    b256!("10e525753a1265dd9353af53544b8f8e1233b3e4427d3a378d9c3eaabf189c36");
+const ROOT_PAUSE: B256 = b256!("f15abadf64611e38c13be8e860612264ffb7df782719ff33a702a6cf6c70f4b6");
 const ROOT_UNPAUSE: B256 =
-    b256!("1b2266695094856d8d6ba8c3bfb4ddad06eb62e2e84f7a0b7aad73d7ced77c8b");
+    b256!("13854daf203d625a639412c6a0db8a790a9a73a778ae774f6de9f3e5348368ac");
 const ROOT_UPDATE_SUPPLY_CAP: B256 =
-    b256!("c015947401c254de0048d23829260de53f8336e931303f6a834cfbadbc26cadf");
+    b256!("8cb7e9658b49d9d55d09cac6651beed064078ddf981f5ecf349a166e981f1d61");
 const ROOT_UPDATE_NAME: B256 =
-    b256!("b85866e5c928bb1bc3bd6a1a37997e810b8f12a4f954ffa8be864201e768d408");
+    b256!("8aa174b0a6507c67bf8400a540505cd9a1c9a44da27ec05444bef3917fe36a78");
 const ROOT_UPDATE_SYMBOL: B256 =
-    b256!("4ceb55698e686f56e42acd2b520aa11d3a721fffad18b2c84b919d845b8ea05c");
+    b256!("b2d90d93686822cfe668f3d81e17de3f3c5d5669490bbc18fd3b38a3ead418a7");
 const ROOT_UPDATE_CONTRACT_URI: B256 =
-    b256!("105a00417a775dc6952d888da191665eea83bc0da04055ec399b23e0af4b784f");
+    b256!("65c9f8d814cfbafa23dddcd943a319b201828166383472ea0ede7980c9d5c974");
 const ROOT_GRANT_ROLE: B256 =
-    b256!("466d162a8569f3ed273ea3689aff08281147acafe9880be40875abaa2f23da01");
+    b256!("8f961185963d121cc90a6f26f7f2c1d7471f0dcf8c4f6992488ff0f60c5bddcf");
 const ROOT_REVOKE_ROLE: B256 =
-    b256!("e02df46d329afcff5fe3d109b3a33184cdf8d87811bceb9c409014deb2f3f6e8");
+    b256!("b7ec0c7336c431b45f81cc4b0015e16d26c62fb6659b7d0c157bed92533ba8ad");
 const ROOT_RENOUNCE_ROLE: B256 =
-    b256!("e02df46d329afcff5fe3d109b3a33184cdf8d87811bceb9c409014deb2f3f6e8");
+    b256!("96e3d3f6b7afad034bc17652d89d434e9e24eb9a6c45fefe086e022d7e63316a");
 const ROOT_RENOUNCE_LAST_ADMIN: B256 =
-    b256!("bd0a4b40f729d855f33e56d59ab7d54caa9c17309b09283dd97a8adcfeb06bea");
+    b256!("398d33be3d71a30d908b12aa086801f1f38a73bc5b69eb8798320e37849b73e0");
 const ROOT_SET_ROLE_ADMIN: B256 =
-    b256!("29e24a05fe68557c945411e65b7a8b4fe28e6c3a0ea9a3ffd6c1b4ad4b4f83ff");
+    b256!("a5d4520fbef2745695430cc687f32276cf81633f063f68fbdd9e17d996015368");
 const ROOT_UPDATE_POLICY: B256 =
-    b256!("2930532eb1606d19001dd17bbd6a48d00ec12fe72a1e6ae50ca00ea314b05b3b");
-const ROOT_PERMIT: B256 = b256!("65cdbfcff466d847e7360f1d72ca45be64356af1e77eea83533faf425966e836");
+    b256!("631687761415ff5034f80d3e6d029854f75dfece34cf9bbb2929fb76be79a343");
+const ROOT_PERMIT: B256 = b256!("11cf56d1d65755ac20e8db15c67056a0597cc8870e598629683e929f2ec40b66");
 const ROOT_UPDATE_MULTIPLIER: B256 =
-    b256!("46294ac17788ce1755c5f9504a08af0c1d0689fc2bfb739032cbb335a9d9d904");
+    b256!("80cba89b0ac378b954dd622f35ed3c0a66c2067d8e03ab822c919f932741f9c9");
 const ROOT_UPDATE_EXTRA_METADATA: B256 =
-    b256!("4e461dd1b6f3383297f97e4d19848fd5484b7adb5adc780d721d149805fac16a");
+    b256!("5e3b7da0cdd4193e4f3c46702560b7a0c7d549b6f94fed71de101953b46a7244");
 const ROOT_BATCH_MINT: B256 =
-    b256!("abeeb4354269e4994a293dc1decc3c33a61c566f8d8b8479a018c8a03bd744b0");
+    b256!("c58dd84264e3bdf4fed1ecb91a83d23c18d0030f9776e0225d416944373215b8");
 const ROOT_ANNOUNCE: B256 =
-    b256!("18badab132a0ba9de303e277d69816df82091fdc024322ea600bdbd3a6147068");
+    b256!("439f65ccf6b663f2e3e014084049f40d831fca102fcb0683a3efa05df240a193");
 const ROOT_GRANT_DEFAULT_ADMIN: B256 =
-    b256!("df78d6e3c794391187702ecd8f74b31c027363c342984bb972e7583b69a03f2f");
+    b256!("e0a76929f30db7c62da21ffc2ff780869b29c9a656157e42a9374f82d222dd29");
 const ROOT_GRANT_IDEMPOTENT: B256 =
     b256!("39658b6dcaf82dc5e146d5d44fed26ba96b03220e92aa1fe9bd7cecb23437e22");
 const ROOT_GRANT_UNCHECKED: B256 =
-    b256!("6cdfdb30b62a059f71f67cec831aa1e1ddc44750e483bcd02c641b030cc4b8f4");
+    b256!("62b96b5458bad3edc693aad2f51c79f1f9de3102454cec8581351a43ff169b25");
 
 // --- harness ----------------------------------------------------------------
 
@@ -210,13 +210,23 @@ fn last_topic0(storage: &HashMapStorageProvider) -> B256 {
     storage.get_events(TOKEN).last().expect("an emitted event").topics()[0]
 }
 
-/// Deterministic keccak hash over the sorted `(address, slot, value)` storage triples.
+/// Deterministic keccak hash of the per-case snapshot: the token's emitted events
+/// (topics + data) followed by its sorted `(address, slot, value)` storage triples.
 ///
-/// This is a plain content hash of the KV pairs, not an MPT state root.
+/// A plain content hash (not an MPT state root). Events are included so a regression in
+/// an event's payload — indexed args or data not otherwise reflected in storage, e.g. a
+/// `Memo`'s bytes — is pinned here even though logs are not storage.
 fn hash_state(storage: HashMapStorageProvider) -> B256 {
+    let events: Vec<LogData> = storage.get_events(TOKEN).clone();
     let mut triples: Vec<(Address, U256, U256)> = storage.into_storage().collect();
     triples.sort();
-    let mut buf = Vec::with_capacity(triples.len() * 84);
+    let mut buf = Vec::with_capacity(triples.len() * 84 + events.len() * 64);
+    for log in &events {
+        for topic in log.topics() {
+            buf.extend_from_slice(topic.as_slice());
+        }
+        buf.extend_from_slice(&log.data);
+    }
     for (addr, slot, value) in triples {
         buf.extend_from_slice(addr.as_slice());
         buf.extend_from_slice(&slot.to_be_bytes::<32>());
@@ -229,7 +239,7 @@ fn hash_state(storage: HashMapStorageProvider) -> B256 {
 #[track_caller]
 fn assert_root(label: &str, storage: HashMapStorageProvider, expected: B256) {
     let got = hash_state(storage);
-    if std::env::var_os("BLESS_GOLDEN").is_some() {
+    if std::env::var("BLESS_GOLDEN").ok().as_deref() == Some("1") {
         println!("GOLDEN_ROOT {label} = {got:#x}");
         return;
     }
@@ -2490,7 +2500,7 @@ fn golden_gas_footprints() {
         ("announce", (1, 2, 0)),
     ];
 
-    if std::env::var_os("BLESS_GOLDEN").is_some() {
+    if std::env::var("BLESS_GOLDEN").ok().as_deref() == Some("1") {
         for (label, counts) in &actual {
             println!("GAS {label} = {counts:?}");
         }
