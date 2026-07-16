@@ -73,6 +73,15 @@ pub struct BasePooledTransaction<
     /// Optional maximum timestamp (millis since Unix epoch) from bundle submission.
     /// The transaction should be evicted after this time.
     max_timestamp: Option<u64>,
+    /// The set of on-chain state surfaces whose change invalidates this
+    /// transaction, computed once during validation and consumed by the pool's
+    /// invalidation index. Empty until set; see [`crate::WatchSet`].
+    watch_set: OnceLock<crate::WatchSet>,
+    /// The admission limit classification (resolved sender/payer, lock/trusted
+    /// status, payer balance and max cost), computed once during validation and
+    /// consumed by the pool's admission guard. Unset until classified; see
+    /// [`crate::LimitClass`].
+    limit_class: OnceLock<crate::LimitClass>,
 }
 
 impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
@@ -87,6 +96,8 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             target_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            watch_set: OnceLock::new(),
+            limit_class: OnceLock::new(),
         }
     }
 
@@ -107,6 +118,8 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             target_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            watch_set: OnceLock::new(),
+            limit_class: OnceLock::new(),
         }
     }
 
@@ -353,6 +366,30 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
         None
     }
 
+    /// Returns the invalidation watch set computed during validation, if set.
+    ///
+    /// Defaults to `None` for implementers that do not track invalidation
+    /// surfaces.
+    fn watch_set(&self) -> Option<&crate::WatchSet> {
+        None
+    }
+
+    /// Records the invalidation watch set computed during validation.
+    ///
+    /// Defaults to a no-op for implementers that do not track invalidation
+    /// surfaces.
+    fn set_watch_set(&self, _watch_set: crate::WatchSet) {}
+
+    /// Returns the admission limit classification computed during validation, if
+    /// set. Defaults to `None`.
+    fn limit_class(&self) -> Option<&crate::LimitClass> {
+        None
+    }
+
+    /// Records the admission limit classification computed during validation.
+    /// Defaults to a no-op.
+    fn set_limit_class(&self, _limit_class: crate::LimitClass) {}
+
     /// Returns whether this transaction belongs in the EIP-8130 sidecar.
     fn is_eip8130_sidecar_transaction(&self) -> bool {
         self.eip8130_nonce_channel_key().is_some() || self.eip8130_replay_id().is_some()
@@ -391,6 +428,22 @@ where
             return None;
         }
         Some(signed.tx().replay_id(self.sender()))
+    }
+
+    fn watch_set(&self) -> Option<&crate::WatchSet> {
+        self.watch_set.get()
+    }
+
+    fn set_watch_set(&self, watch_set: crate::WatchSet) {
+        let _ = self.watch_set.set(watch_set);
+    }
+
+    fn limit_class(&self) -> Option<&crate::LimitClass> {
+        self.limit_class.get()
+    }
+
+    fn set_limit_class(&self, limit_class: crate::LimitClass) {
+        let _ = self.limit_class.set(limit_class);
     }
 }
 

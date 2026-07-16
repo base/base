@@ -4,6 +4,7 @@ use base_common_consensus::BasePrimitives;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
 use base_execution_rpc::eth::BaseEthApiBuilder;
+use base_execution_txpool::GuardLimits;
 use base_node_core::{
     BaseConsensusBuilder, BaseEngineApiBuilder, BaseEngineTypes, BaseExecutorBuilder,
     BaseNetworkBuilder, BaseNodeComponentBuilder, BaseNodeTypes, BasePayloadValidatorBuilder,
@@ -73,13 +74,22 @@ impl BaseNode {
             compute_pending_block,
             discovery_v4,
             max_inflight_delegated_slots,
+            mempool_sender_limit,
+            mempool_payer_limit,
             ..
         } = self.args;
         ComponentsBuilder::default()
             .node_types::<Node>()
             .pool(
                 BasePoolBuilder::default()
-                    .with_max_inflight_delegated_slots(max_inflight_delegated_slots),
+                    .with_max_inflight_delegated_slots(max_inflight_delegated_slots)
+                    .with_guard_limits(GuardLimits {
+                        default_sender: mempool_sender_limit,
+                        default_payer: mempool_payer_limit,
+                    })
+                    .with_additional_trusted_delegation_targets(
+                        self.args.mempool_trusted_delegation_targets.iter().copied(),
+                    ),
             )
             .executor(BaseExecutorBuilder::default())
             .payload(BasicPayloadServiceBuilder::new(

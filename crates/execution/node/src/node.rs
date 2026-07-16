@@ -7,7 +7,7 @@ use std::{
 };
 
 use alloy_consensus::BlockHeader;
-use alloy_primitives::{Address, B64, B256, Bytes, bytes::BytesMut};
+use alloy_primitives::{Address, B64, B256, Bytes, bytes::BytesMut, map::AddressSet};
 use alloy_rlp::Encodable;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BasePrimitives, BaseTransaction, BaseTxEnvelope};
@@ -28,8 +28,10 @@ use base_execution_rpc::{
 };
 use base_execution_txpool::{
     BaseOrdering, BasePooledTransaction, BasePooledTx, BaseTransactionPool,
-    BaseTransactionValidator, TimestampedTransaction,
+    BaseTransactionValidator, GuardLimits, TimestampedTransaction,
+    maintain_state_diff_invalidation,
 };
+use reth_chain_state::CanonStateSubscriptions;
 use reth_chainspec::{BaseFeeParams, ChainSpecProvider, EthChainSpec, Hardforks};
 use reth_discv5::discv5::enr::{IP_ENR_KEY, IP6_ENR_KEY};
 use reth_evm::ConfigureEvm;
@@ -47,7 +49,7 @@ use reth_node_builder::{
     components::{
         BasicPayloadServiceBuilder, ComponentsBuilder, ConsensusBuilder, ExecutorBuilder,
         NetworkBuilder, PayloadBuilderBuilder, PoolBuilder, PoolBuilderConfigOverrides,
-        TxPoolBuilder,
+        spawn_maintenance_tasks,
     },
     node::{FullNodeTypes, NodeTypes},
     rpc::{
@@ -68,6 +70,7 @@ use reth_transaction_pool::{
 };
 use reth_trie_common::KeccakKeyHasher;
 use serde::de::DeserializeOwned;
+use tokio_stream::wrappers::BroadcastStream;
 
 use crate::{
     BaseEngineApiBuilder, BaseEngineTypes, BaseStorage,
@@ -248,6 +251,8 @@ impl BaseNode {
             discovery_v4,
             txpool_ordering,
             max_inflight_delegated_slots,
+            mempool_sender_limit,
+            mempool_payer_limit,
             ..
         } = self.args;
         let ordering = match txpool_ordering {
@@ -260,7 +265,14 @@ impl BaseNode {
             .pool(
                 BasePoolBuilder::default()
                     .with_ordering(ordering)
-                    .with_max_inflight_delegated_slots(max_inflight_delegated_slots),
+                    .with_max_inflight_delegated_slots(max_inflight_delegated_slots)
+                    .with_guard_limits(GuardLimits {
+                        default_sender: mempool_sender_limit,
+                        default_payer: mempool_payer_limit,
+                    })
+                    .with_additional_trusted_delegation_targets(
+                        self.args.mempool_trusted_delegation_targets.iter().copied(),
+                    ),
             )
             .payload(BasicPayloadServiceBuilder::new(
                 BasePayloadBuilder::new(compute_pending_block)
@@ -862,6 +874,10 @@ pub struct BasePoolBuilder<T = BasePooledTransaction> {
     pub ordering: BaseOrdering<T>,
     /// Maximum inflight EIP-7702 delegated account transactions per sender.
     pub max_inflight_delegated_slots: usize,
+    /// Per-account EIP-8130 admission caps.
+    pub guard_limits: GuardLimits,
+    /// Additional trusted EIP-7702 delegation targets for locked payers.
+    pub additional_trusted_delegation_targets: AddressSet,
     /// Marker for the pooled transaction type.
     _pd: core::marker::PhantomData<T>,
 }
@@ -872,6 +888,8 @@ impl<T> Default for BasePoolBuilder<T> {
             pool_config_overrides: Default::default(),
             ordering: BaseOrdering::default(),
             max_inflight_delegated_slots: 4,
+            guard_limits: GuardLimits::default(),
+            additional_trusted_delegation_targets: AddressSet::default(),
             _pd: Default::default(),
         }
     }
@@ -883,6 +901,10 @@ impl<T> Clone for BasePoolBuilder<T> {
             pool_config_overrides: self.pool_config_overrides.clone(),
             ordering: self.ordering.clone(),
             max_inflight_delegated_slots: self.max_inflight_delegated_slots,
+            guard_limits: self.guard_limits,
+            additional_trusted_delegation_targets: self
+                .additional_trusted_delegation_targets
+                .clone(),
             _pd: core::marker::PhantomData,
         }
     }
@@ -909,6 +931,21 @@ impl<T> BasePoolBuilder<T> {
         self.max_inflight_delegated_slots = limit;
         self
     }
+
+    /// Sets the per-account EIP-8130 admission caps.
+    pub const fn with_guard_limits(mut self, guard_limits: GuardLimits) -> Self {
+        self.guard_limits = guard_limits;
+        self
+    }
+
+    /// Sets additional trusted delegation targets for balance-bounded locked payers.
+    pub fn with_additional_trusted_delegation_targets(
+        mut self,
+        targets: impl IntoIterator<Item = Address>,
+    ) -> Self {
+        self.additional_trusted_delegation_targets = targets.into_iter().collect();
+        self
+    }
 }
 
 impl<Node, T, Evm> PoolBuilder<Node, Evm> for BasePoolBuilder<T>
@@ -924,7 +961,14 @@ where
         ctx: &BuilderContext<Node>,
         evm_config: Evm,
     ) -> eyre::Result<Self::Pool> {
-        let Self { pool_config_overrides, ordering, max_inflight_delegated_slots, .. } = self;
+        let Self {
+            pool_config_overrides,
+            ordering,
+            max_inflight_delegated_slots,
+            guard_limits,
+            additional_trusted_delegation_targets,
+            ..
+        } = self;
 
         let blob_store = reth_node_builder::components::create_blob_store(ctx)?;
         let validator =
@@ -946,23 +990,39 @@ where
                         // In --dev mode we can't require gas fees because we're unable to decode
                         // the L1 block info
                         .require_l1_data_gas_fee(!ctx.config().dev.dev)
+                        .with_additional_trusted_delegation_targets(
+                            additional_trusted_delegation_targets.clone(),
+                        )
                 });
 
         let mut final_pool_config = pool_config_overrides.apply(ctx.pool_config());
         final_pool_config.max_inflight_delegated_slot_limit = max_inflight_delegated_slots;
 
-        let transaction_pool = TxPoolBuilder::new(ctx)
-            .with_validator(validator)
-            .build_with_ordering_and_spawn_maintenance_task(
-                ordering.clone(),
-                blob_store,
-                final_pool_config,
-            )?;
+        let transaction_pool = reth_transaction_pool::Pool::new(
+            validator,
+            ordering.clone(),
+            blob_store,
+            final_pool_config.clone(),
+        );
+        let transaction_pool =
+            BaseTransactionPool::new(transaction_pool, ordering).with_guard_limits(guard_limits);
+        spawn_maintenance_tasks(ctx, transaction_pool.clone(), &final_pool_config)?;
+        let state_diff_events = BroadcastStream::new(ctx.provider().subscribe_to_canonical_state());
+        ctx.task_executor().spawn_critical_task(
+            "mempool-invalidation",
+            maintain_state_diff_invalidation(transaction_pool.clone(), state_diff_events),
+        );
 
-        info!(target: "reth::cli", max_inflight_delegated_slots, "Transaction pool initialized");
-        debug!(target: "reth::cli", "Spawned txpool maintenance task");
+        info!(
+            target: "reth::cli",
+            max_inflight_delegated_slots = max_inflight_delegated_slots,
+            sender_limit = guard_limits.default_sender,
+            payer_limit = guard_limits.default_payer,
+            "Transaction pool initialized"
+        );
+        debug!(target: "reth::cli", "Spawned txpool maintenance tasks");
 
-        Ok(BaseTransactionPool::new(transaction_pool, ordering))
+        Ok(transaction_pool)
     }
 }
 
