@@ -4,7 +4,9 @@
 //! [`NodeActor`]: crate::NodeActor
 
 mod builder;
-pub use builder::{DerivationDelegateConfig, L1ConfigBuilder, RollupNodeBuilder};
+pub use builder::{
+    DerivationDelegateConfig, L1ConfigBuilder, RollupNodeBuilder, UpgradeSignalBuilderConfig,
+};
 
 pub use crate::follow::{FollowNode, FollowNodeConfig};
 
