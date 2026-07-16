@@ -34,7 +34,7 @@ const fn hashes_eq(a: &[u8; 32], b: &[u8; 32]) -> bool {
 const _: () = assert!(
     hashes_eq(&Sha256::new().update(V1_LOGIC_SOURCE).finalize(), &V1_LOGIC_HASH),
     "logic/v1.rs changed since it was frozen at Beryl - if intentional, recompute its hash and \
-     update V1_LOGIC_HASH as a deliberate, CODEOWNERS-reviewed change",
+     update V1_LOGIC_HASH as a deliberate, reviewed change",
 );
 
 /// An activated version of the stablecoin B-20 precompile logic.
