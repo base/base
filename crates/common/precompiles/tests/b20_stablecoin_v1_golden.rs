@@ -24,10 +24,10 @@ use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
 use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
     B20_MAX_SUPPLY_CAP, B20PolicyType, B20StablecoinInit, B20StablecoinStorage, B20StablecoinToken,
-    B20TokenRole, IB20, IB20Stablecoin, InMemoryPolicy, NoopPrecompileCallObserver, PermitArgs,
-    Stablecoin, StablecoinV1, StablecoinVersion, StablecoinVersions, TokenAccounting,
+    B20TokenRole, IB20, IB20::IB20Calls as C, IB20Stablecoin,
+    IB20Stablecoin::IB20StablecoinCalls as SC, InMemoryPolicy, NoopPrecompileCallObserver,
+    PermitArgs, Stablecoin, StablecoinV1, StablecoinVersion, StablecoinVersions, TokenAccounting,
 };
-use base_common_precompiles::{IB20::IB20Calls as C, IB20Stablecoin::IB20StablecoinCalls as SC};
 use base_precompile_storage::{BasePrecompileError, HashMapStorageProvider, StorageCtx};
 use k256::ecdsa::SigningKey;
 
