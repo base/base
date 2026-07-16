@@ -24,9 +24,8 @@ use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
 use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
     B20_MAX_SUPPLY_CAP, B20PolicyType, B20StablecoinInit, B20StablecoinStorage, B20StablecoinToken,
-    B20TokenRole, IB20, IB20::IB20Calls as C, IB20Stablecoin,
-    IB20Stablecoin::IB20StablecoinCalls as SC, InMemoryPolicy, NoopPrecompileCallObserver,
-    PermitArgs, Stablecoin, StablecoinV1, StablecoinVersion, StablecoinVersions, TokenAccounting,
+    B20TokenRole, IB20, IB20Stablecoin, InMemoryPolicy, NoopPrecompileCallObserver, PermitArgs,
+    Stablecoin, StablecoinV1, StablecoinVersion, StablecoinVersions, TokenAccounting,
 };
 use base_precompile_storage::{BasePrecompileError, HashMapStorageProvider, StorageCtx};
 use k256::ecdsa::SigningKey;
@@ -1548,6 +1547,7 @@ fn golden_unpause_unprivileged_requires_role() {
 }
 
 /// Asserts an unprivileged metadata/admin op reverts for a caller lacking `role`.
+#[track_caller]
 fn assert_unprivileged_requires_role(calldata: Vec<u8>, role: B256) {
     let mut s = fresh();
     let err = op(&mut s, ALICE, InMemoryPolicy::new(), calldata).unwrap_err();
@@ -2073,6 +2073,9 @@ fn golden_gas_footprints() {
 /// reviewed.
 #[allow(dead_code)]
 fn v1_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Stablecoin::IB20StablecoinCalls) {
+    use IB20::IB20Calls as C;
+    use IB20Stablecoin::IB20StablecoinCalls as SC;
+
     // No-op: forces each arm to name real golden `#[test]` fns by path.
     fn covered(_goldens: &[fn()]) {}
 
