@@ -56,6 +56,9 @@ pub use metrics::{
     PrecompileCallMetric, PrecompileCallOutcome, PrecompileCallStatus,
 };
 
+mod freeze;
+pub use freeze::FrozenHash;
+
 mod b20_asset;
 pub use b20_asset::{
     AssetAccounting, B20AssetExtensionStorage, B20AssetInit, B20AssetPrecompile, B20AssetStorage,
