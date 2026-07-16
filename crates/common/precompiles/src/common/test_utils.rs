@@ -332,7 +332,7 @@ impl Default for FakePolicyAccounting {
 
 impl FakePolicyAccounting {
     /// Creates empty policy-registry storage (no built-ins seeded).
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             caller: Address::ZERO,
             initialized: false,
