@@ -9,7 +9,7 @@ worker API for both ZK and TEE proof jobs. The protocol-native service uses
 `proof_requests` as the single execution queue.
 
 Concrete proving backends live behind worker hosts. ZK hosts own SP1
-cluster/network/mock/dry-run integration, while TEE hosts own enclave
+cluster/network/dry-run integration, while TEE hosts own enclave
 integration.
 
 Enable `rpc-server` to generate the server trait. Use
