@@ -629,10 +629,13 @@ mod tests {
     }
 
     #[test]
-    fn delegate_rejects_nested_delegate_at_authorize_layer() {
-        // Depth-2: DELEGATE || delegate_account(20) || DELEGATE || .... The
-        // authorize layer's independent guard rejects the nested delegate before
-        // re-entering `authenticate_actor`, mirroring the dispatch-level check.
+    fn nested_delegate_is_rejected() {
+        // Depth-2: DELEGATE || delegate_account(20) || DELEGATE || .... Single-hop
+        // is rejected. On the public path the dispatch-level structural check
+        // (`AuthenticatorDispatch::delegate`) fires first, so that is what this
+        // test exercises; the authorize-layer guard is redundant defense-in-depth
+        // that only becomes reachable if the dispatch check were removed. Both
+        // surface the same `NestedDelegate` error.
         let delegate_account = address!("0x00000000000000000000000000000000000000bb");
         let mut data = Vec::new();
         data.extend_from_slice(delegate_account.as_slice());
