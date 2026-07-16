@@ -5,6 +5,7 @@
 //! deltas into the EIP-8130 invalidation index.
 
 use alloy_primitives::{B256, U256};
+use base_common_precompiles::NonceManagerStorage;
 use futures::StreamExt;
 use reth_provider::CanonStateNotification;
 use revm::database::BundleState;
@@ -110,6 +111,29 @@ impl AccountStateDiff {
         }
         diffs
     }
+
+    /// Collects watched state changes between flashblocks.
+    ///
+    /// Protocol and channel nonce advances are omitted because the builder has
+    /// already pruned each included transaction, promoting the valid successor
+    /// in that pool lane. Treating an included transaction's nonce advance as
+    /// external invalidation would immediately evict that successor. This is a
+    /// deliberately coarse intra-block filter: canonical invalidation remains
+    /// conservative for unrelated protocol-nonce or nonce-manager writes.
+    #[must_use]
+    pub fn collect_for_intra_block(bundle: &BundleState) -> Vec<Self> {
+        Self::collect(bundle)
+            .into_iter()
+            .filter_map(|mut diff| {
+                diff.nonce_changed = false;
+                if diff.address == NonceManagerStorage::ADDRESS {
+                    diff.changed_slots.clear();
+                }
+                (diff.balance.is_some() || diff.code_changed || !diff.changed_slots.is_empty())
+                    .then_some(diff)
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -186,5 +210,68 @@ mod tests {
         let bundle = bundle(vec![(address, account(Some(info(100, 0)), None, vec![]))]);
         let diffs = AccountStateDiff::collect(&bundle);
         assert_eq!(diffs[0].balance, Some(U256::ZERO));
+    }
+
+    #[test]
+    fn intra_block_diff_omits_protocol_and_channel_nonce_advances() {
+        let sender = Address::repeat_byte(2);
+        let nonce_slot = U256::from(9);
+        let changed_slot =
+            StorageSlot { previous_or_original_value: U256::ZERO, present_value: U256::from(1) };
+        let bundle = bundle(vec![
+            (sender, account(Some(info(100, 1)), Some(info(100, 2)), vec![])),
+            (
+                NonceManagerStorage::ADDRESS,
+                account(Some(info(0, 0)), Some(info(0, 0)), vec![(nonce_slot, changed_slot)]),
+            ),
+        ]);
+
+        assert!(
+            AccountStateDiff::collect_for_intra_block(&bundle).is_empty(),
+            "included nonce advances must not evict newly promoted successors"
+        );
+    }
+
+    #[test]
+    fn intra_block_diff_retains_non_nonce_surfaces() {
+        let account_address = Address::repeat_byte(3);
+        let contract = Address::repeat_byte(4);
+        let contract_slot = U256::from(10);
+        let changed_slot =
+            StorageSlot { previous_or_original_value: U256::ZERO, present_value: U256::from(1) };
+        let bundle = bundle(vec![
+            (account_address, account(Some(info(100, 1)), Some(info(50, 2)), vec![])),
+            (
+                NonceManagerStorage::ADDRESS,
+                account(Some(info(100, 0)), Some(info(50, 0)), vec![(U256::from(9), changed_slot)]),
+            ),
+            (
+                contract,
+                account(
+                    Some(info(100, 0)),
+                    Some(info(100, 0)),
+                    vec![(contract_slot, changed_slot)],
+                ),
+            ),
+        ]);
+
+        let diffs = AccountStateDiff::collect_for_intra_block(&bundle);
+        let account_diff = diffs
+            .iter()
+            .find(|diff| diff.address == account_address)
+            .expect("balance diff retained");
+        assert_eq!(account_diff.balance, Some(U256::from(50)));
+        assert!(!account_diff.nonce_changed);
+
+        let nonce_manager_diff = diffs
+            .iter()
+            .find(|diff| diff.address == NonceManagerStorage::ADDRESS)
+            .expect("nonce manager balance diff retained");
+        assert_eq!(nonce_manager_diff.balance, Some(U256::from(50)));
+        assert!(nonce_manager_diff.changed_slots.is_empty());
+
+        let contract_diff =
+            diffs.iter().find(|diff| diff.address == contract).expect("contract slot retained");
+        assert_eq!(contract_diff.changed_slots, vec![B256::from(contract_slot)]);
     }
 }
