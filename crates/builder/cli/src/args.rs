@@ -268,7 +268,7 @@ impl Args {
     ) -> eyre::Result<BuilderConfig> {
         if self.flashblock_execution_time_budget_us.is_some()
             || self.block_state_root_gas_limit.is_some()
-            || self.state_root_gas_coefficient != 0.02
+            || (self.state_root_gas_coefficient - 0.02).abs() > f64::EPSILON
             || self.state_root_gas_anchor_us != 5_000
         {
             warn!("deprecated builder resource limit flags are ignored");

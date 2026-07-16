@@ -567,6 +567,8 @@ mod tests {
             "base",
             "rpc",
             "--enable-metering",
+            "--metering.target-flashblocks-per-block",
+            "4",
             "--metering.gas-limit",
             "30000000",
         ]));

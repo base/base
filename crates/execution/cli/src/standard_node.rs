@@ -713,6 +713,8 @@ mod tests {
         let args = CommandParser::<StandardNodeArgs>::parse_from([
             "reth",
             "--enable-metering",
+            "--metering.target-flashblocks-per-block",
+            "4",
             "--metering.gas-limit",
             "30000000",
         ])
