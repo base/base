@@ -61,7 +61,10 @@ use crate::{
     },
     traits::{ClientBounds, PoolBounds},
     transaction_events::{
-        BuilderTransactionEventContext, emit_builder_payload_event, emit_builder_transaction_event,
+        BuilderFlashblockPublishedEventData, BuilderFlashblockStartedEventData,
+        BuilderFlashblockStoppedEventData, BuilderIncludedEventData,
+        BuilderPayloadFinalizedEventData, BuilderTransactionEventContext,
+        emit_builder_payload_event, emit_builder_transaction_event,
     },
 };
 
@@ -593,24 +596,17 @@ where
             &payload_id,
             TransactionEventType::BuilderFlashblockStarted,
             None,
-            serde_json::Map::from_iter([
-                ("target_gas".to_string(), serde_json::json!(target_gas_for_batch)),
-                ("gas_used".to_string(), serde_json::json!(info.cumulative_gas_used)),
-                ("target_da".to_string(), serde_json::json!(target_da_for_batch)),
-                ("da_used".to_string(), serde_json::json!(info.cumulative_da_bytes_used)),
-                (
-                    "target_da_footprint".to_string(),
-                    serde_json::json!(target_da_footprint_for_batch),
-                ),
-                (
-                    "target_state_root_gas".to_string(),
-                    serde_json::json!(target_state_root_gas_for_batch),
-                ),
-                (
-                    "flashblock_execution_time_limit_us".to_string(),
-                    serde_json::json!(flashblock_execution_time_limit_us),
-                ),
-            ]),
+            || {
+                BuilderFlashblockStartedEventData::new(
+                    target_gas_for_batch,
+                    info.cumulative_gas_used,
+                    target_da_for_batch,
+                    info.cumulative_da_bytes_used,
+                    target_da_footprint_for_batch,
+                    target_state_root_gas_for_batch,
+                    flashblock_execution_time_limit_us,
+                )
+            },
         );
 
         info.reset_flashblock_execution_time();
@@ -708,16 +704,13 @@ where
                 &payload_id,
                 TransactionEventType::BuilderFlashblockBuildStopped,
                 None,
-                serde_json::Map::from_iter([
-                    ("reason".to_string(), serde_json::json!("block_cancelled_before_build")),
-                    ("transaction_count".to_string(), serde_json::json!(0)),
-                    (
-                        "build_duration_ms".to_string(),
-                        serde_json::json!(
-                            flashblock_build_start_time.elapsed().as_secs_f64() * 1000.0
-                        ),
-                    ),
-                ]),
+                || {
+                    BuilderFlashblockStoppedEventData::new(
+                        "block_cancelled_before_build",
+                        0,
+                        flashblock_build_start_time.elapsed().as_secs_f64() * 1000.0,
+                    )
+                },
             );
             self.record_flashblocks_metrics(
                 ctx,
@@ -777,22 +770,13 @@ where
                         &payload_id,
                         TransactionEventType::BuilderFlashblockBuildStopped,
                         None,
-                        serde_json::Map::from_iter([
-                            (
-                                "reason".to_string(),
-                                serde_json::json!("payload_resolved_before_publish"),
-                            ),
-                            (
-                                "transaction_count".to_string(),
-                                serde_json::json!(fb_payload.diff.transactions.len()),
-                            ),
-                            (
-                                "build_duration_ms".to_string(),
-                                serde_json::json!(
-                                    flashblock_build_start_time.elapsed().as_secs_f64() * 1000.0
-                                ),
-                            ),
-                        ]),
+                        || {
+                            BuilderFlashblockStoppedEventData::new(
+                                "payload_resolved_before_publish",
+                                fb_payload.diff.transactions.len(),
+                                flashblock_build_start_time.elapsed().as_secs_f64() * 1000.0,
+                            )
+                        },
                     );
                     self.record_flashblocks_metrics(
                         ctx,
@@ -818,22 +802,15 @@ where
                     &payload_id,
                     TransactionEventType::BuilderFlashblockPublished,
                     Some(fb_payload.diff.block_hash),
-                    serde_json::Map::from_iter([
-                        (
-                            "transaction_count".to_string(),
-                            serde_json::json!(fb_payload.diff.transactions.len()),
-                        ),
-                        ("byte_size".to_string(), serde_json::json!(flashblock_byte_size)),
-                        (
-                            "build_duration_ms".to_string(),
-                            serde_json::json!(flashblock_build_duration.as_secs_f64() * 1000.0),
-                        ),
-                        ("gas_used".to_string(), serde_json::json!(fb_payload.diff.gas_used)),
-                        (
-                            "block_hash".to_string(),
-                            serde_json::json!(format!("{:#x}", fb_payload.diff.block_hash)),
-                        ),
-                    ]),
+                    || {
+                        BuilderFlashblockPublishedEventData::new(
+                            fb_payload.diff.transactions.len(),
+                            flashblock_byte_size,
+                            flashblock_build_duration.as_secs_f64() * 1000.0,
+                            fb_payload.diff.gas_used,
+                            fb_payload.diff.block_hash,
+                        )
+                    },
                 );
                 BuilderMetrics::flashblock_build_duration().record(flashblock_build_duration);
                 BuilderMetrics::flashblock_byte_size_histogram()
@@ -913,14 +890,17 @@ where
         }
     }
 
-    fn emit_flashblock_event(
+    fn emit_flashblock_event<D, F>(
         &self,
         ctx: &BasePayloadBuilderCtx,
         payload_id: &str,
         event_type: TransactionEventType,
         block_hash: Option<B256>,
-        data: serde_json::Map<String, serde_json::Value>,
-    ) {
+        data: F,
+    ) where
+        D: Serialize,
+        F: FnOnce() -> D,
+    {
         if GlobalTransactionEventWriter::get().is_none() {
             return;
         }
@@ -1033,13 +1013,15 @@ where
         emit_builder_payload_event(
             payload_event_ctx.clone(),
             TransactionEventType::BuilderPayloadFinalized,
-            serde_json::Map::from_iter([
-                ("transaction_count".to_string(), serde_json::json!(transaction_count)),
-                ("gas_used".to_string(), serde_json::json!(block.gas_used)),
-                ("gas_limit".to_string(), serde_json::json!(block.gas_limit)),
-                ("timestamp".to_string(), serde_json::json!(block.timestamp)),
-                ("inclusion_signal".to_string(), serde_json::json!("builder_finalized_payload")),
-            ]),
+            || {
+                BuilderPayloadFinalizedEventData::new(
+                    transaction_count,
+                    block.gas_used,
+                    block.gas_limit,
+                    block.timestamp,
+                    "builder_finalized_payload",
+                )
+            },
         );
 
         for (position, tx) in block.body().transactions.iter().enumerate() {
@@ -1049,10 +1031,7 @@ where
                 event_ctx,
                 TransactionEventType::BuilderIncluded,
                 tx.tx_hash(),
-                serde_json::Map::from_iter([(
-                    "inclusion_signal".to_string(),
-                    serde_json::json!("builder_finalized_payload"),
-                )]),
+                || BuilderIncludedEventData::new("builder_finalized_payload"),
             );
         }
     }

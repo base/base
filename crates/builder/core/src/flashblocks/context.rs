@@ -23,7 +23,7 @@ use base_execution_payload_builder::{
 use base_execution_txpool::{
     BundleTransaction, TimestampedTransaction, estimated_da_size::DataAvailabilitySized,
 };
-use base_observability_events::{GlobalTransactionEventWriter, TransactionEventType};
+use base_observability_events::TransactionEventType;
 use reth_basic_payload_builder::PayloadConfig;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_evm::{
@@ -36,7 +36,7 @@ use reth_primitives_traits::{InMemorySize, SealedHeader, SignedTransaction};
 use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
 use revm::{DatabaseCommit, context::result::ResultAndState, interpreter::as_u64_saturated};
-use serde_json::Map;
+use serde::Serialize;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, debug, span, trace, warn};
@@ -45,8 +45,8 @@ use crate::{
     BuilderConfig, BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded, PayloadTxsBounds,
     ResourceLimits, TxResources, TxnExecutionError, TxnOutcome,
     transaction_events::{
-        BuilderTransactionEventContext, add_budget_fields, emit_builder_transaction_event,
-        rejection_reason_code,
+        BuilderAcceptedEventData, BuilderConsideredEventData, BuilderRejectedEventData,
+        BuilderTransactionEventContext, emit_builder_transaction_event, rejection_reason_code,
     },
 };
 
@@ -497,17 +497,17 @@ impl BasePayloadBuilderCtx {
         }
     }
 
-    fn emit_builder_decision_event(
+    fn emit_builder_decision_event<D, F>(
         &self,
         payload_id: &str,
         event_type: TransactionEventType,
         tx_hash: TxHash,
         ordering_position: Option<u64>,
-        data: Map<String, serde_json::Value>,
-    ) {
-        if GlobalTransactionEventWriter::get().is_none() {
-            return;
-        }
+        data: F,
+    ) where
+        D: Serialize,
+        F: FnOnce() -> D,
+    {
         emit_builder_transaction_event(
             self.builder_transaction_event_context(payload_id, ordering_position, None),
             event_type,
@@ -712,35 +712,33 @@ impl BasePayloadBuilderCtx {
                     current_block = block_number,
                     "skipping bundle tx: wrong target block"
                 );
-                let mut considered_data = Map::from_iter([(
-                    "bundle_target_block".to_string(),
-                    serde_json::json!(target),
-                )]);
-                add_budget_fields(&mut considered_data, info, limits, None);
                 self.emit_builder_decision_event(
                     &payload_id,
                     TransactionEventType::BuilderConsidered,
                     tx_hash,
                     Some(ordering_position),
-                    considered_data,
+                    || {
+                        BuilderConsideredEventData::new(info, limits, None)
+                            .with_bundle_target_block(target)
+                    },
                 );
-                let mut rejected_data = Map::from_iter([
-                    ("rejection_reason".to_string(), serde_json::json!("wrong_target_block")),
-                    (
-                        "rejection_detail".to_string(),
-                        serde_json::json!("bundle target block does not match current block"),
-                    ),
-                    ("bundle_target_block".to_string(), serde_json::json!(target)),
-                    ("current_block".to_string(), serde_json::json!(block_number)),
-                    ("permanent".to_string(), serde_json::json!(false)),
-                ]);
-                add_budget_fields(&mut rejected_data, info, limits, None);
                 self.emit_builder_decision_event(
                     &payload_id,
                     TransactionEventType::BuilderRejected,
                     tx_hash,
                     Some(ordering_position),
-                    rejected_data,
+                    || {
+                        BuilderRejectedEventData::new(
+                            "wrong_target_block",
+                            "bundle target block does not match current block",
+                            false,
+                            info,
+                            limits,
+                            None,
+                        )
+                        .with_bundle_target_block(target)
+                        .with_current_block(block_number)
+                    },
                 );
                 best_txs.mark_invalid(tx.sender(), tx.nonce());
                 continue;
@@ -757,31 +755,29 @@ impl BasePayloadBuilderCtx {
                     timestamp = block_timestamp,
                     "skipping bundle tx: expired"
                 );
-                let mut considered_data = Map::new();
-                add_budget_fields(&mut considered_data, info, limits, None);
                 self.emit_builder_decision_event(
                     &payload_id,
                     TransactionEventType::BuilderConsidered,
                     tx_hash,
                     Some(ordering_position),
-                    considered_data,
+                    || BuilderConsideredEventData::new(info, limits, None),
                 );
-                let mut rejected_data = Map::from_iter([
-                    ("rejection_reason".to_string(), serde_json::json!("bundle_expired")),
-                    (
-                        "rejection_detail".to_string(),
-                        serde_json::json!("bundle validity window expired"),
-                    ),
-                    ("block_timestamp".to_string(), serde_json::json!(block_timestamp)),
-                    ("permanent".to_string(), serde_json::json!(false)),
-                ]);
-                add_budget_fields(&mut rejected_data, info, limits, None);
                 self.emit_builder_decision_event(
                     &payload_id,
                     TransactionEventType::BuilderRejected,
                     tx_hash,
                     Some(ordering_position),
-                    rejected_data,
+                    || {
+                        BuilderRejectedEventData::new(
+                            "bundle_expired",
+                            "bundle validity window expired",
+                            false,
+                            info,
+                            limits,
+                            None,
+                        )
+                        .with_block_timestamp(block_timestamp)
+                    },
                 );
                 best_txs.mark_invalid(tx.sender(), tx.nonce());
                 continue;
@@ -798,31 +794,29 @@ impl BasePayloadBuilderCtx {
                     timestamp = block_timestamp,
                     "skipping bundle tx: not yet valid"
                 );
-                let mut considered_data = Map::new();
-                add_budget_fields(&mut considered_data, info, limits, None);
                 self.emit_builder_decision_event(
                     &payload_id,
                     TransactionEventType::BuilderConsidered,
                     tx_hash,
                     Some(ordering_position),
-                    considered_data,
+                    || BuilderConsideredEventData::new(info, limits, None),
                 );
-                let mut rejected_data = Map::from_iter([
-                    ("rejection_reason".to_string(), serde_json::json!("bundle_not_yet_valid")),
-                    (
-                        "rejection_detail".to_string(),
-                        serde_json::json!("bundle validity window has not started"),
-                    ),
-                    ("block_timestamp".to_string(), serde_json::json!(block_timestamp)),
-                    ("permanent".to_string(), serde_json::json!(false)),
-                ]);
-                add_budget_fields(&mut rejected_data, info, limits, None);
                 self.emit_builder_decision_event(
                     &payload_id,
                     TransactionEventType::BuilderRejected,
                     tx_hash,
                     Some(ordering_position),
-                    rejected_data,
+                    || {
+                        BuilderRejectedEventData::new(
+                            "bundle_not_yet_valid",
+                            "bundle validity window has not started",
+                            false,
+                            info,
+                            limits,
+                            None,
+                        )
+                        .with_block_timestamp(block_timestamp)
+                    },
                 );
                 best_txs.mark_invalid(tx.sender(), tx.nonce());
                 continue;
@@ -872,41 +866,30 @@ impl BasePayloadBuilderCtx {
                         state_root_gas: None,
                         uncompressed_size: tx_uncompressed_size,
                     };
-                    let mut considered_data = Map::from_iter([
-                        ("tx_age_ms".to_string(), serde_json::json!(tx_age_ms)),
-                        (
-                            "metering_wait_duration_ms".to_string(),
-                            serde_json::json!(wait_duration.as_millis()),
-                        ),
-                    ]);
-                    add_budget_fields(&mut considered_data, info, limits, Some(&tx_resources));
                     self.emit_builder_decision_event(
                         &payload_id,
                         TransactionEventType::BuilderConsidered,
                         tx_hash,
                         Some(ordering_position),
-                        considered_data,
+                        || {
+                            BuilderConsideredEventData::new(info, limits, Some(&tx_resources))
+                                .with_metering_wait(tx_age_ms, wait_duration.as_millis())
+                        },
                     );
-                    let mut rejected_data = Map::from_iter([
-                        (
-                            "rejection_reason".to_string(),
-                            serde_json::json!(rejection_reason_code(&err)),
-                        ),
-                        ("rejection_detail".to_string(), serde_json::json!(err.to_string())),
-                        ("tx_age_ms".to_string(), serde_json::json!(tx_age_ms)),
-                        (
-                            "metering_wait_duration_ms".to_string(),
-                            serde_json::json!(wait_duration.as_millis()),
-                        ),
-                        ("permanent".to_string(), serde_json::json!(false)),
-                    ]);
-                    add_budget_fields(&mut rejected_data, info, limits, Some(&tx_resources));
                     self.emit_builder_decision_event(
                         &payload_id,
                         TransactionEventType::BuilderRejected,
                         tx_hash,
                         Some(ordering_position),
-                        rejected_data,
+                        || {
+                            BuilderRejectedEventData::from_error(
+                                &err,
+                                info,
+                                limits,
+                                Some(&tx_resources),
+                            )
+                            .with_metering_wait(tx_age_ms, wait_duration.as_millis())
+                        },
                     );
                     log_txn(Err(err));
                     BuilderMetrics::metering_data_pending_skip().increment(1);
@@ -943,14 +926,12 @@ impl BasePayloadBuilderCtx {
                 state_root_gas,
                 uncompressed_size: tx_uncompressed_size,
             };
-            let mut considered_data = Map::new();
-            add_budget_fields(&mut considered_data, info, limits, Some(&tx_resources));
             self.emit_builder_decision_event(
                 &payload_id,
                 TransactionEventType::BuilderConsidered,
                 tx_hash,
                 Some(ordering_position),
-                considered_data,
+                || BuilderConsideredEventData::new(info, limits, Some(&tx_resources)),
             );
 
             // ensure we still have capacity for this transaction
@@ -1001,22 +982,20 @@ impl BasePayloadBuilderCtx {
                             );
                         }
 
-                        let mut rejected_data = Map::from_iter([
-                            (
-                                "rejection_reason".to_string(),
-                                serde_json::json!(rejection_reason_code(&err)),
-                            ),
-                            ("rejection_detail".to_string(), serde_json::json!(err.to_string())),
-                            ("dry_run".to_string(), serde_json::json!(false)),
-                            ("permanent".to_string(), serde_json::json!(err.is_permanent())),
-                        ]);
-                        add_budget_fields(&mut rejected_data, info, limits, Some(&tx_resources));
                         self.emit_builder_decision_event(
                             &payload_id,
                             TransactionEventType::BuilderRejected,
                             tx_hash,
                             Some(ordering_position),
-                            rejected_data,
+                            || {
+                                BuilderRejectedEventData::from_error(
+                                    &err,
+                                    info,
+                                    limits,
+                                    Some(&tx_resources),
+                                )
+                                .with_dry_run(false)
+                            },
                         );
                         log_txn(Err(err));
                         best_txs.mark_invalid(tx.signer(), tx.nonce());
@@ -1033,21 +1012,19 @@ impl BasePayloadBuilderCtx {
                         diag.permanently_rejected_txs.push(tx_hash);
                     }
 
-                    let mut rejected_data = Map::from_iter([
-                        (
-                            "rejection_reason".to_string(),
-                            serde_json::json!(rejection_reason_code(&err)),
-                        ),
-                        ("rejection_detail".to_string(), serde_json::json!(err.to_string())),
-                        ("permanent".to_string(), serde_json::json!(err.is_permanent())),
-                    ]);
-                    add_budget_fields(&mut rejected_data, info, limits, Some(&tx_resources));
                     self.emit_builder_decision_event(
                         &payload_id,
                         TransactionEventType::BuilderRejected,
                         tx_hash,
                         Some(ordering_position),
-                        rejected_data,
+                        || {
+                            BuilderRejectedEventData::from_error(
+                                &err,
+                                info,
+                                limits,
+                                Some(&tx_resources),
+                            )
+                        },
                     );
                     log_txn(Err(err));
                     best_txs.mark_invalid(tx.signer(), tx.nonce());
@@ -1069,21 +1046,19 @@ impl BasePayloadBuilderCtx {
                 diag.record_rejection(&err);
                 let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
                 record_rejected_tx_priority_fee(&err, priority_fee);
-                let mut rejected_data = Map::from_iter([
-                    (
-                        "rejection_reason".to_string(),
-                        serde_json::json!(rejection_reason_code(&err)),
-                    ),
-                    ("rejection_detail".to_string(), serde_json::json!(err.to_string())),
-                    ("permanent".to_string(), serde_json::json!(err.is_permanent())),
-                ]);
-                add_budget_fields(&mut rejected_data, info, limits, Some(&tx_resources));
                 self.emit_builder_decision_event(
                     &payload_id,
                     TransactionEventType::BuilderRejected,
                     tx_hash,
                     Some(ordering_position),
-                    rejected_data,
+                    || {
+                        BuilderRejectedEventData::from_error(
+                            &err,
+                            info,
+                            limits,
+                            Some(&tx_resources),
+                        )
+                    },
                 );
                 log_txn(Err(err));
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
@@ -1119,32 +1094,19 @@ impl BasePayloadBuilderCtx {
                             let priority_fee =
                                 tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
                             record_rejected_tx_priority_fee(&diag_err, priority_fee);
-                            let mut rejected_data = Map::from_iter([
-                                (
-                                    "rejection_reason".to_string(),
-                                    serde_json::json!(rejection_reason_code(&diag_err)),
-                                ),
-                                (
-                                    "rejection_detail".to_string(),
-                                    serde_json::json!(diag_err.to_string()),
-                                ),
-                                (
-                                    "permanent".to_string(),
-                                    serde_json::json!(diag_err.is_permanent()),
-                                ),
-                            ]);
-                            add_budget_fields(
-                                &mut rejected_data,
-                                info,
-                                limits,
-                                Some(&tx_resources),
-                            );
                             self.emit_builder_decision_event(
                                 &payload_id,
                                 TransactionEventType::BuilderRejected,
                                 tx_hash,
                                 Some(ordering_position),
-                                rejected_data,
+                                || {
+                                    BuilderRejectedEventData::from_error(
+                                        &diag_err,
+                                        info,
+                                        limits,
+                                        Some(&tx_resources),
+                                    )
+                                },
                             );
                             log_txn(Err(diag_err));
                             trace!(target: "payload_builder", %err, ?tx, "skipping nonce too low transaction");
@@ -1156,32 +1118,19 @@ impl BasePayloadBuilderCtx {
                             let priority_fee =
                                 tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
                             record_rejected_tx_priority_fee(&diag_err, priority_fee);
-                            let mut rejected_data = Map::from_iter([
-                                (
-                                    "rejection_reason".to_string(),
-                                    serde_json::json!(rejection_reason_code(&diag_err)),
-                                ),
-                                (
-                                    "rejection_detail".to_string(),
-                                    serde_json::json!(diag_err.to_string()),
-                                ),
-                                (
-                                    "permanent".to_string(),
-                                    serde_json::json!(diag_err.is_permanent()),
-                                ),
-                            ]);
-                            add_budget_fields(
-                                &mut rejected_data,
-                                info,
-                                limits,
-                                Some(&tx_resources),
-                            );
                             self.emit_builder_decision_event(
                                 &payload_id,
                                 TransactionEventType::BuilderRejected,
                                 tx_hash,
                                 Some(ordering_position),
-                                rejected_data,
+                                || {
+                                    BuilderRejectedEventData::from_error(
+                                        &diag_err,
+                                        info,
+                                        limits,
+                                        Some(&tx_resources),
+                                    )
+                                },
                             );
                             log_txn(Err(diag_err));
                             trace!(target: "payload_builder", %err, ?tx, "skipping invalid transaction and its descendants");
@@ -1248,21 +1197,19 @@ impl BasePayloadBuilderCtx {
                 if err.is_permanent() {
                     diag.permanently_rejected_txs.push(tx_hash);
                 }
-                let mut rejected_data = Map::from_iter([
-                    (
-                        "rejection_reason".to_string(),
-                        serde_json::json!(rejection_reason_code(&err)),
-                    ),
-                    ("rejection_detail".to_string(), serde_json::json!(err.to_string())),
-                    ("permanent".to_string(), serde_json::json!(err.is_permanent())),
-                ]);
-                add_budget_fields(&mut rejected_data, info, limits, Some(&tx_resources));
                 self.emit_builder_decision_event(
                     &payload_id,
                     TransactionEventType::BuilderRejected,
                     tx_hash,
                     Some(ordering_position),
-                    rejected_data,
+                    || {
+                        BuilderRejectedEventData::from_error(
+                            &err,
+                            info,
+                            limits,
+                            Some(&tx_resources),
+                        )
+                    },
                 );
                 log_txn(Err(err));
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
@@ -1291,20 +1238,20 @@ impl BasePayloadBuilderCtx {
                 BuilderMetrics::state_root_time_per_gas_ratio().record(ratio);
             }
 
-            let mut accepted_data = Map::from_iter([
-                (
-                    "execution_outcome".to_string(),
-                    serde_json::json!(if is_success { "success" } else { "reverted" }),
-                ),
-                ("gas_used".to_string(), serde_json::json!(gas_used)),
-            ]);
-            add_budget_fields(&mut accepted_data, info, limits, Some(&tx_resources));
             self.emit_builder_decision_event(
                 &payload_id,
                 TransactionEventType::BuilderAccepted,
                 tx_hash,
                 Some(ordering_position),
-                accepted_data,
+                || {
+                    BuilderAcceptedEventData::new(
+                        if is_success { "success" } else { "reverted" },
+                        gas_used,
+                        info,
+                        limits,
+                        Some(&tx_resources),
+                    )
+                },
             );
 
             // Push transaction changeset and calculate header bloom filter for receipt.
