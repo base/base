@@ -116,6 +116,7 @@ where
         block_number,
         signer_recovery_time_us: signer_recovery_time,
         execution_time_us: execution_time,
+        // Retained as a zero-valued compatibility field for older profiling clients.
         state_root_time_us: 0,
         total_time_us: total_time,
         transactions: transaction_times,

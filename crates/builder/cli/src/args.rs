@@ -139,20 +139,24 @@ pub struct Args {
     pub max_execution_time_per_tx_us: Option<u128>,
 
     /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
+    /// Scheduled for removal in v1.4.0 after rolling deployments have migrated.
     #[arg(long = "builder.flashblock-execution-time-budget-us", hide = true)]
     pub flashblock_execution_time_budget_us: Option<u128>,
 
     /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
+    /// Scheduled for removal in v1.4.0 after rolling deployments have migrated.
     #[arg(long = "builder.block-state-root-gas-limit", hide = true)]
     pub block_state_root_gas_limit: Option<u64>,
 
     /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
-    #[arg(long = "builder.state-root-gas-coefficient", default_value = "0.02", hide = true)]
-    pub state_root_gas_coefficient: f64,
+    /// Scheduled for removal in v1.4.0 after rolling deployments have migrated.
+    #[arg(long = "builder.state-root-gas-coefficient", hide = true)]
+    pub state_root_gas_coefficient: Option<f64>,
 
     /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
-    #[arg(long = "builder.state-root-gas-anchor-us", default_value = "5000", hide = true)]
-    pub state_root_gas_anchor_us: u128,
+    /// Scheduled for removal in v1.4.0 after rolling deployments have migrated.
+    #[arg(long = "builder.state-root-gas-anchor-us", hide = true)]
+    pub state_root_gas_anchor_us: Option<u128>,
 
     /// Execution metering mode: off, dry-run, or enforce
     #[arg(long = "builder.execution-metering-mode", value_enum, default_value = "off")]
@@ -237,8 +241,8 @@ impl Default for Args {
             max_execution_time_per_tx_us: None,
             flashblock_execution_time_budget_us: None,
             block_state_root_gas_limit: None,
-            state_root_gas_coefficient: 0.02,
-            state_root_gas_anchor_us: 5000,
+            state_root_gas_coefficient: None,
+            state_root_gas_anchor_us: None,
             execution_metering_mode: ExecutionMeteringMode::Off,
             extra_block_deadline_secs: 20,
             enable_resource_metering: false,
@@ -268,8 +272,8 @@ impl Args {
     ) -> eyre::Result<BuilderConfig> {
         if self.flashblock_execution_time_budget_us.is_some()
             || self.block_state_root_gas_limit.is_some()
-            || (self.state_root_gas_coefficient - 0.02).abs() > f64::EPSILON
-            || self.state_root_gas_anchor_us != 5_000
+            || self.state_root_gas_coefficient.is_some()
+            || self.state_root_gas_anchor_us.is_some()
         {
             warn!("deprecated builder resource limit flags are ignored");
         }
@@ -473,8 +477,8 @@ mod tests {
 
         assert_eq!(args.flashblock_execution_time_budget_us, Some(5_000_000));
         assert_eq!(args.block_state_root_gas_limit, Some(1_000_000));
-        assert_eq!(args.state_root_gas_coefficient, 0.1);
-        assert_eq!(args.state_root_gas_anchor_us, 5_000);
+        assert_eq!(args.state_root_gas_coefficient, Some(0.1));
+        assert_eq!(args.state_root_gas_anchor_us, Some(5_000));
     }
 
     #[test]

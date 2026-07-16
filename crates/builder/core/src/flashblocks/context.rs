@@ -169,11 +169,10 @@ impl FlashblockDiagnostics {
             TxnExecutionError::BlockUncompressedSizeExceeded { .. } => {
                 self.txs_rejected_uncompressed_size += 1;
             }
-            TxnExecutionError::ExecutionMeteringLimitExceeded(inner) => match inner {
-                ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _) => {
-                    self.txs_rejected_execution_time += 1;
-                }
-            },
+            TxnExecutionError::ExecutionMeteringLimitExceeded(inner) => {
+                let ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _) = inner;
+                self.txs_rejected_execution_time += 1;
+            }
             TxnExecutionError::MeteringDataPending => {
                 self.txs_rejected_metering_data_pending += 1;
             }
