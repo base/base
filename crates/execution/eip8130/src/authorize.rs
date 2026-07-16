@@ -89,11 +89,12 @@ impl ActorAuthorizer {
                 // `_actorConfig[bytes20(delegate)][account]` binding check.
                 //
                 // Independent depth-1 guard: `authenticate_actor` re-enters the
-                // public dispatch with `allow_delegate = true`, so reject a nested
-                // delegate here before re-entry. `AuthenticatorDispatch::delegate`
-                // already enforces this structurally; this second, layer-local
-                // check keeps single-hop intact even if either layer is later
-                // refactored. (`data` is `delegate_account(20) || nested_auth`, so
+                // public dispatch, which routes a delegate authenticator straight
+                // to the (structural) delegate step, so reject a nested delegate
+                // here before re-entry. `AuthenticatorDispatch::delegate` already
+                // enforces this structurally; this second, layer-local check keeps
+                // single-hop intact even if either layer is later refactored.
+                // (`data` is `delegate_account(20) || nested_auth`, so
                 // `data[20..40]` is the nested authenticator; the outer dispatch
                 // guarantees `data.len() >= 40`.)
                 let nested_authenticator = Address::from_slice(&data[20..40]);
@@ -678,10 +679,7 @@ mod tests {
         let outer_id = actor_id(delegate_account);
         let auth = delegate_auth(delegate_account, &nested_key);
         with_storage(|acc| {
-            acc.account_state
-                .at_mut(&delegate_account)
-                .write(pack_self(0, 0, true))
-                .unwrap();
+            acc.account_state.at_mut(&delegate_account).write(pack_self(0, 0, true)).unwrap();
             acc.actor_config
                 .at_mut(&outer_id)
                 .at_mut(&ACCOUNT)

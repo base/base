@@ -60,21 +60,16 @@ impl AuthenticatorDispatch {
     /// change digest); the caller computes it. For the native secp256k1 path the
     /// caller passes [`Eip8130Constants::K1_AUTHENTICATOR`] as `authenticator`
     /// with the raw 65-byte signature as `data`.
+    ///
+    /// Routes by authenticator address. The delegate authenticator is dispatched
+    /// structurally only (see [`Self::delegate`]): it never verifies the nested
+    /// signature here, so this routes one level deep and single-hop is enforced by
+    /// [`Self::delegate`] plus the authorize layer's own guard before it re-enters
+    /// the full auth path against the delegate account.
     pub fn authenticate(
         hash: B256,
         authenticator: Address,
         data: &[u8],
-    ) -> Result<DispatchOutcome, AuthError> {
-        Self::authenticate_inner(hash, authenticator, data, true)
-    }
-
-    /// Routes by authenticator address. `allow_delegate` is `false` for the
-    /// nested authentication inside a delegate blob (depth-1 only).
-    fn authenticate_inner(
-        hash: B256,
-        authenticator: Address,
-        data: &[u8],
-        allow_delegate: bool,
     ) -> Result<DispatchOutcome, AuthError> {
         // `address(0)` is the empty / "no actor configured" sentinel and is never
         // a valid authenticator selector; it falls through to `NotCanonical`.
@@ -91,9 +86,6 @@ impl AuthenticatorDispatch {
             return Ok(DispatchOutcome::Authenticated { actor_id: Self::webauthn(hash, data)? });
         }
         if authenticator == Eip8130Contracts::DELEGATE_AUTHENTICATOR {
-            if !allow_delegate {
-                return Err(AuthError::NestedDelegate);
-            }
             return Self::delegate(data);
         }
         Err(AuthError::NotCanonical(authenticator))
