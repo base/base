@@ -2,6 +2,7 @@
 
 use alloy_primitives::Bytes;
 use alloy_sol_types::{SolCall, SolValue};
+use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
@@ -12,8 +13,13 @@ use crate::{
 
 impl<'a> B20FactoryStorage<'a> {
     /// ABI-dispatches `calldata` to the appropriate `IB20Factory` handler.
-    pub fn dispatch(&mut self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
-        self.dispatch_with_observer(ctx, calldata, NoopPrecompileCallObserver)
+    pub fn dispatch(
+        &mut self,
+        ctx: StorageCtx<'_>,
+        calldata: &[u8],
+        upgrade: BaseUpgrade,
+    ) -> PrecompileResult {
+        self.dispatch_with_observer(ctx, calldata, upgrade, NoopPrecompileCallObserver)
     }
 
     /// ABI-dispatches `calldata` to the appropriate `IB20Factory` handler with an observer.
@@ -21,6 +27,7 @@ impl<'a> B20FactoryStorage<'a> {
         &mut self,
         ctx: StorageCtx<'_>,
         calldata: &[u8],
+        upgrade: BaseUpgrade,
         observer: O,
     ) -> PrecompileResult
     where
@@ -37,13 +44,14 @@ impl<'a> B20FactoryStorage<'a> {
         if let Err(error) = recorder.deduct_calldata_gas(ctx, calldata) {
             return recorder.record_base_error_result(ctx, error);
         }
-        recorder.record_base_result(ctx, self.inner(ctx, calldata, observer), |b| b)
+        recorder.record_base_result(ctx, self.inner(ctx, calldata, upgrade, observer), |b| b)
     }
 
     fn inner<O>(
         &mut self,
         ctx: StorageCtx<'_>,
         calldata: &[u8],
+        upgrade: BaseUpgrade,
         observer: O,
     ) -> base_precompile_storage::Result<Bytes>
     where
@@ -58,7 +66,8 @@ impl<'a> B20FactoryStorage<'a> {
                     "abi_decode_validate rejects non-canonical discriminants before dispatch",
                 );
                 let address_hash = ctx.metered_keccak256(&(caller, call.salt).abi_encode())?;
-                let token = self.create_b20_with_observer(call, address_hash, observer.clone())?;
+                let token =
+                    self.create_b20_with_observer(call, address_hash, upgrade, observer.clone())?;
                 observer.record_b20_created(variant.as_label());
                 Ok(IB20Factory::createB20Call::abi_encode_returns(&token).into())
             }
@@ -86,6 +95,7 @@ impl<'a> B20FactoryStorage<'a> {
 mod tests {
     use alloy_primitives::{Address, U256};
     use alloy_sol_types::{SolCall, SolError};
+    use base_common_genesis::BaseUpgrade;
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
     use crate::{B20FactoryStorage, IB20Factory};
@@ -97,7 +107,7 @@ mod tests {
         let calldata = IB20Factory::isB20Call { token: Address::ZERO }.abi_encode();
 
         let out = StorageCtx::enter(&mut storage, |ctx| {
-            B20FactoryStorage::new(ctx).dispatch(ctx, &calldata)
+            B20FactoryStorage::new(ctx).dispatch(ctx, &calldata, BaseUpgrade::Beryl)
         })
         .expect("dispatch must not fatally error");
 

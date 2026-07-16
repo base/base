@@ -12,13 +12,10 @@ mod versions;
 pub use versions::{PolicyVersion, PolicyVersions};
 
 mod logic;
-pub use logic::{PolicyRegistryLogic, PolicyRegistryRuntime, PolicyRegistryV1};
+pub use logic::{PolicyRegistryLogic, PolicyRegistryV1};
 
 mod precompile;
 pub use precompile::PolicyRegistryPrecompile;
-
-mod handle;
-pub use handle::PolicyHandle;
 
 mod storage;
 pub use storage::{PackedPolicy, PolicyRegistryStorage};

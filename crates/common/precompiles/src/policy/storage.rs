@@ -156,7 +156,7 @@ mod tests {
 
     use crate::{
         IPolicyRegistry::PolicyType,
-        PolicyRegistryLogic, PolicyRegistryRuntime, PolicyRegistryV1,
+        PolicyRegistryLogic, PolicyRegistryV1,
         policy::storage::{PackedPolicy, PolicyRegistryStorage, slots},
     };
 
@@ -235,8 +235,8 @@ mod tests {
         let mut s = HashMapStorageProvider::new(1);
         s.set_caller(ADMIN);
         StorageCtx::enter(&mut s, |ctx| {
-            let mut rt = PolicyRegistryRuntime::with_storage(PolicyRegistryStorage::new(ctx));
-            PolicyRegistryV1.ensure_initialized_and_get_counter(&mut rt)
+            let mut storage = PolicyRegistryStorage::new(ctx);
+            PolicyRegistryV1.ensure_initialized_and_get_counter(&mut storage)
         })
         .unwrap();
         s
@@ -245,8 +245,8 @@ mod tests {
     /// Creates an ALLOWLIST policy through the pinned V1 logic.
     fn create_allowlist(s: &mut HashMapStorageProvider) -> u64 {
         StorageCtx::enter(s, |ctx| {
-            let mut rt = PolicyRegistryRuntime::with_storage(PolicyRegistryStorage::new(ctx));
-            PolicyRegistryV1.create_policy(&mut rt, ADMIN, PolicyType::ALLOWLIST)
+            let mut storage = PolicyRegistryStorage::new(ctx);
+            PolicyRegistryV1.create_policy(&mut storage, ADMIN, PolicyType::ALLOWLIST)
         })
         .unwrap()
     }
@@ -298,12 +298,12 @@ mod tests {
         let id = create_allowlist(&mut s);
         assert_eq!(id & PolicyRegistryV1::COUNTER_MASK, 2);
         StorageCtx::enter(&mut s, |ctx| {
-            let rt = PolicyRegistryRuntime::with_storage(PolicyRegistryStorage::new(ctx));
+            let storage = PolicyRegistryStorage::new(ctx);
             assert!(
-                PolicyRegistryV1.policy_exists(&rt, PolicyRegistryV1::ALWAYS_ALLOW_ID).unwrap()
+                PolicyRegistryV1.policy_exists(&storage, PolicyRegistryV1::ALWAYS_ALLOW_ID).unwrap()
             );
             assert!(
-                PolicyRegistryV1.policy_exists(&rt, PolicyRegistryV1::ALWAYS_BLOCK_ID).unwrap()
+                PolicyRegistryV1.policy_exists(&storage, PolicyRegistryV1::ALWAYS_BLOCK_ID).unwrap()
             );
         });
     }
@@ -315,8 +315,8 @@ mod tests {
         let mut s = seeded_storage();
         s.set_static(true);
         let err = StorageCtx::enter(&mut s, |ctx| {
-            let mut rt = PolicyRegistryRuntime::with_storage(PolicyRegistryStorage::new(ctx));
-            PolicyRegistryV1.create_policy(&mut rt, ADMIN, PolicyType::ALLOWLIST)
+            let mut storage = PolicyRegistryStorage::new(ctx);
+            PolicyRegistryV1.create_policy(&mut storage, ADMIN, PolicyType::ALLOWLIST)
         })
         .unwrap_err();
         assert_eq!(err, BasePrecompileError::StaticCallViolation);
@@ -328,8 +328,8 @@ mod tests {
         let id = create_allowlist(&mut s);
         s.set_static(true);
         let err = StorageCtx::enter(&mut s, |ctx| {
-            let mut rt = PolicyRegistryRuntime::with_storage(PolicyRegistryStorage::new(ctx));
-            PolicyRegistryV1.update_allowlist(&mut rt, id, true, alloc::vec![ALICE])
+            let mut storage = PolicyRegistryStorage::new(ctx);
+            PolicyRegistryV1.update_allowlist(&mut storage, id, true, alloc::vec![ALICE])
         })
         .unwrap_err();
         assert_eq!(err, BasePrecompileError::StaticCallViolation);

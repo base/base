@@ -9,7 +9,7 @@
 
 use base_common_genesis::BaseUpgrade;
 
-use crate::{Asset, AssetAccounting, AssetV1, Policy};
+use crate::{Asset, AssetAccounting, AssetV1, PolicyAccounting};
 
 /// An activated version of the asset B-20 precompile logic.
 ///
@@ -22,10 +22,10 @@ pub enum AssetVersion {
 
 impl AssetVersion {
     /// Returns the immutable logic implementation for this version.
-    pub fn implementation<'l, S, P>(self) -> &'l dyn Asset<S, P>
+    pub fn implementation<'l, S, A>(self) -> &'l dyn Asset<S, A>
     where
         S: AssetAccounting + 'l,
-        P: Policy + 'l,
+        A: PolicyAccounting + 'l,
     {
         static V1: AssetV1 = AssetV1;
         match self {

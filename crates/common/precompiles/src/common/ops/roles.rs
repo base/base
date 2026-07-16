@@ -269,7 +269,7 @@ mod tests {
     use base_precompile_storage::BasePrecompileError;
 
     use crate::{
-        B20TokenRole, IB20, InMemoryPolicy, InMemoryTokenAccounting, RoleManaged, TestToken, Token,
+        B20TokenRole, IB20, FakePolicyAccounting, InMemoryTokenAccounting, RoleManaged, TestToken, Token,
         TokenAccounting,
     };
 
@@ -280,9 +280,7 @@ mod tests {
     const CUSTOM_ROLE: B256 = B256::repeat_byte(0x42);
 
     fn make_token() -> TestToken {
-        TestToken::with_storage_and_policy(
-            InMemoryTokenAccounting::new(TOKEN_ADDR),
-            InMemoryPolicy::new(),
+        TestToken::with_storage_and_policy(InMemoryTokenAccounting::new(TOKEN_ADDR), FakePolicyAccounting::new(),
         )
     }
 
@@ -290,7 +288,7 @@ mod tests {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
         accounting.roles.insert((B20TokenRole::DefaultAdmin.id(), ADMIN), true);
         accounting.role_member_counts.insert(B20TokenRole::DefaultAdmin.id(), U256::ONE);
-        TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
+        TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new())
     }
 
     #[test]

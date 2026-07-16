@@ -2,6 +2,7 @@ use alloc::{string::ToString, vec::Vec};
 
 use alloy_primitives::{Address, B256, Bytes, U256, address, b256, keccak256};
 use alloy_sol_types::{SolCall, SolValue};
+use base_common_genesis::BaseUpgrade;
 use base_precompile_macros::contract;
 use base_precompile_storage::{BasePrecompileError, Result};
 use revm::state::Bytecode;
@@ -9,8 +10,8 @@ use revm::state::Bytecode;
 use crate::{
     ActivationRegistryStorage, B20_MAX_SUPPLY_CAP, B20AssetInit, B20AssetStorage, B20AssetToken,
     B20StablecoinInit, B20StablecoinStorage, B20StablecoinToken, B20TokenRole, B20Variant,
-    BerylAuxiliaryMetrics, IB20Factory, NoopPrecompileCallObserver, PolicyHandle,
-    PrecompileCallObserver, Token,
+    BerylAuxiliaryMetrics, IB20Factory, NoopPrecompileCallObserver, PolicyRegistryStorage,
+    PolicyVersions, PrecompileCallObserver, Token,
 };
 
 /// Version byte for `B20StablecoinEventParams` inside `B20Created.variantParams`.
@@ -53,9 +54,10 @@ impl<'a> B20FactoryStorage<'a> {
         &mut self,
         caller: Address,
         call: IB20Factory::createB20Call,
+        upgrade: BaseUpgrade,
     ) -> Result<Address> {
         let address_hash = keccak256((caller, call.salt).abi_encode());
-        self.create_b20_with_observer(call, address_hash, NoopPrecompileCallObserver)
+        self.create_b20_with_observer(call, address_hash, upgrade, NoopPrecompileCallObserver)
     }
 
     /// Creates a token at a deterministic address and records observer-only metrics.
@@ -67,6 +69,7 @@ impl<'a> B20FactoryStorage<'a> {
         &mut self,
         call: IB20Factory::createB20Call,
         address_hash: B256,
+        upgrade: BaseUpgrade,
         observer: O,
     ) -> Result<Address>
     where
@@ -96,10 +99,10 @@ impl<'a> B20FactoryStorage<'a> {
         let init_calls = call.initCalls;
         match params {
             TokenCreateParams::Stablecoin { common, init } => {
-                self.init_stablecoin(token_address, common, init, init_calls, observer)?;
+                self.init_stablecoin(token_address, common, init, init_calls, upgrade, observer)?;
             }
             TokenCreateParams::Asset { common, init } => {
-                self.init_asset_token(token_address, common, init, init_calls, observer)?;
+                self.init_asset_token(token_address, common, init, init_calls, upgrade, observer)?;
             }
         }
 
@@ -128,14 +131,17 @@ impl<'a> B20FactoryStorage<'a> {
         common: CommonParams,
         init: B20StablecoinInit,
         init_calls: Vec<Bytes>,
+        upgrade: BaseUpgrade,
         observer: O,
     ) -> Result<()>
     where
         O: PrecompileCallObserver,
     {
-        let mut token = B20StablecoinToken::with_storage_and_policy(
-            B20StablecoinStorage::from_address(token_address, self.storage),
-            PolicyHandle::new(self.storage),
+        let version = PolicyVersions::from_base_upgrade(upgrade)
+            .ok_or_else(|| BasePrecompileError::Revert(Bytes::new()))?;
+        let mut token = B20StablecoinToken::with_storage_and_policy(B20StablecoinStorage::from_address(token_address, self.storage),
+            PolicyRegistryStorage::new(self.storage),
+            version,
         );
         let (name, symbol, currency) =
             (init.name.clone(), init.symbol.clone(), init.currency.clone());
@@ -185,14 +191,17 @@ impl<'a> B20FactoryStorage<'a> {
         common: CommonParams,
         init: B20AssetInit,
         init_calls: Vec<Bytes>,
+        upgrade: BaseUpgrade,
         observer: O,
     ) -> Result<()>
     where
         O: PrecompileCallObserver,
     {
-        let mut token = B20AssetToken::with_storage_and_policy(
-            B20AssetStorage::from_address(token_address, self.storage),
-            PolicyHandle::new(self.storage),
+        let version = PolicyVersions::from_base_upgrade(upgrade)
+            .ok_or_else(|| BasePrecompileError::Revert(Bytes::new()))?;
+        let mut token = B20AssetToken::with_storage_and_policy(B20AssetStorage::from_address(token_address, self.storage),
+            PolicyRegistryStorage::new(self.storage),
+            version,
         );
         let (name, symbol, decimals) = (init.name.clone(), init.symbol.clone(), init.decimals);
         token.accounting_mut().initialize(init)?;
@@ -382,7 +391,7 @@ mod tests {
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, Asset,
         AssetAccounting, AssetV1, B20_MAX_SUPPLY_CAP, B20AssetStorage, B20AssetToken,
         B20FactoryStorage, B20StablecoinStorage, B20TokenRole, B20Variant, IB20, IB20Factory,
-        PolicyHandle, Token, TokenAccounting,
+        PolicyRegistryStorage, PolicyVersion, Token, TokenAccounting,
     };
 
     /// Upgrade at which the asset precompile is active for factory dispatch tests.
@@ -439,10 +448,10 @@ mod tests {
     fn token_at<'a>(
         addr: Address,
         ctx: StorageCtx<'a>,
-    ) -> B20AssetToken<B20AssetStorage<'a>, PolicyHandle<'a>> {
-        B20AssetToken::with_storage_and_policy(
-            B20AssetStorage::from_address(addr, ctx),
-            PolicyHandle::new(ctx),
+    ) -> B20AssetToken<B20AssetStorage<'a>, PolicyRegistryStorage<'a>> {
+        B20AssetToken::with_storage_and_policy(B20AssetStorage::from_address(addr, ctx),
+            PolicyRegistryStorage::new(ctx),
+            PolicyVersion::V1,
         )
     }
 
@@ -452,14 +461,14 @@ mod tests {
 
     fn dispatch_factory_success(ctx: StorageCtx<'_>, call: impl SolCall) -> Bytes {
         let mut factory = B20FactoryStorage::new(ctx);
-        let output = factory.dispatch(ctx, &call.abi_encode()).unwrap();
+        let output = factory.dispatch(ctx, &call.abi_encode(), TEST_UPGRADE).unwrap();
         assert!(!output.is_revert(), "factory call reverted: {:?}", output.bytes);
         output.bytes
     }
 
     fn dispatch_factory_revert(ctx: StorageCtx<'_>, call: impl SolCall) -> Bytes {
         let mut factory = B20FactoryStorage::new(ctx);
-        let output = factory.dispatch(ctx, &call.abi_encode()).unwrap();
+        let output = factory.dispatch(ctx, &call.abi_encode(), TEST_UPGRADE).unwrap();
         assert!(output.is_revert(), "factory call unexpectedly succeeded");
         output.bytes
     }
@@ -528,7 +537,7 @@ mod tests {
 
         StorageCtx::enter(&mut storage, |ctx| {
             let mut factory = B20FactoryStorage::new(ctx);
-            let token = factory.create_b20(caller, b20_call(salt)).unwrap();
+            let token = factory.create_b20(caller, b20_call(salt), TEST_UPGRADE).unwrap();
 
             assert_eq!(token, expected_addr);
             assert!(ctx.has_bytecode(expected_addr).unwrap());
@@ -546,7 +555,7 @@ mod tests {
 
         StorageCtx::enter(&mut storage, |ctx| {
             let mut factory = B20FactoryStorage::new(ctx);
-            let token_addr = factory.create_b20(caller, call).unwrap();
+            let token_addr = factory.create_b20(caller, call, TEST_UPGRADE).unwrap();
             let token = B20AssetStorage::from_address(token_addr, ctx);
 
             assert_eq!(token.b20.name.read().unwrap(), "My Token");
@@ -571,7 +580,7 @@ mod tests {
 
         StorageCtx::enter(&mut storage, |ctx| {
             let mut factory = B20FactoryStorage::new(ctx);
-            let token_addr = factory.create_b20(caller, call).unwrap();
+            let token_addr = factory.create_b20(caller, call, TEST_UPGRADE).unwrap();
             let token = B20AssetStorage::from_address(token_addr, ctx);
 
             assert_eq!(token.b20.total_supply.read().unwrap(), supply);
@@ -594,7 +603,7 @@ mod tests {
 
         StorageCtx::enter(&mut storage, |ctx| {
             let mut factory = B20FactoryStorage::new(ctx);
-            let token_addr = factory.create_b20(creator, call).unwrap();
+            let token_addr = factory.create_b20(creator, call, TEST_UPGRADE).unwrap();
             let token = B20AssetStorage::from_address(token_addr, ctx);
 
             assert_eq!(ctx.caller(), creator);
@@ -612,8 +621,8 @@ mod tests {
 
         StorageCtx::enter(&mut storage, |ctx| {
             let mut factory = B20FactoryStorage::new(ctx);
-            factory.create_b20(caller, b20_call(salt)).unwrap();
-            let result = factory.create_b20(caller, b20_call(salt));
+            factory.create_b20(caller, b20_call(salt), TEST_UPGRADE).unwrap();
+            let result = factory.create_b20(caller, b20_call(salt), TEST_UPGRADE);
             assert!(result.is_err());
         });
     }
@@ -634,7 +643,7 @@ mod tests {
 
         StorageCtx::enter(&mut storage, |ctx| {
             let mut factory = B20FactoryStorage::new(ctx);
-            factory.create_b20(caller, b20_call(salt)).unwrap();
+            factory.create_b20(caller, b20_call(salt), TEST_UPGRADE).unwrap();
         });
     }
 
@@ -650,7 +659,7 @@ mod tests {
             bad_params.version = B20Variant::Asset.supported_version() + 1;
             let bad_version =
                 create_call(IB20Factory::B20Variant::ASSET, bad_params, B256::repeat_byte(0x01));
-            assert!(factory.create_b20(caller, bad_version).is_err());
+            assert!(factory.create_b20(caller, bad_version, TEST_UPGRADE).is_err());
 
             let bad_variant = IB20Factory::createB20Call {
                 variant: IB20Factory::B20Variant::__Invalid,
@@ -658,7 +667,7 @@ mod tests {
                 params: token_params("Bad Variant", "BAD").abi_encode().into(),
                 initCalls: Vec::new(),
             };
-            assert!(factory.create_b20(caller, bad_variant).is_err());
+            assert!(factory.create_b20(caller, bad_variant, TEST_UPGRADE).is_err());
         });
     }
 
@@ -710,7 +719,7 @@ mod tests {
 
         StorageCtx::enter(&mut storage, |ctx| {
             let mut factory = B20FactoryStorage::new(ctx);
-            let token_addr = factory.create_b20(caller, call).unwrap();
+            let token_addr = factory.create_b20(caller, call, TEST_UPGRADE).unwrap();
             let token = B20AssetStorage::from_address(token_addr, ctx);
 
             assert_eq!(token.b20.name.read().unwrap(), "");
@@ -881,7 +890,7 @@ mod tests {
 
         StorageCtx::enter(&mut storage, |ctx| {
             let mut factory = B20FactoryStorage::new(ctx);
-            let token_addr = factory.create_b20(caller, call).unwrap();
+            let token_addr = factory.create_b20(caller, call, TEST_UPGRADE).unwrap();
             let token = B20AssetStorage::from_address(token_addr, ctx);
 
             assert_eq!(token.b20.name.read().unwrap(), "Configured");
@@ -900,7 +909,7 @@ mod tests {
             let mut factory = B20FactoryStorage::new(ctx);
             assert!(factory.is_b20(addr).unwrap());
 
-            let token = factory.create_b20(caller, b20_call(salt)).unwrap();
+            let token = factory.create_b20(caller, b20_call(salt), TEST_UPGRADE).unwrap();
             assert!(factory.is_b20(token).unwrap());
             assert_eq!(B20Variant::from_address(token), Some(B20Variant::Asset));
         });
@@ -971,6 +980,7 @@ mod tests {
                 .create_b20(
                     Address::repeat_byte(0xCA),
                     create_call(IB20Factory::B20Variant::ASSET, params, B256::repeat_byte(0x12)),
+                    TEST_UPGRADE,
                 )
                 .unwrap();
 
@@ -995,10 +1005,10 @@ mod tests {
         StorageCtx::enter(&mut storage, |ctx| {
             let mut factory = B20FactoryStorage::new(ctx);
             let first = factory
-                .create_b20(Address::repeat_byte(0xCA), b20_call(B256::repeat_byte(0x07)))
+                .create_b20(Address::repeat_byte(0xCA), b20_call(B256::repeat_byte(0x07)), TEST_UPGRADE)
                 .unwrap();
             let second = factory
-                .create_b20(Address::repeat_byte(0xCA), b20_call(B256::repeat_byte(0x08)))
+                .create_b20(Address::repeat_byte(0xCA), b20_call(B256::repeat_byte(0x08)), TEST_UPGRADE)
                 .unwrap();
 
             assert_ne!(first, second);
@@ -1225,11 +1235,11 @@ mod tests {
 
         StorageCtx::enter(&mut storage, |ctx| {
             let mut factory = B20FactoryStorage::new(ctx);
-            let token_addr = factory.create_b20(caller, call).unwrap();
+            let token_addr = factory.create_b20(caller, call, TEST_UPGRADE).unwrap();
 
-            let token = B20AssetToken::with_storage_and_policy(
-                B20AssetStorage::from_address(token_addr, ctx),
-                PolicyHandle::new(ctx),
+            let token = B20AssetToken::with_storage_and_policy(B20AssetStorage::from_address(token_addr, ctx),
+                PolicyRegistryStorage::new(ctx),
+                PolicyVersion::V1,
             );
             assert!(
                 AssetV1.has_role(&token, B20TokenRole::DefaultAdmin.id(), initial_admin).unwrap()
@@ -1256,11 +1266,11 @@ mod tests {
 
         StorageCtx::enter(&mut storage, |ctx| {
             let mut factory = B20FactoryStorage::new(ctx);
-            let token_addr = factory.create_b20(caller, call_no_admin).unwrap();
+            let token_addr = factory.create_b20(caller, call_no_admin, TEST_UPGRADE).unwrap();
 
-            let token = B20AssetToken::with_storage_and_policy(
-                B20AssetStorage::from_address(token_addr, ctx),
-                PolicyHandle::new(ctx),
+            let token = B20AssetToken::with_storage_and_policy(B20AssetStorage::from_address(token_addr, ctx),
+                PolicyRegistryStorage::new(ctx),
+                PolicyVersion::V1,
             );
             assert!(
                 !AssetV1.has_role(&token, B20TokenRole::DefaultAdmin.id(), initial_admin).unwrap()

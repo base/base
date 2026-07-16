@@ -10,12 +10,12 @@ use crate::{
     ActivationFeature, ActivationRegistryStorage, BerylAuxiliaryMetrics, BerylCallRecorder,
     BerylMetricLabels,
     IPolicyRegistry::{self, IPolicyRegistryCalls as C},
-    NoopPrecompileCallObserver, PolicyAccounting, PolicyRegistryRuntime, PolicyVersion,
-    PolicyVersions, PrecompileCallObserver,
+    NoopPrecompileCallObserver, PolicyRegistryStorage, PolicyVersion, PolicyVersions,
+    PrecompileCallObserver,
     macros::decode_precompile_call,
 };
 
-impl<S: PolicyAccounting> PolicyRegistryRuntime<S> {
+impl PolicyRegistryStorage<'_> {
     /// ABI-dispatches policy registry calldata for `upgrade`.
     ///
     /// View (read-only) calls bypass the activation gate and remain accessible even when the
@@ -175,7 +175,7 @@ mod tests {
 
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, BerylErrorKind,
-        IPolicyRegistry, PolicyRegistryRuntime, PolicyRegistryStorage, PolicyRegistryV1,
+        IPolicyRegistry, PolicyRegistryStorage, PolicyRegistryV1,
         PrecompileCallMetric, PrecompileCallObserver, PrecompileCallOutcome, PrecompileCallStatus,
     };
 
@@ -218,7 +218,7 @@ mod tests {
     fn activate_and_init(storage: &mut HashMapStorageProvider) {
         activate_policy_registry(storage);
         StorageCtx::enter(storage, |ctx| {
-            let mut rt = PolicyRegistryRuntime::with_storage(PolicyRegistryStorage::new(ctx));
+            let mut rt = PolicyRegistryStorage::new(ctx);
             PolicyRegistryV1.ensure_initialized_and_get_counter(&mut rt)
         })
         .unwrap();
@@ -227,7 +227,7 @@ mod tests {
     /// Dispatches `calldata` against a Beryl runtime, expecting no fatal error.
     fn run(storage: &mut HashMapStorageProvider, calldata: &[u8]) -> PrecompileOutput {
         StorageCtx::enter(storage, |ctx| {
-            PolicyRegistryRuntime::with_storage(PolicyRegistryStorage::new(ctx)).dispatch(
+            PolicyRegistryStorage::new(ctx).dispatch(
                 ctx,
                 calldata,
                 BaseUpgrade::Beryl,
@@ -243,7 +243,7 @@ mod tests {
         observer: RecordingObserver,
     ) -> PrecompileOutput {
         StorageCtx::enter(storage, |ctx| {
-            PolicyRegistryRuntime::with_storage(PolicyRegistryStorage::new(ctx))
+            PolicyRegistryStorage::new(ctx)
                 .dispatch_with_observer(ctx, calldata, BaseUpgrade::Beryl, observer)
         })
         .expect("dispatch should not fatally error")
