@@ -15,8 +15,8 @@ use crate::{BaseP2PApiServer, net::P2pRpc};
 
 const PEER_STATE_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 
-fn peer_state_result(actual: bool, expected: bool, error_message: &'static str) -> RpcResult<()> {
-    if actual == expected {
+fn peer_state_result(ok: bool, error_message: &'static str) -> RpcResult<()> {
+    if ok {
         Ok(())
     } else {
         Err(ErrorObject::borrowed(ErrorCode::InvalidParams.code(), error_message, None))
@@ -259,14 +259,13 @@ impl P2pRpc {
                 ErrorObject::borrowed(ErrorCode::InternalError.code(), "Failed to get peers", None)
             })?;
 
-            peer_state_result(
-                peers.peers.contains_key(&peer_id.to_string()),
-                true,
-                "Peer not connected",
-            )
+            peer_state_result(peers.peers.contains_key(&peer_id.to_string()), "Peer not connected")
         };
 
-        is_connected.retry(backoff).await?;
+        is_connected
+            .retry(backoff)
+            .when(|error| error.code() == ErrorCode::InvalidParams.code())
+            .await?;
         Ok(())
     }
 
@@ -305,12 +304,14 @@ impl P2pRpc {
 
             peer_state_result(
                 !peers.peers.contains_key(&peer_id.to_string()),
-                true,
                 "Peers are still connected",
             )
         };
 
-        is_not_connected.retry(backoff).await?;
+        is_not_connected
+            .retry(backoff)
+            .when(|error| error.code() == ErrorCode::InvalidParams.code())
+            .await?;
         Ok(())
     }
 }
