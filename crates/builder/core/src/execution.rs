@@ -239,15 +239,33 @@ impl ExecutionInfo {
         }
     }
 
-    /// Returns true if the transaction would exceed the block limits:
-    /// - block gas limit: ensures the transaction still fits into the block.
+    /// Returns an error if the transaction would exceed any block limit.
+    ///
+    /// Checks the hard limits first (see [`is_tx_over_hard_limits`](Self::is_tx_over_hard_limits)),
+    /// then the metering limits (see
+    /// [`is_tx_over_metering_limits`](Self::is_tx_over_metering_limits)). The split lets callers
+    /// evaluate the two classes independently — hard limits are always enforced, while metering
+    /// limits depend on metering-service predictions and may run in dry-run mode.
+    pub fn is_tx_over_limits(
+        &self,
+        tx: &TxResources,
+        limits: &ResourceLimits,
+    ) -> Result<(), TxnExecutionError> {
+        self.is_tx_over_hard_limits(tx, limits)?;
+        self.is_tx_over_metering_limits(tx, limits)?;
+        Ok(())
+    }
+
+    /// Returns an error if the transaction would exceed a hard limit. Hard limits require no
+    /// metering data and are always enforced:
     /// - tx DA limit: if configured, ensures the tx does not exceed the maximum allowed DA limit
     ///   per tx.
     /// - block DA limit: if configured, ensures the transaction's DA size does not exceed the
     ///   maximum allowed DA limit per block.
-    /// - execution time limit: if configured with metering data, ensures the transaction's
-    ///   predicted execution time does not exceed the per-transaction limit.
-    pub fn is_tx_over_limits(
+    /// - DA footprint limit: post-Jovian, ensures the block DA footprint stays within budget.
+    /// - block gas limit: ensures the transaction still fits into the block.
+    /// - block uncompressed size limit: if configured, ensures the block stays within budget.
+    pub fn is_tx_over_hard_limits(
         &self,
         tx: &TxResources,
         limits: &ResourceLimits,
@@ -305,13 +323,28 @@ impl ExecutionInfo {
             }
         }
 
+        Ok(())
+    }
+
+    /// Returns an error if the transaction would exceed a metering limit. Metering limits depend on
+    /// metering-service predictions and are only checked when the prediction is present:
+    /// - per-transaction execution time limit: if configured with metering data, ensures the
+    ///   transaction's predicted execution time does not exceed the per-transaction limit.
+    ///
+    /// Returns [`ExecutionMeteringLimitExceeded`] (not [`TxnExecutionError`]) so callers can apply
+    /// dry-run/enforce handling without matching on the broader error enum.
+    pub const fn is_tx_over_metering_limits(
+        &self,
+        tx: &TxResources,
+        limits: &ResourceLimits,
+    ) -> Result<(), ExecutionMeteringLimitExceeded> {
         // Check execution time limits (if metering data is available)
         if let Some(tx_time) = tx.execution_time_us {
             // Check per-transaction execution time limit
             if let Some(tx_limit) = limits.tx_execution_time_limit_us
                 && tx_time > tx_limit
             {
-                return Err(TransactionExecutionTime(tx_time, tx_limit).into());
+                return Err(TransactionExecutionTime(tx_time, tx_limit));
             }
         }
 
@@ -568,5 +601,63 @@ mod tests {
             TxResources { gas_limit: 21_000, uncompressed_size: 1_000_000, ..Default::default() };
 
         assert!(info.is_tx_over_limits(&tx, &limits).is_ok());
+    }
+
+    // ==================== Hard vs Metering Split Tests ====================
+
+    #[test]
+    fn test_hard_limits_ignore_execution_time() {
+        // A tx over its per-tx execution time limit is *not* a hard-limit violation.
+        let info = ExecutionInfo::with_capacity(10);
+        let limits =
+            ResourceLimits { tx_execution_time_limit_us: Some(1_000_000), ..default_limits() };
+        let tx = TxResources {
+            gas_limit: 21_000,
+            execution_time_us: Some(1_500_000),
+            ..Default::default()
+        };
+
+        assert!(info.is_tx_over_hard_limits(&tx, &limits).is_ok());
+    }
+
+    #[test]
+    fn test_hard_limits_catch_gas() {
+        let mut info = ExecutionInfo::with_capacity(10);
+        info.cumulative_gas_used = 29_990_000;
+        let limits = default_limits();
+        let tx = TxResources { gas_limit: 21_000, ..Default::default() };
+
+        assert!(matches!(
+            info.is_tx_over_hard_limits(&tx, &limits),
+            Err(TxnExecutionError::TransactionGasLimitExceeded { .. })
+        ));
+    }
+
+    #[test]
+    fn test_metering_limits_ignore_hard_limits() {
+        // A tx over the block gas limit is *not* a metering-limit violation.
+        let mut info = ExecutionInfo::with_capacity(10);
+        info.cumulative_gas_used = 29_990_000;
+        let limits = default_limits();
+        let tx = TxResources { gas_limit: 21_000, ..Default::default() };
+
+        assert!(info.is_tx_over_metering_limits(&tx, &limits).is_ok());
+    }
+
+    #[test]
+    fn test_metering_limits_catch_execution_time() {
+        let info = ExecutionInfo::with_capacity(10);
+        let limits =
+            ResourceLimits { tx_execution_time_limit_us: Some(1_000_000), ..default_limits() };
+        let tx = TxResources {
+            gas_limit: 21_000,
+            execution_time_us: Some(1_500_000),
+            ..Default::default()
+        };
+
+        assert!(matches!(
+            info.is_tx_over_metering_limits(&tx, &limits),
+            Err(ExecutionMeteringLimitExceeded::TransactionExecutionTime(1_500_000, 1_000_000))
+        ));
     }
 }
