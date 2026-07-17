@@ -9,7 +9,7 @@ use std::{
 
 use alloy_primitives::Address;
 use base_execution_trie::{MdbxProofsStorageOptions, RocksdbProofsStorageOptions};
-use base_execution_txpool::{DEFAULT_PAYER_LIMIT, DEFAULT_SENDER_LIMIT};
+use base_execution_txpool::{DEFAULT_PAYMENT_LIMIT, DEFAULT_SIGNATURE_LIMIT};
 use base_upgrade_signal::{UpgradeSignalArgs, UpgradeSignalL1RpcArgs};
 use clap::{ArgAction, ValueEnum, builder::ArgPredicate};
 
@@ -374,11 +374,11 @@ pub struct RollupArgs {
     pub max_inflight_delegated_slots: usize,
 
     /// Maximum inflight EIP-8130 transactions per non-locked sender account.
-    #[arg(long = "rollup.mempool-sender-limit", default_value_t = DEFAULT_SENDER_LIMIT)]
+    #[arg(long = "rollup.mempool-sender-limit", default_value_t = DEFAULT_SIGNATURE_LIMIT)]
     pub mempool_sender_limit: u32,
 
     /// Maximum inflight EIP-8130 transactions per count-limited payer account.
-    #[arg(long = "rollup.mempool-payer-limit", default_value_t = DEFAULT_PAYER_LIMIT)]
+    #[arg(long = "rollup.mempool-payer-limit", default_value_t = DEFAULT_PAYMENT_LIMIT)]
     pub mempool_payer_limit: u32,
 
     /// Additional trusted delegation targets for balance-bounded locked payers.
@@ -481,8 +481,8 @@ impl Default for RollupArgs {
             min_suggested_priority_fee: 1_000_000,
             txpool_ordering: TxpoolOrdering::default(),
             max_inflight_delegated_slots: 4,
-            mempool_sender_limit: DEFAULT_SENDER_LIMIT,
-            mempool_payer_limit: DEFAULT_PAYER_LIMIT,
+            mempool_sender_limit: DEFAULT_SIGNATURE_LIMIT,
+            mempool_payer_limit: DEFAULT_PAYMENT_LIMIT,
             mempool_trusted_delegation_targets: Vec::new(),
             proofs_history: false,
             proofs_history_storage_path: None,
@@ -601,8 +601,8 @@ mod tests {
     #[test]
     fn test_parse_mempool_limits_default() {
         let args = CommandParser::<RollupArgs>::parse_from(["reth"]).args;
-        assert_eq!(args.mempool_sender_limit, DEFAULT_SENDER_LIMIT);
-        assert_eq!(args.mempool_payer_limit, DEFAULT_PAYER_LIMIT);
+        assert_eq!(args.mempool_sender_limit, DEFAULT_SIGNATURE_LIMIT);
+        assert_eq!(args.mempool_payer_limit, DEFAULT_PAYMENT_LIMIT);
         assert!(args.mempool_trusted_delegation_targets.is_empty());
     }
 

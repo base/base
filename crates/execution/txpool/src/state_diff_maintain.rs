@@ -46,6 +46,9 @@ pub async fn maintain_state_diff_invalidation<P, N>(
         };
 
         if matches!(&notification, CanonStateNotification::Reorg { .. }) {
+            // The committed segment omits state changes caused solely by rolling
+            // back the reverted segment. Correct targeted handling would need
+            // both key sets, so conservatively flush this exceptional path.
             let removed = pool.invalidate_all_tracked();
             warn!(
                 removed = removed,

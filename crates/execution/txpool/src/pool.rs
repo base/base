@@ -420,6 +420,11 @@ where
                 == self.validator().validator().limit_class_cache_generation()
         });
         if !current {
+            // All generation updates take `protocol_admission_lock`, which is
+            // held from the pre-insertion freshness check through this gate.
+            // Keep this conservative backstop for future callers that violate
+            // that lock discipline rather than admitting stale bookkeeping.
+            debug_assert!(current, "classification changed under protocol admission lock");
             drop(guard);
             self.protocol_pool.remove_transactions(vec![hash]);
             return Err(Self::stale_classification_error(hash));
@@ -1864,7 +1869,7 @@ mod tests {
         let signer = signer();
         fund(&client, signer.address());
 
-        let count = u64::from(GuardLimits::default().default_sender) + 2;
+        let count = u64::from(GuardLimits::default().signature_limit) + 2;
         for nonce in 0..count {
             let result =
                 pool.add_transaction(TransactionOrigin::Local, signed_1559(&signer, nonce)).await;
@@ -1875,7 +1880,7 @@ mod tests {
 
     #[tokio::test]
     async fn protocol_and_sidecar_eip8130_routes_enforce_sender_limit() {
-        let cap = u64::from(GuardLimits::default().default_sender);
+        let cap = u64::from(GuardLimits::default().signature_limit);
 
         let (protocol_pool, protocol_client) = build_integration_pool();
         let protocol_signer = signer();
@@ -1919,7 +1924,7 @@ mod tests {
         let (pool, client) = build_integration_pool();
         let signer = signer();
         fund(&client, signer.address());
-        let cap = u64::from(GuardLimits::default().default_sender);
+        let cap = u64::from(GuardLimits::default().signature_limit);
 
         let mut admitted = Vec::new();
         for offset in 0..cap {
@@ -1947,7 +1952,7 @@ mod tests {
         let (pool, client) = build_integration_pool();
         let signer = signer();
         fund(&client, signer.address());
-        let cap = u64::from(GuardLimits::default().default_sender);
+        let cap = u64::from(GuardLimits::default().signature_limit);
 
         let original = self_paid_eoa_8130(&signer, U256::ZERO, 0, 0, 1_000);
         let original_hash = *original.hash();

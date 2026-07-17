@@ -84,8 +84,8 @@ impl BaseNode {
                 BasePoolBuilder::default()
                     .with_max_inflight_delegated_slots(max_inflight_delegated_slots)
                     .with_guard_limits(GuardLimits {
-                        default_sender: mempool_sender_limit,
-                        default_payer: mempool_payer_limit,
+                        signature_limit: mempool_sender_limit,
+                        payment_limit: mempool_payer_limit,
                     })
                     .with_additional_trusted_delegation_targets(
                         self.args.mempool_trusted_delegation_targets.iter().copied(),

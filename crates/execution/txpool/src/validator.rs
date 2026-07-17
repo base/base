@@ -386,6 +386,9 @@ impl PrecompileStorageProvider for OverlayPrecompileStorage<'_> {
     }
 
     fn sload(&mut self, address: Address, key: U256) -> Result<U256, BasePrecompileError> {
+        // Overlay hits are this transaction's buffered writes, not canonical
+        // dependencies. Recording one would make later manifest validation
+        // compare a transaction's own effect against pre-state and reject it.
         if let Some(value) = self.storage.get(&(address, key)) {
             return Ok(*value);
         }
@@ -551,6 +554,7 @@ pub struct BaseTransactionValidator<Client, Tx, Evm> {
     require_l1_data_gas_fee: bool,
     trusted_delegation_targets: Arc<AddressSet>,
     limit_class_cache: Arc<RwLock<LimitClassCache>>,
+    // A slot mapping exists exactly while its account's cached lock state is present.
     limit_class_cache_slots: Arc<RwLock<HashMap<B256, Address>>>,
     limit_class_cache_generation: Arc<AtomicU64>,
 }
