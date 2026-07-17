@@ -42,15 +42,19 @@ impl Default for GuardLimits {
 }
 
 /// Why an admission was rejected by the limit check.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum LimitRejection {
     /// The sender's signature limit is reached.
+    #[error("sender signature limit reached")]
     SenderLimit,
     /// The sponsored payer's signature limit is reached.
+    #[error("payer signature limit reached")]
     PayerLimit,
     /// A count-limited payer's payment limit is reached.
+    #[error("payer payment limit reached")]
     PaymentLimit,
     /// A balance-bounded payer cannot afford another reservation.
+    #[error("payer balance is insufficient for reservation")]
     PayerBalance,
 }
 
@@ -198,7 +202,27 @@ impl MempoolGuard {
     /// On rejection no state is mutated (any partial reservation is rolled
     /// back), so the caller may safely drop the transaction.
     pub fn try_admit(&mut self, admission: Admission) -> Result<(), LimitRejection> {
-        if self.records.contains_key(&admission.hash) {
+        if let Some(record) = self.records.get(&admission.hash) {
+            debug_assert_eq!(record.sender, admission.sender, "re-admission changed sender");
+            debug_assert_eq!(record.payer, admission.payer, "re-admission changed payer");
+            debug_assert_eq!(record.max_cost, admission.max_cost, "re-admission changed max cost");
+            debug_assert_eq!(
+                record.sender_signature_charged, !admission.sender_locked,
+                "re-admission changed sender lock classification"
+            );
+            debug_assert_eq!(
+                record.payer_signature_charged,
+                admission.payer != admission.sender && !admission.payer_locked,
+                "re-admission changed payer lock classification"
+            );
+            // A forced replacement may conservatively fall back from trusted
+            // aggregate accounting to count accounting, but never vice versa.
+            debug_assert!(!record.payer_trusted || admission.payer_trusted);
+            debug_assert_eq!(
+                self.index.watch_set(&admission.hash),
+                Some(&admission.watch_set),
+                "re-admission changed invalidation surfaces"
+            );
             return Ok(());
         }
 
@@ -474,7 +498,7 @@ mod tests {
             payer_balance: U256::from(1_000_000u64),
             max_cost: U256::from(max_cost),
             priority: 1,
-            watch_set: WatchSet::new().watch(InvalidationKey::Balance(account)),
+            watch_set: WatchSet::new(),
         }
     }
 
@@ -493,6 +517,17 @@ mod tests {
         over.payer = addr(250);
         assert_eq!(guard.try_admit(over), Err(LimitRejection::SenderLimit));
         assert_eq!(guard.len(), DEFAULT_SIGNATURE_LIMIT as usize);
+    }
+
+    #[test]
+    #[should_panic(expected = "re-admission changed payer")]
+    fn idempotent_admission_rejects_changed_parameters() {
+        let mut guard = MempoolGuard::new(GuardLimits::default());
+        let sender = addr(1);
+        guard.try_admit(self_pay(1, sender, 10)).unwrap();
+
+        let changed = Admission { payer: addr(2), ..self_pay(1, sender, 10) };
+        let _ = guard.try_admit(changed);
     }
 
     #[test]
@@ -645,7 +680,10 @@ mod tests {
         let account = addr(1);
 
         // Self-pay tx costing 500 against a (default) count-limited payer.
-        let adm = self_pay(1, account, 500);
+        let adm = Admission {
+            watch_set: WatchSet::new().watch(InvalidationKey::Balance(account)),
+            ..self_pay(1, account, 500)
+        };
         assert!(guard.try_admit(adm).is_ok());
 
         // Balance still covers it: kept.
