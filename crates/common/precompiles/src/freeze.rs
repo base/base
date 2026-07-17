@@ -12,9 +12,14 @@ use sha2_const_stable::Sha256;
 pub struct FrozenHash;
 
 impl FrozenHash {
+    /// Returns the SHA-256 digest of `source`.
+    pub const fn digest(source: &[u8]) -> [u8; 32] {
+        Sha256::new().update(source).finalize()
+    }
+
     /// Returns whether `source`'s SHA-256 digest equals `expected`.
     pub const fn matches(source: &[u8], expected: [u8; 32]) -> bool {
-        let actual = Sha256::new().update(source).finalize();
+        let actual = Self::digest(source);
         let mut i = 0;
         while i < 32 {
             if actual[i] != expected[i] {

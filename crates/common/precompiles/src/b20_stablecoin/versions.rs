@@ -64,10 +64,13 @@ mod tests {
 
     #[test]
     fn v1_logic_is_frozen() {
-        assert!(
-            FrozenHash::matches(V1_LOGIC_SOURCE, V1_LOGIC_HASH),
-            "logic/v1.rs changed since it was frozen at Beryl - if intentional, recompute its hash \
-             and update V1_LOGIC_HASH as a deliberate, reviewed change"
+        let actual = FrozenHash::digest(V1_LOGIC_SOURCE);
+        assert_eq!(
+            actual,
+            V1_LOGIC_HASH,
+            "logic/v1.rs changed since it was frozen at Beryl - if intentional, update \
+             V1_LOGIC_HASH to {} as a deliberate, reviewed change",
+            alloy_primitives::hex::encode(actual),
         );
     }
 
