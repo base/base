@@ -1,4 +1,8 @@
-//! Metrics for the EIP-8130 admission and invalidation guard.
+//! Metrics for EIP-8130 admission, invalidation, builder prechecks, and
+//! transaction validation.
+//!
+//! All labels are low-cardinality static categories; addresses and transaction
+//! hashes are never used as label values.
 
 base_metrics::define_metrics! {
     txpool.guard,
@@ -16,6 +20,9 @@ base_metrics::define_metrics! {
     expiry_buckets_fired: counter,
     #[describe("Transactions currently tracked by the admission/invalidation guard")]
     tracked: gauge,
+    #[describe("EIP-8130 drop events from the builder's stateless manifest precheck")]
+    #[label(name = "cause", default = ["config_slot", "payer_balance", "expiry"])]
+    builder_precheck_dropped: counter,
 }
 
 impl GuardMetrics {
@@ -63,4 +70,20 @@ impl GuardMetrics {
             Self::invalidated("reconcile").increment(count as u64);
         }
     }
+
+    /// Records a builder precheck drop by its positively observed stale cause.
+    pub fn record_builder_precheck_drop(stale: &crate::ManifestStale) {
+        Self::builder_precheck_dropped(stale.cause()).increment(1);
+    }
+}
+
+base_metrics::define_metrics! {
+    txpool.validator,
+    struct = ValidatorMetrics,
+    #[describe("End-to-end mempool validation wall time by transaction kind")]
+    #[label(name = "kind", default = ["eip8130", "standard"])]
+    validate_seconds: histogram,
+    #[describe("EIP-8130 authorization wall time by sender authenticator type")]
+    #[label(name = "sig_type", default = ["k1", "p256", "passkey", "delegate", "delegate-k1", "delegate-p256", "delegate-passkey", "other"])]
+    auth_seconds: histogram,
 }

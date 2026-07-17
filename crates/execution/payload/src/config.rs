@@ -3,18 +3,31 @@
 use std::sync::{Arc, atomic::AtomicU64};
 
 /// Settings for the Base payload builder.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct BaseBuilderConfig {
     /// Data availability configuration for the Base payload builder.
     pub da_config: BaseDAConfig,
     /// Gas limit configuration for the Base payload builder.
     pub gas_limit_config: GasLimitConfig,
+    /// Whether to drop positively stale EIP-8130 transactions using their
+    /// captured authorization manifest before execution.
+    pub manifest_precheck_enabled: bool,
+}
+
+impl Default for BaseBuilderConfig {
+    fn default() -> Self {
+        Self {
+            da_config: BaseDAConfig::default(),
+            gas_limit_config: GasLimitConfig::default(),
+            manifest_precheck_enabled: true,
+        }
+    }
 }
 
 impl BaseBuilderConfig {
     /// Creates a new Base payload builder configuration with the given data availability configuration.
     pub const fn new(da_config: BaseDAConfig, gas_limit_config: GasLimitConfig) -> Self {
-        Self { da_config, gas_limit_config }
+        Self { da_config, gas_limit_config, manifest_precheck_enabled: true }
     }
 
     /// Returns the data availability configuration for the Base payload builder, if it has
