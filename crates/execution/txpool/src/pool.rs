@@ -242,6 +242,8 @@ where
         &self,
         diffs: &[AccountStateDiff],
     ) -> Vec<Arc<ValidPoolTransaction<T>>> {
+        // Keep classification-generation changes atomic with protocol admission.
+        let _admission_guard = self.protocol_admission_lock.lock();
         // Advance validator classification generation before dropping guard records.
         self.validator().validator().invalidate_limit_class_cache(diffs);
         let mut exact = Vec::new();
@@ -268,6 +270,8 @@ where
 
     /// Clears all guarded transactions after a canonical-feed gap.
     pub fn invalidate_all_tracked_transactions(&self) -> Vec<Arc<ValidPoolTransaction<T>>> {
+        // Keep classification-generation changes atomic with protocol admission.
+        let _admission_guard = self.protocol_admission_lock.lock();
         self.validator().validator().clear_limit_class_cache();
         let dropped = self.guard.write().invalidate_all();
         let removed = self.remove_dropped_across_pools(dropped);
@@ -358,6 +362,46 @@ where
             .map(|existing| *existing.hash())
     }
 
+    fn stale_classification_error(hash: TxHash) -> reth_transaction_pool::error::PoolError {
+        reth_transaction_pool::error::PoolError::other(
+            hash,
+            "EIP-8130 admission classification changed during validation",
+        )
+    }
+
+    fn ensure_protocol_classification_current(
+        &self,
+        hash: TxHash,
+        validated: &TransactionValidationOutcome<T>,
+    ) -> PoolResult<()> {
+        let current = validated.as_valid_transaction().is_none_or(|transaction| {
+            transaction.transaction().limit_class().is_none_or(|class| {
+                class.classification_generation
+                    == self.validator().validator().limit_class_cache_generation()
+            })
+        });
+        if current { Ok(()) } else { Err(Self::stale_classification_error(hash)) }
+    }
+
+    fn add_validated_protocol_transaction(
+        &self,
+        origin: TransactionOrigin,
+        hash: TxHash,
+        sender: Address,
+        nonce: u64,
+        validated: TransactionValidationOutcome<T>,
+    ) -> PoolResult<AddedTransactionOutcome> {
+        let _admission_guard = self.protocol_admission_lock.lock();
+        // Reject stale validation before reth can replace the currently pooled transaction.
+        self.ensure_protocol_classification_current(hash, &validated)?;
+        let replaced = self.protocol_replacement_hash(sender, nonce);
+        let mut outcomes =
+            self.protocol_pool.inner().add_transactions(origin, std::iter::once(validated));
+        let outcome = outcomes.pop().expect("one transaction produces one outcome")?;
+        self.gate_protocol_admission(hash, replaced)?;
+        Ok(outcome)
+    }
+
     fn gate_protocol_admission(&self, hash: TxHash, replaced: Option<TxHash>) -> PoolResult<()> {
         let Some(transaction) = self.protocol_pool.get(&hash) else {
             if let Some(replaced) = replaced {
@@ -375,10 +419,7 @@ where
         if !current {
             drop(guard);
             self.protocol_pool.remove_transactions(vec![hash]);
-            return Err(reth_transaction_pool::error::PoolError::other(
-                hash,
-                "EIP-8130 admission classification changed during validation",
-            ));
+            return Err(Self::stale_classification_error(hash));
         }
         if replaced_was_tracked {
             guard.insert_forced(admission);
@@ -468,10 +509,7 @@ where
                             listeners.on_discarded(std::slice::from_ref(replaced));
                         }
                     }
-                    return Err(reth_transaction_pool::error::PoolError::other(
-                        hash,
-                        "EIP-8130 admission classification changed during validation",
-                    ));
+                    return Err(Self::stale_classification_error(hash));
                 }
                 match (&outcome.replaced, admission) {
                     (Some(replaced), Some(admission)) => {
@@ -647,6 +685,7 @@ where
             let nonce = transaction.nonce();
             let validated = self.validator().validate_transaction(origin, transaction).await;
             let _admission_guard = self.protocol_admission_lock.lock();
+            self.ensure_protocol_classification_current(hash, &validated)?;
             let replaced = self.protocol_replacement_hash(sender, nonce);
             let events =
                 self.protocol_pool.inner().add_transaction_and_subscribe(origin, validated)?;
@@ -675,13 +714,7 @@ where
             let sender = transaction.sender();
             let nonce = transaction.nonce();
             let validated = self.validator().validate_transaction(origin, transaction).await;
-            let _admission_guard = self.protocol_admission_lock.lock();
-            let replaced = self.protocol_replacement_hash(sender, nonce);
-            let mut outcomes =
-                self.protocol_pool.inner().add_transactions(origin, std::iter::once(validated));
-            let outcome = outcomes.pop().expect("one transaction produces one outcome")?;
-            self.gate_protocol_admission(hash, replaced)?;
-            Ok(outcome)
+            self.add_validated_protocol_transaction(origin, hash, sender, nonce, validated)
         }
     }
 
@@ -1961,6 +1994,41 @@ mod tests {
             tracked.iter().all(|hash| pool.protocol_pool.get(hash).is_some()),
             "every guard record must still have a protocol-pool transaction"
         );
+    }
+
+    #[tokio::test]
+    async fn stale_protocol_replacement_keeps_original_transaction() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+
+        let original = self_paid_eoa_8130(&signer, U256::ZERO, 0, 0, 1_000);
+        let original_hash = *original.hash();
+        pool.add_transaction(TransactionOrigin::Local, original).await.unwrap();
+
+        let replacement = self_paid_eoa_8130(&signer, U256::ZERO, 0, 0, 1_250);
+        let replacement_hash = *replacement.hash();
+        let replacement_sender = replacement.sender();
+        let replacement_nonce = replacement.nonce();
+        let validated =
+            pool.validator().validate_transaction(TransactionOrigin::Local, replacement).await;
+        pool.validator().validator().clear_limit_class_cache();
+
+        let error = pool
+            .add_validated_protocol_transaction(
+                TransactionOrigin::Local,
+                replacement_hash,
+                replacement_sender,
+                replacement_nonce,
+                validated,
+            )
+            .expect_err("stale classification must reject before replacing the pooled transaction");
+
+        assert!(error.to_string().contains("classification changed during validation"));
+        assert!(pool.get(&replacement_hash).is_none());
+        assert!(pool.get(&original_hash).is_some());
+        assert!(pool.guard.read().contains(&original_hash));
+        assert!(!pool.guard.read().contains(&replacement_hash));
     }
 
     #[tokio::test]
