@@ -86,7 +86,7 @@ where
         + 'static,
     Builder: PayloadBuilder + Unpin + 'static,
     Builder::Attributes: Unpin + Clone,
-    Builder::BuiltPayload: Unpin + Clone + Send + Sync + 'static,
+    Builder::BuiltPayload: Unpin + Clone,
 {
     type Job = BlockPayloadJob<Builder>;
 
@@ -211,7 +211,7 @@ where
     /// See [`PayloadBuilder`]
     pub(crate) builder: Builder,
     /// Receiver for the latest payload from the builder task.
-    /// `None` until `spawn_build_job` is called; cloned by `resolve_kind` into [`ResolvePayload`].
+    /// `None` until `spawn_build_job` is called; taken by `resolve_kind` into [`ResolvePayload`].
     pub(crate) payload_rx: Option<watch::Receiver<Option<Builder::BuiltPayload>>>,
     /// The error the build task last failed with, if any.
     ///
@@ -244,7 +244,7 @@ impl<Builder> PayloadJob for BlockPayloadJob<Builder>
 where
     Builder: PayloadBuilder + Unpin + 'static,
     Builder::Attributes: Unpin + Clone,
-    Builder::BuiltPayload: Unpin + Clone + Send + Sync + 'static,
+    Builder::BuiltPayload: Unpin + Clone,
 {
     type PayloadAttributes = Builder::Attributes;
     type ResolvePayloadFuture = ResolvePayload<Self::BuiltPayload>;
@@ -271,7 +271,7 @@ where
         }
 
         (
-            ResolvePayload::new(self.payload_rx.clone(), Arc::clone(&self.build_error)),
+            ResolvePayload::new(self.payload_rx.take(), Arc::clone(&self.build_error)),
             KeepPayloadJobAlive::No,
         )
     }
@@ -295,7 +295,7 @@ impl<Builder> BlockPayloadJob<Builder>
 where
     Builder: PayloadBuilder + Unpin + 'static,
     Builder::Attributes: Unpin + Clone,
-    Builder::BuiltPayload: Unpin + Clone + Send + Sync + 'static,
+    Builder::BuiltPayload: Unpin + Clone,
 {
     /// Spawns a blocking task that builds the next payload using the current configuration.
     pub fn spawn_build_job(&mut self) {
@@ -324,7 +324,7 @@ impl<Builder> Future for BlockPayloadJob<Builder>
 where
     Builder: PayloadBuilder + Unpin + 'static,
     Builder::Attributes: Unpin + Clone,
-    Builder::BuiltPayload: Unpin + Clone + Send + Sync + 'static,
+    Builder::BuiltPayload: Unpin + Clone,
 {
     type Output = Result<(), PayloadBuilderError>;
 
