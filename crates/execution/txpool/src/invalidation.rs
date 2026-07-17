@@ -1,11 +1,10 @@
 //! State-keyed transaction invalidation index.
 //!
 //! Each pooled transaction's invalidation surfaces are known the moment it is
-//! validated (see `MEMPOOL_HARDENING.md`). This module records those surfaces as
-//! a [`WatchSet`] of [`InvalidationKey`]s and maintains a reverse index from
-//! each key to the transactions depending on it, so per-block invalidation is a
-//! lookup of exactly the affected transactions rather than a scan of the whole
-//! pool.
+//! validated. This module records those surfaces as a [`WatchSet`] of
+//! [`InvalidationKey`]s and maintains a reverse index from each key to the
+//! transactions depending on it, so per-block invalidation is a lookup of
+//! exactly the affected transactions rather than a scan of the whole pool.
 //!
 //! Keys carry one of two invalidation semantics:
 //!
