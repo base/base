@@ -169,7 +169,10 @@ async fn l4_confirmations_observed_by_derivation() {
                 if fcs.safe_block_hash == hash_for(1)
         )
     });
-    assert!(saw_safe_confirmation, "expected engine-originated FCU safe-head confirmation for derived block");
+    assert!(
+        saw_safe_confirmation,
+        "expected engine-originated FCU safe-head confirmation for derived block"
+    );
 }
 
 #[tokio::test(start_paused = true)]
