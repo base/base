@@ -229,7 +229,14 @@ impl<Cons: Typed2718, Pooled> Typed2718 for BasePooledTransaction<Cons, Pooled> 
 
 impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Pooled> {
     fn size(&self) -> usize {
-        self.inner.size() + core::mem::size_of::<u128>() + core::mem::size_of::<Option<u64>>() * 3
+        let watch_keys_size =
+            self.watch_set.get().map_or(0, |watch_set| core::mem::size_of_val(watch_set.keys()));
+        self.inner.size()
+            + core::mem::size_of::<u128>()
+            + core::mem::size_of::<Option<u64>>() * 3
+            + core::mem::size_of::<OnceLock<crate::WatchSet>>()
+            + watch_keys_size
+            + core::mem::size_of::<OnceLock<crate::LimitClass>>()
     }
 }
 
@@ -536,7 +543,7 @@ mod tests {
 
     use alloy_consensus::transaction::Recovered;
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{Bytes, TxKind, U256};
+    use alloy_primitives::{Address, Bytes, TxKind, U256};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
@@ -546,13 +553,16 @@ mod tests {
     };
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
+    use reth_primitives_traits::InMemorySize;
     use reth_provider::test_utils::MockEthProvider;
     use reth_transaction_pool::{
         PoolTransaction, TransactionOrigin, TransactionValidationOutcome,
         blobstore::InMemoryBlobStore, validate::EthTransactionValidatorBuilder,
     };
 
-    use crate::{BasePooledTransaction, BaseTransactionValidator};
+    use crate::{
+        BasePooledTransaction, BasePooledTx, BaseTransactionValidator, InvalidationKey, WatchSet,
+    };
 
     fn signer() -> PrivateKeySigner {
         PrivateKeySigner::random()
@@ -624,5 +634,19 @@ mod tests {
         assert!(eip8130_pooled(U256::ZERO).requires_nonce_check());
         assert!(!eip8130_pooled(U256::from(1)).requires_nonce_check());
         assert!(!eip8130_pooled(Eip8130Constants::NONCE_KEY_MAX).requires_nonce_check());
+    }
+
+    #[test]
+    fn in_memory_size_includes_watch_keys() {
+        let transaction = eip8130_pooled(U256::ZERO);
+        let size_without_keys = transaction.size();
+        let watch_set = WatchSet::new()
+            .watch(InvalidationKey::Balance(Address::ZERO))
+            .watch(InvalidationKey::ProtocolNonce(Address::ZERO));
+        let keys_size = core::mem::size_of_val(watch_set.keys());
+
+        transaction.set_watch_set(watch_set);
+
+        assert_eq!(transaction.size(), size_without_keys + keys_size);
     }
 }
