@@ -183,14 +183,17 @@ async fn l5_no_cross_actor_deadlock() {
         .spawn_node(
             NodeMode::Validator,
             NodeConfig {
-                builder: HarnessBuilder::new().with_scripted_el_responses([
-                    syncing_fcu(),
-                    valid_fcu(),
-                    valid_fcu(),
-                    valid_fcu(),
-                    valid_fcu(),
-                    valid_fcu(),
-                ]),
+                builder: HarnessBuilder::new()
+                    .with_reset_recovery_support()
+                    .with_scripted_el_responses([
+                        syncing_fcu(),
+                        valid_fcu(),
+                        valid_fcu(),
+                        valid_fcu(),
+                        valid_fcu(),
+                        valid_fcu(),
+                        valid_fcu(),
+                    ]),
             },
         )
         .await;
@@ -201,15 +204,20 @@ async fn l5_no_cross_actor_deadlock() {
     fake_l1.extend(block(2, hash_for(1), hash_for(2), 2)).await;
     fake_l1.extend(block(3, hash_for(2), hash_for(3), 3)).await;
 
-    driver.tick(200).await;
-
-    let safe_number = driver
-        .snapshot()
-        .await
-        .nodes
-        .get(node_id)
-        .map(|node| node.safe_head_number)
-        .unwrap_or_default();
+    let mut safe_number = 0u64;
+    for _ in 0..200 {
+        driver.tick(1).await;
+        safe_number = driver
+            .snapshot()
+            .await
+            .nodes
+            .get(node_id)
+            .map(|node| node.safe_head_number)
+            .unwrap_or_default();
+        if safe_number >= 3 {
+            break;
+        }
+    }
 
     assert!(safe_number >= 3, "L5 violated: safe-head did not reach block 3 after 200 ticks");
 }
