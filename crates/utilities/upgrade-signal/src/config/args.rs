@@ -6,7 +6,6 @@ use super::{
     UpgradeSignalBlockTag, UpgradeSignalConfig, UpgradeSignalConfigError, UpgradeSignalDefaults,
     UpgradeSignalMode,
 };
-use crate::UpgradeSignalRuntimeValidation;
 
 /// CLI arguments shared by nodes that read the L1 upgrade signal contract.
 #[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
@@ -112,7 +111,6 @@ impl UpgradeSignalArgs {
         &self,
         l1_rpc_args: &UpgradeSignalL1RpcArgs,
         log_context: &'static str,
-        runtime_validation: UpgradeSignalRuntimeValidation,
         chain_id: u64,
         execution_sink: &mut EL,
         consensus_sink: &mut CL,
@@ -125,13 +123,7 @@ impl UpgradeSignalArgs {
     {
         if let Some(startup_config) = self.startup_config(l1_rpc_args)? {
             startup_config
-                .apply_to_sinks(
-                    log_context,
-                    runtime_validation,
-                    chain_id,
-                    execution_sink,
-                    consensus_sink,
-                )
+                .apply_to_sinks(log_context, chain_id, execution_sink, consensus_sink)
                 .await?;
         }
 
@@ -153,7 +145,6 @@ impl UpgradeSignalStartupConfig {
     pub async fn apply_to_sinks<EL, CL>(
         self,
         log_context: &'static str,
-        runtime_validation: UpgradeSignalRuntimeValidation,
         chain_id: u64,
         execution_sink: &mut EL,
         consensus_sink: &mut CL,
@@ -168,7 +159,6 @@ impl UpgradeSignalStartupConfig {
             .apply_startup_to_sinks(
                 self.l1_rpc,
                 log_context,
-                runtime_validation,
                 chain_id,
                 execution_sink,
                 consensus_sink,
