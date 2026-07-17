@@ -143,7 +143,12 @@ impl PayerBook {
     /// succeeds only if the new reservation still fits within the balance:
     /// `reserved + max_cost ≤ balance`.
     pub fn try_reserve(&mut self, hash: TxHash, max_cost: U256, priority: u128) -> bool {
-        if self.entries.contains_key(&hash) {
+        if let Some(existing) = self.entries.get(&hash) {
+            debug_assert_eq!(
+                *existing,
+                (priority, max_cost),
+                "reservation parameters changed for an existing transaction hash"
+            );
             return true;
         }
         let Some(new_reserved) = self.reserved.checked_add(max_cost) else {
@@ -165,6 +170,7 @@ impl PayerBook {
             return false;
         };
         self.by_priority.remove(&(priority, *hash));
+        debug_assert!(self.reserved >= max_cost, "reserved balance accounting underflow");
         self.reserved = self.reserved.saturating_sub(max_cost);
         true
     }
@@ -182,6 +188,7 @@ impl PayerBook {
             };
             self.by_priority.remove(&(priority, hash));
             self.entries.remove(&hash);
+            debug_assert!(self.reserved >= max_cost, "reserved balance accounting underflow");
             self.reserved = self.reserved.saturating_sub(max_cost);
             evicted.push(hash);
         }
