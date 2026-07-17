@@ -132,6 +132,7 @@ impl WatchSet {
     }
 
     /// Builds a watch set from an iterator of keys, de-duplicating as it goes.
+    #[must_use]
     pub fn from_keys<I>(keys: I) -> Self
     where
         I: IntoIterator<Item = InvalidationKey>,

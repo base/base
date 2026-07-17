@@ -490,7 +490,8 @@ impl MempoolGuard {
             // `PayerBook::set_balance` already removed aggregate-limit
             // evictions from the book. `release` intentionally touches that
             // book again (as a no-op) while releasing the other dimensions.
-            self.release(hash);
+            let released = self.release(hash);
+            debug_assert!(released, "evicted hash must be releasable");
         }
         dropped
     }
