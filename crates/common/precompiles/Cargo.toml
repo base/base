@@ -42,6 +42,10 @@ required-features = ["test-utils"]
 name = "b20_stablecoin_v1_golden"
 required-features = ["test-utils"]
 
+[[test]]
+name = "b20_asset_v1_golden"
+required-features = ["test-utils"]
+
 [features]
 default = [ "blst", "c-kzg", "portable", "secp256k1", "std" ]
 std = [
