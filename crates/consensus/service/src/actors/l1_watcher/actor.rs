@@ -41,10 +41,14 @@ use crate::{
 pub struct LogRetrier;
 
 impl LogRetrier {
-    /// Fetch logs matching `filter` with capped exponential backoff, retrying up to 10 times.
+    /// Fetch logs matching `filter` with capped exponential backoff, trying up to 10 times.
     ///
     /// Returns `Ok(Some(logs))` on success, `Ok(None)` if `cancel` fires during a backoff sleep,
     /// or `Err(`[`L1WatcherActorError::RetriesExhausted`]`)` once all attempts fail.
+    ///
+    /// Provider failures, including request timeouts, use the same bounded retry path. Exhausting
+    /// those attempts returns an actor error so the node service can shut down instead of waiting
+    /// indefinitely on an L1 request.
     ///
     /// `initial_backoff` and `max_backoff` are caller-supplied so tests can use tiny values.
     pub async fn fetch_logs_with_retry<F>(
@@ -224,6 +228,8 @@ where
                             && head_block_info.number >= self.verifier_l1_confs
                         {
                             let target = head_block_info.number - self.verifier_l1_confs;
+                            // Delayed block reads are best effort. A request timeout is handled
+                            // like any other fetch error: skip this head and try the next one.
                             match self.l1_provider.get_block(BlockId::Number(target.into())).await {
                                 Ok(Some(block)) => block.into_consensus().into(),
                                 Ok(None) => {
@@ -268,6 +274,8 @@ where
                             .address(filter_address)
                             .select(derivation_block.hash);
 
+                        // Log requests are retried with bounded backoff. If all attempts time out
+                        // or otherwise fail, the actor returns an error instead of hanging.
                         let Some(logs) = LogRetrier::fetch_logs_with_retry(
                             &self.l1_provider,
                             filter,

@@ -428,7 +428,10 @@ mod tests {
             .await
             .expect("beacon requests must not remain pending");
 
-        assert!(result.is_err(), "beacon request should fail at the request deadline");
+        assert!(
+            matches!(result, Err(BeaconClientError::Http(error)) if error.is_timeout()),
+            "beacon request should fail with a request timeout"
+        );
         mock.assert_async().await;
     }
 }

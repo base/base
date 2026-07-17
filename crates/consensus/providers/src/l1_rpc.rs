@@ -1,3 +1,5 @@
+//! Shared HTTP providers for consensus L1 execution and Beacon API requests.
+
 use std::time::Duration;
 
 use alloy_provider::RootProvider;
@@ -43,6 +45,16 @@ mod tests {
     const TEST_REQUEST_TIMEOUT: Duration = Duration::from_millis(25);
     const TEST_RESPONSE_DELAY: Duration = Duration::from_millis(250);
 
+    fn is_reqwest_timeout<T>(result: &alloy_transport::TransportResult<T>) -> bool {
+        result
+            .as_ref()
+            .err()
+            .and_then(|error| error.as_transport_err())
+            .and_then(|error| error.as_custom())
+            .and_then(|error| error.downcast_ref::<reqwest::Error>())
+            .is_some_and(reqwest::Error::is_timeout)
+    }
+
     #[tokio::test]
     async fn execution_requests_timeout_at_the_provider_boundary() {
         let server = MockServer::start_async().await;
@@ -65,8 +77,11 @@ mod tests {
         .await
         .expect("provider requests must not remain pending");
 
-        assert!(requests.0.is_err(), "eth_getLogs should fail at the request deadline");
-        assert!(requests.1.is_err(), "eth_getBlockByNumber should fail at the request deadline");
+        assert!(is_reqwest_timeout(&requests.0), "eth_getLogs should fail with a request timeout");
+        assert!(
+            is_reqwest_timeout(&requests.1),
+            "eth_getBlockByNumber should fail with a request timeout"
+        );
         mock.assert_calls_async(2).await;
     }
 }
