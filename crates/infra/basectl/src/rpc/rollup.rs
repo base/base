@@ -479,7 +479,10 @@ pub async fn run_rollup_config_poller(
     tx: mpsc::Sender<UpgradeConfig>,
     toast_tx: mpsc::Sender<Toast>,
 ) {
-    let client = match HttpClientBuilder::default().build(consensus_rpc.as_str()) {
+    let client = match HttpClientBuilder::default()
+        .request_timeout(ROLLUP_CONFIG_POLL_INTERVAL)
+        .build(consensus_rpc.as_str())
+    {
         Ok(client) => client,
         Err(error) => {
             warn!(
