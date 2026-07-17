@@ -150,6 +150,10 @@ impl FakeL1 {
                 .await;
         }
 
+        // Intentional ordering shortcut: in production, the derivation actor receives
+        // ProcessEngineSafeHeadUpdateRequest only after the engine completes consolidation and
+        // emits the update itself. Here we dispatch both simultaneously so tests do not need
+        // to wait for the engine round-trip to observe safe-head advancement in derivation.
         if let Some(derivation_request_tx) = &self.derivation_request_tx {
             let update =
                 DerivationActorRequest::ProcessEngineSafeHeadUpdateRequest(Box::new(safe_l2));

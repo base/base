@@ -2,9 +2,7 @@
 
 use alloy_consensus::Header as ConsensusHeader;
 use alloy_primitives::B256;
-use alloy_rpc_types_engine::{
-    ForkchoiceState, ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum,
-};
+use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
 use base_consensus_engine::ConsolidateInput;
 use base_consensus_safedb::SafeHeadResponse;
 use base_protocol::{BlockInfo, L2BlockInfo};
@@ -143,7 +141,14 @@ async fn l4_confirmations_observed_by_derivation() {
         )
         .await;
 
-    let fake_l1 = driver.harness(node_id).fake_l1().clone();
+    let (fake_l1, fake_engine_handle) = {
+        let harness = driver.harness(node_id);
+        (harness.fake_l1().clone(), harness.fake_engine_handle().clone())
+    };
+
+    // dispatch_safe_l2_for injects one synthetic FCU log entry per extend() call; real
+    // engine-originated FCUs appear after that, so skip pre_extend_count+1 entries.
+    let pre_extend_count = fake_engine_handle.call_count();
     fake_l1.extend(block(1, B256::ZERO, hash_for(1), 1)).await;
 
     driver
@@ -156,15 +161,15 @@ async fn l4_confirmations_observed_by_derivation() {
         .await
         .expect("safe head did not advance for derivation confirmation check");
 
-    let calls = driver.harness(node_id).fake_engine_handle().calls().await;
-    let saw_safe_confirmation = calls.iter().any(|call| {
+    let calls = fake_engine_handle.calls().await;
+    let saw_safe_confirmation = calls[pre_extend_count + 1..].iter().any(|call| {
         matches!(
             call,
             EngineClientCall::ForkChoiceUpdatedV3 { fcs, .. }
                 if fcs.safe_block_hash == hash_for(1)
         )
     });
-    assert!(saw_safe_confirmation, "expected FCU safe-head confirmation for derived block");
+    assert!(saw_safe_confirmation, "expected engine-originated FCU safe-head confirmation for derived block");
 }
 
 #[tokio::test(start_paused = true)]
@@ -179,8 +184,6 @@ async fn l5_no_cross_actor_deadlock() {
                     syncing_fcu(),
                     valid_fcu(),
                     valid_fcu(),
-                    syncing_fcu(),
-                    valid_fcu(),
                     valid_fcu(),
                     valid_fcu(),
                     valid_fcu(),
@@ -189,29 +192,11 @@ async fn l5_no_cross_actor_deadlock() {
         )
         .await;
 
-    let (fake_l1, fake_engine_handle) = {
-        let harness = driver.harness(node_id);
-        (harness.fake_l1().clone(), harness.fake_engine_handle().clone())
-    };
+    let fake_l1 = driver.harness(node_id).fake_l1().clone();
 
     fake_l1.extend(block(1, B256::ZERO, hash_for(1), 1)).await;
     fake_l1.extend(block(2, hash_for(1), hash_for(2), 2)).await;
     fake_l1.extend(block(3, hash_for(2), hash_for(3), 3)).await;
-
-    fake_engine_handle
-        .inject_fcu_v3_call(ForkchoiceState {
-            head_block_hash: hash_for(101),
-            safe_block_hash: hash_for(2),
-            finalized_block_hash: hash_for(1),
-        })
-        .await;
-    fake_engine_handle
-        .inject_fcu_v3_call(ForkchoiceState {
-            head_block_hash: hash_for(102),
-            safe_block_hash: hash_for(3),
-            finalized_block_hash: hash_for(2),
-        })
-        .await;
 
     driver.tick(200).await;
 
@@ -222,15 +207,8 @@ async fn l5_no_cross_actor_deadlock() {
         .get(node_id)
         .map(|node| node.safe_head_number)
         .unwrap_or_default();
-    let fcu_calls = fake_engine_handle
-        .calls()
-        .await
-        .into_iter()
-        .filter(|call| matches!(call, EngineClientCall::ForkChoiceUpdatedV3 { .. }))
-        .count();
 
-    assert!(safe_number >= 1, "L5 violated: no measurable safe-head progress after 200 ticks");
-    assert!(fcu_calls >= 3, "L5 violated: actor graph did not keep processing FCU traffic");
+    assert!(safe_number >= 3, "L5 violated: safe-head did not reach block 3 after 200 ticks");
 }
 
 #[tokio::test(start_paused = true)]
