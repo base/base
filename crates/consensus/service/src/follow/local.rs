@@ -68,9 +68,9 @@ impl FollowLocalClient for LocalL2Client {
 
     async fn l1_block_hash(&self, number: u64) -> Result<Option<B256>, FollowError> {
         self.l1_provider
-            .get_block_by_number(number.into())
+            .get_header_by_number(number.into())
             .await
-            .map(|block| block.map(|block| block.header.hash))
+            .map(|header| header.map(|header| header.hash))
             .map_err(|source| FollowError::LocalL1BlockFetch { number, source })
     }
 

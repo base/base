@@ -135,7 +135,6 @@ where
 
         // Read number and hash from the same response, matching op-node's `L2BlockRefByLabel`.
         let source_safe = source.get_block_info(BlockNumberOrTag::Safe).await?;
-        Self::validate_source_l1_origin(local.as_ref(), &source_safe).await?;
         let safe = Self::verified_local_block(
             &local,
             &source_safe,
@@ -143,12 +142,14 @@ where
             latest.block_info.number,
         )
         .await?;
+        if safe.is_some() {
+            Self::validate_source_l1_origin(local.as_ref(), &source_safe).await?;
+        }
 
         let safe_limit = safe.as_ref().unwrap_or(&local_safe).block_info.number;
 
         // Finalized floor at the local finalized head (never unwind), ceiling at the safe head.
         let source_finalized = source.get_block_info(BlockNumberOrTag::Finalized).await?;
-        Self::validate_source_l1_origin(local.as_ref(), &source_finalized).await?;
         let local_finalized_number =
             local_finalized.map(|block| block.block_info.number).unwrap_or_default();
         let finalized = Self::verified_local_block(
@@ -158,6 +159,9 @@ where
             latest.block_info.number.min(safe_limit),
         )
         .await?;
+        if finalized.is_some() {
+            Self::validate_source_l1_origin(local.as_ref(), &source_finalized).await?;
+        }
 
         engine.update_safe_finalized_blocks(safe, finalized).await
     }
@@ -654,6 +658,46 @@ mod tests {
         let engine_for_update: Arc<dyn FollowEngine> = Arc::<RecordingEngine>::clone(&engine);
         FollowRuntime::<MockFollowLocalClient, MockRemoteClient, NoopProofGate>::update_safe_and_finalized(
             local,
+            Arc::new(source),
+            engine_for_update,
+        )
+        .await
+        .expect("labels");
+
+        assert!(engine.labels.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn out_of_range_source_labels_skip_l1_origin_validation() {
+        let mut local = MockFollowLocalClient::new();
+        local.expect_block_info().returning(|tag| {
+            Ok(Some(match tag {
+                BlockNumberOrTag::Latest => block_info(10),
+                BlockNumberOrTag::Safe => block_info(8),
+                BlockNumberOrTag::Finalized => block_info(7),
+                _ => panic!("unexpected local block lookup: {tag:?}"),
+            }))
+        });
+        local.expect_l1_block_hash().times(0);
+
+        let mut source = MockRemoteClient::new();
+        source
+            .expect_get_block_info()
+            .with(eq(BlockNumberOrTag::Safe))
+            .returning(|_| Ok(source_block_info(20)));
+        source
+            .expect_get_block_info()
+            .with(eq(BlockNumberOrTag::Finalized))
+            .returning(|_| Ok(source_block_info(6)));
+        let engine = Arc::new(RecordingEngine {
+            inserted: Mutex::new(Vec::new()),
+            labels: Mutex::new(Vec::new()),
+            delay: Duration::ZERO,
+        });
+        let engine_for_update: Arc<dyn FollowEngine> = Arc::<RecordingEngine>::clone(&engine);
+
+        FollowRuntime::<MockFollowLocalClient, MockRemoteClient, NoopProofGate>::update_safe_and_finalized(
+            Arc::new(local),
             Arc::new(source),
             engine_for_update,
         )
