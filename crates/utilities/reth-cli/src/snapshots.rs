@@ -5,7 +5,7 @@ use std::borrow::Cow;
 use reth_cli_commands::download::DownloadDefaults;
 
 pub(crate) const DEFAULT_DOWNLOAD_URL: &str = "https://v2-snapshots-ui.vercel.app/8453";
-const SNAPSHOT_API_URL: &str = "https://v2-snapshots-ui.vercel.app/api/snapshots";
+const SNAPSHOT_API_URL: &str = "https://chain.base.org/api/snapshots";
 
 /// Reth snapshot download URLs initialization for Base execution layer binaries
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
