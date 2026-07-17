@@ -9,7 +9,7 @@ use std::{
 
 use alloy_consensus::{BlockHeader, Transaction, constants::KECCAK_EMPTY};
 use alloy_eips::eip2718::Encodable2718;
-use alloy_primitives::{Address, B256, LogData, U256, keccak256, map::AddressSet};
+use alloy_primitives::{Address, B256, LogData, U256, map::AddressSet};
 use base_common_chains::Upgrades;
 use base_common_consensus::{
     AccountChange, ActorChange, ActorChangeType, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
@@ -91,18 +91,10 @@ struct Eip8130ValidationState {
     payer_max_cost: U256,
 }
 
-const ACCOUNT_CONFIG_ACCOUNT_STATE_BASE_SLOT: u64 = 3;
 const LIMIT_CLASS_CACHE_CAPACITY: usize = 100_000;
 
 /// Cached lock state and trusted-delegation classification by account.
 pub type LimitClassCache = HashMap<Address, (Option<AccountState>, Option<bool>)>;
-
-fn mapping_slot_address(key: Address, base_slot: U256) -> U256 {
-    let mut buf = [0u8; 64];
-    buf[12..32].copy_from_slice(key.as_slice());
-    buf[32..].copy_from_slice(&base_slot.to_be_bytes::<32>());
-    U256::from_be_bytes(keccak256(buf).0)
-}
 
 fn b256_from_u256(slot: U256) -> B256 {
     B256::from(slot.to_be_bytes::<32>())
@@ -1056,10 +1048,7 @@ where
     }
 
     fn account_state_slot(account: Address) -> B256 {
-        b256_from_u256(mapping_slot_address(
-            account,
-            U256::from(ACCOUNT_CONFIG_ACCOUNT_STATE_BASE_SLOT),
-        ))
+        AccountConfigurationStorage::account_state_slot(account)
     }
 
     fn account_lock(

@@ -313,8 +313,8 @@ where
     }
 
     fn expire_due_buckets(&self, now: u64) {
-        // Called while canonical maintenance holds `protocol_admission_lock`,
-        // so a reservation cannot be expired between guard and reth insertion.
+        // Do not expire a protocol reservation between guard and reth insertion.
+        let _admission_guard = self.protocol_admission_lock.lock();
         let horizon = now.saturating_add(InvalidationKey::EXPIRY_BUCKET_SECS)
             / InvalidationKey::EXPIRY_BUCKET_SECS;
         let recent = (now / InvalidationKey::EXPIRY_BUCKET_SECS).saturating_sub(1);
@@ -338,14 +338,26 @@ where
     }
 
     fn reconcile_guard(&self) {
-        // Called while canonical maintenance holds `protocol_admission_lock`
-        // so reserved-before-insert transactions cannot look stale.
         let tracked = self.guard.read().tracked_hashes();
         if tracked.is_empty() {
             return;
         }
         let nonce_pool = self.nonce_pool.read();
         let stale: Vec<_> = tracked
+            .into_iter()
+            .filter(|hash| self.protocol_pool.get(hash).is_none() && !nonce_pool.contains(hash))
+            .collect();
+        drop(nonce_pool);
+        if stale.is_empty() {
+            return;
+        }
+
+        // Recheck only stale candidates under admission serialization. The
+        // initial full scan stays outside this critical section, while a
+        // reserved-before-insert transaction cannot be mistaken for an orphan.
+        let _admission_guard = self.protocol_admission_lock.lock();
+        let nonce_pool = self.nonce_pool.read();
+        let stale: Vec<_> = stale
             .into_iter()
             .filter(|hash| self.protocol_pool.get(hash).is_none() && !nonce_pool.contains(hash))
             .collect();
@@ -1340,11 +1352,16 @@ where
         let block_hash = update.hash();
         let now = update.timestamp();
         let mined_transactions = update.mined_transactions.clone();
-        // Keep protocol-pool removal, guard release, expiry, and reconciliation
-        // atomic with protocol pre-admission. This prevents transient stale
-        // accounting from rejecting a transaction while canonical maintenance
-        // releases capacity.
-        let _admission_guard = self.protocol_admission_lock.lock();
+        // Free mined capacity atomically with admission before the heavier pool
+        // maintenance. The transaction is already canonical, so it no longer
+        // consumes an admission slot even until its pool entry is pruned below.
+        {
+            let _admission_guard = self.protocol_admission_lock.lock();
+            let mut guard = self.guard.write();
+            for hash in &mined_transactions {
+                guard.release(hash);
+            }
+        }
         self.protocol_pool.on_canonical_state_change(update);
         {
             let mut nonce_pool = self.nonce_pool.write();
@@ -1357,16 +1374,13 @@ where
             if !expired.is_empty() {
                 listeners.on_discarded(&expired);
             }
-            // Canonical maintenance lock order is admission -> nonce_pool -> listeners -> guard.
+            // Sidecar maintenance lock order is nonce_pool -> listeners -> guard.
             let mut guard = self.guard.write();
             for transaction in &pruned.removed {
                 guard.release(transaction.hash());
             }
             for transaction in &expired {
                 guard.release(transaction.hash());
-            }
-            for hash in &mined_transactions {
-                guard.release(hash);
             }
         }
         self.expire_due_buckets(now);
@@ -1395,7 +1409,20 @@ where
                 "EIP-8130 transactions invalidated by balance change"
             );
         }
-        self.protocol_pool.update_accounts(accounts)
+        let discard_candidates: Vec<_> = accounts
+            .iter()
+            .flat_map(|account| self.protocol_pool.get_transactions_by_sender(account.address))
+            .map(|transaction| *transaction.hash())
+            .collect();
+        self.protocol_pool.update_accounts(accounts);
+        let discarded: Vec<_> = discard_candidates
+            .into_iter()
+            .filter(|hash| self.protocol_pool.get(hash).is_none())
+            .collect();
+        let mut guard = self.guard.write();
+        for hash in discarded {
+            guard.release(&hash);
+        }
     }
 
     fn delete_blob(&self, tx: B256) {
@@ -2225,6 +2252,26 @@ mod tests {
 
         assert!(pool.get(&hash).is_none());
         assert!(!pool.nonce_pool.read().contains(&hash));
+        assert!(!pool.guard.read().contains(&hash));
+    }
+
+    #[tokio::test]
+    async fn account_update_releases_guard_for_protocol_discard() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+        let transaction = self_paid_eoa_8130(&signer, U256::ZERO, 0, 0, 1_000);
+        let hash = *transaction.hash();
+        pool.add_transaction(TransactionOrigin::Local, transaction).await.unwrap();
+        assert!(pool.guard.read().contains(&hash));
+
+        pool.update_accounts(vec![ChangedAccount {
+            address: signer.address(),
+            nonce: 1,
+            balance: U256::MAX,
+        }]);
+
+        assert!(pool.get(&hash).is_none());
         assert!(!pool.guard.read().contains(&hash));
     }
 
