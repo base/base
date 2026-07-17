@@ -15,8 +15,9 @@ methods:
 list:
     @just --justfile {{ source_file() }} methods
 
-# Request a proof or dry-run for a block range: proof_type=compressed|snark
-prove start_block number_of_blocks='1' proof_type='compressed' session_id='' prover_address='' l1_head='':
+# Request a proof for a block range.
+# proof_type=compressed|snark  zk_backend=mock|dry_run|cluster|network (or ZK_BACKEND env)
+prove start_block number_of_blocks='1' proof_type='compressed' zk_backend='' session_id='' prover_address='' l1_head='':
     #!/usr/bin/env bash
     set -euo pipefail
     command -v jq >/dev/null 2>&1 || { echo "jq is required" >&2; exit 1; }
@@ -25,6 +26,12 @@ prove start_block number_of_blocks='1' proof_type='compressed' session_id='' pro
     proof_type={{ quote(proof_type) }}
     proof_type="${proof_type#proof_type=}"
     proof_type="$(printf '%s' "$proof_type" | tr '[:upper:]-' '[:lower:]_')"
+    zk_backend={{ quote(zk_backend) }}
+    zk_backend="${zk_backend#zk_backend=}"
+    if [ -z "$zk_backend" ]; then
+      zk_backend="${ZK_BACKEND:-cluster}"
+    fi
+    zk_backend="$(printf '%s' "$zk_backend" | tr '[:upper:]-' '[:lower:]_')"
     session_id={{ quote(session_id) }}
     prover_address={{ quote(prover_address) }}
     l1_head={{ quote(l1_head) }}
@@ -39,6 +46,13 @@ prove start_block number_of_blocks='1' proof_type='compressed' session_id='' pro
       echo "number_of_blocks must be greater than zero" >&2
       exit 1
     fi
+    case "$zk_backend" in
+      mock|dry_run|cluster|network) ;;
+      *)
+        echo "unknown zk_backend: $zk_backend (use mock, dry_run, cluster, or network)" >&2
+        exit 1
+        ;;
+    esac
 
     if [ -z "$session_id" ]; then
       session_id="$(uuidgen | tr '[:upper:]' '[:lower:]')"
@@ -51,10 +65,12 @@ prove start_block number_of_blocks='1' proof_type='compressed' session_id='' pro
       --argjson start_block "$start_block" \
       --argjson number_of_blocks "$number_of_blocks" \
       --arg l1_head "$l1_head" \
+      --arg zk_backend "$zk_backend" \
       '{
         start_block_number: $start_block,
         number_of_blocks_to_prove: $number_of_blocks,
-        zk_vm: "sp1"
+        zk_vm: "sp1",
+        zk_backend: $zk_backend
       } + if $l1_head == "" then {} else {l1_head: $l1_head} end')"
 
     case "$proof_type" in
@@ -81,6 +97,7 @@ prove start_block number_of_blocks='1' proof_type='compressed' session_id='' pro
         ;;
     esac
 
+    echo "session_id=$session_id zk_backend=$zk_backend proof_type=$proof_type" >&2
     params="$(jq -n -c \
       --arg session_id "$session_id" \
       --argjson request "$request" \
