@@ -19,7 +19,7 @@ use revm::{
 
 use crate::{
     error::{BasePrecompileError, Result},
-    provider::PrecompileStorageProvider,
+    provider::{PrecompileStorageProvider, validate_loaded_code_presence},
 };
 
 /// Production [`PrecompileStorageProvider`] backed by a live EVM journal.
@@ -155,6 +155,33 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
         }
 
         f(&info);
+        Ok(())
+    }
+
+    fn with_account_code(&mut self, address: Address, f: &mut dyn FnMut(&Bytecode)) -> Result<()> {
+        // Load and clone the full bytecode before releasing the journal borrow.
+        let (code, is_cold) = {
+            let state_load = self
+                .internals
+                .load_account_code(address)
+                .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
+            let expected_hash = *state_load.data.code_hash();
+            let code = state_load.data.code().cloned().ok_or_else(|| {
+                BasePrecompileError::Fatal(
+                    "account code unavailable after successful EVM load".to_string(),
+                )
+            })?;
+            validate_loaded_code_presence(expected_hash, &code)?;
+            (code, state_load.is_cold)
+        };
+
+        // EIP-2929: charge the same account-access cost as `with_account_info`.
+        self.deduct_gas(self.gas_params.warm_storage_read_cost())?;
+        if is_cold {
+            self.deduct_gas(self.gas_params.cold_account_additional_cost())?;
+        }
+
+        f(&code);
         Ok(())
     }
 

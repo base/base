@@ -1,7 +1,7 @@
 //! Traits for the metering RPC module.
 
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::{B256, TxHash};
+use alloy_primitives::B256;
 use base_bundles::{Bundle, MeterBundleResponse};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 
@@ -9,8 +9,7 @@ use crate::{MeterBlockResponse, MeteredPriorityFeeResponse};
 
 /// RPC API for transaction metering.
 ///
-/// The mutating metering methods in this namespace are intended for trusted internal callers only.
-/// Operators should restrict access to them with private networking or authenticated proxying.
+/// The API exposes bundle simulation, block profiling, and priority-fee estimation.
 #[rpc(server, namespace = "base")]
 pub trait MeteringApi {
     /// Simulates and meters a bundle of transactions
@@ -19,26 +18,24 @@ pub trait MeteringApi {
 
     /// Handler for: `base_meterBlockByHash`
     ///
-    /// Re-executes a block and returns timing metrics for EVM execution and state root calculation.
+    /// Re-executes a block and returns timing metrics for signer recovery and EVM execution.
     ///
     /// This method fetches the block by hash, re-executes all transactions against the parent
     /// block's state, and measures:
     /// - `executionTimeUs`: Time to execute all transactions in the EVM
-    /// - `stateRootTimeUs`: Time to compute the state root after execution
-    /// - `totalTimeUs`: Sum of execution and state root calculation time
+    /// - `totalTimeUs`: Sum of signer recovery and execution time
     /// - `meteredTransactions`: Per-transaction execution times and gas usage
     #[method(name = "meterBlockByHash")]
     async fn meter_block_by_hash(&self, hash: B256) -> RpcResult<MeterBlockResponse>;
 
     /// Handler for: `base_meterBlockByNumber`
     ///
-    /// Re-executes a block and returns timing metrics for EVM execution and state root calculation.
+    /// Re-executes a block and returns timing metrics for signer recovery and EVM execution.
     ///
     /// This method fetches the block by number, re-executes all transactions against the parent
     /// block's state, and measures:
     /// - `executionTimeUs`: Time to execute all transactions in the EVM
-    /// - `stateRootTimeUs`: Time to compute the state root after execution
-    /// - `totalTimeUs`: Sum of execution and state root calculation time
+    /// - `totalTimeUs`: Sum of signer recovery and execution time
     /// - `meteredTransactions`: Per-transaction execution times and gas usage
     #[method(name = "meterBlockByNumber")]
     async fn meter_block_by_number(
@@ -62,25 +59,4 @@ pub trait MeteringApi {
         &self,
         bundle: Bundle,
     ) -> RpcResult<MeteredPriorityFeeResponse>;
-
-    /// Sets metering information for a transaction. Called by trusted ingestion
-    /// infrastructure to push externally measured state root timing for priority
-    /// fee estimation.
-    ///
-    /// Only `meter.state_root_time_us` is consumed here; the full response shape
-    /// matches the existing ingress metering payload.
-    #[method(name = "setMeteringInformation")]
-    async fn set_metering_information(
-        &self,
-        tx_hash: TxHash,
-        meter: MeterBundleResponse,
-    ) -> RpcResult<()>;
-
-    /// Enables or disables metering data collection.
-    #[method(name = "setMeteringEnabled")]
-    async fn set_metering_enabled(&self, enabled: bool) -> RpcResult<()>;
-
-    /// Clears all pending metering information.
-    #[method(name = "clearMeteringInformation")]
-    async fn clear_metering_information(&self) -> RpcResult<()>;
 }

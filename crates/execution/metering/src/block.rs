@@ -15,7 +15,7 @@ use reth_revm::{database::StateProviderDatabase, db::State};
 
 use crate::types::{MeterBlockResponse, MeterBlockTransactions};
 
-/// Re-executes a block and meters execution time, state root calculation time, and total time.
+/// Re-executes a block and meters execution and timing information.
 ///
 /// Takes a provider, the chain spec, and the block to meter.
 ///
@@ -23,7 +23,6 @@ use crate::types::{MeterBlockResponse, MeterBlockTransactions};
 /// - Block hash
 /// - Signer recovery time (can be parallelized)
 /// - EVM execution time for all transactions
-/// - State root calculation time
 /// - Total time
 /// - Per-transaction timing information
 ///
@@ -31,9 +30,6 @@ use crate::types::{MeterBlockResponse, MeterBlockTransactions};
 ///
 /// If the parent block's state has been pruned, this function will return an error.
 ///
-/// State root calculation timing is most accurate for recent blocks where state tries are
-/// cached. For older blocks, trie nodes may not be cached, which can significantly inflate
-/// the `state_root_time_us` value.
 pub fn meter_block<P>(
     provider: P,
     chain_spec: Arc<BaseChainSpec>,
@@ -113,22 +109,15 @@ where
     }
     let execution_time = evm_start.elapsed().as_micros();
 
-    // Calculate state root and measure time
-    let state_root_start = Instant::now();
-    let hashed_state = state_provider.hashed_post_state(&db.bundle_state);
-    let _state_root = state_provider
-        .state_root(hashed_state)
-        .map_err(|e| eyre!("Failed to calculate state root: {}", e))?;
-    let state_root_time = state_root_start.elapsed().as_micros();
-
-    let total_time = signer_recovery_time + execution_time + state_root_time;
+    let total_time = signer_recovery_time + execution_time;
 
     Ok(MeterBlockResponse {
         block_hash,
         block_number,
         signer_recovery_time_us: signer_recovery_time,
         execution_time_us: execution_time,
-        state_root_time_us: state_root_time,
+        // Retained as a zero-valued compatibility field for older profiling clients.
+        state_root_time_us: 0,
         total_time_us: total_time,
         transactions: transaction_times,
     })
@@ -184,12 +173,10 @@ mod tests {
             response.execution_time_us > 0,
             "execution time should be non-zero due to EVM setup"
         );
-        assert!(response.state_root_time_us > 0, "state root time should be non-zero");
+        assert_eq!(response.state_root_time_us, 0);
         assert_eq!(
             response.total_time_us,
-            response.signer_recovery_time_us
-                + response.execution_time_us
-                + response.state_root_time_us
+            response.signer_recovery_time_us + response.execution_time_us
         );
 
         Ok(())
@@ -231,12 +218,9 @@ mod tests {
 
         assert!(response.signer_recovery_time_us > 0, "signer recovery should take time");
         assert!(response.execution_time_us > 0);
-        assert!(response.state_root_time_us > 0);
         assert_eq!(
             response.total_time_us,
-            response.signer_recovery_time_us
-                + response.execution_time_us
-                + response.state_root_time_us
+            response.signer_recovery_time_us + response.execution_time_us
         );
 
         Ok(())
@@ -306,12 +290,9 @@ mod tests {
         // Check aggregate times
         assert!(response.signer_recovery_time_us > 0, "signer recovery should take time");
         assert!(response.execution_time_us > 0);
-        assert!(response.state_root_time_us > 0);
         assert_eq!(
             response.total_time_us,
-            response.signer_recovery_time_us
-                + response.execution_time_us
-                + response.state_root_time_us
+            response.signer_recovery_time_us + response.execution_time_us
         );
 
         // Ensure individual transaction times are consistent with total
@@ -352,13 +333,10 @@ mod tests {
         // Verify timing invariants
         assert!(response.signer_recovery_time_us > 0, "signer recovery time must be positive");
         assert!(response.execution_time_us > 0, "execution time must be positive");
-        assert!(response.state_root_time_us > 0, "state root time must be positive");
         assert_eq!(
             response.total_time_us,
-            response.signer_recovery_time_us
-                + response.execution_time_us
-                + response.state_root_time_us,
-            "total time must equal signer recovery + execution + state root times"
+            response.signer_recovery_time_us + response.execution_time_us,
+            "total time must equal signer recovery + execution time"
         );
 
         Ok(())

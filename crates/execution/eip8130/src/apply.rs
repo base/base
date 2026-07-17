@@ -25,7 +25,8 @@ use alloy_sol_types::{SolValue, sol};
 use base_common_consensus::{
     ActorChange, ActorChangeType, CreateEntry, Eip8130Constants, Eip8130Contracts, InitialActor,
 };
-use base_precompile_storage::BasePrecompileError;
+use base_precompile_storage::{BasePrecompileError, StorageCtx};
+use revm::state::Bytecode;
 
 use crate::{AccountConfigurationStorage, ActorConfig};
 
@@ -43,13 +44,12 @@ sol! {
 
 /// Reason an account change could not be applied.
 ///
-/// Every variant is a hard rejection mirroring a `require`/`revert` in
-/// `AccountConfiguration`: a transaction MUST NOT be included if applying its
-/// account changes fails.
+/// Every variant is a hard rejection while applying EIP-8130 state changes: a
+/// transaction MUST NOT be included if applying its account changes fails.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ApplyError {
-    /// An `AccountConfiguration` storage read or write failed.
-    #[error("account-configuration storage access failed: {0}")]
+    /// An EIP-8130 state read or write failed.
+    #[error("EIP-8130 state access failed: {0}")]
     Storage(#[from] BasePrecompileError),
 
     /// An `Authorize` change's `data` did not ABI-decode to
@@ -128,6 +128,15 @@ pub enum ApplyError {
     #[error("a create entry and a delegation entry may not coexist in the same transaction")]
     CreateAndDelegation,
 
+    /// A delegation attempted to replace ordinary contract bytecode. Delegation
+    /// may replace only empty code or code beginning with the delegation
+    /// indicator prefix.
+    #[error("delegation cannot replace non-delegation code at account {account}")]
+    NonDelegatableCode {
+        /// The account whose existing code cannot be replaced by a delegation.
+        account: Address,
+    },
+
     /// A channel sequence would overflow `u64`.
     #[error("account-change sequence overflow")]
     SequenceOverflow,
@@ -155,6 +164,45 @@ pub struct DelegationEffect {
 }
 
 impl DelegationEffect {
+    /// Creates a deferred delegation code effect.
+    #[must_use]
+    pub const fn new(account: Address, target: Address) -> Self {
+        Self { account, target }
+    }
+
+    /// Returns whether `code` may be replaced by a delegation entry.
+    ///
+    /// Empty code and any code beginning with the delegation indicator prefix
+    /// are replaceable. The prefix match is intentional: this does not require
+    /// the code to have the canonical 23-byte indicator length.
+    #[must_use]
+    pub fn can_replace_code(code: &[u8]) -> bool {
+        code.is_empty() || code.starts_with(&Eip8130Constants::DELEGATION_INDICATOR_PREFIX)
+    }
+
+    /// Installs or clears this delegation after verifying the account's current
+    /// code is delegatable.
+    ///
+    /// The current full bytecode is read before any code write. Ordinary
+    /// contract bytecode is left unchanged and rejected with
+    /// [`ApplyError::NonDelegatableCode`].
+    pub fn install(&self, sctx: StorageCtx<'_>) -> Result<(), ApplyError> {
+        let can_replace = sctx.with_account_code(self.account, |code| {
+            Ok(Self::can_replace_code(code.original_bytes().as_ref()))
+        })?;
+        if !can_replace {
+            return Err(ApplyError::NonDelegatableCode { account: self.account });
+        }
+
+        let code = if self.target.is_zero() {
+            Bytecode::default()
+        } else {
+            Bytecode::new_eip7702(self.target)
+        };
+        sctx.set_code(self.account, code)?;
+        Ok(())
+    }
+
     /// The delegation-indicator code to install
     /// (`DELEGATION_INDICATOR_PREFIX || target`), or `None` to clear the
     /// account's delegation (a zero target).
@@ -476,7 +524,8 @@ impl AccountChangeApplier {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{address, b256};
-    use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
+    use base_precompile_storage::{HashMapStorageProvider, PrecompileStorageProvider, StorageCtx};
+    use revm::state::Bytecode;
 
     use super::*;
 
@@ -798,13 +847,99 @@ mod tests {
     #[test]
     fn delegation_effect_indicator_set_and_clear() {
         let target = address!("0x00000000000000000000000000000000000000ee");
-        let set = DelegationEffect { account: ACCOUNT, target };
+        let set = DelegationEffect::new(ACCOUNT, target);
         let code = set.indicator().unwrap();
         assert_eq!(code.len(), Eip8130Constants::DELEGATION_INDICATOR_SIZE);
         assert_eq!(&code[..3], &Eip8130Constants::DELEGATION_INDICATOR_PREFIX);
         assert_eq!(&code[3..], target.as_slice());
 
-        let clear = DelegationEffect { account: ACCOUNT, target: Address::ZERO };
+        let clear = DelegationEffect::new(ACCOUNT, Address::ZERO);
         assert!(clear.indicator().is_none());
+    }
+
+    #[test]
+    fn delegation_effect_replaceable_code_predicate() {
+        assert!(DelegationEffect::can_replace_code(&[]));
+        assert!(DelegationEffect::can_replace_code(&Eip8130Constants::DELEGATION_INDICATOR_PREFIX));
+
+        let mut full_indicator = Eip8130Constants::DELEGATION_INDICATOR_PREFIX.to_vec();
+        full_indicator.extend_from_slice(Address::repeat_byte(0x11).as_slice());
+        assert!(DelegationEffect::can_replace_code(&full_indicator));
+
+        assert!(!DelegationEffect::can_replace_code(&[0x60, 0x00]));
+        assert!(!DelegationEffect::can_replace_code(&[0xef, 0x01, 0x01]));
+    }
+
+    #[test]
+    fn delegation_effect_install_rejects_ordinary_code_without_mutating_it() {
+        let ordinary = Bytecode::new_raw(Bytes::from_static(&[0x60, 0x00]));
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_code(ACCOUNT, ordinary.clone()).unwrap();
+
+        let effect = DelegationEffect::new(ACCOUNT, Address::repeat_byte(0x22));
+        let error = StorageCtx::enter(&mut storage, |sctx| effect.install(sctx)).unwrap_err();
+
+        assert_eq!(error, ApplyError::NonDelegatableCode { account: ACCOUNT });
+        assert_eq!(
+            storage.get_account_info(ACCOUNT).and_then(|info| info.code.as_ref()),
+            Some(&ordinary)
+        );
+    }
+
+    #[test]
+    fn delegation_effect_install_accepts_empty_code() {
+        let target = Address::repeat_byte(0x33);
+        let mut storage = HashMapStorageProvider::new(1);
+
+        StorageCtx::enter(&mut storage, |sctx| {
+            DelegationEffect::new(ACCOUNT, target).install(sctx)
+        })
+        .unwrap();
+
+        assert_eq!(
+            storage
+                .get_account_info(ACCOUNT)
+                .and_then(|info| info.code.as_ref())
+                .and_then(Bytecode::eip7702_address),
+            Some(target)
+        );
+    }
+
+    #[test]
+    fn delegation_effect_install_updates_existing_delegation() {
+        let target = Address::repeat_byte(0x44);
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_code(ACCOUNT, Bytecode::new_eip7702(Address::repeat_byte(0x11))).unwrap();
+
+        StorageCtx::enter(&mut storage, |sctx| {
+            DelegationEffect::new(ACCOUNT, target).install(sctx)
+        })
+        .unwrap();
+
+        assert_eq!(
+            storage
+                .get_account_info(ACCOUNT)
+                .and_then(|info| info.code.as_ref())
+                .and_then(Bytecode::eip7702_address),
+            Some(target)
+        );
+    }
+
+    #[test]
+    fn delegation_effect_install_clears_existing_delegation() {
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_code(ACCOUNT, Bytecode::new_eip7702(Address::repeat_byte(0x11))).unwrap();
+
+        StorageCtx::enter(&mut storage, |sctx| {
+            DelegationEffect::new(ACCOUNT, Address::ZERO).install(sctx)
+        })
+        .unwrap();
+
+        assert!(
+            storage
+                .get_account_info(ACCOUNT)
+                .and_then(|info| info.code.as_ref())
+                .is_some_and(Bytecode::is_empty)
+        );
     }
 }
