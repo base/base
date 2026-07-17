@@ -295,14 +295,12 @@ where
                             if let Ok(SystemConfigUpdate::UnsafeBlockSigner(UnsafeBlockSignerUpdate { unsafe_block_signer })) = sys_cfg_log.build() {
                                 info!(
                                     target: "l1_watcher",
-                                    unsafe_block_signer = %unsafe_block_signer,
-                                    "Unsafe block signer update"
+                                    "Unsafe block signer update: {unsafe_block_signer}"
                                 );
                                 if let Some(ref block_signer_sender) = self.block_signer_sender && let Err(e) = block_signer_sender.send(unsafe_block_signer).await {
                                     error!(
                                         target: "l1_watcher",
-                                        error = %e,
-                                        "Error sending unsafe block signer update"
+                                        "Error sending unsafe block signer update: {e}"
                                     );
                                 }
                             }
