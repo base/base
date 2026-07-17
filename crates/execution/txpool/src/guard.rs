@@ -73,8 +73,9 @@ pub struct LimitClass {
     /// Resolved payer account (equals `sender` for self-paying transactions).
     pub payer: Address,
     /// Cache generation against which the lock/trusted classification was
-    /// derived. Admission rejects a class if state-diff invalidation advanced
-    /// the generation while validation was in flight.
+    /// derived. Once integrated with the pool, admission will reject a class if
+    /// state-diff invalidation advanced the generation while validation was in
+    /// flight.
     pub classification_generation: u64,
     /// Whether the sender's owner config is locked (stable auth surface).
     pub sender_locked: bool,
@@ -129,7 +130,10 @@ pub struct AdmissionRecord {
     pub sender_signature_charged: bool,
     /// Whether admission charged the sponsor-signature dimension.
     pub payer_signature_charged: bool,
-    /// Whether admission reserved aggregate balance instead of a payment count.
+    /// Whether admission actually reserved aggregate balance instead of a
+    /// payment count. This records the accounting path taken, not merely the
+    /// incoming classification: forced insertion may conservatively fall back
+    /// to count accounting if an aggregate reservation does not fit.
     pub payer_trusted: bool,
     /// Maximum payer cost reserved by this transaction.
     pub max_cost: U256,
@@ -311,7 +315,30 @@ impl MempoolGuard {
     /// expiry. The fallback keeps the "never reject" guarantee while ensuring
     /// the record stays reachable by the next balance-driven eviction.
     pub fn insert_forced(&mut self, admission: Admission) {
-        if self.records.contains_key(&admission.hash) {
+        if let Some(record) = self.records.get(&admission.hash) {
+            debug_assert_eq!(record.sender, admission.sender, "forced re-admission changed sender");
+            debug_assert_eq!(record.payer, admission.payer, "forced re-admission changed payer");
+            debug_assert_eq!(
+                record.max_cost, admission.max_cost,
+                "forced re-admission changed max cost"
+            );
+            debug_assert_eq!(
+                record.sender_signature_charged, !admission.sender_locked,
+                "forced re-admission changed sender lock classification"
+            );
+            debug_assert_eq!(
+                record.payer_signature_charged,
+                admission.payer != admission.sender && !admission.payer_locked,
+                "forced re-admission changed payer lock classification"
+            );
+            // A previous forced insertion may have fallen back from trusted
+            // aggregate accounting to count accounting, but never vice versa.
+            debug_assert!(!record.payer_trusted || admission.payer_trusted);
+            debug_assert_eq!(
+                self.index.watch_set(&admission.hash),
+                Some(&admission.watch_set),
+                "forced re-admission changed invalidation surfaces"
+            );
             return;
         }
         let sender_signature_charged = !admission.sender_locked;
@@ -457,6 +484,9 @@ impl MempoolGuard {
         dropped.sort_unstable();
         dropped.dedup();
         for hash in &dropped {
+            // The two eviction paths are mutually exclusive for each record:
+            // aggregate books contain trusted-payer records, while the
+            // threshold filter selects only non-trusted records.
             // `PayerBook::set_balance` already removed aggregate-limit
             // evictions from the book. `release` intentionally touches that
             // book again (as a no-op) while releasing the other dimensions.
@@ -747,6 +777,17 @@ mod tests {
         // A forced insert is released through the normal path and frees the slot.
         assert!(guard.release(&hash(1)));
         assert!(guard.is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "forced re-admission changed payer")]
+    fn forced_idempotent_admission_rejects_changed_parameters() {
+        let mut guard = MempoolGuard::new(GuardLimits::default());
+        let sender = addr(1);
+        guard.insert_forced(self_pay(1, sender, 10));
+
+        let changed = Admission { payer: addr(2), ..self_pay(1, sender, 10) };
+        guard.insert_forced(changed);
     }
 
     #[test]
