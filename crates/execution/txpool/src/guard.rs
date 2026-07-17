@@ -407,6 +407,10 @@ impl MempoolGuard {
                 .iter()
                 .filter(|hash| {
                     self.records.get(*hash).is_some_and(|record| {
+                        debug_assert_eq!(
+                            record.payer, account,
+                            "balance watcher must match the transaction payer"
+                        );
                         !record.payer_trusted && record.max_cost > new_balance
                     })
                 })
@@ -418,6 +422,9 @@ impl MempoolGuard {
         dropped.sort_unstable();
         dropped.dedup();
         for hash in &dropped {
+            // `PayerBook::set_balance` already removed aggregate-limit
+            // evictions from the book. `release` intentionally touches that
+            // book again (as a no-op) while releasing the other dimensions.
             self.release(hash);
         }
         dropped
@@ -636,6 +643,21 @@ mod tests {
         let dropped = guard.on_balance_changed(account, U256::from(499u64));
         assert_eq!(dropped, vec![hash(1)]);
         assert!(guard.is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "balance watcher must match the transaction payer")]
+    fn balance_change_rejects_mismatched_payer_watch() {
+        let mut guard = MempoolGuard::new(GuardLimits::default());
+        let payer = addr(1);
+        let watched = addr(2);
+        let admission = Admission {
+            watch_set: WatchSet::new().watch(InvalidationKey::Balance(watched)),
+            ..self_pay(1, payer, 500)
+        };
+
+        assert!(guard.try_admit(admission).is_ok());
+        guard.on_balance_changed(watched, U256::from(499u64));
     }
 
     #[test]

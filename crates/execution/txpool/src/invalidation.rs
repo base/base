@@ -101,6 +101,13 @@ pub struct WatchSet {
 }
 
 impl WatchSet {
+    /// Maximum number of unique invalidation keys one transaction may watch.
+    ///
+    /// EIP-8130 transactions currently need at most approximately seven keys;
+    /// this leaves room for additional protocol-owned dependencies while
+    /// bounding reverse-index memory and the linear de-duplication scan.
+    pub const MAX_KEYS: usize = 16;
+
     /// Creates an empty watch set.
     #[must_use]
     pub const fn new() -> Self {
@@ -117,10 +124,19 @@ impl WatchSet {
 
     /// Adds `key` to the set if not already present. Returns `true` if the key
     /// was newly inserted.
+    ///
+    /// # Panics
+    ///
+    /// Panics if adding the key would exceed [`WatchSet::MAX_KEYS`].
     pub fn push(&mut self, key: InvalidationKey) -> bool {
         if self.keys.contains(&key) {
             return false;
         }
+        assert!(
+            self.keys.len() < Self::MAX_KEYS,
+            "watch set cannot contain more than {} unique keys",
+            Self::MAX_KEYS
+        );
         self.keys.push(key);
         true
     }
@@ -323,6 +339,18 @@ mod tests {
         assert_eq!(watch.len(), 2);
         assert!(!watch.push(key));
         assert_eq!(watch.len(), 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "watch set cannot contain more than 16 unique keys")]
+    fn watch_set_rejects_more_than_maximum_unique_keys() {
+        let mut watch = WatchSet::new();
+        for byte in 0..=WatchSet::MAX_KEYS {
+            watch.push(InvalidationKey::Slot {
+                address: addr(1),
+                slot: B256::repeat_byte(byte as u8),
+            });
+        }
     }
 
     #[test]
