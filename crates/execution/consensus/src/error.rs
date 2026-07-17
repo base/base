@@ -7,14 +7,6 @@ use reth_storage_errors::provider::ProviderError;
 /// Base consensus error.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum BaseConsensusError {
-    /// The canonical metadata claim does not match the post-execution committed value.
-    #[error("BaseTime metadata claim {claim} does not match committed value {committed}")]
-    BaseTimeClaimCommittedMismatch {
-        /// Millisecond component claimed by the canonical metadata transaction.
-        claim: u16,
-        /// Millisecond component committed in post-execution state.
-        committed: u16,
-    },
     /// Block body has non-empty withdrawals list (l1 withdrawals).
     #[error("non-empty block body withdrawals list")]
     WithdrawalsNonEmpty,
