@@ -92,7 +92,8 @@ impl EngineQueries {
                 // Cloning the l2 block below is cheaper than sending a network request to get the
                 // l2 block info. Querying the `L2BlockInfo` from the client ends up
                 // fetching the full l2 block again.
-                let consensus_block = output_block.clone().into_consensus();
+                let consensus_block =
+                    output_block.clone().map_header(|header| header.into_inner()).into_consensus();
                 let output_block_info = L2BlockInfo::from_block_and_genesis(
                     &consensus_block.map_transactions(|tx| tx.inner.inner.into_inner()),
                     &rollup_config.genesis,

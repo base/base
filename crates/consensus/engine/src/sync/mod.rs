@@ -93,7 +93,10 @@ pub async fn find_starting_forkchoice_with_checkpoint_reader<
                     .ok_or(SyncStartError::BlockNotFound(l2_parent_hash))?;
 
                 current_fc.un_safe = L2BlockInfo::from_block_and_genesis(
-                    &l2_parent.into_consensus().map_transactions(|tx| tx.inner.inner.into_inner()),
+                    &l2_parent
+                        .map_header(|header| header.into_inner())
+                        .into_consensus()
+                        .map_transactions(|tx| tx.inner.inner.into_inner()),
                     &cfg.genesis,
                 )?;
             }
@@ -144,7 +147,10 @@ pub async fn find_starting_forkchoice_with_checkpoint_reader<
             .await?
             .ok_or(SyncStartError::BlockNotFound(safe_cursor.block_info.parent_hash.into()))?;
         safe_cursor = L2BlockInfo::from_block_and_genesis(
-            &block.into_consensus().map_transactions(|tx| tx.inner.inner.into_inner()),
+            &block
+                .map_header(|header| header.into_inner())
+                .into_consensus()
+                .map_transactions(|tx| tx.inner.inner.into_inner()),
             &cfg.genesis,
         )?;
     }

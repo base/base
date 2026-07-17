@@ -24,7 +24,6 @@ use async_trait::async_trait;
 use base_common_consensus::{BaseBlock, BasePrimitives, BaseReceipt};
 use base_common_genesis::RollupConfig;
 use base_common_network::{Base, BaseEngineApi};
-use base_common_rpc_types::Transaction as BaseTransaction;
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadEnvelopeV3,
     BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5, BaseExecutionPayloadV4,
@@ -71,6 +70,9 @@ pub type TestBlockchainProvider = BlockchainProvider<TestNodeTypes>;
 
 /// Type alias for the noop pool used by the engine client.
 pub type TestPool = NoopTransactionPool<BasePooledTransaction>;
+
+/// Type alias for Base L2 RPC blocks returned by the action engine.
+type ActionL2RpcBlock = <Base as Network>::BlockResponse;
 
 /// A payload built in-process during sequencer mode, waiting to be sealed or inserted.
 #[derive(Debug, Clone)]
@@ -596,11 +598,11 @@ impl ActionEngineClient {
         }
     }
 
-    fn header_to_l2_rpc_block(header: &Header, block_hash: B256) -> Block<BaseTransaction> {
+    fn header_to_l2_rpc_block(header: &Header, block_hash: B256) -> ActionL2RpcBlock {
         let sealed = Sealed::new_unchecked(header.clone(), block_hash);
         let rpc_header = alloy_rpc_types_eth::Header::from_sealed(sealed);
         Block {
-            header: rpc_header,
+            header: rpc_header.into(),
             uncles: vec![],
             transactions: BlockTransactions::Hashes(vec![]),
             withdrawals: None,
@@ -709,7 +711,7 @@ impl EngineClient for ActionEngineClient {
     async fn l2_block_by_label(
         &self,
         numtag: BlockNumberOrTag,
-    ) -> Result<Option<Block<BaseTransaction>>, EngineClientError> {
+    ) -> Result<Option<ActionL2RpcBlock>, EngineClientError> {
         let guard = self.inner.lock().expect("action engine inner lock poisoned");
         let block = match numtag {
             BlockNumberOrTag::Number(n) => guard

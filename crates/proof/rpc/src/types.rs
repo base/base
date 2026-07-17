@@ -14,7 +14,10 @@ pub type HttpProvider = RootProvider<Ethereum>;
 /// Required for deserializing Base deposit transactions (type 0x7E).
 pub type L2HttpProvider = RootProvider<Base>;
 
+/// Base header type with Base-specific optional timestamp extensions.
+pub type BaseHeader = base_common_rpc_types::BaseHeaderResponse<alloy_rpc_types_eth::Header>;
+
 /// Base block type with Base-specific transactions.
 ///
 /// Uses `base_common_rpc_types::Transaction` which can deserialize deposit transactions (type 0x7E).
-pub type BaseBlock = alloy_rpc_types_eth::Block<base_common_rpc_types::Transaction>;
+pub type BaseBlock = base_common_rpc_types::BaseBlockResponse<base_common_rpc_types::Transaction>;

@@ -22,7 +22,7 @@ use base_proof_contracts::{
     AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,
     GameStatus,
 };
-use base_proof_rpc::{L2Provider, RpcError, RpcResult};
+use base_proof_rpc::{BaseHeader, L2Provider, RpcError, RpcResult};
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
 use base_prover_service_protocol::{
     DeleteProofRequest, GetProofRequest, GetProofResponse, ProofResult as ApiProofResult,
@@ -730,7 +730,7 @@ impl L2Provider for MockL2Provider {
             .ok_or_else(|| RpcError::ProofNotFound(format!("no proof for hash {block_hash}")))
     }
 
-    async fn header_by_number(&self, block: BlockNumberOrTag) -> RpcResult<RpcHeader> {
+    async fn header_by_number(&self, block: BlockNumberOrTag) -> RpcResult<BaseHeader> {
         let block_number = match block {
             BlockNumberOrTag::Number(number) => number,
             other => panic!("MockL2Provider::header_by_number does not support tag {other:?}"),
@@ -744,6 +744,7 @@ impl L2Provider for MockL2Provider {
         self.headers
             .get(&block_number)
             .cloned()
+            .map(Into::into)
             .ok_or_else(|| RpcError::HeaderNotFound(format!("no header for block {block_number}")))
     }
 
