@@ -1076,10 +1076,18 @@ where
             value
         } else {
             let mut storage = StateProviderPrecompileStorage::new(state, local_chain_id, now);
-            let Some(value) = StorageCtx::enter(&mut storage, |ctx| {
-                AccountConfigurationStorage::new(ctx).get_account_state(account).ok()
-            }) else {
-                return (false, None);
+            let value = match StorageCtx::enter(&mut storage, |ctx| {
+                AccountConfigurationStorage::new(ctx).get_account_state(account)
+            }) {
+                Ok(value) => value,
+                Err(error) => {
+                    tracing::warn!(
+                        error = %error,
+                        account = %account,
+                        "EIP-8130 account lock classification read failed"
+                    );
+                    return (false, None);
+                }
             };
             let mut cache = self.limit_class_cache.write();
             let mut slots = self.limit_class_cache_slots.write();
@@ -1107,10 +1115,19 @@ where
         if let Some(value) = self.limit_class_cache.read().get(&account).and_then(|entry| entry.1) {
             return value;
         }
-        let trusted = Self::delegation_target(state, account)
-            .ok()
-            .flatten()
-            .is_some_and(|target| self.trusted_delegation_targets.contains(&target));
+        let trusted = match Self::delegation_target(state, account) {
+            Ok(target) => {
+                target.is_some_and(|target| self.trusted_delegation_targets.contains(&target))
+            }
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    account = %account,
+                    "EIP-8130 trusted delegation classification read failed"
+                );
+                return false;
+            }
+        };
         let mut cache = self.limit_class_cache.write();
         if generation == self.limit_class_cache_generation()
             && (cache.contains_key(&account) || cache.len() < LIMIT_CLASS_CACHE_CAPACITY)

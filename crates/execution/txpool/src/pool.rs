@@ -313,6 +313,10 @@ where
     }
 
     fn expire_due_buckets(&self, now: u64) {
+        // A protocol transaction can reserve guard capacity immediately before
+        // reth inserts it. Do not expire that reservation while it is between
+        // the guard and protocol pool.
+        let _admission_guard = self.protocol_admission_lock.lock();
         let horizon = now.saturating_add(InvalidationKey::EXPIRY_BUCKET_SECS)
             / InvalidationKey::EXPIRY_BUCKET_SECS;
         let recent = (now / InvalidationKey::EXPIRY_BUCKET_SECS).saturating_sub(1);
@@ -336,6 +340,9 @@ where
     }
 
     fn reconcile_guard(&self) {
+        // Keep the reserved-before-insert protocol admission window from
+        // looking like a stale guard record.
+        let _admission_guard = self.protocol_admission_lock.lock();
         let tracked = self.guard.read().tracked_hashes();
         if tracked.is_empty() {
             return;
@@ -386,6 +393,28 @@ where
         if current { Ok(()) } else { Err(Self::stale_classification_error(hash)) }
     }
 
+    fn pre_admit_protocol_transaction(
+        &self,
+        hash: TxHash,
+        replaced: Option<TxHash>,
+        validated: &TransactionValidationOutcome<T>,
+    ) -> PoolResult<bool> {
+        let mut guard = self.guard.write();
+        if guard.contains(&hash) || replaced.is_some_and(|hash| guard.contains(&hash)) {
+            return Ok(false);
+        }
+        let Some(admission) = validated
+            .as_valid_transaction()
+            .and_then(|transaction| admission_for(transaction.transaction()))
+        else {
+            return Ok(false);
+        };
+        if let Err(rejection) = guard.try_admit(admission) {
+            return Err(Self::limit_rejection_error(hash, rejection));
+        }
+        Ok(true)
+    }
+
     fn add_validated_protocol_transaction(
         &self,
         origin: TransactionOrigin,
@@ -398,17 +427,37 @@ where
         // Reject stale validation before reth can replace the currently pooled transaction.
         self.ensure_protocol_classification_current(hash, &validated)?;
         let replaced = self.protocol_replacement_hash(sender, nonce);
+        // Reserve guard capacity before reth publishes insertion events. A
+        // tracked replacement bypasses this check and is reaccounted after the
+        // protocol pool atomically accepts the fee bump.
+        let pre_admitted = self.pre_admit_protocol_transaction(hash, replaced, &validated)?;
         let mut outcomes =
             self.protocol_pool.inner().add_transactions(origin, std::iter::once(validated));
-        let outcome = outcomes.pop().expect("one transaction produces one outcome")?;
-        self.gate_protocol_admission(hash, replaced)?;
+        let outcome = match outcomes.pop().expect("one transaction produces one outcome") {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                if pre_admitted {
+                    self.guard.write().release(&hash);
+                }
+                return Err(error);
+            }
+        };
+        self.gate_protocol_admission(hash, replaced, pre_admitted)?;
         Ok(outcome)
     }
 
-    fn gate_protocol_admission(&self, hash: TxHash, replaced: Option<TxHash>) -> PoolResult<()> {
+    fn gate_protocol_admission(
+        &self,
+        hash: TxHash,
+        replaced: Option<TxHash>,
+        pre_admitted: bool,
+    ) -> PoolResult<()> {
         let Some(transaction) = self.protocol_pool.get(&hash) else {
-            if let Some(replaced) = replaced {
-                self.guard.write().release(&replaced);
+            let mut guard = self.guard.write();
+            if pre_admitted {
+                guard.release(&hash);
+            } else if let Some(replaced) = replaced {
+                guard.release(&replaced);
             }
             return Ok(());
         };
@@ -425,6 +474,9 @@ where
             // Keep this conservative backstop for future callers that violate
             // that lock discipline rather than admitting stale bookkeeping.
             debug_assert!(current, "classification changed under protocol admission lock");
+            if pre_admitted {
+                guard.release(&hash);
+            }
             drop(guard);
             self.protocol_pool.remove_transactions(vec![hash]);
             return Err(Self::stale_classification_error(hash));
@@ -432,6 +484,14 @@ where
         if replaced_was_tracked {
             guard.insert_forced(admission);
             return Ok(());
+        }
+        if pre_admitted && !guard.contains(&hash) {
+            // A reservation that vanished despite admission serialization was
+            // explicitly invalidated or removed. Never recreate it from the
+            // now-stale validation snapshot.
+            drop(guard);
+            self.protocol_pool.remove_transactions(vec![hash]);
+            return Err(Self::stale_classification_error(hash));
         }
         if let Err(rejection) = guard.try_admit(admission) {
             drop(guard);
@@ -695,9 +755,18 @@ where
             let _admission_guard = self.protocol_admission_lock.lock();
             self.ensure_protocol_classification_current(hash, &validated)?;
             let replaced = self.protocol_replacement_hash(sender, nonce);
+            let pre_admitted = self.pre_admit_protocol_transaction(hash, replaced, &validated)?;
             let events =
-                self.protocol_pool.inner().add_transaction_and_subscribe(origin, validated)?;
-            self.gate_protocol_admission(hash, replaced)?;
+                match self.protocol_pool.inner().add_transaction_and_subscribe(origin, validated) {
+                    Ok(events) => events,
+                    Err(error) => {
+                        if pre_admitted {
+                            self.guard.write().release(&hash);
+                        }
+                        return Err(error);
+                    }
+                };
+            self.gate_protocol_admission(hash, replaced, pre_admitted)?;
             return Ok(events);
         }
 
@@ -1304,6 +1373,10 @@ where
     }
 
     fn update_accounts(&self, accounts: Vec<ChangedAccount>) {
+        // Serialize balance invalidation with protocol pre-admission so a
+        // dropped reservation cannot be recreated from an older validation
+        // snapshot after reth publishes the transaction.
+        let _admission_guard = self.protocol_admission_lock.lock();
         let dropped = {
             let mut guard = self.guard.write();
             let mut dropped = Vec::new();
@@ -1545,7 +1618,7 @@ fn pooled_element<T: BasePooledTx>(
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
 
     use alloy_consensus::{
         SignableTransaction, Transaction, TxEip1559,
@@ -1891,6 +1964,7 @@ mod tests {
                 protocol_pool.add_transaction(TransactionOrigin::Local, transaction).await.is_ok()
             );
         }
+        let mut protocol_events = protocol_pool.all_transactions_event_listener();
         let over = self_paid_eoa_8130(&protocol_signer, U256::ZERO, cap, 0, 1_000);
         let over_hash = *over.hash();
         let error = protocol_pool
@@ -1899,6 +1973,10 @@ mod tests {
             .expect_err("protocol-resident transaction above the cap must be rejected");
         assert!(error.to_string().contains("sender EIP-8130 signature limit"));
         assert!(protocol_pool.get(&over_hash).is_none());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), protocol_events.next()).await.is_err(),
+            "guard-rejected protocol transaction must not publish pool events"
+        );
 
         let (sidecar_pool, sidecar_client) = build_integration_pool();
         let sidecar_signer = signer();
