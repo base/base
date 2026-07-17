@@ -6,8 +6,8 @@ use base_precompile_macros::precompile;
 use base_precompile_storage::StorageSemantics;
 
 use crate::{
-    ActivationAdminConfig, ActivationRegistryStorage, PrecompileCallObserver,
-    macros::base_precompile,
+    ActivationAdminConfig, ActivationRegistryStorage, NoopPrecompileCallObserver,
+    PrecompileCallObserver, macros::base_precompile,
 };
 
 /// Entry point for the activation registry precompile.
@@ -16,6 +16,11 @@ use crate::{
 pub struct ActivationRegistry;
 
 impl ActivationRegistry {
+    /// Returns the storage semantics implied by the activation admin configuration.
+    pub const fn storage_semantics(admin_config: ActivationAdminConfig) -> StorageSemantics {
+        if admin_config.state_enabled { StorageSemantics::Cobalt } else { StorageSemantics::Legacy }
+    }
+
     /// Installs the activation registry precompile using a static fallback admin.
     pub fn install(precompiles: &mut PrecompilesMap, activation_admin_address: Option<Address>) {
         Self::install_with_config(
@@ -31,7 +36,11 @@ impl ActivationRegistry {
     ) {
         precompiles.extend_precompiles(core::iter::once((
             ActivationRegistryStorage::ADDRESS,
-            Self::precompile(admin_config),
+            Self::precompile_with_observer_and_storage_semantics(
+                admin_config,
+                NoopPrecompileCallObserver,
+                Self::storage_semantics(admin_config),
+            ),
         )));
     }
 
@@ -47,7 +56,7 @@ impl ActivationRegistry {
             precompiles,
             admin_config,
             observer,
-            StorageSemantics::Legacy,
+            Self::storage_semantics(admin_config),
         );
     }
 
@@ -81,7 +90,7 @@ impl ActivationRegistry {
         Self::precompile_with_observer_and_storage_semantics(
             admin_config,
             observer,
-            StorageSemantics::Legacy,
+            Self::storage_semantics(admin_config),
         )
     }
 
@@ -114,9 +123,10 @@ impl ActivationRegistry {
 mod tests {
     use alloy_evm::precompiles::PrecompilesMap;
     use alloy_primitives::Address;
+    use base_precompile_storage::StorageSemantics;
     use revm::precompile::Precompiles;
 
-    use crate::{ActivationRegistry, ActivationRegistryStorage};
+    use crate::{ActivationAdminConfig, ActivationRegistry, ActivationRegistryStorage};
 
     #[test]
     fn install_accepts_static_fallback_admin() {
@@ -125,5 +135,17 @@ mod tests {
         ActivationRegistry::install(&mut precompiles, Some(Address::repeat_byte(0x11)));
 
         assert!(precompiles.get(&ActivationRegistryStorage::ADDRESS).is_some());
+    }
+
+    #[test]
+    fn admin_config_selects_storage_semantics() {
+        assert_eq!(
+            ActivationRegistry::storage_semantics(ActivationAdminConfig::static_fallback(None)),
+            StorageSemantics::Legacy,
+        );
+        assert_eq!(
+            ActivationRegistry::storage_semantics(ActivationAdminConfig::state_backed(None)),
+            StorageSemantics::Cobalt,
+        );
     }
 }
