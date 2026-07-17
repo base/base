@@ -12,8 +12,8 @@ use super::Logic;
 use crate::{
     ActivationRegistryStorage, B20AssetInit, B20AssetStorage, B20FactoryStorage, B20StablecoinInit,
     B20StablecoinStorage, B20TokenRole, B20Variant, ContractContext, IB20Factory,
-    NoopPrecompileCallObserver, PolicyRegistryStorage, PolicyVersions, StablecoinContractContext,
-    StablecoinVersion, Token, Version,
+    NoopPrecompileCallObserver, PolicyRegistryStorage, PolicyVersionResolver,
+    StablecoinContractContext, StablecoinVersion, Token, Version,
 };
 
 /// Version byte for `B20StablecoinEventParams` inside `B20Created.variantParams`.
@@ -47,7 +47,7 @@ impl LogicV1 {
         init_calls: Vec<Bytes>,
         upgrade: BaseUpgrade,
     ) -> Result<()> {
-        let policy_version = PolicyVersions::from_base_upgrade(upgrade)
+        let policy_version = PolicyVersionResolver::from_base_upgrade(upgrade)
             .ok_or_else(|| BasePrecompileError::Revert(Bytes::new()))?;
         let mut token = StablecoinContractContext::with_storage_and_policy(
             B20StablecoinStorage::from_address(token_address, storage.storage()),
@@ -108,7 +108,7 @@ impl LogicV1 {
         init_calls: Vec<Bytes>,
         upgrade: BaseUpgrade,
     ) -> Result<()> {
-        let policy_version = PolicyVersions::from_base_upgrade(upgrade)
+        let policy_version = PolicyVersionResolver::from_base_upgrade(upgrade)
             .ok_or_else(|| BasePrecompileError::Revert(Bytes::new()))?;
         let mut token = ContractContext::with_storage_and_policy(
             B20AssetStorage::from_address(token_address, storage.storage()),

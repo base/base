@@ -1,31 +1,32 @@
 //! Version manager for the `PolicyRegistry` precompile.
 //!
 //! Single owner of both version mappings: which version is active at a given hardfork
-//! ([`PolicyVersions::from_base_upgrade`]), and which concrete implementation backs a
-//! version ([`PolicyVersion::implementation`]). Centralizing fork routing here keeps
+//! ([`VersionResolver::from_base_upgrade`]), and which concrete implementation backs a
+//! version ([`Version::implementation`]). Centralizing fork routing here keeps
 //! hardfork logic auditable and off the execution path, and lets the dispatcher route
 //! calls without ever matching on the version itself.
 
 use base_common_genesis::BaseUpgrade;
 
-use crate::{PolicyAccounting, PolicyRegistryLogic, PolicyRegistryV1};
+use super::logic::{Logic, LogicV1};
+use crate::PolicyAccounting;
 
 /// An activated version of the `PolicyRegistry` precompile logic.
 ///
 /// Each variant maps to an immutable implementation via [`Self::implementation`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PolicyVersion {
+pub enum Version {
     /// Introduced at Beryl, the fork where the policy registry precompile is installed.
     V1,
 }
 
-impl PolicyVersion {
+impl Version {
     /// Returns the immutable logic implementation for this version.
-    pub fn implementation<'l, S>(self) -> &'l dyn PolicyRegistryLogic<S>
+    pub fn implementation<'l, S>(self) -> &'l dyn Logic<S>
     where
         S: PolicyAccounting + 'l,
     {
-        static V1: PolicyRegistryV1 = PolicyRegistryV1;
+        static V1: LogicV1 = LogicV1;
         match self {
             Self::V1 => &V1,
         }
@@ -37,13 +38,13 @@ impl PolicyVersion {
 /// The version is resolved once per call from the block's active upgrade; there is only
 /// ever one active version at a time.
 #[derive(Debug, Default, Clone, Copy)]
-pub struct PolicyVersions;
+pub struct VersionResolver;
 
-impl PolicyVersions {
+impl VersionResolver {
     /// Returns the version active at `upgrade`, or `None` before Beryl, where the policy
     /// registry precompile is not installed at all.
-    pub fn from_base_upgrade(upgrade: BaseUpgrade) -> Option<PolicyVersion> {
-        if upgrade >= BaseUpgrade::Beryl { Some(PolicyVersion::V1) } else { None }
+    pub fn from_base_upgrade(upgrade: BaseUpgrade) -> Option<Version> {
+        if upgrade >= BaseUpgrade::Beryl { Some(Version::V1) } else { None }
     }
 }
 
@@ -51,20 +52,26 @@ impl PolicyVersions {
 mod tests {
     use base_common_genesis::BaseUpgrade;
 
-    use crate::{PolicyVersion, PolicyVersions};
+    use crate::{PolicyVersion, PolicyVersionResolver};
 
     #[test]
     fn resolves_none_before_beryl() {
-        assert_eq!(PolicyVersions::from_base_upgrade(BaseUpgrade::Azul), None);
+        assert_eq!(PolicyVersionResolver::from_base_upgrade(BaseUpgrade::Azul), None);
     }
 
     #[test]
     fn resolves_v1_from_beryl() {
-        assert_eq!(PolicyVersions::from_base_upgrade(BaseUpgrade::Beryl), Some(PolicyVersion::V1));
+        assert_eq!(
+            PolicyVersionResolver::from_base_upgrade(BaseUpgrade::Beryl),
+            Some(PolicyVersion::V1)
+        );
     }
 
     #[test]
     fn resolves_v1_at_cobalt() {
-        assert_eq!(PolicyVersions::from_base_upgrade(BaseUpgrade::Cobalt), Some(PolicyVersion::V1));
+        assert_eq!(
+            PolicyVersionResolver::from_base_upgrade(BaseUpgrade::Cobalt),
+            Some(PolicyVersion::V1)
+        );
     }
 }

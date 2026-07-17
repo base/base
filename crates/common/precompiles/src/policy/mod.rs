@@ -9,10 +9,10 @@ pub use accounting::PolicyAccounting;
 mod dispatch;
 
 mod versions;
-pub use versions::{PolicyVersion, PolicyVersions};
+pub use versions::{Version, VersionResolver};
 
 mod logic;
-pub use logic::{PolicyRegistryLogic, PolicyRegistryV1};
+pub use logic::{Logic, LogicV1};
 
 mod precompile;
 pub use precompile::PolicyRegistryPrecompile;

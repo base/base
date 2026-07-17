@@ -6,12 +6,12 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
+use super::{Version, VersionResolver};
 use crate::{
     ActivationFeature, ActivationRegistryStorage, BerylAuxiliaryMetrics, BerylCallRecorder,
     BerylMetricLabels,
     IPolicyRegistry::{self, IPolicyRegistryCalls as C},
-    NoopPrecompileCallObserver, PolicyRegistryStorage, PolicyVersion, PolicyVersions,
-    PrecompileCallObserver,
+    NoopPrecompileCallObserver, PolicyRegistryStorage, PrecompileCallObserver,
     macros::decode_precompile_call,
 };
 
@@ -53,7 +53,7 @@ impl PolicyRegistryStorage<'_> {
         }
         // Gate by hardfork: resolve the active version once. `None` is unreachable in
         // practice — the precompile is only installed from Beryl — but we revert defensively.
-        let Some(version) = PolicyVersions::from_base_upgrade(upgrade) else {
+        let Some(version) = VersionResolver::from_base_upgrade(upgrade) else {
             return recorder
                 .record_base_error_result(ctx, BasePrecompileError::Revert(Bytes::new()));
         };
@@ -90,7 +90,7 @@ impl PolicyRegistryStorage<'_> {
     fn route<O>(
         &mut self,
         calldata: &[u8],
-        version: PolicyVersion,
+        version: Version,
         observer: &O,
     ) -> base_precompile_storage::Result<Bytes>
     where
@@ -173,10 +173,11 @@ mod tests {
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
     use revm::precompile::PrecompileOutput;
 
+    use super::super::LogicV1;
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, BerylErrorKind,
-        IPolicyRegistry, PolicyRegistryStorage, PolicyRegistryV1, PrecompileCallMetric,
-        PrecompileCallObserver, PrecompileCallOutcome, PrecompileCallStatus,
+        IPolicyRegistry, PolicyRegistryStorage, PrecompileCallMetric, PrecompileCallObserver,
+        PrecompileCallOutcome, PrecompileCallStatus,
     };
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
@@ -219,7 +220,7 @@ mod tests {
         activate_policy_registry(storage);
         StorageCtx::enter(storage, |ctx| {
             let mut rt = PolicyRegistryStorage::new(ctx);
-            PolicyRegistryV1.ensure_initialized_and_get_counter(&mut rt)
+            LogicV1.ensure_initialized_and_get_counter(&mut rt)
         })
         .unwrap();
     }
@@ -264,8 +265,7 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         activate_and_init(&mut storage);
         let calldata =
-            IPolicyRegistry::policyExistsCall { policyId: PolicyRegistryV1::ALWAYS_ALLOW_ID }
-                .abi_encode();
+            IPolicyRegistry::policyExistsCall { policyId: LogicV1::ALWAYS_ALLOW_ID }.abi_encode();
 
         let output = run_obs(&mut storage, &calldata, observer.clone());
 
@@ -320,8 +320,7 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         activate_and_init(&mut storage);
         let calldata =
-            IPolicyRegistry::policyExistsCall { policyId: PolicyRegistryV1::ALWAYS_ALLOW_ID }
-                .abi_encode();
+            IPolicyRegistry::policyExistsCall { policyId: LogicV1::ALWAYS_ALLOW_ID }.abi_encode();
 
         let output = run(&mut storage, &calldata);
 
@@ -379,7 +378,7 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         activate_and_init(&mut storage);
         let calldata = IPolicyRegistry::isAuthorizedCall {
-            policyId: PolicyRegistryV1::ALWAYS_ALLOW_ID,
+            policyId: LogicV1::ALWAYS_ALLOW_ID,
             account: ALICE,
         }
         .abi_encode();
@@ -658,8 +657,7 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         storage.set_call_value(alloy_primitives::U256::from(1u64));
         let calldata =
-            IPolicyRegistry::policyExistsCall { policyId: PolicyRegistryV1::ALWAYS_ALLOW_ID }
-                .abi_encode();
+            IPolicyRegistry::policyExistsCall { policyId: LogicV1::ALWAYS_ALLOW_ID }.abi_encode();
 
         let out = run(&mut storage, &calldata);
 

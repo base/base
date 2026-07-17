@@ -10,8 +10,8 @@ use crate::{IPolicyRegistry::PolicyType, PolicyAccounting};
 /// The policy-registry logic interface.
 ///
 /// Each method takes the [`PolicyAccounting`] storage port directly. Versioned
-/// implementations are resolved via [`crate::PolicyVersions`].
-pub trait PolicyRegistryLogic<S: PolicyAccounting> {
+/// implementations are resolved via [`super::super::VersionResolver`].
+pub trait Logic<S: PolicyAccounting> {
     /// Creates a new ALLOWLIST or BLOCKLIST policy, returning its encoded ID.
     fn create_policy(
         &self,

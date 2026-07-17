@@ -7,7 +7,7 @@ use base_precompile_storage::BasePrecompileError;
 
 use super::ContractContext;
 use crate::{
-    B20StablecoinStorage, NoopPrecompileCallObserver, PolicyRegistryStorage, PolicyVersions,
+    B20StablecoinStorage, NoopPrecompileCallObserver, PolicyRegistryStorage, PolicyVersionResolver,
     PrecompileCallObserver, macros::base_precompile,
 };
 
@@ -36,7 +36,7 @@ impl B20StablecoinPrecompile {
     {
         base_precompile!(alloc::format!("B20Stablecoin@{token_address}"), |ctx, calldata| {
             let observer = observer.clone();
-            let Some(version) = PolicyVersions::from_base_upgrade(upgrade) else {
+            let Some(version) = PolicyVersionResolver::from_base_upgrade(upgrade) else {
                 return BasePrecompileError::Revert(Bytes::new()).into_precompile_result(0, 0);
             };
             ContractContext::with_storage_and_policy(

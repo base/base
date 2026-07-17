@@ -10,8 +10,8 @@ use base_precompile_storage::Result;
 
 use crate::{
     Burnable, Configurable, Mintable, PackedPolicy, Pausable, Permittable, PolicyAccounting,
-    PolicyRegistryLogic, PolicyRegistryStorage, PolicyVersion, RoleManaged,
-    StablecoinContractContext, Token, Transferable,
+    PolicyLogic, PolicyRegistryStorage, PolicyVersion, RoleManaged, StablecoinContractContext,
+    Token, Transferable,
     b20_asset::{AssetAccounting, B20AssetStorage},
     b20_stablecoin::StablecoinAccounting,
     common::{B20_MAX_SUPPLY_CAP, TokenAccounting},
@@ -60,7 +60,7 @@ impl Token for TestToken {
         &mut self.accounting
     }
 
-    fn policy(&self) -> &dyn PolicyRegistryLogic<FakePolicyAccounting> {
+    fn policy(&self) -> &dyn PolicyLogic<FakePolicyAccounting> {
         self.policy_version.implementation()
     }
 
@@ -313,7 +313,7 @@ impl StablecoinAccounting for InMemoryTokenAccounting {
 /// In-memory [`PolicyAccounting`] for unit tests.
 ///
 /// Pair with [`PolicyVersion::V1`] on tokens so authorization goes through
-/// [`crate::PolicyRegistryLogic`]. Call [`FakePolicyAccounting::allow`] to grant membership
+/// [`crate::PolicyLogic`]. Call [`FakePolicyAccounting::allow`] to grant membership
 /// (ALLOWLIST semantics under V1) before exercising token ops that need a custom policy.
 #[derive(Debug)]
 pub struct FakePolicyAccounting {

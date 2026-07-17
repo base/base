@@ -6,14 +6,14 @@
 
 use alloy_primitives::Address;
 
-use crate::{AssetAccounting, PolicyAccounting, PolicyRegistryLogic, PolicyVersion, Token};
+use crate::{AssetAccounting, PolicyAccounting, PolicyLogic, PolicyVersion, Token};
 
 /// Storage + policy binding the asset logic operates on.
 ///
 /// A minimal `(storage, policy, policy_version)` holder implementing [`Token`];
 /// it carries no behavior of its own — all business logic lives in the version
 /// implementations resolved from [`crate::VersionResolver`]. Authorization goes
-/// through [`crate::PolicyRegistryLogic`] via [`Token::policy`].
+/// through [`crate::PolicyLogic`] via [`Token::policy`].
 #[derive(Debug, Clone)]
 pub struct ContractContext<S: AssetAccounting, A: PolicyAccounting> {
     storage: S,
@@ -44,7 +44,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> Token for ContractContext<S, A> {
         &mut self.storage
     }
 
-    fn policy(&self) -> &dyn PolicyRegistryLogic<A> {
+    fn policy(&self) -> &dyn PolicyLogic<A> {
         self.policy_version.implementation()
     }
 
