@@ -15,7 +15,7 @@ methods:
 list:
     @just --justfile {{ source_file() }} methods
 
-# Request a proof for a block range: proof_type=compressed|snark
+# Request a proof for a block range: proof_type=compressed|snark zk_backend=dry_run|cluster|network
 prove start_block number_of_blocks='1' proof_type='compressed' zk_backend='dry_run' session_id='' prover_address='' l1_head='':
     #!/usr/bin/env bash
     set -euo pipefail
