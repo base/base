@@ -1,6 +1,6 @@
 //! Standard Base execution-node arguments and runner wiring.
 
-use std::{sync::Arc, time::Duration};
+use std::{env, path::PathBuf, sync::Arc, time::Duration};
 
 use base_bundle_extension::BundleExtension;
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
@@ -9,6 +9,10 @@ use base_flashblocks_node::FlashblocksExtension;
 use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension, MeteringResourceLimits};
 use base_node_core::args::RollupArgs;
 use base_node_runner::{BaseNodeBuilder, BaseNodeRunner, LaunchedBaseNode, PayloadServiceBuilder};
+use base_observability_events::{
+    DEFAULT_QUEUE_CAPACITY, GlobalTransactionEventWriter, TransactionEventProducer,
+    TransactionEventWriterConfig,
+};
 use base_proofs_extension::ProofsHistoryExtension;
 use base_tx_forwarding::{
     DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS, DEFAULT_RESEND_AFTER_MS, TxForwardingConfig,
@@ -17,6 +21,7 @@ use base_tx_forwarding::{
 use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
 use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
 use base_upgrade_signal::UpgradeSignalStartupMode;
+use tracing::warn;
 use url::Url;
 
 use crate::upgrade_signal::{
@@ -37,14 +42,15 @@ pub struct MeteringArgs {
     )]
     pub metering_gas_limit: Option<u64>,
 
-    /// Per-flashblock execution time budget in microseconds for priority fee estimation.
-    #[arg(long = "metering.execution-time-us", requires = "enable_metering")]
+    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
+    #[arg(long = "metering.execution-time-us", requires = "enable_metering", hide = true)]
     pub metering_execution_time_us: Option<u64>,
 
-    /// Whole-block state root computation budget in microseconds for priority fee estimation.
+    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
     #[arg(
         long = "metering.state-root-time-us",
-        requires_all = ["enable_metering", "metering_target_flashblocks_per_block"]
+        requires_all = ["enable_metering", "metering_target_flashblocks_per_block"],
+        hide = true
     )]
     pub metering_state_root_time_us: Option<u64>,
 
@@ -57,8 +63,8 @@ pub struct MeteringArgs {
 
     /// Target number of tx-pool flashblocks the builder budgets per block.
     ///
-    /// This excludes the base flashblock at index `0` and is required when gas, state root
-    /// time, or DA estimation is enabled.
+    /// This excludes the base flashblock at index `0` and is required when gas or DA
+    /// estimation is enabled.
     #[arg(long = "metering.target-flashblocks-per-block", requires = "enable_metering")]
     pub metering_target_flashblocks_per_block: Option<usize>,
 
@@ -156,10 +162,6 @@ pub struct RpcStandardNodeArgs {
     )]
     pub max_pending_blocks_depth: u64,
 
-    /// Enable cached execution via the flashblocks-aware engine validator.
-    #[arg(long = "flashblocks.cached-execution", requires = "flashblocks_url")]
-    pub flashblocks_cached_execution: bool,
-
     /// Interval between flashblocks upstream websocket ping frames.
     #[arg(
         long = "flashblocks.ping-interval",
@@ -180,6 +182,21 @@ pub struct RpcStandardNodeArgs {
         value_name = "ENABLE_TRANSACTION_TRACING_LOGS"
     )]
     pub enable_transaction_tracing_logs: bool,
+
+    /// Enable durable transaction event journal emission from txpool tracing.
+    #[arg(
+        long = "enable-transaction-event-journal",
+        value_name = "ENABLE_TRANSACTION_EVENT_JOURNAL"
+    )]
+    pub enable_transaction_event_journal: bool,
+
+    /// Dedicated JSONL path for durable transaction event journal emission.
+    #[arg(
+        long = "transaction-event-journal-path",
+        value_name = "TRANSACTION_EVENT_JOURNAL_PATH",
+        requires = "enable_transaction_event_journal"
+    )]
+    pub transaction_event_journal_path: Option<PathBuf>,
 }
 
 impl From<RpcStandardNodeArgs> for StandardNodeArgs {
@@ -211,10 +228,8 @@ impl StandardNodeArgs {
 impl From<&StandardNodeArgs> for Option<FlashblocksConfig> {
     fn from(args: &StandardNodeArgs) -> Self {
         args.rpc.flashblocks_url.clone().map(|url| {
-            let mut config = FlashblocksConfig::new(url, args.rpc.max_pending_blocks_depth)
-                .with_subscriber_ping_interval(args.rpc.flashblocks_ping_interval);
-            config.cached_execution = args.rpc.flashblocks_cached_execution;
-            config
+            FlashblocksConfig::new(url, args.rpc.max_pending_blocks_depth)
+                .with_subscriber_ping_interval(args.rpc.flashblocks_ping_interval)
         })
     }
 }
@@ -335,6 +350,16 @@ impl StandardBaseRethNode {
 
         // Create flashblocks config first so we can share its state with metering.
         let flashblocks_config: Option<FlashblocksConfig> = (&args).into();
+        let transaction_event_env = TransactionEventEnv::read();
+        let transaction_event_writer_config =
+            transaction_event_writer_config(&args.rpc, &transaction_event_env)?;
+        // Initialize before installing extensions so node-started hooks that emit
+        // transaction events (e.g. tx forwarding) see a ready writer.
+        if let Some(config) = transaction_event_writer_config
+            && let Err(err) = GlobalTransactionEventWriter::init(Some(config))
+        {
+            tracing::warn!(error = %err, "transaction event journal disabled");
+        }
 
         // Feature extensions. Several use `replace_configured` (which is overwrite,
         // not compose) on overlapping RPC methods, so install order would otherwise
@@ -351,15 +376,22 @@ impl StandardBaseRethNode {
             sequencer_rpc: args.rpc.rollup_args.sequencer.clone(),
         });
         runner.install_ext::<TxPoolExtension>(TxpoolConfig {
-            tracing_enabled: args.rpc.enable_transaction_tracing,
+            tracing_enabled: args.rpc.enable_transaction_tracing
+                || args.rpc.enable_transaction_event_journal
+                || transaction_event_env.enabled,
             tracing_logs_enabled: args.rpc.enable_transaction_tracing_logs,
+            transaction_event_node_role: transaction_event_node_role(),
             flashblocks_config: flashblocks_config.clone(),
         });
 
+        if args.metering.metering_execution_time_us.is_some()
+            || args.metering.metering_state_root_time_us.is_some()
+        {
+            warn!("deprecated metering resource limit flags are ignored");
+        }
+
         let resource_limits = MeteringResourceLimits {
             gas_limit: args.metering.metering_gas_limit,
-            execution_time_us: args.metering.metering_execution_time_us,
-            state_root_time_us: args.metering.metering_state_root_time_us,
             da_bytes: args.metering.metering_da_bytes,
         };
         let metering_config = if args.metering.enable_metering {
@@ -446,10 +478,85 @@ impl StandardBaseRethNode {
     }
 }
 
+fn transaction_event_writer_config(
+    args: &RpcStandardNodeArgs,
+    env: &TransactionEventEnv,
+) -> eyre::Result<Option<TransactionEventWriterConfig>> {
+    if !args.enable_transaction_event_journal && !env.enabled {
+        return Ok(None);
+    }
+
+    let file_path =
+        args.transaction_event_journal_path.clone().or_else(|| env.path.clone()).ok_or_else(
+            || {
+                eyre::eyre!(
+                    "--enable-transaction-event-journal requires --transaction-event-journal-path \
+                 or BASE_TRANSACTION_EVENTS_PATH/TRANSACTION_EVENTS_PATH"
+                )
+            },
+        )?;
+
+    Ok(Some(TransactionEventWriterConfig {
+        enabled: true,
+        file_path,
+        queue_capacity: DEFAULT_QUEUE_CAPACITY,
+        required: false,
+        producer: TransactionEventProducer::BaseRethNode,
+        network: env.network.clone(),
+    }))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TransactionEventEnv {
+    enabled: bool,
+    path: Option<PathBuf>,
+    network: String,
+}
+
+impl TransactionEventEnv {
+    fn read() -> Self {
+        Self {
+            enabled: transaction_event_journal_env_enabled(),
+            path: env::var_os("BASE_TRANSACTION_EVENTS_PATH")
+                .or_else(|| env::var_os("TRANSACTION_EVENTS_PATH"))
+                .map(PathBuf::from),
+            network: env::var("BASE_TRANSACTION_EVENTS_NETWORK")
+                .or_else(|_| env::var("BASE_NODE_NETWORK"))
+                .unwrap_or_else(|_| "unknown".to_string()),
+        }
+    }
+}
+
+fn transaction_event_journal_env_enabled() -> bool {
+    env::var("BASE_TRANSACTION_EVENTS_ENABLED")
+        .or_else(|_| env::var("TRANSACTION_EVENTS_ENABLED"))
+        .map(transaction_event_env_bool)
+        .unwrap_or(false)
+}
+
+fn transaction_event_env_bool(value: String) -> bool {
+    matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes")
+}
+
+fn transaction_event_node_role() -> Option<String> {
+    env::var("BASE_TRANSACTION_EVENTS_NODE_ROLE")
+        .ok()
+        .or_else(|| parse_otel_resource_attribute("base.node"))
+}
+
+fn parse_otel_resource_attribute(key: &str) -> Option<String> {
+    env::var("OTEL_RESOURCE_ATTRIBUTES").ok().and_then(|attrs| {
+        attrs.split(',').find_map(|part| {
+            let (attr_key, attr_value) = part.split_once('=')?;
+            (attr_key.trim() == key)
+                .then(|| attr_value.trim().to_string())
+                .filter(|v| !v.is_empty())
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use alloy_primitives::address;
     use clap::{Args, Parser};
 
@@ -467,10 +574,11 @@ mod tests {
             rpc_forwarding_endpoint: None,
             flashblocks_url: None,
             max_pending_blocks_depth: 3,
-            flashblocks_cached_execution: false,
             flashblocks_ping_interval: Duration::from_secs(30),
             enable_transaction_tracing: false,
             enable_transaction_tracing_logs: false,
+            enable_transaction_event_journal: false,
+            transaction_event_journal_path: None,
         }
     }
 
@@ -544,6 +652,23 @@ mod tests {
     }
 
     #[test]
+    fn parses_transaction_event_journal_flags() {
+        let args = CommandParser::<RpcStandardNodeArgs>::parse_from([
+            "base-reth",
+            "--enable-transaction-event-journal",
+            "--transaction-event-journal-path",
+            "/var/log/transaction-events/execution/events.jsonl",
+        ])
+        .args;
+
+        assert!(args.enable_transaction_event_journal);
+        assert_eq!(
+            args.transaction_event_journal_path.as_deref(),
+            Some(std::path::Path::new("/var/log/transaction-events/execution/events.jsonl"))
+        );
+    }
+
+    #[test]
     fn test_rpc_forwarding_endpoint_keeps_tx_forwarding_extension_disabled() {
         let args = CommandParser::<RpcStandardNodeArgs>::parse_from([
             "reth",
@@ -588,12 +713,63 @@ mod tests {
         let args = CommandParser::<StandardNodeArgs>::parse_from([
             "reth",
             "--enable-metering",
-            "--metering.execution-time-us",
-            "5000000",
+            "--metering.target-flashblocks-per-block",
+            "4",
+            "--metering.gas-limit",
+            "30000000",
         ])
         .args;
 
         assert!(args.metering.enable_metering);
+        assert_eq!(args.metering.metering_gas_limit, Some(30_000_000));
+    }
+
+    #[test]
+    fn transaction_event_journal_requires_path_when_no_env_path_exists() {
+        let args = CommandParser::<RpcStandardNodeArgs>::parse_from([
+            "base-reth",
+            "--enable-transaction-event-journal",
+            "--transaction-event-journal-path",
+            "/tmp/events.jsonl",
+        ])
+        .args;
+
+        let env =
+            TransactionEventEnv { enabled: false, path: None, network: "unknown".to_string() };
+        let config = transaction_event_writer_config(&args, &env).unwrap().unwrap();
+        assert_eq!(config.file_path, PathBuf::from("/tmp/events.jsonl"));
+        assert_eq!(config.producer, TransactionEventProducer::BaseRethNode);
+    }
+
+    #[test]
+    fn transaction_event_journal_can_be_enabled_by_env() {
+        let args = CommandParser::<RpcStandardNodeArgs>::parse_from(["base-reth"]).args;
+        let env = TransactionEventEnv {
+            enabled: true,
+            path: Some(PathBuf::from("/tmp/env-events.jsonl")),
+            network: "base-devnet".to_string(),
+        };
+        let config = transaction_event_writer_config(&args, &env).unwrap().unwrap();
+
+        assert_eq!(config.file_path, PathBuf::from("/tmp/env-events.jsonl"));
+        assert_eq!(config.network, "base-devnet");
+    }
+
+    #[test]
+    fn test_standard_node_args_accepts_deprecated_metering_flags() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "reth",
+            "--enable-metering",
+            "--metering.execution-time-us",
+            "5000000",
+            "--metering.state-root-time-us",
+            "1000000",
+            "--metering.target-flashblocks-per-block",
+            "4",
+        ])
+        .args;
+
         assert_eq!(args.metering.metering_execution_time_us, Some(5_000_000));
+        assert_eq!(args.metering.metering_state_root_time_us, Some(1_000_000));
     }
 }

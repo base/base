@@ -201,7 +201,6 @@ base-node-runner = { path = "crates/execution/runner" }
 base-execution-exex = { path = "crates/execution/exex" }
 base-execution-trie = { path = "crates/execution/trie" }
 base-txpool-rpc = { path = "crates/execution/txpool-rpc" }
-base-engine-tree = { path = "crates/execution/engine-tree" }
 base-flashblocks = { path = "crates/execution/flashblocks" }
 base-execution-txpool = { path = "crates/execution/txpool" }
 base-bundle-extension = { path = "crates/execution/bundle" }
@@ -344,7 +343,9 @@ reth-revm = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-trie = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-exex = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-tasks = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
+reth-ecies = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-errors = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
+reth-eth-wire = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-codecs = { version = "0.4.1", default-features = false, features = ["alloy"] }
 reth-db-api = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }
 reth-discv4 = { git = "https://github.com/paradigmxyz/reth", tag = "v2.3.0" }

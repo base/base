@@ -362,7 +362,13 @@ pub struct RollupArgs {
     /// Maximum number of inflight EIP-7702 delegated account transactions per sender in the
     /// txpool. Reth defaults to 1, which prevents delegated accounts from submitting multiple
     /// transactions within a block (e.g. buy + approve in a single Flashblock).
-    #[arg(long = "rollup.txpool-max-inflight-delegated-slots", default_value_t = 1)]
+    ///
+    /// We raise the default to 4 (matching the EIP-8130 sender cap). Delegated code can move the
+    /// account's balance mid-block, so a queued tx can become insolvent before the next canonical
+    /// update; but that case fails fast — revm rejects on the pre-execution balance check before
+    /// running any delegated code — so the only cost of a small cap is bounded (linear in the cap)
+    /// mempool memory and cheap wasted pre-checks per account per block.
+    #[arg(long = "rollup.txpool-max-inflight-delegated-slots", default_value_t = 4)]
     pub max_inflight_delegated_slots: usize,
 
     /// If true, initialize external-proofs exex to save and serve trie nodes to provide proofs
@@ -460,7 +466,7 @@ impl Default for RollupArgs {
             sequencer_headers: Vec::new(),
             min_suggested_priority_fee: 1_000_000,
             txpool_ordering: TxpoolOrdering::default(),
-            max_inflight_delegated_slots: 1,
+            max_inflight_delegated_slots: 4,
             proofs_history: false,
             proofs_history_storage_path: None,
             proofs_history_db: ProofsHistoryDbBackend::default(),
@@ -554,12 +560,22 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_max_inflight_delegated_slots() {
-        let expected_args = RollupArgs { max_inflight_delegated_slots: 4, ..Default::default() };
+    fn test_parse_max_inflight_delegated_slots_default() {
+        let args = CommandParser::<RollupArgs>::parse_from(["reth"]).args;
+        assert_eq!(args.max_inflight_delegated_slots, 4);
+        assert_eq!(
+            args.max_inflight_delegated_slots,
+            RollupArgs::default().max_inflight_delegated_slots
+        );
+    }
+
+    #[test]
+    fn test_parse_max_inflight_delegated_slots_override() {
+        let expected_args = RollupArgs { max_inflight_delegated_slots: 7, ..Default::default() };
         let args = CommandParser::<RollupArgs>::parse_from([
             "reth",
             "--rollup.txpool-max-inflight-delegated-slots",
-            "4",
+            "7",
         ])
         .args;
         assert_eq!(args, expected_args);

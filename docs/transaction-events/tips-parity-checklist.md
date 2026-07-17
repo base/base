@@ -21,8 +21,7 @@ against audit-archiver/Postgres.
 - For each sampled non-system transaction, the S3 and Postgres responses agree
   on whether simulation data exists.
 - When simulation data exists, compare bundle hash/id, state block number, total
-  gas used, total execution time, state root time, and per-transaction gas/time
-  summaries.
+  gas used, total execution time, and per-transaction gas/time summaries.
 - `GET /api/txn/<tx-hash>` returns the same transaction hash and at least one
   bundle id/hash join key.
 - `GET /api/bundle/<bundle-id-or-hash>` returns events in event-time order and

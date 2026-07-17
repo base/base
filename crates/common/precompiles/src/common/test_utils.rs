@@ -5,23 +5,78 @@
 
 use std::collections::{HashMap, HashSet};
 
-use alloy_primitives::{Address, B256, LogData, U256};
+use alloy_primitives::{Address, Address as TokenAddress, B256, LogData, U256};
 use base_precompile_storage::Result;
 
 use crate::{
-    IPolicyRegistry, PolicyRegistry, PolicyRegistryStorage,
-    b20_asset::{AssetAccounting, B20AssetStorage, B20AssetToken},
+    Burnable, Configurable, IPolicyRegistry, Mintable, Pausable, Permittable, PolicyRegistry,
+    PolicyRegistryStorage, RoleManaged, Token, Transferable,
+    b20_asset::{AssetAccounting, B20AssetStorage},
     b20_stablecoin::{B20StablecoinToken, StablecoinAccounting},
     common::{B20_MAX_SUPPLY_CAP, Policy, TokenAccounting},
 };
 
-/// Convenience alias: [`B20AssetToken`] wired with both in-memory fakes.
-pub type TestToken = B20AssetToken<InMemoryTokenAccounting, InMemoryPolicy>;
-
 /// Convenience alias: [`B20StablecoinToken`] wired with both in-memory fakes.
 ///
-/// Use this in unit tests instead of spelling out the full generic each time.
+/// The stablecoin holder is a minimal storage+policy holder (its behavior lives in `logic/vN`), so
+/// this alias is used by dispatch/`inner` tests, not for calling capability-trait methods directly.
 pub type TestStablecoinToken = B20StablecoinToken<InMemoryTokenAccounting, InMemoryPolicy>;
+
+/// Concrete test token that opts into the shared capability traits over the in-memory fakes.
+///
+/// The production holders ([`crate::B20AssetToken`], [`crate::B20StablecoinToken`]) are now minimal
+/// storage+policy holders whose behavior lives entirely in their versioned `logic/vN`
+/// implementations, so they no longer implement the [`Transferable`]/[`Mintable`]/… capability
+/// traits. This type keeps those shared traits exercised by the `common::ops` unit tests without
+/// depending on any token variant.
+#[derive(Debug)]
+pub struct TestToken {
+    accounting: InMemoryTokenAccounting,
+    policy: InMemoryPolicy,
+}
+
+impl TestToken {
+    /// Creates a test token backed by the provided in-memory fakes.
+    pub const fn with_storage_and_policy(
+        accounting: InMemoryTokenAccounting,
+        policy: InMemoryPolicy,
+    ) -> Self {
+        Self { accounting, policy }
+    }
+}
+
+impl Token for TestToken {
+    type Accounting = InMemoryTokenAccounting;
+    type Policy = InMemoryPolicy;
+
+    fn accounting(&self) -> &InMemoryTokenAccounting {
+        &self.accounting
+    }
+
+    fn accounting_mut(&mut self) -> &mut InMemoryTokenAccounting {
+        &mut self.accounting
+    }
+
+    fn policy(&self) -> &InMemoryPolicy {
+        &self.policy
+    }
+
+    fn policy_mut(&mut self) -> &mut InMemoryPolicy {
+        &mut self.policy
+    }
+
+    fn token_address(&self) -> TokenAddress {
+        self.accounting.token_address()
+    }
+}
+
+impl Transferable for TestToken {}
+impl Mintable for TestToken {}
+impl Burnable for TestToken {}
+impl Pausable for TestToken {}
+impl Configurable for TestToken {}
+impl Permittable for TestToken {}
+impl RoleManaged for TestToken {}
 
 /// HashMap-backed [`TokenAccounting`] for unit tests.
 ///

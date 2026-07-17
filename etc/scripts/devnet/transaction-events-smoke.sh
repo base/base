@@ -48,8 +48,6 @@ for attempt in $(seq 1 60); do
       and has_event("base-reth-node"; [
         "TXPOOL_PENDING",
         "TXPOOL_QUEUED",
-        "TXPOOL_FLASHBLOCK_INCLUDED",
-        "TXPOOL_BLOCK_INCLUDED",
         "TXPOOL_BUILDER_FORWARD_ATTEMPT",
         "TXPOOL_BUILDER_FORWARD_SUCCESS"
       ])

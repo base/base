@@ -50,7 +50,6 @@ pub struct PendingBlocksBuilder {
     state_overrides: Option<StateOverride>,
     transaction_results: HashMap<B256, ExecutionResult<BaseHaltReason>>,
     execution_times: HashMap<B256, u128>,
-    state_root_times: HashMap<B256, u128>,
 
     bundle_state: Option<Arc<BundleState>>,
 
@@ -87,7 +86,6 @@ impl PendingBlocksBuilder {
             transaction_senders: HashMap::new(),
             transaction_results: HashMap::new(),
             execution_times: HashMap::new(),
-            state_root_times: HashMap::new(),
             state_overrides: None,
             bundle_state: None,
             deferred_error: None,
@@ -109,7 +107,6 @@ impl PendingBlocksBuilder {
         let transaction_senders = pending_blocks.transaction_senders.clone();
         let transaction_results = pending_blocks.transaction_results.clone();
         let execution_times = pending_blocks.execution_times.clone();
-        let state_root_times = pending_blocks.state_root_times.clone();
         let next_position_per_block = pending_blocks.next_position_per_block.clone();
         let bundle_state = Arc::clone(&pending_blocks.bundle_state);
 
@@ -136,7 +133,6 @@ impl PendingBlocksBuilder {
             state_overrides,
             transaction_results,
             execution_times,
-            state_root_times,
             bundle_state: Some(bundle_state),
             deferred_error: None,
         }
@@ -279,13 +275,6 @@ impl PendingBlocksBuilder {
         self
     }
 
-    /// Stores per-transaction state root simulation time.
-    #[inline]
-    pub fn with_state_root_time(&mut self, hash: B256, time_us: u128) -> &Self {
-        self.state_root_times.insert(hash, time_us);
-        self
-    }
-
     /// Builds the pending blocks.
     pub fn build(self) -> Result<PendingBlocks, StateProcessorError> {
         if let Some(err) = self.deferred_error {
@@ -375,7 +364,6 @@ impl PendingBlocksBuilder {
             bundle_state: self.bundle_state.unwrap_or_default(),
             transaction_results: self.transaction_results,
             execution_times: self.execution_times,
-            state_root_times: self.state_root_times,
         })
     }
 }
@@ -406,7 +394,6 @@ pub struct PendingBlocks {
     state_overrides: Option<StateOverride>,
     transaction_results: HashMap<B256, ExecutionResult<BaseHaltReason>>,
     execution_times: HashMap<B256, u128>,
-    state_root_times: HashMap<B256, u128>,
 
     bundle_state: Arc<BundleState>,
 }
@@ -592,11 +579,6 @@ impl PendingBlocks {
     /// Returns the per-transaction EVM execution time in microseconds.
     pub fn get_execution_time(&self, tx_hash: &B256) -> Option<u128> {
         self.execution_times.get(tx_hash).copied()
-    }
-
-    /// Returns the per-transaction state root simulation time in microseconds.
-    pub fn get_state_root_time(&self, tx_hash: &B256) -> Option<u128> {
-        self.state_root_times.get(tx_hash).copied()
     }
 
     /// Returns the receipt and state for a transaction.

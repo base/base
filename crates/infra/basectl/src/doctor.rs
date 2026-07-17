@@ -988,6 +988,7 @@ mod tests {
         RethLimits, bootnode_addrs, bootnode_chain, bootnode_layer_summary, classify_ip,
         expected_chain_id, peer_count_check, worst_status,
     };
+    use crate::ElNodeIdentity;
 
     #[test]
     fn summary_counts_all_statuses() {
@@ -1066,6 +1067,7 @@ mod tests {
     fn el_peer_count_unavailable_skips_instead_of_failing() {
         let info = Ok(ElInfoReport {
             endpoint: None,
+            identity: ElNodeIdentity::default(),
             peer_count: None,
             peer_count_error: Some("EL `net_peerCount` unavailable from this RPC"),
         });

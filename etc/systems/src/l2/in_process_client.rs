@@ -261,6 +261,7 @@ impl InProcessClient {
         let txpool_config = TxpoolConfig {
             tracing_enabled: false,
             tracing_logs_enabled: false,
+            transaction_event_node_role: None,
             flashblocks_config: Some(flashblocks_config.clone()),
         };
         extensions.push(Box::new(TxPoolExtension::new(txpool_config)));
