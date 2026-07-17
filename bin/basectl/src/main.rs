@@ -57,7 +57,7 @@ async fn main() -> anyhow::Result<()> {
             .await
         }
         Some(cli::Commands::P2p { command }) => {
-            if p2p::run(MonitoringConfig::load(config).await?, command).await?.has_failures() {
+            if p2p::run(config, command).await?.has_failures() {
                 std::process::exit(1);
             }
             Ok(())
