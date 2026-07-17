@@ -138,8 +138,7 @@ impl ZkBenchRunner {
         Ok((outcome, execution_stats))
     }
 
-    // Heap-backed request builder; not intended for const evaluation.
-    #[allow(clippy::missing_const_for_fn)]
+    #[allow(clippy::missing_const_for_fn)] // heap types; not meant for const eval
     fn proof_request(
         session_id: String,
         start_block_number: u64,
