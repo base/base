@@ -1003,6 +1003,9 @@ where
             Self::validate_eip8130_create_freshness(&*state, sender, &sender_account)?;
         }
 
+        // Nonce validity is intentionally checked against canonical state, not
+        // authorization's speculative overlay writes. Those writes are effects
+        // of this transaction and cannot satisfy its own admission nonce.
         let mut storage = StateProviderPrecompileStorage::new(&*state, local_chain_id, now);
         StorageCtx::enter(&mut storage, |ctx| {
             let nonce_storage = NonceManagerStorage::new(ctx);

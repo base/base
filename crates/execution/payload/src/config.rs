@@ -25,9 +25,13 @@ impl Default for BaseBuilderConfig {
 }
 
 impl BaseBuilderConfig {
-    /// Creates a new Base payload builder configuration with the given data availability configuration.
-    pub const fn new(da_config: BaseDAConfig, gas_limit_config: GasLimitConfig) -> Self {
-        Self { da_config, gas_limit_config, manifest_precheck_enabled: true }
+    /// Creates a new Base payload builder configuration.
+    pub const fn new(
+        da_config: BaseDAConfig,
+        gas_limit_config: GasLimitConfig,
+        manifest_precheck_enabled: bool,
+    ) -> Self {
+        Self { da_config, gas_limit_config, manifest_precheck_enabled }
     }
 
     /// Returns the data availability configuration for the Base payload builder, if it has
@@ -156,6 +160,13 @@ mod tests {
     fn test_da_constrained() {
         let config = BaseBuilderConfig::default();
         assert!(config.constrained_da_config().is_none());
+    }
+
+    #[test]
+    fn new_preserves_manifest_precheck_setting() {
+        let config =
+            BaseBuilderConfig::new(BaseDAConfig::default(), GasLimitConfig::default(), false);
+        assert!(!config.manifest_precheck_enabled);
     }
 
     #[test]

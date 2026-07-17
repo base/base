@@ -21,12 +21,18 @@ pub struct ConfigSlot {
 }
 
 /// State predicates captured during EIP-8130 authorization.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WatchManifest {
     config_slots: Vec<ConfigSlot>,
     payer: Address,
     payer_max_cost: U256,
     effective_expiry: u64,
+}
+
+impl Default for WatchManifest {
+    fn default() -> Self {
+        Self::new(Vec::new(), Address::ZERO, U256::ZERO, u64::MAX)
+    }
 }
 
 impl WatchManifest {
@@ -195,6 +201,15 @@ mod tests {
             U256::from(1_000),
             u64::MAX,
         )
+    }
+
+    #[test]
+    fn default_manifest_is_inert() {
+        let manifest = WatchManifest::default();
+        let mut db = InMemoryDB::default();
+
+        assert_eq!(manifest.effective_expiry(), u64::MAX);
+        assert_eq!(manifest.revalidate(&mut db, u64::MAX), Ok(()));
     }
 
     #[test]
