@@ -1,7 +1,7 @@
 //! ABI dispatch for the `B20Factory` precompile.
 //!
 //! The dispatcher owns everything that is *not* version-specific: it resolves the
-//! active version from the block's hardfork (via [`FactoryVersions`]) and routes
+//! active version from the block's hardfork (via [`VersionResolver`]) and routes
 //! `createB20`'s business logic to it. `getB20Address`, `isB20`, and
 //! `isB20Initialized` are answered via version-invariant computations/pass-throughs.
 
@@ -11,10 +11,11 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, Result, StorageCtx};
 use revm::precompile::PrecompileResult;
 
+use super::{Logic, LogicV1, Version, VersionResolver};
 use crate::{
     B20FactoryStorage, B20Variant, BerylAuxiliaryMetrics, BerylCallRecorder, BerylMetricLabels,
-    Factory, FactoryV1, FactoryVersion, FactoryVersions, IB20Factory, NoopPrecompileCallObserver,
-    PrecompileCallObserver, macros::decode_precompile_call,
+    IB20Factory, NoopPrecompileCallObserver, PrecompileCallObserver,
+    macros::decode_precompile_call,
 };
 
 impl<'a> B20FactoryStorage<'a> {
@@ -51,7 +52,7 @@ impl<'a> B20FactoryStorage<'a> {
             return recorder.record_base_error_result(ctx, error);
         }
         // Gate by hardfork: resolve the active version once.
-        let Some(version) = FactoryVersions::from_base_upgrade(upgrade) else {
+        let Some(version) = VersionResolver::from_base_upgrade(upgrade) else {
             return recorder
                 .record_base_error_result(ctx, BasePrecompileError::Revert(Bytes::new()));
         };
@@ -72,7 +73,7 @@ impl<'a> B20FactoryStorage<'a> {
         upgrade: BaseUpgrade,
     ) -> Result<Address> {
         let address_hash = keccak256((caller, call.salt).abi_encode());
-        FactoryV1.create_b20(self, call, address_hash, upgrade)
+        LogicV1.create_b20(self, call, address_hash, upgrade)
     }
 
     /// Decodes calldata and routes it to `version`'s logic.
@@ -80,7 +81,7 @@ impl<'a> B20FactoryStorage<'a> {
         &mut self,
         ctx: StorageCtx<'_>,
         calldata: &[u8],
-        version: FactoryVersion,
+        version: Version,
         upgrade: BaseUpgrade,
         observer: O,
     ) -> Result<Bytes>
@@ -661,7 +662,7 @@ mod tests {
         assert!(!event.variantParams.is_empty(), "STABLECOIN variantParams must not be empty");
         let params = IB20Factory::B20StablecoinEventParams::abi_decode(&event.variantParams)
             .expect("variantParams must decode as B20StablecoinEventParams");
-        // Version byte frozen by `FactoryV1` for `B20StablecoinEventParams`.
+        // Version byte frozen by `LogicV1` for `B20StablecoinEventParams`.
         assert_eq!(params.version, 1);
         assert_eq!(params.currency, "USD");
     }

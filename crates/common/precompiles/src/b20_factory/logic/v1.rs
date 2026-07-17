@@ -8,9 +8,10 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, ContractStorage, Result};
 use revm::state::Bytecode;
 
+use super::Logic;
 use crate::{
     ActivationRegistryStorage, B20AssetInit, B20AssetStorage, B20FactoryStorage, B20StablecoinInit,
-    B20StablecoinStorage, B20TokenRole, B20Variant, ContractContext, Factory, IB20Factory,
+    B20StablecoinStorage, B20TokenRole, B20Variant, ContractContext, IB20Factory,
     NoopPrecompileCallObserver, PolicyRegistryStorage, PolicyVersions, StablecoinContractContext,
     StablecoinVersion, Token, Version,
 };
@@ -34,9 +35,9 @@ const INITIAL_MULTIPLIER: U256 = U256::ZERO;
 
 /// First B-20 token factory logic implementation. Frozen as of its activation at Beryl.
 #[derive(Debug, Default, Clone, Copy)]
-pub struct FactoryV1;
+pub struct LogicV1;
 
-impl FactoryV1 {
+impl LogicV1 {
     fn init_stablecoin(
         &self,
         storage: &B20FactoryStorage<'_>,
@@ -179,7 +180,7 @@ impl FactoryV1 {
     }
 }
 
-impl Factory for FactoryV1 {
+impl Logic for LogicV1 {
     fn create_b20(
         &self,
         storage: &mut B20FactoryStorage<'_>,

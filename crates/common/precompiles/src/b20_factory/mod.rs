@@ -6,7 +6,7 @@ pub use abi::IB20Factory;
 mod dispatch;
 
 mod logic;
-pub use logic::{CommonParams, Factory, FactoryV1, TokenCreateParams};
+pub use logic::{CommonParams, Logic, LogicV1, TokenCreateParams};
 
 mod precompile;
 pub use precompile::B20Factory;
@@ -18,4 +18,4 @@ mod variant;
 pub use variant::B20Variant;
 
 mod versions;
-pub use versions::{FactoryVersion, FactoryVersions};
+pub use versions::{Version, VersionResolver};
