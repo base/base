@@ -251,7 +251,7 @@ where
     type BuiltPayload = Builder::BuiltPayload;
 
     fn best_payload(&self) -> Result<Self::BuiltPayload, PayloadBuilderError> {
-        unimplemented!()
+        Err(PayloadBuilderError::Other("best_payload not supported; use resolve_kind".into()))
     }
 
     fn payload_attributes(&self) -> Result<Self::PayloadAttributes, PayloadBuilderError> {
@@ -311,10 +311,12 @@ where
         self.executor.spawn_blocking_task(Box::pin(async move {
             let args =
                 BuildArguments { cached_reads, config: payload_config, cancel, publish_guard };
-            if let Err(e) = builder.try_build(args, watch_tx).await {
+            if let Err(e) = builder.try_build(args, &watch_tx).await {
                 warn!(error = %e, "Payload build task failed");
                 *build_error.lock() = Some(e.to_string());
             }
+            // watch_tx is dropped here, after any failure cause has been recorded above,
+            // so ResolvePayload always observes the cause before the sender's drop.
         }));
     }
 }
@@ -375,20 +377,14 @@ impl<T: Clone + Send + Sync + 'static> ResolvePayload<T> {
                 return Err(PayloadBuilderError::Other("payload receiver missing".into()));
             };
 
-            loop {
-                if let Some(payload) = rx.borrow().clone() {
-                    return Ok(payload);
-                }
+            let payload = rx.wait_for(Option::is_some).await.map_err(|_| {
+                build_error.lock().take().map_or(
+                    PayloadBuilderError::Other("builder exited before producing payload".into()),
+                    |err| PayloadBuilderError::Other(err.into()),
+                )
+            })?;
 
-                rx.changed().await.map_err(|_| {
-                    build_error.lock().take().map_or(
-                        PayloadBuilderError::Other(
-                            "builder exited before producing payload".into(),
-                        ),
-                        |err| PayloadBuilderError::Other(err.into()),
-                    )
-                })?;
-            }
+            Ok(payload.as_ref().expect("checked is_some by wait_for predicate").clone())
         }
         .boxed();
 
@@ -509,7 +505,7 @@ mod tests {
         async fn try_build(
             &self,
             args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
-            _payload_tx: watch::Sender<Option<Self::BuiltPayload>>,
+            _payload_tx: &watch::Sender<Option<Self::BuiltPayload>>,
         ) -> Result<(), PayloadBuilderError> {
             self.new_event(BlockEvent::Started);
 

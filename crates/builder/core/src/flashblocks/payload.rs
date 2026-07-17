@@ -253,7 +253,7 @@ where
     async fn build_payload(
         &self,
         args: BuildArguments<BasePayloadBuilderAttributes<BaseTransactionSigned>, BaseBuiltPayload>,
-        payload_tx: watch::Sender<Option<BaseBuiltPayload>>,
+        payload_tx: &watch::Sender<Option<BaseBuiltPayload>>,
     ) -> Result<(), PayloadBuilderError> {
         let block_build_start_time = Instant::now();
         let BuildArguments { mut cached_reads, config, cancel: block_cancel, publish_guard } = args;
@@ -472,7 +472,7 @@ where
                     &span,
                     "Payload building complete, target flashblock count reached",
                 );
-                self.finalize_payload(&mut state, &ctx, &mut info, &payload_tx)?;
+                self.finalize_payload(&mut state, &ctx, &mut info, payload_tx)?;
                 return Ok(());
             }
 
@@ -499,7 +499,7 @@ where
                         &span,
                         "Payload building complete, job cancelled or target flashblock count reached",
                     );
-                    self.finalize_payload(&mut state, &ctx, &mut info, &payload_tx)?;
+                    self.finalize_payload(&mut state, &ctx, &mut info, payload_tx)?;
                     return Ok(());
                 }
                 Err(err) => {
@@ -526,7 +526,7 @@ where
                         &span,
                         "Payload building complete, channel closed or job cancelled",
                     );
-                    self.finalize_payload(&mut state, &ctx, &mut info, &payload_tx)?;
+                    self.finalize_payload(&mut state, &ctx, &mut info, payload_tx)?;
                     return Ok(());
                 }
             }
@@ -1043,7 +1043,7 @@ where
     async fn try_build(
         &self,
         args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
-        payload_tx: watch::Sender<Option<Self::BuiltPayload>>,
+        payload_tx: &watch::Sender<Option<Self::BuiltPayload>>,
     ) -> Result<(), PayloadBuilderError> {
         self.build_payload(args, payload_tx).await
     }
