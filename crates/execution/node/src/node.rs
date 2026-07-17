@@ -10,7 +10,7 @@ use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, B64, B256, Bytes, bytes::BytesMut};
 use alloy_rlp::Encodable;
 use base_common_chains::Upgrades;
-use base_common_consensus::{BasePrimitives, BaseTxEnvelope};
+use base_common_consensus::{BasePrimitives, BaseTransaction, BaseTxEnvelope};
 use base_common_rpc_types_engine::{BasePayloadAttributes, ExecutionData};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::BaseBeaconConsensus;
@@ -871,7 +871,7 @@ impl<T> Default for BasePoolBuilder<T> {
         Self {
             pool_config_overrides: Default::default(),
             ordering: BaseOrdering::default(),
-            max_inflight_delegated_slots: 1,
+            max_inflight_delegated_slots: 4,
             _pd: Default::default(),
         }
     }
@@ -1333,6 +1333,7 @@ where
     <<Node::Types as NodeTypes>::Payload as PayloadTypes>::PayloadAttributes: Attributes<
         Transaction = <<Node::Types as NodeTypes>::Primitives as NodePrimitives>::SignedTx,
     >,
+    <<Node::Types as NodeTypes>::Primitives as NodePrimitives>::SignedTx: BaseTransaction,
 {
     type Validator = BaseEngineValidator<
         Node::Provider,

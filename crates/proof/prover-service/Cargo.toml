@@ -34,7 +34,6 @@ rstest.workspace = true
 chrono.workspace = true
 jsonrpsee = { workspace = true, features = ["http-client"] }
 metrics-util = { workspace = true, features = ["debugging"] }
-tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 base-prover-service-protocol = { workspace = true, features = ["rpc-client"] }
 
 [lints]

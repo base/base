@@ -16,6 +16,7 @@ base-protocol.workspace = true
 base-common-consensus.workspace = true
 base-proof-mpt.workspace = true
 base-common-evm.workspace = true
+base-optimism-rpc.workspace = true
 base-common-network.workspace = true
 base-consensus-providers.workspace = true
 base-proof = { workspace = true, features = ["std"] }

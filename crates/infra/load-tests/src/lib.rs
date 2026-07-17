@@ -8,6 +8,12 @@ pub use config::{
     RealTokenSetupConfig, TestConfig, TxTypeConfig, WeightedTxType, WorkloadConfig,
 };
 
+mod executor;
+pub use executor::{
+    LoadTestCleanupSummary, LoadTestDisplayConfig, LoadTestExecutor, LoadTestRunHooks,
+    LoadTestRunOptions, LoadTestRunOutput, LoadTestSetupAmounts, SignalHandlerGuard,
+};
+
 mod utils;
 pub use utils::{BaselineError, Result};
 
@@ -19,9 +25,9 @@ pub use rpc::{
 
 mod metrics;
 pub use metrics::{
-    BlockRange, ConfigSummary, FlashblocksLatencyMetrics, GasMetrics, LatencyMetrics,
-    MetricsAggregator, MetricsCollector, MetricsSummary, ReceiptCoverage, RollingWindow,
-    SubmissionStats, ThroughputMetrics, ThroughputPercentiles, ThroughputSample,
+    BlockLoadMetrics, BlockRange, ConfigSummary, FlashblocksLatencyMetrics, GasMetrics,
+    LatencyMetrics, MetricsAggregator, MetricsCollector, MetricsSummary, ReceiptCoverage,
+    RollingWindow, SubmissionStats, ThroughputMetrics, ThroughputPercentiles, ThroughputSample,
     TransactionMetrics,
 };
 

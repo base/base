@@ -264,6 +264,7 @@ mod tests {
             l2_block_number: block,
             prev_output_root: B256::repeat_byte(3),
             config_hash: B256::repeat_byte(4),
+            schedule_id: B256::repeat_byte(5),
         }
     }
 

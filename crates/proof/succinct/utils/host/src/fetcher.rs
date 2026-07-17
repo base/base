@@ -817,6 +817,7 @@ impl OPSuccinctDataFetcher {
         let prover = base_proof_host::ProverConfig {
             l1_eth_url: self.rpc_config.l1_rpc.as_str().trim_end_matches('/').to_string(),
             l2_eth_url: self.rpc_config.l2_rpc.as_str().trim_end_matches('/').to_string(),
+            l2_node_url: self.rpc_config.l2_node_rpc.as_str().trim_end_matches('/').to_string(),
             l1_beacon_url,
             l2_chain_id: rollup_config.l2_chain_id.id(),
             rollup_config: rollup_config.clone(),

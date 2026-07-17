@@ -4,9 +4,9 @@ use alloc::vec::Vec;
 
 use alloy_primitives::{Bytes, Sealable, Sealed, TxKind, U256};
 use base_common_consensus::{
-    BaseTimeDepositSource, DepositSourceDomain, Predeploys, SystemAddresses, TxDeposit,
+    BaseTimeDepositSource, BaseTransaction, DepositSourceDomain, Predeploys, SystemAddresses,
+    TxDeposit,
 };
-use base_common_genesis::RollupConfig;
 
 use crate::REGOLITH_SYSTEM_TX_GAS;
 
@@ -80,22 +80,54 @@ impl BaseTimeUpdateTx {
             .map_err(BaseTimeUpdateDecodeError::InvalidTimestampMillisPart)
     }
 
-    /// Returns a typed deposit transaction for inclusion at `tx[1]`.
+    /// Extracts and validates the `BaseTime` metadata deposit at `tx[1]`.
+    pub fn extract_from_transactions<T: BaseTransaction>(
+        transactions: &[T],
+        block_number: u64,
+    ) -> Result<Self, BaseTimeMetadataError> {
+        let transaction = transactions.get(1).ok_or(BaseTimeMetadataError::Missing)?;
+        let deposit = transaction.as_deposit().ok_or(BaseTimeMetadataError::NotDeposit)?;
+        let base_time = Self::validate_deposit(deposit, block_number)?;
+
+        Ok(base_time)
+    }
+
+    /// Validates and decodes a `BaseTime` metadata deposit.
+    pub fn validate_deposit(
+        deposit: &TxDeposit,
+        block_number: u64,
+    ) -> Result<Self, BaseTimeMetadataError> {
+        let expected_source_hash =
+            DepositSourceDomain::BaseTime(BaseTimeDepositSource { block_number }).source_hash();
+        if deposit.source_hash != expected_source_hash {
+            return Err(BaseTimeMetadataError::InvalidSourceHash);
+        }
+        if deposit.from != SystemAddresses::DEPOSITOR_ACCOUNT {
+            return Err(BaseTimeMetadataError::InvalidSender);
+        }
+        if deposit.to != TxKind::Call(Predeploys::BASE_TIME) {
+            return Err(BaseTimeMetadataError::InvalidRecipient);
+        }
+        if deposit.mint != 0 {
+            return Err(BaseTimeMetadataError::NonZeroMint);
+        }
+        if deposit.value != U256::ZERO {
+            return Err(BaseTimeMetadataError::NonZeroValue);
+        }
+        if deposit.gas_limit != REGOLITH_SYSTEM_TX_GAS {
+            return Err(BaseTimeMetadataError::InvalidGasLimit);
+        }
+        if deposit.is_system_transaction {
+            return Err(BaseTimeMetadataError::SystemTransaction);
+        }
+
+        Self::decode_calldata(&deposit.input).map_err(BaseTimeMetadataError::InvalidCalldata)
+    }
+
+    /// Converts this update into a typed deposit transaction for inclusion at `tx[1]`.
     ///
-    /// Callers are responsible for activation gating; this helper only validates and encodes the
-    /// `BaseTime` metadata deposit once the surrounding protocol has decided it is allowed.
-    ///
-    /// `_l2_parent_block_time` is reserved so later hard-fork activation logic can make the same
-    /// same-second boundary decisions here that [`crate::L1BlockInfoTx::try_new_with_deposit_tx`]
-    /// already needs.
-    pub fn try_new_with_deposit_tx(
-        _rollup_config: &RollupConfig,
-        l2_block_number: u64,
-        timestamp_millis_part: u16,
-        _l2_parent_block_time: u64,
-        _l2_block_time: u64,
-    ) -> Result<(Self, Sealed<TxDeposit>), BaseTimeUpdateError> {
-        let base_time = Self::new(timestamp_millis_part)?;
+    /// Callers are responsible for activation gating.
+    pub fn into_deposit_tx(self, l2_block_number: u64) -> Sealed<TxDeposit> {
         let source =
             DepositSourceDomain::BaseTime(BaseTimeDepositSource { block_number: l2_block_number });
 
@@ -109,10 +141,10 @@ impl BaseTimeUpdateTx {
             // ordinary-deposit semantics introduced there.
             gas_limit: REGOLITH_SYSTEM_TX_GAS,
             is_system_transaction: false,
-            input: base_time.encode_calldata(),
+            input: self.encode_calldata(),
         };
 
-        Ok((base_time, deposit_tx.seal_slow()))
+        deposit_tx.seal_slow()
     }
 }
 
@@ -144,14 +176,76 @@ pub enum BaseTimeUpdateDecodeError {
     InvalidTimestampMillisPart(BaseTimeUpdateError),
 }
 
+/// An error extracting or validating a `BaseTime` metadata deposit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum BaseTimeMetadataError {
+    /// The block does not contain a transaction at `tx[1]`.
+    #[error("missing BaseTime metadata deposit at tx[1]")]
+    Missing,
+    /// The transaction at `tx[1]` is not a deposit transaction.
+    #[error("BaseTime metadata transaction is not a deposit")]
+    NotDeposit,
+    /// The deposit source hash does not commit to the block number and `BaseTime` domain.
+    #[error("invalid BaseTime metadata source hash")]
+    InvalidSourceHash,
+    /// The deposit sender is not the protocol depositor.
+    #[error("invalid BaseTime metadata sender")]
+    InvalidSender,
+    /// The deposit does not call the `BaseTime` predeploy.
+    #[error("invalid BaseTime metadata recipient")]
+    InvalidRecipient,
+    /// The deposit mints ETH.
+    #[error("BaseTime metadata deposit has non-zero mint")]
+    NonZeroMint,
+    /// The deposit transfers ETH.
+    #[error("BaseTime metadata deposit has non-zero value")]
+    NonZeroValue,
+    /// The deposit gas limit does not match the protocol constant.
+    #[error("invalid BaseTime metadata gas limit")]
+    InvalidGasLimit,
+    /// The deposit uses pre-Regolith system-transaction semantics.
+    #[error("BaseTime metadata deposit is a system transaction")]
+    SystemTransaction,
+    /// The deposit calldata is not a canonical `BaseTime` setter call.
+    #[error("invalid BaseTime metadata calldata: {0}")]
+    InvalidCalldata(BaseTimeUpdateDecodeError),
+}
+
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{TxKind, U256};
-    use base_common_consensus::{Predeploys, SystemAddresses};
-    use base_common_genesis::RollupConfig;
+    use alloy_consensus::{Sealable, TxLegacy};
+    use alloy_primitives::{Address, B256, Signature, TxKind, U256};
+    use base_common_consensus::{
+        BaseTransactionSigned, BaseTypedTransaction, Predeploys, SystemAddresses, TxDeposit,
+    };
 
-    use super::{BaseTimeUpdateDecodeError, BaseTimeUpdateError, BaseTimeUpdateTx};
+    use super::{
+        BaseTimeMetadataError, BaseTimeUpdateDecodeError, BaseTimeUpdateError, BaseTimeUpdateTx,
+    };
     use crate::REGOLITH_SYSTEM_TX_GAS;
+
+    fn base_time_deposit(block_number: u64, timestamp_millis_part: u16) -> TxDeposit {
+        BaseTimeUpdateTx::new(timestamp_millis_part)
+            .unwrap()
+            .into_deposit_tx(block_number)
+            .into_inner()
+    }
+
+    fn user_transaction() -> BaseTransactionSigned {
+        let tx = TxLegacy {
+            chain_id: Some(1),
+            nonce: 0,
+            gas_price: 1,
+            gas_limit: 21_000,
+            to: TxKind::Call(Address::ZERO),
+            value: U256::ZERO,
+            input: Default::default(),
+        };
+        BaseTransactionSigned::new_unhashed(
+            BaseTypedTransaction::Legacy(tx),
+            Signature::new(U256::ZERO, U256::ZERO, false),
+        )
+    }
 
     #[test]
     fn base_time_update_roundtrips() {
@@ -193,12 +287,9 @@ mod tests {
 
     #[test]
     fn base_time_update_builds_deposit_tx() {
-        let rollup_config = RollupConfig::default();
         let l2_block_number = 9;
-
-        let (base_time, deposit_tx) =
-            BaseTimeUpdateTx::try_new_with_deposit_tx(&rollup_config, l2_block_number, 600, 1, 2)
-                .unwrap();
+        let base_time = BaseTimeUpdateTx::new(600).unwrap();
+        let deposit_tx = base_time.into_deposit_tx(l2_block_number);
 
         assert_eq!(deposit_tx.from, SystemAddresses::DEPOSITOR_ACCOUNT);
         assert_eq!(deposit_tx.to, TxKind::Call(Predeploys::BASE_TIME));
@@ -207,5 +298,131 @@ mod tests {
         assert_eq!(deposit_tx.gas_limit, REGOLITH_SYSTEM_TX_GAS);
         assert!(!deposit_tx.is_system_transaction);
         assert_eq!(deposit_tx.input, base_time.encode_calldata());
+    }
+
+    #[test]
+    fn extracts_valid_base_time_metadata_at_tx_one() {
+        let transactions: Vec<BaseTransactionSigned> = vec![
+            TxDeposit::default().seal_slow().into(),
+            base_time_deposit(9, 600).seal_slow().into(),
+        ];
+
+        let base_time = BaseTimeUpdateTx::extract_from_transactions(&transactions, 9).unwrap();
+
+        assert_eq!(base_time.timestamp_millis_part(), 600);
+    }
+
+    #[test]
+    fn rejects_missing_or_mispositioned_base_time_metadata() {
+        let l1_info: BaseTransactionSigned = TxDeposit::default().seal_slow().into();
+        assert_eq!(
+            BaseTimeUpdateTx::extract_from_transactions(&[l1_info], 9),
+            Err(BaseTimeMetadataError::Missing)
+        );
+
+        let transactions = vec![
+            TxDeposit::default().seal_slow().into(),
+            user_transaction(),
+            base_time_deposit(9, 600).seal_slow().into(),
+        ];
+        assert_eq!(
+            BaseTimeUpdateTx::extract_from_transactions(&transactions, 9),
+            Err(BaseTimeMetadataError::NotDeposit)
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_base_time_deposit_envelope() {
+        let mut deposit = base_time_deposit(9, 600);
+        deposit.source_hash = B256::ZERO;
+        assert_eq!(
+            BaseTimeUpdateTx::validate_deposit(&deposit, 9),
+            Err(BaseTimeMetadataError::InvalidSourceHash)
+        );
+
+        let mut deposit = base_time_deposit(9, 600);
+        deposit.from = Address::ZERO;
+        assert_eq!(
+            BaseTimeUpdateTx::validate_deposit(&deposit, 9),
+            Err(BaseTimeMetadataError::InvalidSender)
+        );
+
+        let mut deposit = base_time_deposit(9, 600);
+        deposit.to = TxKind::Call(Address::ZERO);
+        assert_eq!(
+            BaseTimeUpdateTx::validate_deposit(&deposit, 9),
+            Err(BaseTimeMetadataError::InvalidRecipient)
+        );
+
+        let mut deposit = base_time_deposit(9, 600);
+        deposit.mint = 1;
+        assert_eq!(
+            BaseTimeUpdateTx::validate_deposit(&deposit, 9),
+            Err(BaseTimeMetadataError::NonZeroMint)
+        );
+
+        let mut deposit = base_time_deposit(9, 600);
+        deposit.value = U256::from(1);
+        assert_eq!(
+            BaseTimeUpdateTx::validate_deposit(&deposit, 9),
+            Err(BaseTimeMetadataError::NonZeroValue)
+        );
+
+        let mut deposit = base_time_deposit(9, 600);
+        deposit.gas_limit -= 1;
+        assert_eq!(
+            BaseTimeUpdateTx::validate_deposit(&deposit, 9),
+            Err(BaseTimeMetadataError::InvalidGasLimit)
+        );
+
+        let mut deposit = base_time_deposit(9, 600);
+        deposit.is_system_transaction = true;
+        assert_eq!(
+            BaseTimeUpdateTx::validate_deposit(&deposit, 9),
+            Err(BaseTimeMetadataError::SystemTransaction)
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_base_time_deposit_calldata() {
+        let mut deposit = base_time_deposit(9, 600);
+        let mut input = deposit.input.to_vec();
+        input[0] ^= 0xff;
+        deposit.input = input.into();
+        assert_eq!(
+            BaseTimeUpdateTx::validate_deposit(&deposit, 9),
+            Err(BaseTimeMetadataError::InvalidCalldata(BaseTimeUpdateDecodeError::InvalidSelector))
+        );
+
+        let mut deposit = base_time_deposit(9, 600);
+        let mut input = deposit.input.to_vec();
+        input[34..].copy_from_slice(&100_u16.to_be_bytes());
+        deposit.input = input.into();
+        assert_eq!(
+            BaseTimeUpdateTx::validate_deposit(&deposit, 9),
+            Err(BaseTimeMetadataError::InvalidCalldata(
+                BaseTimeUpdateDecodeError::InvalidTimestampMillisPart(
+                    BaseTimeUpdateError::InvalidTimestampMillisPart(100)
+                )
+            ))
+        );
+
+        let mut deposit = base_time_deposit(9, 600);
+        deposit.input = deposit.input[..3].to_vec().into();
+        assert_eq!(
+            BaseTimeUpdateTx::validate_deposit(&deposit, 9),
+            Err(BaseTimeMetadataError::InvalidCalldata(BaseTimeUpdateDecodeError::MissingSelector))
+        );
+
+        let mut deposit = base_time_deposit(9, 600);
+        let mut input = deposit.input.to_vec();
+        input.push(0);
+        deposit.input = input.into();
+        assert_eq!(
+            BaseTimeUpdateTx::validate_deposit(&deposit, 9),
+            Err(BaseTimeMetadataError::InvalidCalldata(BaseTimeUpdateDecodeError::InvalidLength(
+                36, 37
+            )))
+        );
     }
 }

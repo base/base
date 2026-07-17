@@ -65,17 +65,32 @@ impl AccountConfigurationStorage<'_> {
         Ok(false)
     }
 
-    /// Mirrors `AccountConfiguration.getPolicy`: resolves an actor's policy
-    /// gate target and signed commitment. An ungated actor resolves to
-    /// `(address(0), bytes32(0))`; a gated one to `(manager, commitment)`.
-    /// The secp256k1 self key's policy scope lives inline in
-    /// `AccountState` (read only while the self key is live); a non-k1 self and
-    /// every other actor resolve from `actor_config`.
+    /// Resolves an actor's effective policy gate target and signed commitment.
+    /// An ungated actor resolves to `(address(0), bytes32(0))`; a gated one to
+    /// `(manager, commitment)`.
+    ///
+    /// Unlike the contract's `getPolicy` — a pure two-slot raw read — this gates
+    /// on the actor's live scope. The result matches `getPolicy` for every state
+    /// the contract can produce (the write-time invariant keeps the slots
+    /// non-zero iff `scope & SCOPE_POLICY`), but this is a resolver, not a 1:1
+    /// mirror; for the raw reads use [`Self::get_policy_manager`] /
+    /// [`Self::get_policy_commitment`].
+    ///
+    /// The self-actorId is a shared keyspace with two mutually exclusive homes:
+    /// an explicit `actor_config` entry (a non-k1 self) takes precedence and its
+    /// policy resolves normally — even while `DEFAULT_EOA_REVOKED` is set, since
+    /// that flag disables only the *inline k1* self, not the actorId. Only when
+    /// no explicit entry exists does the inline k1 self govern, and a revoked one
+    /// resolves as ungated (its slots are always already zeroed by then).
     pub fn get_policy(&self, account: Address, actor_id: B256) -> Result<(Address, B256)> {
         let stored = self.get_actor_config(account, actor_id)?;
         let scope = if stored.authenticator != Address::ZERO {
+            // Explicit entry (any non-self actor, or a non-k1 self): its scope
+            // governs regardless of the inline-self `DEFAULT_EOA_REVOKED` flag.
             stored.scope
         } else if actor_id == Self::self_actor_id(account) {
+            // No explicit entry: the inline k1 self. A revoked one is ungated;
+            // its policy slots are guaranteed zero, so this matches `getPolicy`.
             let state = self.get_account_state(account)?;
             if state.default_eoa_revoked() {
                 return Ok((Address::ZERO, B256::ZERO));
@@ -124,10 +139,18 @@ impl AccountConfigurationStorage<'_> {
         Ok((state.multichain_sequence, state.local_sequence))
     }
 
-    /// `true` once the account is initialized (created or imported); the contract
-    /// uses `local_sequence > 0` as the initialized flag.
+    /// Mirrors `AccountConfiguration._isInitialized`: `true` once the account has
+    /// any EIP-8130 state. `local_sequence > 0` is set at bootstrap
+    /// (created/imported) and doubles as the initialized flag, but it is not the
+    /// only channel: a never-bootstrapped account can establish state through a
+    /// `chain_id == 0` (multichain) `applySignedActorChanges` — authenticated by
+    /// its still-live implicit default EOA — which bumps `multichain_sequence`
+    /// while leaving `local_sequence` at 0. The contract treats that account as
+    /// initialized (blocking a later create/import from clobbering the
+    /// multichain-established state), so both counters must be checked.
     pub fn is_initialized(&self, account: Address) -> Result<bool> {
-        Ok(self.get_account_state(account)?.local_sequence > 0)
+        let state = self.get_account_state(account)?;
+        Ok(state.local_sequence > 0 || state.multichain_sequence > 0)
     }
 
     /// Mirrors `AccountConfiguration._isLocked`: not locked unless `FLAG_LOCKED`
@@ -294,10 +317,12 @@ impl ActorConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct AccountState {
-    /// Sequence for `chain_id == 0` (multichain) signed actor changes.
+    /// Sequence for `chain_id == 0` (multichain) signed actor changes. A non-zero
+    /// value also marks the account initialized (see [`Self`] / `is_initialized`).
     pub multichain_sequence: u64,
-    /// Sequence for local (`chain_id == block.chainid`) changes; `> 0` also marks
-    /// the account initialized.
+    /// Sequence for local (`chain_id == block.chainid`) changes. Set to 1 at
+    /// bootstrap (create/import); a non-zero value also marks the account
+    /// initialized (see [`Self`] / `is_initialized`).
     pub local_sequence: u64,
     /// Account flags bitfield: bit 0 ([`Eip8130Constants::DEFAULT_EOA_REVOKED`])
     /// disables the inline secp256k1 self key; bit 1
@@ -591,6 +616,33 @@ mod tests {
     }
 
     #[test]
+    fn get_policy_resolves_non_k1_self_while_default_eoa_revoked() {
+        // A non-k1 self authenticator homed at the self-actorId coexists with
+        // DEFAULT_EOA_REVOKED (authorizing it *sets* that flag via mutual
+        // exclusion). The flag disables only the inline k1 self, so an explicit
+        // entry's policy must still resolve — the explicit-entry branch wins.
+        let authenticator = address!("0x00000000000000000000000000000000000000e5");
+        let manager = address!("0x00000000000000000000000000000000000000d4");
+        let commitment =
+            b256!("0x3333333333333333333333333333333333333333333333333333333333333333");
+        let self_id = AccountConfigurationStorage::self_actor_id(ACCOUNT);
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut acc = AccountConfigurationStorage::new(ctx);
+            let gated = pack_actor_config(authenticator, Eip8130Constants::SCOPE_POLICY, 0);
+            acc.actor_config.at_mut(&self_id).at_mut(&ACCOUNT).write(gated).unwrap();
+            acc.policy_manager.at_mut(&self_id).at_mut(&ACCOUNT).write(manager).unwrap();
+            acc.policy_commitment.at_mut(&self_id).at_mut(&ACCOUNT).write(commitment).unwrap();
+            acc.account_state
+                .at_mut(&ACCOUNT)
+                .write(pack_account_state(0, 1, Eip8130Constants::DEFAULT_EOA_REVOKED, 0, 0, 0))
+                .unwrap();
+
+            assert_eq!(acc.get_policy(ACCOUNT, self_id).unwrap(), (manager, commitment));
+        });
+    }
+
+    #[test]
     fn get_policy_manager_reads_only_the_manager_slot() {
         let manager = address!("0x00000000000000000000000000000000000000d4");
         let mut storage = HashMapStorageProvider::new(1);
@@ -627,6 +679,28 @@ mod tests {
             assert_eq!(state.default_eoa_scope, 0xAB);
             assert_eq!(state.default_eoa_expiry, expiry);
             assert_eq!(acc.get_change_sequences(ACCOUNT).unwrap(), (7, 3));
+            assert!(acc.is_initialized(ACCOUNT).unwrap());
+        });
+    }
+
+    #[test]
+    fn is_initialized_covers_both_sequence_channels() {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut acc = AccountConfigurationStorage::new(ctx);
+
+            // Fresh account: neither channel set -> uninitialized.
+            assert!(!acc.is_initialized(ACCOUNT).unwrap());
+
+            // Multichain-only: a chain_id == 0 change bumped `multichain_sequence`
+            // on a never-bootstrapped account, `local_sequence` still 0. The
+            // contract's `_isInitialized` (local || multichain) treats this as
+            // initialized, so the native mirror must too.
+            acc.account_state.at_mut(&ACCOUNT).write(pack_account_state(1, 0, 0, 0, 0, 0)).unwrap();
+            assert!(acc.is_initialized(ACCOUNT).unwrap());
+
+            // Local-only: the bootstrap (create/import) channel.
+            acc.account_state.at_mut(&ACCOUNT).write(pack_account_state(0, 1, 0, 0, 0, 0)).unwrap();
             assert!(acc.is_initialized(ACCOUNT).unwrap());
         });
     }

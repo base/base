@@ -108,6 +108,7 @@ fn parse_range_outputs(proof: &mut SP1ProofWithPublicValues) -> Result<()> {
     println!("l2PreBlockNumber:  {}", boot_info.l2PreBlockNumber);
     println!("l2BlockNumber:     {}", boot_info.l2BlockNumber);
     println!("rollupConfigHash:  {}", boot_info.rollupConfigHash);
+    println!("scheduleId:        {}", boot_info.scheduleId);
     println!(
         "intermediateRoots: {} bytes ({} roots)",
         boot_info.intermediateRoots.len(),

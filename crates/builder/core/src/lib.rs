@@ -31,6 +31,11 @@ pub use metering::{MeteringProvider, NoopMeteringProvider, SharedMeteringProvide
 mod rejected_tx_forwarder;
 pub use rejected_tx_forwarder::RejectedTxForwarder;
 
+// Internal-only helpers for emitting builder transaction events. The event surface
+// is shared via `base-observability-events`, while this module keeps
+// builder-specific payload construction private to the builder crate.
+mod transaction_events;
+
 mod rejection_cache;
 pub use rejection_cache::RejectionCache;
 

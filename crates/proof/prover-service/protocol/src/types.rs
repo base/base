@@ -53,8 +53,6 @@ pub enum ZkVm {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ZkBackend {
-    /// Instant placeholder proofs for tests and local smoke checks.
-    Mock,
     /// Local SP1 execution statistics without proof bytes.
     DryRun,
     /// Self-hosted SP1 cluster.
@@ -68,7 +66,6 @@ impl ZkBackend {
     /// Returns the canonical wire and database representation.
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Mock => "mock",
             Self::DryRun => "dry_run",
             Self::Cluster => "cluster",
             Self::Network => "network",
@@ -87,7 +84,6 @@ impl TryFrom<&str> for ZkBackend {
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value {
-            "mock" => Ok(Self::Mock),
             "dry_run" => Ok(Self::DryRun),
             "cluster" => Ok(Self::Cluster),
             "network" => Ok(Self::Network),
@@ -719,6 +715,7 @@ mod tests {
                 "l2_block_number": aggregate_proposal.l2_block_number,
                 "prev_output_root": format!("{:#x}", aggregate_proposal.prev_output_root),
                 "config_hash": format!("{:#x}", aggregate_proposal.config_hash),
+                "schedule_id": format!("{:#x}", aggregate_proposal.schedule_id),
             })
         );
         assert_eq!(
@@ -731,6 +728,7 @@ mod tests {
                 "l2_block_number": proposal.l2_block_number,
                 "prev_output_root": format!("{:#x}", proposal.prev_output_root),
                 "config_hash": format!("{:#x}", proposal.config_hash),
+                "schedule_id": format!("{:#x}", proposal.schedule_id),
             })
         );
     }
@@ -836,6 +834,7 @@ mod tests {
                 "l2_block_number": aggregate_proposal.l2_block_number,
                 "prev_output_root": format!("{:#x}", aggregate_proposal.prev_output_root),
                 "config_hash": format!("{:#x}", aggregate_proposal.config_hash),
+                "schedule_id": format!("{:#x}", aggregate_proposal.schedule_id),
             })
         );
         assert_eq!(
@@ -848,6 +847,7 @@ mod tests {
                 "l2_block_number": proposal.l2_block_number,
                 "prev_output_root": format!("{:#x}", proposal.prev_output_root),
                 "config_hash": format!("{:#x}", proposal.config_hash),
+                "schedule_id": format!("{:#x}", proposal.schedule_id),
             })
         );
     }
@@ -985,6 +985,7 @@ mod tests {
             l2_block_number,
             prev_output_root: B256::repeat_byte(byte + 2),
             config_hash: B256::repeat_byte(byte + 3),
+            schedule_id: B256::repeat_byte(byte + 4),
         }
     }
 }

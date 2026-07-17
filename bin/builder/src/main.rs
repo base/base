@@ -10,6 +10,7 @@ use base_builder_core::{BuilderApiExtension, FlashblocksServiceBuilder};
 use base_builder_metering::MeteringStoreExtension;
 use base_execution_cli::{Cli, StandardBaseRethNode};
 use base_node_runner::BaseNodeRunner;
+use base_observability_events::GlobalTransactionEventWriter;
 use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
 
 type BuilderCli = Cli<Args>;
@@ -34,6 +35,10 @@ fn main() {
 
         let metering_provider: base_builder_core::SharedMeteringProvider =
             Arc::new(builder_args.build_metering_store());
+        let transaction_events_enabled = builder_args.transaction_events.enabled;
+        GlobalTransactionEventWriter::init(
+            transaction_events_enabled.then(|| builder_args.transaction_events.writer_config()),
+        )?;
 
         let builder_config = builder_args
             .into_builder_config(Arc::clone(&metering_provider))
