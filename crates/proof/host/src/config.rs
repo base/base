@@ -54,10 +54,3 @@ pub struct HostConfig {
     /// Data directory for preimage data storage. When set, enables offline mode.
     pub data_dir: Option<PathBuf>,
 }
-
-impl HostConfig {
-    /// Returns `true` if the host is running in offline mode.
-    pub const fn is_offline(&self) -> bool {
-        self.data_dir.is_some()
-    }
-}

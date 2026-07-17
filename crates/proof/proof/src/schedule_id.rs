@@ -1,16 +1,11 @@
 use alloy_primitives::{B256, U256, keccak256};
-use base_common_genesis::{RollupConfig, UpgradeConfig};
+use base_common_genesis::UpgradeConfig;
 
 /// Computes the locally derived schedule ID for the effective hardfork activation schedule.
 #[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
 pub struct ScheduleId;
 
 impl ScheduleId {
-    /// Derives the schedule ID from the hardfork timestamps in a rollup config.
-    pub fn from_rollup_config(rollup_config: &RollupConfig) -> B256 {
-        Self::from_upgrades(&rollup_config.upgrades)
-    }
-
     /// Derive the schedule ID from upgrade timestamps in canonical field order.
     ///
     /// This mirrors the onchain `ProtocolVersions.scheduleId()` hash chain:

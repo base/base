@@ -353,7 +353,7 @@ impl BootInfo {
             }
         };
 
-        let schedule_id = ScheduleId::from_rollup_config(&rollup_config);
+        let schedule_id = ScheduleId::from_upgrades(&rollup_config.upgrades);
 
         Ok(Self {
             l1_head,
