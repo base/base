@@ -1,6 +1,6 @@
 use clap::ValueEnum;
 
-/// Mode for execution metering limits (execution time and state root time).
+/// Mode for per-transaction execution-time metering limits.
 ///
 /// Controls how the builder handles execution metering limits that depend on
 /// metering service predictions. These limits can be gradually rolled out

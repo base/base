@@ -110,7 +110,7 @@ impl UpgradeSignalMonitor {
     /// Tolerantly polls the reader, records live metrics, and returns the number of changed signals.
     ///
     /// This is the single live-poll routine shared by the consensus actor and the execution
-    /// metrics extension; per-upgrade read failures are recorded but do not abort the poll.
+    /// metrics extension; read failures are recorded but do not abort the poll.
     pub async fn poll(
         &mut self,
         reader: &AlloyUpgradeSignalReader,

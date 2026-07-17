@@ -30,20 +30,11 @@ pub enum EstimateError {
 
 /// Configured capacity limits for each resource type.
 ///
-/// These limits mirror the builder's budget semantics.
-///
-/// Execution time resets for each flashblock, matching the builder's
-/// `flashblock_execution_time_limit_us` and `reset_flashblock_execution_time()`.
-/// Gas, DA bytes, and state root time accumulate across the block against
-/// cumulative per-flashblock targets derived from the whole-block budget.
+/// These limits mirror the builder's cumulative gas and data-availability budget semantics.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ResourceLimits {
     /// Gas budget for the whole block.
     pub gas_used: Option<u64>,
-    /// Execution time budget per flashblock in microseconds.
-    pub execution_time_us: Option<u128>,
-    /// State root computation budget for the whole block in microseconds.
-    pub state_root_time_us: Option<u128>,
     /// Data availability byte budget for the whole block.
     pub data_availability_bytes: Option<u64>,
 }
@@ -53,8 +44,6 @@ impl ResourceLimits {
     pub fn limit_for(&self, resource: ResourceKind) -> Option<u128> {
         match resource {
             ResourceKind::GasUsed => self.gas_used.map(|v| v as u128),
-            ResourceKind::ExecutionTime => self.execution_time_us,
-            ResourceKind::StateRootTime => self.state_root_time_us,
             ResourceKind::DataAvailability => self.data_availability_bytes.map(|v| v as u128),
         }
     }
@@ -65,46 +54,20 @@ impl ResourceLimits {
 pub enum ResourceKind {
     /// Gas consumption.
     GasUsed,
-    /// Execution time.
-    ExecutionTime,
-    /// State root computation time.
-    StateRootTime,
     /// Data availability bytes.
     DataAvailability,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ResourceBudgetBehavior {
-    ResetsEachFlashblock,
-    AccumulatesUntilBlockEnd,
-}
-
 impl ResourceKind {
     /// Returns all resource kinds in a fixed order.
-    pub const fn all() -> [Self; 4] {
-        [Self::GasUsed, Self::ExecutionTime, Self::StateRootTime, Self::DataAvailability]
-    }
-
-    /// Returns how this resource budget behaves in the builder.
-    ///
-    /// Execution time resets each flashblock, while gas, DA bytes, and state root time
-    /// accumulate across the block against growing cumulative targets in the tx-pool
-    /// flashblock loop.
-    const fn budget_behavior(self) -> ResourceBudgetBehavior {
-        match self {
-            Self::ExecutionTime => ResourceBudgetBehavior::ResetsEachFlashblock,
-            Self::GasUsed | Self::StateRootTime | Self::DataAvailability => {
-                ResourceBudgetBehavior::AccumulatesUntilBlockEnd
-            }
-        }
+    pub const fn all() -> [Self; 2] {
+        [Self::GasUsed, Self::DataAvailability]
     }
 
     /// Returns a human-readable name for the resource kind.
     pub const fn as_name(&self) -> &'static str {
         match self {
             Self::GasUsed => "gas",
-            Self::ExecutionTime => "execution time",
-            Self::StateRootTime => "state root time",
             Self::DataAvailability => "data availability",
         }
     }
@@ -113,8 +76,6 @@ impl ResourceKind {
     pub const fn as_camel_case(&self) -> &'static str {
         match self {
             Self::GasUsed => "gasUsed",
-            Self::ExecutionTime => "executionTime",
-            Self::StateRootTime => "stateRootTime",
             Self::DataAvailability => "dataAvailability",
         }
     }
@@ -125,10 +86,6 @@ impl ResourceKind {
 pub struct ResourceDemand {
     /// Gas demand.
     pub gas_used: Option<u64>,
-    /// Execution time demand in microseconds.
-    pub execution_time_us: Option<u128>,
-    /// State root time demand in microseconds.
-    pub state_root_time_us: Option<u128>,
     /// Data availability bytes demand.
     pub data_availability_bytes: Option<u64>,
 }
@@ -138,8 +95,6 @@ impl ResourceDemand {
     pub fn demand_for(&self, resource: ResourceKind) -> Option<u128> {
         match resource {
             ResourceKind::GasUsed => self.gas_used.map(|v| v as u128),
-            ResourceKind::ExecutionTime => self.execution_time_us,
-            ResourceKind::StateRootTime => self.state_root_time_us,
             ResourceKind::DataAvailability => self.data_availability_bytes.map(|v| v as u128),
         }
     }
@@ -173,10 +128,6 @@ pub struct ResourceEstimate {
 pub struct ResourceEstimates {
     /// Gas usage estimate.
     pub gas_used: Option<ResourceEstimate>,
-    /// Execution time estimate.
-    pub execution_time: Option<ResourceEstimate>,
-    /// State root time estimate.
-    pub state_root_time: Option<ResourceEstimate>,
     /// Data availability estimate.
     pub data_availability: Option<ResourceEstimate>,
 }
@@ -186,8 +137,6 @@ impl ResourceEstimates {
     pub const fn get(&self, kind: ResourceKind) -> Option<&ResourceEstimate> {
         match kind {
             ResourceKind::GasUsed => self.gas_used.as_ref(),
-            ResourceKind::ExecutionTime => self.execution_time.as_ref(),
-            ResourceKind::StateRootTime => self.state_root_time.as_ref(),
             ResourceKind::DataAvailability => self.data_availability.as_ref(),
         }
     }
@@ -196,8 +145,6 @@ impl ResourceEstimates {
     pub const fn set(&mut self, kind: ResourceKind, estimate: ResourceEstimate) {
         match kind {
             ResourceKind::GasUsed => self.gas_used = Some(estimate),
-            ResourceKind::ExecutionTime => self.execution_time = Some(estimate),
-            ResourceKind::StateRootTime => self.state_root_time = Some(estimate),
             ResourceKind::DataAvailability => self.data_availability = Some(estimate),
         }
     }
@@ -206,8 +153,6 @@ impl ResourceEstimates {
     pub fn iter(&self) -> impl Iterator<Item = (ResourceKind, &ResourceEstimate)> {
         [
             (ResourceKind::GasUsed, &self.gas_used),
-            (ResourceKind::ExecutionTime, &self.execution_time),
-            (ResourceKind::StateRootTime, &self.state_root_time),
             (ResourceKind::DataAvailability, &self.data_availability),
         ]
         .into_iter()
@@ -421,36 +366,6 @@ impl PriorityFeeEstimator {
         Ok(())
     }
 
-    fn estimate_resetting_resource(
-        &self,
-        resource: ResourceKind,
-        state: &mut BlockEstimateState<'_>,
-        demand: u128,
-        limit: u128,
-    ) -> Result<ResourceEstimate, EstimateError> {
-        self.ensure_capacity(resource, demand, limit)?;
-
-        let mut rolling_summary = None;
-        for flashblock_position in 0..state.flashblock_inputs.len() {
-            let estimate = self.estimate_resource(
-                resource,
-                &state.flashblock_inputs[flashblock_position].transactions,
-                demand,
-                limit,
-            )?;
-
-            if rolling_summary.as_ref().is_none_or(|current: &ResourceEstimate| {
-                is_more_competitive_estimate(&estimate, current)
-            }) {
-                rolling_summary = Some(estimate.clone());
-            }
-
-            state.record_estimate(resource, flashblock_position, estimate);
-        }
-
-        Ok(rolling_summary.expect("flashblock_inputs are non-empty"))
-    }
-
     fn estimate_accumulating_resource(
         &self,
         resource: ResourceKind,
@@ -538,21 +453,12 @@ impl PriorityFeeEstimator {
                 continue;
             };
 
-            let resource_summary = match resource.budget_behavior() {
-                ResourceBudgetBehavior::ResetsEachFlashblock => self.estimate_resetting_resource(
-                    resource,
-                    &mut state,
-                    demand_value,
-                    limit_value,
-                )?,
-                ResourceBudgetBehavior::AccumulatesUntilBlockEnd => self
-                    .estimate_accumulating_resource(
-                        resource,
-                        &mut state,
-                        demand_value,
-                        limit_value,
-                    )?,
-            };
+            let resource_summary = self.estimate_accumulating_resource(
+                resource,
+                &mut state,
+                demand_value,
+                limit_value,
+            )?;
             rolling_summary.set(resource, resource_summary);
         }
 
@@ -883,8 +789,6 @@ fn compute_estimate(
 fn usage_extractor(resource: ResourceKind) -> fn(&MeteredTransaction) -> u128 {
     match resource {
         ResourceKind::GasUsed => |tx: &MeteredTransaction| tx.gas_used as u128,
-        ResourceKind::ExecutionTime => |tx: &MeteredTransaction| tx.execution_time_us,
-        ResourceKind::StateRootTime => |tx: &MeteredTransaction| tx.state_root_time_us,
         ResourceKind::DataAvailability => {
             |tx: &MeteredTransaction| tx.data_availability_bytes as u128
         }
@@ -907,27 +811,19 @@ mod tests {
             priority_fee_per_gas: U256::from(priority),
             gas_used: usage,
             execution_time_us: usage as u128,
-            state_root_time_us: usage as u128,
             data_availability_bytes: usage,
         }
     }
 
-    /// Creates a transaction with independent resource usage per dimension.
-    fn tx_multi(
-        priority: u64,
-        gas: u64,
-        exec_us: u128,
-        state_root_us: u128,
-        da_bytes: u64,
-    ) -> MeteredTransaction {
+    /// Creates a transaction with independent gas and DA usage.
+    fn tx_multi(priority: u64, gas: u64, da_bytes: u64) -> MeteredTransaction {
         let mut hash_bytes = [0u8; 32];
         hash_bytes[24..].copy_from_slice(&priority.to_be_bytes());
         MeteredTransaction {
             tx_hash: B256::new(hash_bytes),
             priority_fee_per_gas: U256::from(priority),
             gas_used: gas,
-            execution_time_us: exec_us,
-            state_root_time_us: state_root_us,
+            execution_time_us: 0,
             data_availability_bytes: da_bytes,
         }
     }
@@ -1088,12 +984,8 @@ mod tests {
         assert_eq!(quote.recommended_priority_fee, DEFAULT_FEE);
     }
 
-    const DEFAULT_LIMITS: ResourceLimits = ResourceLimits {
-        gas_used: Some(25),
-        execution_time_us: Some(100),
-        state_root_time_us: None,
-        data_availability_bytes: Some(100),
-    };
+    const DEFAULT_LIMITS: ResourceLimits =
+        ResourceLimits { gas_used: Some(25), data_availability_bytes: Some(100) };
 
     fn setup_estimator(
         limits: ResourceLimits,
@@ -1276,46 +1168,6 @@ mod tests {
     }
 
     #[test]
-    fn estimate_rolling_priority_fee_is_max_across_resources() {
-        let limits = ResourceLimits {
-            gas_used: Some(50),
-            execution_time_us: Some(200),
-            state_root_time_us: None,
-            data_availability_bytes: Some(200),
-        };
-        let (cache, estimator) = setup_estimator(limits);
-        {
-            let mut guard = cache.write();
-            guard.push_transaction(1, 1, tx(100, 10));
-            guard.push_transaction(1, 1, tx(50, 10));
-        }
-        let demand = ResourceDemand {
-            gas_used: Some(25),
-            execution_time_us: Some(25),
-            data_availability_bytes: Some(25),
-            ..Default::default()
-        };
-
-        let result = estimator.estimate_rolling(demand).expect("no error").expect("has data");
-
-        let gas_fee =
-            result.estimates.gas_used.map(|e| e.recommended_priority_fee).unwrap_or(U256::ZERO);
-        let exec_fee = result
-            .estimates
-            .execution_time
-            .map(|e| e.recommended_priority_fee)
-            .unwrap_or(U256::ZERO);
-        let da_fee = result
-            .estimates
-            .data_availability
-            .map(|e| e.recommended_priority_fee)
-            .unwrap_or(U256::ZERO);
-
-        let expected_max = gas_fee.max(exec_fee).max(da_fee);
-        assert_eq!(result.priority_fee, expected_max);
-    }
-
-    #[test]
     fn collect_sorted_transaction_prefixes_merges_each_flashblock_into_descending_prefixes() {
         let tx_100 = tx(100, 1);
         let tx_95 = tx(95, 1);
@@ -1355,106 +1207,13 @@ mod tests {
     }
 
     #[test]
-    fn estimate_for_block_resetting_resources_use_local_flashblock_competition() {
-        let limits = ResourceLimits {
-            gas_used: None,
-            execution_time_us: Some(30),
-            state_root_time_us: None,
-            data_availability_bytes: None,
-        };
-        let (cache, estimator) = setup_estimator_with_target(limits, 2);
-        {
-            let mut guard = cache.write();
-            guard.push_transaction(1, 1, tx_multi(100, 0, 15, 0, 0));
-            guard.push_transaction(1, 1, tx_multi(90, 0, 15, 0, 0));
-            guard.push_transaction(1, 2, tx_multi(80, 0, 15, 0, 0));
-            guard.push_transaction(1, 2, tx_multi(70, 0, 15, 0, 0));
-        }
-
-        let demand = ResourceDemand { execution_time_us: Some(15), ..Default::default() };
-        let result =
-            estimator.estimate_for_block(Some(1), demand).expect("no error").expect("block exists");
-
-        assert_eq!(result.flashblocks.len(), 2);
-        let first = result.flashblocks[0]
-            .estimates
-            .execution_time
-            .as_ref()
-            .expect("execution time estimate");
-        let second = result.flashblocks[1]
-            .estimates
-            .execution_time
-            .as_ref()
-            .expect("execution time estimate");
-
-        assert_eq!(first.threshold_priority_fee, U256::from(100));
-        assert_eq!(second.threshold_priority_fee, U256::from(80));
-    }
-
-    #[test]
-    fn estimate_for_block_resetting_resource_prefers_non_empty_summary_on_fee_tie() {
-        let limits = ResourceLimits {
-            gas_used: None,
-            execution_time_us: Some(100),
-            state_root_time_us: None,
-            data_availability_bytes: None,
-        };
-        let (cache, estimator) = setup_estimator_with_target(limits, 4);
-        {
-            let mut guard = cache.write();
-            guard.push_transaction(1, 3, tx_multi(100, 0, 0, 0, 0));
-            guard.push_transaction(1, 3, tx_multi(90, 0, 0, 0, 0));
-        }
-
-        let demand = ResourceDemand { execution_time_us: Some(10), ..Default::default() };
-        let result =
-            estimator.estimate_for_block(Some(1), demand).expect("no error").expect("block exists");
-
-        let execution_summary =
-            result.max_across_flashblocks.execution_time.as_ref().expect("execution time summary");
-        assert_eq!(execution_summary.recommended_priority_fee, DEFAULT_FEE);
-        assert_eq!(execution_summary.total_transactions, 2);
-        assert_eq!(execution_summary.threshold_tx_count, 2);
-    }
-
-    #[test]
-    fn estimate_rolling_resetting_resource_prefers_non_empty_summary_on_fee_tie() {
-        let limits = ResourceLimits {
-            gas_used: None,
-            execution_time_us: Some(100),
-            state_root_time_us: None,
-            data_availability_bytes: None,
-        };
-        let (cache, estimator) = setup_estimator_with_target(limits, 4);
-        {
-            let mut guard = cache.write();
-            guard.push_transaction(1, 3, tx_multi(100, 0, 0, 0, 0));
-            guard.push_transaction(1, 3, tx_multi(90, 0, 0, 0, 0));
-        }
-
-        let demand = ResourceDemand { execution_time_us: Some(10), ..Default::default() };
-        let result = estimator.estimate_rolling(demand).expect("no error").expect("has data");
-
-        let execution_summary =
-            result.estimates.execution_time.as_ref().expect("execution time summary");
-        assert_eq!(execution_summary.recommended_priority_fee, DEFAULT_FEE);
-        assert_eq!(execution_summary.total_transactions, 2);
-        assert_eq!(execution_summary.threshold_tx_count, 2);
-    }
-
-    #[test]
     fn estimate_for_block_accumulating_resources_follow_builder_cumulative_targets() {
-        let limits = ResourceLimits {
-            gas_used: Some(100),
-            execution_time_us: None,
-            state_root_time_us: None,
-            data_availability_bytes: None,
-        };
+        let limits = ResourceLimits { gas_used: Some(100), data_availability_bytes: None };
         let (cache, estimator) = setup_estimator_with_target(limits, 4);
         {
             let mut guard = cache.write();
-            guard.push_transaction(1, 1, tx_multi(100, 20, 0, 0, 0));
-            guard.push_transaction(1, 3, tx_multi(90, 20, 0, 0, 0));
+            guard.push_transaction(1, 1, tx_multi(100, 20, 0));
+            guard.push_transaction(1, 3, tx_multi(90, 20, 0));
         }
 
         let demand = ResourceDemand { gas_used: Some(40), ..Default::default() };
@@ -1477,17 +1236,12 @@ mod tests {
 
     #[test]
     fn estimate_rolling_accumulating_resources_uses_block_end_budget() {
-        let limits = ResourceLimits {
-            gas_used: Some(100),
-            execution_time_us: None,
-            state_root_time_us: None,
-            data_availability_bytes: None,
-        };
+        let limits = ResourceLimits { gas_used: Some(100), data_availability_bytes: None };
         let (cache, estimator) = setup_estimator_with_target(limits, 4);
         {
             let mut guard = cache.write();
-            guard.push_transaction(1, 1, tx_multi(100, 20, 0, 0, 0));
-            guard.push_transaction(1, 3, tx_multi(90, 20, 0, 0, 0));
+            guard.push_transaction(1, 1, tx_multi(100, 20, 0));
+            guard.push_transaction(1, 3, tx_multi(90, 20, 0));
         }
 
         let demand = ResourceDemand { gas_used: Some(40), ..Default::default() };
@@ -1503,17 +1257,12 @@ mod tests {
 
     #[test]
     fn estimate_for_block_ignores_base_flashblock_for_budgeted_resources() {
-        let limits = ResourceLimits {
-            gas_used: Some(20),
-            execution_time_us: None,
-            state_root_time_us: None,
-            data_availability_bytes: None,
-        };
+        let limits = ResourceLimits { gas_used: Some(20), data_availability_bytes: None };
         let (cache, estimator) = setup_estimator(limits);
         {
             let mut guard = cache.write();
-            guard.push_transaction(1, 0, tx_multi(100, 10, 0, 0, 0));
-            guard.push_transaction(1, 1, tx_multi(10, 1, 0, 0, 0));
+            guard.push_transaction(1, 0, tx_multi(100, 10, 0));
+            guard.push_transaction(1, 1, tx_multi(10, 1, 0));
         }
 
         let demand = ResourceDemand { gas_used: Some(15), ..Default::default() };

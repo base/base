@@ -20,10 +20,11 @@ use base_common_genesis::DaFootprintGasScalarUpdate;
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_eip8130::{
     AccountConfigurationStorage, ApplyError, AuthorizeError, FeeCheck, IntrinsicGas,
-    IntrinsicGasInput, NonceError, NonceMode, NonceValidator, Operation, ResolvedActor,
-    TransactionAuthorizer, TxAuthError,
+    IntrinsicGasInput, NonceError, NonceMode, NonceValidator, TransactionAuthorizer, TxAuthError,
 };
-use base_precompile_storage::{BasePrecompileError, PrecompileStorageProvider, StorageCtx};
+use base_precompile_storage::{
+    BasePrecompileError, PrecompileStorageProvider, StorageCtx, validate_loaded_code_presence,
+};
 use parking_lot::RwLock;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::ConfigureEvm;
@@ -134,6 +135,35 @@ impl PrecompileStorageProvider for StateProviderPrecompileStorage<'_> {
             self.state.basic_account(&address).map_err(Self::provider_error)?.unwrap_or_default();
         let account_info = AccountInfo::from(account);
         f(&account_info);
+        Ok(())
+    }
+
+    fn with_account_code(
+        &mut self,
+        address: Address,
+        f: &mut dyn FnMut(&Bytecode),
+    ) -> Result<(), BasePrecompileError> {
+        let expected_hash = self
+            .state
+            .basic_account(&address)
+            .map_err(Self::provider_error)?
+            .and_then(|account| account.bytecode_hash)
+            .unwrap_or(B256::ZERO);
+        let code = if expected_hash == B256::ZERO || expected_hash == KECCAK_EMPTY {
+            Bytecode::default()
+        } else {
+            self.state
+                .bytecode_by_hash(&expected_hash)
+                .map_err(Self::provider_error)?
+                .ok_or_else(|| {
+                    BasePrecompileError::Fatal(
+                        "account code unavailable for non-empty code hash".into(),
+                    )
+                })?
+                .0
+        };
+        validate_loaded_code_presence(expected_hash, &code)?;
+        f(&code);
         Ok(())
     }
 
@@ -249,10 +279,9 @@ impl PrecompileStorageProvider for StateProviderPrecompileStorage<'_> {
 /// The pool's state snapshot is read-only, so this overlay buffers `SSTORE`s in
 /// memory and serves them back on `SLOAD`, falling through to the snapshot for
 /// unbuffered slots. The buffered writes are scoped to a single validation and
-/// dropped with the overlay: admission never mutates canonical state. The
-/// deferred account-*code* effects an apply surfaces are not needed for
-/// admission (no `SLOAD` reads account bytecode through this provider), so
-/// `set_code` is accepted and discarded.
+/// dropped with the overlay: admission never mutates canonical state. Deferred
+/// account-code effects validate the canonical code through `with_account_code`,
+/// while the subsequent `set_code` is accepted and discarded.
 // `BTreeMap` (not `HashMap`) for deterministic iteration order. The overlay
 // only performs point reads/writes today so ordering is not observed, but
 // precompile storage feeds consensus-relevant state — a `BTreeMap` keeps a
@@ -292,25 +321,34 @@ impl PrecompileStorageProvider for OverlayPrecompileStorage<'_> {
     }
 
     fn set_code(&mut self, _address: Address, _code: Bytecode) -> Result<(), BasePrecompileError> {
-        // Deferred account-code effects are not read back during admission.
+        // Delegation installation validates canonical code before this deferred
+        // write, which admission intentionally discards.
         Ok(())
     }
 
     // NOTE: account *info* (nonce, balance, code hash) is intentionally not
     // overlaid — it delegates to the read-only inner provider, so a
     // counterfactual-create account reads back as empty/default here. This is
-    // sound only because the authorize-and-apply admission flow reads account
-    // state exclusively through `sload`/`sstore` (which the overlay buffers);
-    // the protocol nonce / balance / code checks run separately against the
-    // `state` snapshot. If a future change reads `AccountInfo` for the sender
-    // inside that flow, it would see stale data for created accounts and the
-    // overlay would need to buffer account info too.
+    // sound because account-configuration state uses `sload`/`sstore` (which
+    // the overlay buffers), while delegation code reads below intentionally use
+    // the canonical snapshot. If a future change needs created-account info in
+    // this flow, the overlay would need to buffer account info too.
     fn with_account_info(
         &mut self,
         address: Address,
         f: &mut dyn FnMut(&AccountInfo),
     ) -> Result<(), BasePrecompileError> {
         self.inner.with_account_info(address, f)
+    }
+
+    // Delegation installation validates the canonical code; deferred code
+    // writes are discarded by `set_code` above and cannot affect this read.
+    fn with_account_code(
+        &mut self,
+        address: Address,
+        f: &mut dyn FnMut(&Bytecode),
+    ) -> Result<(), BasePrecompileError> {
+        self.inner.with_account_code(address, f)
     }
 
     fn sload(&mut self, address: Address, key: U256) -> Result<U256, BasePrecompileError> {
@@ -673,26 +711,28 @@ where
             local_chain_id,
             now,
         ));
-        let (sender, payer, sender_actor, is_create, has_delegation) =
-            StorageCtx::enter(&mut storage, |ctx| {
+        let (sender, payer, is_create) = StorageCtx::enter(&mut storage, |ctx| {
+            let applied = {
                 let mut account_config = AccountConfigurationStorage::new(ctx);
                 TransactionAuthorizer::authorize_and_apply(
                     signed,
                     &mut account_config,
                     local_chain_id,
                     now,
-                )
-                .map(|applied| {
-                    let sender = applied.actors.sender.account;
-                    let payer = applied.actors.payer.map_or(sender, |actor| actor.account);
-                    // Thread the authoritative applied flags through rather than
-                    // re-scanning account_changes below.
-                    let is_create = applied.applied.created.is_some();
-                    let has_delegation = applied.applied.delegation.is_some();
-                    (sender, payer, applied.actors.sender.resolved, is_create, has_delegation)
-                })
-                .map_err(Self::map_tx_auth_error)
-            })?;
+                )?
+            };
+            if let Some(delegation) = applied.applied.delegation {
+                delegation.install(ctx).map_err(TxAuthError::from)?;
+            }
+
+            let sender = applied.actors.sender.account;
+            let payer = applied.actors.payer.map_or(sender, |actor| actor.account);
+            // Thread the authoritative create flag through rather than
+            // re-scanning account_changes below.
+            let is_create = applied.applied.created.is_some();
+            Ok::<_, TxAuthError>((sender, payer, is_create))
+        })
+        .map_err(Self::map_tx_auth_error)?;
 
         let sender_account = state
             .basic_account(&sender)
@@ -701,12 +741,6 @@ where
         let protocol_nonce = sender_account.nonce;
         if is_create {
             Self::validate_eip8130_create_freshness(&*state, sender, &sender_account)?;
-        }
-        // A standalone delegation (no create) keeps the existing self-actor /
-        // CONFIG-scope / code-shape pre-checks. A create+delegation is rejected
-        // structurally before reaching here, so has_delegation implies no create.
-        if has_delegation {
-            Self::validate_eip8130_delegation(&*state, sender, sender_actor)?;
         }
 
         let mut storage = StateProviderPrecompileStorage::new(&*state, local_chain_id, now);
@@ -798,30 +832,6 @@ where
         Ok(())
     }
 
-    /// Pre-checks a standalone delegation (no create in the same transaction):
-    /// the authorizing sender must be the account's self actor with CONFIG scope
-    /// and the account's code must be empty or an existing delegation indicator.
-    /// A create+delegation is authorized by the create owner's signature and the
-    /// shared apply records the effect, matching inclusion, so it skips this gate.
-    fn validate_eip8130_delegation(
-        state: &dyn StateProvider,
-        sender: Address,
-        sender_actor: ResolvedActor,
-    ) -> Result<(), InvalidPoolTransactionError> {
-        if sender_actor.actor_id != AccountConfigurationStorage::self_actor_id(sender) {
-            return Err(Self::eip8130_error("delegation requires self actor"));
-        }
-        if !Operation::Config.is_granted_by(sender_actor.scope) {
-            return Err(Self::eip8130_error("delegation requires CONFIG scope"));
-        }
-        if !Self::account_code_empty_or_delegated(state, sender)
-            .map_err(|error| Self::state_read_error(error, "sender code read failed"))?
-        {
-            return Err(Self::eip8130_error("delegation sender has non-delegation code"));
-        }
-        Ok(())
-    }
-
     fn eip8130_nonce_state(
         &self,
         state: &dyn StateProvider,
@@ -857,24 +867,6 @@ where
             .is_some_and(|hash| hash != KECCAK_EMPTY))
     }
 
-    fn account_code_empty_or_delegated(
-        state: &dyn StateProvider,
-        address: Address,
-    ) -> Result<bool, reth_storage_api::errors::ProviderError> {
-        let Some(code_hash) =
-            state.basic_account(&address)?.and_then(|account| account.bytecode_hash)
-        else {
-            return Ok(true);
-        };
-        if code_hash == KECCAK_EMPTY {
-            return Ok(true);
-        }
-        let Some(code) = state.bytecode_by_hash(&code_hash)? else {
-            return Ok(false);
-        };
-        Ok(code.original_bytes().starts_with(&Eip8130Constants::DELEGATION_INDICATOR_PREFIX))
-    }
-
     fn eip8130_encoded(&self, signed: &Eip8130Signed) -> Vec<u8> {
         let mut encoded = Vec::with_capacity(signed.encode_2718_len());
         signed.encode_2718(&mut encoded);
@@ -902,6 +894,7 @@ where
             TxAuthError::SenderRecovery => "EOA sender recovery failed",
             TxAuthError::Scope { .. } => "actor scope insufficient",
             TxAuthError::AccountLocked => "account is locked",
+            TxAuthError::DelegationUnauthorized => "delegation requires native-k1 admin self actor",
             TxAuthError::ConfigChainId { .. } => "config change targets a foreign chain",
             TxAuthError::ConfigSequence { .. } => "config change sequence mismatch",
             TxAuthError::Apply(apply) => Self::map_apply_error(apply),
@@ -917,7 +910,7 @@ where
     /// [`Self::map_tx_auth_error`].
     fn map_apply_error(error: ApplyError) -> &'static str {
         match error {
-            ApplyError::Storage(_) => "account configuration write failed",
+            ApplyError::Storage(_) => "EIP-8130 state access failed",
             ApplyError::MalformedAuthorizeData => "actor change authorize data is malformed",
             ApplyError::InvalidAuthenticator => "actor authenticator is not canonical",
             ApplyError::MalformedPolicyData => "actor policy data is malformed",
@@ -930,6 +923,7 @@ where
             ApplyError::InvalidCreatePosition => "create entry must be the only one, at index 0",
             ApplyError::MultipleDelegations => "at most one delegation is allowed",
             ApplyError::CreateAndDelegation => "create and delegation may not coexist",
+            ApplyError::NonDelegatableCode { .. } => "delegation sender has non-delegation code",
             ApplyError::SequenceOverflow => "config change sequence overflow",
         }
     }
@@ -1450,6 +1444,24 @@ mod tests {
         build_test_validator_with_spec(chain_spec)
     }
 
+    /// Builds a Cobalt-activated validator with one canonical account seeded.
+    fn build_test_validator_with_account(
+        address: Address,
+        account: ExtendedAccount,
+    ) -> TestValidator {
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().cobalt_activated().build());
+        let client = MockEthProvider::<BasePrimitives>::new()
+            .with_chain_spec(Arc::clone(&chain_spec))
+            .with_genesis_block();
+        client.add_account(address, account);
+        let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
+        let inner = EthTransactionValidatorBuilder::new(client, evm_config)
+            .no_shanghai()
+            .no_cancun()
+            .build(InMemoryBlobStore::default());
+        BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
+    }
+
     /// Returns the chain id the [`build_test_validator`] is configured against.
     fn test_chain_id() -> u64 {
         ChainConfig::mainnet().chain_id
@@ -1513,6 +1525,24 @@ mod tests {
                 InvalidTransactionError::TipAboveFeeCap,
             )) => {}
             other => panic!("expected TipAboveFeeCap, got {other:?}"),
+        }
+    }
+
+    #[track_caller]
+    fn assert_eip8130_validation_reason(
+        result: Result<Eip8130ValidationState, InvalidPoolTransactionError>,
+        expected: &'static str,
+    ) {
+        match result {
+            Err(InvalidPoolTransactionError::Other(error)) => {
+                match error.as_any().downcast_ref::<BaseTxPoolError>() {
+                    Some(BaseTxPoolError::Eip8130Validation { reason }) => {
+                        assert_eq!(*reason, expected);
+                    }
+                    other => panic!("expected Eip8130Validation, got {other:?}"),
+                }
+            }
+            other => panic!("expected Eip8130Validation, got {other:?}"),
         }
     }
 
@@ -2311,6 +2341,45 @@ mod tests {
         Bytes::from(out)
     }
 
+    fn delegation_indicator(target: Address) -> Bytes {
+        let mut code = Vec::with_capacity(Eip8130Constants::DELEGATION_INDICATOR_SIZE);
+        code.extend_from_slice(&Eip8130Constants::DELEGATION_INDICATOR_PREFIX);
+        code.extend_from_slice(target.as_slice());
+        Bytes::from(code)
+    }
+
+    fn delegation_validation_fixture(
+        signer: &PrivateKeySigner,
+        existing_code: Option<Bytes>,
+    ) -> (TestValidator, Eip8130Signed, Address) {
+        let sender = signer.address();
+        let tx = TxEip8130 {
+            chain_id: test_chain_id(),
+            sender: None,
+            nonce_key: U256::ZERO,
+            nonce_sequence: 0,
+            expiry: 0,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 100,
+            gas_limit: 1_000_000,
+            account_changes: vec![AccountChange::Delegation(Delegation {
+                target: Address::repeat_byte(0x22),
+            })],
+            calls: Vec::new(),
+            metadata: Bytes::new(),
+            payer: None,
+        };
+        let sender_auth = k1_auth_blob(signer, tx.sender_signature_hash()).slice(20..);
+        let signed = Eip8130Signed::new(tx, sender_auth, Bytes::new());
+
+        let mut account = ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64));
+        if let Some(code) = existing_code {
+            account = account.with_bytecode(code);
+        }
+        let validator = build_test_validator_with_account(sender, account);
+        (validator, signed, sender)
+    }
+
     /// Pool-side coverage for the [`OverlayPrecompileStorage`] admission path:
     /// a counterfactual `Create` followed by a `ConfigChange` in the same
     /// transaction must be admitted, which can only happen if the overlay
@@ -2380,27 +2449,60 @@ mod tests {
 
         // Fund the counterfactual address so the self-paid fee check passes; it
         // is still "fresh" (nonce 0, no code) for the create freshness gate.
-        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().cobalt_activated().build());
-        let client = MockEthProvider::<BasePrimitives>::new()
-            .with_chain_spec(Arc::clone(&chain_spec))
-            .with_genesis_block();
-        client.add_account(
+        let validator = build_test_validator_with_account(
             derived,
             ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64)),
         );
-        let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
-        let inner = EthTransactionValidatorBuilder::new(client, evm_config)
-            .no_shanghai()
-            .no_cancun()
-            .build(InMemoryBlobStore::default());
-        let validator: TestValidator =
-            BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default());
 
         let state = validator
             .validate_eip8130_full(&signed)
             .expect("create + config change must be admitted via the overlay");
         assert_eq!(state.sender, derived);
         assert_eq!(state.payer, derived, "self-paid create");
+    }
+
+    #[test]
+    fn rejects_delegation_over_ordinary_code_via_overlay_install() {
+        let signer = PrivateKeySigner::random();
+        let (validator, signed, sender) =
+            delegation_validation_fixture(&signer, Some(Bytes::from_static(&[0x60, 0x00])));
+        assert_eq!(sender, signer.address());
+
+        assert_eip8130_validation_reason(
+            validator.validate_eip8130_full(&signed),
+            "delegation sender has non-delegation code",
+        );
+    }
+
+    #[test]
+    fn admits_delegation_over_empty_code_via_overlay_install() {
+        let signer = PrivateKeySigner::random();
+        let (validator, signed, sender) = delegation_validation_fixture(&signer, None);
+        assert_eq!(sender, signer.address());
+
+        let state = validator
+            .validate_eip8130_full(&signed)
+            .expect("empty sender code must accept delegation");
+        assert_eq!(state.sender, sender);
+        assert_eq!(state.payer, sender);
+        assert_eq!(state.sender_bytecode_hash, None);
+    }
+
+    #[test]
+    fn admits_delegation_update_over_existing_indicator_via_overlay_install() {
+        let signer = PrivateKeySigner::random();
+        let existing_code = delegation_indicator(Address::repeat_byte(0x11));
+        let expected_hash = alloy_primitives::keccak256(&existing_code);
+        let (validator, signed, sender) =
+            delegation_validation_fixture(&signer, Some(existing_code));
+        assert_eq!(sender, signer.address());
+
+        let state = validator
+            .validate_eip8130_full(&signed)
+            .expect("existing delegation indicator must accept a target update");
+        assert_eq!(state.sender, sender);
+        assert_eq!(state.payer, sender);
+        assert_eq!(state.sender_bytecode_hash, Some(expected_hash));
     }
 
     #[test]

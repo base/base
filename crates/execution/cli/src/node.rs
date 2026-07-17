@@ -413,17 +413,19 @@ mod tests {
         let args = CommandParser::<ExecutionNodeArgs>::parse_from([
             "reth",
             "--enable-metering",
-            "--metering.execution-time-us",
-            "5000000",
+            "--metering.target-flashblocks-per-block",
+            "4",
+            "--metering.gas-limit",
+            "30000000",
         ])
         .args;
 
         assert!(args.metering.enable_metering);
-        assert_eq!(args.metering.metering_execution_time_us, Some(5_000_000));
+        assert_eq!(args.metering.metering_gas_limit, Some(30_000_000));
 
         let launch_config = args.into_launch_config(Arc::new(BaseChainSpec::devnet()));
         assert!(launch_config.standard.metering.enable_metering);
-        assert_eq!(launch_config.standard.metering.metering_execution_time_us, Some(5_000_000));
+        assert_eq!(launch_config.standard.metering.metering_gas_limit, Some(30_000_000));
     }
 
     #[test]

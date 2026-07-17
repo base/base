@@ -871,7 +871,7 @@ impl<T> Default for BasePoolBuilder<T> {
         Self {
             pool_config_overrides: Default::default(),
             ordering: BaseOrdering::default(),
-            max_inflight_delegated_slots: 1,
+            max_inflight_delegated_slots: 4,
             _pd: Default::default(),
         }
     }

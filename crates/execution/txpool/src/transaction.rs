@@ -352,6 +352,11 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
     fn eip8130_replay_id(&self) -> Option<B256> {
         None
     }
+
+    /// Returns whether this transaction belongs in the EIP-8130 sidecar.
+    fn is_eip8130_sidecar_transaction(&self) -> bool {
+        self.eip8130_nonce_channel_key().is_some() || self.eip8130_replay_id().is_some()
+    }
 }
 
 impl<Pooled> BasePooledTx for BasePooledTransaction<BaseTransactionSigned, Pooled>

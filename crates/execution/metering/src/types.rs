@@ -5,7 +5,7 @@ use base_bundles::MeterBundleResponse;
 use serde::{Deserialize, Serialize};
 
 /// Response for block metering RPC calls.
-/// Contains the block hash plus timing information for EVM execution and state root calculation.
+/// Contains the block hash plus timing information for signer recovery and EVM execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MeterBlockResponse {
@@ -17,12 +17,13 @@ pub struct MeterBlockResponse {
     pub signer_recovery_time_us: u128,
     /// Duration of EVM execution in microseconds
     pub execution_time_us: u128,
-    /// Duration of state root calculation in microseconds.
+    /// Deprecated state-root calculation duration in microseconds.
     ///
-    /// Note: This timing is most accurate for recent blocks where state tries are cached.
-    /// For older blocks, trie nodes may not be cached, which can significantly inflate this value.
+    /// State-root simulation was removed from this profiling path. The field is retained for
+    /// response compatibility and is always serialized as zero by this version.
+    #[serde(default)]
     pub state_root_time_us: u128,
-    /// Total duration (signer recovery + EVM execution + state root calculation) in microseconds
+    /// Total duration (signer recovery + EVM execution) in microseconds
     pub total_time_us: u128,
     /// Per-transaction metering data
     pub transactions: Vec<MeterBlockTransactions>,
@@ -46,7 +47,7 @@ pub struct MeterBlockTransactions {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourceFeeEstimateResponse {
-    /// Resource name (gasUsed, executionTime, etc).
+    /// Resource name (gasUsed or dataAvailability).
     pub resource: String,
     /// Minimum fee to displace enough capacity.
     pub threshold_priority_fee: U256,
@@ -73,4 +74,32 @@ pub struct MeteredPriorityFeeResponse {
     pub blocks_sampled: u64,
     /// Per-resource estimates.
     pub resource_estimates: Vec<ResourceFeeEstimateResponse>,
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::B256;
+
+    use super::{MeterBlockResponse, MeterBlockTransactions};
+
+    #[test]
+    fn meter_block_response_serializes_deprecated_state_root_time_as_zero() {
+        let response = MeterBlockResponse {
+            block_hash: B256::ZERO,
+            block_number: 1,
+            signer_recovery_time_us: 2,
+            execution_time_us: 3,
+            state_root_time_us: 0,
+            total_time_us: 5,
+            transactions: vec![MeterBlockTransactions {
+                tx_hash: B256::ZERO,
+                gas_used: 21_000,
+                execution_time_us: 3,
+            }],
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+
+        assert!(json.contains("\"stateRootTimeUs\":0"));
+    }
 }

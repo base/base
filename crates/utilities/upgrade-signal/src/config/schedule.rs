@@ -37,7 +37,7 @@ impl UpgradeSignalConfig {
             upgrade_ids: vec![upgrade_id],
             mode: UpgradeSignalMode::MetricsOnly,
             l1_block_tag: BlockNumberOrTag::Finalized,
-            node_protocol_version: U256::from(UpgradeSignalDefaults::NODE_PROTOCOL_VERSION),
+            node_protocol_version: UpgradeSignalDefaults::node_protocol_version(),
         }
     }
 
@@ -203,6 +203,15 @@ mod tests {
         BaseUpgrade::from_contract_fork_name(upgrade_id).unwrap()
     }
 
+    fn supported_config(upgrade_id: &str) -> UpgradeSignalConfig {
+        let mut config = UpgradeSignalConfig::new(
+            address!("0000000000000000000000000000000000000001"),
+            upgrade(upgrade_id),
+        );
+        config.node_protocol_version = UpgradeSignalDefaults::packed_protocol_version(1, 1, 0);
+        config
+    }
+
     #[rstest]
     #[case("azul")]
     #[case("beryl")]
@@ -242,10 +251,7 @@ mod tests {
     #[case("azul")]
     #[case("beryl")]
     fn rejects_signal_above_node_protocol_version(#[case] upgrade_id: &str) {
-        let config = UpgradeSignalConfig::new(
-            address!("0000000000000000000000000000000000000001"),
-            upgrade(upgrade_id),
-        );
+        let config = supported_config(upgrade_id);
         let minimum_protocol_version = config.node_protocol_version + U256::from(1);
 
         assert!(matches!(
@@ -297,10 +303,7 @@ mod tests {
 
     #[test]
     fn schedule_validation_rejects_unsupported_protocol_version() {
-        let config = UpgradeSignalConfig::new(
-            address!("0000000000000000000000000000000000000001"),
-            BaseUpgrade::Azul,
-        );
+        let config = supported_config("azul");
 
         let schedule = UpgradeSignalSchedule::new(vec![
             UpgradeSignal {
