@@ -78,6 +78,11 @@ impl FakeL1 {
     }
 
     /// Extends the canonical chain by one block.
+    ///
+    /// When not stalled, each call dispatches the block through `dispatch_safe_l2_for`, which
+    /// consumes **two** scripted FCU responses: one synthetic (via `inject_fcu_v3_call`) and one
+    /// real (from the engine actor processing `ProcessSafeL2SignalRequest`). Script the response
+    /// queue with this in mind.
     pub async fn extend(&self, block: BlockInfo) {
         let mut state = self.state.lock().await;
         state.canonical.push(block);
@@ -141,13 +146,11 @@ impl FakeL1 {
             .expect("engine actor request channel closed while dispatching safe l2 signal");
 
         if let Some(engine_handle) = &self.engine_handle {
-            engine_handle
-                .inject_fcu_v3_call(alloy_rpc_types_engine::ForkchoiceState {
-                    head_block_hash: safe_l2.block_info.hash,
-                    safe_block_hash: safe_l2.block_info.hash,
-                    finalized_block_hash: safe_l2.block_info.hash,
-                })
-                .await;
+            engine_handle.inject_fcu_v3_call(alloy_rpc_types_engine::ForkchoiceState {
+                head_block_hash: safe_l2.block_info.hash,
+                safe_block_hash: safe_l2.block_info.hash,
+                finalized_block_hash: safe_l2.block_info.hash,
+            });
         }
 
         // Intentional ordering shortcut: in production, the derivation actor receives
@@ -194,6 +197,12 @@ impl BeaconClient for FakeL1 {
 
 #[async_trait]
 impl L1RetrievalProvider for FakeL1 {
+    /// Returns the next pending block, or `None` during normal (non-stalled) operation.
+    ///
+    /// In this harness, L1 data flows through the engine actor channel (`dispatch_safe_l2_for` →
+    /// `ProcessSafeL2SignalRequest`) rather than through pipeline polling. The `pending` queue is
+    /// only populated while the chain is stalled; in the normal path `extend()` dispatches blocks
+    /// directly and `next_l1_block` returns `Ok(None)`.
     async fn next_l1_block(&mut self) -> PipelineResult<Option<BlockInfo>> {
         let mut state = self.state.lock().await;
         if state.stalled {

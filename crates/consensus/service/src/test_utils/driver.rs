@@ -79,13 +79,11 @@ impl Driver {
 
     /// Advances simulated time by `ticks` deterministic steps.
     ///
-    /// Each tick advances paused time by 1ms and yields to the runtime exactly
-    /// once. A single tick therefore lets each currently-ready task make one
-    /// step of progress; it does not drain a chain of dependent actor messages.
-    /// A message that must cross `N` actor hops (e.g. L1 watcher -> derivation
-    /// -> engine) needs at least `N` ticks to propagate end-to-end. Size tick
-    /// budgets accordingly: multi-hop choreography tests use large budgets such
-    /// as `tick(200)` to guarantee the whole chain settles.
+    /// Each tick advances paused time by 1ms and yields to the runtime exactly once, allowing one
+    /// ready task to make one step of progress. Because multiple actors may each be ready, a
+    /// message crossing `N` actor hops can take significantly more than `N` ticks depending on
+    /// task interleaving. Size budgets conservatively — multi-hop tests use large values such as
+    /// `tick(200)` to guarantee the whole chain settles regardless of scheduling order.
     pub async fn tick(&mut self, ticks: u64) {
         for _ in 0..ticks {
             tokio::time::advance(Duration::from_millis(1)).await;
