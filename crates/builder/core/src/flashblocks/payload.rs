@@ -26,6 +26,7 @@ use base_common_flashblocks::{
 use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{BaseBuiltPayload, BasePayloadBuilderAttributes};
+use base_observability_events::{GlobalTransactionEventWriter, TransactionEventType};
 use eyre::WrapErr as _;
 use reth_basic_payload_builder::BuildOutcome;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
@@ -59,6 +60,12 @@ use crate::{
         generator::{BlockCell, BuildArguments},
     },
     traits::{ClientBounds, PoolBounds},
+    transaction_events::{
+        BuilderFlashblockPublishedEventData, BuilderFlashblockStartedEventData,
+        BuilderFlashblockStoppedEventData, BuilderIncludedEventData,
+        BuilderPayloadFinalizedEventData, BuilderTransactionEventContext,
+        emit_builder_payload_event, emit_builder_transaction_event,
+    },
 };
 
 type NextBestFlashblocksTxs<Pool> = BestFlashblocksTxs<
@@ -388,11 +395,6 @@ where
             .map(|da_limit| da_limit / flashblocks_per_block);
         let da_footprint_per_batch =
             info.da_footprint_scalar.map(|_| ctx.block_gas_limit() / flashblocks_per_block);
-        let execution_time_per_batch_us = ctx.builder_config.flashblock_execution_time_budget_us;
-        let state_root_gas_per_batch = ctx
-            .builder_config
-            .block_state_root_gas_limit
-            .map(|limit| limit / flashblocks_per_block);
 
         let extra = FlashblocksExtraCtx {
             flashblock_index: 1,
@@ -400,13 +402,9 @@ where
             target_gas_for_batch: gas_per_batch,
             target_da_for_batch: da_per_batch,
             target_da_footprint_for_batch: da_footprint_per_batch,
-            target_execution_time_for_batch_us: execution_time_per_batch_us,
-            target_state_root_gas_for_batch: state_root_gas_per_batch,
             gas_per_batch,
             da_per_batch,
             da_footprint_per_batch,
-            execution_time_per_batch_us,
-            state_root_gas_per_batch,
         };
 
         let mut fb_cancel = block_cancel.child_token();
@@ -562,11 +560,10 @@ where
         executed_sender_nonces: &mut HashMap<Address, u64>,
     ) -> eyre::Result<Option<FlashblocksExtraCtx>> {
         let flashblock_index = ctx.flashblock_index();
+        let payload_id = ctx.payload_id().to_string();
         let target_gas_for_batch = ctx.extra.target_gas_for_batch;
         let mut target_da_for_batch = ctx.extra.target_da_for_batch;
         let mut target_da_footprint_for_batch = ctx.extra.target_da_footprint_for_batch;
-        let mut target_state_root_gas_for_batch = ctx.extra.target_state_root_gas_for_batch;
-        let flashblock_execution_time_limit_us = ctx.extra.execution_time_per_batch_us;
 
         info!(
             target: "payload_builder",
@@ -578,13 +575,24 @@ where
             da_used = info.cumulative_da_bytes_used,
             block_gas_used = ctx.block_gas_limit(),
             target_da_footprint = target_da_footprint_for_batch,
-            flashblock_execution_time_limit_us = ?flashblock_execution_time_limit_us,
-            target_state_root_gas_for_batch = ?target_state_root_gas_for_batch,
             "Building flashblock",
         );
         let flashblock_build_start_time = Instant::now();
-
-        info.reset_flashblock_execution_time();
+        self.emit_flashblock_event(
+            ctx,
+            &payload_id,
+            TransactionEventType::BuilderFlashblockStarted,
+            None,
+            || {
+                BuilderFlashblockStartedEventData::new(
+                    target_gas_for_batch,
+                    info.cumulative_gas_used,
+                    target_da_for_batch,
+                    info.cumulative_da_bytes_used,
+                    target_da_footprint_for_batch,
+                )
+            },
+        );
 
         // Correct the pool's sender nonce tracking before reading the next iterator.
         // `prune_transactions` clears sender_info, causing nonce-continuation txs to
@@ -624,8 +632,6 @@ where
             da_footprint_gas_scalar: info.da_footprint_scalar,
             block_da_footprint_limit: target_da_footprint_for_batch,
             tx_execution_time_limit_us: ctx.builder_config.max_execution_time_per_tx_us,
-            flashblock_execution_time_limit_us,
-            block_state_root_gas_limit: target_state_root_gas_for_batch,
             block_uncompressed_size_limit: ctx.builder_config.max_uncompressed_block_size,
         };
         let diag = ctx
@@ -674,6 +680,19 @@ where
         // We got block cancelled, we won't need anything from the block at this point
         // Caution: this assume that block cancel token only cancelled when new FCU is received
         if block_cancel.is_cancelled() {
+            self.emit_flashblock_event(
+                ctx,
+                &payload_id,
+                TransactionEventType::BuilderFlashblockBuildStopped,
+                None,
+                || {
+                    BuilderFlashblockStoppedEventData::new(
+                        "block_cancelled_before_build",
+                        0,
+                        flashblock_build_start_time.elapsed().as_secs_f64() * 1000.0,
+                    )
+                },
+            );
             self.record_flashblocks_metrics(
                 ctx,
                 info,
@@ -727,6 +746,19 @@ where
                 };
 
                 if cancelled {
+                    self.emit_flashblock_event(
+                        ctx,
+                        &payload_id,
+                        TransactionEventType::BuilderFlashblockBuildStopped,
+                        None,
+                        || {
+                            BuilderFlashblockStoppedEventData::new(
+                                "payload_resolved_before_publish",
+                                fb_payload.diff.transactions.len(),
+                                flashblock_build_start_time.elapsed().as_secs_f64() * 1000.0,
+                            )
+                        },
+                    );
                     self.record_flashblocks_metrics(
                         ctx,
                         info,
@@ -745,8 +777,23 @@ where
                 best_payload.set(new_payload);
 
                 // Record flashblock build duration
-                BuilderMetrics::flashblock_build_duration()
-                    .record(flashblock_build_start_time.elapsed());
+                let flashblock_build_duration = flashblock_build_start_time.elapsed();
+                self.emit_flashblock_event(
+                    ctx,
+                    &payload_id,
+                    TransactionEventType::BuilderFlashblockPublished,
+                    Some(fb_payload.diff.block_hash),
+                    || {
+                        BuilderFlashblockPublishedEventData::new(
+                            fb_payload.diff.transactions.len(),
+                            flashblock_byte_size,
+                            flashblock_build_duration.as_secs_f64() * 1000.0,
+                            fb_payload.diff.gas_used,
+                            fb_payload.diff.block_hash,
+                        )
+                    },
+                );
+                BuilderMetrics::flashblock_build_duration().record(flashblock_build_duration);
                 BuilderMetrics::flashblock_byte_size_histogram()
                     .record(flashblock_byte_size as f64);
                 BuilderMetrics::flashblock_num_tx_histogram()
@@ -771,18 +818,10 @@ where
                     *footprint += da_footprint_limit;
                 }
 
-                if let (Some(time), Some(time_per_batch)) =
-                    (target_state_root_gas_for_batch.as_mut(), ctx.extra.state_root_gas_per_batch)
-                {
-                    *time += time_per_batch;
-                }
-
                 let next_extra = ctx.extra.clone().next(
                     target_gas_for_batch,
                     target_da_for_batch,
                     target_da_footprint_for_batch,
-                    ctx.extra.execution_time_per_batch_us,
-                    target_state_root_gas_for_batch,
                 );
 
                 let gas_headroom_pct = if limits.block_gas_limit > 0 {
@@ -812,16 +851,40 @@ where
                     target_gas = limits.block_gas_limit,
                     gas_headroom_pct = gas_headroom_pct,
                     current_da = info.cumulative_da_bytes_used,
-                    flashblock_exec_time_us = info.flashblock_execution_time_us,
-                    exec_time_limit_us = ?limits.flashblock_execution_time_limit_us,
-                    cumulative_state_root_gas = info.cumulative_state_root_gas,
-                    state_root_gas_limit = ?limits.block_state_root_gas_limit,
                     target_flashblocks = ctx.target_flashblock_count(),
                 );
 
                 Ok(Some(next_extra))
             }
         }
+    }
+
+    fn emit_flashblock_event<D, F>(
+        &self,
+        ctx: &BasePayloadBuilderCtx,
+        payload_id: &str,
+        event_type: TransactionEventType,
+        block_hash: Option<B256>,
+        data: F,
+    ) where
+        D: Serialize,
+        F: FnOnce() -> D,
+    {
+        if GlobalTransactionEventWriter::get().is_none() {
+            return;
+        }
+        let event_ctx = BuilderTransactionEventContext {
+            payload_id: payload_id.to_string(),
+            block_number: ctx.block_number(),
+            block_hash,
+            parent_hash: ctx.parent_hash(),
+            flashblock_index: Some(ctx.flashblock_index()),
+            target_flashblock_count: ctx.target_flashblock_count(),
+            ordering_position: None,
+            builder_mode: "flashblocks",
+            source_queue: "flashblock_builder",
+        };
+        emit_builder_payload_event(event_ctx, event_type, data);
     }
 
     /// Do some logging and metric recording when we stop build flashblocks
@@ -839,11 +902,6 @@ where
             .record(flashblocks_per_block.saturating_sub(ctx.flashblock_index()) as f64);
         BuilderMetrics::payload_num_tx().record(info.executed_transactions.len() as f64);
         BuilderMetrics::payload_num_tx_gauge().set(info.executed_transactions.len() as f64);
-
-        // Record cumulative state root gas for the block
-        if info.cumulative_state_root_gas > 0 {
-            BuilderMetrics::block_state_root_gas().record(info.cumulative_state_root_gas as f64);
-        }
 
         // Record cumulative uncompressed block size
         BuilderMetrics::block_uncompressed_size().record(info.cumulative_uncompressed_bytes as f64);
@@ -876,6 +934,7 @@ where
         let (final_payload, _) = build_block(state, ctx, info, FlashblockId::default(), true)?;
 
         ctx.flush_rejected_txs(info);
+        self.emit_final_inclusion_events(ctx, &final_payload);
 
         let elapsed = start_time.elapsed();
         info!(
@@ -889,6 +948,56 @@ where
         finalized_cell.set(final_payload);
 
         Ok(())
+    }
+
+    fn emit_final_inclusion_events(
+        &self,
+        ctx: &BasePayloadBuilderCtx,
+        final_payload: &BaseBuiltPayload,
+    ) {
+        if GlobalTransactionEventWriter::get().is_none() {
+            return;
+        }
+
+        let block = final_payload.block();
+        let block_hash = block.hash();
+        let block_number = block.number;
+        let transaction_count = block.body().transactions.len();
+        let payload_event_ctx = BuilderTransactionEventContext {
+            payload_id: ctx.payload_id().to_string(),
+            block_number,
+            block_hash: Some(block_hash),
+            parent_hash: ctx.parent_hash(),
+            flashblock_index: None,
+            target_flashblock_count: ctx.target_flashblock_count(),
+            ordering_position: None,
+            builder_mode: "flashblocks",
+            source_queue: "finalized_payload",
+        };
+        emit_builder_payload_event(
+            payload_event_ctx.clone(),
+            TransactionEventType::BuilderPayloadFinalized,
+            || {
+                BuilderPayloadFinalizedEventData::new(
+                    transaction_count,
+                    block.gas_used,
+                    block.gas_limit,
+                    block.timestamp,
+                    "builder_finalized_payload",
+                )
+            },
+        );
+
+        for (position, tx) in block.body().transactions.iter().enumerate() {
+            let mut event_ctx = payload_event_ctx.clone();
+            event_ctx.ordering_position = Some(position as u64);
+            emit_builder_transaction_event(
+                event_ctx,
+                TransactionEventType::BuilderIncluded,
+                tx.tx_hash(),
+                || BuilderIncludedEventData::new("builder_finalized_payload"),
+            );
+        }
     }
 
     /// Calculate number of flashblocks, taking time drift into account.

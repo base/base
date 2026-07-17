@@ -309,8 +309,6 @@ services:
       - --rollup.chain-block-time=2000
       - --metrics=0.0.0.0:${L2_BUILDER_METRICS_PORT}
       - --builder.enable-resource-metering
-      - --builder.flashblock-execution-time-budget-us=${METERING_EXECUTION_TIME_US}
-      - --builder.block-state-root-gas-limit=${BUILDER_BLOCK_STATE_ROOT_GAS_LIMIT}
       - --builder.max-rejected-txs-per-block=${BUILDER_MAX_REJECTED_TXS_PER_BLOCK}
       - --txpool.nolocals
       - --rollup.txpool-max-inflight-delegated-slots=32768
@@ -476,8 +474,6 @@ services:
       - --enable-transaction-event-journal
       - --enable-metering
       - --metering.gas-limit=${METERING_GAS_LIMIT}
-      - --metering.execution-time-us=${METERING_EXECUTION_TIME_US}
-      - --metering.state-root-time-us=${METERING_STATE_ROOT_TIME_US}
       - --metering.da-bytes=${METERING_DA_BYTES}
       - --metering.target-flashblocks-per-block=${METERING_TARGET_FLASHBLOCKS_PER_BLOCK}
       - --l1-eth-rpc

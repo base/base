@@ -1,10 +1,6 @@
 //! Base transaction-pool wrapper that combines the protocol pool with a 2D nonce sidecar.
 
-use std::{
-    collections::{HashMap, HashSet},
-    fmt,
-    sync::Arc,
-};
+use std::{collections::HashMap, fmt, sync::Arc};
 
 use alloy_eips::{
     eip4844::{BlobAndProofV1, BlobAndProofV2, BlobCellsAndProofsV1},
@@ -52,7 +48,6 @@ pub struct BaseTransactionPool<
         Pool<TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>>, O, S>,
     ordering: O,
     nonce_pool: Arc<RwLock<TwoDNoncePool<T>>>,
-    eip8130_replays: Arc<RwLock<HashMap<B256, TxHash>>>,
     listeners: Arc<RwLock<SidecarListeners<T>>>,
 }
 
@@ -84,7 +79,6 @@ where
             protocol_pool: self.protocol_pool.clone(),
             ordering: self.ordering.clone(),
             nonce_pool: Arc::clone(&self.nonce_pool),
-            eip8130_replays: Arc::clone(&self.eip8130_replays),
             listeners: Arc::clone(&self.listeners),
         }
     }
@@ -124,7 +118,6 @@ where
             protocol_pool,
             ordering,
             nonce_pool: Arc::new(RwLock::new(TwoDNoncePool::new(price_bump_config))),
-            eip8130_replays: Arc::new(RwLock::new(HashMap::new())),
             listeners: Arc::new(RwLock::new(SidecarListeners::default())),
         }
     }
@@ -145,91 +138,7 @@ where
     }
 
     fn is_sidecar_transaction(&self, transaction: &T) -> bool {
-        transaction.eip8130_nonce_channel_key().is_some()
-    }
-
-    /// Best-effort replay-id dedup lookup for the mempool admission path.
-    ///
-    /// This check and the subsequent [`Self::track_eip8130_replay_id`] insert are
-    /// deliberately **not** atomic: the index lock is released between them (and
-    /// between this check and the actual pool insert). Two concurrent admissions
-    /// of the same `replay_id` can therefore both pass and enter the
-    /// pool. That is acceptable because the index is only a mempool optimization,
-    /// not a consensus control: identical transactions collapse by tx-hash in the
-    /// underlying pool, and any surviving nonce-free duplicate is rejected at
-    /// execution by the enshrined replay buffer. Holding the index lock across the
-    /// validate+insert would also serialize admission and reintroduce cross-lock
-    /// nesting, so the looser guarantee is intentional. A stale entry whose target
-    /// is no longer pooled is opportunistically evicted here.
-    fn eip8130_replay_already_seen(&self, transaction: &T) -> Option<TxHash> {
-        // `replay_id` already commits to the resolved sender, so it alone keys the
-        // index (matching the enshrined replay buffer, which keys by `replay_id`).
-        let replay_id = transaction.eip8130_replay_id()?;
-        let hash = self.eip8130_replays.read().get(&replay_id).copied()?;
-        // Only nonce-free transactions have replay IDs, and those are only ever
-        // admitted to the protocol pool; channelized transactions live in
-        // `nonce_pool` and never carry a replay ID. Guard that routing invariant
-        // so the protocol-pool-only liveness check below stays sound if routing
-        // or replay-id derivation ever evolve independently.
-        debug_assert!(
-            !self.nonce_pool.read().contains(&hash),
-            "eip8130 replay index points at a sidecar-pool transaction",
-        );
-        if self.protocol_pool.get(&hash).is_some() {
-            return Some(hash);
-        }
-        self.eip8130_replays.write().remove(&replay_id);
-        None
-    }
-
-    fn track_eip8130_replay_id(&self, replay_id: B256, hash: TxHash) {
-        {
-            let mut index = self.eip8130_replays.write();
-            index.insert(replay_id, hash);
-        }
-        self.reconcile_eip8130_replays_if_needed();
-    }
-
-    fn reconcile_eip8130_replays_if_needed(&self) {
-        let pool_size = self.pool_size().total;
-        // Fast path: bail while within bound, holding only the index read lock.
-        if self.eip8130_replays.read().len() <= pool_size {
-            return;
-        }
-        // Snapshot and rebuild the index from the live pool *without* holding the
-        // `eip8130_replays` lock. `pooled_transactions()` takes `nonce_pool.read()`,
-        // so acquiring the index write lock first (as the naive `write(); rebuild()`
-        // would) establishes an `eip8130_replays -> nonce_pool` lock order. Building
-        // the replacement outside the lock keeps the two locks strictly disjoint,
-        // avoiding a lock-order inversion with any path that touches the index after
-        // the nonce pool. Entries added between this snapshot and the write below are
-        // best-effort only (the index is a dedup optimization, not consensus state).
-        let mut rebuilt = HashMap::new();
-        for transaction in self.pooled_transactions() {
-            if let Some(replay_id) = transaction.transaction.eip8130_replay_id() {
-                rebuilt.insert(replay_id, *transaction.hash());
-            }
-        }
-        let mut index = self.eip8130_replays.write();
-        // Re-check under the write lock: only overwrite while still oversized.
-        if index.len() > pool_size {
-            *index = rebuilt;
-        }
-    }
-
-    fn untrack_eip8130_replays(&self, transactions: &[Arc<ValidPoolTransaction<T>>]) {
-        let mut index = self.eip8130_replays.write();
-        for transaction in transactions {
-            if let Some(replay_id) = transaction.transaction.eip8130_replay_id() {
-                index.remove(&replay_id);
-            }
-        }
-    }
-
-    fn untrack_eip8130_hashes(&self, hashes: &[TxHash]) {
-        let hashes = hashes.iter().collect::<HashSet<_>>();
-        let mut index = self.eip8130_replays.write();
-        index.retain(|_, indexed_hash| !hashes.contains(indexed_hash));
+        transaction.is_eip8130_sidecar_transaction()
     }
 
     fn partition_hashes_by_pool(&self, hashes: Vec<TxHash>) -> (Vec<TxHash>, Vec<TxHash>) {
@@ -413,23 +322,8 @@ where
         origin: TransactionOrigin,
         transaction: Self::Transaction,
     ) -> PoolResult<TransactionEvents> {
-        if self.eip8130_replay_already_seen(&transaction).is_some() {
-            // TODO: Replace the indexed transaction when the new priority fee
-            // satisfies the pool's configured price bump.
-            return Err(reth_transaction_pool::error::PoolError::new(
-                *transaction.hash(),
-                reth_transaction_pool::error::PoolErrorKind::AlreadyImported,
-            ));
-        }
         if !self.is_sidecar_transaction(&transaction) {
-            let replay_id = transaction.eip8130_replay_id();
-            let hash = *transaction.hash();
-            let events =
-                self.protocol_pool.add_transaction_and_subscribe(origin, transaction).await?;
-            if let Some(replay_id) = replay_id {
-                self.track_eip8130_replay_id(replay_id, hash);
-            }
-            return Ok(events);
+            return self.protocol_pool.add_transaction_and_subscribe(origin, transaction).await;
         }
 
         let hash = *transaction.hash();
@@ -446,24 +340,10 @@ where
         origin: TransactionOrigin,
         transaction: Self::Transaction,
     ) -> PoolResult<AddedTransactionOutcome> {
-        if self.eip8130_replay_already_seen(&transaction).is_some() {
-            // TODO: Replace the indexed transaction when the new priority fee
-            // satisfies the pool's configured price bump.
-            return Err(reth_transaction_pool::error::PoolError::new(
-                *transaction.hash(),
-                reth_transaction_pool::error::PoolErrorKind::AlreadyImported,
-            ));
-        }
         if self.is_sidecar_transaction(&transaction) {
             self.add_sidecar_transaction(origin, transaction).await
         } else {
-            let replay_id = transaction.eip8130_replay_id();
-            let hash = *transaction.hash();
-            let outcome = self.protocol_pool.add_transaction(origin, transaction).await?;
-            if let Some(replay_id) = replay_id {
-                self.track_eip8130_replay_id(replay_id, hash);
-            }
-            Ok(outcome)
+            self.protocol_pool.add_transaction(origin, transaction).await
         }
     }
 
@@ -682,8 +562,9 @@ where
         sender: Address,
         nonce: u64,
     ) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
-        // Channelized nonce sequences live in a separate namespace from account nonces, so this
-        // sender+nonce lookup intentionally remains protocol-only.
+        // Channelized nonce sequences and nonce-free replay ids live in separate
+        // namespaces from account nonces, so this sender+nonce lookup
+        // intentionally remains protocol-only.
         self.protocol_pool.get_pending_transaction_by_sender_and_nonce(sender, nonce)
     }
 
@@ -735,10 +616,8 @@ where
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(hashes);
         let mut removed = self.protocol_pool.remove_transactions(protocol_hashes);
-        self.untrack_eip8130_replays(&removed);
         let sidecar_removed = self.nonce_pool.write().remove_transactions(&sidecar_hashes);
         if !sidecar_removed.is_empty() {
-            self.untrack_eip8130_replays(&sidecar_removed);
             self.listeners.write().on_discarded(&sidecar_removed);
         }
         removed.extend(sidecar_removed);
@@ -751,11 +630,9 @@ where
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(hashes);
         let mut removed = self.protocol_pool.remove_transactions_and_descendants(protocol_hashes);
-        self.untrack_eip8130_replays(&removed);
         let sidecar_removed =
             self.nonce_pool.write().remove_transactions_and_descendants(&sidecar_hashes);
         if !sidecar_removed.is_empty() {
-            self.untrack_eip8130_replays(&sidecar_removed);
             self.listeners.write().on_discarded(&sidecar_removed);
         }
         removed.extend(sidecar_removed);
@@ -767,10 +644,8 @@ where
         sender: Address,
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let mut removed = self.protocol_pool.remove_transactions_by_sender(sender);
-        self.untrack_eip8130_replays(&removed);
         let sidecar_removed = self.nonce_pool.write().remove_transactions_by_sender(sender);
         if !sidecar_removed.is_empty() {
-            self.untrack_eip8130_replays(&sidecar_removed);
             self.listeners.write().on_discarded(&sidecar_removed);
         }
         removed.extend(sidecar_removed);
@@ -783,9 +658,7 @@ where
     ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
         let (protocol_hashes, sidecar_hashes) = self.partition_hashes_by_pool(hashes);
         let mut removed = self.protocol_pool.prune_transactions(protocol_hashes);
-        self.untrack_eip8130_replays(&removed);
         let pruned = self.nonce_pool.write().prune_mined(&sidecar_hashes);
-        self.untrack_eip8130_replays(&pruned.removed);
         removed.extend(pruned.removed);
         removed
     }
@@ -1012,21 +885,24 @@ where
         update: reth_transaction_pool::CanonicalStateUpdate<'_, Self::Block>,
     ) {
         let block_hash = update.hash();
+        let now = update.timestamp();
         let mined_transactions = update.mined_transactions.clone();
-        self.untrack_eip8130_hashes(&mined_transactions);
         self.protocol_pool.on_canonical_state_change(update);
         let mut nonce_pool = self.nonce_pool.write();
         let pruned = nonce_pool.prune_mined(&mined_transactions);
+        let expired = nonce_pool.remove_expired_nonce_free(now);
         let mut listeners = self.listeners.write();
         if !pruned.removed.is_empty() {
             listeners.on_mined(&pruned.removed, block_hash);
+        }
+        if !expired.is_empty() {
+            listeners.on_discarded(&expired);
         }
     }
 
     fn update_accounts(&self, accounts: Vec<ChangedAccount>) {
         let removed = self.nonce_pool.write().remove_unaffordable(&accounts);
         if !removed.is_empty() {
-            self.untrack_eip8130_replays(&removed);
             self.listeners.write().on_discarded(&removed);
         }
         self.protocol_pool.update_accounts(accounts)
@@ -1262,7 +1138,8 @@ mod tests {
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
-        BasePooledTransaction as ConsensusPooledTransaction, Eip8130Signed, TxEip8130,
+        BasePooledTransaction as ConsensusPooledTransaction, Eip8130Constants, Eip8130Signed,
+        TxEip8130,
     };
     use futures::StreamExt;
     use reth_transaction_pool::{PriceBumpConfig, TransactionOrigin, identifier::TransactionId};
@@ -1290,6 +1167,32 @@ mod tests {
             nonce_key,
             nonce_sequence,
             expiry: 0,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas,
+            gas_limit: 50_000,
+            account_changes: Vec::new(),
+            calls: Vec::new(),
+            metadata: Bytes::new(),
+            payer: None,
+        };
+        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let signed =
+            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+        let pooled = ConsensusPooledTransaction::Eip8130(signed);
+        BasePooledTransaction::from_pooled(Recovered::new_unchecked(pooled, signer.address()))
+    }
+
+    fn signed_nonce_free_tx(
+        signer: &PrivateKeySigner,
+        expiry: u64,
+        max_fee_per_gas: u128,
+    ) -> BasePooledTransaction {
+        let tx = TxEip8130 {
+            chain_id: test_chain_id(),
+            sender: None,
+            nonce_key: Eip8130Constants::NONCE_KEY_MAX,
+            nonce_sequence: 0,
+            expiry,
             max_priority_fee_per_gas: 0,
             max_fee_per_gas,
             gas_limit: 50_000,
@@ -1378,5 +1281,32 @@ mod tests {
         assert!(
             matches!(all_events.next().await, Some(FullTransactionEvent::Discarded(event_hash)) if event_hash == hash)
         );
+    }
+
+    #[tokio::test]
+    async fn nonce_free_replacement_notifies_old_hash_and_keeps_new_pending() {
+        let mut nonce_pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let mut listeners = SidecarListeners::default();
+        let signer = signer();
+        let original = valid_pool_transaction(signed_nonce_free_tx(&signer, 10, 1_000));
+        let replacement = valid_pool_transaction(signed_nonce_free_tx(&signer, 10, 1_250));
+        let original_hash = *original.hash();
+        let replacement_hash = *replacement.hash();
+        let mut original_events = listeners.subscribe_hash(original_hash).0;
+        let mut replacement_events = listeners.subscribe_hash(replacement_hash).0;
+
+        let original_outcome = nonce_pool.insert_validated(original, 0).unwrap();
+        listeners.on_inserted(&nonce_pool, &original_outcome);
+        assert!(matches!(original_events.next().await, Some(TransactionEvent::Pending)));
+
+        let replacement_outcome = nonce_pool.insert_validated(replacement, 0).unwrap();
+        listeners.on_inserted(&nonce_pool, &replacement_outcome);
+
+        assert!(
+            matches!(original_events.next().await, Some(TransactionEvent::Replaced(hash)) if hash == replacement_hash)
+        );
+        assert!(matches!(replacement_events.next().await, Some(TransactionEvent::Pending)));
+        assert!(nonce_pool.get(&original_hash).is_none());
+        assert!(nonce_pool.get(&replacement_hash).is_some());
     }
 }

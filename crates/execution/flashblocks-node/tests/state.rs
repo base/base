@@ -789,11 +789,11 @@ async fn test_bundle_state_published_for_pending_metering() {
 
     assert!(
         bundle_state.account(&Account::Alice.address()).is_some(),
-        "pending bundle_state must include Alice for metering/trie cache consumers"
+        "pending bundle_state must include Alice for bundle metering consumers"
     );
     assert!(
         bundle_state.account(&Account::Bob.address()).is_some(),
-        "pending bundle_state must include Bob for metering/trie cache consumers"
+        "pending bundle_state must include Bob for bundle metering consumers"
     );
 }
 

@@ -200,13 +200,10 @@ L2_BASE_BERYL_BLOCK=21
 L2_BASE_COBALT_BLOCK=22
 
 # Metering Resource Limits
-# Whole-block budgets for gas/state-root/DA, plus a per-flashblock execution budget.
-# These preserve the builder's current 10-flashblock targets: 60M gas / block,
-# ~1.5MB DA / block, ~1s state root / block, and 5s execution / flashblock.
+# Whole-block budgets for gas and DA.
+# These preserve the builder's current 10-flashblock targets: 60M gas / block
+# and ~1.5MB DA / block.
 METERING_GAS_LIMIT=60000000
-METERING_EXECUTION_TIME_US=5000000
-METERING_STATE_ROOT_TIME_US=1000000
 METERING_DA_BYTES=1572860
 METERING_TARGET_FLASHBLOCKS_PER_BLOCK=10
-BUILDER_BLOCK_STATE_ROOT_GAS_LIMIT=600000000
 BUILDER_MAX_REJECTED_TXS_PER_BLOCK=20000

@@ -50,8 +50,8 @@ use base_common_consensus::{
 };
 use base_common_precompiles::{NonceManagerStorage, TxContextStorage};
 use base_execution_eip8130::{
-    AccountChangeApplier, AccountConfigurationStorage, ApplyError, FeeCheck, IntrinsicGas,
-    IntrinsicGasInput, NonceMode, NonceValidator, TransactionAuthorizer,
+    AccountChangeApplier, AccountConfigurationStorage, ApplyError, DelegationEffect, FeeCheck,
+    IntrinsicGas, IntrinsicGasInput, NonceMode, NonceValidator, TransactionAuthorizer,
 };
 use base_precompile_storage::{JournalStorageProvider, StorageCtx};
 use revm::{
@@ -826,12 +826,7 @@ impl Eip8130Executor {
                     .map_err(BaseTransactionError::eip8130)?;
             }
             if let Some(delegation) = &applied_tx.applied.delegation {
-                let code = if delegation.target.is_zero() {
-                    Bytecode::default()
-                } else {
-                    Bytecode::new_eip7702(delegation.target)
-                };
-                sctx.set_code(delegation.account, code).map_err(BaseTransactionError::eip8130)?;
+                delegation.install(sctx).map_err(BaseTransactionError::eip8130)?;
             }
 
             // 3. Resolve the nonce channel's first-use flag and validate the nonce.
@@ -1368,7 +1363,7 @@ impl Eip8130Executor {
     ) -> Result<(), BaseTransactionError> {
         let mut acc_mut = AccountConfigurationStorage::new(sctx);
         let mut created_effect: Option<(Address, Bytes)> = None;
-        let mut delegation_effect: Option<(Address, Address)> = None;
+        let mut delegation_effect: Option<DelegationEffect> = None;
         for (index, change) in signed.tx().account_changes.iter().enumerate() {
             match change {
                 AccountChange::Create(entry) => {
@@ -1400,7 +1395,7 @@ impl Eip8130Executor {
                     if created_effect.is_some() {
                         return Err(BaseTransactionError::eip8130(ApplyError::CreateAndDelegation));
                     }
-                    delegation_effect = Some((sender, *target));
+                    delegation_effect = Some(DelegationEffect::new(sender, *target));
                 }
             }
         }
@@ -1408,10 +1403,8 @@ impl Eip8130Executor {
             sctx.set_code(address, Bytecode::new_raw(code))
                 .map_err(BaseTransactionError::eip8130)?;
         }
-        if let Some((account, target)) = delegation_effect {
-            let code =
-                if target.is_zero() { Bytecode::default() } else { Bytecode::new_eip7702(target) };
-            sctx.set_code(account, code).map_err(BaseTransactionError::eip8130)?;
+        if let Some(delegation) = delegation_effect {
+            delegation.install(sctx).map_err(BaseTransactionError::eip8130)?;
         }
         Ok(())
     }
@@ -1597,6 +1590,32 @@ mod tests {
         evm_with_accounts(balance, sender, &[])
     }
 
+    fn seed_account_code(
+        evm: &mut BaseEvm<InMemoryDB, NoOpInspector, PrecompilesMap>,
+        address: Address,
+        code: Bytes,
+    ) {
+        let db = evm.ctx_mut().journal_mut().db_mut();
+        let mut info = db.basic(address).expect("in-memory account read").unwrap_or_default();
+        info.code_hash = keccak256(&code);
+        info.code = Some(Bytecode::new_raw(code));
+        db.insert_account_info(address, info);
+    }
+
+    fn journal_account_code(
+        evm: &mut BaseEvm<InMemoryDB, NoOpInspector, PrecompilesMap>,
+        address: Address,
+    ) -> Bytes {
+        evm.ctx_mut()
+            .journal_mut()
+            .load_account_with_code(address)
+            .expect("in-memory account code load")
+            .info
+            .code
+            .as_ref()
+            .map_or_else(Bytes::new, Bytecode::original_bytes)
+    }
+
     #[test]
     fn eoa_self_pay_transaction_executes_and_charges_sender() {
         let key = signing_key(0x22);
@@ -1621,6 +1640,58 @@ mod tests {
         // Fees were routed: base fee to the vault, priority tip to the beneficiary.
         assert!(outcome.state.contains_key(&Predeploys::BASE_FEE_VAULT));
         assert!(outcome.state.contains_key(&BENEFICIARY));
+    }
+
+    #[test]
+    fn transact_raw_rejects_delegation_over_ordinary_sender_code_without_replacing_it() {
+        let key = signing_key(0x23);
+        let sender = eoa_address(&key);
+        let ordinary_code = bytes!("60006000");
+        let target = address!("0x00000000000000000000000000000000000000dd");
+        let mut tx = base_tx();
+        tx.sender = Some(sender);
+        tx.account_changes = vec![AccountChange::Delegation(Delegation { target })];
+        let signed = configured_signed(tx, &key);
+        let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), sender);
+        seed_account_code(&mut evm, sender, ordinary_code.clone());
+
+        let error = evm.transact_raw(into_base_tx(&signed)).unwrap_err();
+
+        let EVMError::Transaction(BaseTransactionError::Eip8130(reason)) = error else {
+            panic!("ordinary sender code must reject delegation inclusion, got {error:?}");
+        };
+        assert!(
+            reason.contains("delegation cannot replace non-delegation code"),
+            "unexpected delegation rejection: {reason}"
+        );
+        assert_eq!(journal_account_code(&mut evm, sender), ordinary_code);
+    }
+
+    #[test]
+    fn simulate_rejects_delegation_over_ordinary_sender_code_and_rolls_back() {
+        let key = signing_key(0x24);
+        let sender = eoa_address(&key);
+        let ordinary_code = bytes!("60016000");
+        let target = address!("0x00000000000000000000000000000000000000dd");
+        let mut tx = base_tx();
+        tx.sender = Some(sender);
+        tx.account_changes = vec![AccountChange::Delegation(Delegation { target })];
+        let signed = configured_signed(tx, &key);
+        let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), sender);
+        seed_account_code(&mut evm, sender, ordinary_code.clone());
+        evm.ctx_mut().tx = into_base_tx(&signed);
+        evm.ctx_mut().tx.base.caller = sender;
+
+        let error = Eip8130Executor::simulate(&mut evm).unwrap_err();
+
+        let EVMError::Transaction(BaseTransactionError::Eip8130(reason)) = error else {
+            panic!("ordinary sender code must reject delegation simulation, got {error:?}");
+        };
+        assert!(
+            reason.contains("delegation cannot replace non-delegation code"),
+            "unexpected delegation rejection: {reason}"
+        );
+        assert_eq!(journal_account_code(&mut evm, sender), ordinary_code);
     }
 
     #[test]

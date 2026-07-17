@@ -43,6 +43,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 alloy-genesis.workspace = true
+base-protocol.workspace = true
 base-common-genesis.workspace = true
 reth-evm = { workspace = true, features = ["test-utils"] }
 reth-revm = { workspace = true, features = ["test-utils"] }

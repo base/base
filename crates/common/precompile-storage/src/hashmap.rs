@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use alloy_primitives::{Address, LogData, U256};
+use alloy_primitives::{Address, B256, LogData, U256};
 use revm::{
     context::journaled_state::JournalCheckpoint,
     context_interface::cfg::GasParams,
@@ -8,7 +8,10 @@ use revm::{
     state::{AccountInfo, Bytecode},
 };
 
-use crate::{error::BasePrecompileError, provider::PrecompileStorageProvider};
+use crate::{
+    error::BasePrecompileError,
+    provider::{PrecompileStorageProvider, validate_loaded_code_presence},
+};
 
 /// In-memory [`PrecompileStorageProvider`] for unit tests.
 ///
@@ -133,6 +136,21 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
     ) -> Result<(), BasePrecompileError> {
         let account = self.accounts.entry(address).or_default();
         f(&*account);
+        Ok(())
+    }
+
+    fn with_account_code(
+        &mut self,
+        address: Address,
+        f: &mut dyn FnMut(&Bytecode),
+    ) -> Result<(), BasePrecompileError> {
+        let empty = Bytecode::default();
+        let (expected_hash, code) =
+            self.accounts.get(&address).map_or((B256::ZERO, &empty), |account| {
+                (account.code_hash, account.code.as_ref().unwrap_or(&empty))
+            });
+        validate_loaded_code_presence(expected_hash, code)?;
+        f(code);
         Ok(())
     }
 
@@ -410,13 +428,83 @@ pub fn setup_storage() -> (HashMapStorageProvider, Address) {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, U256};
+    use alloy_primitives::{Address, B256, U256};
 
     use super::*;
     use crate::provider::PrecompileStorageProvider;
 
     const ADDR: Address = Address::ZERO;
     const KEY: U256 = U256::ZERO;
+
+    #[test]
+    fn with_account_code_reads_absent_as_empty_without_creating_account() {
+        let mut p = HashMapStorageProvider::new(1);
+        let mut observed_empty = false;
+
+        p.with_account_code(ADDR, &mut |code| observed_empty = code.is_empty()).unwrap();
+
+        assert!(observed_empty);
+        assert!(!p.accounts.contains_key(&ADDR), "a code read must not create the account");
+    }
+
+    #[test]
+    fn with_account_code_reads_empty_hash_with_missing_code_as_empty() {
+        let mut p = HashMapStorageProvider::new(1);
+        p.accounts.insert(ADDR, AccountInfo { code: None, ..Default::default() });
+        let mut observed_empty = false;
+
+        p.with_account_code(ADDR, &mut |code| observed_empty = code.is_empty()).unwrap();
+
+        assert!(observed_empty);
+        assert!(p.accounts.get(&ADDR).is_some_and(|account| account.code.is_none()));
+    }
+
+    #[test]
+    fn with_account_code_reads_matching_populated_code() {
+        let mut p = HashMapStorageProvider::new(1);
+        let code = Bytecode::new_raw([0x60u8, 0x00].as_ref().into());
+        p.set_code(ADDR, code.clone()).unwrap();
+        let mut observed = None;
+
+        p.with_account_code(ADDR, &mut |loaded| observed = Some(loaded.clone())).unwrap();
+
+        assert_eq!(observed, Some(code));
+    }
+
+    #[test]
+    fn with_account_code_rejects_missing_code_for_nonempty_hash() {
+        let mut p = HashMapStorageProvider::new(1);
+        p.accounts.insert(
+            ADDR,
+            AccountInfo { code_hash: B256::repeat_byte(0x11), code: None, ..Default::default() },
+        );
+        let mut callback_invoked = false;
+
+        let error = p.with_account_code(ADDR, &mut |_| callback_invoked = true).unwrap_err();
+
+        assert!(matches!(error, BasePrecompileError::Fatal(_)));
+        assert!(!callback_invoked);
+        assert!(p.accounts.get(&ADDR).is_some_and(|account| account.code.is_none()));
+    }
+
+    #[test]
+    fn with_account_code_does_not_rehash_populated_code() {
+        let mut p = HashMapStorageProvider::new(1);
+        let code = Bytecode::new_raw([0x60u8, 0x00].as_ref().into());
+        p.accounts.insert(
+            ADDR,
+            AccountInfo {
+                code_hash: B256::repeat_byte(0x22),
+                code: Some(code.clone()),
+                ..Default::default()
+            },
+        );
+        let mut observed = None;
+
+        p.with_account_code(ADDR, &mut |loaded| observed = Some(loaded.clone())).unwrap();
+
+        assert_eq!(observed, Some(code));
+    }
 
     #[test]
     fn set_code_static_violation_before_state_gas_charge() {

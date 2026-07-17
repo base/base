@@ -4,4 +4,4 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod args;
-pub use args::{Args, FlashblocksArgs};
+pub use args::{Args, FlashblocksArgs, TransactionEventsArgs};

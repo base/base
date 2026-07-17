@@ -23,6 +23,7 @@ use base_execution_payload_builder::{
 use base_execution_txpool::{
     BundleTransaction, TimestampedTransaction, estimated_da_size::DataAvailabilitySized,
 };
+use base_observability_events::TransactionEventType;
 use reth_basic_payload_builder::PayloadConfig;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_evm::{
@@ -35,6 +36,7 @@ use reth_primitives_traits::{InMemorySize, SealedHeader, SignedTransaction};
 use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
 use revm::{DatabaseCommit, context::result::ResultAndState, interpreter::as_u64_saturated};
+use serde::Serialize;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, debug, span, trace, warn};
@@ -42,37 +44,15 @@ use tracing::{Level, debug, span, trace, warn};
 use crate::{
     BuilderConfig, BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded, PayloadTxsBounds,
     ResourceLimits, TxResources, TxnExecutionError, TxnOutcome,
+    transaction_events::{
+        BuilderAcceptedEventData, BuilderConsideredEventData, BuilderRejectedEventData,
+        BuilderTransactionEventContext, emit_builder_transaction_event, rejection_reason_code,
+    },
 };
 
 /// Records the priority fee of a rejected transaction with the given reason as a label.
 fn record_rejected_tx_priority_fee(reason: &TxnExecutionError, priority_fee: f64) {
-    let r = match reason {
-        TxnExecutionError::TransactionDASizeExceeded(_, _) => "tx_da_size_exceeded",
-        TxnExecutionError::BlockDASizeExceeded { .. } => "block_da_size_exceeded",
-        TxnExecutionError::DAFootprintLimitExceeded { .. } => "da_footprint_limit_exceeded",
-        TxnExecutionError::TransactionGasLimitExceeded { .. } => "transaction_gas_limit_exceeded",
-        TxnExecutionError::BlockUncompressedSizeExceeded { .. } => {
-            "block_uncompressed_size_exceeded"
-        }
-        TxnExecutionError::MeteringDataPending => "metering_data_pending",
-        TxnExecutionError::ExecutionMeteringLimitExceeded(inner) => match inner {
-            ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _) => {
-                "tx_execution_time_exceeded"
-            }
-            ExecutionMeteringLimitExceeded::FlashblockExecutionTime(_, _, _) => {
-                "flashblock_execution_time_exceeded"
-            }
-            ExecutionMeteringLimitExceeded::BlockStateRootGas(_, _, _) => {
-                "block_state_root_gas_exceeded"
-            }
-        },
-        TxnExecutionError::SequencerTransaction => "sequencer_transaction",
-        TxnExecutionError::NonceTooLow => "nonce_too_low",
-        TxnExecutionError::InternalError(_) => "internal_error",
-        TxnExecutionError::EvmError => "evm_error",
-        TxnExecutionError::MaxGasUsageExceeded => "max_gas_usage_exceeded",
-    };
-    BuilderMetrics::rejected_tx_priority_fee(r).record(priority_fee);
+    BuilderMetrics::rejected_tx_priority_fee(rejection_reason_code(reason)).record(priority_fee);
 }
 
 /// Diagnostics captured during a single flashblock's transaction execution.
@@ -115,10 +95,8 @@ pub struct FlashblockDiagnostics {
     pub txs_rejected_da: u64,
     /// Number rejected by DA footprint limit.
     pub txs_rejected_da_footprint: u64,
-    /// Number rejected by execution time limits (tx or flashblock).
+    /// Number rejected by the per-transaction execution time limit.
     pub txs_rejected_execution_time: u64,
-    /// Number rejected by state root time limits (tx or block).
-    pub txs_rejected_state_root_time: u64,
     /// Number rejected by uncompressed size limit.
     pub txs_rejected_uncompressed_size: u64,
     /// Number skipped because metering data has not yet arrived.
@@ -144,13 +122,12 @@ impl FlashblockDiagnostics {
     }
 
     /// Returns the rejection counts keyed by their metric/log reason labels.
-    pub const fn rejection_counts(&self) -> [(&'static str, u64); 8] {
+    pub const fn rejection_counts(&self) -> [(&'static str, u64); 7] {
         [
             ("gas_limit", self.txs_rejected_gas),
             ("da_size", self.txs_rejected_da),
             ("da_footprint", self.txs_rejected_da_footprint),
             ("execution_time", self.txs_rejected_execution_time),
-            ("state_root_time", self.txs_rejected_state_root_time),
             ("uncompressed_size", self.txs_rejected_uncompressed_size),
             ("metering_data_pending", self.txs_rejected_metering_data_pending),
             ("other", self.txs_rejected_other),
@@ -171,7 +148,6 @@ impl FlashblockDiagnostics {
             + self.txs_rejected_da
             + self.txs_rejected_da_footprint
             + self.txs_rejected_execution_time
-            + self.txs_rejected_state_root_time
             + self.txs_rejected_uncompressed_size
             + self.txs_rejected_metering_data_pending
             + self.txs_rejected_other
@@ -193,15 +169,10 @@ impl FlashblockDiagnostics {
             TxnExecutionError::BlockUncompressedSizeExceeded { .. } => {
                 self.txs_rejected_uncompressed_size += 1;
             }
-            TxnExecutionError::ExecutionMeteringLimitExceeded(inner) => match inner {
-                ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _)
-                | ExecutionMeteringLimitExceeded::FlashblockExecutionTime(_, _, _) => {
-                    self.txs_rejected_execution_time += 1;
-                }
-                ExecutionMeteringLimitExceeded::BlockStateRootGas(_, _, _) => {
-                    self.txs_rejected_state_root_time += 1;
-                }
-            },
+            TxnExecutionError::ExecutionMeteringLimitExceeded(inner) => {
+                let ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _) = inner;
+                self.txs_rejected_execution_time += 1;
+            }
             TxnExecutionError::MeteringDataPending => {
                 self.txs_rejected_metering_data_pending += 1;
             }
@@ -232,20 +203,12 @@ pub struct FlashblocksExtraCtx {
     pub target_da_for_batch: Option<u64>,
     /// Total DA footprint left for the current flashblock
     pub target_da_footprint_for_batch: Option<u64>,
-    /// Target execution time for the current flashblock in microseconds
-    pub target_execution_time_for_batch_us: Option<u128>,
-    /// Target state root gas for the current flashblock
-    pub target_state_root_gas_for_batch: Option<u64>,
     /// Gas limit per flashblock
     pub gas_per_batch: u64,
     /// DA bytes limit per flashblock
     pub da_per_batch: Option<u64>,
     /// DA footprint limit per flashblock
     pub da_footprint_per_batch: Option<u64>,
-    /// Execution time limit per flashblock in microseconds
-    pub execution_time_per_batch_us: Option<u128>,
-    /// State root gas limit per flashblock
-    pub state_root_gas_per_batch: Option<u64>,
 }
 
 impl FlashblocksExtraCtx {
@@ -258,16 +221,12 @@ impl FlashblocksExtraCtx {
         target_gas_for_batch: u64,
         target_da_for_batch: Option<u64>,
         target_da_footprint_for_batch: Option<u64>,
-        target_execution_time_for_batch_us: Option<u128>,
-        target_state_root_gas_for_batch: Option<u64>,
     ) -> Self {
         Self {
             flashblock_index: self.flashblock_index + 1,
             target_gas_for_batch,
             target_da_for_batch,
             target_da_footprint_for_batch,
-            target_execution_time_for_batch_us,
-            target_state_root_gas_for_batch,
             ..self
         }
     }
@@ -497,6 +456,44 @@ impl BasePayloadBuilderCtx {
             }
         }
     }
+
+    fn builder_transaction_event_context(
+        &self,
+        payload_id: &str,
+        ordering_position: Option<u64>,
+        block_hash: Option<BlockHash>,
+    ) -> BuilderTransactionEventContext {
+        BuilderTransactionEventContext {
+            payload_id: payload_id.to_string(),
+            block_number: self.block_number(),
+            block_hash,
+            parent_hash: self.parent_hash(),
+            flashblock_index: Some(self.flashblock_index()),
+            target_flashblock_count: self.target_flashblock_count(),
+            ordering_position,
+            builder_mode: "flashblocks",
+            source_queue: "txpool_best",
+        }
+    }
+
+    fn emit_builder_decision_event<D, F>(
+        &self,
+        payload_id: &str,
+        event_type: TransactionEventType,
+        tx_hash: TxHash,
+        ordering_position: Option<u64>,
+        data: F,
+    ) where
+        D: Serialize,
+        F: FnOnce() -> D,
+    {
+        emit_builder_transaction_event(
+            self.builder_transaction_event_context(payload_id, ordering_position, None),
+            event_type,
+            tx_hash,
+            data,
+        );
+    }
 }
 
 impl BasePayloadBuilderCtx {
@@ -671,48 +668,132 @@ impl BasePayloadBuilderCtx {
             block_data_limit = ?limits.block_data_limit,
             tx_data_limit = ?limits.tx_data_limit,
             block_gas_limit = ?limits.block_gas_limit,
-            flashblock_execution_time_limit_us = ?limits.flashblock_execution_time_limit_us,
-            block_state_root_gas_limit = ?limits.block_state_root_gas_limit,
             execution_metering_mode = ?self.builder_config.execution_metering_mode,
         );
 
         let block_number = as_u64_saturated!(self.evm_env.block_env.number);
         let block_timestamp = self.attributes().timestamp();
+        let payload_id = self.payload_id().to_string();
 
         while let Some(tx) = best_txs.next(()) {
             if let Some(target) = tx.target_block_number()
                 && target != block_number
             {
+                let tx_hash = *tx.hash();
+                num_txs_considered += 1;
+                let ordering_position = num_txs_considered;
                 trace!(
                     target: "payload_builder",
-                    tx_hash = ?tx.hash(),
+                    tx_hash = ?tx_hash,
                     target_block = target,
                     current_block = block_number,
                     "skipping bundle tx: wrong target block"
+                );
+                self.emit_builder_decision_event(
+                    &payload_id,
+                    TransactionEventType::BuilderConsidered,
+                    tx_hash,
+                    Some(ordering_position),
+                    || {
+                        BuilderConsideredEventData::new(info, limits, None)
+                            .with_bundle_target_block(target)
+                    },
+                );
+                self.emit_builder_decision_event(
+                    &payload_id,
+                    TransactionEventType::BuilderRejected,
+                    tx_hash,
+                    Some(ordering_position),
+                    || {
+                        BuilderRejectedEventData::new(
+                            "wrong_target_block",
+                            "bundle target block does not match current block",
+                            false,
+                            info,
+                            limits,
+                            None,
+                        )
+                        .with_bundle_target_block(target)
+                        .with_current_block(block_number)
+                    },
                 );
                 best_txs.mark_invalid(tx.sender(), tx.nonce());
                 continue;
             }
 
             if tx.is_bundle_expired(block_number, block_timestamp) {
+                let tx_hash = *tx.hash();
+                num_txs_considered += 1;
+                let ordering_position = num_txs_considered;
                 trace!(
                     target: "payload_builder",
-                    tx_hash = ?tx.hash(),
+                    tx_hash = ?tx_hash,
                     block = block_number,
                     timestamp = block_timestamp,
                     "skipping bundle tx: expired"
+                );
+                self.emit_builder_decision_event(
+                    &payload_id,
+                    TransactionEventType::BuilderConsidered,
+                    tx_hash,
+                    Some(ordering_position),
+                    || BuilderConsideredEventData::new(info, limits, None),
+                );
+                self.emit_builder_decision_event(
+                    &payload_id,
+                    TransactionEventType::BuilderRejected,
+                    tx_hash,
+                    Some(ordering_position),
+                    || {
+                        BuilderRejectedEventData::new(
+                            "bundle_expired",
+                            "bundle validity window expired",
+                            false,
+                            info,
+                            limits,
+                            None,
+                        )
+                        .with_block_timestamp(block_timestamp)
+                    },
                 );
                 best_txs.mark_invalid(tx.sender(), tx.nonce());
                 continue;
             }
 
             if tx.is_bundle_not_yet_valid(block_timestamp) {
+                let tx_hash = *tx.hash();
+                num_txs_considered += 1;
+                let ordering_position = num_txs_considered;
                 trace!(
                     target: "payload_builder",
-                    tx_hash = ?tx.hash(),
+                    tx_hash = ?tx_hash,
                     block = block_number,
                     timestamp = block_timestamp,
                     "skipping bundle tx: not yet valid"
+                );
+                self.emit_builder_decision_event(
+                    &payload_id,
+                    TransactionEventType::BuilderConsidered,
+                    tx_hash,
+                    Some(ordering_position),
+                    || BuilderConsideredEventData::new(info, limits, None),
+                );
+                self.emit_builder_decision_event(
+                    &payload_id,
+                    TransactionEventType::BuilderRejected,
+                    tx_hash,
+                    Some(ordering_position),
+                    || {
+                        BuilderRejectedEventData::new(
+                            "bundle_not_yet_valid",
+                            "bundle validity window has not started",
+                            false,
+                            info,
+                            limits,
+                            None,
+                        )
+                        .with_block_timestamp(block_timestamp)
+                    },
                 );
                 best_txs.mark_invalid(tx.sender(), tx.nonce());
                 continue;
@@ -739,6 +820,7 @@ impl BasePayloadBuilderCtx {
             };
 
             num_txs_considered += 1;
+            let ordering_position = num_txs_considered;
 
             let resource_usage = self.builder_config.metering_provider.get(&tx_hash);
 
@@ -753,7 +835,39 @@ impl BasePayloadBuilderCtx {
                     .unwrap_or(0);
                 let tx_age_ms = now_ms.saturating_sub(tx_received_at_ms);
                 if tx_age_ms < wait_duration.as_millis() {
-                    log_txn(Err(TxnExecutionError::MeteringDataPending));
+                    let err = TxnExecutionError::MeteringDataPending;
+                    let tx_resources = TxResources {
+                        da_size: tx_da_size,
+                        gas_limit: tx.gas_limit(),
+                        execution_time_us: None,
+                        uncompressed_size: tx_uncompressed_size,
+                    };
+                    self.emit_builder_decision_event(
+                        &payload_id,
+                        TransactionEventType::BuilderConsidered,
+                        tx_hash,
+                        Some(ordering_position),
+                        || {
+                            BuilderConsideredEventData::new(info, limits, Some(&tx_resources))
+                                .with_metering_wait(tx_age_ms, wait_duration.as_millis())
+                        },
+                    );
+                    self.emit_builder_decision_event(
+                        &payload_id,
+                        TransactionEventType::BuilderRejected,
+                        tx_hash,
+                        Some(ordering_position),
+                        || {
+                            BuilderRejectedEventData::from_error(
+                                &err,
+                                info,
+                                limits,
+                                Some(&tx_resources),
+                            )
+                            .with_metering_wait(tx_age_ms, wait_duration.as_millis())
+                        },
+                    );
+                    log_txn(Err(err));
                     BuilderMetrics::metering_data_pending_skip().increment(1);
                     self.builder_config.metering_provider.skip(&tx_hash);
                     best_txs.mark_invalid(tx.signer(), tx.nonce());
@@ -764,30 +878,21 @@ impl BasePayloadBuilderCtx {
             // Extract predicted execution time from metering data
             let predicted_execution_time_us =
                 resource_usage.as_ref().map(|m| m.total_execution_time_us);
-            let predicted_state_root_time_us =
-                resource_usage.as_ref().map(|m| m.state_root_time_us);
-
-            // Compute state root gas from metering data:
-            // sr_gas = gas_used × (1 + K × max(0, SR_ms - anchor_ms))
-            let state_root_gas = resource_usage.as_ref().map(|m| {
-                let gas_used = m.total_gas_used;
-                let sr_us = m.state_root_time_us;
-                let anchor_us = self.builder_config.state_root_gas_anchor_us;
-                let k = self.builder_config.state_root_gas_coefficient;
-                let excess_us = sr_us.saturating_sub(anchor_us);
-                let excess_ms = excess_us as f64 / 1000.0;
-                let multiplier = 1.0 + k * excess_ms;
-                (gas_used as f64 * multiplier) as u64
-            });
 
             // Build tx resources struct
             let tx_resources = TxResources {
                 da_size: tx_da_size,
                 gas_limit: tx.gas_limit(),
                 execution_time_us: predicted_execution_time_us,
-                state_root_gas,
                 uncompressed_size: tx_uncompressed_size,
             };
+            self.emit_builder_decision_event(
+                &payload_id,
+                TransactionEventType::BuilderConsidered,
+                tx_hash,
+                Some(ordering_position),
+                || BuilderConsideredEventData::new(info, limits, Some(&tx_resources)),
+            );
 
             // ensure we still have capacity for this transaction
             if let Err(err) = info.is_tx_over_limits(&tx_resources, limits) {
@@ -820,23 +925,36 @@ impl BasePayloadBuilderCtx {
                             diag.permanently_rejected_txs.push(tx_hash);
                         }
 
-                        if let ExecutionMeteringLimitExceeded::TransactionExecutionTime(
+                        let ExecutionMeteringLimitExceeded::TransactionExecutionTime(
                             tx_time_us,
                             limit_us,
-                        ) = limit_err
-                        {
-                            // Only record per-tx execution time limits for the audit trail for now
-                            self.record_rejected_tx(
-                                info,
-                                tx_hash,
-                                RejectionReason::ExecutionTimeExceeded {
-                                    tx_time_us: *tx_time_us,
-                                    limit_us: *limit_us,
-                                },
-                                resource_usage.unwrap_or_default(),
-                            );
-                        }
+                        ) = limit_err;
+                        // Only record per-tx execution time limits for the audit trail for now
+                        self.record_rejected_tx(
+                            info,
+                            tx_hash,
+                            RejectionReason::ExecutionTimeExceeded {
+                                tx_time_us: *tx_time_us,
+                                limit_us: *limit_us,
+                            },
+                            resource_usage.unwrap_or_default(),
+                        );
 
+                        self.emit_builder_decision_event(
+                            &payload_id,
+                            TransactionEventType::BuilderRejected,
+                            tx_hash,
+                            Some(ordering_position),
+                            || {
+                                BuilderRejectedEventData::from_error(
+                                    &err,
+                                    info,
+                                    limits,
+                                    Some(&tx_resources),
+                                )
+                                .with_dry_run(false)
+                            },
+                        );
                         log_txn(Err(err));
                         best_txs.mark_invalid(tx.signer(), tx.nonce());
                         continue;
@@ -852,6 +970,20 @@ impl BasePayloadBuilderCtx {
                         diag.permanently_rejected_txs.push(tx_hash);
                     }
 
+                    self.emit_builder_decision_event(
+                        &payload_id,
+                        TransactionEventType::BuilderRejected,
+                        tx_hash,
+                        Some(ordering_position),
+                        || {
+                            BuilderRejectedEventData::from_error(
+                                &err,
+                                info,
+                                limits,
+                                Some(&tx_resources),
+                            )
+                        },
+                    );
                     log_txn(Err(err));
                     best_txs.mark_invalid(tx.signer(), tx.nonce());
                     continue;
@@ -862,16 +994,26 @@ impl BasePayloadBuilderCtx {
             if let Some(predicted_us) = predicted_execution_time_us {
                 BuilderMetrics::tx_predicted_execution_time_us().record(predicted_us as f64);
             }
-            if let Some(predicted_us) = predicted_state_root_time_us {
-                BuilderMetrics::tx_predicted_state_root_time_us().record(predicted_us as f64);
-            }
-
             // A sequencer's block should never contain blob or deposit transactions from the pool.
             if tx.is_eip4844() || tx.is_deposit() {
                 let err = TxnExecutionError::SequencerTransaction;
                 diag.record_rejection(&err);
                 let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
                 record_rejected_tx_priority_fee(&err, priority_fee);
+                self.emit_builder_decision_event(
+                    &payload_id,
+                    TransactionEventType::BuilderRejected,
+                    tx_hash,
+                    Some(ordering_position),
+                    || {
+                        BuilderRejectedEventData::from_error(
+                            &err,
+                            info,
+                            limits,
+                            Some(&tx_resources),
+                        )
+                    },
+                );
                 log_txn(Err(err));
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
@@ -906,6 +1048,20 @@ impl BasePayloadBuilderCtx {
                             let priority_fee =
                                 tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
                             record_rejected_tx_priority_fee(&diag_err, priority_fee);
+                            self.emit_builder_decision_event(
+                                &payload_id,
+                                TransactionEventType::BuilderRejected,
+                                tx_hash,
+                                Some(ordering_position),
+                                || {
+                                    BuilderRejectedEventData::from_error(
+                                        &diag_err,
+                                        info,
+                                        limits,
+                                        Some(&tx_resources),
+                                    )
+                                },
+                            );
                             log_txn(Err(diag_err));
                             trace!(target: "payload_builder", %err, ?tx, "skipping nonce too low transaction");
                         } else {
@@ -916,6 +1072,20 @@ impl BasePayloadBuilderCtx {
                             let priority_fee =
                                 tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
                             record_rejected_tx_priority_fee(&diag_err, priority_fee);
+                            self.emit_builder_decision_event(
+                                &payload_id,
+                                TransactionEventType::BuilderRejected,
+                                tx_hash,
+                                Some(ordering_position),
+                                || {
+                                    BuilderRejectedEventData::from_error(
+                                        &diag_err,
+                                        info,
+                                        limits,
+                                        Some(&tx_resources),
+                                    )
+                                },
+                            );
                             log_txn(Err(diag_err));
                             trace!(target: "payload_builder", %err, ?tx, "skipping invalid transaction and its descendants");
                             best_txs.mark_invalid(tx.signer(), tx.nonce());
@@ -981,6 +1151,20 @@ impl BasePayloadBuilderCtx {
                 if err.is_permanent() {
                     diag.permanently_rejected_txs.push(tx_hash);
                 }
+                self.emit_builder_decision_event(
+                    &payload_id,
+                    TransactionEventType::BuilderRejected,
+                    tx_hash,
+                    Some(ordering_position),
+                    || {
+                        BuilderRejectedEventData::from_error(
+                            &err,
+                            info,
+                            limits,
+                            Some(&tx_resources),
+                        )
+                    },
+                );
                 log_txn(Err(err));
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
@@ -991,23 +1175,22 @@ impl BasePayloadBuilderCtx {
             info.cumulative_da_bytes_used += tx_da_size;
             // record uncompressed tx size
             info.cumulative_uncompressed_bytes += tx_uncompressed_size;
-            // record execution time (only from predictions; unmetered txs count as zero)
-            if let Some(execution_time) = predicted_execution_time_us {
-                info.flashblock_execution_time_us += execution_time;
-            }
-            // record state root gas (only from predictions)
-            if let Some(sr_gas) = state_root_gas {
-                info.cumulative_state_root_gas += sr_gas;
-                BuilderMetrics::tx_state_root_gas().record(sr_gas as f64);
-            }
-            // record state root time / gas ratio for anomaly detection
-            if let Some(state_root_time) = predicted_state_root_time_us
-                && gas_used > 0
-            {
-                let ratio = state_root_time as f64 / gas_used as f64;
-                BuilderMetrics::state_root_time_per_gas_ratio().record(ratio);
-            }
 
+            self.emit_builder_decision_event(
+                &payload_id,
+                TransactionEventType::BuilderAccepted,
+                tx_hash,
+                Some(ordering_position),
+                || {
+                    BuilderAcceptedEventData::new(
+                        if is_success { "success" } else { "reverted" },
+                        gas_used,
+                        info,
+                        limits,
+                        Some(&tx_resources),
+                    )
+                },
+            );
             // Push transaction changeset and calculate header bloom filter for receipt.
             let ctx = ReceiptBuilderCtx {
                 tx_type: tx.tx_type(),
@@ -1045,11 +1228,6 @@ impl BasePayloadBuilderCtx {
             // append sender and transaction to the respective lists
             info.executed_senders.push(tx.signer());
             info.executed_transactions.push(tx.into_inner());
-        }
-
-        // Record cumulative state root gas for the block
-        if info.cumulative_state_root_gas > 0 {
-            BuilderMetrics::block_state_root_gas().record(info.cumulative_state_root_gas as f64);
         }
 
         let payload_transaction_simulation_time = execute_txs_start_time.elapsed();
@@ -1103,12 +1281,6 @@ impl BasePayloadBuilderCtx {
         match limit {
             ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _) => {
                 BuilderMetrics::tx_execution_time_exceeded_total().increment(1);
-            }
-            ExecutionMeteringLimitExceeded::FlashblockExecutionTime(_, _, _) => {
-                BuilderMetrics::flashblock_execution_time_exceeded_total().increment(1);
-            }
-            ExecutionMeteringLimitExceeded::BlockStateRootGas(_, _, _) => {
-                BuilderMetrics::block_state_root_gas_exceeded_total().increment(1);
             }
         }
     }
@@ -1213,11 +1385,7 @@ mod tests {
 
     #[test]
     fn diagnostics_report_rejection_counts() {
-        let diag = FlashblockDiagnostics {
-            txs_rejected_gas: 2,
-            txs_rejected_state_root_time: 1,
-            ..Default::default()
-        };
+        let diag = FlashblockDiagnostics { txs_rejected_gas: 2, ..Default::default() };
 
         assert_eq!(
             diag.rejection_counts(),
@@ -1226,7 +1394,6 @@ mod tests {
                 ("da_size", 0),
                 ("da_footprint", 0),
                 ("execution_time", 0),
-                ("state_root_time", 1),
                 ("uncompressed_size", 0),
                 ("metering_data_pending", 0),
                 ("other", 0),
@@ -1267,21 +1434,15 @@ mod tests {
             target_gas_for_batch: 1_000_000,
             target_da_for_batch: Some(500),
             target_da_footprint_for_batch: Some(200),
-            target_execution_time_for_batch_us: Some(100_000),
-            target_state_root_gas_for_batch: Some(50_000),
             gas_per_batch: 3_000_000,
             da_per_batch: Some(1_500),
             da_footprint_per_batch: Some(600),
-            execution_time_per_batch_us: Some(300_000),
-            state_root_gas_per_batch: Some(150_000),
         };
 
         let next = ctx.next(
-            2_000_000,     // new gas target
-            Some(800),     // new DA target
-            Some(350),     // new DA footprint target
-            Some(200_000), // new execution time target
-            Some(80_000),  // new state root gas target
+            2_000_000, // new gas target
+            Some(800), // new DA target
+            Some(350), // new DA footprint target
         );
 
         // Index incremented
@@ -1291,16 +1452,12 @@ mod tests {
         assert_eq!(next.target_gas_for_batch, 2_000_000);
         assert_eq!(next.target_da_for_batch, Some(800));
         assert_eq!(next.target_da_footprint_for_batch, Some(350));
-        assert_eq!(next.target_execution_time_for_batch_us, Some(200_000));
-        assert_eq!(next.target_state_root_gas_for_batch, Some(80_000));
 
         // Per-batch limits and target count are preserved (..self)
         assert_eq!(next.target_flashblock_count, 10);
         assert_eq!(next.gas_per_batch, 3_000_000);
         assert_eq!(next.da_per_batch, Some(1_500));
         assert_eq!(next.da_footprint_per_batch, Some(600));
-        assert_eq!(next.execution_time_per_batch_us, Some(300_000));
-        assert_eq!(next.state_root_gas_per_batch, Some(150_000));
     }
 
     /// Regression test: when the payload attributes are derived (`no_tx_pool=true`), an
