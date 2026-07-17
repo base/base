@@ -9,9 +9,10 @@ use base_precompile_storage::{BasePrecompileError, ContractStorage, Result};
 use revm::state::Bytecode;
 
 use crate::{
-    ActivationRegistryStorage, B20AssetInit, B20AssetStorage, B20AssetToken, B20FactoryStorage,
-    B20StablecoinInit, B20StablecoinStorage, B20StablecoinToken, B20TokenRole, B20Variant, Factory,
-    IB20Factory, PolicyRegistryStorage, PolicyVersions, Token,
+    ActivationRegistryStorage, AssetVersion, B20AssetInit, B20AssetStorage, B20AssetToken,
+    B20FactoryStorage, B20StablecoinInit, B20StablecoinStorage, B20StablecoinToken, B20TokenRole,
+    B20Variant, Factory, IB20Factory, NoopPrecompileCallObserver, PolicyRegistryStorage,
+    PolicyVersions, StablecoinVersion, Token,
 };
 
 /// Version byte for `B20StablecoinEventParams` inside `B20Created.variantParams`.
@@ -79,10 +80,17 @@ impl FactoryV1 {
             )?;
         }
 
+        // Pinned to V1: factory-init setup calls run before any later fork can be relevant.
         storage.storage().with_caller(B20FactoryStorage::ADDRESS, || {
             for (index, calldata) in init_calls.into_iter().enumerate() {
                 token
-                    .inner_with_privilege(storage.storage(), &calldata, true)
+                    .route(
+                        storage.storage(),
+                        &calldata,
+                        StablecoinVersion::V1,
+                        true,
+                        NoopPrecompileCallObserver,
+                    )
                     .map_err(|err| Self::map_init_call_error(index, err))?;
             }
             Ok::<(), BasePrecompileError>(())
@@ -130,10 +138,17 @@ impl FactoryV1 {
             )?;
         }
 
+        // Pinned to V1: factory-init setup calls run before any later fork can be relevant.
         storage.storage().with_caller(B20FactoryStorage::ADDRESS, || {
             for (index, calldata) in init_calls.into_iter().enumerate() {
                 token
-                    .inner_with_privilege(storage.storage(), &calldata, true)
+                    .route(
+                        storage.storage(),
+                        &calldata,
+                        AssetVersion::V1,
+                        true,
+                        NoopPrecompileCallObserver,
+                    )
                     .map_err(|err| Self::map_init_call_error(index, err))?;
             }
             Ok::<(), BasePrecompileError>(())
