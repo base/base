@@ -16,7 +16,7 @@ list:
     @just --justfile {{ source_file() }} methods
 
 # Request a proof for a block range: proof_type=compressed|snark
-prove start_block number_of_blocks='1' proof_type='compressed' zk_backend='' session_id='' prover_address='' l1_head='':
+prove start_block number_of_blocks='1' proof_type='compressed' zk_backend='dry_run' session_id='' prover_address='' l1_head='':
     #!/usr/bin/env bash
     set -euo pipefail
     command -v jq >/dev/null 2>&1 || { echo "jq is required" >&2; exit 1; }
@@ -27,9 +27,6 @@ prove start_block number_of_blocks='1' proof_type='compressed' zk_backend='' ses
     proof_type="$(printf '%s' "$proof_type" | tr '[:upper:]-' '[:lower:]_')"
     zk_backend={{ quote(zk_backend) }}
     zk_backend="${zk_backend#zk_backend=}"
-    if [ -z "$zk_backend" ]; then
-      zk_backend="${ZK_BACKEND:-cluster}"
-    fi
     zk_backend="$(printf '%s' "$zk_backend" | tr '[:upper:]-' '[:lower:]_')"
     session_id={{ quote(session_id) }}
     prover_address={{ quote(prover_address) }}
