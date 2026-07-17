@@ -309,7 +309,7 @@ where
             if source_block.hash == finalized.block_info.hash {
                 return Ok(*finalized);
             }
-            return Err(FollowError::SourceBlockHashMismatch {
+            return Err(FollowError::FinalizedDivergence {
                 number,
                 local: finalized.block_info.hash,
                 remote: source_block.hash,

@@ -73,6 +73,20 @@ pub enum FollowError {
         remote: B256,
     },
 
+    /// The local and source finalized heads disagree. Follow-mode recovery cannot rewind past
+    /// the local finalized head, so this requires operator intervention.
+    #[error(
+        "source finalized block hash {remote} does not match local finalized block hash {local} at block {number}"
+    )]
+    FinalizedDivergence {
+        /// Finalized block number compared across the source and local nodes.
+        number: u64,
+        /// Hash returned by the local node.
+        local: B256,
+        /// Hash returned by the source node.
+        remote: B256,
+    },
+
     /// Two source reads for the same block number described different source branches.
     #[error("source branch mismatch at block {number}: expected {expected}, got {actual}")]
     SourceBranchMismatch {

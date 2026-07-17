@@ -162,8 +162,17 @@ where
                 // A recovery reorg ends the loop so the caller restarts fetch/insert from the
                 // common ancestor.
                 Ok(outcome @ SafetyOutcome::Reorged { .. }) => return Ok(outcome),
-                Err(e) => {
-                    warn!(target: "follow", error = %e, "Failed to update safe/finalized labels");
+                Err(FollowError::FinalizedDivergence { number, local, remote }) => {
+                    error!(
+                        target: "follow",
+                        number,
+                        local = %local,
+                        source = %remote,
+                        "Local finalized head diverged from source; follow mode requires operator intervention",
+                    );
+                }
+                Err(error) => {
+                    warn!(target: "follow", error = %error, "Failed to update safe/finalized labels");
                 }
             }
         }
@@ -256,11 +265,7 @@ where
             }
             LabelOutcome::Skip => None,
             LabelOutcome::Diverged { number, local: local_hash, remote } => {
-                return Err(FollowError::SourceBlockHashMismatch {
-                    number,
-                    local: local_hash,
-                    remote,
-                });
+                return Err(FollowError::FinalizedDivergence { number, local: local_hash, remote });
             }
         };
 
@@ -1121,7 +1126,7 @@ mod tests {
             .await
             .expect_err("source branch diverges at finalized");
 
-        assert!(matches!(error, FollowError::SourceBlockHashMismatch { number: 7, .. }));
+        assert!(matches!(error, FollowError::FinalizedDivergence { number: 7, .. }));
         assert!(!generation.is_cancelled());
         assert!(engine.reset.lock().await.is_empty());
     }
@@ -1153,7 +1158,7 @@ mod tests {
             .await
             .expect_err("mismatched finalized hash");
 
-        assert!(matches!(error, FollowError::SourceBlockHashMismatch { number: 8, .. }));
+        assert!(matches!(error, FollowError::FinalizedDivergence { number: 8, .. }));
         assert!(engine.labels.lock().await.is_empty());
         assert!(engine.reset.lock().await.is_empty());
     }
@@ -1238,7 +1243,7 @@ mod tests {
         .await
         .expect_err("finalized divergence");
 
-        assert!(matches!(error, FollowError::SourceBlockHashMismatch { number: 7, .. }));
+        assert!(matches!(error, FollowError::FinalizedDivergence { number: 7, .. }));
     }
 
     #[tokio::test]
@@ -1290,7 +1295,7 @@ mod tests {
         .await
         .expect_err("fresh finalized divergence must prevent reset");
 
-        assert!(matches!(error, FollowError::SourceBlockHashMismatch { number: 10, .. }));
+        assert!(matches!(error, FollowError::FinalizedDivergence { number: 10, .. }));
         assert_eq!(finalized_reads.load(Ordering::SeqCst), 1);
         assert!(engine.reset.lock().await.is_empty());
     }
