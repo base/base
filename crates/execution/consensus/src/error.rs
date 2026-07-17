@@ -7,28 +7,6 @@ use reth_storage_errors::provider::ProviderError;
 /// Base consensus error.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum BaseConsensusError {
-    /// The expected `BaseTime` timestamp cannot be derived from the chain configuration.
-    #[error(
-        "cannot derive BaseTime timestamp for block {block_number} on chain {chain_id}: {reason}"
-    )]
-    BaseTimeTimestampUnavailable {
-        /// L2 chain ID.
-        chain_id: u64,
-        /// L2 block number.
-        block_number: u64,
-        /// Why the expected timestamp could not be derived.
-        reason: &'static str,
-    },
-    /// The block's full-millisecond timestamp does not match the hardfork schedule.
-    #[error(
-        "BaseTime timestamp {actual_timestamp_ms}ms does not match expected {expected_timestamp_ms}ms"
-    )]
-    BaseTimeTimestampMismatch {
-        /// Full-millisecond timestamp derived from the hardfork schedule and block number.
-        expected_timestamp_ms: u128,
-        /// Full-millisecond timestamp encoded by the header and `BaseTime` metadata.
-        actual_timestamp_ms: u128,
-    },
     /// The canonical metadata claim does not match the post-execution committed value.
     #[error("BaseTime metadata claim {claim} does not match committed value {committed}")]
     BaseTimeClaimCommittedMismatch {

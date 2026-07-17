@@ -3,7 +3,7 @@ use std::{marker::PhantomData, sync::Arc};
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_engine::{ExecutionPayloadEnvelopeV2, ExecutionPayloadV1};
-use base_common_chains::{BaseUpgrade, ChainConfig, Upgrades};
+use base_common_chains::Upgrades;
 use base_common_consensus::{BaseBlock, BaseTransaction, Predeploys};
 use base_common_evm::BaseTime;
 use base_common_rpc_types_engine::{
@@ -15,7 +15,7 @@ use base_execution_payload_builder::{
     Attributes, BaseExecutionPayloadValidator, BasePayloadBuilderAttributes, BasePayloadTypes,
 };
 use base_protocol::BaseTimeUpdateTx;
-use reth_chainspec::{EthChainSpec, ForkCondition};
+use reth_chainspec::EthChainSpec;
 use reth_consensus::ConsensusError;
 use reth_node_api::{
     BuiltPayload, EngineApiValidator, EngineTypes, NodePrimitives, PayloadValidator,
@@ -154,7 +154,7 @@ where
             .map_err(ConsensusError::other)
     }
 
-    /// Verifies the `BaseTime` claim, committed state, and expected timestamp after block execution.
+    /// Verifies the `BaseTime` claim and committed state after block execution.
     pub fn validate_base_time_post_execution<DB>(
         &self,
         state_updates: &HashedPostState,
@@ -170,47 +170,7 @@ where
                 .map_err(ConsensusError::other)?;
         let claimed_millis_part = claimed_base_time.timestamp_millis_part();
 
-        // TODO: Validate against the parent timestamp once BasicEngineValidatorBuilder provides it.
-        let chain_id = self.chain_spec().chain().id();
-        let unavailable = |reason| {
-            ConsensusError::other(BaseConsensusError::BaseTimeTimestampUnavailable {
-                chain_id,
-                block_number: block.number(),
-                reason,
-            })
-        };
-        let config = ChainConfig::by_chain_id(chain_id)
-            .ok_or_else(|| unavailable("unknown chain configuration"))?;
-        let ForkCondition::Timestamp(activation_timestamp) =
-            self.chain_spec().upgrade_activation(BaseUpgrade::Zombie)
-        else {
-            return Err(unavailable("non-timestamp activation"));
-        };
-        let activation_offset = activation_timestamp
-            .checked_sub(config.genesis_l2_time)
-            .ok_or_else(|| unavailable("activation before genesis"))?;
-        if config.block_time == 0 {
-            return Err(unavailable("zero block time"));
-        }
-        if !activation_offset.is_multiple_of(config.block_time) {
-            return Err(unavailable("misaligned activation"));
-        }
-        let activation_block = activation_offset / config.block_time;
-        let elapsed_blocks = block
-            .number()
-            .checked_sub(activation_block)
-            .ok_or_else(|| unavailable("block before activation"))?;
-        let expected_timestamp_ms = u128::from(activation_timestamp) * 1_000
-            + u128::from(elapsed_blocks) * u128::from(BaseTimeUpdateTx::BLOCK_INTERVAL_MILLIS);
-        let actual_timestamp_ms =
-            u128::from(block.timestamp()) * 1_000 + u128::from(claimed_millis_part);
-        if actual_timestamp_ms != expected_timestamp_ms {
-            return Err(ConsensusError::other(BaseConsensusError::BaseTimeTimestampMismatch {
-                expected_timestamp_ms,
-                actual_timestamp_ms,
-            }));
-        }
-
+        // ponytail: compare full timestamps when Reth exposes the parent header to this hook.
         let read_parent_millis_part = || {
             parent_state
                 .storage(Predeploys::BASE_TIME, BaseTime::TIMESTAMP_MILLIS_PART_SLOT.into())
@@ -303,8 +263,8 @@ where
             return Err(InvalidPayloadAttributesError::InvalidTimestamp);
         }
 
-        // The parent header does not contain its millisecond component. The exact 200ms slot is
-        // enforced against the hardfork schedule during post-execution validation.
+        // The parent header does not contain its millisecond component, so only whole-second
+        // ordering can be checked here.
         (timestamp >= header.timestamp())
             .then_some(())
             .ok_or(InvalidPayloadAttributesError::InvalidTimestamp)
@@ -493,7 +453,7 @@ mod tests {
     use crate::engine;
 
     const ZOMBIE_TIMESTAMP: u64 = 1_800_000_001;
-    const ZOMBIE_ACTIVATION_BLOCK: u64 = 56_605_327;
+    const BASE_TIME_BLOCK_NUMBER: u64 = 56_605_327;
 
     fn validator_with_chain_spec(
         chain_spec: BaseChainSpec,
@@ -877,38 +837,21 @@ mod tests {
         )
     }
 
-    fn validate_base_time_with(
-        validator: &BaseEngineValidator<NoopProvider, BaseTxEnvelope, BaseChainSpec>,
-        block_number: u64,
+    fn validate_base_time(
         parent_millis_part: u16,
-        child_timestamp: u64,
         claimed_millis_part: u16,
         committed_millis_part: Option<u16>,
         wiped: bool,
     ) -> Result<(), ConsensusError> {
-        validator.validate_base_time_post_execution(
+        zombie_validator().validate_base_time_post_execution(
             &state_updates(committed_millis_part, wiped),
             &parent_state(parent_millis_part),
-            &base_time_block(block_number, child_timestamp, claimed_millis_part, EMPTY_ROOT_HASH),
-        )
-    }
-
-    fn validate_base_time(
-        block_number: u64,
-        parent_millis_part: u16,
-        child_timestamp: u64,
-        claimed_millis_part: u16,
-        committed_millis_part: Option<u16>,
-        wiped: bool,
-    ) -> Result<(), ConsensusError> {
-        validate_base_time_with(
-            &zombie_validator(),
-            block_number,
-            parent_millis_part,
-            child_timestamp,
-            claimed_millis_part,
-            committed_millis_part,
-            wiped,
+            &base_time_block(
+                BASE_TIME_BLOCK_NUMBER,
+                ZOMBIE_TIMESTAMP,
+                claimed_millis_part,
+                EMPTY_ROOT_HASH,
+            ),
         )
     }
 
@@ -920,125 +863,13 @@ mod tests {
     }
 
     #[test]
-    fn base_time_post_execution_accepts_first_scheduled_slot_without_storage_update() {
-        validate_base_time(ZOMBIE_ACTIVATION_BLOCK, 0, ZOMBIE_TIMESTAMP, 0, None, false).unwrap();
-    }
-
-    #[test]
-    fn base_time_post_execution_accepts_scheduled_same_second_slot() {
-        validate_base_time(
-            ZOMBIE_ACTIVATION_BLOCK + 2,
-            200,
-            ZOMBIE_TIMESTAMP,
-            400,
-            Some(400),
-            false,
-        )
-        .unwrap();
-    }
-
-    #[test]
-    fn base_time_post_execution_accepts_scheduled_second_boundary() {
-        validate_base_time(
-            ZOMBIE_ACTIVATION_BLOCK + 5,
-            800,
-            ZOMBIE_TIMESTAMP + 1,
-            0,
-            Some(0),
-            false,
-        )
-        .unwrap();
-    }
-
-    #[test]
-    fn base_time_post_execution_rejects_millis_not_scheduled_for_block_number() {
-        let error = validate_base_time(
-            ZOMBIE_ACTIVATION_BLOCK + 2,
-            200,
-            ZOMBIE_TIMESTAMP,
-            600,
-            Some(600),
-            false,
-        )
-        .unwrap_err();
-        assert!(matches!(
-            base_consensus_error(&error),
-            Some(BaseConsensusError::BaseTimeTimestampMismatch {
-                expected_timestamp_ms: 1_800_000_001_400,
-                actual_timestamp_ms: 1_800_000_001_600,
-            })
-        ));
-    }
-
-    #[test]
-    fn base_time_post_execution_rejects_unknown_chain_config() {
-        let chain_spec = BaseChainSpecBuilder::base_mainnet()
-            .chain(Default::default())
-            .with_fork(BaseUpgrade::Zombie, ForkCondition::Timestamp(ZOMBIE_TIMESTAMP))
-            .build();
-        assert!(ChainConfig::by_chain_id(chain_spec.chain().id()).is_none());
-
-        let validator = validator_with_chain_spec(chain_spec);
-        let error = validate_base_time_with(
-            &validator,
-            ZOMBIE_ACTIVATION_BLOCK,
-            0,
-            ZOMBIE_TIMESTAMP,
-            0,
-            None,
-            false,
-        )
-        .unwrap_err();
-
-        assert!(matches!(
-            base_consensus_error(&error),
-            Some(BaseConsensusError::BaseTimeTimestampUnavailable {
-                block_number: ZOMBIE_ACTIVATION_BLOCK,
-                reason: "unknown chain configuration",
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn base_time_post_execution_rejects_misaligned_zombie_activation() {
-        let validator = validator_with_chain_spec(
-            BaseChainSpecBuilder::base_mainnet()
-                .with_fork(BaseUpgrade::Zombie, ForkCondition::Timestamp(ZOMBIE_TIMESTAMP + 1))
-                .build(),
-        );
-        let error = validate_base_time_with(
-            &validator,
-            ZOMBIE_ACTIVATION_BLOCK,
-            0,
-            ZOMBIE_TIMESTAMP + 1,
-            0,
-            None,
-            false,
-        )
-        .unwrap_err();
-
-        assert!(matches!(
-            base_consensus_error(&error),
-            Some(BaseConsensusError::BaseTimeTimestampUnavailable {
-                chain_id: 8453,
-                block_number: ZOMBIE_ACTIVATION_BLOCK,
-                reason: "misaligned activation",
-            })
-        ));
+    fn base_time_post_execution_accepts_valid_commitment() {
+        validate_base_time(200, 600, Some(600), false).unwrap();
     }
 
     #[test]
     fn base_time_post_execution_rejects_claim_committed_mismatch() {
-        let error = validate_base_time(
-            ZOMBIE_ACTIVATION_BLOCK + 2,
-            200,
-            ZOMBIE_TIMESTAMP,
-            400,
-            Some(600),
-            false,
-        )
-        .unwrap_err();
+        let error = validate_base_time(200, 400, Some(600), false).unwrap_err();
         assert!(matches!(
             base_consensus_error(&error),
             Some(BaseConsensusError::BaseTimeClaimCommittedMismatch { claim: 400, committed: 600 })
@@ -1047,15 +878,7 @@ mod tests {
 
     #[test]
     fn base_time_post_execution_uses_parent_when_child_slot_is_absent() {
-        let error = validate_base_time(
-            ZOMBIE_ACTIVATION_BLOCK + 2,
-            200,
-            ZOMBIE_TIMESTAMP,
-            400,
-            None,
-            false,
-        )
-        .unwrap_err();
+        let error = validate_base_time(200, 400, None, false).unwrap_err();
         assert!(matches!(
             base_consensus_error(&error),
             Some(BaseConsensusError::BaseTimeClaimCommittedMismatch { claim: 400, committed: 200 })
@@ -1064,13 +887,12 @@ mod tests {
 
     #[test]
     fn base_time_post_execution_treats_wiped_storage_as_zero() {
-        validate_base_time(ZOMBIE_ACTIVATION_BLOCK + 5, 800, ZOMBIE_TIMESTAMP + 1, 0, None, true)
-            .unwrap();
+        validate_base_time(800, 0, None, true).unwrap();
     }
 
     #[test]
     fn generic_post_execution_validation_checks_isthmus_before_zombie() {
-        let block = base_time_block(ZOMBIE_ACTIVATION_BLOCK, ZOMBIE_TIMESTAMP, 0, EMPTY_ROOT_HASH);
+        let block = base_time_block(BASE_TIME_BLOCK_NUMBER, ZOMBIE_TIMESTAMP, 0, EMPTY_ROOT_HASH);
         let error =
             PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
                 &zombie_validator(),
@@ -1086,8 +908,8 @@ mod tests {
     }
 
     #[test]
-    fn generic_post_execution_validation_accepts_derived_child_timestamp() {
-        let block = base_time_block(ZOMBIE_ACTIVATION_BLOCK + 1, ZOMBIE_TIMESTAMP, 200, B256::ZERO);
+    fn generic_post_execution_validation_accepts_valid_base_time_commitment() {
+        let block = base_time_block(BASE_TIME_BLOCK_NUMBER, ZOMBIE_TIMESTAMP + 1, 200, B256::ZERO);
 
         PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
             &zombie_validator(),
@@ -1095,26 +917,5 @@ mod tests {
             &block,
         )
         .unwrap();
-    }
-
-    #[test]
-    fn generic_post_execution_validation_rejects_inexact_derived_child_timestamp() {
-        let block =
-            base_time_block(ZOMBIE_ACTIVATION_BLOCK + 1, ZOMBIE_TIMESTAMP + 1, 200, B256::ZERO);
-        let error =
-            PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
-                &zombie_validator(),
-                &state_updates(Some(200), false),
-                &block,
-            )
-            .unwrap_err();
-
-        assert!(matches!(
-            base_consensus_error(&error),
-            Some(BaseConsensusError::BaseTimeTimestampMismatch {
-                expected_timestamp_ms: 1_800_000_001_200,
-                actual_timestamp_ms: 1_800_000_002_200,
-            })
-        ));
     }
 }
