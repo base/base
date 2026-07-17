@@ -517,11 +517,11 @@ mod tests {
         let payer = addr(9);
 
         for i in 0..DEFAULT_PAYMENT_LIMIT as u8 {
-            let adm = Admission { payer, ..self_pay(i, addr(i + 1), 10) };
+            let adm = Admission { payer, payer_locked: true, ..self_pay(i, addr(i + 1), 10) };
             assert!(guard.try_admit(adm).is_ok());
         }
-        let over = Admission { payer, ..self_pay(200, addr(201), 10) };
-        assert_eq!(guard.try_admit(over), Err(LimitRejection::PayerLimit));
+        let over = Admission { payer, payer_locked: true, ..self_pay(200, addr(201), 10) };
+        assert_eq!(guard.try_admit(over), Err(LimitRejection::PaymentLimit));
     }
 
     #[test]
