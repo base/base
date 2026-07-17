@@ -79,6 +79,11 @@ pub struct FakeEngineClientHandle {
 }
 
 impl FakeEngineClientHandle {
+    /// Returns the number of recorded calls without cloning the full log.
+    pub fn call_count(&self) -> usize {
+        self.state.lock().expect("FakeEngineClient state mutex poisoned").calls.len()
+    }
+
     /// Returns all recorded calls in order.
     pub async fn calls(&self) -> Vec<EngineClientCall> {
         self.state.lock().expect("FakeEngineClient state mutex poisoned").calls.clone()

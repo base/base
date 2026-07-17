@@ -21,8 +21,7 @@ use super::{
 };
 use crate::{
     DerivationActor, DerivationActorRequest, DerivationState, EngineActorRequest, EngineProcessor,
-    EngineProcessorOptions, EngineRequestReceiver, NodeActor, NodeMode,
-    QueuedDerivationEngineClient, QueuedEngineDerivationClient,
+    EngineProcessorOptions, NodeMode, QueuedDerivationEngineClient, QueuedEngineDerivationClient,
 };
 
 /// Live actor-system harness assembled by [`HarnessBuilder`].
