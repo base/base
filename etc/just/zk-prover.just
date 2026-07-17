@@ -15,8 +15,7 @@ methods:
 list:
     @just --justfile {{ source_file() }} methods
 
-# Request a proof for a block range.
-# proof_type=compressed|snark  zk_backend=mock|dry_run|cluster|network (or ZK_BACKEND env)
+# Request a proof for a block range: proof_type=compressed|snark
 prove start_block number_of_blocks='1' proof_type='compressed' zk_backend='' session_id='' prover_address='' l1_head='':
     #!/usr/bin/env bash
     set -euo pipefail
@@ -47,9 +46,9 @@ prove start_block number_of_blocks='1' proof_type='compressed' zk_backend='' ses
       exit 1
     fi
     case "$zk_backend" in
-      mock|dry_run|cluster|network) ;;
+      dry_run|cluster|network) ;;
       *)
-        echo "unknown zk_backend: $zk_backend (use mock, dry_run, cluster, or network)" >&2
+        echo "unknown zk_backend: $zk_backend (use dry_run, cluster, or network)" >&2
         exit 1
         ;;
     esac
