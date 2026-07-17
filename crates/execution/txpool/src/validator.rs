@@ -20,8 +20,7 @@ use base_common_genesis::DaFootprintGasScalarUpdate;
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_eip8130::{
     AccountConfigurationStorage, AccountState, ApplyError, AuthorizeError, FeeCheck, IntrinsicGas,
-    IntrinsicGasInput, NonceError, NonceMode, NonceValidator, ResolvedActor,
-    TransactionAuthorizer, TxAuthError,
+    IntrinsicGasInput, NonceError, NonceMode, NonceValidator, TransactionAuthorizer, TxAuthError,
 };
 use base_precompile_storage::{
     BasePrecompileError, PrecompileStorageProvider, StorageCtx, validate_loaded_code_presence,
@@ -317,11 +316,18 @@ struct OverlayPrecompileStorage<'a> {
     storage: BTreeMap<(Address, U256), U256>,
     transient: BTreeMap<(Address, U256), U256>,
     reads: BTreeSet<(Address, U256)>,
+    code_reads: BTreeSet<Address>,
 }
 
 impl<'a> OverlayPrecompileStorage<'a> {
     const fn new(inner: StateProviderPrecompileStorage<'a>) -> Self {
-        Self { inner, storage: BTreeMap::new(), transient: BTreeMap::new(), reads: BTreeSet::new() }
+        Self {
+            inner,
+            storage: BTreeMap::new(),
+            transient: BTreeMap::new(),
+            reads: BTreeSet::new(),
+            code_reads: BTreeSet::new(),
+        }
     }
 }
 
@@ -374,7 +380,9 @@ impl PrecompileStorageProvider for OverlayPrecompileStorage<'_> {
         address: Address,
         f: &mut dyn FnMut(&Bytecode),
     ) -> Result<(), BasePrecompileError> {
-        self.inner.with_account_code(address, f)
+        self.inner.with_account_code(address, f)?;
+        self.code_reads.insert(address);
+        Ok(())
     }
 
     fn sload(&mut self, address: Address, key: U256) -> Result<U256, BasePrecompileError> {
@@ -862,6 +870,7 @@ where
             })
             .map_err(Self::map_tx_auth_error)?;
         let authorization_reads = storage.reads.clone();
+        let authorization_code_reads = storage.code_reads.clone();
 
         let sender_account = state
             .basic_account(&sender)
@@ -947,6 +956,9 @@ where
         let mut watch_set = WatchSet::new().watch(InvalidationKey::Balance(payer));
         for (address, slot) in authorization_reads {
             watch_set.push(InvalidationKey::Slot { address, slot: b256_from_u256(slot) });
+        }
+        for address in authorization_code_reads {
+            watch_set.push(InvalidationKey::CodeHash(address));
         }
         if effective_expiry != u64::MAX {
             watch_set.push(InvalidationKey::expiry_bucket(effective_expiry));
@@ -2849,6 +2861,7 @@ mod tests {
         assert_eq!(state.sender, sender);
         assert_eq!(state.payer, sender);
         assert_eq!(state.sender_bytecode_hash, None);
+        assert!(state.watch_set.iter().any(|key| *key == InvalidationKey::CodeHash(sender)));
     }
 
     #[test]
@@ -2866,6 +2879,7 @@ mod tests {
         assert_eq!(state.sender, sender);
         assert_eq!(state.payer, sender);
         assert_eq!(state.sender_bytecode_hash, Some(expected_hash));
+        assert!(state.watch_set.iter().any(|key| *key == InvalidationKey::CodeHash(sender)));
     }
 
     #[test]
