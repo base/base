@@ -52,8 +52,9 @@ impl StablecoinVersions {
 #[cfg(test)]
 mod tests {
     use base_common_genesis::BaseUpgrade;
+    use sha2::{Digest, Sha256};
 
-    use crate::{FrozenHash, StablecoinVersion, StablecoinVersions};
+    use crate::{StablecoinVersion, StablecoinVersions};
 
     /// SHA-256 of `logic/v1.rs`, pinned at Beryl activation. Recompute only as a
     /// deliberate, reviewed change alongside whatever edit to `logic/v1.rs` this
@@ -64,10 +65,10 @@ mod tests {
 
     #[test]
     fn v1_logic_is_frozen() {
-        let actual = FrozenHash::digest(V1_LOGIC_SOURCE);
+        let actual = Sha256::digest(V1_LOGIC_SOURCE);
         assert_eq!(
-            actual,
-            V1_LOGIC_HASH,
+            actual.as_slice(),
+            &V1_LOGIC_HASH[..],
             "logic/v1.rs changed since it was frozen at Beryl - if intentional, update \
              V1_LOGIC_HASH to {} as a deliberate, reviewed change",
             alloy_primitives::hex::encode(actual),
