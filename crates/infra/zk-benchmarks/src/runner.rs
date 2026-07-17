@@ -43,8 +43,7 @@ impl ZkBenchRunner {
         Ok(ZkBenchSummary::new(target, proof, execution_stats))
     }
 
-    /// Selects the fullest confirmed block by gas as the proof target.
-    pub fn select_proof_target(summary: &MetricsSummary) -> Result<ZkBenchTarget> {
+    fn select_proof_target(summary: &MetricsSummary) -> Result<ZkBenchTarget> {
         ensure!(
             summary.receipt_coverage.is_complete(),
             "cannot select fullest block with incomplete receipt coverage"
@@ -62,8 +61,7 @@ impl ZkBenchRunner {
         })
     }
 
-    /// Waits for the target block to become safe, requests a proof, and polls for completion.
-    pub async fn prove_safe_block(
+    async fn prove_safe_block(
         rollup_provider: &QueryProvider,
         block_number: u64,
         config: ZkBenchConfig,
@@ -79,8 +77,7 @@ impl ZkBenchRunner {
         Self::prove_block(block_number, l1_head, config).await
     }
 
-    /// Waits for a workload block to become safe and returns the current L1 head.
-    pub async fn wait_for_safe_l2(
+    async fn wait_for_safe_l2(
         provider: &QueryProvider,
         block_number: u64,
         wait_timeout: Duration,
@@ -103,8 +100,7 @@ impl ZkBenchRunner {
         .wrap_err("timed out waiting for workload block to become safe")?
     }
 
-    /// Requests a proof for a single block and polls for completion.
-    pub async fn prove_block(
+    async fn prove_block(
         block_number: u64,
         l1_head: B256,
         config: ZkBenchConfig,
@@ -125,7 +121,7 @@ impl ZkBenchRunner {
 
         let execution_stats = Self::poll_proof(
             &client,
-            response.session_id.clone(),
+            &response.session_id,
             zk_backend,
             proof_timeout,
             poll_interval,
@@ -142,8 +138,9 @@ impl ZkBenchRunner {
         Ok((outcome, execution_stats))
     }
 
-    /// Builds a compressed SP1 proof request for a single benchmark block.
-    pub const fn proof_request(
+    // Heap-backed request builder; not intended for const evaluation.
+    #[allow(clippy::missing_const_for_fn)]
+    fn proof_request(
         session_id: String,
         start_block_number: u64,
         l1_head: B256,
@@ -165,26 +162,25 @@ impl ZkBenchRunner {
         }
     }
 
-    /// Polls a proof job until it succeeds or fails.
-    pub async fn poll_proof(
+    async fn poll_proof(
         client: &ProofRequesterClient,
-        session_id: String,
+        session_id: &str,
         zk_backend: ZkBackend,
         proof_timeout: Duration,
         poll_interval: Duration,
     ) -> Result<Option<ExecutionStats>> {
-        let timeout_session_id = session_id.clone();
+        let get_proof_request = GetProofRequest { session_id: session_id.to_owned() };
         timeout(proof_timeout, async {
             let start = Instant::now();
             loop {
                 let response = client
-                    .get_proof(GetProofRequest { session_id: session_id.clone() })
+                    .get_proof(get_proof_request.clone())
                     .await
                     .wrap_err("get-proof request failed")?;
 
                 match response.status {
                     ProofStatus::Succeeded => {
-                        return Self::proof_result(zk_backend, &session_id, response.result);
+                        return Self::proof_result(zk_backend, session_id, response.result);
                     }
                     ProofStatus::Failed => {
                         return Err(eyre::eyre!(
@@ -200,11 +196,10 @@ impl ZkBenchRunner {
             }
         })
         .await
-        .wrap_err_with(|| format!("timed out waiting for proof request {timeout_session_id}"))?
+        .wrap_err_with(|| format!("timed out waiting for proof request {session_id}"))?
     }
 
-    /// Validates a successful proof result and extracts dry-run execution statistics.
-    pub fn proof_result(
+    fn proof_result(
         zk_backend: ZkBackend,
         session_id: &str,
         result: Option<ProofResult>,
