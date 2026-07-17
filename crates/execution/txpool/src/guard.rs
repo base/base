@@ -1,8 +1,7 @@
 //! Mempool admission and invalidation bookkeeping.
 //!
-//! [`MempoolGuard`] ties together the three mechanisms built in
-//! [`crate::invalidation`] and [`crate::limits`] into the policy described in
-//! `MEMPOOL_HARDENING.md`:
+//! [`MempoolGuard`] ties together the mechanisms built in
+//! [`crate::invalidation`] and [`crate::limits`]:
 //!
 //! * the account **signature / payment** admission checks, and
 //! * state-keyed **invalidation** (exact-match slot drops and balance

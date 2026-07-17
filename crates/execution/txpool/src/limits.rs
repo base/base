@@ -1,6 +1,6 @@
 //! Per-account admission limits: payer balance accounting and inflight counters.
 //!
-//! Two independent dimensions gate admission (see `MEMPOOL_HARDENING.md`):
+//! Two independent dimensions gate admission:
 //!
 //! * the **sender limit**, bounded by signature/auth-surface stability, and
 //! * the **payer limit**, bounded by balance-drain risk.

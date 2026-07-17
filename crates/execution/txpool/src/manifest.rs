@@ -13,8 +13,7 @@
 //! (including the delegate account's slots on the delegate path, which the
 //! hand-derived [`crate::WatchSet`] cannot see), because it is recorded at the
 //! storage layer rather than re-derived. It is intended to be consumed by the
-//! builder for a cheap, stateless intra-block validity check. See
-//! `MEMPOOL_HARDENING.md` §13.
+//! builder for a cheap, stateless intra-block validity check.
 
 use alloy_primitives::{Address, U256};
 use revm::Database;

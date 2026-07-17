@@ -335,7 +335,7 @@ struct OverlayPrecompileStorage<'a> {
     /// first value observed per slot wins); a read served from an overlay-buffered
     /// write is the transaction's *own* effect, not an external dependency, so it
     /// is intentionally excluded. This is the drift-free authorization read-set
-    /// captured for the [`WatchManifest`]. See `MEMPOOL_HARDENING.md` §13.
+    /// captured for the [`WatchManifest`].
     reads: BTreeMap<(Address, U256), U256>,
 }
 
