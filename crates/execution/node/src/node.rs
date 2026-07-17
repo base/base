@@ -175,6 +175,7 @@ impl PayloadAttributesBuilder<BasePayloadBuilderAttributes<BaseTxEnvelope>>
                     .is_ecotone_active_at_timestamp(timestamp)
                     .then(B256::random),
                 slot_number: None,
+                target_gas_limit: None,
             },
             transactions: Some(vec![TX_SET_L1_BLOCK_BASE_MAINNET_BLOCK_1.into()]),
             no_tx_pool: None,

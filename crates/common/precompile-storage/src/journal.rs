@@ -18,9 +18,7 @@ use alloc::string::ToString;
 use alloy_evm::EvmInternals;
 use alloy_primitives::{Address, B256, Log, LogData, U256};
 use revm::{
-    // `Block` is imported only to bring its trait methods (e.g. `block_env().number()`)
-    // into scope; `as _` keeps it anonymous since it is never named directly.
-    context::{Block as _, journaled_state::JournalCheckpoint},
+    context::journaled_state::JournalCheckpoint,
     primitives::keccak256,
     state::{AccountInfo, Bytecode},
 };

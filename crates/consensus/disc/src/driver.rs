@@ -292,22 +292,22 @@ impl Discv5Driver {
                             continue;
                         };
                         match event {
-                            discv5::Event::Discovered(enr) => {
-                                if EnrValidation::validate(&enr, chain_id).is_valid() {
-                                    debug!(target: "discovery", enr = ?enr, "Valid ENR discovered, forwarding to swarm");
-                                    Metrics::discovery_event("discovered").increment(1.0);
-                                    if try_forward_enr(&enr_sender, enr.clone()) {
-                                        store.add_enr(enr);
-                                    }
+                            discv5::Event::Discovered(enr)
+                                if EnrValidation::validate(&enr, chain_id).is_valid() =>
+                            {
+                                debug!(target: "discovery", enr = ?enr, "Valid ENR discovered, forwarding to swarm");
+                                Metrics::discovery_event("discovered").increment(1.0);
+                                if try_forward_enr(&enr_sender, enr.clone()) {
+                                    store.add_enr(enr);
                                 }
                             }
-                            discv5::Event::SessionEstablished(enr, addr) => {
-                                if EnrValidation::validate(&enr, chain_id).is_valid() {
-                                    debug!(target: "discovery", addr = ?addr, enr = ?enr, "Session established with valid ENR, forwarding to swarm");
-                                    Metrics::discovery_event("session_established").increment(1.0);
-                                    if try_forward_enr(&enr_sender, enr.clone()) {
-                                        store.add_enr(enr);
-                                    }
+                            discv5::Event::SessionEstablished(enr, addr)
+                                if EnrValidation::validate(&enr, chain_id).is_valid() =>
+                            {
+                                debug!(target: "discovery", addr = ?addr, enr = ?enr, "Session established with valid ENR, forwarding to swarm");
+                                Metrics::discovery_event("session_established").increment(1.0);
+                                if try_forward_enr(&enr_sender, enr.clone()) {
+                                    store.add_enr(enr);
                                 }
                             }
                             discv5::Event::UnverifiableEnr { enr, .. }

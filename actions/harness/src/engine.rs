@@ -510,6 +510,7 @@ impl ActionEngineClient {
                 withdrawals: Some(vec![]),
                 parent_beacon_block_root: None,
                 slot_number: None,
+                target_gas_limit: None,
             },
             transactions: Some(payload.transactions.clone()),
             no_tx_pool: Some(true),

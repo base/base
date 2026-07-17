@@ -17,7 +17,8 @@ use base_protocol::BaseTimeUpdateTx;
 use reth_chainspec::EthChainSpec;
 use reth_consensus::ConsensusError;
 use reth_node_api::{
-    BuiltPayload, EngineApiValidator, EngineTypes, NodePrimitives, PayloadValidator,
+    BuiltPayload, EngineApiValidator, EngineTypes, InsertBlockErrorKind, NodePrimitives,
+    PayloadValidator,
     payload::{
         EngineApiMessageVersion, EngineObjectValidationError, MessageValidationKind,
         NewPayloadError, PayloadOrAttributes, PayloadTypes, VersionSpecificValidationError,
@@ -26,8 +27,9 @@ use reth_node_api::{
     validate_version_specific_fields,
 };
 use reth_payload_primitives::{InvalidPayloadAttributesError, PayloadAttributes};
-use reth_primitives_traits::{Block, RecoveredBlock, SealedBlock, SignedTransaction};
+use reth_primitives_traits::{Block, RecoveredBlock, SealedBlock, SealedHeader, SignedTransaction};
 use reth_provider::{StateProvider, StateProviderFactory};
+use reth_storage_api::{StateProviderBox, errors::ProviderResult};
 use reth_trie_common::{HashedPostState, KeyHasher};
 
 /// The types used in the Base beacon consensus engine.
@@ -155,25 +157,22 @@ where
 {
     type Block = alloy_consensus::Block<Tx>;
 
-    fn validate_block_post_execution_with_hashed_state(
+    fn validate_block_post_execution_with_hashed_state<'a>(
         &self,
-        state_updates: &HashedPostState,
+        state_updates: impl FnOnce() -> &'a HashedPostState,
         block: &RecoveredBlock<Self::Block>,
-    ) -> Result<(), ConsensusError> {
+        _parent_header: &SealedHeader<<Self::Block as Block>::Header>,
+        parent_state: impl FnOnce() -> ProviderResult<StateProviderBox>,
+    ) -> Result<(), InsertBlockErrorKind> {
         let timestamp = block.timestamp();
 
         if !self.chain_spec().is_isthmus_active_at_timestamp(timestamp) {
             return Ok(());
         }
 
-        let parent_state =
-            self.provider.state_by_block_hash(block.parent_hash()).map_err(|err| {
-                ConsensusError::Other(Arc::from(Box::<dyn core::error::Error + Send + Sync>::from(
-                    format!("failed to load parent state for post-execution validation: {err}"),
-                )))
-            })?;
-
-        self.validate_isthmus_post_execution(state_updates, &parent_state, block.header())
+        let parent_state = parent_state()?;
+        self.validate_isthmus_post_execution(state_updates(), parent_state.as_ref(), block.header())
+            .map_err(Into::into)
     }
 
     fn convert_payload_to_block(
@@ -445,6 +444,7 @@ mod tests {
                     withdrawals: Some(vec![]),
                     parent_beacon_block_root: Some(B256::ZERO),
                     slot_number: None,
+                    target_gas_limit: None,
                 },
             },
             3,
@@ -728,8 +728,8 @@ mod tests {
         RecoveredBlock::new_sealed(SealedBlock::seal_slow(block), vec![])
     }
 
-    fn base_consensus_error(error: &ConsensusError) -> Option<&BaseConsensusError> {
-        let ConsensusError::Other(error) = error else {
+    fn base_consensus_error(error: &InsertBlockErrorKind) -> Option<&BaseConsensusError> {
+        let InsertBlockErrorKind::Consensus(ConsensusError::Other(error)) = error else {
             return None;
         };
         error.downcast_ref()
@@ -738,11 +738,14 @@ mod tests {
     #[test]
     fn generic_post_execution_validation_checks_isthmus() {
         let block = post_execution_block(EMPTY_ROOT_HASH);
+        let state_updates = HashedPostState::default();
         let error =
             PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
                 &zombie_validator(),
-                &HashedPostState::default(),
+                || &state_updates,
                 &block,
+                block.sealed_header(),
+                || Ok(Box::new(NoopProvider::default())),
             )
             .unwrap_err();
 
