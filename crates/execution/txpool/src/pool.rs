@@ -313,10 +313,8 @@ where
     }
 
     fn expire_due_buckets(&self, now: u64) {
-        // A protocol transaction can reserve guard capacity immediately before
-        // reth inserts it. Do not expire that reservation while it is between
-        // the guard and protocol pool.
-        let _admission_guard = self.protocol_admission_lock.lock();
+        // Called while canonical maintenance holds `protocol_admission_lock`,
+        // so a reservation cannot be expired between guard and reth insertion.
         let horizon = now.saturating_add(InvalidationKey::EXPIRY_BUCKET_SECS)
             / InvalidationKey::EXPIRY_BUCKET_SECS;
         let recent = (now / InvalidationKey::EXPIRY_BUCKET_SECS).saturating_sub(1);
@@ -340,9 +338,8 @@ where
     }
 
     fn reconcile_guard(&self) {
-        // Keep the reserved-before-insert protocol admission window from
-        // looking like a stale guard record.
-        let _admission_guard = self.protocol_admission_lock.lock();
+        // Called while canonical maintenance holds `protocol_admission_lock`
+        // so reserved-before-insert transactions cannot look stale.
         let tracked = self.guard.read().tracked_hashes();
         if tracked.is_empty() {
             return;
@@ -1343,6 +1340,11 @@ where
         let block_hash = update.hash();
         let now = update.timestamp();
         let mined_transactions = update.mined_transactions.clone();
+        // Keep protocol-pool removal, guard release, expiry, and reconciliation
+        // atomic with protocol pre-admission. This prevents transient stale
+        // accounting from rejecting a transaction while canonical maintenance
+        // releases capacity.
+        let _admission_guard = self.protocol_admission_lock.lock();
         self.protocol_pool.on_canonical_state_change(update);
         {
             let mut nonce_pool = self.nonce_pool.write();
@@ -1355,7 +1357,7 @@ where
             if !expired.is_empty() {
                 listeners.on_discarded(&expired);
             }
-            // Canonical maintenance lock order is nonce_pool -> listeners -> guard.
+            // Canonical maintenance lock order is admission -> nonce_pool -> listeners -> guard.
             let mut guard = self.guard.write();
             for transaction in &pruned.removed {
                 guard.release(transaction.hash());
