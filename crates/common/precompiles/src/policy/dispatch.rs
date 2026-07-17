@@ -6,16 +6,16 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
-use super::{Version, VersionResolver};
+use super::{ContractContext, Version, VersionResolver};
 use crate::{
     ActivationFeature, ActivationRegistryStorage, BerylAuxiliaryMetrics, BerylCallRecorder,
     BerylMetricLabels,
     IPolicyRegistry::{self, IPolicyRegistryCalls as C},
-    NoopPrecompileCallObserver, PolicyRegistryStorage, PrecompileCallObserver,
+    NoopPrecompileCallObserver, PolicyAccounting, PrecompileCallObserver,
     macros::decode_precompile_call,
 };
 
-impl PolicyRegistryStorage<'_> {
+impl<S: PolicyAccounting> ContractContext<S> {
     /// ABI-dispatches policy registry calldata for `upgrade`.
     ///
     /// View (read-only) calls bypass the activation gate and remain accessible even when the
@@ -173,7 +173,7 @@ mod tests {
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
     use revm::precompile::PrecompileOutput;
 
-    use super::super::LogicV1;
+    use super::super::{ContractContext, PolicyRegistryLogicV1};
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, BerylErrorKind,
         IPolicyRegistry, PolicyRegistryStorage, PrecompileCallMetric, PrecompileCallObserver,
@@ -219,8 +219,8 @@ mod tests {
     fn activate_and_init(storage: &mut HashMapStorageProvider) {
         activate_policy_registry(storage);
         StorageCtx::enter(storage, |ctx| {
-            let mut rt = PolicyRegistryStorage::new(ctx);
-            LogicV1.ensure_initialized_and_get_counter(&mut rt)
+            let mut rt = ContractContext::with_storage(PolicyRegistryStorage::new(ctx));
+            PolicyRegistryLogicV1.ensure_initialized_and_get_counter(rt.storage_mut())
         })
         .unwrap();
     }
@@ -228,7 +228,11 @@ mod tests {
     /// Dispatches `calldata` against a Beryl runtime, expecting no fatal error.
     fn run(storage: &mut HashMapStorageProvider, calldata: &[u8]) -> PrecompileOutput {
         StorageCtx::enter(storage, |ctx| {
-            PolicyRegistryStorage::new(ctx).dispatch(ctx, calldata, BaseUpgrade::Beryl)
+            ContractContext::with_storage(PolicyRegistryStorage::new(ctx)).dispatch(
+                ctx,
+                calldata,
+                BaseUpgrade::Beryl,
+            )
         })
         .expect("dispatch should not fatally error")
     }
@@ -240,7 +244,7 @@ mod tests {
         observer: RecordingObserver,
     ) -> PrecompileOutput {
         StorageCtx::enter(storage, |ctx| {
-            PolicyRegistryStorage::new(ctx).dispatch_with_observer(
+            ContractContext::with_storage(PolicyRegistryStorage::new(ctx)).dispatch_with_observer(
                 ctx,
                 calldata,
                 BaseUpgrade::Beryl,
@@ -265,7 +269,7 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         activate_and_init(&mut storage);
         let calldata =
-            IPolicyRegistry::policyExistsCall { policyId: LogicV1::ALWAYS_ALLOW_ID }.abi_encode();
+            IPolicyRegistry::policyExistsCall { policyId: PolicyRegistryLogicV1::ALWAYS_ALLOW_ID }.abi_encode();
 
         let output = run_obs(&mut storage, &calldata, observer.clone());
 
@@ -320,7 +324,7 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         activate_and_init(&mut storage);
         let calldata =
-            IPolicyRegistry::policyExistsCall { policyId: LogicV1::ALWAYS_ALLOW_ID }.abi_encode();
+            IPolicyRegistry::policyExistsCall { policyId: PolicyRegistryLogicV1::ALWAYS_ALLOW_ID }.abi_encode();
 
         let output = run(&mut storage, &calldata);
 
@@ -378,7 +382,7 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         activate_and_init(&mut storage);
         let calldata = IPolicyRegistry::isAuthorizedCall {
-            policyId: LogicV1::ALWAYS_ALLOW_ID,
+            policyId: PolicyRegistryLogicV1::ALWAYS_ALLOW_ID,
             account: ALICE,
         }
         .abi_encode();
@@ -657,7 +661,7 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         storage.set_call_value(alloy_primitives::U256::from(1u64));
         let calldata =
-            IPolicyRegistry::policyExistsCall { policyId: LogicV1::ALWAYS_ALLOW_ID }.abi_encode();
+            IPolicyRegistry::policyExistsCall { policyId: PolicyRegistryLogicV1::ALWAYS_ALLOW_ID }.abi_encode();
 
         let out = run(&mut storage, &calldata);
 

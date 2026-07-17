@@ -7,7 +7,7 @@ use alloy_sol_types::SolValue;
 use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
     B20AssetStorage, B20FactoryStorage, B20TokenRole, B20Variant, ContractContext, IB20,
-    IB20Factory, Logic, LogicV1, PolicyRegistryStorage, PolicyVersion, Token, TokenAccounting,
+    IB20Factory, B20AssetLogic, B20AssetLogicV1, PolicyRegistryStorage, PolicyVersion, Token, TokenAccounting,
 };
 use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 use criterion::{Criterion, criterion_group, criterion_main};
@@ -64,7 +64,7 @@ impl BaseTokenBenchSetup {
         let token_address = Self::create_b20(ctx, Self::caller(), params, salt, initial_supply);
         let mut token = Self::token_at(ctx, token_address);
         if initial_supply > U256::ZERO {
-            LogicV1
+            B20AssetLogicV1
                 .mint(
                     &mut token,
                     Self::admin(),
@@ -187,7 +187,7 @@ fn base_token_view(c: &mut Criterion) {
             let spender = Address::repeat_byte(0x02);
             let mut token =
                 BaseTokenBenchSetup::create_token(ctx, B256::repeat_byte(0x07), U256::ZERO);
-            LogicV1.approve(&mut token, owner, spender, U256::from(500u64)).unwrap();
+            B20AssetLogicV1.approve(&mut token, owner, spender, U256::from(500u64)).unwrap();
 
             b.iter(|| {
                 let token = black_box(&token);
@@ -237,7 +237,7 @@ fn base_token_mutate(c: &mut Criterion) {
             b.iter(|| {
                 let token = black_box(&mut token);
                 let user = black_box(user);
-                LogicV1.mint(token, user, user, U256::ONE, true).unwrap();
+                B20AssetLogicV1.mint(token, user, user, U256::ONE, true).unwrap();
             });
         });
     });
@@ -258,7 +258,7 @@ fn base_token_mutate(c: &mut Criterion) {
             b.iter(|| {
                 let token = black_box(&mut token);
                 let holder = black_box(holder);
-                LogicV1.burn(token, holder, U256::ONE).unwrap();
+                B20AssetLogicV1.burn(token, holder, U256::ONE).unwrap();
             });
         });
     });
@@ -275,7 +275,7 @@ fn base_token_mutate(c: &mut Criterion) {
                 let token = black_box(&mut token);
                 let owner = black_box(owner);
                 let spender = black_box(spender);
-                LogicV1.approve(token, owner, spender, U256::from(500u64)).unwrap();
+                B20AssetLogicV1.approve(token, owner, spender, U256::from(500u64)).unwrap();
             });
         });
     });
@@ -294,7 +294,7 @@ fn base_token_mutate(c: &mut Criterion) {
             b.iter(|| {
                 let token = black_box(&mut token);
                 let from = black_box(from);
-                LogicV1.transfer(token, from, to, U256::ONE, false).unwrap();
+                B20AssetLogicV1.transfer(token, from, to, U256::ONE, false).unwrap();
             });
         });
     });
@@ -310,12 +310,12 @@ fn base_token_mutate(c: &mut Criterion) {
                 B256::repeat_byte(0x10),
                 U256::from(u128::MAX),
             );
-            LogicV1.approve(&mut token, owner, spender, U256::MAX).unwrap();
+            B20AssetLogicV1.approve(&mut token, owner, spender, U256::MAX).unwrap();
 
             b.iter(|| {
                 let token = black_box(&mut token);
                 let spender = black_box(spender);
-                LogicV1.transfer_from(token, spender, owner, recipient, U256::ONE, false).unwrap();
+                B20AssetLogicV1.transfer_from(token, spender, owner, recipient, U256::ONE, false).unwrap();
             });
         });
     });
@@ -335,8 +335,8 @@ fn base_token_mutate(c: &mut Criterion) {
             b.iter(|| {
                 let token = black_box(&mut token);
                 let from = black_box(from);
-                LogicV1.transfer(token, from, to, U256::ONE, false).unwrap();
-                LogicV1.emit_memo(token, from, memo).unwrap();
+                B20AssetLogicV1.transfer(token, from, to, U256::ONE, false).unwrap();
+                B20AssetLogicV1.emit_memo(token, from, memo).unwrap();
             });
         });
     });
@@ -353,13 +353,13 @@ fn base_token_mutate(c: &mut Criterion) {
                 B256::repeat_byte(0x12),
                 U256::from(u128::MAX),
             );
-            LogicV1.approve(&mut token, owner, spender, U256::MAX).unwrap();
+            B20AssetLogicV1.approve(&mut token, owner, spender, U256::MAX).unwrap();
 
             b.iter(|| {
                 let token = black_box(&mut token);
                 let spender = black_box(spender);
-                LogicV1.transfer_from(token, spender, owner, recipient, U256::ONE, false).unwrap();
-                LogicV1.emit_memo(token, spender, memo).unwrap();
+                B20AssetLogicV1.transfer_from(token, spender, owner, recipient, U256::ONE, false).unwrap();
+                B20AssetLogicV1.emit_memo(token, spender, memo).unwrap();
             });
         });
     });
@@ -374,7 +374,7 @@ fn base_token_mutate(c: &mut Criterion) {
             b.iter(|| {
                 let token = black_box(&mut token);
                 let admin = black_box(admin);
-                LogicV1.pause(token, admin, vec![IB20::PausableFeature::TRANSFER], true).unwrap();
+                B20AssetLogicV1.pause(token, admin, vec![IB20::PausableFeature::TRANSFER], true).unwrap();
             });
         });
     });
@@ -385,12 +385,12 @@ fn base_token_mutate(c: &mut Criterion) {
             let admin = BaseTokenBenchSetup::admin();
             let mut token =
                 BaseTokenBenchSetup::create_token(ctx, B256::repeat_byte(0x14), U256::ZERO);
-            LogicV1.pause(&mut token, admin, vec![IB20::PausableFeature::TRANSFER], true).unwrap();
+            B20AssetLogicV1.pause(&mut token, admin, vec![IB20::PausableFeature::TRANSFER], true).unwrap();
 
             b.iter(|| {
                 let token = black_box(&mut token);
                 let admin = black_box(admin);
-                LogicV1.unpause(token, admin, vec![IB20::PausableFeature::TRANSFER], true).unwrap();
+                B20AssetLogicV1.unpause(token, admin, vec![IB20::PausableFeature::TRANSFER], true).unwrap();
             });
         });
     });
@@ -408,7 +408,7 @@ fn base_token_mutate(c: &mut Criterion) {
             b.iter(|| {
                 let token = black_box(&mut token);
                 let admin = black_box(admin);
-                LogicV1.update_supply_cap(token, admin, U256::from(10_000u64), true).unwrap();
+                B20AssetLogicV1.update_supply_cap(token, admin, U256::from(10_000u64), true).unwrap();
             });
         });
     });

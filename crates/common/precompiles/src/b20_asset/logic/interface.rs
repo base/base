@@ -10,7 +10,7 @@ use crate::{
 };
 
 /// The asset B-20 logic interface.
-pub trait Logic<S: AssetAccounting, A: PolicyAccounting> {
+pub trait B20AssetLogic<S: AssetAccounting, A: PolicyAccounting> {
     /// ERC-20 `transfer`.
     fn transfer(
         &self,

@@ -6,13 +6,16 @@ pub use abi::IPolicyRegistry;
 mod accounting;
 pub use accounting::PolicyAccounting;
 
+mod context;
+pub use context::ContractContext;
+
 mod dispatch;
 
 mod versions;
 pub use versions::{Version, VersionResolver};
 
 mod logic;
-pub use logic::{Logic, LogicV1};
+pub use logic::{PolicyRegistryLogic, PolicyRegistryLogicV1};
 
 mod precompile;
 pub use precompile::PolicyRegistryPrecompile;

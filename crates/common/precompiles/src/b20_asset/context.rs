@@ -6,18 +6,20 @@
 
 use alloy_primitives::Address;
 
-use crate::{AssetAccounting, PolicyAccounting, PolicyLogic, PolicyVersion, Token};
+use crate::{
+    AssetAccounting, PolicyAccounting, PolicyContractContext, PolicyRegistryLogic, PolicyVersion, Token,
+};
 
 /// Storage + policy binding the asset logic operates on.
 ///
 /// A minimal `(storage, policy, policy_version)` holder implementing [`Token`];
 /// it carries no behavior of its own — all business logic lives in the version
 /// implementations resolved from [`crate::VersionResolver`]. Authorization goes
-/// through [`crate::PolicyLogic`] via [`Token::policy`].
+/// through [`crate::PolicyRegistryLogic`] via [`Token::policy`].
 #[derive(Debug, Clone)]
 pub struct ContractContext<S: AssetAccounting, A: PolicyAccounting> {
     storage: S,
-    policy: A,
+    policy: PolicyContractContext<A>,
     policy_version: PolicyVersion,
 }
 
@@ -28,7 +30,11 @@ impl<S: AssetAccounting, A: PolicyAccounting> ContractContext<S, A> {
         policy: A,
         policy_version: PolicyVersion,
     ) -> Self {
-        Self { storage, policy, policy_version }
+        Self {
+            storage,
+            policy: PolicyContractContext::with_storage(policy),
+            policy_version,
+        }
     }
 }
 
@@ -44,16 +50,24 @@ impl<S: AssetAccounting, A: PolicyAccounting> Token for ContractContext<S, A> {
         &mut self.storage
     }
 
-    fn policy(&self) -> &dyn PolicyLogic<A> {
+    fn policy(&self) -> &dyn PolicyRegistryLogic<A> {
         self.policy_version.implementation()
     }
 
-    fn policy_storage(&self) -> &A {
+    fn policy_context(&self) -> &PolicyContractContext<A> {
         &self.policy
     }
 
-    fn policy_storage_mut(&mut self) -> &mut A {
+    fn policy_context_mut(&mut self) -> &mut PolicyContractContext<A> {
         &mut self.policy
+    }
+
+    fn policy_storage(&self) -> &A {
+        self.policy.storage()
+    }
+
+    fn policy_storage_mut(&mut self) -> &mut A {
+        self.policy.storage_mut()
     }
 
     fn token_address(&self) -> Address {

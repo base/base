@@ -9,7 +9,7 @@
 
 use base_common_genesis::BaseUpgrade;
 
-use super::logic::{Logic, LogicV1};
+use super::logic::{B20FactoryLogic, B20FactoryLogicV1};
 
 /// An activated version of the B-20 token factory precompile logic.
 ///
@@ -22,8 +22,8 @@ pub enum Version {
 
 impl Version {
     /// Returns the immutable logic implementation for this version.
-    pub fn implementation<'l>(self) -> &'l dyn Logic {
-        static V1: LogicV1 = LogicV1;
+    pub fn implementation<'l>(self) -> &'l dyn B20FactoryLogic {
+        static V1: B20FactoryLogicV1 = B20FactoryLogicV1;
         match self {
             Self::V1 => &V1,
         }

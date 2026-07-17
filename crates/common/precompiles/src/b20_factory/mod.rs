@@ -6,7 +6,7 @@ pub use abi::IB20Factory;
 mod dispatch;
 
 mod logic;
-pub use logic::{CommonParams, Logic, LogicV1, TokenCreateParams};
+pub use logic::{CommonParams, B20FactoryLogic, B20FactoryLogicV1, TokenCreateParams};
 
 mod precompile;
 pub use precompile::B20Factory;

@@ -25,7 +25,7 @@ use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
     B20_MAX_SUPPLY_CAP, B20PolicyType, B20StablecoinInit, B20StablecoinStorage, StablecoinContractContext,
     B20TokenRole, FakePolicyAccounting, IB20, IB20Stablecoin, NoopPrecompileCallObserver,
-    PermitArgs, PolicyVersion, StablecoinLogic, StablecoinLogicV1, StablecoinVersion,
+    PermitArgs, PolicyVersion, B20StablecoinLogic, B20StablecoinLogicV1, StablecoinVersion,
     StablecoinVersionResolver,
     TokenAccounting,
 };
@@ -44,7 +44,7 @@ const NAME: &str = "USD Coin";
 const SYMBOL: &str = "USDC";
 const CURRENCY: &str = "USD";
 const MEMO: B256 = B256::repeat_byte(0x77);
-const LOGIC: StablecoinLogicV1 = StablecoinLogicV1;
+const LOGIC: B20StablecoinLogicV1 = B20StablecoinLogicV1;
 
 /// A concrete (non-sentinel) ALLOWLIST policy id (type byte = 1, counter = 7).
 ///

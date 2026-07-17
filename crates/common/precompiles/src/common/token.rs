@@ -1,6 +1,6 @@
 use alloy_primitives::Address;
 
-use crate::{PolicyAccounting, PolicyLogic, TokenAccounting};
+use crate::{PolicyAccounting, PolicyContractContext, PolicyRegistryLogic, TokenAccounting};
 
 /// Token identity layer, bridging the storage port to capability traits.
 ///
@@ -9,10 +9,11 @@ use crate::{PolicyAccounting, PolicyLogic, TokenAccounting};
 ///   [`Self::accounting_mut`]) that all capability trait default impls use to
 ///   read and write state without the 22-method delegation block.
 /// - Access to the policy registry: [`Self::policy`] returns the active version's
-///   [`PolicyLogic`] contract, and [`Self::policy_storage`] /
-///   [`Self::policy_storage_mut`] expose the storage it operates on. Together they
-///   make the whole policy contract available at the call site, e.g.
-///   `token.policy().is_authorized(token.policy_storage(), policy_id, account)`.
+///   [`PolicyRegistryLogic`] contract, and [`Self::policy_context`] /
+///   [`Self::policy_context_mut`] expose the [`PolicyContractContext`] it operates
+///   on. Together they make the whole policy contract available at the call site,
+///   e.g.
+///   `token.policy().is_authorized(token.policy_context(), policy_id, account)`.
 /// - [`Self::token_address`], the on-chain address of this token.
 ///
 /// All capability traits extend `Token`. Implement it on a token struct by
@@ -31,11 +32,19 @@ pub trait Token {
     /// Returns an exclusive reference to this token's storage adapter.
     fn accounting_mut(&mut self) -> &mut Self::Accounting;
     /// Returns the policy-registry logic contract active for this token's version.
-    fn policy(&self) -> &dyn PolicyLogic<Self::PolicyAccounting>;
+    fn policy(&self) -> &dyn PolicyRegistryLogic<Self::PolicyAccounting>;
+    /// Returns a shared reference to the policy-registry contract context.
+    fn policy_context(&self) -> &PolicyContractContext<Self::PolicyAccounting>;
+    /// Returns an exclusive reference to the policy-registry contract context.
+    fn policy_context_mut(&mut self) -> &mut PolicyContractContext<Self::PolicyAccounting>;
     /// Returns a shared reference to the policy-registry storage the contract reads from.
-    fn policy_storage(&self) -> &Self::PolicyAccounting;
+    fn policy_storage(&self) -> &Self::PolicyAccounting {
+        self.policy_context().storage()
+    }
     /// Returns an exclusive reference to the policy-registry storage port.
-    fn policy_storage_mut(&mut self) -> &mut Self::PolicyAccounting;
+    fn policy_storage_mut(&mut self) -> &mut Self::PolicyAccounting {
+        self.policy_context_mut().storage_mut()
+    }
     /// Returns the on-chain address of this token contract.
     fn token_address(&self) -> Address;
 }

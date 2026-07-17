@@ -11,7 +11,7 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, Result, StorageCtx};
 use revm::precompile::PrecompileResult;
 
-use super::{Logic, LogicV1, Version, VersionResolver};
+use super::{B20FactoryLogic, B20FactoryLogicV1, Version, VersionResolver};
 use crate::{
     B20FactoryStorage, B20Variant, BerylAuxiliaryMetrics, BerylCallRecorder, BerylMetricLabels,
     IB20Factory, NoopPrecompileCallObserver, PrecompileCallObserver,
@@ -73,7 +73,7 @@ impl<'a> B20FactoryStorage<'a> {
         upgrade: BaseUpgrade,
     ) -> Result<Address> {
         let address_hash = keccak256((caller, call.salt).abi_encode());
-        LogicV1.create_b20(self, call, address_hash, upgrade)
+        B20FactoryLogicV1.create_b20(self, call, address_hash, upgrade)
     }
 
     /// Decodes calldata and routes it to `version`'s logic.
@@ -662,7 +662,7 @@ mod tests {
         assert!(!event.variantParams.is_empty(), "STABLECOIN variantParams must not be empty");
         let params = IB20Factory::B20StablecoinEventParams::abi_decode(&event.variantParams)
             .expect("variantParams must decode as B20StablecoinEventParams");
-        // Version byte frozen by `LogicV1` for `B20StablecoinEventParams`.
+        // Version byte frozen by `B20FactoryLogicV1` for `B20StablecoinEventParams`.
         assert_eq!(params.version, 1);
         assert_eq!(params.currency, "USD");
     }

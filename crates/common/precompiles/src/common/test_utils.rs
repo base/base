@@ -10,8 +10,8 @@ use base_precompile_storage::Result;
 
 use crate::{
     Burnable, Configurable, Mintable, PackedPolicy, Pausable, Permittable, PolicyAccounting,
-    PolicyLogic, PolicyRegistryStorage, PolicyVersion, RoleManaged, StablecoinContractContext,
-    Token, Transferable,
+    PolicyContractContext, PolicyRegistryLogic, PolicyRegistryStorage, PolicyVersion, RoleManaged,
+    StablecoinContractContext, Token, Transferable,
     b20_asset::{AssetAccounting, B20AssetStorage},
     b20_stablecoin::StablecoinAccounting,
     common::{B20_MAX_SUPPLY_CAP, TokenAccounting},
@@ -34,7 +34,7 @@ pub type TestStablecoinToken =
 #[derive(Debug)]
 pub struct TestToken {
     accounting: InMemoryTokenAccounting,
-    policy: FakePolicyAccounting,
+    policy: PolicyContractContext<FakePolicyAccounting>,
     policy_version: PolicyVersion,
 }
 
@@ -44,7 +44,11 @@ impl TestToken {
         accounting: InMemoryTokenAccounting,
         policy: FakePolicyAccounting,
     ) -> Self {
-        Self { accounting, policy, policy_version: PolicyVersion::V1 }
+        Self {
+            accounting,
+            policy: PolicyContractContext::with_storage(policy),
+            policy_version: PolicyVersion::V1,
+        }
     }
 }
 
@@ -60,15 +64,15 @@ impl Token for TestToken {
         &mut self.accounting
     }
 
-    fn policy(&self) -> &dyn PolicyLogic<FakePolicyAccounting> {
+    fn policy(&self) -> &dyn PolicyRegistryLogic<FakePolicyAccounting> {
         self.policy_version.implementation()
     }
 
-    fn policy_storage(&self) -> &FakePolicyAccounting {
+    fn policy_context(&self) -> &PolicyContractContext<FakePolicyAccounting> {
         &self.policy
     }
 
-    fn policy_storage_mut(&mut self) -> &mut FakePolicyAccounting {
+    fn policy_context_mut(&mut self) -> &mut PolicyContractContext<FakePolicyAccounting> {
         &mut self.policy
     }
 
@@ -313,7 +317,7 @@ impl StablecoinAccounting for InMemoryTokenAccounting {
 /// In-memory [`PolicyAccounting`] for unit tests.
 ///
 /// Pair with [`PolicyVersion::V1`] on tokens so authorization goes through
-/// [`crate::PolicyLogic`]. Call [`FakePolicyAccounting::allow`] to grant membership
+/// [`crate::PolicyRegistryLogic`]. Call [`FakePolicyAccounting::allow`] to grant membership
 /// (ALLOWLIST semantics under V1) before exercising token ops that need a custom policy.
 #[derive(Debug)]
 pub struct FakePolicyAccounting {

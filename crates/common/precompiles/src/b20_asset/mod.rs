@@ -15,7 +15,7 @@ mod versions;
 pub use versions::{Version, VersionResolver};
 
 mod logic;
-pub use logic::{Logic, LogicV1};
+pub use logic::{B20AssetLogic, B20AssetLogicV1};
 
 mod precompile;
 pub use precompile::B20AssetPrecompile;

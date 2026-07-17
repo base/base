@@ -8,7 +8,7 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, ContractStorage, Result};
 use revm::state::Bytecode;
 
-use super::Logic;
+use super::B20FactoryLogic;
 use crate::{
     ActivationRegistryStorage, B20AssetInit, B20AssetStorage, B20FactoryStorage, B20StablecoinInit,
     B20StablecoinStorage, B20TokenRole, B20Variant, ContractContext, IB20Factory,
@@ -35,9 +35,9 @@ const INITIAL_MULTIPLIER: U256 = U256::ZERO;
 
 /// First B-20 token factory logic implementation. Frozen as of its activation at Beryl.
 #[derive(Debug, Default, Clone, Copy)]
-pub struct LogicV1;
+pub struct B20FactoryLogicV1;
 
-impl LogicV1 {
+impl B20FactoryLogicV1 {
     fn init_stablecoin(
         &self,
         storage: &B20FactoryStorage<'_>,
@@ -180,7 +180,7 @@ impl LogicV1 {
     }
 }
 
-impl Logic for LogicV1 {
+impl B20FactoryLogic for B20FactoryLogicV1 {
     fn create_b20(
         &self,
         storage: &mut B20FactoryStorage<'_>,
@@ -348,7 +348,8 @@ mod tests {
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
         B20_MAX_SUPPLY_CAP, B20AssetStorage, B20FactoryStorage, B20TokenRole, B20Variant,
-        ContractContext, IB20, IB20Factory, Logic, LogicV1, PolicyRegistryStorage, PolicyVersion,
+        B20AssetLogic, B20AssetLogicV1, ContractContext, IB20, IB20Factory, PolicyRegistryStorage,
+        PolicyVersion,
         Token, TokenAccounting,
     };
 
@@ -621,9 +622,9 @@ mod tests {
             let bob = Address::repeat_byte(0xBB);
             let mut token = token_at(token_addr, ctx);
 
-            LogicV1.mint(&mut token, alice, alice, U256::from(1_000u64), true).unwrap();
-            LogicV1.transfer(&mut token, alice, bob, U256::from(300u64), false).unwrap();
-            LogicV1.mint(&mut token, alice, alice, U256::from(200u64), true).unwrap();
+            B20AssetLogicV1.mint(&mut token, alice, alice, U256::from(1_000u64), true).unwrap();
+            B20AssetLogicV1.transfer(&mut token, alice, bob, U256::from(300u64), false).unwrap();
+            B20AssetLogicV1.mint(&mut token, alice, alice, U256::from(200u64), true).unwrap();
 
             assert_eq!(token.accounting().balance_of(alice).unwrap(), U256::from(900u64));
             assert_eq!(token.accounting().balance_of(bob).unwrap(), U256::from(300u64));
@@ -661,15 +662,15 @@ mod tests {
             assert_eq!(second_token.token_address(), second);
 
             let (_, _, _, _, first_domain_address, _, _) =
-                LogicV1.eip712_domain(&first_token, ctx.chain_id()).unwrap();
+                B20AssetLogicV1.eip712_domain(&first_token, ctx.chain_id()).unwrap();
             let (_, _, _, _, second_domain_address, _, _) =
-                LogicV1.eip712_domain(&second_token, ctx.chain_id()).unwrap();
+                B20AssetLogicV1.eip712_domain(&second_token, ctx.chain_id()).unwrap();
 
             assert_eq!(first_domain_address, first);
             assert_eq!(second_domain_address, second);
             assert_ne!(
-                LogicV1.domain_separator(&first_token, ctx.chain_id()).unwrap(),
-                LogicV1.domain_separator(&second_token, ctx.chain_id()).unwrap()
+                B20AssetLogicV1.domain_separator(&first_token, ctx.chain_id()).unwrap(),
+                B20AssetLogicV1.domain_separator(&second_token, ctx.chain_id()).unwrap()
             );
         });
     }

@@ -3,10 +3,10 @@
 //! The dispatcher owns everything that is *not* version-specific: it decodes the
 //! calldata, resolves the active version once from the hardfork (via
 //! [`VersionResolver`]), and routes each operation — including reads — to the active
-//! version's [`Logic`] implementation. Only constant getters (role IDs, policy type
+//! version's [`B20AssetLogic`] implementation. Only constant getters (role IDs, policy type
 //! IDs) that are invariant across all versions are answered inline. The `announce`
 //! internal-call loop stays here because re-dispatching arbitrary sub-calls is a
-//! routing responsibility; its version-defined business steps live on [`Logic`].
+//! routing responsibility; its version-defined business steps live on [`B20AssetLogic`].
 
 use alloc::string::ToString;
 
@@ -21,7 +21,7 @@ use crate::{
     BerylCallRecorder, BerylMetricLabels, BerylSelector, ContractContext,
     IB20::{self, IB20Calls as C},
     IB20Asset::{self, IB20AssetCalls as SC},
-    LogicV1, NoopPrecompileCallObserver, PermitArgs, PolicyAccounting, PrecompileCallObserver,
+    B20AssetLogicV1, NoopPrecompileCallObserver, PermitArgs, PolicyAccounting, PrecompileCallObserver,
     Version, VersionResolver,
     macros::decode_precompile_call,
 };
@@ -119,8 +119,8 @@ impl<S: AssetAccounting, A: PolicyAccounting> ContractContext<S, A> {
     /// Grants `role` to `account` without checking caller authorization.
     ///
     /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and the
-    /// authorized [`Logic::grant_role`](crate::Logic) path is not yet reachable. Pinned to
-    /// [`LogicV1`], the token's introduction version.
+    /// authorized [`B20AssetLogic::grant_role`](crate::B20AssetLogic) path is not yet reachable. Pinned to
+    /// [`B20AssetLogicV1`], the token's introduction version.
     // TODO: When the factory gains fork threading, remove this and pull versions into the factory.
     pub fn grant_role_unchecked(
         &mut self,
@@ -128,7 +128,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> ContractContext<S, A> {
         account: alloy_primitives::Address,
         sender: alloy_primitives::Address,
     ) -> base_precompile_storage::Result<()> {
-        LogicV1.grant_role_unchecked(self, role, account, sender)
+        B20AssetLogicV1.grant_role_unchecked(self, role, account, sender)
     }
 
     /// Decodes calldata, observes the decoded operation, and routes it to `version` with optional
@@ -435,7 +435,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> ContractContext<S, A> {
     /// Posts an announcement and atomically executes `internalCalls` via self-dispatch.
     ///
     /// Re-dispatching arbitrary sub-calls is a routing responsibility, so it stays in the
-    /// dispatcher; the version's [`Logic::begin_announce`]/[`Logic::end_announce`] bracket the loop
+    /// dispatcher; the version's [`B20AssetLogic::begin_announce`]/[`B20AssetLogic::end_announce`] bracket the loop
     /// with the version-defined business steps. Each internal call routes at the same `version`.
     /// The selector check in the inner loop prevents recursive invocation.
     fn announce<O>(
@@ -510,7 +510,7 @@ mod tests {
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
         B20AssetStorage, B20TokenRole, BerylErrorKind, ContractContext, FakePolicyAccounting, IB20,
-        IB20Asset, InMemoryTokenAccounting, LogicV1, NoopPrecompileCallObserver, PolicyVersion,
+        IB20Asset, InMemoryTokenAccounting, B20AssetLogicV1, NoopPrecompileCallObserver, PolicyVersion,
         PrecompileCallMetric, PrecompileCallObserver, PrecompileCallOutcome, PrecompileCallStatus,
         Token, TokenAccounting, Version,
     };
@@ -682,7 +682,7 @@ mod tests {
         let mut token = make_token();
         // Any balance > 1 overflows when multiplied by this multiplier.
         token.accounting_mut().multiplier = U256::MAX / U256::from(2u64) + U256::ONE;
-        token.accounting_mut().roles.insert((LogicV1::OPERATOR_ROLE, ALICE), true);
+        token.accounting_mut().roles.insert((B20AssetLogicV1::OPERATOR_ROLE, ALICE), true);
 
         let inner_call = Bytes::from(
             IB20Asset::toScaledBalanceCall { rawBalance: U256::from(2u64) }.abi_encode(),
@@ -706,7 +706,7 @@ mod tests {
     fn announce_inner_ordinary_revert_wraps_as_internal_call_failed() {
         let mut token = make_token();
         // ALICE has OPERATOR_ROLE (needed for announce) but not MINT_ROLE (needed for mint).
-        token.accounting_mut().roles.insert((LogicV1::OPERATOR_ROLE, ALICE), true);
+        token.accounting_mut().roles.insert((B20AssetLogicV1::OPERATOR_ROLE, ALICE), true);
 
         let inner_call = Bytes::from(IB20::mintCall { to: BOB, amount: U256::ONE }.abi_encode());
         let calldata = IB20Asset::announceCall {

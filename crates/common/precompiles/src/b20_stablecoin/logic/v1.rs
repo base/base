@@ -10,7 +10,7 @@ use alloy_primitives::{Address, B256, FixedBytes, U256, b256, keccak256};
 use alloy_sol_types::{SolEvent, SolValue};
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use super::{super::ContractContext, Logic};
+use super::{super::ContractContext, B20StablecoinLogic};
 use crate::{
     B20_MAX_SUPPLY_CAP, B20Guards, B20PausableFeature, B20PolicyType, B20TokenRole, Eip712Domain,
     IB20, PermitArgs, PolicyAccounting, StablecoinAccounting, Token,
@@ -25,9 +25,9 @@ const VERSION: &[u8] = b"1";
 
 /// First stablecoin B-20 implementation. Frozen as of its activation at Beryl.
 #[derive(Debug, Default, Clone, Copy)]
-pub struct LogicV1;
+pub struct B20StablecoinLogicV1;
 
-impl LogicV1 {
+impl B20StablecoinLogicV1 {
     /// Balance-moving core of `transfer`/`transferFrom`, without the pause check.
     fn transfer_inner<S: StablecoinAccounting, A: PolicyAccounting>(
         &self,
@@ -92,9 +92,9 @@ impl LogicV1 {
     /// Grants `role` to `account` without checking caller authorization.
     ///
     /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and the
-    /// authorized [`grant_role`](Logic::grant_role) path is not reachable. Bumps the
-    /// `DefaultAdmin` member count and emits `RoleGranted`. Kept inherent to V1 (off the `Logic`
-    /// trait) so it stays frozen with this version and off `&dyn Logic`.
+    /// authorized [`grant_role`](B20StablecoinLogic::grant_role) path is not reachable. Bumps the
+    /// `DefaultAdmin` member count and emits `RoleGranted`. Kept inherent to V1 (off the `B20StablecoinLogic`
+    /// trait) so it stays frozen with this version and off `&dyn B20StablecoinLogic`.
     pub(crate) fn grant_role_unchecked<S: StablecoinAccounting, A: PolicyAccounting>(
         &self,
         ctx: &mut ContractContext<S, A>,
@@ -166,7 +166,7 @@ impl LogicV1 {
     }
 }
 
-impl<S: StablecoinAccounting, A: PolicyAccounting> Logic<S, A> for LogicV1 {
+impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinLogic<S, A> for B20StablecoinLogicV1 {
     fn transfer(
         &self,
         ctx: &mut ContractContext<S, A>,
@@ -528,7 +528,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Logic<S, A> for LogicV1 {
             B20Guards::ensure_token_role(ctx, caller, B20TokenRole::DefaultAdmin)?;
         }
         let old_policy_id = self.policy_id(ctx, policy_scope)?;
-        if !ctx.policy().policy_exists(ctx.policy_storage(), new_policy_id)? {
+        if !ctx.policy().policy_exists(ctx.policy_context(), new_policy_id)? {
             return Err(BasePrecompileError::revert(IB20::PolicyNotFound {
                 policyId: new_policy_id,
             }));
@@ -637,7 +637,7 @@ mod tests {
     use base_precompile_storage::{BasePrecompileError, Result};
     use k256::ecdsa::SigningKey;
 
-    use super::{Logic, LogicV1};
+    use super::{B20StablecoinLogic, B20StablecoinLogicV1};
     use crate::{
         B20_MAX_SUPPLY_CAP, B20PolicyType, B20TokenRole, IB20, PackedPolicy, PermitArgs,
         PolicyAccounting, PolicyRegistryStorage, PolicyVersion, StablecoinAccounting, Token,
@@ -652,7 +652,7 @@ mod tests {
     const ALICE: Address = Address::repeat_byte(0xA1);
     const BOB: Address = Address::repeat_byte(0xB0);
     const CHAIN_ID: u64 = 8453;
-    const LOGIC: LogicV1 = LogicV1;
+    const LOGIC: B20StablecoinLogicV1 = B20StablecoinLogicV1;
 
     // Anvil/Hardhat account 0 — well-known test key, never used in production.
     const PRIVATE_KEY: [u8; 32] =

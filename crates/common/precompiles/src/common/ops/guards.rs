@@ -61,7 +61,7 @@ impl B20Guards {
         account: Address,
     ) -> Result<()> {
         let policy_id = token.accounting().policy_id(policy_scope)?;
-        if token.policy().is_authorized(token.policy_storage(), policy_id, account)? {
+        if token.policy().is_authorized(token.policy_context(), policy_id, account)? {
             Ok(())
         } else {
             Err(BasePrecompileError::revert(IB20::PolicyForbids {
@@ -77,7 +77,7 @@ impl B20Guards {
     pub fn ensure_blocked<T: Token + ?Sized>(token: &T, account: Address) -> Result<()> {
         let policy_scope = B20PolicyType::TransferSender.id();
         let policy_id = token.accounting().policy_id(policy_scope)?;
-        if token.policy().is_authorized(token.policy_storage(), policy_id, account)? {
+        if token.policy().is_authorized(token.policy_context(), policy_id, account)? {
             Err(BasePrecompileError::revert(IB20::AccountNotBlocked { account }))
         } else {
             Ok(())

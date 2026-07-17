@@ -2,7 +2,7 @@
 //!
 //! The dispatcher owns everything that is *not* version-specific: it decodes the
 //! (via [`VersionResolver`]), and routes each operation — including reads — to
-//! the active version's [`Logic`] implementation. Only constant getters
+//! the active version's [`B20StablecoinLogic`] implementation. Only constant getters
 //! (role IDs, policy type IDs, `decimals`) that are invariant across all versions
 //! are answered inline.
 
@@ -14,7 +14,7 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
-use super::{ContractContext, LogicV1, Version, VersionResolver};
+use super::{ContractContext, B20StablecoinLogicV1, Version, VersionResolver};
 use crate::{
     B20PolicyType, B20TokenRole, B20Variant, BerylCallRecorder, BerylMetricLabels, BerylSelector,
     IB20::{self, IB20Calls as C},
@@ -116,7 +116,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> ContractContext<S, A> {
     /// Grants `role` to `account` without checking caller authorization.
     ///
     /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and the
-    /// authorized [`Logic::grant_role`](super::Logic) path is not yet reachable.
+    /// authorized [`B20StablecoinLogic::grant_role`](super::B20StablecoinLogic) path is not yet reachable.
     // TODO: When factory get's logic for threading fork, remove this and pull in versions into the factory to use that function
     pub fn grant_role_unchecked(
         &mut self,
@@ -124,7 +124,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> ContractContext<S, A> {
         account: Address,
         sender: Address,
     ) -> base_precompile_storage::Result<()> {
-        LogicV1.grant_role_unchecked(self, role, account, sender)
+        B20StablecoinLogicV1.grant_role_unchecked(self, role, account, sender)
     }
 
     /// Decodes calldata, observes the decoded operation, and routes it to `version` with optional

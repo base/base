@@ -10,7 +10,7 @@ use crate::{B20FactoryStorage, IB20Factory};
 ///
 /// This trait is append-only: new versions add methods, never remove or change the
 /// signature of an existing one.
-pub trait Logic {
+pub trait B20FactoryLogic {
     /// Creates a token at a deterministic address derived from `(caller, variant, salt)`.
     ///
     /// `address_hash` must be `keccak256(abi_encode(caller, call.salt))`. Computing (and

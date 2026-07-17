@@ -58,30 +58,30 @@ pub use metrics::{
 
 mod b20_asset;
 pub use b20_asset::{
-    AssetAccounting, B20AssetExtensionStorage, B20AssetInit, B20AssetPrecompile, B20AssetStorage,
-    ContractContext, IB20Asset, Logic, LogicV1, Version, VersionResolver,
+    AssetAccounting, B20AssetExtensionStorage, B20AssetInit, B20AssetLogic, B20AssetLogicV1,
+    B20AssetPrecompile, B20AssetStorage, ContractContext, IB20Asset, Version, VersionResolver,
 };
 
 mod b20_stablecoin;
 pub use b20_stablecoin::{
-    B20StablecoinExtensionStorage, B20StablecoinInit, B20StablecoinPrecompile,
-    B20StablecoinStorage, ContractContext as StablecoinContractContext, IB20Stablecoin,
-    Logic as StablecoinLogic, LogicV1 as StablecoinLogicV1, StablecoinAccounting,
-    Version as StablecoinVersion, VersionResolver as StablecoinVersionResolver,
+    B20StablecoinExtensionStorage, B20StablecoinInit, B20StablecoinLogic, B20StablecoinLogicV1,
+    B20StablecoinPrecompile, B20StablecoinStorage, ContractContext as StablecoinContractContext,
+    IB20Stablecoin, StablecoinAccounting, Version as StablecoinVersion,
+    VersionResolver as StablecoinVersionResolver,
 };
 
 mod b20_factory;
 pub use b20_factory::{
-    B20Factory, B20FactoryStorage, B20Variant, CommonParams, IB20Factory, Logic as FactoryLogic,
-    LogicV1 as FactoryLogicV1, TokenCreateParams, Version as FactoryVersion,
+    B20Factory, B20FactoryLogic, B20FactoryLogicV1, B20FactoryStorage, B20Variant, CommonParams,
+    IB20Factory, TokenCreateParams, Version as FactoryVersion,
     VersionResolver as FactoryVersionResolver,
 };
 
 mod policy;
 pub use policy::{
-    IPolicyRegistry, Logic as PolicyLogic, LogicV1 as PolicyLogicV1, PackedPolicy,
-    PolicyAccounting, PolicyRegistryPrecompile, PolicyRegistryStorage, Version as PolicyVersion,
-    VersionResolver as PolicyVersionResolver,
+    ContractContext as PolicyContractContext, IPolicyRegistry, PackedPolicy, PolicyAccounting,
+    PolicyRegistryLogic, PolicyRegistryLogicV1, PolicyRegistryPrecompile, PolicyRegistryStorage,
+    Version as PolicyVersion, VersionResolver as PolicyVersionResolver,
 };
 
 mod tx_context;

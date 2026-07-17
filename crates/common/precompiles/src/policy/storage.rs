@@ -77,14 +77,14 @@ impl PolicyRegistryStorage<'_> {
     /// Built-in policy ID that always authorizes every account.
     ///
     /// A stable protocol sentinel consumed by B-20 tokens as their default policy; the
-    /// encoding is owned by the frozen [`crate::PolicyLogicV1`] logic and re-exported
+    /// encoding is owned by the frozen [`crate::PolicyRegistryLogicV1`] logic and re-exported
     /// here for the registry's public API.
-    pub const ALWAYS_ALLOW_ID: u64 = crate::PolicyLogicV1::ALWAYS_ALLOW_ID;
+    pub const ALWAYS_ALLOW_ID: u64 = crate::PolicyRegistryLogicV1::ALWAYS_ALLOW_ID;
 
     /// Built-in policy ID that always rejects every account.
     ///
-    /// A stable protocol sentinel; encoding owned by [`crate::PolicyLogicV1`].
-    pub const ALWAYS_BLOCK_ID: u64 = crate::PolicyLogicV1::ALWAYS_BLOCK_ID;
+    /// A stable protocol sentinel; encoding owned by [`crate::PolicyRegistryLogicV1`].
+    pub const ALWAYS_BLOCK_ID: u64 = crate::PolicyRegistryLogicV1::ALWAYS_BLOCK_ID;
 }
 
 impl PolicyAccounting for PolicyRegistryStorage<'_> {
@@ -156,7 +156,7 @@ mod tests {
 
     use crate::{
         IPolicyRegistry::PolicyType,
-        PolicyLogic, PolicyLogicV1,
+        PolicyContractContext, PolicyRegistryLogic, PolicyRegistryLogicV1,
         policy::storage::{PackedPolicy, PolicyRegistryStorage, slots},
     };
 
@@ -235,8 +235,9 @@ mod tests {
         let mut s = HashMapStorageProvider::new(1);
         s.set_caller(ADMIN);
         StorageCtx::enter(&mut s, |ctx| {
-            let mut storage = PolicyRegistryStorage::new(ctx);
-            PolicyLogicV1.ensure_initialized_and_get_counter(&mut storage)
+            let mut ctx =
+                PolicyContractContext::with_storage(PolicyRegistryStorage::new(ctx));
+            PolicyRegistryLogicV1.ensure_initialized_and_get_counter(ctx.storage_mut())
         })
         .unwrap();
         s
@@ -245,8 +246,9 @@ mod tests {
     /// Creates an ALLOWLIST policy through the pinned V1 logic.
     fn create_allowlist(s: &mut HashMapStorageProvider) -> u64 {
         StorageCtx::enter(s, |ctx| {
-            let mut storage = PolicyRegistryStorage::new(ctx);
-            PolicyLogicV1.create_policy(&mut storage, ADMIN, PolicyType::ALLOWLIST)
+            let mut ctx =
+                PolicyContractContext::with_storage(PolicyRegistryStorage::new(ctx));
+            PolicyRegistryLogicV1.create_policy(&mut ctx, ADMIN, PolicyType::ALLOWLIST)
         })
         .unwrap()
     }
@@ -296,11 +298,11 @@ mod tests {
         .unwrap();
 
         let id = create_allowlist(&mut s);
-        assert_eq!(id & PolicyLogicV1::COUNTER_MASK, 2);
+        assert_eq!(id & PolicyRegistryLogicV1::COUNTER_MASK, 2);
         StorageCtx::enter(&mut s, |ctx| {
-            let storage = PolicyRegistryStorage::new(ctx);
-            assert!(PolicyLogicV1.policy_exists(&storage, PolicyLogicV1::ALWAYS_ALLOW_ID).unwrap());
-            assert!(PolicyLogicV1.policy_exists(&storage, PolicyLogicV1::ALWAYS_BLOCK_ID).unwrap());
+            let ctx = PolicyContractContext::with_storage(PolicyRegistryStorage::new(ctx));
+            assert!(PolicyRegistryLogicV1.policy_exists(&ctx, PolicyRegistryLogicV1::ALWAYS_ALLOW_ID).unwrap());
+            assert!(PolicyRegistryLogicV1.policy_exists(&ctx, PolicyRegistryLogicV1::ALWAYS_BLOCK_ID).unwrap());
         });
     }
 
@@ -311,8 +313,9 @@ mod tests {
         let mut s = seeded_storage();
         s.set_static(true);
         let err = StorageCtx::enter(&mut s, |ctx| {
-            let mut storage = PolicyRegistryStorage::new(ctx);
-            PolicyLogicV1.create_policy(&mut storage, ADMIN, PolicyType::ALLOWLIST)
+            let mut ctx =
+                PolicyContractContext::with_storage(PolicyRegistryStorage::new(ctx));
+            PolicyRegistryLogicV1.create_policy(&mut ctx, ADMIN, PolicyType::ALLOWLIST)
         })
         .unwrap_err();
         assert_eq!(err, BasePrecompileError::StaticCallViolation);
@@ -324,8 +327,9 @@ mod tests {
         let id = create_allowlist(&mut s);
         s.set_static(true);
         let err = StorageCtx::enter(&mut s, |ctx| {
-            let mut storage = PolicyRegistryStorage::new(ctx);
-            PolicyLogicV1.update_allowlist(&mut storage, id, true, alloc::vec![ALICE])
+            let mut ctx =
+                PolicyContractContext::with_storage(PolicyRegistryStorage::new(ctx));
+            PolicyRegistryLogicV1.update_allowlist(&mut ctx, id, true, alloc::vec![ALICE])
         })
         .unwrap_err();
         assert_eq!(err, BasePrecompileError::StaticCallViolation);

@@ -6,14 +6,17 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use super::Logic;
-use crate::{IPolicyRegistry, IPolicyRegistry::PolicyType, PackedPolicy, PolicyAccounting};
+use super::PolicyRegistryLogic;
+use crate::{
+    IPolicyRegistry, IPolicyRegistry::PolicyType, PackedPolicy, PolicyAccounting,
+    PolicyContractContext as ContractContext,
+};
 
 /// First `PolicyRegistry` implementation. Frozen as of its activation at Beryl.
 #[derive(Debug, Default, Clone, Copy)]
-pub struct LogicV1;
+pub struct PolicyRegistryLogicV1;
 
-impl LogicV1 {
+impl PolicyRegistryLogicV1 {
     /// Built-in policy ID that always authorizes every account.
     ///
     /// Encoded as BLOCKLIST (type=0) with counter=0 — an empty blocklist authorizes
@@ -205,33 +208,34 @@ impl LogicV1 {
     }
 }
 
-impl<S: PolicyAccounting> Logic<S> for LogicV1 {
+impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryLogicV1 {
     fn create_policy(
         &self,
-        storage: &mut S,
+        ctx: &mut ContractContext<S>,
         admin: Address,
         policy_type: PolicyType,
     ) -> Result<u64> {
         let policy_type_u8 = Self::validate_create_policy_inputs(admin, policy_type)?;
-        self.create_policy_inner(storage, admin, policy_type, policy_type_u8)
+        self.create_policy_inner(ctx.storage_mut(), admin, policy_type, policy_type_u8)
     }
 
     fn create_policy_with_accounts(
         &self,
-        storage: &mut S,
+        ctx: &mut ContractContext<S>,
         admin: Address,
         policy_type: PolicyType,
         accounts: Vec<Address>,
     ) -> Result<u64> {
         let policy_type_u8 = Self::validate_create_policy_inputs(admin, policy_type)?;
         Self::require_account_batch_size(&accounts)?;
-        let policy_id = self.create_policy_inner(storage, admin, policy_type, policy_type_u8)?;
-        let caller = storage.caller();
+        let policy_id =
+            self.create_policy_inner(ctx.storage_mut(), admin, policy_type, policy_type_u8)?;
+        let caller = ctx.storage().caller();
         for account in &accounts {
-            storage.set_member(policy_id, *account)?;
+            ctx.storage_mut().set_member(policy_id, *account)?;
         }
         match policy_type {
-            PolicyType::ALLOWLIST => storage.emit_event(
+            PolicyType::ALLOWLIST => ctx.storage_mut().emit_event(
                 IPolicyRegistry::AllowlistUpdated {
                     policyId: policy_id,
                     updater: caller,
@@ -240,7 +244,7 @@ impl<S: PolicyAccounting> Logic<S> for LogicV1 {
                 }
                 .encode_log_data(),
             )?,
-            PolicyType::BLOCKLIST => storage.emit_event(
+            PolicyType::BLOCKLIST => ctx.storage_mut().emit_event(
                 IPolicyRegistry::BlocklistUpdated {
                     policyId: policy_id,
                     updater: caller,
@@ -256,17 +260,17 @@ impl<S: PolicyAccounting> Logic<S> for LogicV1 {
 
     fn stage_update_admin(
         &self,
-        storage: &mut S,
+        ctx: &mut ContractContext<S>,
         policy_id: u64,
         new_admin: Address,
     ) -> Result<()> {
-        let (_, caller) = self.require_admin(storage, policy_id)?;
+        let (_, caller) = self.require_admin(ctx.storage(), policy_id)?;
         if new_admin == Address::ZERO {
-            storage.delete_pending_admin(policy_id)?;
+            ctx.storage_mut().delete_pending_admin(policy_id)?;
         } else {
-            storage.write_pending_admin(policy_id, new_admin)?;
+            ctx.storage_mut().write_pending_admin(policy_id, new_admin)?;
         }
-        storage.emit_event(
+        ctx.storage_mut().emit_event(
             IPolicyRegistry::PolicyAdminStaged {
                 policyId: policy_id,
                 currentAdmin: caller,
@@ -277,20 +281,20 @@ impl<S: PolicyAccounting> Logic<S> for LogicV1 {
         Ok(())
     }
 
-    fn finalize_update_admin(&self, storage: &mut S, policy_id: u64) -> Result<()> {
-        let packed = self.require_custom(storage, policy_id)?;
-        let pending = storage.read_pending_admin(policy_id)?;
+    fn finalize_update_admin(&self, ctx: &mut ContractContext<S>, policy_id: u64) -> Result<()> {
+        let packed = self.require_custom(ctx.storage(), policy_id)?;
+        let pending = ctx.storage().read_pending_admin(policy_id)?;
         if pending == Address::ZERO {
             return Err(BasePrecompileError::revert(IPolicyRegistry::NoPendingAdmin {}));
         }
-        let caller = storage.caller();
+        let caller = ctx.storage().caller();
         if pending != caller {
             return Err(BasePrecompileError::revert(IPolicyRegistry::Unauthorized {}));
         }
         let previous_admin = packed.admin();
-        storage.write_policy_word(policy_id, packed.with_admin(caller).into_u256())?;
-        storage.delete_pending_admin(policy_id)?;
-        storage.emit_event(
+        ctx.storage_mut().write_policy_word(policy_id, packed.with_admin(caller).into_u256())?;
+        ctx.storage_mut().delete_pending_admin(policy_id)?;
+        ctx.storage_mut().emit_event(
             IPolicyRegistry::PolicyAdminUpdated {
                 policyId: policy_id,
                 previousAdmin: previous_admin,
@@ -301,11 +305,12 @@ impl<S: PolicyAccounting> Logic<S> for LogicV1 {
         Ok(())
     }
 
-    fn renounce_admin(&self, storage: &mut S, policy_id: u64) -> Result<()> {
-        let (packed, caller) = self.require_admin(storage, policy_id)?;
-        storage.write_policy_word(policy_id, packed.with_admin(Address::ZERO).into_u256())?;
-        storage.delete_pending_admin(policy_id)?;
-        storage.emit_event(
+    fn renounce_admin(&self, ctx: &mut ContractContext<S>, policy_id: u64) -> Result<()> {
+        let (packed, caller) = self.require_admin(ctx.storage(), policy_id)?;
+        ctx.storage_mut()
+            .write_policy_word(policy_id, packed.with_admin(Address::ZERO).into_u256())?;
+        ctx.storage_mut().delete_pending_admin(policy_id)?;
+        ctx.storage_mut().emit_event(
             IPolicyRegistry::PolicyAdminUpdated {
                 policyId: policy_id,
                 previousAdmin: caller,
@@ -318,14 +323,19 @@ impl<S: PolicyAccounting> Logic<S> for LogicV1 {
 
     fn update_allowlist(
         &self,
-        storage: &mut S,
+        ctx: &mut ContractContext<S>,
         policy_id: u64,
         allowed: bool,
         accounts: Vec<Address>,
     ) -> Result<()> {
-        let caller =
-            self.update_membership(storage, policy_id, Self::ALLOWLIST_TYPE, allowed, &accounts)?;
-        storage.emit_event(
+        let caller = self.update_membership(
+            ctx.storage_mut(),
+            policy_id,
+            Self::ALLOWLIST_TYPE,
+            allowed,
+            &accounts,
+        )?;
+        ctx.storage_mut().emit_event(
             IPolicyRegistry::AllowlistUpdated {
                 policyId: policy_id,
                 updater: caller,
@@ -338,14 +348,19 @@ impl<S: PolicyAccounting> Logic<S> for LogicV1 {
 
     fn update_blocklist(
         &self,
-        storage: &mut S,
+        ctx: &mut ContractContext<S>,
         policy_id: u64,
         blocked: bool,
         accounts: Vec<Address>,
     ) -> Result<()> {
-        let caller =
-            self.update_membership(storage, policy_id, Self::BLOCKLIST_TYPE, blocked, &accounts)?;
-        storage.emit_event(
+        let caller = self.update_membership(
+            ctx.storage_mut(),
+            policy_id,
+            Self::BLOCKLIST_TYPE,
+            blocked,
+            &accounts,
+        )?;
+        ctx.storage_mut().emit_event(
             IPolicyRegistry::BlocklistUpdated {
                 policyId: policy_id,
                 updater: caller,
@@ -356,7 +371,12 @@ impl<S: PolicyAccounting> Logic<S> for LogicV1 {
         )
     }
 
-    fn is_authorized(&self, storage: &S, policy_id: u64, account: Address) -> Result<bool> {
+    fn is_authorized(
+        &self,
+        ctx: &ContractContext<S>,
+        policy_id: u64,
+        account: Address,
+    ) -> Result<bool> {
         // Malformed IDs (type byte > 1) are treated as unauthorized rather than reverting.
         if Self::policy_id_type(policy_id) > PolicyType::ALLOWLIST as u8 {
             return Ok(false);
@@ -373,7 +393,7 @@ impl<S: PolicyAccounting> Logic<S> for LogicV1 {
         // An unwritten slot returns false, which naturally gives:
         //   ALLOWLIST  => false  (no members => not authorized)
         //   BLOCKLIST  => !false (no members blocked => authorized)
-        let member = storage.read_member(policy_id, account)?;
+        let member = ctx.storage().read_member(policy_id, account)?;
         match Self::policy_id_type(policy_id) {
             Self::ALLOWLIST_TYPE => Ok(member),
             Self::BLOCKLIST_TYPE => Ok(!member),
@@ -381,7 +401,7 @@ impl<S: PolicyAccounting> Logic<S> for LogicV1 {
         }
     }
 
-    fn policy_exists(&self, storage: &S, policy_id: u64) -> Result<bool> {
+    fn policy_exists(&self, ctx: &ContractContext<S>, policy_id: u64) -> Result<bool> {
         // Malformed IDs (type byte > 1) are not well-formed, so they do not exist.
         if Self::policy_id_type(policy_id) > PolicyType::ALLOWLIST as u8 {
             return Ok(false);
@@ -389,29 +409,29 @@ impl<S: PolicyAccounting> Logic<S> for LogicV1 {
         if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
             return Ok(true);
         }
-        let packed = PackedPolicy::from_raw(storage.read_policy_word(policy_id)?);
+        let packed = PackedPolicy::from_raw(ctx.storage().read_policy_word(policy_id)?);
         Ok(packed.exists())
     }
 
-    fn get_policy_admin(&self, storage: &S, policy_id: u64) -> Result<Address> {
+    fn get_policy_admin(&self, ctx: &ContractContext<S>, policy_id: u64) -> Result<Address> {
         if Self::policy_id_type(policy_id) > PolicyType::ALLOWLIST as u8 {
             return Ok(Address::ZERO);
         }
-        let packed = PackedPolicy::from_raw(storage.read_policy_word(policy_id)?);
+        let packed = PackedPolicy::from_raw(ctx.storage().read_policy_word(policy_id)?);
         if !packed.exists() {
             return Ok(Address::ZERO);
         }
         Ok(packed.admin())
     }
 
-    fn pending_policy_admin(&self, storage: &S, policy_id: u64) -> Result<Address> {
+    fn pending_policy_admin(&self, ctx: &ContractContext<S>, policy_id: u64) -> Result<Address> {
         if Self::policy_id_type(policy_id) > PolicyType::ALLOWLIST as u8 {
             return Ok(Address::ZERO);
         }
         if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
             return Ok(Address::ZERO);
         }
-        storage.read_pending_admin(policy_id)
+        ctx.storage().read_pending_admin(policy_id)
     }
 }
 
@@ -423,15 +443,18 @@ mod tests {
     use alloy_sol_types::SolEvent;
     use base_precompile_storage::{BasePrecompileError, Result};
 
-    use super::{super::Logic, LogicV1};
-    use crate::{IPolicyRegistry, IPolicyRegistry::PolicyType, PolicyAccounting};
+    use super::{super::PolicyRegistryLogic, PolicyRegistryLogicV1};
+    use crate::{
+        IPolicyRegistry, IPolicyRegistry::PolicyType, PolicyAccounting,
+        PolicyContractContext as ContractContext,
+    };
 
     const REGISTRY: Address = address!("0x8453000000000000000000000000000000000002");
     const ADMIN: Address = address!("0x1000000000000000000000000000000000000001");
     const ALICE: Address = address!("0xA000000000000000000000000000000000000001");
     const BOB: Address = address!("0xB000000000000000000000000000000000000001");
     const NEW_ADMIN: Address = address!("0x2000000000000000000000000000000000000002");
-    const LOGIC: LogicV1 = LogicV1;
+    const LOGIC: PolicyRegistryLogicV1 = PolicyRegistryLogicV1;
 
     // --- Self-contained in-memory fake (no dependency on `common::test_utils`, so shared
     //     test scaffolding can never drift this frozen version's coverage) ---
@@ -516,36 +539,36 @@ mod tests {
         }
     }
 
-    type Storage = FakePolicyAccounting;
+    type Ctx = ContractContext<FakePolicyAccounting>;
 
-    /// Bare storage (no built-ins seeded), caller = `ADMIN`.
-    fn bare() -> Storage {
-        FakePolicyAccounting::new()
+    /// Bare context (no built-ins seeded), caller = `ADMIN`.
+    fn bare() -> Ctx {
+        ContractContext::with_storage(FakePolicyAccounting::new())
     }
 
-    /// Storage with both built-in policies seeded and the counter at 2.
-    fn initialized() -> Storage {
-        let mut storage = bare();
-        LOGIC.ensure_initialized_and_get_counter(&mut storage).unwrap();
-        storage
+    /// Context with both built-in policies seeded and the counter at 2.
+    fn initialized() -> Ctx {
+        let mut ctx = bare();
+        LOGIC.ensure_initialized_and_get_counter(ctx.storage_mut()).unwrap();
+        ctx
     }
 
-    fn set_caller(storage: &mut Storage, caller: Address) {
-        storage.caller = caller;
+    fn set_caller(ctx: &mut Ctx, caller: Address) {
+        ctx.storage_mut().caller = caller;
     }
 
-    fn create_allowlist(storage: &mut Storage) -> u64 {
-        set_caller(storage, ADMIN);
-        LOGIC.create_policy(storage, ADMIN, PolicyType::ALLOWLIST).unwrap()
+    fn create_allowlist(ctx: &mut Ctx) -> u64 {
+        set_caller(ctx, ADMIN);
+        LOGIC.create_policy(ctx, ADMIN, PolicyType::ALLOWLIST).unwrap()
     }
 
-    fn create_blocklist(storage: &mut Storage) -> u64 {
-        set_caller(storage, ADMIN);
-        LOGIC.create_policy(storage, ADMIN, PolicyType::BLOCKLIST).unwrap()
+    fn create_blocklist(ctx: &mut Ctx) -> u64 {
+        set_caller(ctx, ADMIN);
+        LOGIC.create_policy(ctx, ADMIN, PolicyType::BLOCKLIST).unwrap()
     }
 
-    fn is_authorized(storage: &Storage, policy_id: u64, account: Address) -> bool {
-        LOGIC.is_authorized(storage, policy_id, account).unwrap()
+    fn is_authorized(ctx: &Ctx, policy_id: u64, account: Address) -> bool {
+        LOGIC.is_authorized(ctx, policy_id, account).unwrap()
     }
 
     fn many_accounts(count: usize) -> Vec<Address> {
@@ -557,15 +580,15 @@ mod tests {
     #[test]
     fn always_allow_id_authorizes_any_account() {
         let rt = initialized();
-        assert!(is_authorized(&rt, LogicV1::ALWAYS_ALLOW_ID, ALICE));
-        assert!(is_authorized(&rt, LogicV1::ALWAYS_ALLOW_ID, BOB));
+        assert!(is_authorized(&rt, PolicyRegistryLogicV1::ALWAYS_ALLOW_ID, ALICE));
+        assert!(is_authorized(&rt, PolicyRegistryLogicV1::ALWAYS_ALLOW_ID, BOB));
     }
 
     #[test]
     fn always_block_id_rejects_any_account() {
         let rt = initialized();
-        assert!(!is_authorized(&rt, LogicV1::ALWAYS_BLOCK_ID, ALICE));
-        assert!(!is_authorized(&rt, LogicV1::ALWAYS_BLOCK_ID, BOB));
+        assert!(!is_authorized(&rt, PolicyRegistryLogicV1::ALWAYS_BLOCK_ID, ALICE));
+        assert!(!is_authorized(&rt, PolicyRegistryLogicV1::ALWAYS_BLOCK_ID, BOB));
     }
 
     #[test]
@@ -577,7 +600,7 @@ mod tests {
 
     #[test]
     fn unknown_allowlist_policy_id_does_not_authorize_account() {
-        let unknown_allowlist = LogicV1::make_id(PolicyType::ALLOWLIST as u8, 9999);
+        let unknown_allowlist = PolicyRegistryLogicV1::make_id(PolicyType::ALLOWLIST as u8, 9999);
         let rt = initialized();
         assert!(!is_authorized(&rt, unknown_allowlist, ALICE));
     }
@@ -602,19 +625,19 @@ mod tests {
     fn first_create_policy_initializes_builtins_and_starts_counter_at_two() {
         let mut rt = bare();
         let id = LOGIC.create_policy(&mut rt, ADMIN, PolicyType::ALLOWLIST).unwrap();
-        assert_eq!(id & LogicV1::COUNTER_MASK, 2);
-        assert!(LOGIC.policy_exists(&rt, LogicV1::ALWAYS_ALLOW_ID).unwrap());
-        assert!(LOGIC.policy_exists(&rt, LogicV1::ALWAYS_BLOCK_ID).unwrap());
-        assert!(rt.initialized);
+        assert_eq!(id & PolicyRegistryLogicV1::COUNTER_MASK, 2);
+        assert!(LOGIC.policy_exists(&rt, PolicyRegistryLogicV1::ALWAYS_ALLOW_ID).unwrap());
+        assert!(LOGIC.policy_exists(&rt, PolicyRegistryLogicV1::ALWAYS_BLOCK_ID).unwrap());
+        assert!(rt.storage().initialized);
     }
 
     #[test]
     fn ensure_initialized_and_get_counter_is_idempotent() {
         let mut rt = bare();
         for _ in 0..3 {
-            LOGIC.ensure_initialized_and_get_counter(&mut rt).unwrap();
+            LOGIC.ensure_initialized_and_get_counter(rt.storage_mut()).unwrap();
         }
-        assert_eq!(rt.next_counter, LogicV1::BUILTIN_POLICY_COUNT);
+        assert_eq!(rt.storage_mut().next_counter, PolicyRegistryLogicV1::BUILTIN_POLICY_COUNT);
     }
 
     // --- createPolicy ---
@@ -633,14 +656,14 @@ mod tests {
         let id2 = create_blocklist(&mut rt);
         assert_eq!((id1 >> 56) as u8, PolicyType::ALLOWLIST as u8);
         assert_eq!((id2 >> 56) as u8, PolicyType::BLOCKLIST as u8);
-        assert_eq!(id1 & LogicV1::COUNTER_MASK, 2);
-        assert_eq!(id2 & LogicV1::COUNTER_MASK, 3);
+        assert_eq!(id1 & PolicyRegistryLogicV1::COUNTER_MASK, 2);
+        assert_eq!(id2 & PolicyRegistryLogicV1::COUNTER_MASK, 3);
     }
 
     #[test]
     fn create_policy_at_counter_mask_reverts_with_under_overflow() {
         let mut rt = initialized();
-        rt.next_counter = LogicV1::COUNTER_MASK;
+        rt.storage_mut().next_counter = PolicyRegistryLogicV1::COUNTER_MASK;
         let err = LOGIC.create_policy(&mut rt, ADMIN, PolicyType::ALLOWLIST).unwrap_err();
         assert_eq!(err, BasePrecompileError::under_overflow());
     }
@@ -648,9 +671,9 @@ mod tests {
     #[test]
     fn create_policy_at_counter_mask_minus_one_consumes_last_slot_then_reverts() {
         let mut rt = initialized();
-        rt.next_counter = LogicV1::COUNTER_MASK - 1;
+        rt.storage_mut().next_counter = PolicyRegistryLogicV1::COUNTER_MASK - 1;
         let id = LOGIC.create_policy(&mut rt, ADMIN, PolicyType::ALLOWLIST).unwrap();
-        assert_eq!(id & LogicV1::COUNTER_MASK, LogicV1::COUNTER_MASK - 1);
+        assert_eq!(id & PolicyRegistryLogicV1::COUNTER_MASK, PolicyRegistryLogicV1::COUNTER_MASK - 1);
         let err = LOGIC.create_policy(&mut rt, ADMIN, PolicyType::ALLOWLIST).unwrap_err();
         assert_eq!(err, BasePrecompileError::under_overflow());
     }
@@ -659,7 +682,7 @@ mod tests {
     fn create_policy_emits_policy_created_and_admin_updated_events() {
         let mut rt = initialized();
         let id = create_allowlist(&mut rt);
-        let events = &rt.events;
+        let events = &rt.storage().events;
         assert_eq!(events.len(), 2);
         let created = IPolicyRegistry::PolicyCreated::decode_log_data(&events[0]).unwrap();
         assert_eq!(created.policyId, id);
@@ -673,7 +696,7 @@ mod tests {
         let id = create_allowlist(&mut rt);
         LOGIC.update_allowlist(&mut rt, id, true, vec![ALICE]).unwrap();
         let updated =
-            IPolicyRegistry::AllowlistUpdated::decode_log_data(rt.events.last().unwrap()).unwrap();
+            IPolicyRegistry::AllowlistUpdated::decode_log_data(rt.storage().events.last().unwrap()).unwrap();
         assert_eq!(updated.policyId, id);
         assert_eq!(updated.updater, ADMIN);
         assert!(updated.allowed);
@@ -715,12 +738,12 @@ mod tests {
     fn update_allowlist_too_many_accounts_reverts() {
         let mut rt = initialized();
         let id = create_allowlist(&mut rt);
-        let accounts = many_accounts(LogicV1::MAX_ACCOUNTS_PER_BATCH + 1);
+        let accounts = many_accounts(PolicyRegistryLogicV1::MAX_ACCOUNTS_PER_BATCH + 1);
         let err = LOGIC.update_allowlist(&mut rt, id, true, accounts).unwrap_err();
         assert_eq!(
             err,
             BasePrecompileError::revert(IPolicyRegistry::BatchSizeTooLarge {
-                maxBatchSize: U256::from(LogicV1::MAX_ACCOUNTS_PER_BATCH),
+                maxBatchSize: U256::from(PolicyRegistryLogicV1::MAX_ACCOUNTS_PER_BATCH),
             })
         );
     }
@@ -729,7 +752,7 @@ mod tests {
     fn update_allowlist_max_batch_size_succeeds() {
         let mut rt = initialized();
         let id = create_allowlist(&mut rt);
-        let accounts = many_accounts(LogicV1::MAX_ACCOUNTS_PER_BATCH);
+        let accounts = many_accounts(PolicyRegistryLogicV1::MAX_ACCOUNTS_PER_BATCH);
         LOGIC.update_allowlist(&mut rt, id, true, accounts).unwrap();
     }
 
@@ -790,12 +813,12 @@ mod tests {
     fn update_blocklist_too_many_accounts_reverts() {
         let mut rt = initialized();
         let id = create_blocklist(&mut rt);
-        let accounts = many_accounts(LogicV1::MAX_ACCOUNTS_PER_BATCH + 1);
+        let accounts = many_accounts(PolicyRegistryLogicV1::MAX_ACCOUNTS_PER_BATCH + 1);
         let err = LOGIC.update_blocklist(&mut rt, id, true, accounts).unwrap_err();
         assert_eq!(
             err,
             BasePrecompileError::revert(IPolicyRegistry::BatchSizeTooLarge {
-                maxBatchSize: U256::from(LogicV1::MAX_ACCOUNTS_PER_BATCH),
+                maxBatchSize: U256::from(PolicyRegistryLogicV1::MAX_ACCOUNTS_PER_BATCH),
             })
         );
     }
@@ -836,7 +859,7 @@ mod tests {
         let id = LOGIC
             .create_policy_with_accounts(&mut rt, ADMIN, PolicyType::ALLOWLIST, Vec::new())
             .unwrap();
-        let events = &rt.events;
+        let events = &rt.storage().events;
         assert_eq!(events.len(), 3);
         let updated =
             IPolicyRegistry::AllowlistUpdated::decode_log_data(events.last().unwrap()).unwrap();
@@ -863,14 +886,14 @@ mod tests {
     #[test]
     fn create_policy_with_accounts_too_many_accounts_reverts() {
         let mut rt = initialized();
-        let accounts = many_accounts(LogicV1::MAX_ACCOUNTS_PER_BATCH + 1);
+        let accounts = many_accounts(PolicyRegistryLogicV1::MAX_ACCOUNTS_PER_BATCH + 1);
         let err = LOGIC
             .create_policy_with_accounts(&mut rt, ADMIN, PolicyType::ALLOWLIST, accounts)
             .unwrap_err();
         assert_eq!(
             err,
             BasePrecompileError::revert(IPolicyRegistry::BatchSizeTooLarge {
-                maxBatchSize: U256::from(LogicV1::MAX_ACCOUNTS_PER_BATCH),
+                maxBatchSize: U256::from(PolicyRegistryLogicV1::MAX_ACCOUNTS_PER_BATCH),
             })
         );
     }
@@ -878,7 +901,7 @@ mod tests {
     #[test]
     fn create_policy_with_accounts_zero_admin_precedes_batch_size_revert() {
         let mut rt = initialized();
-        let accounts = many_accounts(LogicV1::MAX_ACCOUNTS_PER_BATCH + 1);
+        let accounts = many_accounts(PolicyRegistryLogicV1::MAX_ACCOUNTS_PER_BATCH + 1);
         let err = LOGIC
             .create_policy_with_accounts(&mut rt, Address::ZERO, PolicyType::ALLOWLIST, accounts)
             .unwrap_err();
@@ -888,7 +911,7 @@ mod tests {
     #[test]
     fn create_policy_with_accounts_invalid_policy_type_precedes_batch_size_revert() {
         let mut rt = initialized();
-        let accounts = many_accounts(LogicV1::MAX_ACCOUNTS_PER_BATCH + 1);
+        let accounts = many_accounts(PolicyRegistryLogicV1::MAX_ACCOUNTS_PER_BATCH + 1);
         let err = LOGIC
             .create_policy_with_accounts(&mut rt, ADMIN, PolicyType::__Invalid, accounts)
             .unwrap_err();
@@ -969,7 +992,7 @@ mod tests {
     #[test]
     fn builtin_policies_reject_admin_mutations() {
         let mut rt = initialized();
-        for policy_id in [LogicV1::ALWAYS_ALLOW_ID, LogicV1::ALWAYS_BLOCK_ID] {
+        for policy_id in [PolicyRegistryLogicV1::ALWAYS_ALLOW_ID, PolicyRegistryLogicV1::ALWAYS_BLOCK_ID] {
             let err = LOGIC.stage_update_admin(&mut rt, policy_id, ALICE).unwrap_err();
             assert!(matches!(err, BasePrecompileError::Revert(_)));
         }
@@ -980,15 +1003,15 @@ mod tests {
     #[test]
     fn policy_exists_builtin_ids_always_return_true() {
         let rt = bare();
-        assert!(LOGIC.policy_exists(&rt, LogicV1::ALWAYS_ALLOW_ID).unwrap());
-        assert!(LOGIC.policy_exists(&rt, LogicV1::ALWAYS_BLOCK_ID).unwrap());
+        assert!(LOGIC.policy_exists(&rt, PolicyRegistryLogicV1::ALWAYS_ALLOW_ID).unwrap());
+        assert!(LOGIC.policy_exists(&rt, PolicyRegistryLogicV1::ALWAYS_BLOCK_ID).unwrap());
     }
 
     #[test]
     fn get_policy_admin_builtin_ids_return_zero_address() {
         let rt = initialized();
-        assert_eq!(LOGIC.get_policy_admin(&rt, LogicV1::ALWAYS_ALLOW_ID).unwrap(), Address::ZERO);
-        assert_eq!(LOGIC.get_policy_admin(&rt, LogicV1::ALWAYS_BLOCK_ID).unwrap(), Address::ZERO);
+        assert_eq!(LOGIC.get_policy_admin(&rt, PolicyRegistryLogicV1::ALWAYS_ALLOW_ID).unwrap(), Address::ZERO);
+        assert_eq!(LOGIC.get_policy_admin(&rt, PolicyRegistryLogicV1::ALWAYS_BLOCK_ID).unwrap(), Address::ZERO);
     }
 
     #[test]
@@ -1008,11 +1031,11 @@ mod tests {
     fn pending_policy_admin_builtin_ids_return_zero_address() {
         let rt = initialized();
         assert_eq!(
-            LOGIC.pending_policy_admin(&rt, LogicV1::ALWAYS_ALLOW_ID).unwrap(),
+            LOGIC.pending_policy_admin(&rt, PolicyRegistryLogicV1::ALWAYS_ALLOW_ID).unwrap(),
             Address::ZERO
         );
         assert_eq!(
-            LOGIC.pending_policy_admin(&rt, LogicV1::ALWAYS_BLOCK_ID).unwrap(),
+            LOGIC.pending_policy_admin(&rt, PolicyRegistryLogicV1::ALWAYS_BLOCK_ID).unwrap(),
             Address::ZERO
         );
     }
@@ -1020,8 +1043,8 @@ mod tests {
     #[test]
     fn pending_policy_admin_builtin_ids_short_circuit_staged_slot() {
         let mut rt = initialized();
-        for policy_id in [LogicV1::ALWAYS_ALLOW_ID, LogicV1::ALWAYS_BLOCK_ID] {
-            rt.pending_admins.insert(policy_id, NEW_ADMIN);
+        for policy_id in [PolicyRegistryLogicV1::ALWAYS_ALLOW_ID, PolicyRegistryLogicV1::ALWAYS_BLOCK_ID] {
+            rt.storage_mut().pending_admins.insert(policy_id, NEW_ADMIN);
             assert_eq!(
                 LOGIC.pending_policy_admin(&rt, policy_id).unwrap(),
                 Address::ZERO,
@@ -1033,10 +1056,10 @@ mod tests {
     #[test]
     fn pending_policy_admin_counter_one_blocklist_reads_staged_slot() {
         // BLOCKLIST counter=1 is not ALWAYS_BLOCK_ID, which is ALLOWLIST counter=1.
-        let counter_one_blocklist = LogicV1::make_id(PolicyType::BLOCKLIST as u8, 1);
-        assert_ne!(counter_one_blocklist, LogicV1::ALWAYS_BLOCK_ID);
+        let counter_one_blocklist = PolicyRegistryLogicV1::make_id(PolicyType::BLOCKLIST as u8, 1);
+        assert_ne!(counter_one_blocklist, PolicyRegistryLogicV1::ALWAYS_BLOCK_ID);
         let mut rt = initialized();
-        rt.pending_admins.insert(counter_one_blocklist, NEW_ADMIN);
+        rt.storage_mut().pending_admins.insert(counter_one_blocklist, NEW_ADMIN);
         assert_eq!(LOGIC.pending_policy_admin(&rt, counter_one_blocklist).unwrap(), NEW_ADMIN);
     }
 
@@ -1056,7 +1079,7 @@ mod tests {
     #[test]
     fn pending_policy_admin_nonexistent_well_formed_policy_returns_zero_address() {
         let rt = initialized();
-        let nonexistent = LogicV1::make_id(0, 999);
+        let nonexistent = PolicyRegistryLogicV1::make_id(0, 999);
         assert_eq!(LOGIC.pending_policy_admin(&rt, nonexistent).unwrap(), Address::ZERO);
     }
 }

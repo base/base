@@ -9,7 +9,7 @@ use super::super::ContractContext;
 use crate::{Eip712Domain, IB20, PermitArgs, PolicyAccounting, StablecoinAccounting, Token};
 
 /// The stablecoin logic interface.
-pub trait Logic<S: StablecoinAccounting, A: PolicyAccounting> {
+pub trait B20StablecoinLogic<S: StablecoinAccounting, A: PolicyAccounting> {
     /// ERC-20 `transfer`.
     fn transfer(
         &self,

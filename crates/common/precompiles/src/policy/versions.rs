@@ -8,7 +8,7 @@
 
 use base_common_genesis::BaseUpgrade;
 
-use super::logic::{Logic, LogicV1};
+use super::logic::{PolicyRegistryLogic, PolicyRegistryLogicV1};
 use crate::PolicyAccounting;
 
 /// An activated version of the `PolicyRegistry` precompile logic.
@@ -22,11 +22,11 @@ pub enum Version {
 
 impl Version {
     /// Returns the immutable logic implementation for this version.
-    pub fn implementation<'l, S>(self) -> &'l dyn Logic<S>
+    pub fn implementation<'l, S>(self) -> &'l dyn PolicyRegistryLogic<S>
     where
         S: PolicyAccounting + 'l,
     {
-        static V1: LogicV1 = LogicV1;
+        static V1: PolicyRegistryLogicV1 = PolicyRegistryLogicV1;
         match self {
             Self::V1 => &V1,
         }

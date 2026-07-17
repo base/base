@@ -4,8 +4,8 @@ use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
 use base_common_genesis::BaseUpgrade;
 
 use crate::{
-    NoopPrecompileCallObserver, PolicyRegistryStorage, PrecompileCallObserver,
-    macros::base_precompile,
+    NoopPrecompileCallObserver, PolicyContractContext, PolicyRegistryStorage,
+    PrecompileCallObserver, macros::base_precompile,
 };
 
 /// EVM entry point for the `PolicyRegistry` precompile.
@@ -42,7 +42,7 @@ impl PolicyRegistryPrecompile {
     {
         base_precompile!("PolicyRegistryPrecompile", |ctx, calldata| {
             let observer = observer.clone();
-            PolicyRegistryStorage::new(ctx)
+            PolicyContractContext::with_storage(PolicyRegistryStorage::new(ctx))
                 .dispatch_with_observer(ctx, &calldata, upgrade, observer)
         })
     }

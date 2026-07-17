@@ -12,7 +12,7 @@ use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
     AssetAccounting, B20_MAX_SUPPLY_CAP, B20AssetStorage, B20Guards, B20PausableFeature,
-    B20PolicyType, B20TokenRole, ContractContext, Eip712Domain, IB20, IB20Asset, Logic, PermitArgs,
+    B20PolicyType, B20TokenRole, ContractContext, Eip712Domain, IB20, IB20Asset, B20AssetLogic, PermitArgs,
     PolicyAccounting, Token,
 };
 
@@ -25,9 +25,9 @@ const VERSION: &[u8] = b"1";
 
 /// First asset B-20 implementation. Frozen as of its activation at Beryl.
 #[derive(Debug, Default, Clone, Copy)]
-pub struct LogicV1;
+pub struct B20AssetLogicV1;
 
-impl LogicV1 {
+impl B20AssetLogicV1 {
     /// Role identifier for asset operators: `keccak256("OPERATOR_ROLE")`.
     ///
     /// Asset-specific (not part of [`B20TokenRole`]); kept inherent to V1 so it stays frozen with
@@ -99,9 +99,9 @@ impl LogicV1 {
     /// Grants `role` to `account` without checking caller authorization.
     ///
     /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and the
-    /// authorized [`grant_role`](Logic::grant_role) path is not reachable. Bumps the `DefaultAdmin`
-    /// member count and emits `RoleGranted`. Kept inherent to V1 (off the `Logic` trait) so it stays
-    /// frozen with this version and off `&dyn Logic`.
+    /// authorized [`grant_role`](B20AssetLogic::grant_role) path is not reachable. Bumps the `DefaultAdmin`
+    /// member count and emits `RoleGranted`. Kept inherent to V1 (off the `B20AssetLogic` trait) so it stays
+    /// frozen with this version and off `&dyn B20AssetLogic`.
     pub(crate) fn grant_role_unchecked<S: AssetAccounting, A: PolicyAccounting>(
         &self,
         ctx: &mut ContractContext<S, A>,
@@ -197,7 +197,7 @@ impl LogicV1 {
     }
 }
 
-impl<S: AssetAccounting, A: PolicyAccounting> Logic<S, A> for LogicV1 {
+impl<S: AssetAccounting, A: PolicyAccounting> B20AssetLogic<S, A> for B20AssetLogicV1 {
     fn transfer(
         &self,
         ctx: &mut ContractContext<S, A>,
@@ -559,7 +559,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> Logic<S, A> for LogicV1 {
             B20Guards::ensure_token_role(ctx, caller, B20TokenRole::DefaultAdmin)?;
         }
         let old_policy_id = self.policy_id(ctx, policy_scope)?;
-        if !ctx.policy().policy_exists(ctx.policy_storage(), new_policy_id)? {
+        if !ctx.policy().policy_exists(ctx.policy_context(), new_policy_id)? {
             return Err(BasePrecompileError::revert(IB20::PolicyNotFound {
                 policyId: new_policy_id,
             }));
@@ -780,7 +780,7 @@ mod tests {
 
     use crate::{
         AssetAccounting, B20_MAX_SUPPLY_CAP, B20AssetStorage, B20PolicyType, B20TokenRole,
-        ContractContext, IB20, IB20Asset, Logic, LogicV1, PackedPolicy, PermitArgs,
+        ContractContext, IB20, IB20Asset, B20AssetLogic, B20AssetLogicV1, PackedPolicy, PermitArgs,
         PolicyAccounting, PolicyRegistryStorage, PolicyVersion, Token, TokenAccounting,
     };
 
@@ -792,7 +792,7 @@ mod tests {
     const ALICE: Address = Address::repeat_byte(0xA1);
     const BOB: Address = Address::repeat_byte(0xB0);
     const CHAIN_ID: u64 = 8453;
-    const LOGIC: LogicV1 = LogicV1;
+    const LOGIC: B20AssetLogicV1 = B20AssetLogicV1;
 
     // Anvil/Hardhat account 0 — well-known test key, never used in production.
     const PRIVATE_KEY: [u8; 32] =
@@ -1131,7 +1131,7 @@ mod tests {
 
     #[test]
     fn operator_role_matches_solidity_hash() {
-        assert_eq!(LogicV1::OPERATOR_ROLE, keccak256("OPERATOR_ROLE"));
+        assert_eq!(B20AssetLogicV1::OPERATOR_ROLE, keccak256("OPERATOR_ROLE"));
     }
 
     // --- transfer ---
@@ -1405,7 +1405,7 @@ mod tests {
             err,
             BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
                 account: ALICE,
-                neededRole: LogicV1::OPERATOR_ROLE,
+                neededRole: B20AssetLogicV1::OPERATOR_ROLE,
             })
         );
     }
@@ -1585,7 +1585,7 @@ mod tests {
             err,
             BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
                 account: ALICE,
-                neededRole: LogicV1::OPERATOR_ROLE,
+                neededRole: B20AssetLogicV1::OPERATOR_ROLE,
             })
         );
     }
