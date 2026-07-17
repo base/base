@@ -68,6 +68,7 @@ std = [
 	"base-common-consensus/std",
 	"base-common-evm?/std",
 	"derive_more/std",
+	"reth-primitives-traits?/std",
 	"revm?/std",
 	"serde/std",
 	"serde_json/std",
@@ -80,6 +81,7 @@ arbitrary = [
 	"alloy-serde/arbitrary",
 	"base-common-consensus/arbitrary",
 	"dep:arbitrary",
+	"reth-primitives-traits?/arbitrary",
 	"revm?/arbitrary",
 	"std",
 ]
@@ -92,6 +94,7 @@ serde = [
 	"alloy-rpc-types-eth/serde",
 	"base-common-consensus/serde",
 	"base-common-evm?/serde",
+	"reth-primitives-traits?/serde",
 	"revm?/serde",
 ]
 reth = [
@@ -99,8 +102,8 @@ reth = [
 	"dep:alloy-network",
 	"dep:alloy-signer",
 	"dep:base-common-evm",
-	"dep:reth-rpc-convert",
 	"dep:reth-primitives-traits",
+	"dep:reth-rpc-convert",
 	"dep:revm",
 	"std",
 ]
