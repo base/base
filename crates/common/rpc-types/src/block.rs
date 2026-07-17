@@ -22,24 +22,17 @@ pub struct BaseHeaderResponse<H = Header> {
     /// Full Unix timestamp in milliseconds when sub-second timing is available.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub timestamp_ms: Option<u64>,
-    /// Sub-second millisecond component of the block timestamp.
-    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
-    pub timestamp_millis_part: Option<u16>,
 }
 
 impl<H> BaseHeaderResponse<H> {
     /// Creates a header response without Base millisecond timestamp extensions.
     pub const fn new(inner: H) -> Self {
-        Self { inner, timestamp_ms: None, timestamp_millis_part: None }
+        Self { inner, timestamp_ms: None }
     }
 
-    /// Creates a header response with explicit Base millisecond timestamp extensions.
-    pub const fn with_timestamp_fields(
-        inner: H,
-        timestamp_ms: Option<u64>,
-        timestamp_millis_part: Option<u16>,
-    ) -> Self {
-        Self { inner, timestamp_ms, timestamp_millis_part }
+    /// Creates a header response with an explicit millisecond timestamp.
+    pub const fn with_timestamp_ms(inner: H, timestamp_ms: Option<u64>) -> Self {
+        Self { inner, timestamp_ms }
     }
 
     /// Consumes the response and returns the wrapped Ethereum header response.
@@ -201,34 +194,31 @@ mod tests {
     use super::BaseHeaderResponse;
 
     #[test]
-    fn base_header_response_serializes_timestamp_millis_fields() {
+    fn base_header_response_serializes_timestamp_ms() {
         let inner = Header::new(ConsensusHeader { timestamp: 42, ..Default::default() });
-        let response = BaseHeaderResponse::with_timestamp_fields(inner, Some(42_200), Some(200));
+        let response = BaseHeaderResponse::with_timestamp_ms(inner, Some(42_200));
         let value = serde_json::to_value(response).unwrap();
 
         assert_eq!(value["timestamp"], json!("0x2a"));
         assert_eq!(value["timestampMs"], json!("0xa4d8"));
-        assert_eq!(value["timestampMillisPart"], json!("0xc8"));
     }
 
     #[test]
-    fn base_header_response_omits_timestamp_millis_fields_when_absent() {
+    fn base_header_response_omits_timestamp_ms_when_absent() {
         let inner = Header::new(ConsensusHeader { timestamp: 42, ..Default::default() });
         let value = serde_json::to_value(BaseHeaderResponse::new(inner.clone())).unwrap();
 
         assert!(value.get("timestampMs").is_none());
-        assert!(value.get("timestampMillisPart").is_none());
 
         let decoded: BaseHeaderResponse = serde_json::from_value(value).unwrap();
         assert_eq!(decoded.inner, inner);
         assert_eq!(decoded.timestamp_ms, None);
-        assert_eq!(decoded.timestamp_millis_part, None);
     }
 
     #[test]
     fn base_header_response_preserves_header_field_access() {
         let inner = Header::new(ConsensusHeader { timestamp: 42, number: 7, ..Default::default() });
-        let response = BaseHeaderResponse::with_timestamp_fields(inner, Some(42_200), Some(200));
+        let response = BaseHeaderResponse::with_timestamp_ms(inner, Some(42_200));
 
         assert_eq!(response.timestamp, 42);
         assert_eq!(response.number, 7);
@@ -237,7 +227,7 @@ mod tests {
     #[test]
     fn base_header_response_round_trips_through_json() {
         let inner = Header::new(ConsensusHeader { timestamp: 42, ..Default::default() });
-        let original = BaseHeaderResponse::with_timestamp_fields(inner, Some(42_200), Some(200));
+        let original = BaseHeaderResponse::with_timestamp_ms(inner, Some(42_200));
         let json = serde_json::to_value(&original).unwrap();
         let decoded: BaseHeaderResponse = serde_json::from_value(json).unwrap();
 
