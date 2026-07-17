@@ -25,7 +25,6 @@ base-precompile-macros.workspace = true
 base-precompile-storage.workspace = true
 
 # crypto
-hex-literal.workspace = true
 sha2-const-stable.workspace = true
 
 # revm
@@ -34,6 +33,7 @@ revm.workspace = true
 [dev-dependencies]
 rstest.workspace = true
 criterion.workspace = true
+hex-literal.workspace = true
 k256 = { workspace = true, features = ["ecdsa"] }
 base-precompile-storage = { workspace = true, features = ["test-utils"] }
 

@@ -9,21 +9,7 @@
 
 use base_common_genesis::BaseUpgrade;
 
-use crate::{FrozenHash, Policy, Stablecoin, StablecoinAccounting, StablecoinV1};
-
-const V1_LOGIC_SOURCE: &[u8] = include_bytes!("logic/v1.rs");
-
-/// Pinned at Beryl activation. Recompute only as a deliberate, reviewed change
-/// alongside whatever edit to `logic/v1.rs` this hash is meant to gate.
-const V1_LOGIC_HASH: [u8; 32] =
-    hex_literal::hex!("acfcb78949da613764339f58a89f60b8049ed9d3681dbc9a2db78f5aacbb13d8");
-
-#[allow(long_running_const_eval)]
-const _: () = assert!(
-    FrozenHash::matches(V1_LOGIC_SOURCE, V1_LOGIC_HASH),
-    "logic/v1.rs changed since it was frozen at Beryl - if intentional, recompute its hash and \
-     update V1_LOGIC_HASH as a deliberate, reviewed change",
-);
+use crate::{Policy, Stablecoin, StablecoinAccounting, StablecoinV1};
 
 /// An activated version of the stablecoin B-20 precompile logic.
 ///
@@ -67,7 +53,23 @@ impl StablecoinVersions {
 mod tests {
     use base_common_genesis::BaseUpgrade;
 
-    use crate::{StablecoinVersion, StablecoinVersions};
+    use crate::{FrozenHash, StablecoinVersion, StablecoinVersions};
+
+    /// SHA-256 of `logic/v1.rs`, pinned at Beryl activation. Recompute only as a
+    /// deliberate, reviewed change alongside whatever edit to `logic/v1.rs` this
+    /// hash is meant to gate.
+    const V1_LOGIC_SOURCE: &[u8] = include_bytes!("logic/v1.rs");
+    const V1_LOGIC_HASH: [u8; 32] =
+        hex_literal::hex!("acfcb78949da613764339f58a89f60b8049ed9d3681dbc9a2db78f5aacbb13d8");
+
+    #[test]
+    fn v1_logic_is_frozen() {
+        assert!(
+            FrozenHash::matches(V1_LOGIC_SOURCE, V1_LOGIC_HASH),
+            "logic/v1.rs changed since it was frozen at Beryl - if intentional, recompute its hash \
+             and update V1_LOGIC_HASH as a deliberate, reviewed change"
+        );
+    }
 
     #[test]
     fn resolves_none_before_beryl() {
