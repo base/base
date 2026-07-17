@@ -198,6 +198,8 @@ base-execution-evm = { path = "crates/execution/evm" }
 base-execution-rpc = { path = "crates/execution/rpc" }
 base-metering = { path = "crates/execution/metering" }
 base-node-runner = { path = "crates/execution/runner" }
+base-shadow-canary = { path = "crates/execution/shadow-canary" }
+base-shadow-canary-db = { path = "crates/execution/shadow-canary-db" }
 base-execution-exex = { path = "crates/execution/exex" }
 base-execution-trie = { path = "crates/execution/trie" }
 base-txpool-rpc = { path = "crates/execution/txpool-rpc" }

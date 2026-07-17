@@ -1,6 +1,6 @@
 //! Reusable consensus node arguments and launch helpers.
 
-use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf, str::FromStr, sync::Arc};
 
 use alloy_primitives::Address;
 use alloy_provider::RootProvider;
@@ -27,7 +27,7 @@ use url::Url;
 use crate::{
     ConsensusChainArgs, EmbeddedL2ClientArgs, EmbeddedP2PArgs, EmbeddedRpcArgs, L1ClientArgs,
     L1ConfigFile, L2ClientArgs, L2ConfigFile, LogArgs, MetricsArgs, P2PArgs, RpcArgs,
-    SequencerArgs, metrics::CliMetrics,
+    SequencerArgs, ShadowDriveArgs, metrics::CliMetrics,
 };
 
 /// Overrides supplied by callers that embed consensus alongside another service.
@@ -186,6 +186,15 @@ pub struct ConsensusNodeConfigArgs {
         long = "mode",
         default_value_t = NodeMode::Validator,
         env = "BASE_NODE_MODE",
+        value_parser = |arg: &str| -> Result<NodeMode, <NodeMode as FromStr>::Err> {
+            let normalized = arg.trim().to_ascii_lowercase().replace('-', "").replace('_', "");
+            match normalized.as_str() {
+                "validator" => Ok(NodeMode::Validator),
+                "sequencer" => Ok(NodeMode::Sequencer),
+                "shadowdrive" => Ok(NodeMode::ShadowDrive),
+                _ => NodeMode::from_str(arg),
+            }
+        },
         help = format!(
             "The mode to run the node in. Supported modes are: {}",
             NodeMode::iter()
@@ -223,6 +232,10 @@ pub struct ConsensusNodeConfigArgs {
     /// SEQUENCER CLI arguments.
     #[command(flatten)]
     pub sequencer_flags: SequencerArgs,
+
+    /// Shadow-drive CLI arguments.
+    #[command(flatten)]
+    pub shadow_drive_flags: ShadowDriveArgs,
 
     /// Path to the `SafeDB` directory. If not set, safe head tracking is disabled.
     #[arg(long = "safedb.path", env = "BASE_NODE_SAFEDB_PATH")]
@@ -324,6 +337,7 @@ impl From<EmbeddedConsensusNodeConfigArgs> for ConsensusNodeConfigArgs {
             p2p_flags: args.p2p_flags.into(),
             rpc_flags: args.rpc_flags.into(),
             sequencer_flags: SequencerArgs::default(),
+            shadow_drive_flags: ShadowDriveArgs::default(),
             safedb_path: args.safedb_path,
             checkpoint_path: args.checkpoint_path,
             upgrade_signal: UpgradeSignalArgs::default(),
@@ -342,6 +356,7 @@ impl From<EmbeddedSequencerConsensusNodeConfigArgs> for ConsensusNodeConfigArgs 
             p2p_flags: args.p2p_flags,
             rpc_flags: args.rpc_flags.into(),
             sequencer_flags: args.sequencer_flags,
+            shadow_drive_flags: ShadowDriveArgs::default(),
             safedb_path: args.safedb_path,
             checkpoint_path: args.checkpoint_path,
             upgrade_signal: UpgradeSignalArgs::default(),
@@ -473,6 +488,11 @@ impl ConsensusNodeArgs {
             mode: self.config.node_mode,
         };
 
+        let shadow_drive_config = self
+            .config
+            .node_mode
+            .is_shadow_drive()
+            .then(|| self.config.shadow_drive_flags.config());
         let mut builder = RollupNodeBuilder::new(
             cfg,
             l1_config,
@@ -482,6 +502,7 @@ impl ConsensusNodeArgs {
             rpc_config,
         )
         .with_sequencer_config(self.config.sequencer_flags.config())
+        .with_shadow_drive_config(shadow_drive_config)
         .with_upgrade_signal_config(UpgradeSignalBuilderConfig {
             metrics_config: upgrade_signal_config,
             l1_rpc: upgrade_signal_l1_rpc,
@@ -630,6 +651,7 @@ mod tests {
             p2p_flags: P2PArgs::default(),
             rpc_flags: RpcArgs::default(),
             sequencer_flags: SequencerArgs::default(),
+            shadow_drive_flags: ShadowDriveArgs::default(),
             safedb_path: None,
             checkpoint_path: None,
             upgrade_signal: UpgradeSignalArgs::default(),
@@ -640,6 +662,20 @@ mod tests {
     struct CommandParser<T: Args> {
         #[command(flatten)]
         args: T,
+    }
+
+    fn parse_config(args: &[&str]) -> ConsensusNodeConfigArgs {
+        let required = [
+            "base-consensus",
+            "--l1-eth-rpc",
+            "http://localhost:8545",
+            "--l1-beacon",
+            "http://localhost:5052",
+            "--l2-engine-rpc",
+            "http://localhost:8551",
+        ];
+        CommandParser::<ConsensusNodeConfigArgs>::parse_from([required.as_slice(), args].concat())
+            .args
     }
 
     #[test]
@@ -661,6 +697,18 @@ mod tests {
             args.upgrade_signal.contract_address,
             Some(address!("0000000000000000000000000000000000000001"))
         );
+    }
+
+    #[test]
+    fn parses_shadow_drive_mode_aliases() {
+        let args = parse_config(&["--mode", "shadow-drive"]);
+        assert_eq!(args.node_mode, NodeMode::ShadowDrive);
+
+        let args = parse_config(&["--mode", "ShadowDrive"]);
+        assert_eq!(args.node_mode, NodeMode::ShadowDrive);
+
+        let args = parse_config(&["--mode", "sequencer"]);
+        assert_eq!(args.node_mode, NodeMode::Sequencer);
     }
 
     fn upgrade_schedule(signals: &[(BaseUpgrade, u64)]) -> UpgradeSignalSchedule {

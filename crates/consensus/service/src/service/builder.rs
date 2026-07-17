@@ -35,6 +35,17 @@ pub struct DerivationDelegateConfig {
     pub l2_cl_url: Url,
 }
 
+/// Configuration for shadow-drive mode.
+#[derive(Debug, Clone)]
+pub struct ShadowDriveConfig {
+    /// The L2 RPC URL for the shadow-drive source node.
+    pub source_l2_rpc: Url,
+    /// Deadline for building shadow payloads.
+    pub build_deadline: Duration,
+    /// Maximum number of blocks to reorg when shadow-drive detects divergence.
+    pub max_reorg_depth: u64,
+}
+
 impl Default for DerivationDelegateConfig {
     fn default() -> Self {
         Self { l2_cl_url: Url::parse("http://localhost:9545").unwrap() }
@@ -79,6 +90,8 @@ pub struct RollupNodeBuilder {
     /// Optional configuration for Derivation Delegate mode.
     /// When present, the node does not run derivation, instead trusting the configured delegate.
     pub derivation_delegate_config: Option<DerivationDelegateConfig>,
+    /// Optional configuration for shadow-drive mode.
+    pub shadow_drive_config: Option<ShadowDriveConfig>,
     /// Override for the finalized-block poll interval.
     ///
     /// When `None`, [`L1Config::default_finalized_poll_interval`] is used to select a
@@ -130,6 +143,7 @@ impl RollupNodeBuilder {
             rpc_config,
             sequencer_config: None,
             derivation_delegate_config: None,
+            shadow_drive_config: None,
             finalized_poll_interval: None,
             checkpoint_path: None,
             safedb_path: None,
@@ -171,6 +185,11 @@ impl RollupNodeBuilder {
         derivation_delegate_config: Option<DerivationDelegateConfig>,
     ) -> Self {
         Self { derivation_delegate_config, ..self }
+    }
+
+    /// Sets the shadow-drive configuration.
+    pub fn with_shadow_drive_config(self, shadow_drive_config: Option<ShadowDriveConfig>) -> Self {
+        Self { shadow_drive_config, ..self }
     }
 
     /// Enables persistent safe head tracking by setting the path to the redb database file.
@@ -253,6 +272,7 @@ impl RollupNodeBuilder {
             p2p_config,
             sequencer_config,
             derivation_delegate_provider,
+            shadow_drive_config: self.shadow_drive_config,
             checkpoint_path,
             safedb_path: self.safedb_path,
             upgrade_signal_config,

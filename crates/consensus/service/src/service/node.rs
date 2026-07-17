@@ -33,8 +33,8 @@ use crate::{
     NodeActor, NodeMode, PayloadBuilder, QueuedDerivationEngineClient,
     QueuedEngineDerivationClient, QueuedEngineRpcClient, QueuedL1WatcherDerivationClient,
     QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient,
-    RecoveryModeGuard, RpcActor, RpcContext, SequencerActor, SequencerConfig,
-    UpgradeSignalNodeConfig,
+    RecoveryModeGuard, RemoteL2Client, RpcActor, RpcContext, SequencerActor, SequencerConfig,
+    ShadowDriveActor, ShadowDriveConfig, UpgradeSignalNodeConfig,
     actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
 };
 
@@ -105,6 +105,8 @@ pub struct RollupNode {
     pub sequencer_config: SequencerConfig,
     /// Optional derivation delegate provider.
     pub derivation_delegate_provider: Option<DerivationDelegateClient>,
+    /// Optional shadow-drive configuration.
+    pub shadow_drive_config: Option<ShadowDriveConfig>,
     /// Path to the mandatory checkpoint database.
     ///
     /// The node records safe/finalized forkchoice checkpoints here so restart can recover
@@ -243,8 +245,11 @@ impl RollupNode {
         unsafe_head_tx: watch::Sender<L2BlockInfo>,
         conductor: Option<Arc<dyn Conductor>>,
         checkpoint_client: CheckpointClient,
-    ) -> (EngineActor<EngineProcessor<E, QueuedEngineDerivationClient>>, EngineRpcProcessor<E>)
-    {
+    ) -> (
+        EngineActor<EngineProcessor<E, QueuedEngineDerivationClient>>,
+        EngineRpcProcessor<E>,
+        watch::Receiver<EngineState>,
+    ) {
         let engine_state = EngineState::default();
         let (engine_state_tx, engine_state_rx) = watch::channel(engine_state);
         let (engine_queue_length_tx, engine_queue_length_rx) = watch::channel(0);
@@ -261,7 +266,11 @@ impl RollupNode {
             engine,
             EngineProcessorOptions {
                 node_mode: mode,
-                unsafe_head_tx: if mode.is_sequencer() { Some(unsafe_head_tx) } else { None },
+                unsafe_head_tx: if mode.is_sequencer() || mode.is_shadow_drive() {
+                    Some(unsafe_head_tx)
+                } else {
+                    None
+                },
                 conductor,
                 sequencer_stopped: self.sequencer_config.sequencer_stopped,
                 shadow_sequencer: mode.is_sequencer()
@@ -271,6 +280,7 @@ impl RollupNode {
             checkpoint_writer,
         );
 
+        let engine_state_rx_shadow = engine_state_rx.clone();
         let engine_rpc_processor = EngineRpcProcessor::new(
             Arc::clone(&engine_client),
             Arc::clone(&self.config),
@@ -281,7 +291,7 @@ impl RollupNode {
         let engine_actor =
             EngineActor::new(cancellation_token, engine_request_rx, engine_processor);
 
-        (engine_actor, engine_rpc_processor)
+        (engine_actor, engine_rpc_processor, engine_state_rx_shadow)
     }
 
     /// Starts the rollup node service.
@@ -432,7 +442,7 @@ impl RollupNode {
         let engine_conductor: Option<Arc<dyn Conductor>> =
             conductor.clone().map(|c| Arc::new(c) as Arc<dyn Conductor>);
 
-        let (engine_actor, engine_rpc_processor) = self.create_engine_actor(
+        let (engine_actor, engine_rpc_processor, engine_state_rx) = self.create_engine_actor(
             engine_client,
             cancellation.clone(),
             engine_actor_request_rx,
@@ -441,6 +451,7 @@ impl RollupNode {
             engine_conductor,
             checkpoint_client,
         );
+        let mut engine_state_rx_shadow = Some(engine_state_rx);
 
         // Select the concrete derivation actor implementation based on
         // RollupNode configuration.
@@ -498,8 +509,8 @@ impl RollupNode {
             self.sequencer_config.l1_conf_delay,
         );
 
-        let delayed_origin_selector =
-            L1OriginSelector::new(Arc::clone(&self.config), delayed_l1_provider);
+        let mut delayed_origin_selector =
+            Some(L1OriginSelector::new(Arc::clone(&self.config), delayed_l1_provider));
 
         // Create the L1 Watcher actor
 
@@ -546,8 +557,10 @@ impl RollupNode {
             .as_ref()
             .map(|c| c.metrics_actor(upgrade_signal_refresher.clone(), cancellation.clone()));
         let node_mode = self.mode();
-        // Create the sequencer if needed
-        let (sequencer_actor, sequencer_admin_client) = if node_mode.is_sequencer() {
+        // Create the sequencer or shadow-drive actor if needed.
+        let (sequencer_actor, sequencer_admin_client, shadow_drive_actor) = if node_mode.is_sequencer() {
+            let delayed_origin_selector =
+                delayed_origin_selector.take().expect("origin selector must be available");
             let sequencer_engine_client = QueuedSequencerEngineClient {
                 engine_actor_request_tx: engine_actor_request_tx.clone(),
                 unsafe_head_rx,
@@ -583,10 +596,42 @@ impl RollupNode {
                     pending_stop: None,
                 }),
                 Some(QueuedSequencerAdminAPIClient::new(sequencer_admin_api_tx)),
+                None,
+            )
+        } else if node_mode.is_shadow_drive() {
+            let delayed_origin_selector =
+                delayed_origin_selector.take().expect("origin selector must be available");
+            let shadow_drive_config = self
+                .shadow_drive_config
+                .clone()
+                .ok_or_else(|| "shadow-drive config missing for shadow-drive mode".to_string())?;
+            let shadow_engine_client = QueuedSequencerEngineClient {
+                engine_actor_request_tx: engine_actor_request_tx.clone(),
+                unsafe_head_rx,
+            };
+            let source = RemoteL2Client::new(shadow_drive_config.source_l2_rpc.clone());
+            let actor = ShadowDriveActor {
+                attributes_builder: self.create_attributes_builder(),
+                origin_selector: delayed_origin_selector,
+                engine_client: Arc::new(shadow_engine_client),
+                engine_actor_request_tx: engine_actor_request_tx.clone(),
+                source: Arc::new(source),
+                rollup_config: Arc::clone(&self.config),
+                shadow_config: shadow_drive_config,
+                cancellation_token: cancellation.clone(),
+                engine_state_rx: engine_state_rx_shadow
+                    .take()
+                    .expect("engine state receiver must be available"),
+            };
+            (
+                None,
+                None,
+                Some(actor),
             )
         } else {
-            (None, None)
+            (None, None, None)
         };
+        let _ = delayed_origin_selector;
 
         // Create the RPC server actor.
         let rpc_builder = self.rpc_builder();
@@ -602,6 +647,15 @@ impl RollupNode {
                 upgrade_signal_refresher,
             )
         });
+
+        let derivation_actor = if node_mode.is_shadow_drive() {
+            // ShadowDrive mode re-anchors forkchoice directly; running derivation would issue
+            // independent FCUs via consolidation and violate single-writer invariants. Skipping
+            // derivation here is safe because el_sync_complete is only used to notify derivation.
+            None
+        } else {
+            Some(derivation)
+        };
 
         crate::service::spawn_and_wait!(
             cancellation,
@@ -620,10 +674,11 @@ impl RollupNode {
                 Some((l1_watcher, ())),
                 Some((l1_query_processor, ())),
                 upgrade_signal_metrics_actor.map(|actor| (actor, ())),
-                Some((derivation, ())),
+                derivation_actor.map(|actor| (actor, ())),
                 Some((checkpoint_actor, cancellation.clone())),
                 Some((engine_actor, ())),
                 engine_rpc_actor,
+                shadow_drive_actor.map(|actor| (actor, ())),
             ]
         );
         Ok(())

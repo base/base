@@ -12,7 +12,8 @@ use alloy_genesis::ChainConfig;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::JwtSecret;
 use base_common_genesis::RollupConfig;
-use base_consensus_node::NodeMode;
+use base_consensus_node::{NodeMode, ShadowDriveConfig};
+use base_shadow_canary::ShadowCanaryConfig;
 use base_tx_forwarding::TxForwardingConfig;
 use eyre::{Result, WrapErr};
 use url::Url;
@@ -32,6 +33,8 @@ pub enum L2ClientConsensusMode {
     Validator,
     /// Run the client consensus node in follow mode against the builder RPC.
     Follow,
+    /// Run the client consensus node in shadow-drive mode against the builder RPC.
+    ShadowDrive,
 }
 
 /// Configuration for the L2 stack.
@@ -65,6 +68,12 @@ pub struct L2StackConfig {
     pub verifier_l1_confs: u64,
     /// Consensus mode for the L2 client node.
     pub client_consensus_mode: L2ClientConsensusMode,
+    /// Shadow-drive build deadline (only used when `client_consensus_mode` is ShadowDrive).
+    pub shadow_drive_build_deadline: Option<Duration>,
+    /// Shadow-drive max reorg depth (only used when `client_consensus_mode` is ShadowDrive).
+    pub shadow_drive_max_reorg_depth: Option<u64>,
+    /// Optional shadow canary ExEx configuration for the client node.
+    pub shadow_canary_config: Option<ShadowCanaryConfig>,
 }
 
 /// Running L2 client consensus node.
@@ -74,6 +83,8 @@ pub enum L2ClientConsensus {
     Validator(InProcessConsensus),
     /// Follow-mode consensus node.
     Follow(InProcessFollowConsensus),
+    /// Shadow-drive consensus node.
+    ShadowDrive(InProcessConsensus),
 }
 
 impl L2ClientConsensus {
@@ -82,6 +93,7 @@ impl L2ClientConsensus {
         match self {
             Self::Validator(consensus) => consensus.rpc_url(),
             Self::Follow(consensus) => consensus.rpc_url(),
+            Self::ShadowDrive(consensus) => consensus.rpc_url(),
         }
     }
 }
@@ -146,6 +158,7 @@ impl L2Stack {
             auth_port: container_config.and_then(|c| c.builder_auth_port),
             p2p_port: container_config.and_then(|c| c.builder_p2p_port),
             flashblocks_port: container_config.and_then(|c| c.builder_flashblocks_port),
+            shadow_canary: None,
         };
         let builder = InProcessBuilder::start(builder_config)
             .await
@@ -172,6 +185,7 @@ impl L2Stack {
             l1_slot_duration_override: Some(4),
             sequencer_stopped: true,
             verifier_l1_confs: 0,
+            shadow_drive_config: None,
         };
         let builder_consensus = InProcessConsensus::start(builder_consensus_config)
             .await
@@ -212,6 +226,7 @@ impl L2Stack {
             auth_port: container_config.and_then(|c| c.client_auth_port),
             p2p_port: container_config.and_then(|c| c.client_p2p_port),
             tx_forwarding_config,
+            shadow_canary: config.shadow_canary_config.clone(),
         };
         let client = InProcessClient::start(client_config)
             .await
@@ -237,6 +252,7 @@ impl L2Stack {
                     l1_slot_duration_override: Some(4),
                     sequencer_stopped: false,
                     verifier_l1_confs: config.verifier_l1_confs,
+                    shadow_drive_config: None,
                 };
                 let client_consensus = InProcessConsensus::start(client_consensus_config)
                     .await
@@ -267,6 +283,42 @@ impl L2Stack {
                     .await
                     .wrap_err("Failed to start follow client consensus")?;
                 L2ClientConsensus::Follow(client_consensus)
+            }
+            L2ClientConsensusMode::ShadowDrive => {
+                let build_deadline = config.shadow_drive_build_deadline.ok_or_else(|| {
+                    eyre::eyre!("shadow drive build deadline is required")
+                })?;
+                let max_reorg_depth = config.shadow_drive_max_reorg_depth.ok_or_else(|| {
+                    eyre::eyre!("shadow drive max reorg depth is required")
+                })?;
+                let shadow_drive_config = ShadowDriveConfig {
+                    source_l2_rpc: builder.rpc_url()?,
+                    build_deadline,
+                    max_reorg_depth,
+                };
+                let client_consensus_config = InProcessConsensusConfig {
+                    rollup_config,
+                    l1_chain_config,
+                    jwt_secret: config.jwt_secret,
+                    l1_rpc_url,
+                    l1_beacon_url,
+                    l2_engine_url: client.engine_url()?,
+                    mode: NodeMode::ShadowDrive,
+                    sequencer_key: None,
+                    p2p_key: None,
+                    rpc_port: container_config.and_then(|c| c.client_consensus_rpc_port),
+                    p2p_tcp_port: container_config.and_then(|c| c.client_consensus_p2p_tcp_port),
+                    p2p_udp_port: container_config.and_then(|c| c.client_consensus_p2p_udp_port),
+                    unsafe_block_signer: SEQUENCER.address,
+                    l1_slot_duration_override: Some(4),
+                    sequencer_stopped: false,
+                    verifier_l1_confs: config.verifier_l1_confs,
+                    shadow_drive_config: Some(shadow_drive_config),
+                };
+                let client_consensus = InProcessConsensus::start(client_consensus_config)
+                    .await
+                    .wrap_err("Failed to start shadow-drive client consensus")?;
+                L2ClientConsensus::ShadowDrive(client_consensus)
             }
         };
 

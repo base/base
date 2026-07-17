@@ -1,7 +1,8 @@
 use alloy_rpc_types_engine::PayloadId;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_engine::{
-    BuildTaskError, ConsolidateInput, EngineQueries, InsertTaskError, SealTaskError,
+    BuildTaskError, ConsolidateInput, EngineQueries, InsertTaskError, ReanchorTaskError,
+    SealTaskError,
 };
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 use opentelemetry::Context;
@@ -62,6 +63,8 @@ pub enum EngineActorRequest {
     ProcessAdminUnsafeL2BlockRequest(Box<BaseExecutionPayloadEnvelope>),
     /// Request to insert a locally produced sequencer unsafe block.
     ProcessLocalUnsafeL2BlockRequest(Box<InsertUnsafePayloadRequest>),
+    /// Request to re-anchor the unsafe head to a canonical payload.
+    ProcessShadowReanchorRequest(Box<ShadowReanchorRequest>),
     /// Request to reset engine forkchoice.
     ResetRequest(Box<ResetRequest>),
 }
@@ -101,6 +104,17 @@ pub struct InsertUnsafePayloadRequest {
     pub envelope: BaseExecutionPayloadEnvelope,
     /// Optional response channel used by the sequencer to wait for actual insertion.
     pub result_tx: Option<mpsc::Sender<Result<L2BlockInfo, InsertTaskError>>>,
+    /// [`opentelemetry::Context`] from the requester, for trace propagation.
+    pub otel_cx: Context,
+}
+
+/// A request to re-anchor the unsafe head to a canonical payload.
+#[derive(Debug)]
+pub struct ShadowReanchorRequest {
+    /// The payload envelope to re-anchor to.
+    pub envelope: BaseExecutionPayloadEnvelope,
+    /// Response channel used by callers that need acknowledgement.
+    pub result_tx: mpsc::Sender<Result<L2BlockInfo, ReanchorTaskError>>,
     /// [`opentelemetry::Context`] from the requester, for trace propagation.
     pub otel_cx: Context,
 }

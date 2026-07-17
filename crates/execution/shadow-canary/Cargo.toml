@@ -1,0 +1,35 @@
+[package]
+name = "base-shadow-canary"
+description = "Shadow canary ExEx for capturing executed blocks"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# workspace
+base-node-runner.workspace = true
+base-shadow-canary-db = { path = "../shadow-canary-db" }
+
+# reth
+reth-exex.workspace = true
+reth-execution-types.workspace = true
+reth-node-api.workspace = true
+reth-primitives-traits.workspace = true
+reth-tasks.workspace = true
+
+# tokio
+tokio.workspace = true
+
+# tracing
+tracing = { workspace = true, features = ["std"] }
+
+# misc
+chrono.workspace = true
+eyre.workspace = true
+futures.workspace = true

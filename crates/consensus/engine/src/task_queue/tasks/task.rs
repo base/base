@@ -9,10 +9,10 @@ use derive_more::Display;
 use thiserror::Error;
 use tokio::task::yield_now;
 
-use super::{ConsolidateTask, FinalizeTask, InsertTask};
+use super::{ConsolidateTask, FinalizeTask, InsertTask, ReanchorTask};
 use crate::{
     BuildTaskError, ConsolidateTaskError, EngineClient, EngineState, FinalizeTaskError,
-    InsertTaskError, Metrics,
+    InsertTaskError, Metrics, ReanchorTaskError,
     task_queue::{SealTask, SealTaskError},
 };
 
@@ -75,6 +75,9 @@ pub enum EngineTaskErrors {
     /// An error that occurred while finalizing an L2 block.
     #[error(transparent)]
     Finalize(#[from] FinalizeTaskError),
+    /// An error that occurred while re-anchoring the unsafe head.
+    #[error(transparent)]
+    Reanchor(#[from] ReanchorTaskError),
 }
 
 impl EngineTaskErrorSeverity {
@@ -97,6 +100,7 @@ impl EngineTaskError for EngineTaskErrors {
             Self::Seal(inner) => inner.severity(),
             Self::Consolidate(inner) => inner.severity(),
             Self::Finalize(inner) => inner.severity(),
+            Self::Reanchor(inner) => inner.severity(),
         }
     }
 }
@@ -116,6 +120,8 @@ pub enum EngineTask<EngineClient_: EngineClient> {
     Consolidate(Box<ConsolidateTask<EngineClient_>>),
     /// Finalizes an L2 block
     Finalize(Box<FinalizeTask<EngineClient_>>),
+    /// Re-anchors the unsafe head to a canonical payload.
+    Reanchor(Box<ReanchorTask<EngineClient_>>),
 }
 
 impl<EngineClient_: EngineClient> EngineTask<EngineClient_> {
@@ -126,6 +132,7 @@ impl<EngineClient_: EngineClient> EngineTask<EngineClient_> {
             Self::Seal(task) => task.execute(state).await?,
             Self::Consolidate(task) => task.execute(state).await?,
             Self::Finalize(task) => task.execute(state).await?,
+            Self::Reanchor(task) => task.execute(state).await?,
         };
 
         Ok(())
@@ -137,13 +144,14 @@ impl<EngineClient_: EngineClient> EngineTask<EngineClient_> {
             Self::Consolidate(_) => Metrics::CONSOLIDATE_TASK_LABEL,
             Self::Seal(_) => Metrics::SEAL_TASK_LABEL,
             Self::Finalize(_) => Metrics::FINALIZE_TASK_LABEL,
+            Self::Reanchor(_) => Metrics::DELEGATED_FORKCHOICE_TASK_LABEL,
         }
     }
 
     const fn task_priority(&self) -> u8 {
         match self {
             Self::Seal(_) => 4,
-            Self::Insert(_) => 3,
+            Self::Insert(_) | Self::Reanchor(_) => 3,
             Self::Consolidate(_) => 2,
             Self::Finalize(_) => 1,
         }
@@ -158,6 +166,7 @@ impl<EngineClient_: EngineClient> PartialEq for EngineTask<EngineClient_> {
                 | (Self::Seal(_), Self::Seal(_))
                 | (Self::Consolidate(_), Self::Consolidate(_))
                 | (Self::Finalize(_), Self::Finalize(_))
+                | (Self::Reanchor(_), Self::Reanchor(_))
         )
     }
 }

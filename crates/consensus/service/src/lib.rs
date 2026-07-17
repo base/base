@@ -12,7 +12,7 @@ extern crate tracing;
 mod service;
 pub use service::{
     DerivationDelegateConfig, FollowNode, FollowNodeConfig, HEAD_STREAM_POLL_INTERVAL, L1Config,
-    L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder, ShutdownSignal,
+    L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder, ShadowDriveConfig, ShutdownSignal,
     UpgradeSignalBuilderConfig,
 };
 
@@ -42,7 +42,8 @@ pub use actors::{
     QueuedSequencerEngineClient, QueuedUnsafePayloadGossipClient, RecoveryModeGuard, ResetRequest,
     RpcActor, RpcActorError, RpcContext, ScheduledTicker, SealState, SealStepError,
     SealStepOutcome, SequencerActor, SequencerActorError, SequencerAdminQuery, SequencerConfig,
-    SequencerEngineClient, UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
+    SequencerEngineClient, ShadowDriveActor, ShadowDriveActorError, ShadowReanchorRequest,
+    UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
     UnsealedPayloadHandle, UpgradeSignalMetricsActor, UpgradeSignalNodeConfig,
 };
 

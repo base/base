@@ -13,6 +13,9 @@ pub use insert::{
     InsertPayloadPolicy, InsertPayloadSafety, InsertTask, InsertTaskError, InsertTaskResult,
 };
 
+mod reanchor;
+pub use reanchor::{ReanchorTask, ReanchorTaskError, ReanchorTaskResult};
+
 mod build;
 pub use build::{BuildTaskError, EngineBuildError};
 

@@ -26,6 +26,7 @@ base-consensus-rpc = { workspace = true, features = ["client"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
 base-builder-core = { workspace = true, features = ["test-utils"] }
+base-shadow-canary.workspace = true
 
 # consensus
 base-consensus-disc.workspace = true
@@ -96,6 +97,7 @@ clap = { workspace = true, features = ["derive"] }
 # consensus
 base-consensus-derive.workspace = true
 base-consensus-engine = { workspace = true, features = ["test-utils"] }
+base-shadow-canary-db.workspace = true
 
 # alloy
 alloy-json-rpc.workspace = true
@@ -112,6 +114,7 @@ base-prover-service-protocol.workspace = true
 # misc
 indicatif.workspace = true
 async-trait.workspace = true
+testcontainers-modules = { workspace = true, features = ["postgres"] }
 
 [[bench]]
 name = "b20_zk_proving"

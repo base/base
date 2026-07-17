@@ -46,6 +46,9 @@ pub use rpc::{EmbeddedRpcArgs, RpcArgs};
 mod sequencer;
 pub use sequencer::SequencerArgs;
 
+mod shadow_drive;
+pub use shadow_drive::ShadowDriveArgs;
+
 pub mod signer;
 pub use signer::{SignerArgs, SignerArgsParseError};
 

@@ -12,6 +12,7 @@ use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
 use base_node_core::args::RollupArgs;
 use base_node_runner::{BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks};
+use base_shadow_canary::{ShadowCanaryConfig, ShadowCanaryExtension};
 use base_tx_forwarding::{TxForwardingConfig, TxForwardingExtension};
 use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
 use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
@@ -53,6 +54,8 @@ pub struct InProcessClientConfig {
     /// Optional transaction forwarding configuration.
     /// When set, the client will forward transactions to builder RPC endpoints.
     pub tx_forwarding_config: Option<TxForwardingConfig>,
+    /// Optional shadow canary ExEx configuration.
+    pub shadow_canary: Option<ShadowCanaryConfig>,
 }
 
 /// In-process Base client node that syncs from a builder.
@@ -269,6 +272,10 @@ impl InProcessClient {
         // TxForwarding extension (optional - forwards txs to builder RPC)
         if let Some(ref tx_fwd_config) = config.tx_forwarding_config {
             extensions.push(Box::new(TxForwardingExtension::from_config(tx_fwd_config.clone())));
+        }
+
+        if let Some(config) = config.shadow_canary.clone().filter(|cfg| cfg.enabled) {
+            extensions.push(Box::new(ShadowCanaryExtension::from_config(config)));
         }
 
         // Flashblocks extension (must be last - uses replace_configured)

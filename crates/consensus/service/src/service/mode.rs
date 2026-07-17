@@ -22,6 +22,9 @@ pub enum NodeMode {
     /// Sequencer mode.
     #[display("Sequencer")]
     Sequencer,
+    /// Shadow-drive mode.
+    #[display("ShadowDrive")]
+    ShadowDrive,
 }
 
 impl NodeMode {
@@ -33,5 +36,10 @@ impl NodeMode {
     /// Returns `true` if [`Self`] is [`Self::Sequencer`].
     pub const fn is_sequencer(&self) -> bool {
         matches!(self, Self::Sequencer)
+    }
+
+    /// Returns `true` if [`Self`] is [`Self::ShadowDrive`].
+    pub const fn is_shadow_drive(&self) -> bool {
+        matches!(self, Self::ShadowDrive)
     }
 }

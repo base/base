@@ -1,12 +1,13 @@
 //! System test stack orchestration and lifecycle management.
 
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 use alloy_network::Ethereum;
 use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_engine::JwtSecret;
 use base_common_network::Base;
+use base_shadow_canary::ShadowCanaryConfig;
 use base_tx_forwarding::TxForwardingConfig;
 use eyre::{Result, WrapErr};
 use tempfile::TempDir;
@@ -109,6 +110,13 @@ impl SystemTestStack {
         Ok(RootProvider::<Base>::new(client))
     }
 
+    /// Returns an L2 shadow-drive provider with Base network.
+    pub fn l2_shadow_drive_provider(&self) -> Result<RootProvider<Base>> {
+        let url = self.l2_client_rpc_url()?;
+        let client = RpcClient::builder().http(url);
+        Ok(RootProvider::<Base>::new(client))
+    }
+
     /// Returns all RPC URLs for this system test stack.
     pub async fn urls(&self) -> Result<crate::SystemTestUrls> {
         Ok(crate::SystemTestUrls {
@@ -136,6 +144,9 @@ pub struct SystemTestStackBuilder {
     tx_forwarding_config: Option<TxForwardingConfig>,
     verifier_l1_confs: u64,
     client_consensus_mode: L2ClientConsensusMode,
+    shadow_drive_build_deadline: Option<Duration>,
+    shadow_drive_max_reorg_depth: Option<u64>,
+    shadow_canary_config: Option<ShadowCanaryConfig>,
 }
 
 impl SystemTestStackBuilder {
@@ -216,6 +227,24 @@ impl SystemTestStackBuilder {
     /// Runs the L2 client consensus node in follow mode against the builder RPC.
     pub const fn with_follow_mode_client_consensus(mut self) -> Self {
         self.client_consensus_mode = L2ClientConsensusMode::Follow;
+        self
+    }
+
+    /// Runs the L2 client consensus node in shadow-drive mode against the builder RPC.
+    pub fn with_shadow_drive_client_consensus(
+        mut self,
+        build_deadline_ms: u64,
+        max_reorg_depth: u64,
+    ) -> Self {
+        self.client_consensus_mode = L2ClientConsensusMode::ShadowDrive;
+        self.shadow_drive_build_deadline = Some(Duration::from_millis(build_deadline_ms));
+        self.shadow_drive_max_reorg_depth = Some(max_reorg_depth);
+        self
+    }
+
+    /// Configures the shadow canary ExEx for the L2 client node.
+    pub fn with_shadow_canary_config(mut self, config: ShadowCanaryConfig) -> Self {
+        self.shadow_canary_config = Some(config);
         self
     }
 
@@ -335,6 +364,9 @@ impl SystemTestStackBuilder {
             tx_forwarding_config: self.tx_forwarding_config,
             verifier_l1_confs: self.verifier_l1_confs,
             client_consensus_mode: self.client_consensus_mode,
+            shadow_drive_build_deadline: self.shadow_drive_build_deadline,
+            shadow_drive_max_reorg_depth: self.shadow_drive_max_reorg_depth,
+            shadow_canary_config: self.shadow_canary_config,
         };
 
         let l2_stack = L2Stack::start(l2_config).await.wrap_err("Failed to start L2 stack")?;

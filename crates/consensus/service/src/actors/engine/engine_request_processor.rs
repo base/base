@@ -8,7 +8,7 @@ use base_consensus_engine::{
     ConsolidateTask, Engine, EngineClient, EngineSyncStateUpdate, EngineTask, EngineTaskError,
     EngineTaskErrorSeverity, EngineTaskErrors, FinalizeTask, ForkchoiceCheckpointLabel,
     ForkchoiceCheckpointReader, InsertTask, InsertTaskResult, Metrics as EngineMetrics,
-    NoopForkchoiceCheckpointReader, SealTaskError,
+    NoopForkchoiceCheckpointReader, ReanchorTask, SealTaskError,
 };
 use base_protocol::L2BlockInfo;
 use opentelemetry::context::FutureExt as OtelFutureExt;
@@ -20,7 +20,7 @@ use tokio::{
 use crate::{
     BuildRequest, CheckpointWriter, Conductor, EngineActorRequest, EngineClientError,
     EngineDerivationClient, EngineError, GetPayloadRequest, InsertUnsafePayloadRequest, NodeMode,
-    NoopCheckpointWriter,
+    NoopCheckpointWriter, ShadowReanchorRequest,
 };
 
 /// Requires that the implementor handles engine requests via the provided channel.
@@ -528,6 +528,20 @@ where
         self.enqueue_unsafe_payload_insert(envelope, result_tx);
     }
 
+    fn handle_shadow_reanchor(
+        &mut self,
+        envelope: BaseExecutionPayloadEnvelope,
+        result_tx: mpsc::Sender<Result<L2BlockInfo, base_consensus_engine::ReanchorTaskError>>,
+    ) {
+        let task = EngineTask::Reanchor(Box::new(ReanchorTask::with_result(
+            Arc::clone(&self.client),
+            Arc::clone(&self.rollup),
+            envelope,
+            result_tx,
+        )));
+        self.engine.enqueue(task);
+    }
+
     async fn mark_el_sync_complete_and_notify_derivation_actor(
         &mut self,
     ) -> Result<(), EngineError> {
@@ -942,6 +956,11 @@ where
                         // Attach for the synchronous enqueue call only — no await, no Send issue.
                         let _guard = otel_cx.attach();
                         self.handle_local_unsafe_l2_block(envelope, result_tx);
+                    }
+                    EngineActorRequest::ProcessShadowReanchorRequest(reanchor_request) => {
+                        let ShadowReanchorRequest { envelope, result_tx, otel_cx } = *reanchor_request;
+                        let _guard = otel_cx.attach();
+                        self.handle_shadow_reanchor(envelope, result_tx);
                     }
                     EngineActorRequest::ResetRequest(reset_request) => {
                         // Do not reset the engine while the EL is still syncing. A Reset sends a

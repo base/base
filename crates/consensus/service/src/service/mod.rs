@@ -5,7 +5,8 @@
 
 mod builder;
 pub use builder::{
-    DerivationDelegateConfig, L1ConfigBuilder, RollupNodeBuilder, UpgradeSignalBuilderConfig,
+    DerivationDelegateConfig, L1ConfigBuilder, RollupNodeBuilder, ShadowDriveConfig,
+    UpgradeSignalBuilderConfig,
 };
 
 pub use crate::follow::{FollowNode, FollowNodeConfig};

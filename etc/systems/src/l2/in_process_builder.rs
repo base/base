@@ -14,6 +14,7 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{BasePooledTransaction, BuilderApiImpl, BuilderApiServer};
 use base_node_core::{args::RollupArgs, node::BasePoolBuilder};
 use base_node_runner::BaseNode;
+use base_shadow_canary::{ShadowCanaryConfig, run_exex, spawn_writer};
 use eyre::{Result, WrapErr, eyre};
 use nanoid::nanoid;
 use reth_db::{
@@ -27,6 +28,7 @@ use reth_node_core::{
     exit::NodeExitFuture,
 };
 use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
+use tokio::sync::mpsc;
 use tracing::warn;
 use url::Url;
 
@@ -49,6 +51,8 @@ pub struct InProcessBuilderConfig {
     pub p2p_port: Option<u16>,
     /// Optional fixed Flashblocks port (uses random if None).
     pub flashblocks_port: Option<u16>,
+    /// Optional shadow canary ExEx configuration.
+    pub shadow_canary: Option<ShadowCanaryConfig>,
 }
 
 /// An in-process builder node that replaces Docker-based `BuilderContainer`.
@@ -138,7 +142,7 @@ impl InProcessBuilder {
         let node_config = create_node_config(chain_spec, &data_path, &jwt_path, &config)?;
         let p2p_port = node_config.network.port;
 
-        let node_builder = NodeBuilder::new(node_config.clone())
+        let mut node_builder = NodeBuilder::new(node_config.clone())
             .with_database(db)
             .with_launch_context(runtime.clone())
             .with_types::<BaseNode>()
@@ -157,8 +161,22 @@ impl InProcessBuilder {
                 Ok(())
             });
 
+        let mut shadow_writer = None;
+        if let Some(config) = config.shadow_canary.clone().filter(|cfg| cfg.enabled) {
+            let (tx, rx) = mpsc::channel(1024);
+            let db = config.db.clone();
+            let builder_version = config.builder_version.clone();
+            node_builder = node_builder
+                .install_exex("shadow-canary", move |ctx| async move { Ok(run_exex(ctx, tx)) });
+            shadow_writer = Some((rx, db, builder_version));
+        }
+
         let NodeHandle { node: node_handle, node_exit_future } =
             node_builder.launch().await.wrap_err("Failed to launch builder node")?;
+
+        if let Some((rx, db, builder_version)) = shadow_writer {
+            spawn_writer(node_handle.task_executor.clone(), rx, db, builder_version);
+        }
 
         let http_api_addr = node_handle
             .rpc_server_handle()

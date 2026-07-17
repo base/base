@@ -19,6 +19,7 @@ pub use engine::{
     EngineClientResult, EngineConfig, EngineDerivationClient, EngineError, EngineProcessor,
     EngineProcessorOptions, EngineRequestReceiver, EngineRpcProcessor, EngineRpcRequest,
     GetPayloadRequest, InsertUnsafePayloadRequest, QueuedEngineDerivationClient, ResetRequest,
+    ShadowReanchorRequest,
 };
 
 mod rpc;
@@ -67,3 +68,6 @@ pub use sequencer::{
 };
 #[cfg(test)]
 pub use sequencer::{MockConductor, MockOriginSelector, MockSequencerEngineClient};
+
+mod shadow_drive;
+pub use shadow_drive::{ShadowDriveActor, ShadowDriveActorError};

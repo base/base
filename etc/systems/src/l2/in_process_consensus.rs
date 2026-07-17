@@ -20,6 +20,7 @@ use base_common_genesis::RollupConfig;
 use base_consensus_disc::LocalNode;
 use base_consensus_node::{
     EngineConfig, L1ConfigBuilder, NetworkConfig, NodeMode, RollupNodeBuilder, SequencerConfig,
+    ShadowDriveConfig,
 };
 use base_consensus_peers::{PeerScoreLevel, SecretKeyLoader};
 use base_consensus_rpc::{AdminApiClient, BaseP2PApiClient, RollupNodeApiClient, RpcBuilder};
@@ -52,7 +53,7 @@ pub struct InProcessConsensusConfig {
     pub l1_beacon_url: Url,
     /// L2 engine API URL (builder or client).
     pub l2_engine_url: Url,
-    /// Node mode (Sequencer or Validator).
+    /// Node mode (Sequencer, Validator, or ShadowDrive).
     pub mode: NodeMode,
     /// Sequencer signing key (required for Sequencer mode).
     pub sequencer_key: Option<B256>,
@@ -72,6 +73,8 @@ pub struct InProcessConsensusConfig {
     pub sequencer_stopped: bool,
     /// Number of L1 blocks to keep distance from the L1 head for the verifier.
     pub verifier_l1_confs: u64,
+    /// Optional shadow-drive configuration.
+    pub shadow_drive_config: Option<ShadowDriveConfig>,
 }
 
 /// A running in-process consensus node.
@@ -189,7 +192,8 @@ impl InProcessConsensus {
             net_config,
             Some(rpc_config),
         )
-        .with_checkpoint_path(checkpoint_path);
+        .with_checkpoint_path(checkpoint_path)
+        .with_shadow_drive_config(config.shadow_drive_config);
 
         if config.mode == NodeMode::Sequencer {
             builder = builder.with_sequencer_config(SequencerConfig {
