@@ -7,7 +7,7 @@ use base_common_genesis::RollupConfig;
 use base_proof_preimage::{PreimageKey, PreimageOracleClient};
 use serde::{Deserialize, Serialize};
 
-use crate::errors::OracleProviderError;
+use crate::{ScheduleId, errors::OracleProviderError};
 
 /// The local key identifier for the L1 head hash.
 ///
@@ -46,9 +46,9 @@ pub const L2_CHAIN_ID_KEY: U256 = uint!(5_U256);
 
 /// The local key identifier for the L2 rollup configuration.
 ///
-/// This key is used as a fallback to retrieve the rollup configuration from
-/// the preimage oracle when no hardcoded configuration is available for the
-/// given chain ID. Oracle-loaded configs require additional validation.
+/// This key retrieves the rollup configuration served by the L2 node.
+/// Once the config's L2 chain ID matches the committed boot chain ID, the prover uses the full
+/// node-served config for execution.
 pub const L2_ROLLUP_CONFIG_KEY: U256 = uint!(6_U256);
 
 /// The local key identifier for the L1 chain configuration.
@@ -154,7 +154,8 @@ pub struct BootInfo {
     /// derivation, including genesis configuration, system addresses, gas limits,
     /// and upgrade activation heights.
     ///
-    /// **Security**: Loaded from built-in config (secure) or oracle (requires validation).
+    /// **Security**: Loaded from the L2 node via the preimage oracle and bound to the committed L2
+    /// chain ID during boot loading.
     pub rollup_config: RollupConfig,
     /// An optional configuration for the l1 chain associated with the l2 chain.
     ///
@@ -181,6 +182,9 @@ pub struct BootInfo {
     /// block number without an extra lookup. Defaults to 0 when not set.
     #[serde(default)]
     pub l1_head_number: u64,
+    /// The locally derived schedule ID for this proof attempt.
+    #[serde(default)]
+    pub schedule_id: B256,
 }
 
 impl BootInfo {
@@ -244,29 +248,18 @@ impl BootInfo {
                 .map_err(OracleProviderError::SliceConversion)?,
         );
 
-        let built_in_chain_config = base_common_chains::ChainConfig::by_chain_id(chain_id);
         let activation_admin_address =
             base_common_chains::ChainConfig::beryl_activation_admin_address_by_chain_id(chain_id);
 
-        // Attempt to load the rollup config from the chain ID. If there is no config for the chain,
-        // fall back to loading the config from the preimage oracle.
-        let rollup_config = if let Some(config) = built_in_chain_config {
-            config.rollup_config()
-        } else {
-            warn!(
-                target: "boot_loader",
-                chain_id,
-                "no built-in rollup config found for chain ID, falling back to preimage oracle; this is insecure in production without additional validation"
-            );
-            let ser_cfg = oracle
-                .get(PreimageKey::new_local(L2_ROLLUP_CONFIG_KEY.to()))
-                .await
-                .map_err(OracleProviderError::Preimage)?;
-            serde_json::from_slice(&ser_cfg).map_err(OracleProviderError::Serde)?
-        };
+        let ser_cfg = oracle
+            .get(PreimageKey::new_local(L2_ROLLUP_CONFIG_KEY.to()))
+            .await
+            .map_err(OracleProviderError::Preimage)?;
+        let rollup_config: RollupConfig =
+            serde_json::from_slice(&ser_cfg).map_err(OracleProviderError::Serde)?;
 
-        // Built-in configs should already match, but oracle-provided configs must be bound to the
-        // committed boot chain ID before any config-derived chain parameters are trusted.
+        // The node-served rollup config must always be bound to the committed boot chain ID before
+        // any execution-critical fields are trusted.
         let rollup_config_chain_id = rollup_config.l2_chain_id.id();
         if chain_id != rollup_config_chain_id {
             return Err(OracleProviderError::RollupConfigChainIdMismatch {
@@ -274,9 +267,11 @@ impl BootInfo {
                 rollup_config_chain_id,
             });
         }
-        // The activation registry is installed at Beryl. For built-in chains, the admin comes from
-        // `ChainConfig`; for oracle-provided rollup configs, do not infer an admin from untrusted
-        // fallback data until the admin has an explicit committed source.
+
+        // The activation registry is installed at Beryl. The admin address is sourced from the
+        // trusted binary keyed by the committed chain ID, never from the node-served rollup config,
+        // so a Beryl-enabled chain without a built-in admin address is rejected rather than trusting
+        // an admin from unverified config.
         if activation_admin_address.is_none() && rollup_config.upgrades.base.beryl.is_some() {
             return Err(OracleProviderError::MissingActivationAdminAddress { chain_id });
         }
@@ -358,6 +353,8 @@ impl BootInfo {
             }
         };
 
+        let schedule_id = ScheduleId::from_upgrades(&rollup_config.upgrades);
+
         Ok(Self {
             l1_head,
             agreed_l2_output_root: l2_output_root,
@@ -370,6 +367,7 @@ impl BootInfo {
             proposer,
             intermediate_block_interval,
             l1_head_number,
+            schedule_id,
         })
     }
 }
@@ -381,6 +379,7 @@ mod tests {
     use alloy_primitives::B256;
     use async_trait::async_trait;
     use base_common_chains::ChainConfig as BaseChainConfig;
+    use base_common_genesis::{BaseUpgradeConfig, UpgradeConfig};
     use base_proof_preimage::{
         PreimageKey, PreimageOracleClient,
         errors::{PreimageOracleError, PreimageOracleResult},
@@ -425,6 +424,7 @@ mod tests {
     #[tokio::test]
     async fn loads_activation_admin_address_from_builtin_chain_id() {
         let chain_config = BaseChainConfig::ZERONET;
+        let rollup_config = chain_config.rollup_config();
 
         let mut oracle = MockOracle::new();
         oracle.insert(L1_HEAD_KEY, B256::repeat_byte(0x11).to_vec());
@@ -432,6 +432,10 @@ mod tests {
         oracle.insert(L2_CLAIM_KEY, B256::repeat_byte(0x33).to_vec());
         oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, 40_308_263u64.to_be_bytes().to_vec());
         oracle.insert(L2_CHAIN_ID_KEY, chain_config.chain_id.to_be_bytes().to_vec());
+        oracle.insert(
+            L2_ROLLUP_CONFIG_KEY,
+            serde_json::to_vec(&rollup_config).expect("rollup config should serialize"),
+        );
 
         let boot_info = BootInfo::load(&oracle).await.expect("boot info should load");
 
@@ -439,6 +443,35 @@ mod tests {
             boot_info.activation_admin_address,
             Some(base_common_chains::ZERONET_BERYL_ACTIVATION_ADMIN_ADDRESS)
         );
+    }
+
+    #[tokio::test]
+    async fn uses_oracle_rollup_config_for_builtin_chain() {
+        let chain_config = BaseChainConfig::MAINNET;
+        let upgrades = UpgradeConfig {
+            canyon_time: Some(123),
+            base: BaseUpgradeConfig { azul: Some(456), beryl: None, cobalt: None },
+            ..Default::default()
+        };
+        let mut rollup_config = chain_config.rollup_config();
+        rollup_config.channel_timeout = 777;
+        rollup_config.upgrades = upgrades;
+
+        let mut oracle = MockOracle::new();
+        oracle.insert(L1_HEAD_KEY, B256::repeat_byte(0x11).to_vec());
+        oracle.insert(L2_OUTPUT_ROOT_KEY, B256::repeat_byte(0x22).to_vec());
+        oracle.insert(L2_CLAIM_KEY, B256::repeat_byte(0x33).to_vec());
+        oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, 40_308_263u64.to_be_bytes().to_vec());
+        oracle.insert(L2_CHAIN_ID_KEY, chain_config.chain_id.to_be_bytes().to_vec());
+        oracle.insert(
+            L2_ROLLUP_CONFIG_KEY,
+            serde_json::to_vec(&rollup_config).expect("rollup config should serialize"),
+        );
+
+        let boot_info = BootInfo::load(&oracle).await.expect("boot info should load");
+
+        assert_eq!(boot_info.rollup_config, rollup_config);
+        assert_eq!(boot_info.schedule_id, ScheduleId::from_upgrades(&upgrades));
     }
 
     #[tokio::test]

@@ -71,6 +71,10 @@ struct ResultsTrackerInner {
     flashblocks: HashMap<TxHash, Instant>,
     flashblock_eviction_queue: VecDeque<TxHash>,
     unreported_confirmations: VecDeque<TransactionMetrics>,
+    /// Flashblock latency observations for the rolling window. These are drained
+    /// separately from confirmed metrics and do NOT enter `self.transactions` in the
+    /// collector, avoiding double-counting in the final summary.
+    unreported_flashblock_observations: VecDeque<(Duration, Instant)>,
     in_flight_per_sender: HashMap<Address, u64>,
     total_in_flight: u64,
     /// Block numbers in which at least one of our transactions landed, used to scope
@@ -97,6 +101,7 @@ impl ResultsTracker {
                 flashblocks: HashMap::new(),
                 flashblock_eviction_queue: VecDeque::new(),
                 unreported_confirmations: VecDeque::new(),
+                unreported_flashblock_observations: VecDeque::new(),
                 in_flight_per_sender,
                 total_in_flight: 0,
                 landed_blocks: BTreeSet::new(),
@@ -134,23 +139,40 @@ impl ResultsTracker {
     /// Records transaction inclusions observed from the flashblock stream.
     ///
     /// When a pending transaction is seen in a flashblock, its in-flight slot is released
-    /// immediately so the sender can submit new transactions without waiting for the slower
-    /// canonical block receipt.
+    /// immediately and the latency observation is queued for the rolling window. The
+    /// flashblock latency is also stored in the cache so that `land_if_pending` can join
+    /// it onto the canonical block metric for the final summary.
     pub fn on_new_flashblock(&self, inclusions: Vec<FlashblockInclusion>) {
         let mut inner = self.inner.write();
 
         for inclusion in inclusions {
-            if let Entry::Vacant(e) = inner.flashblocks.entry(inclusion.tx_hash) {
-                e.insert(inclusion.included_at);
-                inner.flashblock_eviction_queue.push_back(inclusion.tx_hash);
-            }
+            let first_observation =
+                if let Entry::Vacant(e) = inner.flashblocks.entry(inclusion.tx_hash) {
+                    e.insert(inclusion.included_at);
+                    inner.flashblock_eviction_queue.push_back(inclusion.tx_hash);
+                    true
+                } else {
+                    false
+                };
 
-            if let Some(pending) = inner.pending.get_mut(&inclusion.tx_hash)
-                && !pending.in_flight_released
-            {
-                pending.in_flight_released = true;
+            if first_observation && let Some(pending) = inner.pending.get_mut(&inclusion.tx_hash) {
+                let submit_time = pending.submit_time;
+                let should_release = !pending.in_flight_released;
                 let from = pending.from;
-                inner.decrement_in_flight(&from);
+                if should_release {
+                    pending.in_flight_released = true;
+                }
+
+                // Queue flashblock latency for the rolling window (drained separately).
+                if let Some(latency) = inclusion.included_at.checked_duration_since(submit_time) {
+                    inner
+                        .unreported_flashblock_observations
+                        .push_back((latency, inclusion.included_at));
+                }
+
+                if should_release {
+                    inner.decrement_in_flight(&from);
+                }
             }
         }
 
@@ -208,6 +230,16 @@ impl ResultsTracker {
         inner.unreported_confirmations.drain(..).collect()
     }
 
+    /// Drains flashblock latency observations for the rolling window.
+    ///
+    /// Returns `(latency, observed_at)` pairs that feed `record_flashblock_observed`
+    /// on the collector. These are separate from confirmed metrics and do not enter
+    /// the final summary's transaction list.
+    pub fn drain_flashblock_observations(&self) -> Vec<(Duration, Instant)> {
+        let mut inner = self.inner.write();
+        inner.unreported_flashblock_observations.drain(..).collect()
+    }
+
     /// Returns the current pending transaction count.
     pub fn pending_count(&self) -> usize {
         self.inner.read().pending.len()
@@ -241,6 +273,9 @@ impl ResultsTrackerInner {
     /// Records the first observation of `tx_hash` in a polled block, emitting its
     /// landing metrics. Idempotent: a tx is removed from `pending` on first landing,
     /// so later blocks containing the same hash are ignored.
+    ///
+    /// Flashblock latency (computed from the WS observation time) is joined here so
+    /// that the final summary only includes FB latency for canonically confirmed txs.
     fn land_if_pending(&mut self, tx_hash: TxHash, block: &BlockObservation) {
         let Some(pending) = self.pending.remove(&tx_hash) else {
             return;
@@ -337,7 +372,7 @@ mod tests {
     }
 
     #[test]
-    fn joins_flashblock_latency() {
+    fn flashblock_observation_feeds_rolling_and_joins_at_block_landing() {
         let from = address!("0000000000000000000000000000000000000001");
         let tx_hash = TxHash::repeat_byte(2);
         let tracker = ResultsTracker::new(&[from]);
@@ -348,11 +383,21 @@ mod tests {
             tx_hash,
             included_at: now + Duration::from_millis(50),
         }]);
-        tracker.on_new_block_hashes(block_at(8, now + Duration::from_millis(200)), vec![tx_hash]);
 
+        // Flashblock observation goes to separate rolling queue, not confirmed metrics.
+        let confirmed = tracker.drain_confirmed_metrics();
+        assert!(confirmed.is_empty(), "no confirmed metrics until canonical block");
+        let fb_obs = tracker.drain_flashblock_observations();
+        assert_eq!(fb_obs.len(), 1, "one rolling observation from WS");
+        assert!(fb_obs[0].0 >= Duration::from_millis(50), "latency from submit to WS observation");
+
+        // Canonical block landing produces a single metric with FB latency joined.
+        tracker.on_new_block_hashes(block_at(8, now + Duration::from_millis(200)), vec![tx_hash]);
         let metrics = tracker.drain_confirmed_metrics();
-        assert_eq!(metrics.len(), 1);
-        assert!(metrics[0].flashblocks_latency.is_some(), "FB latency joined at landing");
+        assert_eq!(metrics.len(), 1, "exactly one confirmed metric");
+        assert!(metrics[0].flashblocks_latency.is_some(), "FB latency joined from WS time");
+        assert!(metrics[0].block_latency.is_some(), "block latency recorded");
+        assert_eq!(metrics[0].block_number, Some(8));
     }
 
     #[test]
@@ -370,13 +415,17 @@ mod tests {
         assert_eq!(tracker.total_in_flight(), 0, "flashblock should release in-flight slot");
         assert_eq!(tracker.in_flight_for(&from), 0);
 
+        // Flashblock observation is in the rolling queue, not confirmed metrics.
+        assert!(tracker.drain_confirmed_metrics().is_empty());
+        assert_eq!(tracker.drain_flashblock_observations().len(), 1);
+
         let observed_at = Instant::now() + Duration::from_millis(500);
         tracker.on_new_block_hashes(block_at(10, observed_at), vec![tx_hash]);
 
         assert_eq!(tracker.total_in_flight(), 0, "block landing should not double-decrement");
         let metrics = tracker.drain_confirmed_metrics();
-        assert_eq!(metrics.len(), 1, "metrics should still be produced from block landing");
-        assert!(metrics[0].flashblocks_latency.is_some());
+        assert_eq!(metrics.len(), 1, "block landing metric produced");
+        assert!(metrics[0].flashblocks_latency.is_some(), "FB latency joined at landing");
     }
 
     #[test]

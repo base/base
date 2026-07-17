@@ -847,6 +847,7 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
         l2_block_number: 20,
         prev_output_root: root_15,
         config_hash: B256::ZERO,
+        schedule_id: B256::ZERO,
     };
     let proof_requester = Arc::new(MockZkProofProvider {
         session_id: String::new(),
@@ -908,6 +909,7 @@ async fn test_step_tee_contract_revert_falls_back_to_zk() {
         l2_block_number: 20,
         prev_output_root: root_15,
         config_hash: B256::ZERO,
+        schedule_id: B256::ZERO,
     };
     let zk = Arc::new(MockZkProofProvider {
         session_id: String::new(),
@@ -1001,6 +1003,7 @@ async fn test_step_invalid_tee_result_falls_back_to_zk_without_timeout() {
         l2_block_number: 20,
         prev_output_root: root_15,
         config_hash: B256::ZERO,
+        schedule_id: B256::ZERO,
     };
     let proof_requester = Arc::new(MockZkProofProvider {
         session_id: String::new(),
@@ -1333,6 +1336,7 @@ async fn test_step_dual_proof_invalid_with_tee_config_nullifies_tee_first() {
         l2_block_number: 20,
         prev_output_root: root_15,
         config_hash: B256::ZERO,
+        schedule_id: B256::ZERO,
     };
     let proof_requester = Arc::new(MockZkProofProvider {
         session_id: String::new(),
@@ -1785,6 +1789,7 @@ mod metrics_emission {
                     l2_block_number: 20,
                     prev_output_root: B256::ZERO,
                     config_hash: B256::ZERO,
+                    schedule_id: B256::ZERO,
                 };
                 let zk = Arc::new(MockZkProofProvider {
                     session_id: "tee-bad-root-session".to_string(),

@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 
 /// Hash the rollup config using the canonical [`PerChainConfig`] binary encoding and keccak256.
 ///
-/// This is stable across upgrade additions: only the core chain identity fields are hashed,
-/// so adding a new fork timestamp to [`RollupConfig`] does not change the hash.
+/// This is stable across upgrade additions: only the core chain identity fields are hashed, and
+/// dynamic hardfork timestamps are committed separately via `scheduleId`.
 pub fn hash_rollup_config(config: &RollupConfig) -> B256 {
     let mut per_chain =
         PerChainConfig::from_rollup_config(config).expect("rollup config missing system_config");
@@ -28,6 +28,7 @@ sol! {
         uint64 l2PreBlockNumber;
         uint64 l2BlockNumber;
         bytes32 rollupConfigHash;
+        bytes32 scheduleId;
         bytes intermediateRoots;
     }
 }
@@ -54,6 +55,7 @@ impl BootInfoStruct {
             l2PreBlockNumber: l2_pre_block_number,
             l2BlockNumber: l2_block_number,
             rollupConfigHash: hash_rollup_config(&boot_info.rollup_config),
+            scheduleId: boot_info.schedule_id,
             intermediateRoots: Bytes::from(
                 intermediate_roots
                     .iter()
@@ -93,6 +95,7 @@ mod tests {
             proposer: Address::ZERO,
             intermediate_block_interval: 0,
             l1_head_number: 0,
+            schedule_id: B256::repeat_byte(0x44),
         }
     }
 

@@ -189,6 +189,17 @@ impl BlockRange {
     }
 }
 
+/// Aggregated load-test transaction density for one L2 block.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BlockLoadMetrics {
+    /// L2 block number.
+    pub block_number: u64,
+    /// Confirmed load-test transactions in this block.
+    pub confirmed_count: u64,
+    /// Total gas used by confirmed load-test transactions in this block.
+    pub total_gas: u64,
+}
+
 /// Aggregated flashblocks latency percentiles.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FlashblocksLatencyMetrics {

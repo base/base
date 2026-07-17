@@ -4,8 +4,8 @@ use std::borrow::Cow;
 
 use reth_cli_commands::download::DownloadDefaults;
 
-pub(crate) const DEFAULT_DOWNLOAD_URL: &str = "https://v2-snapshots-ui.vercel.app/8453";
-const SNAPSHOT_API_URL: &str = "https://v2-snapshots-ui.vercel.app/api/snapshots";
+pub(crate) const DEFAULT_DOWNLOAD_URL: &str = "https://chain.base.org/8453";
+const SNAPSHOT_API_URL: &str = "https://chain.base.org/api/snapshots";
 
 /// Reth snapshot download URLs initialization for Base execution layer binaries
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -25,8 +25,8 @@ impl Snapshots {
         let download_defaults = DownloadDefaults {
             available_snapshots: vec![
                 Cow::Owned(format!("{DEFAULT_DOWNLOAD_URL} (mainnet)")),
-                Cow::Borrowed("https://v2-snapshots-ui.vercel.app/84532 (sepolia)"),
-                Cow::Borrowed("https://v2-snapshots-ui.vercel.app/763360 (zeronet)"),
+                Cow::Borrowed("https://chain.base.org/84532 (sepolia)"),
+                Cow::Borrowed("https://chain.base.org/763360 (zeronet)"),
             ],
             default_base_url: Cow::Borrowed(DEFAULT_DOWNLOAD_URL),
             default_chain_aware_base_url: None,
