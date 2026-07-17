@@ -52,7 +52,7 @@ where
     pub engine_client: Arc<E>,
     /// Provider for reading local L2 state.
     pub local_l2_provider: RootProvider<Base>,
-    /// Provider for validating source label L1 origins against canonical L1.
+    /// Provider used to check L2 block origins against canonical L1.
     pub l1_provider: RootProvider,
     /// Source L2 client used to fetch payloads to follow.
     pub l2_source: RemoteL2Client,

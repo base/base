@@ -143,7 +143,7 @@ where
         )
         .await?;
         if let Some(safe_block) = safe.as_ref() {
-            Self::validate_source_l1_origin(local.as_ref(), safe_block).await?;
+            Self::log_l2_origin_validation(local.as_ref(), safe_block).await;
         }
 
         let safe_limit = safe.as_ref().unwrap_or(&local_safe).block_info.number;
@@ -160,7 +160,7 @@ where
         )
         .await?;
         if let Some(finalized_block) = finalized.as_ref() {
-            Self::validate_source_l1_origin(local.as_ref(), finalized_block).await?;
+            Self::log_l2_origin_validation(local.as_ref(), finalized_block).await;
         }
 
         engine.update_safe_finalized_blocks(safe, finalized).await
@@ -201,8 +201,8 @@ where
         Ok(Some(local_block))
     }
 
-    /// Verifies that a hash-verified local block's L1 origin is canonical in the local L1 view.
-    async fn validate_source_l1_origin(
+    /// Checks whether a hash-verified local block's L1 origin is canonical in the local L1 view.
+    async fn validate_l2_origin_against_local_l1(
         local: &Local,
         block: &L2BlockInfo,
     ) -> Result<(), FollowError> {
@@ -212,14 +212,36 @@ where
             .await?
             .ok_or(FollowError::LocalL1BlockUnavailable(origin.number))?;
         if local_hash != origin.hash {
-            return Err(FollowError::SourceL1OriginMismatch {
+            return Err(FollowError::L2OriginNotCanonical {
                 l2_number: block.block_info.number,
                 l1_number: origin.number,
-                local: local_hash,
-                remote: origin.hash,
+                local_l1: local_hash,
+                l2_origin: origin.hash,
             });
         }
         Ok(())
+    }
+
+    async fn log_l2_origin_validation(local: &Local, block: &L2BlockInfo) {
+        match Self::validate_l2_origin_against_local_l1(local, block).await {
+            Ok(()) => {}
+            Err(FollowError::LocalL1BlockUnavailable(l1_number)) => {
+                info!(
+                    target: "follow",
+                    l2_block = block.block_info.number,
+                    l1_block = l1_number,
+                    "Local L1 origin block unavailable; promoting label without local L1 confirmation"
+                );
+            }
+            Err(error) => {
+                warn!(
+                    target: "follow",
+                    error = %error,
+                    l2_block = block.block_info.number,
+                    "L2 origin check failed; promoting label without local L1 confirmation"
+                );
+            }
+        }
     }
 }
 
@@ -757,7 +779,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn verified_local_l1_origin_must_be_canonical_locally() {
+    async fn l2_origin_mismatch_does_not_block_label_promotion() {
         let mut local = MockFollowLocalClient::new();
         local.expect_block_info().returning(|tag| {
             Ok(Some(match tag {
@@ -780,6 +802,10 @@ mod tests {
             .expect_get_block_info()
             .with(eq(BlockNumberOrTag::Safe))
             .returning(|_| Ok(source_block_info(9)));
+        source
+            .expect_get_block_info()
+            .with(eq(BlockNumberOrTag::Finalized))
+            .returning(|_| Ok(source_block_info(6)));
         let engine = Arc::new(RecordingEngine {
             inserted: Mutex::new(Vec::new()),
             labels: Mutex::new(Vec::new()),
@@ -787,20 +813,55 @@ mod tests {
         });
         let engine_for_update: Arc<dyn FollowEngine> = Arc::<RecordingEngine>::clone(&engine);
 
-        let error =
-            FollowRuntime::<MockFollowLocalClient, MockRemoteClient, NoopProofGate>::update_safe_and_finalized(
-                Arc::new(local),
-                Arc::new(source),
-                engine_for_update,
-            )
-            .await
-            .expect_err("verified local L1 origin must match local canonical L1");
+        FollowRuntime::<MockFollowLocalClient, MockRemoteClient, NoopProofGate>::update_safe_and_finalized(
+            Arc::new(local),
+            Arc::new(source),
+            engine_for_update,
+        )
+        .await
+        .expect("label update");
 
-        assert!(matches!(
-            error,
-            FollowError::SourceL1OriginMismatch { l2_number: 9, l1_number: 0, .. }
-        ));
-        assert!(engine.labels.lock().await.is_empty());
+        assert_eq!(*engine.labels.lock().await, vec![(Some(9), None)]);
+    }
+
+    #[tokio::test]
+    async fn unavailable_l2_origin_does_not_block_label_promotion() {
+        let mut local = MockFollowLocalClient::new();
+        local.expect_block_info().returning(|tag| {
+            Ok(Some(match tag {
+                BlockNumberOrTag::Latest => block_info(10),
+                BlockNumberOrTag::Safe => block_info(8),
+                BlockNumberOrTag::Finalized => block_info(7),
+                BlockNumberOrTag::Number(9) => block_info(9),
+                _ => panic!("unexpected local block lookup: {tag:?}"),
+            }))
+        });
+        local.expect_l1_block_hash().returning(|_| Ok(None));
+        let mut source = MockRemoteClient::new();
+        source
+            .expect_get_block_info()
+            .with(eq(BlockNumberOrTag::Safe))
+            .returning(|_| Ok(source_block_info(9)));
+        source
+            .expect_get_block_info()
+            .with(eq(BlockNumberOrTag::Finalized))
+            .returning(|_| Ok(source_block_info(6)));
+        let engine = Arc::new(RecordingEngine {
+            inserted: Mutex::new(Vec::new()),
+            labels: Mutex::new(Vec::new()),
+            delay: Duration::ZERO,
+        });
+        let engine_for_update: Arc<dyn FollowEngine> = Arc::<RecordingEngine>::clone(&engine);
+
+        FollowRuntime::<MockFollowLocalClient, MockRemoteClient, NoopProofGate>::update_safe_and_finalized(
+            Arc::new(local),
+            Arc::new(source),
+            engine_for_update,
+        )
+        .await
+        .expect("label update");
+
+        assert_eq!(*engine.labels.lock().await, vec![(Some(9), None)]);
     }
 
     #[tokio::test]
