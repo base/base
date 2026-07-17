@@ -6,8 +6,8 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, StorageSemantics};
 
 use crate::{
-    B20AssetStorage, B20AssetToken, NoopPrecompileCallObserver, PolicyRegistryStorage,
-    PolicyVersions, PrecompileCallObserver, macros::base_precompile,
+    B20AssetStorage, B20AssetToken, BaseStorageSemantics, NoopPrecompileCallObserver,
+    PolicyRegistryStorage, PolicyVersions, PrecompileCallObserver, macros::base_precompile,
 };
 
 /// Entry point for the asset B-20 token precompile.
@@ -38,11 +38,7 @@ impl B20AssetPrecompile {
             token_address,
             upgrade,
             observer,
-            if upgrade >= BaseUpgrade::Cobalt {
-                StorageSemantics::Cobalt
-            } else {
-                StorageSemantics::Legacy
-            },
+            BaseStorageSemantics::from_upgrade(upgrade),
         )
     }
 

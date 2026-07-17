@@ -6,8 +6,8 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::StorageSemantics;
 
 use crate::{
-    B20AssetPrecompile, B20StablecoinPrecompile, B20Variant, NoopPrecompileCallObserver,
-    PrecompileCallObserver,
+    B20AssetPrecompile, B20StablecoinPrecompile, B20Variant, BaseStorageSemantics,
+    NoopPrecompileCallObserver, PrecompileCallObserver,
 };
 
 /// Dynamic precompile lookup installed for Beryl and later forks.
@@ -33,11 +33,7 @@ impl BerylLookup {
             precompiles,
             upgrade,
             observer,
-            if upgrade >= BaseUpgrade::Cobalt {
-                StorageSemantics::Cobalt
-            } else {
-                StorageSemantics::Legacy
-            },
+            BaseStorageSemantics::from_upgrade(upgrade),
         );
     }
 
@@ -78,11 +74,7 @@ impl BerylLookup {
             address,
             upgrade,
             observer,
-            if upgrade >= BaseUpgrade::Cobalt {
-                StorageSemantics::Cobalt
-            } else {
-                StorageSemantics::Legacy
-            },
+            BaseStorageSemantics::from_upgrade(upgrade),
         )
     }
 
@@ -128,11 +120,7 @@ pub struct BerylLookupWithObserver<O> {
 impl<O> BerylLookupWithObserver<O> {
     /// Creates a Beryl dynamic precompile lookup with `observer` for `upgrade`.
     pub const fn new(observer: O, upgrade: BaseUpgrade) -> Self {
-        let storage_semantics = if upgrade as u8 >= BaseUpgrade::Cobalt as u8 {
-            StorageSemantics::Cobalt
-        } else {
-            StorageSemantics::Legacy
-        };
+        let storage_semantics = BaseStorageSemantics::from_upgrade(upgrade);
         Self::new_with_storage_semantics(observer, upgrade, storage_semantics)
     }
 

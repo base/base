@@ -4,7 +4,9 @@ use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
 use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::StorageSemantics;
 
-use crate::{B20FactoryStorage, PrecompileCallObserver, macros::base_precompile};
+use crate::{
+    B20FactoryStorage, BaseStorageSemantics, PrecompileCallObserver, macros::base_precompile,
+};
 
 /// Entry point for the `B20Factory` precompile.
 #[derive(Debug, Default, Clone, Copy)]
@@ -24,11 +26,7 @@ impl B20Factory {
             precompiles,
             upgrade,
             observer,
-            if upgrade >= BaseUpgrade::Cobalt {
-                StorageSemantics::Cobalt
-            } else {
-                StorageSemantics::Legacy
-            },
+            BaseStorageSemantics::from_upgrade(upgrade),
         );
     }
 
@@ -60,11 +58,7 @@ impl B20Factory {
         Self::precompile_with_observer_and_storage_semantics(
             upgrade,
             observer,
-            if upgrade >= BaseUpgrade::Cobalt {
-                StorageSemantics::Cobalt
-            } else {
-                StorageSemantics::Legacy
-            },
+            BaseStorageSemantics::from_upgrade(upgrade),
         )
     }
 

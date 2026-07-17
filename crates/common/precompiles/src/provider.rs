@@ -15,9 +15,9 @@ use revm::{
 };
 
 use crate::{
-    ActivationAdminConfig, ActivationRegistry, B20Factory, BasePrecompileSpec, BerylLookup,
-    NonceManager, NoopPrecompileCallObserver, PolicyRegistryPrecompile, PrecompileCallObserver,
-    TxContext, bls12_381, bn254_pair,
+    ActivationAdminConfig, ActivationRegistry, B20Factory, BasePrecompileSpec,
+    BaseStorageSemantics, BerylLookup, NonceManager, NoopPrecompileCallObserver,
+    PolicyRegistryPrecompile, PrecompileCallObserver, TxContext, bls12_381, bn254_pair,
 };
 
 /// Base precompile provider.
@@ -79,11 +79,7 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
 
     /// Returns the persistent-storage semantics selected by this Base upgrade.
     pub fn storage_semantics(&self) -> StorageSemantics {
-        if self.spec.upgrade() >= BaseUpgrade::Cobalt {
-            StorageSemantics::Cobalt
-        } else {
-            StorageSemantics::Legacy
-        }
+        BaseStorageSemantics::from_upgrade(self.spec.upgrade())
     }
 
     /// Converts a Base upgrade into its Ethereum precompile spec.

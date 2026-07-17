@@ -6,8 +6,8 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, StorageSemantics};
 
 use crate::{
-    B20StablecoinStorage, B20StablecoinToken, NoopPrecompileCallObserver, PolicyRegistryStorage,
-    PolicyVersions, PrecompileCallObserver, macros::base_precompile,
+    B20StablecoinStorage, B20StablecoinToken, BaseStorageSemantics, NoopPrecompileCallObserver,
+    PolicyRegistryStorage, PolicyVersions, PrecompileCallObserver, macros::base_precompile,
 };
 
 /// Entry point for the stablecoin B-20 variant.
@@ -37,11 +37,7 @@ impl B20StablecoinPrecompile {
             token_address,
             upgrade,
             observer,
-            if upgrade >= BaseUpgrade::Cobalt {
-                StorageSemantics::Cobalt
-            } else {
-                StorageSemantics::Legacy
-            },
+            BaseStorageSemantics::from_upgrade(upgrade),
         )
     }
 

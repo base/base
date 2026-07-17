@@ -5,8 +5,8 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::StorageSemantics;
 
 use crate::{
-    NoopPrecompileCallObserver, PolicyRegistryStorage, PrecompileCallObserver,
-    macros::base_precompile,
+    BaseStorageSemantics, NoopPrecompileCallObserver, PolicyRegistryStorage,
+    PrecompileCallObserver, macros::base_precompile,
 };
 
 /// EVM entry point for the `PolicyRegistry` precompile.
@@ -33,11 +33,7 @@ impl PolicyRegistryPrecompile {
             precompiles,
             upgrade,
             observer,
-            if upgrade >= BaseUpgrade::Cobalt {
-                StorageSemantics::Cobalt
-            } else {
-                StorageSemantics::Legacy
-            },
+            BaseStorageSemantics::from_upgrade(upgrade),
         );
     }
 
@@ -69,11 +65,7 @@ impl PolicyRegistryPrecompile {
         Self::precompile_with_observer_and_storage_semantics(
             upgrade,
             observer,
-            if upgrade >= BaseUpgrade::Cobalt {
-                StorageSemantics::Cobalt
-            } else {
-                StorageSemantics::Legacy
-            },
+            BaseStorageSemantics::from_upgrade(upgrade),
         )
     }
 
