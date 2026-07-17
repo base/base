@@ -2,11 +2,11 @@
 //!
 //! The dispatcher owns everything that is *not* version-specific: it decodes the
 //! calldata, resolves the active version once from the hardfork (via
-//! [`AssetVersions`]), and routes each operation — including reads — to the active
-//! version's [`Asset`] implementation. Only constant getters (role IDs, policy type
+//! [`VersionResolver`]), and routes each operation — including reads — to the active
+//! version's [`Logic`] implementation. Only constant getters (role IDs, policy type
 //! IDs) that are invariant across all versions are answered inline. The `announce`
 //! internal-call loop stays here because re-dispatching arbitrary sub-calls is a
-//! routing responsibility; its version-defined business steps live on [`Asset`].
+//! routing responsibility; its version-defined business steps live on [`Logic`].
 
 use alloc::string::ToString;
 
@@ -17,16 +17,16 @@ use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    AssetAccounting, AssetV1, AssetVersion, AssetVersions, B20AssetStorage, B20AssetToken,
-    B20PolicyType, B20TokenRole, BerylAuxiliaryMetrics, BerylCallRecorder, BerylMetricLabels,
-    BerylSelector,
+    AssetAccounting, B20AssetStorage, B20PolicyType, B20TokenRole, BerylAuxiliaryMetrics,
+    BerylCallRecorder, BerylMetricLabels, BerylSelector, ContractContext,
     IB20::{self, IB20Calls as C},
     IB20Asset::{self, IB20AssetCalls as SC},
-    NoopPrecompileCallObserver, PermitArgs, PolicyAccounting, PrecompileCallObserver,
+    LogicV1, NoopPrecompileCallObserver, PermitArgs, PolicyAccounting, PrecompileCallObserver,
+    Version, VersionResolver,
     macros::decode_precompile_call,
 };
 
-impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
+impl<S: AssetAccounting, A: PolicyAccounting> ContractContext<S, A> {
     /// ABI-dispatches `calldata` to the appropriate handler for `upgrade`.
     pub fn dispatch(
         &mut self,
@@ -59,7 +59,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
         }
         // Gate by hardfork: resolve the active version once. `None` is unreachable in practice —
         // the precompile is only installed from Beryl — but we revert defensively.
-        let Some(version) = AssetVersions::from_base_upgrade(upgrade) else {
+        let Some(version) = VersionResolver::from_base_upgrade(upgrade) else {
             return recorder
                 .record_base_error_result(ctx, BasePrecompileError::Revert(Bytes::new()));
         };
@@ -78,8 +78,8 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
     /// Grants `role` to `account` without checking caller authorization.
     ///
     /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and the
-    /// authorized [`Asset::grant_role`](crate::Asset) path is not yet reachable. Pinned to
-    /// [`AssetV1`], the token's introduction version.
+    /// authorized [`Logic::grant_role`](crate::Logic) path is not yet reachable. Pinned to
+    /// [`LogicV1`], the token's introduction version.
     // TODO: When the factory gains fork threading, remove this and pull versions into the factory.
     pub fn grant_role_unchecked(
         &mut self,
@@ -87,7 +87,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
         account: alloy_primitives::Address,
         sender: alloy_primitives::Address,
     ) -> base_precompile_storage::Result<()> {
-        AssetV1.grant_role_unchecked(self, role, account, sender)
+        LogicV1.grant_role_unchecked(self, role, account, sender)
     }
 
     /// Decodes calldata, observes the decoded operation, and routes it to `version` with optional
@@ -96,7 +96,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
         &mut self,
         ctx: StorageCtx<'_>,
         calldata: &[u8],
-        version: AssetVersion,
+        version: Version,
         privileged: bool,
         observer: O,
     ) -> base_precompile_storage::Result<Bytes>
@@ -129,7 +129,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
         &mut self,
         ctx: StorageCtx<'_>,
         call: C,
-        version: AssetVersion,
+        version: Version,
         privileged: bool,
     ) -> base_precompile_storage::Result<Bytes> {
         let logic = version.implementation();
@@ -331,7 +331,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
         &mut self,
         ctx: StorageCtx<'_>,
         call: SC,
-        version: AssetVersion,
+        version: Version,
         privileged: bool,
         observer: O,
     ) -> base_precompile_storage::Result<Bytes>
@@ -394,14 +394,14 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
     /// Posts an announcement and atomically executes `internalCalls` via self-dispatch.
     ///
     /// Re-dispatching arbitrary sub-calls is a routing responsibility, so it stays in the
-    /// dispatcher; the version's [`Asset::begin_announce`]/[`Asset::end_announce`] bracket the loop
+    /// dispatcher; the version's [`Logic::begin_announce`]/[`Logic::end_announce`] bracket the loop
     /// with the version-defined business steps. Each internal call routes at the same `version`.
     /// The selector check in the inner loop prevents recursive invocation.
     fn announce<O>(
         &mut self,
         ctx: StorageCtx<'_>,
         call: IB20Asset::announceCall,
-        version: AssetVersion,
+        version: Version,
         privileged: bool,
         observer: &O,
     ) -> base_precompile_storage::Result<()>
@@ -468,13 +468,13 @@ mod tests {
 
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
-        AssetV1, B20AssetStorage, B20AssetToken, B20TokenRole, BerylErrorKind,
-        AssetVersion, FakePolicyAccounting, IB20, IB20Asset, InMemoryTokenAccounting,
-        NoopPrecompileCallObserver, PolicyVersion, PrecompileCallMetric, PrecompileCallObserver,
-        PrecompileCallOutcome, PrecompileCallStatus, Token, TokenAccounting,
+        B20AssetStorage, B20TokenRole, BerylErrorKind, ContractContext, FakePolicyAccounting, IB20,
+        IB20Asset, InMemoryTokenAccounting, LogicV1, NoopPrecompileCallObserver, PolicyVersion,
+        PrecompileCallMetric, PrecompileCallObserver, PrecompileCallOutcome, PrecompileCallStatus,
+        Token, TokenAccounting, Version,
     };
 
-    type TestAssetToken = B20AssetToken<InMemoryTokenAccounting, FakePolicyAccounting>;
+    type TestContractContext = ContractContext<InMemoryTokenAccounting, FakePolicyAccounting>;
 
     /// Upgrade at which the asset precompile is active for every dispatch test.
     const UPGRADE: BaseUpgrade = BaseUpgrade::Beryl;
@@ -503,10 +503,10 @@ mod tests {
     const ACTIVATION_ADMIN_CONFIG: ActivationAdminConfig =
         ActivationAdminConfig::static_fallback(Some(ACTIVATION_ADMIN));
 
-    fn make_token() -> TestAssetToken {
+    fn make_token() -> TestContractContext {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
         accounting.multiplier = B20AssetStorage::WAD; // 1:1 multiplier
-        TestAssetToken::with_storage_and_policy(
+        TestContractContext::with_storage_and_policy(
             accounting,
             FakePolicyAccounting::new(),
             PolicyVersion::V1,
@@ -529,10 +529,14 @@ mod tests {
         storage
     }
 
-    fn call_asset(token: &mut TestAssetToken, caller: Address, calldata: Vec<u8>) -> Result<Bytes> {
+    fn call_asset(
+        token: &mut TestContractContext,
+        caller: Address,
+        calldata: Vec<u8>,
+    ) -> Result<Bytes> {
         let mut storage = storage_with_caller(caller);
         StorageCtx::enter(&mut storage, |ctx| {
-            token.route(ctx, calldata.as_ref(), AssetVersion::V1, false, NoopPrecompileCallObserver)
+            token.route(ctx, calldata.as_ref(), Version::V1, false, NoopPrecompileCallObserver)
         })
     }
 
@@ -637,7 +641,7 @@ mod tests {
         let mut token = make_token();
         // Any balance > 1 overflows when multiplied by this multiplier.
         token.accounting_mut().multiplier = U256::MAX / U256::from(2u64) + U256::ONE;
-        token.accounting_mut().roles.insert((AssetV1::OPERATOR_ROLE, ALICE), true);
+        token.accounting_mut().roles.insert((LogicV1::OPERATOR_ROLE, ALICE), true);
 
         let inner_call = Bytes::from(
             IB20Asset::toScaledBalanceCall { rawBalance: U256::from(2u64) }.abi_encode(),
@@ -661,7 +665,7 @@ mod tests {
     fn announce_inner_ordinary_revert_wraps_as_internal_call_failed() {
         let mut token = make_token();
         // ALICE has OPERATOR_ROLE (needed for announce) but not MINT_ROLE (needed for mint).
-        token.accounting_mut().roles.insert((AssetV1::OPERATOR_ROLE, ALICE), true);
+        token.accounting_mut().roles.insert((LogicV1::OPERATOR_ROLE, ALICE), true);
 
         let inner_call = Bytes::from(IB20::mintCall { to: BOB, amount: U256::ONE }.abi_encode());
         let calldata = IB20Asset::announceCall {

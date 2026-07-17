@@ -139,8 +139,8 @@ mod tests {
 
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
-        B20AssetStorage, B20AssetToken, B20FactoryStorage, B20StablecoinStorage, B20Variant, IB20,
-        IB20Factory, PolicyRegistryStorage, PolicyVersion,
+        B20AssetStorage, B20FactoryStorage, B20StablecoinStorage, B20Variant, ContractContext,
+        IB20, IB20Factory, PolicyRegistryStorage, PolicyVersion,
     };
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
@@ -182,8 +182,8 @@ mod tests {
     fn token_at<'a>(
         addr: Address,
         ctx: StorageCtx<'a>,
-    ) -> B20AssetToken<B20AssetStorage<'a>, PolicyRegistryStorage<'a>> {
-        B20AssetToken::with_storage_and_policy(
+    ) -> ContractContext<B20AssetStorage<'a>, PolicyRegistryStorage<'a>> {
+        ContractContext::with_storage_and_policy(
             B20AssetStorage::from_address(addr, ctx),
             PolicyRegistryStorage::new(ctx),
             PolicyVersion::V1,

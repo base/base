@@ -24,7 +24,7 @@ pub type TestStablecoinToken = B20StablecoinToken<InMemoryTokenAccounting, FakeP
 
 /// Concrete test token that opts into the shared capability traits over the in-memory fakes.
 ///
-/// The production holders ([`crate::B20AssetToken`], [`crate::B20StablecoinToken`]) are now minimal
+/// The production holders ([`crate::ContractContext`], [`crate::B20StablecoinToken`]) are now minimal
 /// storage+policy holders whose behavior lives entirely in their versioned `logic/vN`
 /// implementations, so they no longer implement the [`Transferable`]/[`Mintable`]/… capability
 /// traits. This type keeps those shared traits exercised by the `common::ops` unit tests without
