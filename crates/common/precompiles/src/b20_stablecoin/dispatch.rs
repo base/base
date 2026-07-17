@@ -1,8 +1,8 @@
 //! ABI dispatch for the stablecoin B-20 variant.
 //!
 //! The dispatcher owns everything that is *not* version-specific: it decodes the
-//! (via [`StablecoinVersions`]), and routes each operation — including reads — to
-//! the active version's [`Stablecoin`] implementation. Only constant getters
+//! (via [`VersionResolver`]), and routes each operation — including reads — to
+//! the active version's [`Logic`] implementation. Only constant getters
 //! (role IDs, policy type IDs, `decimals`) that are invariant across all versions
 //! are answered inline.
 
@@ -14,17 +14,17 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
+use super::{ContractContext, LogicV1, Version, VersionResolver};
 use crate::{
-    B20PolicyType, B20StablecoinToken, B20TokenRole, B20Variant, BerylCallRecorder,
-    BerylMetricLabels, BerylSelector,
+    B20PolicyType, B20TokenRole, B20Variant, BerylCallRecorder, BerylMetricLabels, BerylSelector,
     IB20::{self, IB20Calls as C},
     IB20Stablecoin::{self, IB20StablecoinCalls as SC},
     NoopPrecompileCallObserver, PermitArgs, PolicyAccounting, PrecompileCallObserver,
-    StablecoinAccounting, StablecoinV1, StablecoinVersion, StablecoinVersions,
+    StablecoinAccounting,
     macros::decode_precompile_call,
 };
 
-impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
+impl<S: StablecoinAccounting, A: PolicyAccounting> ContractContext<S, A> {
     /// ABI-dispatches `calldata` to the appropriate `IB20` handler for `upgrade`.
     pub fn dispatch(
         &mut self,
@@ -59,7 +59,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
         }
         // Gate by hardfork: resolve the active version once. `None` is unreachable in practice —
         // the precompile is only installed from Beryl — but we revert defensively.
-        let Some(version) = StablecoinVersions::from_base_upgrade(upgrade) else {
+        let Some(version) = VersionResolver::from_base_upgrade(upgrade) else {
             return recorder
                 .record_base_error_result(ctx, BasePrecompileError::Revert(Bytes::new()));
         };
@@ -78,7 +78,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
     /// Grants `role` to `account` without checking caller authorization.
     ///
     /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and the
-    /// authorized [`Stablecoin::grant_role`](crate::Stablecoin) path is not yet reachable.
+    /// authorized [`Logic::grant_role`](super::Logic) path is not yet reachable.
     // TODO: When factory get's logic for threading fork, remove this and pull in versions into the factory to use that function
     pub fn grant_role_unchecked(
         &mut self,
@@ -86,7 +86,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
         account: Address,
         sender: Address,
     ) -> base_precompile_storage::Result<()> {
-        StablecoinV1.grant_role_unchecked(self, role, account, sender)
+        LogicV1.grant_role_unchecked(self, role, account, sender)
     }
 
     /// Decodes calldata, observes the decoded operation, and routes it to `version` with optional
@@ -95,7 +95,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
         &mut self,
         ctx: StorageCtx<'_>,
         calldata: &[u8],
-        version: StablecoinVersion,
+        version: Version,
         privileged: bool,
         observer: O,
     ) -> base_precompile_storage::Result<Bytes>
@@ -335,9 +335,10 @@ mod tests {
     use base_common_genesis::BaseUpgrade;
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
+    use super::{ContractContext, Version};
     use crate::{
-        B20StablecoinToken, FakePolicyAccounting, IB20, InMemoryTokenAccounting,
-        NoopPrecompileCallObserver, PolicyVersion, StablecoinVersion, TestStablecoinToken,
+        FakePolicyAccounting, IB20, InMemoryTokenAccounting, NoopPrecompileCallObserver,
+        PolicyVersion, TestStablecoinToken,
     };
 
     const TOKEN: Address = Address::repeat_byte(0x01);
@@ -356,14 +357,14 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         storage.set_caller(TOKEN);
         StorageCtx::enter(&mut storage, |ctx| {
-            token.route(ctx, calldata, StablecoinVersion::V1, false, NoopPrecompileCallObserver)
+            token.route(ctx, calldata, Version::V1, false, NoopPrecompileCallObserver)
         })
         .unwrap()
         .to_vec()
     }
 
-    fn make_token() -> B20StablecoinToken<InMemoryTokenAccounting, FakePolicyAccounting> {
-        B20StablecoinToken::with_storage_and_policy(
+    fn make_token() -> ContractContext<InMemoryTokenAccounting, FakePolicyAccounting> {
+        ContractContext::with_storage_and_policy(
             InMemoryTokenAccounting::new(TOKEN),
             FakePolicyAccounting::new(),
             PolicyVersion::V1,

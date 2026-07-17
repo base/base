@@ -10,10 +10,10 @@ use alloy_primitives::{Address, B256, FixedBytes, U256, b256, keccak256};
 use alloy_sol_types::{SolEvent, SolValue};
 use base_precompile_storage::{BasePrecompileError, Result};
 
+use super::{super::ContractContext, Logic};
 use crate::{
-    B20_MAX_SUPPLY_CAP, B20Guards, B20PausableFeature, B20PolicyType, B20StablecoinToken,
-    B20TokenRole, Eip712Domain, IB20, PermitArgs, PolicyAccounting, Stablecoin,
-    StablecoinAccounting, Token,
+    B20_MAX_SUPPLY_CAP, B20Guards, B20PausableFeature, B20PolicyType, B20TokenRole, Eip712Domain,
+    IB20, PermitArgs, PolicyAccounting, StablecoinAccounting, Token,
 };
 
 /// `keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)")`
@@ -25,13 +25,13 @@ const VERSION: &[u8] = b"1";
 
 /// First stablecoin B-20 implementation. Frozen as of its activation at Beryl.
 #[derive(Debug, Default, Clone, Copy)]
-pub struct StablecoinV1;
+pub struct LogicV1;
 
-impl StablecoinV1 {
+impl LogicV1 {
     /// Balance-moving core of `transfer`/`transferFrom`, without the pause check.
     fn transfer_inner<S: StablecoinAccounting, A: PolicyAccounting>(
         &self,
-        token: &mut B20StablecoinToken<S, A>,
+        ctx: &mut ContractContext<S, A>,
         from: Address,
         to: Address,
         amount: U256,
@@ -44,10 +44,10 @@ impl StablecoinV1 {
             return Err(BasePrecompileError::revert(IB20::InvalidSender { sender: from }));
         }
         if !privileged {
-            B20Guards::ensure_policy_type(token, B20PolicyType::TransferSender, from)?;
-            B20Guards::ensure_policy_type(token, B20PolicyType::TransferReceiver, to)?;
+            B20Guards::ensure_policy_type(ctx, B20PolicyType::TransferSender, from)?;
+            B20Guards::ensure_policy_type(ctx, B20PolicyType::TransferReceiver, to)?;
         }
-        let from_balance = token.accounting().balance_of(from)?;
+        let from_balance = ctx.accounting().balance_of(from)?;
         if from_balance < amount {
             return Err(BasePrecompileError::revert(IB20::InsufficientBalance {
                 sender: from,
@@ -57,22 +57,22 @@ impl StablecoinV1 {
         }
         let new_from_balance =
             from_balance.checked_sub(amount).ok_or_else(BasePrecompileError::under_overflow)?;
-        token.accounting_mut().set_balance(from, new_from_balance)?;
-        let to_balance = token.accounting().balance_of(to)?;
+        ctx.accounting_mut().set_balance(from, new_from_balance)?;
+        let to_balance = ctx.accounting().balance_of(to)?;
         let new_to_balance =
             to_balance.checked_add(amount).ok_or_else(BasePrecompileError::under_overflow)?;
-        token.accounting_mut().set_balance(to, new_to_balance)?;
-        token.accounting_mut().emit_event(IB20::Transfer { from, to, amount }.encode_log_data())
+        ctx.accounting_mut().set_balance(to, new_to_balance)?;
+        ctx.accounting_mut().emit_event(IB20::Transfer { from, to, amount }.encode_log_data())
     }
 
     /// Supply-reducing core of the burn operations, without pause or role checks.
     fn burn_inner<S: StablecoinAccounting, A: PolicyAccounting>(
         &self,
-        token: &mut B20StablecoinToken<S, A>,
+        ctx: &mut ContractContext<S, A>,
         from: Address,
         amount: U256,
     ) -> Result<()> {
-        let balance = token.accounting().balance_of(from)?;
+        let balance = ctx.accounting().balance_of(from)?;
         if balance < amount {
             return Err(BasePrecompileError::revert(IB20::InsufficientBalance {
                 sender: from,
@@ -80,75 +80,72 @@ impl StablecoinV1 {
                 needed: amount,
             }));
         }
-        token.accounting_mut().set_balance(from, balance - amount)?;
-        let supply = token.accounting().total_supply()?;
+        ctx.accounting_mut().set_balance(from, balance - amount)?;
+        let supply = ctx.accounting().total_supply()?;
         let new_supply =
             supply.checked_sub(amount).ok_or_else(BasePrecompileError::under_overflow)?;
-        token.accounting_mut().set_total_supply(new_supply)?;
-        token
-            .accounting_mut()
+        ctx.accounting_mut().set_total_supply(new_supply)?;
+        ctx.accounting_mut()
             .emit_event(IB20::Transfer { from, to: Address::ZERO, amount }.encode_log_data())
     }
 
     /// Grants `role` to `account` without checking caller authorization.
     ///
     /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and the
-    /// authorized [`grant_role`](Stablecoin::grant_role) path is not reachable. Bumps the
-    /// `DefaultAdmin` member count and emits `RoleGranted`. Kept inherent to V1 (off the `Stablecoin`
-    /// trait) so it stays frozen with this version and off `&dyn Stablecoin`.
+    /// authorized [`grant_role`](Logic::grant_role) path is not reachable. Bumps the
+    /// `DefaultAdmin` member count and emits `RoleGranted`. Kept inherent to V1 (off the `Logic`
+    /// trait) so it stays frozen with this version and off `&dyn Logic`.
     pub(crate) fn grant_role_unchecked<S: StablecoinAccounting, A: PolicyAccounting>(
         &self,
-        token: &mut B20StablecoinToken<S, A>,
+        ctx: &mut ContractContext<S, A>,
         role: B256,
         account: Address,
         sender: Address,
     ) -> Result<()> {
-        if token.accounting().has_role(role, account)? {
+        if ctx.accounting().has_role(role, account)? {
             return Ok(());
         }
-        token.accounting_mut().set_role(role, account, true)?;
+        ctx.accounting_mut().set_role(role, account, true)?;
         if role == B20TokenRole::DefaultAdmin.id() {
-            let current = token.accounting().role_member_count(role)?;
+            let current = ctx.accounting().role_member_count(role)?;
             let next =
                 current.checked_add(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
-            token.accounting_mut().set_role_member_count(role, next)?;
+            ctx.accounting_mut().set_role_member_count(role, next)?;
         }
-        token
-            .accounting_mut()
+        ctx.accounting_mut()
             .emit_event(IB20::RoleGranted { role, account, sender }.encode_log_data())
     }
 
     /// Revokes `role` from `account` without checking caller authorization.
     fn revoke_role_unchecked<S: StablecoinAccounting, A: PolicyAccounting>(
         &self,
-        token: &mut B20StablecoinToken<S, A>,
+        ctx: &mut ContractContext<S, A>,
         role: B256,
         account: Address,
         sender: Address,
     ) -> Result<()> {
-        if !token.accounting().has_role(role, account)? {
+        if !ctx.accounting().has_role(role, account)? {
             return Ok(());
         }
-        token.accounting_mut().set_role(role, account, false)?;
+        ctx.accounting_mut().set_role(role, account, false)?;
         if role == B20TokenRole::DefaultAdmin.id() {
-            let current = token.accounting().role_member_count(role)?;
+            let current = ctx.accounting().role_member_count(role)?;
             let next =
                 current.checked_sub(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
-            token.accounting_mut().set_role_member_count(role, next)?;
+            ctx.accounting_mut().set_role_member_count(role, next)?;
         }
-        token
-            .accounting_mut()
+        ctx.accounting_mut()
             .emit_event(IB20::RoleRevoked { role, account, sender }.encode_log_data())
     }
 
     /// Ensures role-admin mutations are still reachable.
     fn ensure_role_admin_mutations_available<S: StablecoinAccounting, A: PolicyAccounting>(
         &self,
-        token: &B20StablecoinToken<S, A>,
+        ctx: &ContractContext<S, A>,
         caller: Address,
     ) -> Result<()> {
         let admin_role = B20TokenRole::DefaultAdmin.id();
-        if token.accounting().role_member_count(admin_role)? == U256::ZERO {
+        if ctx.accounting().role_member_count(admin_role)? == U256::ZERO {
             return Err(BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
                 account: caller,
                 neededRole: admin_role,
@@ -169,36 +166,36 @@ impl StablecoinV1 {
     }
 }
 
-impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for StablecoinV1 {
+impl<S: StablecoinAccounting, A: PolicyAccounting> Logic<S, A> for LogicV1 {
     fn transfer(
         &self,
-        token: &mut B20StablecoinToken<S, A>,
+        ctx: &mut ContractContext<S, A>,
         caller: Address,
         to: Address,
         amount: U256,
         privileged: bool,
     ) -> Result<()> {
-        B20Guards::ensure_not_paused(token, IB20::PausableFeature::TRANSFER)?;
-        self.transfer_inner(token, caller, to, amount, privileged)
+        B20Guards::ensure_not_paused(ctx, IB20::PausableFeature::TRANSFER)?;
+        self.transfer_inner(ctx, caller, to, amount, privileged)
     }
 
     fn transfer_from(
         &self,
-        token: &mut B20StablecoinToken<S, A>,
+        ctx: &mut ContractContext<S, A>,
         caller: Address,
         from: Address,
         to: Address,
         amount: U256,
         privileged: bool,
     ) -> Result<()> {
-        B20Guards::ensure_not_paused(token, IB20::PausableFeature::TRANSFER)?;
+        B20Guards::ensure_not_paused(ctx, IB20::PausableFeature::TRANSFER)?;
         if to == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
         }
         if from == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidSender { sender: from }));
         }
-        let allowance = token.accounting().allowance(from, caller)?;
+        let allowance = ctx.accounting().allowance(from, caller)?;
         let is_infinite = allowance == U256::MAX;
         if !is_infinite && allowance < amount {
             return Err(BasePrecompileError::revert(IB20::InsufficientAllowance {
@@ -208,18 +205,18 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
             }));
         }
         if !privileged && caller != from {
-            B20Guards::ensure_policy_type(token, B20PolicyType::TransferExecutor, caller)?;
+            B20Guards::ensure_policy_type(ctx, B20PolicyType::TransferExecutor, caller)?;
         }
-        self.transfer_inner(token, from, to, amount, privileged)?;
+        self.transfer_inner(ctx, from, to, amount, privileged)?;
         if is_infinite {
             return Ok(());
         }
-        token.accounting_mut().set_allowance(from, caller, allowance - amount)
+        ctx.accounting_mut().set_allowance(from, caller, allowance - amount)
     }
 
     fn approve(
         &self,
-        token: &mut B20StablecoinToken<S, A>,
+        ctx: &mut ContractContext<S, A>,
         caller: Address,
         spender: Address,
         amount: U256,
@@ -230,39 +227,38 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
         if spender == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidSpender { spender }));
         }
-        token.accounting_mut().set_allowance(caller, spender, amount)?;
-        token
-            .accounting_mut()
+        ctx.accounting_mut().set_allowance(caller, spender, amount)?;
+        ctx.accounting_mut()
             .emit_event(IB20::Approval { owner: caller, spender, amount }.encode_log_data())
     }
 
     fn emit_memo(
         &self,
-        token: &mut B20StablecoinToken<S, A>,
+        ctx: &mut ContractContext<S, A>,
         caller: Address,
         memo: B256,
     ) -> Result<()> {
-        token.accounting_mut().emit_event(IB20::Memo { caller, memo }.encode_log_data())
+        ctx.accounting_mut().emit_event(IB20::Memo { caller, memo }.encode_log_data())
     }
 
     fn mint(
         &self,
-        token: &mut B20StablecoinToken<S, A>,
+        ctx: &mut ContractContext<S, A>,
         caller: Address,
         to: Address,
         amount: U256,
         privileged: bool,
     ) -> Result<()> {
-        B20Guards::ensure_not_paused(token, IB20::PausableFeature::MINT)?;
+        B20Guards::ensure_not_paused(ctx, IB20::PausableFeature::MINT)?;
         if !privileged {
-            B20Guards::ensure_token_role(token, caller, B20TokenRole::Mint)?;
+            B20Guards::ensure_token_role(ctx, caller, B20TokenRole::Mint)?;
         }
         if to == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
         }
-        B20Guards::ensure_policy_type(token, B20PolicyType::MintReceiver, to)?;
-        let supply = token.accounting().total_supply()?;
-        let cap = token.accounting().supply_cap()?;
+        B20Guards::ensure_policy_type(ctx, B20PolicyType::MintReceiver, to)?;
+        let supply = ctx.accounting().total_supply()?;
+        let cap = ctx.accounting().supply_cap()?;
         let new_supply =
             supply.checked_add(amount).ok_or_else(BasePrecompileError::under_overflow)?;
         if new_supply > cap {
@@ -271,50 +267,43 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
                 attempted: new_supply,
             }));
         }
-        token.accounting_mut().set_total_supply(new_supply)?;
-        let to_balance = token.accounting().balance_of(to)?;
+        ctx.accounting_mut().set_total_supply(new_supply)?;
+        let to_balance = ctx.accounting().balance_of(to)?;
         let new_balance =
             to_balance.checked_add(amount).ok_or_else(BasePrecompileError::under_overflow)?;
-        token.accounting_mut().set_balance(to, new_balance)?;
-        token
-            .accounting_mut()
+        ctx.accounting_mut().set_balance(to, new_balance)?;
+        ctx.accounting_mut()
             .emit_event(IB20::Transfer { from: Address::ZERO, to, amount }.encode_log_data())
     }
 
-    fn burn(
-        &self,
-        token: &mut B20StablecoinToken<S, A>,
-        caller: Address,
-        amount: U256,
-    ) -> Result<()> {
+    fn burn(&self, ctx: &mut ContractContext<S, A>, caller: Address, amount: U256) -> Result<()> {
         // Self-burn: `from == caller`, never factory-privileged.
-        B20Guards::ensure_not_paused(token, IB20::PausableFeature::BURN)?;
-        B20Guards::ensure_token_role(token, caller, B20TokenRole::Burn)?;
-        self.burn_inner(token, caller, amount)
+        B20Guards::ensure_not_paused(ctx, IB20::PausableFeature::BURN)?;
+        B20Guards::ensure_token_role(ctx, caller, B20TokenRole::Burn)?;
+        self.burn_inner(ctx, caller, amount)
     }
 
     fn burn_blocked(
         &self,
-        token: &mut B20StablecoinToken<S, A>,
+        ctx: &mut ContractContext<S, A>,
         caller: Address,
         from: Address,
         amount: U256,
         privileged: bool,
     ) -> Result<()> {
-        B20Guards::ensure_not_paused(token, IB20::PausableFeature::BURN)?;
+        B20Guards::ensure_not_paused(ctx, IB20::PausableFeature::BURN)?;
         if !privileged {
-            B20Guards::ensure_token_role(token, caller, B20TokenRole::BurnBlocked)?;
+            B20Guards::ensure_token_role(ctx, caller, B20TokenRole::BurnBlocked)?;
         }
-        B20Guards::ensure_blocked(token, from)?;
-        self.burn_inner(token, from, amount)?;
-        token
-            .accounting_mut()
+        B20Guards::ensure_blocked(ctx, from)?;
+        self.burn_inner(ctx, from, amount)?;
+        ctx.accounting_mut()
             .emit_event(IB20::BurnedBlocked { caller, from, amount }.encode_log_data())
     }
 
     fn pause(
         &self,
-        token: &mut B20StablecoinToken<S, A>,
+        ctx: &mut ContractContext<S, A>,
         caller: Address,
         features: Vec<IB20::PausableFeature>,
         privileged: bool,
@@ -323,24 +312,23 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
             B20PausableFeature::ensure_valid(*feature)?;
         }
         if !privileged {
-            B20Guards::ensure_token_role(token, caller, B20TokenRole::Pause)?;
+            B20Guards::ensure_token_role(ctx, caller, B20TokenRole::Pause)?;
         }
         if features.is_empty() {
             return Err(BasePrecompileError::revert(IB20::EmptyFeatureSet {}));
         }
-        let mut next = token.accounting().paused()?;
+        let mut next = ctx.accounting().paused()?;
         for feature in &features {
             next |= B20PausableFeature::mask(*feature);
         }
-        token.accounting_mut().set_paused(next)?;
-        token
-            .accounting_mut()
+        ctx.accounting_mut().set_paused(next)?;
+        ctx.accounting_mut()
             .emit_event(IB20::Paused { updater: caller, features }.encode_log_data())
     }
 
     fn unpause(
         &self,
-        token: &mut B20StablecoinToken<S, A>,
+        ctx: &mut ContractContext<S, A>,
         caller: Address,
         features: Vec<IB20::PausableFeature>,
         privileged: bool,
@@ -349,41 +337,40 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
             B20PausableFeature::ensure_valid(*feature)?;
         }
         if !privileged {
-            B20Guards::ensure_token_role(token, caller, B20TokenRole::Unpause)?;
+            B20Guards::ensure_token_role(ctx, caller, B20TokenRole::Unpause)?;
         }
         if features.is_empty() {
             return Err(BasePrecompileError::revert(IB20::EmptyFeatureSet {}));
         }
-        let mut next = token.accounting().paused()?;
+        let mut next = ctx.accounting().paused()?;
         for feature in &features {
             next &= !B20PausableFeature::mask(*feature);
         }
-        token.accounting_mut().set_paused(next)?;
-        token
-            .accounting_mut()
+        ctx.accounting_mut().set_paused(next)?;
+        ctx.accounting_mut()
             .emit_event(IB20::Unpaused { updater: caller, features }.encode_log_data())
     }
 
     fn update_supply_cap(
         &self,
-        token: &mut B20StablecoinToken<S, A>,
+        ctx: &mut ContractContext<S, A>,
         caller: Address,
         new_cap: U256,
         privileged: bool,
     ) -> Result<()> {
         if !privileged {
-            B20Guards::ensure_token_role(token, caller, B20TokenRole::DefaultAdmin)?;
+            B20Guards::ensure_token_role(ctx, caller, B20TokenRole::DefaultAdmin)?;
         }
-        let supply = token.accounting().total_supply()?;
+        let supply = ctx.accounting().total_supply()?;
         if new_cap < supply || new_cap > B20_MAX_SUPPLY_CAP {
             return Err(BasePrecompileError::revert(IB20::InvalidSupplyCap {
                 currentSupply: supply,
                 proposedCap: new_cap,
             }));
         }
-        let old = token.accounting().supply_cap()?;
-        token.accounting_mut().set_supply_cap(new_cap)?;
-        token.accounting_mut().emit_event(
+        let old = ctx.accounting().supply_cap()?;
+        ctx.accounting_mut().set_supply_cap(new_cap)?;
+        ctx.accounting_mut().emit_event(
             IB20::SupplyCapUpdated { updater: caller, oldSupplyCap: old, newSupplyCap: new_cap }
                 .encode_log_data(),
         )
@@ -391,94 +378,93 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
 
     fn update_name(
         &self,
-        token: &mut B20StablecoinToken<S, A>,
+        ctx: &mut ContractContext<S, A>,
         caller: Address,
         name: String,
         privileged: bool,
     ) -> Result<()> {
         if !privileged {
-            B20Guards::ensure_token_role(token, caller, B20TokenRole::Metadata)?;
+            B20Guards::ensure_token_role(ctx, caller, B20TokenRole::Metadata)?;
         }
-        token.accounting_mut().set_name(name.clone())?;
-        token
-            .accounting_mut()
+        ctx.accounting_mut().set_name(name.clone())?;
+        ctx.accounting_mut()
             .emit_event(IB20::NameUpdated { updater: caller, newName: name }.encode_log_data())?;
-        token.accounting_mut().emit_event(IB20::EIP712DomainChanged {}.encode_log_data())
+        ctx.accounting_mut().emit_event(IB20::EIP712DomainChanged {}.encode_log_data())
     }
 
     fn update_symbol(
         &self,
-        token: &mut B20StablecoinToken<S, A>,
+        ctx: &mut ContractContext<S, A>,
         caller: Address,
         symbol: String,
         privileged: bool,
     ) -> Result<()> {
         if !privileged {
-            B20Guards::ensure_token_role(token, caller, B20TokenRole::Metadata)?;
+            B20Guards::ensure_token_role(ctx, caller, B20TokenRole::Metadata)?;
         }
-        token.accounting_mut().set_symbol(symbol.clone())?;
-        token.accounting_mut().emit_event(
+        ctx.accounting_mut().set_symbol(symbol.clone())?;
+        ctx.accounting_mut().emit_event(
             IB20::SymbolUpdated { updater: caller, newSymbol: symbol }.encode_log_data(),
         )
     }
 
     fn update_contract_uri(
         &self,
-        token: &mut B20StablecoinToken<S, A>,
+        ctx: &mut ContractContext<S, A>,
         caller: Address,
         uri: String,
         privileged: bool,
     ) -> Result<()> {
         if !privileged {
-            B20Guards::ensure_token_role(token, caller, B20TokenRole::Metadata)?;
+            B20Guards::ensure_token_role(ctx, caller, B20TokenRole::Metadata)?;
         }
-        token.accounting_mut().set_contract_uri(uri)?;
-        token.accounting_mut().emit_event(IB20::ContractURIUpdated {}.encode_log_data())
+        ctx.accounting_mut().set_contract_uri(uri)?;
+        ctx.accounting_mut().emit_event(IB20::ContractURIUpdated {}.encode_log_data())
     }
 
     fn grant_role(
         &self,
-        token: &mut B20StablecoinToken<S, A>,
+        ctx: &mut ContractContext<S, A>,
         caller: Address,
         role: B256,
         account: Address,
         privileged: bool,
     ) -> Result<()> {
         if role == B20TokenRole::DefaultAdmin.id() || !privileged {
-            self.ensure_role_admin_mutations_available(token, caller)?;
+            self.ensure_role_admin_mutations_available(ctx, caller)?;
         }
         if !privileged {
-            let admin = token.accounting().role_admin(role)?;
-            B20Guards::ensure_role(token, caller, admin)?;
+            let admin = ctx.accounting().role_admin(role)?;
+            B20Guards::ensure_role(ctx, caller, admin)?;
         }
-        self.grant_role_unchecked(token, role, account, caller)
+        self.grant_role_unchecked(ctx, role, account, caller)
     }
 
     fn revoke_role(
         &self,
-        token: &mut B20StablecoinToken<S, A>,
+        ctx: &mut ContractContext<S, A>,
         caller: Address,
         role: B256,
         account: Address,
         privileged: bool,
     ) -> Result<()> {
         if !privileged {
-            self.ensure_role_admin_mutations_available(token, caller)?;
-            let admin = token.accounting().role_admin(role)?;
-            B20Guards::ensure_role(token, caller, admin)?;
+            self.ensure_role_admin_mutations_available(ctx, caller)?;
+            let admin = ctx.accounting().role_admin(role)?;
+            B20Guards::ensure_role(ctx, caller, admin)?;
         }
         if role == B20TokenRole::DefaultAdmin.id()
-            && token.accounting().has_role(role, account)?
-            && token.accounting().role_member_count(role)? == U256::ONE
+            && ctx.accounting().has_role(role, account)?
+            && ctx.accounting().role_member_count(role)? == U256::ONE
         {
             return Err(BasePrecompileError::revert(IB20::LastAdminCannotRenounce {}));
         }
-        self.revoke_role_unchecked(token, role, account, caller)
+        self.revoke_role_unchecked(ctx, role, account, caller)
     }
 
     fn renounce_role(
         &self,
-        token: &mut B20StablecoinToken<S, A>,
+        ctx: &mut ContractContext<S, A>,
         caller: Address,
         role: B256,
         confirmation: Address,
@@ -487,45 +473,40 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
             return Err(BasePrecompileError::revert(IB20::AccessControlBadConfirmation {}));
         }
         if role == B20TokenRole::DefaultAdmin.id()
-            && token.accounting().has_role(role, caller)?
-            && token.accounting().role_member_count(role)? == U256::ONE
+            && ctx.accounting().has_role(role, caller)?
+            && ctx.accounting().role_member_count(role)? == U256::ONE
         {
             return Err(BasePrecompileError::revert(IB20::LastAdminCannotRenounce {}));
         }
-        self.revoke_role_unchecked(token, role, caller, caller)
+        self.revoke_role_unchecked(ctx, role, caller, caller)
     }
 
-    fn renounce_last_admin(
-        &self,
-        token: &mut B20StablecoinToken<S, A>,
-        caller: Address,
-    ) -> Result<()> {
+    fn renounce_last_admin(&self, ctx: &mut ContractContext<S, A>, caller: Address) -> Result<()> {
         let admin_role = B20TokenRole::DefaultAdmin.id();
-        B20Guards::ensure_role(token, caller, admin_role)?;
-        if token.accounting().role_member_count(admin_role)? != U256::ONE {
+        B20Guards::ensure_role(ctx, caller, admin_role)?;
+        if ctx.accounting().role_member_count(admin_role)? != U256::ONE {
             return Err(BasePrecompileError::revert(IB20::NotSoleAdmin {}));
         }
-        self.revoke_role_unchecked(token, admin_role, caller, caller)?;
-        token
-            .accounting_mut()
+        self.revoke_role_unchecked(ctx, admin_role, caller, caller)?;
+        ctx.accounting_mut()
             .emit_event(IB20::LastAdminRenounced { previousAdmin: caller }.encode_log_data())
     }
 
     fn set_role_admin(
         &self,
-        token: &mut B20StablecoinToken<S, A>,
+        ctx: &mut ContractContext<S, A>,
         caller: Address,
         role: B256,
         new_admin_role: B256,
         privileged: bool,
     ) -> Result<()> {
-        let previous_admin_role = token.accounting().role_admin(role)?;
+        let previous_admin_role = ctx.accounting().role_admin(role)?;
         if !privileged {
-            self.ensure_role_admin_mutations_available(token, caller)?;
-            B20Guards::ensure_role(token, caller, previous_admin_role)?;
+            self.ensure_role_admin_mutations_available(ctx, caller)?;
+            B20Guards::ensure_role(ctx, caller, previous_admin_role)?;
         }
-        token.accounting_mut().set_role_admin(role, new_admin_role)?;
-        token.accounting_mut().emit_event(
+        ctx.accounting_mut().set_role_admin(role, new_admin_role)?;
+        ctx.accounting_mut().emit_event(
             IB20::RoleAdminChanged {
                 role,
                 previousAdminRole: previous_admin_role,
@@ -537,23 +518,23 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
 
     fn update_policy(
         &self,
-        token: &mut B20StablecoinToken<S, A>,
+        ctx: &mut ContractContext<S, A>,
         caller: Address,
         policy_scope: B256,
         new_policy_id: u64,
         privileged: bool,
     ) -> Result<()> {
         if !privileged {
-            B20Guards::ensure_token_role(token, caller, B20TokenRole::DefaultAdmin)?;
+            B20Guards::ensure_token_role(ctx, caller, B20TokenRole::DefaultAdmin)?;
         }
-        let old_policy_id = self.policy_id(token, policy_scope)?;
-        if !token.policy().policy_exists(token.policy_storage(), new_policy_id)? {
+        let old_policy_id = self.policy_id(ctx, policy_scope)?;
+        if !ctx.policy().policy_exists(ctx.policy_storage(), new_policy_id)? {
             return Err(BasePrecompileError::revert(IB20::PolicyNotFound {
                 policyId: new_policy_id,
             }));
         }
-        token.accounting_mut().set_policy_id(policy_scope, new_policy_id)?;
-        token.accounting_mut().emit_event(
+        ctx.accounting_mut().set_policy_id(policy_scope, new_policy_id)?;
+        ctx.accounting_mut().emit_event(
             IB20::PolicyUpdated {
                 policyScope: policy_scope,
                 oldPolicyId: old_policy_id,
@@ -565,7 +546,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
 
     fn permit(
         &self,
-        token: &mut B20StablecoinToken<S, A>,
+        ctx: &mut ContractContext<S, A>,
         chain_id: u64,
         now: U256,
         args: PermitArgs,
@@ -575,29 +556,26 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
                 deadline: args.deadline,
             }));
         }
-        let domain_sep = self.domain_separator(token, chain_id)?;
-        let nonce = token.accounting().nonce(args.owner)?;
+        let domain_sep = self.domain_separator(ctx, chain_id)?;
+        let nonce = ctx.accounting().nonce(args.owner)?;
         let signing_hash = args.signing_hash(domain_sep, nonce);
         let recovered = args.recover_signer(signing_hash)?;
         PermitArgs::validate_recovered_address(recovered, args.owner)?;
-        token.accounting_mut().increment_nonce(args.owner)?;
-        self.approve(token, args.owner, args.spender, args.value)
+        ctx.accounting_mut().increment_nonce(args.owner)?;
+        self.approve(ctx, args.owner, args.spender, args.value)
     }
 
     fn is_paused(
         &self,
-        token: &B20StablecoinToken<S, A>,
+        ctx: &ContractContext<S, A>,
         feature: IB20::PausableFeature,
     ) -> Result<bool> {
         B20PausableFeature::ensure_valid(feature)?;
-        Ok((token.accounting().paused()? & B20PausableFeature::mask(feature)) != U256::ZERO)
+        Ok((ctx.accounting().paused()? & B20PausableFeature::mask(feature)) != U256::ZERO)
     }
 
-    fn paused_features(
-        &self,
-        token: &B20StablecoinToken<S, A>,
-    ) -> Result<Vec<IB20::PausableFeature>> {
-        let paused = token.accounting().paused()?;
+    fn paused_features(&self, ctx: &ContractContext<S, A>) -> Result<Vec<IB20::PausableFeature>> {
+        let paused = ctx.accounting().paused()?;
         let mut features = Vec::new();
         for feature in [
             IB20::PausableFeature::TRANSFER,
@@ -611,41 +589,37 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
         Ok(features)
     }
 
-    fn policy_id(&self, token: &B20StablecoinToken<S, A>, policy_scope: B256) -> Result<u64> {
+    fn policy_id(&self, ctx: &ContractContext<S, A>, policy_scope: B256) -> Result<u64> {
         Self::ensure_supported_policy_type(policy_scope)?;
-        token.accounting().policy_id(policy_scope)
+        ctx.accounting().policy_id(policy_scope)
     }
 
-    fn domain_separator(&self, token: &B20StablecoinToken<S, A>, chain_id: u64) -> Result<B256> {
-        let name = token.accounting().name()?;
+    fn domain_separator(&self, ctx: &ContractContext<S, A>, chain_id: u64) -> Result<B256> {
+        let name = ctx.accounting().name()?;
         let name_hash = keccak256(name.as_bytes());
         let version_hash = keccak256(VERSION);
         let encoded =
-            (DOMAIN_TYPEHASH, name_hash, version_hash, U256::from(chain_id), token.token_address())
+            (DOMAIN_TYPEHASH, name_hash, version_hash, U256::from(chain_id), ctx.token_address())
                 .abi_encode();
         Ok(keccak256(&encoded))
     }
 
-    fn eip712_domain(
-        &self,
-        token: &B20StablecoinToken<S, A>,
-        chain_id: u64,
-    ) -> Result<Eip712Domain> {
-        let name = token.accounting().name()?;
+    fn eip712_domain(&self, ctx: &ContractContext<S, A>, chain_id: u64) -> Result<Eip712Domain> {
+        let name = ctx.accounting().name()?;
         Ok((
             // bits 0+1+2+3: name + version + chainId + verifyingContract
             FixedBytes::<1>::from([0x0f]),
             name,
             "1".to_string(),
             U256::from(chain_id),
-            token.token_address(),
+            ctx.token_address(),
             B256::ZERO,
             vec![],
         ))
     }
 
-    fn currency(&self, token: &B20StablecoinToken<S, A>) -> Result<String> {
-        token.accounting().currency()
+    fn currency(&self, ctx: &ContractContext<S, A>) -> Result<String> {
+        ctx.accounting().currency()
     }
 }
 
@@ -663,10 +637,11 @@ mod tests {
     use base_precompile_storage::{BasePrecompileError, Result};
     use k256::ecdsa::SigningKey;
 
+    use super::{Logic, LogicV1};
     use crate::{
-        B20_MAX_SUPPLY_CAP, B20PolicyType, B20StablecoinToken, B20TokenRole, IB20, PackedPolicy,
-        PermitArgs, PolicyAccounting, PolicyRegistryStorage, PolicyVersion, Stablecoin,
-        StablecoinAccounting, StablecoinV1, Token, TokenAccounting,
+        B20_MAX_SUPPLY_CAP, B20PolicyType, B20TokenRole, IB20, PackedPolicy, PermitArgs,
+        PolicyAccounting, PolicyRegistryStorage, PolicyVersion, StablecoinAccounting, Token,
+        TokenAccounting, b20_stablecoin::ContractContext,
     };
 
     // --- Self-contained in-memory fakes (no dependency on `common::test_utils`, so shared test
@@ -677,7 +652,7 @@ mod tests {
     const ALICE: Address = Address::repeat_byte(0xA1);
     const BOB: Address = Address::repeat_byte(0xB0);
     const CHAIN_ID: u64 = 8453;
-    const LOGIC: StablecoinV1 = StablecoinV1;
+    const LOGIC: LogicV1 = LogicV1;
 
     // Anvil/Hardhat account 0 — well-known test key, never used in production.
     const PRIVATE_KEY: [u8; 32] =
@@ -933,10 +908,10 @@ mod tests {
         }
     }
 
-    type Tok = B20StablecoinToken<FakeAccounting, FakePolicyAccounting>;
+    type Tok = ContractContext<FakeAccounting, FakePolicyAccounting>;
 
-    fn token() -> Tok {
-        B20StablecoinToken::with_storage_and_policy(
+    fn make_ctx() -> Tok {
+        ContractContext::with_storage_and_policy(
             FakeAccounting::new(),
             FakePolicyAccounting::new(),
             PolicyVersion::V1,
@@ -994,7 +969,7 @@ mod tests {
 
     #[test]
     fn transfer_moves_balance_and_emits_transfer() {
-        let mut tok = token();
+        let mut tok = make_ctx();
         fund(&mut tok, ALICE, U256::from(100u64));
         LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(30u64), true).unwrap();
         assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(70u64));
@@ -1004,7 +979,7 @@ mod tests {
 
     #[test]
     fn transfer_reverts_on_zero_receiver() {
-        let mut tok = token();
+        let mut tok = make_ctx();
         fund(&mut tok, ALICE, U256::from(10u64));
         let err =
             LOGIC.transfer(&mut tok, ALICE, Address::ZERO, U256::from(1u64), true).unwrap_err();
@@ -1016,7 +991,7 @@ mod tests {
 
     #[test]
     fn transfer_reverts_on_insufficient_balance() {
-        let mut tok = token();
+        let mut tok = make_ctx();
         fund(&mut tok, ALICE, U256::from(10u64));
         let err = LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(50u64), true).unwrap_err();
         assert_eq!(
@@ -1031,7 +1006,7 @@ mod tests {
 
     #[test]
     fn transfer_reverts_when_paused() {
-        let mut tok = token();
+        let mut tok = make_ctx();
         fund(&mut tok, ALICE, U256::from(10u64));
         LOGIC.pause(&mut tok, ADMIN, vec![IB20::PausableFeature::TRANSFER], true).unwrap();
         let err = LOGIC.transfer(&mut tok, ALICE, BOB, U256::from(1u64), true).unwrap_err();
@@ -1045,7 +1020,7 @@ mod tests {
 
     #[test]
     fn transfer_unprivileged_enforces_transfer_policies() {
-        let mut tok = token();
+        let mut tok = make_ctx();
         fund(&mut tok, ALICE, U256::from(100u64));
         // ALLOWLIST with no members → sender/receiver policy checks revert.
         const POLICY: u64 = (1u64 << 56) | 7;
@@ -1064,7 +1039,7 @@ mod tests {
 
     #[test]
     fn transfer_from_decrements_finite_allowance() {
-        let mut tok = token();
+        let mut tok = make_ctx();
         fund(&mut tok, ALICE, U256::from(100u64));
         tok.accounting_mut().set_allowance(ALICE, BOB, U256::from(40u64)).unwrap();
         LOGIC.transfer_from(&mut tok, BOB, ALICE, BOB, U256::from(30u64), true).unwrap();
@@ -1074,7 +1049,7 @@ mod tests {
 
     #[test]
     fn transfer_from_infinite_allowance_is_not_decremented() {
-        let mut tok = token();
+        let mut tok = make_ctx();
         fund(&mut tok, ALICE, U256::from(100u64));
         tok.accounting_mut().set_allowance(ALICE, BOB, U256::MAX).unwrap();
         LOGIC.transfer_from(&mut tok, BOB, ALICE, BOB, U256::from(30u64), true).unwrap();
@@ -1083,7 +1058,7 @@ mod tests {
 
     #[test]
     fn transfer_from_reverts_on_insufficient_allowance() {
-        let mut tok = token();
+        let mut tok = make_ctx();
         fund(&mut tok, ALICE, U256::from(100u64));
         tok.accounting_mut().set_allowance(ALICE, BOB, U256::from(5u64)).unwrap();
         let err =
@@ -1102,7 +1077,7 @@ mod tests {
 
     #[test]
     fn approve_sets_allowance_and_emits() {
-        let mut tok = token();
+        let mut tok = make_ctx();
         LOGIC.approve(&mut tok, ALICE, BOB, U256::from(50u64)).unwrap();
         assert_eq!(tok.accounting().allowance(ALICE, BOB).unwrap(), U256::from(50u64));
         assert_eq!(last_event_sig(&tok), IB20::Approval::SIGNATURE_HASH);
@@ -1110,7 +1085,7 @@ mod tests {
 
     #[test]
     fn approve_reverts_on_zero_spender() {
-        let mut tok = token();
+        let mut tok = make_ctx();
         let err = LOGIC.approve(&mut tok, ALICE, Address::ZERO, U256::from(1u64)).unwrap_err();
         assert_eq!(
             err,
@@ -1122,7 +1097,7 @@ mod tests {
 
     #[test]
     fn mint_privileged_increases_supply_and_balance() {
-        let mut tok = token();
+        let mut tok = make_ctx();
         tok.policy_storage_mut().allow(0, BOB); // MintReceiver policy is enforced even when privileged
         LOGIC.mint(&mut tok, ADMIN, BOB, U256::from(100u64), true).unwrap();
         assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(100u64));
@@ -1132,7 +1107,7 @@ mod tests {
 
     #[test]
     fn mint_reverts_over_supply_cap() {
-        let mut tok = token();
+        let mut tok = make_ctx();
         tok.accounting_mut().set_supply_cap(U256::from(50u64)).unwrap();
         let err = LOGIC.mint(&mut tok, ADMIN, BOB, U256::from(100u64), true).unwrap_err();
         assert_eq!(
@@ -1146,7 +1121,7 @@ mod tests {
 
     #[test]
     fn mint_unprivileged_requires_mint_role() {
-        let mut tok = token();
+        let mut tok = make_ctx();
         let err = LOGIC.mint(&mut tok, ALICE, BOB, U256::from(1u64), false).unwrap_err();
         assert_eq!(
             err,
@@ -1161,7 +1136,7 @@ mod tests {
 
     #[test]
     fn burn_requires_role_then_decreases_supply() {
-        let mut tok = token();
+        let mut tok = make_ctx();
         fund(&mut tok, ALICE, U256::from(100u64));
         let err = LOGIC.burn(&mut tok, ALICE, U256::from(1u64)).unwrap_err();
         assert_eq!(
@@ -1180,7 +1155,7 @@ mod tests {
 
     #[test]
     fn burn_blocked_destroys_from_unauthorized_account() {
-        let mut tok = token();
+        let mut tok = make_ctx();
         fund(&mut tok, ALICE, U256::from(100u64));
         // ALWAYS_BLOCK => ALICE is unauthorized/blocked; privileged skips the role check.
         tok.accounting_mut()
@@ -1196,7 +1171,7 @@ mod tests {
 
     #[test]
     fn burn_blocked_reverts_when_account_not_blocked() {
-        let mut tok = token();
+        let mut tok = make_ctx();
         fund(&mut tok, ALICE, U256::from(100u64));
         // Default ALWAYS_ALLOW authorizes ALICE => not blocked.
         let err = LOGIC.burn_blocked(&mut tok, ADMIN, ALICE, U256::from(1u64), true).unwrap_err();
@@ -1207,7 +1182,7 @@ mod tests {
 
     #[test]
     fn pause_and_unpause_toggle_feature_bit() {
-        let mut tok = token();
+        let mut tok = make_ctx();
         LOGIC.pause(&mut tok, ADMIN, vec![IB20::PausableFeature::MINT], true).unwrap();
         assert!(LOGIC.is_paused(&tok, IB20::PausableFeature::MINT).unwrap());
         assert!(!LOGIC.is_paused(&tok, IB20::PausableFeature::TRANSFER).unwrap());
@@ -1217,14 +1192,14 @@ mod tests {
 
     #[test]
     fn pause_reverts_on_empty_feature_set() {
-        let mut tok = token();
+        let mut tok = make_ctx();
         let err = LOGIC.pause(&mut tok, ADMIN, vec![], true).unwrap_err();
         assert_eq!(err, BasePrecompileError::revert(IB20::EmptyFeatureSet {}));
     }
 
     #[test]
     fn paused_features_reports_active_set() {
-        let mut tok = token();
+        let mut tok = make_ctx();
         LOGIC
             .pause(
                 &mut tok,
@@ -1241,7 +1216,7 @@ mod tests {
 
     #[test]
     fn update_supply_cap_sets_and_emits() {
-        let mut tok = token();
+        let mut tok = make_ctx();
         LOGIC.update_supply_cap(&mut tok, ADMIN, U256::from(1_000u64), true).unwrap();
         assert_eq!(tok.accounting().supply_cap().unwrap(), U256::from(1_000u64));
         assert_eq!(last_event_sig(&tok), IB20::SupplyCapUpdated::SIGNATURE_HASH);
@@ -1249,7 +1224,7 @@ mod tests {
 
     #[test]
     fn update_supply_cap_reverts_below_current_supply() {
-        let mut tok = token();
+        let mut tok = make_ctx();
         fund(&mut tok, ALICE, U256::from(500u64));
         let err = LOGIC.update_supply_cap(&mut tok, ADMIN, U256::from(100u64), true).unwrap_err();
         assert_eq!(
@@ -1263,7 +1238,7 @@ mod tests {
 
     #[test]
     fn update_name_emits_name_updated_and_domain_changed() {
-        let mut tok = token();
+        let mut tok = make_ctx();
         LOGIC.update_name(&mut tok, ADMIN, "New Name".to_string(), true).unwrap();
         assert_eq!(tok.accounting().name().unwrap(), "New Name");
         let events = &tok.accounting().events;
@@ -1275,7 +1250,7 @@ mod tests {
 
     #[test]
     fn grant_role_privileged_grants_and_emits() {
-        let mut tok = token();
+        let mut tok = make_ctx();
         LOGIC.grant_role(&mut tok, ADMIN, B20TokenRole::Mint.id(), ALICE, true).unwrap();
         assert!(tok.accounting().has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
         assert_eq!(last_event_sig(&tok), IB20::RoleGranted::SIGNATURE_HASH);
@@ -1283,7 +1258,7 @@ mod tests {
 
     #[test]
     fn revoke_role_privileged_revokes_and_emits() {
-        let mut tok = token();
+        let mut tok = make_ctx();
         grant(&mut tok, B20TokenRole::Mint.id(), ALICE);
         LOGIC.revoke_role(&mut tok, ADMIN, B20TokenRole::Mint.id(), ALICE, true).unwrap();
         assert!(!tok.accounting().has_role(B20TokenRole::Mint.id(), ALICE).unwrap());
@@ -1292,7 +1267,7 @@ mod tests {
 
     #[test]
     fn revoke_last_admin_is_rejected() {
-        let mut tok = token();
+        let mut tok = make_ctx();
         grant(&mut tok, B20TokenRole::DefaultAdmin.id(), ADMIN);
         let err = LOGIC
             .revoke_role(&mut tok, ADMIN, B20TokenRole::DefaultAdmin.id(), ADMIN, true)
@@ -1302,7 +1277,7 @@ mod tests {
 
     #[test]
     fn grant_role_unchecked_bumps_admin_count() {
-        let mut tok = token();
+        let mut tok = make_ctx();
         LOGIC
             .grant_role_unchecked(&mut tok, B20TokenRole::DefaultAdmin.id(), ADMIN, TOKEN)
             .unwrap();
@@ -1317,7 +1292,7 @@ mod tests {
 
     #[test]
     fn update_policy_sets_new_id() {
-        let mut tok = token();
+        let mut tok = make_ctx();
         tok.policy_storage_mut().create_existing_policy(7);
         LOGIC.update_policy(&mut tok, ADMIN, B20PolicyType::TransferSender.id(), 7, true).unwrap();
         assert_eq!(tok.accounting().policy_id(B20PolicyType::TransferSender.id()).unwrap(), 7);
@@ -1325,7 +1300,7 @@ mod tests {
 
     #[test]
     fn update_policy_reverts_when_policy_missing() {
-        let mut tok = token();
+        let mut tok = make_ctx();
         let err = LOGIC
             .update_policy(&mut tok, ADMIN, B20PolicyType::TransferSender.id(), 99, true)
             .unwrap_err();
@@ -1334,7 +1309,7 @@ mod tests {
 
     #[test]
     fn policy_id_rejects_unsupported_scope() {
-        let tok = token();
+        let tok = make_ctx();
         let scope = B256::repeat_byte(0xEE);
         let err = LOGIC.policy_id(&tok, scope).unwrap_err();
         assert_eq!(
@@ -1347,7 +1322,7 @@ mod tests {
 
     #[test]
     fn permit_sets_allowance_and_increments_nonce() {
-        let mut tok = token();
+        let mut tok = make_ctx();
         let owner = anvil_owner();
         let args = signed_permit(&tok, owner, BOB, U256::from(500u64), U256::MAX);
         LOGIC.permit(&mut tok, CHAIN_ID, U256::ZERO, args).unwrap();
@@ -1357,7 +1332,7 @@ mod tests {
 
     #[test]
     fn permit_reverts_when_expired() {
-        let mut tok = token();
+        let mut tok = make_ctx();
         let owner = anvil_owner();
         let args = signed_permit(&tok, owner, BOB, U256::from(1u64), U256::from(10u64));
         let err = LOGIC.permit(&mut tok, CHAIN_ID, U256::from(11u64), args).unwrap_err();
@@ -1369,7 +1344,7 @@ mod tests {
 
     #[test]
     fn permit_replay_is_rejected() {
-        let mut tok = token();
+        let mut tok = make_ctx();
         let owner = anvil_owner();
         let args = signed_permit(&tok, owner, BOB, U256::from(1u64), U256::MAX);
         LOGIC.permit(&mut tok, CHAIN_ID, U256::ZERO, args.clone()).unwrap();
@@ -1381,13 +1356,13 @@ mod tests {
 
     #[test]
     fn currency_reads_storage() {
-        let tok = token();
+        let tok = make_ctx();
         assert_eq!(LOGIC.currency(&tok).unwrap(), "USD");
     }
 
     #[test]
     fn is_initialized_reflects_storage() {
-        let mut tok = token();
+        let mut tok = make_ctx();
         assert!(LOGIC.is_initialized(&tok).unwrap());
         tok.accounting_mut().initialized = false;
         assert!(!LOGIC.is_initialized(&tok).unwrap());
@@ -1395,7 +1370,7 @@ mod tests {
 
     #[test]
     fn domain_separator_is_deterministic_and_chain_specific() {
-        let tok = token();
+        let tok = make_ctx();
         assert_eq!(
             LOGIC.domain_separator(&tok, CHAIN_ID).unwrap(),
             LOGIC.domain_separator(&tok, CHAIN_ID).unwrap()

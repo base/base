@@ -10,21 +10,23 @@ use base_precompile_storage::Result;
 
 use crate::{
     Burnable, Configurable, Mintable, PackedPolicy, Pausable, Permittable, PolicyAccounting,
-    PolicyRegistryLogic, PolicyRegistryStorage, PolicyVersion, RoleManaged, Token, Transferable,
+    PolicyRegistryLogic, PolicyRegistryStorage, PolicyVersion, RoleManaged,
+    StablecoinContractContext, Token, Transferable,
     b20_asset::{AssetAccounting, B20AssetStorage},
-    b20_stablecoin::{B20StablecoinToken, StablecoinAccounting},
+    b20_stablecoin::StablecoinAccounting,
     common::{B20_MAX_SUPPLY_CAP, TokenAccounting},
 };
 
-/// Convenience alias: [`B20StablecoinToken`] wired with both in-memory fakes.
+/// Convenience alias: [`StablecoinContractContext`] wired with both in-memory fakes.
 ///
 /// The stablecoin holder is a minimal storage+policy holder (its behavior lives in `logic/vN`), so
 /// this alias is used by dispatch/`inner` tests, not for calling capability-trait methods directly.
-pub type TestStablecoinToken = B20StablecoinToken<InMemoryTokenAccounting, FakePolicyAccounting>;
+pub type TestStablecoinToken =
+    StablecoinContractContext<InMemoryTokenAccounting, FakePolicyAccounting>;
 
 /// Concrete test token that opts into the shared capability traits over the in-memory fakes.
 ///
-/// The production holders ([`crate::ContractContext`], [`crate::B20StablecoinToken`]) are now minimal
+/// The production holders ([`crate::ContractContext`], [`crate::StablecoinContractContext`]) are now minimal
 /// storage+policy holders whose behavior lives entirely in their versioned `logic/vN`
 /// implementations, so they no longer implement the [`Transferable`]/[`Mintable`]/… capability
 /// traits. This type keeps those shared traits exercised by the `common::ops` unit tests without

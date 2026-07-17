@@ -10,8 +10,8 @@ use revm::state::Bytecode;
 
 use crate::{
     ActivationRegistryStorage, B20AssetInit, B20AssetStorage, B20FactoryStorage, B20StablecoinInit,
-    B20StablecoinStorage, B20StablecoinToken, B20TokenRole, B20Variant, ContractContext, Factory,
-    IB20Factory, NoopPrecompileCallObserver, PolicyRegistryStorage, PolicyVersions,
+    B20StablecoinStorage, B20TokenRole, B20Variant, ContractContext, Factory, IB20Factory,
+    NoopPrecompileCallObserver, PolicyRegistryStorage, PolicyVersions, StablecoinContractContext,
     StablecoinVersion, Token, Version,
 };
 
@@ -48,7 +48,7 @@ impl FactoryV1 {
     ) -> Result<()> {
         let policy_version = PolicyVersions::from_base_upgrade(upgrade)
             .ok_or_else(|| BasePrecompileError::Revert(Bytes::new()))?;
-        let mut token = B20StablecoinToken::with_storage_and_policy(
+        let mut token = StablecoinContractContext::with_storage_and_policy(
             B20StablecoinStorage::from_address(token_address, storage.storage()),
             PolicyRegistryStorage::new(storage.storage()),
             policy_version,
