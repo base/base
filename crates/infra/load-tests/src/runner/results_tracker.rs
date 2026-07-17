@@ -71,9 +71,7 @@ struct ResultsTrackerInner {
     flashblocks: HashMap<TxHash, Instant>,
     flashblock_eviction_queue: VecDeque<TxHash>,
     unreported_confirmations: VecDeque<TransactionMetrics>,
-    /// Flashblock latency observations for the rolling window. These are drained
-    /// separately from confirmed metrics and do NOT enter `self.transactions` in the
-    /// collector, avoiding double-counting in the final summary.
+    /// Flashblock latency observations for the rolling window.
     unreported_flashblock_observations: VecDeque<(Duration, Instant)>,
     in_flight_per_sender: HashMap<Address, u64>,
     total_in_flight: u64,

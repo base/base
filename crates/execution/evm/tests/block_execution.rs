@@ -100,14 +100,7 @@ fn execute_same_block_base_time_read(getter_selector: [u8; 4]) -> U256 {
         ..Default::default()
     }
     .into();
-    let (_, base_time_tx) = BaseTimeUpdateTx::try_new_with_deposit_tx(
-        &Default::default(),
-        1,
-        CURRENT_MILLIS_PART,
-        BLOCK_TIMESTAMP,
-        BLOCK_TIMESTAMP,
-    )
-    .unwrap();
+    let base_time_tx = BaseTimeUpdateTx::new(CURRENT_MILLIS_PART).unwrap().into_deposit_tx(1);
     let base_time_tx: BaseTransactionSigned = base_time_tx.into();
     let user_tx: BaseTransactionSigned = TxEip1559 {
         chain_id: chain_spec.chain.id(),

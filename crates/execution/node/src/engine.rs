@@ -4,7 +4,7 @@ use alloy_consensus::BlockHeader;
 use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_engine::{ExecutionPayloadEnvelopeV2, ExecutionPayloadV1};
 use base_common_chains::Upgrades;
-use base_common_consensus::{BaseBlock, Predeploys};
+use base_common_consensus::{BaseBlock, BaseTransaction, Predeploys};
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
     ExecutionData,
@@ -14,6 +14,7 @@ use base_execution_payload_builder::{
     Attributes, BaseExecutionPayloadValidator, BasePayloadBuilderAttributes, BasePayloadTypes,
 };
 use base_protocol::BaseTimeUpdateTx;
+use reth_chainspec::EthChainSpec;
 use reth_consensus::ConsensusError;
 use reth_node_api::{
     BuiltPayload, EngineApiValidator, EngineTypes, NodePrimitives, PayloadValidator,
@@ -115,7 +116,7 @@ where
 
 impl<P, Tx, ChainSpec> BaseEngineValidator<P, Tx, ChainSpec>
 where
-    ChainSpec: Upgrades,
+    ChainSpec: EthChainSpec + Upgrades,
 {
     /// Returns the chain spec used by the validator.
     #[inline]
@@ -123,87 +124,32 @@ where
         self.inner.chain_spec()
     }
 
-    /// Verifies upgrade-gated post-execution rules against the supplied parent state.
-    ///
-    /// Authoritative implementation of all Base-specific post-execution checks that require
-    /// access to parent state (currently: Isthmus' L2-to-L1 message-passer storage root).
-    /// Callers supply `parent_state` explicitly so engine pipelines can pass in-memory-aware
-    /// overlay providers when the parent block isn't canonical yet.
-    ///
-    /// To add a check for a future upgrade, extend the body with another
-    /// `if chain_spec.is_<X>_active_at_timestamp(...)` arm.
-    pub fn validate_block_post_execution_with_state<DB, H>(
+    /// Verifies the Isthmus L2-to-L1 message-passer storage root after block execution.
+    pub fn validate_isthmus_post_execution<DB, H>(
         &self,
         state_updates: &HashedPostState,
-        parent_state: DB,
+        parent_state: &DB,
         header: H,
     ) -> Result<(), ConsensusError>
     where
-        DB: StateProvider,
+        DB: StateProvider + ?Sized,
         H: BlockHeader,
     {
-        if !self.chain_spec().is_isthmus_active_at_timestamp(header.timestamp()) {
-            return Ok(());
-        }
-
         let predeploy_storage_updates = state_updates
             .storages
             .get(&self.hashed_addr_l2tol1_msg_passer)
             .cloned()
             .unwrap_or_default();
         isthmus::verify_withdrawals_root_prehashed(predeploy_storage_updates, parent_state, header)
-            .map_err(|err| {
-                ConsensusError::Other(Arc::from(Box::<dyn core::error::Error + Send + Sync>::from(
-                    format!("failed to verify block post-execution: {err}"),
-                )))
-            })
-    }
-}
-
-/// Extension trait that exposes [`BaseEngineValidator::validate_block_post_execution_with_state`]
-/// through generic engine pipelines.
-///
-/// The inherent method on [`BaseEngineValidator`] is the source of truth; this trait is just a
-/// dispatch surface so callers that don't know the concrete validator type can still invoke it.
-pub trait BasePostExecutionValidator<Types: PayloadTypes>:
-    PayloadValidator<Types, Block = BaseBlock>
-{
-    /// See [`BaseEngineValidator::validate_block_post_execution_with_state`].
-    fn validate_block_post_execution_with_parent_state<DB: StateProvider>(
-        &self,
-        state_updates: &HashedPostState,
-        parent_state: DB,
-        block: &RecoveredBlock<BaseBlock>,
-    ) -> Result<(), ConsensusError>;
-}
-
-impl<Types, P, Tx, ChainSpec> BasePostExecutionValidator<Types>
-    for BaseEngineValidator<P, Tx, ChainSpec>
-where
-    Types: PayloadTypes,
-    Self: PayloadValidator<Types, Block = BaseBlock>,
-    ChainSpec: Upgrades,
-{
-    fn validate_block_post_execution_with_parent_state<DB: StateProvider>(
-        &self,
-        state_updates: &HashedPostState,
-        parent_state: DB,
-        block: &RecoveredBlock<BaseBlock>,
-    ) -> Result<(), ConsensusError> {
-        Self::validate_block_post_execution_with_state(
-            self,
-            state_updates,
-            parent_state,
-            block.header(),
-        )
+            .map_err(ConsensusError::other)
     }
 }
 
 impl<P, Tx, ChainSpec, Types> PayloadValidator<Types> for BaseEngineValidator<P, Tx, ChainSpec>
 where
     P: StateProviderFactory + Unpin + 'static,
-    Tx: SignedTransaction + Unpin + 'static,
-    ChainSpec: Upgrades + Send + Sync + 'static,
+    Tx: BaseTransaction + SignedTransaction + Unpin + 'static,
+    ChainSpec: EthChainSpec + Upgrades + Send + Sync + 'static,
     Types: PayloadTypes<ExecutionData = ExecutionData>,
     Types::PayloadAttributes: Attributes<Transaction = Tx>,
 {
@@ -214,20 +160,20 @@ where
         state_updates: &HashedPostState,
         block: &RecoveredBlock<Self::Block>,
     ) -> Result<(), ConsensusError> {
-        if !self.chain_spec().is_isthmus_active_at_timestamp(block.timestamp()) {
+        let timestamp = block.timestamp();
+
+        if !self.chain_spec().is_isthmus_active_at_timestamp(timestamp) {
             return Ok(());
         }
 
         let parent_state =
             self.provider.state_by_block_hash(block.parent_hash()).map_err(|err| {
                 ConsensusError::Other(Arc::from(Box::<dyn core::error::Error + Send + Sync>::from(
-                    format!(
-                        "failed to load parent state for Isthmus withdrawals root validation: {err}"
-                    ),
+                    format!("failed to load parent state for post-execution validation: {err}"),
                 )))
             })?;
 
-        self.validate_block_post_execution_with_state(state_updates, parent_state, block.header())
+        self.validate_isthmus_post_execution(state_updates, &parent_state, block.header())
     }
 
     fn convert_payload_to_block(
@@ -256,8 +202,8 @@ where
             return Err(InvalidPayloadAttributesError::InvalidTimestamp);
         }
 
-        // The parent header does not contain its millisecond component. Exact 200ms progression is
-        // enforced against committed BaseTime state during post-execution validation.
+        // The parent header does not contain its millisecond component, so only whole-second
+        // ordering can be checked here.
         (timestamp >= header.timestamp())
             .then_some(())
             .ok_or(InvalidPayloadAttributesError::InvalidTimestamp)
@@ -273,7 +219,7 @@ where
         >,
     P: StateProviderFactory + Unpin + 'static,
     Tx: SignedTransaction + Unpin + 'static,
-    ChainSpec: Upgrades + Send + Sync + 'static,
+    ChainSpec: EthChainSpec + Upgrades + Send + Sync + 'static,
 {
     fn validate_version_specific_fields(
         &self,
@@ -428,19 +374,22 @@ pub fn validate_withdrawals_presence(
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::Header;
+    use alloy_consensus::{EMPTY_ROOT_HASH, Header};
     use alloy_primitives::{Address, B64, B256, b64};
     use alloy_rpc_types_engine::PayloadAttributes;
     use base_common_chains::{BaseUpgrade, ChainConfig};
     use base_common_consensus::BaseTxEnvelope;
     use base_common_rpc_types_engine::BasePayloadAttributes;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
+    use base_execution_consensus::BaseConsensusError;
     use reth_ethereum_forks::ForkCondition;
     use reth_provider::noop::NoopProvider;
     use reth_trie_common::KeccakKeyHasher;
 
     use super::*;
     use crate::engine;
+
+    const ZOMBIE_TIMESTAMP: u64 = 1_800_000_001;
 
     fn validator_with_chain_spec(
         chain_spec: BaseChainSpec,
@@ -458,8 +407,7 @@ mod tests {
     fn zombie_validator() -> BaseEngineValidator<NoopProvider, BaseTxEnvelope, BaseChainSpec> {
         validator_with_chain_spec(
             BaseChainSpecBuilder::base_mainnet()
-                .cobalt_activated()
-                .with_fork(BaseUpgrade::Zombie, ForkCondition::Timestamp(42))
+                .with_fork(BaseUpgrade::Zombie, ForkCondition::Timestamp(ZOMBIE_TIMESTAMP))
                 .build(),
         )
     }
@@ -666,7 +614,7 @@ mod tests {
     #[test]
     fn test_malformed_attributes_post_zombie_without_timestamp_millis_part() {
         let validator = zombie_validator();
-        let attributes = zombie_attributes(42);
+        let attributes = zombie_attributes(ZOMBIE_TIMESTAMP);
 
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
             BaseEngineTypes,
@@ -679,7 +627,7 @@ mod tests {
     #[test]
     fn test_malformed_attributes_post_zombie_with_invalid_timestamp_millis_part() {
         let validator = zombie_validator();
-        let mut attributes = zombie_attributes(42);
+        let mut attributes = zombie_attributes(ZOMBIE_TIMESTAMP);
         attributes.timestamp_millis_part = Some(100);
 
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
@@ -693,7 +641,7 @@ mod tests {
     #[test]
     fn test_well_formed_attributes_post_zombie_with_valid_timestamp_millis_part() {
         let validator = zombie_validator();
-        let mut attributes = zombie_attributes(42);
+        let mut attributes = zombie_attributes(ZOMBIE_TIMESTAMP);
         attributes.timestamp_millis_part = Some(200);
 
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
@@ -722,14 +670,20 @@ mod tests {
     fn test_payload_attributes_post_zombie_accept_same_second() {
         let validator = zombie_validator();
 
-        assert!(validate_against_parent(&validator, 42, Some(200), 42).is_ok());
+        assert!(
+            validate_against_parent(&validator, ZOMBIE_TIMESTAMP, Some(200), ZOMBIE_TIMESTAMP,)
+                .is_ok()
+        );
     }
 
     #[test]
     fn test_payload_attributes_post_zombie_accept_next_second() {
         let validator = zombie_validator();
 
-        assert!(validate_against_parent(&validator, 43, Some(0), 42).is_ok());
+        assert!(
+            validate_against_parent(&validator, ZOMBIE_TIMESTAMP + 1, Some(0), ZOMBIE_TIMESTAMP,)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -737,7 +691,7 @@ mod tests {
         let validator = zombie_validator();
 
         assert!(matches!(
-            validate_against_parent(&validator, 42, Some(800), 43),
+            validate_against_parent(&validator, ZOMBIE_TIMESTAMP, Some(800), ZOMBIE_TIMESTAMP + 1,),
             Err(InvalidPayloadAttributesError::InvalidTimestamp)
         ));
     }
@@ -747,7 +701,7 @@ mod tests {
         let validator = zombie_validator();
 
         assert!(matches!(
-            validate_against_parent(&validator, 42, None, 42),
+            validate_against_parent(&validator, ZOMBIE_TIMESTAMP, None, ZOMBIE_TIMESTAMP),
             Err(InvalidPayloadAttributesError::InvalidTimestamp)
         ));
     }
@@ -757,8 +711,44 @@ mod tests {
         let validator = zombie_validator();
 
         assert!(matches!(
-            validate_against_parent(&validator, 42, Some(999), 42),
+            validate_against_parent(&validator, ZOMBIE_TIMESTAMP, Some(999), ZOMBIE_TIMESTAMP,),
             Err(InvalidPayloadAttributesError::InvalidTimestamp)
+        ));
+    }
+
+    fn post_execution_block(withdrawals_root: B256) -> RecoveredBlock<BaseBlock> {
+        let block = BaseBlock {
+            header: Header {
+                timestamp: ZOMBIE_TIMESTAMP,
+                withdrawals_root: Some(withdrawals_root),
+                ..Default::default()
+            },
+            body: Default::default(),
+        };
+        RecoveredBlock::new_sealed(SealedBlock::seal_slow(block), vec![])
+    }
+
+    fn base_consensus_error(error: &ConsensusError) -> Option<&BaseConsensusError> {
+        let ConsensusError::Other(error) = error else {
+            return None;
+        };
+        error.downcast_ref()
+    }
+
+    #[test]
+    fn generic_post_execution_validation_checks_isthmus() {
+        let block = post_execution_block(EMPTY_ROOT_HASH);
+        let error =
+            PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
+                &zombie_validator(),
+                &HashedPostState::default(),
+                &block,
+            )
+            .unwrap_err();
+
+        assert!(matches!(
+            base_consensus_error(&error),
+            Some(BaseConsensusError::L2WithdrawalsRootMismatch { .. })
         ));
     }
 }

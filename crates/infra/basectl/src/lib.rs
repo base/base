@@ -61,9 +61,9 @@ pub use rpc::{
     fetch_sequencer_active, fetch_sync_status, list_banned_peers, pause_sequencer_node,
     remove_peer, restart_conductor_node, run_block_fetcher, run_conductor_poller,
     run_flashblock_ws, run_flashblock_ws_timestamped, run_l1_blob_watcher, run_pods_poller,
-    run_proofs_poller, run_safe_head_poller, run_validator_poller, start_sequencer,
-    start_sequencer_node, stop_sequencer, stop_sequencer_node, transfer_conductor_leader,
-    unban_peer, unpause_sequencer_node,
+    run_proofs_poller, run_rollup_config_poller, run_safe_head_poller, run_validator_poller,
+    start_sequencer, start_sequencer_node, stop_sequencer, stop_sequencer_node,
+    transfer_conductor_leader, unban_peer, unpause_sequencer_node,
 };
 
 mod tui;

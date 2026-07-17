@@ -10,7 +10,8 @@ use alloy_eips::Encodable2718;
 use alloy_primitives::{B256, Bloom, Bytes};
 use alloy_trie::EMPTY_ROOT_HASH;
 use base_common_chains::Upgrades;
-use base_common_consensus::DepositReceiptExt;
+use base_common_consensus::{BaseTxEnvelope, DepositReceiptExt};
+use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
 use reth_consensus::ConsensusError;
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{BlockBody, GotExpected, receipt::gas_spent_by_transactions};
@@ -20,6 +21,20 @@ use crate::proof::calculate_receipt_root;
 
 fn should_trust_precomputed_receipt_root(chain_spec: &impl Upgrades, timestamp: u64) -> bool {
     chain_spec.is_canyon_active_at_timestamp(timestamp)
+}
+
+/// Validates the `BaseTime` metadata deposit when its activation gate is active.
+pub fn validate_base_time_metadata(
+    chain_spec: &impl Upgrades,
+    timestamp: u64,
+    block_number: u64,
+    transactions: &[BaseTxEnvelope],
+) -> Result<(), BaseTimeMetadataError> {
+    if chain_spec.is_zombie_active_at_timestamp(timestamp) {
+        BaseTimeUpdateTx::extract_from_transactions(transactions, block_number)?;
+    }
+
+    Ok(())
 }
 
 /// Ensures the block response data matches the header.
@@ -227,13 +242,14 @@ fn compare_receipts_root_and_logs_bloom(
 mod tests {
     use std::sync::Arc;
 
-    use alloy_consensus::{Header, Receipt, TxReceipt};
+    use alloy_consensus::{Header, Receipt, Sealable, TxReceipt};
     use alloy_eips::{eip2718::Encodable2718, eip7685::Requests};
     use alloy_primitives::{Bloom, Bytes, b256, hex};
     use alloy_trie::root::ordered_trie_root_with_encoder;
-    use base_common_consensus::{BaseReceipt, BaseTxEnvelope, DepositReceipt};
+    use base_common_consensus::{BaseReceipt, BaseTxEnvelope, DepositReceipt, TxDeposit};
     use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::BaseChainSpec;
+    use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
     use reth_chainspec::{BaseFeeParams, EthChainSpec, ForkCondition};
 
     use super::*;
@@ -269,6 +285,28 @@ mod tests {
             deposit_nonce: Some(4_012_991),
             deposit_receipt_version: None,
         })
+    }
+
+    fn base_time_transactions(
+        block_number: u64,
+        timestamp_millis_part: u16,
+    ) -> Vec<BaseTxEnvelope> {
+        let metadata =
+            BaseTimeUpdateTx::new(timestamp_millis_part).unwrap().into_deposit_tx(block_number);
+        vec![TxDeposit::default().seal_slow().into(), metadata.into()]
+    }
+
+    #[test]
+    fn validates_base_time_metadata_only_after_activation() {
+        let mut chain_spec = BaseChainSpec::sepolia();
+        chain_spec.set_fork(BaseUpgrade::Zombie, ForkCondition::Timestamp(10));
+
+        validate_base_time_metadata(&chain_spec, 10, 9, &base_time_transactions(9, 400)).unwrap();
+        assert!(matches!(
+            validate_base_time_metadata(&chain_spec, 10, 9, &[]),
+            Err(BaseTimeMetadataError::Missing)
+        ));
+        validate_base_time_metadata(&chain_spec, 9, 9, &[]).unwrap();
     }
 
     fn plain_precomputed_receipt_root_bloom(receipts: &[BaseReceipt]) -> (B256, Bloom) {
