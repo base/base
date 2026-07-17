@@ -1077,7 +1077,8 @@ where
             [transaction_expiry, sender_expiry, payer_expiry].into_iter().min().unwrap_or(u64::MAX);
         let mut watch_set = WatchSet::new().watch(InvalidationKey::Balance(payer));
         for read in &config_reads {
-            watch_set.push(InvalidationKey::Slot { address: read.address, slot: B256::from(read.slot) });
+            watch_set
+                .push(InvalidationKey::Slot { address: read.address, slot: B256::from(read.slot) });
         }
         for address in authorization_code_reads {
             watch_set.push(InvalidationKey::CodeHash(address));
@@ -3086,7 +3087,7 @@ mod tests {
             assert!(
                 state.watch_set.contains(&InvalidationKey::Slot {
                     address: read.address,
-                    slot: b256_from_u256(read.slot),
+                    slot: B256::from(read.slot),
                 }),
                 "captured read must also be indexed for invalidation: {read:?}"
             );

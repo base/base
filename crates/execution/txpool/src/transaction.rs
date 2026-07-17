@@ -237,12 +237,18 @@ impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Po
     fn size(&self) -> usize {
         let watch_keys_size =
             self.watch_set.get().map_or(0, |watch_set| core::mem::size_of_val(watch_set.keys()));
+        let manifest_slots_size = self
+            .watch_manifest
+            .get()
+            .map_or(0, |manifest| core::mem::size_of_val(manifest.config_slots()));
         self.inner.size()
             + core::mem::size_of::<u128>()
             + core::mem::size_of::<Option<u64>>() * 3
             + core::mem::size_of::<OnceLock<crate::WatchSet>>()
             + watch_keys_size
             + core::mem::size_of::<OnceLock<crate::LimitClass>>()
+            + core::mem::size_of::<OnceLock<crate::WatchManifest>>()
+            + manifest_slots_size
     }
 }
 
@@ -587,7 +593,8 @@ mod tests {
     };
 
     use crate::{
-        BasePooledTransaction, BasePooledTx, BaseTransactionValidator, InvalidationKey, WatchSet,
+        BasePooledTransaction, BasePooledTx, BaseTransactionValidator, ConfigSlot, InvalidationKey,
+        WatchManifest, WatchSet,
     };
 
     fn signer() -> PrivateKeySigner {
@@ -674,5 +681,29 @@ mod tests {
         transaction.set_watch_set(watch_set);
 
         assert_eq!(transaction.size(), size_without_keys + keys_size);
+    }
+
+    #[test]
+    fn in_memory_size_includes_manifest_slots() {
+        let transaction = eip8130_pooled(U256::ZERO);
+        let size_without_slots = transaction.size();
+        let manifest = WatchManifest::new(
+            vec![
+                ConfigSlot { address: Address::ZERO, slot: U256::ZERO, expected: U256::ZERO },
+                ConfigSlot {
+                    address: Address::repeat_byte(1),
+                    slot: U256::from(1),
+                    expected: U256::from(2),
+                },
+            ],
+            Address::ZERO,
+            U256::ZERO,
+            u64::MAX,
+        );
+        let slots_size = core::mem::size_of_val(manifest.config_slots());
+
+        transaction.set_watch_manifest(manifest);
+
+        assert_eq!(transaction.size(), size_without_slots + slots_size);
     }
 }
