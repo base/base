@@ -179,6 +179,16 @@ services:
       - ${SEQUENCER_KEY}
       - --p2p.scoring
       - Off
+      # Devnet runs a tiny gossip mesh that never reaches the mesh low-watermark,
+      # so the topic mesh cannot stabilize. Flood publishing sends unsafe payloads
+      # to every known peer on the topic regardless of mesh state, removing the
+      # single-peer fast-path fragility that stalls followers.
+      - --p2p.gossip.mesh.floodpublish
+      - "true"
+      # Reconnect quickly after a transient drop instead of waiting the default
+      # 60m redial period before the dial counter resets.
+      - --p2p.redial.period
+      - "1"
       - -vvv
     healthcheck:
       <<: *node-healthcheck
@@ -288,6 +298,16 @@ services:
       - ${SEQUENCER_KEY}
       - --p2p.scoring
       - Off
+      # Devnet runs a tiny gossip mesh that never reaches the mesh low-watermark,
+      # so the topic mesh cannot stabilize. Flood publishing sends unsafe payloads
+      # to every known peer on the topic regardless of mesh state, removing the
+      # single-peer fast-path fragility that stalls followers.
+      - --p2p.gossip.mesh.floodpublish
+      - "true"
+      # Reconnect quickly after a transient drop instead of waiting the default
+      # 60m redial period before the dial counter resets.
+      - --p2p.redial.period
+      - "1"
       - -vvv
     healthcheck:
       <<: *node-healthcheck
