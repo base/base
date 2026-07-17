@@ -221,8 +221,13 @@ where
                     &engine,
                     finalized,
                     &source_safe,
+                    local_hash,
+                    generation.clone(),
                 )
                 .await?;
+                if generation.is_cancelled() {
+                    return Ok(SafetyOutcome::Updated);
+                }
                 // Cancel only after a confirmed reset. Cancelling earlier lets fetch/insert finish
                 // first and causes the outer select to shut down follow mode before recovery can
                 // return its restart point.
@@ -412,7 +417,7 @@ mod tests {
     use crate::{
         MockRemoteClient,
         follow::{
-            engine::FollowEngine,
+            engine::{FollowEngine, ResetStats},
             local::MockFollowLocalClient,
             proof_gate::{ActiveProofGate, NoopProofGate},
         },
@@ -528,9 +533,13 @@ mod tests {
             Ok(())
         }
 
-        async fn reset_to_ancestor(&self, ancestor: L2BlockInfo) -> Result<(), FollowError> {
+        async fn reset_to_ancestor(
+            &self,
+            ancestor: L2BlockInfo,
+            _cancellation: CancellationToken,
+        ) -> Result<ResetStats, FollowError> {
             self.reset.lock().await.push(ancestor.block_info.number);
-            Ok(())
+            Ok(ResetStats::default())
         }
     }
 
@@ -1217,11 +1226,73 @@ mod tests {
             ..Default::default()
         };
 
-        let error = recovery::recover(&local, &source, &engine, &finalized, &source_safe)
-            .await
-            .expect_err("finalized divergence");
+        let error = recovery::recover(
+            &local,
+            &source,
+            &engine,
+            &finalized,
+            &source_safe,
+            B256::from([7; 32]),
+            CancellationToken::new(),
+        )
+        .await
+        .expect_err("finalized divergence");
 
         assert!(matches!(error, FollowError::SourceBlockHashMismatch { number: 7, .. }));
+    }
+
+    #[tokio::test]
+    async fn recovery_rechecks_fresh_finalized_head_before_reset() {
+        let finalized_reads = Arc::new(AtomicU64::new(0));
+        let finalized_reads_for_local = Arc::clone(&finalized_reads);
+        let mut local = MockFollowLocalClient::new();
+        local.expect_block_info().returning(move |tag| {
+            Ok(Some(match tag {
+                BlockNumberOrTag::Finalized => {
+                    finalized_reads_for_local.fetch_add(1, Ordering::SeqCst);
+                    block_info(10)
+                }
+                BlockNumberOrTag::Number(number) => block_info(number),
+                _ => block_info(0),
+            }))
+        });
+
+        let mut source = MockRemoteClient::new();
+        source.expect_get_block_info().with(eq(BlockNumberOrTag::Latest)).returning(|_| {
+            Ok(BlockInfo {
+                number: 10,
+                hash: B256::from([99; 32]),
+                parent_hash: B256::from([9; 32]),
+                ..Default::default()
+            })
+        });
+        source
+            .expect_get_block_info_by_hash()
+            .with(eq(B256::from([9; 32])))
+            .returning(|_| Ok(source_block_info(9)));
+
+        let engine = Arc::new(RecordingEngine::new(Duration::ZERO));
+        let engine_for_recovery: Arc<dyn FollowEngine> = Arc::<RecordingEngine>::clone(&engine);
+        let error = recovery::recover(
+            &local,
+            &source,
+            &engine_for_recovery,
+            &block_info(7),
+            &BlockInfo {
+                number: 10,
+                hash: B256::from([99; 32]),
+                parent_hash: B256::from([9; 32]),
+                ..Default::default()
+            },
+            B256::from([10; 32]),
+            CancellationToken::new(),
+        )
+        .await
+        .expect_err("fresh finalized divergence must prevent reset");
+
+        assert!(matches!(error, FollowError::SourceBlockHashMismatch { number: 10, .. }));
+        assert_eq!(finalized_reads.load(Ordering::SeqCst), 1);
+        assert!(engine.reset.lock().await.is_empty());
     }
 
     #[tokio::test(flavor = "multi_thread")]

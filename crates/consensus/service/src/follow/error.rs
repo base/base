@@ -95,6 +95,15 @@ pub enum FollowError {
         parent_number: u64,
     },
 
+    /// Recovery exceeded its shared lookup or time budget.
+    #[error("follow recovery budget exceeded during {phase} after {lookups} lookups")]
+    RecoveryBudgetExceeded {
+        /// Recovery phase that exhausted the budget.
+        phase: &'static str,
+        /// Number of lookups attempted before the budget was exhausted.
+        lookups: u64,
+    },
+
     /// A recovery reorg was refused because it would rewind below the finalized head.
     #[error("refusing to reorg to block {number} below the finalized head {finalized}")]
     ReorgBelowFinalized {
