@@ -275,7 +275,7 @@ where
         self.validator().validator().clear_limit_class_cache();
         let dropped = self.guard.write().invalidate_all();
         let removed = self.remove_dropped_across_pools(dropped);
-        GuardMetrics::record_state_diff_invalidations(removed.len());
+        GuardMetrics::record_feed_gap_invalidations(removed.len());
         removed
     }
 
@@ -318,6 +318,9 @@ where
         let recent = (now / InvalidationKey::EXPIRY_BUCKET_SECS).saturating_sub(1);
         let keys: Vec<InvalidationKey> = {
             let mut last = self.last_fired_expiry_bucket.write();
+            // Bootstrap from one bucket before `now`, clamped at zero and the
+            // horizon. This bounds the first sweep to at most three buckets,
+            // including for the timestamp-zero edge case.
             let start =
                 last.map_or(recent.min(horizon), |previous| previous.min(recent).min(horizon));
             *last = Some(last.map_or(horizon, |previous| previous.max(horizon)));

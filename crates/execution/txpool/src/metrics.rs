@@ -7,7 +7,10 @@ base_metrics::define_metrics! {
     #[label(name = "reason", default = ["sender", "payer", "payment", "payer_balance"])]
     admission_rejected: counter,
     #[describe("EIP-8130 transactions invalidated and evicted ahead of the builder")]
-    #[label(name = "cause", default = ["state_diff", "balance_update", "expiry", "reconcile"])]
+    #[label(
+        name = "cause",
+        default = ["state_diff", "balance_update", "expiry", "feed_gap", "reconcile"]
+    )]
     invalidated: counter,
     #[describe("Expiry buckets fired on canonical updates (one-block lookahead eviction)")]
     expiry_buckets_fired: counter,
@@ -44,6 +47,13 @@ impl GuardMetrics {
     pub fn record_expiry_invalidations(count: usize) {
         if count > 0 {
             Self::invalidated("expiry").increment(count as u64);
+        }
+    }
+
+    /// Records bulk invalidations after a canonical-state feed gap or reorg.
+    pub fn record_feed_gap_invalidations(count: usize) {
+        if count > 0 {
+            Self::invalidated("feed_gap").increment(count as u64);
         }
     }
 
