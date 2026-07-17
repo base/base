@@ -1067,11 +1067,9 @@ where
             };
             let mut cache = self.limit_class_cache.write();
             let mut slots = self.limit_class_cache_slots.write();
-            if generation == self.limit_class_cache_generation() {
-                if !cache.contains_key(&account) && cache.len() >= LIMIT_CLASS_CACHE_CAPACITY {
-                    cache.clear();
-                    slots.clear();
-                }
+            if generation == self.limit_class_cache_generation()
+                && (cache.contains_key(&account) || cache.len() < LIMIT_CLASS_CACHE_CAPACITY)
+            {
                 cache.entry(account).or_default().0 = Some(value);
                 slots.insert(Self::account_state_slot(account), account);
             }
@@ -1098,12 +1096,9 @@ where
             .flatten()
             .is_some_and(|target| self.trusted_delegation_targets.contains(&target));
         let mut cache = self.limit_class_cache.write();
-        let mut slots = self.limit_class_cache_slots.write();
-        if generation == self.limit_class_cache_generation() {
-            if !cache.contains_key(&account) && cache.len() >= LIMIT_CLASS_CACHE_CAPACITY {
-                cache.clear();
-                slots.clear();
-            }
+        if generation == self.limit_class_cache_generation()
+            && (cache.contains_key(&account) || cache.len() < LIMIT_CLASS_CACHE_CAPACITY)
+        {
             cache.entry(account).or_default().1 = Some(trusted);
         }
         trusted

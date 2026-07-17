@@ -8,7 +8,7 @@ use alloy_eips::{
 };
 use alloy_primitives::{Address, B128, B256, TxHash, U256, map::AddressSet};
 use futures::StreamExt;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use reth_eth_wire_types::HandleMempoolData;
 use reth_execution_types::ChangedAccount;
 use reth_primitives_traits::Recovered;
@@ -111,6 +111,10 @@ pub struct BaseTransactionPool<
     listeners: Arc<RwLock<SidecarListeners<T>>>,
     /// Shared admission and invalidation ledger for EIP-8130 transactions.
     guard: Arc<RwLock<MempoolGuard>>,
+    /// Serializes the short protocol-pool insertion/admission section so a
+    /// concurrent same-nonce replacement cannot leave a stale guard record.
+    /// Validation remains outside this lock.
+    protocol_admission_lock: Arc<Mutex<()>>,
     /// Highest expiry bucket fired by canonical maintenance.
     last_fired_expiry_bucket: Arc<RwLock<Option<u64>>>,
 }
@@ -145,6 +149,7 @@ where
             nonce_pool: Arc::clone(&self.nonce_pool),
             listeners: Arc::clone(&self.listeners),
             guard: Arc::clone(&self.guard),
+            protocol_admission_lock: Arc::clone(&self.protocol_admission_lock),
             last_fired_expiry_bucket: Arc::clone(&self.last_fired_expiry_bucket),
         }
     }
@@ -186,6 +191,7 @@ where
             nonce_pool: Arc::new(RwLock::new(TwoDNoncePool::new(price_bump_config))),
             listeners: Arc::new(RwLock::new(SidecarListeners::default())),
             guard: Arc::new(RwLock::new(MempoolGuard::unlimited())),
+            protocol_admission_lock: Arc::new(Mutex::new(())),
             last_fired_expiry_bucket: Arc::new(RwLock::new(None)),
         }
     }
@@ -261,7 +267,7 @@ where
     }
 
     /// Clears all guarded transactions after a canonical-feed gap.
-    pub fn invalidate_all_tracked(&self) -> Vec<Arc<ValidPoolTransaction<T>>> {
+    pub fn invalidate_all_tracked_transactions(&self) -> Vec<Arc<ValidPoolTransaction<T>>> {
         self.validator().validator().clear_limit_class_cache();
         let dropped = self.guard.write().invalidate_all();
         let removed = self.remove_dropped_across_pools(dropped);
@@ -344,11 +350,11 @@ where
         GuardMetrics::record_reconcile_releases(stale.len());
     }
 
-    fn protocol_replacement_hash(&self, transaction: &T) -> Option<TxHash> {
+    fn protocol_replacement_hash(&self, sender: Address, nonce: u64) -> Option<TxHash> {
         self.protocol_pool
-            .get_transactions_by_sender(transaction.sender())
+            .get_transactions_by_sender(sender)
             .into_iter()
-            .find(|existing| existing.nonce() == transaction.nonce())
+            .find(|existing| existing.nonce() == nonce)
             .map(|existing| *existing.hash())
     }
 
@@ -595,7 +601,7 @@ where
     }
 
     fn invalidate_all_tracked(&self) -> usize {
-        self.invalidate_all_tracked().len()
+        self.invalidate_all_tracked_transactions().len()
     }
 }
 
@@ -637,9 +643,13 @@ where
     ) -> PoolResult<TransactionEvents> {
         if !self.is_sidecar_transaction(&transaction) {
             let hash = *transaction.hash();
-            let replaced = self.protocol_replacement_hash(&transaction);
+            let sender = transaction.sender();
+            let nonce = transaction.nonce();
+            let validated = self.validator().validate_transaction(origin, transaction).await;
+            let _admission_guard = self.protocol_admission_lock.lock();
+            let replaced = self.protocol_replacement_hash(sender, nonce);
             let events =
-                self.protocol_pool.add_transaction_and_subscribe(origin, transaction).await?;
+                self.protocol_pool.inner().add_transaction_and_subscribe(origin, validated)?;
             self.gate_protocol_admission(hash, replaced)?;
             return Ok(events);
         }
@@ -662,8 +672,14 @@ where
             self.add_sidecar_transaction(origin, transaction).await
         } else {
             let hash = *transaction.hash();
-            let replaced = self.protocol_replacement_hash(&transaction);
-            let outcome = self.protocol_pool.add_transaction(origin, transaction).await?;
+            let sender = transaction.sender();
+            let nonce = transaction.nonce();
+            let validated = self.validator().validate_transaction(origin, transaction).await;
+            let _admission_guard = self.protocol_admission_lock.lock();
+            let replaced = self.protocol_replacement_hash(sender, nonce);
+            let mut outcomes =
+                self.protocol_pool.inner().add_transactions(origin, std::iter::once(validated));
+            let outcome = outcomes.pop().expect("one transaction produces one outcome")?;
             self.gate_protocol_admission(hash, replaced)?;
             Ok(outcome)
         }
@@ -1505,7 +1521,7 @@ mod tests {
     };
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_evm::BaseEvmConfig;
-    use futures::StreamExt;
+    use futures::{StreamExt, future::join_all};
     use reth_primitives_traits::SealedBlock;
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
     use reth_tasks::Runtime;
@@ -1923,6 +1939,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn concurrent_protocol_replacements_leave_no_stale_guard_records() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+        let transactions = (0..16)
+            .map(|index| self_paid_eoa_8130(&signer, U256::ZERO, 0, 0, 1_000 + index * 250))
+            .collect::<Vec<_>>();
+
+        let outcomes = join_all(
+            transactions
+                .into_iter()
+                .map(|transaction| pool.add_transaction(TransactionOrigin::Local, transaction)),
+        )
+        .await;
+
+        assert!(outcomes.iter().any(Result::is_ok));
+        let tracked = pool.guard.read().tracked_hashes();
+        assert_eq!(tracked.len(), 1, "same-nonce replacements must consume one guard slot");
+        assert!(
+            tracked.iter().all(|hash| pool.protocol_pool.get(hash).is_some()),
+            "every guard record must still have a protocol-pool transaction"
+        );
+    }
+
+    #[tokio::test]
     async fn stale_sidecar_replacement_restores_original_transaction() {
         let (pool, client) = build_integration_pool();
         let signer = signer();
@@ -1989,7 +2030,7 @@ mod tests {
         pool.add_transaction(TransactionOrigin::Local, channel).await.unwrap();
         assert!(pool.guard.read().contains(&channel_hash));
 
-        let removed = pool.invalidate_all_tracked();
+        let removed = pool.invalidate_all_tracked_transactions();
         assert_eq!(removed.len(), 1);
         assert_eq!(*removed[0].hash(), channel_hash);
         assert!(pool.get(&channel_hash).is_none());
