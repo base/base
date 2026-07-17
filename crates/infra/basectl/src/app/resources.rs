@@ -328,10 +328,10 @@ impl Resources {
 
     /// Polls for live upgrade schedule updates from the consensus node.
     pub fn poll_upgrades(&mut self) {
-        if let Some(ref mut rx) = self.upgrades_rx
-            && let Ok(upgrades) = rx.try_recv()
-        {
-            self.config.upgrades = Some(upgrades);
+        if let Some(ref mut rx) = self.upgrades_rx {
+            while let Ok(upgrades) = rx.try_recv() {
+                self.config.upgrades = Some(upgrades);
+            }
         }
     }
 }
