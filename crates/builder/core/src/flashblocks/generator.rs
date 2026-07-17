@@ -86,7 +86,7 @@ where
         + 'static,
     Builder: PayloadBuilder + Unpin + 'static,
     Builder::Attributes: Unpin + Clone,
-    Builder::BuiltPayload: Unpin + Clone,
+    Builder::BuiltPayload: Unpin + Clone + Send + Sync + 'static,
 {
     type Job = BlockPayloadJob<Builder>;
 
@@ -160,6 +160,7 @@ where
             builder: self.builder.clone(),
             config,
             payload_rx: None,
+            build_error: Arc::new(Mutex::new(None)),
             cancel: cancel_token,
             publish_guard,
             deadline,
@@ -210,8 +211,14 @@ where
     /// See [`PayloadBuilder`]
     pub(crate) builder: Builder,
     /// Receiver for the latest payload from the builder task.
-    /// `None` until `spawn_build_job` is called; taken by `resolve_kind` into [`ResolvePayload`].
+    /// `None` until `spawn_build_job` is called; cloned by `resolve_kind` into [`ResolvePayload`].
     pub(crate) payload_rx: Option<watch::Receiver<Option<Builder::BuiltPayload>>>,
+    /// The error the build task last failed with, if any.
+    ///
+    /// The build task can only report failure by dropping `payload_rx`'s sender, which loses
+    /// the underlying cause. This carries that cause over to [`ResolvePayload`] so its error
+    /// reflects why the build task exited rather than a generic message.
+    pub(crate) build_error: Arc<Mutex<Option<String>>>,
     /// Cancellation token for the running job
     pub(crate) cancel: CancellationToken,
     /// Mutex to synchronize cancellation with payload publishing.
@@ -244,10 +251,7 @@ where
     type BuiltPayload = Builder::BuiltPayload;
 
     fn best_payload(&self) -> Result<Self::BuiltPayload, PayloadBuilderError> {
-        self.payload_rx
-            .as_ref()
-            .and_then(|rx| rx.borrow().clone())
-            .ok_or(PayloadBuilderError::MissingPayload)
+        unimplemented!()
     }
 
     fn payload_attributes(&self) -> Result<Self::PayloadAttributes, PayloadBuilderError> {
@@ -266,7 +270,10 @@ where
             self.cancel.cancel();
         }
 
-        (ResolvePayload::new(self.payload_rx.clone()), KeepPayloadJobAlive::No)
+        (
+            ResolvePayload::new(self.payload_rx.clone(), Arc::clone(&self.build_error)),
+            KeepPayloadJobAlive::No,
+        )
     }
 }
 
@@ -288,7 +295,7 @@ impl<Builder> BlockPayloadJob<Builder>
 where
     Builder: PayloadBuilder + Unpin + 'static,
     Builder::Attributes: Unpin + Clone,
-    Builder::BuiltPayload: Unpin + Clone,
+    Builder::BuiltPayload: Unpin + Clone + Send + Sync + 'static,
 {
     /// Spawns a blocking task that builds the next payload using the current configuration.
     pub fn spawn_build_job(&mut self) {
@@ -296,6 +303,7 @@ where
         let payload_config = self.config.clone();
         let cancel = self.cancel.clone();
         let publish_guard = Arc::clone(&self.publish_guard);
+        let build_error = Arc::clone(&self.build_error);
 
         let (watch_tx, watch_rx) = watch::channel(None);
         self.payload_rx = Some(watch_rx);
@@ -305,6 +313,7 @@ where
                 BuildArguments { cached_reads, config: payload_config, cancel, publish_guard };
             if let Err(e) = builder.try_build(args, watch_tx).await {
                 warn!(error = %e, "Payload build task failed");
+                *build_error.lock() = Some(e.to_string());
             }
         }));
     }
@@ -315,7 +324,7 @@ impl<Builder> Future for BlockPayloadJob<Builder>
 where
     Builder: PayloadBuilder + Unpin + 'static,
     Builder::Attributes: Unpin + Clone,
-    Builder::BuiltPayload: Unpin + Clone,
+    Builder::BuiltPayload: Unpin + Clone + Send + Sync + 'static,
 {
     type Output = Result<(), PayloadBuilderError>;
 
@@ -344,7 +353,8 @@ where
 ///
 /// Waits for the first non-`None` value from the watch channel.  If the sender
 /// is dropped before any value is sent (build task failed or panicked), the
-/// future resolves with `Err(MissingPayload)`.
+/// future resolves with an error describing why the build task exited, falling
+/// back to a generic message if no cause was recorded.
 pub struct ResolvePayload<T> {
     future: futures::future::BoxFuture<'static, Result<T, PayloadBuilderError>>,
 }
@@ -356,7 +366,10 @@ impl<T> std::fmt::Debug for ResolvePayload<T> {
 }
 
 impl<T: Clone + Send + Sync + 'static> ResolvePayload<T> {
-    fn new(payload_rx: Option<watch::Receiver<Option<T>>>) -> Self {
+    fn new(
+        payload_rx: Option<watch::Receiver<Option<T>>>,
+        build_error: Arc<Mutex<Option<String>>>,
+    ) -> Self {
         let future = async move {
             let Some(mut rx) = payload_rx else {
                 return Err(PayloadBuilderError::Other("payload receiver missing".into()));
@@ -368,7 +381,12 @@ impl<T: Clone + Send + Sync + 'static> ResolvePayload<T> {
                 }
 
                 rx.changed().await.map_err(|_| {
-                    PayloadBuilderError::Other("builder exited before producing payload".into())
+                    build_error.lock().take().map_or(
+                        PayloadBuilderError::Other(
+                            "builder exited before producing payload".into(),
+                        ),
+                        |err| PayloadBuilderError::Other(err.into()),
+                    )
                 })?;
             }
         }
@@ -378,7 +396,7 @@ impl<T: Clone + Send + Sync + 'static> ResolvePayload<T> {
     }
 }
 
-impl<T: Unpin> Future for ResolvePayload<T> {
+impl<T> Future for ResolvePayload<T> {
     type Output = Result<T, PayloadBuilderError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -608,10 +626,13 @@ mod tests {
             sleep(Duration::from_millis(50)).await;
             tx.send_replace(Some(MockPayloadValue(7)));
         });
-        let payload = timeout(Duration::from_secs(1), ResolvePayload::new(Some(rx)))
-            .await
-            .expect("timed out")
-            .expect("missing payload");
+        let payload = timeout(
+            Duration::from_secs(1),
+            ResolvePayload::new(Some(rx), Arc::new(Mutex::new(None))),
+        )
+        .await
+        .expect("timed out")
+        .expect("missing payload");
         assert_eq!(payload, MockPayloadValue(7));
     }
 
@@ -619,7 +640,9 @@ mod tests {
     async fn test_resolve_payload_immediate_value() {
         let (tx, rx) = watch::channel::<Option<MockPayloadValue>>(None);
         tx.send_replace(Some(MockPayloadValue(3)));
-        let payload = ResolvePayload::new(Some(rx)).await.expect("should resolve immediately");
+        let payload = ResolvePayload::new(Some(rx), Arc::new(Mutex::new(None)))
+            .await
+            .expect("should resolve immediately");
         assert_eq!(payload, MockPayloadValue(3));
     }
 
@@ -627,14 +650,26 @@ mod tests {
     async fn test_resolve_payload_errors_when_sender_dropped() {
         let (tx, rx) = watch::channel::<Option<MockPayloadValue>>(None);
         drop(tx);
-        ResolvePayload::new(Some(rx))
+        ResolvePayload::new(Some(rx), Arc::new(Mutex::new(None)))
             .await
             .expect_err("should error when sender dropped without value");
     }
 
     #[tokio::test]
+    async fn test_resolve_payload_propagates_build_error() {
+        let (tx, rx) = watch::channel::<Option<MockPayloadValue>>(None);
+        let build_error = Arc::new(Mutex::new(None));
+        *build_error.lock() = Some("state root computation failed".to_string());
+        drop(tx);
+        let err = ResolvePayload::new(Some(rx), build_error)
+            .await
+            .expect_err("should error when sender dropped without value");
+        assert!(err.to_string().contains("state root computation failed"));
+    }
+
+    #[tokio::test]
     async fn test_resolve_payload_errors_when_rx_missing() {
-        ResolvePayload::<MockPayloadValue>::new(None)
+        ResolvePayload::<MockPayloadValue>::new(None, Arc::new(Mutex::new(None)))
             .await
             .expect_err("should error when receiver is missing");
     }
