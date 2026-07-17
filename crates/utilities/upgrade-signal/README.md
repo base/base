@@ -13,6 +13,13 @@ Three graduated rollout modes are supported:
 - **runtime-admin** — write live overrides into `RuntimeUpgradeRegistry` so fork checks reflect
   contract-sourced signals without a node restart
 
+## Startup Read
+
+A consensus node that configures the upgrade signal contract must read it successfully (with
+retries) before it starts serving. The observer actor fails node startup when the initial read
+cannot be completed, so a restarted sequencer can never become leader and build blocks with an
+unread upgrade schedule.
+
 ## Protocol Versions
 
 The contract exposes one global `minimumProtocolVersion()` as a packed-semver `uint256`

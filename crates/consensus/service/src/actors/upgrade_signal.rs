@@ -1,7 +1,6 @@
-//! Upgrade signal metrics observer actor.
+//! Upgrade signal observer actor: startup read, live metrics, and runtime auto-apply.
 
 use alloy_provider::RootProvider;
-use base_common_genesis::BaseUpgrade;
 use base_upgrade_signal::{
     AlloyUpgradeSignalReader, UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalError,
     UpgradeSignalMetricLayer, UpgradeSignalMonitor, UpgradeSignalRefresher,
@@ -73,14 +72,14 @@ impl UpgradeSignalNodeConfig {
     }
 }
 
-/// Actor that records live L1 upgrade signal metrics and, when runtime refresh is enabled,
-/// automatically re-applies the schedule on observed L1 changes.
+/// Actor that reads the L1 upgrade signal at startup, records live metrics, and, when runtime
+/// refresh is enabled, automatically re-applies the schedule on observed L1 changes.
 #[derive(Debug)]
 pub struct UpgradeSignalMetricsActor {
+    /// Upgrade signal schedule read configuration.
+    pub config: UpgradeSignalConfig,
     /// L1 upgrade signal reader.
     pub reader: AlloyUpgradeSignalReader,
-    /// Contract-backed upgrades read from the L1 contract.
-    pub upgrade_ids: Vec<BaseUpgrade>,
     /// Live metrics state.
     pub monitor: UpgradeSignalMonitor,
     /// Runtime refresher applied automatically on observed live updates, when enabled.
@@ -101,13 +100,31 @@ impl UpgradeSignalMetricsActor {
         let monitor =
             UpgradeSignalMonitor::new(UpgradeSignalMetricLayer::Consensus, &config.upgrade_ids);
 
-        Self { reader, upgrade_ids: config.upgrade_ids, monitor, refresher, cancellation }
+        Self { config, reader, monitor, refresher, cancellation }
+    }
+
+    /// Reads the L1 upgrade signal once before the node starts serving.
+    ///
+    /// A node — especially a sequencer that may immediately become leader — must never start with
+    /// an unread upgrade schedule: a restart shortly before an upgrade could otherwise build
+    /// blocks without the activation timestamp set and fork the chain. The read is retried and,
+    /// on persistent failure, fails node startup instead of degrading to tolerant live polling.
+    pub async fn read_startup_signal(&self) -> Result<(), UpgradeSignalError> {
+        self.config
+            .read_schedule(
+                &self.reader,
+                "consensus startup",
+                &[UpgradeSignalMetricLayer::Consensus],
+            )
+            .await?;
+
+        Ok(())
     }
 
     /// Polls L1 upgrade signal state, records metrics, and auto-applies observed changes when
     /// runtime refresh is enabled.
     pub async fn poll_l1_signal(&mut self) {
-        let Some(schedule) = self.monitor.poll(&self.reader, &self.upgrade_ids).await else {
+        let Some(schedule) = self.monitor.poll(&self.reader, &self.config.upgrade_ids).await else {
             return;
         };
         if let Some(refresher) = &self.refresher
@@ -129,6 +146,14 @@ impl NodeActor for UpgradeSignalMetricsActor {
 
     async fn start(mut self, _ctx: ()) -> Result<(), Self::Error> {
         let cancellation = self.cancellation.clone();
+
+        // Ensure the upgrade signal is read on startup: a failed read must stop the node rather
+        // than let it (and especially a sequencer leader) run with an unknown upgrade schedule.
+        tokio::select! {
+            _ = cancellation.cancelled() => return Ok(()),
+            result = self.read_startup_signal() => result?,
+        }
+
         let mut interval = tokio::time::interval(UpgradeSignalDefaults::POLL_INTERVAL);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
