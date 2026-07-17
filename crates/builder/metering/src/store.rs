@@ -102,8 +102,6 @@ impl MeteringProvider for MeteringStore {
             BuilderMetrics::metering_late_arrival_latency_ms().record(latency_ms);
             BuilderMetrics::metering_late_arrival_execution_time_us()
                 .record(metering.total_execution_time_us as f64);
-            BuilderMetrics::metering_late_arrival_state_root_time_us()
-                .record(metering.state_root_time_us as f64);
             return;
         }
 
@@ -176,11 +174,6 @@ mod tests {
             state_flashblock_index: None,
             total_gas_used: gas_used,
             total_execution_time_us: 533,
-            state_root_time_us: 0,
-            state_root_account_leaf_count: 0,
-            state_root_account_branch_count: 0,
-            state_root_storage_leaf_count: 0,
-            state_root_storage_branch_count: 0,
         }
     }
 

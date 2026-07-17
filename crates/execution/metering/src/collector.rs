@@ -10,7 +10,7 @@ use parking_lot::RwLock;
 use tokio::sync::broadcast;
 use tracing::{debug, warn};
 
-use crate::{MeteredTransaction, MeteringCache, PendingStateRootTimes};
+use crate::{MeteredTransaction, MeteringCache};
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct FlashblockPosition {
@@ -28,7 +28,6 @@ impl FlashblockPosition {
 /// with per-transaction resource usage data derived from flashblock execution.
 pub struct MeteringCollector {
     cache: Arc<RwLock<MeteringCache>>,
-    state_root_cache: Arc<RwLock<PendingStateRootTimes>>,
     flashblock_rx: broadcast::Receiver<Arc<PendingBlocks>>,
     last_earliest_block: Option<u64>,
     last_processed: Option<FlashblockPosition>,
@@ -47,16 +46,9 @@ impl MeteringCollector {
     /// Creates a new metering collector.
     pub const fn new(
         cache: Arc<RwLock<MeteringCache>>,
-        state_root_cache: Arc<RwLock<PendingStateRootTimes>>,
         flashblock_rx: broadcast::Receiver<Arc<PendingBlocks>>,
     ) -> Self {
-        Self {
-            cache,
-            state_root_cache,
-            flashblock_rx,
-            last_earliest_block: None,
-            last_processed: None,
-        }
+        Self { cache, flashblock_rx, last_earliest_block: None, last_processed: None }
     }
 
     /// Runs the collector until the broadcast channel is closed.
@@ -201,19 +193,11 @@ impl MeteringCollector {
                 },
             );
 
-            // State root time: prefer simulation data from PendingBlocks,
-            // fall back to externally-submitted data from setMeteringInformation.
-            let state_root_time_us = pending
-                .get_state_root_time(&tx_hash)
-                .or_else(|| self.state_root_cache.write().pop(&tx_hash))
-                .unwrap_or(0);
-
             metered_transactions.push(MeteredTransaction {
                 tx_hash,
                 priority_fee_per_gas: U256::from(priority_fee),
                 gas_used,
                 execution_time_us,
-                state_root_time_us,
                 data_availability_bytes: da_bytes,
             });
         }
@@ -273,8 +257,6 @@ impl MeteringCollector {
 
 #[cfg(test)]
 mod tests {
-    use std::num::NonZeroUsize;
-
     use alloy_consensus::{Header, Receipt, ReceiptWithBloom, Sealed};
     use alloy_primitives::{Address, B256, Bloom, Bytes, Signature};
     use alloy_rpc_types_engine::PayloadId;
@@ -287,7 +269,7 @@ mod tests {
     use revm::context_interface::result::ExecutionResult;
 
     use super::*;
-    use crate::{PendingStateRootTimes, cache::MeteringCache};
+    use crate::cache::MeteringCache;
 
     struct TestFlashblockTx {
         index: u64,
@@ -464,38 +446,11 @@ mod tests {
             build_pending_with_tx(raw_tx, tx_hash, base_fee, effective_gas_price, Some(500));
 
         let cache = Arc::new(RwLock::new(MeteringCache::new(10, 1)));
-        let state_root_cache =
-            Arc::new(RwLock::new(PendingStateRootTimes::new(NonZeroUsize::new(8).unwrap())));
         let (_, rx) = broadcast::channel::<Arc<PendingBlocks>>(1);
 
-        let mut collector = MeteringCollector::new(Arc::clone(&cache), state_root_cache, rx);
+        let mut collector = MeteringCollector::new(Arc::clone(&cache), rx);
         collector.handle_pending_blocks(&pending);
 
-        assert!(cache.read().contains_block(100));
-    }
-
-    #[test]
-    fn collector_uses_state_root_cache_fallback() {
-        let (raw_tx, tx_hash) = make_raw_tx();
-        let base_fee = 1_000_000_000u64;
-        let effective_gas_price = 2_000_000_000u128;
-
-        let pending = build_pending_with_tx(raw_tx, tx_hash, base_fee, effective_gas_price, None);
-
-        let cache = Arc::new(RwLock::new(MeteringCache::new(10, 1)));
-        let state_root_cache =
-            Arc::new(RwLock::new(PendingStateRootTimes::new(NonZeroUsize::new(8).unwrap())));
-
-        // Pre-populate state root cache with external data
-        state_root_cache.write().push(tx_hash, 1234);
-
-        let (_, rx) = broadcast::channel::<Arc<PendingBlocks>>(1);
-        let mut collector =
-            MeteringCollector::new(Arc::clone(&cache), Arc::clone(&state_root_cache), rx);
-        collector.handle_pending_blocks(&pending);
-
-        // State root cache entry should have been consumed
-        assert!(!state_root_cache.read().contains(&tx_hash));
         assert!(cache.read().contains_block(100));
     }
 
@@ -507,11 +462,9 @@ mod tests {
             build_pending_with_tx(raw_tx, tx_hash, 1_000_000_000, 2_000_000_000, Some(100));
 
         let cache = Arc::new(RwLock::new(MeteringCache::new(10, 1)));
-        let state_root_cache =
-            Arc::new(RwLock::new(PendingStateRootTimes::new(NonZeroUsize::new(8).unwrap())));
         let (_, rx) = broadcast::channel::<Arc<PendingBlocks>>(1);
 
-        let mut collector = MeteringCollector::new(Arc::clone(&cache), state_root_cache, rx);
+        let mut collector = MeteringCollector::new(Arc::clone(&cache), rx);
 
         // Process once
         collector.handle_pending_blocks(&pending);
@@ -565,10 +518,8 @@ mod tests {
         );
 
         let cache = Arc::new(RwLock::new(MeteringCache::new(10, 3)));
-        let state_root_cache =
-            Arc::new(RwLock::new(PendingStateRootTimes::new(NonZeroUsize::new(8).unwrap())));
         let (_, rx) = broadcast::channel::<Arc<PendingBlocks>>(1);
-        let mut collector = MeteringCollector::new(Arc::clone(&cache), state_root_cache, rx);
+        let mut collector = MeteringCollector::new(Arc::clone(&cache), rx);
 
         collector.handle_pending_blocks(&pending_0);
         collector.handle_pending_blocks(&pending_2);
@@ -616,10 +567,8 @@ mod tests {
         );
 
         let cache = Arc::new(RwLock::new(MeteringCache::new(10, 2)));
-        let state_root_cache =
-            Arc::new(RwLock::new(PendingStateRootTimes::new(NonZeroUsize::new(8).unwrap())));
         let (_, rx) = broadcast::channel::<Arc<PendingBlocks>>(1);
-        let mut collector = MeteringCollector::new(Arc::clone(&cache), state_root_cache, rx);
+        let mut collector = MeteringCollector::new(Arc::clone(&cache), rx);
 
         collector.handle_pending_blocks(&pending_1);
         collector.handle_pending_blocks(&pending_0);

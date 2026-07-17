@@ -34,10 +34,16 @@ pub enum TxAuthError {
         scope: u8,
     },
 
-    /// A config change targets a locked account. All config changes are rejected
-    /// while locked. Mirrors `AccountConfiguration`'s `onlyUnlocked` modifier.
+    /// A config change or delegation targets a locked account. Both operations
+    /// are rejected while locked. Mirrors `AccountConfiguration`'s
+    /// `onlyUnlocked` modifier.
     #[error("account is locked")]
     AccountLocked,
+
+    /// A delegation was not authorized by the account's native secp256k1 admin
+    /// self actor.
+    #[error("delegation requires the native-k1 admin self actor")]
+    DelegationUnauthorized,
 
     /// A config change is bound to a chain other than `0` (multichain) or the
     /// local chain. Mirrors `require(chainId == 0 || chainId == block.chainid)`.

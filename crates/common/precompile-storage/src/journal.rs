@@ -27,7 +27,7 @@ use revm::{
 
 use crate::{
     error::{BasePrecompileError, Result},
-    provider::PrecompileStorageProvider,
+    provider::{PrecompileStorageProvider, validate_loaded_code_presence},
 };
 
 /// Gas-free [`PrecompileStorageProvider`] backed by a live EVM journal.
@@ -110,6 +110,24 @@ impl PrecompileStorageProvider for JournalStorageProvider<'_> {
             .load_account(address)
             .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
         f(&state_load.data.info);
+        Ok(())
+    }
+
+    fn with_account_code(&mut self, address: Address, f: &mut dyn FnMut(&Bytecode)) -> Result<()> {
+        // `load_account_code` resolves code from the database into the journal.
+        // This provider deliberately charges no gas for that account access.
+        let state_load = self
+            .internals
+            .load_account_code(address)
+            .map_err(|e| BasePrecompileError::Fatal(e.to_string()))?;
+        let expected_hash = *state_load.data.code_hash();
+        let code = state_load.data.code().ok_or_else(|| {
+            BasePrecompileError::Fatal(
+                "account code unavailable after successful journal load".to_string(),
+            )
+        })?;
+        validate_loaded_code_presence(expected_hash, code)?;
+        f(code);
         Ok(())
     }
 

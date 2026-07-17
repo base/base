@@ -11,6 +11,7 @@ use base_node_core::args::RollupArgs;
 use base_observability_events::{
     DEFAULT_QUEUE_CAPACITY, TransactionEventProducer, TransactionEventWriterConfig,
 };
+use tracing::warn;
 
 /// Parameters for Flashblocks configuration.
 ///
@@ -137,21 +138,25 @@ pub struct Args {
     #[arg(long = "builder.max-execution-time-per-tx-us")]
     pub max_execution_time_per_tx_us: Option<u128>,
 
-    /// Flashblock-level execution time budget in microseconds (requires resource metering)
-    #[arg(long = "builder.flashblock-execution-time-budget-us")]
+    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
+    /// Scheduled for removal in v1.4.0 after rolling deployments have migrated.
+    #[arg(long = "builder.flashblock-execution-time-budget-us", hide = true)]
     pub flashblock_execution_time_budget_us: Option<u128>,
 
-    /// Block-level state root gas limit (requires resource metering)
-    #[arg(long = "builder.block-state-root-gas-limit")]
+    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
+    /// Scheduled for removal in v1.4.0 after rolling deployments have migrated.
+    #[arg(long = "builder.block-state-root-gas-limit", hide = true)]
     pub block_state_root_gas_limit: Option<u64>,
 
-    /// State root gas coefficient (K): controls how excess SR time inflates `sr_gas` cost
-    #[arg(long = "builder.state-root-gas-coefficient", default_value = "0.02")]
-    pub state_root_gas_coefficient: f64,
+    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
+    /// Scheduled for removal in v1.4.0 after rolling deployments have migrated.
+    #[arg(long = "builder.state-root-gas-coefficient", hide = true)]
+    pub state_root_gas_coefficient: Option<f64>,
 
-    /// State root gas anchor in microseconds: SR below this produces no penalty
-    #[arg(long = "builder.state-root-gas-anchor-us", default_value = "5000")]
-    pub state_root_gas_anchor_us: u128,
+    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
+    /// Scheduled for removal in v1.4.0 after rolling deployments have migrated.
+    #[arg(long = "builder.state-root-gas-anchor-us", hide = true)]
+    pub state_root_gas_anchor_us: Option<u128>,
 
     /// Execution metering mode: off, dry-run, or enforce
     #[arg(long = "builder.execution-metering-mode", value_enum, default_value = "off")]
@@ -236,8 +241,8 @@ impl Default for Args {
             max_execution_time_per_tx_us: None,
             flashblock_execution_time_budget_us: None,
             block_state_root_gas_limit: None,
-            state_root_gas_coefficient: 0.02,
-            state_root_gas_anchor_us: 5000,
+            state_root_gas_coefficient: None,
+            state_root_gas_anchor_us: None,
             execution_metering_mode: ExecutionMeteringMode::Off,
             extra_block_deadline_secs: 20,
             enable_resource_metering: false,
@@ -265,6 +270,14 @@ impl Args {
         self,
         metering_provider: SharedMeteringProvider,
     ) -> eyre::Result<BuilderConfig> {
+        if self.flashblock_execution_time_budget_us.is_some()
+            || self.block_state_root_gas_limit.is_some()
+            || self.state_root_gas_coefficient.is_some()
+            || self.state_root_gas_anchor_us.is_some()
+        {
+            warn!("deprecated builder resource limit flags are ignored");
+        }
+
         let flashblocks_ws_addr = SocketAddr::new(
             self.flashblocks.flashblocks_addr.parse()?,
             self.flashblocks.flashblocks_port,
@@ -283,10 +296,6 @@ impl Args {
             ),
             max_gas_per_txn: self.max_gas_per_txn,
             max_execution_time_per_tx_us: self.max_execution_time_per_tx_us,
-            flashblock_execution_time_budget_us: self.flashblock_execution_time_budget_us,
-            block_state_root_gas_limit: self.block_state_root_gas_limit,
-            state_root_gas_coefficient: self.state_root_gas_coefficient,
-            state_root_gas_anchor_us: self.state_root_gas_anchor_us,
             execution_metering_mode: self.execution_metering_mode,
             max_uncompressed_block_size: self.max_uncompressed_block_size,
             metering_wait_duration: self.metering_wait_duration_ms.map(Duration::from_millis),
@@ -309,9 +318,16 @@ mod tests {
     use alloy_primitives::{B256, TxHash, U256};
     use base_builder_core::{MeteringProvider, NoopMeteringProvider};
     use base_bundles::MeterBundleResponse;
+    use clap::Parser;
     use rstest::rstest;
 
     use super::*;
+
+    #[derive(Debug, Parser)]
+    struct CommandParser {
+        #[command(flatten)]
+        args: Args,
+    }
 
     fn convert(args: Args) -> BuilderConfig {
         let metering_provider: SharedMeteringProvider = Arc::new(NoopMeteringProvider);
@@ -391,11 +407,6 @@ mod tests {
                 state_flashblock_index: None,
                 total_gas_used: 21000,
                 total_execution_time_us: 500,
-                state_root_time_us: 100,
-                state_root_account_leaf_count: 0,
-                state_root_account_branch_count: 0,
-                state_root_storage_leaf_count: 0,
-                state_root_storage_branch_count: 0,
             },
         );
 
@@ -438,11 +449,6 @@ mod tests {
                 state_flashblock_index: None,
                 total_gas_used: 21000,
                 total_execution_time_us: 0,
-                state_root_time_us: 0,
-                state_root_account_leaf_count: 0,
-                state_root_account_branch_count: 0,
-                state_root_storage_leaf_count: 0,
-                state_root_storage_branch_count: 0,
             },
         );
         assert!(store.get(&tx_hash).is_some(), "entry should be present within TTL");
@@ -455,10 +461,33 @@ mod tests {
     }
 
     #[test]
+    fn deprecated_resource_limit_flags_remain_accepted() {
+        let args = CommandParser::parse_from([
+            "builder",
+            "--builder.flashblock-execution-time-budget-us",
+            "5000000",
+            "--builder.block-state-root-gas-limit",
+            "1000000",
+            "--builder.state-root-gas-coefficient",
+            "0.1",
+            "--builder.state-root-gas-anchor-us",
+            "5000",
+        ])
+        .args;
+
+        assert_eq!(args.flashblock_execution_time_budget_us, Some(5_000_000));
+        assert_eq!(args.block_state_root_gas_limit, Some(1_000_000));
+        assert_eq!(args.state_root_gas_coefficient, Some(0.1));
+        assert_eq!(args.state_root_gas_anchor_us, Some(5_000));
+    }
+
+    #[test]
     fn combined_overrides_work_together() {
         let args = Args {
             chain_block_time: 2000,
             max_gas_per_txn: Some(100000),
+            max_execution_time_per_tx_us: Some(5000),
+            execution_metering_mode: ExecutionMeteringMode::Enforce,
             extra_block_deadline_secs: 10,
             flashblocks: FlashblocksArgs {
                 flashblocks_block_time: 200,
@@ -471,6 +500,8 @@ mod tests {
 
         assert_eq!(config.block_time, Duration::from_millis(2000));
         assert_eq!(config.max_gas_per_txn, Some(100000));
+        assert_eq!(config.max_execution_time_per_tx_us, Some(5000));
+        assert_eq!(config.execution_metering_mode, ExecutionMeteringMode::Enforce);
         assert_eq!(config.block_time_leeway, Duration::from_secs(10));
         assert_eq!(config.flashblocks_interval, Duration::from_millis(200));
         assert_eq!(config.flashblocks_leeway_time, Duration::from_millis(50));
