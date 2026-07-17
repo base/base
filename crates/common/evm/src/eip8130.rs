@@ -32,11 +32,13 @@
 //!
 //! # Scope
 //!
-//! Per-phase receipt status (`phaseStatuses`) and protocol-injected
-//! account-change logs are not yet surfaced; the overall transaction status
-//! (all-phases-succeeded vs reverted) is reported through the returned
-//! [`ExecutionResult`] variant ([`ExecutionResult::Success`] vs
-//! [`ExecutionResult::Revert`]).
+//! Protocol-injected account-change logs (`ActorAuthorized`, `ActorRevoked`,
+//! `AccountCreated`, `DelegationApplied`) are written to the journal during the
+//! pre-call apply step and surface in the transaction receipt ahead of any
+//! `calls` logs. Per-phase receipt status (`phaseStatuses`) is reported on the
+//! EIP-8130 receipt; the overall transaction status (all-phases-succeeded vs
+//! reverted) is reported through the returned [`ExecutionResult`] variant
+//! ([`ExecutionResult::Success`] vs [`ExecutionResult::Revert`]).
 //!
 //! [transaction context]: TxContextStorage
 //! [`BaseEvm::transact_raw`]: crate::BaseEvm
@@ -50,8 +52,9 @@ use base_common_consensus::{
 };
 use base_common_precompiles::{NonceManagerStorage, TxContextStorage};
 use base_execution_eip8130::{
-    AccountChangeApplier, AccountConfigurationStorage, ApplyError, DelegationEffect, FeeCheck,
-    IntrinsicGas, IntrinsicGasInput, NonceMode, NonceValidator, TransactionAuthorizer,
+    AccountChangeApplier, AccountConfigurationEvents, AccountConfigurationStorage, ApplyError,
+    DelegationEffect, FeeCheck, IntrinsicGas, IntrinsicGasInput, NonceMode, NonceValidator,
+    TransactionAuthorizer,
 };
 use base_precompile_storage::{JournalStorageProvider, StorageCtx};
 use revm::{
@@ -310,8 +313,7 @@ impl Eip8130Executor {
         Eip8130PhaseStatuses::set(core::mem::take(&mut calls.phase_statuses));
 
         // The gas refund is already folded into `gas_used` (via `net_used` in
-        // `settle_fees`), so the `refunded` counter is left 0; the per-phase
-        // receipt breakdown is deferred (see the module-level "Scope").
+        // `settle_fees`), so the `refunded` counter is left 0.
         let result_gas = ResultGas::new_with_state_gas(gas_used, 0, 0, 0);
         if calls.reverted {
             // The transaction is still included (nonce consumed, fee paid). Logs
@@ -1424,7 +1426,11 @@ impl Eip8130Executor {
             .with_account_info(sender, |info| Ok(info.is_empty_code_hash()))
             .map_err(BaseTransactionError::eip8130)?;
         if is_codeless {
-            sctx.set_code(sender, Bytecode::new_eip7702(Eip8130Contracts::DEFAULT_ACCOUNT))
+            let target = Eip8130Contracts::DEFAULT_ACCOUNT;
+            sctx.set_code(sender, Bytecode::new_eip7702(target))
+                .map_err(BaseTransactionError::eip8130)?;
+            // Same protocol-injected receipt log as an explicit delegation entry.
+            AccountConfigurationEvents::emit_delegation_applied(sctx, sender, target)
                 .map_err(BaseTransactionError::eip8130)?;
         }
         Ok(is_codeless)
