@@ -374,7 +374,7 @@ pub fn validate_withdrawals_presence(
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{EMPTY_ROOT_HASH, Header, Sealable};
+    use alloy_consensus::{EMPTY_ROOT_HASH, Header};
     use alloy_primitives::{Address, B64, B256, b64};
     use alloy_rpc_types_engine::PayloadAttributes;
     use base_common_chains::{BaseUpgrade, ChainConfig};
