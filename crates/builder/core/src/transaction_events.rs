@@ -72,6 +72,10 @@ struct BuilderEventData<T> {
 }
 
 /// Budget and resource fields shared by builder transaction decision events.
+///
+/// Also serves directly as the considered-event payload: that event is emitted up front, when the
+/// builder begins evaluating a candidate, and carries only this budget context — decision-specific
+/// details (bundle window, metering wait, dry-run) live on the terminal rejected/accepted event.
 #[derive(Debug, Serialize)]
 pub(crate) struct BuilderBudgetFields {
     cumulative_gas_used: u64,
@@ -125,52 +129,6 @@ impl From<&TxResources> for BuilderTransactionResources {
             tx_execution_time_us: resources.execution_time_us,
             tx_uncompressed_size: resources.uncompressed_size,
         }
-    }
-}
-
-/// Fields emitted when the builder considers a transaction.
-#[derive(Debug, Serialize)]
-pub(crate) struct BuilderConsideredEventData {
-    #[serde(flatten)]
-    budget: BuilderBudgetFields,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    bundle_target_block: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tx_age_ms: Option<u128>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    metering_wait_duration_ms: Option<u128>,
-}
-
-impl BuilderConsideredEventData {
-    /// Creates a considered-event payload with no additional decision details.
-    pub(crate) fn new(
-        info: &ExecutionInfo,
-        limits: &ResourceLimits,
-        resources: Option<&TxResources>,
-    ) -> Self {
-        Self {
-            budget: BuilderBudgetFields::new(info, limits, resources),
-            bundle_target_block: None,
-            tx_age_ms: None,
-            metering_wait_duration_ms: None,
-        }
-    }
-
-    /// Adds the target block associated with a bundle transaction.
-    pub(crate) const fn with_bundle_target_block(mut self, block_number: u64) -> Self {
-        self.bundle_target_block = Some(block_number);
-        self
-    }
-
-    /// Adds metering wait details to the considered-event payload.
-    pub(crate) const fn with_metering_wait(
-        mut self,
-        tx_age_ms: u128,
-        metering_wait_duration_ms: u128,
-    ) -> Self {
-        self.tx_age_ms = Some(tx_age_ms);
-        self.metering_wait_duration_ms = Some(metering_wait_duration_ms);
-        self
     }
 }
 
