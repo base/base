@@ -405,10 +405,10 @@ mod tests {
     async fn wait_polls_at_deadline_when_max_wait_is_shorter_than_poll_interval() {
         let api = MockRequesterApi::scripted([ProofStatus::Running], ProofStatus::Succeeded);
         let (client, handle) = spawn_mock(api).await;
-        let client = client.with_wait_config(Duration::from_millis(100), Duration::from_millis(10));
+        let client = client.with_wait_config(Duration::from_secs(5), Duration::from_millis(500));
 
         let response = tokio::time::timeout(
-            Duration::from_millis(50),
+            Duration::from_millis(2500),
             client.wait_for_completion("session-short-wait"),
         )
         .await

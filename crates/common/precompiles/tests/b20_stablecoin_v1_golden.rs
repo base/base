@@ -3,7 +3,7 @@
 //! Every op (mutations, computed reads, direct/const reads) is driven through the
 //! **version-resolver-gated** dispatch path (`BaseUpgrade::Beryl` -> `StablecoinVersion::V1`)
 //! against the real EVM-backed `B20StablecoinStorage` over `HashMapStorageProvider`, with an
-//! `InMemoryPolicy` for deterministic allow/block decisions. Each case asserts:
+//! `FakePolicyAccounting` for deterministic allow/block decisions. Each case asserts:
 //!   1. exact returned ABI bytes (or the typed revert),
 //!   2. resulting state (balances / supply / roles / allowances / storage),
 //!   3. emitted events, and
@@ -24,8 +24,9 @@ use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
 use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
     B20_MAX_SUPPLY_CAP, B20PolicyType, B20StablecoinInit, B20StablecoinStorage, B20StablecoinToken,
-    B20TokenRole, IB20, IB20Stablecoin, InMemoryPolicy, NoopPrecompileCallObserver, PermitArgs,
-    Stablecoin, StablecoinV1, StablecoinVersion, StablecoinVersions, TokenAccounting,
+    B20TokenRole, FakePolicyAccounting, IB20, IB20Stablecoin, NoopPrecompileCallObserver,
+    PermitArgs, PolicyVersion, Stablecoin, StablecoinV1, StablecoinVersion, StablecoinVersions,
+    TokenAccounting,
 };
 use base_precompile_storage::{BasePrecompileError, HashMapStorageProvider, StorageCtx};
 use k256::ecdsa::SigningKey;
@@ -44,10 +45,15 @@ const CURRENCY: &str = "USD";
 const MEMO: B256 = B256::repeat_byte(0x77);
 const LOGIC: StablecoinV1 = StablecoinV1;
 
-/// A concrete (non-sentinel) policy id. Unconfigured scopes default to the
-/// `ALWAYS_ALLOW_ID` (0) EVM zero-slot, so blocking/executor guards must be
-/// exercised against an explicitly configured policy id like this one.
-const POLICY_ID: u64 = 7;
+/// A concrete (non-sentinel) ALLOWLIST policy id (type byte = 1, counter = 7).
+///
+/// Unconfigured scopes default to the `ALWAYS_ALLOW_ID` (0) EVM zero-slot, so
+/// blocking/executor guards must be exercised against an explicitly configured
+/// policy id like this one. Under V1 the top byte encodes the policy type, and
+/// authorization goes through membership: ALLOWLIST (type = 1) authorizes exactly
+/// its members, so `.allow(POLICY_ID, acct)` grants and unconfigured accounts are
+/// blocked. A BLOCKLIST id (top byte 0, e.g. a bare `7`) would invert every guard.
+const POLICY_ID: u64 = (1u64 << 56) | 7;
 
 // Anvil/Hardhat account 0 — well-known test key, never used in production.
 const PRIVATE_KEY: [u8; 32] =
@@ -59,7 +65,7 @@ const ROOT_FRESH: B256 = b256!("7f52ac593dc5c5de5e040f65148db8c081010c85db757516
 const ROOT_TRANSFER_PRIV: B256 =
     b256!("55bdd0b008a5e28bd9dee4572766a7bce75b0147fb614c9b4874963fc18ef390");
 const ROOT_TRANSFER_UNPRIV: B256 =
-    b256!("77c291321163d01cb51fb226b7f25efd68819c8a60cc463f4863dbfccae49c03");
+    b256!("dc5dfb01848c6061b25b98deee929c2bc9dd05191e1892186254aedef4445ace");
 const ROOT_TRANSFER_WITH_MEMO: B256 =
     b256!("8c9923a10e52e0dd795aed030a844bcff443ee66d4908caf897a525e1de4f867");
 const ROOT_TRANSFER_FROM_FINITE: B256 =
@@ -80,7 +86,7 @@ const ROOT_BURN: B256 = b256!("e292d12852ea52c48bf7869feac153e12aff28fdc301d0c64
 const ROOT_BURN_WITH_MEMO: B256 =
     b256!("a261f181fb9c7b7143307339be3844de4584275bac4bc002a1cdbc2547757898");
 const ROOT_BURN_BLOCKED: B256 =
-    b256!("9908f1eb41cd484b52fd364415296117e80ffb86c8222973f921032f28c85cbf");
+    b256!("adc5a77aca0c7da11dd25ff69d2434badf8d0f035eacd2de7cdf5592efc31c2a");
 const ROOT_PAUSE: B256 = b256!("8fc4e227c8dcc72faebe02a2f0154ff0834d5a99cf472e15ea6e49d742c299ef");
 const ROOT_UNPAUSE: B256 =
     b256!("67f1ec70420578aafb490cdc86a5e450211342259aa79b0fb18944bffe3de1e8");
@@ -161,7 +167,7 @@ fn read<R>(
 fn op(
     storage: &mut HashMapStorageProvider,
     caller: Address,
-    policy: InMemoryPolicy,
+    policy: FakePolicyAccounting,
     calldata: Vec<u8>,
 ) -> Result<Bytes, BasePrecompileError> {
     storage.set_caller(caller);
@@ -169,6 +175,7 @@ fn op(
         B20StablecoinToken::with_storage_and_policy(
             B20StablecoinStorage::from_address(TOKEN, ctx),
             policy,
+            PolicyVersion::V1,
         )
         .inner(ctx, &calldata, BaseUpgrade::Beryl)
     })
@@ -178,7 +185,7 @@ fn op(
 fn op_privileged(
     storage: &mut HashMapStorageProvider,
     caller: Address,
-    policy: InMemoryPolicy,
+    policy: FakePolicyAccounting,
     calldata: Vec<u8>,
 ) -> Result<Bytes, BasePrecompileError> {
     storage.set_caller(caller);
@@ -186,6 +193,7 @@ fn op_privileged(
         B20StablecoinToken::with_storage_and_policy(
             B20StablecoinStorage::from_address(TOKEN, ctx),
             policy,
+            PolicyVersion::V1,
         )
         .inner_with_privilege(ctx, &calldata, true)
     })
@@ -259,7 +267,8 @@ fn domain_separator(storage: &mut HashMapStorageProvider) -> B256 {
     StorageCtx::enter(storage, |ctx| {
         let token = B20StablecoinToken::with_storage_and_policy(
             B20StablecoinStorage::from_address(TOKEN, ctx),
-            InMemoryPolicy::new(),
+            FakePolicyAccounting::new(),
+            PolicyVersion::V1,
         );
         LOGIC.domain_separator(&token, CHAIN_ID).unwrap()
     })
@@ -323,7 +332,7 @@ fn golden_transfer_privileged() {
     let out = op_privileged(
         &mut s,
         ALICE,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::transferCall { to: BOB, amount: u(30) }.abi_encode(),
     )
     .unwrap();
@@ -346,7 +355,7 @@ fn golden_transfer_unprivileged_allowed() {
         t.set_policy_id(B20PolicyType::TransferReceiver.id(), POLICY_ID).unwrap();
     });
     // Authorize sender + receiver under the configured policy => guards pass.
-    let mut policy = InMemoryPolicy::new();
+    let mut policy = FakePolicyAccounting::new();
     policy.allow(POLICY_ID, ALICE);
     policy.allow(POLICY_ID, BOB);
     let out = op(&mut s, ALICE, policy, IB20::transferCall { to: BOB, amount: u(10) }.abi_encode())
@@ -371,7 +380,7 @@ fn golden_transfer_unprivileged_blocked_sender_reverts() {
     let err = op(
         &mut s,
         ALICE,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::transferCall { to: BOB, amount: u(10) }.abi_encode(),
     )
     .unwrap_err();
@@ -391,7 +400,7 @@ fn golden_transfer_reverts_zero_receiver() {
     let err = op_privileged(
         &mut s,
         ALICE,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::transferCall { to: Address::ZERO, amount: u(1) }.abi_encode(),
     )
     .unwrap_err();
@@ -405,7 +414,7 @@ fn golden_transfer_reverts_insufficient_balance() {
     let err = op_privileged(
         &mut s,
         ALICE,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::transferCall { to: BOB, amount: u(50) }.abi_encode(),
     )
     .unwrap_err();
@@ -426,14 +435,14 @@ fn golden_transfer_reverts_when_paused() {
     op_privileged(
         &mut s,
         ADMIN,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::pauseCall { features: vec![IB20::PausableFeature::TRANSFER] }.abi_encode(),
     )
     .unwrap();
     let err = op_privileged(
         &mut s,
         ALICE,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::transferCall { to: BOB, amount: u(1) }.abi_encode(),
     )
     .unwrap_err();
@@ -452,7 +461,7 @@ fn golden_transfer_with_memo_emits_transfer_then_memo() {
     let out = op_privileged(
         &mut s,
         ALICE,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::transferWithMemoCall { to: BOB, amount: u(30), memo: MEMO }.abi_encode(),
     )
     .unwrap();
@@ -478,7 +487,7 @@ fn golden_transfer_from_finite_allowance_decrements() {
     let out = op_privileged(
         &mut s,
         BOB,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::transferFromCall { from: ALICE, to: BOB, amount: u(30) }.abi_encode(),
     )
     .unwrap();
@@ -501,7 +510,7 @@ fn golden_transfer_from_infinite_allowance_not_decremented() {
     let out = op_privileged(
         &mut s,
         BOB,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::transferFromCall { from: ALICE, to: BOB, amount: u(30) }.abi_encode(),
     )
     .unwrap();
@@ -521,7 +530,7 @@ fn golden_transfer_from_reverts_insufficient_allowance() {
     let err = op_privileged(
         &mut s,
         BOB,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::transferFromCall { from: ALICE, to: BOB, amount: u(30) }.abi_encode(),
     )
     .unwrap_err();
@@ -549,7 +558,7 @@ fn golden_transfer_from_unprivileged_enforces_executor_policy() {
     let err = op(
         &mut s,
         BOB,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::transferFromCall { from: ALICE, to: CAROL, amount: u(10) }.abi_encode(),
     )
     .unwrap_err();
@@ -572,7 +581,7 @@ fn golden_transfer_from_with_memo() {
     let out = op_privileged(
         &mut s,
         BOB,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::transferFromWithMemoCall { from: ALICE, to: CAROL, amount: u(30), memo: MEMO }
             .abi_encode(),
     )
@@ -595,7 +604,7 @@ fn golden_approve_sets_allowance_and_emits() {
     let out = op(
         &mut s,
         ALICE,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::approveCall { spender: BOB, amount: u(50) }.abi_encode(),
     )
     .unwrap();
@@ -612,7 +621,7 @@ fn golden_approve_reverts_zero_spender() {
     let err = op(
         &mut s,
         ALICE,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::approveCall { spender: Address::ZERO, amount: u(1) }.abi_encode(),
     )
     .unwrap_err();
@@ -626,7 +635,7 @@ fn golden_approve_reverts_zero_spender() {
 #[test]
 fn golden_mint_privileged_still_enforces_receiver_policy() {
     let mut s = fresh();
-    let mut policy = InMemoryPolicy::new();
+    let mut policy = FakePolicyAccounting::new();
     policy.allow(0, BOB); // MintReceiver enforced even when privileged
     let out = op_privileged(
         &mut s,
@@ -649,7 +658,7 @@ fn golden_mint_privileged_still_enforces_receiver_policy() {
 fn golden_mint_unprivileged_requires_role_and_policy() {
     let mut s = fresh();
     // Missing MINT_ROLE => unauthorized.
-    let mut policy = InMemoryPolicy::new();
+    let mut policy = FakePolicyAccounting::new();
     policy.allow(0, BOB);
     let err = op(&mut s, ALICE, policy, IB20::mintCall { to: BOB, amount: u(1) }.abi_encode())
         .unwrap_err();
@@ -663,7 +672,7 @@ fn golden_mint_unprivileged_requires_role_and_policy() {
 
     // With MINT_ROLE + authorized receiver => succeeds.
     seed(&mut s, |t| give_role(t, B20TokenRole::Mint.id(), ALICE));
-    let mut policy = InMemoryPolicy::new();
+    let mut policy = FakePolicyAccounting::new();
     policy.allow(0, BOB);
     let out =
         op(&mut s, ALICE, policy, IB20::mintCall { to: BOB, amount: u(75) }.abi_encode()).unwrap();
@@ -677,7 +686,7 @@ fn golden_mint_unprivileged_requires_role_and_policy() {
 fn golden_mint_reverts_over_supply_cap() {
     let mut s = fresh();
     seed(&mut s, |t| t.set_supply_cap(u(50)).unwrap());
-    let mut policy = InMemoryPolicy::new();
+    let mut policy = FakePolicyAccounting::new();
     policy.allow(0, BOB);
     let err = op_privileged(
         &mut s,
@@ -695,7 +704,7 @@ fn golden_mint_reverts_over_supply_cap() {
 #[test]
 fn golden_mint_with_memo() {
     let mut s = fresh();
-    let mut policy = InMemoryPolicy::new();
+    let mut policy = FakePolicyAccounting::new();
     policy.allow(0, BOB);
     let out = op_privileged(
         &mut s,
@@ -721,9 +730,13 @@ fn golden_burn_requires_role_then_reduces_supply() {
     let mut s = fresh();
     seed(&mut s, |t| fund(t, ALICE, u(100)));
 
-    let err =
-        op(&mut s, ALICE, InMemoryPolicy::new(), IB20::burnCall { amount: u(1) }.abi_encode())
-            .unwrap_err();
+    let err = op(
+        &mut s,
+        ALICE,
+        FakePolicyAccounting::new(),
+        IB20::burnCall { amount: u(1) }.abi_encode(),
+    )
+    .unwrap_err();
     assert_eq!(
         err,
         BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
@@ -733,9 +746,13 @@ fn golden_burn_requires_role_then_reduces_supply() {
     );
 
     seed(&mut s, |t| give_role(t, B20TokenRole::Burn.id(), ALICE));
-    let out =
-        op(&mut s, ALICE, InMemoryPolicy::new(), IB20::burnCall { amount: u(40) }.abi_encode())
-            .unwrap();
+    let out = op(
+        &mut s,
+        ALICE,
+        FakePolicyAccounting::new(),
+        IB20::burnCall { amount: u(40) }.abi_encode(),
+    )
+    .unwrap();
 
     assert!(out.is_empty());
     read(&mut s, |t| {
@@ -756,7 +773,7 @@ fn golden_burn_with_memo() {
     let out = op(
         &mut s,
         ALICE,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::burnWithMemoCall { amount: u(40), memo: MEMO }.abi_encode(),
     )
     .unwrap();
@@ -780,7 +797,7 @@ fn golden_burn_blocked_destroys_from_blocked_account() {
     let out = op_privileged(
         &mut s,
         ADMIN,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::burnBlockedCall { from: ALICE, amount: u(40) }.abi_encode(),
     )
     .unwrap();
@@ -798,7 +815,7 @@ fn golden_burn_blocked_reverts_when_not_blocked() {
         fund(t, ALICE, u(100));
         t.set_policy_id(B20PolicyType::TransferSender.id(), POLICY_ID).unwrap();
     });
-    let mut policy = InMemoryPolicy::new();
+    let mut policy = FakePolicyAccounting::new();
     policy.allow(POLICY_ID, ALICE); // authorized => not blocked
     let err = op_privileged(
         &mut s,
@@ -820,7 +837,7 @@ fn golden_pause_sets_feature_bit() {
     let out = op_privileged(
         &mut s,
         ADMIN,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::pauseCall { features: vec![IB20::PausableFeature::MINT] }.abi_encode(),
     )
     .unwrap();
@@ -836,14 +853,14 @@ fn golden_unpause_clears_feature_bit() {
     op_privileged(
         &mut s,
         ADMIN,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::pauseCall { features: vec![IB20::PausableFeature::MINT] }.abi_encode(),
     )
     .unwrap();
     let out = op_privileged(
         &mut s,
         ADMIN,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::unpauseCall { features: vec![IB20::PausableFeature::MINT] }.abi_encode(),
     )
     .unwrap();
@@ -859,7 +876,7 @@ fn golden_pause_reverts_empty_feature_set() {
     let err = op_privileged(
         &mut s,
         ADMIN,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::pauseCall { features: vec![] }.abi_encode(),
     )
     .unwrap_err();
@@ -872,7 +889,7 @@ fn golden_pause_unprivileged_requires_role() {
     let err = op(
         &mut s,
         ALICE,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::pauseCall { features: vec![IB20::PausableFeature::MINT] }.abi_encode(),
     )
     .unwrap_err();
@@ -895,7 +912,7 @@ fn golden_update_supply_cap() {
     let out = op_privileged(
         &mut s,
         ADMIN,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::updateSupplyCapCall { newSupplyCap: u(1_000) }.abi_encode(),
     )
     .unwrap();
@@ -913,7 +930,7 @@ fn golden_update_supply_cap_reverts_below_supply() {
     let err = op_privileged(
         &mut s,
         ADMIN,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::updateSupplyCapCall { newSupplyCap: u(100) }.abi_encode(),
     )
     .unwrap_err();
@@ -932,7 +949,7 @@ fn golden_update_name_emits_name_and_domain_changed() {
     let out = op_privileged(
         &mut s,
         ADMIN,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::updateNameCall { newName: "New Name".into() }.abi_encode(),
     )
     .unwrap();
@@ -951,7 +968,7 @@ fn golden_update_symbol() {
     let out = op_privileged(
         &mut s,
         ADMIN,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::updateSymbolCall { newSymbol: "USDX".into() }.abi_encode(),
     )
     .unwrap();
@@ -968,7 +985,7 @@ fn golden_update_contract_uri() {
     let out = op_privileged(
         &mut s,
         ADMIN,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::updateContractURICall { newURI: "ipfs://x".into() }.abi_encode(),
     )
     .unwrap();
@@ -989,7 +1006,7 @@ fn golden_grant_role() {
     let out = op_privileged(
         &mut s,
         ADMIN,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::grantRoleCall { role: B20TokenRole::Mint.id(), account: ALICE }.abi_encode(),
     )
     .unwrap();
@@ -1007,7 +1024,7 @@ fn golden_revoke_role() {
     let out = op_privileged(
         &mut s,
         ADMIN,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::revokeRoleCall { role: B20TokenRole::Mint.id(), account: ALICE }.abi_encode(),
     )
     .unwrap();
@@ -1025,7 +1042,7 @@ fn golden_revoke_last_admin_rejected() {
     let err = op_privileged(
         &mut s,
         ADMIN,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::revokeRoleCall { role: B20TokenRole::DefaultAdmin.id(), account: ADMIN }.abi_encode(),
     )
     .unwrap_err();
@@ -1039,7 +1056,7 @@ fn golden_renounce_role() {
     let out = op(
         &mut s,
         ALICE,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::renounceRoleCall { role: B20TokenRole::Mint.id(), callerConfirmation: ALICE }
             .abi_encode(),
     )
@@ -1058,7 +1075,7 @@ fn golden_renounce_role_bad_confirmation() {
     let err = op(
         &mut s,
         ALICE,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::renounceRoleCall { role: B20TokenRole::Mint.id(), callerConfirmation: BOB }
             .abi_encode(),
     )
@@ -1070,8 +1087,9 @@ fn golden_renounce_role_bad_confirmation() {
 fn golden_renounce_last_admin() {
     let mut s = fresh();
     seed(&mut s, |t| give_role(t, B20TokenRole::DefaultAdmin.id(), ADMIN));
-    let out = op(&mut s, ADMIN, InMemoryPolicy::new(), IB20::renounceLastAdminCall {}.abi_encode())
-        .unwrap();
+    let out =
+        op(&mut s, ADMIN, FakePolicyAccounting::new(), IB20::renounceLastAdminCall {}.abi_encode())
+            .unwrap();
 
     assert!(out.is_empty());
     read(&mut s, |t| {
@@ -1089,8 +1107,9 @@ fn golden_renounce_last_admin_reverts_when_not_sole() {
         give_role(t, B20TokenRole::DefaultAdmin.id(), ADMIN);
         give_role(t, B20TokenRole::DefaultAdmin.id(), BOB);
     });
-    let err = op(&mut s, ADMIN, InMemoryPolicy::new(), IB20::renounceLastAdminCall {}.abi_encode())
-        .unwrap_err();
+    let err =
+        op(&mut s, ADMIN, FakePolicyAccounting::new(), IB20::renounceLastAdminCall {}.abi_encode())
+            .unwrap_err();
     assert_eq!(err, BasePrecompileError::revert(IB20::NotSoleAdmin {}));
 }
 
@@ -1100,7 +1119,7 @@ fn golden_set_role_admin() {
     let out = op_privileged(
         &mut s,
         ADMIN,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::setRoleAdminCall {
             role: B20TokenRole::Mint.id(),
             newAdminRole: B20TokenRole::Metadata.id(),
@@ -1124,7 +1143,7 @@ fn golden_set_role_admin() {
 #[test]
 fn golden_update_policy() {
     let mut s = fresh();
-    let mut policy = InMemoryPolicy::new();
+    let mut policy = FakePolicyAccounting::new();
     policy.create_existing_policy(7);
     let out = op_privileged(
         &mut s,
@@ -1147,7 +1166,7 @@ fn golden_update_policy_reverts_missing_policy() {
     let err = op_privileged(
         &mut s,
         ADMIN,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::updatePolicyCall { policyScope: B20PolicyType::TransferSender.id(), newPolicyId: 99 }
             .abi_encode(),
     )
@@ -1166,7 +1185,7 @@ fn golden_permit_sets_allowance_and_increments_nonce() {
     let domain = domain_separator(&mut s);
     let call = signed_permit(domain, U256::ZERO, owner, BOB, u(500), U256::MAX);
     s.set_timestamp(U256::ZERO);
-    let out = op(&mut s, owner, InMemoryPolicy::new(), call.abi_encode()).unwrap();
+    let out = op(&mut s, owner, FakePolicyAccounting::new(), call.abi_encode()).unwrap();
 
     assert!(out.is_empty());
     read(&mut s, |t| {
@@ -1184,7 +1203,7 @@ fn golden_permit_reverts_when_expired() {
     let domain = domain_separator(&mut s);
     let call = signed_permit(domain, U256::ZERO, owner, BOB, u(1), u(10));
     s.set_timestamp(u(11));
-    let err = op(&mut s, owner, InMemoryPolicy::new(), call.abi_encode()).unwrap_err();
+    let err = op(&mut s, owner, FakePolicyAccounting::new(), call.abi_encode()).unwrap_err();
     assert_eq!(err, BasePrecompileError::revert(IB20::ExpiredSignature { deadline: u(10) }));
 }
 
@@ -1195,9 +1214,13 @@ fn golden_permit_reverts_when_expired() {
 #[test]
 fn golden_read_currency() {
     let mut s = fresh();
-    let out =
-        op(&mut s, ALICE, InMemoryPolicy::new(), IB20Stablecoin::currencyCall {}.abi_encode())
-            .unwrap();
+    let out = op(
+        &mut s,
+        ALICE,
+        FakePolicyAccounting::new(),
+        IB20Stablecoin::currencyCall {}.abi_encode(),
+    )
+    .unwrap();
     assert_eq!(out, Bytes::from(CURRENCY.abi_encode()));
     assert_root("read_currency", s, ROOT_FRESH);
 }
@@ -1208,7 +1231,7 @@ fn golden_read_is_paused_and_paused_features() {
     op_privileged(
         &mut s,
         ADMIN,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::pauseCall { features: vec![IB20::PausableFeature::MINT] }.abi_encode(),
     )
     .unwrap();
@@ -1216,7 +1239,7 @@ fn golden_read_is_paused_and_paused_features() {
     let paused_mint = op(
         &mut s,
         ALICE,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::isPausedCall { feature: IB20::PausableFeature::MINT }.abi_encode(),
     )
     .unwrap();
@@ -1225,14 +1248,15 @@ fn golden_read_is_paused_and_paused_features() {
     let paused_transfer = op(
         &mut s,
         ALICE,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::isPausedCall { feature: IB20::PausableFeature::TRANSFER }.abi_encode(),
     )
     .unwrap();
     assert_eq!(paused_transfer, Bytes::from(false.abi_encode()));
 
     let features =
-        op(&mut s, ALICE, InMemoryPolicy::new(), IB20::pausedFeaturesCall {}.abi_encode()).unwrap();
+        op(&mut s, ALICE, FakePolicyAccounting::new(), IB20::pausedFeaturesCall {}.abi_encode())
+            .unwrap();
     assert_eq!(features, Bytes::from(vec![IB20::PausableFeature::MINT].abi_encode()));
 }
 
@@ -1242,7 +1266,7 @@ fn golden_read_policy_id_and_unsupported_scope() {
     let ok = op(
         &mut s,
         ALICE,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::policyIdCall { policyScope: B20PolicyType::TransferSender.id() }.abi_encode(),
     )
     .unwrap();
@@ -1252,7 +1276,7 @@ fn golden_read_policy_id_and_unsupported_scope() {
     let err = op(
         &mut s,
         ALICE,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::policyIdCall { policyScope: bad_scope }.abi_encode(),
     )
     .unwrap_err();
@@ -1266,8 +1290,9 @@ fn golden_read_policy_id_and_unsupported_scope() {
 fn golden_read_domain_separator() {
     let mut s = fresh();
     let expected = domain_separator(&mut s);
-    let out = op(&mut s, ALICE, InMemoryPolicy::new(), IB20::DOMAIN_SEPARATORCall {}.abi_encode())
-        .unwrap();
+    let out =
+        op(&mut s, ALICE, FakePolicyAccounting::new(), IB20::DOMAIN_SEPARATORCall {}.abi_encode())
+            .unwrap();
     assert_eq!(out, Bytes::from(expected.abi_encode()));
     assert_root("read_domain_separator", s, ROOT_FRESH);
 }
@@ -1276,7 +1301,8 @@ fn golden_read_domain_separator() {
 fn golden_read_eip712_domain() {
     let mut s = fresh();
     let out =
-        op(&mut s, ALICE, InMemoryPolicy::new(), IB20::eip712DomainCall {}.abi_encode()).unwrap();
+        op(&mut s, ALICE, FakePolicyAccounting::new(), IB20::eip712DomainCall {}.abi_encode())
+            .unwrap();
     let decoded = IB20::eip712DomainCall::abi_decode_returns(&out).unwrap();
     assert_eq!(decoded.name, NAME);
     assert_eq!(decoded.version, "1");
@@ -1315,7 +1341,7 @@ fn golden_read_metadata_and_supply() {
         ),
     ];
     for (calldata, expected) in cases {
-        let out = op(&mut s, ALICE, InMemoryPolicy::new(), calldata).unwrap();
+        let out = op(&mut s, ALICE, FakePolicyAccounting::new(), calldata).unwrap();
         assert_eq!(out, expected);
     }
     assert_root("read_metadata", s, ROOT_FRESH);
@@ -1338,7 +1364,7 @@ fn golden_read_role_and_policy_constants() {
         (IB20::MINT_RECEIVER_POLICYCall {}.abi_encode(), B20PolicyType::MintReceiver.id()),
     ];
     for (calldata, expected) in cases {
-        let out = op(&mut s, ALICE, InMemoryPolicy::new(), calldata).unwrap();
+        let out = op(&mut s, ALICE, FakePolicyAccounting::new(), calldata).unwrap();
         assert_eq!(out, Bytes::from(expected.abi_encode()));
     }
     assert_root("read_constants", s, ROOT_FRESH);
@@ -1356,7 +1382,8 @@ fn dispatch_rejects_nonzero_value() {
     let out = StorageCtx::enter(&mut s, |ctx| {
         B20StablecoinToken::with_storage_and_policy(
             B20StablecoinStorage::from_address(TOKEN, ctx),
-            InMemoryPolicy::new(),
+            FakePolicyAccounting::new(),
+            PolicyVersion::V1,
         )
         .dispatch_with_observer(
             ctx,
@@ -1377,7 +1404,8 @@ fn dispatch_reverts_before_beryl() {
     let out = StorageCtx::enter(&mut s, |ctx| {
         B20StablecoinToken::with_storage_and_policy(
             B20StablecoinStorage::from_address(TOKEN, ctx),
-            InMemoryPolicy::new(),
+            FakePolicyAccounting::new(),
+            PolicyVersion::V1,
         )
         .dispatch_with_observer(
             ctx,
@@ -1399,7 +1427,8 @@ fn dispatch_reverts_when_uninitialized() {
     let out = StorageCtx::enter(&mut s, |ctx| {
         B20StablecoinToken::with_storage_and_policy(
             B20StablecoinStorage::from_address(TOKEN, ctx),
-            InMemoryPolicy::new(),
+            FakePolicyAccounting::new(),
+            PolicyVersion::V1,
         )
         .dispatch_with_observer(
             ctx,
@@ -1424,7 +1453,7 @@ fn golden_transfer_reverts_zero_sender() {
     let err = op_privileged(
         &mut s,
         Address::ZERO,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::transferCall { to: BOB, amount: u(1) }.abi_encode(),
     )
     .unwrap_err();
@@ -1437,7 +1466,7 @@ fn golden_transfer_from_reverts_zero_receiver() {
     let err = op_privileged(
         &mut s,
         BOB,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::transferFromCall { from: ALICE, to: Address::ZERO, amount: u(1) }.abi_encode(),
     )
     .unwrap_err();
@@ -1450,7 +1479,7 @@ fn golden_transfer_from_reverts_zero_sender() {
     let err = op_privileged(
         &mut s,
         BOB,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::transferFromCall { from: Address::ZERO, to: CAROL, amount: u(1) }.abi_encode(),
     )
     .unwrap_err();
@@ -1464,7 +1493,7 @@ fn golden_approve_reverts_zero_approver() {
     let err = op(
         &mut s,
         Address::ZERO,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::approveCall { spender: BOB, amount: u(1) }.abi_encode(),
     )
     .unwrap_err();
@@ -1477,7 +1506,7 @@ fn golden_mint_reverts_zero_receiver() {
     let err = op_privileged(
         &mut s,
         ADMIN,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::mintCall { to: Address::ZERO, amount: u(1) }.abi_encode(),
     )
     .unwrap_err();
@@ -1491,9 +1520,13 @@ fn golden_burn_reverts_insufficient_balance() {
         fund(t, ALICE, u(10));
         give_role(t, B20TokenRole::Burn.id(), ALICE);
     });
-    let err =
-        op(&mut s, ALICE, InMemoryPolicy::new(), IB20::burnCall { amount: u(50) }.abi_encode())
-            .unwrap_err();
+    let err = op(
+        &mut s,
+        ALICE,
+        FakePolicyAccounting::new(),
+        IB20::burnCall { amount: u(50) }.abi_encode(),
+    )
+    .unwrap_err();
     assert_eq!(
         err,
         BasePrecompileError::revert(IB20::InsufficientBalance {
@@ -1511,7 +1544,7 @@ fn golden_burn_blocked_unprivileged_requires_role() {
     let err = op(
         &mut s,
         ALICE,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::burnBlockedCall { from: BOB, amount: u(1) }.abi_encode(),
     )
     .unwrap_err();
@@ -1530,7 +1563,7 @@ fn golden_unpause_reverts_empty_feature_set() {
     let err = op_privileged(
         &mut s,
         ADMIN,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::unpauseCall { features: vec![] }.abi_encode(),
     )
     .unwrap_err();
@@ -1543,7 +1576,7 @@ fn golden_unpause_unprivileged_requires_role() {
     let err = op(
         &mut s,
         ALICE,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::unpauseCall { features: vec![IB20::PausableFeature::MINT] }.abi_encode(),
     )
     .unwrap_err();
@@ -1560,7 +1593,7 @@ fn golden_unpause_unprivileged_requires_role() {
 #[track_caller]
 fn assert_unprivileged_requires_role(calldata: Vec<u8>, role: B256) {
     let mut s = fresh();
-    let err = op(&mut s, ALICE, InMemoryPolicy::new(), calldata).unwrap_err();
+    let err = op(&mut s, ALICE, FakePolicyAccounting::new(), calldata).unwrap_err();
     assert_eq!(
         err,
         BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
@@ -1618,7 +1651,7 @@ fn golden_grant_role_unprivileged_no_admin_reverts() {
     let err = op(
         &mut s,
         ALICE,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::grantRoleCall { role: B20TokenRole::Mint.id(), account: BOB }.abi_encode(),
     )
     .unwrap_err();
@@ -1639,7 +1672,7 @@ fn golden_grant_role_unprivileged_non_admin_caller_reverts() {
     let err = op(
         &mut s,
         ALICE,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::grantRoleCall { role: B20TokenRole::Mint.id(), account: BOB }.abi_encode(),
     )
     .unwrap_err();
@@ -1659,7 +1692,7 @@ fn golden_revoke_role_unprivileged_non_admin_caller_reverts() {
     let err = op(
         &mut s,
         BOB,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::revokeRoleCall { role: B20TokenRole::Mint.id(), account: ALICE }.abi_encode(),
     )
     .unwrap_err();
@@ -1679,7 +1712,7 @@ fn golden_set_role_admin_unprivileged_non_admin_caller_reverts() {
     let err = op(
         &mut s,
         BOB,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::setRoleAdminCall {
             role: B20TokenRole::Mint.id(),
             newAdminRole: B20TokenRole::Metadata.id(),
@@ -1703,7 +1736,7 @@ fn golden_renounce_role_reverts_last_admin() {
     let err = op(
         &mut s,
         ADMIN,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::renounceRoleCall { role: B20TokenRole::DefaultAdmin.id(), callerConfirmation: ADMIN }
             .abi_encode(),
     )
@@ -1718,7 +1751,7 @@ fn golden_grant_default_admin_bumps_member_count() {
     let out = op_privileged(
         &mut s,
         ADMIN,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::grantRoleCall { role: B20TokenRole::DefaultAdmin.id(), account: ALICE }.abi_encode(),
     )
     .unwrap();
@@ -1743,7 +1776,7 @@ fn golden_grant_role_idempotent_when_already_held() {
     let out = op_privileged(
         &mut s,
         ADMIN,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::grantRoleCall { role: B20TokenRole::Mint.id(), account: ALICE }.abi_encode(),
     )
     .unwrap();
@@ -1761,7 +1794,7 @@ fn golden_revoke_role_noop_when_not_held() {
     let out = op_privileged(
         &mut s,
         ADMIN,
-        InMemoryPolicy::new(),
+        FakePolicyAccounting::new(),
         IB20::revokeRoleCall { role: B20TokenRole::Mint.id(), account: ALICE }.abi_encode(),
     )
     .unwrap();
@@ -1784,7 +1817,8 @@ fn golden_dispatch_no_observer_wrapper_reverts_uninitialized() {
     let out = StorageCtx::enter(&mut s, |ctx| {
         B20StablecoinToken::with_storage_and_policy(
             B20StablecoinStorage::from_address(TOKEN, ctx),
-            InMemoryPolicy::new(),
+            FakePolicyAccounting::new(),
+            PolicyVersion::V1,
         )
         .dispatch(ctx, &calldata, BaseUpgrade::Beryl)
     })
@@ -1800,7 +1834,8 @@ fn golden_inner_reverts_before_beryl() {
     let err = StorageCtx::enter(&mut s, |ctx| {
         B20StablecoinToken::with_storage_and_policy(
             B20StablecoinStorage::from_address(TOKEN, ctx),
-            InMemoryPolicy::new(),
+            FakePolicyAccounting::new(),
+            PolicyVersion::V1,
         )
         .inner(ctx, &calldata, BaseUpgrade::Azul)
     })
@@ -1816,7 +1851,8 @@ fn golden_grant_role_unchecked_bootstraps_first_admin() {
     StorageCtx::enter(&mut s, |ctx| {
         let mut token = B20StablecoinToken::with_storage_and_policy(
             B20StablecoinStorage::from_address(TOKEN, ctx),
-            InMemoryPolicy::new(),
+            FakePolicyAccounting::new(),
+            PolicyVersion::V1,
         );
         token.grant_role_unchecked(B20TokenRole::DefaultAdmin.id(), ADMIN, TOKEN).unwrap();
     });
@@ -1841,7 +1877,7 @@ fn golden_grant_role_unchecked_bootstraps_first_admin() {
 fn gas(
     setup: impl FnOnce(&mut B20StablecoinStorage<'_>),
     caller: Address,
-    policy: InMemoryPolicy,
+    policy: FakePolicyAccounting,
     calldata: Vec<u8>,
 ) -> (u64, u64, u64) {
     let mut s = fresh();
@@ -1852,6 +1888,7 @@ fn gas(
         B20StablecoinToken::with_storage_and_policy(
             B20StablecoinStorage::from_address(TOKEN, ctx),
             policy,
+            PolicyVersion::V1,
         )
         .inner_with_privilege(ctx, &calldata, true)
     })
@@ -1859,9 +1896,9 @@ fn gas(
     (s.counter_sload(), s.counter_sstore(), s.counter_keccak256())
 }
 
-/// An `InMemoryPolicy` authorizing `who` under the default (0) scope.
-fn allow0(who: Address) -> InMemoryPolicy {
-    let mut p = InMemoryPolicy::new();
+/// An `FakePolicyAccounting` authorizing `who` under the default (0) scope.
+fn allow0(who: Address) -> FakePolicyAccounting {
+    let mut p = FakePolicyAccounting::new();
     p.allow(0, who);
     p
 }
@@ -1874,7 +1911,7 @@ fn golden_gas_footprints() {
             gas(
                 |t| fund(t, ALICE, u(100)),
                 ALICE,
-                InMemoryPolicy::new(),
+                FakePolicyAccounting::new(),
                 IB20::transferCall { to: BOB, amount: u(30) }.abi_encode(),
             ),
         ),
@@ -1886,7 +1923,7 @@ fn golden_gas_footprints() {
                     t.set_allowance(ALICE, BOB, u(40)).unwrap();
                 },
                 BOB,
-                InMemoryPolicy::new(),
+                FakePolicyAccounting::new(),
                 IB20::transferFromCall { from: ALICE, to: BOB, amount: u(30) }.abi_encode(),
             ),
         ),
@@ -1895,7 +1932,7 @@ fn golden_gas_footprints() {
             gas(
                 |_t| {},
                 ALICE,
-                InMemoryPolicy::new(),
+                FakePolicyAccounting::new(),
                 IB20::approveCall { spender: BOB, amount: u(50) }.abi_encode(),
             ),
         ),
@@ -1916,7 +1953,7 @@ fn golden_gas_footprints() {
                     give_role(t, B20TokenRole::Burn.id(), ALICE);
                 },
                 ALICE,
-                InMemoryPolicy::new(),
+                FakePolicyAccounting::new(),
                 IB20::burnCall { amount: u(40) }.abi_encode(),
             ),
         ),
@@ -1928,7 +1965,7 @@ fn golden_gas_footprints() {
                     t.set_policy_id(B20PolicyType::TransferSender.id(), POLICY_ID).unwrap();
                 },
                 ADMIN,
-                InMemoryPolicy::new(),
+                FakePolicyAccounting::new(),
                 IB20::burnBlockedCall { from: ALICE, amount: u(40) }.abi_encode(),
             ),
         ),
@@ -1937,7 +1974,7 @@ fn golden_gas_footprints() {
             gas(
                 |_t| {},
                 ADMIN,
-                InMemoryPolicy::new(),
+                FakePolicyAccounting::new(),
                 IB20::pauseCall { features: vec![IB20::PausableFeature::MINT] }.abi_encode(),
             ),
         ),
@@ -1946,7 +1983,7 @@ fn golden_gas_footprints() {
             gas(
                 |_t| {},
                 ADMIN,
-                InMemoryPolicy::new(),
+                FakePolicyAccounting::new(),
                 IB20::unpauseCall { features: vec![IB20::PausableFeature::MINT] }.abi_encode(),
             ),
         ),
@@ -1955,7 +1992,7 @@ fn golden_gas_footprints() {
             gas(
                 |_t| {},
                 ADMIN,
-                InMemoryPolicy::new(),
+                FakePolicyAccounting::new(),
                 IB20::updateSupplyCapCall { newSupplyCap: u(1_000) }.abi_encode(),
             ),
         ),
@@ -1964,7 +2001,7 @@ fn golden_gas_footprints() {
             gas(
                 |_t| {},
                 ADMIN,
-                InMemoryPolicy::new(),
+                FakePolicyAccounting::new(),
                 IB20::updateNameCall { newName: "New Name".into() }.abi_encode(),
             ),
         ),
@@ -1973,7 +2010,7 @@ fn golden_gas_footprints() {
             gas(
                 |_t| {},
                 ADMIN,
-                InMemoryPolicy::new(),
+                FakePolicyAccounting::new(),
                 IB20::updateSymbolCall { newSymbol: "USDX".into() }.abi_encode(),
             ),
         ),
@@ -1982,7 +2019,7 @@ fn golden_gas_footprints() {
             gas(
                 |_t| {},
                 ADMIN,
-                InMemoryPolicy::new(),
+                FakePolicyAccounting::new(),
                 IB20::updateContractURICall { newURI: "ipfs://x".into() }.abi_encode(),
             ),
         ),
@@ -1991,7 +2028,7 @@ fn golden_gas_footprints() {
             gas(
                 |_t| {},
                 ADMIN,
-                InMemoryPolicy::new(),
+                FakePolicyAccounting::new(),
                 IB20::grantRoleCall { role: B20TokenRole::Mint.id(), account: ALICE }.abi_encode(),
             ),
         ),
@@ -2000,7 +2037,7 @@ fn golden_gas_footprints() {
             gas(
                 |t| give_role(t, B20TokenRole::Mint.id(), ALICE),
                 ADMIN,
-                InMemoryPolicy::new(),
+                FakePolicyAccounting::new(),
                 IB20::revokeRoleCall { role: B20TokenRole::Mint.id(), account: ALICE }.abi_encode(),
             ),
         ),
@@ -2009,7 +2046,7 @@ fn golden_gas_footprints() {
             gas(
                 |_t| {},
                 ADMIN,
-                InMemoryPolicy::new(),
+                FakePolicyAccounting::new(),
                 IB20::setRoleAdminCall {
                     role: B20TokenRole::Mint.id(),
                     newAdminRole: B20TokenRole::Metadata.id(),
@@ -2023,7 +2060,7 @@ fn golden_gas_footprints() {
                 |_t| {},
                 ADMIN,
                 {
-                    let mut p = InMemoryPolicy::new();
+                    let mut p = FakePolicyAccounting::new();
                     p.create_existing_policy(7);
                     p
                 },

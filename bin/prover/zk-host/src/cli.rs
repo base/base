@@ -54,10 +54,6 @@ struct WorkerArgs {
     #[arg(long, env = "PROVER_WORKER_ID")]
     worker_id: Option<String>,
 
-    /// Enable the mock backend. Intended only for tests and local smoke checks.
-    #[arg(long, env = "ENABLE_MOCK_ZK_BACKEND", default_value_t = false)]
-    enable_mock_zk_backend: bool,
-
     /// Base consensus node RPC URL. Required for dry-run, cluster, or network backends.
     #[arg(long, env = "BASE_CONSENSUS_ADDRESS")]
     base_consensus_address: Option<Url>,
@@ -167,7 +163,6 @@ struct WorkerArgs {
 impl WorkerArgs {
     fn backend_config(&self) -> SuccinctZkProversConfig {
         SuccinctZkProversConfig {
-            enable_mock: self.enable_mock_zk_backend,
             base_consensus_rpc: self.base_consensus_address.clone(),
             l1_rpc: self.l1_node_address.clone(),
             l1_beacon_rpc: self.l1_beacon_address.clone(),
