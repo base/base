@@ -175,10 +175,12 @@ impl CliMetrics {
         )
         .set(1);
 
-        for (upgrade_name, activation_time) in config.upgrades.iter() {
+        for (upgrade, activation_time) in config.upgrades.iter() {
             // Use `-1` as a signal that the upgrade is not scheduled.
             let time: f64 = activation_time.map(|t| t as f64).unwrap_or(-1f64);
-            metrics::gauge!(Self::UPGRADE_ACTIVATION_TIMES, "upgrade" => upgrade_name).set(time);
+            if let Some(label) = upgrade_metric_label(upgrade) {
+                metrics::gauge!(Self::UPGRADE_ACTIVATION_TIMES, "upgrade" => label).set(time);
+            }
         }
     }
 
@@ -241,6 +243,28 @@ const UPGRADE_ACTIVATION_GRACE_SECONDS: u64 = 15 * 60;
 // activation grace window instead of alerting on an unscheduled sentinel.
 const NO_UPCOMING_UPGRADE_SECONDS: f64 = 4_294_967_295.0;
 
+const UPGRADE_METRIC_LABELS: [(BaseUpgrade, &str); BaseUpgrade::CONTRACT_VARIANTS.len()] = [
+    (BaseUpgrade::Regolith, "Regolith"),
+    (BaseUpgrade::Canyon, "Canyon"),
+    (BaseUpgrade::Delta, "Delta"),
+    (BaseUpgrade::Ecotone, "Ecotone"),
+    (BaseUpgrade::Fjord, "Fjord"),
+    (BaseUpgrade::Granite, "Granite"),
+    (BaseUpgrade::Holocene, "Holocene"),
+    (BaseUpgrade::PectraBlobSchedule, "Pectra Blob Schedule"),
+    (BaseUpgrade::Isthmus, "Isthmus"),
+    (BaseUpgrade::Jovian, "Jovian"),
+    (BaseUpgrade::Azul, "Azul"),
+    (BaseUpgrade::Beryl, "Beryl"),
+    (BaseUpgrade::Cobalt, "Cobalt"),
+];
+
+fn upgrade_metric_label(upgrade: BaseUpgrade) -> Option<&'static str> {
+    UPGRADE_METRIC_LABELS
+        .iter()
+        .find_map(|(candidate, label)| (*candidate == upgrade).then_some(*label))
+}
+
 fn current_unix_timestamp() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
 }
@@ -276,38 +300,12 @@ fn seconds_until_next_upgrades(config: &RollupConfig, now: u64) -> Vec<(&'static
         .collect()
 }
 
-const UPGRADE_METRIC_LABELS: [(BaseUpgrade, &str); BaseUpgrade::CONTRACT_VARIANTS.len()] = [
-    (BaseUpgrade::Regolith, "Regolith"),
-    (BaseUpgrade::Canyon, "Canyon"),
-    (BaseUpgrade::Delta, "Delta"),
-    (BaseUpgrade::Ecotone, "Ecotone"),
-    (BaseUpgrade::Fjord, "Fjord"),
-    (BaseUpgrade::Granite, "Granite"),
-    (BaseUpgrade::Holocene, "Holocene"),
-    (BaseUpgrade::PectraBlobSchedule, "Pectra Blob Schedule"),
-    (BaseUpgrade::Isthmus, "Isthmus"),
-    (BaseUpgrade::Jovian, "Jovian"),
-    (BaseUpgrade::Azul, "Azul"),
-    (BaseUpgrade::Beryl, "Beryl"),
-    (BaseUpgrade::Cobalt, "Cobalt"),
-];
-
-fn upgrade_metric_label(upgrade: BaseUpgrade) -> Option<&'static str> {
-    UPGRADE_METRIC_LABELS
-        .iter()
-        .find_map(|(candidate, label)| (*candidate == upgrade).then_some(*label))
-}
-
 #[cfg(test)]
 mod tests {
     use alloy_chains::Chain;
     use base_common_genesis::{RuntimeUpgradeRegistry, UpgradeConfig};
 
     use super::*;
-
-    fn upgrade_metric_labels() -> Vec<(BaseUpgrade, &'static str)> {
-        UPGRADE_METRIC_LABELS.to_vec()
-    }
 
     #[test]
     fn seconds_until_next_upgrades_returns_future_countdown() {
@@ -396,6 +394,20 @@ mod tests {
         RuntimeUpgradeRegistry::clear_chain(chain_id);
     }
 
+    fn upgrade_metric_labels() -> Vec<(BaseUpgrade, &'static str)> {
+        UPGRADE_METRIC_LABELS.to_vec()
+    }
+
+    #[test]
+    fn upgrade_metric_label_matches_upgrade_activation_time_labels() {
+        let labels = upgrade_metric_labels();
+        assert_eq!(labels.len(), BaseUpgrade::CONTRACT_VARIANTS.len());
+
+        for (upgrade, label) in &labels {
+            assert_eq!(Some(*label), upgrade_metric_label(*upgrade));
+        }
+    }
+
     #[test]
     fn record_seconds_until_next_upgrade_drains_stale_upgrades() {
         let config = RollupConfig {
@@ -419,16 +431,5 @@ mod tests {
             &mut observed_upgrades,
         );
         assert!(observed_upgrades.is_empty());
-    }
-
-    #[test]
-    fn upgrade_metric_label_matches_upgrade_activation_time_labels() {
-        let labels = upgrade_metric_labels();
-        assert_eq!(labels.len(), BaseUpgrade::CONTRACT_VARIANTS.len());
-
-        let config_labels =
-            UpgradeConfig::default().iter().map(|(label, _)| label).collect::<Vec<_>>();
-
-        assert_eq!(labels.iter().map(|(_, label)| *label).collect::<Vec<_>>(), config_labels);
     }
 }

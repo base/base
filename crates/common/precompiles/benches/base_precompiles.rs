@@ -4,9 +4,10 @@ use std::hint::black_box;
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolValue;
+use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
     Asset, AssetV1, B20AssetStorage, B20AssetToken, B20FactoryStorage, B20TokenRole, B20Variant,
-    IB20, IB20Factory, PolicyHandle, Token, TokenAccounting,
+    IB20, IB20Factory, PolicyRegistryStorage, PolicyVersion, Token, TokenAccounting,
 };
 use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 use criterion::{Criterion, criterion_group, criterion_main};
@@ -50,14 +51,14 @@ impl BaseTokenBenchSetup {
             initCalls: Vec::new(),
         };
         let mut factory = B20FactoryStorage::new(ctx);
-        factory.create_b20(caller, call).unwrap()
+        factory.create_b20(caller, call, BaseUpgrade::Beryl).unwrap()
     }
 
     fn create_token<'a>(
         ctx: StorageCtx<'a>,
         salt: B256,
         initial_supply: U256,
-    ) -> B20AssetToken<B20AssetStorage<'a>, PolicyHandle<'a>> {
+    ) -> B20AssetToken<B20AssetStorage<'a>, PolicyRegistryStorage<'a>> {
         let params = Self::token_params("BaseToken", "BASE");
 
         let token_address = Self::create_b20(ctx, Self::caller(), params, salt, initial_supply);
@@ -79,10 +80,11 @@ impl BaseTokenBenchSetup {
     fn token_at<'a>(
         ctx: StorageCtx<'a>,
         token_address: Address,
-    ) -> B20AssetToken<B20AssetStorage<'a>, PolicyHandle<'a>> {
+    ) -> B20AssetToken<B20AssetStorage<'a>, PolicyRegistryStorage<'a>> {
         B20AssetToken::with_storage_and_policy(
             B20AssetStorage::from_address(token_address, ctx),
-            PolicyHandle::new(ctx),
+            PolicyRegistryStorage::new(ctx),
+            PolicyVersion::V1,
         )
     }
 }

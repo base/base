@@ -172,8 +172,8 @@ mod tests {
     use k256::ecdsa::SigningKey;
 
     use crate::{
-        IB20, InMemoryPolicy, InMemoryTokenAccounting, PermitArgs, Permittable, TestToken, Token,
-        TokenAccounting,
+        FakePolicyAccounting, IB20, InMemoryTokenAccounting, PermitArgs, Permittable, TestToken,
+        Token, TokenAccounting,
         common::ops::permittable::{DOMAIN_TYPEHASH, VERSION},
     };
 
@@ -189,7 +189,7 @@ mod tests {
     fn make_token() -> TestToken {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
         accounting.name = TOKEN_NAME.to_string();
-        TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
+        TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new())
     }
 
     fn owner_address() -> Address {

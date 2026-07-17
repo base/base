@@ -21,7 +21,8 @@ reth-execution-types.workspace = true
 reth-consensus-common.workspace = true
 reth-primitives-traits.workspace = true
 
-# op-reth
+# base
+base-protocol.workspace = true
 base-common-chains.workspace = true
 base-common-consensus = { workspace = true, features = ["reth"] }
 
@@ -59,6 +60,7 @@ std = [
 	"base-common-chains/std",
 	"base-common-consensus/std",
 	"base-execution-chainspec/std",
+	"base-protocol/std",
 	"reth-consensus-common/std",
 	"reth-consensus/std",
 	"reth-execution-types/std",

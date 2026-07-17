@@ -19,12 +19,12 @@ use crate::{
     BerylMetricLabels, BerylSelector,
     IB20::{self, IB20Calls as C},
     IB20Stablecoin::{self, IB20StablecoinCalls as SC},
-    NoopPrecompileCallObserver, PermitArgs, Policy, PrecompileCallObserver, StablecoinAccounting,
-    StablecoinV1, StablecoinVersion, StablecoinVersions,
+    NoopPrecompileCallObserver, PermitArgs, PolicyAccounting, PrecompileCallObserver,
+    StablecoinAccounting, StablecoinV1, StablecoinVersion, StablecoinVersions,
     macros::decode_precompile_call,
 };
 
-impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
+impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
     /// ABI-dispatches `calldata` to the appropriate `IB20` handler for `upgrade`.
     pub fn dispatch(
         &mut self,
@@ -374,8 +374,8 @@ mod tests {
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
     use crate::{
-        B20StablecoinToken, IB20, InMemoryPolicy, InMemoryTokenAccounting,
-        NoopPrecompileCallObserver, TestStablecoinToken,
+        B20StablecoinToken, FakePolicyAccounting, IB20, InMemoryTokenAccounting,
+        NoopPrecompileCallObserver, PolicyVersion, TestStablecoinToken,
     };
 
     const TOKEN: Address = Address::repeat_byte(0x01);
@@ -383,7 +383,11 @@ mod tests {
     fn make_stablecoin_token_with_decimals(decimals: u8) -> TestStablecoinToken {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
         accounting.decimals = decimals;
-        TestStablecoinToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
+        TestStablecoinToken::with_storage_and_policy(
+            accounting,
+            FakePolicyAccounting::new(),
+            PolicyVersion::V1,
+        )
     }
 
     fn call_inner(token: &mut TestStablecoinToken, calldata: &[u8]) -> Vec<u8> {
@@ -394,10 +398,11 @@ mod tests {
             .to_vec()
     }
 
-    fn make_token() -> B20StablecoinToken<InMemoryTokenAccounting, InMemoryPolicy> {
+    fn make_token() -> B20StablecoinToken<InMemoryTokenAccounting, FakePolicyAccounting> {
         B20StablecoinToken::with_storage_and_policy(
             InMemoryTokenAccounting::new(TOKEN),
-            InMemoryPolicy::new(),
+            FakePolicyAccounting::new(),
+            PolicyVersion::V1,
         )
     }
 

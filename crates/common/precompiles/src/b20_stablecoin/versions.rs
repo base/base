@@ -9,7 +9,7 @@
 
 use base_common_genesis::BaseUpgrade;
 
-use crate::{Policy, Stablecoin, StablecoinAccounting, StablecoinV1};
+use crate::{PolicyAccounting, Stablecoin, StablecoinAccounting, StablecoinV1};
 
 /// An activated version of the stablecoin B-20 precompile logic.
 ///
@@ -22,10 +22,10 @@ pub enum StablecoinVersion {
 
 impl StablecoinVersion {
     /// Returns the immutable logic implementation for this version.
-    pub fn implementation<'l, S, P>(self) -> &'l dyn Stablecoin<S, P>
+    pub fn implementation<'l, S, A>(self) -> &'l dyn Stablecoin<S, A>
     where
         S: StablecoinAccounting + 'l,
-        P: Policy + 'l,
+        A: PolicyAccounting + 'l,
     {
         static V1: StablecoinV1 = StablecoinV1;
         match self {

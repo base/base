@@ -6,15 +6,16 @@ use alloy_primitives::{Address, B256, U256};
 use base_precompile_storage::Result;
 
 use crate::{
-    B20StablecoinToken, Eip712Domain, IB20, PermitArgs, Policy, StablecoinAccounting, Token,
+    B20StablecoinToken, Eip712Domain, IB20, PermitArgs, PolicyAccounting, StablecoinAccounting,
+    Token,
 };
 
 /// The stablecoin logic interface.
-pub trait Stablecoin<S: StablecoinAccounting, P: Policy> {
+pub trait Stablecoin<S: StablecoinAccounting, A: PolicyAccounting> {
     /// ERC-20 `transfer`.
     fn transfer(
         &self,
-        token: &mut B20StablecoinToken<S, P>,
+        token: &mut B20StablecoinToken<S, A>,
         caller: Address,
         to: Address,
         amount: U256,
@@ -24,7 +25,7 @@ pub trait Stablecoin<S: StablecoinAccounting, P: Policy> {
     /// ERC-20 `transferFrom`.
     fn transfer_from(
         &self,
-        token: &mut B20StablecoinToken<S, P>,
+        token: &mut B20StablecoinToken<S, A>,
         caller: Address,
         from: Address,
         to: Address,
@@ -35,7 +36,7 @@ pub trait Stablecoin<S: StablecoinAccounting, P: Policy> {
     /// ERC-20 `approve`.
     fn approve(
         &self,
-        token: &mut B20StablecoinToken<S, P>,
+        token: &mut B20StablecoinToken<S, A>,
         caller: Address,
         spender: Address,
         amount: U256,
@@ -48,7 +49,7 @@ pub trait Stablecoin<S: StablecoinAccounting, P: Policy> {
     /// stay version-defined without widening every operation's signature.
     fn emit_memo(
         &self,
-        token: &mut B20StablecoinToken<S, P>,
+        token: &mut B20StablecoinToken<S, A>,
         caller: Address,
         memo: B256,
     ) -> Result<()>;
@@ -56,7 +57,7 @@ pub trait Stablecoin<S: StablecoinAccounting, P: Policy> {
     /// Mints `amount` to `to`.
     fn mint(
         &self,
-        token: &mut B20StablecoinToken<S, P>,
+        token: &mut B20StablecoinToken<S, A>,
         caller: Address,
         to: Address,
         amount: U256,
@@ -66,7 +67,7 @@ pub trait Stablecoin<S: StablecoinAccounting, P: Policy> {
     /// Self-burn: the caller destroys `amount` of its own balance.
     fn burn(
         &self,
-        token: &mut B20StablecoinToken<S, P>,
+        token: &mut B20StablecoinToken<S, A>,
         caller: Address,
         amount: U256,
     ) -> Result<()>;
@@ -74,7 +75,7 @@ pub trait Stablecoin<S: StablecoinAccounting, P: Policy> {
     /// Destroys `amount` from a policy-blocked `from` account.
     fn burn_blocked(
         &self,
-        token: &mut B20StablecoinToken<S, P>,
+        token: &mut B20StablecoinToken<S, A>,
         caller: Address,
         from: Address,
         amount: U256,
@@ -84,7 +85,7 @@ pub trait Stablecoin<S: StablecoinAccounting, P: Policy> {
     /// Pauses the given features.
     fn pause(
         &self,
-        token: &mut B20StablecoinToken<S, P>,
+        token: &mut B20StablecoinToken<S, A>,
         caller: Address,
         features: Vec<IB20::PausableFeature>,
         privileged: bool,
@@ -93,7 +94,7 @@ pub trait Stablecoin<S: StablecoinAccounting, P: Policy> {
     /// Unpauses the given features.
     fn unpause(
         &self,
-        token: &mut B20StablecoinToken<S, P>,
+        token: &mut B20StablecoinToken<S, A>,
         caller: Address,
         features: Vec<IB20::PausableFeature>,
         privileged: bool,
@@ -102,7 +103,7 @@ pub trait Stablecoin<S: StablecoinAccounting, P: Policy> {
     /// Updates the maximum total supply.
     fn update_supply_cap(
         &self,
-        token: &mut B20StablecoinToken<S, P>,
+        token: &mut B20StablecoinToken<S, A>,
         caller: Address,
         new_cap: U256,
         privileged: bool,
@@ -111,7 +112,7 @@ pub trait Stablecoin<S: StablecoinAccounting, P: Policy> {
     /// Updates the token name.
     fn update_name(
         &self,
-        token: &mut B20StablecoinToken<S, P>,
+        token: &mut B20StablecoinToken<S, A>,
         caller: Address,
         name: String,
         privileged: bool,
@@ -120,7 +121,7 @@ pub trait Stablecoin<S: StablecoinAccounting, P: Policy> {
     /// Updates the token symbol.
     fn update_symbol(
         &self,
-        token: &mut B20StablecoinToken<S, P>,
+        token: &mut B20StablecoinToken<S, A>,
         caller: Address,
         symbol: String,
         privileged: bool,
@@ -129,7 +130,7 @@ pub trait Stablecoin<S: StablecoinAccounting, P: Policy> {
     /// Updates the contract URI.
     fn update_contract_uri(
         &self,
-        token: &mut B20StablecoinToken<S, P>,
+        token: &mut B20StablecoinToken<S, A>,
         caller: Address,
         uri: String,
         privileged: bool,
@@ -138,7 +139,7 @@ pub trait Stablecoin<S: StablecoinAccounting, P: Policy> {
     /// Grants `role` to `account`.
     fn grant_role(
         &self,
-        token: &mut B20StablecoinToken<S, P>,
+        token: &mut B20StablecoinToken<S, A>,
         caller: Address,
         role: B256,
         account: Address,
@@ -148,7 +149,7 @@ pub trait Stablecoin<S: StablecoinAccounting, P: Policy> {
     /// Revokes `role` from `account`.
     fn revoke_role(
         &self,
-        token: &mut B20StablecoinToken<S, P>,
+        token: &mut B20StablecoinToken<S, A>,
         caller: Address,
         role: B256,
         account: Address,
@@ -158,7 +159,7 @@ pub trait Stablecoin<S: StablecoinAccounting, P: Policy> {
     /// Renounces `role` for the caller.
     fn renounce_role(
         &self,
-        token: &mut B20StablecoinToken<S, P>,
+        token: &mut B20StablecoinToken<S, A>,
         caller: Address,
         role: B256,
         confirmation: Address,
@@ -167,14 +168,14 @@ pub trait Stablecoin<S: StablecoinAccounting, P: Policy> {
     /// Permanently removes the final default admin.
     fn renounce_last_admin(
         &self,
-        token: &mut B20StablecoinToken<S, P>,
+        token: &mut B20StablecoinToken<S, A>,
         caller: Address,
     ) -> Result<()>;
 
     /// Sets the admin role for `role`.
     fn set_role_admin(
         &self,
-        token: &mut B20StablecoinToken<S, P>,
+        token: &mut B20StablecoinToken<S, A>,
         caller: Address,
         role: B256,
         new_admin_role: B256,
@@ -184,7 +185,7 @@ pub trait Stablecoin<S: StablecoinAccounting, P: Policy> {
     /// Updates the policy ID configured for `policy_scope`.
     fn update_policy(
         &self,
-        token: &mut B20StablecoinToken<S, P>,
+        token: &mut B20StablecoinToken<S, A>,
         caller: Address,
         policy_scope: B256,
         new_policy_id: u64,
@@ -194,7 +195,7 @@ pub trait Stablecoin<S: StablecoinAccounting, P: Policy> {
     /// EIP-2612 `permit`.
     fn permit(
         &self,
-        token: &mut B20StablecoinToken<S, P>,
+        token: &mut B20StablecoinToken<S, A>,
         chain_id: u64,
         now: U256,
         args: PermitArgs,
@@ -205,34 +206,34 @@ pub trait Stablecoin<S: StablecoinAccounting, P: Policy> {
     //     every version; a version overrides one only if its read semantics change. ---
 
     /// Returns whether marker bytecode is deployed at this token's address.
-    fn is_initialized(&self, token: &B20StablecoinToken<S, P>) -> Result<bool> {
+    fn is_initialized(&self, token: &B20StablecoinToken<S, A>) -> Result<bool> {
         token.accounting().is_initialized()
     }
 
     /// Returns the token name.
-    fn name(&self, token: &B20StablecoinToken<S, P>) -> Result<String> {
+    fn name(&self, token: &B20StablecoinToken<S, A>) -> Result<String> {
         token.accounting().name()
     }
 
     /// Returns the token symbol.
-    fn symbol(&self, token: &B20StablecoinToken<S, P>) -> Result<String> {
+    fn symbol(&self, token: &B20StablecoinToken<S, A>) -> Result<String> {
         token.accounting().symbol()
     }
 
     /// Returns the total token supply currently in circulation.
-    fn total_supply(&self, token: &B20StablecoinToken<S, P>) -> Result<U256> {
+    fn total_supply(&self, token: &B20StablecoinToken<S, A>) -> Result<U256> {
         token.accounting().total_supply()
     }
 
     /// Returns the token balance of `account`.
-    fn balance_of(&self, token: &B20StablecoinToken<S, P>, account: Address) -> Result<U256> {
+    fn balance_of(&self, token: &B20StablecoinToken<S, A>, account: Address) -> Result<U256> {
         token.accounting().balance_of(account)
     }
 
     /// Returns the allowance granted by `owner` to `spender`.
     fn allowance(
         &self,
-        token: &B20StablecoinToken<S, P>,
+        token: &B20StablecoinToken<S, A>,
         owner: Address,
         spender: Address,
     ) -> Result<U256> {
@@ -240,24 +241,24 @@ pub trait Stablecoin<S: StablecoinAccounting, P: Policy> {
     }
 
     /// Returns the maximum total supply enforced on mint.
-    fn supply_cap(&self, token: &B20StablecoinToken<S, P>) -> Result<U256> {
+    fn supply_cap(&self, token: &B20StablecoinToken<S, A>) -> Result<U256> {
         token.accounting().supply_cap()
     }
 
     /// Returns the current EIP-2612 permit nonce for `owner`.
-    fn nonce(&self, token: &B20StablecoinToken<S, P>, owner: Address) -> Result<U256> {
+    fn nonce(&self, token: &B20StablecoinToken<S, A>, owner: Address) -> Result<U256> {
         token.accounting().nonce(owner)
     }
 
     /// Returns the off-chain metadata URI for this token (ERC-7572).
-    fn contract_uri(&self, token: &B20StablecoinToken<S, P>) -> Result<String> {
+    fn contract_uri(&self, token: &B20StablecoinToken<S, A>) -> Result<String> {
         token.accounting().contract_uri()
     }
 
     /// Returns whether `account` has `role`.
     fn has_role(
         &self,
-        token: &B20StablecoinToken<S, P>,
+        token: &B20StablecoinToken<S, A>,
         role: B256,
         account: Address,
     ) -> Result<bool> {
@@ -265,7 +266,7 @@ pub trait Stablecoin<S: StablecoinAccounting, P: Policy> {
     }
 
     /// Returns the admin role for `role`.
-    fn role_admin(&self, token: &B20StablecoinToken<S, P>, role: B256) -> Result<B256> {
+    fn role_admin(&self, token: &B20StablecoinToken<S, A>, role: B256) -> Result<B256> {
         token.accounting().role_admin(role)
     }
 
@@ -274,30 +275,30 @@ pub trait Stablecoin<S: StablecoinAccounting, P: Policy> {
     /// Returns whether the given pause `feature` is currently set.
     fn is_paused(
         &self,
-        token: &B20StablecoinToken<S, P>,
+        token: &B20StablecoinToken<S, A>,
         feature: IB20::PausableFeature,
     ) -> Result<bool>;
 
     /// Returns all currently paused features.
     fn paused_features(
         &self,
-        token: &B20StablecoinToken<S, P>,
+        token: &B20StablecoinToken<S, A>,
     ) -> Result<Vec<IB20::PausableFeature>>;
 
     /// Returns the configured policy ID for `policy_scope`, validating the scope.
-    fn policy_id(&self, token: &B20StablecoinToken<S, P>, policy_scope: B256) -> Result<u64>;
+    fn policy_id(&self, token: &B20StablecoinToken<S, A>, policy_scope: B256) -> Result<u64>;
 
     /// Computes the EIP-712 domain separator for this token.
-    fn domain_separator(&self, token: &B20StablecoinToken<S, P>, chain_id: u64) -> Result<B256>;
+    fn domain_separator(&self, token: &B20StablecoinToken<S, A>, chain_id: u64) -> Result<B256>;
 
     /// Returns the ERC-5267 `eip712Domain()` tuple for this token.
     fn eip712_domain(
         &self,
-        token: &B20StablecoinToken<S, P>,
+        token: &B20StablecoinToken<S, A>,
         chain_id: u64,
     ) -> Result<Eip712Domain>;
 
     /// Returns the stablecoin currency identifier — the stablecoin-specific
     /// extension operation.
-    fn currency(&self, token: &B20StablecoinToken<S, P>) -> Result<String>;
+    fn currency(&self, token: &B20StablecoinToken<S, A>) -> Result<String>;
 }

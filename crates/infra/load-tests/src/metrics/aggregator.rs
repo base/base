@@ -1,10 +1,10 @@
-use std::time::Duration;
+use std::{cmp::Reverse, collections::BTreeMap, time::Duration};
 
 use serde::{Deserialize, Serialize};
 
 use super::{
-    BlockRange, ConfigSummary, FlashblocksLatencyMetrics, GasMetrics, LatencyMetrics,
-    SubmissionStats, ThroughputMetrics, ThroughputPercentiles, ThroughputSample,
+    BlockLoadMetrics, BlockRange, ConfigSummary, FlashblocksLatencyMetrics, GasMetrics,
+    LatencyMetrics, SubmissionStats, ThroughputMetrics, ThroughputPercentiles, ThroughputSample,
     TransactionMetrics,
 };
 
@@ -60,6 +60,7 @@ impl<'a> MetricsAggregator<'a> {
             throughput_timeseries: throughput_samples.to_vec(),
             gas: Self::compute_gas(self.transactions),
             block_range,
+            fullest_block: Self::compute_fullest_block(self.transactions),
             top_failure_reasons,
             receipt_coverage,
             fresh_recipient_count,
@@ -181,6 +182,26 @@ impl<'a> MetricsAggregator<'a> {
         }
     }
 
+    /// Returns the block with the most load-test gas, breaking ties by transaction count and then
+    /// lowest block number.
+    pub fn compute_fullest_block(transactions: &[TransactionMetrics]) -> Option<BlockLoadMetrics> {
+        let mut blocks = BTreeMap::<u64, BlockLoadMetrics>::new();
+        for transaction in transactions {
+            let Some(block_number) = transaction.block_number else {
+                continue;
+            };
+            let block = blocks.entry(block_number).or_insert_with(|| BlockLoadMetrics {
+                block_number,
+                ..BlockLoadMetrics::default()
+            });
+            block.confirmed_count = block.confirmed_count.saturating_add(1);
+            block.total_gas = block.total_gas.saturating_add(transaction.gas_used);
+        }
+        blocks.into_values().max_by_key(|block| {
+            (block.total_gas, block.confirmed_count, Reverse(block.block_number))
+        })
+    }
+
     fn compute_throughput_percentiles(
         tps_samples: &[f64],
         gps_samples: &[f64],
@@ -242,6 +263,9 @@ pub struct MetricsSummary {
     pub gas: GasMetrics,
     /// Range of blocks containing confirmed test transactions.
     pub block_range: BlockRange,
+    /// Block with the greatest confirmed load-test gas.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fullest_block: Option<BlockLoadMetrics>,
     /// Top failure reasons sorted by count descending (max 3).
     pub top_failure_reasons: Vec<(String, u64)>,
     /// Coverage of the end-of-run receipt pass. Signals whether gas and revert
@@ -283,5 +307,53 @@ impl ReceiptCoverage {
     /// was matched to a receipt, so gas and revert metrics are complete.
     pub const fn is_complete(&self) -> bool {
         self.blocks_failed == 0 && self.transactions_missing == 0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::TxHash;
+
+    use super::*;
+
+    #[test]
+    fn fullest_block_aggregates_gas_and_ignores_unconfirmed() {
+        let transactions = [
+            transaction(10, 100),
+            transaction(11, 300),
+            transaction(10, 250),
+            unconfirmed_transaction(1_000),
+        ];
+
+        let fullest = MetricsAggregator::compute_fullest_block(&transactions).unwrap();
+
+        assert_eq!(fullest.block_number, 10);
+        assert_eq!(fullest.confirmed_count, 2);
+        assert_eq!(fullest.total_gas, 350);
+    }
+
+    #[test]
+    fn fullest_block_uses_transaction_count_then_lowest_block_for_ties() {
+        let transactions = [
+            transaction(12, 100),
+            transaction(11, 200),
+            transaction(12, 100),
+            transaction(13, 200),
+            transaction(13, 0),
+        ];
+
+        let fullest = MetricsAggregator::compute_fullest_block(&transactions).unwrap();
+
+        assert_eq!(fullest.block_number, 12);
+        assert_eq!(fullest.confirmed_count, 2);
+        assert_eq!(fullest.total_gas, 200);
+    }
+
+    fn transaction(block_number: u64, gas_used: u64) -> TransactionMetrics {
+        TransactionMetrics::new(TxHash::ZERO, None, None, gas_used, 0, Some(block_number))
+    }
+
+    fn unconfirmed_transaction(gas_used: u64) -> TransactionMetrics {
+        TransactionMetrics::new(TxHash::ZERO, None, None, gas_used, 0, None)
     }
 }

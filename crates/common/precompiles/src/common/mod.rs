@@ -15,16 +15,15 @@ pub use ops::{
 mod pausable_feature;
 pub use pausable_feature::B20PausableFeature;
 
-mod policy;
-pub use policy::{Policy, PolicyRegistry};
-
 mod policy_type;
 pub use policy_type::B20PolicyType;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub(super) mod test_utils;
 #[cfg(any(test, feature = "test-utils"))]
-pub use test_utils::{InMemoryPolicy, InMemoryTokenAccounting, TestStablecoinToken, TestToken};
+pub use test_utils::{
+    FakePolicyAccounting, InMemoryTokenAccounting, TestStablecoinToken, TestToken,
+};
 
 mod token;
 pub use token::Token;

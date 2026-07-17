@@ -155,7 +155,7 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        B20PausableFeature, B20PolicyType, IB20, InMemoryPolicy, InMemoryTokenAccounting,
+        B20PausableFeature, B20PolicyType, FakePolicyAccounting, IB20, InMemoryTokenAccounting,
         PolicyRegistryStorage, TestToken, Token, TokenAccounting, Transferable,
     };
 
@@ -167,14 +167,14 @@ mod tests {
     fn make_token() -> TestToken {
         TestToken::with_storage_and_policy(
             InMemoryTokenAccounting::new(TOKEN_ADDR),
-            InMemoryPolicy::new(),
+            FakePolicyAccounting::new(),
         )
     }
 
     fn token_with_balance(balance: U256) -> TestToken {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
         accounting.balances.insert(ALICE, balance);
-        TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
+        TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new())
     }
 
     #[test]
@@ -343,7 +343,7 @@ mod tests {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
         accounting.balances.insert(ALICE, U256::from(10u64));
         accounting.paused = B20PausableFeature::mask(IB20::PausableFeature::TRANSFER);
-        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+        let mut token = TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new());
 
         assert_eq!(
             token.transfer(ALICE, BOB, U256::ONE, false).unwrap_err(),
@@ -360,7 +360,7 @@ mod tests {
         accounting
             .policy_ids
             .insert(B20PolicyType::TransferSender.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
-        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+        let mut token = TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new());
 
         assert_eq!(
             token.transfer(ALICE, BOB, U256::ONE, false).unwrap_err(),
@@ -378,7 +378,7 @@ mod tests {
         accounting
             .policy_ids
             .insert(B20PolicyType::TransferReceiver.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
-        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+        let mut token = TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new());
 
         assert_eq!(
             token.transfer(ALICE, BOB, U256::ONE, false).unwrap_err(),
@@ -397,7 +397,7 @@ mod tests {
         accounting
             .policy_ids
             .insert(B20PolicyType::TransferExecutor.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
-        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+        let mut token = TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new());
 
         assert_eq!(
             token.transfer_from(SPENDER, ALICE, BOB, U256::ONE, false).unwrap_err(),
@@ -416,7 +416,7 @@ mod tests {
         accounting
             .policy_ids
             .insert(B20PolicyType::TransferExecutor.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
-        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+        let mut token = TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new());
 
         assert_eq!(
             token.transfer_from(SPENDER, ALICE, BOB, U256::ONE, false).unwrap_err(),
@@ -434,7 +434,7 @@ mod tests {
         accounting
             .policy_ids
             .insert(B20PolicyType::TransferSender.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
-        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+        let mut token = TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new());
 
         token.transfer(ALICE, BOB, U256::ONE, true).unwrap();
 
@@ -448,7 +448,7 @@ mod tests {
         accounting
             .policy_ids
             .insert(B20PolicyType::TransferReceiver.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
-        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+        let mut token = TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new());
 
         token.transfer(ALICE, BOB, U256::ONE, true).unwrap();
 
@@ -463,7 +463,7 @@ mod tests {
         accounting
             .policy_ids
             .insert(B20PolicyType::TransferExecutor.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
-        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+        let mut token = TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new());
 
         token.transfer_from(SPENDER, ALICE, BOB, U256::ONE, true).unwrap();
 
@@ -504,7 +504,7 @@ mod tests {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
         accounting.balances.insert(ALICE, U256::ONE);
         accounting.balances.insert(BOB, U256::MAX);
-        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+        let mut token = TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new());
 
         assert!(token.transfer(ALICE, BOB, U256::ONE, true).is_err());
     }
@@ -513,11 +513,11 @@ mod tests {
 
     #[test]
     fn transfer_allowed_by_external_sender_policy_succeeds() {
-        const POLICY_ID: u64 = 7;
+        const POLICY_ID: u64 = (1u64 << 56) | 7;
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
         accounting.balances.insert(ALICE, U256::from(10u64));
         accounting.policy_ids.insert(B20PolicyType::TransferSender.id(), POLICY_ID);
-        let mut policy = InMemoryPolicy::new();
+        let mut policy = FakePolicyAccounting::new();
         policy.allow(POLICY_ID, ALICE);
         let mut token = TestToken::with_storage_and_policy(accounting, policy);
 
@@ -528,12 +528,12 @@ mod tests {
 
     #[test]
     fn transfer_reverts_when_denied_by_external_sender_policy() {
-        const POLICY_ID: u64 = 7;
+        const POLICY_ID: u64 = (1u64 << 56) | 7;
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
         accounting.balances.insert(ALICE, U256::from(10u64));
         accounting.policy_ids.insert(B20PolicyType::TransferSender.id(), POLICY_ID);
         // ALICE is not in the allow-list so the external policy denies her.
-        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+        let mut token = TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new());
 
         assert_eq!(
             token.transfer(ALICE, BOB, U256::ONE, false).unwrap_err(),
@@ -546,11 +546,11 @@ mod tests {
 
     #[test]
     fn transfer_allowed_by_external_receiver_policy_succeeds() {
-        const POLICY_ID: u64 = 8;
+        const POLICY_ID: u64 = (1u64 << 56) | 8;
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
         accounting.balances.insert(ALICE, U256::from(10u64));
         accounting.policy_ids.insert(B20PolicyType::TransferReceiver.id(), POLICY_ID);
-        let mut policy = InMemoryPolicy::new();
+        let mut policy = FakePolicyAccounting::new();
         policy.allow(POLICY_ID, BOB);
         let mut token = TestToken::with_storage_and_policy(accounting, policy);
 
@@ -670,7 +670,7 @@ mod tests {
                 .policy_ids
                 .insert(B20PolicyType::TransferSender.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
         }
-        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+        let mut token = TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new());
 
         assert_eq!(token.transfer(from, to, U256::ONE, privileged).unwrap_err(), expected_error);
     }
@@ -722,7 +722,7 @@ mod tests {
                 PolicyRegistryStorage::ALWAYS_BLOCK_ID,
             );
         }
-        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+        let mut token = TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new());
 
         assert_eq!(
             token.transfer_from(SPENDER, ALICE, BOB, U256::ONE, privileged).unwrap_err(),

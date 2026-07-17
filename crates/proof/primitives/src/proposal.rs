@@ -8,8 +8,8 @@ use crate::{CryptoError, ProofEncoder};
 pub const ECDSA_SIGNATURE_LENGTH: usize = 65;
 
 /// Base length of the proof journal without intermediate roots:
-/// address(20) + 5 × bytes32(32) + 2 × uint64(8) = 196 bytes.
-pub const PROOF_JOURNAL_BASE_LENGTH: usize = 196;
+/// address(20) + 6 × bytes32(32) + 2 × uint64(8) = 228 bytes.
+pub const PROOF_JOURNAL_BASE_LENGTH: usize = 228;
 
 /// The `AggregateVerifier` contract journal encoding.
 ///
@@ -19,6 +19,7 @@ pub const PROOF_JOURNAL_BASE_LENGTH: usize = 196;
 /// prover(20) || l1OriginHash(32) || prevOutputRoot(32)
 ///   || startingL2Block(8) || outputRoot(32) || endingL2Block(8)
 ///   || intermediateRoots(32*N) || configHash(32) || imageHash(32)
+///   || scheduleId(32)
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProofJournal {
@@ -40,6 +41,8 @@ pub struct ProofJournal {
     pub config_hash: B256,
     /// The TEE image hash.
     pub tee_image_hash: B256,
+    /// The schedule ID.
+    pub schedule_id: B256,
 }
 
 impl ProofJournal {
@@ -60,6 +63,7 @@ impl ProofJournal {
         }
         data.extend_from_slice(self.config_hash.as_slice());
         data.extend_from_slice(self.tee_image_hash.as_slice());
+        data.extend_from_slice(self.schedule_id.as_slice());
 
         data
     }
@@ -83,6 +87,9 @@ pub struct Proposal {
     pub prev_output_root: B256,
     /// The config hash.
     pub config_hash: B256,
+    /// The schedule ID. Defaults to zero for payloads stored before this field existed.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub schedule_id: B256,
 }
 
 impl Proposal {
@@ -133,6 +140,7 @@ mod tests {
                 "0000000000000000000000000000000000000000000000000000000000000003"
             ),
             config_hash: b256!("0000000000000000000000000000000000000000000000000000000000000004"),
+            schedule_id: b256!("0000000000000000000000000000000000000000000000000000000000000005"),
         }
     }
 
@@ -148,6 +156,7 @@ mod tests {
         assert!(json.contains("\"l2_block_number\""));
         assert!(json.contains("\"prev_output_root\""));
         assert!(json.contains("\"config_hash\""));
+        assert!(json.contains("\"schedule_id\""));
     }
 
     #[test]
@@ -168,6 +177,18 @@ mod tests {
         let json = serde_json::to_string(&original).unwrap();
         let parsed: Proposal = serde_json::from_str(&json).unwrap();
         assert_eq!(original, parsed);
+    }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn test_proposal_missing_schedule_id_defaults_to_zero() {
+        // Payloads stored before schedule_id existed must still deserialize; the field defaults.
+        let proposal = sample_proposal();
+        let mut json = serde_json::to_value(&proposal).unwrap();
+        json.as_object_mut().unwrap().remove("schedule_id");
+
+        let parsed: Proposal = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.schedule_id, B256::ZERO);
     }
 
     #[test]
@@ -219,6 +240,7 @@ mod tests {
             tee_image_hash: b256!(
                 "5555555555555555555555555555555555555555555555555555555555555555"
             ),
+            schedule_id: b256!("6666666666666666666666666666666666666666666666666666666666666666"),
         }
     }
 
@@ -226,7 +248,7 @@ mod tests {
     fn test_journal_encode_length() {
         let data = test_journal().encode();
         assert_eq!(data.len(), PROOF_JOURNAL_BASE_LENGTH);
-        assert_eq!(data.len(), 196);
+        assert_eq!(data.len(), 228);
     }
 
     #[test]
@@ -253,6 +275,8 @@ mod tests {
         assert_eq!(&data[off..off + 32], journal.config_hash.as_slice());
         off += 32;
         assert_eq!(&data[off..off + 32], journal.tee_image_hash.as_slice());
+        off += 32;
+        assert_eq!(&data[off..off + 32], journal.schedule_id.as_slice());
     }
 
     #[test]
@@ -270,6 +294,7 @@ mod tests {
             ],
             config_hash: B256::ZERO,
             tee_image_hash: B256::ZERO,
+            schedule_id: B256::ZERO,
         };
 
         let data = journal.encode();

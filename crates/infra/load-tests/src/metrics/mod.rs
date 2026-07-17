@@ -2,8 +2,8 @@
 
 mod types;
 pub use types::{
-    BlockRange, ConfigSummary, FlashblocksLatencyMetrics, GasMetrics, LatencyMetrics,
-    SubmissionStats, ThroughputMetrics, ThroughputPercentiles, ThroughputSample,
+    BlockLoadMetrics, BlockRange, ConfigSummary, FlashblocksLatencyMetrics, GasMetrics,
+    LatencyMetrics, SubmissionStats, ThroughputMetrics, ThroughputPercentiles, ThroughputSample,
     TransactionMetrics,
 };
 

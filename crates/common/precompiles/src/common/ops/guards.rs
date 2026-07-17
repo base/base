@@ -3,9 +3,7 @@
 use alloy_primitives::{Address, B256, U256};
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use crate::{
-    B20PausableFeature, B20PolicyType, B20TokenRole, IB20, Policy, Token, TokenAccounting,
-};
+use crate::{B20PausableFeature, B20PolicyType, B20TokenRole, IB20, Token, TokenAccounting};
 
 /// Authorization and policy guard helpers for B-20 operations.
 #[derive(Debug, Clone, Copy)]
@@ -63,7 +61,7 @@ impl B20Guards {
         account: Address,
     ) -> Result<()> {
         let policy_id = token.accounting().policy_id(policy_scope)?;
-        if token.policy().is_authorized(policy_id, account)? {
+        if token.policy().is_authorized(token.policy_storage(), policy_id, account)? {
             Ok(())
         } else {
             Err(BasePrecompileError::revert(IB20::PolicyForbids {
@@ -79,7 +77,7 @@ impl B20Guards {
     pub fn ensure_blocked<T: Token + ?Sized>(token: &T, account: Address) -> Result<()> {
         let policy_scope = B20PolicyType::TransferSender.id();
         let policy_id = token.accounting().policy_id(policy_scope)?;
-        if token.policy().is_authorized(policy_id, account)? {
+        if token.policy().is_authorized(token.policy_storage(), policy_id, account)? {
             Err(BasePrecompileError::revert(IB20::AccountNotBlocked { account }))
         } else {
             Ok(())
@@ -93,17 +91,17 @@ mod tests {
     use base_precompile_storage::BasePrecompileError;
 
     use crate::{
-        B20Guards, B20PolicyType, IB20, InMemoryPolicy, InMemoryTokenAccounting,
+        B20Guards, B20PolicyType, FakePolicyAccounting, IB20, InMemoryTokenAccounting,
         PolicyRegistryStorage, TestToken,
     };
 
-    const EXTERNAL_POLICY_ID: u64 = 7;
+    const EXTERNAL_POLICY_ID: u64 = (1u64 << 56) | 7; // ALLOWLIST type + counter 7
 
     fn token_with_transfer_sender_policy(account: Address) -> TestToken {
         let mut accounting = InMemoryTokenAccounting::new(Address::repeat_byte(0x20));
         accounting.policy_ids.insert(B20PolicyType::TransferSender.id(), EXTERNAL_POLICY_ID);
 
-        let mut policy = InMemoryPolicy::new();
+        let mut policy = FakePolicyAccounting::new();
         policy.allow(EXTERNAL_POLICY_ID, account);
 
         TestToken::with_storage_and_policy(accounting, policy)
@@ -147,7 +145,7 @@ mod tests {
         accounting
             .policy_ids
             .insert(B20PolicyType::TransferSender.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
-        let token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+        let token = TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new());
 
         B20Guards::ensure_blocked(&token, account).unwrap();
 
@@ -155,7 +153,7 @@ mod tests {
         accounting
             .policy_ids
             .insert(B20PolicyType::TransferSender.id(), PolicyRegistryStorage::ALWAYS_ALLOW_ID);
-        let token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+        let token = TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new());
 
         assert_eq!(
             B20Guards::ensure_blocked(&token, account).unwrap_err(),

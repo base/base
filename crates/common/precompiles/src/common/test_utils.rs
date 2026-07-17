@@ -1,26 +1,26 @@
-//! In-memory fakes of [`TokenAccounting`] and [`Policy`] for unit tests.
+//! In-memory fakes of [`TokenAccounting`] and [`PolicyAccounting`] for unit tests.
 //!
 //! Use these for capability/ops logic tests (Transferable, Mintable, …).
 //! For factory, dispatch, and storage-layout tests keep the EVM harness.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use alloy_primitives::{Address, Address as TokenAddress, B256, LogData, U256};
 use base_precompile_storage::Result;
 
 use crate::{
-    Burnable, Configurable, IPolicyRegistry, Mintable, Pausable, Permittable, PolicyRegistry,
-    PolicyRegistryStorage, RoleManaged, Token, Transferable,
+    Burnable, Configurable, Mintable, PackedPolicy, Pausable, Permittable, PolicyAccounting,
+    PolicyRegistryLogic, PolicyRegistryStorage, PolicyVersion, RoleManaged, Token, Transferable,
     b20_asset::{AssetAccounting, B20AssetStorage},
     b20_stablecoin::{B20StablecoinToken, StablecoinAccounting},
-    common::{B20_MAX_SUPPLY_CAP, Policy, TokenAccounting},
+    common::{B20_MAX_SUPPLY_CAP, TokenAccounting},
 };
 
 /// Convenience alias: [`B20StablecoinToken`] wired with both in-memory fakes.
 ///
 /// The stablecoin holder is a minimal storage+policy holder (its behavior lives in `logic/vN`), so
 /// this alias is used by dispatch/`inner` tests, not for calling capability-trait methods directly.
-pub type TestStablecoinToken = B20StablecoinToken<InMemoryTokenAccounting, InMemoryPolicy>;
+pub type TestStablecoinToken = B20StablecoinToken<InMemoryTokenAccounting, FakePolicyAccounting>;
 
 /// Concrete test token that opts into the shared capability traits over the in-memory fakes.
 ///
@@ -32,22 +32,23 @@ pub type TestStablecoinToken = B20StablecoinToken<InMemoryTokenAccounting, InMem
 #[derive(Debug)]
 pub struct TestToken {
     accounting: InMemoryTokenAccounting,
-    policy: InMemoryPolicy,
+    policy: FakePolicyAccounting,
+    policy_version: PolicyVersion,
 }
 
 impl TestToken {
-    /// Creates a test token backed by the provided in-memory fakes.
+    /// Creates a test token backed by the provided in-memory fakes at [`PolicyVersion::V1`].
     pub const fn with_storage_and_policy(
         accounting: InMemoryTokenAccounting,
-        policy: InMemoryPolicy,
+        policy: FakePolicyAccounting,
     ) -> Self {
-        Self { accounting, policy }
+        Self { accounting, policy, policy_version: PolicyVersion::V1 }
     }
 }
 
 impl Token for TestToken {
     type Accounting = InMemoryTokenAccounting;
-    type Policy = InMemoryPolicy;
+    type PolicyAccounting = FakePolicyAccounting;
 
     fn accounting(&self) -> &InMemoryTokenAccounting {
         &self.accounting
@@ -57,11 +58,15 @@ impl Token for TestToken {
         &mut self.accounting
     }
 
-    fn policy(&self) -> &InMemoryPolicy {
+    fn policy(&self) -> &dyn PolicyRegistryLogic<FakePolicyAccounting> {
+        self.policy_version.implementation()
+    }
+
+    fn policy_storage(&self) -> &FakePolicyAccounting {
         &self.policy
     }
 
-    fn policy_mut(&mut self) -> &mut InMemoryPolicy {
+    fn policy_storage_mut(&mut self) -> &mut FakePolicyAccounting {
         &mut self.policy
     }
 
@@ -303,129 +308,119 @@ impl StablecoinAccounting for InMemoryTokenAccounting {
     }
 }
 
-/// Lookup-table-backed [`Policy`] for unit tests.
+/// In-memory [`PolicyAccounting`] for unit tests.
 ///
-/// Call [`InMemoryPolicy::allow`] to grant authorization before exercising token ops.
-/// Missing entries default to `false`.
+/// Pair with [`PolicyVersion::V1`] on tokens so authorization goes through
+/// [`crate::PolicyRegistryLogic`]. Call [`FakePolicyAccounting::allow`] to grant membership
+/// (ALLOWLIST semantics under V1) before exercising token ops that need a custom policy.
 #[derive(Debug)]
-pub struct InMemoryPolicy {
-    /// Authorization grants keyed by `(policy_id, account)`.
-    pub authorizations: HashMap<(u64, Address), bool>,
-    /// Policy IDs that should be treated as existing.
-    pub policies: HashSet<u64>,
-    /// Next custom policy counter for tests that exercise registry creation.
-    pub next_policy_counter: u64,
+pub struct FakePolicyAccounting {
+    caller: Address,
+    initialized: bool,
+    policies: BTreeMap<u64, U256>,
+    members: BTreeMap<(u64, Address), bool>,
+    pending_admins: BTreeMap<u64, Address>,
+    next_counter: u64,
+    events: Vec<LogData>,
 }
 
-impl Default for InMemoryPolicy {
+impl Default for FakePolicyAccounting {
     fn default() -> Self {
-        Self { authorizations: HashMap::new(), policies: HashSet::new(), next_policy_counter: 2 }
+        Self::new()
     }
 }
 
-impl InMemoryPolicy {
-    /// Creates an empty policy with no authorizations.
-    pub fn new() -> Self {
-        Self::default()
+impl FakePolicyAccounting {
+    /// Creates empty policy-registry storage (no built-ins seeded).
+    pub const fn new() -> Self {
+        Self {
+            caller: Address::ZERO,
+            initialized: false,
+            policies: BTreeMap::new(),
+            members: BTreeMap::new(),
+            pending_admins: BTreeMap::new(),
+            next_counter: 0,
+            events: Vec::new(),
+        }
     }
 
-    /// Marks `account` as authorized under `policy_id`.
+    /// Marks `account` as a member of `policy_id` and records the policy as existing.
+    ///
+    /// For V1 ALLOWLIST policy IDs this authorizes `account`; for BLOCKLIST IDs it blocks them.
     pub fn allow(&mut self, policy_id: u64, account: Address) {
-        self.policies.insert(policy_id);
-        self.authorizations.insert((policy_id, account), true);
+        self.create_existing_policy(policy_id);
+        self.members.insert((policy_id, account), true);
     }
 
     /// Marks `policy_id` as an existing policy without granting any account.
     pub fn create_existing_policy(&mut self, policy_id: u64) {
-        self.policies.insert(policy_id);
+        self.policies.insert(policy_id, PackedPolicy::new(Address::ZERO).into_u256());
     }
 }
 
-impl Policy for InMemoryPolicy {
-    fn is_authorized(&self, policy_id: u64, account: Address) -> Result<bool> {
-        match policy_id {
-            PolicyRegistryStorage::ALWAYS_ALLOW_ID => Ok(true),
-            PolicyRegistryStorage::ALWAYS_BLOCK_ID => Ok(false),
-            _ => Ok(*self.authorizations.get(&(policy_id, account)).unwrap_or(&false)),
-        }
+impl PolicyAccounting for FakePolicyAccounting {
+    fn registry_address(&self) -> Address {
+        Address::repeat_byte(0x02)
     }
 
-    fn policy_exists(&self, policy_id: u64) -> Result<bool> {
-        Ok(policy_id == PolicyRegistryStorage::ALWAYS_ALLOW_ID
-            || policy_id == PolicyRegistryStorage::ALWAYS_BLOCK_ID
-            || self.policies.contains(&policy_id))
-    }
-}
-
-impl PolicyRegistry for InMemoryPolicy {
-    fn create_policy(
-        &mut self,
-        _admin: Address,
-        policy_type: IPolicyRegistry::PolicyType,
-    ) -> Result<u64> {
-        let policy_id = (policy_type as u64) << 56 | self.next_policy_counter;
-        self.next_policy_counter += 1;
-        self.policies.insert(policy_id);
-        Ok(policy_id)
+    fn caller(&self) -> Address {
+        self.caller
     }
 
-    fn create_policy_with_accounts(
-        &mut self,
-        admin: Address,
-        policy_type: IPolicyRegistry::PolicyType,
-        accounts: Vec<Address>,
-    ) -> Result<u64> {
-        let policy_id = self.create_policy(admin, policy_type)?;
-        for account in accounts {
-            self.allow(policy_id, account);
-        }
-        Ok(policy_id)
+    fn read_policy_word(&self, policy_id: u64) -> Result<U256> {
+        Ok(self.policies.get(&policy_id).copied().unwrap_or(U256::ZERO))
     }
 
-    fn stage_update_admin(&mut self, _policy_id: u64, _new_admin: Address) -> Result<()> {
+    fn write_policy_word(&mut self, policy_id: u64, word: U256) -> Result<()> {
+        self.policies.insert(policy_id, word);
         Ok(())
     }
 
-    fn finalize_update_admin(&mut self, _policy_id: u64) -> Result<()> {
+    fn read_member(&self, policy_id: u64, account: Address) -> Result<bool> {
+        Ok(self.members.get(&(policy_id, account)).copied().unwrap_or(false))
+    }
+
+    fn set_member(&mut self, policy_id: u64, account: Address) -> Result<()> {
+        self.members.insert((policy_id, account), true);
         Ok(())
     }
 
-    fn renounce_admin(&mut self, _policy_id: u64) -> Result<()> {
+    fn delete_member(&mut self, policy_id: u64, account: Address) -> Result<()> {
+        self.members.remove(&(policy_id, account));
         Ok(())
     }
 
-    fn update_allowlist(
-        &mut self,
-        policy_id: u64,
-        allowed: bool,
-        accounts: Vec<Address>,
-    ) -> Result<()> {
-        self.policies.insert(policy_id);
-        for account in accounts {
-            self.authorizations.insert((policy_id, account), allowed);
-        }
+    fn read_pending_admin(&self, policy_id: u64) -> Result<Address> {
+        Ok(self.pending_admins.get(&policy_id).copied().unwrap_or(Address::ZERO))
+    }
+
+    fn write_pending_admin(&mut self, policy_id: u64, admin: Address) -> Result<()> {
+        self.pending_admins.insert(policy_id, admin);
         Ok(())
     }
 
-    fn update_blocklist(
-        &mut self,
-        policy_id: u64,
-        blocked: bool,
-        accounts: Vec<Address>,
-    ) -> Result<()> {
-        self.policies.insert(policy_id);
-        for account in accounts {
-            self.authorizations.insert((policy_id, account), !blocked);
-        }
+    fn delete_pending_admin(&mut self, policy_id: u64) -> Result<()> {
+        self.pending_admins.remove(&policy_id);
         Ok(())
     }
 
-    fn get_policy_admin(&self, _policy_id: u64) -> Result<Address> {
-        Ok(Address::ZERO)
+    fn read_next_counter(&self) -> Result<u64> {
+        Ok(self.next_counter)
     }
 
-    fn pending_policy_admin(&self, _policy_id: u64) -> Result<Address> {
-        Ok(Address::ZERO)
+    fn write_next_counter(&mut self, counter: u64) -> Result<()> {
+        self.next_counter = counter;
+        Ok(())
+    }
+
+    fn emit_event(&mut self, log: LogData) -> Result<()> {
+        self.events.push(log);
+        Ok(())
+    }
+
+    fn mark_initialized(&mut self) -> Result<()> {
+        self.initialized = true;
+        Ok(())
     }
 }
 

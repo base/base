@@ -18,13 +18,12 @@ use alloy_consensus::{
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_primitives::{B64, B256};
 use base_common_chains::Upgrades;
-use base_common_consensus::DepositReceiptExt;
+use base_common_consensus::{BaseTxEnvelope, DepositReceiptExt};
 use base_execution_chainspec::BaseChainSpec;
 use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator, ReceiptRootBloom};
 use reth_consensus_common::validation::{
     validate_against_parent_eip1559_base_fee, validate_against_parent_hash_number,
-    validate_against_parent_timestamp, validate_cancun_gas, validate_header_base_fee,
-    validate_header_extra_data, validate_header_gas,
+    validate_cancun_gas, validate_header_base_fee, validate_header_extra_data, validate_header_gas,
 };
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{
@@ -35,7 +34,7 @@ mod proof;
 pub use proof::{calculate_receipt_root, calculate_receipt_root_no_memo};
 
 pub mod validation;
-pub use validation::{canyon, isthmus, validate_block_post_execution};
+pub use validation::{canyon, isthmus, validate_base_time_metadata, validate_block_post_execution};
 
 pub mod error;
 pub use error::BaseConsensusError;
@@ -71,7 +70,7 @@ impl BaseBeaconConsensus {
 
 impl<N> FullConsensus<N> for BaseBeaconConsensus
 where
-    N: NodePrimitives<BlockHeader = Header, Receipt: DepositReceiptExt>,
+    N: NodePrimitives<BlockHeader = Header, Receipt: DepositReceiptExt, SignedTx = BaseTxEnvelope>,
 {
     fn validate_block_post_execution(
         &self,
@@ -86,14 +85,23 @@ where
 
 impl<B> Consensus<B> for BaseBeaconConsensus
 where
-    B: Block<Header = Header>,
+    B: Block<Header = Header, Body: BlockBody<Transaction = BaseTxEnvelope>>,
 {
     fn validate_body_against_header(
         &self,
         body: &B::Body,
         header: &SealedHeader<B::Header>,
     ) -> Result<(), ConsensusError> {
-        validation::validate_body_against_header_base(&self.chain_spec, body, header.header())
+        validation::validate_body_against_header_base(&self.chain_spec, body, header.header())?;
+        // This is also checked by `validate_block_pre_execution` because callers may invoke either
+        // consensus entry point independently.
+        validation::validate_base_time_metadata(
+            &self.chain_spec,
+            header.timestamp(),
+            header.number(),
+            body.transactions(),
+        )
+        .map_err(ConsensusError::other)
     }
 
     fn validate_block_pre_execution(&self, block: &SealedBlock<B>) -> Result<(), ConsensusError> {
@@ -113,6 +121,14 @@ where
         if let Err(error) = block.ensure_transaction_root_valid() {
             return Err(ConsensusError::BodyTransactionRootDiff(error.into()));
         }
+
+        validation::validate_base_time_metadata(
+            &self.chain_spec,
+            block.timestamp(),
+            block.number(),
+            block.body().transactions(),
+        )
+        .map_err(ConsensusError::other)?;
 
         // Check empty shanghai-withdrawals
         if self.chain_spec.is_canyon_active_at_timestamp(block.timestamp()) {
@@ -213,8 +229,16 @@ impl HeaderValidator<Header> for BaseBeaconConsensus {
     ) -> Result<(), ConsensusError> {
         validate_against_parent_hash_number(header.header(), parent)?;
 
-        if self.chain_spec.is_bedrock_active_at_block(header.number()) {
-            validate_against_parent_timestamp(header.header(), parent.header())?;
+        let allows_same_timestamp =
+            self.chain_spec.is_zombie_active_at_timestamp(header.timestamp())
+                && self.chain_spec.is_zombie_active_at_timestamp(parent.timestamp());
+        let timestamp_is_invalid = header.timestamp() < parent.timestamp()
+            || (header.timestamp() == parent.timestamp() && !allows_same_timestamp);
+        if self.chain_spec.is_bedrock_active_at_block(header.number()) && timestamp_is_invalid {
+            return Err(ConsensusError::TimestampIsInPast {
+                parent_timestamp: parent.timestamp(),
+                timestamp: header.timestamp(),
+            });
         }
 
         validate_against_parent_eip1559_base_fee(
@@ -269,8 +293,9 @@ mod tests {
         BasePrimitives, BaseReceipt, BaseTransactionSigned, BaseTypedTransaction,
         HoloceneExtraData, JovianExtraData,
     };
+    use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
-    use reth_chainspec::BaseFeeParams;
+    use reth_chainspec::{BaseFeeParams, EthChainSpec, ForkCondition};
     use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator};
     use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader, proofs};
     use reth_provider::BlockExecutionResult;
@@ -301,6 +326,63 @@ mod tests {
         BaseChainSpecBuilder::default()
             .genesis(base_mainnet.genesis.clone())
             .chain(base_mainnet.chain)
+    }
+
+    #[test]
+    fn activated_parent_validation_allows_same_second_headers() {
+        let mut chain_spec = BaseChainSpec::mainnet();
+        chain_spec.set_fork(BaseUpgrade::Zombie, ForkCondition::Timestamp(10));
+        let parent_header = Header {
+            number: 8,
+            timestamp: 10,
+            gas_limit: 30_000_000,
+            gas_used: 15_000_000,
+            base_fee_per_gas: Some(1_000_000_000),
+            ..Default::default()
+        };
+        let child_base_fee = chain_spec.next_block_base_fee(&parent_header, 10).unwrap();
+        let consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
+        let parent = SealedHeader::seal_slow(parent_header);
+        let child = SealedHeader::seal_slow(Header {
+            number: 9,
+            parent_hash: parent.hash(),
+            timestamp: 10,
+            gas_limit: 30_000_000,
+            base_fee_per_gas: Some(child_base_fee),
+            ..Default::default()
+        });
+
+        consensus.validate_header_against_parent(&child, &parent).unwrap();
+    }
+
+    #[test]
+    fn activated_parent_validation_rejects_timestamp_in_past() {
+        let mut chain_spec = BaseChainSpec::mainnet();
+        chain_spec.set_fork(BaseUpgrade::Zombie, ForkCondition::Timestamp(10));
+        let parent_header = Header {
+            number: 8,
+            timestamp: 11,
+            gas_limit: 30_000_000,
+            gas_used: 15_000_000,
+            base_fee_per_gas: Some(1_000_000_000),
+            ..Default::default()
+        };
+        let child_base_fee = chain_spec.next_block_base_fee(&parent_header, 10).unwrap();
+        let consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
+        let parent = SealedHeader::seal_slow(parent_header);
+        let child = SealedHeader::seal_slow(Header {
+            number: 9,
+            parent_hash: parent.hash(),
+            timestamp: 10,
+            gas_limit: 30_000_000,
+            base_fee_per_gas: Some(child_base_fee),
+            ..Default::default()
+        });
+
+        assert!(matches!(
+            consensus.validate_header_against_parent(&child, &parent),
+            Err(ConsensusError::TimestampIsInPast { parent_timestamp: 11, timestamp: 10 })
+        ));
     }
 
     #[test]

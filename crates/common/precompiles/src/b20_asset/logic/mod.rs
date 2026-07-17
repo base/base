@@ -7,7 +7,7 @@
 
 use alloy_primitives::Address;
 
-use crate::{AssetAccounting, Policy, Token};
+use crate::{AssetAccounting, PolicyAccounting, PolicyRegistryLogic, PolicyVersion, Token};
 
 mod interface;
 pub use interface::Asset;
@@ -17,27 +17,31 @@ pub use v1::AssetV1;
 
 /// Storage + policy binding the asset logic operates on.
 ///
-/// A minimal `(accounting, policy)` holder implementing [`Token`]; it carries no
-/// behavior of its own — all business logic lives in the version implementations
-/// resolved from [`crate::AssetVersions`]. It is parameterized by the storage
-/// (`S`) and policy (`P`) adapters so tests can inject in-memory backends while
-/// production uses the EVM-backed storage.
+/// A minimal `(accounting, policy, policy_version)` holder implementing [`Token`];
+/// it carries no behavior of its own — all business logic lives in the version
+/// implementations resolved from [`crate::AssetVersions`]. Authorization goes
+/// through [`crate::PolicyRegistryLogic`] via [`Token::policy`].
 #[derive(Debug, Clone)]
-pub struct B20AssetToken<S: AssetAccounting, P: Policy> {
+pub struct B20AssetToken<S: AssetAccounting, A: PolicyAccounting> {
     accounting: S,
-    policy: P,
+    policy: A,
+    policy_version: PolicyVersion,
 }
 
-impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
-    /// Creates a holder backed by the provided storage and policy adapters.
-    pub const fn with_storage_and_policy(accounting: S, policy: P) -> Self {
-        Self { accounting, policy }
+impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
+    /// Creates a holder backed by token storage, policy-registry storage, and version.
+    pub const fn with_storage_and_policy(
+        accounting: S,
+        policy: A,
+        policy_version: PolicyVersion,
+    ) -> Self {
+        Self { accounting, policy, policy_version }
     }
 }
 
-impl<S: AssetAccounting, P: Policy> Token for B20AssetToken<S, P> {
+impl<S: AssetAccounting, A: PolicyAccounting> Token for B20AssetToken<S, A> {
     type Accounting = S;
-    type Policy = P;
+    type PolicyAccounting = A;
 
     fn accounting(&self) -> &S {
         &self.accounting
@@ -47,11 +51,15 @@ impl<S: AssetAccounting, P: Policy> Token for B20AssetToken<S, P> {
         &mut self.accounting
     }
 
-    fn policy(&self) -> &P {
+    fn policy(&self) -> &dyn PolicyRegistryLogic<A> {
+        self.policy_version.implementation()
+    }
+
+    fn policy_storage(&self) -> &A {
         &self.policy
     }
 
-    fn policy_mut(&mut self) -> &mut P {
+    fn policy_storage_mut(&mut self) -> &mut A {
         &mut self.policy
     }
 

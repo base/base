@@ -7,7 +7,7 @@
 
 use alloy_primitives::Address;
 
-use crate::{Policy, StablecoinAccounting, Token};
+use crate::{PolicyAccounting, PolicyRegistryLogic, PolicyVersion, StablecoinAccounting, Token};
 
 mod interface;
 pub use interface::Stablecoin;
@@ -17,27 +17,31 @@ pub use v1::StablecoinV1;
 
 /// Storage + policy binding the stablecoin logic operates on.
 ///
-/// A minimal `(accounting, policy)` holder implementing [`Token`]; it carries no
-/// behavior of its own — all business logic lives in the version implementations
-/// resolved from [`crate::StablecoinVersions`]. It is parameterized by the
-/// storage (`S`) and policy (`P`) adapters so tests can inject in-memory
-/// backends while production uses the EVM-backed storage.
+/// A minimal `(accounting, policy, policy_version)` holder implementing [`Token`];
+/// it carries no behavior of its own — all business logic lives in the version
+/// implementations resolved from [`crate::StablecoinVersions`]. Authorization goes
+/// through [`crate::PolicyRegistryLogic`] via [`Token::policy`].
 #[derive(Debug, Clone)]
-pub struct B20StablecoinToken<S: StablecoinAccounting, P: Policy> {
+pub struct B20StablecoinToken<S: StablecoinAccounting, A: PolicyAccounting> {
     accounting: S,
-    policy: P,
+    policy: A,
+    policy_version: PolicyVersion,
 }
 
-impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
-    /// Creates a holder backed by the provided storage and policy adapters.
-    pub const fn with_storage_and_policy(accounting: S, policy: P) -> Self {
-        Self { accounting, policy }
+impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
+    /// Creates a holder backed by token storage, policy-registry storage, and version.
+    pub const fn with_storage_and_policy(
+        accounting: S,
+        policy: A,
+        policy_version: PolicyVersion,
+    ) -> Self {
+        Self { accounting, policy, policy_version }
     }
 }
 
-impl<S: StablecoinAccounting, P: Policy> Token for B20StablecoinToken<S, P> {
+impl<S: StablecoinAccounting, A: PolicyAccounting> Token for B20StablecoinToken<S, A> {
     type Accounting = S;
-    type Policy = P;
+    type PolicyAccounting = A;
 
     fn accounting(&self) -> &S {
         &self.accounting
@@ -47,11 +51,15 @@ impl<S: StablecoinAccounting, P: Policy> Token for B20StablecoinToken<S, P> {
         &mut self.accounting
     }
 
-    fn policy(&self) -> &P {
+    fn policy(&self) -> &dyn PolicyRegistryLogic<A> {
+        self.policy_version.implementation()
+    }
+
+    fn policy_storage(&self) -> &A {
         &self.policy
     }
 
-    fn policy_mut(&mut self) -> &mut P {
+    fn policy_storage_mut(&mut self) -> &mut A {
         &mut self.policy
     }
 

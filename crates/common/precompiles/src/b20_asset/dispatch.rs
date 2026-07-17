@@ -22,11 +22,11 @@ use crate::{
     BerylSelector,
     IB20::{self, IB20Calls as C},
     IB20Asset::{self, IB20AssetCalls as SC},
-    NoopPrecompileCallObserver, PermitArgs, Policy, PrecompileCallObserver,
+    NoopPrecompileCallObserver, PermitArgs, PolicyAccounting, PrecompileCallObserver,
     macros::decode_precompile_call,
 };
 
-impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
+impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
     /// ABI-dispatches `calldata` to the appropriate handler for `upgrade`.
     pub fn dispatch(
         &mut self,
@@ -509,13 +509,13 @@ mod tests {
 
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
-        AssetV1, B20AssetStorage, B20AssetToken, B20TokenRole, BerylErrorKind, IB20, IB20Asset,
-        InMemoryPolicy, InMemoryTokenAccounting, NoopPrecompileCallObserver, PrecompileCallMetric,
-        PrecompileCallObserver, PrecompileCallOutcome, PrecompileCallStatus, Token,
-        TokenAccounting,
+        AssetV1, B20AssetStorage, B20AssetToken, B20TokenRole, BerylErrorKind,
+        FakePolicyAccounting, IB20, IB20Asset, InMemoryTokenAccounting, NoopPrecompileCallObserver,
+        PolicyVersion, PrecompileCallMetric, PrecompileCallObserver, PrecompileCallOutcome,
+        PrecompileCallStatus, Token, TokenAccounting,
     };
 
-    type TestAssetToken = B20AssetToken<InMemoryTokenAccounting, InMemoryPolicy>;
+    type TestAssetToken = B20AssetToken<InMemoryTokenAccounting, FakePolicyAccounting>;
 
     /// Upgrade at which the asset precompile is active for every dispatch test.
     const UPGRADE: BaseUpgrade = BaseUpgrade::Beryl;
@@ -547,7 +547,11 @@ mod tests {
     fn make_token() -> TestAssetToken {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
         accounting.multiplier = B20AssetStorage::WAD; // 1:1 multiplier
-        TestAssetToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
+        TestAssetToken::with_storage_and_policy(
+            accounting,
+            FakePolicyAccounting::new(),
+            PolicyVersion::V1,
+        )
     }
 
     fn activate_b20_asset(storage: &mut HashMapStorageProvider) {

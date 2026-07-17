@@ -379,6 +379,7 @@ pub fn test_proposal(block_number: u64) -> Proposal {
         l2_block_number: block_number,
         prev_output_root: B256::repeat_byte(0x03),
         config_hash: B256::repeat_byte(0x04),
+        schedule_id: B256::repeat_byte(0x05),
     }
 }
 
