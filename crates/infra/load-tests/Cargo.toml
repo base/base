@@ -24,6 +24,7 @@ alloy-provider = { workspace = true, features = ["pubsub", "ws"] }
 alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 
 # base
+base-cli-utils.workspace = true
 base-tx-manager.workspace = true
 base-common-network.workspace = true
 base-common-flashblocks.workspace = true
