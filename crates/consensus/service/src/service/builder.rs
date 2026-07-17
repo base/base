@@ -18,6 +18,17 @@ use crate::{
     actors::DerivationDelegateClient, service::node::L1Config,
 };
 
+/// Upgrade signal configuration for the [`RollupNodeBuilder`].
+#[derive(Debug, Clone, Default)]
+pub struct UpgradeSignalBuilderConfig {
+    /// Optional L1 upgrade signal metrics observer configuration.
+    pub metrics_config: Option<UpgradeSignalConfig>,
+    /// Optional L1 RPC endpoint override for upgrade signal reads.
+    pub l1_rpc: Option<Url>,
+    /// Optional runtime upgrade signal validation context.
+    pub runtime_validation: Option<UpgradeSignalRuntimeValidation>,
+}
+
 /// Configuration for Derivation Delegate mode.
 #[derive(Debug, Clone)]
 pub struct DerivationDelegateConfig {
@@ -84,12 +95,8 @@ pub struct RollupNodeBuilder {
     /// When set, enables persistent safe head tracking via redb and serves
     /// `optimism_safeHeadAtL1Block` RPC requests from the database.
     pub safedb_path: Option<PathBuf>,
-    /// Optional L1 upgrade signal metrics observer configuration.
-    pub upgrade_signal_metrics_config: Option<UpgradeSignalConfig>,
-    /// Optional L1 RPC endpoint override for upgrade signal reads.
-    pub upgrade_signal_l1_rpc: Option<Url>,
-    /// Optional runtime upgrade signal validation context.
-    pub upgrade_signal_runtime_validation: Option<UpgradeSignalRuntimeValidation>,
+    /// Upgrade signal configuration.
+    pub upgrade_signal_config: UpgradeSignalBuilderConfig,
 }
 
 impl RollupNodeBuilder {
@@ -128,9 +135,11 @@ impl RollupNodeBuilder {
             finalized_poll_interval: None,
             checkpoint_path: None,
             safedb_path: None,
-            upgrade_signal_metrics_config: None,
-            upgrade_signal_l1_rpc: None,
-            upgrade_signal_runtime_validation: None,
+            upgrade_signal_config: UpgradeSignalBuilderConfig {
+                metrics_config: None,
+                l1_rpc: None,
+                runtime_validation: None,
+            },
         }
     }
 
@@ -177,22 +186,9 @@ impl RollupNodeBuilder {
         Self { checkpoint_path: Some(path), ..self }
     }
 
-    /// Sets the optional L1 upgrade signal metrics observer configuration.
-    pub fn with_upgrade_signal_metrics_config(self, config: Option<UpgradeSignalConfig>) -> Self {
-        Self { upgrade_signal_metrics_config: config, ..self }
-    }
-
-    /// Sets the optional L1 RPC endpoint override for upgrade signal reads.
-    pub fn with_upgrade_signal_l1_rpc(self, l1_rpc: Option<Url>) -> Self {
-        Self { upgrade_signal_l1_rpc: l1_rpc, ..self }
-    }
-
-    /// Sets the optional runtime upgrade signal validation context.
-    pub fn with_upgrade_signal_runtime_validation(
-        self,
-        validation: Option<UpgradeSignalRuntimeValidation>,
-    ) -> Self {
-        Self { upgrade_signal_runtime_validation: validation, ..self }
+    /// Sets the upgrade signal configuration.
+    pub fn with_upgrade_signal_config(self, config: UpgradeSignalBuilderConfig) -> Self {
+        Self { upgrade_signal_config: config, ..self }
     }
 
     /// Assembles the [`RollupNode`] service.
@@ -241,13 +237,13 @@ impl RollupNodeBuilder {
             )
         });
 
-        let upgrade_signal_config = self.upgrade_signal_metrics_config.map(|config| {
+        let upgrade_signal_config = self.upgrade_signal_config.metrics_config.map(|config| {
             UpgradeSignalNodeConfig::resolve(
                 config,
-                self.upgrade_signal_l1_rpc.as_ref(),
+                self.upgrade_signal_config.l1_rpc.as_ref(),
                 l1_config.engine_provider.clone(),
                 rollup_config.l2_chain_id.id(),
-                self.upgrade_signal_runtime_validation,
+                self.upgrade_signal_config.runtime_validation,
             )
         });
 

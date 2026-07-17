@@ -8,7 +8,10 @@ use alloy_rpc_types_engine::JwtSecret;
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_chains::ChainConfig;
 use base_common_genesis::RollupConfig;
-use base_consensus_node::{EngineConfig, L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder};
+use base_consensus_node::{
+    EngineConfig, L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder,
+    UpgradeSignalBuilderConfig,
+};
 use base_upgrade_signal::{
     UpgradeSignalArgs, UpgradeSignalConfig, UpgradeSignalMetricLayer, UpgradeSignalRuntimeApplier,
     UpgradeSignalRuntimeValidation, UpgradeSignalSchedule, UpgradeSignalStartupMode,
@@ -486,9 +489,11 @@ impl ConsensusNodeArgs {
             rpc_config,
         )
         .with_sequencer_config(self.config.sequencer_flags.config())
-        .with_upgrade_signal_metrics_config(upgrade_signal_config)
-        .with_upgrade_signal_runtime_validation(Some(runtime_validation))
-        .with_upgrade_signal_l1_rpc(upgrade_signal_l1_rpc);
+        .with_upgrade_signal_config(UpgradeSignalBuilderConfig {
+            metrics_config: upgrade_signal_config,
+            l1_rpc: upgrade_signal_l1_rpc,
+            runtime_validation: Some(runtime_validation),
+        });
 
         if let Some(path) = self.config.checkpoint_path.clone() {
             builder = builder.with_checkpoint_path(path);

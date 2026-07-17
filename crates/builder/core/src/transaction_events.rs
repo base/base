@@ -76,16 +76,12 @@ struct BuilderEventData<T> {
 pub(crate) struct BuilderBudgetFields {
     cumulative_gas_used: u64,
     cumulative_da_bytes_used: u64,
-    flashblock_execution_time_us: u128,
-    cumulative_state_root_gas: u64,
     cumulative_uncompressed_bytes: u64,
     block_gas_limit: u64,
     tx_data_limit: Option<u64>,
     block_data_limit: Option<u64>,
     block_da_footprint_limit: Option<u64>,
     tx_execution_time_limit_us: Option<u128>,
-    flashblock_execution_time_limit_us: Option<u128>,
-    block_state_root_gas_limit: Option<u64>,
     block_uncompressed_size_limit: Option<u64>,
     #[serde(flatten)]
     transaction_resources: Option<BuilderTransactionResources>,
@@ -96,7 +92,6 @@ struct BuilderTransactionResources {
     tx_da_size: u64,
     tx_gas_limit: u64,
     tx_execution_time_us: Option<u128>,
-    tx_state_root_gas: Option<u64>,
     tx_uncompressed_size: u64,
 }
 
@@ -110,16 +105,12 @@ impl BuilderBudgetFields {
         Self {
             cumulative_gas_used: info.cumulative_gas_used,
             cumulative_da_bytes_used: info.cumulative_da_bytes_used,
-            flashblock_execution_time_us: info.flashblock_execution_time_us,
-            cumulative_state_root_gas: info.cumulative_state_root_gas,
             cumulative_uncompressed_bytes: info.cumulative_uncompressed_bytes,
             block_gas_limit: limits.block_gas_limit,
             tx_data_limit: limits.tx_data_limit,
             block_data_limit: limits.block_data_limit,
             block_da_footprint_limit: limits.block_da_footprint_limit,
             tx_execution_time_limit_us: limits.tx_execution_time_limit_us,
-            flashblock_execution_time_limit_us: limits.flashblock_execution_time_limit_us,
-            block_state_root_gas_limit: limits.block_state_root_gas_limit,
             block_uncompressed_size_limit: limits.block_uncompressed_size_limit,
             transaction_resources: resources.map(BuilderTransactionResources::from),
         }
@@ -132,7 +123,6 @@ impl From<&TxResources> for BuilderTransactionResources {
             tx_da_size: resources.da_size,
             tx_gas_limit: resources.gas_limit,
             tx_execution_time_us: resources.execution_time_us,
-            tx_state_root_gas: resources.state_root_gas,
             tx_uncompressed_size: resources.uncompressed_size,
         }
     }
@@ -317,8 +307,6 @@ pub(crate) struct BuilderFlashblockStartedEventData {
     target_da: Option<u64>,
     da_used: u64,
     target_da_footprint: Option<u64>,
-    target_state_root_gas: Option<u64>,
-    flashblock_execution_time_limit_us: Option<u128>,
 }
 
 impl BuilderFlashblockStartedEventData {
@@ -329,18 +317,8 @@ impl BuilderFlashblockStartedEventData {
         target_da: Option<u64>,
         da_used: u64,
         target_da_footprint: Option<u64>,
-        target_state_root_gas: Option<u64>,
-        flashblock_execution_time_limit_us: Option<u128>,
     ) -> Self {
-        Self {
-            target_gas,
-            gas_used,
-            target_da,
-            da_used,
-            target_da_footprint,
-            target_state_root_gas,
-            flashblock_execution_time_limit_us,
-        }
+        Self { target_gas, gas_used, target_da, da_used, target_da_footprint }
     }
 }
 
@@ -441,12 +419,6 @@ pub(crate) const fn rejection_reason_code(err: &TxnExecutionError) -> &'static s
         TxnExecutionError::ExecutionMeteringLimitExceeded(inner) => match inner {
             ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _) => {
                 "tx_execution_time_exceeded"
-            }
-            ExecutionMeteringLimitExceeded::FlashblockExecutionTime(_, _, _) => {
-                "flashblock_execution_time_exceeded"
-            }
-            ExecutionMeteringLimitExceeded::BlockStateRootGas(_, _, _) => {
-                "block_state_root_gas_exceeded"
             }
         },
         TxnExecutionError::SequencerTransaction => "sequencer_transaction",
@@ -591,8 +563,6 @@ mod tests {
                 &ExecutionInfo {
                     cumulative_gas_used: 21_000,
                     cumulative_da_bytes_used: 120,
-                    flashblock_execution_time_us: 100,
-                    cumulative_state_root_gas: 22_000,
                     cumulative_uncompressed_bytes: 110,
                     ..Default::default()
                 },
@@ -605,7 +575,6 @@ mod tests {
                     da_size: 120,
                     gas_limit: 21_000,
                     execution_time_us: Some(100),
-                    state_root_gas: Some(22_000),
                     uncompressed_size: 110,
                 }),
             ),
@@ -657,9 +626,9 @@ mod tests {
         );
         assert_eq!(
             rejection_reason_code(&TxnExecutionError::ExecutionMeteringLimitExceeded(
-                ExecutionMeteringLimitExceeded::FlashblockExecutionTime(1, 2, 3),
+                ExecutionMeteringLimitExceeded::TransactionExecutionTime(1, 2),
             )),
-            "flashblock_execution_time_exceeded"
+            "tx_execution_time_exceeded"
         );
     }
 }

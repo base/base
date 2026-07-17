@@ -18,8 +18,6 @@ pub struct MeteredTransaction {
     pub gas_used: u64,
     /// Execution time in microseconds.
     pub execution_time_us: u128,
-    /// State root computation time in microseconds.
-    pub state_root_time_us: u128,
     /// Data availability bytes.
     pub data_availability_bytes: u64,
 }
@@ -32,7 +30,6 @@ impl MeteredTransaction {
             priority_fee_per_gas: U256::ZERO,
             gas_used: 0,
             execution_time_us: 0,
-            state_root_time_us: 0,
             data_availability_bytes: 0,
         }
     }
@@ -43,10 +40,6 @@ impl MeteredTransaction {
 pub struct ResourceTotals {
     /// Total gas used.
     pub gas_used: u64,
-    /// Total execution time in microseconds.
-    pub execution_time_us: u128,
-    /// Total state root time in microseconds.
-    pub state_root_time_us: u128,
     /// Total data availability bytes.
     pub data_availability_bytes: u64,
 }
@@ -54,8 +47,6 @@ pub struct ResourceTotals {
 impl ResourceTotals {
     const fn accumulate(&mut self, tx: &MeteredTransaction) {
         self.gas_used = self.gas_used.saturating_add(tx.gas_used);
-        self.execution_time_us = self.execution_time_us.saturating_add(tx.execution_time_us);
-        self.state_root_time_us = self.state_root_time_us.saturating_add(tx.state_root_time_us);
         self.data_availability_bytes =
             self.data_availability_bytes.saturating_add(tx.data_availability_bytes);
     }
@@ -274,7 +265,6 @@ mod tests {
             priority_fee_per_gas: U256::from(priority),
             gas_used: 10,
             execution_time_us: 5,
-            state_root_time_us: 7,
             data_availability_bytes: 20,
         }
     }
