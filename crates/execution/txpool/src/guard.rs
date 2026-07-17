@@ -20,24 +20,24 @@ use alloy_primitives::{Address, TxHash, U256};
 use crate::{InflightCounters, InvalidationIndex, InvalidationKey, PayerBook, WatchSet};
 
 /// Default cap on inflight signatures per unlocked account.
-pub const DEFAULT_SENDER_LIMIT: u32 = 4;
-/// Default cap on inflight signatures or payments per payer account.
-pub const DEFAULT_PAYER_LIMIT: u32 = 4;
+pub const DEFAULT_SIGNATURE_LIMIT: u32 = 4;
+/// Default cap on inflight payments per count-limited payer account.
+pub const DEFAULT_PAYMENT_LIMIT: u32 = 4;
 
 /// Configurable per-account admission caps.
 #[derive(Debug, Clone, Copy)]
 pub struct GuardLimits {
     /// Cap on inflight transactions signed by an unlocked account, whether it
     /// appears as sender or sponsor. Locked accounts are exempt.
-    pub default_sender: u32,
+    pub signature_limit: u32,
     /// Cap on inflight payments for a count-limited payer. Balance-bounded
     /// trusted payers use aggregate reservations instead.
-    pub default_payer: u32,
+    pub payment_limit: u32,
 }
 
 impl Default for GuardLimits {
     fn default() -> Self {
-        Self { default_sender: DEFAULT_SENDER_LIMIT, default_payer: DEFAULT_PAYER_LIMIT }
+        Self { signature_limit: DEFAULT_SIGNATURE_LIMIT, payment_limit: DEFAULT_PAYMENT_LIMIT }
     }
 }
 
@@ -116,13 +116,19 @@ pub struct Admission {
 /// How a transaction was charged against the limits, retained so removal can
 /// release exactly the dimensions it consumed.
 #[derive(Debug, Clone, Copy)]
-struct AdmissionRecord {
-    sender: Address,
-    payer: Address,
-    sender_signature_charged: bool,
-    payer_signature_charged: bool,
-    payer_trusted: bool,
-    max_cost: U256,
+pub struct AdmissionRecord {
+    /// Account charged on the sender-signature dimension.
+    pub sender: Address,
+    /// Account charged on the payment and optional sponsor-signature dimensions.
+    pub payer: Address,
+    /// Whether admission charged the sender-signature dimension.
+    pub sender_signature_charged: bool,
+    /// Whether admission charged the sponsor-signature dimension.
+    pub payer_signature_charged: bool,
+    /// Whether admission reserved aggregate balance instead of a payment count.
+    pub payer_trusted: bool,
+    /// Maximum payer cost reserved by this transaction.
+    pub max_cost: U256,
 }
 
 /// In-memory admission and invalidation ledger for the pool.
@@ -143,7 +149,7 @@ impl MempoolGuard {
     /// is rejected for exceeding a per-account count.
     #[must_use]
     pub fn unlimited() -> Self {
-        Self::new(GuardLimits { default_sender: u32::MAX, default_payer: u32::MAX })
+        Self::new(GuardLimits { signature_limit: u32::MAX, payment_limit: u32::MAX })
     }
 
     /// Creates a guard with the given limits.
@@ -198,7 +204,7 @@ impl MempoolGuard {
 
         let sender_signature_charged = !admission.sender_locked;
         if sender_signature_charged
-            && !self.signature_counts.try_increment(admission.sender, self.limits.default_sender)
+            && !self.signature_counts.try_increment(admission.sender, self.limits.signature_limit)
         {
             return Err(LimitRejection::SenderLimit);
         }
@@ -206,7 +212,7 @@ impl MempoolGuard {
         let payer_signature_charged =
             admission.payer != admission.sender && !admission.payer_locked;
         if payer_signature_charged
-            && !self.signature_counts.try_increment(admission.payer, self.limits.default_sender)
+            && !self.signature_counts.try_increment(admission.payer, self.limits.signature_limit)
         {
             if sender_signature_charged {
                 self.signature_counts.decrement(admission.sender);
@@ -215,13 +221,16 @@ impl MempoolGuard {
         }
 
         let payment_ok = if admission.payer_trusted {
+            // Only the first admission seeds the book. Once it exists, canonical
+            // balance updates own this value through `on_balance_changed`; a
+            // later validation snapshot must not overwrite a newer diff-fed value.
             let book = self
                 .payer_books
                 .entry(admission.payer)
                 .or_insert_with(|| PayerBook::new(admission.payer_balance));
             book.try_reserve(admission.hash, admission.max_cost, admission.priority)
         } else {
-            self.payment_counts.try_increment(admission.payer, self.limits.default_payer)
+            self.payment_counts.try_increment(admission.payer, self.limits.payment_limit)
         };
 
         if !payment_ok {
@@ -293,12 +302,14 @@ impl MempoolGuard {
             debug_assert!(payer_ok, "uncapped increment must always succeed");
         }
 
-        let payer_trusted = admission.payer_trusted
-            && self
-                .payer_books
+        let payer_trusted = admission.payer_trusted && {
+            // As in `try_admit`, only creation uses the validation snapshot;
+            // canonical balance updates own an existing book's value.
+            self.payer_books
                 .entry(admission.payer)
                 .or_insert_with(|| PayerBook::new(admission.payer_balance))
-                .try_reserve(admission.hash, admission.max_cost, admission.priority);
+                .try_reserve(admission.hash, admission.max_cost, admission.priority)
+        };
 
         if !payer_trusted {
             let payer_ok = self.payment_counts.try_increment(admission.payer, u32::MAX);
@@ -468,11 +479,11 @@ mod tests {
     }
 
     #[test]
-    fn default_sender_limit_is_enforced() {
+    fn default_signature_limit_is_enforced() {
         let mut guard = MempoolGuard::new(GuardLimits::default());
         let sender = addr(1);
 
-        for i in 0..DEFAULT_SENDER_LIMIT as u8 {
+        for i in 0..DEFAULT_SIGNATURE_LIMIT as u8 {
             // Distinct payers so the payer dimension never binds first.
             let mut adm = self_pay(i, sender, 10);
             adm.payer = addr(100 + i);
@@ -481,7 +492,7 @@ mod tests {
         let mut over = self_pay(200, sender, 10);
         over.payer = addr(250);
         assert_eq!(guard.try_admit(over), Err(LimitRejection::SenderLimit));
-        assert_eq!(guard.len(), DEFAULT_SENDER_LIMIT as usize);
+        assert_eq!(guard.len(), DEFAULT_SIGNATURE_LIMIT as usize);
     }
 
     #[test]
@@ -501,11 +512,11 @@ mod tests {
     }
 
     #[test]
-    fn default_payer_limit_is_enforced_across_senders() {
+    fn default_payment_limit_is_enforced_across_senders() {
         let mut guard = MempoolGuard::new(GuardLimits::default());
         let payer = addr(9);
 
-        for i in 0..DEFAULT_PAYER_LIMIT as u8 {
+        for i in 0..DEFAULT_PAYMENT_LIMIT as u8 {
             let adm = Admission { payer, ..self_pay(i, addr(i + 1), 10) };
             assert!(guard.try_admit(adm).is_ok());
         }
@@ -518,7 +529,7 @@ mod tests {
         let mut guard = MempoolGuard::new(GuardLimits::default());
         let account = addr(9);
 
-        for i in 0..DEFAULT_SENDER_LIMIT as u8 {
+        for i in 0..DEFAULT_SIGNATURE_LIMIT as u8 {
             let admission =
                 Admission { payer: addr(100 + i), payer_locked: true, ..self_pay(i, account, 10) };
             guard.try_admit(admission).unwrap();
@@ -533,7 +544,7 @@ mod tests {
         let mut guard = MempoolGuard::new(GuardLimits::default());
         let payer = addr(9);
 
-        for i in 0..DEFAULT_PAYER_LIMIT as u8 {
+        for i in 0..DEFAULT_PAYMENT_LIMIT as u8 {
             let admission = Admission { payer, payer_locked: true, ..self_pay(i, addr(i + 1), 10) };
             guard.try_admit(admission).unwrap();
         }
@@ -572,7 +583,7 @@ mod tests {
         let payer = addr(9);
 
         // Saturate the payer count limit using distinct senders.
-        for i in 0..DEFAULT_PAYER_LIMIT as u8 {
+        for i in 0..DEFAULT_PAYMENT_LIMIT as u8 {
             assert!(guard.try_admit(Admission { payer, ..self_pay(i, addr(i + 1), 10) }).is_ok());
         }
         // A new sender whose payer is over the limit must be fully rejected,
@@ -594,7 +605,7 @@ mod tests {
         let mut guard = MempoolGuard::new(GuardLimits::default());
         let sender = addr(1);
 
-        for i in 0..DEFAULT_SENDER_LIMIT as u8 {
+        for i in 0..DEFAULT_SIGNATURE_LIMIT as u8 {
             let adm = Admission { payer: addr(100 + i), ..self_pay(i, sender, 10) };
             assert!(guard.try_admit(adm).is_ok());
         }
@@ -666,7 +677,7 @@ mod tests {
         let sender = addr(1);
 
         // Fill the sender dimension to its default cap with distinct payers.
-        for i in 0..DEFAULT_SENDER_LIMIT as u8 {
+        for i in 0..DEFAULT_SIGNATURE_LIMIT as u8 {
             let adm = Admission { payer: addr(100 + i), ..self_pay(i, sender, 10) };
             assert!(guard.try_admit(adm).is_ok());
         }
@@ -679,7 +690,7 @@ mod tests {
         assert!(guard.release(&hash(0)));
         let replacement = Admission { payer: addr(250), ..self_pay(60, sender, 10) };
         guard.insert_forced(replacement);
-        assert_eq!(guard.len(), DEFAULT_SENDER_LIMIT as usize);
+        assert_eq!(guard.len(), DEFAULT_SIGNATURE_LIMIT as usize);
         assert!(guard.contains(&hash(60)));
         assert!(!guard.contains(&hash(0)));
     }

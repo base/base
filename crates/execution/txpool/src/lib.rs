@@ -9,8 +9,8 @@
 
 mod guard;
 pub use guard::{
-    Admission, DEFAULT_PAYER_LIMIT, DEFAULT_SENDER_LIMIT, GuardLimits, LimitClass, LimitRejection,
-    MempoolGuard,
+    Admission, AdmissionRecord, DEFAULT_PAYMENT_LIMIT, DEFAULT_SIGNATURE_LIMIT, GuardLimits,
+    LimitClass, LimitRejection, MempoolGuard,
 };
 
 mod invalidation;
