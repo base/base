@@ -33,6 +33,7 @@ serde = { workspace = true, features = ["derive", "alloc"] }
 revm = { workspace = true, optional = true }
 alloy-evm = { workspace = true, optional = true }
 base-common-evm = { workspace = true, optional = true }
+reth-primitives-traits = { workspace = true, optional = true }
 reth-rpc-convert = { workspace = true, optional = true }
 
 # signing
@@ -99,6 +100,7 @@ reth = [
 	"dep:alloy-signer",
 	"dep:base-common-evm",
 	"dep:reth-rpc-convert",
+	"dep:reth-primitives-traits",
 	"dep:revm",
 	"std",
 ]

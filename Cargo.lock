@@ -3863,6 +3863,7 @@ dependencies = [
  "base-common-evm",
  "derive_more 2.1.1",
  "rand 0.9.4",
+ "reth-primitives-traits",
  "reth-rpc-convert",
  "revm",
  "serde",
