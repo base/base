@@ -442,13 +442,22 @@ where
         let pre_admitted = self.pre_admit_protocol_transaction(hash, replaced, &validated)?;
         let mut outcomes =
             self.protocol_pool.inner().add_transactions(origin, std::iter::once(validated));
-        let outcome = match outcomes.pop().expect("one transaction produces one outcome") {
-            Ok(outcome) => outcome,
-            Err(error) => {
+        let outcome = match outcomes.pop() {
+            Some(Ok(outcome)) => outcome,
+            Some(Err(error)) => {
                 if pre_admitted {
                     self.guard.write().release(&hash);
                 }
                 return Err(error);
+            }
+            None => {
+                if pre_admitted {
+                    self.guard.write().release(&hash);
+                }
+                return Err(reth_transaction_pool::error::PoolError::other(
+                    hash,
+                    "inner pool returned no outcome",
+                ));
             }
         };
         self.gate_protocol_admission(hash, replaced, pre_admitted)?;
@@ -472,7 +481,13 @@ where
         };
         let mut guard = self.guard.write();
         let replaced_was_tracked = replaced.is_some_and(|hash| guard.release(&hash));
-        let Some(admission) = admission_for(&transaction.transaction) else { return Ok(()) };
+        let Some(admission) = admission_for(&transaction.transaction) else {
+            debug_assert!(!pre_admitted, "non-EIP-8130 transaction was pre-admitted");
+            if pre_admitted {
+                guard.release(&hash);
+            }
+            return Ok(());
+        };
         let current = transaction.transaction.limit_class().is_some_and(|class| {
             class.classification_generation
                 == self.validator().validator().limit_class_cache_generation()

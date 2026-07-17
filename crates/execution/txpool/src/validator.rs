@@ -1059,6 +1059,8 @@ where
         account: Address,
         generation: u64,
     ) -> (bool, Option<u64>) {
+        // Invalidation may advance the generation immediately after this read.
+        // Pool admission rejects the captured classification if that happens.
         let account_state = if let Some(value) =
             self.limit_class_cache.read().get(&account).and_then(|entry| entry.0)
         {
@@ -1101,6 +1103,8 @@ where
         account: Address,
         generation: u64,
     ) -> bool {
+        // Invalidation may advance the generation immediately after this read.
+        // Pool admission rejects the captured classification if that happens.
         if let Some(value) = self.limit_class_cache.read().get(&account).and_then(|entry| entry.1) {
             return value;
         }
