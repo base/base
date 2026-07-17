@@ -85,24 +85,12 @@ impl FakeEngineClientHandle {
     }
 
     /// Returns all recorded calls in order.
-    pub async fn calls(&self) -> Vec<EngineClientCall> {
+    pub fn calls(&self) -> Vec<EngineClientCall> {
         self.state.lock().expect("FakeEngineClient state mutex poisoned").calls.clone()
     }
 
     /// Appends scripted FCU-v3 responses to be consumed in call order.
-    pub async fn push_scripted_fcu_v3(
-        &self,
-        scripted: impl IntoIterator<Item = ScriptedForkchoiceResponse>,
-    ) {
-        self.state
-            .lock()
-            .expect("FakeEngineClient state mutex poisoned")
-            .scripted_fcu_v3
-            .extend(scripted);
-    }
-
-    /// Blocking variant of [`Self::push_scripted_fcu_v3`] for runtime-owned setup code.
-    pub fn push_scripted_fcu_v3_blocking(
+    pub fn push_scripted_fcu_v3(
         &self,
         scripted: impl IntoIterator<Item = ScriptedForkchoiceResponse>,
     ) {
@@ -114,10 +102,7 @@ impl FakeEngineClientHandle {
     }
 
     /// Appends scripted `new_payload_v3` responses to be consumed in call order.
-    pub async fn push_scripted_new_payload_v3(
-        &self,
-        scripted: impl IntoIterator<Item = PayloadStatus>,
-    ) {
+    pub fn push_scripted_new_payload_v3(&self, scripted: impl IntoIterator<Item = PayloadStatus>) {
         self.state
             .lock()
             .expect("FakeEngineClient state mutex poisoned")
@@ -125,27 +110,8 @@ impl FakeEngineClientHandle {
             .extend(scripted);
     }
 
-    /// Blocking variant of [`Self::push_scripted_new_payload_v3`] for runtime-owned setup code.
-    pub fn push_scripted_new_payload_v3_blocking(
-        &self,
-        scripted: impl IntoIterator<Item = PayloadStatus>,
-    ) {
-        self.state
-            .lock()
-            .expect("FakeEngineClient state mutex poisoned")
-            .scripted_new_payload_v3
-            .extend(scripted);
-    }
-
-    /// Records a synthetic FCU-v3 call in the call log and consumes one scripted
-    /// response.
-    ///
-    /// This mirrors the real engine actor: when `dispatch_safe_l2_for` feeds a
-    /// safe-head signal it drives one real `fork_choice_updated_v3` on the engine
-    /// (which pops a scripted response). This synthetic call keeps the harness's
-    /// scripted-response budget in lockstep with that real consumption so tests
-    /// that script a fixed number of FCU responses stay accurate.
-    pub async fn inject_fcu_v3_call(&self, fork_choice_state: ForkchoiceState) {
+    /// Records a synthetic FCU-v3 call in the call log and consumes one scripted response.
+    pub fn inject_fcu_v3_call(&self, fork_choice_state: ForkchoiceState) {
         let mut state = self.state.lock().expect("FakeEngineClient state mutex poisoned");
         state.calls.push(EngineClientCall::ForkChoiceUpdatedV3 {
             fcs: fork_choice_state,
@@ -155,7 +121,7 @@ impl FakeEngineClientHandle {
     }
 
     /// Sets the `l2_block_info_by_label` response for a specific tag.
-    pub fn set_l2_block_info_by_label_blocking(
+    pub fn set_l2_block_info_by_label(
         &self,
         tag: Eip1898BlockNumberOrTag,
         block: L2BlockInfo,
@@ -168,24 +134,7 @@ impl FakeEngineClientHandle {
     }
 
     /// Sets the `l2_block_by_label` response for a specific tag.
-    pub fn set_l2_block_by_label_blocking(
-        &self,
-        tag: BlockNumberOrTag,
-        block: Block<BaseTransaction>,
-    ) {
-        self.state
-            .lock()
-            .expect("FakeEngineClient state mutex poisoned")
-            .l2_blocks_by_label
-            .insert(tag, block);
-    }
-
-    /// Async variant of [`Self::set_l2_block_by_label_blocking`].
-    pub async fn set_l2_block_by_label(
-        &self,
-        tag: BlockNumberOrTag,
-        block: Block<BaseTransaction>,
-    ) {
+    pub fn set_l2_block_by_label(&self, tag: BlockNumberOrTag, block: Block<BaseTransaction>) {
         self.state
             .lock()
             .expect("FakeEngineClient state mutex poisoned")

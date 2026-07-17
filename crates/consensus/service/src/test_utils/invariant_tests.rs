@@ -161,7 +161,7 @@ async fn l4_confirmations_observed_by_derivation() {
         .await
         .expect("safe head did not advance for derivation confirmation check");
 
-    let calls = fake_engine_handle.calls().await;
+    let calls = fake_engine_handle.calls();
     let saw_safe_confirmation = calls[pre_extend_count + 1..].iter().any(|call| {
         matches!(
             call,
@@ -255,7 +255,6 @@ async fn e2e_invalid_fcu_reset_and_recovery() {
 
     let fcu_heads: Vec<B256> = fake_engine_handle
         .calls()
-        .await
         .into_iter()
         .filter_map(|call| match call {
             EngineClientCall::ForkChoiceUpdatedV3 { fcs, .. } => Some(fcs.head_block_hash),

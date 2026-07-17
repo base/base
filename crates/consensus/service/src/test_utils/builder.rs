@@ -116,8 +116,8 @@ impl Harness {
         *self.engine_state_rx.borrow()
     }
 
-    /// Returns the current derivation state, if the actor is still reachable.
-    pub async fn current_derivation_state(&self) -> Option<DerivationState> {
+    /// Returns the current derivation state, or `None` if the actor channel has closed.
+    pub async fn try_derivation_state(&self) -> Option<DerivationState> {
         let (result_tx, result_rx) = oneshot::channel();
         if self
             .derivation_request_tx
@@ -239,15 +239,13 @@ impl HarnessBuilder {
         });
         let fake_engine_client = FakeEngineClient::new(Arc::clone(&config));
         let fake_engine_handle = fake_engine_client.handle();
-        fake_engine_handle.push_scripted_fcu_v3(self.scripted_el_responses).await;
+        fake_engine_handle.push_scripted_fcu_v3(self.scripted_el_responses);
 
         fake_engine_client
             .set_l2_block_info_by_label(BlockNumberOrTag::Latest, L2BlockInfo::default())
             .await;
         if self.reset_recovery_support {
-            fake_engine_handle
-                .set_l2_block_by_label(BlockNumberOrTag::Latest, Default::default())
-                .await;
+            fake_engine_handle.set_l2_block_by_label(BlockNumberOrTag::Latest, Default::default());
         }
 
         let initial_state = EngineState::default();
