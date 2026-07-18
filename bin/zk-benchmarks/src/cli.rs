@@ -3,35 +3,16 @@
 use std::path::PathBuf;
 
 use base_cli_utils::RuntimeManager;
-use base_load_tests::{
-    LoadTestCleanupSummary, LoadTestDisplay, LoadTestExecutor, LoadTestRunOptions, TestConfig,
-};
+use base_load_tests::{LoadTestDisplay, LoadTestExecutor, LoadTestRunOptions, TestConfig};
 use base_prover_service_protocol::ZkBackend;
 use base_zk_benchmarks::{ZkBenchConfig, ZkBenchRunner, ZkBenchSummary};
-use clap::{Args, Parser, ValueEnum};
-use eyre::{Result, bail};
+use clap::{Parser, ValueEnum};
+use eyre::Result;
 
 /// The Base ZK benchmark CLI.
 #[derive(Parser, Clone, Debug)]
 #[command(author, version = env!("CARGO_PKG_VERSION"), about = "Base ZK benchmarks")]
-pub(crate) struct Cli {
-    /// ZK benchmark arguments.
-    #[command(flatten)]
-    args: ZkBenchArgs,
-}
-
-impl Cli {
-    /// Runs the selected benchmark.
-    pub(crate) fn run(self) -> Result<()> {
-        RuntimeManager::new()
-            .tokio_runtime()?
-            .block_on(async move { run_zk_benchmark(self.args).await })
-    }
-}
-
-/// ZK benchmark command arguments.
-#[derive(Args, Clone, Debug)]
-struct ZkBenchArgs {
+pub(crate) struct ZkBenchArgs {
     /// ZK proof backend.
     #[arg(long, value_enum)]
     mode: ZkBackendArg,
@@ -57,6 +38,13 @@ struct ZkBenchArgs {
     config: PathBuf,
 }
 
+impl ZkBenchArgs {
+    /// Runs the selected benchmark.
+    pub(crate) fn run(self) -> Result<()> {
+        RuntimeManager::new().tokio_runtime()?.block_on(async move { run_zk_benchmark(self).await })
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 enum ZkBackendArg {
     DryRun,
@@ -77,16 +65,12 @@ impl From<ZkBackendArg> for ZkBackend {
 async fn run_zk_benchmark(args: ZkBenchArgs) -> Result<()> {
     let _mp = LoadTestDisplay::init_tracing();
 
-    if !args.config.exists() {
-        bail!("config file not found: {}", args.config.display());
-    }
-
     let test_config = TestConfig::load(&args.config)?;
-    let zk_config = ZkBenchConfig::new(
-        args.rollup_rpc_url.clone(),
-        args.prover_service_url.clone(),
-        args.mode.into(),
-    );
+    let zk_config = ZkBenchConfig {
+        zk_backend: args.mode.into(),
+        rollup_rpc_url: args.rollup_rpc_url,
+        prover_url: args.prover_service_url,
+    };
 
     println!("=== Base ZK Benchmark Runner ===");
     println!("Config: {}", args.config.display());
@@ -114,7 +98,6 @@ async fn run_zk_benchmark(args: ZkBenchArgs) -> Result<()> {
             Err(e) => eprintln!("Warning: failed to serialize load test results: {e}"),
         }
     }
-    print_cleanup_warnings(&output.cleanup);
     if let Some(error) = output.run_error {
         return Err(error.into());
     }
@@ -137,15 +120,6 @@ async fn run_zk_benchmark(args: ZkBenchArgs) -> Result<()> {
     }
 
     Ok(())
-}
-
-fn print_cleanup_warnings(cleanup: &LoadTestCleanupSummary) {
-    if let Some(error) = &cleanup.b20_teardown_error {
-        eprintln!("Warning: B-20 teardown failed: {error}");
-    }
-    if let Some(error) = &cleanup.drain_error {
-        eprintln!("Warning: drain failed: {error}");
-    }
 }
 
 fn print_zk_bench_summary(summary: &ZkBenchSummary) {

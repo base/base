@@ -38,13 +38,6 @@ pub struct ZkBenchConfig {
     pub prover_url: Url,
 }
 
-impl ZkBenchConfig {
-    /// Builds ZK bench config from endpoint URLs and proof backend.
-    pub const fn new(rollup_rpc_url: Url, prover_url: Url, zk_backend: ZkBackend) -> Self {
-        Self { zk_backend, rollup_rpc_url, prover_url }
-    }
-}
-
 /// The single L2 block selected for proof.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ZkBenchTarget {
@@ -83,15 +76,6 @@ pub struct ZkBenchSummary {
 }
 
 impl ZkBenchSummary {
-    /// Builds a completed ZK benchmark summary.
-    pub const fn new(
-        target: ZkBenchTarget,
-        proof: ZkBenchProofOutcome,
-        execution_stats: Option<ExecutionStats>,
-    ) -> Self {
-        Self { target, proof, execution_stats }
-    }
-
     /// Serializes the summary to pretty JSON.
     pub fn to_json(&self) -> serde_json::Result<String> {
         serde_json::to_string_pretty(self)
@@ -109,17 +93,17 @@ mod tests {
 
     #[test]
     fn summary_json_encodes_proof_duration_as_millis() {
-        let summary = ZkBenchSummary::new(
-            ZkBenchTarget { block: 11, reason: "fullest".to_string() },
-            ZkBenchProofOutcome {
+        let summary = ZkBenchSummary {
+            target: ZkBenchTarget { block: 11, reason: "fullest".to_string() },
+            proof: ZkBenchProofOutcome {
                 zk_backend: ZkBackend::DryRun,
                 session_id: "session".to_string(),
                 start_block_number: 10,
                 l1_head: B256::ZERO,
                 proof_duration: Duration::from_millis(1_250),
             },
-            None,
-        );
+            execution_stats: None,
+        };
 
         let json = summary.to_json().unwrap();
         assert!(json.contains("\"proof_duration\": 1250"), "{json}");
