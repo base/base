@@ -9,6 +9,7 @@ use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use alloy_signer_local::PrivateKeySigner;
 use base_common_genesis::BaseUpgrade;
+use base_execution_cli::ExecutionUpgradeSignalConfig;
 use base_test_utils::MockProtocolVersions;
 use base_upgrade_signal::{UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalMode};
 use eyre::{Result, WrapErr};
@@ -25,6 +26,8 @@ use crate::config::ANVIL_ACCOUNT_4;
 pub struct UpgradeSignalStackOptions {
     /// Local schedule mutation mode used by the consensus nodes.
     pub mode: UpgradeSignalMode,
+    /// Optional mode for the client execution node; `None` leaves execution nodes unwired.
+    pub execution_mode: Option<UpgradeSignalMode>,
     /// Initial `(upgrade, activation timestamp)` entries seeded into the mock contract.
     ///
     /// The consensus nodes read exactly these upgrades from the contract, so upgrades absent
@@ -41,9 +44,16 @@ impl UpgradeSignalStackOptions {
     pub const fn new(mode: UpgradeSignalMode) -> Self {
         Self {
             mode,
+            execution_mode: None,
             schedule: Vec::new(),
             minimum_protocol_version: UpgradeSignalDefaults::packed_protocol_version(0, 0, 1),
         }
+    }
+
+    /// Also wires the client execution node to the upgrade signal with the given mode.
+    pub const fn with_execution_mode(mut self, mode: UpgradeSignalMode) -> Self {
+        self.execution_mode = Some(mode);
+        self
     }
 
     /// Adds an initial activation timestamp for one contract-backed upgrade.
@@ -69,14 +79,36 @@ impl UpgradeSignalStackOptions {
         ids
     }
 
-    /// Builds the node-side upgrade signal configuration for a deployed contract.
+    /// Builds the consensus-side upgrade signal configuration for a deployed contract.
+    pub fn signal_config(&self, contract_address: Address) -> UpgradeSignalConfig {
+        self.signal_config_with_mode(contract_address, self.mode)
+    }
+
+    /// Builds the client execution node's upgrade signal configuration, when execution reads
+    /// are enabled via [`Self::with_execution_mode`].
+    pub fn execution_signal_config(
+        &self,
+        contract_address: Address,
+        l1_rpc: Url,
+    ) -> Option<ExecutionUpgradeSignalConfig> {
+        self.execution_mode.map(|mode| ExecutionUpgradeSignalConfig {
+            signal_config: self.signal_config_with_mode(contract_address, mode),
+            l1_rpc,
+        })
+    }
+
+    /// Builds an upgrade signal configuration for a deployed contract with an explicit mode.
     ///
     /// Reads at the latest L1 block because the devnet L1 takes several epochs to finalize.
-    pub fn signal_config(&self, contract_address: Address) -> UpgradeSignalConfig {
+    pub fn signal_config_with_mode(
+        &self,
+        contract_address: Address,
+        mode: UpgradeSignalMode,
+    ) -> UpgradeSignalConfig {
         UpgradeSignalConfig {
             contract_address,
             upgrade_ids: self.upgrade_ids(),
-            mode: self.mode,
+            mode,
             l1_block_tag: BlockNumberOrTag::Latest,
             node_protocol_version: UpgradeSignalDefaults::node_protocol_version(),
         }

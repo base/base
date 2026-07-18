@@ -6399,6 +6399,7 @@ dependencies = [
  "base-consensus-rpc",
  "base-consensus-sources",
  "base-execution-chainspec",
+ "base-execution-cli",
  "base-execution-rpc",
  "base-execution-txpool",
  "base-flashblocks",

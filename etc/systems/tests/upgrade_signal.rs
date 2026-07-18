@@ -97,6 +97,87 @@ async fn test_upgrade_signal_metrics_only_does_not_mutate_schedule() -> Result<(
     Ok(())
 }
 
+/// Execution startup-apply mode reads the L1 schedule before startup and applies it to the
+/// client execution node's chain spec, while metrics-only consensus nodes leave their rollup
+/// config untouched.
+#[tokio::test]
+async fn test_upgrade_signal_execution_startup_apply_sets_chain_spec() -> Result<()> {
+    let system = SystemTestStackBuilder::new()
+        .with_l2_chain_id(84_538_464)
+        .with_upgrade_signal(
+            UpgradeSignalStackOptions::new(UpgradeSignalMode::MetricsOnly)
+                .with_execution_mode(UpgradeSignalMode::StartupApply)
+                .with_upgrade(BaseUpgrade::Cobalt, COBALT_ACTIVATION_TIMESTAMP),
+        )
+        .build()
+        .await?;
+
+    let chain_spec = system.l2_stack().client().chain_spec();
+    let cobalt = chain_spec.fork(BaseUpgrade::Cobalt);
+    assert!(
+        cobalt.active_at_timestamp(COBALT_ACTIVATION_TIMESTAMP),
+        "client execution chain spec should activate Cobalt at the L1-scheduled timestamp"
+    );
+    assert!(
+        !cobalt.active_at_timestamp(COBALT_ACTIVATION_TIMESTAMP - 1),
+        "client execution chain spec must not activate Cobalt before the L1-scheduled timestamp"
+    );
+
+    let builder_config =
+        rollup_config_via_rpc(&system.l2_stack().builder_consensus_rpc_url()).await?;
+    assert_ne!(
+        builder_config.contract_upgrade_activation_timestamp(BaseUpgrade::Cobalt),
+        Some(COBALT_ACTIVATION_TIMESTAMP),
+        "metrics-only consensus must not apply the schedule the execution node applied"
+    );
+
+    Ok(())
+}
+
+/// Execution runtime-admin mode automatically re-applies observed live L1 schedule changes to
+/// the process-local runtime registry; metrics-only consensus nodes cannot be the writers.
+#[tokio::test]
+async fn test_upgrade_signal_execution_runtime_admin_reapplies_live_schedule_change() -> Result<()>
+{
+    let l2_chain_id = 84_538_465;
+    let system = SystemTestStackBuilder::new()
+        .with_l2_chain_id(l2_chain_id)
+        .with_upgrade_signal(
+            UpgradeSignalStackOptions::new(UpgradeSignalMode::MetricsOnly)
+                .with_execution_mode(UpgradeSignalMode::RuntimeAdmin)
+                .with_upgrade(BaseUpgrade::Cobalt, COBALT_ACTIVATION_TIMESTAMP),
+        )
+        .build()
+        .await?;
+
+    let contract =
+        system.upgrade_signal().expect("stack was built with the upgrade signal enabled");
+    contract
+        .set_schedule(&[(BaseUpgrade::Cobalt, COBALT_RESCHEDULED_TIMESTAMP)])
+        .await
+        .wrap_err("Failed to reschedule Cobalt on L1")?;
+
+    timeout(LIVE_APPLY_TIMEOUT, async {
+        loop {
+            if RuntimeUpgradeRegistry::activation(l2_chain_id, BaseUpgrade::Cobalt)
+                == Some(UpgradeActivation::Timestamp(COBALT_RESCHEDULED_TIMESTAMP))
+            {
+                return;
+            }
+            sleep(LIVE_APPLY_POLL_INTERVAL).await;
+        }
+    })
+    .await
+    .map_err(|_| {
+        eyre::eyre!(
+            "live L1 reschedule was not re-applied by the execution node within {}s",
+            LIVE_APPLY_TIMEOUT.as_secs()
+        )
+    })?;
+
+    Ok(())
+}
+
 /// Runtime-admin mode applies the L1 schedule at startup and automatically re-applies observed
 /// live L1 schedule changes to the process-local runtime registry.
 #[tokio::test]

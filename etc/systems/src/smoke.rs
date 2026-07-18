@@ -269,7 +269,8 @@ impl SystemTestStackBuilder {
     }
 
     /// Enables the L1 upgrade signal: deploys a mock `ProtocolVersions` contract to L1, seeds
-    /// it with the options' schedule, and starts both consensus nodes reading it.
+    /// it with the options' schedule, and starts both consensus nodes (and, when an execution
+    /// mode is set, the client execution node) reading it.
     pub fn with_upgrade_signal(mut self, options: UpgradeSignalStackOptions) -> Self {
         self.upgrade_signal = Some(options);
         self
@@ -418,6 +419,12 @@ impl SystemTestStackBuilder {
             client_consensus_mode: self.client_consensus_mode,
             upgrade_signal: match (&self.upgrade_signal, &upgrade_signal) {
                 (Some(options), Some(client)) => Some(options.signal_config(client.address)),
+                _ => None,
+            },
+            execution_upgrade_signal: match (&self.upgrade_signal, &upgrade_signal) {
+                (Some(options), Some(client)) => {
+                    options.execution_signal_config(client.address, client.l1_rpc_url.clone())
+                }
                 _ => None,
             },
             shadow_sequencers,

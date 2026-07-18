@@ -8,6 +8,9 @@ use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
 use base_bundle_extension::BundleExtension;
 use base_execution_chainspec::BaseChainSpec;
+use base_execution_cli::{
+    ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalRuntimeExtension,
+};
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
 use base_node_core::args::RollupArgs;
@@ -53,6 +56,13 @@ pub struct InProcessClientConfig {
     /// Optional transaction forwarding configuration.
     /// When set, the client will forward transactions to builder RPC endpoints.
     pub tx_forwarding_config: Option<TxForwardingConfig>,
+    /// Optional L1 upgrade signal configuration.
+    ///
+    /// When the mode applies at startup, the schedule is read from L1 and applied to the chain
+    /// spec before the node starts, mirroring the standalone execution CLI. The runtime
+    /// extension is installed for live polling (and, in runtime-admin mode, automatic
+    /// re-application of observed L1 changes).
+    pub upgrade_signal: Option<ExecutionUpgradeSignalConfig>,
 }
 
 /// In-process Base client node that syncs from a builder.
@@ -62,6 +72,7 @@ pub struct InProcessClient {
     http_api_addr: SocketAddr,
     ws_api_addr: SocketAddr,
     engine_addr: SocketAddr,
+    chain_spec: Arc<BaseChainSpec>,
     _node_exit_future: NodeExitFuture,
     _node: Box<dyn Any + Sync + Send>,
     _runtime: Runtime,
@@ -93,9 +104,22 @@ impl InProcessClient {
         // Parse genesis JSON to chain spec
         let genesis: alloy_genesis::Genesis = serde_json::from_slice(&config.genesis_json)
             .map_err(|e| eyre!("Failed to parse genesis JSON: {}", e))?;
-        let chain_spec = Arc::new(
-            BaseChainSpec::try_from_genesis(genesis).wrap_err("Invalid genesis chain spec")?,
-        );
+        let mut chain_spec =
+            BaseChainSpec::try_from_genesis(genesis).wrap_err("Invalid genesis chain spec")?;
+
+        // Mirror the standalone execution CLI: apply the L1 upgrade signal schedule to the
+        // chain spec before startup when the configured mode applies at startup.
+        if let Some(signal_config) = &config.upgrade_signal
+            && signal_config.signal_config.mode.applies_at_startup()
+        {
+            ExecutionUpgradeSignal::apply_initial_signal_to_chain_spec(
+                signal_config,
+                &mut chain_spec,
+            )
+            .await
+            .wrap_err("Failed to apply upgrade signal to client chain spec")?;
+        }
+        let chain_spec = Arc::new(chain_spec);
 
         let mut network_config = NetworkArgs {
             discovery: DiscoveryArgs { disable_discovery: true, ..DiscoveryArgs::default() },
@@ -191,11 +215,18 @@ impl InProcessClient {
             http_api_addr,
             ws_api_addr,
             engine_addr,
+            chain_spec,
             _node_exit_future: node_exit_future,
             _node: Box::new(node_handle),
             _runtime: runtime,
             _db_path: db_path,
         })
+    }
+
+    /// Returns the chain spec the node was started with, including any upgrade signal
+    /// schedule applied at startup.
+    pub const fn chain_spec(&self) -> &Arc<BaseChainSpec> {
+        &self.chain_spec
     }
 
     /// Returns the HTTP RPC URL for the client.
@@ -269,6 +300,13 @@ impl InProcessClient {
         // TxForwarding extension (optional - forwards txs to builder RPC)
         if let Some(ref tx_fwd_config) = config.tx_forwarding_config {
             extensions.push(Box::new(TxForwardingExtension::from_config(tx_fwd_config.clone())));
+        }
+
+        // Upgrade signal runtime extension (optional - live L1 schedule polling)
+        if let Some(ref signal_config) = config.upgrade_signal {
+            extensions.push(Box::new(ExecutionUpgradeSignalRuntimeExtension::from_config(
+                signal_config.clone(),
+            )));
         }
 
         // Flashblocks extension (must be last - uses replace_configured)
