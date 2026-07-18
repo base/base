@@ -209,8 +209,9 @@ mod tests {
     use base_proof_contracts::{AnchorStateRegistryClient, DisputeGameFactoryClient};
     use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
     use base_prover_service_protocol::{
-        DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, GetProofResponse,
-        ListProofsRequest, ListProofsResponse, ProveBlockRangeRequest, ProveBlockRangeResponse,
+        CancelProofRequest, DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest,
+        GetProofResponse, ListProofsRequest, ListProofsResponse, ProveBlockRangeRequest,
+        ProveBlockRangeResponse,
     };
     use tokio_util::sync::CancellationToken;
 
@@ -248,6 +249,13 @@ mod tests {
             _request: GetProofRequest,
         ) -> Result<GetProofResponse, ProverServiceClientError> {
             Err(ProverServiceClientError::Timeout("simulated poll failure".into()))
+        }
+
+        async fn cancel_proof_request(
+            &self,
+            _request: CancelProofRequest,
+        ) -> Result<(), ProverServiceClientError> {
+            unimplemented!("pipeline tests do not cancel proofs")
         }
 
         async fn delete_proof_request(
