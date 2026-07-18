@@ -65,7 +65,7 @@ impl ChallengerService {
         // ── 3. Construct tx-manager and challenge submitter ──────────────────
         let signer_config = config.signing;
         let sender_addr = signer_config.address();
-        let l1_rpc_url = config.l1_eth_rpc.as_ref().clone();
+        let l1_rpc_url = config.l1_eth_rpc.clone();
         let l1_provider = if config.metrics.enabled {
             let (layer, mut balance_rx) = BalanceMonitorLayer::new(
                 sender_addr,
@@ -154,7 +154,7 @@ impl ChallengerService {
         let anchor_registry_client = Arc::new(anchor_registry_client);
 
         // ── 5. L2 client ─────────────────────────────────────────────────────
-        let l2_config = L2ClientConfig::new(config.l2_eth_rpc.as_ref().clone());
+        let l2_config = L2ClientConfig::new(config.l2_eth_rpc.clone());
         let l2_client = Arc::new(L2Client::new(l2_config)?);
         info!(endpoint = %config.l2_eth_rpc, "L2 client initialized");
 

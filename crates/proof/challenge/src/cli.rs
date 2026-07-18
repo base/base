@@ -77,16 +77,6 @@ pub struct ChallengerArgs {
     #[arg(long = "zk-rpc-url", env = cli_env!("ZK_RPC_URL"))]
     pub zk_rpc_url: Url,
 
-    /// Timeout for establishing the initial gRPC connection to the ZK proof
-    /// service (e.g., "10s", "1m").
-    #[arg(
-        long = "zk-connect-timeout",
-        env = cli_env!("ZK_CONNECT_TIMEOUT"),
-        default_value = "10s",
-        value_parser = humantime::parse_duration
-    )]
-    pub zk_connect_timeout: Duration,
-
     /// Timeout for individual gRPC requests to the ZK proof service
     /// (e.g., "30s", "1m").
     #[arg(

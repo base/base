@@ -13,7 +13,7 @@ mod anchor;
 pub use anchor::AnchorUpdater;
 
 mod config;
-pub use config::{ChallengerConfig, ConfigError, UrlValidationError, Validated};
+pub use config::ChallengerConfig;
 
 mod driver;
 pub use driver::{Driver, DriverComponents, DriverConfig, TeeConfig};
