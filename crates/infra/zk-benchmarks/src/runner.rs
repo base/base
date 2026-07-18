@@ -40,7 +40,7 @@ impl ZkBenchRunner {
         let (proof, execution_stats) =
             Self::prove_safe_block(&rollup_provider, target.block, config).await?;
 
-        Ok(ZkBenchSummary::new(target, proof, execution_stats))
+        Ok(ZkBenchSummary { target, proof, execution_stats })
     }
 
     fn select_proof_target(summary: &MetricsSummary) -> Result<ZkBenchTarget> {
