@@ -13,6 +13,7 @@ use std::{
 
 use alloy_genesis::ChainConfig;
 use alloy_primitives::B256;
+use alloy_provider::RootProvider;
 use alloy_rpc_types_engine::JwtSecret;
 use alloy_signer_local::PrivateKeySigner;
 use base_builder_core::test_utils::get_available_port;
@@ -20,10 +21,15 @@ use base_common_genesis::RollupConfig;
 use base_consensus_disc::LocalNode;
 use base_consensus_node::{
     EngineConfig, L1ConfigBuilder, NetworkConfig, NodeMode, RollupNodeBuilder, SequencerConfig,
+    UpgradeSignalBuilderConfig,
 };
 use base_consensus_peers::{PeerScoreLevel, SecretKeyLoader};
 use base_consensus_rpc::{AdminApiClient, BaseP2PApiClient, RollupNodeApiClient, RpcBuilder};
 use base_consensus_sources::BlockSigner;
+use base_upgrade_signal::{
+    UpgradeSignalConfig, UpgradeSignalMetricLayer, UpgradeSignalRuntimeApplier,
+    UpgradeSignalRuntimeValidation,
+};
 use eyre::{Result, WrapErr};
 use jsonrpsee::http_client::HttpClientBuilder;
 use tempfile::TempDir;
@@ -78,6 +84,13 @@ pub struct InProcessConsensusConfig {
     /// shadow sequencer: it buffers canonical payloads gossiped by the active sequencer, builds
     /// the given number of private blocks per cycle, then reconciles back to the canonical chain.
     pub shadow_blocks_per_cycle: Option<NonZeroU64>,
+    /// Optional L1 upgrade signal configuration.
+    ///
+    /// When the mode applies at startup, the schedule is read from L1 (over `l1_rpc_url`) and
+    /// applied to the rollup config before the node starts, mirroring the standalone consensus
+    /// CLI. The config is also passed to the node for live polling (and, in runtime-admin mode,
+    /// automatic re-application of observed L1 changes).
+    pub upgrade_signal: Option<UpgradeSignalConfig>,
 }
 
 /// A running in-process consensus node.
@@ -102,8 +115,34 @@ impl std::fmt::Debug for InProcessConsensus {
 impl InProcessConsensus {
     /// Starts an in-process consensus node with the given configuration.
     pub async fn start(config: InProcessConsensusConfig) -> Result<Self> {
-        let rollup_config = config.rollup_config;
+        let mut rollup_config = config.rollup_config;
         let l1_chain_config = config.l1_chain_config;
+
+        // Mirror the standalone consensus CLI: with no chain-specific activation admin source,
+        // runtime validation is fail-closed (positive Beryl signals are rejected).
+        let runtime_validation = UpgradeSignalRuntimeValidation::fail_closed();
+        if let Some(signal_config) = &config.upgrade_signal
+            && signal_config.mode.applies_at_startup()
+        {
+            let reader = signal_config.reader(RootProvider::new_http(config.l1_rpc_url.clone()));
+            let schedule = signal_config
+                .read_validated_schedule(
+                    &reader,
+                    "system test consensus startup",
+                    &[UpgradeSignalMetricLayer::Consensus],
+                )
+                .await
+                .wrap_err("Failed to read upgrade signal schedule at startup")?;
+            let chain_id = rollup_config.l2_chain_id.id();
+            runtime_validation.validate_schedule(chain_id, &schedule)?;
+            UpgradeSignalRuntimeApplier::apply_schedule_to_sink(
+                chain_id,
+                &schedule,
+                &mut rollup_config,
+            )
+            .unwrap_or_else(|never| match never {})
+            .log("rollup config");
+        }
 
         let rpc_port = config.rpc_port.unwrap_or_else(get_available_port);
         let p2p_tcp_port = config.p2p_tcp_port.unwrap_or_else(get_available_port);
@@ -196,6 +235,11 @@ impl InProcessConsensus {
             net_config,
             Some(rpc_config),
         )
+        .with_upgrade_signal_config(UpgradeSignalBuilderConfig {
+            metrics_config: config.upgrade_signal,
+            l1_rpc: None,
+            runtime_validation: Some(runtime_validation),
+        })
         .with_checkpoint_path(checkpoint_path);
 
         if config.mode == NodeMode::Sequencer {

@@ -14,6 +14,7 @@ use alloy_rpc_types_engine::JwtSecret;
 use base_common_genesis::RollupConfig;
 use base_consensus_node::NodeMode;
 use base_tx_forwarding::TxForwardingConfig;
+use base_upgrade_signal::UpgradeSignalConfig;
 use eyre::{Result, WrapErr};
 use url::Url;
 
@@ -66,6 +67,8 @@ pub struct L2StackConfig {
     pub verifier_l1_confs: u64,
     /// Consensus mode for the L2 client node.
     pub client_consensus_mode: L2ClientConsensusMode,
+    /// Optional L1 upgrade signal configuration shared by both consensus nodes.
+    pub upgrade_signal: Option<UpgradeSignalConfig>,
     /// Shadow sequencer configuration. When [`None`], no shadow sequencers are started.
     pub shadow_sequencers: Option<ShadowSequencersConfig>,
 }
@@ -189,6 +192,7 @@ impl L2Stack {
             sequencer_stopped: true,
             verifier_l1_confs: 0,
             shadow_blocks_per_cycle: None,
+            upgrade_signal: config.upgrade_signal.clone(),
         };
         let builder_consensus = InProcessConsensus::start(builder_consensus_config)
             .await
@@ -255,6 +259,7 @@ impl L2Stack {
                     sequencer_stopped: false,
                     verifier_l1_confs: config.verifier_l1_confs,
                     shadow_blocks_per_cycle: None,
+                    upgrade_signal: config.upgrade_signal.clone(),
                 };
                 let client_consensus = InProcessConsensus::start(client_consensus_config)
                     .await

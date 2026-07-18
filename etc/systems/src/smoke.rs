@@ -22,6 +22,7 @@ use crate::{
     },
     setup::{L1GenesisOutput, L2DeploymentOutput, SetupContainer},
     system_config::StableSystemTestConfig,
+    upgrade_signal::{MockProtocolVersionsClient, UpgradeSignalStackOptions},
 };
 
 const DEFAULT_L1_CHAIN_ID: u64 = 1337;
@@ -36,6 +37,7 @@ pub struct SystemTestStack {
     l2_deployment: L2DeploymentOutput,
     l1_stack: L1Stack,
     l2_stack: L2Stack,
+    upgrade_signal: Option<MockProtocolVersionsClient>,
 }
 
 impl std::fmt::Debug for SystemTestStack {
@@ -130,6 +132,12 @@ impl SystemTestStack {
         Ok(RootProvider::<Base>::new(client))
     }
 
+    /// Returns the mock L1 upgrade signal contract client, when the stack was built with
+    /// [`SystemTestStackBuilder::with_upgrade_signal`].
+    pub const fn upgrade_signal(&self) -> Option<&MockProtocolVersionsClient> {
+        self.upgrade_signal.as_ref()
+    }
+
     /// Returns all RPC URLs for this system test stack.
     pub async fn urls(&self) -> Result<crate::SystemTestUrls> {
         Ok(crate::SystemTestUrls {
@@ -159,6 +167,7 @@ pub struct SystemTestStackBuilder {
     client_consensus_mode: L2ClientConsensusMode,
     shadow_sequencer_count: usize,
     shadow_blocks_per_cycle: Option<NonZeroU64>,
+    upgrade_signal: Option<UpgradeSignalStackOptions>,
 }
 
 impl SystemTestStackBuilder {
@@ -259,6 +268,13 @@ impl SystemTestStackBuilder {
         self
     }
 
+    /// Enables the L1 upgrade signal: deploys a mock `ProtocolVersions` contract to L1, seeds
+    /// it with the options' schedule, and starts both consensus nodes reading it.
+    pub fn with_upgrade_signal(mut self, options: UpgradeSignalStackOptions) -> Self {
+        self.upgrade_signal = Some(options);
+        self
+    }
+
     /// Builds and starts the system test stack.
     pub async fn build(self) -> Result<SystemTestStack> {
         let l1_chain_id = self.l1_chain_id.unwrap_or(DEFAULT_L1_CHAIN_ID);
@@ -345,6 +361,17 @@ impl SystemTestStackBuilder {
 
         let l1_stack = L1Stack::start(l1_config).await.wrap_err("Failed to start L1 stack")?;
 
+        let upgrade_signal = match &self.upgrade_signal {
+            Some(options) => {
+                let l1_public_rpc_url = l1_stack.rpc_url().await?;
+                let client = MockProtocolVersionsClient::deploy(l1_public_rpc_url, options)
+                    .await
+                    .wrap_err("Failed to deploy upgrade signal mock contract")?;
+                Some(client)
+            }
+            None => None,
+        };
+
         let l1_internal_rpc_url = l1_stack.reth().internal_rpc_url();
         let l2_deployment =
             tokio::task::spawn_blocking(move || setup.deploy_l2_contracts(&l1_internal_rpc_url))
@@ -389,11 +416,22 @@ impl SystemTestStackBuilder {
             tx_forwarding_config: self.tx_forwarding_config,
             verifier_l1_confs: self.verifier_l1_confs,
             client_consensus_mode: self.client_consensus_mode,
+            upgrade_signal: match (&self.upgrade_signal, &upgrade_signal) {
+                (Some(options), Some(client)) => Some(options.signal_config(client.address)),
+                _ => None,
+            },
             shadow_sequencers,
         };
 
         let l2_stack = L2Stack::start(l2_config).await.wrap_err("Failed to start L2 stack")?;
 
-        Ok(SystemTestStack { _temp_dir: temp_dir, l1_genesis, l2_deployment, l1_stack, l2_stack })
+        Ok(SystemTestStack {
+            _temp_dir: temp_dir,
+            l1_genesis,
+            l2_deployment,
+            l1_stack,
+            l2_stack,
+            upgrade_signal,
+        })
     }
 }
