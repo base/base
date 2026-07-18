@@ -6665,6 +6665,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-zk-fork-dispute"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-provider 2.0.5",
+ "alloy-signer-local 2.0.5",
+ "base-challenger",
+ "base-cli-utils",
+ "base-common-consensus",
+ "base-proof-contracts",
+ "base-proof-rpc",
+ "base-protocol",
+ "base-prover-service-client",
+ "base-prover-service-protocol",
+ "base-tx-manager",
+ "clap",
+ "eyre",
+ "humantime",
+ "serde",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "base-zk-fork-dispute-bin"
+version = "0.0.0"
+dependencies = [
+ "base-cli-utils",
+ "base-zk-fork-dispute",
+ "clap",
+ "eyre",
+ "tokio",
+]
+
+[[package]]
 name = "base16ct"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
