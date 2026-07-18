@@ -15,11 +15,28 @@ use crate::{BaseP2PApiServer, net::P2pRpc};
 
 const PEER_STATE_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 
-fn peer_state_result(ok: bool, error_message: &'static str) -> RpcResult<()> {
-    if ok {
+/// Retryable peer-state miss for Backon wait loops.
+///
+/// `InvalidParams` marks "desired state not reached yet" so connect/disconnect waits can
+/// distinguish it from terminal `InternalError`s (e.g. a dropped gossip RPC channel), which
+/// must fail fast instead of burning the wait timeout.
+fn peer_state_miss(error_message: &'static str) -> ErrorObject<'static> {
+    ErrorObject::borrowed(ErrorCode::InvalidParams.code(), error_message, None)
+}
+
+fn require_peer_connected(peers: &PeerDump, peer_id: &libp2p::PeerId) -> RpcResult<()> {
+    if peers.peers.contains_key(&peer_id.to_string()) {
         Ok(())
     } else {
-        Err(ErrorObject::borrowed(ErrorCode::InvalidParams.code(), error_message, None))
+        Err(peer_state_miss("Peer not connected"))
+    }
+}
+
+fn require_peer_disconnected(peers: &PeerDump, peer_id: &libp2p::PeerId) -> RpcResult<()> {
+    if peers.peers.contains_key(&peer_id.to_string()) {
+        Err(peer_state_miss("Peers are still connected"))
+    } else {
+        Ok(())
     }
 }
 
@@ -259,9 +276,10 @@ impl P2pRpc {
                 ErrorObject::borrowed(ErrorCode::InternalError.code(), "Failed to get peers", None)
             })?;
 
-            peer_state_result(peers.peers.contains_key(&peer_id.to_string()), "Peer not connected")
+            require_peer_connected(&peers, &peer_id)
         };
 
+        // Retry only peer-state misses; do not retry channel failures.
         is_connected
             .retry(backoff)
             .when(|error| error.code() == ErrorCode::InvalidParams.code())
@@ -302,12 +320,10 @@ impl P2pRpc {
                 ErrorObject::borrowed(ErrorCode::InternalError.code(), "Failed to get peers", None)
             })?;
 
-            peer_state_result(
-                !peers.peers.contains_key(&peer_id.to_string()),
-                "Peers are still connected",
-            )
+            require_peer_disconnected(&peers, &peer_id)
         };
 
+        // Retry only peer-state misses; do not retry channel failures.
         is_not_connected
             .retry(backoff)
             .when(|error| error.code() == ErrorCode::InvalidParams.code())
