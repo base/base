@@ -123,6 +123,8 @@ mod tests {
     use super::*;
     use crate::cli::SignerCli;
 
+    type InvalidConfigCase = (fn(&mut Cli), &'static str);
+
     fn minimal_cli() -> Cli {
         Cli::try_parse_from([
             "challenger",
@@ -157,7 +159,7 @@ mod tests {
 
     #[test]
     fn test_invalid_config_rejected() {
-        let cases: [(fn(&mut Cli), &'static str); 10] = [
+        let cases: [InvalidConfigCase; 10] = [
             (
                 |cli| cli.challenger.poll_interval = Duration::ZERO,
                 "poll-interval must be greater than 0",
