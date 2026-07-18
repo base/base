@@ -22,7 +22,8 @@ use sp1_cluster_common::{
     client::ClusterServiceClient,
     proto::{
         ExecutionFailureCause, ExecutionStatus, ProofRequest as ClusterProtoProofRequest,
-        ProofRequestCreateRequest, ProofRequestGetRequest, ProofRequestStatus,
+        ProofRequestCancelRequest, ProofRequestCreateRequest, ProofRequestGetRequest,
+        ProofRequestStatus,
     },
 };
 use sp1_prover_types::{Artifact, ArtifactClient as _, ArtifactType};
@@ -901,6 +902,16 @@ impl ZkProver for ClusterZkProver {
                 ))
             }
         }
+    }
+
+    async fn cancel(&self, backend_session_id: &str) -> Result<(), ZkProverError> {
+        let session = ClusterSessionId::parse(backend_session_id)?;
+        self.config
+            .cluster
+            .service_client
+            .cancel_proof_request(ProofRequestCancelRequest { proof_id: session.proof_id })
+            .await
+            .map_err(|e| backend_error!("failed to cancel cluster proof request: {e}"))
     }
 
     async fn submit_next(

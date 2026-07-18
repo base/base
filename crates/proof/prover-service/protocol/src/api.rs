@@ -3,11 +3,11 @@
 use jsonrpsee::proc_macros::rpc;
 
 use crate::{
-    DeleteProofRequest, GetNextProofRequest, GetNextProofResponse, GetProofRequest,
-    GetProofResponse, GetProofSessionRequest, GetProofSessionResponse, HeartbeatRequest,
-    HeartbeatResponse, ListProofsRequest, ListProofsResponse, ProveBlockRangeRequest,
-    ProveBlockRangeResponse, RecordProofSessionRequest, RecordProofSessionResponse,
-    WorkerSubmitProofRequest, WorkerSubmitProofResponse,
+    CancelProofRequest, DeleteProofRequest, GetNextProofRequest, GetNextProofResponse,
+    GetProofRequest, GetProofResponse, GetProofSessionRequest, GetProofSessionResponse,
+    HeartbeatRequest, HeartbeatResponse, ListProofsRequest, ListProofsResponse,
+    ProveBlockRangeRequest, ProveBlockRangeResponse, RecordProofSessionRequest,
+    RecordProofSessionResponse, WorkerSubmitProofRequest, WorkerSubmitProofResponse,
 };
 
 #[cfg_attr(
@@ -37,6 +37,13 @@ pub trait ProverRequesterApi {
         &self,
         request: GetProofRequest,
     ) -> jsonrpsee::core::RpcResult<GetProofResponse>;
+
+    /// Cancel a queued or running proof request.
+    #[method(name = "cancelProofRequest")]
+    async fn cancel_proof_request(
+        &self,
+        request: CancelProofRequest,
+    ) -> jsonrpsee::core::RpcResult<()>;
 
     /// Delete a completed proof request so it can be retried with the same session id.
     #[method(name = "deleteProofRequest")]

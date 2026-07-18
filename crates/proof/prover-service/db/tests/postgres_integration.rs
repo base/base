@@ -16,17 +16,18 @@
 use std::time::Duration;
 
 use base_prover_service_db::{
-    ApiProofType, ClaimProofJob, CompleteClaimedProofJob, CreateProofRequest,
-    CreateProofRequestError, CreateProofRequestOutcome, CreateProofSession,
+    ApiProofType, CancelProofRequestOutcome, ClaimProofJob, CompleteClaimedProofJob,
+    CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome, CreateProofSession,
     DeleteProofRequestOutcome, FailExpiredProofJobs, HeartbeatOutcome, HeartbeatProofJob,
     ProofJobStatus, ProofRequestPage, ProofRequestRepo, ProofStatus, ProofType,
     RecordSessionOutcome, RetryOutcome, SessionStatus, SessionType, SubmitProofOutcome, TeeKind,
     UpdateProofSession, UpdateReceipt, WorkerSessionUpsert, ZkVmKind,
 };
 use base_prover_service_protocol::{
-    ProofRequest as ProtocolProofRequest, ProofRequestKind as ProtocolProofRequestKind,
-    ProofResult as ProtocolProofResult, SnarkPlonkProofRequest, SnarkPlonkProofResult,
-    TeeKind as ProtocolTeeKind, TeeProofRequest, ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
+    PROOF_REQUEST_CANCELLED_MESSAGE, ProofRequest as ProtocolProofRequest,
+    ProofRequestKind as ProtocolProofRequestKind, ProofResult as ProtocolProofResult,
+    SnarkPlonkProofRequest, SnarkPlonkProofResult, TeeKind as ProtocolTeeKind, TeeProofRequest,
+    ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
 };
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
@@ -1250,6 +1251,41 @@ async fn test_create_for_worker_queue_rejects_succeeded_row_with_new_l1_head() {
         err,
         CreateProofRequestError::IdCollision { id, field: "l1_head" } if id == explicit_id
     ));
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_cancel_proof_request_cluster_only_rejects_tee_and_dry_run() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool.clone());
+
+    let cluster_id = Uuid::new_v4();
+    let cluster_session = cluster_id.to_string();
+    let mut cluster = compressed_request_at_with_backend(100, ZkBackend::Cluster);
+    set_request_session_id(&mut cluster, cluster_session.clone());
+    repo.create_for_worker_queue(cluster, TEST_MAX_PROOF_RETRIES).await.unwrap();
+
+    let CancelProofRequestOutcome::Cancelled(job) =
+        repo.cancel_proof_request_by_session_id(&cluster_session).await.unwrap()
+    else {
+        panic!("cluster cancel should succeed");
+    };
+    assert_eq!(job.job_status, ProofJobStatus::Failed);
+    assert_eq!(job.error_message.as_deref(), Some(PROOF_REQUEST_CANCELLED_MESSAGE));
+    assert!(matches!(
+        repo.cancel_proof_request_by_session_id(&cluster_session).await.unwrap(),
+        CancelProofRequestOutcome::AlreadyCancelled
+    ));
+
+    for mut request in [tee_request(), compressed_request_at_with_backend(100, ZkBackend::DryRun)] {
+        let session_id = Uuid::new_v4().to_string();
+        set_request_session_id(&mut request, session_id.clone());
+        repo.create_for_worker_queue(request, TEST_MAX_PROOF_RETRIES).await.unwrap();
+        assert!(matches!(
+            repo.cancel_proof_request_by_session_id(&session_id).await.unwrap(),
+            CancelProofRequestOutcome::UnsupportedBackend
+        ));
+    }
 }
 
 #[tokio::test]

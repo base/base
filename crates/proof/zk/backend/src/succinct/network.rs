@@ -504,6 +504,15 @@ impl ZkProver for NetworkZkProver {
         Ok(state)
     }
 
+    async fn cancel(&self, backend_session_id: &str) -> Result<(), ZkProverError> {
+        let proof_id = Self::parse_proof_id(backend_session_id)?;
+        self.config
+            .network_prover
+            .cancel_request(proof_id)
+            .await
+            .map_err(|e| backend_error!("failed to cancel network proof request: {e}"))
+    }
+
     async fn download(
         &self,
         session_type: SessionType,

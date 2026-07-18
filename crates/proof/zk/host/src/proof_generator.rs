@@ -420,6 +420,50 @@ where
         }
     }
 
+    async fn cancel_active_backend_sessions(&self, request: &ProofGeneratorRequest) {
+        let Ok(prover) = self.prover_for(&request.request) else {
+            return;
+        };
+        let handle = ProofSessionHandle::new(
+            self.submitter.client().clone(),
+            request.claim.session_id.clone(),
+            request.claim.lock_id.clone(),
+            request.claim.worker_id.clone(),
+        );
+
+        for session_type in [SessionType::Stark, SessionType::Snark] {
+            let session = match handle.get(session_type).await {
+                Ok(Some(session)) if session.state == BackendSessionState::Running => session,
+                Ok(_) => continue,
+                Err(error) => {
+                    warn!(
+                        session_id = %request.claim.session_id,
+                        ?session_type,
+                        error = %error,
+                        "failed to load backend session for cancellation"
+                    );
+                    continue;
+                }
+            };
+
+            match prover.cancel(&session.backend_session_id).await {
+                Ok(()) => info!(
+                    session_id = %request.claim.session_id,
+                    backend_session_id = %session.backend_session_id,
+                    ?session_type,
+                    "requested backend proof cancellation"
+                ),
+                Err(error) => warn!(
+                    session_id = %request.claim.session_id,
+                    backend_session_id = %session.backend_session_id,
+                    ?session_type,
+                    error = %error,
+                    "failed to cancel backend proof session"
+                ),
+            }
+        }
+    }
+
     async fn with_heartbeat_while_generating<Output, Generate>(
         &self,
         request: &ProofGeneratorRequest,
@@ -440,6 +484,14 @@ where
                 source,
             }),
             source = &mut heartbeat => {
+                if source.is_proof_cancelled() {
+                    self.cancel_active_backend_sessions(request).await;
+                    return Err(ProofGeneratorError::Heartbeat {
+                        session_id: request.claim.session_id.clone(),
+                        source,
+                    });
+                }
+
                 match timeout(
                     DEFAULT_PROOF_GENERATOR_HEARTBEAT_FAILURE_DRAIN_TIMEOUT,
                     &mut generate,

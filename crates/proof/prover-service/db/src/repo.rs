@@ -1,13 +1,14 @@
 use base_prover_service_protocol::{
-    ProofResult as ProtocolProofResult, SnarkPlonkProofResult, ZkBackend, ZkProofResult, ZkVm,
+    PROOF_REQUEST_CANCELLED_MESSAGE, ProofResult as ProtocolProofResult, SnarkPlonkProofResult,
+    ZkBackend, ZkProofResult, ZkVm,
 };
 use chrono::Utc;
 use sqlx::{PgPool, Result, Row};
 use uuid::Uuid;
 
 use crate::{
-    ApiProofType, ClaimAuth, ClaimProofJob, CompleteClaimedProofJob, CompleteProofResult,
-    CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome,
+    ApiProofType, CancelProofRequestOutcome, ClaimAuth, ClaimProofJob, CompleteClaimedProofJob,
+    CompleteProofResult, CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome,
     CreateProofRequestValidationError, CreateProofSession, DeleteProofRequestOutcome,
     FailExpiredProofJobs, HeartbeatOutcome, HeartbeatProofJob, JobLockState, ProofJob,
     ProofJobStatus, ProofRequest, ProofRequestListItem, ProofRequestPage, ProofSession,
@@ -235,6 +236,97 @@ impl ProofRequestRepo {
                 Ok(CreateProofRequestOutcome::Requeued(existing_id))
             }
         }
+    }
+
+    /// Cancel a non-terminal Cluster or Network proof request by public session id.
+    pub async fn cancel_proof_request_by_session_id(
+        &self,
+        session_id: &str,
+    ) -> Result<CancelProofRequestOutcome> {
+        let session_id = canonical_session_id(session_id)
+            .map_err(|e| sqlx::Error::InvalidArgument(e.to_string()))?;
+        let mut tx = self.pool.begin().await?;
+
+        let row = sqlx::query(
+            r#"
+            SELECT status, error_message, api_proof_type, proof_type, zk_backend
+            FROM proof_requests
+            WHERE COALESCE(session_id, id::text) = $1
+            FOR UPDATE
+            "#,
+        )
+        .bind(&session_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let Some(row) = row else {
+            tx.rollback().await?;
+            return Ok(CancelProofRequestOutcome::NotFound);
+        };
+
+        let proof_type = row
+            .get::<Option<&str>, _>("proof_type")
+            .map(ProofType::try_from)
+            .transpose()
+            .map_err(sqlx::Error::Protocol)?;
+        let api_proof_type = row
+            .get::<Option<&str>, _>("api_proof_type")
+            .map(ApiProofType::try_from)
+            .transpose()
+            .map_err(sqlx::Error::Protocol)?
+            .unwrap_or_else(|| api_proof_type_for_backend(proof_type));
+        let zk_backend = row
+            .get::<Option<&str>, _>("zk_backend")
+            .map(parse_zk_backend)
+            .transpose()?
+            .or_else(|| fallback_zk_backend_for_request(api_proof_type));
+
+        if !matches!(zk_backend, Some(ZkBackend::Cluster | ZkBackend::Network)) {
+            tx.rollback().await?;
+            return Ok(CancelProofRequestOutcome::UnsupportedBackend);
+        }
+
+        let status_str: &str = row.get("status");
+        let status = ProofStatus::try_from(status_str).map_err(|e| {
+            sqlx::Error::Protocol(format!("Unknown proof status '{status_str}': {e}"))
+        })?;
+        if status == ProofStatus::Failed
+            && row.get::<Option<&str>, _>("error_message") == Some(PROOF_REQUEST_CANCELLED_MESSAGE)
+        {
+            tx.rollback().await?;
+            return Ok(CancelProofRequestOutcome::AlreadyCancelled);
+        }
+        if matches!(status, ProofStatus::Succeeded | ProofStatus::Failed) {
+            tx.rollback().await?;
+            return Ok(CancelProofRequestOutcome::AlreadyTerminal(status));
+        }
+
+        let columns = PROOF_JOB_RETURNING_COLUMNS;
+        let sql = format!(
+            r#"
+            UPDATE proof_requests
+            SET status = 'FAILED',
+                job_status = 'FAILED',
+                error_message = $2,
+                completed_at = NOW(),
+                worker_id = NULL,
+                lock_id = NULL,
+                lock_expires_at = NULL,
+                claimed_at = NULL,
+                last_heartbeat_at = NULL
+            WHERE COALESCE(session_id, id::text) = $1
+            RETURNING {columns}
+            "#
+        );
+        let row = sqlx::query(&sql)
+            .bind(&session_id)
+            .bind(PROOF_REQUEST_CANCELLED_MESSAGE)
+            .fetch_one(&mut *tx)
+            .await?;
+        let job = row_to_proof_job(&row)?;
+
+        tx.commit().await?;
+        Ok(CancelProofRequestOutcome::Cancelled(Box::new(job)))
     }
 
     /// Delete a terminal proof request by public session id.

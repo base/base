@@ -11,7 +11,11 @@ use thiserror::Error;
 pub enum ProverServiceClientError {
     /// A JSON-RPC client, server, or transport error occurred.
     #[error("prover-service RPC/transport failure: {0}")]
-    RpcTransport(#[from] JsonRpcClientError),
+    RpcTransport(JsonRpcClientError),
+
+    /// The requester cancelled this proof job.
+    #[error("proof request was cancelled")]
+    ProofCancelled,
 
     /// The prover service reached a terminal failed proof state.
     #[error("proof failed: {message}")]
@@ -53,6 +57,9 @@ impl ProverServiceClientError {
     /// JSON-RPC code used by the prover service for failed preconditions.
     pub const ERROR_FAILED_PRECONDITION: i32 = -32017;
 
+    /// JSON-RPC code used when a requester cancelled a claimed proof job.
+    pub const ERROR_PROOF_CANCELLED: i32 = -32018;
+
     /// Returns `true` when retrying the same client operation may succeed.
     #[must_use]
     pub fn is_retryable(&self) -> bool {
@@ -60,6 +67,7 @@ impl ProverServiceClientError {
             Self::RpcTransport(err) => Self::is_retryable_rpc_error(err),
             Self::Timeout(_) => true,
             Self::ProofFailure { .. }
+            | Self::ProofCancelled
             | Self::WorkerLeaseRejected { .. }
             | Self::MissingResult(_)
             | Self::UnexpectedResultPayload(_) => false,
@@ -86,6 +94,12 @@ impl ProverServiceClientError {
             && call.message() == ProofRequestIdCollisionMessage::for_field(session_id, "l1_head")
     }
 
+    /// Returns `true` when the requester cancelled the proof job.
+    #[must_use]
+    pub const fn is_proof_cancelled(&self) -> bool {
+        matches!(self, Self::ProofCancelled)
+    }
+
     /// Returns `true` when the JSON-RPC error is classified as transient.
     #[must_use]
     pub fn is_retryable_rpc_error(err: &JsonRpcClientError) -> bool {
@@ -103,6 +117,19 @@ impl ProverServiceClientError {
     #[must_use]
     pub const fn is_retryable_rpc_code(code: i32) -> bool {
         code == Self::ERROR_UNAVAILABLE || code == ErrorCode::InternalError.code()
+    }
+}
+
+impl From<JsonRpcClientError> for ProverServiceClientError {
+    fn from(error: JsonRpcClientError) -> Self {
+        if matches!(
+            &error,
+            JsonRpcClientError::Call(call) if call.code() == Self::ERROR_PROOF_CANCELLED
+        ) {
+            Self::ProofCancelled
+        } else {
+            Self::RpcTransport(error)
+        }
     }
 }
 

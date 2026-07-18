@@ -10,6 +10,9 @@ use serde::{Deserialize, Serialize};
 /// JSON-RPC error message returned when a proof request session cannot be found.
 pub const PROOF_REQUEST_NOT_FOUND_MESSAGE: &str = "Proof request not found";
 
+/// Failure message stored when a proof request is cancelled.
+pub const PROOF_REQUEST_CANCELLED_MESSAGE: &str = "Proof request cancelled by requester";
+
 /// JSON-RPC error message returned when a session id is reused for a different request.
 #[derive(Debug, Clone, Copy)]
 pub struct ProofRequestIdCollisionMessage;
@@ -131,6 +134,13 @@ pub struct ProveBlockRangeRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProveBlockRangeResponse {
     /// Accepted client-supplied session identifier.
+    pub session_id: String,
+}
+
+/// Request to cancel a queued or running proof request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CancelProofRequest {
+    /// Proof session identifier.
     pub session_id: String,
 }
 

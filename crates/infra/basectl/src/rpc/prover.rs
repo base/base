@@ -222,9 +222,9 @@ mod tests {
     };
 
     use base_prover_service_protocol::{
-        DeleteProofRequest, GetProofRequest, GetProofResponse, ListProofsRequest,
-        ListProofsResponse, ProofRequestKind, ProofStatus, ProveBlockRangeRequest,
-        ProveBlockRangeResponse, ProverRequesterApiServer, ZkVm,
+        CancelProofRequest, DeleteProofRequest, GetProofRequest, GetProofResponse,
+        ListProofsRequest, ListProofsResponse, ProofRequestKind, ProofStatus,
+        ProveBlockRangeRequest, ProveBlockRangeResponse, ProverRequesterApiServer, ZkVm,
     };
     use jsonrpsee::{
         core::{RpcResult, async_trait},
@@ -338,6 +338,14 @@ mod tests {
                 .pop_front()
                 .unwrap_or(self.last_status);
             Ok(GetProofResponse { status, error_message: None, result: None })
+        }
+
+        async fn cancel_proof_request(&self, _request: CancelProofRequest) -> RpcResult<()> {
+            Err(ErrorObjectOwned::owned(
+                ErrorCode::MethodNotFound.code(),
+                "not used by tests",
+                None::<()>,
+            ))
         }
 
         async fn delete_proof_request(&self, _request: DeleteProofRequest) -> RpcResult<()> {

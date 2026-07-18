@@ -25,9 +25,9 @@ use base_proof_contracts::{
 use base_proof_rpc::{BaseHeader, L2Provider, RpcError, RpcResult};
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
 use base_prover_service_protocol::{
-    DeleteProofRequest, GetProofRequest, GetProofResponse, ProofResult as ApiProofResult,
-    ProofStatus, ProveBlockRangeRequest, ProveBlockRangeResponse, SnarkPlonkProofResult,
-    ZkProofResult, ZkVm,
+    CancelProofRequest, DeleteProofRequest, GetProofRequest, GetProofResponse,
+    ProofResult as ApiProofResult, ProofStatus, ProveBlockRangeRequest, ProveBlockRangeResponse,
+    SnarkPlonkProofResult, ZkProofResult, ZkVm,
 };
 use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager};
 
@@ -845,6 +845,13 @@ impl ProofRequesterProvider for MockZkProofProvider {
             error_message: state.error_message,
             result,
         })
+    }
+
+    async fn cancel_proof_request(
+        &self,
+        _request: CancelProofRequest,
+    ) -> Result<(), ProverServiceClientError> {
+        unimplemented!("tests do not cancel proofs")
     }
 
     async fn delete_proof_request(

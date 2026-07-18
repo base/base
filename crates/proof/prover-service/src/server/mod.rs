@@ -4,8 +4,8 @@ use std::fmt;
 
 use base_prover_service_db::ProofRequestRepo;
 use base_prover_service_protocol::{
-    DeleteProofRequest, GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
-    ProveBlockRangeRequest, ProveBlockRangeResponse, ProverRequesterApiServer,
+    CancelProofRequest, DeleteProofRequest, GetProofRequest, GetProofResponse, ListProofsRequest,
+    ListProofsResponse, ProveBlockRangeRequest, ProveBlockRangeResponse, ProverRequesterApiServer,
 };
 use jsonrpsee::{
     core::{RpcResult, async_trait},
@@ -14,6 +14,7 @@ use jsonrpsee::{
 
 use crate::WorkerQueueConfig;
 
+mod cancel_proof_request;
 mod delete_proof_request;
 mod get_proof;
 mod list_proofs;
@@ -24,6 +25,7 @@ const ERROR_NOT_FOUND: i32 = -32004;
 const ERROR_UNAVAILABLE: i32 = -32014;
 const ERROR_RESOURCE_EXHAUSTED: i32 = -32016;
 const ERROR_FAILED_PRECONDITION: i32 = -32017;
+const ERROR_PROOF_CANCELLED: i32 = -32018;
 
 /// Lock duration tuning for the worker job API.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,6 +104,10 @@ impl ProverRequesterApiServer for ProverServiceServer {
         self.get_proof_impl(request).await
     }
 
+    async fn cancel_proof_request(&self, request: CancelProofRequest) -> RpcResult<()> {
+        self.cancel_proof_request_impl(request).await
+    }
+
     async fn delete_proof_request(&self, request: DeleteProofRequest) -> RpcResult<()> {
         self.delete_proof_request_impl(request).await
     }
@@ -135,6 +141,10 @@ fn failed_precondition(message: impl Into<String>) -> ErrorObjectOwned {
     ErrorObjectOwned::owned(ERROR_FAILED_PRECONDITION, message.into(), None::<()>)
 }
 
+fn proof_cancelled(message: impl Into<String>) -> ErrorObjectOwned {
+    ErrorObjectOwned::owned(ERROR_PROOF_CANCELLED, message.into(), None::<()>)
+}
+
 const fn rpc_status_code_str(code: i32) -> &'static str {
     match code {
         code if code == ErrorCode::InvalidParams.code() => "INVALID_ARGUMENT",
@@ -143,6 +153,7 @@ const fn rpc_status_code_str(code: i32) -> &'static str {
         ERROR_UNAVAILABLE => "UNAVAILABLE",
         ERROR_RESOURCE_EXHAUSTED => "RESOURCE_EXHAUSTED",
         ERROR_FAILED_PRECONDITION => "FAILED_PRECONDITION",
+        ERROR_PROOF_CANCELLED => "CANCELLED",
         _ => "ERROR",
     }
 }

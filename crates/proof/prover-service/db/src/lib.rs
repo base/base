@@ -8,8 +8,8 @@ pub use conversions::ConversionError;
 
 mod models;
 pub use models::{
-    ApiProofType, ClaimAuth, ClaimProofJob, CompleteClaimedProofJob, CompleteProofResult,
-    CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome,
+    ApiProofType, CancelProofRequestOutcome, ClaimAuth, ClaimProofJob, CompleteClaimedProofJob,
+    CompleteProofResult, CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome,
     CreateProofRequestValidationError, CreateProofSession, DeleteProofRequestOutcome,
     DerivedProofRequestFields, FailExpiredProofJobs, HeartbeatOutcome, HeartbeatProofJob,
     JobLockState, ProofJob, ProofJobStatus, ProofRequest, ProofRequestListItem, ProofRequestPage,

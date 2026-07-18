@@ -234,6 +234,21 @@ impl CreateProofRequestOutcome {
     }
 }
 
+/// Outcome of cancelling a proof request by session id.
+#[derive(Debug, Clone)]
+pub enum CancelProofRequestOutcome {
+    /// A queued or running proof request was terminally failed.
+    Cancelled(Box<ProofJob>),
+    /// The request was already cancelled.
+    AlreadyCancelled,
+    /// No proof request exists for the session id.
+    NotFound,
+    /// The proof backend does not support cancellation.
+    UnsupportedBackend,
+    /// The request had already reached another terminal state.
+    AlreadyTerminal(ProofStatus),
+}
+
 /// Outcome of deleting a completed proof request by session id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeleteProofRequestOutcome {
