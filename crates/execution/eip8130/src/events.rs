@@ -11,7 +11,7 @@
 
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_sol_types::{SolEvent, sol};
-use base_common_consensus::{Eip8130Constants, Eip8130Contracts};
+use base_common_consensus::Eip8130Constants;
 use base_precompile_storage::{ContractStorage, Result as StorageResult, StorageCtx};
 
 use crate::{AccountConfigurationStorage, ActorConfig};
@@ -114,15 +114,21 @@ impl AccountConfigurationEvents {
 
     /// Emits [`DelegationApplied`] from the Account Configuration address.
     ///
+    /// Takes a raw [`StorageCtx`] (unlike the other emit helpers) because the
+    /// call sites — [`crate::DelegationEffect::install`] and auto-delegation —
+    /// do not hold an [`AccountConfigurationStorage`] view. The log address is
+    /// still [`AccountConfigurationStorage::ADDRESS`] so it cannot drift from
+    /// the other emit helpers.
+    ///
     /// Used for both explicit delegation entries and auto-delegation of a
-    /// code-less sender to [`Eip8130Contracts::DEFAULT_ACCOUNT`].
+    /// code-less sender to `DEFAULT_ACCOUNT`.
     pub fn emit_delegation_applied(
         sctx: StorageCtx<'_>,
         account: Address,
         target: Address,
     ) -> StorageResult<()> {
         sctx.emit_event(
-            Eip8130Contracts::ACCOUNT_CONFIG,
+            AccountConfigurationStorage::ADDRESS,
             DelegationApplied { account, target }.encode_log_data(),
         )
     }
