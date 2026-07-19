@@ -203,7 +203,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager> Driver<L2, P, T> {
             intermediate_roots: &intermediate_roots,
         };
 
-        match self.proof_manager.validator.validate_intermediate_roots(params).await {
+        match self.proof_manager.validate_intermediate_roots(params).await {
             Ok(result) => Ok(Some(result)),
             Err(e) => match &e {
                 ValidatorError::BlockNotAvailable { .. } => {
@@ -296,7 +296,6 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager> Driver<L2, P, T> {
 
         let validation = match self
             .proof_manager
-            .validator
             .validate_claimed_root_at_block(game_address, checkpoint_block, on_chain_root)
             .await
         {

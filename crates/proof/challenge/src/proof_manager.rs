@@ -25,16 +25,17 @@ use tracing::{debug, info, warn};
 
 use crate::{
     CandidateGame, ChallengeSubmitError, ChallengeSubmitter, ChallengerMetrics,
-    ChallengerProofAdapter, DisputeIntent, L1HeadProvider, OutputValidator, PendingProof,
-    PendingProofs, ProofKind, ProofPhase, ProofUpdate,
+    ChallengerProofAdapter, DisputeIntent, IntermediateValidationParams, L1HeadProvider,
+    OutputValidator, PendingProof, PendingProofs, ProofKind, ProofPhase, ProofUpdate,
+    ValidationResult, ValidatorError,
 };
 
 /// Manages the lifecycle of proofs used to dispute invalid games.
 pub struct DisputeProofManager<L2: L2Provider, P: ProofRequesterProvider> {
     /// Validates output roots and constructs TEE proof commitments.
-    pub validator: OutputValidator<L2>,
+    validator: OutputValidator<L2>,
     /// Prover-service requester used to generate and poll fault proofs.
-    pub proof_requester: Arc<P>,
+    proof_requester: Arc<P>,
     tee: Option<Arc<dyn L1HeadProvider>>,
     verifier_client: Arc<dyn AggregateVerifierClient>,
     /// In-flight proof sessions keyed by game address.
@@ -84,6 +85,26 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
             max_proof_duration,
             tee_submit_retry_limit,
         }
+    }
+
+    /// Validates intermediate output roots against the local L2 node.
+    pub async fn validate_intermediate_roots(
+        &self,
+        params: IntermediateValidationParams<'_>,
+    ) -> Result<ValidationResult, ValidatorError> {
+        self.validator.validate_intermediate_roots(params).await
+    }
+
+    /// Validates a claimed output root at a specific L2 block.
+    pub async fn validate_claimed_root_at_block(
+        &self,
+        game_address: Address,
+        l2_block_number: u64,
+        claimed_root: B256,
+    ) -> Result<ValidationResult, ValidatorError> {
+        self.validator
+            .validate_claimed_root_at_block(game_address, l2_block_number, claimed_root)
+            .await
     }
 
     /// Returns whether a game is terminally ignored.

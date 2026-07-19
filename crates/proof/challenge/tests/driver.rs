@@ -938,7 +938,7 @@ async fn test_step_tee_contract_revert_falls_back_to_zk() {
         Arc::clone(&factory),
         Arc::clone(&verifier),
         l2,
-        zk,
+        Arc::clone(&zk),
         tx_manager,
         Some(l1_head),
     );
@@ -970,7 +970,7 @@ async fn test_step_tee_contract_revert_falls_back_to_zk() {
     );
 
     {
-        let mut state = driver.proof_manager.proof_requester.state.lock().unwrap();
+        let mut state = zk.state.lock().unwrap();
         state.result = None;
         state.proof = vec![0xDE, 0xAD];
         state.proof_status = ProofStatus::Succeeded;
