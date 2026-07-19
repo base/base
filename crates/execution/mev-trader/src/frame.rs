@@ -15,8 +15,8 @@ use reth_revm::{State, database::StateProviderDatabase};
 use revm::{DatabaseCommit, context_interface::result::ExecutionResult};
 
 use crate::{
-    AuditedWriteKey, DeltaGuard, MaterializedState, PayloadVisitor, PortError, SnapshotHandle,
-    StateMaterializer, TraderSnapshotPort, VisitControl,
+    AuditedWriteKey, CancellationProbe, DeltaGuard, MaterializedState, PayloadVisitor, PortError,
+    SnapshotHandle, StateMaterializer, TraderSnapshotPort, VisitControl,
 };
 
 /// Maximum age accepted for an ingress victim frame.
@@ -140,6 +140,7 @@ impl FrameProcessor {
         now: Instant,
         chain_spec: Arc<BaseChainSpec>,
         audited_writes: &[AuditedWriteKey],
+        cancellation: &CancellationProbe,
     ) -> Result<Option<MaterializedState>, PortError> {
         if !port.is_current_authoritative(snapshot) || !SnapshotCoherence::validate(snapshot)? {
             return Ok(None);
@@ -180,7 +181,8 @@ impl FrameProcessor {
         }
 
         evm.db_mut().commit(output.state);
-        let materialized = StateMaterializer::materialize(evm.db_mut(), audited_writes)?;
+        let materialized =
+            StateMaterializer::materialize(evm.db_mut(), audited_writes, cancellation)?;
         drop(evm);
 
         if !port.is_current_authoritative(snapshot) {
