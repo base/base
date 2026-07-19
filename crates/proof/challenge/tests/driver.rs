@@ -229,7 +229,7 @@ fn driver_with_ready_proof(
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
     driver
         .proof_manager
-        .pending_proofs
+        .pending_proofs_mut()
         .insert(addr(0), default_ready_proof(DisputeIntent::Challenge));
     driver
 }
@@ -293,7 +293,7 @@ async fn test_step_invalid_game_proof_succeeded() {
     // Step 1: proof initiated, not yet polled.
     driver.step().await.unwrap();
     assert!(
-        driver.proof_manager.pending_proofs.contains_key(&addr(0)),
+        driver.proof_manager.pending_proofs().contains_key(&addr(0)),
         "proof should be pending after initiation"
     );
 
@@ -306,7 +306,7 @@ async fn test_step_invalid_game_proof_succeeded() {
     // Step 2: proof polled → Succeeded → nullification submitted → entry removed.
     driver.step().await.unwrap();
     assert!(
-        !driver.proof_manager.pending_proofs.contains_key(&addr(0)),
+        !driver.proof_manager.pending_proofs().contains_key(&addr(0)),
         "entry should be removed after successful nullification"
     );
 }
@@ -324,7 +324,7 @@ async fn test_step_invalid_game_proof_failed() {
     // Step 1: proof initiated but not yet polled (deferred to next tick).
     driver.step().await.unwrap();
     assert!(
-        driver.proof_manager.pending_proofs.contains_key(&addr(0)),
+        driver.proof_manager.pending_proofs().contains_key(&addr(0)),
         "proof should be pending after initiation"
     );
 
@@ -335,7 +335,7 @@ async fn test_step_invalid_game_proof_failed() {
     // Entry should be retained in AwaitingProof phase (re-initiated) with retry_count == 1.
     let entry = driver
         .proof_manager
-        .pending_proofs
+        .pending_proofs()
         .get(&addr(0))
         .expect("entry should be retained after failure");
     assert!(
@@ -439,7 +439,7 @@ async fn test_step_pending_proof_skips_prove_block() {
     // proof_status is not polled this tick (pending_proofs is empty at poll time).
     driver.step().await.unwrap();
     assert!(
-        driver.proof_manager.pending_proofs.contains_key(&addr(0)),
+        driver.proof_manager.pending_proofs().contains_key(&addr(0)),
         "session should be stored in pending_proofs"
     );
 
@@ -456,7 +456,7 @@ async fn test_step_pending_proof_skips_prove_block() {
     // challenge tx submitted, session removed from pending_proofs.
     driver.step().await.unwrap();
     assert!(
-        !driver.proof_manager.pending_proofs.contains_key(&addr(0)),
+        !driver.proof_manager.pending_proofs().contains_key(&addr(0)),
         "session should be removed after proof succeeded"
     );
 }
@@ -478,7 +478,7 @@ async fn test_step_nullification_failure_preserves_proof() {
     // Step 1: proof initiated but not yet polled.
     driver.step().await.unwrap();
     assert!(
-        driver.proof_manager.pending_proofs.contains_key(&addr(0)),
+        driver.proof_manager.pending_proofs().contains_key(&addr(0)),
         "proof should be pending after initiation"
     );
 
@@ -487,7 +487,7 @@ async fn test_step_nullification_failure_preserves_proof() {
 
     // Entry must still be in pending_proofs as ReadyToSubmit.
     let entry =
-        driver.proof_manager.pending_proofs.get(&addr(0)).expect("proof should be preserved");
+        driver.proof_manager.pending_proofs().get(&addr(0)).expect("proof should be preserved");
     assert!(entry.is_ready(), "phase should be ReadyToSubmit after tx failure");
 
     // Simulate the onchain effect of a successful challenge: game is resolved.
@@ -499,7 +499,7 @@ async fn test_step_nullification_failure_preserves_proof() {
     // Step 3: poll_pending_proofs re-submits the challenge tx, now it succeeds.
     driver.step().await.unwrap();
     assert!(
-        !driver.proof_manager.pending_proofs.contains_key(&addr(0)),
+        !driver.proof_manager.pending_proofs().contains_key(&addr(0)),
         "entry should be removed after successful submission"
     );
 }
@@ -512,7 +512,7 @@ async fn test_poll_or_submit_drops_resolved_game() {
         driver_with_ready_proof(mock_state(GameStatus::ChallengerWins, Address::ZERO, 20));
     driver.step().await.unwrap();
     assert!(
-        !driver.proof_manager.pending_proofs.contains_key(&addr(0)),
+        !driver.proof_manager.pending_proofs().contains_key(&addr(0)),
         "resolved game should be removed from pending_proofs"
     );
 }
@@ -525,7 +525,7 @@ async fn test_poll_or_submit_drops_already_challenged_game() {
         driver_with_ready_proof(mock_state(GameStatus::InProgress, ZK_PROVER_ADDR, 20));
     driver.step().await.unwrap();
     assert!(
-        !driver.proof_manager.pending_proofs.contains_key(&addr(0)),
+        !driver.proof_manager.pending_proofs().contains_key(&addr(0)),
         "already-challenged game should be removed from pending_proofs"
     );
 }
@@ -542,7 +542,7 @@ async fn test_poll_or_submit_drops_nullified_game() {
     ));
     driver.step().await.unwrap();
     assert!(
-        !driver.proof_manager.pending_proofs.contains_key(&addr(0)),
+        !driver.proof_manager.pending_proofs().contains_key(&addr(0)),
         "nullified game should be removed from pending_proofs"
     );
 }
@@ -581,14 +581,14 @@ async fn test_step_proof_retry_succeeds() {
     // Step 1: proof initiated, not yet polled.
     driver.step().await.unwrap();
     assert!(
-        driver.proof_manager.pending_proofs.contains_key(&addr(0)),
+        driver.proof_manager.pending_proofs().contains_key(&addr(0)),
         "proof should be pending after initiation"
     );
 
     // Step 2: proof polled → Failed → NeedsRetry → handle_proof_retry
     // re-initiates prove_block → AwaitingProof with retry_count == 1.
     driver.step().await.unwrap();
-    let entry = driver.proof_manager.pending_proofs.get(&addr(0)).expect("entry should exist");
+    let entry = driver.proof_manager.pending_proofs().get(&addr(0)).expect("entry should exist");
     assert!(
         matches!(entry.phase, ProofPhase::AwaitingProof { .. }),
         "phase should be AwaitingProof after retry re-initiation"
@@ -607,7 +607,7 @@ async fn test_step_proof_retry_succeeds() {
     // Step 3: proof succeeds, challenge tx submitted, entry removed.
     driver.step().await.unwrap();
     assert!(
-        !driver.proof_manager.pending_proofs.contains_key(&addr(0)),
+        !driver.proof_manager.pending_proofs().contains_key(&addr(0)),
         "entry should be removed after successful challenge submission"
     );
 }
@@ -667,7 +667,7 @@ async fn test_step_proof_retry_reuses_deterministic_session_id() {
 
     let entry = driver
         .proof_manager
-        .pending_proofs
+        .pending_proofs()
         .get(&addr(0))
         .expect("entry should be retained after retry");
     assert!(
@@ -691,7 +691,7 @@ async fn test_step_proof_retry_reuses_deterministic_session_id() {
 
     driver.step().await.unwrap();
     assert!(
-        !driver.proof_manager.pending_proofs.contains_key(&addr(0)),
+        !driver.proof_manager.pending_proofs().contains_key(&addr(0)),
         "entry should be removed after successful retry submission",
     );
 }
@@ -709,7 +709,7 @@ async fn test_step_proof_exceeds_max_retries() {
     driver.step().await.unwrap();
     let entry = driver
         .proof_manager
-        .pending_proofs
+        .pending_proofs()
         .get(&addr(0))
         .expect("entry should exist after initiation");
     assert_eq!(entry.retry_count, 0);
@@ -721,7 +721,7 @@ async fn test_step_proof_exceeds_max_retries() {
         driver.step().await.unwrap();
         let entry = driver
             .proof_manager
-            .pending_proofs
+            .pending_proofs()
             .get(&addr(0))
             .expect("entry should exist during retries");
         assert_eq!(entry.retry_count, i + 1);
@@ -738,7 +738,7 @@ async fn test_step_proof_exceeds_max_retries() {
     // handle_proof_retry sees retry_count > MAX_PROOF_RETRIES and drops the entry.
     driver.step().await.unwrap();
     assert!(
-        !driver.proof_manager.pending_proofs.contains_key(&addr(0)),
+        !driver.proof_manager.pending_proofs().contains_key(&addr(0)),
         "entry should be dropped after exceeding max retries"
     );
 }
@@ -764,7 +764,7 @@ async fn test_step_invalid_game_tee_fails_zk_fallback() {
 
     let entry = driver
         .proof_manager
-        .pending_proofs
+        .pending_proofs()
         .get(&addr(0))
         .expect("ZK proof should be pending after TEE fallback");
     assert!(
@@ -784,7 +784,7 @@ async fn test_step_invalid_game_no_tee_provider_zk_only() {
     driver.step().await.unwrap();
 
     let entry =
-        driver.proof_manager.pending_proofs.get(&addr(0)).expect("ZK proof should be pending");
+        driver.proof_manager.pending_proofs().get(&addr(0)).expect("ZK proof should be pending");
     assert!(
         matches!(entry.phase, ProofPhase::AwaitingProof { .. }),
         "phase should be AwaitingProof (ZK, no TEE provider)"
@@ -812,7 +812,7 @@ async fn test_step_invalid_game_tee_fails_zk_succeeds() {
     // to ZK, proof session initiated (polled on next tick).
     driver.step().await.unwrap();
     assert!(
-        driver.proof_manager.pending_proofs.contains_key(&addr(0)),
+        driver.proof_manager.pending_proofs().contains_key(&addr(0)),
         "ZK proof should be pending after TEE fallback"
     );
 
@@ -825,7 +825,7 @@ async fn test_step_invalid_game_tee_fails_zk_succeeds() {
     // Step 2: proof polled → Succeeded → challenge tx submitted → entry removed.
     driver.step().await.unwrap();
     assert!(
-        !driver.proof_manager.pending_proofs.contains_key(&addr(0)),
+        !driver.proof_manager.pending_proofs().contains_key(&addr(0)),
         "entry should be removed after successful ZK challenge submission"
     );
 }
@@ -886,7 +886,7 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
     driver.step().await.unwrap();
 
     assert!(
-        !driver.proof_manager.pending_proofs.contains_key(&addr(0)),
+        !driver.proof_manager.pending_proofs().contains_key(&addr(0)),
         "no pending proof should remain after TEE nullification is observed"
     );
 }
@@ -952,7 +952,7 @@ async fn test_step_tee_contract_revert_falls_back_to_zk() {
     // The entry should now be a ZK proof in AwaitingProof phase (ZK fallback).
     let entry = driver
         .proof_manager
-        .pending_proofs
+        .pending_proofs()
         .get(&addr(0))
         .expect("ZK fallback proof should be pending after TEE tx failure");
     assert!(
@@ -984,7 +984,7 @@ async fn test_step_tee_contract_revert_falls_back_to_zk() {
     // Step 3: ZK proof polled → Succeeded → challenge tx submitted → entry cleaned up.
     driver.step().await.unwrap();
     assert!(
-        !driver.proof_manager.pending_proofs.contains_key(&addr(0)),
+        !driver.proof_manager.pending_proofs().contains_key(&addr(0)),
         "entry should be removed after ZK fallback completes"
     );
 }
@@ -1038,7 +1038,7 @@ async fn test_step_invalid_tee_result_falls_back_to_zk_without_timeout() {
 
     let entry = driver
         .proof_manager
-        .pending_proofs
+        .pending_proofs()
         .get(&addr(0))
         .expect("ZK fallback proof should be pending after invalid TEE result");
     assert!(matches!(entry.kind, base_challenger::ProofKind::Zk { .. }));
@@ -1061,7 +1061,7 @@ async fn test_step_nullified_game_not_reprocessed() {
     driver.step().await.unwrap();
 
     assert!(
-        driver.proof_manager.pending_proofs.is_empty(),
+        driver.proof_manager.pending_proofs().is_empty(),
         "no proofs should be pending for a nullified game"
     );
 }
@@ -1089,13 +1089,13 @@ async fn test_poll_or_submit_nullify_intent_not_dropped_when_zk_prover_set() {
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
     driver
         .proof_manager
-        .pending_proofs
+        .pending_proofs_mut()
         .insert(addr(0), default_ready_proof(DisputeIntent::Nullify));
 
     driver.step().await.unwrap();
 
     assert!(
-        !driver.proof_manager.pending_proofs.contains_key(&addr(0)),
+        !driver.proof_manager.pending_proofs().contains_key(&addr(0)),
         "nullify intent should be submitted, not dropped due to zk_prover"
     );
 }
@@ -1112,7 +1112,7 @@ async fn test_successful_nullify_does_not_track_anchor_update() {
     ));
 
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
-    driver.proof_manager.pending_proofs.insert(
+    driver.proof_manager.pending_proofs_mut().insert(
         addr(0),
         PendingProof {
             phase: ProofPhase::ReadyToSubmit { proof_bytes: Bytes::from_static(&[0x00, 0xAA]) },
@@ -1127,7 +1127,7 @@ async fn test_successful_nullify_does_not_track_anchor_update() {
 
     driver.step().await.unwrap();
 
-    assert!(!driver.proof_manager.pending_proofs.contains_key(&addr(0)));
+    assert!(!driver.proof_manager.pending_proofs().contains_key(&addr(0)));
 }
 
 #[tokio::test]
@@ -1147,13 +1147,13 @@ async fn test_poll_or_submit_challenge_intent_dropped_when_zk_prover_set() {
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), tx);
     driver
         .proof_manager
-        .pending_proofs
+        .pending_proofs_mut()
         .insert(addr(0), default_ready_proof(DisputeIntent::Challenge));
 
     driver.step().await.unwrap();
 
     assert!(
-        !driver.proof_manager.pending_proofs.contains_key(&addr(0)),
+        !driver.proof_manager.pending_proofs().contains_key(&addr(0)),
         "challenge intent should be dropped when game is already challenged"
     );
 }
@@ -1197,7 +1197,7 @@ async fn test_step_fraudulent_zk_challenge_legitimate_skips() {
     driver.step().await.unwrap();
 
     assert!(
-        driver.proof_manager.pending_proofs.is_empty(),
+        driver.proof_manager.pending_proofs().is_empty(),
         "no proof should be initiated when the ZK challenge is legitimate"
     );
 }
@@ -1214,7 +1214,7 @@ async fn test_step_fraudulent_zk_challenge_nullifies() {
 
     let entry = driver
         .proof_manager
-        .pending_proofs
+        .pending_proofs()
         .get(&addr(0))
         .expect("proof should be pending for fraudulent ZK challenge");
     assert_eq!(
@@ -1246,7 +1246,7 @@ async fn test_step_fraudulent_zk_challenge_nullifies_despite_earlier_invalid_roo
     driver.step().await.unwrap();
 
     let entry =
-        driver.proof_manager.pending_proofs.get(&addr(0)).expect(
+        driver.proof_manager.pending_proofs().get(&addr(0)).expect(
             "proof should be pending — challenged root is valid, ZK challenge is fraudulent",
         );
     assert_eq!(
@@ -1278,7 +1278,7 @@ async fn test_step_invalid_zk_proposal_initiates_zk_nullification() {
 
     let entry = driver
         .proof_manager
-        .pending_proofs
+        .pending_proofs()
         .get(&addr(0))
         .expect("ZK nullification proof should be pending");
     assert_eq!(entry.intent, DisputeIntent::Nullify, "intent should be Nullify for ZK proposals");
@@ -1297,7 +1297,7 @@ async fn test_step_valid_zk_proposal_skipped() {
     driver.step().await.unwrap();
 
     assert!(
-        driver.proof_manager.pending_proofs.is_empty(),
+        driver.proof_manager.pending_proofs().is_empty(),
         "valid ZK proposal should not trigger any proof"
     );
 }
@@ -1325,7 +1325,7 @@ async fn test_step_dual_proof_invalid_without_tee_provider_falls_back_to_zk_null
 
     let entry = driver
         .proof_manager
-        .pending_proofs
+        .pending_proofs()
         .get(&addr(0))
         .expect("ZK nullification proof should be pending for dual-proof game");
     assert_eq!(
@@ -1398,7 +1398,7 @@ async fn test_step_dual_proof_invalid_with_tee_provider_nullifies_tee_first() {
     // invalid ZK proposal and a ZK nullification proof is initiated.
     let entry = driver
         .proof_manager
-        .pending_proofs
+        .pending_proofs()
         .get(&addr(0))
         .expect("ZK proof should be pending after TEE nullification");
     assert!(matches!(entry.kind, base_challenger::ProofKind::Zk { .. }));
@@ -1421,7 +1421,7 @@ async fn test_step_dual_proof_valid_skipped() {
     driver.step().await.unwrap();
 
     assert!(
-        driver.proof_manager.pending_proofs.is_empty(),
+        driver.proof_manager.pending_proofs().is_empty(),
         "valid dual-proof game should not trigger any proof"
     );
 }
@@ -1452,7 +1452,7 @@ async fn test_step_dual_proof_tee_fails_falls_back_to_zk_nullify() {
 
     let entry = driver
         .proof_manager
-        .pending_proofs
+        .pending_proofs()
         .get(&addr(0))
         .expect("ZK proof should be pending after TEE fallback for dual-proof game");
     assert_eq!(
@@ -1501,7 +1501,7 @@ async fn test_step_checkpoint_count_mismatch_surfaces_error() {
     driver.step().await.unwrap();
 
     assert!(
-        driver.proof_manager.pending_proofs.is_empty(),
+        driver.proof_manager.pending_proofs().is_empty(),
         "no proof should be initiated when checkpoint count mismatches — \
          the error should be surfaced, not silently swallowed"
     );
@@ -1879,7 +1879,7 @@ mod metrics_emission {
                     DisputeProofManager::<MockL2Provider, MockZkProofProvider>::MAX_PROOF_RETRIES;
                 let entry = driver
                     .proof_manager
-                    .pending_proofs
+                    .pending_proofs_mut()
                     .get_mut(&addr(0))
                     .expect("entry should exist after initiation");
                 entry.retry_count = max_retries + 1;

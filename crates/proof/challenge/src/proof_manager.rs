@@ -39,7 +39,7 @@ pub struct DisputeProofManager<L2: L2Provider, P: ProofRequesterProvider> {
     tee: Option<Arc<dyn L1HeadProvider>>,
     verifier_client: Arc<dyn AggregateVerifierClient>,
     /// In-flight proof sessions keyed by game address.
-    pub pending_proofs: PendingProofs,
+    pending_proofs: PendingProofs,
     ignored_games: HashSet<Address>,
     ignored_game_order: VecDeque<Address>,
     max_proof_duration: Duration,
@@ -120,6 +120,18 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
     /// Returns the number of in-flight proof sessions.
     pub fn pending_proofs_len(&self) -> usize {
         self.pending_proofs.len()
+    }
+
+    /// Returns in-flight proof sessions for test inspection.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn pending_proofs(&self) -> &PendingProofs {
+        &self.pending_proofs
+    }
+
+    /// Returns in-flight proof sessions for test setup.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn pending_proofs_mut(&mut self) -> &mut PendingProofs {
+        &mut self.pending_proofs
     }
 
     /// Returns the number of terminally ignored games retained in memory.
