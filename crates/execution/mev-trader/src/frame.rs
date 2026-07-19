@@ -15,8 +15,8 @@ use reth_revm::{State, database::StateProviderDatabase};
 use revm::{DatabaseCommit, context_interface::result::ExecutionResult};
 
 use crate::{
-    AuditedWriteKey, CancellationProbe, DeltaGuard, MaterializedState, PayloadVisitor, PortError,
-    SnapshotHandle, StateMaterializer, TraderSnapshotPort, VisitControl,
+    AuditedWriteKey, CancellationProbe, DeltaGuard, MaterializedState, MeasurementContext,
+    PayloadVisitor, PortError, SnapshotHandle, StateMaterializer, TraderSnapshotPort, VisitControl,
 };
 
 /// Maximum age accepted for an ingress victim frame.
@@ -47,6 +47,25 @@ pub struct VictimFrame {
     pub received_at: Instant,
 }
 
+/// Opaque evidence that one frame completed the authoritative processing path.
+#[derive(Debug)]
+pub struct ProcessedFrame {
+    materialized_state: MaterializedState,
+    measurement_context: MeasurementContext,
+}
+
+impl ProcessedFrame {
+    /// Returns immutable post-victim state materialized from audited writes.
+    pub const fn materialized_state(&self) -> &MaterializedState {
+        &self.materialized_state
+    }
+
+    /// Returns immutable frame identity bound to the successful processing result.
+    pub const fn measurement_context(&self) -> &MeasurementContext {
+        &self.measurement_context
+    }
+}
+
 /// Payload traversal state used for generation coherence checks.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct SnapshotCoherence {
@@ -57,15 +76,21 @@ pub struct SnapshotCoherence {
 }
 
 impl SnapshotCoherence {
-    /// Validates non-empty, single-payload, exact-latest-index snapshot coherence.
-    pub fn validate(snapshot: &SnapshotHandle) -> Result<bool, PortError> {
+    fn validated_payload_id(snapshot: &SnapshotHandle) -> Result<Option<PayloadId>, PortError> {
         let mut coherence = Self { all_same_payload: true, ..Self::default() };
         let summary = snapshot.visit_latest_block_payloads(&mut coherence)?;
-        Ok(summary.complete
+        Ok((summary.complete
             && summary.visited == coherence.visited
             && coherence.visited != 0
             && coherence.all_same_payload
             && coherence.last_flashblock_index == Some(snapshot.latest_flashblock_index()))
+        .then_some(coherence.first_payload_id)
+        .flatten())
+    }
+
+    /// Validates non-empty, single-payload, exact-latest-index snapshot coherence.
+    pub fn validate(snapshot: &SnapshotHandle) -> Result<bool, PortError> {
+        Ok(Self::validated_payload_id(snapshot)?.is_some())
     }
 }
 
@@ -101,9 +126,7 @@ impl FrameProcessor {
             || frame.parent_hash != snapshot.parent_hash()
             || frame.block_number != snapshot.latest_block_number()
             || snapshot.latest_flashblock_index() >= frame.victim_flashblock_index
-            || frame
-                .victim_flashblock_index
-                .checked_sub(snapshot.latest_flashblock_index())
+            || frame.victim_flashblock_index.checked_sub(snapshot.latest_flashblock_index())
                 > Some(1)
             || snapshot.has_transaction_hash(frame.transaction_hash)
             || now.checked_duration_since(frame.received_at)?.as_millis()
@@ -144,10 +167,13 @@ impl FrameProcessor {
         chain_spec: Arc<BaseChainSpec>,
         audited_writes: &[AuditedWriteKey],
         cancellation: &CancellationProbe,
-    ) -> Result<Option<MaterializedState>, PortError> {
-        if !port.is_current_authoritative(snapshot) || !SnapshotCoherence::validate(snapshot)? {
+    ) -> Result<Option<ProcessedFrame>, PortError> {
+        if !port.is_current_authoritative(snapshot) {
             return Ok(None);
         }
+        let Some(payload_id) = SnapshotCoherence::validated_payload_id(snapshot)? else {
+            return Ok(None);
+        };
 
         let latest_header = snapshot.latest_header();
         if latest_header.number != snapshot.latest_block_number()
@@ -188,13 +214,354 @@ impl FrameProcessor {
             StateMaterializer::materialize(evm.db_mut(), audited_writes, cancellation)?;
         drop(evm);
 
-        if !port.is_current_authoritative(snapshot) {
+        let current_authority = port.is_current_authoritative(snapshot);
+        if !cancellation.checkpoint(Instant::now(), current_authority) {
+            cancellation.token().request_cancel();
+            cancellation.acknowledge_drop();
             return Ok(None);
         }
-        Ok(Some(materialized))
+        Ok(Some(ProcessedFrame {
+            materialized_state: materialized,
+            measurement_context: MeasurementContext {
+                parent_hash: snapshot.parent_hash(),
+                block_number: snapshot.latest_block_number(),
+                predecessor_index: snapshot.latest_flashblock_index(),
+                payload_id,
+                victim: frame.transaction_hash,
+            },
+        }))
     }
 }
 
+/// Production-path processed-frame support for sibling crate-unit tests.
+#[cfg(test)]
+pub(crate) mod test_utils {
+    use std::{
+        str::FromStr,
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+        },
+        time::{Duration, Instant},
+    };
+
+    use alloy_consensus::{Header, Sealed, Transaction, transaction::SignerRecoverable};
+    use alloy_eips::{Decodable2718, Typed2718};
+    use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
+    use alloy_rpc_types_engine::PayloadId;
+    use base_common_consensus::BaseTxEnvelope;
+    use base_execution_chainspec::BaseChainSpec;
+    use reth_provider::StateProviderBox;
+
+    use super::{FrameProcessor, ProcessedFrame, VictimFrame};
+    use crate::{
+        BundleVisitor, CancellationProbe, CancellationToken, GlobalLifecycle, PayloadVisitor,
+        PendingSnapshotView, PortError, SnapshotCaptureCoordinator, SnapshotHandle,
+        SnapshotHandleFactory, TraderSnapshotPort, TransactionVisitor, VisitControl, VisitSummary,
+        registry,
+    };
+
+    const RAW_VICTIM: &str = "f8628080830186a0940000000000000000000000000000000000000000808082422da0840cfc572845f5786e702984c2a582528cad4b49b2a10b9db1be7fca90058565a025e7109ceb98168d95b09b18bbf6b685130e0562f233877d492b94eee0c5b6d1";
+    const BLOCK_NUMBER: u64 = 100;
+    const PREDECESSOR_INDEX: u64 = 1;
+
+    #[derive(Debug)]
+    struct ProofView {
+        parent_hash: B256,
+        latest_header: Mutex<Sealed<Header>>,
+    }
+
+    impl PendingSnapshotView for ProofView {
+        fn parent_hash(&self) -> B256 {
+            self.parent_hash
+        }
+
+        fn latest_block_number(&self) -> u64 {
+            BLOCK_NUMBER
+        }
+
+        fn canonical_block_number(&self) -> u64 {
+            BLOCK_NUMBER - 1
+        }
+
+        fn latest_flashblock_index(&self) -> u64 {
+            PREDECESSOR_INDEX
+        }
+
+        fn latest_header(&self) -> Sealed<Header> {
+            self.latest_header.lock().expect("fixture header lock").clone()
+        }
+
+        fn latest_block_transaction_count(&self) -> usize {
+            0
+        }
+
+        fn has_transaction_hash(&self, _transaction_hash: B256) -> bool {
+            false
+        }
+
+        fn transaction_position(
+            &self,
+            _block_number: u64,
+            _transaction_hash: B256,
+        ) -> Option<usize> {
+            None
+        }
+
+        fn visit_latest_block_payloads(
+            &self,
+            visitor: &mut dyn PayloadVisitor,
+        ) -> Result<VisitSummary, PortError> {
+            let control = visitor.visit(PayloadId::new([2; 8]), PREDECESSOR_INDEX)?;
+            Ok(VisitSummary { visited: 1, complete: control == VisitControl::Continue })
+        }
+
+        fn visit_transactions_for_block(
+            &self,
+            _block_number: u64,
+            _start: usize,
+            _limit: usize,
+            _visitor: &mut dyn TransactionVisitor,
+        ) -> Result<VisitSummary, PortError> {
+            Ok(VisitSummary { visited: 0, complete: true })
+        }
+
+        fn visit_bundle(
+            &self,
+            _visitor: &mut dyn BundleVisitor,
+        ) -> Result<VisitSummary, PortError> {
+            Ok(VisitSummary { visited: 0, complete: true })
+        }
+    }
+
+    #[derive(Debug)]
+    struct ProofPort {
+        view: Arc<dyn PendingSnapshotView + Send + Sync>,
+        received_at: Instant,
+        parent_header: Sealed<Header>,
+        provider_available: AtomicBool,
+        authority_checks: AtomicUsize,
+        authoritative_until: AtomicUsize,
+    }
+
+    impl TraderSnapshotPort for ProofPort {
+        fn capture_latest(
+            &self,
+            factory: &SnapshotHandleFactory,
+        ) -> Result<Option<SnapshotHandle>, PortError> {
+            factory.issue(Arc::clone(&self.view), self.received_at).map(Some)
+        }
+
+        fn is_current_authoritative(&self, handle: &SnapshotHandle) -> bool {
+            let check = self.authority_checks.fetch_add(1, Ordering::SeqCst);
+            check < self.authoritative_until.load(Ordering::SeqCst)
+                && handle.matches_capture(&self.view, self.received_at)
+        }
+
+        fn state_at_hash(&self, block_hash: B256) -> Result<StateProviderBox, PortError> {
+            if !self.provider_available.load(Ordering::SeqCst) {
+                return Err(PortError::ProviderUnavailable);
+            }
+            if block_hash != self.parent_header.hash() {
+                return Err(PortError::Incoherent);
+            }
+            Ok(Box::new(reth_provider::noop::NoopProvider::default()))
+        }
+
+        fn sealed_header_at_hash(&self, block_hash: B256) -> Result<Sealed<Header>, PortError> {
+            if block_hash != self.parent_header.hash() {
+                return Err(PortError::Incoherent);
+            }
+            Ok(self.parent_header.clone())
+        }
+    }
+
+    /// Opaque test-only owner of one captured deterministic processing fixture.
+    #[derive(Debug)]
+    pub(crate) struct TestFrameHarness {
+        port: ProofPort,
+        view: Arc<ProofView>,
+        snapshot: SnapshotHandle,
+        frame: VictimFrame,
+        chain_spec: Arc<BaseChainSpec>,
+        audited_writes: [crate::AuditedWriteKey; 1],
+        processing_probe: CancellationProbe,
+    }
+
+    impl TestFrameHarness {
+        /// Captures the exact authoritative snapshot used by the fixture.
+        pub(crate) fn capture() -> Self {
+            Self::capture_timed().0
+        }
+
+        /// Prepares the fixture, then sets receive t0 around only authoritative capture.
+        pub(crate) fn capture_timed() -> (Self, Instant) {
+            let raw_tx = Bytes::from_str(&format!("0x{RAW_VICTIM}")).expect("fixture bytes");
+            let transaction =
+                BaseTxEnvelope::decode_2718_exact(raw_tx.as_ref()).expect("fixture transaction");
+            let transaction_hash = keccak256(&raw_tx);
+            let from = transaction.recover_signer().expect("fixture sender");
+
+            assert_eq!(*transaction.tx_hash(), transaction_hash);
+            assert_eq!(transaction.chain_id(), Some(8453));
+            assert_eq!(transaction.ty(), 0);
+            assert_eq!(transaction.nonce(), 0);
+            assert_eq!(transaction.gas_price(), Some(0));
+            assert_eq!(transaction.gas_limit(), 100_000);
+            assert_eq!(transaction.to(), Some(Address::ZERO));
+            assert_eq!(transaction.value(), U256::ZERO);
+            assert!(transaction.input().is_empty());
+
+            let parent_header = Sealed::new(Header {
+                number: BLOCK_NUMBER - 1,
+                gas_limit: 30_000_000,
+                base_fee_per_gas: Some(0),
+                ..Default::default()
+            });
+            let parent_hash = parent_header.hash();
+            let latest_header = Sealed::new(Header {
+                parent_hash,
+                number: BLOCK_NUMBER,
+                gas_limit: 30_000_000,
+                base_fee_per_gas: Some(0),
+                ..Default::default()
+            });
+            let view =
+                Arc::new(ProofView { parent_hash, latest_header: Mutex::new(latest_header) });
+            let captured_view: Arc<dyn PendingSnapshotView + Send + Sync> =
+                Arc::<ProofView>::clone(&view);
+            let fixture_time = Instant::now();
+            let mut frame = VictimFrame {
+                chain_id: 8453,
+                transaction_type: 0,
+                transaction_hash,
+                from,
+                raw_tx,
+                parent_hash,
+                block_number: BLOCK_NUMBER,
+                victim_flashblock_index: PREDECESSOR_INDEX + 1,
+                received_at: fixture_time,
+            };
+            let port = ProofPort {
+                view: captured_view,
+                received_at: fixture_time,
+                parent_header,
+                provider_available: AtomicBool::new(true),
+                authority_checks: AtomicUsize::new(0),
+                authoritative_until: AtomicUsize::new(usize::MAX),
+            };
+            let chain_spec = Arc::new(BaseChainSpec::mainnet());
+            let audited_writes = registry::test_utils::audited_sender_nonce(from);
+            let processing_probe = CancellationProbe::new(
+                Arc::new(CancellationToken::with_approved_deadline(Instant::now())),
+                Arc::new(GlobalLifecycle::default()),
+            );
+
+            frame.received_at = Instant::now();
+            let snapshot = SnapshotCaptureCoordinator
+                .capture(&port)
+                .expect("snapshot capture")
+                .expect("authoritative snapshot");
+            let harness =
+                Self { port, view, snapshot, frame, chain_spec, audited_writes, processing_probe };
+            let discover_end = Instant::now();
+            (harness, discover_end)
+        }
+
+        /// Returns the captured victim frame, including its receive t0.
+        pub(crate) const fn frame(&self) -> &VictimFrame {
+            &self.frame
+        }
+
+        /// Returns the exact audited sender-nonce key used by the positive fixture.
+        pub(crate) const fn audited_writes(&self) -> [crate::AuditedWriteKey; 1] {
+            self.audited_writes
+        }
+
+        /// Makes the hash-pinned provider unavailable for the next processing attempt.
+        pub(crate) fn make_provider_unavailable(&self) {
+            self.port.provider_available.store(false, Ordering::SeqCst);
+        }
+
+        /// Makes the captured latest header fail block-number coherence.
+        pub(crate) fn make_latest_header_incoherent(&self) {
+            let latest_header = Sealed::new(Header {
+                parent_hash: self.frame.parent_hash,
+                number: BLOCK_NUMBER + 1,
+                gas_limit: 30_000_000,
+                base_fee_per_gas: Some(0),
+                ..Default::default()
+            });
+            *self.view.latest_header.lock().expect("fixture header lock") = latest_header;
+        }
+
+        /// Allows exactly `successful` authority checks during the next processing attempt.
+        pub(crate) fn allow_authority_checks(&self, successful: usize) {
+            self.port.authority_checks.store(0, Ordering::SeqCst);
+            self.port.authoritative_until.store(successful, Ordering::SeqCst);
+        }
+
+        /// Executes the production processing path and preserves its fail-closed result.
+        pub(crate) fn process_result(
+            &self,
+            audited_writes: &[crate::AuditedWriteKey],
+            cancellation: &CancellationProbe,
+        ) -> Result<Option<ProcessedFrame>, PortError> {
+            FrameProcessor::process(
+                &self.port,
+                &self.snapshot,
+                &self.frame,
+                Instant::now(),
+                Arc::clone(&self.chain_spec),
+                audited_writes,
+                cancellation,
+            )
+        }
+
+        /// Executes the production processing call with the prepared positive inputs.
+        pub(crate) fn process_prepared(&self) -> Result<Option<ProcessedFrame>, PortError> {
+            self.process_result(&self.audited_writes, &self.processing_probe)
+        }
+
+        /// Checks the audited write and context of a successful processing result.
+        pub(crate) fn assert_processed(&self, processed: &ProcessedFrame) {
+            assert_eq!(self.audited_writes[0].address(), self.frame.from);
+            assert!(!self.audited_writes[0].evidence_digest().is_zero());
+            assert_eq!(processed.materialized_state().writes.len(), 1);
+            assert_eq!(processed.materialized_state().writes[0].key, self.audited_writes[0]);
+            assert_eq!(processed.materialized_state().writes[0].value, U256::from(1));
+            assert_eq!(
+                processed.measurement_context(),
+                &crate::MeasurementContext {
+                    parent_hash: self.frame.parent_hash,
+                    block_number: BLOCK_NUMBER,
+                    predecessor_index: PREDECESSOR_INDEX,
+                    payload_id: PayloadId::new([2; 8]),
+                    victim: self.frame.transaction_hash,
+                }
+            );
+        }
+
+        /// Obtains a proof only by executing the production processing path.
+        pub(crate) fn process(&self, cancellation: &CancellationProbe) -> ProcessedFrame {
+            let processed = self
+                .process_result(&self.audited_writes, cancellation)
+                .expect("frame processing")
+                .expect("successful frame proof");
+            self.assert_processed(&processed);
+            processed
+        }
+    }
+
+    /// Obtains a proof through capture and the production frame-processing path.
+    pub(crate) fn processed_frame() -> ProcessedFrame {
+        let cancellation = CancellationProbe::new(
+            Arc::new(CancellationToken::new(Instant::now() + Duration::from_secs(5))),
+            Arc::new(GlobalLifecycle::default()),
+        );
+        TestFrameHarness::capture().process(&cancellation)
+    }
+}
 #[cfg(test)]
 mod tests {
     use std::{str::FromStr, sync::Arc, time::Duration};
@@ -205,7 +572,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        BundleVisitor, PendingSnapshotView, SnapshotHandleFactory, TransactionVisitor, VisitSummary,
+        BundleVisitor, CancellationToken, GlobalLifecycle, PendingSnapshotView,
+        SnapshotHandleFactory, TaskState, TransactionVisitor, VisitSummary,
     };
 
     const LEGACY_TX: &str = "f86c098504a817c800825208943535353535353535353535353535353535353535880de0b6b3a76400008025a028ef61340bd939bc2195fe537567866003e1a15d3c71ff63e1590620aa636276a067cbe9d8997f761aecb703304b3800ccf555c9f3dc64214b297fb1966a3b6d83";
@@ -404,6 +772,78 @@ mod tests {
         );
     }
 
+    #[test]
+    fn production_process_mints_the_pinned_measurement_proof() {
+        let processed = test_utils::processed_frame();
+        assert_eq!(processed.materialized_state().writes.len(), 1);
+    }
+
+    fn cancellation(deadline: Instant) -> (Arc<CancellationToken>, CancellationProbe) {
+        let token = Arc::new(CancellationToken::new(deadline));
+        let probe =
+            CancellationProbe::new(Arc::clone(&token), Arc::new(GlobalLifecycle::default()));
+        (token, probe)
+    }
+
+    #[test]
+    fn production_process_fails_closed_for_provider_header_and_delta_faults() {
+        let deadline = Instant::now() + Duration::from_secs(5);
+
+        let provider = test_utils::TestFrameHarness::capture();
+        provider.make_provider_unavailable();
+        let (_, probe) = cancellation(deadline);
+        assert!(matches!(
+            provider.process_result(&provider.audited_writes(), &probe),
+            Err(PortError::ProviderUnavailable)
+        ));
+
+        let header = test_utils::TestFrameHarness::capture();
+        header.make_latest_header_incoherent();
+        let (_, probe) = cancellation(deadline);
+        assert!(matches!(header.process_result(&header.audited_writes(), &probe), Ok(None)));
+
+        let delta = test_utils::TestFrameHarness::capture();
+        let (_, probe) = cancellation(deadline);
+        assert!(matches!(delta.process_result(&[], &probe), Ok(None)));
+    }
+
+    #[test]
+    fn production_process_fails_closed_for_precancel_and_deadline() {
+        let harness = test_utils::TestFrameHarness::capture();
+        let (token, probe) = cancellation(Instant::now() + Duration::from_secs(5));
+        assert!(token.request_cancel());
+        assert!(matches!(
+            harness.process_result(&harness.audited_writes(), &probe),
+            Err(PortError::Incoherent)
+        ));
+        assert_eq!(token.state(), TaskState::DroppedAcked);
+
+        let harness = test_utils::TestFrameHarness::capture();
+        let (token, probe) = cancellation(Instant::now());
+        assert!(matches!(
+            harness.process_result(&harness.audited_writes(), &probe),
+            Err(PortError::Incoherent)
+        ));
+        assert_eq!(token.state(), TaskState::DroppedAcked);
+    }
+
+    #[test]
+    fn production_process_fails_closed_for_initial_and_final_authority_loss() {
+        let initial = test_utils::TestFrameHarness::capture();
+        initial.allow_authority_checks(0);
+        let (token, probe) = cancellation(Instant::now() + Duration::from_secs(5));
+        assert!(matches!(initial.process_result(&initial.audited_writes(), &probe), Ok(None)));
+        assert_eq!(token.state(), TaskState::Active);
+
+        let final_loss = test_utils::TestFrameHarness::capture();
+        final_loss.allow_authority_checks(1);
+        let (token, probe) = cancellation(Instant::now() + Duration::from_secs(5));
+        assert!(matches!(
+            final_loss.process_result(&final_loss.audited_writes(), &probe),
+            Ok(None)
+        ));
+        assert_eq!(token.state(), TaskState::DroppedAcked);
+    }
     #[test]
     fn bundle_types_remain_borrowed_at_public_boundary() {
         fn visitor_shape(

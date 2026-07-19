@@ -14,7 +14,8 @@ pub use port::{
 
 mod frame;
 pub use frame::{
-    FrameProcessor, MAX_FRAME_AGE_MILLIS, MAX_RAW_FRAME_BYTES, SnapshotCoherence, VictimFrame,
+    FrameProcessor, MAX_FRAME_AGE_MILLIS, MAX_RAW_FRAME_BYTES, ProcessedFrame, SnapshotCoherence,
+    VictimFrame,
 };
 
 mod registry;
@@ -35,7 +36,8 @@ pub use storage::{
 mod latency;
 pub use latency::{
     LATENCY_THRESHOLD_NS, LATENCY_TIMED_RUNS, LATENCY_WARMUP_RUNS, LatencyAccounting, LatencyError,
-    LatencyRecorder, LatencyReport,
+    LatencyRecorder, LatencyReport, StageLatencyRecorder, StageLatencyReport, StageLatencySample,
+    StageQuantiles,
 };
 
 mod lifecycle;

@@ -410,15 +410,10 @@ fn production_source_has_exact_files_and_no_forbidden_identifiers() {
         }
 
         if file == "blink_ingress.rs" {
-            assert_eq!(
-                production.matches("wss://baseauction.blinklabs.xyz/ws/v1/").count(),
-                1
-            );
+            assert_eq!(production.matches("wss://baseauction.blinklabs.xyz/ws/v1/").count(), 1);
             assert_eq!(production.matches("blink_partialPendingTransactions").count(), 1);
             assert_eq!(
-                production
-                    .matches("socket.send(Message::Text(BLINK_SUBSCRIBE.into()))")
-                    .count(),
+                production.matches("socket.send(Message::Text(BLINK_SUBSCRIBE.into()))").count(),
                 1
             );
             assert_eq!(production.matches(".send(").count(), 1, "one audited sink send");
@@ -450,6 +445,123 @@ fn production_source_has_exact_files_and_no_forbidden_identifiers() {
             }
         }
     }
+}
+
+#[test]
+fn a2_proof_binding_and_test_support_have_bounded_api_shape() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let frame = fs::read_to_string(root.join("src/frame.rs")).expect("frame source");
+    let registry = fs::read_to_string(root.join("src/registry.rs")).expect("registry source");
+    let pairwise = fs::read_to_string(root.join("src/pairwise.rs")).expect("pairwise source");
+    let latency = fs::read_to_string(root.join("src/latency.rs")).expect("latency source");
+    let crate_root = fs::read_to_string(root.join("src/lib.rs")).expect("crate root");
+    let runtime = fs::read_to_string(root.join("src/runtime.rs")).expect("runtime source");
+    let integration =
+        fs::read_to_string(root.join("tests/deterministic_e2e.rs")).expect("integration source");
+
+    let frame_support_marker = "\n#[cfg(test)]\npub(crate) mod test_utils {";
+    assert_eq!(frame.matches(frame_support_marker).count(), 1);
+    let (frame_production, frame_support_and_tests) =
+        frame.split_once(frame_support_marker).expect("frame test support");
+    let (frame_support, _) = frame_support_and_tests
+        .split_once("\n#[cfg(test)]\nmod tests {")
+        .expect("final frame tests");
+
+    assert!(frame_production.contains(
+        "pub struct ProcessedFrame {\n    materialized_state: MaterializedState,\n    measurement_context: MeasurementContext,\n}"
+    ));
+    assert_eq!(frame_production.matches("impl ProcessedFrame {").count(), 1);
+    assert_eq!(frame_production.matches("pub const fn materialized_state").count(), 1);
+    assert_eq!(frame_production.matches("pub const fn measurement_context").count(), 1);
+    assert_eq!(frame_production.matches("Ok(Some(ProcessedFrame {").count(), 1);
+    assert!(!frame_production.contains("impl Default for ProcessedFrame"));
+    assert!(!frame_production.contains("&mut MaterializedState"));
+    assert!(!frame_production.contains("&mut MeasurementContext"));
+    let final_authority = frame_production
+        .find("let current_authority = port.is_current_authoritative(snapshot);")
+        .expect("final authority check");
+    let proof_construction =
+        frame_production.find("Ok(Some(ProcessedFrame {").expect("sole proof construction");
+    assert!(final_authority < proof_construction);
+
+    assert_eq!(
+        frame_production
+            .matches("!matches!(output.result, ExecutionResult::Success { .. })")
+            .count(),
+        1
+    );
+
+    const RAW_VICTIM: &str = "f8628080830186a0940000000000000000000000000000000000000000808082422da0840cfc572845f5786e702984c2a582528cad4b49b2a10b9db1be7fca90058565a025e7109ceb98168d95b09b18bbf6b685130e0562f233877d492b94eee0c5b6d1";
+    assert_eq!(frame.matches(RAW_VICTIM).count(), 1);
+    assert_eq!(frame_support.matches("BaseTxEnvelope::decode_2718_exact").count(), 1);
+    assert_eq!(frame_support.matches("keccak256(&raw_tx)").count(), 1);
+    assert_eq!(frame_support.matches("transaction.recover_signer()").count(), 1);
+    assert_eq!(
+        frame_support.matches("Box::new(reth_provider::noop::NoopProvider::default())").count(),
+        1
+    );
+    assert_eq!(frame_support.matches("FrameProcessor::process(").count(), 1);
+    assert_eq!(frame_support.matches("Ok(Some(ProcessedFrame {").count(), 0);
+    assert!(!frame_support.contains("impl ProcessedFrame"));
+    assert!(!frame_support.contains("BackrunPlan"));
+
+    let registry_support_marker = "\n#[cfg(test)]\npub(crate) mod test_utils {";
+    assert_eq!(registry.matches(registry_support_marker).count(), 1);
+    let (_, registry_support_and_tests) =
+        registry.split_once(registry_support_marker).expect("registry test support");
+    let (registry_support, _) = registry_support_and_tests
+        .split_once("\n#[cfg(test)]\nmod tests {")
+        .expect("final registry tests");
+    assert_eq!(registry_support.matches("pub(crate) fn audited_sender_nonce").count(), 1);
+    assert_eq!(registry_support.matches("AuditedWriteKey::AccountNonce").count(), 1);
+    assert_eq!(registry_support.matches("const NONCE_EVIDENCE_DIGEST").count(), 1);
+    assert!(registry_support.contains("B256::new([0x5a; 32])"));
+    for forbidden in [
+        "AccountBalance",
+        "AuditedWriteKey::Storage",
+        "ProcessedFrame",
+        "MeasurementContext",
+        "BackrunPlan",
+    ] {
+        assert!(!registry_support.contains(forbidden), "registry test support exposes {forbidden}");
+    }
+
+    assert_eq!(pairwise.matches("pub fn select_measurement(").count(), 1);
+    assert!(pairwise.contains(
+        "pub fn select_measurement(\n        processed: &ProcessedFrame,\n        candidates: &[PairwiseCandidate],"
+    ));
+    assert_eq!(pairwise.matches(") -> Result<Option<BackrunPlan>, PairwiseError> {").count(), 1);
+    assert_eq!(pairwise.matches("let mut plan = BackrunPlan {").count(), 1);
+    assert_eq!(pairwise.matches("pub struct MeasurementEncoder;").count(), 1);
+    assert_eq!(pairwise.matches("impl MeasurementEncoder {").count(), 1);
+    assert_eq!(pairwise.matches("pub fn encode(plan: &BackrunPlan)").count(), 1);
+    assert!(!pairwise.contains("context: MeasurementContext"));
+    assert!(!pairwise.contains("impl BackrunPlan {"));
+
+    assert!(crate_root.contains(
+        "FrameProcessor, MAX_FRAME_AGE_MILLIS, MAX_RAW_FRAME_BYTES, ProcessedFrame, SnapshotCoherence,"
+    ));
+    assert!(!crate_root.contains("test_utils"));
+    for forbidden in [
+        "PairwiseEngine",
+        "select_measurement",
+        "MeasurementEncoder",
+        "BackrunPlan",
+        "ProcessedFrame",
+    ] {
+        assert!(!runtime.contains(forbidden), "runtime exposes A2 output surface {forbidden}");
+    }
+    for forbidden in ["select_measurement", "MeasurementContext", "BackrunPlan", "ProcessedFrame"] {
+        assert!(!integration.contains(forbidden), "integration bypass surface {forbidden}");
+    }
+
+    assert_eq!(latency.matches("#[ignore = ").count(), 1);
+    assert_eq!(
+        latency
+            .matches("fn release_fixture_uses_ten_warmups_one_hundred_samples_and_drains()")
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -489,13 +601,7 @@ fn runtime_wiring_is_receive_only_and_preserves_forwarding_semantics() {
             "forbidden identifier {forbidden} in CLI trader adapter"
         );
     }
-    for forbidden in [
-        "WebSocketStream",
-        "Message",
-        "Sender",
-        "raw_tx",
-        "send_raw_transaction",
-    ] {
+    for forbidden in ["WebSocketStream", "Message", "Sender", "raw_tx", "send_raw_transaction"] {
         assert!(
             !adapter_identifiers.contains(forbidden),
             "forbidden transport or egress surface {forbidden} in CLI trader adapter"

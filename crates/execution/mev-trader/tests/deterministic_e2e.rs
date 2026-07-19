@@ -8,9 +8,9 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_rpc_types_engine::PayloadId;
 use base_common_consensus::BaseTxEnvelope;
 use base_mev_trader::{
-    BundleVisitor, CancellationProbe, CancellationToken, ExactPrefixCoordinator, ExactPrefixOracle,
-    ExactProtocol, FrameProcessor, GlobalLifecycle, IndependentOracle, MeasurementContext,
-    MeasurementEncoder, OracleDigest, OracleOutcome, PairwiseEngine, PayloadVisitor,
+    BundleVisitor, CancellationProbe, CancellationToken, D44CandidateEncoder,
+    ExactPrefixCoordinator, ExactPrefixOracle, ExactProtocol, FrameProcessor, GlobalLifecycle,
+    IndependentOracle, OracleDigest, OracleOutcome, PairwiseEngine, PayloadVisitor,
     PendingSnapshotView, PortError, PredecessorOracle, PreparedPoolQuote, PreparedPoolState,
     SnapshotCaptureCoordinator, SnapshotHandle, SnapshotHandleFactory, TaskState,
     TraderSnapshotPort, TransactionVisitor, VictimFrame, VisitControl, VisitSummary, WETH,
@@ -276,48 +276,34 @@ fn fixture_pipeline() -> Vec<u8> {
     let cancellation = live_probe();
     let candidates = PairwiseEngine::discover("e2e", &pools, &[pools[0].pool], &cancellation)
         .expect("pairwise discovery");
-    let plan = PairwiseEngine::select_measurement(
-        MeasurementContext {
-            parent_hash: victim.parent_hash,
-            block_number: victim.block_number,
-            predecessor_index: snapshot.latest_flashblock_index(),
-            payload_id,
-            victim: victim.transaction_hash,
-        },
-        &candidates,
-        &cancellation,
-    )
-    .expect("measurement selection")
-    .expect("positive max-one plan");
-    MeasurementEncoder::validate(&plan).expect("measurement digest");
-    MeasurementEncoder::encode(&plan).expect("canonical measurement")
+    let bytes = D44CandidateEncoder::encode(&candidates).expect("canonical d44 candidate bytes");
+    assert!(!bytes.is_empty());
+    bytes
 }
 
 #[test]
-fn repeated_snapshot_frame_oracle_pairwise_measurement_is_byte_identical() {
+fn repeated_snapshot_frame_oracle_pairwise_candidate_is_byte_identical() {
     let first = fixture_pipeline();
     let second = fixture_pipeline();
     assert_eq!(first, second);
 }
 
 #[test]
-fn cancelled_or_late_selection_has_zero_output() {
+fn cancelled_pairwise_discovery_has_zero_output() {
     let now = Instant::now();
     let token = Arc::new(CancellationToken::new(now));
     let cancellation =
         CancellationProbe::new(Arc::clone(&token), Arc::new(GlobalLifecycle::default()));
-    let result = PairwiseEngine::select_measurement(
-        MeasurementContext {
-            parent_hash: B256::ZERO,
-            block_number: 1,
-            predecessor_index: 0,
-            payload_id: PayloadId::default(),
-            victim: B256::with_last_byte(1),
-        },
-        &[],
-        &cancellation,
-    );
+    let token_address = Address::with_last_byte(0xaa);
+    let pools = [
+        pool(1, token_address, "1000000000000000000000000", "2000000000000000000000000"),
+        pool(2, token_address, "1000000000000000000000000", "1000000000000000000000000"),
+    ];
+    let result = PairwiseEngine::discover("cancelled-e2e", &pools, &[pools[0].pool], &cancellation);
+    let candidate_count = result.as_ref().map_or(0, Vec::len);
+
     assert!(result.is_err());
+    assert_eq!(candidate_count, 0);
     assert_eq!(token.state(), TaskState::DroppedAcked);
 }
 

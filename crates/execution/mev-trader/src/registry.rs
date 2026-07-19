@@ -705,6 +705,20 @@ impl AuditedWriteCodec {
     }
 }
 
+/// Deterministic audit data used by crate-unit processing fixtures.
+#[cfg(test)]
+pub(crate) mod test_utils {
+    use alloy_primitives::{Address, B256};
+
+    use super::AuditedWriteKey;
+
+    const NONCE_EVIDENCE_DIGEST: B256 = B256::new([0x5a; 32]);
+
+    /// Returns the sole deterministic sender-nonce audit fixture.
+    pub(crate) fn audited_sender_nonce(address: Address) -> [AuditedWriteKey; 1] {
+        [AuditedWriteKey::AccountNonce { address, evidence_digest: NONCE_EVIDENCE_DIGEST }]
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
