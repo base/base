@@ -1,36 +1,36 @@
-//! Offline release latency accounting gate.
-use std::{hint::black_box, time::Instant};
+//! Independent public staged-accounting integration gate.
 
-use base_mev_trader::{LATENCY_TIMED_RUNS, LATENCY_WARMUP_RUNS, LatencyRecorder};
-
-fn deterministic_fixture_work(iteration: usize) -> u64 {
-    (0..256u64)
-        .fold(iteration as u64, |value, lane| black_box(value.wrapping_mul(17).wrapping_add(lane)))
-}
+use base_mev_trader::{StageLatencyRecorder, StageLatencySample};
 
 #[test]
-#[ignore = "run as the offline release latency gate"]
-fn release_fixture_uses_ten_warmups_one_hundred_samples_and_drains() {
-    for iteration in 0..LATENCY_WARMUP_RUNS {
-        black_box(deterministic_fixture_work(iteration));
-    }
+fn public_staged_accounting_preserves_split_losses_and_drain() {
+    let mut recorder = StageLatencyRecorder::default();
+    recorder.record_pre_admission_drop().expect("pre-admission drop");
+    recorder.record_admission().expect("completed admission");
+    recorder
+        .record_completion(StageLatencySample {
+            discover_ns: 1,
+            canonicalize_ns: 2,
+            bind_ns: 3,
+            two_hop_ns: 4,
+            encode_ns: 5,
+            end_to_end_ns: 15,
+        })
+        .expect("atomic completion");
+    recorder.record_admission().expect("dropped admission");
+    recorder.record_post_admission_drop().expect("post-admission drop");
 
-    let mut recorder = LatencyRecorder::default();
-    for iteration in 0..LATENCY_TIMED_RUNS {
-        recorder.record_admission().expect("admission");
-        let started = Instant::now();
-        black_box(deterministic_fixture_work(iteration));
-        let latency_ns = u64::try_from(started.elapsed().as_nanos()).expect("bounded latency");
-        recorder.record_completion(latency_ns).expect("completion");
-    }
-
-    let report = recorder.finish().expect("terminal report");
-    assert_eq!(report.admitted, LATENCY_TIMED_RUNS as u64);
-    assert_eq!(report.completed, report.admitted);
-    assert_eq!(report.dropped, 0);
+    let report = recorder.finish().expect("drained report");
+    assert_eq!(report.received, 3);
+    assert_eq!(report.pre_admission_dropped, 1);
+    assert_eq!(report.admitted, 2);
+    assert_eq!(report.completed, 1);
+    assert_eq!(report.post_admission_dropped, 1);
+    assert_eq!(report.dropped, 2);
     assert_eq!(report.truncated, 0);
     assert_eq!(report.in_flight, 0);
-    assert_eq!(report.completed_under50_over_admitted, 1.0);
-    assert_eq!(report.completed_under50_over_completed, 1.0);
-    assert!(report.is_full(), "exclusive p95 gate failed: {report:?}");
+    assert_eq!(report.end_to_end.sample_count, 1);
+    assert_eq!(report.completed_under50_over_admitted, Some(0.5));
+    assert_eq!(report.completed_under50_over_completed, Some(1.0));
+    assert!(!report.is_full());
 }

@@ -15,7 +15,7 @@ use alloy_rpc_types_engine::PayloadId;
 
 use crate::{
     CancellationProbe, CanonicalDigest, CanonicalEncoder, ExactProtocol, MAX_CANDIDATES, MAX_PAIRS,
-    MAX_PLANS_PER_FRAME, MAX_POOLS,
+    MAX_PLANS_PER_FRAME, MAX_POOLS, ProcessedFrame,
 };
 
 /// Canonical Base WETH address used by the pinned pairwise authority.
@@ -1628,10 +1628,11 @@ impl PairwiseEngine {
 
     /// Selects at most one positive-gross measurement DTO by frozen canonical rank.
     pub fn select_measurement(
-        context: MeasurementContext,
+        processed: &ProcessedFrame,
         candidates: &[PairwiseCandidate],
         cancellation: &CancellationProbe,
     ) -> Result<Option<BackrunPlan>, PairwiseError> {
+        let context = processed.measurement_context();
         if MAX_PLANS_PER_FRAME != 1 {
             return Err(PairwiseError::LimitExceeded);
         }
@@ -1893,13 +1894,40 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::{CancellationToken, GlobalLifecycle};
+    use crate::{CancellationToken, GlobalLifecycle, TaskState, frame};
 
     fn probe() -> CancellationProbe {
         CancellationProbe::new(
             Arc::new(CancellationToken::with_approved_deadline(Instant::now())),
             Arc::new(GlobalLifecycle::default()),
         )
+    }
+
+    fn candidate(directed_key: &str, first_pool: u8, gross_profit: i64) -> PairwiseCandidate {
+        let token = Address::with_last_byte(0xaa);
+        PairwiseCandidate {
+            fixture_id: directed_key.to_owned(),
+            directed_key: directed_key.to_owned(),
+            route: [
+                BackrunHop {
+                    pool: Address::with_last_byte(first_pool),
+                    protocol: ExactProtocol::UniswapV2,
+                    token_in: WETH,
+                    token_out: token,
+                },
+                BackrunHop {
+                    pool: Address::with_last_byte(first_pool + 1),
+                    protocol: ExactProtocol::UniswapV2,
+                    token_in: token,
+                    token_out: WETH,
+                },
+            ],
+            amount_in: U256::from(10),
+            amount_out: U256::from(
+                u64::try_from(10 + gross_profit).expect("nonnegative fixture output"),
+            ),
+            gross_profit: I512::try_from(gross_profit).expect("fixture gross"),
+        }
     }
 
     fn v2(pool: u8, token: Address, weth_reserve: u64) -> PreparedPoolState {
@@ -2069,43 +2097,100 @@ mod tests {
     }
 
     #[test]
-    fn measurement_digest_excludes_only_self_and_plan_count_is_one() {
-        let token = Address::with_last_byte(0xaa);
-        let candidate = PairwiseCandidate {
-            fixture_id: "winner".to_owned(),
-            directed_key: "winner".to_owned(),
-            route: [
-                BackrunHop {
-                    pool: Address::with_last_byte(1),
-                    protocol: ExactProtocol::UniswapV2,
-                    token_in: WETH,
-                    token_out: token,
-                },
-                BackrunHop {
-                    pool: Address::with_last_byte(2),
-                    protocol: ExactProtocol::UniswapV2,
-                    token_in: token,
-                    token_out: WETH,
-                },
-            ],
-            amount_in: U256::from(10),
-            amount_out: U256::from(12),
-            gross_profit: I512::try_from(2).expect("profit"),
-        };
-        let context = MeasurementContext {
-            parent_hash: B256::with_last_byte(1),
-            block_number: 10,
-            predecessor_index: 1,
-            payload_id: PayloadId::new([2; 8]),
-            victim: B256::with_last_byte(3),
-        };
-        let plan = PairwiseEngine::select_measurement(context, &[candidate], &probe())
-            .expect("selection")
-            .expect("plan");
+    fn measurement_selection_rejects_empty_and_nonpositive_candidates() {
+        let processed = frame::test_utils::processed_frame();
+        assert_eq!(PairwiseEngine::select_measurement(&processed, &[], &probe()), Ok(None));
+        assert_eq!(
+            PairwiseEngine::select_measurement(
+                &processed,
+                &[candidate("zero", 1, 0), candidate("negative", 3, -1)],
+                &probe(),
+            ),
+            Ok(None)
+        );
+    }
+
+    #[test]
+    fn measurement_selection_is_proof_bound_deterministic_and_max_one() {
+        let processed = frame::test_utils::processed_frame();
+        let context = *processed.measurement_context();
+        let later = candidate("z-route", 3, 2);
+        let earlier = candidate("a-route", 1, 2);
+
+        let plan = PairwiseEngine::select_measurement(
+            &processed,
+            &[later.clone(), earlier.clone()],
+            &probe(),
+        )
+        .expect("selection")
+        .expect("one plan");
+        let reversed =
+            PairwiseEngine::select_measurement(&processed, &[earlier.clone(), later], &probe())
+                .expect("selection")
+                .expect("one plan");
+
+        assert_eq!(plan.digest, reversed.digest);
+        assert_eq!(plan.parent_hash, context.parent_hash);
+        assert_eq!(plan.block_number, context.block_number);
+        assert_eq!(plan.predecessor_index, context.predecessor_index);
+        assert_eq!(plan.payload_id, context.payload_id);
+        assert_eq!(plan.victim, context.victim);
+        assert_eq!(plan.route, earlier.route);
+        assert_eq!(plan.amount_in, earlier.amount_in);
+        assert_eq!(plan.amount_out, earlier.amount_out);
+        assert_eq!(plan.gross_profit, U256::from(2));
+
+        let lower_profit = candidate("a-lower-profit", 1, 1);
+        let higher_profit = candidate("z-higher-profit", 3, 3);
+        let profit_ranked = PairwiseEngine::select_measurement(
+            &processed,
+            &[lower_profit, higher_profit.clone()],
+            &probe(),
+        )
+        .expect("profit-ranked selection")
+        .expect("one higher-profit plan");
+        assert_eq!(profit_ranked.route, higher_profit.route);
+        assert_eq!(profit_ranked.gross_profit, U256::from(3));
+    }
+
+    #[test]
+    fn measurement_digest_validates_and_excludes_only_its_self_field() {
+        let processed = frame::test_utils::processed_frame();
+        let plan =
+            PairwiseEngine::select_measurement(&processed, &[candidate("winner", 1, 2)], &probe())
+                .expect("selection")
+                .expect("plan");
+
         MeasurementEncoder::validate(&plan).expect("digest");
+        let encoded = MeasurementEncoder::encode(&plan).expect("canonical bytes");
         let expected = plan.digest;
-        let mut self_mutated = plan;
+        let mut self_mutated = plan.clone();
         self_mutated.digest = BackrunPlanDigest(B256::with_last_byte(99));
+        assert_eq!(MeasurementEncoder::encode(&self_mutated), Ok(encoded));
         assert_eq!(MeasurementEncoder::digest(&self_mutated), Ok(expected));
+
+        let mut bound_field_mutated = plan;
+        bound_field_mutated.victim = B256::with_last_byte(99);
+        assert_ne!(MeasurementEncoder::digest(&bound_field_mutated), Ok(expected));
+        assert!(MeasurementEncoder::validate(&bound_field_mutated).is_err());
+    }
+
+    #[test]
+    fn measurement_selection_drops_cancellation_after_proof() {
+        let processed = frame::test_utils::processed_frame();
+        let token = Arc::new(CancellationToken::with_approved_deadline(Instant::now()));
+        let cancellation =
+            CancellationProbe::new(Arc::clone(&token), Arc::new(GlobalLifecycle::default()));
+        assert!(token.request_cancel());
+
+        assert_eq!(
+            PairwiseEngine::select_measurement(
+                &processed,
+                &[candidate("winner", 1, 2)],
+                &cancellation,
+            ),
+            Err(PairwiseError::Cancelled)
+        );
+        assert_eq!(token.state(), TaskState::DroppedAcked);
     }
 }
