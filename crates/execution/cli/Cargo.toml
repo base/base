@@ -38,6 +38,7 @@ base-cli-utils.workspace = true
 base-node-core.workspace = true
 base-txpool-rpc.workspace = true
 base-flashblocks.workspace = true
+base-mev-trader.workspace = true
 base-node-runner.workspace = true
 base-common-chains.workspace = true
 base-execution-evm.workspace = true
@@ -64,6 +65,8 @@ tracing.workspace = true
 alloy-eips.workspace = true
 secp256k1.workspace = true
 tokio-stream.workspace = true
+alloy-consensus.workspace = true
+alloy-primitives.workspace = true
 
 # reth test-vectors
 proptest = { workspace = true, optional = true }
@@ -72,6 +75,7 @@ base-common-consensus = { workspace = true, features = ["reth"] }
 [dev-dependencies]
 rstest.workspace = true
 tempfile.workspace = true
+base-common-flashblocks.workspace = true
 
 [build-dependencies]
 base-execution-chainspec = { workspace = true, features = ["std"] }

@@ -526,6 +526,16 @@ impl PendingBlocks {
             .collect()
     }
 
+    /// Borrows only the flashblocks for the latest pending block.
+    ///
+    /// This traversal performs no cloning or allocation.
+    pub fn latest_block_flashblocks_iter(&self) -> impl Iterator<Item = &Flashblock> + '_ {
+        let latest_block = self.latest_block_number();
+        self.flashblocks
+            .iter()
+            .filter(move |flashblock| flashblock.metadata.block_number == latest_block)
+    }
+
     /// Returns the EVM state for a transaction.
     pub fn get_transaction_state(&self, hash: &B256) -> Option<EvmState> {
         self.transaction_state.get(hash).cloned()
@@ -1278,6 +1288,10 @@ mod tests {
         assert_eq!(pending_blocks.latest_block_base().block_number, 2);
         assert_eq!(pending_blocks.latest_block_transaction_count(), 1);
         assert_eq!(pending_blocks.latest_block_cumulative_gas_used(), 42_000);
+
+        let latest: Vec<_> = pending_blocks.latest_block_flashblocks_iter().collect();
+        assert_eq!(latest.len(), 1);
+        assert_eq!(latest[0].metadata.block_number, 2);
         assert_eq!(pending_blocks.latest_block_next_log_index(), 1);
     }
 
