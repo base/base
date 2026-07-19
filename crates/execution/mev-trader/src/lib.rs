@@ -21,5 +21,9 @@ pub use storage::{DeltaGuard, MaterializedState, MaterializedWrite, StateMateria
 mod latency;
 mod lifecycle;
 mod oracle;
+pub use oracle::{
+    ExactPrefixCoordinator, ExactPrefixOracle, FrozenPredecessor, IndependentOracle, OracleDigest,
+    OracleEvaluation, OracleObservation, OracleOutcome, PredecessorOracle,
+};
 mod pairwise;
 mod runtime;
