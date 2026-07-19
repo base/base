@@ -13,6 +13,10 @@ pub mod app;
 pub mod chainspec;
 /// Base CLI commands.
 pub mod commands;
+mod mev_trader;
+pub use mev_trader::{
+    BaseNodeTraderConfig, BaseNodeTraderExtension, BaseNodeTraderStart, MevTraderPhaseAInstaller,
+};
 mod node;
 pub use node::{ExecutionNodeArgs, ExecutionNodeLaunchConfig};
 /// Standard Base execution-node runner wiring.

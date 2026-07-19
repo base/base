@@ -4395,12 +4395,15 @@ dependencies = [
 name = "base-execution-cli"
 version = "1.1.1"
 dependencies = [
+ "alloy-consensus 2.0.5",
  "alloy-eips 2.0.5",
+ "alloy-primitives",
  "backon",
  "base-bundle-extension",
  "base-cli-utils",
  "base-common-chains",
  "base-common-consensus",
+ "base-common-flashblocks",
  "base-execution-chainspec",
  "base-execution-consensus",
  "base-execution-evm",
@@ -4409,6 +4412,7 @@ dependencies = [
  "base-flashblocks-node",
  "base-metering",
  "base-mev-emitter",
+ "base-mev-trader",
  "base-node-core",
  "base-node-runner",
  "base-proofs-extension",
@@ -5026,6 +5030,30 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-tungstenite 0.28.0",
+ "tracing",
+]
+
+[[package]]
+name = "base-mev-trader"
+version = "1.1.1"
+dependencies = [
+ "alloy-consensus 2.0.5",
+ "alloy-eips 2.0.5",
+ "alloy-primitives",
+ "alloy-rpc-types-engine",
+ "base-common-consensus",
+ "base-execution-chainspec",
+ "base-execution-evm",
+ "rayon",
+ "reth-evm",
+ "reth-provider",
+ "reth-revm",
+ "revm",
+ "revm-bytecode",
+ "revm-database",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
  "tracing",
 ]
 
