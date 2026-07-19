@@ -23,15 +23,19 @@ impl TimestampMsHeader for BaseHeaderResponse {
     }
 }
 
-fn timestamp_ms<B: BlockBody>(body: &B, block_number: u64, timestamp: u64) -> Option<u64>
-where
-    B::Transaction: BaseTransaction,
-{
-    let millis = BaseTimeUpdateTx::extract_from_transactions(body.transactions(), block_number)
-        .ok()?
-        .timestamp_millis_part();
-    Some(timestamp.wrapping_mul(1_000).wrapping_add(u64::from(millis)))
+trait BaseTimeBlockBody: BlockBody {
+    fn extract_timestamp_ms(&self, block_number: u64, timestamp: u64) -> Option<u64>
+    where
+        Self::Transaction: BaseTransaction,
+    {
+        let millis = BaseTimeUpdateTx::extract_from_transactions(self.transactions(), block_number)
+            .ok()?
+            .timestamp_millis_part();
+        Some(timestamp.wrapping_mul(1_000).wrapping_add(u64::from(millis)))
+    }
 }
+
+impl<B: BlockBody> BaseTimeBlockBody for B {}
 
 impl<N, Rpc> EthBlocks for BaseEthApi<N, Rpc>
 where
@@ -49,7 +53,7 @@ where
         Self: FullEthApiTypes,
     {
         let Some(block) = self.recovered_block(block_id).await? else { return Ok(None) };
-        let timestamp_ms = timestamp_ms(block.body(), block.number(), block.timestamp());
+        let timestamp_ms = block.body().extract_timestamp_ms(block.number(), block.timestamp());
         let mut header =
             self.converter().convert_header(block.clone_sealed_header(), block.rlp_length())?;
         header.set_timestamp_ms(timestamp_ms);
@@ -65,7 +69,7 @@ where
         Self: FullEthApiTypes,
     {
         let Some(block) = self.recovered_block(block_id).await? else { return Ok(None) };
-        let timestamp_ms = timestamp_ms(block.body(), block.number(), block.timestamp());
+        let timestamp_ms = block.body().extract_timestamp_ms(block.number(), block.timestamp());
         let mut block = block.clone_into_rpc_block(
             full.into(),
             |tx, tx_info| self.converter().fill(tx, tx_info),
@@ -109,30 +113,27 @@ mod tests {
         let body =
             body_with_transactions([TxDeposit::default().into(), base_time_transaction(7, 200)]);
 
-        assert_eq!(timestamp_ms(&body, 7, 42), Some(42_200));
+        assert_eq!(body.extract_timestamp_ms(7, 42), Some(42_200));
     }
 
     #[test]
     fn omits_timestamp_ms_without_valid_base_time_transaction_at_index_one() {
         assert_eq!(
-            timestamp_ms(&body_with_transactions([TxDeposit::default().into()]), 7, 42),
+            body_with_transactions([TxDeposit::default().into()]).extract_timestamp_ms(7, 42),
             None
         );
         assert_eq!(
-            timestamp_ms(
-                &body_with_transactions([
-                    TxDeposit::default().into(),
-                    TxDeposit::default().into(),
-                    base_time_transaction(7, 400),
-                ]),
-                7,
-                42,
-            ),
+            body_with_transactions([
+                TxDeposit::default().into(),
+                TxDeposit::default().into(),
+                base_time_transaction(7, 400),
+            ])
+            .extract_timestamp_ms(7, 42),
             None
         );
 
         let wrong_block =
             body_with_transactions([TxDeposit::default().into(), base_time_transaction(8, 400)]);
-        assert_eq!(timestamp_ms(&wrong_block, 7, 42), None);
+        assert_eq!(wrong_block.extract_timestamp_ms(7, 42), None);
     }
 }
