@@ -8,7 +8,7 @@ use std::{
 
 use serde_json::Value;
 
-const NORMAL_DEPENDENCIES: [&str; 17] = [
+const NORMAL_DEPENDENCIES: [&str; 22] = [
     "alloy-consensus",
     "alloy-eips",
     "alloy-primitives",
@@ -16,6 +16,7 @@ const NORMAL_DEPENDENCIES: [&str; 17] = [
     "base-common-consensus",
     "base-execution-chainspec",
     "base-execution-evm",
+    "futures",
     "rayon",
     "reth-evm",
     "reth-provider",
@@ -23,11 +24,16 @@ const NORMAL_DEPENDENCIES: [&str; 17] = [
     "revm",
     "revm-bytecode",
     "revm-database",
+    "serde",
+    "serde_json",
     "sha2",
     "thiserror",
+    "tokio",
+    "tokio-tungstenite",
     "tracing",
 ];
-const SOURCE_FILES: [&str; 10] = [
+const SOURCE_FILES: [&str; 11] = [
+    "blink_ingress.rs",
     "frame.rs",
     "latency.rs",
     "lib.rs",
@@ -39,7 +45,7 @@ const SOURCE_FILES: [&str; 10] = [
     "runtime.rs",
     "storage.rs",
 ];
-const FORBIDDEN_DEPENDENCY_PREFIXES: [&str; 18] = [
+const FORBIDDEN_DEPENDENCY_PREFIXES: [&str; 25] = [
     "alloy-json-rpc",
     "alloy-network",
     "alloy-provider",
@@ -51,13 +57,20 @@ const FORBIDDEN_DEPENDENCY_PREFIXES: [&str; 18] = [
     "base-execution-txpool",
     "base-flashblocks",
     "base-tx-forwarding",
+    "futures-util",
     "jsonrpsee",
+    "libc",
+    "native-tls",
+    "openssl",
     "reth-network",
     "reth-rpc",
     "reth-transaction-pool",
+    "rustls",
     "secp256k1",
-    "tokio-tungstenite",
+    "tokio-native-tls",
+    "tokio-rustls",
     "tungstenite",
+    "url",
 ];
 const FORBIDDEN_IDENTIFIERS: [&str; 38] = [
     "AwsSigner",
@@ -127,6 +140,7 @@ fn dependency_features() -> BTreeMap<&'static str, (&'static [&'static str], boo
         ("base-common-consensus", (&["evm", "std"][..], false)),
         ("base-execution-chainspec", (&[][..], true)),
         ("base-execution-evm", (&[][..], true)),
+        ("futures", (&[][..], true)),
         ("rayon", (&[][..], true)),
         ("reth-evm", (&[][..], true)),
         ("reth-provider", (&[][..], true)),
@@ -134,8 +148,12 @@ fn dependency_features() -> BTreeMap<&'static str, (&'static [&'static str], boo
         ("revm", (&["std"][..], false)),
         ("revm-bytecode", (&["std"][..], false)),
         ("revm-database", (&["std"][..], false)),
+        ("serde", (&["derive", "std"][..], false)),
+        ("serde_json", (&["std"][..], false)),
         ("sha2", (&["std"][..], false)),
         ("thiserror", (&["std"][..], false)),
+        ("tokio", (&["net", "rt", "sync", "time"][..], true)),
+        ("tokio-tungstenite", (&["native-tls"][..], true)),
         ("tracing", (&["std"][..], false)),
     ])
 }
@@ -174,7 +192,7 @@ fn metadata_has_exact_target_and_dependency_shape() {
         .filter(|dependency| dependency["kind"] == "dev")
         .map(|dependency| dependency["name"].as_str().expect("dependency name"))
         .collect();
-    assert_eq!(development, BTreeSet::from(["serde_json"]));
+    assert!(development.is_empty());
     assert!(!dependencies.iter().any(|dependency| dependency["kind"] == "build"));
 
     let expected = dependency_features();
@@ -213,7 +231,12 @@ fn lockfile_contains_exact_resolved_pins() {
         ("sha2", "0.10.9", "registry+https://github.com/rust-lang/crates.io-index"),
         ("thiserror", "2.0.18", "registry+https://github.com/rust-lang/crates.io-index"),
         ("tracing", "0.1.44", "registry+https://github.com/rust-lang/crates.io-index"),
+        ("futures", "0.3.32", "registry+https://github.com/rust-lang/crates.io-index"),
+        ("serde", "1.0.228", "registry+https://github.com/rust-lang/crates.io-index"),
         ("serde_json", "1.0.150", "registry+https://github.com/rust-lang/crates.io-index"),
+        ("tokio", "1.52.3", "registry+https://github.com/rust-lang/crates.io-index"),
+        ("tokio-tungstenite", "0.28.0", "registry+https://github.com/rust-lang/crates.io-index"),
+        ("tungstenite", "0.28.0", "registry+https://github.com/rust-lang/crates.io-index"),
     ];
     for (name, version, source) in expected {
         assert!(
@@ -372,10 +395,59 @@ fn production_source_has_exact_files_and_no_forbidden_identifiers() {
 
     for file in SOURCE_FILES {
         let source = fs::read_to_string(source_root.join(file)).expect("source file");
+        let production = if file == "blink_ingress.rs" {
+            let marker = "\n#[cfg(test)]\nmod tests {";
+            assert_eq!(source.matches(marker).count(), 1, "sole final test module marker");
+            let (production, _) = source.split_once(marker).expect("Blink production prefix");
+            production
+        } else {
+            source.as_str()
+        };
         let identifiers =
-            identifiers(&source).unwrap_or_else(|error| panic!("malformed {file}: {error}"));
+            identifiers(production).unwrap_or_else(|error| panic!("malformed {file}: {error}"));
         for forbidden in FORBIDDEN_IDENTIFIERS {
             assert!(!identifiers.contains(forbidden), "forbidden identifier {forbidden} in {file}");
+        }
+
+        if file == "blink_ingress.rs" {
+            assert_eq!(
+                production.matches("wss://baseauction.blinklabs.xyz/ws/v1/").count(),
+                1
+            );
+            assert_eq!(production.matches("blink_partialPendingTransactions").count(), 1);
+            assert_eq!(
+                production
+                    .matches("socket.send(Message::Text(BLINK_SUBSCRIBE.into()))")
+                    .count(),
+                1
+            );
+            assert_eq!(production.matches(".send(").count(), 1, "one audited sink send");
+            assert_eq!(
+                production
+                    .matches(
+                        "connect_async_tls_with_config(request, Some(websocket_config), false, None)",
+                    )
+                    .count(),
+                1
+            );
+            assert_eq!(production.matches("String::with_capacity").count(), 1);
+            assert_eq!(production.matches("format!(").count(), 0);
+            for forbidden_constructor in [
+                ".send(Message::Binary",
+                ".send(Message::Ping",
+                ".send(Message::Pong",
+                ".send(Message::Close",
+            ] {
+                assert_eq!(production.matches(forbidden_constructor).count(), 0);
+            }
+            for forbidden_accessor in [
+                "pub fn socket",
+                "pub fn sink",
+                "pub fn credential",
+                "impl fmt::Display for BlinkCredential",
+            ] {
+                assert!(!production.contains(forbidden_accessor));
+            }
         }
     }
 }
@@ -401,7 +473,7 @@ fn scanner_ignores_non_code_and_rejects_malformed_source() {
 }
 
 #[test]
-fn runtime_wiring_is_idle_and_preserves_forwarding_semantics() {
+fn runtime_wiring_is_receive_only_and_preserves_forwarding_semantics() {
     let root = workspace_root();
     let adapter = fs::read_to_string(root.join("crates/execution/cli/src/mev_trader.rs"))
         .expect("CLI adapter");
@@ -417,19 +489,36 @@ fn runtime_wiring_is_idle_and_preserves_forwarding_semantics() {
             "forbidden identifier {forbidden} in CLI trader adapter"
         );
     }
-    for forbidden in
-        ["FlashblocksSubscriber", "Sender", "VictimFrame", "websocket", "credential", "transport"]
-    {
+    for forbidden in [
+        "WebSocketStream",
+        "Message",
+        "Sender",
+        "raw_tx",
+        "send_raw_transaction",
+    ] {
         assert!(
             !adapter_identifiers.contains(forbidden),
-            "live producer surface {forbidden} in CLI trader adapter"
+            "forbidden transport or egress surface {forbidden} in CLI trader adapter"
         );
     }
 
-    assert_eq!(adapter.matches("tokio::spawn").count(), 2);
+    assert_eq!(adapter.matches("tokio::spawn").count(), 4);
+    assert_eq!(adapter.matches("spawn_critical_task").count(), 0);
+    assert_eq!(adapter.matches("spawn_with_graceful_shutdown_signal").count(), 1);
     assert_eq!(adapter.matches("subscribe_to_flashblocks").count(), 1);
-    assert!(runtime.contains("A0_MEASUREMENT_IDLE_NO_LIVE_INGRESS"));
+    assert_eq!(adapter.matches("MEV_TRADER_BLINK_CREDENTIAL_FILE").count(), 1);
+    let phase_gate = adapter.find("if !Self::enabled(env)").expect("exact phase gate");
+    let flashblocks_gate =
+        adapter.find("flashblocks_config.as_ref()?").expect("flashblocks-present gate");
+    let credential_gate = adapter
+        .find("std::env::var_os(\"MEV_TRADER_BLINK_CREDENTIAL_FILE\")")
+        .expect("credential consult");
+    assert!(phase_gate < flashblocks_gate);
+    assert!(flashblocks_gate < credential_gate);
+    assert!(runtime.contains("LatestSlot<QueuedBlinkVictim>"));
     assert!(runtime.contains("FixturePoolRegistry::new(descriptors, digest)"));
+    assert_eq!(runtime.matches("run_consumer").count(), 1);
+    assert_eq!(runtime.matches("run_control").count(), 1);
 
     let bundle = "runner.install_ext::<BundleExtension>(());";
     let forwarding = "runner.install_ext::<TxForwardingExtension>((&args).into());";

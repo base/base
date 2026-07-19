@@ -254,7 +254,7 @@ fn fixture_pipeline() -> Vec<u8> {
         raw_tx,
         parent_hash: snapshot.parent_hash(),
         block_number: snapshot.latest_block_number(),
-        predecessor_index: 0,
+        victim_flashblock_index: 2,
         received_at: now,
     };
     FrameProcessor::decode(&snapshot, &victim, now).expect("coherent protected frame");
@@ -280,7 +280,7 @@ fn fixture_pipeline() -> Vec<u8> {
         MeasurementContext {
             parent_hash: victim.parent_hash,
             block_number: victim.block_number,
-            predecessor_index: victim.predecessor_index,
+            predecessor_index: snapshot.latest_flashblock_index(),
             payload_id,
             victim: victim.transaction_hash,
         },

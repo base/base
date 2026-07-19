@@ -1,8 +1,7 @@
 use std::{
     collections::BTreeSet,
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     fmt::Debug,
-    future,
     sync::{Arc, RwLock},
     time::Instant,
 };
@@ -12,9 +11,10 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
 use base_flashblocks::{FlashblocksAPI, FlashblocksConfig, FlashblocksState, PendingBlocks};
 use base_mev_trader::{
-    A0_IDLE_STATUS, BundleVisitor, MevTraderIdleRuntime, MevTraderRuntimeConfig, PayloadVisitor,
-    PendingSnapshotView, PortError, RuntimeInstallError, SnapshotHandle, SnapshotHandleFactory,
-    TraderSnapshotPort, TransactionVisitor, VisitControl, VisitSummary,
+    A1Status, BlinkFeedClient, BlinkIngressConfig, BundleVisitor, MevTraderRuntime,
+    MevTraderRuntimeConfig, PayloadVisitor, PendingSnapshotView, PortError, RuntimeInstallError,
+    SnapshotHandle, SnapshotHandleFactory, TraderSnapshotPort, TransactionVisitor, VisitControl,
+    VisitSummary,
 };
 use base_node_runner::{BaseNodeExtension, BaseNodeRunner, FromExtensionConfig, NodeHooks};
 use reth_provider::{HeaderProvider, StateProviderBox, StateProviderFactory};
@@ -203,10 +203,11 @@ where
     }
 }
 
-/// Exact-1 Phase A extension configuration containing only shared flashblock state.
+/// Exact-1 Phase A extension configuration with post-gate receive credential input.
 #[derive(Debug, Clone)]
 pub struct BaseNodeTraderConfig {
     flashblocks: Arc<FlashblocksState>,
+    credential_file: Option<OsString>,
 }
 
 impl BaseNodeTraderConfig {
@@ -215,7 +216,7 @@ impl BaseNodeTraderConfig {
         env == Some(OsStr::new("1"))
     }
 
-    /// Clones flashblock state only for exact-1 with a present configuration.
+    /// Applies exact-1 and flashblocks-present gates before consulting the credential environment.
     pub fn from_inputs(
         flashblocks_config: &Option<FlashblocksConfig>,
         env: Option<&OsStr>,
@@ -223,23 +224,43 @@ impl BaseNodeTraderConfig {
         if !Self::enabled(env) {
             return None;
         }
-        flashblocks_config.as_ref().map(|config| Self { flashblocks: Arc::clone(&config.state) })
+        let config = flashblocks_config.as_ref()?;
+        let credential_file = std::env::var_os("MEV_TRADER_BLINK_CREDENTIAL_FILE");
+        Some(Self {
+            flashblocks: Arc::clone(&config.state),
+            credential_file,
+        })
     }
 
-    /// Creates the sole broadcast subscription and empty idle runtime at node start.
+    /// Creates the sole snapshot subscription and receive-only A1 runtime.
     pub fn start_idle(self) -> Result<BaseNodeTraderStart, RuntimeInstallError> {
         let receiver = self.flashblocks.subscribe_to_flashblocks();
-        let runtime = MevTraderIdleRuntime::start(MevTraderRuntimeConfig::empty()?)?;
-        Ok(BaseNodeTraderStart { flashblocks: self.flashblocks, receiver, runtime })
+        let runtime = Arc::new(MevTraderRuntime::start(MevTraderRuntimeConfig::empty()?)?);
+        let client = self.credential_file.and_then(|credential_file| {
+            BlinkFeedClient::new(
+                BlinkIngressConfig::production(credential_file),
+                Arc::clone(&runtime),
+            )
+        });
+        if client.is_none() {
+            runtime.set_a1_status(A1Status::DisabledNoConnect);
+        }
+        Ok(BaseNodeTraderStart {
+            flashblocks: self.flashblocks,
+            receiver,
+            runtime,
+            client,
+        })
     }
 }
 
-/// Provider-independent node-start resources for the intentionally idle runtime.
+/// Provider-independent node-start resources for the receive-only runtime.
 #[derive(Debug)]
 pub struct BaseNodeTraderStart {
     flashblocks: Arc<FlashblocksState>,
     receiver: tokio::sync::broadcast::Receiver<Arc<PendingBlocks>>,
-    runtime: MevTraderIdleRuntime,
+    runtime: Arc<MevTraderRuntime>,
+    client: Option<BlinkFeedClient>,
 }
 
 impl BaseNodeTraderStart {
@@ -248,8 +269,8 @@ impl BaseNodeTraderStart {
         1
     }
 
-    /// Returns the exact one sole idle worker.
-    pub const fn worker_count(&self) -> usize {
+    /// Returns the exact one sole consumer.
+    pub fn worker_count(&self) -> usize {
         if self.runtime.worker_is_claimed() { 1 } else { 0 }
     }
 
@@ -260,22 +281,21 @@ impl BaseNodeTraderStart {
 
     /// Returns the exact one separate watchdog/control domain.
     pub const fn watchdog_count(&self) -> usize {
-        let _ = self.runtime.watchdog();
         1
     }
 
     /// Returns true only while the production registry remains empty.
-    pub const fn registry_is_empty(&self) -> bool {
+    pub fn registry_is_empty(&self) -> bool {
         self.runtime.registry_is_empty()
     }
 
-    /// Returns false because A0 installs no live victim producer.
+    /// Returns whether a valid receive-only ingress client was constructed.
     pub const fn has_live_victim_producer(&self) -> bool {
-        self.runtime.has_live_victim_producer()
+        self.client.is_some()
     }
 }
 
-/// CLI-owned node extension that starts only provider-backed snapshot observation and idle analysis.
+/// CLI-owned node extension for snapshot observation and receive-only A1 ownership.
 #[derive(Debug)]
 pub struct BaseNodeTraderExtension {
     config: BaseNodeTraderConfig,
@@ -299,23 +319,56 @@ impl FromExtensionConfig for BaseNodeTraderExtension {
 impl BaseNodeExtension for BaseNodeTraderExtension {
     fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
         hooks.add_node_started_hook(move |node| {
-            let BaseNodeTraderStart { flashblocks, mut receiver, runtime } =
-                self.config.start_idle()?;
+            let BaseNodeTraderStart {
+                flashblocks,
+                mut receiver,
+                runtime,
+                client,
+            } = self.config.start_idle()?;
             let port = Arc::new(CliTraderSnapshotPort::new(flashblocks, node.provider().clone()));
-            tokio::spawn(async move {
-                while let Ok(pending) = receiver.recv().await {
-                    port.record_pending_snapshot(pending, Instant::now());
-                }
-            });
-            tokio::spawn(async move {
-                let _runtime = runtime;
-                future::pending::<()>().await;
+            let consumer_port: Arc<dyn TraderSnapshotPort> = port.clone();
+            let chain_spec = node.chain_spec();
+            let executor = node.task_executor;
+            let startup_status = runtime.a1_status();
+            executor.spawn_with_graceful_shutdown_signal(move |signal| {
+                Box::pin(async move {
+                    let snapshot_runtime = Arc::clone(&runtime);
+                    let snapshot_handle = tokio::spawn(async move {
+                        loop {
+                            tokio::select! {
+                                () = snapshot_runtime.shutdown().wait_cancelled() => return,
+                                pending = receiver.recv() => match pending {
+                                    Ok(pending) => port.record_pending_snapshot(pending, Instant::now()),
+                                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                                }
+                            }
+                        }
+                    });
+                    let consumer_runtime = Arc::clone(&runtime);
+                    let consumer_handle = tokio::spawn(async move {
+                        consumer_runtime.run_consumer(consumer_port, chain_spec).await;
+                    });
+                    let control_runtime = Arc::clone(&runtime);
+                    let control_handle =
+                        tokio::spawn(async move { control_runtime.run_control().await });
+                    let ingress_handle = client.map(|client| tokio::spawn(client.run()));
+
+                    let _guard = signal.await;
+                    runtime.close();
+                    let _ = snapshot_handle.await;
+                    let _ = consumer_handle.await;
+                    let _ = control_handle.await;
+                    if let Some(handle) = ingress_handle {
+                        let _ = handle.await;
+                    }
+                })
             });
             info!(
-                status = A0_IDLE_STATUS,
+                status = ?startup_status,
                 registry_empty = true,
-                live_victim_producer = false,
-                "MEV trader Phase A measurement runtime is intentionally idle"
+                receive_only = true,
+                "MEV trader Phase A receive-only runtime started"
             );
             Ok(())
         })
