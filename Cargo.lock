@@ -5044,6 +5044,7 @@ dependencies = [
  "base-common-consensus",
  "base-execution-chainspec",
  "base-execution-evm",
+ "futures",
  "rayon",
  "reth-evm",
  "reth-provider",
@@ -5051,9 +5052,12 @@ dependencies = [
  "revm",
  "revm-bytecode",
  "revm-database",
+ "serde",
  "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.18",
+ "tokio",
+ "tokio-tungstenite 0.28.0",
  "tracing",
 ]
 

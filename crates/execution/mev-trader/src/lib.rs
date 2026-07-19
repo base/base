@@ -1,5 +1,10 @@
 #![doc = include_str!("../README.md")]
 
+mod blink_ingress;
+pub use blink_ingress::{
+    A1Counters, A1Outcome, A1Status, BlinkCredential, BlinkFeedClient, BlinkIngressConfig,
+    BlinkVictim, QueuedBlinkVictim, RuntimeShutdown,
+};
 mod port;
 pub use port::{
     BundleVisitor, PayloadVisitor, PendingSnapshotView, PortError, SnapshotCaptureCoordinator,
@@ -60,6 +65,4 @@ pub use pairwise::{
     SwapStep, TICK_MULTIPLIERS, V3QuoteResult, WETH,
 };
 mod runtime;
-pub use runtime::{
-    A0_IDLE_STATUS, MevTraderIdleRuntime, MevTraderRuntimeConfig, RuntimeInstallError,
-};
+pub use runtime::{MevTraderRuntime, MevTraderRuntimeConfig, RuntimeInstallError};
