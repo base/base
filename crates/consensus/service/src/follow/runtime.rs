@@ -194,9 +194,8 @@ where
         };
         let local_finalized = local.block_info(BlockNumberOrTag::Finalized).await?;
 
-        // One coherent read per label: the number and hash come from the same response, so a
-        // load-balanced multi-replica source can no longer supply a safe height from one backend
-        // and a by-number hash from another (mirrors op-node `L2BlockRefByLabel`).
+        // Coherent label read: number and hash from one response (mirrors op-node
+        // `L2BlockRefByLabel`).
         let source_safe = source.get_block_info(BlockNumberOrTag::Safe).await?;
         let safe = match Self::evaluate_label(
             &local,
@@ -212,8 +211,7 @@ where
             }
             LabelOutcome::Skip => None,
             LabelOutcome::Diverged { number, local: local_hash, remote } => {
-                // Rather than wedge forever, reset to the common ancestor and replay the source
-                // branch forward.
+                // Reset to the common ancestor and replay the source branch forward.
                 warn!(
                     target: "follow",
                     number,
@@ -237,9 +235,8 @@ where
                 if generation.is_cancelled() {
                     return Ok(SafetyOutcome::Updated);
                 }
-                // Cancel only after a confirmed reset. Cancelling earlier lets fetch/insert finish
-                // first and causes the outer select to shut down follow mode before recovery can
-                // return its restart point.
+                // Cancel fetch/insert after the reset so this generation can return the restart
+                // point.
                 generation.cancel();
                 return Ok(SafetyOutcome::Reorged { plan });
             }
@@ -356,28 +353,72 @@ where
                 generation.clone(),
                 blocks_to_insert_tx,
             );
-            let fetch_loop = prefetcher.run(head_number, replay);
-            let insert_loop = Self::run_ordered_insert_loop(
-                Arc::clone(&self.engine),
-                generation.clone(),
-                blocks_to_insert_rx,
-                next_insert,
-                &mut self.proof_gate,
-                self.insert_delay,
-            );
-            let safety_loop = Self::run_update_safe_finalized_heads_loop(
+            // Pin the safety future so an insert stall can await the same in-flight reconciliation
+            // after catch-up futures are dropped.
+            let mut safety_loop = Box::pin(Self::run_update_safe_finalized_heads_loop(
                 Arc::clone(&self.local),
                 Arc::clone(&self.source),
                 Arc::clone(&self.engine),
                 generation.clone(),
                 self.cancellation.clone(),
-            );
+            ));
 
-            let outcome = tokio::select! {
-                result = fetch_loop => result.map(|()| SafetyOutcome::Updated),
-                result = insert_loop => result.map(|()| SafetyOutcome::Updated),
-                result = safety_loop => result,
-            }?;
+            let selected = {
+                let fetch_loop = prefetcher.run(head_number, replay);
+                let insert_loop = Self::run_ordered_insert_loop(
+                    Arc::clone(&self.engine),
+                    generation.clone(),
+                    blocks_to_insert_rx,
+                    next_insert,
+                    &mut self.proof_gate,
+                    self.insert_delay,
+                );
+                tokio::pin!(fetch_loop);
+                tokio::pin!(insert_loop);
+
+                tokio::select! {
+                    result = &mut fetch_loop => GenerationSelect::Finished(
+                        result.map(|()| SafetyOutcome::Updated),
+                    ),
+                    result = &mut insert_loop => match result {
+                        Ok(()) => GenerationSelect::Finished(Ok(SafetyOutcome::Updated)),
+                        Err(FollowError::PayloadNotApplied {
+                            expected_number,
+                            expected_hash,
+                            actual_number,
+                            actual_hash,
+                        }) => GenerationSelect::InsertionStalled {
+                            expected_number,
+                            expected_hash,
+                            actual_number,
+                            actual_hash,
+                        },
+                        Err(error) => GenerationSelect::Finished(Err(error)),
+                    },
+                    result = &mut safety_loop => GenerationSelect::Finished(result),
+                }
+            };
+
+            let outcome = match selected {
+                GenerationSelect::Finished(result) => result?,
+                GenerationSelect::InsertionStalled {
+                    expected_number,
+                    expected_hash,
+                    actual_number,
+                    actual_hash,
+                } => {
+                    // Pause catch-up and finish reconciliation on the in-flight safety loop.
+                    warn!(
+                        target: "follow",
+                        expected_number,
+                        expected_hash = %expected_hash,
+                        actual_number,
+                        actual_hash = %actual_hash,
+                        "Source payload was not applied; pausing insertion until safety reconciliation completes",
+                    );
+                    safety_loop.await?
+                }
+            };
 
             match outcome {
                 SafetyOutcome::Reorged { plan } => {
@@ -397,6 +438,23 @@ where
             }
         }
     }
+}
+
+/// Result of selecting among fetch, insert, and safety work for one follow generation.
+enum GenerationSelect {
+    /// Fetch, insert, or safety finished with a definitive generation outcome.
+    Finished(Result<SafetyOutcome, FollowError>),
+    /// Insert could not apply a source payload; await the in-flight safety loop for reconciliation.
+    InsertionStalled {
+        /// Source payload block number that was not applied.
+        expected_number: u64,
+        /// Source payload block hash that was not applied.
+        expected_hash: B256,
+        /// Engine head block number after the rejected insert.
+        actual_number: u64,
+        /// Engine head block hash after the rejected insert.
+        actual_hash: B256,
+    },
 }
 
 #[cfg(test)]
@@ -437,6 +495,8 @@ mod tests {
         reset: Mutex<Vec<u64>>,
         delay: Duration,
         advance: bool,
+        /// When set, inserts report a non-advancing head until [`FollowEngine::reset_to_ancestor`].
+        stall_until_reset: bool,
     }
 
     impl RecordingEngine {
@@ -447,11 +507,16 @@ mod tests {
                 reset: Mutex::new(Vec::new()),
                 delay,
                 advance: true,
+                stall_until_reset: false,
             }
         }
 
         fn non_advancing(delay: Duration) -> Self {
             Self { advance: false, ..Self::new(delay) }
+        }
+
+        fn stall_inserts_until_reset(delay: Duration) -> Self {
+            Self { stall_until_reset: true, ..Self::new(delay) }
         }
     }
 
@@ -517,9 +582,17 @@ mod tests {
         ) -> Result<L2BlockInfo, FollowError> {
             time::sleep(self.delay).await;
             let number = envelope.execution_payload.block_number();
+            let hash = envelope.execution_payload.block_hash();
             self.inserted.lock().await.push(number);
-            let reported_number = if self.advance { number } else { number.saturating_sub(1) };
-            Ok(block_info(reported_number))
+            let advance =
+                self.advance && (!self.stall_until_reset || !self.reset.lock().await.is_empty());
+            if advance {
+                return Ok(L2BlockInfo {
+                    block_info: BlockInfo { number, hash, ..Default::default() },
+                    ..Default::default()
+                });
+            }
+            Ok(block_info(number.saturating_sub(1)))
         }
 
         async fn update_safe_finalized_blocks(
@@ -694,6 +767,158 @@ mod tests {
             FollowError::PayloadNotApplied { expected_number: 1, actual_number: 0, .. }
         ));
         assert_eq!(*engine.inserted.lock().await, vec![1]);
+    }
+
+    /// Source whose safe label is delayed and disagrees with the local tip at that height.
+    #[derive(Debug)]
+    struct DivergentRestartSource {
+        safe_delay: Duration,
+    }
+
+    #[async_trait]
+    impl RemoteClient for DivergentRestartSource {
+        async fn get_block_number(
+            &self,
+            tag: BlockNumberOrTag,
+        ) -> Result<u64, crate::RemoteL2ClientError> {
+            match tag {
+                BlockNumberOrTag::Latest => Ok(2),
+                BlockNumberOrTag::Number(number) => Ok(number),
+                BlockNumberOrTag::Safe => Ok(1),
+                _ => Ok(0),
+            }
+        }
+
+        async fn get_block_info(
+            &self,
+            tag: BlockNumberOrTag,
+        ) -> Result<BlockInfo, crate::RemoteL2ClientError> {
+            match tag {
+                BlockNumberOrTag::Safe => {
+                    time::sleep(self.safe_delay).await;
+                    Ok(BlockInfo {
+                        number: 1,
+                        hash: B256::from([99; 32]),
+                        parent_hash: B256::from([0; 32]),
+                        ..Default::default()
+                    })
+                }
+                BlockNumberOrTag::Latest => Ok(BlockInfo {
+                    number: 2,
+                    hash: B256::from([2; 32]),
+                    parent_hash: B256::from([99; 32]),
+                    ..Default::default()
+                }),
+                BlockNumberOrTag::Number(number) => Ok(source_block_info(number)),
+                _ => Ok(source_block_info(0)),
+            }
+        }
+
+        async fn get_block_info_by_hash(
+            &self,
+            hash: B256,
+        ) -> Result<BlockInfo, crate::RemoteL2ClientError> {
+            if hash == B256::from([99; 32]) {
+                return Ok(BlockInfo {
+                    number: 1,
+                    hash,
+                    parent_hash: B256::from([0; 32]),
+                    ..Default::default()
+                });
+            }
+            if hash == B256::from([2; 32]) {
+                return Ok(BlockInfo {
+                    number: 2,
+                    hash,
+                    parent_hash: B256::from([99; 32]),
+                    ..Default::default()
+                });
+            }
+            Ok(source_block_info(hash[31] as u64))
+        }
+
+        async fn get_payload_by_number(
+            &self,
+            number: u64,
+        ) -> Result<BaseExecutionPayloadEnvelope, crate::RemoteL2ClientError> {
+            Ok(payload(number))
+        }
+
+        async fn get_payload_by_hash(
+            &self,
+            hash: B256,
+        ) -> Result<BaseExecutionPayloadEnvelope, crate::RemoteL2ClientError> {
+            let mut envelope = if hash == B256::from([99; 32]) {
+                payload(1)
+            } else if hash == B256::from([2; 32]) {
+                payload(2)
+            } else {
+                payload(hash[31] as u64)
+            };
+            if let BaseExecutionPayload::V1(payload) = &mut envelope.execution_payload {
+                payload.block_hash = hash;
+                payload.parent_hash = if hash == B256::from([2; 32]) {
+                    B256::from([99; 32])
+                } else if hash == B256::from([99; 32]) {
+                    B256::from([0; 32])
+                } else {
+                    B256::from([hash[31].saturating_sub(1); 32])
+                };
+            }
+            Ok(envelope)
+        }
+    }
+
+    #[tokio::test]
+    async fn payload_not_applied_awaits_safety_recovery() {
+        let mut local = MockFollowLocalClient::new();
+        local.expect_block_info().returning(|tag| {
+            Ok(Some(match tag {
+                BlockNumberOrTag::Latest => block_info(1),
+                BlockNumberOrTag::Number(number) => block_info(number),
+                _ => block_info(0),
+            }))
+        });
+        local.expect_proofs_latest().returning(|| Ok(Some(100)));
+
+        let engine = Arc::new(RecordingEngine::stall_inserts_until_reset(Duration::ZERO));
+        let cancellation = CancellationToken::new();
+        let engine_for_runtime: Arc<dyn FollowEngine> = Arc::<RecordingEngine>::clone(&engine);
+        let runtime = FollowRuntime::new(
+            Arc::new(local),
+            Arc::new(DivergentRestartSource { safe_delay: Duration::from_millis(50) }),
+            engine_for_runtime,
+            cancellation.clone(),
+            block_info(1),
+            NoopProofGate,
+            Duration::ZERO,
+        );
+        let handle = tokio::spawn(async move { runtime.start().await });
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if !engine.reset.lock().await.is_empty()
+                && engine.inserted.lock().await.iter().any(|number| *number >= 2)
+            {
+                break;
+            }
+            time::sleep(Duration::from_millis(10)).await;
+        }
+
+        assert_eq!(*engine.reset.lock().await, vec![0]);
+        assert!(
+            engine.inserted.lock().await.contains(&1),
+            "recovery must replay the source branch after reset: {:?}",
+            engine.inserted.lock().await
+        );
+        assert!(
+            engine.inserted.lock().await.iter().any(|number| *number >= 2),
+            "follow must resume catch-up after recovery: {:?}",
+            engine.inserted.lock().await
+        );
+
+        cancellation.cancel();
+        handle.await.expect("join").expect("follow recovered after PayloadNotApplied");
     }
 
     #[tokio::test]
@@ -956,10 +1181,9 @@ mod tests {
 
     #[tokio::test]
     async fn safe_divergence_recovers_to_ancestor() {
-        // A coherent read of the safe label (number + hash together) disagrees with the local block
-        // at that height (number 10). Rather than wedge, recovery finds the common ancestor and
-        // resets to it. The source latest read is on the same branch as source safe, so the
-        // recovery plan contains block 10 for hash-pinned replay.
+        // Safe label (number + hash) disagrees with the local block at height 10. Recovery resets
+        // to the common ancestor. Source latest is on the same branch as source safe, so the plan
+        // includes block 10 for hash-pinned replay.
         let local = Arc::new(local_client(10, 8, 7, 100));
         let mut source = MockRemoteClient::new();
         source.expect_get_block_info().with(eq(BlockNumberOrTag::Safe)).returning(|_| {
@@ -1133,9 +1357,8 @@ mod tests {
 
     #[tokio::test]
     async fn finalized_label_rejects_source_hash_mismatch() {
-        // The safe label is consistent (so evaluation reaches the finalized read), but the in-range
-        // finalized block's hash disagrees with the local block: surface the existing mismatch
-        // error and never reset.
+        // Safe label is consistent so evaluation reaches finalized; the in-range finalized hash
+        // disagrees with local, which returns FinalizedDivergence without resetting.
         let local = Arc::new(local_client(10, 9, 7, 100));
         let mut source = MockRemoteClient::new();
         source
@@ -1201,9 +1424,8 @@ mod tests {
 
     #[tokio::test]
     async fn recover_rejects_finalized_hash_mismatch() {
-        // If the source disagrees with the local node even at the finalized height, finality has
-        // diverged. Recovery cannot safely reset below finalized, so surface the existing mismatch
-        // error and never reset.
+        // Source disagrees with local at the finalized height. Recovery must not reset below
+        // finalized, so this returns FinalizedDivergence.
         let mut local = MockFollowLocalClient::new();
         local.expect_block_info().returning(|tag| {
             Ok(Some(match tag {

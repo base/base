@@ -176,6 +176,9 @@ pub enum FollowError {
     },
 
     /// The execution engine did not advance to the source payload that was inserted.
+    ///
+    /// The follow runtime treats this as an insertion stall and awaits safety reconciliation so a
+    /// recoverable divergence can reset and replay.
     #[error(
         "engine did not advance to source payload {expected_hash} at block {expected_number}; \
          current head is {actual_hash} at block {actual_number}"

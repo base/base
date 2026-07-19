@@ -411,9 +411,8 @@ mod tests {
             l2_block(0, h0),
         ));
 
-        // Pointing the EL at the canonical *tip* (a block it does not have) returns Syncing: the
-        // head does not move and nothing is recovered. This is exactly why recovery must target the
-        // common ancestor, not the source tip.
+        // A forkchoice update to a tip the EL does not have returns Syncing and leaves the head
+        // unchanged.
         let tip = l2_block(5, B256::with_last_byte(205));
         let error = engine
             .reset_to_ancestor(tip, CancellationToken::new())

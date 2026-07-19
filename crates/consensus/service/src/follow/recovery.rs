@@ -1,8 +1,7 @@
 //! Follow-mode recovery: when the local chain diverges from the source, reset the local engine to
 //! the highest block both nodes agree on (the common ancestor) and let the normal insert loop
 //! replay source payloads forward from there. The reset targets a block the local EL already has,
-//! so its forkchoice update is `Valid` (no EL sync) — unlike pointing the EL at the canonical tip,
-//! which it lacks and would answer `Syncing`.
+//! so the forkchoice update is `Valid` and the head reorgs without EL sync.
 
 use std::{
     future::Future,
@@ -261,12 +260,7 @@ where
     Ok(reverse_path)
 }
 
-/// Walks the captured source-safe branch backward by parent hash and returns its highest block that
-/// matches the local chain. The finalized head must be common; recovery cannot reorg below it.
-///
-/// Parent-hash traversal pins every lookup to the branch containing `source_safe`. Independent
-/// by-number lookups are unsafe here because a load-balanced source can route them to replicas on
-/// different branches and violate the monotonicity required by a binary search.
+/// Test helper for [`find_common_ancestor_with_budget`] with a fresh recovery budget.
 #[cfg(test)]
 pub(super) async fn find_common_ancestor<Local, Remote>(
     local: &Local,
@@ -282,6 +276,8 @@ where
     find_common_ancestor_with_budget(local, source, finalized, source_safe, &mut budget).await
 }
 
+/// Walks the source-safe branch backward by parent hash and returns its highest block that matches
+/// the local chain. The finalized head must be common; recovery cannot reorg below it.
 async fn find_common_ancestor_with_budget<Local, Remote>(
     local: &Local,
     source: &Remote,
