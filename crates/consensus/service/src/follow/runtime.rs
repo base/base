@@ -789,7 +789,7 @@ mod tests {
 
         let error =
             FollowRuntime::<MockFollowLocalClient, MockRemoteClient, NoopProofGate>::update_safe_and_finalized(
-                local,
+                Arc::new(local),
                 Arc::new(source),
                 engine_for_update,
             )
