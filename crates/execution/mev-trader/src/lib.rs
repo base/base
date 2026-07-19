@@ -28,6 +28,10 @@ pub use storage::{
 };
 
 mod latency;
+pub use latency::{
+    LATENCY_THRESHOLD_NS, LATENCY_TIMED_RUNS, LATENCY_WARMUP_RUNS, LatencyAccounting, LatencyError,
+    LatencyRecorder, LatencyReport,
+};
 
 mod lifecycle;
 pub use lifecycle::{
@@ -44,4 +48,15 @@ pub use oracle::{
     OracleEvaluation, OracleObservation, OracleOutcome, PredecessorOracle,
 };
 mod pairwise;
+pub use pairwise::{
+    BackrunHop, BackrunPlan, BackrunPlanDigest, CachedEvaluator, D44CandidateEncoder,
+    D44ContractError, D44ErrorEncoder, FEE_DENOMINATOR, ISSUE76_ENGINE_QUOTE,
+    ISSUE76_OBSERVED_QUOTE, ISSUE76_PROVENANCE_BLOB, ISSUE76_QUOTE_BLOB, ISSUE76_QUOTE_GAP, K16,
+    MAX_ACTIVATED_TOKENS, MAX_SQRT_RATIO, MAX_SQRT_RATIO_DECIMAL, MIN_SQRT_RATIO,
+    MeasurementContext, MeasurementEncoder, OptimizedSize, OptimizerSample, PAIRWISE_MAX_TICK,
+    PAIRWISE_MIN_TICK, PAIRWISE_SOURCE_COMMIT, PAIRWISE_SOURCE_TREE, PairwiseCandidate,
+    PairwiseEngine, PairwiseError, PairwiseMath, PairwiseOptimizer, PairwiseV3Tick,
+    PreparedPoolQuote, PreparedPoolState, PreparedV3QuoteParams, RankedMarket, SizeBounds,
+    SwapStep, TICK_MULTIPLIERS, V3QuoteResult, WETH,
+};
 mod runtime;
