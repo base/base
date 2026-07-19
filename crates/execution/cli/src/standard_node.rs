@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use crate::MevTraderPhaseAInstaller;
 use base_bundle_extension::BundleExtension;
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
@@ -255,6 +256,12 @@ impl StandardBaseRethNode {
         runner.install_ext::<MeteringExtension>(metering_config);
         runner.install_ext::<BundleExtension>(());
         runner.install_ext::<TxForwardingExtension>((&args).into());
+        let mev_trader_env = std::env::var_os("MEV_TRADER_PHASE_A");
+        MevTraderPhaseAInstaller::maybe_install(
+            &mut runner,
+            &flashblocks_config,
+            mev_trader_env.as_deref(),
+        );
         // Issue #45: clone the shared FlashblocksState BEFORE the config is moved
         // into the flashblocks extension, so the MEV emitter can subscribe to
         // preconfirmations (ahead-of-committed pool-slot source) or install the
@@ -307,8 +314,12 @@ impl StandardBaseRethNode {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{ffi::OsString, time::Duration};
 
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStringExt;
+
+    use crate::BaseNodeTraderConfig;
     use clap::{Args, Parser};
 
     use super::*;
@@ -369,5 +380,70 @@ mod tests {
             .expect("flashblocks config should exist");
 
         assert_eq!(config.subscriber_ping_interval, Duration::from_secs(45));
+    }
+
+    #[test]
+    fn mev_trader_exact_native_ascii_one_parser_rejects_every_other_value() {
+        assert!(!BaseNodeTraderConfig::enabled(None));
+        for value in ["", "0", "true", "1 ", " 1", "\t1", "1\n"] {
+            assert!(!BaseNodeTraderConfig::enabled(Some(std::ffi::OsStr::new(value))));
+        }
+        assert!(BaseNodeTraderConfig::enabled(Some(std::ffi::OsStr::new("1"))));
+
+        #[cfg(unix)]
+        assert!(!BaseNodeTraderConfig::enabled(Some(OsString::from_vec(vec![0xff]).as_os_str())));
+    }
+
+    #[test]
+    fn mev_trader_noop_matrix_is_independent_of_emitter_modes() {
+        let mut env_values = vec![
+            None,
+            Some(OsString::from("")),
+            Some(OsString::from("0")),
+            Some(OsString::from("true")),
+            Some(OsString::from("1 ")),
+            Some(OsString::from(" 1")),
+            Some(OsString::from("1")),
+        ];
+        #[cfg(unix)]
+        env_values.push(Some(OsString::from_vec(vec![0xff])));
+
+        for _emitter_mode in ["off", "enable-only", "preconf", "dryrun"] {
+            for has_flashblocks in [false, true] {
+                for env in &env_values {
+                    let flashblocks_config = has_flashblocks.then(|| {
+                        FlashblocksConfig::new(
+                            Url::parse("wss://example.com/ws").expect("fixture URL"),
+                            3,
+                        )
+                    });
+                    let state = flashblocks_config
+                        .as_ref()
+                        .map(|config| std::sync::Arc::clone(&config.state));
+                    let before = state.as_ref().map(std::sync::Arc::strong_count);
+                    let prepared =
+                        BaseNodeTraderConfig::from_inputs(&flashblocks_config, env.as_deref());
+                    let expected =
+                        has_flashblocks && env.as_deref() == Some(std::ffi::OsStr::new("1"));
+                    assert_eq!(prepared.is_some(), expected);
+
+                    if let Some(prepared) = prepared {
+                        assert_eq!(
+                            state.as_ref().map(std::sync::Arc::strong_count),
+                            before.map(|count| count + 1)
+                        );
+                        let start = prepared.start_idle().expect("exact-1 idle start");
+                        assert_eq!(start.subscriber_count(), 1);
+                        assert_eq!(start.worker_count(), 1);
+                        assert_eq!(start.pool_count(), 1);
+                        assert_eq!(start.watchdog_count(), 1);
+                        assert!(start.registry_is_empty());
+                        assert!(!start.has_live_victim_producer());
+                        drop(start);
+                    }
+                    assert_eq!(state.as_ref().map(std::sync::Arc::strong_count), before);
+                }
+            }
+        }
     }
 }

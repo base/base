@@ -399,3 +399,46 @@ fn scanner_ignores_non_code_and_rejects_malformed_source() {
     assert!(identifiers("\"unterminated").is_err());
     assert!(identifiers("r###\"unterminated").is_err());
 }
+
+#[test]
+fn runtime_wiring_is_idle_and_preserves_forwarding_semantics() {
+    let root = workspace_root();
+    let adapter = fs::read_to_string(root.join("crates/execution/cli/src/mev_trader.rs"))
+        .expect("CLI adapter");
+    let standard = fs::read_to_string(root.join("crates/execution/cli/src/standard_node.rs"))
+        .expect("standard node");
+    let runtime = fs::read_to_string(root.join("crates/execution/mev-trader/src/runtime.rs"))
+        .expect("trader runtime");
+
+    let adapter_identifiers = identifiers(&adapter).expect("well-formed CLI adapter");
+    for forbidden in FORBIDDEN_IDENTIFIERS {
+        assert!(
+            !adapter_identifiers.contains(forbidden),
+            "forbidden identifier {forbidden} in CLI trader adapter"
+        );
+    }
+    for forbidden in
+        ["FlashblocksSubscriber", "Sender", "VictimFrame", "websocket", "credential", "transport"]
+    {
+        assert!(
+            !adapter_identifiers.contains(forbidden),
+            "live producer surface {forbidden} in CLI trader adapter"
+        );
+    }
+
+    assert_eq!(adapter.matches("tokio::spawn").count(), 2);
+    assert_eq!(adapter.matches("subscribe_to_flashblocks").count(), 1);
+    assert!(runtime.contains("A0_MEASUREMENT_IDLE_NO_LIVE_INGRESS"));
+    assert!(runtime.contains("FixturePoolRegistry::new(descriptors, digest)"));
+
+    let bundle = "runner.install_ext::<BundleExtension>(());";
+    let forwarding = "runner.install_ext::<TxForwardingExtension>((&args).into());";
+    let installer = "MevTraderPhaseAInstaller::maybe_install(";
+    let protected_comment =
+        "// Issue #45: clone the shared FlashblocksState BEFORE the config is moved";
+    assert_eq!(standard.matches(forwarding).count(), 1);
+    assert_eq!(standard.matches(installer).count(), 1);
+    assert!(standard.find(bundle) < standard.find(forwarding));
+    assert!(standard.find(forwarding) < standard.find(installer));
+    assert!(standard.find(installer) < standard.find(protected_comment));
+}

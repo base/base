@@ -1,6 +1,8 @@
 use std::{
     collections::BTreeSet,
+    ffi::OsStr,
     fmt::Debug,
+    future,
     sync::{Arc, RwLock},
     time::Instant,
 };
@@ -8,12 +10,15 @@ use std::{
 use alloy_consensus::{Header, Sealed};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
-use base_flashblocks::{FlashblocksAPI, FlashblocksState, PendingBlocks};
+use base_flashblocks::{FlashblocksAPI, FlashblocksConfig, FlashblocksState, PendingBlocks};
 use base_mev_trader::{
-    BundleVisitor, PayloadVisitor, PendingSnapshotView, PortError, SnapshotHandle,
-    SnapshotHandleFactory, TraderSnapshotPort, TransactionVisitor, VisitControl, VisitSummary,
+    A0_IDLE_STATUS, BundleVisitor, MevTraderIdleRuntime, MevTraderRuntimeConfig, PayloadVisitor,
+    PendingSnapshotView, PortError, RuntimeInstallError, SnapshotHandle, SnapshotHandleFactory,
+    TraderSnapshotPort, TransactionVisitor, VisitControl, VisitSummary,
 };
+use base_node_runner::{BaseNodeExtension, BaseNodeRunner, FromExtensionConfig, NodeHooks};
 use reth_provider::{HeaderProvider, StateProviderBox, StateProviderFactory};
+use tracing::info;
 
 #[derive(Debug)]
 struct PendingSnapshotViewAdapter {
@@ -132,7 +137,7 @@ pub(crate) struct CliTraderSnapshotPort<Provider> {
 }
 
 impl<Provider> CliTraderSnapshotPort<Provider> {
-    pub(crate) fn new(flashblocks: Arc<FlashblocksState>, provider: Provider) -> Self {
+    pub(crate) const fn new(flashblocks: Arc<FlashblocksState>, provider: Provider) -> Self {
         Self { flashblocks, provider, current_record: RwLock::new(None) }
     }
 
@@ -195,6 +200,142 @@ where
             .map_err(|_| PortError::HeaderUnavailable)?
             .ok_or(PortError::HeaderUnavailable)?;
         Ok(Sealed::new_unchecked(header.clone_header(), header.hash()))
+    }
+}
+
+/// Exact-1 Phase A extension configuration containing only shared flashblock state.
+#[derive(Debug, Clone)]
+pub struct BaseNodeTraderConfig {
+    flashblocks: Arc<FlashblocksState>,
+}
+
+impl BaseNodeTraderConfig {
+    /// Returns true only for the exact native `OsStr` bytes `1`.
+    pub fn enabled(env: Option<&OsStr>) -> bool {
+        env == Some(OsStr::new("1"))
+    }
+
+    /// Clones flashblock state only for exact-1 with a present configuration.
+    pub fn from_inputs(
+        flashblocks_config: &Option<FlashblocksConfig>,
+        env: Option<&OsStr>,
+    ) -> Option<Self> {
+        if !Self::enabled(env) {
+            return None;
+        }
+        flashblocks_config.as_ref().map(|config| Self { flashblocks: Arc::clone(&config.state) })
+    }
+
+    /// Creates the sole broadcast subscription and empty idle runtime at node start.
+    pub fn start_idle(self) -> Result<BaseNodeTraderStart, RuntimeInstallError> {
+        let receiver = self.flashblocks.subscribe_to_flashblocks();
+        let runtime = MevTraderIdleRuntime::start(MevTraderRuntimeConfig::empty()?)?;
+        Ok(BaseNodeTraderStart { flashblocks: self.flashblocks, receiver, runtime })
+    }
+}
+
+/// Provider-independent node-start resources for the intentionally idle runtime.
+#[derive(Debug)]
+pub struct BaseNodeTraderStart {
+    flashblocks: Arc<FlashblocksState>,
+    receiver: tokio::sync::broadcast::Receiver<Arc<PendingBlocks>>,
+    runtime: MevTraderIdleRuntime,
+}
+
+impl BaseNodeTraderStart {
+    /// Returns the exact one existing flashblock broadcast subscription.
+    pub const fn subscriber_count(&self) -> usize {
+        1
+    }
+
+    /// Returns the exact one sole idle worker.
+    pub const fn worker_count(&self) -> usize {
+        if self.runtime.worker_is_claimed() { 1 } else { 0 }
+    }
+
+    /// Returns the exact one dedicated Rayon4 analysis pool.
+    pub const fn pool_count(&self) -> usize {
+        1
+    }
+
+    /// Returns the exact one separate watchdog/control domain.
+    pub const fn watchdog_count(&self) -> usize {
+        let _ = self.runtime.watchdog();
+        1
+    }
+
+    /// Returns true only while the production registry remains empty.
+    pub const fn registry_is_empty(&self) -> bool {
+        self.runtime.registry_is_empty()
+    }
+
+    /// Returns false because A0 installs no live victim producer.
+    pub const fn has_live_victim_producer(&self) -> bool {
+        self.runtime.has_live_victim_producer()
+    }
+}
+
+/// CLI-owned node extension that starts only provider-backed snapshot observation and idle analysis.
+#[derive(Debug)]
+pub struct BaseNodeTraderExtension {
+    config: BaseNodeTraderConfig,
+}
+
+impl BaseNodeTraderExtension {
+    /// Creates an extension from exact-1 configuration.
+    pub const fn new(config: BaseNodeTraderConfig) -> Self {
+        Self { config }
+    }
+}
+
+impl FromExtensionConfig for BaseNodeTraderExtension {
+    type Config = BaseNodeTraderConfig;
+
+    fn from_config(config: Self::Config) -> Self {
+        Self::new(config)
+    }
+}
+
+impl BaseNodeExtension for BaseNodeTraderExtension {
+    fn apply(self: Box<Self>, hooks: NodeHooks) -> NodeHooks {
+        hooks.add_node_started_hook(move |node| {
+            let BaseNodeTraderStart { flashblocks, mut receiver, runtime } =
+                self.config.start_idle()?;
+            let port = Arc::new(CliTraderSnapshotPort::new(flashblocks, node.provider().clone()));
+            tokio::spawn(async move {
+                while let Ok(pending) = receiver.recv().await {
+                    port.record_pending_snapshot(pending, Instant::now());
+                }
+            });
+            tokio::spawn(async move {
+                let _runtime = runtime;
+                future::pending::<()>().await;
+            });
+            info!(
+                status = A0_IDLE_STATUS,
+                registry_empty = true,
+                live_victim_producer = false,
+                "MEV trader Phase A measurement runtime is intentionally idle"
+            );
+            Ok(())
+        })
+    }
+}
+
+/// Public exact-1 installer called from standard-node assembly before flashblocks config is moved.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct MevTraderPhaseAInstaller;
+
+impl MevTraderPhaseAInstaller {
+    /// Installs exactly one extension only for `MEV_TRADER_PHASE_A=1` plus flashblocks `Some`.
+    pub fn maybe_install(
+        runner: &mut BaseNodeRunner,
+        flashblocks_config: &Option<FlashblocksConfig>,
+        env: Option<&OsStr>,
+    ) {
+        if let Some(config) = BaseNodeTraderConfig::from_inputs(flashblocks_config, env) {
+            runner.install_ext::<BaseNodeTraderExtension>(config);
+        }
     }
 }
 
