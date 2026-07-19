@@ -78,7 +78,7 @@ impl InProcessFollowConsensus {
         );
         let l1_provider = L1RpcProvider::new_http(config.l1_rpc_url);
         let local_l2_provider = RootProvider::<Base>::new_http(config.local_l2_rpc_url);
-        let l2_source = RemoteL2Client::new(config.source_l2_rpc_url, Arc::clone(&rollup_config));
+        let l2_source = RemoteL2Client::new(config.source_l2_rpc_url);
         let rpc_builder = RpcBuilder {
             no_restart: true,
             socket: rpc_addr,
