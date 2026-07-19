@@ -124,13 +124,13 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
 
     /// Returns in-flight proof sessions for test inspection.
     #[cfg(any(test, feature = "test-utils"))]
-    pub fn pending_proofs(&self) -> &PendingProofs {
+    pub const fn pending_proofs(&self) -> &PendingProofs {
         &self.pending_proofs
     }
 
     /// Returns in-flight proof sessions for test setup.
     #[cfg(any(test, feature = "test-utils"))]
-    pub fn pending_proofs_mut(&mut self) -> &mut PendingProofs {
+    pub const fn pending_proofs_mut(&mut self) -> &mut PendingProofs {
         &mut self.pending_proofs
     }
 
@@ -161,9 +161,9 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
     ///
     /// When `try_tee_first` is `true` and the game has a non-zero TEE prover,
     /// a synchronous TEE proof is attempted before falling back to ZK.
-    pub async fn initiate_proof<T: TxManager>(
+    pub async fn initiate_proof(
         &mut self,
-        submitter: &ChallengeSubmitter<T>,
+        prover_address: Address,
         candidate: CandidateGame,
         invalid_index: u64,
         expected_root: B256,
@@ -179,7 +179,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
             ChallengerMetrics::tee_proof_attempts_total().increment(1);
             match self
                 .build_tee_request(
-                    submitter,
+                    prover_address,
                     &candidate,
                     invalid_index,
                     expected_root,
@@ -189,7 +189,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
             {
                 Ok(tee_request) => {
                     let (zk_fallback_request, zk_fallback_intent) =
-                        match self.build_zk_request(submitter, &candidate, invalid_index) {
+                        match self.build_zk_request(prover_address, &candidate, invalid_index) {
                             Ok(req) => (Some(req), Some(intent)),
                             Err(e) => {
                                 warn!(
@@ -248,13 +248,14 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
             ChallengerMetrics::tee_proof_fallback_total().increment(1);
         }
 
-        self.initiate_zk_proof(submitter, candidate, invalid_index, expected_root, intent).await
+        self.initiate_zk_proof(prover_address, candidate, invalid_index, expected_root, intent)
+            .await
     }
 
     /// Requests a ZK proof and stores its session for later polling.
-    pub async fn initiate_zk_proof<T: TxManager>(
+    pub async fn initiate_zk_proof(
         &mut self,
-        submitter: &ChallengeSubmitter<T>,
+        prover_address: Address,
         candidate: CandidateGame,
         invalid_index: u64,
         expected_root: B256,
@@ -262,7 +263,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
     ) -> eyre::Result<()> {
         let game_address = candidate.factory.proxy;
 
-        let proof_request = self.build_zk_request(submitter, &candidate, invalid_index)?;
+        let proof_request = self.build_zk_request(prover_address, &candidate, invalid_index)?;
         let request = ChallengerProofAdapter::snark_plonk_prove_block_range_request(
             game_address,
             invalid_index,
@@ -291,9 +292,9 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
         Ok(())
     }
 
-    async fn build_tee_request<T: TxManager>(
+    async fn build_tee_request(
         &self,
-        submitter: &ChallengeSubmitter<T>,
+        proposer: Address,
         candidate: &CandidateGame,
         invalid_index: u64,
         expected_root: B256,
@@ -319,16 +320,16 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
             agreed_l2_output_root,
             claimed_l2_output_root: expected_root,
             claimed_l2_block_number,
-            proposer: submitter.sender_address(),
+            proposer,
             intermediate_block_interval: candidate.intermediate_block_interval,
             l1_head_number,
             ..Default::default()
         })
     }
 
-    fn build_zk_request<T: TxManager>(
+    fn build_zk_request(
         &self,
-        submitter: &ChallengeSubmitter<T>,
+        prover_address: Address,
         candidate: &CandidateGame,
         invalid_index: u64,
     ) -> eyre::Result<SnarkPlonkProofRequest> {
@@ -344,7 +345,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
                 zk_vm: ZkVm::Sp1,
                 zk_backend: ZkBackend::Cluster,
             },
-            prover_address: submitter.sender_address(),
+            prover_address,
         })
     }
 

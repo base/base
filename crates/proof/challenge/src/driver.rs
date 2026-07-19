@@ -12,7 +12,7 @@ use base_runtime::TokioRuntime;
 use base_tx_manager::TxManager;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     AnchorUpdater, BondManager, CandidateGame, ChallengeSubmitter, ChallengerMetrics,
@@ -262,18 +262,38 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager> Driver<L2, P, T> {
             "invalid intermediate root detected, requesting proof"
         );
 
-        let metric = match intent {
-            DisputeIntent::Challenge => ChallengerMetrics::invalid_tee_proposal_detected_total(),
-            DisputeIntent::Nullify if try_tee_first => {
+        let metric = match &candidate.category {
+            GameCategory::InvalidTeeProposal => {
+                ChallengerMetrics::invalid_tee_proposal_detected_total()
+            }
+            GameCategory::InvalidZkProposal => {
+                ChallengerMetrics::invalid_zk_proposal_detected_total()
+            }
+            GameCategory::InvalidDualProposal => {
                 ChallengerMetrics::invalid_dual_proposal_detected_total()
             }
-            DisputeIntent::Nullify => ChallengerMetrics::invalid_zk_proposal_detected_total(),
+            GameCategory::FraudulentZkChallenge { .. } => {
+                error!(
+                    category = ?candidate.category,
+                    game = %game_address,
+                    "unexpected category in process_invalid_proposal"
+                );
+                debug_assert!(
+                    false,
+                    "unexpected category in process_invalid_proposal: {:?}",
+                    candidate.category
+                );
+                return Err(eyre::eyre!(
+                    "unexpected category in process_invalid_proposal: {:?}",
+                    candidate.category
+                ));
+            }
         };
         metric.increment(1);
 
         self.proof_manager
             .initiate_proof(
-                &self.submitter,
+                self.submitter.sender_address(),
                 candidate,
                 invalid_index,
                 expected_root,
@@ -340,7 +360,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager> Driver<L2, P, T> {
 
         self.proof_manager
             .initiate_zk_proof(
-                &self.submitter,
+                self.submitter.sender_address(),
                 candidate,
                 challenged_index,
                 validation.expected_root,
