@@ -39,10 +39,10 @@ pub struct VictimFrame {
     pub raw_tx: Bytes,
     /// Captured canonical parent hash.
     pub parent_hash: B256,
-    /// Captured pending block number.
+    /// Feed-observed pending block number.
     pub block_number: u64,
-    /// Flashblock index immediately preceding this frame.
-    pub predecessor_index: u64,
+    /// Feed-observed flashblock index containing this victim.
+    pub victim_flashblock_index: u64,
     /// Time at which this decoded frame was received.
     pub received_at: Instant,
 }
@@ -100,8 +100,11 @@ impl FrameProcessor {
         if frame.raw_tx.len() > MAX_RAW_FRAME_BYTES
             || frame.parent_hash != snapshot.parent_hash()
             || frame.block_number != snapshot.latest_block_number()
-            || frame.predecessor_index >= snapshot.latest_flashblock_index()
-            || snapshot.latest_flashblock_index().checked_sub(frame.predecessor_index)? > 1
+            || snapshot.latest_flashblock_index() >= frame.victim_flashblock_index
+            || frame
+                .victim_flashblock_index
+                .checked_sub(snapshot.latest_flashblock_index())
+                > Some(1)
             || snapshot.has_transaction_hash(frame.transaction_hash)
             || now.checked_duration_since(frame.received_at)?.as_millis()
                 > u128::from(MAX_FRAME_AGE_MILLIS)
@@ -213,6 +216,7 @@ mod tests {
     struct FrameView {
         payloads: Vec<(PayloadId, u64)>,
         contained_hash: Option<B256>,
+        latest_flashblock_index: u64,
     }
 
     impl PendingSnapshotView for FrameView {
@@ -229,7 +233,7 @@ mod tests {
         }
 
         fn latest_flashblock_index(&self) -> u64 {
-            1
+            self.latest_flashblock_index
         }
 
         fn latest_header(&self) -> Sealed<Header> {
@@ -296,8 +300,17 @@ mod tests {
         contained_hash: Option<B256>,
         received_at: Instant,
     ) -> SnapshotHandle {
+        snapshot_with_latest(payloads, contained_hash, received_at, 1)
+    }
+
+    fn snapshot_with_latest(
+        payloads: Vec<(PayloadId, u64)>,
+        contained_hash: Option<B256>,
+        received_at: Instant,
+        latest_flashblock_index: u64,
+    ) -> SnapshotHandle {
         let view: Arc<dyn PendingSnapshotView + Send + Sync> =
-            Arc::new(FrameView { payloads, contained_hash });
+            Arc::new(FrameView { payloads, contained_hash, latest_flashblock_index });
         SnapshotHandleFactory::new().issue(view, received_at).expect("fresh factory")
     }
 
@@ -313,7 +326,7 @@ mod tests {
             raw_tx,
             parent_hash: B256::with_last_byte(1),
             block_number: 100,
-            predecessor_index: 0,
+            victim_flashblock_index: 2,
             received_at: now,
         }
     }
@@ -329,7 +342,34 @@ mod tests {
     }
 
     #[test]
-    fn decode_rejects_generation_hash_presence_and_age_mismatches() {
+    fn decode_enforces_victim_flashblock_and_feed_block_relation() {
+        let now = Instant::now();
+        let mut frame = frame_for(DYNAMIC_FEE_TX, now);
+
+        let zero = snapshot_with_latest(vec![(PayloadId::default(), 0)], None, now, 0);
+        frame.victim_flashblock_index = 1;
+        assert!(FrameProcessor::decode(&zero, &frame, now).is_some());
+
+        let four = snapshot_with_latest(vec![(PayloadId::default(), 4)], None, now, 4);
+        frame.victim_flashblock_index = 5;
+        assert!(FrameProcessor::decode(&four, &frame, now).is_some());
+
+        frame.victim_flashblock_index = 4;
+        assert!(FrameProcessor::decode(&four, &frame, now).is_none());
+        frame.victim_flashblock_index = 0;
+        assert!(FrameProcessor::decode(&four, &frame, now).is_none());
+        frame.victim_flashblock_index = 3;
+        assert!(FrameProcessor::decode(&four, &frame, now).is_none());
+        frame.victim_flashblock_index = 6;
+        assert!(FrameProcessor::decode(&four, &frame, now).is_none());
+
+        frame.victim_flashblock_index = 5;
+        frame.block_number = 101;
+        assert!(FrameProcessor::decode(&four, &frame, now).is_none());
+    }
+
+    #[test]
+    fn decode_rejects_hash_presence_and_age_mismatches() {
         let now = Instant::now();
         let mut frame = frame_for(DYNAMIC_FEE_TX, now);
         let snapshot =
@@ -337,12 +377,6 @@ mod tests {
         assert!(FrameProcessor::decode(&snapshot, &frame, now).is_none());
 
         let snapshot = snapshot_with(vec![(PayloadId::default(), 1)], None, now);
-        frame.predecessor_index = 1;
-        assert!(FrameProcessor::decode(&snapshot, &frame, now).is_none());
-        frame.predecessor_index = 0;
-        frame.block_number = 101;
-        assert!(FrameProcessor::decode(&snapshot, &frame, now).is_none());
-        frame.block_number = 100;
         frame.received_at = now - Duration::from_millis(MAX_FRAME_AGE_MILLIS + 1);
         assert!(FrameProcessor::decode(&snapshot, &frame, now).is_none());
     }

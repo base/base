@@ -377,7 +377,7 @@ mod tests {
             raw_tx: Bytes::new(),
             parent_hash: B256::with_last_byte(1),
             block_number: 100,
-            predecessor_index: 0,
+            victim_flashblock_index: 2,
             received_at: now,
         }
     }

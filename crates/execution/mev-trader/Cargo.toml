@@ -33,9 +33,11 @@ revm-database = { workspace = true, features = ["std"] }
 
 # execution
 rayon.workspace = true
+futures.workspace = true
 sha2 = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
-
-[dev-dependencies]
 serde_json = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["derive", "std"] }
+tokio = { workspace = true, features = ["net", "rt", "sync", "time"] }
+tokio-tungstenite = { workspace = true, features = ["native-tls"] }
