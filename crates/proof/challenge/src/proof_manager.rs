@@ -188,9 +188,9 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
                 .await
             {
                 Ok(tee_request) => {
-                    let (zk_fallback_request, zk_fallback_intent) =
+                    let zk_fallback =
                         match self.build_zk_request(prover_address, &candidate, invalid_index) {
-                            Ok(req) => (Some(req), Some(intent)),
+                            Ok(request) => Some((request, intent)),
                             Err(e) => {
                                 warn!(
                                     error = %e,
@@ -198,7 +198,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
                                     "failed to build ZK fallback request; \
                                      TEE proof will have no ZK fallback"
                                 );
-                                (None, None)
+                                None
                             }
                         };
 
@@ -222,8 +222,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
                                     response.session_id,
                                     invalid_index,
                                     expected_root,
-                                    zk_fallback_request,
-                                    zk_fallback_intent,
+                                    zk_fallback,
                                 ),
                             );
                             return Ok(());
@@ -489,7 +488,8 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
                         let Some(pending) = self.pending_proofs.get_mut(&game_address) else {
                             return Ok(());
                         };
-                        let has_zk_fallback = pending.kind.has_zk_fallback();
+                        let has_zk_fallback =
+                            matches!(&pending.kind, ProofKind::Tee { zk_fallback: Some(_) });
 
                         if pending.tee_submit_retry_count >= self.tee_submit_retry_limit {
                             warn!(
@@ -579,10 +579,8 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
         }
 
         let request = match &pending.kind {
-            ProofKind::Tee { zk_fallback_request, zk_fallback_intent } => {
-                let (Some(fallback_request), Some(fallback_intent)) =
-                    (zk_fallback_request.clone(), *zk_fallback_intent)
-                else {
+            ProofKind::Tee { zk_fallback } => {
+                let Some((fallback_request, fallback_intent)) = zk_fallback.clone() else {
                     debug!(
                         game = %game_address,
                         "TEE proof has no ZK fallback request, dropping entry"
@@ -724,8 +722,8 @@ mod tests {
             PendingProof {
                 phase: ProofPhase::ReadyToSubmit { proof_bytes: Bytes::from(vec![0x00, 0xAA]) },
                 kind: ProofKind::Tee {
-                    zk_fallback_request: with_zk_fallback.then(proof_request),
-                    zk_fallback_intent: with_zk_fallback.then_some(DisputeIntent::Nullify),
+                    zk_fallback: with_zk_fallback
+                        .then(|| (proof_request(), DisputeIntent::Nullify)),
                 },
                 invalid_index: 0,
                 expected_root: B256::repeat_byte(0x22),
