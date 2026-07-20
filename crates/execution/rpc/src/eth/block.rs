@@ -13,22 +13,6 @@ use reth_rpc_eth_api::{
 
 use crate::{BaseEthApi, BaseEthApiError, eth::RpcNodeCore};
 
-impl<N: RpcNodeCore, Rpc: RpcConvert> BaseEthApi<N, Rpc> {
-    fn extract_timestamp_ms<B: BlockBody>(
-        body: &B,
-        block_number: u64,
-        timestamp: u64,
-    ) -> Option<u64>
-    where
-        B::Transaction: BaseTransaction,
-    {
-        let millis = BaseTimeUpdateTx::extract_from_transactions(body.transactions(), block_number)
-            .ok()?
-            .timestamp_millis_part();
-        Some(timestamp.wrapping_mul(1_000).wrapping_add(u64::from(millis)))
-    }
-}
-
 impl<N, Rpc> EthBlocks for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
@@ -45,8 +29,12 @@ where
         Self: FullEthApiTypes,
     {
         let Some(block) = self.recovered_block(block_id).await? else { return Ok(None) };
-        let timestamp_ms =
-            Self::extract_timestamp_ms(block.body(), block.number(), block.timestamp());
+        let timestamp_ms = BaseTimeUpdateTx::extract_timestamp_ms(
+            block.body().transactions(),
+            block.number(),
+            block.timestamp(),
+        )
+        .ok();
         let mut header =
             self.converter().convert_header(block.clone_sealed_header(), block.rlp_length())?;
         header.timestamp_ms = timestamp_ms;
@@ -62,8 +50,12 @@ where
         Self: FullEthApiTypes,
     {
         let Some(block) = self.recovered_block(block_id).await? else { return Ok(None) };
-        let timestamp_ms =
-            Self::extract_timestamp_ms(block.body(), block.number(), block.timestamp());
+        let timestamp_ms = BaseTimeUpdateTx::extract_timestamp_ms(
+            block.body().transactions(),
+            block.number(),
+            block.timestamp(),
+        )
+        .ok();
         let mut block = block.clone_into_rpc_block(
             full.into(),
             |tx, tx_info| self.converter().fill(tx, tx_info),
