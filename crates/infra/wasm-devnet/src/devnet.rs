@@ -7,6 +7,6 @@ pub use native::Devnet;
 mod wasm_impl;
 #[cfg(target_family = "wasm")]
 pub use wasm_impl::{
-    address_from_verifying_key, l1_origin_from_attrs, DapQueue, Devnet, InMemoryDap, L1Block,
-    L1ProviderError, L2ProviderError, SharedL1, WasmL1Provider, WasmL2Provider, DEV_KEY,
+    DEV_KEY, DapQueue, Devnet, InMemoryDap, L1Block, L1ProviderError, L2ProviderError, SharedL1,
+    WasmL1Provider, WasmL2Provider, address_from_verifying_key, l1_origin_from_attrs,
 };

@@ -23,7 +23,7 @@ impl WasmDevnet {
         self.inner.mine_l1_blocks(n)
     }
 
-    /// Run one epoch: mine L1 blocks, produce L2 blocks, submit, and derive.
+    /// Advance the devnet: mine `l1_blocks`, produce `l2_blocks`, submit, and derive.
     pub async fn run_epoch(&mut self, l1_blocks: u64, l2_blocks: u64) -> usize {
         self.inner.run_epoch(l1_blocks, l2_blocks).await
     }
@@ -56,6 +56,11 @@ impl WasmDevnet {
     /// Return the number of L2 blocks whose derived hash matches the sequenced hash.
     pub fn verified_block_count(&self) -> u64 {
         self.inner.verified_block_count()
+    }
+
+    /// Return how many frames were submitted in the most recent epoch submission.
+    pub fn last_submitted_frame_count(&self) -> u64 {
+        self.inner.last_submitted_frame_count()
     }
 
     /// Queue a raw EIP-2718 encoded transaction for inclusion in the next L2 block.

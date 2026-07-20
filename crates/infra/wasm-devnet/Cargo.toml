@@ -23,7 +23,9 @@ base-common-consensus = { workspace = true, features = ["std"] }
 base-action-harness.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dependencies]
+base-batcher-encoder.workspace = true
 base-consensus-derive.workspace = true
+base-consensus-upgrades.workspace = true
 base-common-genesis.workspace = true
 base-common-consensus = { workspace = true, features = ["std", "k256"] }
 base-execution-evm.workspace = true
@@ -36,9 +38,7 @@ alloy-eips.workspace = true
 alloy-genesis.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
-alloy-rlp.workspace = true
 async-trait.workspace = true
-miniz_oxide.workspace = true
 serde_json = { workspace = true, features = ["std"] }
 thiserror.workspace = true
 wasm-bindgen.workspace = true

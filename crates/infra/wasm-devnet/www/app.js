@@ -21,6 +21,11 @@ const els = {
     statNonce: document.getElementById('stat-nonce'),
     statBalance: document.getElementById('stat-balance'),
     
+    statPendingBlocks: document.getElementById('stat-pending-blocks'),
+    statTotalFrames: document.getElementById('stat-total-frames'),
+    statCompressionRatio: document.getElementById('stat-compression-ratio'),
+    statLastBatch: document.getElementById('stat-last-batch'),
+    
     txSender: document.getElementById('tx-sender'),
     txRecipient: document.getElementById('tx-recipient'),
     txAmount: document.getElementById('tx-amount'),
@@ -122,11 +127,29 @@ function weiToEth(weiBigInt) {
     return fraction ? `${whole}.${fraction}` : whole;
 }
 
+let totalFramesSubmitted = 0;
+let pendingBlocks = 0;
+
 async function tick() {
     if (isTicking) return;
     isTicking = true;
     try {
-        await devnet.run_epoch(1n, 1n);
+        await devnet.run_epoch(0n, 1n);
+        
+        pendingBlocks++;
+        const frames = Number(devnet.last_submitted_frame_count());
+        if (frames > 0) {
+            totalFramesSubmitted += frames;
+            const ratio = (pendingBlocks / frames).toFixed(2);
+            els.statCompressionRatio.textContent = `${ratio}x`;
+            els.statLastBatch.textContent = `[ OK ] ${pendingBlocks} BLOCKS → ${frames} FRAMES`;
+            els.statLastBatch.style.color = 'var(--accent-primary)';
+            pendingBlocks = 0;
+        }
+        
+        if (els.statPendingBlocks) els.statPendingBlocks.textContent = pendingBlocks;
+        if (els.statTotalFrames) els.statTotalFrames.textContent = totalFramesSubmitted;
+
         await updateStats();
         await updateBlocks();
         checkPendingTxs();
