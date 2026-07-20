@@ -193,25 +193,3 @@ The production-shaped synthetic L1/DA implementation is now the default:
 
 This keeps action tests fast while moving the critical DA boundary closer to
 production.
-
-## Decision Log
-
-- 2026-05-04: Track action-test production readiness in this README. Treat
-  production-mode L1/DA as the first productionization focus because current
-  tests bypass production calldata/blob sources.
-- 2026-05-04: Added production-mode L1/DA inside the harness crate under
-  `src/l1/`: signed transaction envelopes, versioned blob hashes, an
-  `EthereumDataSource` node builder, and coverage for calldata/blob DA.
-- 2026-05-04: Removed the legacy direct DA transaction path. Verifier nodes now
-  use production-shaped signed L1 transactions by default, and batcher
-  confirmations resolve against receipts from the mined `L1Block`.
-- 2026-05-05: Converted synthetic L1 events into signed event transactions with
-  per-transaction consensus receipts, RPC log metadata, and receipt/header
-  blooms. Updated `L1MinerTxManager` so staged submissions keep polling across
-  blocks that do not include their receipt.
-- 2026-07-20: Added txpool-blocked recovery coverage. `L1MinerTxManager` can now
-  reject submissions with `TxManagerError::AlreadyReserved` (via
-  `Batcher::block_next_n_submissions`) and implements `TxManager::cancel_tx`
-  instead of the trait default no-op, so the production `BatchDriver`
-  `TxpoolBlocked` → requeue → `cancel_tx` → resubmit path is exercised
-  end-to-end through derivation.
