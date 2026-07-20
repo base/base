@@ -363,7 +363,7 @@ impl ConsensusNodeArgs {
     /// Validates that a non-shadow sequencer has a signing key configured.
     pub fn validate_sequencer_key(&self) -> eyre::Result<()> {
         if self.config.node_mode.is_sequencer()
-            && self.config.sequencer_flags.shadow_blocks_per_cycle.is_none()
+            && !self.config.sequencer_flags.config().is_shadow_sequencer()
         {
             let signer = &self.config.p2p_flags.signer;
             if signer.sequencer_key.is_none()

@@ -103,6 +103,11 @@ where
     SequencerEngineClient_: SequencerEngineClient,
     UnsafePayloadGossipClient_: UnsafePayloadGossipClient,
 {
+    /// Returns whether this actor is running as a shadow sequencer.
+    pub const fn is_shadow_sequencer(&self) -> bool {
+        self.shadow_blocks_per_cycle.is_some()
+    }
+
     /// Fetches the sealed payload envelope from the engine for the given unsealed handle.
     pub(super) async fn seal_payload(
         &self,
@@ -119,7 +124,7 @@ where
         Metrics::sequencer_total_transactions_sequenced()
             .increment(handle.attributes_with_parent.count_transactions());
 
-        if self.shadow_blocks_per_cycle.is_some() {
+        if self.is_shadow_sequencer() {
             Ok(PayloadSealer::new_private(envelope))
         } else {
             Ok(PayloadSealer::new(envelope))
