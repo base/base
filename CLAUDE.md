@@ -19,3 +19,18 @@ Use structured tracing instead of interpolated strings. Always use key=value fie
 Keep unit tests colocated with their implementation. Do not introduce standalone `tests.rs` modules for unit tests; define tests in the same `.rs` implementation file/module inside a `#[cfg(test)] mod tests { ... }` block.
 
 `#[cfg(test)] mod tests { ... }` must always be placed at the end of the file, after all non-test code.
+
+Do not destructure a type into its fields with `let Self { .. } = self` (or similar `let T { .. } = value`) just to read fields. Access fields directly via `self.field` for readability.
+
+```rust
+// Avoid
+fn area(&self) -> u32 {
+    let Self { width, height } = self;
+    width * height
+}
+
+// Prefer
+fn area(&self) -> u32 {
+    self.width * self.height
+}
+```
