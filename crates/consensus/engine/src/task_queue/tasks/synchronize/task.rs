@@ -44,7 +44,7 @@ pub struct SynchronizeTask<EngineClient_: EngineClient> {
     /// The sync state update to apply to the engine state.
     pub state_update: EngineSyncStateUpdate,
     /// Whether to send an FCU when the requested state already matches the current state.
-    pub force: bool,
+    force: bool,
 }
 
 impl<EngineClient_: EngineClient> SynchronizeTask<EngineClient_> {

@@ -403,12 +403,22 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
     /// Existing safe and finalized heads are preserved, while local-safe is reset to safe after
     /// the unsafe-chain replacement. The caller is responsible for providing payloads in
     /// contiguous canonical order.
+    ///
+    /// Each acknowledged payload is applied and published immediately. If a later insertion
+    /// fails, earlier progress is retained. Callers may safely retry the full sequence because
+    /// authoritative duplicate payloads still require an acknowledged forkchoice update.
+    ///
+    /// Returns [`InsertTaskError::EmptyAuthoritativePayloads`] when `payloads` is empty.
     pub async fn insert_authoritative_payloads(
         &mut self,
         client: Arc<EngineClient_>,
         config: Arc<RollupConfig>,
         payloads: Vec<BaseExecutionPayloadEnvelope>,
     ) -> Result<L2BlockInfo, InsertTaskError> {
+        if payloads.is_empty() {
+            return Err(InsertTaskError::EmptyAuthoritativePayloads);
+        }
+
         let mut head = self.state.sync_state.unsafe_head();
         for envelope in payloads {
             head = InsertTask::authoritative_payload(

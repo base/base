@@ -383,7 +383,7 @@ mod tests {
 
     use super::{InsertPayloadPolicy, InsertPayloadSafety, InsertTask};
     use crate::{
-        Engine, EngineTaskExt,
+        Engine, EngineTaskExt, InsertTaskError,
         test_utils::{TestEngineStateBuilder, test_engine_client_builder},
     };
 
@@ -771,5 +771,20 @@ mod tests {
             .execute_with_result(&mut state)
             .await
             .expect("authoritative duplicate should accept a valid FCU response");
+    }
+
+    #[tokio::test]
+    async fn engine_rejects_empty_authoritative_payloads() {
+        let client = test_client();
+        let config = Arc::new(base_common_genesis::RollupConfig::default());
+        let initial_state = TestEngineStateBuilder::new().build();
+        let (state_tx, _) = tokio::sync::watch::channel(initial_state);
+        let (queue_tx, _) = tokio::sync::watch::channel(0usize);
+        let mut engine = Engine::new(initial_state, state_tx, queue_tx);
+
+        let result = engine.insert_authoritative_payloads(client, config, vec![]).await;
+
+        assert!(matches!(result, Err(InsertTaskError::EmptyAuthoritativePayloads)));
+        assert_eq!(engine.state(), &initial_state);
     }
 }
