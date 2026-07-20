@@ -62,9 +62,13 @@ jobs:
         # Replay a specific seed via the workflow_dispatch input; otherwise generate
         # a fresh random seed so each run fuzzes a different transaction stream. The
         # seed is logged (and echoed below) so a failing run can be replayed.
+        # The dispatch input is passed via env (not interpolated into the script) to
+        # avoid shell injection.
+        env:
+          SEED_INPUT: ${{ github.event.inputs.seed }}
         run: |
-          if [ -n "${{ github.event.inputs.seed }}" ]; then
-            SEED="${{ github.event.inputs.seed }}"
+          if [ -n "$SEED_INPUT" ]; then
+            SEED="$SEED_INPUT"
           else
             SEED="0x$(openssl rand -hex 8)"
           fi
