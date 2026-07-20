@@ -206,6 +206,11 @@ impl PendingProofs {
         self.0.len()
     }
 
+    /// Returns `true` if there are no pending proofs.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     /// Polls prover service for an in-flight proof and advances the entry.
     ///
     /// - **`AwaitingProof`** — sends a `GetProofRequest` to prover service
