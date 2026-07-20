@@ -1,7 +1,7 @@
-# Nightly fuzz: runs the build/validate sync-parity fuzz test across
-# several seeds to explore more of the input space than a single per-merge run.
-# A failing run prints the seed in its error message so it can be replayed and
-# minted into a deterministic regression test.
+# Nightly fuzz: runs the build/validate sync-parity fuzz test with a fresh random
+# seed each run (several shards in parallel) so every run explores a different
+# transaction stream. The chosen seed is logged; a failing run can be replayed by
+# dispatching this workflow with that seed.
 name: Fuzz Nightly
 
 on:
@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       seed:
-        description: "Single seed to run (hex or decimal). Leave blank to run the default matrix."
+        description: "Seed to replay (hex or decimal). Leave blank to generate a fresh random seed."
         required: false
         type: string
 
@@ -36,10 +36,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # TEMPORARY: trimmed to one seed for fast branch iteration. Restore the
-        # full nightly spread before merging:
-        #   seed: ["0xBA5EF0FF", "0x1", "0xDEADBEEF", "0xC0FFEE"]
-        seed: ["0xBA5EF0FF"]
+        # Parallel shards, each with its own random seed, for more coverage per run.
+        # TEMPORARY: trimmed to one shard for fast branch iteration. Restore the
+        # full spread before merging:
+        #   shard: [1, 2, 3, 4]
+        shard: [1]
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -57,6 +58,18 @@ jobs:
           rust-cache-shared-key: "stable"
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+      - name: Pick fuzz seed
+        # Replay a specific seed via the workflow_dispatch input; otherwise generate
+        # a fresh random seed so each run fuzzes a different transaction stream. The
+        # seed is logged (and echoed below) so a failing run can be replayed.
+        run: |
+          if [ -n "${{ github.event.inputs.seed }}" ]; then
+            SEED="${{ github.event.inputs.seed }}"
+          else
+            SEED="0x$(openssl rand -hex 8)"
+          fi
+          echo "FUZZ_SEED=$SEED" >> "$GITHUB_ENV"
+          echo "::notice::Fuzzing with seed $SEED (replay via workflow_dispatch input seed=$SEED)"
       - name: Pre-pull docker images
         run: just devnet pull-images
       - name: Build test contracts
@@ -64,9 +77,7 @@ jobs:
         # time; they are gitignored build output, so generate them before building.
         run: cd crates/utilities/test-utils/contracts && forge soldeer install && forge build
       - name: Run fuzz sync-parity test
-        env:
-          # A manual dispatch seed overrides the matrix seed for this run.
-          FUZZ_SEED: ${{ github.event.inputs.seed || matrix.seed }}
+        # FUZZ_SEED is exported by the "Pick fuzz seed" step above.
         run: |
           cargo nextest run -P ci --locked -p base-system-tests \
             --cargo-profile ci --no-capture -E 'test(fuzz_sync_parity)'
@@ -74,6 +85,6 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: fuzz-log-seed-${{ github.event.inputs.seed || matrix.seed }}
+          name: fuzz-log-shard-${{ matrix.shard }}-${{ github.run_id }}
           path: target/nextest/ci/*.xml
           if-no-files-found: ignore
