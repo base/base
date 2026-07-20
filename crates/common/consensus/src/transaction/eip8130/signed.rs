@@ -101,6 +101,34 @@ impl<'a> arbitrary::Arbitrary<'a> for Eip8130Signed {
     }
 }
 
+/// Why an [`Eip8130Signed`] failed the timestamp-sensitive admission rules in
+/// [`Eip8130Signed::validate_timestamp`].
+///
+/// Kept as a dedicated error (rather than collapsing every case into
+/// `TxTypeNotSupported`) so callers can surface an actionable, per-case reason
+/// to submitters and logs: the transaction *type* is supported, its `expiry`
+/// is simply outside the node's admission window.
+#[cfg(feature = "reth")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum Eip8130TimestampError {
+    /// Nonce-free mode (`nonce_key == NONCE_KEY_MAX`) requires `nonce_sequence
+    /// == 0` and a non-zero `expiry`; one of those invariants is violated.
+    #[error("nonce-free transaction must set a non-zero expiry and a zero nonce sequence")]
+    NonceFreeMalformed,
+    /// A nonce-free transaction's `expiry` is at or before the reference time,
+    /// so it has already elapsed and can never be included.
+    #[error("nonce-free transaction expiry has already elapsed")]
+    NonceFreeExpired,
+    /// A nonce-free transaction's `expiry` is further into the future than the
+    /// permitted [`Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW`].
+    #[error("nonce-free transaction expiry exceeds the maximum admission window")]
+    NonceFreeExpiryTooFar,
+    /// A nonce-bearing transaction set a non-zero `expiry` that is at or before
+    /// the reference time.
+    #[error("transaction expiry has already elapsed")]
+    Expired,
+}
+
 impl Eip8130Signed {
     /// Constructs a new [`Eip8130Signed`] from its parts, computing and caching
     /// the EIP-2718 transaction hash.
@@ -165,19 +193,20 @@ impl Eip8130Signed {
     /// Txpool passes in one head-block timestamp snapshot so both branches see
     /// the same wall-clock value even if the tip updates concurrently.
     #[cfg(feature = "reth")]
-    pub fn validate_timestamp(&self, now: u64) -> Result<(), InvalidTransactionError> {
+    pub fn validate_timestamp(&self, now: u64) -> Result<(), Eip8130TimestampError> {
         let tx = self.tx();
         if tx.nonce_key == Eip8130Constants::NONCE_KEY_MAX {
             if tx.nonce_sequence != 0 || tx.expiry == 0 {
-                return Err(InvalidTransactionError::TxTypeNotSupported);
+                return Err(Eip8130TimestampError::NonceFreeMalformed);
             }
-            if tx.expiry <= now
-                || tx.expiry > now.saturating_add(Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW)
-            {
-                return Err(InvalidTransactionError::TxTypeNotSupported);
+            if tx.expiry <= now {
+                return Err(Eip8130TimestampError::NonceFreeExpired);
+            }
+            if tx.expiry > now.saturating_add(Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW) {
+                return Err(Eip8130TimestampError::NonceFreeExpiryTooFar);
             }
         } else if tx.expiry != 0 && tx.expiry <= now {
-            return Err(InvalidTransactionError::TxTypeNotSupported);
+            return Err(Eip8130TimestampError::Expired);
         }
         Ok(())
     }
