@@ -5,11 +5,6 @@
 name: Fuzz Nightly
 
 on:
-  # TEMPORARY: run on PRs from any branch so this workflow can be exercised on
-  # the real runners before it is merged. REMOVE this pull_request trigger
-  # before merging (the scheduled + dispatch triggers below are the real ones).
-  pull_request:
-    branches: ["**"]
   schedule:
     # 07:00 UTC daily (after most merges have settled).
     - cron: "0 7 * * *"
@@ -40,10 +35,7 @@ jobs:
         # its own random seed, so the shards fan out for more coverage per night. On
         # a workflow_dispatch replay, every shard uses the supplied seed to reproduce
         # it (parallelism adds no coverage there, which is fine for replay).
-        # TEMPORARY: trimmed to one shard for fast branch iteration. Restore the
-        # full spread before merging:
-        #   shard: [1, 2, 3, 4]
-        shard: [1]
+        shard: [1, 2, 3, 4]
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
