@@ -7,7 +7,10 @@ use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_optimism_rpc::{OutputAtBlock, SyncStatus};
 
-use super::{error::RpcResult, types::BaseBlock};
+use super::{
+    error::RpcResult,
+    types::{BaseBlock, BaseHeader},
+};
 
 /// L1 RPC provider trait for interacting with Ethereum.
 #[async_trait]
@@ -53,7 +56,7 @@ pub trait L2Provider: Send + Sync {
     ) -> RpcResult<EIP1186AccountProofResponse>;
 
     /// Gets a header by block number or tag.
-    async fn header_by_number(&self, block: BlockNumberOrTag) -> RpcResult<Header>;
+    async fn header_by_number(&self, block: BlockNumberOrTag) -> RpcResult<BaseHeader>;
 
     /// Gets a block by block number or tag with full transactions.
     async fn block_by_number(&self, block: BlockNumberOrTag) -> RpcResult<BaseBlock>;

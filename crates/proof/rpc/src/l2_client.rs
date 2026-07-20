@@ -6,7 +6,7 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
-use alloy_rpc_types_eth::{BlockId, EIP1186AccountProofResponse, Header};
+use alloy_rpc_types_eth::{BlockId, EIP1186AccountProofResponse};
 use alloy_transport_http::{Http, reqwest::Client};
 use async_trait::async_trait;
 use backon::Retryable;
@@ -20,7 +20,7 @@ use super::{
     config::DEFAULT_CACHE_SIZE,
     error::{RpcError, RpcResult},
     traits::L2Provider,
-    types::BaseBlock,
+    types::{BaseBlock, BaseHeader},
 };
 
 /// Cache key for account proofs (address + block hash).
@@ -107,7 +107,7 @@ pub struct L2Client {
     /// Cache for blocks by hash.
     blocks_cache: MeteredCache<B256, BaseBlock>,
     /// Cache for headers by hash.
-    headers_cache: MeteredCache<B256, Header>,
+    headers_cache: MeteredCache<B256, BaseHeader>,
     /// Cache for account proofs.
     proofs_cache: MeteredCache<ProofCacheKey, EIP1186AccountProofResponse>,
     /// Retry configuration.
@@ -170,7 +170,7 @@ impl L2Client {
     }
 
     /// Returns the headers cache.
-    pub const fn headers_cache(&self) -> &MeteredCache<B256, Header> {
+    pub const fn headers_cache(&self) -> &MeteredCache<B256, BaseHeader> {
         &self.headers_cache
     }
 
@@ -238,7 +238,7 @@ impl L2Provider for L2Client {
         Ok(proof)
     }
 
-    async fn header_by_number(&self, block: BlockNumberOrTag) -> RpcResult<Header> {
+    async fn header_by_number(&self, block: BlockNumberOrTag) -> RpcResult<BaseHeader> {
         let block_id: BlockId = block.into();
 
         let backoff = self.retry_config.to_backoff_builder();

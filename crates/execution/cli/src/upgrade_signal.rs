@@ -1,12 +1,11 @@
 //! Execution-node upgrade signal schedule application.
 
 use alloy_provider::RootProvider;
-use base_common_genesis::BaseUpgrade;
 use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
 use base_upgrade_signal::{
-    AlloyUpgradeSignalReader, UpgradeSignalApplySummary, UpgradeSignalConfig,
-    UpgradeSignalDefaults, UpgradeSignalMetricLayer, UpgradeSignalMonitor, UpgradeSignalRefresher,
+    UpgradeSignalApplySummary, UpgradeSignalConfig, UpgradeSignalDefaults,
+    UpgradeSignalMetricLayer, UpgradeSignalMonitor, UpgradeSignalRefresher,
     UpgradeSignalRuntimeApplier, UpgradeSignalRuntimeValidation, UpgradeSignalSchedule,
 };
 use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObject};
@@ -80,38 +79,15 @@ impl ExecutionUpgradeSignal {
     pub async fn refresh_runtime_upgrade_signal(
         refresher: &ExecutionUpgradeSignalRuntimeRefresher,
     ) -> RpcResult<UpgradeSignalApplySummary> {
-        match refresher.refresher.read_validated_schedule().await {
-            Ok(schedule) => {
-                if let Err(error) =
-                    Self::validate_runtime_schedule_for_chain_spec(&refresher.chain_spec, &schedule)
-                {
-                    warn!(
-                        target: "upgrade_signal",
-                        error = %error,
-                        "failed to validate execution runtime upgrade signal"
-                    );
-                    return Err(ErrorObject::owned(
-                        -32005,
-                        "failed to validate upgrade signal",
-                        None::<()>,
-                    ));
-                }
-                let summary = UpgradeSignalRuntimeApplier::apply_schedule(
-                    refresher.refresher.chain_id,
-                    &schedule,
-                );
-                info!(
+        match refresher.refresher.read_schedule().await {
+            Ok(schedule) => refresher.apply(&schedule).map_err(|error| {
+                warn!(
                     target: "upgrade_signal",
-                    chain_id = summary.chain_id,
-                    l1_block_number = ?summary.l1_block_number,
-                    applied_upgrades = summary.applied_upgrades,
-                    cleared_upgrades = summary.cleared_upgrades,
-                    ignored_upgrades = summary.ignored_upgrades,
-                    configured_upgrades = summary.configured_upgrades,
-                    "refreshed execution runtime upgrade signal"
+                    error = %error,
+                    "failed to validate execution runtime upgrade signal"
                 );
-                Ok(summary)
-            }
+                ErrorObject::owned(-32005, "failed to validate upgrade signal", None::<()>)
+            }),
             Err(error) => {
                 warn!(
                     target: "upgrade_signal",
@@ -133,8 +109,8 @@ impl ExecutionUpgradeSignal {
         }
 
         let chain_id = ctx.config().chain.chain().id();
-        // Execution validates each refresh against the live chain spec in
-        // `refresh_runtime_upgrade_signal`, so the shared refresher itself stays unvalidated.
+        // Chain-spec validation happens per-apply in the execution wrapper, so the shared
+        // refresher itself carries no runtime validation.
         let refresher = ExecutionUpgradeSignalRuntimeRefresher::new(
             UpgradeSignalRefresher::new(
                 config.signal_config,
@@ -171,6 +147,18 @@ impl ExecutionUpgradeSignalRuntimeRefresher {
     pub const fn new(refresher: UpgradeSignalRefresher, chain_spec: BaseChainSpec) -> Self {
         Self { refresher, chain_spec }
     }
+
+    /// Validates an already-read schedule against the execution chain spec and applies it.
+    pub fn apply(
+        &self,
+        schedule: &UpgradeSignalSchedule,
+    ) -> eyre::Result<UpgradeSignalApplySummary> {
+        ExecutionUpgradeSignal::validate_runtime_schedule_for_chain_spec(
+            &self.chain_spec,
+            schedule,
+        )?;
+        Ok(self.refresher.apply(schedule)?)
+    }
 }
 
 /// Execution-node extension that registers runtime admin refresh and optional live metrics.
@@ -184,22 +172,6 @@ impl ExecutionUpgradeSignalRuntimeExtension {
     /// Creates a new execution upgrade signal runtime extension.
     pub const fn new(config: ExecutionUpgradeSignalConfig) -> Self {
         Self { config }
-    }
-
-    /// Polls L1 upgrade signal state and records metrics without mutating local config.
-    pub async fn poll_l1_signal(
-        monitor: &mut UpgradeSignalMonitor,
-        reader: &AlloyUpgradeSignalReader,
-        upgrade_ids: &[BaseUpgrade],
-    ) {
-        let updated_upgrades = monitor.poll(reader, upgrade_ids).await;
-        if updated_upgrades > 0 {
-            info!(
-                target: "upgrade_signal",
-                updated_upgrades,
-                "observed live L1 upgrade signal update"
-            );
-        }
     }
 }
 
@@ -217,9 +189,23 @@ impl BaseNodeExtension for ExecutionUpgradeSignalRuntimeExtension {
         };
 
         hooks.add_node_started_hook(move |ctx| {
-            let reader = config
-                .signal_config
-                .reader(RootProvider::new_http(config.l1_rpc.clone()));
+            let l1_provider = RootProvider::new_http(config.l1_rpc.clone());
+            let reader = config.signal_config.reader(l1_provider.clone());
+            // Live updates are validated against the startup chain spec and re-applied
+            // automatically, matching the manual `admin_refreshUpgradeSignal` path.
+            let auto_refresher = config.signal_config.mode.allows_runtime_admin().then(|| {
+                let chain_spec = ctx.chain_spec();
+                ExecutionUpgradeSignalRuntimeRefresher::new(
+                    UpgradeSignalRefresher::new(
+                        config.signal_config.clone(),
+                        l1_provider,
+                        chain_spec.chain().id(),
+                        UpgradeSignalRuntimeValidation::disabled(),
+                        UpgradeSignalMetricLayer::Execution,
+                    ),
+                    chain_spec.as_ref().clone(),
+                )
+            });
             let upgrade_ids = config.signal_config.upgrade_ids;
             let mut monitor =
                 UpgradeSignalMonitor::new(UpgradeSignalMetricLayer::Execution, &upgrade_ids);
@@ -237,7 +223,18 @@ impl BaseNodeExtension for ExecutionUpgradeSignalRuntimeExtension {
                             _ = interval.tick() => {
                                 tokio::select! {
                                     _ = &mut signal => break,
-                                    _ = Self::poll_l1_signal(&mut monitor, &reader, &upgrade_ids) => {}
+                                    polled = monitor.poll(&reader, &upgrade_ids) => {
+                                        if let Some(refresher) = &auto_refresher
+                                            && let Some(schedule) = polled
+                                            && let Err(error) = refresher.apply(&schedule)
+                                        {
+                                            warn!(
+                                                target: "upgrade_signal",
+                                                error = %error,
+                                                "failed to auto-apply live upgrade signal update"
+                                            );
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -261,10 +258,39 @@ impl FromExtensionConfig for ExecutionUpgradeSignalRuntimeExtension {
 
 #[cfg(test)]
 mod tests {
-    use base_common_genesis::BaseUpgrade;
+    use alloy_primitives::Address;
+    use base_common_genesis::{BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation};
     use reth_chainspec::{ChainSpec, EthereumHardfork, ForkCondition};
 
     use super::*;
+
+    fn runtime_refresher(
+        chain_id: u64,
+        chain_spec: BaseChainSpec,
+    ) -> ExecutionUpgradeSignalRuntimeRefresher {
+        ExecutionUpgradeSignalRuntimeRefresher::new(
+            UpgradeSignalRefresher::new(
+                UpgradeSignalConfig::new(Address::ZERO, BaseUpgrade::Azul),
+                RootProvider::new_http("http://127.0.0.1:1".parse().unwrap()),
+                chain_id,
+                UpgradeSignalRuntimeValidation::disabled(),
+                UpgradeSignalMetricLayer::Execution,
+            ),
+            chain_spec,
+        )
+    }
+
+    fn versioned_schedule(
+        upgrade_id: BaseUpgrade,
+        activation_timestamp: u64,
+    ) -> UpgradeSignalSchedule {
+        UpgradeSignalSchedule::new(vec![base_upgrade_signal::UpgradeSignal {
+            upgrade_id,
+            activation_timestamp,
+            protocol_version: UpgradeSignalDefaults::node_protocol_version(),
+            l1_block_number: 1,
+        }])
+    }
 
     fn schedule(signals: &[(BaseUpgrade, u64)]) -> UpgradeSignalSchedule {
         UpgradeSignalSchedule::new(
@@ -354,5 +380,36 @@ mod tests {
 
         assert!(error.to_string().contains("missing activation admin address"));
         assert_eq!(chain_spec.fork(BaseUpgrade::Beryl), ForkCondition::Never);
+    }
+
+    #[test]
+    fn apply_applies_validated_schedule_to_registry() {
+        let chain_id = 9_100_004;
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+
+        let summary = runtime_refresher(chain_id, BaseChainSpec::devnet())
+            .apply(&versioned_schedule(BaseUpgrade::Azul, 42))
+            .unwrap();
+
+        assert_eq!(summary.applied_upgrades, 1);
+        assert_eq!(
+            RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Azul),
+            Some(UpgradeActivation::Timestamp(42))
+        );
+
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+    }
+
+    #[test]
+    fn apply_rejects_invalid_schedule_without_mutating_registry() {
+        let chain_id = 9_100_005;
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+
+        let error = runtime_refresher(chain_id, BaseChainSpec::from(ChainSpec::default()))
+            .apply(&versioned_schedule(BaseUpgrade::Beryl, 42))
+            .unwrap_err();
+
+        assert!(error.to_string().contains("missing activation admin address"));
+        assert_eq!(RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Beryl), None);
     }
 }

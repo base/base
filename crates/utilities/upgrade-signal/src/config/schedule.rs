@@ -154,8 +154,8 @@ impl UpgradeSignalConfig {
         Ok(())
     }
 
-    /// Reads, records, logs, and validates the L1 schedule.
-    pub async fn read_validated_schedule(
+    /// Reads the L1 schedule with retries, recording metrics and logging each signal.
+    pub async fn read_schedule(
         &self,
         reader: &AlloyUpgradeSignalReader,
         log_context: &'static str,
@@ -184,6 +184,17 @@ impl UpgradeSignalConfig {
             );
         }
 
+        Ok(schedule)
+    }
+
+    /// Reads the L1 schedule via [`Self::read_schedule`] and validates its protocol versions.
+    pub async fn read_validated_schedule(
+        &self,
+        reader: &AlloyUpgradeSignalReader,
+        log_context: &'static str,
+        metrics_layers: &[UpgradeSignalMetricLayer],
+    ) -> Result<UpgradeSignalSchedule, UpgradeSignalError> {
+        let schedule = self.read_schedule(reader, log_context, metrics_layers).await?;
         self.validate_schedule_protocol_versions(&schedule)?;
 
         Ok(schedule)

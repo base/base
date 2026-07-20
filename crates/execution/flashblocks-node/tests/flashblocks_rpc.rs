@@ -414,7 +414,7 @@ async fn test_get_pending_block() -> Result<()> {
         .expect("latest block expected");
 
     assert_eq!(pending_block.number(), latest_block.number());
-    assert_eq!(pending_block.hash(), latest_block.hash());
+    assert_eq!(pending_block.header.hash, latest_block.header.hash);
 
     let base_payload = setup.create_first_payload();
     setup.send_flashblock(base_payload).await?;

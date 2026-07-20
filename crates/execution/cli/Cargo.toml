@@ -41,7 +41,6 @@ base-flashblocks.workspace = true
 base-node-runner.workspace = true
 base-observability-events.workspace = true
 base-common-chains.workspace = true
-base-common-genesis.workspace = true
 base-execution-evm.workspace = true
 base-tx-forwarding.workspace = true
 base-txpool-tracing.workspace = true
@@ -79,6 +78,7 @@ base-common-consensus = { workspace = true, features = ["reth"] }
 
 [dev-dependencies]
 alloy-primitives.workspace = true
+base-common-genesis.workspace = true
 rstest.workspace = true
 tempfile.workspace = true
 axum = { workspace = true, features = ["tokio", "http1"] }
@@ -118,7 +118,6 @@ serde = [
 	"alloy-eips/serde",
 	"base-common-chains/serde",
 	"base-common-consensus/serde",
-	"base-common-genesis/serde",
 	"base-execution-chainspec/serde",
 	"reth-network/serde",
 	"secp256k1/serde",
