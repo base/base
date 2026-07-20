@@ -10,6 +10,11 @@ base-telemetry --listen-addr 0.0.0.0:8080
 
 The listen address can also be configured with `BASE_TELEMETRY_LISTEN_ADDR`.
 
+Requests are rate limited to 2 per minute per client IP. The client IP is
+read from the `X-Forwarded-For` header only when the direct peer is inside a
+CIDR listed in `BASE_TELEMETRY_TRUSTED_PROXY_CIDRS` (default empty);
+otherwise the peer socket address is used.
+
 The service exposes health routes and an on-demand execution-layer
 reachability check:
 

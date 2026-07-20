@@ -1,0 +1,17 @@
+[package]
+name = "base-http-utils"
+description = "Shared HTTP utilities for Base services"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+http.workspace = true
+ipnet.workspace = true
+tracing = { workspace = true, features = ["std"] }
