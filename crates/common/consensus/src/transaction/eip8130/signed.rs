@@ -108,11 +108,24 @@ impl<'a> arbitrary::Arbitrary<'a> for Eip8130Signed {
 /// `TxTypeNotSupported`) so callers can surface an actionable, per-case reason
 /// to submitters and logs: the transaction *type* is supported, its `expiry`
 /// is simply outside the node's admission window.
+///
+/// All variants except [`Self::NonceFreeMalformed`] describe a relationship
+/// between the transaction's `expiry` and the reference `now`.
+/// [`Self::NonceFreeMalformed`] is the exception: it reports a nonce-free
+/// *structural* precondition (`nonce_sequence`/`expiry` field constraints) that
+/// does not depend on `now`. It lives here — rather than in
+/// [`Eip8130Signed::validate_static`] — only because those preconditions gate
+/// the very nonce-free `expiry` window checks that follow it, so validating them
+/// in the same pass keeps the nonce-free rules in one place.
 #[cfg(feature = "reth")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Eip8130TimestampError {
     /// Nonce-free mode (`nonce_key == NONCE_KEY_MAX`) requires `nonce_sequence
     /// == 0` and a non-zero `expiry`; one of those invariants is violated.
+    ///
+    /// Unlike the other variants this is a `now`-independent structural check
+    /// on the transaction's fields, not a timing relationship (see the enum
+    /// docs).
     #[error("nonce-free transaction must set a non-zero expiry and a zero nonce sequence")]
     NonceFreeMalformed,
     /// A nonce-free transaction's `expiry` is at or before the reference time,
