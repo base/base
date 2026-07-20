@@ -607,6 +607,9 @@ pub enum KillStoreError {
     /// The monotonic epoch anchor is absent, corrupt, or below the record epoch.
     #[error("kill-state epoch anchor is invalid")]
     EpochAnchorInvalid,
+    /// The monotonic epoch space is exhausted (u64::MAX); no further engage.
+    #[error("kill-state epoch space is exhausted")]
+    EpochExhausted,
     /// Reset signature could not be parsed.
     #[error("reset attestation signature is malformed")]
     SignatureMalformed,
@@ -636,15 +639,25 @@ pub enum KillStoreError {
 /// the surviving anchor, losing/corrupting only the record cannot reuse a past
 /// epoch and let a stale reset attestation match.
 ///
+/// ## Durable, fail-closed commits
+/// Writer transitions validate an fsync-able directory handle BEFORE any rename, so
+/// a non-fsyncable directory (e.g. mode 0300) fails closed before any visible
+/// change. An Engaged→Clear commit additionally restores the Engaged latch if the
+/// post-rename `fsync(dir)` fails, so a commit returning `Err` can NEVER leave an
+/// accepted `Clear` (durability failure ⇒ latch stays Engaged). The state directory
+/// is created 0700 and verified to be a real, private, non-symlink directory on
+/// every transition (a non-private/symlinked path is surfaced as an error).
+///
 /// ## Residual (pre-arm requirement, not a silent gap)
 /// A *simultaneous* rollback of BOTH the record AND the `epoch.hwm` anchor (e.g. a
-/// whole-directory snapshot restore) removes all in-store memory of past epochs
-/// and could let an old reset attestation clear a re-engaged state. Defending that
-/// requires an external monotonic anchor established at arm time plus host
-/// filesystem isolation — an explicit pre-arm (G4/arm) + host-isolation P0
-/// requirement, out of scope for this keyless file store. (The whole reset/Clear
-/// path is moot while `OWNER_ATTEST_ADDRESS` is unset, but the contract is correct
-/// for arm time and proven by tests.)
+/// whole-directory snapshot restore) removes all in-store memory of past epochs and
+/// could let an old reset attestation clear a re-engaged state. Defending it needs
+/// an external monotonic anchor established at arm time plus host filesystem
+/// isolation. The reset/Clear path is moot while `OWNER_ATTEST_ADDRESS` is unset,
+/// and it is correct for the reachable single-file rollback cases proven by tests —
+/// but arming remains FORBIDDEN until that pre-arm gate (external monotonic anchor +
+/// host-isolation P0) is resolved. Pinning `OWNER_ATTEST_ADDRESS` alone does NOT
+/// authorize arming.
 #[derive(Debug, Clone)]
 pub struct FileKillStateStore {
     dir: PathBuf,
@@ -698,21 +711,45 @@ impl FileKillStateStore {
         self.dir.join("state.lock")
     }
 
-    /// Ensures the dedicated state directory exists, tightening it to a private
-    /// mode only on creation (an existing directory's mode is left as the operator
-    /// set it).
+    /// Ensures the state directory exists as a real, private (0700), non-symlink
+    /// directory: created atomically at 0700 when absent, then verified on every
+    /// transition. A pre-existing symlink, non-directory, or non-private path is
+    /// surfaced as `Io` (the host-isolation boundary the residual argument relies on
+    /// is enforced, not silently assumed).
     fn ensure_dir(&self) -> Result<(), KillStoreError> {
-        if self.dir.is_dir() {
-            return Ok(());
+        if fs::symlink_metadata(&self.dir).is_err() {
+            self.create_private_dir()?;
         }
-        fs::create_dir_all(&self.dir).map_err(|_| KillStoreError::Io)?;
+        self.verify_private_dir()
+    }
+
+    #[cfg(unix)]
+    fn create_private_dir(&self) -> Result<(), KillStoreError> {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&self.dir)
+            .map_err(|_| KillStoreError::Io)
+    }
+
+    #[cfg(not(unix))]
+    fn create_private_dir(&self) -> Result<(), KillStoreError> {
+        fs::create_dir_all(&self.dir).map_err(|_| KillStoreError::Io)
+    }
+
+    /// Verifies the state directory is a real directory (no symlink) and, on unix,
+    /// private (no group/other permission bits). Failures surface as `Io`.
+    fn verify_private_dir(&self) -> Result<(), KillStoreError> {
+        let metadata = fs::symlink_metadata(&self.dir).map_err(|_| KillStoreError::Io)?;
+        if !metadata.file_type().is_dir() {
+            return Err(KillStoreError::Io);
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            if let Ok(metadata) = fs::metadata(&self.dir) {
-                let mut perms = metadata.permissions();
-                perms.set_mode(0o700);
-                let _ = fs::set_permissions(&self.dir, perms);
+            if metadata.permissions().mode() & 0o077 != 0 {
+                return Err(KillStoreError::Io);
             }
         }
         Ok(())
@@ -757,12 +794,18 @@ impl FileKillStateStore {
         }
     }
 
-    /// Atomically replaces `path`: O_EXCL temp → fsync(file) → rename → fsync(dir),
-    /// every step a required success condition. Any failure leaves the prior file
-    /// intact and surfaces `Io`.
-    fn atomic_write(&self, path: &Path, bytes: &[u8]) -> Result<(), KillStoreError> {
+    /// Opens and validates a directory handle usable for fsync (needs read access).
+    /// Acquired BEFORE any rename so a non-fsyncable directory (e.g. mode 0300) fails
+    /// closed before any visible state change.
+    fn open_dir_for_sync(&self) -> Result<File, KillStoreError> {
+        File::open(&self.dir).map_err(|_| KillStoreError::Io)
+    }
+
+    /// Stages `bytes` into a fresh O_EXCL temp sibling of `path` (written + fsynced),
+    /// returning its path. Any failure removes the temp and surfaces `Io`.
+    fn stage_temp(&self, path: &Path, bytes: &[u8]) -> Result<PathBuf, KillStoreError> {
         let temp = temp_path(path);
-        let write = (|| -> std::io::Result<()> {
+        let staged = (|| -> std::io::Result<()> {
             // O_EXCL (`create_new`): never open an existing/preempted temp and never
             // follow a symlink planted at the temp path.
             let mut file = OpenOptions::new().write(true).create_new(true).open(&temp)?;
@@ -770,29 +813,79 @@ impl FileKillStateStore {
             file.sync_all()?;
             Ok(())
         })();
-        if write.is_err() {
+        if staged.is_err() {
             let _ = fs::remove_file(&temp);
             return Err(KillStoreError::Io);
         }
+        Ok(temp)
+    }
+
+    /// Durable commit for records whose visible-but-undurable result is fail-safe
+    /// (Engaged / a higher anchor): validate dir handle → stage temp → rename →
+    /// fsync(dir). A post-rename fsync error is surfaced without rollback.
+    fn commit(&self, path: &Path, bytes: &[u8]) -> Result<(), KillStoreError> {
+        let dir = self.open_dir_for_sync()?;
+        let temp = self.stage_temp(path, bytes)?;
         if fs::rename(&temp, path).is_err() {
             let _ = fs::remove_file(&temp);
             return Err(KillStoreError::Io);
         }
-        // Directory fsync makes the rename durable; failure is propagated, not swallowed.
-        let dir = File::open(&self.dir).map_err(|_| KillStoreError::Io)?;
-        dir.sync_all().map_err(|_| KillStoreError::Io)?;
-        Ok(())
+        dir_sync(&dir).map_err(|_| KillStoreError::Io)
     }
 
     fn write_record(&self, record: &PersistedRecord) -> Result<(), KillStoreError> {
         let bytes = serde_json::to_vec(record).map_err(|_| KillStoreError::Io)?;
-        self.atomic_write(&self.record_path(), &bytes)
+        self.commit(&self.record_path(), &bytes)
     }
 
     fn write_hwm(&self, high_water_epoch: u64) -> Result<(), KillStoreError> {
         let bytes = serde_json::to_vec(&HighWaterMark { high_water_epoch })
             .map_err(|_| KillStoreError::Io)?;
-        self.atomic_write(&self.hwm_path(), &bytes)
+        self.commit(&self.hwm_path(), &bytes)
+    }
+
+    /// Fail-closed Engaged→Clear commit: validate dir handle → stage temp → rename →
+    /// fsync(dir). If the post-rename fsync fails, restore the Engaged latch so a
+    /// commit returning `Err` can never leave an accepted `Clear`.
+    fn commit_clear(
+        &self,
+        epoch: u64,
+        reason: KillReason,
+        reset: PersistedReset,
+    ) -> Result<(), KillStoreError> {
+        let dir = self.open_dir_for_sync()?; // validated before any visible change
+        let clear = serde_json::to_vec(&PersistedRecord::Clear { epoch, reset })
+            .map_err(|_| KillStoreError::Io)?;
+        let temp = self.stage_temp(&self.record_path(), &clear)?;
+        if fs::rename(&temp, self.record_path()).is_err() {
+            let _ = fs::remove_file(&temp);
+            return Err(KillStoreError::Io); // still Engaged
+        }
+        // The Clear is now visible; confirm durability or restore Engaged.
+        if dir_sync(&dir).is_err() {
+            self.restore_engaged(epoch, reason);
+            return Err(KillStoreError::Io);
+        }
+        Ok(())
+    }
+
+    /// Best-effort restore of the Engaged latch after a failed Clear commit. Making
+    /// Engaged visible (rename) is what re-establishes `load() != Clear`; its own
+    /// durability is best-effort (a visible Engaged is already fail-safe).
+    fn restore_engaged(&self, epoch: u64, reason: KillReason) {
+        let Ok(bytes) = serde_json::to_vec(&PersistedRecord::Engaged { epoch, reason }) else {
+            return;
+        };
+        let Ok(temp) = self.stage_temp(&self.record_path(), &bytes) else {
+            return;
+        };
+        if fs::rename(&temp, self.record_path()).is_err() {
+            let _ = fs::remove_file(&temp);
+            return;
+        }
+        if let Ok(dir) = self.open_dir_for_sync() {
+            let _ = dir.sync_all();
+        }
     }
 
     /// Verifies a reset attestation against `expected_epoch` and the trust root.
@@ -862,8 +955,13 @@ impl KillStateStore for FileKillStateStore {
         self.ensure_dir()?;
         let _lock = self.lock_exclusive()?;
         // Next epoch is strictly above both the record and the surviving anchor, so
-        // losing only the record cannot reuse a past epoch.
-        let next = self.record_epoch().max(self.read_hwm().unwrap_or(0)).saturating_add(1);
+        // losing only the record cannot reuse a past epoch. A CHECKED increment
+        // refuses to reuse an epoch at u64::MAX (fail-closed), so a reset attestation
+        // valid at MAX can never be replayed to a later engagement.
+        let base = self.record_epoch().max(self.read_hwm().unwrap_or(0));
+        let Some(next) = base.checked_add(1) else {
+            return Err(KillStoreError::EpochExhausted);
+        };
         // Advance the anchor first: a crash before the record write biases the next
         // load to a fail-closed outcome and lets a retry advance cleanly.
         self.write_hwm(next)?;
@@ -873,8 +971,8 @@ impl KillStateStore for FileKillStateStore {
     fn owner_reset(&self, attestation: &ResetAttestation) -> Result<(), KillStoreError> {
         self.ensure_dir()?;
         let _lock = self.lock_exclusive()?;
-        // Only an engaged latch may be reset.
-        let Some(PersistedRecord::Engaged { epoch, .. }) = self.read_record() else {
+        // Only an engaged latch may be reset (keep its reason for a rollback restore).
+        let Some(PersistedRecord::Engaged { epoch, reason }) = self.read_record() else {
             return Err(KillStoreError::NotEngaged);
         };
         // The engaged record must sit at the current monotonic anchor.
@@ -887,9 +985,9 @@ impl KillStateStore for FileKillStateStore {
         // Anti-replay: the attestation must be bound to the current engaged epoch,
         // and recover to the trust-root owner.
         self.verify_reset(attestation, epoch)?;
-        let reset = PersistedReset::from(attestation);
-        // Persistence failure keeps the latch engaged (the old record is intact).
-        self.write_record(&PersistedRecord::Clear { epoch, reset })
+        // Fail-closed commit: a durability failure restores the Engaged latch, so a
+        // returned `Err` can never leave an accepted Clear.
+        self.commit_clear(epoch, reason, PersistedReset::from(attestation))
     }
 }
 
@@ -943,6 +1041,30 @@ fn temp_path(path: &Path) -> PathBuf {
     let mut temp = path.as_os_str().to_owned();
     temp.push(format!(".tmp.{pid}.{nanos}.{seq}"));
     PathBuf::from(temp)
+}
+
+/// fsyncs a directory handle. A `#[cfg(test)]` one-shot seam can force a single
+/// failure to exercise the fail-closed post-rename commit path deterministically.
+fn dir_sync(handle: &File) -> std::io::Result<()> {
+    #[cfg(test)]
+    {
+        if FAIL_NEXT_DIR_SYNC.with(|flag| flag.replace(false)) {
+            return Err(std::io::Error::other("injected directory sync failure"));
+        }
+    }
+    handle.sync_all()
+}
+
+#[cfg(test)]
+thread_local! {
+    /// One-shot: when set, the next `dir_sync` returns an error (and clears itself).
+    static FAIL_NEXT_DIR_SYNC: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Arms a single injected `dir_sync` failure on the current thread (test-only).
+#[cfg(test)]
+fn arm_dir_sync_failure() {
+    FAIL_NEXT_DIR_SYNC.with(|flag| flag.set(true));
 }
 
 #[cfg(test)]
@@ -1021,6 +1143,7 @@ mod tests {
             nanos
         ));
         fs::create_dir_all(&dir).expect("temp dir");
+        set_mode(&dir, 0o700); // the store requires a private (0700) state directory
         dir
     }
 
@@ -1514,6 +1637,112 @@ mod tests {
         let result = store.engage(KillReason::KeyOrSignatureFailure);
         assert!(matches!(result, Err(KillStoreError::Io)), "engage into uncreatable dir must error");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    // BLOCKER (round 2): a non-fsyncable directory (0300, no read) fails the reset
+    // BEFORE any visible change — the dir handle is validated before the rename.
+    #[test]
+    fn kill_store_reset_nonreadable_dir_fails_before_visible_change() {
+        let dir = temp_dir("reset-nordir");
+        let store = FileKillStateStore::new(&dir);
+        store.engage(KillReason::DrawdownFloorBreach).expect("engage");
+
+        set_mode(&dir, 0o300); // write+execute, no read -> dir fsync handle unopenable
+        let result = store.owner_reset(&reset_attestation(1, SIG_RESET_EPOCH1));
+        set_mode(&dir, 0o700); // restore before asserting
+
+        assert!(matches!(result, Err(KillStoreError::Io)), "non-fsyncable dir must error");
+        assert!(
+            matches!(store.load(), KillState::Engaged { .. }),
+            "Err must imply load() != Clear (no visible state change)"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // BLOCKER (round 2): an injected post-rename directory-fsync failure restores the
+    // Engaged latch, so a commit returning Err never leaves an accepted Clear.
+    #[test]
+    fn kill_store_reset_post_rename_sync_failure_restores_engaged() {
+        let dir = temp_dir("reset-syncfail");
+        let store = FileKillStateStore::new(&dir);
+        store.engage(KillReason::DrawdownFloorBreach).expect("engage");
+
+        arm_dir_sync_failure(); // fail the next dir fsync (post-rename in commit_clear)
+        let result = store.owner_reset(&reset_attestation(1, SIG_RESET_EPOCH1));
+
+        assert!(matches!(result, Err(KillStoreError::Io)), "post-rename sync failure must error");
+        assert_ne!(store.load(), KillState::Clear { verified_at: 1 }, "Err must imply load() != Clear");
+        assert!(
+            matches!(store.load(), KillState::Engaged { .. }),
+            "the Engaged latch is restored after a failed Clear commit"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // MAJOR (round 2): at a u64::MAX anchor, engage is fail-closed (no epoch reuse)
+    // and a stale reset attestation cannot clear the latch.
+    #[test]
+    fn kill_store_engage_at_epoch_max_is_fail_closed() {
+        let dir = temp_dir("epoch-max");
+        let store = FileKillStateStore::new(&dir);
+        // Establish the private dir + files, then pin both to u64::MAX.
+        store.engage(KillReason::DrawdownFloorBreach).expect("bootstrap");
+        fs::write(dir.join("epoch.hwm"), br#"{"high_water_epoch":18446744073709551615}"#)
+            .expect("write max anchor");
+        fs::write(
+            dir.join("state.json"),
+            br#"{"state":"engaged","epoch":18446744073709551615,"reason":"drawdown_floor_breach"}"#,
+        )
+        .expect("write max record");
+        assert_eq!(store.debug_epochs(), (u64::MAX, Some(u64::MAX)));
+
+        // Engage refuses to reuse the exhausted epoch.
+        assert!(matches!(store.engage(KillReason::DrawdownFloorBreach), Err(KillStoreError::EpochExhausted)));
+        assert_eq!(store.debug_epochs(), (u64::MAX, Some(u64::MAX)), "no epoch reuse at MAX");
+        // A stale epoch-1 reset attestation cannot clear the MAX-epoch latch.
+        let result = store.owner_reset(&reset_attestation(1, SIG_RESET_EPOCH1));
+        assert!(matches!(result, Err(KillStoreError::ResetEpochMismatch)));
+        assert!(matches!(store.load(), KillState::Engaged { .. }));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // MAJOR (round 2): a pre-existing non-private (world/group-accessible) directory
+    // is rejected, not silently accepted.
+    #[test]
+    fn kill_store_rejects_non_private_dir() {
+        let parent = temp_dir("nonprivate");
+        let dir = parent.join("state");
+        fs::create_dir_all(&dir).expect("dir");
+        set_mode(&dir, 0o755); // group/other-accessible
+        let store = FileKillStateStore::new(&dir);
+        assert!(matches!(store.engage(KillReason::DrawdownFloorBreach), Err(KillStoreError::Io)));
+        let _ = fs::remove_dir_all(&parent);
+    }
+
+    // MAJOR (round 2): a symlinked state path is rejected (no-symlink verification).
+    #[test]
+    fn kill_store_rejects_symlinked_dir() {
+        let parent = temp_dir("symlink");
+        let target = parent.join("target");
+        fs::create_dir_all(&target).expect("target");
+        set_mode(&target, 0o700);
+        let link = parent.join("link");
+        std::os::unix::fs::symlink(&target, &link).expect("symlink");
+        let store = FileKillStateStore::new(&link);
+        assert!(matches!(store.engage(KillReason::DrawdownFloorBreach), Err(KillStoreError::Io)));
+        let _ = fs::remove_dir_all(&parent);
+    }
+
+    // MAJOR (round 2): a freshly created state directory is private (0700).
+    #[test]
+    fn kill_store_creates_private_state_dir() {
+        let parent = temp_dir("create-private");
+        let dir = parent.join("state");
+        let store = FileKillStateStore::new(&dir);
+        store.engage(KillReason::DrawdownFloorBreach).expect("engage creates dir");
+        let mode = fs::symlink_metadata(&dir).expect("metadata").permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "created state dir must be private");
+        let _ = fs::remove_dir_all(&parent);
     }
 
     fn set_mode(dir: &Path, mode: u32) {
