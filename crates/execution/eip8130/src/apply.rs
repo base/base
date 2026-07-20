@@ -33,9 +33,7 @@ use base_common_consensus::{
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::state::Bytecode;
 
-use crate::{
-    AccountConfigurationEvents, AccountConfigurationStorage, AccountState, ActorConfig,
-};
+use crate::{AccountConfigurationEvents, AccountConfigurationStorage, AccountState, ActorConfig};
 
 sol! {
     /// ABI shape of the per-actor config carried in an `Authorize` change's
