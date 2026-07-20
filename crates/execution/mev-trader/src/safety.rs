@@ -639,14 +639,20 @@ pub enum KillStoreError {
 /// the surviving anchor, losing/corrupting only the record cannot reuse a past
 /// epoch and let a stale reset attestation match.
 ///
-/// ## Durable, fail-closed commits
-/// Writer transitions validate an fsync-able directory handle BEFORE any rename, so
-/// a non-fsyncable directory (e.g. mode 0300) fails closed before any visible
-/// change. An Engaged→Clear commit additionally restores the Engaged latch if the
-/// post-rename `fsync(dir)` fails, so a commit returning `Err` can NEVER leave an
-/// accepted `Clear` (durability failure ⇒ latch stays Engaged). The state directory
-/// is created 0700 and verified to be a real, private, non-symlink directory on
-/// every transition (a non-private/symlinked path is surfaced as an error).
+/// ## Durable, fail-closed commits (safety asymmetry)
+/// `owner_reset` (Engaged→Clear, the UNSAFE direction) uses `rename` as its commit
+/// point: it stages a temp Clear and renames it over the record. Returning `Err`
+/// implies the rename did NOT occur, so the record is still Engaged and
+/// `load() != Clear` — there is no post-commit compensation that could itself fail.
+/// The directory fsync after a successful reset rename is best-effort: its only
+/// failure mode is a crash that loses the un-fsynced rename and reverts to the SAFE
+/// Engaged state, so a fsync failure does not fail the reset. `engage` (→Engaged,
+/// the SAFE/halt direction) instead validates an fsync-able directory handle BEFORE
+/// its rename and PROPAGATES a fsync failure as `Err` — the Engaged record is
+/// visible/effective immediately, and the `Err` signals "halt active but not
+/// crash-durable" so the trigger can escalate. The state directory is created 0700
+/// and verified to be a real, private, non-symlink directory on every transition (a
+/// non-private/symlinked path is surfaced as an error).
 ///
 /// ## Residual (pre-arm requirement, not a silent gap)
 /// A *simultaneous* rollback of BOTH the record AND the `epoch.hwm` anchor (e.g. a
@@ -844,48 +850,30 @@ impl FileKillStateStore {
         self.commit(&self.hwm_path(), &bytes)
     }
 
-    /// Fail-closed Engaged→Clear commit: validate dir handle → stage temp → rename →
-    /// fsync(dir). If the post-rename fsync fails, restore the Engaged latch so a
-    /// commit returning `Err` can never leave an accepted `Clear`.
-    fn commit_clear(
-        &self,
-        epoch: u64,
-        reason: KillReason,
-        reset: PersistedReset,
-    ) -> Result<(), KillStoreError> {
-        let dir = self.open_dir_for_sync()?; // validated before any visible change
+    /// Fail-closed Engaged→Clear commit with `rename` as the commit point. Stage a
+    /// temp Clear, then rename it over the record. If the rename does not happen
+    /// (stage failure or rename error) the record stays Engaged and `Err` is
+    /// returned — so `owner_reset` returning `Err` ALWAYS implies `load() != Clear`,
+    /// with no compensation path that could itself fail. A successful rename commits
+    /// the Clear (the owner genuinely reset); the directory fsync is then
+    /// best-effort, because the only failure mode of an un-fsynced reset rename is a
+    /// crash that reverts to the SAFE Engaged state — so a durability failure does
+    /// NOT fail the reset.
+    fn commit_clear(&self, epoch: u64, reset: PersistedReset) -> Result<(), KillStoreError> {
+        let record = self.record_path();
         let clear = serde_json::to_vec(&PersistedRecord::Clear { epoch, reset })
             .map_err(|_| KillStoreError::Io)?;
-        let temp = self.stage_temp(&self.record_path(), &clear)?;
-        if fs::rename(&temp, self.record_path()).is_err() {
+        let temp = self.stage_temp(&record, &clear)?; // Err here => record still Engaged
+        if rename_commit(&temp, &record).is_err() {
             let _ = fs::remove_file(&temp);
-            return Err(KillStoreError::Io); // still Engaged
+            return Err(KillStoreError::Io); // no rename => record still Engaged
         }
-        // The Clear is now visible; confirm durability or restore Engaged.
-        if dir_sync(&dir).is_err() {
-            self.restore_engaged(epoch, reason);
-            return Err(KillStoreError::Io);
+        // The rename committed the Clear. Best-effort durability only: a crash that
+        // loses the un-fsynced rename reverts to the safe Engaged state.
+        if let Ok(dir) = self.open_dir_for_sync() {
+            let _ = dir_sync(&dir);
         }
         Ok(())
-    }
-
-    /// Best-effort restore of the Engaged latch after a failed Clear commit. Making
-    /// Engaged visible (rename) is what re-establishes `load() != Clear`; its own
-    /// durability is best-effort (a visible Engaged is already fail-safe).
-    fn restore_engaged(&self, epoch: u64, reason: KillReason) {
-        let Ok(bytes) = serde_json::to_vec(&PersistedRecord::Engaged { epoch, reason }) else {
-            return;
-        };
-        let Ok(temp) = self.stage_temp(&self.record_path(), &bytes) else {
-            return;
-        };
-        if fs::rename(&temp, self.record_path()).is_err() {
-            let _ = fs::remove_file(&temp);
-            return;
-        }
-        if let Ok(dir) = self.open_dir_for_sync() {
-            let _ = dir.sync_all();
-        }
     }
 
     /// Verifies a reset attestation against `expected_epoch` and the trust root.
@@ -971,8 +959,8 @@ impl KillStateStore for FileKillStateStore {
     fn owner_reset(&self, attestation: &ResetAttestation) -> Result<(), KillStoreError> {
         self.ensure_dir()?;
         let _lock = self.lock_exclusive()?;
-        // Only an engaged latch may be reset (keep its reason for a rollback restore).
-        let Some(PersistedRecord::Engaged { epoch, reason }) = self.read_record() else {
+        // Only an engaged latch may be reset.
+        let Some(PersistedRecord::Engaged { epoch, .. }) = self.read_record() else {
             return Err(KillStoreError::NotEngaged);
         };
         // The engaged record must sit at the current monotonic anchor.
@@ -985,9 +973,9 @@ impl KillStateStore for FileKillStateStore {
         // Anti-replay: the attestation must be bound to the current engaged epoch,
         // and recover to the trust-root owner.
         self.verify_reset(attestation, epoch)?;
-        // Fail-closed commit: a durability failure restores the Engaged latch, so a
-        // returned `Err` can never leave an accepted Clear.
-        self.commit_clear(epoch, reason, PersistedReset::from(attestation))
+        // Rename is the commit point: a returned `Err` implies no rename occurred, so
+        // the record stays Engaged and `load() != Clear`.
+        self.commit_clear(epoch, PersistedReset::from(attestation))
     }
 }
 
@@ -1065,6 +1053,30 @@ thread_local! {
 #[cfg(test)]
 fn arm_dir_sync_failure() {
     FAIL_NEXT_DIR_SYNC.with(|flag| flag.set(true));
+}
+
+/// Renames `from` to `to` — the reset commit point. A `#[cfg(test)]` one-shot seam
+/// can force a single failure to exercise the fail-closed rename-failure path.
+fn rename_commit(from: &Path, to: &Path) -> std::io::Result<()> {
+    #[cfg(test)]
+    {
+        if FAIL_NEXT_RENAME.with(|flag| flag.replace(false)) {
+            return Err(std::io::Error::other("injected rename failure"));
+        }
+    }
+    fs::rename(from, to)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// One-shot: when set, the next `rename_commit` returns an error (and clears itself).
+    static FAIL_NEXT_RENAME: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Arms a single injected `rename_commit` failure on the current thread (test-only).
+#[cfg(test)]
+fn arm_rename_failure() {
+    FAIL_NEXT_RENAME.with(|flag| flag.set(true));
 }
 
 #[cfg(test)]
@@ -1639,42 +1651,59 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    // BLOCKER (round 2): a non-fsyncable directory (0300, no read) fails the reset
-    // BEFORE any visible change — the dir handle is validated before the rename.
+    // BLOCKER (round 3): `rename` is the reset commit point. A rename failure means
+    // no Clear becomes visible, so owner_reset returning Err ALWAYS implies Engaged,
+    // and a restart never sees a spurious Clear (there is no compensation path).
     #[test]
-    fn kill_store_reset_nonreadable_dir_fails_before_visible_change() {
-        let dir = temp_dir("reset-nordir");
+    fn kill_store_reset_rename_failure_keeps_engaged() {
+        let dir = temp_dir("reset-renamefail");
         let store = FileKillStateStore::new(&dir);
         store.engage(KillReason::DrawdownFloorBreach).expect("engage");
 
-        set_mode(&dir, 0o300); // write+execute, no read -> dir fsync handle unopenable
+        arm_rename_failure(); // fail the commit-point rename in commit_clear
         let result = store.owner_reset(&reset_attestation(1, SIG_RESET_EPOCH1));
-        set_mode(&dir, 0o700); // restore before asserting
 
-        assert!(matches!(result, Err(KillStoreError::Io)), "non-fsyncable dir must error");
-        assert!(
-            matches!(store.load(), KillState::Engaged { .. }),
-            "Err must imply load() != Clear (no visible state change)"
-        );
+        assert!(matches!(result, Err(KillStoreError::Io)), "rename failure must error");
+        assert!(matches!(store.load(), KillState::Engaged { .. }), "Err implies no visible Clear");
+        // A restart also sees Engaged (no rename => nothing committed).
+        assert!(matches!(FileKillStateStore::new(&dir).load(), KillState::Engaged { .. }));
         let _ = fs::remove_dir_all(&dir);
     }
 
-    // BLOCKER (round 2): an injected post-rename directory-fsync failure restores the
-    // Engaged latch, so a commit returning Err never leaves an accepted Clear.
+    // BLOCKER (round 3): a directory-fsync failure AFTER a successful reset rename is
+    // non-fatal — the owner genuinely reset, the rename committed the Clear, and the
+    // only failure mode of the un-fsynced rename is a crash reverting to Engaged.
     #[test]
-    fn kill_store_reset_post_rename_sync_failure_restores_engaged() {
-        let dir = temp_dir("reset-syncfail");
+    fn kill_store_reset_dir_sync_failure_is_nonfatal() {
+        let dir = temp_dir("reset-syncnonfatal");
         let store = FileKillStateStore::new(&dir);
         store.engage(KillReason::DrawdownFloorBreach).expect("engage");
 
-        arm_dir_sync_failure(); // fail the next dir fsync (post-rename in commit_clear)
+        arm_dir_sync_failure(); // fail the best-effort post-rename dir fsync
         let result = store.owner_reset(&reset_attestation(1, SIG_RESET_EPOCH1));
 
-        assert!(matches!(result, Err(KillStoreError::Io)), "post-rename sync failure must error");
-        assert_ne!(store.load(), KillState::Clear { verified_at: 1 }, "Err must imply load() != Clear");
+        assert!(result.is_ok(), "reset rename committed; dir-fsync failure is non-fatal");
+        assert_eq!(store.load(), KillState::Clear { verified_at: 1 });
+        // The committed Clear also survives a restart.
+        assert_eq!(FileKillStateStore::new(&dir).load(), KillState::Clear { verified_at: 1 });
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // MAJOR (round 3): engage keeps propagating a dir-fsync failure as Err (the safe
+    // halt direction) while the Engaged latch stays visible/effective.
+    #[test]
+    fn kill_store_engage_dir_sync_failure_surfaces_error() {
+        let dir = temp_dir("engage-syncfail");
+        let store = FileKillStateStore::new(&dir);
+        store.engage(KillReason::DrawdownFloorBreach).expect("bootstrap engage");
+
+        arm_dir_sync_failure(); // fail the next engage commit's dir fsync
+        let result = store.engage(KillReason::KeyOrSignatureFailure);
+
+        assert!(matches!(result, Err(KillStoreError::Io)), "engage surfaces dir-fsync failure");
         assert!(
             matches!(store.load(), KillState::Engaged { .. }),
-            "the Engaged latch is restored after a failed Clear commit"
+            "the Engaged latch stays visible after a non-durable engage"
         );
         let _ = fs::remove_dir_all(&dir);
     }
