@@ -250,7 +250,7 @@ impl Checkpoint {
         let invalid_index = invalid_index.to_be_bytes();
         ProofSessionId::derive_from_components(
             b"base/zk-fork-dispute/proof-session/v1",
-            ChallengerProofAdapter::snark_plonk_session_label(),
+            "zk/sp1/snark_plonk",
             &[
                 game_address.as_slice(),
                 &invalid_index,
