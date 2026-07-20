@@ -22,14 +22,12 @@ flashblocks_ws: "ws://localhost:7111"
 # Number of sender accounts
 sender_count: 100
 
-# Target gas per second (~100 simple transfers)
-target_gps: 20000000
+# Optional gas/s ceiling (~100 simple transfers); omit for fully adaptive throughput.
+max_target_gps: 20000000
 
 # Keep local devnet RPC pressure batched while leaving enough in-flight room
 # for block receipt confirmation to provide backpressure.
 in_flight_per_sender: 96
-batch_size: 20
-batch_timeout: "10ms"
 
 # Test duration
 duration: "30s"

@@ -82,6 +82,10 @@ struct LoadArgs {
     #[arg(long)]
     recover_real_tokens: bool,
 
+    /// Skip draining native ETH balances back to the funder account.
+    #[arg(long)]
+    skip_drain: bool,
+
     /// Load test YAML configuration.
     #[arg(value_name = "CONFIG")]
     config: PathBuf,
@@ -123,6 +127,7 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
     }
 
     let test_config = TestConfig::load(&config_path)?;
+    let skip_drain = args.skip_drain || test_config.skip_drain;
 
     let query_rpc = match test_config.query_rpc.clone() {
         Some(query_rpc) => query_rpc,
@@ -147,6 +152,10 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
                 "Re-deriving {} accounts from config and draining to funder...",
                 load_config.account_count
             );
+            if skip_drain {
+                println!("Skipping drain due to --skip-drain.");
+                return Ok(());
+            }
             let runner = LoadRunner::new(load_config)?;
             match runner.drain_accounts(funding_key).await {
                 Ok(drained) => println!("Drained {} ETH back to funder.", format_ether(drained)),
@@ -179,9 +188,15 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
                 }
                 Err(e) => bail!("real-token recovery failed: {e}"),
             }
-            match runner.drain_accounts(funding_key).await {
-                Ok(drained) => println!("Drained {} ETH back to funder.", format_ether(drained)),
-                Err(e) => bail!("drain failed: {e}"),
+            if skip_drain {
+                println!("Skipping drain due to --skip-drain.");
+            } else {
+                match runner.drain_accounts(funding_key).await {
+                    Ok(drained) => {
+                        println!("Drained {} ETH back to funder.", format_ether(drained))
+                    }
+                    Err(e) => bail!("drain failed: {e}"),
+                }
             }
             return Ok(());
         }
@@ -208,9 +223,12 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
     } else {
         load_config.duration.map_or_else(|| "continuous".to_string(), |d| format!("{d:?}"))
     };
+    let max_target_gps_display = load_config
+        .max_target_gps
+        .map_or_else(|| "unbounded".to_string(), |gps| format!("{gps} gas/s"));
     println!(
-        "Target: {} GPS | Duration: {} | Accounts: {}",
-        load_config.target_gps, duration_display, load_config.account_count
+        "Target cap: {} | Duration: {} | Accounts: {}",
+        max_target_gps_display, duration_display, load_config.account_count
     );
     println!();
 
@@ -219,7 +237,11 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
         test_config,
         load_config,
         funding_key,
-        LoadTestRunOptions { continuous: args.continuous, install_signal_handler: true },
+        LoadTestRunOptions {
+            continuous: args.continuous,
+            install_signal_handler: true,
+            skip_drain,
+        },
         LoadTestRunHooks {
             display: Some(LoadTestDisplayConfig { multi_progress: mp, duration: display_duration }),
             before_cleanup: present_load_test_summary,

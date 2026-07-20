@@ -27,6 +27,8 @@ pub struct LoadTestRunOptions {
     pub continuous: bool,
     /// Install signal handlers that ask the runner to stop gracefully.
     pub install_signal_handler: bool,
+    /// Skip draining native ETH balances back to the funder account.
+    pub skip_drain: bool,
 }
 
 /// Caller-supplied hooks for a prepared load-test run.
@@ -190,7 +192,7 @@ impl LoadTestExecutor {
         let hook_panic = std::panic::catch_unwind(AssertUnwindSafe(|| {
             (hooks.before_cleanup)(&summary);
         }));
-        let cleanup = Self::cleanup(&runner, funding_key).await;
+        let cleanup = Self::cleanup(&runner, funding_key, options.skip_drain).await;
         if let Err(payload) = hook_panic {
             std::panic::resume_unwind(payload);
         }
@@ -254,6 +256,7 @@ impl LoadTestExecutor {
     pub async fn cleanup(
         runner: &LoadRunner,
         funding_key: PrivateKeySigner,
+        skip_drain: bool,
     ) -> LoadTestCleanupSummary {
         tokio::time::sleep(Duration::from_secs(2)).await;
 
@@ -271,15 +274,19 @@ impl LoadTestExecutor {
         }
 
         println!();
-        println!("Draining accounts back to funder...");
-        match runner.drain_accounts(funding_key).await {
-            Ok(drained) => {
-                println!("Drained {} ETH back to funder.", format_ether(drained));
-                summary.drained = Some(drained);
-            }
-            Err(error) => {
-                eprintln!("Warning: drain failed: {error}");
-                summary.drain_error = Some(error.to_string());
+        if skip_drain {
+            println!("Skipping drain due to --skip-drain.");
+        } else {
+            println!("Draining accounts back to funder...");
+            match runner.drain_accounts(funding_key).await {
+                Ok(drained) => {
+                    println!("Drained {} ETH back to funder.", format_ether(drained));
+                    summary.drained = Some(drained);
+                }
+                Err(error) => {
+                    eprintln!("Warning: drain failed: {error}");
+                    summary.drain_error = Some(error.to_string());
+                }
             }
         }
 
