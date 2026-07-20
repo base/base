@@ -23,7 +23,7 @@ pub enum SealState {
     Committed,
     /// Gossiped to peers. Ready for engine insertion.
     Gossiped,
-    /// Private payload ready for engine insertion without conductor commit or gossip.
+    /// Shadow sequencer payload ready for private engine insertion without commit or gossip.
     Private,
 }
 
@@ -144,9 +144,14 @@ impl PayloadSealer {
                 Ok(SealStepOutcome::Pending)
             }
             SealState::Gossiped | SealState::Private => {
-                self.seal_span.in_scope(
-                    || debug!(target: "sequencer", step = "insert", "seal pipeline step"),
-                );
+                self.seal_span.in_scope(|| {
+                    debug!(
+                        target: "sequencer",
+                        step = "insert",
+                        state = ?self.state,
+                        "seal pipeline step"
+                    );
+                });
                 let inserted_head = engine_client
                     .insert_unsafe_payload(self.envelope.clone())
                     .instrument(self.seal_span.clone())
