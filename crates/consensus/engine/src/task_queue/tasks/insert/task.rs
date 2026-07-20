@@ -217,6 +217,9 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
     }
 
     /// Inserts the payload and returns the engine-acknowledged unsafe head.
+    ///
+    /// After successfully inserting an authoritative payload, this also resets the local-safe
+    /// head to the current safe head.
     pub async fn execute_with_result(&self, state: &mut EngineState) -> InsertTaskResult {
         let time_start = Instant::now();
 
