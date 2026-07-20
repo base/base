@@ -1,0 +1,31 @@
+[package]
+name = "base-state-populate"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+name = "base_state_populate"
+
+[[bin]]
+name = "state-populate"
+path = "src/main.rs"
+
+[dependencies]
+eyre.workspace = true
+k256.workspace = true
+rand.workspace = true
+rayon.workspace = true
+tracing.workspace = true
+reth-trie.workspace = true
+indicatif.workspace = true
+reth-db-api.workspace = true
+reth-trie-db.workspace = true
+alloy-primitives.workspace = true
+tracing-subscriber.workspace = true
+reth-primitives-traits.workspace = true
+clap = { workspace = true, features = ["derive"] }
+reth-db = { workspace = true, features = ["mdbx"] }
+
+[lints]
+workspace = true
