@@ -85,9 +85,16 @@ impl PayloadSealer {
 
     /// Creates a private sealer that skips conductor commit and gossip.
     pub fn new_private(envelope: BaseExecutionPayloadEnvelope) -> Self {
-        let mut sealer = Self::new(envelope);
-        sealer.state = SealState::Private;
-        sealer
+        let block_hash = envelope.execution_payload.block_hash();
+        let block_num = envelope.execution_payload.block_number();
+        let seal_span = tracing::info_span!(
+            "seal_payload_pipeline",
+            block_hash = %block_hash,
+            block_number = block_num,
+            mode = "shadow",
+        );
+
+        Self { envelope, state: SealState::Private, seal_span, started_at: Instant::now() }
     }
 
     /// Performs one step of the seal pipeline.
