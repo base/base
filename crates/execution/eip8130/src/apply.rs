@@ -451,6 +451,9 @@ impl AccountChangeApplier {
     ) -> Result<(), ApplyError> {
         let config = storage.get_actor_config(account, actor_id)?;
         if config.authenticator != Address::ZERO {
+            // An explicit self actor is necessarily non-k1. Installing it sets
+            // DEFAULT_EOA_REVOKED and clears the inline scope/expiry, so revoking
+            // its explicit home requires no further account-state mutation.
             return Self::revoke_explicit_actor(storage, account, actor_id, config);
         }
         if actor_id != AccountConfigurationStorage::self_actor_id(account)
