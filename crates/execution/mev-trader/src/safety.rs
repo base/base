@@ -16,9 +16,10 @@
 //! only computes decisions.
 
 use std::{
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     io::Write,
-    path::PathBuf,
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 use alloy_primitives::{Address, Signature, U256};
@@ -296,6 +297,8 @@ pub struct CriteriaArtifact {
 /// Why a load produced `Unarmed`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnarmedReason {
+    /// No arming artifact was present (the caller could not find/parse one).
+    ArtifactMissing,
     /// `sha256(canonical_payload)` did not equal the pinned criteria SHA.
     CriteriaShaMismatch,
     /// Source-commit was not exactly 40 lowercase hex (rejects 39/41/64/`0x`/upper).
@@ -335,6 +338,17 @@ impl ArmedCriteria {
     /// Any failure yields a fail-closed unarmed value.
     pub fn load(artifact: &CriteriaArtifact) -> Self {
         Self::load_with_owner(artifact, OWNER_ATTEST_ADDRESS)
+    }
+
+    /// Fail-closed entrypoint that folds artifact absence into an explicit
+    /// `Unarmed(ArtifactMissing)`. `None` (the caller could not find or parse an
+    /// artifact) is treated exactly like any other verification failure: unarmed,
+    /// so `submit_gate` is closed.
+    pub fn load_optional(artifact: Option<&CriteriaArtifact>) -> Self {
+        match artifact {
+            Some(artifact) => Self::load(artifact),
+            None => Self::unarmed(UnarmedReason::ArtifactMissing),
+        }
     }
 
     /// Loads against an explicit trust root. The public [`load`](Self::load)
@@ -590,6 +604,9 @@ pub enum KillStoreError {
     /// Reset attestation epoch does not equal the current engaged epoch.
     #[error("reset attestation epoch does not match the engaged epoch")]
     ResetEpochMismatch,
+    /// The monotonic epoch anchor is absent, corrupt, or below the record epoch.
+    #[error("kill-state epoch anchor is invalid")]
+    EpochAnchorInvalid,
     /// Reset signature could not be parsed.
     #[error("reset attestation signature is malformed")]
     SignatureMalformed,
@@ -604,11 +621,33 @@ pub enum KillStoreError {
     NotEngaged,
 }
 
-/// Minimal purpose-built kill-state file store. Writes are atomic (temp → fsync →
-/// rename) and every load path fails closed to `Unknown`.
+/// Minimal purpose-built kill-state file store backed by a dedicated private
+/// directory holding three files: the state record, the monotonic epoch anchor,
+/// and an advisory lock. All writer transitions (`engage`/`owner_reset`) run the
+/// entire read-check-write under a process- and thread-exclusive advisory lock;
+/// every load path fails closed to `Unknown`.
+///
+/// ## Anti-replay and the epoch anchor
+/// The `epoch.hwm` anchor is a high-water mark that only ever increases; `engage`
+/// advances it past both the record epoch and the anchor. A persisted `Clear` is
+/// honored ONLY when its epoch equals the current anchor, so an old valid
+/// `Clear{epoch:n}` restored (rolled back) after a later `engage` no longer
+/// matches the anchor and fails closed. Because `engage` bases the next epoch on
+/// the surviving anchor, losing/corrupting only the record cannot reuse a past
+/// epoch and let a stale reset attestation match.
+///
+/// ## Residual (pre-arm requirement, not a silent gap)
+/// A *simultaneous* rollback of BOTH the record AND the `epoch.hwm` anchor (e.g. a
+/// whole-directory snapshot restore) removes all in-store memory of past epochs
+/// and could let an old reset attestation clear a re-engaged state. Defending that
+/// requires an external monotonic anchor established at arm time plus host
+/// filesystem isolation — an explicit pre-arm (G4/arm) + host-isolation P0
+/// requirement, out of scope for this keyless file store. (The whole reset/Clear
+/// path is moot while `OWNER_ATTEST_ADDRESS` is unset, but the contract is correct
+/// for arm time and proven by tests.)
 #[derive(Debug, Clone)]
 pub struct FileKillStateStore {
-    path: PathBuf,
+    dir: PathBuf,
 }
 
 /// On-disk record. A `Clear` is stored with its full attestation (never a bare
@@ -628,20 +667,88 @@ struct PersistedReset {
     signature_hex: String,
 }
 
+/// Persisted monotonic high-water epoch anchor.
+#[derive(Serialize, Deserialize)]
+struct HighWaterMark {
+    high_water_epoch: u64,
+}
+
+/// RAII holder for the exclusive advisory lock; releasing it (drop, which closes
+/// the file descriptor) releases the underlying `flock`.
+struct StateLock {
+    _file: File,
+}
+
 impl FileKillStateStore {
-    /// Creates a store backed by `path` (a node-config location).
-    pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+    /// Creates a store backed by a dedicated private directory (a node-config
+    /// location). The directory and its files are created on first write.
+    pub fn new(dir: impl Into<PathBuf>) -> Self {
+        Self { dir: dir.into() }
+    }
+
+    fn record_path(&self) -> PathBuf {
+        self.dir.join("state.json")
+    }
+
+    fn hwm_path(&self) -> PathBuf {
+        self.dir.join("epoch.hwm")
+    }
+
+    fn lock_path(&self) -> PathBuf {
+        self.dir.join("state.lock")
+    }
+
+    /// Ensures the dedicated state directory exists, tightening it to a private
+    /// mode only on creation (an existing directory's mode is left as the operator
+    /// set it).
+    fn ensure_dir(&self) -> Result<(), KillStoreError> {
+        if self.dir.is_dir() {
+            return Ok(());
+        }
+        fs::create_dir_all(&self.dir).map_err(|_| KillStoreError::Io)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(metadata) = fs::metadata(&self.dir) {
+                let mut perms = metadata.permissions();
+                perms.set_mode(0o700);
+                let _ = fs::set_permissions(&self.dir, perms);
+            }
+        }
+        Ok(())
+    }
+
+    /// Acquires the exclusive advisory lock covering the whole read-check-write.
+    /// Blocks until granted; released when the returned guard drops. `flock` is
+    /// exclusive across independent opens, giving both cross-process and
+    /// cross-thread serialization.
+    fn lock_exclusive(&self) -> Result<StateLock, KillStoreError> {
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(self.lock_path())
+            .map_err(|_| KillStoreError::Io)?;
+        file.lock().map_err(|_| KillStoreError::Io)?;
+        Ok(StateLock { _file: file })
     }
 
     /// Reads and deserializes the record; `None` on absence/unreadable/torn/corrupt.
     fn read_record(&self) -> Option<PersistedRecord> {
-        let bytes = fs::read(&self.path).ok()?;
+        let bytes = fs::read(self.record_path()).ok()?;
         serde_json::from_slice(&bytes).ok()
     }
 
-    /// Current monotonic epoch (0 when no valid record exists).
-    fn current_epoch(&self) -> u64 {
+    /// Reads the monotonic epoch anchor; `None` on absence/unreadable/torn/corrupt.
+    fn read_hwm(&self) -> Option<u64> {
+        let bytes = fs::read(self.hwm_path()).ok()?;
+        let anchor: HighWaterMark = serde_json::from_slice(&bytes).ok()?;
+        Some(anchor.high_water_epoch)
+    }
+
+    /// Epoch carried by the record (0 when no valid record exists).
+    fn record_epoch(&self) -> u64 {
         match self.read_record() {
             Some(PersistedRecord::Engaged { epoch, .. } | PersistedRecord::Clear { epoch, .. }) => {
                 epoch
@@ -650,18 +757,16 @@ impl FileKillStateStore {
         }
     }
 
-    /// Atomically replaces the record: temp file → fsync → rename (+ best-effort
-    /// directory fsync). Any failure leaves the previous record intact.
-    fn atomic_write(&self, record: &PersistedRecord) -> Result<(), KillStoreError> {
-        let bytes = serde_json::to_vec(record).map_err(|_| KillStoreError::Io)?;
-        let mut temp = self.path.clone().into_os_string();
-        temp.push(".tmp.");
-        temp.push(unique_suffix());
-        let temp = PathBuf::from(temp);
-
+    /// Atomically replaces `path`: O_EXCL temp → fsync(file) → rename → fsync(dir),
+    /// every step a required success condition. Any failure leaves the prior file
+    /// intact and surfaces `Io`.
+    fn atomic_write(&self, path: &Path, bytes: &[u8]) -> Result<(), KillStoreError> {
+        let temp = temp_path(path);
         let write = (|| -> std::io::Result<()> {
-            let mut file = File::create(&temp)?;
-            file.write_all(&bytes)?;
+            // O_EXCL (`create_new`): never open an existing/preempted temp and never
+            // follow a symlink planted at the temp path.
+            let mut file = OpenOptions::new().write(true).create_new(true).open(&temp)?;
+            file.write_all(bytes)?;
             file.sync_all()?;
             Ok(())
         })();
@@ -669,16 +774,25 @@ impl FileKillStateStore {
             let _ = fs::remove_file(&temp);
             return Err(KillStoreError::Io);
         }
-        if fs::rename(&temp, &self.path).is_err() {
+        if fs::rename(&temp, path).is_err() {
             let _ = fs::remove_file(&temp);
             return Err(KillStoreError::Io);
         }
-        if let Some(parent) = self.path.parent() {
-            if let Ok(dir) = File::open(parent) {
-                let _ = dir.sync_all();
-            }
-        }
+        // Directory fsync makes the rename durable; failure is propagated, not swallowed.
+        let dir = File::open(&self.dir).map_err(|_| KillStoreError::Io)?;
+        dir.sync_all().map_err(|_| KillStoreError::Io)?;
         Ok(())
+    }
+
+    fn write_record(&self, record: &PersistedRecord) -> Result<(), KillStoreError> {
+        let bytes = serde_json::to_vec(record).map_err(|_| KillStoreError::Io)?;
+        self.atomic_write(&self.record_path(), &bytes)
+    }
+
+    fn write_hwm(&self, high_water_epoch: u64) -> Result<(), KillStoreError> {
+        let bytes = serde_json::to_vec(&HighWaterMark { high_water_epoch })
+            .map_err(|_| KillStoreError::Io)?;
+        self.atomic_write(&self.hwm_path(), &bytes)
     }
 
     /// Verifies a reset attestation against `expected_epoch` and the trust root.
@@ -704,14 +818,30 @@ impl FileKillStateStore {
         }
         Ok(())
     }
+
+    /// Test-only view of `(record_epoch, high_water_anchor)`.
+    #[cfg(test)]
+    fn debug_epochs(&self) -> (u64, Option<u64>) {
+        (self.record_epoch(), self.read_hwm())
+    }
 }
 
 impl KillStateStore for FileKillStateStore {
     fn load(&self) -> KillState {
+        // Lock-free: each file write is atomic, so a reader sees old-or-new (never
+        // torn) per file, and every inconsistency biases to a fail-closed outcome.
         match self.read_record() {
             None => KillState::Unknown,
             Some(PersistedRecord::Engaged { reason, .. }) => KillState::Engaged { reason },
             Some(PersistedRecord::Clear { epoch, reset }) => {
+                // A Clear is honored only when it is the anchor's current epoch;
+                // an absent/corrupt anchor or a stale (rolled-back) Clear fails closed.
+                let Some(anchor) = self.read_hwm() else {
+                    return KillState::Unknown;
+                };
+                if epoch != anchor {
+                    return KillState::Unknown;
+                }
                 let Some(signature) = decode_signature_hex(&reset.signature_hex) else {
                     return KillState::Unknown;
                 };
@@ -729,21 +859,37 @@ impl KillStateStore for FileKillStateStore {
     }
 
     fn engage(&self, reason: KillReason) -> Result<(), KillStoreError> {
-        let next_epoch = self.current_epoch().saturating_add(1);
-        self.atomic_write(&PersistedRecord::Engaged { epoch: next_epoch, reason })
+        self.ensure_dir()?;
+        let _lock = self.lock_exclusive()?;
+        // Next epoch is strictly above both the record and the surviving anchor, so
+        // losing only the record cannot reuse a past epoch.
+        let next = self.record_epoch().max(self.read_hwm().unwrap_or(0)).saturating_add(1);
+        // Advance the anchor first: a crash before the record write biases the next
+        // load to a fail-closed outcome and lets a retry advance cleanly.
+        self.write_hwm(next)?;
+        self.write_record(&PersistedRecord::Engaged { epoch: next, reason })
     }
 
     fn owner_reset(&self, attestation: &ResetAttestation) -> Result<(), KillStoreError> {
+        self.ensure_dir()?;
+        let _lock = self.lock_exclusive()?;
         // Only an engaged latch may be reset.
-        if !matches!(self.load(), KillState::Engaged { .. }) {
+        let Some(PersistedRecord::Engaged { epoch, .. }) = self.read_record() else {
             return Err(KillStoreError::NotEngaged);
+        };
+        // The engaged record must sit at the current monotonic anchor.
+        let Some(anchor) = self.read_hwm() else {
+            return Err(KillStoreError::EpochAnchorInvalid);
+        };
+        if epoch != anchor {
+            return Err(KillStoreError::EpochAnchorInvalid);
         }
-        let current_epoch = self.current_epoch();
-        // Anti-replay: the attestation must be bound to the current engaged epoch.
-        self.verify_reset(attestation, current_epoch)?;
+        // Anti-replay: the attestation must be bound to the current engaged epoch,
+        // and recover to the trust-root owner.
+        self.verify_reset(attestation, epoch)?;
         let reset = PersistedReset::from(attestation);
         // Persistence failure keeps the latch engaged (the old record is intact).
-        self.atomic_write(&PersistedRecord::Clear { epoch: current_epoch, reset })
+        self.write_record(&PersistedRecord::Clear { epoch, reset })
     }
 }
 
@@ -784,18 +930,19 @@ fn decode_signature_hex(hex: &str) -> Option<[u8; 65]> {
     Some(out)
 }
 
-/// Process- and time-unique suffix for atomic temp files.
-fn unique_suffix() -> String {
+/// Builds a process-, time-, and sequence-unique temp sibling for `path`, so the
+/// O_EXCL create in `atomic_write` never collides with a concurrent or prior temp.
+fn temp_path(path: &Path) -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
     let pid = std::process::id();
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_nanos())
         .unwrap_or(0);
-    let mut suffix = String::with_capacity(40);
-    suffix.push_str(&pid.to_string());
-    suffix.push('.');
-    suffix.push_str(&nanos.to_string());
-    suffix
+    let mut temp = path.as_os_str().to_owned();
+    temp.push(format!(".tmp.{pid}.{nanos}.{seq}"));
+    PathBuf::from(temp)
 }
 
 #[cfg(test)]
@@ -958,6 +1105,24 @@ mod tests {
     }
 
     #[test]
+    fn loader_absent_artifact_is_unarmed_and_gate_closed() {
+        // MAJOR #4: absence is expressible and folds to a fail-closed unarmed value.
+        let absent = ArmedCriteria::load_optional(None);
+        assert!(!absent.is_armed());
+        assert_eq!(absent.unarmed_reason(), Some(UnarmedReason::ArtifactMissing));
+        // A present artifact still arms through the same entrypoint.
+        assert!(ArmedCriteria::load_optional(Some(&valid_artifact())).is_armed());
+        // The master gate closes on the absent artifact.
+        let decision = submit_gate(SubmitContext {
+            armed: &absent,
+            amount_in_wei: U256::ZERO,
+            drawdown: under_floor_complete(),
+            kill: KillState::Clear { verified_at: 1 },
+        });
+        assert_eq!(decision, SubmitDecision::Closed(ClosedReason::NotArmed));
+    }
+
+    #[test]
     fn loader_unarmed_on_payload_tamper_sha_mismatch() {
         let mut artifact = valid_artifact();
         artifact.canonical_payload[0] ^= 0x01; // any change breaks the SHA pin
@@ -1101,7 +1266,7 @@ mod tests {
     #[test]
     fn kill_store_cold_start_is_unknown() {
         let dir = temp_dir("cold");
-        let store = FileKillStateStore::new(dir.join("killstate.json"));
+        let store = FileKillStateStore::new(&dir);
         assert_eq!(store.load(), KillState::Unknown);
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1109,12 +1274,11 @@ mod tests {
     #[test]
     fn kill_store_engage_persists_across_restart() {
         let dir = temp_dir("engage");
-        let path = dir.join("killstate.json");
-        FileKillStateStore::new(&path)
+        FileKillStateStore::new(&dir)
             .engage(KillReason::StrictMinOutPrincipalLoss)
             .expect("engage");
         // Fresh handle == restart.
-        let restarted = FileKillStateStore::new(&path);
+        let restarted = FileKillStateStore::new(&dir);
         assert_eq!(
             restarted.load(),
             KillState::Engaged { reason: KillReason::StrictMinOutPrincipalLoss }
@@ -1125,26 +1289,21 @@ mod tests {
     #[test]
     fn kill_store_valid_owner_reset_clears_and_survives_restart() {
         let dir = temp_dir("reset-ok");
-        let path = dir.join("killstate.json");
-        let store = FileKillStateStore::new(&path);
+        let store = FileKillStateStore::new(&dir);
         store.engage(KillReason::DrawdownFloorBreach).expect("engage");
         store
             .owner_reset(&reset_attestation(1, SIG_RESET_EPOCH1))
             .expect("valid reset clears");
         assert_eq!(store.load(), KillState::Clear { verified_at: 1 });
-        // Restart re-verifies the persisted attestation against the epoch.
-        assert_eq!(
-            FileKillStateStore::new(&path).load(),
-            KillState::Clear { verified_at: 1 }
-        );
+        // Restart re-verifies the persisted attestation against the epoch anchor.
+        assert_eq!(FileKillStateStore::new(&dir).load(), KillState::Clear { verified_at: 1 });
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn kill_store_reset_rejects_stale_epoch_replay() {
         let dir = temp_dir("reset-replay");
-        let path = dir.join("killstate.json");
-        let store = FileKillStateStore::new(&path);
+        let store = FileKillStateStore::new(&dir);
         store.engage(KillReason::DrawdownFloorBreach).expect("engage epoch 1");
         store.engage(KillReason::DrawdownFloorBreach).expect("engage epoch 2");
         // A once-valid epoch-1 attestation cannot clear the epoch-2 engagement.
@@ -1157,8 +1316,7 @@ mod tests {
     #[test]
     fn kill_store_reset_rejects_epoch_forged_attestation() {
         let dir = temp_dir("reset-forge");
-        let path = dir.join("killstate.json");
-        let store = FileKillStateStore::new(&path);
+        let store = FileKillStateStore::new(&dir);
         store.engage(KillReason::DrawdownFloorBreach).expect("epoch 1");
         store.engage(KillReason::DrawdownFloorBreach).expect("epoch 2");
         // Attestation claims epoch 2 but the signature is over the epoch-1 message.
@@ -1171,8 +1329,7 @@ mod tests {
     #[test]
     fn kill_store_reset_at_second_epoch_uses_bound_signature() {
         let dir = temp_dir("reset-epoch2");
-        let path = dir.join("killstate.json");
-        let store = FileKillStateStore::new(&path);
+        let store = FileKillStateStore::new(&dir);
         store.engage(KillReason::DrawdownFloorBreach).expect("epoch 1");
         store.engage(KillReason::DrawdownFloorBreach).expect("epoch 2");
         store
@@ -1185,8 +1342,7 @@ mod tests {
     #[test]
     fn kill_store_reset_rejects_wrong_domain() {
         let dir = temp_dir("reset-domain");
-        let path = dir.join("killstate.json");
-        let store = FileKillStateStore::new(&path);
+        let store = FileKillStateStore::new(&dir);
         store.engage(KillReason::DrawdownFloorBreach).expect("engage");
         let result = store.owner_reset(&reset_attestation(1, SIG_RESET_WRONG_DOMAIN));
         assert!(matches!(result, Err(KillStoreError::OwnerSignatureMismatch)));
@@ -1197,8 +1353,7 @@ mod tests {
     #[test]
     fn kill_store_reset_rejected_when_not_engaged() {
         let dir = temp_dir("reset-notengaged");
-        let path = dir.join("killstate.json");
-        let store = FileKillStateStore::new(&path);
+        let store = FileKillStateStore::new(&dir);
         let result = store.owner_reset(&reset_attestation(1, SIG_RESET_EPOCH1));
         assert!(matches!(result, Err(KillStoreError::NotEngaged)));
         let _ = fs::remove_dir_all(&dir);
@@ -1207,19 +1362,22 @@ mod tests {
     #[test]
     fn kill_store_corrupt_and_bare_clear_load_unknown() {
         let dir = temp_dir("corrupt");
-        let path = dir.join("killstate.json");
-        let store = FileKillStateStore::new(&path);
+        let store = FileKillStateStore::new(&dir);
+        // Establish a valid anchor at epoch 1 so the tampered records reach the
+        // attestation checks (rather than short-circuiting on a missing anchor).
+        store.engage(KillReason::DrawdownFloorBreach).expect("engage");
+        let record = dir.join("state.json");
 
-        fs::write(&path, b"{ this is not json").expect("write torn");
+        fs::write(&record, b"{ this is not json").expect("write torn");
         assert_eq!(store.load(), KillState::Unknown, "torn/corrupt -> Unknown");
 
         // Bare Clear without the reset attestation must not clear (fail-closed).
-        fs::write(&path, br#"{"state":"clear","epoch":1}"#).expect("write bare clear");
+        fs::write(&record, br#"{"state":"clear","epoch":1}"#).expect("write bare clear");
         assert_eq!(store.load(), KillState::Unknown, "bare clear -> Unknown");
 
-        // Clear with a tampered (undecodable) attestation signature.
+        // Clear at the anchor epoch but with a tampered (undecodable) signature.
         fs::write(
-            &path,
+            &record,
             br#"{"state":"clear","epoch":1,"reset":{"engagement_epoch":1,"nonce":424242,"signature_hex":"00"}}"#,
         )
         .expect("write tampered clear");
@@ -1227,15 +1385,112 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    // BLOCKER #2: a rolled-back, once-valid Clear no longer matches the surviving
+    // monotonic anchor after a later engage, so it fails closed.
+    #[test]
+    fn kill_store_rejects_rolled_back_stale_clear() {
+        let dir = temp_dir("rollback-clear");
+        let store = FileKillStateStore::new(&dir);
+        store.engage(KillReason::DrawdownFloorBreach).expect("engage epoch 1");
+        store.owner_reset(&reset_attestation(1, SIG_RESET_EPOCH1)).expect("reset epoch 1");
+        assert_eq!(store.load(), KillState::Clear { verified_at: 1 });
+        // A later engage advances the anchor to 2.
+        store.engage(KillReason::DrawdownFloorBreach).expect("engage epoch 2");
+        // Roll back ONLY the record to the old, once-valid Clear{epoch:1}; anchor stays 2.
+        let stale_clear = format!(
+            r#"{{"state":"clear","epoch":1,"reset":{{"engagement_epoch":1,"nonce":{RESET_NONCE},"signature_hex":"{SIG_RESET_EPOCH1}"}}}}"#
+        );
+        fs::write(dir.join("state.json"), stale_clear.as_bytes()).expect("roll back record");
+        assert_eq!(store.load(), KillState::Unknown, "rolled-back stale Clear must not clear");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // BLOCKER #2: losing only the record cannot reuse a past epoch, because engage
+    // bases the next epoch on the surviving anchor — defeating an old-reset replay.
+    #[test]
+    fn kill_store_record_loss_does_not_reuse_epoch_for_replay() {
+        let dir = temp_dir("record-loss");
+        let store = FileKillStateStore::new(&dir);
+        store.engage(KillReason::DrawdownFloorBreach).expect("engage epoch 1");
+        // Lose only the state record; the monotonic anchor survives at 1.
+        fs::remove_file(dir.join("state.json")).expect("remove record");
+        assert_eq!(store.load(), KillState::Unknown, "record loss loads Unknown");
+        // Re-engage must advance past the surviving anchor (epoch 2), not reuse 1.
+        store.engage(KillReason::DrawdownFloorBreach).expect("re-engage");
+        assert_eq!(store.debug_epochs(), (2, Some(2)), "re-engage did not reuse epoch 1");
+        // An old epoch-1 reset attestation cannot clear the re-engaged (epoch-2) latch.
+        let result = store.owner_reset(&reset_attestation(1, SIG_RESET_EPOCH1));
+        assert!(matches!(result, Err(KillStoreError::ResetEpochMismatch)));
+        assert!(matches!(store.load(), KillState::Engaged { .. }));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // BLOCKER #1: N concurrent engages serialize under the advisory lock, so every
+    // engage is applied (no lost update) and the epoch stays monotonic.
+    #[test]
+    fn kill_store_concurrent_engages_preserve_monotonic_epoch() {
+        const THREADS: u64 = 8;
+        let dir = temp_dir("concurrent-engage");
+        let store = FileKillStateStore::new(&dir);
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(THREADS as usize));
+        let mut handles = Vec::new();
+        for _ in 0..THREADS {
+            let store = store.clone();
+            let barrier = std::sync::Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                barrier.wait();
+                store.engage(KillReason::DrawdownFloorBreach).expect("engage");
+            }));
+        }
+        for handle in handles {
+            handle.join().expect("join");
+        }
+        assert_eq!(store.debug_epochs(), (THREADS, Some(THREADS)), "no lost update; anchor monotonic");
+        assert!(matches!(store.load(), KillState::Engaged { .. }));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // BLOCKER #1: a concurrent engage and owner_reset never interleave; in either
+    // order the engage advances to epoch 2 and no stale Clear{1} survives it.
+    #[test]
+    fn kill_store_concurrent_reset_and_engage_serialize() {
+        let dir = temp_dir("concurrent-reset");
+        let store = FileKillStateStore::new(&dir);
+        store.engage(KillReason::DrawdownFloorBreach).expect("engage epoch 1");
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+
+        let engage_store = store.clone();
+        let engage_barrier = std::sync::Arc::clone(&barrier);
+        let engage = std::thread::spawn(move || {
+            engage_barrier.wait();
+            engage_store.engage(KillReason::DrawdownFloorBreach).expect("engage epoch 2");
+        });
+        let reset_store = store.clone();
+        let reset = std::thread::spawn(move || {
+            barrier.wait();
+            // Wins -> clears epoch 1; loses -> rejected against epoch 2. Never interleaves.
+            let _ = reset_store.owner_reset(&reset_attestation(1, SIG_RESET_EPOCH1));
+        });
+        engage.join().expect("join engage");
+        reset.join().expect("join reset");
+
+        assert_eq!(store.debug_epochs(), (2, Some(2)));
+        assert!(
+            matches!(store.load(), KillState::Engaged { .. }),
+            "no stale Clear survives an engage to a higher epoch"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // MAJOR #3: a persistence failure surfaces an error and leaves the latch safe.
     #[test]
     fn kill_store_reset_persist_failure_keeps_engaged() {
         let dir = temp_dir("reset-writefail");
-        let path = dir.join("killstate.json");
-        let store = FileKillStateStore::new(&path);
+        let store = FileKillStateStore::new(&dir);
         store.engage(KillReason::DrawdownFloorBreach).expect("engage");
         assert!(matches!(store.load(), KillState::Engaged { .. }));
 
-        // Make the directory read-only so the atomic temp write fails.
+        // Make the directory read-only so the atomic temp create fails.
         set_mode(&dir, 0o500);
         let result = store.owner_reset(&reset_attestation(1, SIG_RESET_EPOCH1));
         set_mode(&dir, 0o700); // restore before asserting to avoid leaking perms
@@ -1248,7 +1503,20 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    fn set_mode(dir: &std::path::Path, mode: u32) {
+    // MAJOR #3: engage into an uncreatable state directory fails closed with an error.
+    #[test]
+    fn kill_store_engage_write_failure_surfaces_error() {
+        let dir = temp_dir("engage-writefail");
+        // A regular file where the state directory's parent must be a directory.
+        let blocker = dir.join("blocker");
+        fs::write(&blocker, b"x").expect("write blocker file");
+        let store = FileKillStateStore::new(blocker.join("state-dir"));
+        let result = store.engage(KillReason::KeyOrSignatureFailure);
+        assert!(matches!(result, Err(KillStoreError::Io)), "engage into uncreatable dir must error");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn set_mode(dir: &Path, mode: u32) {
         let mut perms = fs::metadata(dir).expect("metadata").permissions();
         perms.set_mode(mode);
         fs::set_permissions(dir, perms).expect("set permissions");
@@ -1266,7 +1534,7 @@ mod tests {
             KillReason::DrawdownFloorBreach,
         ] {
             let dir = temp_dir("trigger");
-            let store = FileKillStateStore::new(dir.join("killstate.json"));
+            let store = FileKillStateStore::new(&dir);
             store.engage(reason).expect("engage");
             assert_eq!(store.load(), KillState::Engaged { reason });
             let _ = fs::remove_dir_all(&dir);
