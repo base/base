@@ -44,10 +44,58 @@ pub trait B20AssetLogic<S: AssetAccounting, A: PolicyAccounting> {
     /// Emits a `Memo` event attributed to `caller`.
     ///
     /// The memo-decorated ABI calls (`transferWithMemo`, `mintWithMemo`, …) are composed
-    /// by the dispatcher as the base operation followed by this event, so the memo semantics
-    /// stay version-defined without widening every operation's signature.
+    /// by the default `*_with_memo` methods below as the base operation followed by this
+    /// event, so the memo semantics stay version-defined without widening every
+    /// operation's signature or leaking composition into the dispatcher.
     fn emit_memo(&self, ctx: &mut ContractContext<S, A>, caller: Address, memo: B256)
     -> Result<()>;
+
+    /// `transfer` followed by a `Memo` event (`transferWithMemo`).
+    fn transfer_with_memo(
+        &self,
+        ctx: &mut ContractContext<S, A>,
+        caller: Address,
+        call: IB20::transferWithMemoCall,
+        privileged: bool,
+    ) -> Result<()> {
+        self.transfer(ctx, caller, call.to, call.amount, privileged)?;
+        self.emit_memo(ctx, caller, call.memo)
+    }
+
+    /// `transferFrom` followed by a `Memo` event (`transferFromWithMemo`).
+    fn transfer_from_with_memo(
+        &self,
+        ctx: &mut ContractContext<S, A>,
+        caller: Address,
+        call: IB20::transferFromWithMemoCall,
+        privileged: bool,
+    ) -> Result<()> {
+        self.transfer_from(ctx, caller, call.from, call.to, call.amount, privileged)?;
+        self.emit_memo(ctx, caller, call.memo)
+    }
+
+    /// `mint` followed by a `Memo` event (`mintWithMemo`).
+    fn mint_with_memo(
+        &self,
+        ctx: &mut ContractContext<S, A>,
+        caller: Address,
+        call: IB20::mintWithMemoCall,
+        privileged: bool,
+    ) -> Result<()> {
+        self.mint(ctx, caller, call.to, call.amount, privileged)?;
+        self.emit_memo(ctx, caller, call.memo)
+    }
+
+    /// `burn` followed by a `Memo` event (`burnWithMemo`).
+    fn burn_with_memo(
+        &self,
+        ctx: &mut ContractContext<S, A>,
+        caller: Address,
+        call: IB20::burnWithMemoCall,
+    ) -> Result<()> {
+        self.burn(ctx, caller, call.amount)?;
+        self.emit_memo(ctx, caller, call.memo)
+    }
 
     /// Mints `amount` to `to`.
     fn mint(

@@ -2,12 +2,13 @@
 
 use std::hint::black_box;
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, U256, keccak256};
 use alloy_sol_types::SolValue;
 use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
-    B20AssetStorage, B20FactoryStorage, B20TokenRole, B20Variant, ContractContext, IB20,
-    IB20Factory, B20AssetLogic, B20AssetLogicV1, PolicyRegistryStorage, PolicyVersion, Token, TokenAccounting,
+    B20AssetLogic, B20AssetLogicV1, B20AssetStorage, B20FactoryLogic, B20FactoryLogicV1,
+    B20FactoryStorage, B20TokenRole, B20Variant, ContractContext, FactoryContractContext, IB20,
+    IB20Factory, PolicyRegistryStorage, PolicyVersion, Token, TokenAccounting,
 };
 use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 use criterion::{Criterion, criterion_group, criterion_main};
@@ -50,8 +51,9 @@ impl BaseTokenBenchSetup {
             params: params.abi_encode().into(),
             initCalls: Vec::new(),
         };
-        let mut factory = B20FactoryStorage::new(ctx);
-        factory.create_b20(caller, call, BaseUpgrade::Beryl).unwrap()
+        let mut factory = FactoryContractContext::with_storage(B20FactoryStorage::new(ctx));
+        let address_hash = keccak256((caller, call.salt).abi_encode());
+        B20FactoryLogicV1.create_b20(&mut factory, call, address_hash, BaseUpgrade::Beryl).unwrap()
     }
 
     fn create_token<'a>(

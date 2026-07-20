@@ -241,14 +241,12 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> ContractContext<S, A> {
                 }
                 C::transferWithMemo(c) => {
                     let caller = ctx.caller();
-                    logic.transfer(self, caller, c.to, c.amount, privileged)?;
-                    logic.emit_memo(self, caller, c.memo)?;
+                    logic.transfer_with_memo(self, caller, c, privileged)?;
                     true.abi_encode().into()
                 }
                 C::transferFromWithMemo(c) => {
                     let caller = ctx.caller();
-                    logic.transfer_from(self, caller, c.from, c.to, c.amount, privileged)?;
-                    logic.emit_memo(self, caller, c.memo)?;
+                    logic.transfer_from_with_memo(self, caller, c, privileged)?;
                     true.abi_encode().into()
                 }
 
@@ -259,8 +257,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> ContractContext<S, A> {
                 }
                 C::mintWithMemo(c) => {
                     let caller = ctx.caller();
-                    logic.mint(self, caller, c.to, c.amount, privileged)?;
-                    logic.emit_memo(self, caller, c.memo)?;
+                    logic.mint_with_memo(self, caller, c, privileged)?;
                     Bytes::new()
                 }
 
@@ -271,8 +268,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> ContractContext<S, A> {
                 }
                 C::burnWithMemo(c) => {
                     let caller = ctx.caller();
-                    logic.burn(self, caller, c.amount)?;
-                    logic.emit_memo(self, caller, c.memo)?;
+                    logic.burn_with_memo(self, caller, c)?;
                     Bytes::new()
                 }
                 C::burnBlocked(c) => {

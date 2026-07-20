@@ -5,20 +5,19 @@
 //! `createB20`'s business logic to it. `getB20Address`, `isB20`, and
 //! `isB20Initialized` are answered via version-invariant computations/pass-throughs.
 
-use alloy_primitives::{Address, Bytes, keccak256};
+use alloy_primitives::Bytes;
 use alloy_sol_types::{SolCall, SolValue};
 use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, Result, StorageCtx};
 use revm::precompile::PrecompileResult;
 
-use super::{B20FactoryLogic, B20FactoryLogicV1, Version, VersionResolver};
+use super::{ContractContext, Version, VersionResolver};
 use crate::{
-    B20FactoryStorage, B20Variant, BerylAuxiliaryMetrics, BerylCallRecorder, BerylMetricLabels,
-    IB20Factory, NoopPrecompileCallObserver, PrecompileCallObserver,
-    macros::decode_precompile_call,
+    B20Variant, BerylAuxiliaryMetrics, BerylCallRecorder, BerylMetricLabels, IB20Factory,
+    NoopPrecompileCallObserver, PrecompileCallObserver, macros::decode_precompile_call,
 };
 
-impl<'a> B20FactoryStorage<'a> {
+impl ContractContext<'_> {
     /// ABI-dispatches `calldata` to the appropriate `IB20Factory` handler for `upgrade`.
     pub fn dispatch(
         &mut self,
@@ -61,19 +60,6 @@ impl<'a> B20FactoryStorage<'a> {
             self.route(ctx, calldata, version, upgrade, observer),
             |b| b,
         )
-    }
-
-    /// Creates a token at a deterministic address derived from `(caller, variant, salt)`,
-    /// pinned to factory `V1`. `upgrade` selects the policy-logic version the created token
-    /// is bound to.
-    pub fn create_b20(
-        &mut self,
-        caller: Address,
-        call: IB20Factory::createB20Call,
-        upgrade: BaseUpgrade,
-    ) -> Result<Address> {
-        let address_hash = keccak256((caller, call.salt).abi_encode());
-        B20FactoryLogicV1.create_b20(self, call, address_hash, upgrade)
     }
 
     /// Decodes calldata and routes it to `version`'s logic.
@@ -141,7 +127,7 @@ mod tests {
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
         B20AssetStorage, B20FactoryStorage, B20StablecoinStorage, B20Variant, ContractContext,
-        IB20, IB20Factory, PolicyRegistryStorage, PolicyVersion,
+        FactoryContractContext, IB20, IB20Factory, PolicyRegistryStorage, PolicyVersion,
     };
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
@@ -196,14 +182,14 @@ mod tests {
     }
 
     fn dispatch_factory_success(ctx: StorageCtx<'_>, call: impl SolCall) -> Bytes {
-        let mut factory = B20FactoryStorage::new(ctx);
+        let mut factory = FactoryContractContext::with_storage(B20FactoryStorage::new(ctx));
         let output = factory.dispatch(ctx, &call.abi_encode(), BaseUpgrade::Beryl).unwrap();
         assert!(!output.is_revert(), "factory call reverted: {:?}", output.bytes);
         output.bytes
     }
 
     fn dispatch_factory_revert(ctx: StorageCtx<'_>, call: impl SolCall) -> Bytes {
-        let mut factory = B20FactoryStorage::new(ctx);
+        let mut factory = FactoryContractContext::with_storage(B20FactoryStorage::new(ctx));
         let output = factory.dispatch(ctx, &call.abi_encode(), BaseUpgrade::Beryl).unwrap();
         assert!(output.is_revert(), "factory call unexpectedly succeeded");
         output.bytes
@@ -223,7 +209,11 @@ mod tests {
         let calldata = IB20Factory::isB20Call { token: Address::ZERO }.abi_encode();
 
         let out = StorageCtx::enter(&mut storage, |ctx| {
-            B20FactoryStorage::new(ctx).dispatch(ctx, &calldata, BaseUpgrade::Beryl)
+            FactoryContractContext::with_storage(B20FactoryStorage::new(ctx)).dispatch(
+                ctx,
+                &calldata,
+                BaseUpgrade::Beryl,
+            )
         })
         .expect("dispatch must not fatally error");
 

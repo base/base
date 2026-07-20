@@ -3,6 +3,9 @@
 mod abi;
 pub use abi::IB20Factory;
 
+mod context;
+pub use context::ContractContext;
+
 mod dispatch;
 
 mod logic;

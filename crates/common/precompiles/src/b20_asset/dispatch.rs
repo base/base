@@ -250,13 +250,11 @@ impl<S: AssetAccounting, A: PolicyAccounting> ContractContext<S, A> {
                 true.abi_encode().into()
             }
             C::transferWithMemo(c) => {
-                logic.transfer(self, caller, c.to, c.amount, privileged)?;
-                logic.emit_memo(self, caller, c.memo)?;
+                logic.transfer_with_memo(self, caller, c, privileged)?;
                 true.abi_encode().into()
             }
             C::transferFromWithMemo(c) => {
-                logic.transfer_from(self, caller, c.from, c.to, c.amount, privileged)?;
-                logic.emit_memo(self, caller, c.memo)?;
+                logic.transfer_from_with_memo(self, caller, c, privileged)?;
                 true.abi_encode().into()
             }
 
@@ -266,8 +264,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> ContractContext<S, A> {
                 Bytes::new()
             }
             C::mintWithMemo(c) => {
-                logic.mint(self, caller, c.to, c.amount, privileged)?;
-                logic.emit_memo(self, caller, c.memo)?;
+                logic.mint_with_memo(self, caller, c, privileged)?;
                 Bytes::new()
             }
 
@@ -279,8 +276,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> ContractContext<S, A> {
                 Bytes::new()
             }
             C::burnWithMemo(c) => {
-                logic.burn(self, caller, c.amount)?;
-                logic.emit_memo(self, caller, c.memo)?;
+                logic.burn_with_memo(self, caller, c)?;
                 Bytes::new()
             }
             C::burnBlocked(c) => {

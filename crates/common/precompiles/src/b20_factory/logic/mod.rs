@@ -2,7 +2,7 @@
 //!
 //! [`B20FactoryLogic`] (in [`interface`](self)) is the append-only business-logic
 //! interface each version implements; [`B20FactoryLogicV1`] is the first frozen
-//! implementation.
+//! implementation. Logic methods take a [`crate::FactoryContractContext`].
 
 mod interface;
 pub use interface::B20FactoryLogic;
