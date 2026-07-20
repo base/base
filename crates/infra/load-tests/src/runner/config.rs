@@ -215,16 +215,12 @@ pub struct LoadConfig {
     pub sender_offset: usize,
     /// Transaction types with weights.
     pub transactions: Vec<TxConfig>,
-    /// Target gas per second.
-    pub target_gps: u64,
+    /// Optional gas-per-second ceiling applied to adaptive pacing.
+    pub max_target_gps: Option<u64>,
     /// Duration of the load test. `None` means run indefinitely until stopped.
     pub duration: Option<Duration>,
     /// Maximum in-flight (unconfirmed) transactions per sender.
     pub max_in_flight_per_sender: u64,
-    /// Number of transactions to batch together before submitting.
-    pub batch_size: usize,
-    /// Maximum time to wait for a batch to fill before flushing.
-    pub batch_timeout: Duration,
     /// Maximum gas price cap to prevent overspending during congestion.
     pub max_gas_price: u128,
     /// Builder flashblocks broadcast WebSocket endpoint.
@@ -232,6 +228,10 @@ pub struct LoadConfig {
     /// Fraction of transactions that draw a fresh recipient address instead of cycling through
     /// the sender pool. Used to drive account-trie fan-out for account-create workloads.
     pub fresh_recipient_ratio: f64,
+    /// Number of transactions to batch together when funding/setup phases submit from a single
+    /// funder account. Kept below the target txpool's per-sender slot limit to avoid "txpool is
+    /// full" rejections.
+    pub funding_batch_size: usize,
 }
 
 impl LoadConfig {
@@ -249,14 +249,13 @@ impl LoadConfig {
             mnemonic: None,
             sender_offset: 0,
             transactions: vec![TxConfig { weight: 100, tx_type: TxType::Transfer }],
-            target_gps: 2_100_000,
+            max_target_gps: None,
             duration: Some(Duration::from_secs(30)),
             max_in_flight_per_sender: 128,
-            batch_size: 5,
-            batch_timeout: Duration::from_millis(50),
             max_gas_price: DEFAULT_MAX_GAS_PRICE,
             flashblocks_ws: "ws://localhost:7111".parse().expect("valid default flashblocks_ws"),
             fresh_recipient_ratio: 0.0,
+            funding_batch_size: 16,
         }
     }
 
@@ -272,16 +271,13 @@ impl LoadConfig {
         if self.account_count == 0 {
             return Err(BaselineError::Config("account_count must be > 0".into()));
         }
-        if self.target_gps == 0 {
-            return Err(BaselineError::Config("target_gps must be > 0".into()));
+        if self.max_target_gps == Some(0) {
+            return Err(BaselineError::Config("max_target_gps must be > 0 when set".into()));
         }
         if self.duration == Some(Duration::ZERO) {
             return Err(BaselineError::Config(
                 "duration must be > 0 (or omit for continuous)".into(),
             ));
-        }
-        if self.batch_size == 0 {
-            return Err(BaselineError::Config("batch_size must be > 0".into()));
         }
         if !(0.0..=1.0).contains(&self.fresh_recipient_ratio) {
             return Err(BaselineError::Config(
@@ -362,9 +358,9 @@ impl LoadConfig {
         self
     }
 
-    /// Sets the target gas per second.
-    pub const fn with_target_gps(mut self, gps: u64) -> Self {
-        self.target_gps = gps;
+    /// Sets an optional gas-per-second ceiling.
+    pub const fn with_max_target_gps(mut self, gps: Option<u64>) -> Self {
+        self.max_target_gps = gps;
         self
     }
 
@@ -386,15 +382,9 @@ impl LoadConfig {
         self
     }
 
-    /// Sets the batch size for transaction submission.
-    pub const fn with_batch_size(mut self, size: usize) -> Self {
-        self.batch_size = size;
-        self
-    }
-
-    /// Sets the batch timeout.
-    pub const fn with_batch_timeout(mut self, timeout: Duration) -> Self {
-        self.batch_timeout = timeout;
+    /// Sets the funding-phase batch size.
+    pub const fn with_funding_batch_size(mut self, size: usize) -> Self {
+        self.funding_batch_size = size;
         self
     }
 }

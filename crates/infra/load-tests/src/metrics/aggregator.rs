@@ -36,7 +36,7 @@ impl<'a> MetricsAggregator<'a> {
     ) -> MetricsSummary {
         let mut top_failure_reasons: Vec<(String, u64)> =
             submission.failure_reasons.iter().map(|(k, v)| (k.clone(), *v)).collect();
-        top_failure_reasons.sort_by_key(|reason| std::cmp::Reverse(reason.1));
+        top_failure_reasons.sort_by_key(|entry| std::cmp::Reverse(entry.1));
         top_failure_reasons.truncate(3);
 
         let tps_values: Vec<f64> = throughput_samples.iter().map(|s| s.tps).collect();
