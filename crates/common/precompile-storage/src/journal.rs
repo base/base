@@ -259,6 +259,22 @@ mod tests {
         assert_eq!(provider.gas_refunded(), 0);
     }
 
+    /// EIP-8130 context publication uses transient writes through this provider;
+    /// neither the write nor its backing read may expose opcode gas.
+    #[test]
+    fn tstore_then_tload_roundtrips_without_gas() {
+        let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::AMSTERDAM);
+        let mut provider =
+            JournalStorageProvider::new(EvmInternals::from_context(&mut ctx), Address::ZERO);
+        let key = U256::from(7);
+        let value = U256::from(99);
+
+        provider.tstore(ADDR, key, value).unwrap();
+
+        assert_eq!(provider.tload_unmetered(ADDR, key).unwrap(), value);
+        assert_eq!(provider.gas_used(), 0);
+    }
+
     /// `set_code` persists and is reflected in the account's code hash, gas-free.
     #[test]
     fn set_code_persists_without_gas() {

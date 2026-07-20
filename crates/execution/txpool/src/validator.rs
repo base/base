@@ -971,7 +971,11 @@ where
         let intrinsic = IntrinsicGas::compute(
             signed,
             encoded.as_ref(),
-            &IntrinsicGasInput::new(nonce_key_first_use, sender_auto_delegated),
+            &IntrinsicGasInput::new(nonce_key_first_use, sender_auto_delegated)
+                .with_policy_gates(
+                    sender_actor.is_policy_gated(),
+                    payer_actor.is_some_and(|actor| actor.is_policy_gated()),
+                ),
         )
         .map_err(|_| Self::eip8130_error("intrinsic gas computation failed"))?;
         if intrinsic.execution_gas_available(signed.tx().gas_limit).is_none() {

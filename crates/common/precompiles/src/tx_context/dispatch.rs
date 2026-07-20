@@ -11,23 +11,27 @@ use crate::{
     tx_context::storage::TxContextStorage,
 };
 
-/// Per-word calldata gas charge (`G_SHA3WORD`), matching common Base precompile dispatch.
-const CALLDATA_WORD_GAS: u64 = 6;
+/// EIP-8130 getter output price per 32-byte word (`W_copy`).
+const OUTPUT_WORD_GAS: u64 = 3;
 
 impl TxContextStorage<'_> {
-    /// ABI-dispatches transaction context calldata.
+    /// ABI-dispatches transaction context calldata and prices encoded output.
+    ///
+    /// EIP-8130 charges three gas per 32 bytes returned in addition to the
+    /// precompile call's base cost. The backing transient read is unmetered, so
+    /// no TLOAD opcode charge is exposed to the caller.
     pub fn dispatch(&self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
-        let calldata_cost = (calldata.len() as u64).div_ceil(32).saturating_mul(CALLDATA_WORD_GAS);
-        if let Err(error) = ctx.deduct_gas(calldata_cost) {
-            return error.into_precompile_result(ctx.gas_used(), ctx.state_gas_used());
-        }
+        let result = self.inner(calldata).and_then(|output| {
+            let words = u64::try_from(output.len().div_ceil(32))
+                .map_err(|_| base_precompile_storage::BasePrecompileError::OutOfGas)?;
+            let output_cost = words
+                .checked_mul(OUTPUT_WORD_GAS)
+                .ok_or(base_precompile_storage::BasePrecompileError::OutOfGas)?;
+            ctx.deduct_gas(output_cost)?;
+            Ok(output)
+        });
         // These getters never produce a gas refund, so the refund arg is 0.
-        self.inner(calldata).into_precompile_result(
-            ctx.gas_used(),
-            ctx.state_gas_used(),
-            0,
-            |output| output,
-        )
+        result.into_precompile_result(ctx.gas_used(), ctx.state_gas_used(), 0, |output| output)
     }
 
     fn inner(&self, calldata: &[u8]) -> base_precompile_storage::Result<Bytes> {
@@ -104,6 +108,26 @@ mod tests {
                 .unwrap(),
             SENDER_ACTOR_ID
         );
+    }
+
+    #[test]
+    fn getters_charge_only_three_gas_for_one_output_word() {
+        let calls = [
+            ITransactionContext::getTransactionSenderCall {}.abi_encode(),
+            ITransactionContext::getTransactionPayerCall {}.abi_encode(),
+            ITransactionContext::getTransactionSenderActorIdCall {}.abi_encode(),
+        ];
+
+        for calldata in calls {
+            let mut storage = HashMapStorageProvider::new(1);
+            let output = StorageCtx::enter(&mut storage, |ctx| {
+                TxContextStorage::new(ctx).dispatch(ctx, &calldata)
+            })
+            .expect("getter should succeed");
+
+            assert_eq!(output.bytes.len(), 32);
+            assert_eq!(storage.gas_deducted(), super::OUTPUT_WORD_GAS);
+        }
     }
 
     #[test]

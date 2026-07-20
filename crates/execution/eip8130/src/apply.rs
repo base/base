@@ -33,7 +33,9 @@ use base_common_consensus::{
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::state::Bytecode;
 
-use crate::{AccountConfigurationEvents, AccountConfigurationStorage, ActorConfig};
+use crate::{
+    AccountConfigurationEvents, AccountConfigurationStorage, AccountState, ActorConfig,
+};
 
 sol! {
     /// ABI shape of the per-actor config carried in an `Authorize` change's
@@ -262,9 +264,33 @@ impl AccountChangeApplier {
         actor_changes: &[ActorChange],
         chain_id: u64,
     ) -> Result<(), ApplyError> {
+        let mut state = storage.get_account_state(account)?;
+        Self::apply_config_change_with_account_state(
+            storage,
+            account,
+            actor_changes,
+            chain_id,
+            &mut state,
+        )?;
+        storage.set_account_state(account, state)?;
+        Ok(())
+    }
+
+    /// Applies one config change while carrying an already-loaded account state
+    /// through sequence advancement and any inline-self actor mutations.
+    ///
+    /// The caller owns persistence of `state`, allowing the transaction
+    /// orchestrator to perform one final packed-state write after all relevant
+    /// mutations in this change.
+    pub fn apply_config_change_with_account_state(
+        storage: &mut AccountConfigurationStorage<'_>,
+        account: Address,
+        actor_changes: &[ActorChange],
+        chain_id: u64,
+        state: &mut AccountState,
+    ) -> Result<(), ApplyError> {
         // Advance the channel sequence (post-increment in the contract; the
         // authenticated digest committed to the pre-increment value).
-        let mut state = storage.get_account_state(account)?;
         if chain_id == 0 {
             state.multichain_sequence =
                 state.multichain_sequence.checked_add(1).ok_or(ApplyError::SequenceOverflow)?;
@@ -272,16 +298,27 @@ impl AccountChangeApplier {
             state.local_sequence =
                 state.local_sequence.checked_add(1).ok_or(ApplyError::SequenceOverflow)?;
         }
-        storage.set_account_state(account, state)?;
 
         for change in actor_changes {
             match change.change_type {
                 ActorChangeType::Authorize => {
                     let (config, policy_data) = Self::decode_authorize(&change.data)?;
-                    Self::authorize_actor(storage, account, change.actor_id, config, &policy_data)?;
+                    Self::authorize_actor_with_account_state(
+                        storage,
+                        account,
+                        change.actor_id,
+                        config,
+                        &policy_data,
+                        state,
+                    )?;
                 }
                 ActorChangeType::Revoke => {
-                    Self::revoke_actor(storage, account, change.actor_id)?;
+                    Self::revoke_actor_with_account_state(
+                        storage,
+                        account,
+                        change.actor_id,
+                        state,
+                    )?;
                 }
             }
         }
@@ -301,48 +338,85 @@ impl AccountChangeApplier {
         config: ActorConfig,
         policy_data: &[u8],
     ) -> Result<(), ApplyError> {
+        if actor_id == AccountConfigurationStorage::self_actor_id(account) {
+            let mut state = storage.get_account_state(account)?;
+            Self::authorize_actor_with_account_state(
+                storage,
+                account,
+                actor_id,
+                config,
+                policy_data,
+                &mut state,
+            )?;
+            storage.set_account_state(account, state)?;
+            return Ok(());
+        }
+        Self::authorize_non_self_actor(storage, account, actor_id, config, policy_data)
+    }
+
+    /// Authorizes an actor while applying inline-self changes to `state` without
+    /// independently reading or writing the packed account-state slot.
+    pub fn authorize_actor_with_account_state(
+        storage: &mut AccountConfigurationStorage<'_>,
+        account: Address,
+        actor_id: B256,
+        config: ActorConfig,
+        policy_data: &[u8],
+        state: &mut AccountState,
+    ) -> Result<(), ApplyError> {
         // Authenticator namespace: address(0) is the empty-slot sentinel, never a
         // valid selector (`require(config.authenticator >= K1_AUTHENTICATOR)`).
         if config.authenticator.is_zero() {
             return Err(ApplyError::InvalidAuthenticator);
         }
 
-        let (manager, commitment) = Self::slice_policy(config.scope, policy_data)?;
         let self_id = AccountConfigurationStorage::self_actor_id(account);
-
-        if actor_id == self_id {
-            let mut state = storage.get_account_state(account)?;
-            if config.authenticator == Eip8130Constants::K1_AUTHENTICATOR {
-                // Upsert: overwrite a live self in place (no re-authorize guard);
-                // the end state equals revoke-then-authorize.
-                // Mutual exclusion: drop any non-k1 self and move into the inline home.
-                storage.clear_actor_config(account, actor_id)?;
-                state.default_eoa_scope = config.scope;
-                state.default_eoa_expiry = config.expiry;
-                state.flags &= !Eip8130Constants::DEFAULT_EOA_REVOKED;
-            } else {
-                // Upsert: overwrite any existing non-k1 self in place.
-                storage.set_actor_config(account, actor_id, config)?;
-                // Mutual exclusion: disable and clear the inline k1 self.
-                state.flags |= Eip8130Constants::DEFAULT_EOA_REVOKED;
-                state.default_eoa_scope = 0;
-                state.default_eoa_expiry = 0;
-            }
-            storage.set_account_state(account, state)?;
-            // Policy manager/commitment share the actor-id keyspace across both
-            // self homes: writing both (zero clears) resets then sets in one step.
-            storage.set_policy(account, actor_id, manager, commitment)?;
-            AccountConfigurationEvents::emit_actor_authorized(
-                storage, account, actor_id, &config, manager, commitment,
-            )?;
-            return Ok(());
+        if actor_id != self_id {
+            return Self::authorize_non_self_actor(storage, account, actor_id, config, policy_data);
         }
 
+        let (manager, commitment) = Self::slice_policy(config.scope, policy_data)?;
+        if config.authenticator == Eip8130Constants::K1_AUTHENTICATOR {
+            // Upsert: overwrite a live self in place (no re-authorize guard);
+            // the end state equals revoke-then-authorize.
+            // Mutual exclusion: drop any non-k1 self and move into the inline home.
+            storage.clear_actor_config(account, actor_id)?;
+            state.default_eoa_scope = config.scope;
+            state.default_eoa_expiry = config.expiry;
+            state.flags &= !Eip8130Constants::DEFAULT_EOA_REVOKED;
+        } else {
+            // Upsert: overwrite any existing non-k1 self in place.
+            storage.set_actor_config(account, actor_id, config)?;
+            // Mutual exclusion: disable and clear the inline k1 self.
+            state.flags |= Eip8130Constants::DEFAULT_EOA_REVOKED;
+            state.default_eoa_scope = 0;
+            state.default_eoa_expiry = 0;
+        }
+        // Always touch both policy slots, including zero-to-zero clears. Besides
+        // scrubbing stale state, this preserves the reference operation's access
+        // warming for the subsequent call phases.
+        storage.set_policy(account, actor_id, manager, commitment)?;
+        AccountConfigurationEvents::emit_actor_authorized(
+            storage, account, actor_id, &config, manager, commitment,
+        )?;
+        Ok(())
+    }
+
+    /// Authorizes an actor whose id is not the account's self id.
+    pub fn authorize_non_self_actor(
+        storage: &mut AccountConfigurationStorage<'_>,
+        account: Address,
+        actor_id: B256,
+        config: ActorConfig,
+        policy_data: &[u8],
+    ) -> Result<(), ApplyError> {
+        if config.authenticator.is_zero() {
+            return Err(ApplyError::InvalidAuthenticator);
+        }
+        let (manager, commitment) = Self::slice_policy(config.scope, policy_data)?;
         // Non-self actor: a single `actor_config` home. Upsert: overwrite in
-        // place. `set_policy` writes both policy slots (zero clears), resetting
-        // any stale policy so an actor moving policy-bearing -> none can't leak
-        // state, preserving the "commitment non-zero iff SCOPE_POLICY is set"
-        // invariant.
+        // place. Both policy slots are always touched so zero-to-zero clears
+        // preserve the reference operation's access warming.
         storage.set_actor_config(account, actor_id, config)?;
         storage.set_policy(account, actor_id, manager, commitment)?;
         AccountConfigurationEvents::emit_actor_authorized(
@@ -359,18 +433,55 @@ impl AccountChangeApplier {
         account: Address,
         actor_id: B256,
     ) -> Result<(), ApplyError> {
-        if !storage.is_actor(account, actor_id)? {
+        if actor_id == AccountConfigurationStorage::self_actor_id(account) {
+            let mut state = storage.get_account_state(account)?;
+            Self::revoke_actor_with_account_state(storage, account, actor_id, &mut state)?;
+            storage.set_account_state(account, state)?;
+            return Ok(());
+        }
+        let config = storage.get_actor_config(account, actor_id)?;
+        Self::revoke_explicit_actor(storage, account, actor_id, config)
+    }
+
+    /// Revokes an actor while applying inline-self changes to `state` without
+    /// independently reading or writing the packed account-state slot.
+    pub fn revoke_actor_with_account_state(
+        storage: &mut AccountConfigurationStorage<'_>,
+        account: Address,
+        actor_id: B256,
+        state: &mut AccountState,
+    ) -> Result<(), ApplyError> {
+        let config = storage.get_actor_config(account, actor_id)?;
+        if config.authenticator != Address::ZERO {
+            return Self::revoke_explicit_actor(storage, account, actor_id, config);
+        }
+        if actor_id != AccountConfigurationStorage::self_actor_id(account)
+            || state.default_eoa_revoked()
+        {
+            return Err(ApplyError::NotAnActor { actor_id });
+        }
+
+        storage.clear_actor_config(account, actor_id)?;
+        storage.clear_policy(account, actor_id)?;
+        state.flags |= Eip8130Constants::DEFAULT_EOA_REVOKED;
+        state.default_eoa_scope = 0;
+        state.default_eoa_expiry = 0;
+        AccountConfigurationEvents::emit_actor_revoked(storage, account, actor_id)?;
+        Ok(())
+    }
+
+    /// Revokes an actor represented by an explicit `actor_config` entry.
+    pub fn revoke_explicit_actor(
+        storage: &mut AccountConfigurationStorage<'_>,
+        account: Address,
+        actor_id: B256,
+        config: ActorConfig,
+    ) -> Result<(), ApplyError> {
+        if config.authenticator == Address::ZERO {
             return Err(ApplyError::NotAnActor { actor_id });
         }
         storage.clear_actor_config(account, actor_id)?;
         storage.clear_policy(account, actor_id)?;
-        if actor_id == AccountConfigurationStorage::self_actor_id(account) {
-            let mut state = storage.get_account_state(account)?;
-            state.flags |= Eip8130Constants::DEFAULT_EOA_REVOKED;
-            state.default_eoa_scope = 0;
-            state.default_eoa_expiry = 0;
-            storage.set_account_state(account, state)?;
-        }
         AccountConfigurationEvents::emit_actor_revoked(storage, account, actor_id)?;
         Ok(())
     }
@@ -769,6 +880,35 @@ mod tests {
             // A local-channel change advances the local sequence instead.
             AccountChangeApplier::apply_config_change(acc, ACCOUNT, &[], 8453).unwrap();
             assert_eq!(acc.get_change_sequences(ACCOUNT).unwrap(), (1, 1));
+        });
+    }
+
+    #[test]
+    fn config_change_preserves_evolving_inline_self_state() {
+        with_storage(|acc| {
+            let self_id = AccountConfigurationStorage::self_actor_id(ACCOUNT);
+            let scoped = ungated(K1, Eip8130Constants::SCOPE_SENDER);
+            let changes = vec![
+                ActorChange {
+                    change_type: ActorChangeType::Authorize,
+                    actor_id: self_id,
+                    data: authorize_data(&scoped, &[]),
+                },
+                ActorChange {
+                    change_type: ActorChangeType::Revoke,
+                    actor_id: self_id,
+                    data: Bytes::new(),
+                },
+            ];
+
+            AccountChangeApplier::apply_config_change(acc, ACCOUNT, &changes, 0).unwrap();
+
+            let state = acc.get_account_state(ACCOUNT).unwrap();
+            assert_eq!(state.multichain_sequence, 1);
+            assert_eq!(state.local_sequence, 0);
+            assert!(state.default_eoa_revoked());
+            assert_eq!(state.default_eoa_scope, 0);
+            assert_eq!(state.default_eoa_expiry, 0);
         });
     }
 

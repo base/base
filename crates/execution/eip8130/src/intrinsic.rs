@@ -53,9 +53,9 @@ impl AuthWireForm {
 
 /// State-derived inputs the transaction body alone cannot determine.
 ///
-/// Both flags come from the caller's state view (the nonce manager / account
-/// state and the sender's code), supplied so this crate stays a pure function of
-/// the transaction plus these hints.
+/// These flags come from the caller's state view (the nonce manager, account
+/// configuration, and sender code), supplied so this crate stays a pure function
+/// of the transaction plus these hints.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct IntrinsicGasInput {
@@ -67,13 +67,36 @@ pub struct IntrinsicGasInput {
     /// Whether a code-less `sender` EOA is auto-delegated to `DEFAULT_ACCOUNT`
     /// during block execution, incurring the delegation-indicator deposit.
     pub sender_auto_delegated: bool,
+    /// Whether sender authorization resolved a policy-bearing actor and therefore
+    /// read its `policy_manager` slot in addition to its config/state slot.
+    pub sender_policy_gated: bool,
+    /// Whether payer authorization resolved a policy-bearing actor and therefore
+    /// read its `policy_manager` slot in addition to its config/state slot.
+    pub payer_policy_gated: bool,
 }
 
 impl IntrinsicGasInput {
     /// Creates the intrinsic-gas state hints.
     #[must_use]
     pub const fn new(nonce_key_first_use: bool, sender_auto_delegated: bool) -> Self {
-        Self { nonce_key_first_use, sender_auto_delegated }
+        Self {
+            nonce_key_first_use,
+            sender_auto_delegated,
+            sender_policy_gated: false,
+            payer_policy_gated: false,
+        }
+    }
+
+    /// Adds the policy-gate state resolved during sender and payer authorization.
+    #[must_use]
+    pub const fn with_policy_gates(
+        mut self,
+        sender_policy_gated: bool,
+        payer_policy_gated: bool,
+    ) -> Self {
+        self.sender_policy_gated = sender_policy_gated;
+        self.payer_policy_gated = payer_policy_gated;
+        self
     }
 }
 
@@ -170,6 +193,10 @@ impl IntrinsicGas {
                     bytecode = bytecode
                         .saturating_add(Eip8130GasSchedule::CREATE_BASE_COST)
                         .saturating_add(deposit);
+                    // Bootstrap `account_state` (`local_sequence = 1` and the
+                    // default-EOA-revoked flag) before installing initial actors.
+                    account_changes =
+                        account_changes.saturating_add(Eip8130GasSchedule::ACCOUNT_STATE_SET_COST);
                     // Each initial actor writes one fresh `actor_config` slot, plus
                     // the two policy slots (`policy_manager` + `policy_commitment`)
                     // when it sets `SCOPE_POLICY` — a POLICY initial actor is 3
@@ -183,15 +210,22 @@ impl IntrinsicGas {
                             cost = cost.saturating_add(
                                 Eip8130GasSchedule::ACTOR_SLOT_SET_COST.saturating_mul(2),
                             );
+                        } else {
+                            cost = cost.saturating_add(Eip8130GasSchedule::POLICY_SLOTS_NOOP_COST);
                         }
                         account_changes = account_changes.saturating_add(cost);
                     }
                 }
                 AccountChange::ConfigChange(cc) => {
+                    // One packed account-state fetch supplies lock status and both
+                    // sequence channels; the final write advances the selected
+                    // channel. Price the possible first zero-to-nonzero write.
+                    account_changes = account_changes
+                        .saturating_add(Eip8130GasSchedule::CONFIG_CHANGE_STATE_COST);
                     // `cfg.auth` is always `authenticator || data` (never a bare
                     // signature); an implicit-EOA owner names itself explicitly as
                     // `K1_AUTHENTICATOR || sig` here.
-                    let auth = Self::auth_cost(cc.auth.as_ref(), AuthWireForm::Prefixed)?;
+                    let auth = Self::auth_cost(cc.auth.as_ref(), AuthWireForm::Prefixed, false)?;
                     account_changes = account_changes.saturating_add(auth);
                     for actor_change in &cc.actor_changes {
                         account_changes = account_changes
@@ -217,10 +251,17 @@ impl IntrinsicGas {
         // signature parsed via native ecrecover; a configured sender (and every
         // payer) is an `authenticator || data` blob and must not be parsed as a
         // bare signature.
-        let sender_auth =
-            Self::auth_cost(signed.sender_auth().as_ref(), AuthWireForm::for_sender(tx.sender))?;
+        let sender_auth = Self::auth_cost(
+            signed.sender_auth().as_ref(),
+            AuthWireForm::for_sender(tx.sender),
+            input.sender_policy_gated,
+        )?;
         let payer_auth = if tx.payer.is_some() {
-            Self::auth_cost(signed.payer_auth().as_ref(), AuthWireForm::Prefixed)?
+            Self::auth_cost(
+                signed.payer_auth().as_ref(),
+                AuthWireForm::Prefixed,
+                input.payer_policy_gated,
+            )?
         } else {
             0
         };
@@ -251,7 +292,8 @@ impl IntrinsicGas {
     }
 
     /// Cost of authenticating one auth blob: authenticator execution gas plus the
-    /// cold SLOADs the `authorize` step reads.
+    /// cold SLOADs the `authorize` step reads. Policy-gated actors read their
+    /// `policy_manager` slot in addition to their config/state slot.
     ///
     /// `form` selects how the blob is parsed:
     /// [`AuthWireForm::BareSignature`] is a raw 65-byte secp256k1 signature with
@@ -261,9 +303,14 @@ impl IntrinsicGas {
     /// `K1_AUTHENTICATOR || sig`).
     ///
     /// See [`Self::auth_sloads`] for how the SLOAD count is derived.
-    fn auth_cost(auth: &[u8], form: AuthWireForm) -> Result<u64, IntrinsicGasError> {
+    fn auth_cost(
+        auth: &[u8],
+        form: AuthWireForm,
+        policy_gated: bool,
+    ) -> Result<u64, IntrinsicGasError> {
         let exec = Self::auth_exec_cost(auth, form)?;
-        let sloads = Self::auth_sloads(auth, form, exec);
+        let sloads =
+            Self::auth_sloads(auth, form, exec).saturating_add(u64::from(policy_gated && exec > 0));
         Ok(exec.saturating_add(Eip8130GasSchedule::COLD_SLOAD.saturating_mul(sloads)))
     }
 
@@ -342,16 +389,18 @@ impl IntrinsicGas {
 
     /// Storage-write cost for one actor change: an authorize sets the
     /// `actor_config` slot (plus the two policy slots when it carries a policy);
-    /// a revoke overwrites the existing slot.
+    /// a revoke clears the actor config and both policy slots.
     fn actor_change_write_cost(actor_change: &ActorChange) -> u64 {
         match actor_change.change_type {
-            ActorChangeType::Revoke => Eip8130GasSchedule::ACTOR_SLOT_RESET_COST,
+            ActorChangeType::Revoke => Eip8130GasSchedule::ACTOR_REVOKE_COST,
             ActorChangeType::Authorize => {
                 let mut cost = Eip8130GasSchedule::ACTOR_SLOT_SET_COST;
                 if Self::authorize_has_policy(actor_change.data.as_ref()) {
                     // policy_commitment + policy_manager.
                     cost = cost
                         .saturating_add(Eip8130GasSchedule::ACTOR_SLOT_SET_COST.saturating_mul(2));
+                } else {
+                    cost = cost.saturating_add(Eip8130GasSchedule::POLICY_SLOTS_NOOP_COST);
                 }
                 cost
             }
@@ -520,6 +569,7 @@ mod tests {
             gas.bytecode,
             Eip8130GasSchedule::CREATE_BASE_COST + Eip8130GasSchedule::CODE_DEPOSIT_PER_BYTE * 10
         );
+        assert_eq!(gas.account_changes, Eip8130GasSchedule::ACCOUNT_STATE_SET_COST);
     }
 
     #[test]
@@ -544,7 +594,12 @@ mod tests {
             gas.bytecode,
             Eip8130GasSchedule::CREATE_BASE_COST + Eip8130GasSchedule::CODE_DEPOSIT_PER_BYTE * 4
         );
-        assert_eq!(gas.account_changes, Eip8130GasSchedule::ACTOR_SLOT_SET_COST * 3);
+        assert_eq!(
+            gas.account_changes,
+            Eip8130GasSchedule::ACCOUNT_STATE_SET_COST
+                + Eip8130GasSchedule::ACTOR_SLOT_SET_COST * 3
+                + Eip8130GasSchedule::POLICY_SLOTS_NOOP_COST * 3
+        );
     }
 
     #[test]
@@ -575,8 +630,13 @@ mod tests {
             ..Default::default()
         };
         let gas = intrinsic(&signed(tx, vec![0; 65], vec![]), &EXISTING_KEY);
-        // 1 (non-policy) + 3 (policy) = 4 slot-sets.
-        assert_eq!(gas.account_changes, Eip8130GasSchedule::ACTOR_SLOT_SET_COST * 4);
+        // Account-state bootstrap + 1 (non-policy) + 3 (policy) slot-sets.
+        assert_eq!(
+            gas.account_changes,
+            Eip8130GasSchedule::ACCOUNT_STATE_SET_COST
+                + Eip8130GasSchedule::ACTOR_SLOT_SET_COST * 4
+                + Eip8130GasSchedule::POLICY_SLOTS_NOOP_COST
+        );
     }
 
     #[test]
@@ -584,9 +644,9 @@ mod tests {
         // A sub-20-byte prefixed (non-bare) blob resolves no authenticator, so it
         // reads no `actor_config` slot and must cost 0 (not a phantom cold SLOAD).
         // A bare signature still pays the authenticator exec + one cold SLOAD.
-        assert_eq!(IntrinsicGas::auth_cost(&[0u8; 5], AuthWireForm::Prefixed), Ok(0));
+        assert_eq!(IntrinsicGas::auth_cost(&[0u8; 5], AuthWireForm::Prefixed, false), Ok(0));
         assert_eq!(
-            IntrinsicGas::auth_cost(&[0u8; 65], AuthWireForm::BareSignature),
+            IntrinsicGas::auth_cost(&[0u8; 65], AuthWireForm::BareSignature, false),
             Ok(Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD)
         );
     }
@@ -633,8 +693,10 @@ mod tests {
         // ids are non-self, so no self-actor dual-home bump applies.
         let auth_cost = Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD;
         let expected = auth_cost
+            + Eip8130GasSchedule::CONFIG_CHANGE_STATE_COST
             + Eip8130GasSchedule::ACTOR_SLOT_SET_COST
-            + Eip8130GasSchedule::ACTOR_SLOT_RESET_COST;
+            + Eip8130GasSchedule::POLICY_SLOTS_NOOP_COST
+            + Eip8130GasSchedule::ACTOR_REVOKE_COST;
         assert_eq!(gas.account_changes, expected);
 
         // With SCOPE_POLICY, the authorize also writes the two policy slots.
@@ -655,7 +717,12 @@ mod tests {
             ..Default::default()
         };
         let gas = intrinsic(&signed(tx, configured_auth(K1), vec![]), &EXISTING_KEY);
-        assert_eq!(gas.account_changes, auth_cost + Eip8130GasSchedule::ACTOR_SLOT_SET_COST * 3);
+        assert_eq!(
+            gas.account_changes,
+            auth_cost
+                + Eip8130GasSchedule::CONFIG_CHANGE_STATE_COST
+                + Eip8130GasSchedule::ACTOR_SLOT_SET_COST * 3
+        );
     }
 
     #[test]
@@ -687,7 +754,9 @@ mod tests {
 
         let base = Eip8130GasSchedule::AUTH_EXEC_K1
             + Eip8130GasSchedule::COLD_SLOAD
-            + Eip8130GasSchedule::ACTOR_SLOT_SET_COST;
+            + Eip8130GasSchedule::CONFIG_CHANGE_STATE_COST
+            + Eip8130GasSchedule::ACTOR_SLOT_SET_COST
+            + Eip8130GasSchedule::POLICY_SLOTS_NOOP_COST;
 
         // Configured sender targeting a non-self actor: no dual-home bump.
         assert_eq!(account_changes(other_id, Some(ACCOUNT)), base);
@@ -711,7 +780,7 @@ mod tests {
         // surface. The inline self config resolves in a single cold SLOAD.
         let auth_cost = Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD;
         assert_eq!(
-            IntrinsicGas::auth_cost(&configured_auth(K1), AuthWireForm::Prefixed),
+            IntrinsicGas::auth_cost(&configured_auth(K1), AuthWireForm::Prefixed, false),
             Ok(auth_cost)
         );
 
@@ -733,7 +802,13 @@ mod tests {
             ..Default::default()
         };
         let gas = intrinsic(&signed(tx, configured_auth(K1), vec![]), &EXISTING_KEY);
-        assert_eq!(gas.account_changes, auth_cost + Eip8130GasSchedule::ACTOR_SLOT_SET_COST);
+        assert_eq!(
+            gas.account_changes,
+            auth_cost
+                + Eip8130GasSchedule::CONFIG_CHANGE_STATE_COST
+                + Eip8130GasSchedule::ACTOR_SLOT_SET_COST
+                + Eip8130GasSchedule::POLICY_SLOTS_NOOP_COST
+        );
     }
 
     #[test]
@@ -744,18 +819,19 @@ mod tests {
         // blob reads exactly one slot too (the inline self, or a non-self k1
         // actor's `actor_config`).
         assert_eq!(
-            IntrinsicGas::auth_cost(&[0u8; 65], AuthWireForm::BareSignature),
+            IntrinsicGas::auth_cost(&[0u8; 65], AuthWireForm::BareSignature, false),
             Ok(Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD)
         );
         assert_eq!(
-            IntrinsicGas::auth_cost(&configured_auth(K1), AuthWireForm::Prefixed),
+            IntrinsicGas::auth_cost(&configured_auth(K1), AuthWireForm::Prefixed, false),
             Ok(Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD)
         );
         // A non-k1 leaf actor reads only its `actor_config` slot: one cold SLOAD.
         assert_eq!(
             IntrinsicGas::auth_cost(
                 &configured_auth(Eip8130Contracts::P256_AUTHENTICATOR),
-                AuthWireForm::Prefixed
+                AuthWireForm::Prefixed,
+                false,
             ),
             Ok(Eip8130GasSchedule::AUTH_EXEC_P256 + Eip8130GasSchedule::COLD_SLOAD)
         );
@@ -767,7 +843,7 @@ mod tests {
         // authenticator selector. A configured (`AuthWireForm::Prefixed`) blob naming
         // it is rejected as unscheduled rather than silently priced as k1.
         assert_eq!(
-            IntrinsicGas::auth_cost(&configured_auth(Address::ZERO), AuthWireForm::Prefixed),
+            IntrinsicGas::auth_cost(&configured_auth(Address::ZERO), AuthWireForm::Prefixed, false,),
             Err(IntrinsicGasError::UnscheduledAuthenticator(Address::ZERO))
         );
     }
@@ -782,6 +858,19 @@ mod tests {
             let gas = intrinsic(&signed(tx, configured_auth(authenticator), vec![]), &EXISTING_KEY);
             assert_eq!(gas.sender_auth, exec + Eip8130GasSchedule::COLD_SLOAD);
         }
+    }
+
+    #[test]
+    fn policy_gated_authentication_charges_manager_sload() {
+        let tx = TxEip8130 { sender: Some(ACCOUNT), ..Default::default() };
+        let gas = intrinsic(
+            &signed(tx, configured_auth(K1), vec![]),
+            &EXISTING_KEY.with_policy_gates(true, false),
+        );
+        assert_eq!(
+            gas.sender_auth,
+            Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD * 2
+        );
     }
 
     #[test]
@@ -850,6 +939,23 @@ mod tests {
         // payer_auth is metered on top of gas_limit, so it is excluded here.
         assert_eq!(gas.sender_intrinsic(), gas.total() - gas.payer_auth);
         assert!(gas.payer_auth > 0);
+
+        let policy_gated = intrinsic(
+            &signed(
+                TxEip8130 {
+                    sender: Some(ACCOUNT),
+                    payer: Some(address!("0x2222222222222222222222222222222222222222")),
+                    ..Default::default()
+                },
+                configured_auth(K1),
+                configured_auth(Eip8130Contracts::P256_AUTHENTICATOR),
+            ),
+            &EXISTING_KEY.with_policy_gates(false, true),
+        );
+        assert_eq!(
+            policy_gated.payer_auth,
+            Eip8130GasSchedule::AUTH_EXEC_P256 + Eip8130GasSchedule::COLD_SLOAD * 2
+        );
     }
 
     #[test]

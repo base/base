@@ -729,12 +729,17 @@ impl Eip8130Executor {
 
             // 5. Intrinsic gas (auth gas is priced from the auth-blob shape, so a
             //    stub signature of the right authenticator type estimates exactly).
+            //    Payer policy state cannot be resolved without authenticating the
+            //    payer's unsigned representative blob, so estimation does not add
+            //    the state-dependent policy-manager SLOAD.
             let (sender_intrinsic, payer_auth, execution_gas_available) =
                 Self::resolve_execution_gas(
                     signed,
                     encoded,
                     nonce_key_first_use,
                     sender_auto_delegated,
+                    policy_gated,
+                    false,
                     gas_limit,
                 )?;
 
@@ -812,6 +817,11 @@ impl Eip8130Executor {
                     .map_err(BaseTransactionError::eip8130)?;
             let has_explicit_delegation = applied_tx.applied.delegation.is_some();
             let sender_actor = applied_tx.actors.sender.resolved;
+            let payer_policy_gated = applied_tx
+                .actors
+                .payer
+                .as_ref()
+                .is_some_and(|actor| actor.resolved.is_policy_gated());
             let sender = applied_tx.actors.sender.account;
             let payer = applied_tx.actors.payer.as_ref().map_or(sender, |p| p.account);
             // Defense-in-depth: `authorize_and_apply` -> `verify_sender` already
@@ -891,6 +901,8 @@ impl Eip8130Executor {
                     encoded,
                     nonce_key_first_use,
                     sender_auto_delegated,
+                    sender_actor.is_policy_gated(),
+                    payer_policy_gated,
                     gas_limit,
                 )?;
 
@@ -1450,12 +1462,15 @@ impl Eip8130Executor {
         encoded: &[u8],
         nonce_key_first_use: bool,
         sender_auto_delegated: bool,
+        sender_policy_gated: bool,
+        payer_policy_gated: bool,
         gas_limit: u64,
     ) -> Result<(u64, u64, u64), BaseTransactionError> {
         let intrinsic = IntrinsicGas::compute(
             signed,
             encoded,
-            &IntrinsicGasInput::new(nonce_key_first_use, sender_auto_delegated),
+            &IntrinsicGasInput::new(nonce_key_first_use, sender_auto_delegated)
+                .with_policy_gates(sender_policy_gated, payer_policy_gated),
         )
         .map_err(BaseTransactionError::eip8130)?;
         let execution_gas_available =

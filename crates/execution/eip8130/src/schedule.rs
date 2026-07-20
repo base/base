@@ -80,6 +80,29 @@ impl Eip8130GasSchedule {
     /// Overwriting an already-set actor slot (e.g. a revoke) — cold SLOAD +
     /// SSTORE reset.
     pub const ACTOR_SLOT_RESET_COST: u64 = Self::COLD_SLOAD + Self::SSTORE_RESET;
+    /// Touching a cold slot with a zero-to-zero SSTORE: cold access plus the warm
+    /// no-op write cost.
+    pub const COLD_SLOT_NOOP_COST: u64 = Self::COLD_SLOAD + Self::WARM_SLOAD;
+    /// Touching both policy slots with zero-to-zero clears for an ungated actor.
+    pub const POLICY_SLOTS_NOOP_COST: u64 = Self::COLD_SLOT_NOOP_COST * 2;
+    /// Initializing the packed account-state slot. Create entries always perform
+    /// this write, and a config change may be the first state established for an
+    /// otherwise untouched EOA.
+    pub const ACCOUNT_STATE_SET_COST: u64 = Self::COLD_SLOAD + Self::SSTORE_SET;
+    /// Conservative cost for advancing a config-change sequence in the packed
+    /// account-state slot. The same access also supplies the lock status and both
+    /// sequence channels, so those checks must not be charged as extra reads.
+    ///
+    /// A previously initialized account would pay the lower reset cost, but the
+    /// transaction body cannot prove the pre-state. Pricing the possible
+    /// zero-to-nonzero transition prevents first-change undercharging.
+    pub const CONFIG_CHANGE_STATE_COST: u64 = Self::ACCOUNT_STATE_SET_COST;
+    /// Worst-case revoke cost for the actor config and its two policy slots.
+    ///
+    /// Policy slots are cleared on every revoke. Charging all three as resets is
+    /// conservative for ungated actors (whose policy slots are already zero) and
+    /// exact for a policy-bearing actor.
+    pub const ACTOR_REVOKE_COST: u64 = Self::ACTOR_SLOT_RESET_COST * 3;
     /// Worst-case extra cost for a config change targeting the account's own
     /// secp256k1 self-actor. The self key's config lives inline in the
     /// account-state slot, so authorizing or revoking it mutates that slot *and*
@@ -157,6 +180,10 @@ mod tests {
         assert_eq!(
             Eip8130GasSchedule::NONCE_KEY_EXISTING_COST,
             gas::COLD_SLOAD_COST + gas::WARM_SSTORE_RESET
+        );
+        assert_eq!(
+            Eip8130GasSchedule::COLD_SLOT_NOOP_COST,
+            gas::COLD_SLOAD_COST + gas::WARM_STORAGE_READ_COST
         );
         // Nonce-free ring-buffer cost: 2 cold SLOADs + 1 warm SLOAD + 3 warm
         // SSTORE resets = 13,000 gas.

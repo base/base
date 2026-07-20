@@ -127,24 +127,32 @@ impl TransactionAuthorizer {
                     applied.created = Some(created);
                 }
                 AccountChange::ConfigChange(cc) => {
-                    // Authorize against the current (post prior-apply) state: the
-                    // channel sequence is read live, so same-channel entries in
-                    // one transaction are checked against the value left by the
-                    // preceding applied entry.
-                    let resolved = ConfigChangeAuthorizer::authorize(
+                    // Load the evolving packed state once for this change. The
+                    // same decoded value drives lock/sequence authorization,
+                    // inline-self authentication and mutation, and the final
+                    // sequence/self-state write.
+                    let mut state = storage
+                        .get_account_state(sender_account)
+                        .map_err(AuthorizeError::Storage)?;
+                    let resolved = ConfigChangeAuthorizer::authorize_with_account_state(
                         storage,
                         sender_account,
                         local_chain_id,
                         cc,
                         now,
+                        &state,
                     )?;
                     config_changes.push(resolved);
-                    AccountChangeApplier::apply_config_change(
+                    AccountChangeApplier::apply_config_change_with_account_state(
                         storage,
                         sender_account,
                         &cc.actor_changes,
                         cc.chain_id,
+                        &mut state,
                     )?;
+                    storage
+                        .set_account_state(sender_account, state)
+                        .map_err(ApplyError::Storage)?;
                 }
                 AccountChange::Delegation(Delegation { target }) => {
                     if applied.delegation.is_some() {

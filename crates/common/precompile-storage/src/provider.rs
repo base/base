@@ -60,6 +60,15 @@ pub trait PrecompileStorageProvider {
     fn sload(&mut self, address: Address, key: U256) -> Result<U256>;
     /// Performs a TLOAD operation (transient storage read).
     fn tload(&mut self, address: Address, key: U256) -> Result<U256>;
+    /// Reads transient storage without exposing a TLOAD opcode charge.
+    ///
+    /// Native precompiles whose gas schedule prices the enclosing operation
+    /// independently may use this method to access transient backing state.
+    /// Providers that meter [`Self::tload`] must override this method to bypass
+    /// that metering; gas-free providers may rely on the default implementation.
+    fn tload_unmetered(&mut self, address: Address, key: U256) -> Result<U256> {
+        self.tload(address, key)
+    }
     /// Performs an SSTORE operation (persistent storage write).
     fn sstore(&mut self, address: Address, key: U256, value: U256) -> Result<()>;
     /// Performs a TSTORE operation (transient storage write).
