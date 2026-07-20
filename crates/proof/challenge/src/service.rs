@@ -24,7 +24,7 @@ use tracing::{info, warn};
 
 use crate::{
     AnchorUpdater, BondManager, BondManagerConfig, ChallengeSubmitter, ChallengerConfig,
-    ChallengerMetrics, Driver, DriverComponents, DriverConfig, GameScanner, OutputValidator,
+    ChallengerMetrics, Driver, DriverComponents, GameScanner, OutputValidator,
 };
 
 /// Top-level challenger service.
@@ -65,7 +65,7 @@ impl ChallengerService {
         // ── 3. Construct tx-manager and challenge submitter ──────────────────
         let signer_config = config.signing;
         let sender_addr = signer_config.address();
-        let l1_rpc_url = config.l1_eth_rpc.as_ref().clone();
+        let l1_rpc_url = config.l1_eth_rpc.clone();
         let l1_provider = if config.metrics.enabled {
             let (layer, mut balance_rx) = BalanceMonitorLayer::new(
                 sender_addr,
@@ -154,7 +154,7 @@ impl ChallengerService {
         let anchor_registry_client = Arc::new(anchor_registry_client);
 
         // ── 5. L2 client ─────────────────────────────────────────────────────
-        let l2_config = L2ClientConfig::new(config.l2_eth_rpc.as_ref().clone());
+        let l2_config = L2ClientConfig::new(config.l2_eth_rpc.clone());
         let l2_client = Arc::new(L2Client::new(l2_config)?);
         info!(endpoint = %config.l2_eth_rpc, "L2 client initialized");
 
@@ -164,11 +164,11 @@ impl ChallengerService {
         let proof_requester = Arc::new(ProofRequesterClient::connect(&proof_requester_config)?);
         info!(endpoint = %config.zk_rpc_url, "Prover-service requester client initialized");
 
-        // ── 6b. TEE proof config ────────────────────────────────────────────
+        // ── 6b. TEE proof provider ──────────────────────────────────────────
         //
         // TEE-first proof sourcing is the steady-state mode. TEE proofs flow
-        // through the same `proof_requester` as ZK proofs; the TEE config only
-        // carries an L1 head provider used to build the TEE proof request
+        // through the same `proof_requester` as ZK proofs; `tee` carries the
+        // L1 head provider used to build the TEE proof request
         // envelope. The driver automatically falls back to the ZK path when a
         // TEE proof is unavailable for a given session, so TEE-first is safe
         // to run even in deployments where TEE proofs are not yet generated
@@ -176,7 +176,7 @@ impl ChallengerService {
         let l1_config = L1ClientConfig::new(l1_rpc_url.clone());
         let l1_client = L1Client::new(l1_config)
             .map_err(|e| eyre::eyre!("failed to create TEE L1 client: {e}"))?;
-        let tee = Some(crate::TeeConfig { l1_head_provider: Arc::new(l1_client) });
+        let tee: Option<Arc<dyn crate::L1HeadProvider>> = Some(Arc::new(l1_client));
 
         // ── 7. Scanner, anchor updater, and bond manager ──────────────────
         let scanner = GameScanner::new(
@@ -226,25 +226,20 @@ impl ChallengerService {
         };
 
         // ── 9. Run driver ────────────────────────────────────────────────────
-        let driver_config = DriverConfig {
+        let driver = Driver::new(DriverComponents {
+            scanner,
+            validator,
+            proof_requester,
+            submitter,
+            tee,
+            verifier_client,
+            bond_manager,
+            anchor_updater,
             poll_interval: config.poll_interval,
             max_proof_duration: config.max_proof_duration,
             tee_submit_retry_limit: config.tee_submit_retry_limit,
             cancel: cancel.child_token(),
-        };
-        let driver = Driver::new(
-            driver_config,
-            DriverComponents {
-                scanner,
-                validator,
-                proof_requester,
-                submitter,
-                tee,
-                verifier_client,
-                bond_manager,
-                anchor_updater,
-            },
-        );
+        });
 
         // Signal readiness immediately after initialization — the driver loop
         // itself is purely operational work that should not gate readiness probes.

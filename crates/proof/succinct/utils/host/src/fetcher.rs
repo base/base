@@ -217,7 +217,7 @@ impl OPSuccinctDataFetcher {
     pub async fn get_l2_head(&self) -> Result<Header> {
         let block = self.l2_provider.get_block_by_number(BlockNumberOrTag::Latest).await?;
         if let Some(block) = block {
-            Ok(block.header.inner)
+            Ok(block.header.inner.into())
         } else {
             bail!("Failed to get L2 head");
         }
@@ -282,7 +282,7 @@ impl OPSuccinctDataFetcher {
         let block = self.l2_provider.get_block(block_number).await?;
 
         if let Some(block) = block {
-            Ok(block.header.inner)
+            Ok(block.header.inner.into())
         } else {
             bail!("Failed to get L2 header for block {block_number}");
         }

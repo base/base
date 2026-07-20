@@ -3,16 +3,17 @@
 use std::{panic::AssertUnwindSafe, sync::Arc, time::Duration};
 
 use alloy_primitives::B256;
-use alloy_provider::Provider;
-use alloy_rpc_types_eth::{Block, BlockNumberOrTag};
+use alloy_provider::{Network, Provider};
+use alloy_rpc_types_eth::BlockNumberOrTag;
 use async_trait::async_trait;
 use base_common_network::Base;
-use base_common_rpc_types::Transaction;
 use futures::FutureExt;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::L2BlockParityMetrics;
+
+type BaseRpcBlock = <Base as Network>::BlockResponse;
 
 /// Default maximum derived L2 blocks compared in one monitor pass.
 pub const DEFAULT_MAX_BLOCKS_PER_TICK: usize = 25;
@@ -79,12 +80,12 @@ pub struct L2BlockSnapshot {
 
 impl L2BlockSnapshot {
     /// Converts an RPC block into a parity snapshot.
-    pub fn from_rpc_block(block: Block<Transaction>) -> Self {
+    pub fn from_rpc_block(block: BaseRpcBlock) -> Self {
         Self {
             number: block.header.number,
             hash: block.header.hash,
-            parent_hash: block.header.inner.parent_hash,
-            timestamp: block.header.inner.timestamp,
+            parent_hash: block.header.parent_hash,
+            timestamp: block.header.timestamp,
             tx_hashes: block.transactions.hashes().collect(),
         }
     }

@@ -7,6 +7,18 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+mod guard;
+pub use guard::{
+    Admission, AdmissionRecord, DEFAULT_PAYMENT_LIMIT, DEFAULT_SIGNATURE_LIMIT, GuardLimits,
+    LimitClass, LimitRejection, MempoolGuard,
+};
+
+mod invalidation;
+pub use invalidation::{InvalidationIndex, InvalidationKey, WatchSet};
+
+mod limits;
+pub use limits::{InflightCounters, PayerBook};
+
 mod validator;
 pub use validator::{BaseL1BlockInfo, BaseTransactionValidator, BaseTxPoolError};
 

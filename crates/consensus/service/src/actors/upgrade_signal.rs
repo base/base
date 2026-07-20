@@ -8,7 +8,7 @@ use base_upgrade_signal::{
     UpgradeSignalRuntimeValidation,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::warn;
 use url::Url;
 
 use crate::NodeActor;
@@ -45,9 +45,18 @@ impl UpgradeSignalNodeConfig {
         Self { config, l1_provider, chain_id, runtime_validation }
     }
 
-    /// Builds the consensus metrics actor.
-    pub fn metrics_actor(&self, cancellation: CancellationToken) -> UpgradeSignalMetricsActor {
-        UpgradeSignalMetricsActor::new(self.config.clone(), self.l1_provider.clone(), cancellation)
+    /// Builds the consensus metrics actor, with live auto-apply when runtime refresh is enabled.
+    pub fn metrics_actor(
+        &self,
+        refresher: Option<UpgradeSignalRefresher>,
+        cancellation: CancellationToken,
+    ) -> UpgradeSignalMetricsActor {
+        UpgradeSignalMetricsActor::new(
+            self.config.clone(),
+            self.l1_provider.clone(),
+            refresher,
+            cancellation,
+        )
     }
 
     /// Builds the runtime admin refresher when enabled.
@@ -64,7 +73,8 @@ impl UpgradeSignalNodeConfig {
     }
 }
 
-/// Actor that records live L1 upgrade signal metrics without mutating node configuration.
+/// Actor that records live L1 upgrade signal metrics and, when runtime refresh is enabled,
+/// automatically re-applies the schedule on observed L1 changes.
 #[derive(Debug)]
 pub struct UpgradeSignalMetricsActor {
     /// L1 upgrade signal reader.
@@ -73,6 +83,8 @@ pub struct UpgradeSignalMetricsActor {
     pub upgrade_ids: Vec<BaseUpgrade>,
     /// Live metrics state.
     pub monitor: UpgradeSignalMonitor,
+    /// Runtime refresher applied automatically on observed live updates, when enabled.
+    pub refresher: Option<UpgradeSignalRefresher>,
     /// Cancellation token shared with the rollup node.
     pub cancellation: CancellationToken,
 }
@@ -82,23 +94,29 @@ impl UpgradeSignalMetricsActor {
     pub fn new(
         config: UpgradeSignalConfig,
         l1_provider: RootProvider,
+        refresher: Option<UpgradeSignalRefresher>,
         cancellation: CancellationToken,
     ) -> Self {
         let reader = config.reader(l1_provider);
         let monitor =
             UpgradeSignalMonitor::new(UpgradeSignalMetricLayer::Consensus, &config.upgrade_ids);
 
-        Self { reader, upgrade_ids: config.upgrade_ids, monitor, cancellation }
+        Self { reader, upgrade_ids: config.upgrade_ids, monitor, refresher, cancellation }
     }
 
-    /// Polls L1 upgrade signal state and records metrics without mutating local config.
+    /// Polls L1 upgrade signal state, records metrics, and auto-applies observed changes when
+    /// runtime refresh is enabled.
     pub async fn poll_l1_signal(&mut self) {
-        let updated_signals = self.monitor.poll(&self.reader, &self.upgrade_ids).await;
-        if updated_signals > 0 {
-            info!(
+        let Some(schedule) = self.monitor.poll(&self.reader, &self.upgrade_ids).await else {
+            return;
+        };
+        if let Some(refresher) = &self.refresher
+            && let Err(error) = refresher.apply(&schedule)
+        {
+            warn!(
                 target: "upgrade_signal",
-                updated_signals,
-                "observed live L1 upgrade signal update"
+                error = %error,
+                "failed to auto-apply live upgrade signal update"
             );
         }
     }
