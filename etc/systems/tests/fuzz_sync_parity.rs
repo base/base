@@ -129,9 +129,10 @@ struct FuzzTxGenerator {
 
 impl FuzzTxGenerator {
     fn new(seed: u64) -> Self {
-        let generator = WorkloadGenerator::new(WorkloadConfig::new("phase0-fuzz").with_seed(seed))
-            .with_payload(TransferPayload::default(), 0.7)
-            .with_payload(CalldataPayload::new(256).with_min_size(0), 0.3);
+        let generator =
+            WorkloadGenerator::new(WorkloadConfig::new("sync-parity-fuzz").with_seed(seed))
+                .with_payload(TransferPayload::default(), 0.7)
+                .with_payload(CalldataPayload::new(256).with_min_size(0), 0.3);
         Self { generator }
     }
 
