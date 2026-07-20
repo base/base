@@ -17,9 +17,7 @@ use base_proof_primitives::ProofRequest as TeeProofRequest;
 use base_proof_rpc::L2Provider;
 use base_proof_submission::KnownRevert;
 use base_prover_service_client::ProofRequesterProvider;
-use base_prover_service_protocol::{
-    SnarkPlonkProofRequest, TeeKind, ZkBackend, ZkProofRequest, ZkVm,
-};
+use base_prover_service_protocol::{SnarkPlonkProofRequest, ZkBackend, ZkProofRequest, ZkVm};
 use base_tx_manager::{TxManager, TxManagerError};
 use tracing::{debug, info, warn};
 
@@ -206,7 +204,6 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
                         game_address,
                         invalid_index,
                         tee_request,
-                        TeeKind::AwsNitro,
                     );
                     match self.proof_requester.prove_block_range(request).await {
                         Ok(response) => {
