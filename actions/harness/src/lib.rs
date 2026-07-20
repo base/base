@@ -11,8 +11,8 @@ pub use conductor::{ConductorState, TestConductor, TestConductorHandle};
 
 mod common;
 pub use common::{
-    ActionL2Source, BlockHashInner, SharedBlockHashRegistry, TEST_ACCOUNT_ADDRESS,
-    TEST_ACCOUNT_KEY, TestAccount,
+    ActionL2Source, BlockHashInner, SharedBlockHashRegistry, StateRootExpectation,
+    TEST_ACCOUNT_ADDRESS, TEST_ACCOUNT_KEY, TestAccount,
 };
 
 mod l1;

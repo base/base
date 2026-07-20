@@ -57,7 +57,7 @@ use reth_provider::{
 use reth_revm::{cached::CachedReads, cancelled::CancelOnDrop};
 use reth_transaction_pool::noop::NoopTransactionPool;
 
-use crate::{SharedBlockHashRegistry, SharedL1Chain};
+use crate::{SharedBlockHashRegistry, SharedL1Chain, StateRootExpectation};
 
 /// Type alias for the node type adapter used in tests.
 pub type TestNodeTypes = NodeTypesWithDBAdapter<BaseNode, Arc<TempDatabase<DatabaseEnv>>>;
@@ -454,14 +454,21 @@ impl ActionEngineClient {
             inner.executed_receipts.insert(block_number, receipts);
         }
 
-        if let Some(expected_root) = registry.get_state_root(block_number) {
-            assert_eq!(
-                state_root, expected_root,
-                "state root mismatch at block {block_number}: computed={state_root}, expected={expected_root}",
-            );
+        match registry.state_root_expectation(block_number) {
+            Some(StateRootExpectation::Verify(expected_root)) => {
+                assert_eq!(
+                    state_root, expected_root,
+                    "state root mismatch at block {block_number}: computed={state_root}, expected={expected_root}",
+                );
+                registry.record_verified();
+            }
+            // Synthetic blocks (registered without real execution) and blocks
+            // with no reference entry (e.g. deposit-only blocks generated during
+            // derivation) have no root to compare against.
+            Some(StateRootExpectation::Synthetic) | None => {}
         }
 
-        registry.insert(block_number, block_hash, Some(state_root));
+        registry.insert(block_number, block_hash, StateRootExpectation::Verify(state_root));
 
         let l2_info =
             L2BlockInfo::from_block_and_genesis(&block, &rollup_config.genesis).map_err(|e| {

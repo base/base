@@ -34,9 +34,9 @@ store, P2P transport, conductor behavior, and finality/reset orchestration.
 | L1 chain and miner | Alloy `Header`, block hash chaining, signed `TxEnvelope` bodies, consensus receipts consumed by derivation, RPC-shaped transaction receipts and log metadata for batcher confirmations and L1 events | `L1Miner`, `L1Block`, manual reorg/safe/finalized heads | No tx pool, contract execution, full gas accounting, or beacon sidecar service |
 | L1 calldata DA | Verifier nodes use `EthereumDataSource` and production `CalldataSource` over signed tx bodies | In-memory `ActionL1ChainProvider` backed by `SharedL1Chain` | RPC paging/provider edge cases are not covered by the default action path |
 | L1 blob DA | Verifier nodes use `EthereumDataSource`, production `BlobSource`, versioned hashes from signed EIP-4844 txs, and `ActionBlobProvider` sidecar lookup | Blob sidecars are stored in `L1Block::blob_sidecars` rather than fetched from a beacon API | Beacon API behavior, blob retention windows, and sidecar transport are not modeled |
-| Batcher | `BatchDriver`, `BatchEncoder`, channel manager behavior, span/single batch encoding, signed calldata/blob tx construction | `L1MinerTxManager`, in-memory L2/L1 event channels, synthetic inclusion receipts | Submission does not use a real RPC tx manager, replacement, fee bumping, or production receipt polling against an RPC provider |
+| Batcher | `BatchDriver`, `BatchEncoder`, channel manager behavior, span/single batch encoding, signed calldata/blob tx construction, txpool-blocked → `cancel_tx` recovery | `L1MinerTxManager`, in-memory L2/L1 event channels, synthetic inclusion receipts | Submission does not use a real RPC tx manager, mempool, replacement, or fee bumping (nonce-slot blockage is modeled; recovery is exercised via `cancel_tx`) |
 | Sequencer | L1 origin selection, attributes building, payload construction, real signed L2 user txs | Test actor lifecycle and manual stepping | No real node service loop, txpool/RPC ingress, engine transport, or production unsafe block scheduling |
-| Engine | `BasePayloadBuilder`, Base EVM config, temporary Reth database, state-root comparison | `ActionEngineClient` implements only the Engine API behavior tests need | Simplified payload statuses, forkchoice handling, transaction pool, networking, persistence lifecycle, and Engine API edge cases |
+| Engine | `BasePayloadBuilder`, Base EVM config, temporary Reth database, enforced state-root verification (asserts against the sequencer's root; `assert_state_roots_verified` proves it ran) | `ActionEngineClient` implements only the Engine API behavior tests need | Simplified payload statuses, forkchoice handling, transaction pool, networking, persistence lifecycle, and Engine API edge cases |
 | Verifier and derivation | Real derivation pipeline, attributes queue, reset signals, payload application, `SafeDB` | `TestRollupNode` orchestration and manual L1 push/signals | Reset/finality/unsafe-head flow is test-scripted rather than driven by production driver loops and online providers |
 | P2P and unsafe gossip | Optional production unsafe-block signing formula | `SupervisedP2P` and `TestGossipTransport` are in-memory | No libp2p peer scoring, mesh behavior, networking, throttling, or gossip timing |
 | Conductor | Exercises high-level sequencing/follower roles | In-memory conductor control surface | No production service integration, RPC control plane, or multi-process failure modes |
@@ -82,101 +82,20 @@ new tests:
   signals production receives.
 - P2P and conductor tests exercise local state transitions but not real network
   or service integration.
+- L1 contract execution is not modeled. The harness does not run `SystemConfig`,
+  `OptimismPortal`, or other L1 contracts; event helpers encode their expected
+  logs directly, and `ActionL1BlockFetcher::get_logs` is intentionally narrow.
+  Behavior that depends on real RPC/contract semantics (e.g. `eth_getLogs`
+  filtering, deposit/system-config event shape, beacon-sidecar compatibility)
+  belongs in an opt-in external-L1 test backed by a real local L1, not the
+  default in-process path.
+- Full service lifecycle, RPC servers, config/CLI bootstrap, P2P mesh behavior,
+  EL/CL coupling, and multi-process failures are out of scope for action tests
+  by design; they are covered by the Docker-backed system tests.
 
-## Productionizing Roadmap
+## Working With the Harness
 
-### 1. Production-Mode L1/DA
-
-This is the highest-value next step because it removes a custom derivation
-boundary while preserving the speed and determinism of action tests.
-
-Current behavior:
-
-- `L1Block` stores signed `TxEnvelope` values as the only L1 transaction body
-  representation.
-- `L1MinerTxManager` signs every batcher submission into an EIP-1559 or
-  EIP-4844 transaction using `BatcherConfig::l1_signer`.
-- `ActionL1ChainProvider::block_info_and_transactions_by_hash` returns signed
-  transaction bodies to production DA sources.
-- `ActionTestHarness::create_test_rollup_node` wires
-  `EthereumDataSource::new_from_parts` with `ActionL1ChainProvider` and
-  `ActionBlobProvider`.
-- Blob DA computes real versioned hashes and returns exactly the blobs
-  referenced by the signed L1 transaction.
-
-The result is that action tests still use an in-memory L1, but the derivation
-pipeline sees production-shaped L1 data by default.
-
-### 2. Production-Shaped Receipts and L1 Events
-
-Current behavior:
-
-- `enqueue_batcher_update`, gas-config updates, operator-fee updates, and
-  deposits all flow through signed synthetic L1 event transactions.
-- Consensus receipts expose the logs to derivation on the same transaction index
-  as the synthetic event transaction.
-- RPC transaction receipts preserve block hash, block number, block timestamp,
-  transaction hash, transaction index, global log index, sender, recipient, gas
-  fields, blob gas markers, and receipt/header blooms.
-- Direct `enqueue_log` remains available as an explicit test escape hatch, but
-  it no longer creates loose no-transaction receipts.
-
-Remaining gaps:
-
-- The harness does not execute `SystemConfig`, `OptimismPortal`, or other L1
-  contracts; event helpers still encode their expected logs directly.
-- `ActionL1BlockFetcher::get_logs` is still intentionally narrow. Tests that
-  require real `eth_getLogs` filtering should use an opt-in external L1 smoke
-  mode or extend this fetcher deliberately.
-
-### 3. Tx Manager Realism
-
-Keep `BatchDriver` as the production owner, but make the adapter look more
-like the production transaction manager:
-
-Current behavior:
-
-- `send_async` signs each candidate with the batcher L1 signer and assigns a
-  monotonic nonce.
-- Submissions move from pending to staged when the harness submits them to
-  `L1Miner`.
-- A staged submission only resolves when `confirm_block` observes a matching
-  transaction receipt. If a block does not include the transaction, the
-  submission remains staged so tests can model delayed inclusion.
-- Blob submissions link the signed EIP-4844 transaction, versioned hashes,
-  sidecars, and mined receipt observed by derivation.
-- Explicit reorg and submission-failure helpers still fire failed receipts so
-  the production `BatchDriver` requeues frames.
-
-Remaining gaps:
-
-- There is no real RPC tx manager, mempool, replacement, fee bumping,
-  cancellation, or timeout policy.
-- Receipt polling is driven by explicit test calls instead of a background RPC
-  polling task.
-
-### 4. Optional External L1 Smoke Mode
-
-Add a small number of opt-in tests backed by a real local L1 process or
-container when the behavior depends on RPC semantics or contract execution.
-These should complement action tests, not replace the default in-process path.
-
-Good candidates:
-
-- Batch inbox transaction filtering through real RPC responses.
-- Deposit and system-config contract event shape.
-- Blob transaction and beacon-sidecar compatibility, if the selected local L1
-  supports the required Cancun/EIP-4844 behavior.
-
-### 5. Service and Network Coverage
-
-Keep full service lifecycle, RPC servers, P2P mesh behavior, EL/CL coupling,
-and multi-process failures in Docker-backed system tests. Those are outside the fast
-action-test boundary.
-
-## Near-Term L1/DA Design Notes
-
-The production-shaped synthetic L1/DA implementation is now the default:
+The production-shaped synthetic L1/DA path is the default:
 
 1. `BatcherConfig::default()` includes a deterministic L1 signer, and
    `with_l1_signer` updates the batcher address to match.
@@ -190,6 +109,8 @@ The production-shaped synthetic L1/DA implementation is now the default:
 5. Use `Batcher::stage_n_frames`, `Batcher::confirm_staged`, and
    `Batcher::staged_count` when a test needs to distinguish submission from L1
    inclusion.
-
-This keeps action tests fast while moving the critical DA boundary closer to
-production.
+6. Use `Batcher::fail_next_n_submissions` and `Batcher::block_next_n_submissions`
+   (paired with `Batcher::cancellation_count`) to drive the production
+   `BatchDriver` failure and txpool-blocked recovery paths.
+7. Call `TestRollupNode::assert_state_roots_verified` when a test should prove
+   the engine actually compared derived state roots against the sequencer's.

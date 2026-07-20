@@ -331,7 +331,41 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
     ///
     /// [`create_test_rollup_node`]: crate::ActionTestHarness::create_test_rollup_node
     pub fn register_block_hash(&mut self, number: u64, hash: B256) {
-        self.engine.block_hash_registry().insert(number, hash, None);
+        self.engine.block_hash_registry().insert(
+            number,
+            hash,
+            crate::StateRootExpectation::Synthetic,
+        );
+    }
+
+    /// Returns the number of executed blocks whose
+    /// [`Verify`](crate::StateRootExpectation::Verify) state root the engine has
+    /// compared and matched.
+    ///
+    /// For a node created via [`create_test_rollup_node_from_sequencer`], this is
+    /// the count of derived blocks whose state root the verifier checked against
+    /// the sequencer's sealed header. Use it (or
+    /// [`assert_state_roots_verified`]) to prove real state-root validation ran
+    /// rather than being silently skipped for want of a reference entry.
+    ///
+    /// [`create_test_rollup_node_from_sequencer`]: crate::ActionTestHarness::create_test_rollup_node_from_sequencer
+    /// [`assert_state_roots_verified`]: TestRollupNode::assert_state_roots_verified
+    pub fn state_roots_verified(&self) -> usize {
+        self.engine.block_hash_registry().verified_count()
+    }
+
+    /// Assert that exactly `expected` executed blocks have had their state roots
+    /// verified against the reference (sequencer-produced) roots.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the verified count does not equal `expected`.
+    pub fn assert_state_roots_verified(&self, expected: usize) {
+        let actual = self.state_roots_verified();
+        assert_eq!(
+            actual, expected,
+            "expected {expected} state-root verifications, got {actual}",
+        );
     }
 
     /// Record the L1 safe head number. Does not drive additional pipeline steps.
@@ -415,7 +449,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
         self.engine.block_hash_registry().insert(
             block.header.number,
             hash,
-            Some(block.header.state_root),
+            crate::StateRootExpectation::Verify(block.header.state_root),
         );
         let l1_origin = self.l1_origin_from_block(block).unwrap_or_else(|| {
             panic!(

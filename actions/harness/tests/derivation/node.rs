@@ -57,6 +57,9 @@ async fn test_rollup_node_derives_batched_blocks() {
         L2_BLOCK_COUNT,
         "safe head should be at block {L2_BLOCK_COUNT}"
     );
+    // Prove state-root validation actually ran for every derived block rather
+    // than being silently skipped for want of a reference root.
+    node.assert_state_roots_verified(L2_BLOCK_COUNT as usize);
 }
 
 /// P2P gossip advances `unsafe_head` before batches land on L1; derivation
@@ -117,6 +120,8 @@ async fn test_rollup_node_gossip_then_derivation() {
         node.l2_safe_number(),
         "unsafe_head and safe_head should be equal after safe chain caught up"
     );
+    // Every derived block had its state root verified against the sequencer's.
+    node.assert_state_roots_verified(L2_BLOCK_COUNT as usize);
 }
 
 /// Out-of-order gossip blocks are silently dropped; only sequential blocks

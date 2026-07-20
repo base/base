@@ -4,7 +4,7 @@ mod account;
 pub use account::{TEST_ACCOUNT_ADDRESS, TEST_ACCOUNT_KEY, TestAccount};
 
 mod block_hash_registry;
-pub use block_hash_registry::{BlockHashInner, SharedBlockHashRegistry};
+pub use block_hash_registry::{BlockHashInner, SharedBlockHashRegistry, StateRootExpectation};
 
 mod l2_source;
 pub use l2_source::ActionL2Source;
