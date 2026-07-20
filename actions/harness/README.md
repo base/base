@@ -209,3 +209,9 @@ production.
   per-transaction consensus receipts, RPC log metadata, and receipt/header
   blooms. Updated `L1MinerTxManager` so staged submissions keep polling across
   blocks that do not include their receipt.
+- 2026-07-20: Added txpool-blocked recovery coverage. `L1MinerTxManager` can now
+  reject submissions with `TxManagerError::AlreadyReserved` (via
+  `Batcher::block_next_n_submissions`) and implements `TxManager::cancel_tx`
+  instead of the trait default no-op, so the production `BatchDriver`
+  `TxpoolBlocked` → requeue → `cancel_tx` → resubmit path is exercised
+  end-to-end through derivation.
