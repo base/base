@@ -399,6 +399,8 @@ pub struct MockProofRequester {
     pub return_wrong_session_id: bool,
     /// Reject every `delete_proof_request` call with a timeout.
     pub reject_delete: bool,
+    /// Return not found when deleting an unknown session.
+    pub delete_missing_not_found: bool,
 }
 
 #[async_trait]
@@ -488,8 +490,17 @@ impl ProofRequesterProvider for MockProofRequester {
             return Err(ProverServiceClientError::Timeout("simulated delete failure".into()));
         }
 
-        self.requests.lock().unwrap().remove(&request.session_id);
-        self.failed_sessions.lock().unwrap().remove(&request.session_id);
+        let removed_request = self.requests.lock().unwrap().remove(&request.session_id);
+        let removed_failed = self.failed_sessions.lock().unwrap().remove(&request.session_id);
+        if self.delete_missing_not_found && removed_request.is_none() && removed_failed.is_none() {
+            return Err(ProverServiceClientError::RpcTransport(JsonRpcClientError::Call(
+                ErrorObjectOwned::owned(
+                    ProverServiceClientError::ERROR_NOT_FOUND,
+                    PROOF_REQUEST_NOT_FOUND_MESSAGE,
+                    None::<()>,
+                ),
+            )));
+        }
         Ok(())
     }
 

@@ -469,6 +469,14 @@ where
                 );
                 true
             }
+            Err(error) if error.is_not_found() => {
+                info!(
+                    target_block,
+                    session_id = %session_id,
+                    "Proof request already absent"
+                );
+                true
+            }
             Err(error) => {
                 warn!(
                     target_block,
@@ -780,6 +788,19 @@ mod tests {
 
         assert!(!restart);
         assert!(requester.requests.lock().unwrap().contains_key(&session_id));
+    }
+
+    #[tokio::test]
+    async fn delete_proof_request_treats_missing_session_as_deleted() {
+        let requester =
+            Arc::new(MockProofRequester { delete_missing_not_found: true, ..Default::default() });
+        let collector = make_collector(
+            Arc::clone(&requester) as Arc<dyn ProofRequesterProvider>,
+            rollup_client(200, Some(B256::ZERO)),
+            Arc::new(MockOutputProposer::default()),
+        );
+
+        assert!(collector.delete_proof_request("missing-session", 200).await);
     }
 
     #[tokio::test]
