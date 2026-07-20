@@ -16,8 +16,9 @@
 //! can be unit-tested deterministically (see the tests at the bottom); the live
 //! test then drives it against the real devnet.
 //!
-//! The seed is fixed (override with `FUZZ_SEED`) and printed on failure so any
-//! divergence replays.
+//! The seed defaults to a fixed value locally and is overridable with `FUZZ_SEED`
+//! (the nightly workflow picks a random seed per run); it is printed on failure so
+//! any divergence replays.
 
 use std::time::Duration;
 
