@@ -172,12 +172,14 @@ fn op(
 ) -> Result<Bytes, BasePrecompileError> {
     storage.set_caller(caller);
     StorageCtx::enter(storage, |ctx| {
+        let version =
+            StablecoinVersionResolver::from_base_upgrade(BaseUpgrade::Beryl).expect("Beryl activates V1");
         StablecoinContractContext::with_storage_and_policy(
             B20StablecoinStorage::from_address(TOKEN, ctx),
             policy,
             PolicyVersion::V1,
         )
-        .inner(ctx, &calldata, BaseUpgrade::Beryl)
+        .route(ctx, &calldata, version, false, NoopPrecompileCallObserver)
     })
 }
 
@@ -195,7 +197,7 @@ fn op_privileged(
             policy,
             PolicyVersion::V1,
         )
-        .inner_with_privilege(ctx, &calldata, true)
+        .route(ctx, &calldata, StablecoinVersion::V1, true, NoopPrecompileCallObserver)
     })
 }
 
@@ -1828,16 +1830,20 @@ fn golden_dispatch_no_observer_wrapper_reverts_uninitialized() {
 
 #[test]
 fn golden_inner_reverts_before_beryl() {
-    // Exercises the `inner` version-resolution None branch (pre-introduction fork).
+    // Exercises the version-resolution None branch (pre-introduction fork): before Beryl no
+    // version is active, so the resolver-gated path reverts without routing.
     let mut s = fresh();
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     let err = StorageCtx::enter(&mut s, |ctx| {
-        StablecoinContractContext::with_storage_and_policy(
+        let mut token = StablecoinContractContext::with_storage_and_policy(
             B20StablecoinStorage::from_address(TOKEN, ctx),
             FakePolicyAccounting::new(),
             PolicyVersion::V1,
+        );
+        StablecoinVersionResolver::from_base_upgrade(BaseUpgrade::Azul).map_or_else(
+            || Err(BasePrecompileError::Revert(Bytes::new())),
+            |version| token.route(ctx, &calldata, version, false, NoopPrecompileCallObserver),
         )
-        .inner(ctx, &calldata, BaseUpgrade::Azul)
     })
     .unwrap_err();
     assert_eq!(err, BasePrecompileError::Revert(Bytes::new()));
@@ -1893,7 +1899,7 @@ fn gas(
             policy,
             PolicyVersion::V1,
         )
-        .inner_with_privilege(ctx, &calldata, true)
+        .route(ctx, &calldata, StablecoinVersion::V1, true, NoopPrecompileCallObserver)
     })
     .expect("gas-footprint op must succeed");
     (s.counter_sload(), s.counter_sstore(), s.counter_keccak256())

@@ -1,6 +1,9 @@
 //! Sequencer consensus-control CLI flags.
 
-use std::{num::ParseIntError, time::Duration};
+use std::{
+    num::{NonZeroU64, ParseIntError},
+    time::Duration,
+};
 
 use base_consensus_node::SequencerConfig;
 use clap::Parser;
@@ -30,6 +33,15 @@ pub struct SequencerArgs {
         env = "BASE_NODE_SEQUENCER_RECOVER"
     )]
     pub recover: bool,
+
+    /// Number of private blocks to build before reconciling to canonical P2P payloads.
+    ///
+    /// Providing this value enables shadow sequencer mode.
+    #[arg(
+        long = "sequencer.shadow-blocks-per-cycle",
+        env = "BASE_NODE_SEQUENCER_SHADOW_BLOCKS_PER_CYCLE"
+    )]
+    pub shadow_blocks_per_cycle: Option<NonZeroU64>,
 
     /// Conductor service RPC endpoint. Providing this value enables the conductor service.
     #[arg(long = "conductor.rpc", env = "BASE_NODE_CONDUCTOR_RPC")]
@@ -69,10 +81,43 @@ impl SequencerArgs {
         SequencerConfig {
             sequencer_stopped: self.stopped,
             sequencer_recovery_mode: self.recover,
+            shadow_blocks_per_cycle: self.shadow_blocks_per_cycle,
             conductor_rpc_url: self.conductor_rpc.clone(),
             conductor_binary_commit: self.conductor_binary_commit,
             conductor_rpc_timeout: self.conductor_rpc_timeout,
             l1_conf_delay: self.l1_confs,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::num::NonZeroU64;
+
+    use clap::Parser;
+
+    use super::SequencerArgs;
+
+    #[test]
+    fn parses_shadow_blocks_per_cycle() {
+        let args = SequencerArgs::parse_from([
+            "base-consensus",
+            "--sequencer.shadow-blocks-per-cycle",
+            "12",
+        ]);
+
+        assert_eq!(args.shadow_blocks_per_cycle, NonZeroU64::new(12));
+        assert_eq!(args.config().shadow_blocks_per_cycle, NonZeroU64::new(12));
+    }
+
+    #[test]
+    fn rejects_zero_shadow_blocks_per_cycle() {
+        let result = SequencerArgs::try_parse_from([
+            "base-consensus",
+            "--sequencer.shadow-blocks-per-cycle",
+            "0",
+        ]);
+
+        assert!(result.is_err());
     }
 }

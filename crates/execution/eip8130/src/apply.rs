@@ -16,8 +16,13 @@
 //! surfaces those code writes as an [`AppliedAccountChanges`] for the execution
 //! layer (which holds the account/state-trie handle) to carry out.
 //!
+//! Successful authorize / revoke / create mutations also inject the matching
+//! `IAccountConfiguration` receipt logs via [`AccountConfigurationEvents`]
+//! (the enshrined path has no EVM LOG opcodes of its own).
+//!
 //! [`ConfigChangeAuthorizer`]: crate::ConfigChangeAuthorizer
 //! [`ActorChange`]: base_common_consensus::ActorChange
+//! [`AccountConfigurationEvents`]: crate::AccountConfigurationEvents
 //! [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
 
 use alloy_primitives::{Address, B256, Bytes, keccak256};
@@ -28,7 +33,7 @@ use base_common_consensus::{
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::state::Bytecode;
 
-use crate::{AccountConfigurationStorage, ActorConfig};
+use crate::{AccountConfigurationEvents, AccountConfigurationStorage, ActorConfig};
 
 sol! {
     /// ABI shape of the per-actor config carried in an `Authorize` change's
@@ -200,6 +205,9 @@ impl DelegationEffect {
             Bytecode::new_eip7702(self.target)
         };
         sctx.set_code(self.account, code)?;
+        // Protocol-injected: the Solidity contract never emits this on the EVM
+        // path; EIP-8130 requires the receipt log for successful delegation updates.
+        AccountConfigurationEvents::emit_delegation_applied(sctx, self.account, self.target)?;
         Ok(())
     }
 
@@ -324,6 +332,9 @@ impl AccountChangeApplier {
             // Policy manager/commitment share the actor-id keyspace across both
             // self homes: writing both (zero clears) resets then sets in one step.
             storage.set_policy(account, actor_id, manager, commitment)?;
+            AccountConfigurationEvents::emit_actor_authorized(
+                storage, account, actor_id, &config, manager, commitment,
+            )?;
             return Ok(());
         }
 
@@ -334,6 +345,9 @@ impl AccountChangeApplier {
         // invariant.
         storage.set_actor_config(account, actor_id, config)?;
         storage.set_policy(account, actor_id, manager, commitment)?;
+        AccountConfigurationEvents::emit_actor_authorized(
+            storage, account, actor_id, &config, manager, commitment,
+        )?;
         Ok(())
     }
 
@@ -357,6 +371,7 @@ impl AccountChangeApplier {
             state.default_eoa_expiry = 0;
             storage.set_account_state(account, state)?;
         }
+        AccountConfigurationEvents::emit_actor_revoked(storage, account, actor_id)?;
         Ok(())
     }
 
@@ -388,6 +403,14 @@ impl AccountChangeApplier {
         storage.set_account_state(address, state)?;
 
         Self::initialize_actors(storage, address, &entry.initial_actors)?;
+        // After initial actors (each already emitted `ActorAuthorized`), mirror
+        // `createAccount`'s trailing `AccountCreated` log.
+        AccountConfigurationEvents::emit_account_created(
+            storage,
+            address,
+            entry.user_salt,
+            keccak256(&entry.code),
+        )?;
 
         Ok(CreatedAccount { address, code: entry.code.clone() })
     }
@@ -523,11 +546,13 @@ impl AccountChangeApplier {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{address, b256};
+    use alloy_primitives::{LogData, address, b256};
+    use alloy_sol_types::SolEvent;
     use base_precompile_storage::{HashMapStorageProvider, PrecompileStorageProvider, StorageCtx};
     use revm::state::Bytecode;
 
     use super::*;
+    use crate::{AccountCreated, ActorAuthorized, ActorRevoked, DelegationApplied};
 
     const ACCOUNT: Address = address!("0x00000000000000000000000000000000000000a1");
     const K1: Address = Eip8130Constants::K1_AUTHENTICATOR;
@@ -541,6 +566,17 @@ mod tests {
     fn with_storage<R>(body: impl FnOnce(&mut AccountConfigurationStorage<'_>) -> R) -> R {
         let mut storage = HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, |ctx| body(&mut AccountConfigurationStorage::new(ctx)))
+    }
+
+    /// Runs `body` against a fresh provider and returns the Account Configuration logs.
+    fn with_storage_events(
+        body: impl FnOnce(&mut AccountConfigurationStorage<'_>),
+    ) -> Vec<LogData> {
+        let mut provider = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut provider, |ctx| {
+            body(&mut AccountConfigurationStorage::new(ctx));
+        });
+        provider.get_events(AccountConfigurationStorage::ADDRESS).clone()
     }
 
     /// `abi.encode(ActorConfig, bytes policyData)` for an authorize change.
@@ -941,5 +977,99 @@ mod tests {
                 .and_then(|info| info.code.as_ref())
                 .is_some_and(Bytecode::is_empty)
         );
+    }
+
+    #[test]
+    fn authorize_and_revoke_emit_protocol_logs() {
+        let events = with_storage_events(|acc| {
+            let config = ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_SENDER);
+            AccountChangeApplier::authorize_actor(acc, ACCOUNT, NON_SELF, config, &[]).unwrap();
+            AccountChangeApplier::revoke_actor(acc, ACCOUNT, NON_SELF).unwrap();
+        });
+        assert_eq!(events.len(), 2);
+
+        let authorized = ActorAuthorized::decode_log_data(&events[0]).unwrap();
+        assert_eq!(authorized.account, ACCOUNT);
+        assert_eq!(authorized.actorId, NON_SELF);
+        assert_eq!(
+            authorized.actorData,
+            AccountConfigurationEvents::pack_actor_data(
+                &ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_SENDER),
+                Address::ZERO,
+                B256::ZERO,
+            )
+        );
+
+        let revoked = ActorRevoked::decode_log_data(&events[1]).unwrap();
+        assert_eq!(revoked.account, ACCOUNT);
+        assert_eq!(revoked.actorId, NON_SELF);
+    }
+
+    #[test]
+    fn authorize_policy_actor_emits_84_byte_actor_data() {
+        let mut policy = Vec::new();
+        policy.extend_from_slice(MANAGER.as_slice());
+        policy.extend_from_slice(COMMITMENT.as_slice());
+        let config = ActorConfig {
+            authenticator: AUTHENTICATOR,
+            scope: Eip8130Constants::SCOPE_POLICY,
+            expiry: 0,
+        };
+
+        let events = with_storage_events(|acc| {
+            AccountChangeApplier::authorize_actor(acc, ACCOUNT, NON_SELF, config, &policy).unwrap();
+        });
+        assert_eq!(events.len(), 1);
+        let authorized = ActorAuthorized::decode_log_data(&events[0]).unwrap();
+        assert_eq!(authorized.actorData.len(), 84);
+        assert_eq!(
+            authorized.actorData,
+            AccountConfigurationEvents::pack_actor_data(&config, MANAGER, COMMITMENT)
+        );
+    }
+
+    #[test]
+    fn create_emits_actor_authorized_then_account_created() {
+        let entry = CreateEntry {
+            user_salt: b256!("0x2222222222222222222222222222222222222222222222222222222222222222"),
+            code: Bytes::from_static(&[0x60, 0x00]),
+            initial_actors: vec![InitialActor::owner(NON_SELF, AUTHENTICATOR)],
+        };
+        let expected = AccountChangeApplier::compute_address(
+            entry.user_salt,
+            &entry.code,
+            &entry.initial_actors,
+        )
+        .unwrap();
+
+        let events = with_storage_events(|acc| {
+            AccountChangeApplier::apply_create(acc, &entry).unwrap();
+        });
+        assert_eq!(events.len(), 2);
+
+        let authorized = ActorAuthorized::decode_log_data(&events[0]).unwrap();
+        assert_eq!(authorized.account, expected);
+        assert_eq!(authorized.actorId, NON_SELF);
+
+        let created = AccountCreated::decode_log_data(&events[1]).unwrap();
+        assert_eq!(created.account, expected);
+        assert_eq!(created.userSalt, entry.user_salt);
+        assert_eq!(created.codeHash, keccak256(&entry.code));
+    }
+
+    #[test]
+    fn delegation_install_emits_delegation_applied() {
+        let target = Address::repeat_byte(0x33);
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |sctx| {
+            DelegationEffect::new(ACCOUNT, target).install(sctx)
+        })
+        .unwrap();
+
+        let events = storage.get_events(AccountConfigurationStorage::ADDRESS);
+        assert_eq!(events.len(), 1);
+        let applied = DelegationApplied::decode_log_data(&events[0]).unwrap();
+        assert_eq!(applied.account, ACCOUNT);
+        assert_eq!(applied.target, target);
     }
 }
