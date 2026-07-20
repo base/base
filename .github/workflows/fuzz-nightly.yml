@@ -36,7 +36,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Parallel shards, each with its own random seed, for more coverage per run.
+        # Parallel shards. On scheduled runs each shard is its own job and generates
+        # its own random seed, so the shards fan out for more coverage per night. On
+        # a workflow_dispatch replay, every shard uses the supplied seed to reproduce
+        # it (parallelism adds no coverage there, which is fine for replay).
         # TEMPORARY: trimmed to one shard for fast branch iteration. Restore the
         # full spread before merging:
         #   shard: [1, 2, 3, 4]
