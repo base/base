@@ -13,13 +13,16 @@ mod anchor;
 pub use anchor::AnchorUpdater;
 
 mod config;
-pub use config::{ChallengerConfig, ConfigError, UrlValidationError, Validated};
+pub use config::ChallengerConfig;
 
 mod driver;
-pub use driver::{Driver, DriverComponents, DriverConfig, TeeConfig};
+pub use driver::{Driver, DriverComponents};
 
 mod pending;
 pub use pending::{DisputeIntent, PendingProof, PendingProofs, ProofKind, ProofPhase, ProofUpdate};
+
+mod proof_manager;
+pub use proof_manager::DisputeProofManager;
 
 mod proof_adapter;
 pub use proof_adapter::ChallengerProofAdapter;

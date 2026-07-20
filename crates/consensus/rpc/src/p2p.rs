@@ -13,6 +13,33 @@ use jsonrpsee::{
 
 use crate::{BaseP2PApiServer, net::P2pRpc};
 
+const PEER_STATE_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Retryable peer-state miss for Backon wait loops.
+///
+/// `InvalidParams` marks "desired state not reached yet" so connect/disconnect waits can
+/// distinguish it from terminal `InternalError`s (e.g. a dropped gossip RPC channel), which
+/// must fail fast instead of burning the wait timeout.
+fn peer_state_miss(error_message: &'static str) -> ErrorObject<'static> {
+    ErrorObject::borrowed(ErrorCode::InvalidParams.code(), error_message, None)
+}
+
+fn require_peer_connected(peers: &PeerDump, peer_id: &libp2p::PeerId) -> RpcResult<()> {
+    if peers.peers.contains_key(&peer_id.to_string()) {
+        Ok(())
+    } else {
+        Err(peer_state_miss("Peer not connected"))
+    }
+}
+
+fn require_peer_disconnected(peers: &PeerDump, peer_id: &libp2p::PeerId) -> RpcResult<()> {
+    if peers.peers.contains_key(&peer_id.to_string()) {
+        Err(peer_state_miss("Peers are still connected"))
+    } else {
+        Ok(())
+    }
+}
+
 #[async_trait]
 impl BaseP2PApiServer for P2pRpc {
     async fn opp2p_self(&self) -> RpcResult<PeerInfo> {
@@ -184,9 +211,32 @@ impl BaseP2PApiServer for P2pRpc {
             .map_err(|_| ErrorObject::from(ErrorCode::InternalError))
     }
 
-    async fn opp2p_connect_peer(&self, _peer: String) -> RpcResult<()> {
+    async fn opp2p_connect_peer(&self, peer: String) -> RpcResult<()> {
         Metrics::rpc_calls("opp2p_connectPeer").increment(1.0);
-        let ma = libp2p::Multiaddr::from_str(&_peer).map_err(|_| {
+        self.connect_peer_with_backoff(
+            peer,
+            ExponentialBuilder::default().with_total_delay(Some(PEER_STATE_WAIT_TIMEOUT)),
+        )
+        .await
+    }
+
+    async fn opp2p_disconnect_peer(&self, peer_id: String) -> RpcResult<()> {
+        Metrics::rpc_calls("opp2p_disconnectPeer").increment(1.0);
+        self.disconnect_peer_with_backoff(
+            peer_id,
+            ExponentialBuilder::default().with_total_delay(Some(PEER_STATE_WAIT_TIMEOUT)),
+        )
+        .await
+    }
+}
+
+impl P2pRpc {
+    async fn connect_peer_with_backoff(
+        &self,
+        peer: String,
+        backoff: ExponentialBuilder,
+    ) -> RpcResult<()> {
+        let ma = libp2p::Multiaddr::from_str(&peer).map_err(|_| {
             ErrorObject::borrowed(ErrorCode::InvalidParams.code(), "Invalid multiaddr", None)
         })?;
 
@@ -226,25 +276,22 @@ impl BaseP2PApiServer for P2pRpc {
                 ErrorObject::borrowed(ErrorCode::InternalError.code(), "Failed to get peers", None)
             })?;
 
-            Ok::<bool, ErrorObject<'_>>(peers.peers.contains_key(&peer_id.to_string()))
+            require_peer_connected(&peers, &peer_id)
         };
 
-        if !is_connected
-            .retry(ExponentialBuilder::default().with_total_delay(Some(Duration::from_secs(10))))
-            .await?
-        {
-            return Err(ErrorObject::borrowed(
-                ErrorCode::InvalidParams.code(),
-                "Peer not connected",
-                None,
-            ));
-        }
-
+        // Retry only peer-state misses; do not retry channel failures.
+        is_connected
+            .retry(backoff)
+            .when(|error| error.code() == ErrorCode::InvalidParams.code())
+            .await?;
         Ok(())
     }
 
-    async fn opp2p_disconnect_peer(&self, peer_id: String) -> RpcResult<()> {
-        Metrics::rpc_calls("opp2p_disconnectPeer").increment(1.0);
+    async fn disconnect_peer_with_backoff(
+        &self,
+        peer_id: String,
+        backoff: ExponentialBuilder,
+    ) -> RpcResult<()> {
         let peer_id = match peer_id.parse() {
             Ok(id) => id,
             Err(err) => {
@@ -273,27 +320,137 @@ impl BaseP2PApiServer for P2pRpc {
                 ErrorObject::borrowed(ErrorCode::InternalError.code(), "Failed to get peers", None)
             })?;
 
-            Ok::<bool, ErrorObject<'_>>(!peers.peers.contains_key(&peer_id.to_string()))
+            require_peer_disconnected(&peers, &peer_id)
         };
 
-        if !is_not_connected
-            .retry(ExponentialBuilder::default().with_total_delay(Some(Duration::from_secs(10))))
-            .await?
-        {
-            return Err(ErrorObject::borrowed(
-                ErrorCode::InvalidParams.code(),
-                "Peers are still connected",
-                None,
-            ));
-        }
-
+        // Retry only peer-state misses; do not retry channel failures.
+        is_not_connected
+            .retry(backoff)
+            .when(|error| error.code() == ErrorCode::InvalidParams.code())
+            .await?;
         Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
+    use std::{
+        collections::VecDeque,
+        str::FromStr,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::Duration,
+    };
+
+    use backon::ExponentialBuilder;
+    use base_consensus_gossip::{P2pRpcRequest, PeerDump, PeerInfo};
+    use tokio::sync::mpsc;
+
+    use crate::net::P2pRpc;
+
+    fn test_backoff() -> ExponentialBuilder {
+        ExponentialBuilder::default()
+            .with_min_delay(Duration::from_millis(1))
+            .with_total_delay(Some(Duration::from_millis(20)))
+    }
+
+    async fn respond_to_peer_state_requests(
+        mut requests: mpsc::Receiver<P2pRpcRequest>,
+        peer_id: libp2p::PeerId,
+        mut connected_states: VecDeque<bool>,
+        default_connected: bool,
+        attempts: Arc<AtomicUsize>,
+    ) {
+        while let Some(request) = requests.recv().await {
+            match request {
+                P2pRpcRequest::ConnectPeer { .. } | P2pRpcRequest::DisconnectPeer { .. } => {}
+                P2pRpcRequest::Peers { out, connected: true } => {
+                    attempts.fetch_add(1, Ordering::Relaxed);
+                    let connected = connected_states.pop_front().unwrap_or(default_connected);
+                    let mut dump = PeerDump::default();
+                    if connected {
+                        dump.total_connected = 1;
+                        dump.peers.insert(peer_id.to_string(), PeerInfo::default());
+                    }
+                    let _ = out.send(dump);
+                }
+                _ => panic!("unexpected p2p request"),
+            }
+        }
+    }
+
+    fn peer_multiaddr(peer_id: &libp2p::PeerId) -> String {
+        format!("/ip4/127.0.0.1/tcp/30303/p2p/{peer_id}")
+    }
+
+    #[tokio::test]
+    async fn connect_peer_waits_for_multiple_peer_state_responses() {
+        let (sender, requests) = mpsc::channel(8);
+        let rpc = P2pRpc::new(sender);
+        let peer_id = libp2p::PeerId::random();
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let handler = tokio::spawn(respond_to_peer_state_requests(
+            requests,
+            peer_id,
+            VecDeque::from([false, false, true]),
+            false,
+            Arc::clone(&attempts),
+        ));
+
+        let result = rpc.connect_peer_with_backoff(peer_multiaddr(&peer_id), test_backoff()).await;
+
+        assert!(result.is_ok());
+        assert_eq!(attempts.load(Ordering::Relaxed), 3);
+        drop(rpc);
+        handler.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn disconnect_peer_waits_for_multiple_peer_state_responses() {
+        let (sender, requests) = mpsc::channel(8);
+        let rpc = P2pRpc::new(sender);
+        let peer_id = libp2p::PeerId::random();
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let handler = tokio::spawn(respond_to_peer_state_requests(
+            requests,
+            peer_id,
+            VecDeque::from([true, true, false]),
+            true,
+            Arc::clone(&attempts),
+        ));
+
+        let result = rpc.disconnect_peer_with_backoff(peer_id.to_string(), test_backoff()).await;
+
+        assert!(result.is_ok());
+        assert_eq!(attempts.load(Ordering::Relaxed), 3);
+        drop(rpc);
+        handler.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn connect_peer_returns_error_after_timeout() {
+        let (sender, requests) = mpsc::channel(8);
+        let rpc = P2pRpc::new(sender);
+        let peer_id = libp2p::PeerId::random();
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let handler = tokio::spawn(respond_to_peer_state_requests(
+            requests,
+            peer_id,
+            VecDeque::new(),
+            false,
+            Arc::clone(&attempts),
+        ));
+
+        let result = rpc.connect_peer_with_backoff(peer_multiaddr(&peer_id), test_backoff()).await;
+
+        let error = result.expect_err("an absent peer should eventually time out");
+        assert_eq!(error.message(), "Peer not connected");
+        assert!(attempts.load(Ordering::Relaxed) > 1);
+        drop(rpc);
+        handler.await.unwrap();
+    }
 
     #[test]
     fn test_parse_multiaddr_string() {
