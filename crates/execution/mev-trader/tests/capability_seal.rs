@@ -32,7 +32,7 @@ const NORMAL_DEPENDENCIES: [&str; 22] = [
     "tokio-tungstenite",
     "tracing",
 ];
-const SOURCE_FILES: [&str; 11] = [
+const SOURCE_FILES: [&str; 12] = [
     "blink_ingress.rs",
     "frame.rs",
     "latency.rs",
@@ -43,6 +43,7 @@ const SOURCE_FILES: [&str; 11] = [
     "port.rs",
     "registry.rs",
     "runtime.rs",
+    "safety.rs",
     "storage.rs",
 ];
 const FORBIDDEN_DEPENDENCY_PREFIXES: [&str; 25] = [
@@ -135,7 +136,11 @@ fn dependency_features() -> BTreeMap<&'static str, (&'static [&'static str], boo
     BTreeMap::from([
         ("alloy-consensus", (&["k256", "std"][..], false)),
         ("alloy-eips", (&["std"][..], false)),
-        ("alloy-primitives", (&["std"][..], false)),
+        // B1 safety adds owner-signature VERIFY-only recovery (EIP-191
+        // recover_address_from_msg), which is gated behind alloy-primitives' k256
+        // feature. This is recover-only; the signing-capable `secp256k1` crate
+        // remains a forbidden dependency prefix.
+        ("alloy-primitives", (&["k256", "std"][..], false)),
         ("alloy-rpc-types-engine", (&[][..], false)),
         ("base-common-consensus", (&["evm", "std"][..], false)),
         ("base-execution-chainspec", (&[][..], true)),

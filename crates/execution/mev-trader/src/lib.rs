@@ -68,3 +68,11 @@ pub use pairwise::{
 };
 mod runtime;
 pub use runtime::{MevTraderRuntime, MevTraderRuntimeConfig, RuntimeInstallError};
+
+mod safety;
+pub use safety::{
+    ArmedCriteria, ClosedReason, CRITERIA_SHA, CriteriaArtifact, Decision, DrawdownInput,
+    EXPECTED_CRITERIA_COMMIT, EXPECTED_CRITERIA_VERSION, FileKillStateStore, GuardReason, KillReason,
+    KillState, KillStateStore, KillStoreError, LossProvenance, OWNER_ATTEST_ADDRESS, ResetAttestation,
+    SubmitContext, SubmitDecision, UnarmedReason, drawdown_floor, kill_switch, per_tx_cap, submit_gate,
+};
