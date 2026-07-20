@@ -50,32 +50,45 @@ impl Eip8130Contracts {
 
     /// Account Configuration system contract (`ACCOUNT_CONFIG_ADDRESS`). The
     /// protocol reads actor/account state directly from this contract's storage.
-    pub const ACCOUNT_CONFIG: Address = address!("0xe7Bb8eF3728ea9f0A8be6D7e9585FeAb12dE086A");
+    pub const ACCOUNT_CONFIG: Address = address!("0x53648Cf00356fbAA1F2B531715c6B64AaBDE1555");
 
     /// keccak256 of the `ACCOUNT_CONFIG` deployment init code (for CREATE2
     /// derivation and bytecode-drift detection).
     pub const ACCOUNT_CONFIG_INIT_CODE_HASH: B256 =
-        b256!("0x7c04a9931efd384c64c7895cf0a254dfdaf3c1d650e23cab1480dac7840633bd");
+        b256!("0x7c9289d84f391aa48b89cffe374fac16926d7763b5647a832f0810fb9d98aef5");
 
     // ─────────────────────────────────────────────────────────────────────────
     // Account implementations (init code embeds `ACCOUNT_CONFIG`)
     // ─────────────────────────────────────────────────────────────────────────
 
     /// Default wallet implementation, used as the target of default EOA delegation.
-    pub const DEFAULT_ACCOUNT: Address = address!("0xDd802113C9FF6964cD2A61A16e075D5271cC82c9");
+    pub const DEFAULT_ACCOUNT: Address = address!("0x58da469ef71Dd4B092B010CdA37DE124C926EebD");
 
     /// keccak256 of the `DEFAULT_ACCOUNT` deployment init code.
     pub const DEFAULT_ACCOUNT_INIT_CODE_HASH: B256 =
-        b256!("0xa1b68747f3b48894ee02612a0f217b97ed76b1643ea791cb46637c10b4a21595");
+        b256!("0x9ec5fba8d1093ed7edd44bf786513788d5f7b0fc8a29d2b43f8b509f022706b3");
 
-    /// Wallet variant that blocks ETH transfers when locked, granting higher
-    /// EIP-8130 mempool access (rate limits).
-    pub const DEFAULT_HIGH_RATE_ACCOUNT: Address =
-        address!("0xe5edfB7E7365893d685c2FbFBAC3e022f51d942F");
+    /// Canonical high-rate payer account implementation
+    /// (`CanonicalHighRatePayerAccount`). Wallets that block ETH transfers when
+    /// locked, granting higher EIP-8130 mempool access (rate limits).
+    pub const CANONICAL_HIGH_RATE_PAYER_ACCOUNT: Address =
+        address!("0x23Fe6949d6370330Ae32e7c17E1265D65955C92a");
 
-    /// keccak256 of the `DEFAULT_HIGH_RATE_ACCOUNT` deployment init code.
-    pub const DEFAULT_HIGH_RATE_ACCOUNT_INIT_CODE_HASH: B256 =
-        b256!("0xe77be0ab8bf7c2cb2743825182e7aa7f11f351c62cbf1b9fe74c9d43075c6ac6");
+    /// keccak256 of the `CANONICAL_HIGH_RATE_PAYER_ACCOUNT` deployment init code.
+    pub const CANONICAL_HIGH_RATE_PAYER_ACCOUNT_INIT_CODE_HASH: B256 =
+        b256!("0xb694f9cf053eaf4d5a778c60d67d50fb08bf41d88c817904e1295333040980ac");
+
+    /// keccak256 of the ERC-1167 minimal-proxy *runtime* bytecode whose
+    /// implementation is [`Self::CANONICAL_HIGH_RATE_PAYER_ACCOUNT`]:
+    ///
+    /// ```text
+    /// 0x363d3d373d3d3d363d73 <implementation> 5af43d82803e903d91602b57fd5bf3
+    /// ```
+    ///
+    /// Used to recognize high-rate payer accounts by codehash (e.g. mempool
+    /// admission) without resolving an EIP-7702 delegation target.
+    pub const CANONICAL_HIGH_RATE_PAYER_PROXY_CODE_HASH: B256 =
+        b256!("0x3e37c64c39476e47c52408ea45eb3ae0f07e3ca0fd1d713acbcf17bf3b51312c");
 
     // ─────────────────────────────────────────────────────────────────────────
     // Canonical authenticators (accepted on the EIP-8130 block-validation path)
@@ -104,11 +117,21 @@ impl Eip8130Contracts {
     /// Delegated-validation (1-hop) authenticator contract (init code embeds
     /// `ACCOUNT_CONFIG`).
     pub const DELEGATE_AUTHENTICATOR: Address =
-        address!("0x1B0195ba5E3FCdB387DD619816eeF8b510Ed0855");
+        address!("0xbb73E3871FBaC8aef1a7Ee8A24E21139916f14C2");
 
     /// keccak256 of the `DELEGATE_AUTHENTICATOR` deployment init code.
     pub const DELEGATE_AUTHENTICATOR_INIT_CODE_HASH: B256 =
-        b256!("0x483e360a8f1d8e2d891c1c260d164e433e2080080e111fa8bb78e0f4e8e3f876");
+        b256!("0x27e4ead86d2bf8cebc501d9e0c795a139c4616d972152c4f79fa503b84fb4170");
+
+    /// Always-valid authenticator (keyless relay / test). Deployed alongside the
+    /// canonical set but **not** on the node block-validation allowlist
+    /// ([`Self::CANONICAL_AUTHENTICATORS`]).
+    pub const ALWAYS_VALID_AUTHENTICATOR: Address =
+        address!("0xA550545Da91720c23483c5B3493412A02D1cF9F9");
+
+    /// keccak256 of the `ALWAYS_VALID_AUTHENTICATOR` deployment init code.
+    pub const ALWAYS_VALID_AUTHENTICATOR_INIT_CODE_HASH: B256 =
+        b256!("0xc45c91538660545608577c119aeffc5a5550becf4cd2a8710d8368fce6a6b27a");
 
     /// The canonical authenticator allowlist: the deployed `IAuthenticator`
     /// contracts a compliant node accepts on the EIP-8130 block-validation path.
@@ -116,6 +139,7 @@ impl Eip8130Contracts {
     /// secp256k1 is **not** a contract entry here: on EIP-8130 chains it is the
     /// protocol-reserved native ecrecover sentinel (`address(1)`), handled
     /// directly by the protocol rather than via a deployed authenticator contract.
+    /// [`Self::ALWAYS_VALID_AUTHENTICATOR`] is also excluded (test / keyless relay).
     pub const CANONICAL_AUTHENTICATORS: [Address; 3] =
         [Self::P256_AUTHENTICATOR, Self::WEBAUTHN_AUTHENTICATOR, Self::DELEGATE_AUTHENTICATOR];
 
@@ -128,10 +152,24 @@ impl Eip8130Contracts {
     pub fn is_canonical_authenticator(authenticator: &Address) -> bool {
         Self::CANONICAL_AUTHENTICATORS.contains(authenticator)
     }
+
+    /// Builds the ERC-1167 minimal-proxy runtime bytecode for `implementation`.
+    #[must_use]
+    pub fn erc1167_proxy_runtime(implementation: Address) -> [u8; 45] {
+        let mut code = [0u8; 45];
+        code[..10].copy_from_slice(&[0x36, 0x3d, 0x3d, 0x37, 0x3d, 0x3d, 0x3d, 0x36, 0x3d, 0x73]);
+        code[10..30].copy_from_slice(implementation.as_slice());
+        code[30..].copy_from_slice(&[
+            0x5a, 0xf4, 0x3d, 0x82, 0x80, 0x3e, 0x90, 0x3d, 0x91, 0x60, 0x2b, 0x57, 0xfd, 0x5b, 0xf3,
+        ]);
+        code
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::keccak256;
+
     use super::*;
 
     /// Each `(address, init_code_hash)` pair must be self-consistent under
@@ -144,8 +182,8 @@ mod tests {
             (Eip8130Contracts::ACCOUNT_CONFIG, Eip8130Contracts::ACCOUNT_CONFIG_INIT_CODE_HASH),
             (Eip8130Contracts::DEFAULT_ACCOUNT, Eip8130Contracts::DEFAULT_ACCOUNT_INIT_CODE_HASH),
             (
-                Eip8130Contracts::DEFAULT_HIGH_RATE_ACCOUNT,
-                Eip8130Contracts::DEFAULT_HIGH_RATE_ACCOUNT_INIT_CODE_HASH,
+                Eip8130Contracts::CANONICAL_HIGH_RATE_PAYER_ACCOUNT,
+                Eip8130Contracts::CANONICAL_HIGH_RATE_PAYER_ACCOUNT_INIT_CODE_HASH,
             ),
             (
                 Eip8130Contracts::P256_AUTHENTICATOR,
@@ -158,6 +196,10 @@ mod tests {
             (
                 Eip8130Contracts::DELEGATE_AUTHENTICATOR,
                 Eip8130Contracts::DELEGATE_AUTHENTICATOR_INIT_CODE_HASH,
+            ),
+            (
+                Eip8130Contracts::ALWAYS_VALID_AUTHENTICATOR,
+                Eip8130Contracts::ALWAYS_VALID_AUTHENTICATOR_INIT_CODE_HASH,
             ),
         ];
         for (expected, init_code_hash) in cases {
@@ -174,5 +216,21 @@ mod tests {
             assert!(Eip8130Contracts::is_canonical_authenticator(&auth));
         }
         assert!(!Eip8130Contracts::is_canonical_authenticator(&Address::ZERO));
+        // Deployed, but not on the node allowlist.
+        assert!(!Eip8130Contracts::is_canonical_authenticator(
+            &Eip8130Contracts::ALWAYS_VALID_AUTHENTICATOR
+        ));
+    }
+
+    #[test]
+    fn high_rate_payer_proxy_code_hash_matches_erc1167_runtime() {
+        let runtime = Eip8130Contracts::erc1167_proxy_runtime(
+            Eip8130Contracts::CANONICAL_HIGH_RATE_PAYER_ACCOUNT,
+        );
+        assert_eq!(runtime.len(), 45);
+        assert_eq!(
+            keccak256(runtime),
+            Eip8130Contracts::CANONICAL_HIGH_RATE_PAYER_PROXY_CODE_HASH
+        );
     }
 }
