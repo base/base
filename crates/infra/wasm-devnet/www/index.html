@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WASM Devnet HUD</title>
+    <link rel="stylesheet" href="style.css">
+    <script type="module" src="app.js"></script>
+</head>
+<body>
+    <div class="hud-container">
+        <header class="hud-header">
+            <div class="hud-title">
+                <h1>WASM_DEVNET</h1>
+                <span class="pulse-indicator" id="status-indicator"></span>
+                <span id="status-text">INITIALIZING...</span>
+            </div>
+            <div class="controls">
+                <button id="btn-toggle-play" disabled>▶ PLAY</button>
+                <label>
+                    Speed: <span id="speed-display">1.0x</span>
+                    <input type="range" id="speed-slider" min="0.5" max="4.0" step="0.5" value="1.0" disabled>
+                </label>
+            </div>
+        </header>
+
+        <div class="hud-grid">
+
+            <section class="panel about-panel span-full">
+                <div class="about-header">
+                    <h2>[ SYSTEM_MANUAL ]</h2>
+                    <button id="btn-toggle-about">COLLAPSE</button>
+                </div>
+                <div class="about-content" id="about-content">
+                    <p><span class="about-highlight">DESCRIPTION:</span> Real in-browser WebAssembly Ethereum L2 devnet built from the production base/base rollup codebase.</p>
+                    <p><span class="about-highlight">ENVIRONMENT:</span> 100% client-side WASM (SharedArrayBuffer + COOP/COEP). Zero backend server.</p>
+                    <p><span class="about-highlight">PIPELINE_TOPOLOGY:</span></p>
+                    <ul class="about-flow">
+                        <li><span class="about-flow-component">L1_MOCK</span> : Mines L1 blocks every epoch.</li>
+                        <li><span class="about-flow-component">SEQUENCER</span> : Produces L2 blocks continuously.</li>
+                        <li><span class="about-flow-component">BATCHER</span> : Compresses L2 blocks into calldata (RLP+zlib) & submits to L1.</li>
+                        <li><span class="about-flow-component">VALIDATOR</span> : Runs the real base-consensus-derive pipeline to independently re-derive L2 blocks from L1 batch data.</li>
+                    </ul>
+                    <p><span class="about-highlight">INTEGRITY:</span> [ ✓ ] indicates independent validator hash match. Block cryptographically verified.</p>
+                </div>
+            </section>
+
+            <section class="panel stats-panel">
+                <h2>[ NETWORK_STATS ]</h2>
+                <div class="stat-grid">
+                    <div class="stat-box">
+                        <span class="stat-label">Chain ID</span>
+                        <span class="stat-value" id="stat-chain-id">--</span>
+                    </div>
+                    <div class="stat-box">
+                        <span class="stat-label">L1 Tip</span>
+                        <span class="stat-value" id="stat-l1-tip">--</span>
+                    </div>
+                    <div class="stat-box">
+                        <span class="stat-label">Seq Unsafe Head</span>
+                        <span class="stat-value highlight" id="stat-seq-head">--</span>
+                    </div>
+                    <div class="stat-box">
+                        <span class="stat-label">Val Safe Head</span>
+                        <span class="stat-value" id="stat-safe-head">--</span>
+                    </div>
+                    <div class="stat-box">
+                        <span class="stat-label">Verified Blocks</span>
+                        <span class="stat-value text-green" id="stat-verified">--</span>
+                    </div>
+                    <div class="stat-box">
+                        <span class="stat-label">Dev Nonce</span>
+                        <span class="stat-value" id="stat-nonce">--</span>
+                    </div>
+                    <div class="stat-box span-2">
+                        <span class="stat-label">Dev Balance (ETH)</span>
+                        <span class="stat-value" id="stat-balance">--</span>
+                    </div>
+                </div>
+            </section>
+
+
+            <section class="panel tx-panel">
+                <h2>[ TRANSMIT_TX ]</h2>
+                <div class="form-group">
+                    <label>SENDER (DEV KEY)</label>
+                    <input type="text" id="tx-sender" readonly value="--">
+                </div>
+                <div class="form-group">
+                    <label>RECIPIENT (HEX, 20 BYTES)</label>
+                    <div class="input-with-presets">
+                        <input type="text" id="tx-recipient" placeholder="0x..." value="0x000000000000000000000000000000000000dEaD">
+                        <button id="btn-preset-self" class="preset-btn">SELF</button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>AMOUNT (ETH)</label>
+                    <input type="text" id="tx-amount" placeholder="0.0" value="1.5">
+                </div>
+                <button id="btn-send-tx" class="action-btn" disabled>TRANSMIT &lt;ETH&gt;</button>
+                <div id="tx-status-container" class="tx-status hidden">
+                    <h3>TX LIFECYCLE</h3>
+                    <div id="tx-status-log"></div>
+                </div>
+            </section>
+
+
+            <section class="panel blocks-panel">
+                <h2>[ L2_BLOCK_FEED ]</h2>
+                <div class="blocks-header">
+                    <span>NUM</span>
+                    <span>HASH</span>
+                    <span>TXS</span>
+                    <span>VER</span>
+                </div>
+                <div class="blocks-feed" id="blocks-feed">
+
+                </div>
+            </section>
+
+
+            <section class="panel rpc-console-panel span-full">
+                <h2>[ RPC_CONSOLE ]</h2>
+                <p class="rpc-console-hint">Send any JSON-RPC 2.0 call directly to the running devnet.</p>
+                <div class="rpc-console-form">
+                    <div class="form-group rpc-console-method">
+                        <label>METHOD</label>
+                        <input type="text" id="rpc-console-method" list="rpc-console-methods" placeholder="eth_blockNumber" value="eth_blockNumber">
+                        <datalist id="rpc-console-methods">
+                            <option value="eth_chainId"></option>
+                            <option value="net_version"></option>
+                            <option value="web3_clientVersion"></option>
+                            <option value="eth_syncing"></option>
+                            <option value="eth_accounts"></option>
+                            <option value="eth_blockNumber"></option>
+                            <option value="eth_gasPrice"></option>
+                            <option value="eth_maxPriorityFeePerGas"></option>
+                            <option value="eth_maxFeePerGas"></option>
+                            <option value="eth_estimateGas"></option>
+                            <option value="eth_getBalance"></option>
+                            <option value="eth_getTransactionCount"></option>
+                            <option value="eth_getBlockByNumber"></option>
+                            <option value="eth_getBlockByHash"></option>
+                            <option value="eth_getTransactionByHash"></option>
+                            <option value="eth_getTransactionReceipt"></option>
+                            <option value="eth_sendRawTransaction"></option>
+                        </datalist>
+                    </div>
+                    <div class="form-group rpc-console-params">
+                        <label>PARAMS (JSON ARRAY)</label>
+                        <textarea id="rpc-console-params" rows="2" placeholder="[]">[]</textarea>
+                    </div>
+                    <button id="btn-rpc-console-send" class="action-btn rpc-console-send" disabled>SEND</button>
+                </div>
+                <pre class="rpc-console-response" id="rpc-console-response">// response will appear here</pre>
+            </section>
+
+            <section class="panel rpc-panel span-full">
+                <div class="rpc-header">
+                    <h2>[ RPC_TELEMETRY ]</h2>
+                    <button id="btn-toggle-rpc">COLLAPSE</button>
+                </div>
+                <div class="rpc-log" id="rpc-log">
+
+                </div>
+            </section>
+        </div>
+    </div>
+</body>
+</html>

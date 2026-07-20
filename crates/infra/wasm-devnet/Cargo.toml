@@ -1,0 +1,51 @@
+[package]
+name = "base-wasm-devnet"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+description = "In-browser devnet: L1 + batcher + sequencer (CL/EL) + validator (CL/EL) compiled to WASM."
+
+[lints]
+workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+base-protocol.workspace = true
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+base-common-consensus = { workspace = true, features = ["std"] }
+base-action-harness.workspace = true
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+base-consensus-derive.workspace = true
+base-common-genesis.workspace = true
+base-common-consensus = { workspace = true, features = ["std", "k256"] }
+base-execution-evm.workspace = true
+base-execution-chainspec.workspace = true
+revm.workspace = true
+reth-evm.workspace = true
+k256 = { workspace = true, features = ["ecdsa"] }
+alloy-chains.workspace = true
+alloy-eips.workspace = true
+alloy-genesis.workspace = true
+alloy-consensus.workspace = true
+alloy-primitives.workspace = true
+alloy-rlp.workspace = true
+async-trait.workspace = true
+miniz_oxide.workspace = true
+serde_json = { workspace = true, features = ["std"] }
+thiserror.workspace = true
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+console_error_panic_hook = "0.1"
+getrandom = { version = "0.2", features = ["js"] }
+getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
