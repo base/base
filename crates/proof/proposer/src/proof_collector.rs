@@ -187,6 +187,7 @@ where
         parent_address: Address,
         cancel: &CancellationToken,
     ) {
+        // The caller already deleted the proof that triggered this scan.
         let mut deleted = 1;
 
         loop {
