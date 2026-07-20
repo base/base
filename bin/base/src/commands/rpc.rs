@@ -8,7 +8,7 @@ use base_consensus_cli::{
 };
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{ExecutionNodeArgs, chainspec::chain_value_parser};
-use base_upgrade_signal::{UpgradeSignalRuntimeValidation, UpgradeSignalStartupMode};
+use base_upgrade_signal::UpgradeSignalStartupMode;
 use clap::Args;
 use reth_cli_runner::CliRunner;
 use tokio_util::sync::CancellationToken;
@@ -68,10 +68,6 @@ impl RpcCommand {
         let mut rollup_config = consensus_args.load_rollup_config()?;
 
         CliRunner::try_default_runtime()?.run_command_until_exit(|ctx| async move {
-            let upgrade_signal_runtime_validation =
-                UpgradeSignalRuntimeValidation::with_activation_admin_address(
-                    execution_chain.activation_admin_address,
-                );
             execution
                 .standard
                 .rollup_args
@@ -79,7 +75,6 @@ impl RpcCommand {
                 .apply_startup_to_sinks(
                     &execution.standard.rollup_args.upgrade_signal_l1_rpc,
                     "integrated startup",
-                    upgrade_signal_runtime_validation,
                     execution_chain.chain().id(),
                     Arc::make_mut(&mut execution_chain),
                     &mut rollup_config,
@@ -111,7 +106,6 @@ impl RpcCommand {
                 ConsensusNodeStartOptions::new(rollup_config)
                     .with_overrides(ConsensusNodeOverrides::embedded_execution(
                         l2_engine_rpc,
-                        upgrade_signal_runtime_validation,
                         upgrade_signal_l1_rpc,
                     ))
                     .with_cancellation(consensus_cancellation.clone())
@@ -159,10 +153,8 @@ pub(super) fn engine_ipc_url(path: &str) -> eyre::Result<Url> {
 mod tests {
     use std::process::Command;
 
-    use base_common_genesis::BaseUpgrade;
     use base_consensus_cli::ConsensusNodeConfigArgs;
-    use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
-    use base_upgrade_signal::UpgradeSignalRuntimeValidation;
+    use base_execution_chainspec::BaseChainSpec;
     use clap::Parser;
 
     use crate::{
@@ -293,21 +285,6 @@ mod tests {
                 .map(|url| url.as_str()),
             Some("http://finalized-l1:8545/")
         );
-    }
-
-    #[test]
-    fn consensus_runtime_validation_uses_execution_activation_admin() {
-        let execution_chain = BaseChainSpecBuilder::base_mainnet()
-            .optional_activation_admin_address(None)
-            .without_fork(BaseUpgrade::Beryl)
-            .build();
-
-        let validation = UpgradeSignalRuntimeValidation::with_activation_admin_address(
-            execution_chain.activation_admin_address,
-        );
-
-        assert!(validation.require_activation_admin_for_beryl);
-        assert_eq!(validation.activation_admin_address, None);
     }
 
     #[test]

@@ -41,6 +41,7 @@ pub(super) fn test_actor() -> SequencerActor<
         conductor: None,
         engine_client,
         is_active: true,
+        shadow_blocks_per_cycle: None,
         recovery_mode,
         rollup_config,
         unsafe_payload_gossip_client: MockUnsafePayloadGossipClient::new(),

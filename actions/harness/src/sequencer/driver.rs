@@ -276,6 +276,7 @@ impl L2Sequencer {
             conductor: Some(ActionConductor::new(Arc::clone(&self.conductor))),
             engine_client,
             is_active: false,
+            shadow_blocks_per_cycle: None,
             recovery_mode: RecoveryModeGuard::new(false),
             rollup_config: self.actor_rollup_config(),
             unsafe_payload_gossip_client: ActionUnsafePayloadGossipClient,
