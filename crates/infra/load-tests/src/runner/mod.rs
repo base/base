@@ -26,7 +26,7 @@ pub use results_tracker::{
 mod submission;
 pub use submission::{
     BatchTxError, MAX_FEE_BASE_FEE_MULTIPLIER, MAX_SENDER_WORKER_COUNT, MAX_SIGNER_WORKER_COUNT,
-    PipelineQueue, PreparedBatch, PreparedTransaction, QueuedSubmitFailures,
+    PipelineQueue, PipelineStartConfig, PreparedBatch, PreparedTransaction, QueuedSubmitFailures,
     SENDER_WORKERS_PER_RPC, SIGNER_WORKERS_PER_RPC, SUBMIT_BATCH_QUEUE_BUFFER, SUBMIT_MAX_ATTEMPTS,
     SenderContext, SignedBatch, SignedTransaction, SignerContext, SubmissionPipeline, SubmitEvent,
 };

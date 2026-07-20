@@ -11,9 +11,9 @@ pub use key_stream::KeyStream;
 
 mod payloads;
 pub use payloads::{
-    AerodromeClPayload, B20TransferPayload, CalldataPayload, Erc20Payload, OsakaPayload, Payload,
-    PrecompileLooper, PrecompilePayload, StoragePayload, TransferPayload, UniswapV3Payload,
-    parse_precompile_id,
+    AerodromeClPayload, B20EvmTransferPayload, B20TransferPayload, CalldataPayload, Erc20Payload,
+    OsakaPayload, Payload, PrecompileLooper, PrecompilePayload, StoragePayload, TransferPayload,
+    UniswapV3Payload, parse_precompile_id,
 };
 pub(crate) use payloads::{b20_salt_for, b20_token_for};
 

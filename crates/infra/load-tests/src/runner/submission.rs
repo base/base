@@ -241,6 +241,8 @@ pub struct SenderContext {
     pub results_tracker: ResultsTracker,
     /// Events emitted to the runner.
     pub submit_event_tx: mpsc::Sender<SubmitEvent>,
+    /// Whether nonce return is enabled for rejected signed transactions.
+    pub return_reserved_nonces: bool,
 }
 
 impl fmt::Debug for SenderContext {
@@ -248,6 +250,7 @@ impl fmt::Debug for SenderContext {
         f.debug_struct("SenderContext")
             .field("submission_batch_rpcs", &self.submission_batch_rpcs.len())
             .field("nonce_managers", &self.nonce_managers.len())
+            .field("return_reserved_nonces", &self.return_reserved_nonces)
             .finish_non_exhaustive()
     }
 }
@@ -255,11 +258,23 @@ impl fmt::Debug for SenderContext {
 /// Running submission pipeline.
 pub struct SubmissionPipeline {
     prepared_batch_tx: Option<mpsc::Sender<PreparedBatch>>,
+    signed_batch_tx: Option<mpsc::Sender<SignedBatch>>,
     prepared_queue: Arc<PipelineQueue<PreparedBatch>>,
     signed_queue: Arc<PipelineQueue<SignedBatch>>,
     shutdown: CancellationToken,
     signer_workers: Vec<JoinHandle<()>>,
     sender_workers: Vec<JoinHandle<()>>,
+}
+
+/// Runtime configuration for submission pipeline workers and signing.
+#[derive(Debug, Clone, Copy)]
+pub struct PipelineStartConfig {
+    /// Chain ID used for transaction signing.
+    pub chain_id: u64,
+    /// Maximum allowed gas price.
+    pub max_gas_price: u128,
+    /// Whether the runner is operating in open-loop mode.
+    pub open_loop: bool,
 }
 
 impl fmt::Debug for SubmissionPipeline {
@@ -281,8 +296,7 @@ impl SubmissionPipeline {
         submission_batch_rpcs: Arc<Vec<BatchRpcClient>>,
         results_tracker: ResultsTracker,
         submit_event_tx: mpsc::Sender<SubmitEvent>,
-        chain_id: u64,
-        max_gas_price: u128,
+        config: PipelineStartConfig,
     ) -> Self {
         let (prepared_batch_tx, prepared_batch_rx) =
             mpsc::channel::<PreparedBatch>(SUBMIT_BATCH_QUEUE_BUFFER);
@@ -292,9 +306,11 @@ impl SubmissionPipeline {
         let signed_queue = Arc::new(PipelineQueue::new(signed_batch_rx));
         let shutdown = CancellationToken::new();
         let signer_worker_count = Self::signer_worker_count(submission_batch_rpcs.len());
-        let sender_worker_count = Self::sender_worker_count(submission_batch_rpcs.len());
+        let sender_worker_count =
+            Self::sender_worker_count_for_mode(submission_batch_rpcs.len(), config.open_loop);
 
         info!(
+            open_loop = config.open_loop,
             signer_worker_count,
             sender_worker_count,
             submit_rpc_count = submission_batch_rpcs.len(),
@@ -307,8 +323,8 @@ impl SubmissionPipeline {
                 signers: Arc::clone(&signers),
                 nonce_managers: Arc::clone(&nonce_managers),
                 submit_event_tx: submit_event_tx.clone(),
-                chain_id,
-                max_gas_price,
+                chain_id: config.chain_id,
+                max_gas_price: config.max_gas_price,
                 signed_batch_tx: signed_batch_tx.clone(),
                 signed_queue: Arc::clone(&signed_queue),
             };
@@ -326,6 +342,7 @@ impl SubmissionPipeline {
                 nonce_managers: Arc::clone(&nonce_managers),
                 results_tracker: results_tracker.clone(),
                 submit_event_tx: submit_event_tx.clone(),
+                return_reserved_nonces: !config.open_loop,
             };
             let queue = Arc::clone(&signed_queue);
             let shutdown = shutdown.clone();
@@ -334,10 +351,9 @@ impl SubmissionPipeline {
             }));
         }
 
-        drop(signed_batch_tx);
-
         Self {
             prepared_batch_tx: Some(prepared_batch_tx),
+            signed_batch_tx: Some(signed_batch_tx),
             prepared_queue,
             signed_queue,
             shutdown,
@@ -356,6 +372,15 @@ impl SubmissionPipeline {
         (submission_rpc_count * SENDER_WORKERS_PER_RPC).clamp(1, MAX_SENDER_WORKER_COUNT)
     }
 
+    /// Returns sender worker count for a submission RPC count and mode.
+    pub fn sender_worker_count_for_mode(submission_rpc_count: usize, open_loop: bool) -> usize {
+        if open_loop {
+            MAX_SENDER_WORKER_COUNT
+        } else {
+            Self::sender_worker_count(submission_rpc_count)
+        }
+    }
+
     /// Enqueues a prepared batch for signing.
     pub async fn enqueue_prepared(
         &self,
@@ -370,6 +395,22 @@ impl SubmissionPipeline {
             Ok(()) => Ok(()),
             Err(e) => {
                 self.prepared_queue.pending_batches.fetch_sub(1, Ordering::SeqCst);
+                Err(e.0)
+            }
+        }
+    }
+
+    /// Enqueues a signed batch for sending.
+    pub async fn enqueue_signed(&self, batch: SignedBatch) -> std::result::Result<(), SignedBatch> {
+        let Some(tx) = &self.signed_batch_tx else {
+            return Err(batch);
+        };
+
+        self.signed_queue.pending_batches.fetch_add(1, Ordering::SeqCst);
+        match tx.send(batch).await {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                self.signed_queue.pending_batches.fetch_sub(1, Ordering::SeqCst);
                 Err(e.0)
             }
         }
@@ -789,6 +830,10 @@ impl SubmissionPipeline {
     }
 
     async fn return_signed_nonce(ctx: &SenderContext, signed: &SignedTransaction) {
+        if !ctx.return_reserved_nonces {
+            return;
+        }
+
         let Some(nonce_manager) = ctx.nonce_managers.get(&signed.from) else {
             warn!(from = %signed.from, nonce = signed.nonce, "no nonce manager for nonce return");
             return;
@@ -1027,6 +1072,7 @@ mod tests {
 
         let pipeline = SubmissionPipeline {
             prepared_batch_tx: None,
+            signed_batch_tx: None,
             prepared_queue,
             signed_queue,
             shutdown: CancellationToken::new(),

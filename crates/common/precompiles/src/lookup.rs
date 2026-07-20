@@ -1,5 +1,7 @@
 //! Dynamic lookup for Beryl-native precompiles.
 
+use std::sync::OnceLock;
+
 use alloy_evm::precompiles::{DynPrecompile, PrecompileLookup, PrecompilesMap};
 use alloy_primitives::Address;
 use base_common_genesis::BaseUpgrade;
@@ -8,6 +10,16 @@ use crate::{
     B20AssetPrecompile, B20StablecoinPrecompile, B20Variant, NoopPrecompileCallObserver,
     PrecompileCallObserver,
 };
+
+/// Environment variable that, when set to a hex address, forces [`BerylLookup`] to return `None`
+/// for that address so EVM bytecode deployed there executes instead of the native precompile.
+///
+/// This exists solely for benchmarking the deployed Solidity B-20 reference implementation against
+/// the native precompile at an identical storage layout. It must never be set in production.
+pub const B20_PRECOMPILE_EXCLUDE_ENV: &str = "B20_PRECOMPILE_EXCLUDE_ADDRESS";
+
+/// Caches the parsed exclusion address so the hot lookup path avoids repeated env reads.
+static EXCLUDED_ADDRESS: OnceLock<Option<Address>> = OnceLock::new();
 
 /// Dynamic precompile lookup installed for Beryl and later forks.
 #[derive(Debug, Default, Clone, Copy)]
@@ -31,6 +43,20 @@ impl BerylLookup {
         precompiles.set_precompile_lookup(BerylLookupWithObserver::new(observer, upgrade));
     }
 
+    /// Returns the benchmark-only excluded address parsed from [`B20_PRECOMPILE_EXCLUDE_ENV`].
+    pub fn excluded_address() -> Option<Address> {
+        *EXCLUDED_ADDRESS.get_or_init(|| {
+            std::env::var(B20_PRECOMPILE_EXCLUDE_ENV)
+                .ok()
+                .and_then(|raw| raw.parse().ok())
+        })
+    }
+
+    /// Returns whether `address` is excluded from native B-20 dispatch for benchmarking.
+    pub fn is_excluded(address: &Address) -> bool {
+        Self::excluded_address() == Some(*address)
+    }
+
     /// Returns the B-20 variant precompile for `address` at `upgrade`, if it encodes one.
     pub fn lookup(address: &Address, upgrade: BaseUpgrade) -> Option<DynPrecompile> {
         Self::lookup_with_observer(address, upgrade, NoopPrecompileCallObserver)
@@ -48,6 +74,10 @@ impl BerylLookup {
     where
         O: PrecompileCallObserver,
     {
+        if Self::is_excluded(address) {
+            return None;
+        }
+
         match B20Variant::from_address(*address)? {
             B20Variant::Stablecoin => {
                 Some(B20StablecoinPrecompile::create_precompile_with_observer(
