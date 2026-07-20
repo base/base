@@ -42,11 +42,18 @@ impl ZkForkDispute {
         );
 
         let challenger = submitter.sender_address();
+        let status = verifier.status(config.game_address).await?;
         let before_zk = verifier.zk_prover(config.game_address).await?;
         let before_tee = verifier.tee_prover(config.game_address).await?;
         let before_countered = verifier.countered_index(config.game_address).await?;
         // Fail fast before spending hours on proof generation.
-        Self::validate_dispute_preconditions(&config, before_zk, before_tee, before_countered)?;
+        Self::validate_dispute_preconditions(
+            &config,
+            status,
+            before_zk,
+            before_tee,
+            before_countered,
+        )?;
 
         let proof_bytes =
             checkpoint.request_proof(&config, submitter.sender_address(), l1_head).await?;
@@ -79,10 +86,14 @@ impl ZkForkDispute {
 
     fn validate_dispute_preconditions(
         config: &Config,
+        status: GameStatus,
         before_zk: Address,
         before_tee: Address,
         before_countered: u64,
     ) -> Result<()> {
+        if status != GameStatus::InProgress {
+            bail!("dispute requires an InProgress game, got {status}");
+        }
         match config.intent {
             DisputeIntent::Nullify => {
                 if before_zk == Address::ZERO {
@@ -92,6 +103,9 @@ impl ZkForkDispute {
             DisputeIntent::Challenge => {
                 if before_tee == Address::ZERO {
                     bail!("challenge requires an existing TEE prover on the game");
+                }
+                if before_zk != Address::ZERO {
+                    bail!("challenge requires no existing ZK prover on the game");
                 }
                 if before_countered != 0 {
                     bail!("challenge requires an unchallenged game");

@@ -52,11 +52,11 @@ pub struct ForkArgs {
     #[arg(long = "dispute-game-factory", env = cli_env!("DISPUTE_GAME_FACTORY"))]
     pub dispute_game_factory: Address,
 
-    /// Specific dispute game proxy (must exist in the factory).
+    /// Specific already-invalid dispute game proxy (skips Anvil patching).
     #[arg(long = "game-address", env = cli_env!("GAME_ADDRESS"))]
     pub game_address: Option<Address>,
 
-    /// Factory game index override (defaults to newest when auto-selecting).
+    /// Factory game index to select and patch (defaults to newest).
     #[arg(long = "game-index", env = cli_env!("GAME_INDEX"))]
     pub game_index: Option<u64>,
 

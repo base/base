@@ -9,7 +9,8 @@ use base_proof_contracts::{
 };
 use base_prover_service_client::{ProofRequesterClient, ProverServiceClientConfig};
 use base_prover_service_protocol::{
-    GetProofRequest, ProofStatus, SnarkPlonkProofRequest, ZkProofRequest, ZkVm,
+    GetProofRequest, ProofRequest, ProofRequestKind, ProofSessionId, ProofStatus,
+    ProveBlockRangeRequest, SnarkPlonkProofRequest, ZkProofRequest, ZkVm,
 };
 use eyre::{Context, Result, bail, eyre};
 use tracing::info;
@@ -54,24 +55,23 @@ impl Checkpoint {
         let index = config.invalid_index.unwrap_or(0);
         let root_index =
             usize::try_from(index).map_err(|_| eyre!("invalid index does not fit usize"))?;
-        let expected_root = *roots
+        let onchain_root = *roots
             .get(root_index)
             .ok_or_else(|| eyre!("invalid index {index} out of range {}", roots.len()))?;
-        let mut patched_root = expected_root;
+        let mut patched_root = onchain_root;
         *patched_root.0.last_mut().expect("B256 is non-empty") ^= 1;
 
         AnvilPatch::apply(config, verifier, &roots, index, patched_root).await?;
 
-        // Dispute still claims the pre-patch root as the canonical value.
         let starting_block = verifier.starting_block_number(config.game_address).await?;
-        Self::from_roots(
-            starting_block,
+        let interval =
             Self::infer_interval(config.game_address, verifier, starting_block, roots.len())
-                .await?,
-            index,
-            &roots,
-            expected_root,
-        )
+                .await?;
+        // Dispute claims the canonical L2 root, not the pre-patch on-chain value.
+        let mut checkpoint =
+            Self::from_roots(starting_block, interval, index, &roots, onchain_root)?;
+        checkpoint.expected_root = config.output_root_at_block(checkpoint.target_block()).await?;
+        Ok(checkpoint)
     }
 
     /// Finds an already-invalid intermediate root by comparing on-chain vs canonical.
@@ -130,23 +130,31 @@ impl Checkpoint {
             "requesting SNARK PLONK proof"
         );
 
+        let snark_request = SnarkPlonkProofRequest {
+            proof: ZkProofRequest {
+                start_block_number: self.start_block,
+                number_of_blocks_to_prove: self.block_count,
+                sequence_window: None,
+                l1_head: Some(l1_head),
+                intermediate_root_interval: Some(self.block_count),
+                zk_vm: ZkVm::Sp1,
+                zk_backend: config.zk_backend,
+            },
+            prover_address,
+        };
+        let session_id = Self::proof_session_id(
+            config.game_address,
+            self.index,
+            prover_address,
+            config.zk_backend.as_str(),
+        );
         let response = client
-            .prove_block_range(ChallengerProofAdapter::snark_plonk_prove_block_range_request(
-                config.game_address,
-                self.index,
-                SnarkPlonkProofRequest {
-                    proof: ZkProofRequest {
-                        start_block_number: self.start_block,
-                        number_of_blocks_to_prove: self.block_count,
-                        sequence_window: None,
-                        l1_head: Some(l1_head),
-                        intermediate_root_interval: Some(self.block_count),
-                        zk_vm: ZkVm::Sp1,
-                        zk_backend: config.zk_backend,
-                    },
-                    prover_address,
+            .prove_block_range(ProveBlockRangeRequest {
+                proof: ProofRequest {
+                    session_id: session_id.clone(),
+                    request: ProofRequestKind::SnarkPlonk(snark_request),
                 },
-            ))
+            })
             .await
             .context("failed to submit proveBlockRange")?;
         let session_id = response.session_id;
@@ -231,6 +239,26 @@ impl Checkpoint {
         }
         Ok(span / root_count as u64)
     }
+
+    /// Session ID unique per fork-tool run identity (game/index/signer/backend).
+    fn proof_session_id(
+        game_address: Address,
+        invalid_index: u64,
+        prover_address: Address,
+        zk_backend: &str,
+    ) -> String {
+        let invalid_index = invalid_index.to_be_bytes();
+        ProofSessionId::derive_from_components(
+            b"base/zk-fork-dispute/proof-session/v1",
+            ChallengerProofAdapter::snark_plonk_session_label(),
+            &[
+                game_address.as_slice(),
+                &invalid_index,
+                prover_address.as_slice(),
+                zk_backend.as_bytes(),
+            ],
+        )
+    }
 }
 
 /// Anvil storage/code patcher for dispute-game mutation.
@@ -252,14 +280,22 @@ impl AnvilPatch {
             .get(root_index)
             .ok_or_else(|| eyre!("invalid index {index} out of range {}", original_roots.len()))?;
 
+        let root_claim = verifier.game_info(config.game_address).await?.root_claim;
+
         Self::patch_factory_registration(config, verifier, original_roots, index, patched_root)
             .await?;
-        Self::patch_game_code(config, original_root, patched_root).await?;
+        Self::patch_game_code(config, root_index, original_root, patched_root).await?;
 
         let onchain = verifier.intermediate_output_root(config.game_address, index).await?;
         if onchain != patched_root {
             bail!(
                 "patched game code but intermediate root {index} stayed {onchain}; expected {patched_root}"
+            );
+        }
+        let after_claim = verifier.game_info(config.game_address).await?.root_claim;
+        if after_claim != root_claim {
+            bail!(
+                "bytecode patch mutated rootClaim from {root_claim} to {after_claim}; expected unchanged"
             );
         }
 
@@ -356,31 +392,35 @@ impl AnvilPatch {
 
     async fn patch_game_code(
         config: &Config,
+        root_index: usize,
         original_root: B256,
         patched_root: B256,
     ) -> Result<()> {
         let provider: RootProvider = RootProvider::new_http(config.l1_rpc_url.clone());
         let code = provider.get_code_at(config.game_address).await?;
-        let mut patched_code = code.to_vec();
         let original = original_root.as_slice();
-        let mut replacements = 0usize;
+        let mut offsets = Vec::new();
         let mut offset = 0;
-        while offset + original.len() <= patched_code.len() {
-            if &patched_code[offset..offset + original.len()] == original {
-                patched_code[offset..offset + original.len()]
-                    .copy_from_slice(patched_root.as_slice());
-                replacements += 1;
+        while offset + original.len() <= code.len() {
+            if &code[offset..offset + original.len()] == original {
+                offsets.push(offset);
                 offset += original.len();
             } else {
                 offset += 1;
             }
         }
-        if replacements == 0 {
+        let replace_at = offsets.get(root_index).copied().or_else(|| offsets.first().copied());
+        let Some(replace_at) = replace_at else {
             bail!(
                 "could not find intermediate root {original_root} in game {} bytecode",
                 config.game_address
             );
-        }
+        };
+
+        // Replace exactly one occurrence so duplicate immutables (e.g. rootClaim) stay intact.
+        let mut patched_code = code.to_vec();
+        patched_code[replace_at..replace_at + original.len()]
+            .copy_from_slice(patched_root.as_slice());
 
         provider
             .client()

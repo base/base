@@ -44,8 +44,13 @@ zk-fork-dispute intent='' game='' game_index='' invalid_index='':
 
     game_address="${BASE_ZK_FORK_GAME_ADDRESS:-{{game}}}"
     factory="$BASE_ZK_FORK_DISPUTE_GAME_FACTORY"
+    default_l1_rpc='http://127.0.0.1:18545'
 
     if ! curl -fsS -H 'content-type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' "$BASE_ZK_FORK_L1_RPC_URL" >/dev/null 2>&1; then
+      if [[ "$BASE_ZK_FORK_L1_RPC_URL" != "$default_l1_rpc" ]]; then
+        echo "no RPC at $BASE_ZK_FORK_L1_RPC_URL; start Anvil yourself or use $default_l1_rpc" >&2
+        exit 1
+      fi
       command -v anvil >/dev/null || { echo "anvil is required to start the L1 fork" >&2; exit 1; }
       anvil_log="$(mktemp -t zk-fork-anvil.XXXXXX.log)"
       anvil --fork-url "$BASE_ZK_FORK_L1_FORK_URL" --host 127.0.0.1 --port 18545 >"$anvil_log" 2>&1 &

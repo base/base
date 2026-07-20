@@ -3,14 +3,14 @@
 use alloy_primitives::{Address, B256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer_local::PrivateKeySigner;
-use base_challenger::DisputeIntent;
+use base_challenger::{AccountProofVerifier, DisputeIntent};
 use base_cli_utils::LogConfig;
 use base_common_consensus::Predeploys;
 use base_proof_contracts::{DisputeGameFactoryClient, DisputeGameFactoryContractClient};
 use base_proof_rpc::L2HttpProvider;
 use base_protocol::OutputRoot;
 use base_prover_service_protocol::ZkBackend;
-use eyre::{Result, bail, eyre};
+use eyre::{Context, Result, bail, eyre};
 use tracing::info;
 use url::Url;
 
@@ -75,27 +75,54 @@ impl Config {
             intent: args.intent.into(),
             zk_backend: args.zk_backend.into(),
             invalid_index: args.invalid_index,
-            patch_invalid_game: explicit_game.is_none() && explicit_index.is_none(),
+            // Only an explicit game address opts into find-mode; `--game-index` still patches.
+            patch_invalid_game: explicit_game.is_none(),
             poll_interval: args.poll_interval,
             poll_timeout: args.poll_timeout,
             log: LogConfig::from(cli.logging),
         })
     }
 
-    /// Returns the canonical output root at `block_number` via L2 state proof.
+    /// Returns the canonical output root at `block_number` via verified L2 state proof.
     pub async fn output_root_at_block(&self, block_number: u64) -> Result<B256> {
         let block = self
             .l2_provider
             .get_block_by_number(block_number.into())
             .await?
             .ok_or_else(|| eyre!("L2 block {block_number} not found"))?;
-        let proof = self
+
+        let rpc_hash = block.header.hash;
+        let computed_hash = block.header.inner.hash_slow();
+        if rpc_hash != computed_hash {
+            bail!(
+                "header hash mismatch at block {block_number}: rpc={rpc_hash}, computed={computed_hash}"
+            );
+        }
+
+        let account_proof = self
             .l2_provider
             .get_proof(Predeploys::L2_TO_L1_MESSAGE_PASSER, Vec::new())
-            .block_id(block_number.into())
-            .await?;
-        Ok(OutputRoot::from_parts(block.header.state_root, proof.storage_hash, block.header.hash)
-            .hash())
+            .hash(rpc_hash)
+            .await
+            .with_context(|| {
+                format!("failed to fetch L2ToL1MessagePasser proof at {block_number}")
+            })?;
+
+        AccountProofVerifier::verify(
+            &account_proof,
+            block.header.inner.state_root,
+            Predeploys::L2_TO_L1_MESSAGE_PASSER,
+        )
+        .with_context(|| {
+            format!("account proof verification failed for L2 block {block_number}")
+        })?;
+
+        Ok(OutputRoot::from_parts(
+            block.header.inner.state_root,
+            account_proof.storage_hash,
+            computed_hash,
+        )
+        .hash())
     }
 
     async fn resolve_game(
