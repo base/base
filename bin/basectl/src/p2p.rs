@@ -25,25 +25,23 @@ use crate::{
 pub(crate) async fn run(config: &str, command: P2pCommands) -> Result<CommandOutcome> {
     match command {
         P2pCommands::Reachability { enode, telemetry_url, json } => {
-            return run_reachability(&enode, telemetry_url, json).await;
+            run_reachability(&enode, telemetry_url, json).await
         }
-        P2pCommands::Peers(args) => run_peers(MonitoringConfig::load(config).await?, args).await?,
-        P2pCommands::Info(args) => run_info(MonitoringConfig::load(config).await?, args).await?,
-        P2pCommands::AddPeer(args) => {
-            run_add_peer(MonitoringConfig::load(config).await?, args).await?
-        }
-        P2pCommands::RemovePeer(args) => {
-            run_remove_peer(MonitoringConfig::load(config).await?, args).await?
-        }
-        P2pCommands::Ban(args) => run_ban_peer(MonitoringConfig::load(config).await?, args).await?,
-        P2pCommands::Unban(args) => {
-            run_unban_peer(MonitoringConfig::load(config).await?, args).await?
-        }
-        P2pCommands::UnbanAll(args) => {
-            run_unban_all(MonitoringConfig::load(config).await?, args).await?
+        other => {
+            let config = MonitoringConfig::load(config).await?;
+            match other {
+                P2pCommands::Peers(args) => run_peers(config, args).await?,
+                P2pCommands::Info(args) => run_info(config, args).await?,
+                P2pCommands::AddPeer(args) => run_add_peer(config, args).await?,
+                P2pCommands::RemovePeer(args) => run_remove_peer(config, args).await?,
+                P2pCommands::Ban(args) => run_ban_peer(config, args).await?,
+                P2pCommands::Unban(args) => run_unban_peer(config, args).await?,
+                P2pCommands::UnbanAll(args) => run_unban_all(config, args).await?,
+                P2pCommands::Reachability { .. } => unreachable!(),
+            }
+            Ok(CommandOutcome::Success)
         }
     }
-    Ok(CommandOutcome::Success)
 }
 
 /// Runs `basectl p2p reachability`, exiting non-zero when the probe completed
