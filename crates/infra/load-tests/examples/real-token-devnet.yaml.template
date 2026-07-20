@@ -13,10 +13,8 @@ txpool_nodes:
 flashblocks_ws: "ws://localhost:7111"
 
 sender_count: 10
-target_gps: 20000000
+max_target_gps: 20000000
 in_flight_per_sender: 64
-batch_size: 20
-batch_timeout: "10ms"
 duration: "30s"
 seed: 654789
 

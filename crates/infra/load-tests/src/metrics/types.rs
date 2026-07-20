@@ -232,14 +232,12 @@ pub struct ConfigSummary {
     pub sender_offset: u32,
     /// Maximum in-flight transactions per sender.
     pub in_flight_per_sender: u32,
-    /// Number of transactions per RPC batch.
-    pub batch_size: u32,
-    /// Maximum wait before flushing a partial batch.
-    pub batch_timeout: Option<String>,
+    /// Number of transactions per RPC batch during funding/setup phases.
+    pub funding_batch_size: u32,
     /// Test duration.
     pub duration: Option<String>,
-    /// Target gas per second.
-    pub target_gps: Option<u64>,
+    /// Optional gas-per-second ceiling for adaptive pacing.
+    pub max_target_gps: Option<u64>,
     /// Deterministic account seed.
     pub seed: u64,
     /// Chain ID.

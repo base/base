@@ -49,7 +49,10 @@ cargo run -p base-load-tester-bin --bin base-load-tester -- path/to/config.yaml
 
 ## Configuration
 
-All configuration is done via YAML files. See `src/config/test_config.rs` for comprehensive field documentation, or `examples/devnet.yaml` for a working example.
+All configuration is done via YAML files. The runner uses a single adaptive open-loop submission
+mode (confirmation-backlog-aware pacing); there is no separate closed-loop mode.
+See `src/config/test_config.rs` for comprehensive field documentation, or
+`examples/devnet.yaml` for a working example.
 Example minimal config:
 
 ```yaml
@@ -61,7 +64,7 @@ query_rpc: "http://localhost:8545"
 txpool_nodes: []
 flashblocks_ws: "ws://localhost:7111"
 sender_count: 10
-target_gps: 2100000
+max_target_gps: 2100000
 duration: "30s"
 ```
 
@@ -217,11 +220,12 @@ real_token_setup:
 
 #### Running multiple load tests
 
-- You may need to tune `target_gps` and sender count appropriately.
+- You may need to tune `max_target_gps` (or omit it for unbounded adaptive pacing) and sender
+  count appropriately.
 
 #### Account Create
 
-By default, transfer recipients are picked from the bounded sender pool, so long runs keep targeting the same `sender_count` addresses. Set `fresh_recipient_ratio` to a value from `0.0` to `1.0` to derive that fraction of recipient signing keys from the configured mnemonic, or from `seed` when no mnemonic is set. This drives account-trie fan-out for workloads like the account-create performance baseline.
+By default, transfer recipients are picked from the bounded sender pool, so long runs keep targeting the same `sender_count` addresses. Set `fresh_recipient_ratio` to a value from `0.0` to `1.0` to derive that fraction of recipient signing keys from the same derivation kind as the sender pool (mnemonic when set, otherwise seed-based). This drives account-trie fan-out for workloads like the account-create performance baseline.
 
 ```yaml
 fresh_recipient_ratio: 1.0
@@ -230,4 +234,4 @@ transactions:
     type: transfer
 ```
 
-Recipient keys are advanced past the sender keys. The runner prints `recipient_offset` at startup and writes `fresh_recipient_count` to the final summary. Recover recipients with `AccountPool::from_mnemonic(mnemonic, fresh_recipient_count, recipient_offset)` or `AccountPool::with_offset(seed, fresh_recipient_count, recipient_offset)`.
+Recipient keys are always positioned with a runtime-random seed/offset (never the configured `seed`), so repeated runs never regenerate the same "fresh" addresses. The runner logs `randomized_recipient_seed`/`randomized_recipient_offset` at startup and writes `fresh_recipient_count` to the final summary. Recover recipients from that logged value with `AccountPool::from_mnemonic(mnemonic, fresh_recipient_count, randomized_recipient_offset)` or `AccountPool::with_offset(randomized_recipient_seed, fresh_recipient_count, recipient_offset)`.

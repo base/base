@@ -10,10 +10,8 @@ txpool_nodes: []
 flashblocks_ws: "wss://sepolia.flashblocks.base.org/ws"
 
 sender_count: 200
-target_gps: 60000000
+max_target_gps: 60000000
 in_flight_per_sender: 128
-batch_size: 50
-batch_timeout: "10ms"
 duration: "60s"
 seed: 123456
 
