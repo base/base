@@ -1419,11 +1419,10 @@ impl Eip8130Executor {
 
     /// Auto-delegates a code-less sender to [`Eip8130Contracts::DEFAULT_ACCOUNT`]
     /// so the account can dispatch its `calls`, returning whether the delegation
-    /// was installed (which feeds the intrinsic-gas schedule). Both the verifying
-    /// and estimation paths call this unconditionally: a configured account
-    /// already has code so the check is a no-op for it, and any basic-account
-    /// sender — regardless of signing path or authenticator — is delegated to
-    /// `DEFAULT_ACCOUNT`.
+    /// was installed (which feeds the intrinsic-gas schedule). The verifying and
+    /// estimation paths call this only when the transaction has no explicit
+    /// delegation change; an owner-authorized zero target must remain cleared.
+    /// A configured account already has code, so this is otherwise a no-op for it.
     fn auto_delegate_codeless_sender(
         sctx: StorageCtx<'_>,
         sender: Address,
