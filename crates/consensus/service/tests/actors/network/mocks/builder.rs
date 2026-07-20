@@ -130,4 +130,11 @@ impl NetworkEngineClient for ForwardingNetworkEngineClient {
             .inspect_err(|e| error!(target: "net", error = ?e, "Failed to send block"));
         Ok(())
     }
+
+    async fn send_admin_unsafe_block(
+        &self,
+        block: BaseExecutionPayloadEnvelope,
+    ) -> EngineClientResult<()> {
+        self.send_unsafe_block(block).await
+    }
 }
