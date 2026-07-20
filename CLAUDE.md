@@ -34,3 +34,18 @@ fn area(&self) -> u32 {
     self.width * self.height
 }
 ```
+
+Prefer simplifying call chains over adding indirection. If a method only performs a single internal operation, inline that logic at the call site rather than introducing the method. If a method merely forwards to another type, call that type's method directly instead of wrapping it in a new method.
+
+```rust
+// Avoid: a wrapper that just forwards to the inner type
+impl Wallet {
+    fn balance(&self) -> u64 {
+        self.account.balance()
+    }
+}
+let bal = wallet.balance();
+
+// Prefer: call the inner type's method directly
+let bal = wallet.account.balance();
+```
