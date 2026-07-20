@@ -276,11 +276,8 @@ where
         pending_build_parent.take();
         let canonical_head = self.engine_client.get_unsafe_head().await?;
         *shadow_cycle = Some(ShadowCycle::building(canonical_head)?);
-        *next_payload_to_seal = if self.is_active {
-            self.builder.build_on(canonical_head, None).await?
-        } else {
-            None
-        };
+        *next_payload_to_seal =
+            if self.is_active { self.builder.build_on(canonical_head, None).await? } else { None };
         if self.is_active && next_payload_to_seal.is_none() {
             build_ticker.reset_immediately();
         }
@@ -491,7 +488,7 @@ where
                         Ok(Some(head)) => {
                             shadow_cycle.as_mut().expect("shadow reconciliation requires cycle state").reconcile(head)?;
                             if self.is_active {
-                                next_payload_to_seal = self.builder.build_on(head).await?;
+                                next_payload_to_seal = self.builder.build_on(head, None).await?;
                                 if next_payload_to_seal.is_none() {
                                     build_ticker.reset_immediately();
                                 }
@@ -555,29 +552,18 @@ where
                                     warn!(target: "sequencer", "Failed to send deferred stop_sequencer response");
                                 }
                             }
-                            if self.is_active {
-                                if self.is_shadow_sequencer() {
-                                    if shadow_cycle
-                                        .and_then(ShadowCycle::reconciliation_target)
-                                        .is_none()
-                                    {
-                                        // Queue the acknowledged parent instead of starting its child
-                                        // here. Its timestamp is a hard lower bound for the steady-state
-                                        // child build because variable getPayload durations can make
-                                        // insertion complete early.
-                                        let parent_timestamp = inserted_head.block_info.timestamp;
-                                        pending_build_parent = Some(inserted_head);
-                                        build_ticker.reset_at_unix_timestamp(parent_timestamp);
-                                    }
-                                } else {
-                                    next_payload_to_seal = self
-                                        .builder
-                                        .build_on(inserted_head, last_sealed_millis_part)
-                                        .await?;
-                                    if next_payload_to_seal.is_none() {
-                                        build_ticker.reset_immediately();
-                                    }
-                                }
+                            if self.is_active
+                                && shadow_cycle
+                                    .and_then(ShadowCycle::reconciliation_target)
+                                    .is_none()
+                            {
+                                // Queue the acknowledged parent instead of starting its child
+                                // here. Its timestamp is a hard lower bound for the steady-state
+                                // child build because variable getPayload durations can make
+                                // insertion complete early.
+                                let parent_timestamp = inserted_head.block_info.timestamp;
+                                pending_build_parent = Some(inserted_head);
+                                build_ticker.reset_at_unix_timestamp(parent_timestamp);
                             }
                         }
                         Ok(SealStepOutcome::Pending) => {}
@@ -628,14 +614,31 @@ where
                                 last_seal_duration = dur;
                                 last_sealed_millis_part = handle_timestamp_millis_part;
                                 self.sealer = Some(new_sealer);
-                                // Schedule the next tick for the next block's target seal time.
-                                // Use the just-sealed block's timestamp; the next block's
-                                // timestamp is one block_time later.
-                                let next_block_time = self.next_block_seal_target(
+                                let next_block_time = if self.rollup_config.is_zombie_active(
                                     handle_timestamp,
-                                    handle_timestamp_millis_part,
-                                    last_seal_duration,
-                                );
+                                ) {
+                                    let cadence_millis = (self.block_interval.as_millis()
+                                        .min(u128::from(u64::MAX))
+                                        as u64)
+                                        .max(1);
+                                    let current_millis = handle_timestamp
+                                        .saturating_mul(1_000)
+                                        .saturating_add(u64::from(
+                                            handle_timestamp_millis_part.unwrap_or(0),
+                                        ));
+                                    let next_millis = current_millis.saturating_add(cadence_millis);
+                                    self.block_seal_target(
+                                        next_millis / 1_000,
+                                        Some((next_millis % 1_000) as u16),
+                                        last_seal_duration,
+                                    )
+                                } else {
+                                    self.next_block_seal_target(
+                                        handle_timestamp,
+                                        None,
+                                        last_seal_duration,
+                                    )
+                                };
                                 build_ticker.reset_at(next_block_time);
                                 // Do not call build() here. The next payload is built after the
                                 // engine acknowledges insertion of the sealed payload.
