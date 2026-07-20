@@ -10,7 +10,7 @@ use crate::{
     contract::AlloyUpgradeSignalReader,
     error::UpgradeSignalError,
     metrics::{UpgradeSignalMetricLayer, UpgradeSignalMetrics},
-    runtime::{UpgradeSignalRuntimeApplier, UpgradeSignalRuntimeValidation},
+    runtime::UpgradeSignalRuntimeApplier,
     state::{UpgradeSignal, UpgradeSignalSchedule},
 };
 
@@ -113,7 +113,7 @@ impl UpgradeSignalConfig {
         Ok(())
     }
 
-    /// Reads the L1 startup schedule, validates runtime invariants, and applies it to both sinks.
+    /// Reads the L1 startup schedule and applies it to both sinks.
     ///
     /// Execution is applied before consensus so an execution-only validation failure leaves the
     /// rollup config unchanged.
@@ -121,7 +121,6 @@ impl UpgradeSignalConfig {
         &self,
         l1_rpc: Url,
         log_context: &'static str,
-        runtime_validation: UpgradeSignalRuntimeValidation,
         chain_id: u64,
         execution_sink: &mut EL,
         consensus_sink: &mut CL,
@@ -140,8 +139,6 @@ impl UpgradeSignalConfig {
                 &[UpgradeSignalMetricLayer::Execution, UpgradeSignalMetricLayer::Consensus],
             )
             .await?;
-
-        runtime_validation.validate_schedule(chain_id, &schedule)?;
 
         UpgradeSignalRuntimeApplier::apply_schedule_to_sink(chain_id, &schedule, execution_sink)
             .map_err(eyre::Report::new)?

@@ -27,7 +27,6 @@ mod runtime;
 pub use runtime::{
     RuntimeRegistrySink, UpgradeSignalApplyAction, UpgradeSignalApplyChange,
     UpgradeSignalApplySummary, UpgradeSignalRefresher, UpgradeSignalRuntimeApplier,
-    UpgradeSignalRuntimeValidation,
 };
 
 mod state;
