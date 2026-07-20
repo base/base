@@ -2,7 +2,7 @@
 //!
 //! [`PolicyContractContext`] is the minimal storage holder the logic and dispatcher
 //! operate on. It carries no business logic of its own — behavior lives in the
-//! version implementations resolved from [`super::VersionResolver`].
+//! version implementations resolved from [`super::PolicyVersionResolver`].
 
 use super::PolicyAccounting;
 
@@ -10,7 +10,7 @@ use super::PolicyAccounting;
 ///
 /// A minimal `storage` holder; it carries no behavior of its own — all business
 /// logic lives in the version implementations resolved from
-/// [`super::VersionResolver`].
+/// [`super::PolicyVersionResolver`].
 #[derive(Debug, Clone)]
 pub struct PolicyContractContext<S: PolicyAccounting> {
     storage: S,

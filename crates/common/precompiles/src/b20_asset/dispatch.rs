@@ -2,7 +2,7 @@
 //!
 //! The dispatcher owns everything that is *not* version-specific: it decodes the
 //! calldata, resolves the active version once from the hardfork (via
-//! [`VersionResolver`]), and routes each operation — including reads — to the active
+//! [`AssetVersionResolver`]), and routes each operation — including reads — to the active
 //! version's [`B20AssetLogic`] implementation. Only constant getters (role IDs, policy type
 //! IDs) that are invariant across all versions are answered inline. The `announce`
 //! internal-call loop stays here because re-dispatching arbitrary sub-calls is a
@@ -16,7 +16,7 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
-use super::{AssetContractContext, Version, VersionResolver};
+use super::{AssetContractContext, AssetVersion, AssetVersionResolver};
 use crate::{
     AssetAccounting, B20AssetStorage, B20PolicyType, B20TokenRole, BerylAuxiliaryMetrics,
     BerylCallRecorder, BerylMetricLabels, BerylSelector,
@@ -59,7 +59,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> AssetContractContext<S, A> {
         }
         // Gate by hardfork: resolve the active version once. `None` is unreachable in practice —
         // the precompile is only installed from Beryl — but we revert defensively.
-        let Some(version) = VersionResolver::from_base_upgrade(upgrade) else {
+        let Some(version) = AssetVersionResolver::from_base_upgrade(upgrade) else {
             return recorder
                 .record_base_error_result(ctx, BasePrecompileError::Revert(Bytes::new()));
         };
@@ -81,7 +81,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> AssetContractContext<S, A> {
         &mut self,
         ctx: StorageCtx<'_>,
         calldata: &[u8],
-        version: Version,
+        version: AssetVersion,
         privileged: bool,
         observer: O,
     ) -> base_precompile_storage::Result<Bytes>
@@ -114,7 +114,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> AssetContractContext<S, A> {
         &mut self,
         ctx: StorageCtx<'_>,
         call: C,
-        version: Version,
+        version: AssetVersion,
         privileged: bool,
     ) -> base_precompile_storage::Result<Bytes> {
         let logic = version.implementation();
@@ -312,7 +312,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> AssetContractContext<S, A> {
         &mut self,
         ctx: StorageCtx<'_>,
         call: SC,
-        version: Version,
+        version: AssetVersion,
         privileged: bool,
         observer: O,
     ) -> base_precompile_storage::Result<Bytes>
@@ -382,7 +382,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> AssetContractContext<S, A> {
         &mut self,
         ctx: StorageCtx<'_>,
         call: IB20Asset::announceCall,
-        version: Version,
+        version: AssetVersion,
         privileged: bool,
         observer: &O,
     ) -> base_precompile_storage::Result<()>
@@ -447,7 +447,7 @@ mod tests {
     use base_common_genesis::BaseUpgrade;
     use base_precompile_storage::{HashMapStorageProvider, Result, StorageCtx};
 
-    use super::{AssetContractContext, Version};
+    use super::{AssetContractContext, AssetVersion};
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
         B20AssetLogicV1, B20AssetStorage, B20TokenRole, BerylErrorKind, FakePolicyAccounting, IB20,
@@ -518,7 +518,7 @@ mod tests {
     ) -> Result<Bytes> {
         let mut storage = storage_with_caller(caller);
         StorageCtx::enter(&mut storage, |ctx| {
-            token.route(ctx, calldata.as_ref(), Version::V1, false, NoopPrecompileCallObserver)
+            token.route(ctx, calldata.as_ref(), AssetVersion::V1, false, NoopPrecompileCallObserver)
         })
     }
 

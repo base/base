@@ -2,7 +2,7 @@
 //!
 //! [`FactoryContractContext`] is the minimal storage holder the logic and dispatcher
 //! operate on. It carries no business logic of its own — behavior lives in the
-//! version implementations resolved from [`super::VersionResolver`].
+//! version implementations resolved from [`super::FactoryVersionResolver`].
 
 use core::fmt;
 
@@ -12,7 +12,7 @@ use super::B20FactoryStorage;
 ///
 /// A minimal `storage` holder; it carries no behavior of its own — all business
 /// logic lives in the version implementations resolved from
-/// [`super::VersionResolver`].
+/// [`super::FactoryVersionResolver`].
 pub struct FactoryContractContext<'a> {
     storage: B20FactoryStorage<'a>,
 }

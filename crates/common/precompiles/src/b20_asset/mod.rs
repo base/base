@@ -12,7 +12,7 @@ pub use context::AssetContractContext;
 mod dispatch;
 
 mod versions;
-pub use versions::{Version, VersionResolver};
+pub use versions::{AssetVersion, AssetVersionResolver};
 
 mod logic;
 pub use logic::{B20AssetLogic, B20AssetLogicV1};

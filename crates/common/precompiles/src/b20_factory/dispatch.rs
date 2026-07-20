@@ -1,7 +1,7 @@
 //! ABI dispatch for the `B20Factory` precompile.
 //!
 //! The dispatcher owns everything that is *not* version-specific: it resolves the
-//! active version from the block's hardfork (via [`VersionResolver`]) and routes
+//! active version from the block's hardfork (via [`FactoryVersionResolver`]) and routes
 //! `createB20`'s business logic to it. `getB20Address`, `isB20`, and
 //! `isB20Initialized` are answered via version-invariant computations/pass-throughs.
 
@@ -11,7 +11,7 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, Result, StorageCtx};
 use revm::precompile::PrecompileResult;
 
-use super::{FactoryContractContext, Version, VersionResolver};
+use super::{FactoryContractContext, FactoryVersion, FactoryVersionResolver};
 use crate::{
     B20Variant, BerylAuxiliaryMetrics, BerylCallRecorder, BerylMetricLabels, IB20Factory,
     NoopPrecompileCallObserver, PrecompileCallObserver, macros::decode_precompile_call,
@@ -51,7 +51,7 @@ impl FactoryContractContext<'_> {
             return recorder.record_base_error_result(ctx, error);
         }
         // Gate by hardfork: resolve the active version once.
-        let Some(version) = VersionResolver::from_base_upgrade(upgrade) else {
+        let Some(version) = FactoryVersionResolver::from_base_upgrade(upgrade) else {
             return recorder
                 .record_base_error_result(ctx, BasePrecompileError::Revert(Bytes::new()));
         };
@@ -67,7 +67,7 @@ impl FactoryContractContext<'_> {
         &mut self,
         ctx: StorageCtx<'_>,
         calldata: &[u8],
-        version: Version,
+        version: FactoryVersion,
         upgrade: BaseUpgrade,
         observer: O,
     ) -> Result<Bytes>

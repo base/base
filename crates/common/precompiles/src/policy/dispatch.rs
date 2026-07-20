@@ -6,7 +6,7 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
-use super::{PolicyContractContext, Version, VersionResolver};
+use super::{PolicyContractContext, PolicyVersion, PolicyVersionResolver};
 use crate::{
     ActivationFeature, ActivationRegistryStorage, BerylAuxiliaryMetrics, BerylCallRecorder,
     BerylMetricLabels,
@@ -53,7 +53,7 @@ impl<S: PolicyAccounting> PolicyContractContext<S> {
         }
         // Gate by hardfork: resolve the active version once. `None` is unreachable in
         // practice — the precompile is only installed from Beryl — but we revert defensively.
-        let Some(version) = VersionResolver::from_base_upgrade(upgrade) else {
+        let Some(version) = PolicyVersionResolver::from_base_upgrade(upgrade) else {
             return recorder
                 .record_base_error_result(ctx, BasePrecompileError::Revert(Bytes::new()));
         };
@@ -90,7 +90,7 @@ impl<S: PolicyAccounting> PolicyContractContext<S> {
     fn route<O>(
         &mut self,
         calldata: &[u8],
-        version: Version,
+        version: PolicyVersion,
         observer: &O,
     ) -> base_precompile_storage::Result<Bytes>
     where

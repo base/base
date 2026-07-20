@@ -1,8 +1,8 @@
 //! Version manager for the asset B-20 precompile.
 //!
 //! This module is the single owner of both version mappings: which version is
-//! active at a given hardfork ([`VersionResolver::from_base_upgrade`]), and which
-//! concrete implementation backs a version ([`Version::implementation`]).
+//! active at a given hardfork ([`AssetVersionResolver::from_base_upgrade`]), and which
+//! concrete implementation backs a version ([`AssetVersion::implementation`]).
 //! Centralizing fork routing here keeps hardfork logic auditable and off the
 //! execution path, and lets the dispatcher route calls without ever matching on
 //! the version itself.
@@ -15,12 +15,12 @@ use crate::{AssetAccounting, B20AssetLogic, B20AssetLogicV1, PolicyAccounting};
 ///
 /// Each variant maps to an immutable implementation via [`Self::implementation`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Version {
+pub enum AssetVersion {
     /// Introduced at Beryl, the asset's activation fork.
     V1,
 }
 
-impl Version {
+impl AssetVersion {
     /// Returns the immutable logic implementation for this version.
     pub fn implementation<'l, S, A>(self) -> &'l dyn B20AssetLogic<S, A>
     where
@@ -39,13 +39,13 @@ impl Version {
 /// The version is resolved once per call from the block's active upgrade; there
 /// is only ever one active version at a time.
 #[derive(Debug, Default, Clone, Copy)]
-pub struct VersionResolver;
+pub struct AssetVersionResolver;
 
-impl VersionResolver {
+impl AssetVersionResolver {
     /// Returns the version active at `upgrade`, or `None` before the introduction
     /// fork (Beryl), where the asset precompile is not installed at all.
-    pub fn from_base_upgrade(upgrade: BaseUpgrade) -> Option<Version> {
-        if upgrade >= BaseUpgrade::Beryl { Some(Version::V1) } else { None }
+    pub fn from_base_upgrade(upgrade: BaseUpgrade) -> Option<AssetVersion> {
+        if upgrade >= BaseUpgrade::Beryl { Some(AssetVersion::V1) } else { None }
     }
 }
 

@@ -21,4 +21,4 @@ mod variant;
 pub use variant::B20Variant;
 
 mod versions;
-pub use versions::{Version, VersionResolver};
+pub use versions::{FactoryVersion, FactoryVersionResolver};

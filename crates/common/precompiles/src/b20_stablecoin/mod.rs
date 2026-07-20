@@ -12,7 +12,7 @@ pub use context::StablecoinContractContext;
 mod dispatch;
 
 mod versions;
-pub use versions::{Version, VersionResolver};
+pub use versions::{StablecoinVersion, StablecoinVersionResolver};
 
 mod logic;
 pub use logic::{B20StablecoinLogic, B20StablecoinLogicV1};

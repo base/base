@@ -12,7 +12,7 @@ pub use context::PolicyContractContext;
 mod dispatch;
 
 mod versions;
-pub use versions::{Version, VersionResolver};
+pub use versions::{PolicyVersion, PolicyVersionResolver};
 
 mod logic;
 pub use logic::{PolicyRegistryLogic, PolicyRegistryLogicV1};

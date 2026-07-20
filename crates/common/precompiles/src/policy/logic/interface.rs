@@ -11,7 +11,7 @@ use crate::{IPolicyRegistry::PolicyType, PolicyAccounting, PolicyContractContext
 ///
 /// Each method takes a [`PolicyContractContext`] wrapping the [`PolicyAccounting`]
 /// storage port. Versioned implementations are resolved via
-/// [`super::super::VersionResolver`].
+/// [`super::super::PolicyVersionResolver`].
 pub trait PolicyRegistryLogic<S: PolicyAccounting> {
     /// Creates a new ALLOWLIST or BLOCKLIST policy, returning its encoded ID.
     fn create_policy(

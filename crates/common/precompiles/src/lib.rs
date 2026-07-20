@@ -58,31 +58,29 @@ pub use metrics::{
 
 mod b20_asset;
 pub use b20_asset::{
-    AssetAccounting, AssetContractContext, B20AssetExtensionStorage, B20AssetInit, B20AssetLogic,
-    B20AssetLogicV1, B20AssetPrecompile, B20AssetStorage, IB20Asset, Version as AssetVersion,
-    VersionResolver as AssetVersionResolver,
+    AssetAccounting, AssetContractContext, AssetVersion, AssetVersionResolver,
+    B20AssetExtensionStorage, B20AssetInit, B20AssetLogic, B20AssetLogicV1, B20AssetPrecompile,
+    B20AssetStorage, IB20Asset,
 };
 
 mod b20_stablecoin;
 pub use b20_stablecoin::{
     B20StablecoinExtensionStorage, B20StablecoinInit, B20StablecoinLogic, B20StablecoinLogicV1,
     B20StablecoinPrecompile, B20StablecoinStorage, IB20Stablecoin, StablecoinAccounting,
-    StablecoinContractContext, Version as StablecoinVersion,
-    VersionResolver as StablecoinVersionResolver,
+    StablecoinContractContext, StablecoinVersion, StablecoinVersionResolver,
 };
 
 mod b20_factory;
 pub use b20_factory::{
     B20Factory, B20FactoryLogic, B20FactoryLogicV1, B20FactoryStorage, B20Variant, CommonParams,
-    FactoryContractContext, IB20Factory, TokenCreateParams, Version as FactoryVersion,
-    VersionResolver as FactoryVersionResolver,
+    FactoryContractContext, FactoryVersion, FactoryVersionResolver, IB20Factory, TokenCreateParams,
 };
 
 mod policy;
 pub use policy::{
     IPolicyRegistry, PackedPolicy, PolicyAccounting, PolicyContractContext, PolicyRegistryLogic,
-    PolicyRegistryLogicV1, PolicyRegistryPrecompile, PolicyRegistryStorage,
-    Version as PolicyVersion, VersionResolver as PolicyVersionResolver,
+    PolicyRegistryLogicV1, PolicyRegistryPrecompile, PolicyRegistryStorage, PolicyVersion,
+    PolicyVersionResolver,
 };
 
 mod tx_context;
