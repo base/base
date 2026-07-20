@@ -41,10 +41,10 @@ impl FromStr for SequencerSyncMode {
     type Err = String;
 
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
-        match raw {
-            "cl" | "CL" => Ok(Self::Cl),
-            "el" | "EL" => Ok(Self::El),
-            other => Err(format!("expected `cl` or `el`, got `{other}`")),
+        match raw.to_ascii_lowercase().as_str() {
+            "cl" => Ok(Self::Cl),
+            "el" => Ok(Self::El),
+            _ => Err(format!("expected `cl` or `el`, got `{raw}`")),
         }
     }
 }
@@ -117,5 +117,26 @@ impl Default for SequencerConfig {
             l1_rpc_timeout: Self::DEFAULT_L1_RPC_TIMEOUT,
             seal_offset: base_protocol::DEFAULT_SEAL_OFFSET,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sync_mode_from_str_is_case_insensitive() {
+        for raw in ["cl", "CL", "Cl", "cL"] {
+            assert_eq!(SequencerSyncMode::from_str(raw), Ok(SequencerSyncMode::Cl));
+        }
+        for raw in ["el", "EL", "El", "eL"] {
+            assert_eq!(SequencerSyncMode::from_str(raw), Ok(SequencerSyncMode::El));
+        }
+    }
+
+    #[test]
+    fn sync_mode_from_str_rejects_unknown_preserving_input() {
+        let err = SequencerSyncMode::from_str("Xl").unwrap_err();
+        assert_eq!(err, "expected `cl` or `el`, got `Xl`");
     }
 }

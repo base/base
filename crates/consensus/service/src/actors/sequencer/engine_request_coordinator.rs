@@ -1,16 +1,21 @@
 //! Sequencer ownership and serialized routing of engine requests.
 
-use std::{sync::Arc, time::Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use alloy_eips::BlockNumberOrTag;
 use base_consensus_engine::{
-    ConsolidateTask, EngineClient, EngineTask, EngineTaskError, EngineTaskErrorSeverity,
-    EngineTaskErrors, FinalizeTask, Metrics as EngineMetrics, SealTaskError,
+    BuildTaskError, ConsolidateTask, EngineBuildError, EngineClient, EngineTask, EngineTaskError,
+    EngineTaskErrorSeverity, EngineTaskErrors, FinalizeTask, Metrics as EngineMetrics,
+    SealTaskError,
 };
 use opentelemetry::context::FutureExt as OtelFutureExt;
 use tokio::{
     sync::{mpsc, watch},
     task::JoinHandle,
+    time::{self, Instant as TokioInstant, MissedTickBehavior},
 };
 use tracing::{debug, error, info, warn};
 
@@ -18,11 +23,12 @@ use super::{CanonicalUnsafeCatchup, Conductor, SequencerEngineState, ShadowRecon
 use crate::{
     BuildRequest, EngineActorRequest, EngineClientError, EngineDerivationClient, EngineError,
     EngineProcessor, EngineRequestReceiver, GetPayloadRequest, InsertUnsafePayloadRequest, Metrics,
-    ReconcileShadowRequest, ResetOrigin, ResetRequest, ResetRequestOutcome,
+    ReconcileShadowRequest, ResetOrigin, ResetRequest, ResetRequestOutcome, SequencerSyncMode,
     actors::engine::ResetOutcome,
 };
 
 const MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP: u64 = 300;
+const SEQUENCER_EL_SYNC_PROBE_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BootstrapRole {
@@ -42,6 +48,7 @@ where
     sequencer_state: SequencerEngineState,
     conductor: Option<Arc<dyn Conductor>>,
     sequencer_stopped: bool,
+    sequencer_sync_mode: SequencerSyncMode,
     unsafe_head_tx: watch::Sender<base_protocol::L2BlockInfo>,
 }
 
@@ -57,6 +64,7 @@ where
         shadow_mode: bool,
         conductor: Option<Arc<dyn Conductor>>,
         sequencer_stopped: bool,
+        sequencer_sync_mode: SequencerSyncMode,
         unsafe_head_tx: watch::Sender<base_protocol::L2BlockInfo>,
     ) -> Self {
         let sequencer_state = if shadow_mode {
@@ -67,7 +75,14 @@ where
         } else {
             SequencerEngineState::Regular
         };
-        Self { processor, sequencer_state, conductor, sequencer_stopped, unsafe_head_tx }
+        Self {
+            processor,
+            sequencer_state,
+            conductor,
+            sequencer_stopped,
+            sequencer_sync_mode,
+            unsafe_head_tx,
+        }
     }
 
     /// Returns the coordinator's sequencer routing state.
@@ -218,12 +233,32 @@ where
             }
             match bootstrap_role {
                 BootstrapRole::ConductorFollower => {
-                    self.processor.bootstrap_conductor_follower(opt_head).await
+                    if self.sequencer_sync_mode.is_el() {
+                        self.processor.bootstrap_conductor_follower(opt_head, at_genesis).await;
+                    } else {
+                        self.processor.bootstrap_validator(opt_head).await;
+                    }
                 }
                 BootstrapRole::ActiveSequencer => {
-                    self.processor.bootstrap_active_sequencer(opt_head, at_genesis).await
+                    if at_genesis || self.sequencer_sync_mode.is_el() {
+                        self.processor
+                            .bootstrap_active_sequencer(
+                                opt_head,
+                                at_genesis,
+                                self.sequencer_sync_mode.is_el(),
+                            )
+                            .await;
+                    } else {
+                        self.processor.bootstrap_validator(opt_head).await;
+                    }
                 }
             }
+
+            let mut el_sync_probe_interval = time::interval_at(
+                TokioInstant::now() + SEQUENCER_EL_SYNC_PROBE_INTERVAL,
+                SEQUENCER_EL_SYNC_PROBE_INTERVAL,
+            );
+            el_sync_probe_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
             loop {
                 // Full processor iteration window: drain + recv wait + request handling.
@@ -264,10 +299,28 @@ where
                 });
 
                 // Wait for the next processing request.
-                let recv_result = base_metrics::time!(
-                    EngineMetrics::engine_processor_recv_wait_duration_seconds(),
-                    { request_channel.recv().await }
+                let recv_wait_timer = base_metrics::timed!(
+                    EngineMetrics::engine_processor_recv_wait_duration_seconds()
                 );
+                let recv_result = if self.sequencer_sync_mode.is_el()
+                    && !self.processor.engine_state().el_sync_finished
+                {
+                    tokio::select! {
+                        request = request_channel.recv() => request,
+                        _ = el_sync_probe_interval.tick() => {
+                            drop(recv_wait_timer);
+                            let active_sequencer =
+                                self.resolve_bootstrap_role().await == BootstrapRole::ActiveSequencer;
+                            self.processor
+                                .probe_sequencer_el_sync(active_sequencer)
+                                .await;
+                            continue;
+                        }
+                    }
+                } else {
+                    request_channel.recv().await
+                };
+                drop(recv_wait_timer);
                 let Some(request) = recv_result else {
                     error!(target: "engine", "Engine processing request receiver closed unexpectedly");
                     return Err(EngineError::ChannelClosed);
@@ -276,6 +329,18 @@ where
                 match request {
                     EngineActorRequest::BuildRequest(build_request) => {
                         let BuildRequest { attributes, result_tx, otel_cx } = *build_request;
+                        if self.sequencer_sync_mode.is_el()
+                            && !self.processor.engine_state().el_sync_finished
+                        {
+                            warn!(target: "engine", "Deferring sequencer build: EL sync not yet complete");
+                            result_tx
+                                .send(Err(BuildTaskError::EngineBuildError(
+                                    EngineBuildError::EngineSyncing,
+                                )))
+                                .await
+                                .map_err(|_| EngineError::ChannelClosed)?;
+                            continue;
+                        }
                         let client = Arc::clone(self.processor.client());
                         let rollup = Arc::clone(self.processor.rollup());
                         let build_result = self
@@ -690,6 +755,7 @@ mod tests {
     use super::{BootstrapRole, SequencerEngineRequestCoordinator, SequencerEngineState};
     use crate::{
         Conductor, ConductorError, EngineProcessor, MockConductor, MockEngineDerivationClient,
+        SequencerSyncMode,
     };
 
     fn coordinator(
@@ -712,6 +778,7 @@ mod tests {
             shadow,
             conductor,
             stopped,
+            SequencerSyncMode::Cl,
             unsafe_head_tx,
         )
     }

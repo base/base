@@ -10,11 +10,12 @@ use std::{sync::Arc, time::Instant};
 use alloy_rpc_types_engine::PayloadId;
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::{AttributesBuilder, PipelineErrorKind};
+use base_consensus_engine::{BuildTaskError, EngineBuildError};
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 use tracing::instrument;
 
 use crate::{
-    Metrics, PoolActivation, ResetReason,
+    EngineClientError, Metrics, PoolActivation, ResetReason,
     actors::{
         SequencerEngineClient,
         sequencer::{
@@ -123,7 +124,16 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
         let build_request_start = Instant::now();
 
         let payload_id =
-            self.engine_client.start_build_block(attributes_with_parent.clone()).await?;
+            match self.engine_client.start_build_block(attributes_with_parent.clone()).await {
+                Ok(payload_id) => payload_id,
+                Err(EngineClientError::StartBuildError(BuildTaskError::EngineBuildError(
+                    EngineBuildError::EngineSyncing,
+                ))) => {
+                    warn!(target: "sequencer", "EL sync in progress; deferring payload build");
+                    return Ok(BuildOutcome::Deferred);
+                }
+                Err(err) => return Err(err.into()),
+            };
 
         Metrics::sequencer_block_building_start_task_duration()
             .record(build_request_start.elapsed());
