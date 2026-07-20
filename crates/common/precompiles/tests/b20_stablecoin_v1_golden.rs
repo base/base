@@ -1840,12 +1840,10 @@ fn golden_inner_reverts_before_beryl() {
             FakePolicyAccounting::new(),
             PolicyVersion::V1,
         );
-        match StablecoinVersions::from_base_upgrade(BaseUpgrade::Azul) {
-            Some(version) => {
-                token.route(ctx, &calldata, version, false, NoopPrecompileCallObserver)
-            }
-            None => Err(BasePrecompileError::Revert(Bytes::new())),
-        }
+        StablecoinVersions::from_base_upgrade(BaseUpgrade::Azul).map_or_else(
+            || Err(BasePrecompileError::Revert(Bytes::new())),
+            |version| token.route(ctx, &calldata, version, false, NoopPrecompileCallObserver),
+        )
     })
     .unwrap_err();
     assert_eq!(err, BasePrecompileError::Revert(Bytes::new()));
