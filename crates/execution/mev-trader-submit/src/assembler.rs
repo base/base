@@ -83,12 +83,15 @@ pub struct AssembleInput<'a> {
     pub plan: &'a BackrunPlan,
     /// The TRUSTED current-frame identity, sourced from the live
     /// `ProcessedFrame::measurement_context()` (NOT from the plan). The assembler
-    /// compares its 4 frame fields `{parent_hash, block_number, predecessor_index,
-    /// payload_id}` against the plan EXACT before emit; any mismatch — including a
-    /// same-parent but stale `predecessor_index`/`payload_id` generation — is
-    /// fail-closed (no calldata). This is a SEPARATE gate from the digest
-    /// self-check (which only catches field tampering, not staleness). The 5th
-    /// context field, `victim`, is bound via the existing raw-victim↔plan check.
+    /// compares ALL 5 fields `{parent_hash, block_number, predecessor_index,
+    /// payload_id, victim}` against the plan EXACT before emit; any mismatch —
+    /// including a same-parent but stale `predecessor_index`/`payload_id`
+    /// generation, or a plan whose `victim` is not the current frame's victim — is
+    /// fail-closed (no calldata). This is a SEPARATE gate from the digest self-check
+    /// (which only catches field tampering, not staleness/wrong-frame). The
+    /// raw-victim↔plan check in `assemble_unsigned_atomic_tx` is retained and
+    /// complementary: it binds the raw envelope to the plan's victim, while this
+    /// gate binds the plan's victim to the current frame.
     pub current_frame: MeasurementContext,
     /// The `BlinkAtomicExecutor` address (backrun `to`). Not carried by the
     /// plan — a deployment property supplied by the caller.
@@ -253,15 +256,20 @@ fn build_swap_hop(
 /// 1. **Field integrity** — recompute the plan's self-excluding digest and compare
 ///    it to the stored digest. A tampered field OR a tampered `fee_pips` (now part
 ///    of the digest preimage, R8) flips the digest and aborts.
-/// 2. **Frame identity** — compare the plan's 4 frame fields
-///    `{parent_hash, block_number, predecessor_index, payload_id}` against the
-///    TRUSTED current frame (`AssembleInput::current_frame`, sourced from the live
-///    `ProcessedFrame`, NOT from the plan). A stale or wrong-parent/generation plan
-///    is internally digest-valid, so this is a SEPARATE gate from (1); a mismatch —
-///    including a same-parent but stale `predecessor_index`/`payload_id` — aborts.
+/// 2. **Frame identity** — compare the plan's FULL 5-field `MeasurementContext`
+///    `{parent_hash, block_number, predecessor_index, payload_id, victim}` against
+///    the TRUSTED current frame (`AssembleInput::current_frame`, sourced from the
+///    live `ProcessedFrame`, NOT from the plan). A stale or wrong-parent/generation
+///    plan is internally digest-valid, so this is a SEPARATE gate from (1); a
+///    mismatch — including a same-parent but stale `predecessor_index`/`payload_id`
+///    generation, OR a plan whose `victim` is not the current frame's victim —
+///    aborts.
 ///
-/// `victim` (the 5th context field) is intentionally NOT compared here; it is bound
-/// through the raw-victim↔plan check in [`assemble_unsigned_atomic_tx`].
+/// `victim` MUST be bound here: the raw-victim↔plan check in
+/// [`assemble_unsigned_atomic_tx`] only proves the plan is self-consistent for ITS
+/// OWN victim, NOT that that victim is the current frame's victim. A digest-valid
+/// plan for victim B (with a raw tx for B) whose 4 frame fields happen to match a
+/// current frame targeting victim A would otherwise emit against the wrong victim.
 fn enforce_plan_integrity_and_frame(input: &AssembleInput<'_>) -> Result<(), AssembleError> {
     MeasurementEncoder::validate(input.plan).map_err(|_| AssembleError::DigestMismatch)?;
     let plan = input.plan;
@@ -270,6 +278,7 @@ fn enforce_plan_integrity_and_frame(input: &AssembleInput<'_>) -> Result<(), Ass
         || plan.block_number != frame.block_number
         || plan.predecessor_index != frame.predecessor_index
         || plan.payload_id != frame.payload_id
+        || plan.victim != frame.victim
     {
         return Err(AssembleError::FrameIdentityMismatch);
     }

@@ -7,14 +7,38 @@
 
 mod support;
 
-use alloy_primitives::{B256, U256, keccak256};
+use alloy_primitives::{B256, U256, aliases::U24, keccak256};
 use alloy_rpc_types_engine::PayloadId;
+use alloy_sol_types::SolCall;
 use base_mev_trader::{BackrunPlan, ExactProtocol, MeasurementContext};
 use mev_trader_submit::assembler::{
-    AssembleError, AssembleInput, HopExecutionParams, encode_executor_calldata,
+    AssembleError, AssembleInput, HopExecutionParams, assemble_unsigned_atomic_tx,
+    encode_executor_calldata,
 };
 use mev_trader_submit::fee::{FeeParityError, fee_bps_for_executor};
-use support::{ADAPTER, EXECUTOR, backrun_plan, finalize_plan_digest, matching_frame};
+use support::{ADAPTER, EXECUTOR, backrun_plan, finalize_plan_digest, matching_frame, victim_with_priority};
+
+/// The executor entrypoint ABI — used ONLY to decode the emitted calldata and read
+/// back the derived `feeBps` (this is a test-side decoder; production never decodes).
+mod exec_abi {
+    alloy_sol_types::sol! {
+        struct SwapHop {
+            address adapter;
+            address pool;
+            address tokenIn;
+            address tokenOut;
+            uint24 feeBps;
+            uint256 minAmountOut;
+        }
+        function executeBlinkOfaAtomic(
+            SwapHop firstHop,
+            SwapHop secondHop,
+            uint256 amountIn,
+            uint256 minFinalAmount,
+            uint256 validUntilBlock
+        );
+    }
+}
 
 /// Build an `AssembleInput` that exercises ONLY the calldata path (victim-envelope
 /// fields are unused by `encode_executor_calldata` and left minimal here).
@@ -130,6 +154,12 @@ fn fee_parity_conversion_guards_are_total_and_fail_closed() {
     assert_eq!(fee_bps_for_executor(ExactProtocol::UniswapV3, 3_000), Ok(0));
     assert_eq!(fee_bps_for_executor(ExactProtocol::UniswapV3, 500), Ok(0));
     assert_eq!(fee_bps_for_executor(ExactProtocol::AerodromeStable, 3_000), Ok(0));
+    // ★Crucially they ignore even a FRACTIONAL (non-%100) fee: the OutOfRange guard
+    // runs first, then the protocol match returns Ok(0) with NO %100 check. A
+    // regression that moved the %100 check BEFORE the protocol branch would wrongly
+    // reject these — e.g. Slipstream CL's 110 pips (1.1 bps).
+    assert_eq!(fee_bps_for_executor(ExactProtocol::UniswapV3, 110), Ok(0));
+    assert_eq!(fee_bps_for_executor(ExactProtocol::AerodromeStable, 150), Ok(0));
 
     // Constant-product pools (UniswapV2, AerodromeVolatile) convert losslessly.
     assert_eq!(fee_bps_for_executor(ExactProtocol::UniswapV2, 3_000), Ok(30));
@@ -186,4 +216,70 @@ fn fee_parity_guard_failure_aborts_calldata_emit() {
     // A self-applying first hop (UniswapV3) canonicalizes to feeBps 0 and emits.
     let v3 = backrun_plan([ExactProtocol::UniswapV3, ExactProtocol::UniswapV2], victim);
     assert!(encode_executor_calldata(&calldata_input(&v3, matching_frame(&v3))).is_ok());
+}
+
+#[test]
+fn wrong_frame_victim_fails_the_identity_gate_on_both_paths() {
+    // A digest-valid plan for victim B (with a raw tx for B) whose 4 frame fields
+    // match a TRUSTED current frame that targets victim A must NOT emit — the
+    // current-frame victim is bound IN THE GATE, not merely via the raw↔plan
+    // self-consistency check (which only proves the plan agrees with its OWN victim).
+    let (victim_raw, victim_b) = victim_with_priority(41);
+    let plan = backrun_plan([ExactProtocol::UniswapV2, ExactProtocol::UniswapV2], victim_b);
+    let victim_a = keccak256(b"a-different-victim");
+    assert_ne!(victim_a, victim_b);
+    let wrong_victim_frame = MeasurementContext { victim: victim_a, ..matching_frame(&plan) };
+
+    // Direct calldata path → no-emit.
+    assert_eq!(
+        encode_executor_calldata(&calldata_input(&plan, wrong_victim_frame)),
+        Err(AssembleError::FrameIdentityMismatch),
+    );
+
+    // Full-envelope path: the raw↔plan binding PASSES (raw matches plan.victim B),
+    // yet the gate still rejects because plan.victim (B) != current_frame.victim (A).
+    let reject = AssembleInput {
+        plan: &plan,
+        current_frame: wrong_victim_frame,
+        executor: EXECUTOR,
+        hops: [
+            HopExecutionParams { adapter: ADAPTER, min_amount_out: U256::from(1u64) },
+            HopExecutionParams { adapter: ADAPTER, min_amount_out: U256::from(1u64) },
+        ],
+        chain_id: 8453,
+        nonce: 0,
+        gas: 2_000_000,
+        max_fee_per_gas: 1_000_000_000,
+        valid_until_block: 12_345_678,
+        victim_raw_tx: &victim_raw,
+        victim_tx_hash: victim_b,
+        expected_victim_priority_fee: Some(41),
+    };
+    assert_eq!(
+        assemble_unsigned_atomic_tx(&reject).unwrap_err(),
+        AssembleError::FrameIdentityMismatch,
+    );
+
+    // Non-vacuous: the CORRECT current frame (victim B) emits on BOTH paths.
+    assert!(encode_executor_calldata(&calldata_input(&plan, matching_frame(&plan))).is_ok());
+    let accept = AssembleInput { current_frame: matching_frame(&plan), ..reject };
+    assert!(assemble_unsigned_atomic_tx(&accept).is_ok());
+}
+
+#[test]
+fn self_applying_hop_with_fractional_fee_emits_zero_feebps() {
+    // A UniswapV3 first hop carrying a FRACTIONAL sizing fee (110 pips = 1.1 bps,
+    // e.g. Slipstream CL) must still emit ABI feeBps 0 — the pool self-applies its
+    // fee, so the fraction is canonicalized to 0, never rejected or truncated. The
+    // second (UniV2) hop keeps its lossless conversion (3000 pips → 30 bps).
+    let victim = keccak256(b"v3-fractional");
+    let mut plan = backrun_plan([ExactProtocol::UniswapV3, ExactProtocol::UniswapV2], victim);
+    plan.route[0].fee_pips = 110;
+    finalize_plan_digest(&mut plan);
+    let calldata = encode_executor_calldata(&calldata_input(&plan, matching_frame(&plan)))
+        .expect("V3 fractional-fee calldata must emit");
+    let decoded = exec_abi::executeBlinkOfaAtomicCall::abi_decode(&calldata)
+        .expect("decode executor calldata");
+    assert_eq!(decoded.firstHop.feeBps, U24::ZERO, "V3 fractional fee did not canonicalize to 0");
+    assert_eq!(decoded.secondHop.feeBps, U24::from(30u32), "UniV2 hop feeBps not 30");
 }
