@@ -1,0 +1,12 @@
+[package]
+name = "wait-timeout"
+version = "0.2.1"
+edition = "2021"
+description = "Patched wait-timeout with WASM stub (no-op on non-unix/windows)"
+license = "MIT"
+
+[lints]
+workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
