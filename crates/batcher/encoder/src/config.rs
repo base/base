@@ -1,6 +1,7 @@
 //! Encoder configuration and its validation error type.
 
 use base_common_genesis::RollupConfig;
+use base_comp::CompressionAlgo;
 use base_protocol::{
     BLOB_DERIVATION_PREFIX_SIZE as PROTOCOL_BLOB_DERIVATION_PREFIX_SIZE,
     BLOB_MAX_DATA_SIZE as PROTOCOL_BLOB_MAX_DATA_SIZE, BatchType,
@@ -8,6 +9,8 @@ use base_protocol::{
 };
 
 use crate::DaType;
+
+pub use base_comp::CompressionAlgo as EncoderCompressionAlgo;
 
 /// Configuration for the [`BatchEncoder`](crate::BatchEncoder).
 #[derive(Debug, Clone)]
@@ -93,6 +96,13 @@ pub struct EncoderConfig {
     /// [`max_frame_size`]: EncoderConfig::max_frame_size
     /// [`da_type`]: EncoderConfig::da_type
     pub max_l1_tx_size_bytes: Option<usize>,
+
+    /// Compression algorithm used when opening a new channel.
+    ///
+    /// Default: [`CompressionAlgo::Brotli10`] (matches the reference batcher).
+    /// Set to [`CompressionAlgo::Zlib`] for environments without Brotli support
+    /// in the derivation pipeline (e.g. WASM devnet without Fjord activation).
+    pub compression_algo: CompressionAlgo,
 }
 
 impl Default for EncoderConfig {
@@ -107,6 +117,7 @@ impl Default for EncoderConfig {
             da_type: DaType::Blob,
             approx_compr_ratio: 0.6,
             max_l1_tx_size_bytes: None,
+            compression_algo: CompressionAlgo::Brotli10,
         }
     }
 }

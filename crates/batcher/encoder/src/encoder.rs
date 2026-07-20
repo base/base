@@ -331,7 +331,7 @@ impl BatchEncoder {
         let compressor_config = Config {
             target_output_size: self.config.target_frame_size as u64,
             kind: CompressorType::Shadow,
-            compression_algo: CompressionAlgo::Brotli10,
+            compression_algo: self.config.compression_algo,
             approx_compr_ratio: self.config.approx_compr_ratio,
         };
         let compressor = ShadowCompressor::from(compressor_config);
