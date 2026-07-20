@@ -15,7 +15,9 @@ workspace = true
 # alloy
 alloy-rpc-types-engine.workspace = true
 alloy-eips = { workspace = true, features = ["std"] }
-alloy-primitives = { workspace = true, features = ["std"] }
+# k256 enables owner-signature VERIFY-only recovery (EIP-191 recover_address_from_msg)
+# for B1 arming/kill-reset attestation. Recover-only: no signing, no private key.
+alloy-primitives = { workspace = true, features = ["k256", "std"] }
 alloy-consensus = { workspace = true, features = ["k256", "std"] }
 
 # base

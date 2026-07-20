@@ -1,0 +1,33 @@
+criteria_version: 2.0.0
+# [1] sigma / noise-band reuse policy
+sigma_net_error_wei: 2205116555244
+median_net_threshold_wei: 4410233110488
+sigma_reuse_policy: reuse-existing-no-posthoc-reanchor
+# [2] campaign drawdown floor
+drawdown_floor_wei: 50000000000000000
+drawdown_halt_operator: strict-greater-than
+# [3] campaign window
+window_min_hours: 48
+window_policy: longer-of-48h-or-min-submitted-n
+go_windows_required: 2
+go_windows_overlap: disallow
+# [4] minimum submitted N (denominator, per window)
+min_submitted_n_per_window: 100
+# [5] per-tx capital cap
+per_tx_cap_wei: 630000000000000
+# [6] hot wallet funding cap
+hot_wallet_cap_wei: 1000000000000000000
+# [7] decision metric — realized submit-net
+decision_metric_per_window: window_realized_submit_net_wei_gt_0
+decision_metric_cumulative: cumulative_two_window_realized_submit_net_wei_gt_0
+decision_net_fallback: forbidden
+go_conjunction: per_window_and_cumulative_net_gt_0 AND realized_net_median_ge_median_net_threshold_wei AND per_submission_ev_gt_0 AND realized_net_positive_ratio_ge_5pct AND freshness_valid_ratio_ge_80pct AND two_independent_windows
+# [8] inherited signable criteria (carried unchanged from p2-go-nogo-preregistration-draft-2026-07-05.md:28-29,43-44)
+freshness_valid_min_ratio_pct: 80
+freshness_valid_denominator: submitted_n_per_window
+freshness_valid_fail_verdict: INSUFFICIENT
+realized_net_positive_ratio_min_pct: 5
+realized_net_positive_ratio_denominator: submitted_n_per_window
+realized_net_positive_ratio_fail_verdict: NO-GO-WALL2
+# quality gate (inherited)
+quality_valid_min_ratio_pct: 80
