@@ -283,6 +283,7 @@ base-test-utils = { path = "crates/utilities/test-utils" }
 base-tx-manager = { path = "crates/utilities/tx-manager" }
 base-ring-buffer = { path = "crates/utilities/ring-buffer" }
 base-balance-monitor = { path = "crates/utilities/balance-monitor" }
+base-reth-mem-db = { path = "crates/utilities/reth-mem-db" }
 base-metrics = { path = "crates/utilities/metrics", default-features = false }
 base-runtime = { path = "crates/utilities/runtime", default-features = false }
 
@@ -520,6 +521,10 @@ bollard = "0.19.4"
 zstd = "0.13"
 blake3 = "1.8"
 
+# wasm
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+
 # misc
 snap = "1"
 redb = "2"
@@ -618,3 +623,6 @@ toml = { version = "1.0", default-features = false }
 ark-ff = { version = "0.5.0", default-features = false }
 unsigned-varint = { version = "0.8", default-features = false }
 ark-bls12-381 = { version = "0.5.0", default-features = false }
+
+[patch.crates-io]
+wait-timeout = { path = "crates/utilities/wait-timeout" }

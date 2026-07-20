@@ -13,3 +13,4 @@ crates/proof/succinct/elf/range-elf-embedded
 crates/proof/succinct/elf/aggregation-elf
 crates/proof/succinct/elf/*.bin
 /etc/scripts/local/__pycache__/
+crates/infra/wasm-devnet/www/pkg/

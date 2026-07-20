@@ -6005,6 +6005,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-reth-mem-db"
+version = "0.0.0"
+dependencies = [
+ "parking_lot",
+ "reth-db",
+ "reth-db-api",
+]
+
+[[package]]
 name = "base-reth-node"
 version = "0.0.0"
 dependencies = [
@@ -6190,6 +6199,38 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
+]
+
+[[package]]
+name = "base-wasm-devnet"
+version = "0.0.0"
+dependencies = [
+ "alloy-chains",
+ "alloy-consensus 2.0.5",
+ "alloy-eips 2.0.5",
+ "alloy-genesis 2.0.5",
+ "alloy-primitives",
+ "alloy-rlp",
+ "async-trait",
+ "base-action-harness",
+ "base-common-consensus",
+ "base-common-genesis",
+ "base-consensus-derive",
+ "base-execution-chainspec",
+ "base-execution-evm",
+ "base-protocol",
+ "console_error_panic_hook",
+ "getrandom 0.2.17",
+ "getrandom 0.3.4",
+ "k256",
+ "miniz_oxide 0.9.1",
+ "reth-evm",
+ "revm",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]
@@ -7614,6 +7655,16 @@ dependencies = [
  "libc",
  "unicode-width",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "console_error_panic_hook"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc"
+dependencies = [
+ "cfg-if",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -24231,8 +24282,6 @@ dependencies = [
 [[package]]
 name = "wait-timeout"
 version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09ac3b126d3914f9849036f826e054cbabdc8519970b8998ddaf3b5bd3c65f11"
 dependencies = [
  "libc",
 ]
