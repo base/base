@@ -1,0 +1,24 @@
+[package]
+name = "base-reth-mem-db"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+description = """
+A pure-Rust, in-memory implementation of the reth Database trait backed by BTreeMap.
+Designed for WASM targets where MDBX (the default reth storage backend) is unavailable.
+"""
+
+[lints]
+workspace = true
+
+[dependencies]
+reth-db-api.workspace = true
+
+parking_lot = "0.12"
+
+[dev-dependencies]
+reth-db.workspace = true
