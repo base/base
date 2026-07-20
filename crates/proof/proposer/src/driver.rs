@@ -6,6 +6,7 @@
 //! [`ProposerDriverControl`] trait for the admin JSON-RPC server.
 
 use std::{
+    panic::AssertUnwindSafe,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -17,11 +18,15 @@ use alloy_primitives::{Address, B256};
 use async_trait::async_trait;
 use base_proof_rpc::RollupProvider;
 use eyre::Result;
-use tokio::{sync::Mutex as TokioMutex, task::JoinHandle};
+use futures::FutureExt;
+use tokio::{
+    sync::{Mutex as TokioMutex, watch},
+    task::JoinHandle,
+};
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
-use crate::pipeline::ProvingPipeline;
+use crate::{pipeline::ProvingPipeline, proof_recovery::ProofRecovery};
 
 // ---------------------------------------------------------------------------
 // Core types
@@ -118,6 +123,8 @@ where
     R: RollupProvider + 'static,
 {
     pipeline: Arc<ProvingPipeline<R>>,
+    proof_recovery: Arc<ProofRecovery>,
+    recovery_poll_interval: Duration,
     session: TokioMutex<Session>,
     global_cancel: CancellationToken,
     running: Arc<AtomicBool>,
@@ -138,11 +145,18 @@ impl<R> PipelineHandle<R>
 where
     R: RollupProvider + 'static,
 {
-    /// Creates a new [`PipelineHandle`] wrapping the given proving pipeline.
-    pub fn new(pipeline: ProvingPipeline<R>, global_cancel: CancellationToken) -> Self {
+    /// Creates a new [`PipelineHandle`] wrapping the pipeline and recovery loop.
+    pub fn new(
+        pipeline: ProvingPipeline<R>,
+        proof_recovery: Arc<ProofRecovery>,
+        recovery_poll_interval: Duration,
+        global_cancel: CancellationToken,
+    ) -> Self {
         let session = Session { cancel: global_cancel.child_token(), task: None };
         Self {
             pipeline: Arc::new(pipeline),
+            proof_recovery,
+            recovery_poll_interval,
             session: TokioMutex::new(session),
             global_cancel,
             running: Arc::new(AtomicBool::new(false)),
@@ -175,11 +189,44 @@ where
 
         let cancel = self.global_cancel.child_token();
         let pipeline = Arc::clone(&self.pipeline);
+        let proof_recovery = Arc::clone(&self.proof_recovery);
+        let recovery_poll_interval = self.recovery_poll_interval;
 
         let running = Arc::clone(&self.running);
         let run_cancel = cancel.clone();
         let handle = tokio::spawn(async move {
-            pipeline.run(run_cancel).await;
+            info!("Starting proving pipeline");
+
+            loop {
+                let (recovery_tx, recovery_rx) = watch::channel(None);
+                let pipeline_cancel = run_cancel.clone();
+                let session = async {
+                    tokio::select! {
+                        biased;
+                        () = run_cancel.cancelled() => false,
+                        () = proof_recovery.run(recovery_poll_interval, recovery_tx) => true,
+                        restart = pipeline.run(pipeline_cancel, recovery_rx) => restart,
+                    }
+                };
+                let restart =
+                    AssertUnwindSafe(session).catch_unwind().await.unwrap_or_else(|panic| {
+                        let panic = panic
+                            .downcast_ref::<&'static str>()
+                            .copied()
+                            .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+                            .unwrap_or("unknown panic payload");
+                        warn!(panic = %panic, "Proposer session panicked, restarting");
+                        true
+                    });
+
+                if !restart {
+                    break;
+                }
+
+                info!("Restarting proposer recovery session");
+            }
+
+            info!("Proving pipeline stopped");
             running.store(false, Ordering::Release);
         });
 
@@ -298,9 +345,9 @@ mod tests {
             config.block_interval,
             config.submit_timeout,
         );
-        let pipeline =
-            ProvingPipeline::new(config, proof_dispatcher, proof_recovery, proof_collector);
-        PipelineHandle::new(pipeline, global_cancel)
+        let recovery_poll_interval = config.poll_interval;
+        let pipeline = ProvingPipeline::new(config, proof_dispatcher, proof_collector);
+        PipelineHandle::new(pipeline, proof_recovery, recovery_poll_interval, global_cancel)
     }
 
     #[tokio::test]

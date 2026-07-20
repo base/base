@@ -8,10 +8,11 @@ use base_proof_contracts::{
 };
 use base_proof_rpc::{RollupProvider, RpcError};
 use futures::{StreamExt, TryStreamExt, stream};
+use tokio::sync::watch;
 use tracing::{debug, info, warn};
 
 use crate::{
-    driver::RecoveredState, error::ProposerError, proof_target::ProofTarget,
+    Metrics, driver::RecoveredState, error::ProposerError, proof_target::ProofTarget,
     proposal_intervals::ProposalIntervals,
 };
 
@@ -115,6 +116,28 @@ impl ProofRecovery {
         };
 
         Some((state, finalized_head))
+    }
+
+    /// Publishes the latest recovery plan at the given polling interval.
+    pub async fn run(
+        &self,
+        poll_interval: Duration,
+        recovery_tx: watch::Sender<Option<(RecoveredState, u64)>>,
+    ) {
+        let mut cache: Option<ProofRecoveryCache> = None;
+
+        loop {
+            let plan = self.try_recover_and_plan(&mut cache).await;
+            if let Some((state, finalized_head)) = plan {
+                Metrics::safe_head().set(finalized_head as f64);
+                Metrics::finalized_head().set(finalized_head as f64);
+                Metrics::last_proposed_block().set(state.l2_block_number as f64);
+            }
+            // Publish unchanged plans too so failed dispatches and pending proofs retry.
+            recovery_tx.send_replace(plan);
+
+            tokio::time::sleep(poll_interval).await;
+        }
     }
 
     async fn contract_call<T>(
@@ -306,7 +329,8 @@ mod tests {
     use std::{collections::HashMap, sync::Arc, time::Duration};
 
     use alloy_primitives::{Address, B256};
-    use base_proof_contracts::AnchorRoot;
+    use base_proof_contracts::{AnchorRoot, DisputeGameFactoryClient};
+    use tokio::sync::watch;
 
     use super::*;
     use crate::test_utils::{
@@ -524,6 +548,47 @@ mod tests {
             ),
             "hung contract calls should be bounded by the configured RPC timeout"
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn recovery_loop_publishes_one_plan_per_poll() {
+        let factory = Arc::new(MockDisputeGameFactory::default());
+        let factory_client: Arc<dyn DisputeGameFactoryClient> =
+            Arc::<MockDisputeGameFactory>::clone(&factory);
+        let recovery = ProofRecovery::new(
+            ProofRecoveryConfig {
+                block_interval: 100,
+                intermediate_block_interval: 100,
+                game_type: TEST_GAME_TYPE,
+                anchor_state_registry_address: Address::ZERO,
+                scan_concurrency: 8,
+                rpc_timeout: Duration::from_secs(30),
+            },
+            Arc::new(MockRollupClient {
+                sync_status: test_sync_status(200, B256::ZERO),
+                output_roots: HashMap::new(),
+                max_safe_block: None,
+            }),
+            Arc::new(MockAnchorStateRegistry {
+                anchor_root: test_anchor_root(TEST_ANCHOR_BLOCK),
+                anchor_game: Address::ZERO,
+            }),
+            factory_client,
+        );
+        let (recovery_tx, recovery_rx) = watch::channel(None);
+        let run = recovery.run(Duration::from_millis(10), recovery_tx);
+        tokio::pin!(run);
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(49), &mut run).await.is_err(),
+            "recovery loop should keep running"
+        );
+        assert_eq!(
+            factory.game_count_calls.load(std::sync::atomic::Ordering::SeqCst),
+            5,
+            "recovery should run once per 10ms poll"
+        );
+        assert!(recovery_rx.borrow().is_some(), "recovery should publish a plan");
     }
 
     #[tokio::test]

@@ -261,11 +261,15 @@ impl ProposerService {
             driver_config.block_interval,
             driver_config.submit_timeout,
         );
-        let pipeline =
-            ProvingPipeline::new(driver_config, proof_dispatcher, proof_recovery, proof_collector);
+        let recovery_poll_interval = driver_config.poll_interval;
+        let pipeline = ProvingPipeline::new(driver_config, proof_dispatcher, proof_collector);
         info!("Proving pipeline initialized");
-        let driver_handle: Arc<dyn ProposerDriverControl> =
-            Arc::new(PipelineHandle::new(pipeline, cancel.clone()));
+        let driver_handle: Arc<dyn ProposerDriverControl> = Arc::new(PipelineHandle::new(
+            pipeline,
+            proof_recovery,
+            recovery_poll_interval,
+            cancel.clone(),
+        ));
 
         let ready = Arc::new(AtomicBool::new(false));
         let health_handle: JoinHandle<Result<()>> = {
