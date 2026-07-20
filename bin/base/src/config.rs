@@ -1,12 +1,11 @@
 use std::{
-    fmt,
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
 };
 
 use alloy_chains::Chain;
-use base_common_chains::ChainConfig as BuiltInChainConfig;
+use base_common_chains::ChainConfig;
 use base_consensus_cli::ConsensusChainArgs;
 use base_execution_chainspec::BaseChainSpec;
 use eyre::WrapErr;
@@ -19,76 +18,19 @@ use serde::{Deserialize, Serialize};
 /// Prefix for chain configuration environment variables.
 pub(crate) const BASE_CHAIN_ENV_PREFIX: &str = "BASE_CHAIN_";
 
-/// A built-in chain supported by the `base` binary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum BuiltInChain {
-    /// Base mainnet.
-    Mainnet,
-    /// Base sepolia.
-    Sepolia,
-    /// Base zeronet.
-    Zeronet,
-    /// Local Base devnet.
-    Dev,
-}
-
-impl BuiltInChain {
-    /// Returns the canonical CLI name for this chain.
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Mainnet => "mainnet",
-            Self::Sepolia => "sepolia",
-            Self::Zeronet => "zeronet",
-            Self::Dev => "dev",
-        }
-    }
-
-    /// Returns the built-in chain config backing this selection.
-    pub(crate) const fn chain_config(self) -> &'static BuiltInChainConfig {
-        match self {
-            Self::Mainnet => BuiltInChainConfig::mainnet(),
-            Self::Sepolia => BuiltInChainConfig::sepolia(),
-            Self::Zeronet => BuiltInChainConfig::zeronet(),
-            Self::Dev => BuiltInChainConfig::devnet(),
-        }
-    }
-}
-
-impl fmt::Display for BuiltInChain {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl FromStr for BuiltInChain {
-    type Err = String;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value.to_ascii_lowercase().as_str() {
-            "mainnet" => Ok(Self::Mainnet),
-            "sepolia" => Ok(Self::Sepolia),
-            "zeronet" => Ok(Self::Zeronet),
-            "dev" => Ok(Self::Dev),
-            _ => Err(format!(
-                "unsupported built-in chain `{value}`; expected one of mainnet, sepolia, zeronet, dev"
-            )),
-        }
-    }
-}
-
 /// CLI input for the root `--chain` flag.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ChainArg {
-    /// Use one of the built-in static chains.
-    BuiltIn(BuiltInChain),
+    /// Use one of the built-in static chains, identified by its Base network
+    /// selector (`mainnet`, `sepolia`, `zeronet`, `dev`).
+    BuiltIn(String),
     /// Load chain settings from a TOML file.
     File(PathBuf),
 }
 
 impl Default for ChainArg {
     fn default() -> Self {
-        Self::BuiltIn(BuiltInChain::Mainnet)
+        Self::BuiltIn("mainnet".to_owned())
     }
 }
 
@@ -96,16 +38,21 @@ impl FromStr for ChainArg {
     type Err = std::convert::Infallible;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        Ok(BuiltInChain::from_str(value)
-            .map_or_else(|_| Self::File(PathBuf::from(value)), Self::BuiltIn))
+        let selector = value.to_ascii_lowercase();
+        Ok(if ChainConfig::from_base_chain(&selector).is_some() {
+            Self::BuiltIn(selector)
+        } else {
+            Self::File(PathBuf::from(value))
+        })
     }
 }
 
 /// The concrete source of a resolved chain config.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum ResolvedChainSource {
-    /// The config came from a built-in static chain.
-    BuiltIn(BuiltInChain),
+    /// The config came from a built-in static chain, identified by its Base
+    /// network selector.
+    BuiltIn(String),
     /// The config came from a TOML file.
     File(PathBuf),
 }
@@ -135,14 +82,16 @@ pub(crate) struct ResolvedChainValues {
 }
 
 impl ResolvedChainValues {
-    /// Creates resolved values from a built-in chain.
-    pub(crate) fn from_builtin(chain: BuiltInChain) -> Self {
-        let config = chain.chain_config();
-        Self {
-            name: chain.as_str().to_owned(),
+    /// Creates resolved values from a built-in Base network selector.
+    ///
+    /// Returns `None` if the selector is not a known built-in chain.
+    pub(crate) fn from_builtin(selector: &str) -> Option<Self> {
+        let config = ChainConfig::from_base_chain(selector)?;
+        Some(Self {
+            name: selector.to_owned(),
             l2_chain_id: config.chain_id,
             l1_chain_id: config.l1_chain_id,
-        }
+        })
     }
 }
 
@@ -159,10 +108,9 @@ impl ResolvedChainConfig {
 
     /// Returns the execution chainspec for this chain.
     pub(crate) fn execution_chain_spec(&self) -> eyre::Result<Arc<BaseChainSpec>> {
-        let config =
-            base_common_chains::ChainConfig::by_chain_id(self.l2_chain_id).ok_or_else(|| {
-                eyre::eyre!("no built-in execution chainspec for L2 chain ID {}", self.l2_chain_id)
-            })?;
+        let config = ChainConfig::by_chain_id(self.l2_chain_id).ok_or_else(|| {
+            eyre::eyre!("no built-in execution chainspec for L2 chain ID {}", self.l2_chain_id)
+        })?;
         Ok(Arc::new(BaseChainSpec::try_from(config)?))
     }
 
@@ -189,10 +137,11 @@ impl ChainResolver {
     pub(crate) fn resolve(&self) -> eyre::Result<ResolvedChainConfig> {
         match &self.chain {
             ChainArg::BuiltIn(chain) => {
-                let figment =
-                    Figment::from(Serialized::defaults(ResolvedChainValues::from_builtin(*chain)))
-                        .merge(Env::prefixed(BASE_CHAIN_ENV_PREFIX));
-                Self::extract(figment, ResolvedChainSource::BuiltIn(*chain))
+                let defaults = ResolvedChainValues::from_builtin(chain)
+                    .ok_or_else(|| eyre::eyre!("unknown built-in chain `{chain}`"))?;
+                let figment = Figment::from(Serialized::defaults(defaults))
+                    .merge(Env::prefixed(BASE_CHAIN_ENV_PREFIX));
+                Self::extract(figment, ResolvedChainSource::BuiltIn(chain.clone()))
             }
             ChainArg::File(path) => Self::resolve_file(path),
         }
@@ -241,13 +190,14 @@ mod tests {
     #[allow(clippy::result_large_err)]
     fn resolves_mainnet_builtin() {
         with_cleared_env(|_| {
-            let resolved =
-                ChainResolver::new(ChainArg::BuiltIn(BuiltInChain::Mainnet)).resolve().unwrap();
+            let resolved = ChainResolver::new(ChainArg::BuiltIn("mainnet".to_owned()))
+                .resolve()
+                .unwrap();
 
             assert_eq!(resolved.name, "mainnet");
             assert_eq!(resolved.l2_chain_id, 8453);
             assert_eq!(resolved.l1_chain_id, 1);
-            assert_eq!(resolved.source, ResolvedChainSource::BuiltIn(BuiltInChain::Mainnet));
+            assert_eq!(resolved.source, ResolvedChainSource::BuiltIn("mainnet".to_owned()));
 
             Ok(())
         });
@@ -257,8 +207,9 @@ mod tests {
     #[allow(clippy::result_large_err)]
     fn resolves_sepolia_builtin() {
         with_cleared_env(|_| {
-            let resolved =
-                ChainResolver::new(ChainArg::BuiltIn(BuiltInChain::Sepolia)).resolve().unwrap();
+            let resolved = ChainResolver::new(ChainArg::BuiltIn("sepolia".to_owned()))
+                .resolve()
+                .unwrap();
 
             assert_eq!(resolved.name, "sepolia");
             assert_eq!(resolved.l2_chain_id, 84532);
@@ -272,12 +223,13 @@ mod tests {
     #[allow(clippy::result_large_err)]
     fn resolves_zeronet_builtin() {
         with_cleared_env(|_| {
-            let resolved =
-                ChainResolver::new(ChainArg::BuiltIn(BuiltInChain::Zeronet)).resolve().unwrap();
+            let resolved = ChainResolver::new(ChainArg::BuiltIn("zeronet".to_owned()))
+                .resolve()
+                .unwrap();
 
             assert_eq!(resolved.name, "zeronet");
             assert_eq!(resolved.l2_chain_id, 763360);
-            assert_eq!(resolved.source, ResolvedChainSource::BuiltIn(BuiltInChain::Zeronet));
+            assert_eq!(resolved.source, ResolvedChainSource::BuiltIn("zeronet".to_owned()));
 
             Ok(())
         });
@@ -288,12 +240,12 @@ mod tests {
     fn resolves_dev_builtin() {
         with_cleared_env(|_| {
             let resolved =
-                ChainResolver::new(ChainArg::BuiltIn(BuiltInChain::Dev)).resolve().unwrap();
+                ChainResolver::new(ChainArg::BuiltIn("dev".to_owned())).resolve().unwrap();
 
             assert_eq!(resolved.name, "dev");
             assert_eq!(resolved.l2_chain_id, 1337);
             assert_eq!(resolved.l1_chain_id, 900);
-            assert_eq!(resolved.source, ResolvedChainSource::BuiltIn(BuiltInChain::Dev));
+            assert_eq!(resolved.source, ResolvedChainSource::BuiltIn("dev".to_owned()));
 
             Ok(())
         });

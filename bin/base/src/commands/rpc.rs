@@ -168,7 +168,7 @@ mod tests {
     use crate::{
         cli::BaseCli,
         commands::BaseCommand,
-        config::{BuiltInChain, ChainArg},
+        config::ChainArg,
     };
 
     const RPC_FORWARDING_ENDPOINT_ENV: &str = "OP_RETH_SEQUENCER_HTTP";
@@ -378,7 +378,7 @@ mod tests {
             "-vvv",
         ]);
 
-        assert!(matches!(cli.chain, ChainArg::BuiltIn(BuiltInChain::Dev)));
+        assert!(matches!(cli.chain, ChainArg::BuiltIn(ref name) if name == "dev"));
         let BaseCommand::Rpc(rpc) = cli.command else {
             panic!("expected rpc command");
         };
