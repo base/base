@@ -916,7 +916,9 @@ where
             ApplyError::MalformedPolicyData => "actor policy data is malformed",
             ApplyError::NotAnActor { .. } => "revoked actor is not authorized",
             ApplyError::NoInitialActors => "create entry has no initial actors",
-            ApplyError::UnsortedInitialActors => "create initial actors are not strictly ascending",
+            ApplyError::ActorsNotSortedOrDuplicate => {
+                "create initial actors are not strictly ascending"
+            }
             ApplyError::BytecodeTooLarge => "create bytecode exceeds the size limit",
             ApplyError::AlreadyCreated { .. } => "create account already exists",
             ApplyError::CreateAddressMismatch { .. } => "create address does not match the sender",
