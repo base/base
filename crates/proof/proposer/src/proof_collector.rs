@@ -203,7 +203,7 @@ where
                 self.proof_requester.as_ref(),
                 target_block,
                 &session_id,
-                false,
+                true,
             )
             .await
             {
@@ -223,6 +223,10 @@ where
                 }
             };
 
+            // This scan starts after deleting an earlier target, so later proofs
+            // are expected to be invalid against this parent. Stop on any
+            // non-delete outcome and let the next pipeline session rebuild
+            // parent state from chain.
             if self
                 .submit_proof(
                     target_block,
