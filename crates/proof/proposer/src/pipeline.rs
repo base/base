@@ -322,6 +322,7 @@ mod tests {
             proof_submitter,
             config.block_interval,
             config.submit_timeout,
+            config.max_invalid_proof_deletes_per_tick,
         );
         ProvingPipeline::new(config, proof_dispatcher, proof_recovery, proof_collector)
     }

@@ -23,6 +23,9 @@ use tracing::{error, info};
 
 use crate::pipeline::ProvingPipeline;
 
+/// Default maximum invalid proof deletions allowed in one collector tick.
+pub const DEFAULT_MAX_INVALID_PROOF_DELETES_PER_TICK: usize = 50;
+
 // ---------------------------------------------------------------------------
 // Core types
 // ---------------------------------------------------------------------------
@@ -37,6 +40,8 @@ pub struct DriverConfig {
     /// Optional maximum duration for a single inline submit (validation + L1
     /// transaction). `None` disables the outer pipeline timeout.
     pub submit_timeout: Option<Duration>,
+    /// Maximum invalid proof requests to delete in one collector tick.
+    pub max_invalid_proof_deletes_per_tick: usize,
     /// Number of L2 blocks between proposals (read from `AggregateVerifier` at startup).
     pub block_interval: u64,
     /// Number of L2 blocks between intermediate output root checkpoints.
@@ -61,6 +66,7 @@ impl Default for DriverConfig {
             poll_interval: Duration::from_secs(12),
             recovery_scan_concurrency: 8,
             submit_timeout: None,
+            max_invalid_proof_deletes_per_tick: DEFAULT_MAX_INVALID_PROOF_DELETES_PER_TICK,
             block_interval: 512,
             intermediate_block_interval: 512,
             game_type: 0,
@@ -296,6 +302,7 @@ mod tests {
             proof_submitter,
             config.block_interval,
             config.submit_timeout,
+            config.max_invalid_proof_deletes_per_tick,
         );
         let pipeline =
             ProvingPipeline::new(config, proof_dispatcher, proof_recovery, proof_collector);

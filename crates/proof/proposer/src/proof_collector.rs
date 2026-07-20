@@ -33,6 +33,7 @@ where
     submitter: ProofSubmitter,
     block_interval: u64,
     submit_timeout: Option<Duration>,
+    max_invalid_proof_deletes_per_tick: usize,
 }
 
 impl<R> std::fmt::Debug for ProofCollector<R>
@@ -43,6 +44,7 @@ where
         f.debug_struct("ProofCollector")
             .field("block_interval", &self.block_interval)
             .field("submit_timeout", &self.submit_timeout)
+            .field("max_invalid_proof_deletes_per_tick", &self.max_invalid_proof_deletes_per_tick)
             .finish_non_exhaustive()
     }
 }
@@ -58,8 +60,16 @@ where
         submitter: ProofSubmitter,
         block_interval: u64,
         submit_timeout: Option<Duration>,
+        max_invalid_proof_deletes_per_tick: usize,
     ) -> Self {
-        Self { proof_requester, rollup_client, submitter, block_interval, submit_timeout }
+        Self {
+            proof_requester,
+            rollup_client,
+            submitter,
+            block_interval,
+            submit_timeout,
+            max_invalid_proof_deletes_per_tick,
+        }
     }
 
     /// Runs one collector tick.
@@ -177,8 +187,10 @@ where
         parent_address: Address,
         cancel: &CancellationToken,
     ) {
+        let mut deleted = 1;
+
         loop {
-            if cancel.is_cancelled() {
+            if cancel.is_cancelled() || deleted >= self.max_invalid_proof_deletes_per_tick {
                 return;
             }
 
@@ -219,6 +231,7 @@ where
                     if !self.delete_proof_request(&session_id, target_block).await {
                         return;
                     }
+                    deleted += 1;
                     continue;
                 }
             };
@@ -227,7 +240,7 @@ where
             // are expected to be invalid against this parent. Stop on any
             // non-delete outcome and let the next pipeline session rebuild
             // parent state from chain.
-            if self
+            let outcome = self
                 .submit_proof(
                     target_block,
                     &session_id,
@@ -236,11 +249,11 @@ where
                     parent_address,
                     cancel,
                 )
-                .await
-                != SubmitOutcome::DeletedInvalid
-            {
+                .await;
+            if outcome != SubmitOutcome::DeletedInvalid {
                 return;
             }
+            deleted += 1;
         }
     }
 
@@ -586,6 +599,7 @@ mod tests {
             submitter,
             BLOCK_INTERVAL,
             Some(std::time::Duration::from_secs(60)),
+            crate::DEFAULT_MAX_INVALID_PROOF_DELETES_PER_TICK,
         )
     }
 
@@ -893,5 +907,50 @@ mod tests {
         assert!(restart);
         assert!(!requester.failed_sessions.lock().unwrap().contains_key(&first_session));
         assert!(!requester.failed_sessions.lock().unwrap().contains_key(&second_session));
+    }
+
+    #[tokio::test]
+    async fn tick_caps_batch_deleted_invalid_proofs() {
+        let requester = Arc::new(MockProofRequester::default());
+        let first_target = 200;
+        let second_target = 300;
+        let third_target = 400;
+        let first_root = B256::repeat_byte(0xaa);
+        let second_root = B256::repeat_byte(0xbb);
+        let third_root = B256::repeat_byte(0xcc);
+        let first_session = ProposerProofAdapter::tee_session_id_for_root(first_root);
+        let second_session = ProposerProofAdapter::tee_session_id_for_root(second_root);
+        let third_session = ProposerProofAdapter::tee_session_id_for_root(third_root);
+        requester.failed_sessions.lock().unwrap().extend([
+            (first_session.clone(), "simulated first proof failure".to_owned()),
+            (second_session.clone(), "simulated second proof failure".to_owned()),
+            (third_session.clone(), "simulated third proof failure".to_owned()),
+        ]);
+        let mut collector = make_collector(
+            Arc::clone(&requester) as Arc<dyn ProofRequesterProvider>,
+            Arc::new(MockRollupClient {
+                sync_status: test_sync_status(third_target, B256::ZERO),
+                output_roots: [
+                    (first_target, first_root),
+                    (second_target, second_root),
+                    (third_target, third_root),
+                ]
+                .into_iter()
+                .collect(),
+                max_safe_block: None,
+            }),
+            Arc::new(MockOutputProposer::default()),
+        );
+        collector.max_invalid_proof_deletes_per_tick = 2;
+
+        let mut current = recovered(100);
+        let restart = collector
+            .tick(&mut current, third_target, third_target, &CancellationToken::new())
+            .await;
+
+        assert!(restart);
+        assert!(!requester.failed_sessions.lock().unwrap().contains_key(&first_session));
+        assert!(!requester.failed_sessions.lock().unwrap().contains_key(&second_session));
+        assert!(requester.failed_sessions.lock().unwrap().contains_key(&third_session));
     }
 }

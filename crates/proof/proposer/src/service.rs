@@ -220,6 +220,7 @@ impl ProposerService {
             poll_interval: config.poll_interval,
             recovery_scan_concurrency: config.recovery_scan_concurrency,
             submit_timeout,
+            max_invalid_proof_deletes_per_tick: config.max_invalid_proof_deletes_per_tick,
             block_interval,
             intermediate_block_interval,
             game_type: config.game_type,
@@ -259,6 +260,7 @@ impl ProposerService {
             proof_submitter,
             driver_config.block_interval,
             driver_config.submit_timeout,
+            driver_config.max_invalid_proof_deletes_per_tick,
         );
         let pipeline =
             ProvingPipeline::new(driver_config, proof_dispatcher, proof_recovery, proof_collector);
