@@ -13113,6 +13113,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "mev-trader-submit"
+version = "1.1.1"
+dependencies = [
+ "alloy-consensus 2.0.5",
+ "alloy-eips 2.0.5",
+ "alloy-primitives",
+ "alloy-rpc-types-engine",
+ "alloy-sol-types",
+ "base-mev-trader",
+ "k256",
+ "rand 0.8.6",
+ "serde_json",
+]
+
+[[package]]
 name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"

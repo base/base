@@ -1,0 +1,49 @@
+[package]
+name = "mev-trader-submit"
+description = "Phase-B in-node MEV submit safe-prefix: rung-1 unsigned 2-channel assembler + rung-2 ephemeral throwaway signer. Entirely gated behind the `phase-b` feature and absent from the default node build."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# The whole submit surface (ephemeral signer + calldata/bundle assembly) lives
+# behind this feature. With the feature OFF — the default, and the ONLY shape the
+# deployed `base-reth-node` binary is ever built in — every dependency below is
+# unresolved and the crate compiles to an empty lib: zero signer/submit code.
+# HARD GO flips this on for a dev/test build only; it is never a node-binary dep.
+phase-b = [
+    "dep:base-mev-trader",
+    "dep:alloy-consensus",
+    "dep:alloy-eips",
+    "dep:alloy-primitives",
+    "dep:alloy-sol-types",
+    "dep:k256",
+    "dep:rand_08",
+]
+
+[dependencies]
+# All optional: none are pulled unless `phase-b` is explicitly enabled.
+base-mev-trader = { workspace = true, optional = true }
+alloy-consensus = { workspace = true, features = ["k256", "std"], optional = true }
+alloy-eips = { workspace = true, features = ["std"], optional = true }
+alloy-primitives = { workspace = true, features = ["std"], optional = true }
+alloy-sol-types = { workspace = true, features = ["std"], optional = true }
+k256 = { workspace = true, optional = true }
+rand_08 = { workspace = true, optional = true }
+
+[dev-dependencies]
+# Test-only (never linked into any node binary). The anvil e2e talks JSON-RPC to a
+# spawned loopback anvil over a raw std::net TCP socket; serde_json only frames the
+# request/response bodies. The remaining crates build BackrunPlan/victim fixtures.
+serde_json = { workspace = true, features = ["std"] }
+base-mev-trader = { workspace = true }
+alloy-consensus = { workspace = true, features = ["k256", "std"] }
+alloy-eips = { workspace = true, features = ["std"] }
+alloy-primitives = { workspace = true, features = ["std"] }
+alloy-rpc-types-engine = { workspace = true }
