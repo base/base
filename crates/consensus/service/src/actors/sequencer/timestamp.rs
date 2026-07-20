@@ -1,6 +1,10 @@
 //! Timestamp planning for sequencer block production.
 
+use std::time::Duration;
+
 const MILLIS_PER_SECOND: u64 = 1_000;
+/// Fixed sub-second cadence used after Zombie activation.
+pub(super) const ZOMBIE_BLOCK_INTERVAL: Duration = Duration::from_millis(200);
 
 /// A planned block timestamp.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -6,7 +6,7 @@
 
 use std::{
     sync::Arc,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 use alloy_rpc_types_engine::PayloadId;
@@ -25,6 +25,7 @@ use crate::{
             recovery::RecoveryModeGuard,
             timestamp::{
                 SequencerTimestamp, SequencerTimestampPlanner, SequencerTimestampPlannerError,
+                ZOMBIE_BLOCK_INTERVAL,
             },
         },
     },
@@ -57,8 +58,6 @@ pub struct PayloadBuilder<A: AttributesBuilder, O: OriginSelector, E: SequencerE
     pub recovery_mode: RecoveryModeGuard,
     /// The rollup configuration.
     pub rollup_config: Arc<RollupConfig>,
-    /// Wall-clock interval between consecutive block builds.
-    pub block_interval: Duration,
 }
 
 impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadBuilder<A, O, E> {
@@ -174,9 +173,8 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
 
     /// Plans the next block's timestamp.
     ///
-    /// After Zombie activation, or when `block_interval` overrides the rollup `block_time`,
-    /// uses `SequencerTimestampPlanner::sub_second` aligned to the configured cadence.
-    /// Otherwise advances by the whole-second `block_time` via
+    /// After Zombie activation, uses `SequencerTimestampPlanner::sub_second` aligned to the
+    /// fixed Zombie cadence. Otherwise advances by the whole-second `block_time` via
     /// `SequencerTimestampPlanner::legacy`.
     #[allow(clippy::result_large_err)]
     fn plan_next_timestamp(
@@ -187,10 +185,8 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
         let parent_timestamp = parent.block_info.timestamp;
         let legacy =
             SequencerTimestampPlanner::legacy(parent_timestamp, self.rollup_config.block_time)?;
-        let uses_override =
-            self.block_interval != Duration::from_secs(self.rollup_config.block_time);
-        if self.rollup_config.is_zombie_active(legacy.timestamp) || uses_override {
-            let cadence_millis = u64::try_from(self.block_interval.as_millis())
+        if self.rollup_config.is_zombie_active(legacy.timestamp) {
+            let cadence_millis = u64::try_from(ZOMBIE_BLOCK_INTERVAL.as_millis())
                 .map_err(|_| SequencerTimestampPlannerError::TimestampOverflow)?
                 .max(1);
             let parent_timestamp_millis = parent_timestamp

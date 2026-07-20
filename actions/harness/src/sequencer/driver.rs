@@ -265,7 +265,6 @@ impl L2Sequencer {
             origin_selector,
             recovery_mode: RecoveryModeGuard::new(false),
             rollup_config: Arc::clone(&self.rollup_config),
-            block_interval: Duration::from_secs(self.rollup_config.block_time.max(1)),
         };
 
         let (admin_api_tx, admin_api_rx) = mpsc::channel(8);
@@ -280,7 +279,6 @@ impl L2Sequencer {
             shadow_blocks_per_cycle: None,
             recovery_mode: RecoveryModeGuard::new(false),
             rollup_config: self.actor_rollup_config(),
-            block_interval: Duration::from_secs(self.actor_rollup_config().block_time),
             unsafe_payload_gossip_client: ActionUnsafePayloadGossipClient,
             sealer: None,
             pending_stop: None,

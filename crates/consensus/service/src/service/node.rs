@@ -562,10 +562,6 @@ impl RollupNode {
             let recovery_mode =
                 RecoveryModeGuard::new(self.sequencer_config.sequencer_recovery_mode);
             let engine_client = Arc::new(sequencer_engine_client);
-            let block_interval = self
-                .sequencer_config
-                .block_interval
-                .unwrap_or_else(|| Duration::from_secs(self.config.block_time));
             (
                 Some(SequencerActor {
                     admin_api_rx: sequencer_admin_api_rx,
@@ -575,7 +571,6 @@ impl RollupNode {
                         origin_selector: delayed_origin_selector,
                         recovery_mode: recovery_mode.clone(),
                         rollup_config: Arc::clone(&self.config),
-                        block_interval,
                     },
                     cancellation_token: cancellation.clone(),
                     conductor,
@@ -584,7 +579,6 @@ impl RollupNode {
                     shadow_blocks_per_cycle: self.sequencer_config.shadow_blocks_per_cycle,
                     recovery_mode,
                     rollup_config: Arc::clone(&self.config),
-                    block_interval,
                     unsafe_payload_gossip_client: queued_gossip_client,
                     sealer: None,
                     pending_stop: None,
