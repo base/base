@@ -18,6 +18,7 @@ use crate::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SubmitOutcome {
     Advanced(RecoveredState),
+    DeletedInvalid,
     Restart,
     Idle,
 }
@@ -124,7 +125,18 @@ where
                         error = %error,
                         "Deleting proof request after proof collection failure"
                     );
-                    return self.delete_proof_request(&session_id, target_block).await;
+                    if self.delete_proof_request(&session_id, target_block).await {
+                        self.delete_consecutive_invalid_proofs(
+                            target_block,
+                            finalized_head,
+                            dispatched_through,
+                            current.parent_address,
+                            cancel,
+                        )
+                        .await;
+                        return true;
+                    }
+                    return false;
                 }
             };
 
@@ -140,8 +152,90 @@ where
                 .await
             {
                 SubmitOutcome::Advanced(next) => *current = next,
+                SubmitOutcome::DeletedInvalid => {
+                    self.delete_consecutive_invalid_proofs(
+                        target_block,
+                        finalized_head,
+                        dispatched_through,
+                        current.parent_address,
+                        cancel,
+                    )
+                    .await;
+                    return true;
+                }
                 SubmitOutcome::Restart => return true,
                 SubmitOutcome::Idle => return false,
+            }
+        }
+    }
+
+    async fn delete_consecutive_invalid_proofs(
+        &self,
+        mut target_block: u64,
+        finalized_head: u64,
+        dispatched_through: u64,
+        parent_address: Address,
+        cancel: &CancellationToken,
+    ) {
+        loop {
+            if cancel.is_cancelled() {
+                return;
+            }
+
+            let Some(next_target) = ProofTarget::next_block(target_block, self.block_interval)
+            else {
+                return;
+            };
+            target_block = next_target;
+
+            if target_block > finalized_head || target_block > dispatched_through {
+                return;
+            }
+
+            let Some(claimed_l2_output_root) =
+                ProofTarget::canonical_output_root(self.rollup_client.as_ref(), target_block).await
+            else {
+                return;
+            };
+
+            let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_l2_output_root);
+            let (aggregate_proposal, proposals) = match Self::poll_proof(
+                self.proof_requester.as_ref(),
+                target_block,
+                &session_id,
+                false,
+            )
+            .await
+            {
+                Ok(Some(proof)) => proof,
+                Ok(None) => return,
+                Err(error) => {
+                    warn!(
+                        target_block,
+                        session_id = %session_id,
+                        error = %error,
+                        "Deleting consecutive proof request after proof collection failure"
+                    );
+                    if !self.delete_proof_request(&session_id, target_block).await {
+                        return;
+                    }
+                    continue;
+                }
+            };
+
+            if self
+                .submit_proof(
+                    target_block,
+                    &session_id,
+                    aggregate_proposal,
+                    proposals,
+                    parent_address,
+                    cancel,
+                )
+                .await
+                != SubmitOutcome::DeletedInvalid
+            {
+                return;
             }
         }
     }
@@ -347,7 +441,7 @@ where
                     "Submission discarded, deleting proof request for re-prove"
                 );
                 return if self.delete_proof_request(session_id, target_block).await {
-                    SubmitOutcome::Restart
+                    SubmitOutcome::DeletedInvalid
                 } else {
                     SubmitOutcome::Idle
                 };
@@ -420,6 +514,24 @@ mod tests {
             output_roots: root.into_iter().map(|root| (block, root)).collect(),
             max_safe_block: None,
         })
+    }
+
+    async fn dispatch_ready_proof(
+        requester: &MockProofRequester,
+        target_block: u64,
+        claimed_root: B256,
+    ) {
+        let proof_request = ProofRequest {
+            claimed_l2_output_root: claimed_root,
+            claimed_l2_block_number: target_block,
+            intermediate_block_interval: BLOCK_INTERVAL,
+            l1_head_number: 1000,
+            ..Default::default()
+        };
+        requester
+            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(proof_request))
+            .await
+            .expect("test setup should dispatch root session");
     }
 
     fn make_collector(
@@ -607,17 +719,7 @@ mod tests {
         let target_block = 200;
         let claimed_root = B256::repeat_byte(target_block as u8);
         let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_root);
-        let proof_request = ProofRequest {
-            claimed_l2_output_root: claimed_root,
-            claimed_l2_block_number: target_block,
-            intermediate_block_interval: BLOCK_INTERVAL,
-            l1_head_number: 1000,
-            ..Default::default()
-        };
-        requester
-            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(proof_request))
-            .await
-            .expect("test setup should dispatch root session");
+        dispatch_ready_proof(&requester, target_block, claimed_root).await;
         let collector = make_collector(
             Arc::clone(&requester) as Arc<dyn ProofRequesterProvider>,
             rollup_client(target_block, Some(claimed_root)),
@@ -636,22 +738,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn tick_batch_deletes_consecutive_discarded_proofs() {
+        let requester = Arc::new(MockProofRequester::default());
+        let first_target = 200;
+        let second_target = 300;
+        let first_root = B256::repeat_byte(first_target as u8);
+        let second_root = B256::repeat_byte(second_target as u8);
+        let first_session = ProposerProofAdapter::tee_session_id_for_root(first_root);
+        let second_session = ProposerProofAdapter::tee_session_id_for_root(second_root);
+        dispatch_ready_proof(&requester, first_target, first_root).await;
+        dispatch_ready_proof(&requester, second_target, second_root).await;
+
+        let output = Arc::new(MockOutputProposer::with_create_errors([
+            ProposerError::Submission(ProofSubmissionError::InvalidSigner),
+            ProposerError::Submission(ProofSubmissionError::InvalidSigner),
+        ]));
+        let collector = make_collector(
+            Arc::clone(&requester) as Arc<dyn ProofRequesterProvider>,
+            Arc::new(MockRollupClient {
+                sync_status: test_sync_status(second_target, B256::ZERO),
+                output_roots: [(first_target, first_root), (second_target, second_root)]
+                    .into_iter()
+                    .collect(),
+                max_safe_block: None,
+            }),
+            Arc::clone(&output) as Arc<dyn OutputProposer>,
+        );
+
+        let mut current = recovered(100);
+        let restart = collector
+            .tick(&mut current, second_target, second_target, &CancellationToken::new())
+            .await;
+
+        assert!(restart);
+        assert!(!requester.requests.lock().unwrap().contains_key(&first_session));
+        assert!(!requester.requests.lock().unwrap().contains_key(&second_session));
+        assert_eq!(*output.created.lock().unwrap(), 2);
+    }
+
+    #[tokio::test]
     async fn tick_waits_when_delete_after_discard_fails() {
         let requester = Arc::new(MockProofRequester { reject_delete: true, ..Default::default() });
         let target_block = 200;
         let claimed_root = B256::repeat_byte(target_block as u8);
         let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_root);
-        let proof_request = ProofRequest {
-            claimed_l2_output_root: claimed_root,
-            claimed_l2_block_number: target_block,
-            intermediate_block_interval: BLOCK_INTERVAL,
-            l1_head_number: 1000,
-            ..Default::default()
-        };
-        requester
-            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(proof_request))
-            .await
-            .expect("test setup should dispatch root session");
+        dispatch_ready_proof(&requester, target_block, claimed_root).await;
         let collector = make_collector(
             Arc::clone(&requester) as Arc<dyn ProofRequesterProvider>,
             rollup_client(target_block, Some(claimed_root)),
@@ -676,17 +807,7 @@ mod tests {
         let stale_root = B256::repeat_byte(0xaa);
         let fresh_root = B256::repeat_byte(0xbb);
         let session_id = ProposerProofAdapter::tee_session_id_for_root(stale_root);
-        let proof_request = ProofRequest {
-            claimed_l2_output_root: stale_root,
-            claimed_l2_block_number: target_block,
-            intermediate_block_interval: BLOCK_INTERVAL,
-            l1_head_number: 1000,
-            ..Default::default()
-        };
-        requester
-            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(proof_request))
-            .await
-            .expect("test setup should dispatch stale root session");
+        dispatch_ready_proof(&requester, target_block, stale_root).await;
         let collector = make_collector(
             Arc::clone(&requester) as Arc<dyn ProofRequesterProvider>,
             rollup_client(target_block, Some(fresh_root)),
@@ -734,5 +855,40 @@ mod tests {
 
         assert!(restart);
         assert!(!requester.failed_sessions.lock().unwrap().contains_key(&session_id));
+    }
+
+    #[tokio::test]
+    async fn tick_batch_deletes_consecutive_failed_proofs() {
+        let requester = Arc::new(MockProofRequester::default());
+        let first_target = 200;
+        let second_target = 300;
+        let first_root = B256::repeat_byte(0xaa);
+        let second_root = B256::repeat_byte(0xbb);
+        let first_session = ProposerProofAdapter::tee_session_id_for_root(first_root);
+        let second_session = ProposerProofAdapter::tee_session_id_for_root(second_root);
+        requester.failed_sessions.lock().unwrap().extend([
+            (first_session.clone(), "simulated first proof failure".to_owned()),
+            (second_session.clone(), "simulated second proof failure".to_owned()),
+        ]);
+        let collector = make_collector(
+            Arc::clone(&requester) as Arc<dyn ProofRequesterProvider>,
+            Arc::new(MockRollupClient {
+                sync_status: test_sync_status(second_target, B256::ZERO),
+                output_roots: [(first_target, first_root), (second_target, second_root)]
+                    .into_iter()
+                    .collect(),
+                max_safe_block: None,
+            }),
+            Arc::new(MockOutputProposer::default()),
+        );
+
+        let mut current = recovered(100);
+        let restart = collector
+            .tick(&mut current, second_target, second_target, &CancellationToken::new())
+            .await;
+
+        assert!(restart);
+        assert!(!requester.failed_sessions.lock().unwrap().contains_key(&first_session));
+        assert!(!requester.failed_sessions.lock().unwrap().contains_key(&second_session));
     }
 }
