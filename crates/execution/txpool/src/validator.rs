@@ -960,14 +960,28 @@ where
             }
             Eip8130TimestampError::Expired => "transaction expiry has elapsed",
         };
-        tracing::debug!(
-            reason,
-            now,
-            expiry = signed.tx().expiry,
-            nonce_key = %signed.tx().nonce_key,
-            window = Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW,
-            "EIP-8130 timestamp validation failed",
-        );
+        let tx = signed.tx();
+        // The `window` bound only governs the nonce-free "too far in the future"
+        // rejection; logging it for the other variants (e.g. a nonce-bearing
+        // `Expired`) would wrongly imply the nonce-free window was involved.
+        if matches!(error, Eip8130TimestampError::NonceFreeExpiryTooFar) {
+            tracing::debug!(
+                reason,
+                now,
+                expiry = tx.expiry,
+                nonce_key = %tx.nonce_key,
+                window = Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW,
+                "EIP-8130 timestamp validation failed",
+            );
+        } else {
+            tracing::debug!(
+                reason,
+                now,
+                expiry = tx.expiry,
+                nonce_key = %tx.nonce_key,
+                "EIP-8130 timestamp validation failed",
+            );
+        }
         Self::eip8130_error(reason)
     }
 
