@@ -59,7 +59,8 @@ pub use metrics::{
 mod b20_asset;
 pub use b20_asset::{
     AssetAccounting, AssetContractContext, B20AssetExtensionStorage, B20AssetInit, B20AssetLogic,
-    B20AssetLogicV1, B20AssetPrecompile, B20AssetStorage, IB20Asset, Version, VersionResolver,
+    B20AssetLogicV1, B20AssetPrecompile, B20AssetStorage, IB20Asset, Version as AssetVersion,
+    VersionResolver as AssetVersionResolver,
 };
 
 mod b20_stablecoin;

@@ -53,20 +53,26 @@ impl VersionResolver {
 mod tests {
     use base_common_genesis::BaseUpgrade;
 
-    use crate::{Version, VersionResolver};
+    use crate::{AssetVersion, AssetVersionResolver};
 
     #[test]
     fn resolves_none_before_beryl() {
-        assert_eq!(VersionResolver::from_base_upgrade(BaseUpgrade::Azul), None);
+        assert_eq!(AssetVersionResolver::from_base_upgrade(BaseUpgrade::Azul), None);
     }
 
     #[test]
     fn resolves_v1_from_beryl() {
-        assert_eq!(VersionResolver::from_base_upgrade(BaseUpgrade::Beryl), Some(Version::V1));
+        assert_eq!(
+            AssetVersionResolver::from_base_upgrade(BaseUpgrade::Beryl),
+            Some(AssetVersion::V1)
+        );
     }
 
     #[test]
     fn resolves_v1_at_cobalt() {
-        assert_eq!(VersionResolver::from_base_upgrade(BaseUpgrade::Cobalt), Some(Version::V1));
+        assert_eq!(
+            AssetVersionResolver::from_base_upgrade(BaseUpgrade::Cobalt),
+            Some(AssetVersion::V1)
+        );
     }
 }

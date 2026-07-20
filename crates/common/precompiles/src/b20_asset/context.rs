@@ -2,7 +2,7 @@
 //!
 //! [`AssetContractContext`] is the minimal storage + policy holder the logic and
 //! dispatcher operate on. It carries no business logic of its own — behavior
-//! lives in the version implementations resolved from [`crate::VersionResolver`].
+//! lives in the version implementations resolved from [`super::VersionResolver`].
 
 use alloy_primitives::Address;
 
@@ -15,7 +15,7 @@ use crate::{
 ///
 /// A minimal `(storage, policy, policy_version)` holder implementing [`Token`];
 /// it carries no behavior of its own — all business logic lives in the version
-/// implementations resolved from [`crate::VersionResolver`]. Authorization goes
+/// implementations resolved from [`super::VersionResolver`]. Authorization goes
 /// through [`crate::PolicyRegistryLogic`] via [`Token::policy`].
 #[derive(Debug, Clone)]
 pub struct AssetContractContext<S: AssetAccounting, A: PolicyAccounting> {

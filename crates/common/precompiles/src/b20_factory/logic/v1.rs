@@ -10,11 +10,11 @@ use revm::state::Bytecode;
 
 use super::B20FactoryLogic;
 use crate::{
-    ActivationRegistryStorage, AssetContractContext, B20AssetInit, B20AssetStorage,
-    B20FactoryStorage, B20StablecoinInit, B20StablecoinStorage, B20TokenRole, B20Variant,
-    FactoryContractContext, IB20Factory, NoopPrecompileCallObserver, PolicyRegistryStorage,
-    PolicyVersionResolver, StablecoinContractContext, StablecoinVersionResolver, Token,
-    VersionResolver as AssetVersionResolver,
+    ActivationRegistryStorage, AssetContractContext, AssetVersionResolver, B20AssetInit,
+    B20AssetStorage, B20FactoryStorage, B20StablecoinInit, B20StablecoinStorage, B20TokenRole,
+    B20Variant, FactoryContractContext, IB20Factory, NoopPrecompileCallObserver,
+    PolicyRegistryStorage, PolicyVersionResolver, StablecoinContractContext,
+    StablecoinVersionResolver, Token,
 };
 
 /// Version byte for `B20StablecoinEventParams` inside `B20Created.variantParams`.

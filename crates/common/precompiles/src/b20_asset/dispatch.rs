@@ -16,13 +16,13 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
+use super::{AssetContractContext, Version, VersionResolver};
 use crate::{
-    AssetAccounting, AssetContractContext, B20AssetStorage, B20PolicyType, B20TokenRole,
-    BerylAuxiliaryMetrics, BerylCallRecorder, BerylMetricLabels, BerylSelector,
+    AssetAccounting, B20AssetStorage, B20PolicyType, B20TokenRole, BerylAuxiliaryMetrics,
+    BerylCallRecorder, BerylMetricLabels, BerylSelector,
     IB20::{self, IB20Calls as C},
     IB20Asset::{self, IB20AssetCalls as SC},
-    NoopPrecompileCallObserver, PermitArgs, PolicyAccounting, PrecompileCallObserver, Version,
-    VersionResolver,
+    NoopPrecompileCallObserver, PermitArgs, PolicyAccounting, PrecompileCallObserver,
     macros::decode_precompile_call,
 };
 
@@ -447,12 +447,13 @@ mod tests {
     use base_common_genesis::BaseUpgrade;
     use base_precompile_storage::{HashMapStorageProvider, Result, StorageCtx};
 
+    use super::{AssetContractContext, Version};
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
-        AssetContractContext, B20AssetLogicV1, B20AssetStorage, B20TokenRole, BerylErrorKind,
-        FakePolicyAccounting, IB20, IB20Asset, InMemoryTokenAccounting, NoopPrecompileCallObserver,
-        PolicyVersion, PrecompileCallMetric, PrecompileCallObserver, PrecompileCallOutcome,
-        PrecompileCallStatus, Token, TokenAccounting, Version,
+        B20AssetLogicV1, B20AssetStorage, B20TokenRole, BerylErrorKind, FakePolicyAccounting, IB20,
+        IB20Asset, InMemoryTokenAccounting, NoopPrecompileCallObserver, PolicyVersion,
+        PrecompileCallMetric, PrecompileCallObserver, PrecompileCallOutcome, PrecompileCallStatus,
+        Token, TokenAccounting,
     };
 
     type TestContractContext = AssetContractContext<InMemoryTokenAccounting, FakePolicyAccounting>;
