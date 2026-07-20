@@ -312,7 +312,7 @@ impl StandardBaseRethNode {
     /// configured upgrade-signal contract always requires an explicit `--upgrade-signal.l1-rpc` for
     /// its startup application, runtime admin refresh, and live metrics observer.
     pub fn validate_upgrade_signal_args(rollup_args: &RollupArgs) -> eyre::Result<()> {
-        if rollup_args.upgrade_signal.config()?.is_some()
+        if rollup_args.upgrade_signal.config().is_some()
             && rollup_args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.is_none()
         {
             eyre::bail!(
@@ -328,7 +328,7 @@ impl StandardBaseRethNode {
     fn upgrade_signal_config(
         rollup_args: &RollupArgs,
     ) -> eyre::Result<Option<ExecutionUpgradeSignalConfig>> {
-        let Some(signal_config) = rollup_args.upgrade_signal.config()? else {
+        let Some(signal_config) = rollup_args.upgrade_signal.config() else {
             return Ok(None);
         };
         Self::validate_upgrade_signal_args(rollup_args)?;

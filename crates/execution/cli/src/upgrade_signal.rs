@@ -153,9 +153,7 @@ impl BaseNodeExtension for ExecutionUpgradeSignalRuntimeExtension {
                     UpgradeSignalMetricLayer::Execution,
                 )
             });
-            let upgrade_ids = config.signal_config.upgrade_ids;
-            let mut monitor =
-                UpgradeSignalMonitor::new(UpgradeSignalMetricLayer::Execution, &upgrade_ids);
+            let mut monitor = UpgradeSignalMonitor::new(UpgradeSignalMetricLayer::Execution);
             let executor = ctx.task_executor;
 
             executor.spawn_with_graceful_shutdown_signal(|signal| {
@@ -170,7 +168,7 @@ impl BaseNodeExtension for ExecutionUpgradeSignalRuntimeExtension {
                             _ = interval.tick() => {
                                 tokio::select! {
                                     _ = &mut signal => break,
-                                    polled = monitor.poll(&reader, &upgrade_ids) => {
+                                    polled = monitor.poll(&reader) => {
                                         if let Some(refresher) = &auto_refresher
                                             && let Some(schedule) = polled
                                             && let Err(error) = refresher.apply(&schedule)
@@ -213,7 +211,7 @@ mod tests {
 
     fn runtime_refresher(chain_id: u64) -> UpgradeSignalRefresher {
         UpgradeSignalRefresher::new(
-            UpgradeSignalConfig::new(Address::ZERO, BaseUpgrade::Azul),
+            UpgradeSignalConfig::new(Address::ZERO),
             RootProvider::new_http("http://127.0.0.1:1".parse().unwrap()),
             chain_id,
             UpgradeSignalMetricLayer::Execution,

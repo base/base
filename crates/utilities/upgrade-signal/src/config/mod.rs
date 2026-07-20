@@ -7,9 +7,6 @@ use alloy_primitives::U256;
 mod args;
 pub use args::{UpgradeSignalArgs, UpgradeSignalL1RpcArgs, UpgradeSignalStartupConfig};
 
-mod error;
-pub use error::UpgradeSignalConfigError;
-
 mod schedule;
 pub use schedule::UpgradeSignalConfig;
 

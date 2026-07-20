@@ -80,7 +80,7 @@ mod tests {
 
     fn refresher(chain_id: u64) -> UpgradeSignalRefresher {
         UpgradeSignalRefresher::new(
-            UpgradeSignalConfig::new(Address::ZERO, BaseUpgrade::Azul),
+            UpgradeSignalConfig::new(Address::ZERO),
             RootProvider::new_http("http://127.0.0.1:1".parse().unwrap()),
             chain_id,
             UpgradeSignalMetricLayer::Consensus,

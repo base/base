@@ -110,12 +110,12 @@ pub struct UpgradeSignalMonitor {
 }
 
 impl UpgradeSignalMonitor {
-    /// Creates a monitor for the provided upgrade IDs.
-    pub fn new(metrics_layer: UpgradeSignalMetricLayer, upgrade_ids: &[BaseUpgrade]) -> Self {
+    /// Creates a monitor for all contract-backed upgrades.
+    pub fn new(metrics_layer: UpgradeSignalMetricLayer) -> Self {
         UpgradeSignalMetrics::init();
         let mut states = BTreeMap::new();
-        for upgrade_id in upgrade_ids {
-            states.insert(*upgrade_id, UpgradeSignalState::new());
+        for upgrade_id in BaseUpgrade::CONTRACT_VARIANTS {
+            states.insert(upgrade_id, UpgradeSignalState::new());
         }
         Self { metrics_layer, states }
     }
@@ -130,10 +130,9 @@ impl UpgradeSignalMonitor {
     pub async fn poll(
         &mut self,
         reader: &AlloyUpgradeSignalReader,
-        upgrade_ids: &[BaseUpgrade],
     ) -> Option<UpgradeSignalSchedule> {
         let metrics_layers = [self.metrics_layer];
-        let schedule = reader.read_schedule_tolerant(upgrade_ids, &metrics_layers).await;
+        let schedule = reader.read_schedule_tolerant(&metrics_layers).await;
         let updated_signals = self
             .update_schedule(schedule.clone())
             .iter()
@@ -227,7 +226,7 @@ mod tests {
     }
 
     fn monitor() -> UpgradeSignalMonitor {
-        UpgradeSignalMonitor::new(UpgradeSignalMetricLayer::Consensus, &[BaseUpgrade::Azul])
+        UpgradeSignalMonitor::new(UpgradeSignalMetricLayer::Consensus)
     }
 
     fn schedule(timestamp: u64) -> UpgradeSignalSchedule {

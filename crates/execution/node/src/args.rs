@@ -616,15 +616,12 @@ mod tests {
             "reth",
             "--upgrade-signal.contract",
             "0x0000000000000000000000000000000000000001",
-            "--upgrade-signal.upgrade-id",
-            "azul",
             "--upgrade-signal.l1-rpc",
             "http://localhost:8545",
         ])
         .args;
 
         assert_eq!(args.upgrade_signal.contract_address, Some(contract));
-        assert_eq!(args.upgrade_signal.upgrade_ids, ["azul"]);
         assert_eq!(
             args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.as_ref().map(|url| url.as_str()),
             Some("http://localhost:8545/")
