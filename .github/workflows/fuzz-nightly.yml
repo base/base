@@ -1,0 +1,79 @@
+# Nightly fuzz: runs the build/validate sync-parity fuzz test across
+# several seeds to explore more of the input space than a single per-merge run.
+# A failing run prints the seed in its error message so it can be replayed and
+# minted into a deterministic regression test.
+name: Fuzz Nightly
+
+on:
+  # TEMPORARY: run on PRs from any branch so this workflow can be exercised on
+  # the real runners before it is merged. REMOVE this pull_request trigger
+  # before merging (the scheduled + dispatch triggers below are the real ones).
+  pull_request:
+    branches: ["**"]
+  schedule:
+    # 07:00 UTC daily (after most merges have settled).
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: "Single seed to run (hex or decimal). Leave blank to run the default matrix."
+        required: false
+        type: string
+
+concurrency:
+  group: fuzz-nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz-sync-parity:
+    name: Fuzz sync parity
+    runs-on:
+      group: BasePerfRunnerGroup
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        # TEMPORARY: trimmed to one seed for fast branch iteration. Restore the
+        # full nightly spread before merging:
+        #   seed: ["0xBA5EF0FF", "0x1", "0xDEADBEEF", "0xC0FFEE"]
+        seed: ["0xBA5EF0FF"]
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+      - uses: ./.github/actions/setup
+        with:
+          free-disk: "true"
+          native-deps: "true"
+          foundry: "true"
+          tools: cargo-nextest
+          rust-cache-shared-key: "stable"
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+      - name: Pre-pull docker images
+        run: just devnet pull-images
+      - name: Build test contracts
+        # base-test-utils embeds Foundry artifacts (contracts/out/*.json) at compile
+        # time; they are gitignored build output, so generate them before building.
+        run: cd crates/utilities/test-utils/contracts && forge soldeer install && forge build
+      - name: Run fuzz sync-parity test
+        env:
+          # A manual dispatch seed overrides the matrix seed for this run.
+          FUZZ_SEED: ${{ github.event.inputs.seed || matrix.seed }}
+        run: |
+          cargo nextest run -P ci --locked -p base-system-tests \
+            --cargo-profile ci --no-capture -E 'test(fuzz_sync_parity)'
+      - name: Upload run log on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fuzz-log-seed-${{ github.event.inputs.seed || matrix.seed }}
+          path: target/nextest/ci/*.xml
+          if-no-files-found: ignore
