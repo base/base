@@ -360,9 +360,11 @@ impl ConsensusNodeArgs {
         self.config.l2_config.load(&self.chain.l2_chain_id).map_err(|e| eyre::eyre!(e))
     }
 
-    /// Validates that a sequencer signing key is configured when running in sequencer mode.
+    /// Validates that a non-shadow sequencer has a signing key configured.
     pub fn validate_sequencer_key(&self) -> eyre::Result<()> {
-        if self.config.node_mode.is_sequencer() {
+        if self.config.node_mode.is_sequencer()
+            && self.config.sequencer_flags.shadow_blocks_per_cycle.is_none()
+        {
             let signer = &self.config.p2p_flags.signer;
             if signer.sequencer_key.is_none()
                 && signer.sequencer_key_path.is_none()
@@ -901,6 +903,23 @@ mod tests {
             },
         );
         assert_eq!(args.validate_sequencer_key().is_ok(), expected_ok);
+    }
+
+    #[test]
+    fn shadow_sequencer_does_not_require_signing_key() {
+        let args = ConsensusNodeArgs::new(
+            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
+            ConsensusNodeConfigArgs {
+                node_mode: NodeMode::Sequencer,
+                sequencer_flags: SequencerArgs {
+                    shadow_blocks_per_cycle: std::num::NonZeroU64::new(10),
+                    ..SequencerArgs::default()
+                },
+                ..default_node_config_args()
+            },
+        );
+
+        assert!(args.validate_sequencer_key().is_ok());
     }
 
     #[test]
