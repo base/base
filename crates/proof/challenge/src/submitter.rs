@@ -77,11 +77,8 @@ impl<T: TxManager> ChallengeSubmitter<T> {
             "submitting dispute transaction"
         );
 
-        let candidate = TxCandidate {
-            tx_data: calldata,
-            to: Some(game_address),
-            ..Default::default()
-        };
+        let candidate =
+            TxCandidate { tx_data: calldata, to: Some(game_address), ..Default::default() };
 
         debug!(
             tx = ?candidate,
@@ -132,11 +129,7 @@ impl<T: TxManager> ChallengeSubmitter<T> {
         to: Address,
         calldata: Bytes,
     ) -> Result<B256, ChallengeSubmitError> {
-        let candidate = TxCandidate {
-            tx_data: calldata,
-            to: Some(to),
-            ..Default::default()
-        };
+        let candidate = TxCandidate { tx_data: calldata, to: Some(to), ..Default::default() };
 
         info!(
             game = %game_address,
