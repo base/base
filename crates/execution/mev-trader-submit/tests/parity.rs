@@ -30,12 +30,8 @@ const DUMMY_RAW_TX_GOLDEN: &str = "0x02f9024f8221058025843b9aca00831e84809420000
 
 fn hop_params() -> [HopExecutionParams; 2] {
     [
-        HopExecutionParams {
-            adapter: ADAPTER,
-            fee_pips: 3000,
-            min_amount_out: U256::from(FIRST_MIN_OUT),
-        },
-        HopExecutionParams { adapter: ADAPTER, fee_pips: 3000, min_amount_out: U256::from(1u64) },
+        HopExecutionParams { adapter: ADAPTER, min_amount_out: U256::from(FIRST_MIN_OUT) },
+        HopExecutionParams { adapter: ADAPTER, min_amount_out: U256::from(1u64) },
     ]
 }
 
@@ -45,6 +41,7 @@ fn calldata_matches_ts_encode_function_data() {
     let plan = backrun_plan([ExactProtocol::UniswapV2, ExactProtocol::UniswapV2], victim_hash);
     let input = AssembleInput {
         plan: &plan,
+        current_frame: support::matching_frame(&plan),
         executor: EXECUTOR,
         hops: hop_params(),
         chain_id: 8453,
@@ -69,6 +66,7 @@ fn v3_first_hop_canonicalizes_fee_bps_to_zero() {
     let (victim_raw, _) = victim_with_priority(37);
     let input = AssembleInput {
         plan: &plan,
+        current_frame: support::matching_frame(&plan),
         executor: EXECUTOR,
         hops: hop_params(),
         chain_id: 8453,
@@ -90,6 +88,7 @@ fn dummy_raw_tx_matches_ts_serialize_measurement_tx_bytes() {
     let plan = backrun_plan([ExactProtocol::UniswapV2, ExactProtocol::UniswapV2], victim_hash);
     let input = AssembleInput {
         plan: &plan,
+        current_frame: support::matching_frame(&plan),
         executor: EXECUTOR,
         hops: hop_params(),
         chain_id: 8453,
@@ -119,6 +118,7 @@ fn two_channel_dummy_assembly_puts_victim_hash_first_with_zero_bid() {
     let plan = backrun_plan([ExactProtocol::UniswapV2, ExactProtocol::UniswapV2], victim_hash);
     let input = AssembleInput {
         plan: &plan,
+        current_frame: support::matching_frame(&plan),
         executor: EXECUTOR,
         hops: hop_params(),
         chain_id: 8453,

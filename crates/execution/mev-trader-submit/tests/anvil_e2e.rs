@@ -21,7 +21,11 @@ use std::{
 };
 
 use alloy_consensus::TxEip1559;
-use alloy_primitives::{Address, Bytes, TxKind, U256, address, aliases::U112, hex};
+use alloy_primitives::{
+    Address, B256, Bytes, TxKind, U256, address,
+    aliases::{U24, U112},
+    hex,
+};
 use alloy_sol_types::{SolCall, sol};
 use base_mev_trader::ExactProtocol;
 use mev_trader_submit::{
@@ -57,6 +61,40 @@ sol! {
     function balanceOf(address account) external view returns (uint256);
     function swap(address pool, address tokenIn, uint256 amountIn, uint256 minOut, uint256 feeBps)
         external returns (uint256);
+}
+
+/// The impersonated EOA authorized as the executor for the Aerodrome scenario.
+const AERO_CALLER: Address = address!("5000000000000000000000000000000000000005");
+
+/// `MockAerodromePool.setReserves(uint256,uint256)` — distinct selector from the
+/// v2 `setReserves(uint112,uint112)`, so it lives in its own ABI namespace.
+mod aero_abi {
+    alloy_sol_types::sol! {
+        function setReserves(uint256 r0, uint256 r1) external;
+    }
+}
+
+/// The executor entrypoint, used ONLY to hand-encode the NAIVE mispriced calldata
+/// (`fee_pips` passed straight through as `feeBps`) that the R8 fee-SOURCE path
+/// would never emit — proving the executor's strict-minOut reverts it.
+mod exec_abi {
+    alloy_sol_types::sol! {
+        struct SwapHop {
+            address adapter;
+            address pool;
+            address tokenIn;
+            address tokenOut;
+            uint24 feeBps;
+            uint256 minAmountOut;
+        }
+        function executeBlinkOfaAtomic(
+            SwapHop firstHop,
+            SwapHop secondHop,
+            uint256 amountIn,
+            uint256 minFinalAmount,
+            uint256 validUntilBlock
+        );
+    }
 }
 
 fn anvil_bin() -> Option<PathBuf> {
@@ -355,18 +393,14 @@ fn build_unsigned(
 ) -> TxEip1559 {
     let input = AssembleInput {
         plan,
+        current_frame: support::matching_frame(plan),
         executor: fixture.executor,
         hops: [
             HopExecutionParams {
                 adapter: fixture.adapter,
-                fee_pips: FEE_PIPS,
                 min_amount_out: fixture.expected_intermediate,
             },
-            HopExecutionParams {
-                adapter: fixture.adapter,
-                fee_pips: FEE_PIPS,
-                min_amount_out: U256::from(1u64),
-            },
+            HopExecutionParams { adapter: fixture.adapter, min_amount_out: U256::from(1u64) },
         ],
         chain_id: CHAIN_ID,
         nonce: 0,
@@ -403,6 +437,9 @@ fn plan_for(fixture: &Fixture, victim: alloy_primitives::B256) -> base_mev_trade
     plan.amount_in = U256::from(AMOUNT_IN);
     plan.amount_out = fixture.expected_final;
     plan.gross_profit = fixture.expected_final - U256::from(AMOUNT_IN);
+    // Fields (not fee_pips) were mutated after `backrun_plan`; re-seal the digest so
+    // the assembler's field-integrity gate accepts the finalized plan.
+    support::finalize_plan_digest(&mut plan);
     plan
 }
 
@@ -439,6 +476,223 @@ fn inject_drift(rpc: &Rpc, fixture: &Fixture) {
         None,
     );
     assert_eq!(swap["status"], "0x1", "drift swap reverted");
+}
+
+/// Deployed AerodromeVolatile fixture + sized expectations.
+#[derive(Clone, Copy)]
+struct AeroFixture {
+    token: Address,
+    first_pool: Address,
+    second_pool: Address,
+    adapter: Address,
+    executor: Address,
+    expected_intermediate: U256,
+    expected_final: U256,
+}
+
+fn seed_aero_reserves(rpc: &Rpc, pool: Address, r0: u128, r1: u128) {
+    let data = aero_abi::setReservesCall { r0: U256::from(r0), r1: U256::from(r1) }.abi_encode();
+    let receipt = send_impersonated(rpc, OWNER, Some(pool), &data, None);
+    assert_eq!(receipt["status"], "0x1", "aero reserve seed reverted");
+}
+
+fn deploy_aero_fixture(rpc: &Rpc, caller: Address) -> AeroFixture {
+    let temp_weth = deploy(rpc, bytecode::MOCK_WETH_CREATION, &[]);
+    let weth_runtime =
+        rpc.call_str("eth_getCode", serde_json::json!([temp_weth.to_string(), "latest"]));
+    assert_ne!(weth_runtime, "0x", "MockWETH runtime missing");
+    rpc.call("anvil_setCode", serde_json::json!([BASE_WETH.to_string(), weth_runtime]));
+
+    let token = deploy(rpc, bytecode::MOCK_ERC20_CREATION, &[]);
+    let first_pool = deploy(
+        rpc,
+        bytecode::MOCK_AERODROME_POOL_CREATION,
+        &encode_addresses(&[BASE_WETH, token]),
+    );
+    let second_pool = deploy(
+        rpc,
+        bytecode::MOCK_AERODROME_POOL_CREATION,
+        &encode_addresses(&[token, BASE_WETH]),
+    );
+    let adapter = deploy(rpc, bytecode::AERODROME_ADAPTER_CREATION, &[]);
+    let executor = deploy(
+        rpc,
+        bytecode::EXECUTOR_CREATION,
+        &encode_addresses(&[caller, BASE_WETH, PROFIT_RECIPIENT]),
+    );
+
+    let deposit = send_impersonated(
+        rpc,
+        OWNER,
+        Some(BASE_WETH),
+        &depositCall {}.abi_encode(),
+        Some(U256::from(10u64) * U256::from(AMOUNT_IN)),
+    );
+    assert_eq!(deposit["status"], "0x1", "WETH deposit reverted");
+    let fund = send_impersonated(
+        rpc,
+        OWNER,
+        Some(BASE_WETH),
+        &transferCall { to: executor, amount: U256::from(EXECUTOR_PRINCIPAL) }.abi_encode(),
+        None,
+    );
+    assert_eq!(fund["status"], "0x1", "executor funding reverted");
+
+    seed_aero_reserves(rpc, first_pool, FIRST_WETH_RESERVE, FIRST_TOKEN_RESERVE);
+    seed_aero_reserves(rpc, second_pool, SECOND_TOKEN_RESERVE, SECOND_WETH_RESERVE);
+
+    let expected_intermediate = quote_v2(
+        U256::from(AMOUNT_IN),
+        U256::from(FIRST_WETH_RESERVE),
+        U256::from(FIRST_TOKEN_RESERVE),
+        FEE_BPS,
+    );
+    let expected_final = quote_v2(
+        expected_intermediate,
+        U256::from(SECOND_TOKEN_RESERVE),
+        U256::from(SECOND_WETH_RESERVE),
+        FEE_BPS,
+    );
+    assert!(expected_final > U256::from(AMOUNT_IN), "aero fixture must be gross-positive");
+
+    AeroFixture {
+        token,
+        first_pool,
+        second_pool,
+        adapter,
+        executor,
+        expected_intermediate,
+        expected_final,
+    }
+}
+
+fn aero_plan_for(fixture: &AeroFixture, victim: B256) -> base_mev_trader::BackrunPlan {
+    let mut plan = support::backrun_plan(
+        [ExactProtocol::AerodromeVolatile, ExactProtocol::AerodromeVolatile],
+        victim,
+    );
+    plan.route[0].pool = fixture.first_pool;
+    plan.route[0].token_in = BASE_WETH;
+    plan.route[0].token_out = fixture.token;
+    plan.route[1].pool = fixture.second_pool;
+    plan.route[1].token_in = fixture.token;
+    plan.route[1].token_out = BASE_WETH;
+    plan.amount_in = U256::from(AMOUNT_IN);
+    plan.amount_out = fixture.expected_final;
+    plan.gross_profit = fixture.expected_final - U256::from(AMOUNT_IN);
+    support::finalize_plan_digest(&mut plan);
+    plan
+}
+
+#[test]
+fn aerodrome_volatile_fee_parity_and_passthrough_revert() {
+    let Some((_anvil, rpc)) = spawn_anvil() else {
+        eprintln!("SKIP anvil_e2e aerodrome: anvil binary not available");
+        return;
+    };
+    for funded in [OWNER, DRIFTER, AERO_CALLER] {
+        rpc.call(
+            "anvil_setBalance",
+            serde_json::json!([
+                funded.to_string(),
+                hex_quantity(U256::from(100u64) * U256::from(AMOUNT_IN))
+            ]),
+        );
+    }
+
+    // ---- Fee-parity: the assembler converts the carried fee_pips (3000) to feeBps
+    // 30, and the AerodromeVolatile ON-CHAIN output equals the constant-product
+    // sizing quote (sizing == execution). ----
+    let parity = deploy_aero_fixture(&rpc, AERO_CALLER);
+    let plan = aero_plan_for(&parity, B256::repeat_byte(0xab));
+    let input = AssembleInput {
+        plan: &plan,
+        current_frame: support::matching_frame(&plan),
+        executor: parity.executor,
+        hops: [
+            HopExecutionParams {
+                adapter: parity.adapter,
+                min_amount_out: parity.expected_intermediate,
+            },
+            HopExecutionParams { adapter: parity.adapter, min_amount_out: U256::from(1u64) },
+        ],
+        chain_id: CHAIN_ID,
+        nonce: 0,
+        gas: GAS_LIMIT,
+        max_fee_per_gas: MAX_FEE_PER_GAS,
+        valid_until_block: 1_000_000,
+        victim_raw_tx: &[],
+        victim_tx_hash: plan.victim,
+        expected_victim_priority_fee: None,
+    };
+    let calldata = encode_executor_calldata(&input).expect("aero fee-source calldata");
+
+    let kickback_before = native_balance(&rpc, BLINK_OFA_KICKBACK_RECIPIENT);
+    let residual_before = call_balance_of(&rpc, BASE_WETH, PROFIT_RECIPIENT);
+    let principal_before = call_balance_of(&rpc, BASE_WETH, parity.executor);
+    let receipt = send_impersonated(&rpc, AERO_CALLER, Some(parity.executor), &calldata, None);
+    assert_eq!(receipt["status"], "0x1", "aero fee-parity backrun did not execute");
+
+    let realized = (native_balance(&rpc, BLINK_OFA_KICKBACK_RECIPIENT) - kickback_before)
+        + (call_balance_of(&rpc, BASE_WETH, PROFIT_RECIPIENT) - residual_before);
+    assert_eq!(
+        realized,
+        parity.expected_final - U256::from(AMOUNT_IN),
+        "aero realized profit != sized profit (fee-parity broken)"
+    );
+    assert_eq!(
+        call_balance_of(&rpc, BASE_WETH, parity.executor),
+        principal_before,
+        "aero principal not preserved"
+    );
+    assert_eq!(
+        call_balance_of(&rpc, parity.token, parity.executor),
+        U256::ZERO,
+        "aero intermediate token retained"
+    );
+
+    // ---- Passthrough revert: the NAIVE calldata passes fee_pips (3000) straight
+    // through as feeBps (100x the correct 30 bps), so AerodromeAdapter under-delivers
+    // below the per-hop floor — the whole tx reverts and atomically rolls back. ----
+    let drifted = deploy_aero_fixture(&rpc, AERO_CALLER);
+    let naive = exec_abi::executeBlinkOfaAtomicCall {
+        firstHop: exec_abi::SwapHop {
+            adapter: drifted.adapter,
+            pool: drifted.first_pool,
+            tokenIn: BASE_WETH,
+            tokenOut: drifted.token,
+            // NAIVE mispricing: fee_pips as feeBps (30% fee, not the correct 0.30%).
+            feeBps: U24::from(FEE_PIPS),
+            minAmountOut: drifted.expected_intermediate,
+        },
+        secondHop: exec_abi::SwapHop {
+            adapter: drifted.adapter,
+            pool: drifted.second_pool,
+            tokenIn: drifted.token,
+            tokenOut: BASE_WETH,
+            feeBps: U24::from(FEE_PIPS),
+            minAmountOut: U256::from(1u64),
+        },
+        amountIn: U256::from(AMOUNT_IN),
+        minFinalAmount: drifted.expected_final,
+        validUntilBlock: U256::from(1_000_000u64),
+    }
+    .abi_encode();
+
+    let weth_before = call_balance_of(&rpc, BASE_WETH, drifted.executor);
+    let token_before = call_balance_of(&rpc, drifted.token, drifted.executor);
+    let receipt = send_impersonated(&rpc, AERO_CALLER, Some(drifted.executor), &naive, None);
+    assert_eq!(receipt["status"], "0x0", "naive feeBps=fee_pips passthrough did not revert");
+    assert_eq!(
+        call_balance_of(&rpc, BASE_WETH, drifted.executor),
+        weth_before,
+        "aero WETH state not rolled back"
+    );
+    assert_eq!(
+        call_balance_of(&rpc, drifted.token, drifted.executor),
+        token_before,
+        "aero token state not rolled back"
+    );
 }
 
 #[test]

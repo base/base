@@ -14,7 +14,7 @@ use alloy_eips::{
 };
 use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256, b256, keccak256};
 use alloy_sol_types::{SolCall, sol};
-use base_mev_trader::BackrunPlan;
+use base_mev_trader::{BackrunPlan, MeasurementContext, MeasurementEncoder};
 
 use crate::fee::{FeeParityError, fee_bps_for_executor};
 
@@ -64,15 +64,14 @@ pub(crate) const fn dummy_signature() -> Signature {
 
 /// Per-hop execution parameters NOT carried by the measurement [`BackrunPlan`].
 ///
-/// Per fee-parity spec §3.3 option (B), `fee_pips` is re-derived by the submitter
-/// from the same hash-pinned pool state the sizing engine read; it is converted
-/// to the ABI `feeBps` through the single [`fee_bps_for_executor`] point.
+/// R8 fee-SOURCE: the sizing fee is NO LONGER a caller input. It is carried in the
+/// digest-bound [`BackrunPlan::route`] (`BackrunHop::fee_pips`) and converted to the
+/// ABI `feeBps` through the single [`fee_bps_for_executor`] point. Only the adapter
+/// address and the per-hop output floor — neither of which is priced — live here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HopExecutionParams {
     /// The adapter contract that performs this hop's swap.
     pub adapter: Address,
-    /// The re-derived canonical sizing fee in pips (denominator `1e6`).
-    pub fee_pips: u32,
     /// The strict per-hop output floor passed to the executor.
     pub min_amount_out: U256,
 }
@@ -82,6 +81,18 @@ pub struct HopExecutionParams {
 pub struct AssembleInput<'a> {
     /// The measurement plan whose route/amounts drive the calldata.
     pub plan: &'a BackrunPlan,
+    /// The TRUSTED current-frame identity, sourced from the live
+    /// `ProcessedFrame::measurement_context()` (NOT from the plan). The assembler
+    /// compares ALL 5 fields `{parent_hash, block_number, predecessor_index,
+    /// payload_id, victim}` against the plan EXACT before emit; any mismatch —
+    /// including a same-parent but stale `predecessor_index`/`payload_id`
+    /// generation, or a plan whose `victim` is not the current frame's victim — is
+    /// fail-closed (no calldata). This is a SEPARATE gate from the digest self-check
+    /// (which only catches field tampering, not staleness/wrong-frame). The
+    /// raw-victim↔plan check in `assemble_unsigned_atomic_tx` is retained and
+    /// complementary: it binds the raw envelope to the plan's victim, while this
+    /// gate binds the plan's victim to the current frame.
+    pub current_frame: MeasurementContext,
     /// The `BlinkAtomicExecutor` address (backrun `to`). Not carried by the
     /// plan — a deployment property supplied by the caller.
     pub executor: Address,
@@ -145,6 +156,11 @@ pub enum AssembleError {
     VictimPriorityFeeMismatch,
     /// `max_fee_per_gas` was below the victim priority fee.
     MaxFeeBelowVictimPriority,
+    /// The plan's self-excluding digest did not match its fields (field/fee tamper).
+    DigestMismatch,
+    /// The plan's frame identity did not match the trusted current frame (stale or
+    /// wrong-parent/generation plan).
+    FrameIdentityMismatch,
     /// A per-hop fee-parity conversion failed (§3.4 guard).
     FeeParity(FeeParityError),
 }
@@ -171,6 +187,12 @@ impl core::fmt::Display for AssembleError {
             }
             Self::MaxFeeBelowVictimPriority => {
                 write!(formatter, "max_fee_per_gas must be >= victim priority fee")
+            }
+            Self::DigestMismatch => {
+                write!(formatter, "plan digest does not match its fields (field/fee tamper)")
+            }
+            Self::FrameIdentityMismatch => {
+                write!(formatter, "plan frame identity does not match the current frame")
             }
             Self::FeeParity(error) => write!(formatter, "fee parity: {error}"),
         }
@@ -208,6 +230,9 @@ fn victim_priority_fee(victim_raw_tx: &[u8]) -> Result<u128, AssembleError> {
 }
 
 /// Build the `SwapHop` for route index `index` from the plan route and hop params.
+///
+/// R8: the ABI `feeBps` is derived SOLELY from the carried, digest-bound
+/// `BackrunHop::fee_pips` — never from a caller-supplied value.
 fn build_swap_hop(
     plan: &BackrunPlan,
     index: usize,
@@ -215,7 +240,7 @@ fn build_swap_hop(
     label: &'static str,
 ) -> Result<SwapHop, AssembleError> {
     let hop = &plan.route[index];
-    let fee_bps = fee_bps_for_executor(hop.protocol, params.fee_pips)?;
+    let fee_bps = fee_bps_for_executor(hop.protocol, hop.fee_pips)?;
     Ok(SwapHop {
         adapter: require_non_zero(label, params.adapter)?,
         pool: require_non_zero("hop.pool", hop.pool)?,
@@ -226,9 +251,48 @@ fn build_swap_hop(
     })
 }
 
+/// Two independent, fail-closed pre-emit gates:
+///
+/// 1. **Field integrity** — recompute the plan's self-excluding digest and compare
+///    it to the stored digest. A tampered field OR a tampered `fee_pips` (now part
+///    of the digest preimage, R8) flips the digest and aborts.
+/// 2. **Frame identity** — compare the plan's FULL 5-field `MeasurementContext`
+///    `{parent_hash, block_number, predecessor_index, payload_id, victim}` against
+///    the TRUSTED current frame (`AssembleInput::current_frame`, sourced from the
+///    live `ProcessedFrame`, NOT from the plan). A stale or wrong-parent/generation
+///    plan is internally digest-valid, so this is a SEPARATE gate from (1); a
+///    mismatch — including a same-parent but stale `predecessor_index`/`payload_id`
+///    generation, OR a plan whose `victim` is not the current frame's victim —
+///    aborts.
+///
+/// `victim` MUST be bound here: the raw-victim↔plan check in
+/// [`assemble_unsigned_atomic_tx`] only proves the plan is self-consistent for ITS
+/// OWN victim, NOT that that victim is the current frame's victim. A digest-valid
+/// plan for victim B (with a raw tx for B) whose 4 frame fields happen to match a
+/// current frame targeting victim A would otherwise emit against the wrong victim.
+fn enforce_plan_integrity_and_frame(input: &AssembleInput<'_>) -> Result<(), AssembleError> {
+    MeasurementEncoder::validate(input.plan).map_err(|_| AssembleError::DigestMismatch)?;
+    let plan = input.plan;
+    let frame = &input.current_frame;
+    if plan.parent_hash != frame.parent_hash
+        || plan.block_number != frame.block_number
+        || plan.predecessor_index != frame.predecessor_index
+        || plan.payload_id != frame.payload_id
+        || plan.victim != frame.victim
+    {
+        return Err(AssembleError::FrameIdentityMismatch);
+    }
+    Ok(())
+}
+
 /// Encode `executeBlinkOfaAtomic` calldata for the plan. Public so the parity
 /// test can byte-compare against the TS `encodeFunctionData` output.
+///
+/// No calldata is produced until BOTH pre-emit gates pass
+/// ([`enforce_plan_integrity_and_frame`]): a tampered/stale plan yields an error,
+/// never bytes.
 pub fn encode_executor_calldata(input: &AssembleInput<'_>) -> Result<Vec<u8>, AssembleError> {
+    enforce_plan_integrity_and_frame(input)?;
     let plan = input.plan;
     if plan.amount_in.is_zero() {
         return Err(AssembleError::InvalidField("amountIn"));
