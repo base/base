@@ -19,7 +19,7 @@
 //! `BLESS_GOLDEN=1 cargo test -p base-common-precompiles --features test-utils \
 //!    --test b20_factory_v1_golden -- --nocapture` and copy the printed `GOLDEN_ROOT` values.
 
-use alloy_primitives::{Address, B256, Bytes, LogData, U256, address, b256, keccak256};
+use alloy_primitives::{Address, B256, Bytes, LogData, U256, b256, keccak256};
 use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
 use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
@@ -30,13 +30,14 @@ use base_common_precompiles::{
 };
 use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
+mod common;
+use common::{
+    ACTIVATION_ADMIN, ADMIN, ALICE, CHAIN_ID, bless_or_assert_gas, bless_or_assert_root, u,
+};
+
 // --- fixtures ---------------------------------------------------------------
 
-const CHAIN_ID: u64 = 8453;
 const CREATOR: Address = Address::repeat_byte(0xC0);
-const ADMIN: Address = Address::repeat_byte(0xAD);
-const ALICE: Address = Address::repeat_byte(0xA1);
-const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
 const SALT: B256 = B256::repeat_byte(0x51);
 const NAME: &str = "Base Asset";
 const SYMBOL: &str = "bASSET";
@@ -59,11 +60,6 @@ const ROOT_CREATE_SC_WITH_INIT_CALLS: B256 =
     b256!("f757f7ed634e58fac4ff7c8fbb82fad003287185337ccb067d5564c8776b2cf2");
 
 // --- harness ----------------------------------------------------------------
-
-/// `U256` from a small literal.
-fn u(n: u64) -> U256 {
-    U256::from(n)
-}
 
 /// The factory precompile's singleton address.
 const fn factory() -> Address {
@@ -204,12 +200,7 @@ fn assert_root(
     event_addrs: &[Address],
     expected: B256,
 ) {
-    let got = hash_state(storage, event_addrs);
-    if std::env::var("BLESS_GOLDEN").ok().as_deref() == Some("1") {
-        println!("GOLDEN_ROOT {label} = {got:#x}");
-        return;
-    }
-    assert_eq!(got, expected, "V1 storage hash drift for `{label}`");
+    bless_or_assert_root(label, hash_state(storage, event_addrs), expected);
 }
 
 // ============================================================================
@@ -760,13 +751,7 @@ fn golden_gas_footprints() {
         ("is_b20_initialized", (0, 0, 0)),
     ];
 
-    if std::env::var("BLESS_GOLDEN").ok().as_deref() == Some("1") {
-        for (label, counts) in &actual {
-            println!("GAS {label} = {counts:?}");
-        }
-        return;
-    }
-    assert_eq!(actual, expected, "storage-access footprint (sload, sstore, keccak256) drift");
+    bless_or_assert_gas(&actual, expected);
 }
 
 // ============================================================================
