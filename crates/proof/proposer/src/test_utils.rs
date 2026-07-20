@@ -1,7 +1,7 @@
 //! Shared test utilities: reusable mock stubs for L1/L2 clients, contract clients, and proposer.
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     sync::Mutex,
 };
 
@@ -393,14 +393,16 @@ pub struct MockProofRequester {
     pub requests: Mutex<HashMap<String, ProveBlockRangeRequest>>,
     /// Sessions that should return a terminal failed status from `get_proof`.
     pub failed_sessions: Mutex<HashMap<String, String>>,
+    /// Sessions that should return a pending status from `get_proof`.
+    pub pending_sessions: Mutex<HashSet<String>>,
+    /// Sessions whose delete call should fail.
+    pub reject_delete_sessions: Mutex<HashSet<String>>,
     /// Reject every `prove_block_range` call with an L1 head conflict.
     pub reject_l1_head_conflict: bool,
     /// Return a mismatched session id from `prove_block_range`.
     pub return_wrong_session_id: bool,
     /// Reject every `delete_proof_request` call with a timeout.
     pub reject_delete: bool,
-    /// Return not found when deleting an unknown session.
-    pub delete_missing_not_found: bool,
 }
 
 #[async_trait]
@@ -436,6 +438,13 @@ impl ProofRequesterProvider for MockProofRequester {
             return Ok(GetProofResponse {
                 status: ProofStatus::Failed,
                 error_message: Some(message.clone()),
+                result: None,
+            });
+        }
+        if self.pending_sessions.lock().unwrap().contains(&request.session_id) {
+            return Ok(GetProofResponse {
+                status: ProofStatus::Running,
+                error_message: None,
                 result: None,
             });
         }
@@ -486,21 +495,15 @@ impl ProofRequesterProvider for MockProofRequester {
         &self,
         request: DeleteProofRequest,
     ) -> Result<(), ProverServiceClientError> {
-        if self.reject_delete {
+        if self.reject_delete
+            || self.reject_delete_sessions.lock().unwrap().contains(&request.session_id)
+        {
             return Err(ProverServiceClientError::Timeout("simulated delete failure".into()));
         }
 
-        let removed_request = self.requests.lock().unwrap().remove(&request.session_id);
-        let removed_failed = self.failed_sessions.lock().unwrap().remove(&request.session_id);
-        if self.delete_missing_not_found && removed_request.is_none() && removed_failed.is_none() {
-            return Err(ProverServiceClientError::RpcTransport(JsonRpcClientError::Call(
-                ErrorObjectOwned::owned(
-                    ProverServiceClientError::ERROR_NOT_FOUND,
-                    PROOF_REQUEST_NOT_FOUND_MESSAGE,
-                    None::<()>,
-                ),
-            )));
-        }
+        self.requests.lock().unwrap().remove(&request.session_id);
+        self.failed_sessions.lock().unwrap().remove(&request.session_id);
+        self.pending_sessions.lock().unwrap().remove(&request.session_id);
         Ok(())
     }
 
@@ -519,8 +522,8 @@ pub struct MockOutputProposer {
     pub created: Mutex<u32>,
     /// Game addresses passed to `verify_proposal_proof()`.
     pub verified: Mutex<Vec<Address>>,
-    /// Errors returned by subsequent `propose_output` calls.
-    pub create_errors: Mutex<VecDeque<ProposerError>>,
+    /// Error returned by the next `propose_output` call.
+    pub create_error: Mutex<Option<ProposerError>>,
     /// Error returned by the next `verify_proposal_proof` call.
     pub verify_error: Mutex<Option<ProposerError>>,
 }
@@ -528,12 +531,7 @@ pub struct MockOutputProposer {
 impl MockOutputProposer {
     /// Creates a mock that fails the next output proposal.
     pub fn with_create_error(error: ProposerError) -> Self {
-        Self::with_create_errors([error])
-    }
-
-    /// Creates a mock that fails subsequent output proposals.
-    pub fn with_create_errors(errors: impl IntoIterator<Item = ProposerError>) -> Self {
-        Self { create_errors: Mutex::new(errors.into_iter().collect()), ..Default::default() }
+        Self { create_error: Mutex::new(Some(error)), ..Default::default() }
     }
 }
 
@@ -546,7 +544,7 @@ impl OutputProposer for MockOutputProposer {
         _intermediate_roots: &[B256],
     ) -> Result<(), ProposerError> {
         *self.created.lock().unwrap() += 1;
-        if let Some(error) = self.create_errors.lock().unwrap().pop_front() {
+        if let Some(error) = self.create_error.lock().unwrap().take() {
             return Err(error);
         }
         Ok(())

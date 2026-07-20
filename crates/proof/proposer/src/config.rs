@@ -57,8 +57,6 @@ pub struct ProposerConfig {
     pub tx_manager: Option<base_tx_manager::TxManagerConfig>,
     /// Maximum number of concurrent RPC calls during the recovery scan.
     pub recovery_scan_concurrency: usize,
-    /// Maximum invalid proof requests to delete in one collector tick.
-    pub max_invalid_proof_deletes_per_tick: usize,
 }
 
 impl ProposerConfig {
@@ -146,7 +144,6 @@ impl ProposerConfig {
             signing,
             tx_manager,
             recovery_scan_concurrency: proposer.recovery_scan_concurrency.get(),
-            max_invalid_proof_deletes_per_tick: proposer.max_invalid_proof_deletes_per_tick.get(),
         })
     }
 }

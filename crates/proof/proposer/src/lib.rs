@@ -39,10 +39,7 @@ mod proof_submitter;
 pub use proof_submitter::{ProofSubmitter, SubmitAction};
 
 mod driver;
-pub use driver::{
-    DEFAULT_MAX_INVALID_PROOF_DELETES_PER_TICK, DriverConfig, PipelineHandle,
-    ProposerDriverControl, RecoveredState,
-};
+pub use driver::{DriverConfig, PipelineHandle, ProposerDriverControl, RecoveredState};
 
 mod pipeline;
 pub use pipeline::ProvingPipeline;

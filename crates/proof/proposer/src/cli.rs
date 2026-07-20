@@ -7,8 +7,6 @@ use base_cli_utils::CliStyles;
 use clap::{Args, Parser};
 use url::Url;
 
-use crate::DEFAULT_MAX_INVALID_PROOF_DELETES_PER_TICK;
-
 base_cli_utils::define_cli_env!("BASE_PROPOSER");
 base_cli_utils::define_log_args!("BASE_PROPOSER");
 base_cli_utils::define_metrics_args!("BASE_PROPOSER", 7300);
@@ -150,15 +148,6 @@ pub struct ProposerArgs {
         value_parser = clap::value_parser!(NonZeroUsize)
     )]
     pub recovery_scan_concurrency: NonZeroUsize,
-
-    /// Maximum invalid proof requests to delete in one collector tick.
-    #[arg(
-        long = "max-invalid-proof-deletes-per-tick",
-        env = cli_env!("MAX_INVALID_PROOF_DELETES_PER_TICK"),
-        default_value_t = NonZeroUsize::new(DEFAULT_MAX_INVALID_PROOF_DELETES_PER_TICK).unwrap(),
-        value_parser = clap::value_parser!(NonZeroUsize)
-    )]
-    pub max_invalid_proof_deletes_per_tick: NonZeroUsize,
 
     /// Transaction manager configuration.
     #[command(flatten)]
