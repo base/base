@@ -1,6 +1,7 @@
 //! The [`SequencerActor`].
 
 use std::{
+    num::NonZeroU64,
     sync::Arc,
     time::{Duration, Instant, UNIX_EPOCH},
 };
@@ -65,6 +66,8 @@ pub struct SequencerActor<
     pub engine_client: Arc<SequencerEngineClient_>,
     /// Whether the sequencer is active.
     pub is_active: bool,
+    /// Number of private blocks to build per shadow sequencing cycle.
+    pub shadow_blocks_per_cycle: Option<NonZeroU64>,
     /// Shared recovery mode flag.
     pub recovery_mode: RecoveryModeGuard,
     /// The rollup configuration.
@@ -100,6 +103,11 @@ where
     SequencerEngineClient_: SequencerEngineClient,
     UnsafePayloadGossipClient_: UnsafePayloadGossipClient,
 {
+    /// Returns whether this actor is running as a shadow sequencer.
+    pub const fn is_shadow_sequencer(&self) -> bool {
+        self.shadow_blocks_per_cycle.is_some()
+    }
+
     /// Fetches the sealed payload envelope from the engine for the given unsealed handle.
     pub(super) async fn seal_payload(
         &self,
@@ -116,7 +124,11 @@ where
         Metrics::sequencer_total_transactions_sequenced()
             .increment(handle.attributes_with_parent.count_transactions());
 
-        Ok(PayloadSealer::new(envelope))
+        if self.is_shadow_sequencer() {
+            Ok(PayloadSealer::new_private(envelope))
+        } else {
+            Ok(PayloadSealer::new(envelope))
+        }
     }
 
     /// Attempts to seal a pre-built payload, first checking whether it is still fresh.

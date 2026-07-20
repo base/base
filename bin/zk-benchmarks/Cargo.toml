@@ -1,0 +1,28 @@
+[package]
+name = "base-zk-benchmarks-bin"
+description = "Base ZK Benchmark Binary"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "base-zk-benchmarks"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+# base
+base-cli-utils.workspace = true
+base-load-tests.workspace = true
+base-zk-benchmarks.workspace = true
+base-prover-service-protocol.workspace = true
+
+# misc
+url.workspace = true
+eyre.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }

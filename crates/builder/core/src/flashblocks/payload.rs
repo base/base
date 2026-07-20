@@ -47,17 +47,15 @@ use reth_trie::{HashedPostState, updates::TrieUpdates};
 use revm::Database as _;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
 
 use crate::{
     BuilderConfig, BuilderMetrics, ExecutionInfo, PayloadBuilder, ResourceLimits,
     flashblocks::{
-        FlashblocksExtraCtx,
-        best_txs::BestFlashblocksTxs,
-        context::BasePayloadBuilderCtx,
-        generator::{BlockCell, BuildArguments},
+        FlashblocksExtraCtx, best_txs::BestFlashblocksTxs, context::BasePayloadBuilderCtx,
+        generator::BuildArguments,
     },
     traits::{ClientBounds, PoolBounds},
     transaction_events::{
@@ -255,16 +253,10 @@ where
     async fn build_payload(
         &self,
         args: BuildArguments<BasePayloadBuilderAttributes<BaseTransactionSigned>, BaseBuiltPayload>,
-        best_payload: BlockCell<BaseBuiltPayload>,
+        payload_tx: &watch::Sender<Option<BaseBuiltPayload>>,
     ) -> Result<(), PayloadBuilderError> {
         let block_build_start_time = Instant::now();
-        let BuildArguments {
-            mut cached_reads,
-            config,
-            cancel: block_cancel,
-            finalized_cell,
-            publish_guard,
-        } = args;
+        let BuildArguments { mut cached_reads, config, cancel: block_cancel, publish_guard } = args;
 
         // We log only every Nth block based on sampling ratio to reduce usage
         let block_number = config.parent_header.number + 1;
@@ -317,7 +309,6 @@ where
         )?;
 
         self.payload_tx.send(payload.clone()).await.map_err(PayloadBuilderError::other)?;
-        best_payload.set(payload.clone());
 
         info!(
             target: "payload_builder",
@@ -371,7 +362,7 @@ where
         }
 
         if skip_flashblocks_building {
-            finalized_cell.set(payload);
+            payload_tx.send_replace(Some(payload));
             let total_block_building_time = block_build_start_time.elapsed();
             BuilderMetrics::total_block_built_duration().record(total_block_building_time);
             BuilderMetrics::total_block_built_gauge().set(total_block_building_time);
@@ -481,7 +472,7 @@ where
                     &span,
                     "Payload building complete, target flashblock count reached",
                 );
-                self.finalize_payload(&mut state, &ctx, &mut info, &finalized_cell)?;
+                self.finalize_payload(&mut state, &ctx, &mut info, payload_tx)?;
                 return Ok(());
             }
 
@@ -493,7 +484,6 @@ where
                     &mut state,
                     &mut best_txs,
                     &block_cancel,
-                    &best_payload,
                     &publish_guard,
                     &fb_span,
                     &mut executed_sender_nonces,
@@ -509,7 +499,7 @@ where
                         &span,
                         "Payload building complete, job cancelled or target flashblock count reached",
                     );
-                    self.finalize_payload(&mut state, &ctx, &mut info, &finalized_cell)?;
+                    self.finalize_payload(&mut state, &ctx, &mut info, payload_tx)?;
                     return Ok(());
                 }
                 Err(err) => {
@@ -536,7 +526,7 @@ where
                         &span,
                         "Payload building complete, channel closed or job cancelled",
                     );
-                    self.finalize_payload(&mut state, &ctx, &mut info, &finalized_cell)?;
+                    self.finalize_payload(&mut state, &ctx, &mut info, payload_tx)?;
                     return Ok(());
                 }
             }
@@ -554,7 +544,6 @@ where
         state: &mut State<DB>,
         best_txs: &mut NextBestFlashblocksTxs<Pool>,
         block_cancel: &CancellationToken,
-        best_payload: &BlockCell<BaseBuiltPayload>,
         publish_guard: &parking_lot::Mutex<()>,
         span: &tracing::Span,
         executed_sender_nonces: &mut HashMap<Address, u64>,
@@ -769,12 +758,11 @@ where
                     return Ok(None);
                 }
 
-                // Send to handler and set best_payload outside mutex.
+                // Send to handler outside mutex.
                 self.payload_tx
                     .send(new_payload.clone())
                     .await
                     .wrap_err("failed to send built payload to handler")?;
-                best_payload.set(new_payload);
 
                 // Record flashblock build duration
                 let flashblock_build_duration = flashblock_build_start_time.elapsed();
@@ -916,13 +904,13 @@ where
         span.record("flashblock_count", ctx.flashblock_index());
     }
 
-    /// Finalize the payload by computing the state root and setting the finalized cell.
+    /// Finalize the payload by computing the state root and publishing via the watch channel.
     fn finalize_payload<DB, P>(
         &self,
         state: &mut State<DB>,
         ctx: &BasePayloadBuilderCtx,
         info: &mut ExecutionInfo,
-        finalized_cell: &BlockCell<BaseBuiltPayload>,
+        payload_tx: &watch::Sender<Option<BaseBuiltPayload>>,
     ) -> Result<(), PayloadBuilderError>
     where
         DB: Database<Error = ProviderError> + AsRef<P>,
@@ -945,7 +933,7 @@ where
             "Finalized payload with state root"
         );
 
-        finalized_cell.set(final_payload);
+        payload_tx.send_replace(Some(final_payload));
 
         Ok(())
     }
@@ -1055,9 +1043,9 @@ where
     async fn try_build(
         &self,
         args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
-        best_payload: BlockCell<Self::BuiltPayload>,
+        payload_tx: &watch::Sender<Option<Self::BuiltPayload>>,
     ) -> Result<(), PayloadBuilderError> {
-        self.build_payload(args, best_payload).await
+        self.build_payload(args, payload_tx).await
     }
 }
 

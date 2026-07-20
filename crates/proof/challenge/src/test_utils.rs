@@ -22,7 +22,7 @@ use base_proof_contracts::{
     AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,
     GameStatus,
 };
-use base_proof_rpc::{L2Provider, RpcError, RpcResult};
+use base_proof_rpc::{BaseHeader, L2Provider, RpcError, RpcResult};
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
 use base_prover_service_protocol::{
     DeleteProofRequest, GetProofRequest, GetProofResponse, ProofResult as ApiProofResult,
@@ -730,7 +730,7 @@ impl L2Provider for MockL2Provider {
             .ok_or_else(|| RpcError::ProofNotFound(format!("no proof for hash {block_hash}")))
     }
 
-    async fn header_by_number(&self, block: BlockNumberOrTag) -> RpcResult<RpcHeader> {
+    async fn header_by_number(&self, block: BlockNumberOrTag) -> RpcResult<BaseHeader> {
         let block_number = match block {
             BlockNumberOrTag::Number(number) => number,
             other => panic!("MockL2Provider::header_by_number does not support tag {other:?}"),
@@ -744,6 +744,7 @@ impl L2Provider for MockL2Provider {
         self.headers
             .get(&block_number)
             .cloned()
+            .map(Into::into)
             .ok_or_else(|| RpcError::HeaderNotFound(format!("no header for block {block_number}")))
     }
 
@@ -1099,7 +1100,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1143,7 +1144,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1162,7 +1163,7 @@ mod tests {
         let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
         let verifier = Arc::new(MockAggregateVerifier::new(HashMap::new()));
 
-        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1185,7 +1186,7 @@ mod tests {
         let factory = Arc::new(MockDisputeGameFactory::new(games));
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(addr(96)));
+        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(addr(96)));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1266,7 +1267,7 @@ mod tests {
         let factory = Arc::new(MockDisputeGameFactory::new(games));
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
         let anchor_registry = Arc::new(MockAnchorStateRegistry::new(addr(2)));
-        let scanner = GameScanner::new(
+        let mut scanner = GameScanner::new(
             factory,
             verifier,
             Arc::clone(&anchor_registry) as Arc<dyn AnchorStateRegistryClient>,
@@ -1297,7 +1298,7 @@ mod tests {
         let factory = Arc::new(MockDisputeGameFactory::new(games));
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
         let anchor_registry = Arc::new(MockAnchorStateRegistry::new(Address::ZERO));
-        let scanner = GameScanner::new(
+        let mut scanner = GameScanner::new(
             factory,
             verifier,
             Arc::clone(&anchor_registry) as Arc<dyn AnchorStateRegistryClient>,
@@ -1335,7 +1336,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         // Index 0 -> candidate. Index 1 errors -> skipped. Index 2 -> candidate.
         let candidates = scanner.scan().await.unwrap();
@@ -1373,7 +1374,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1395,7 +1396,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1423,7 +1424,7 @@ mod tests {
         verifier_games.insert(addr(0), state);
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
-        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1450,7 +1451,7 @@ mod tests {
         );
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
-        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1468,7 +1469,7 @@ mod tests {
         verifier_games.insert(addr(0), mock_state(GameStatus::InProgress, Address::ZERO, 100));
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
-        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1491,7 +1492,7 @@ mod tests {
             .insert(addr(0), mock_state_with_tee(GameStatus::InProgress, zk_addr, tee_addr, 100));
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
-        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1531,7 +1532,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1568,7 +1569,7 @@ mod tests {
         );
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(
+        let mut scanner = GameScanner::new(
             Arc::clone(&factory) as Arc<dyn DisputeGameFactoryClient>,
             Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
             mock_anchor_registry(Address::ZERO),
@@ -1623,7 +1624,7 @@ mod tests {
         );
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(
+        let mut scanner = GameScanner::new(
             Arc::clone(&factory) as Arc<dyn DisputeGameFactoryClient>,
             Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
             mock_anchor_registry(Address::ZERO),
@@ -1670,7 +1671,7 @@ mod tests {
         );
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(
+        let mut scanner = GameScanner::new(
             Arc::clone(&factory) as Arc<dyn DisputeGameFactoryClient>,
             Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
             mock_anchor_registry(Address::ZERO),

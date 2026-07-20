@@ -262,8 +262,10 @@ impl BatcherService {
                         .ok_or_else(|| {
                             SourceError::Provider(format!("block {} not found", header.number))
                         })?;
-                    let block =
-                        rpc_block.into_consensus().map_transactions(|t| t.inner.into_inner());
+                    let block = rpc_block
+                        .map_header(|header| header.into_inner())
+                        .into_consensus()
+                        .map_transactions(|t| t.inner.into_inner());
                     Ok(block)
                 }
             })

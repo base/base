@@ -75,44 +75,6 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
         recorder.record_base_result(ctx, self.route(ctx, calldata, version, false, observer), |b| b)
     }
 
-    /// Decodes calldata and executes the matching `IB20` operation for `upgrade`.
-    pub fn inner(
-        &mut self,
-        ctx: StorageCtx<'_>,
-        calldata: &[u8],
-        upgrade: BaseUpgrade,
-    ) -> base_precompile_storage::Result<Bytes> {
-        self.inner_with_observer(ctx, calldata, upgrade, NoopPrecompileCallObserver)
-    }
-
-    /// Decodes calldata, observes the decoded operation, and executes the matching handler
-    /// against the version active at `upgrade`.
-    pub fn inner_with_observer<O>(
-        &mut self,
-        ctx: StorageCtx<'_>,
-        calldata: &[u8],
-        upgrade: BaseUpgrade,
-        observer: O,
-    ) -> base_precompile_storage::Result<Bytes>
-    where
-        O: PrecompileCallObserver,
-    {
-        let Some(version) = StablecoinVersions::from_base_upgrade(upgrade) else {
-            return Err(BasePrecompileError::Revert(Bytes::new()));
-        };
-        self.route(ctx, calldata, version, false, observer)
-    }
-
-    /// Decodes calldata and executes it with factory-init privilege.
-    pub fn inner_with_privilege(
-        &mut self,
-        ctx: StorageCtx<'_>,
-        calldata: &[u8],
-        privileged: bool,
-    ) -> base_precompile_storage::Result<Bytes> {
-        self.route(ctx, calldata, StablecoinVersion::V1, privileged, NoopPrecompileCallObserver)
-    }
-
     /// Grants `role` to `account` without checking caller authorization.
     ///
     /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and the
@@ -129,7 +91,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
 
     /// Decodes calldata, observes the decoded operation, and routes it to `version` with optional
     /// factory-init privilege.
-    fn route<O>(
+    pub fn route<O>(
         &mut self,
         ctx: StorageCtx<'_>,
         calldata: &[u8],
@@ -375,7 +337,7 @@ mod tests {
 
     use crate::{
         B20StablecoinToken, FakePolicyAccounting, IB20, InMemoryTokenAccounting,
-        NoopPrecompileCallObserver, PolicyVersion, TestStablecoinToken,
+        NoopPrecompileCallObserver, PolicyVersion, StablecoinVersion, TestStablecoinToken,
     };
 
     const TOKEN: Address = Address::repeat_byte(0x01);
@@ -393,9 +355,11 @@ mod tests {
     fn call_inner(token: &mut TestStablecoinToken, calldata: &[u8]) -> Vec<u8> {
         let mut storage = HashMapStorageProvider::new(1);
         storage.set_caller(TOKEN);
-        StorageCtx::enter(&mut storage, |ctx| token.inner(ctx, calldata, BaseUpgrade::Beryl))
-            .unwrap()
-            .to_vec()
+        StorageCtx::enter(&mut storage, |ctx| {
+            token.route(ctx, calldata, StablecoinVersion::V1, false, NoopPrecompileCallObserver)
+        })
+        .unwrap()
+        .to_vec()
     }
 
     fn make_token() -> B20StablecoinToken<InMemoryTokenAccounting, FakePolicyAccounting> {
