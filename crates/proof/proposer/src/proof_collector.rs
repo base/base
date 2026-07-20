@@ -120,6 +120,7 @@ where
                 target_block,
                 &session_id,
                 target_block <= dispatched_through,
+                true,
             )
             .await
             {
@@ -172,6 +173,7 @@ where
         target_block: u64,
         session_id: &str,
         request_dispatched: bool,
+        record_metrics: bool,
     ) -> Result<Option<(Proposal, Vec<Proposal>)>, ProposerError> {
         let response = match proof_requester
             .get_proof(GetProofRequest { session_id: session_id.to_owned() })
@@ -189,8 +191,11 @@ where
                 }
 
                 let error = ProposerError::Prover(format!("proof session {session_id} not found"));
-                Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_FAILED).increment(1);
-                Metrics::errors_total(error.metric_label()).increment(1);
+                if record_metrics {
+                    Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_FAILED)
+                        .increment(1);
+                    Metrics::errors_total(error.metric_label()).increment(1);
+                }
                 warn!(
                     target_block,
                     session_id = %session_id,
@@ -200,7 +205,9 @@ where
                 return Err(error);
             }
             Err(e) => {
-                Metrics::errors_total("prover").increment(1);
+                if record_metrics {
+                    Metrics::errors_total("prover").increment(1);
+                }
                 warn!(
                     target_block,
                     session_id = %session_id,
@@ -211,13 +218,15 @@ where
             }
         };
 
-        Metrics::proof_status_received_total(match response.status {
-            ProofStatus::Queued => Metrics::PROOF_STATUS_QUEUED,
-            ProofStatus::Running => Metrics::PROOF_STATUS_RUNNING,
-            ProofStatus::Succeeded => Metrics::PROOF_STATUS_SUCCEEDED,
-            ProofStatus::Failed => Metrics::PROOF_STATUS_FAILED,
-        })
-        .increment(1);
+        if record_metrics {
+            Metrics::proof_status_received_total(match response.status {
+                ProofStatus::Queued => Metrics::PROOF_STATUS_QUEUED,
+                ProofStatus::Running => Metrics::PROOF_STATUS_RUNNING,
+                ProofStatus::Succeeded => Metrics::PROOF_STATUS_SUCCEEDED,
+                ProofStatus::Failed => Metrics::PROOF_STATUS_FAILED,
+            })
+            .increment(1);
+        }
 
         match response.status {
             ProofStatus::Queued | ProofStatus::Running => {
@@ -234,8 +243,11 @@ where
                     format!("proof session {session_id} failed without an error message")
                 });
                 let error = ProposerError::Prover(message);
-                Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_FAILED).increment(1);
-                Metrics::errors_total(error.metric_label()).increment(1);
+                if record_metrics {
+                    Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_FAILED)
+                        .increment(1);
+                    Metrics::errors_total(error.metric_label()).increment(1);
+                }
                 warn!(
                     target_block,
                     session_id = %session_id,
@@ -249,9 +261,11 @@ where
                     let error = ProposerError::Prover(format!(
                         "proof session {session_id} succeeded without a result"
                     ));
-                    Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_FAILED)
-                        .increment(1);
-                    Metrics::errors_total(error.metric_label()).increment(1);
+                    if record_metrics {
+                        Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_FAILED)
+                            .increment(1);
+                        Metrics::errors_total(error.metric_label()).increment(1);
+                    }
                     warn!(
                         target_block,
                         session_id = %session_id,
@@ -264,15 +278,19 @@ where
                 match ProposerProofAdapter::tee_proof_result(result) {
                     Ok(proof) => {
                         info!(target_block, session_id = %session_id, "Proof request succeeded");
-                        Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_READY)
-                            .increment(1);
-                        Metrics::last_collected_block().set(target_block as f64);
+                        if record_metrics {
+                            Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_READY)
+                                .increment(1);
+                            Metrics::last_collected_block().set(target_block as f64);
+                        }
                         Ok(Some(proof))
                     }
                     Err(error) => {
-                        Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_FAILED)
-                            .increment(1);
-                        Metrics::errors_total(error.metric_label()).increment(1);
+                        if record_metrics {
+                            Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_FAILED)
+                                .increment(1);
+                            Metrics::errors_total(error.metric_label()).increment(1);
+                        }
                         warn!(
                             target_block,
                             session_id = %session_id,
@@ -424,8 +442,14 @@ where
             };
 
             let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_l2_output_root);
-            match Self::poll_proof(self.proof_requester.as_ref(), target_block, &session_id, false)
-                .await
+            match Self::poll_proof(
+                self.proof_requester.as_ref(),
+                target_block,
+                &session_id,
+                false,
+                false,
+            )
+            .await
             {
                 Ok(Some(_)) if context.delete_succeeded_proofs => {}
                 Ok(Some(_)) | Ok(None) => return true,
