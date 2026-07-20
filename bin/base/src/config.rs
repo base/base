@@ -190,9 +190,8 @@ mod tests {
     #[allow(clippy::result_large_err)]
     fn resolves_mainnet_builtin() {
         with_cleared_env(|_| {
-            let resolved = ChainResolver::new(ChainArg::BuiltIn("mainnet".to_owned()))
-                .resolve()
-                .unwrap();
+            let resolved =
+                ChainResolver::new(ChainArg::BuiltIn("mainnet".to_owned())).resolve().unwrap();
 
             assert_eq!(resolved.name, "mainnet");
             assert_eq!(resolved.l2_chain_id, 8453);
@@ -207,9 +206,8 @@ mod tests {
     #[allow(clippy::result_large_err)]
     fn resolves_sepolia_builtin() {
         with_cleared_env(|_| {
-            let resolved = ChainResolver::new(ChainArg::BuiltIn("sepolia".to_owned()))
-                .resolve()
-                .unwrap();
+            let resolved =
+                ChainResolver::new(ChainArg::BuiltIn("sepolia".to_owned())).resolve().unwrap();
 
             assert_eq!(resolved.name, "sepolia");
             assert_eq!(resolved.l2_chain_id, 84532);
@@ -223,9 +221,8 @@ mod tests {
     #[allow(clippy::result_large_err)]
     fn resolves_zeronet_builtin() {
         with_cleared_env(|_| {
-            let resolved = ChainResolver::new(ChainArg::BuiltIn("zeronet".to_owned()))
-                .resolve()
-                .unwrap();
+            let resolved =
+                ChainResolver::new(ChainArg::BuiltIn("zeronet".to_owned())).resolve().unwrap();
 
             assert_eq!(resolved.name, "zeronet");
             assert_eq!(resolved.l2_chain_id, 763360);

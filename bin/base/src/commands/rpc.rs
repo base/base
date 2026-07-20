@@ -165,11 +165,7 @@ mod tests {
     use base_upgrade_signal::UpgradeSignalRuntimeValidation;
     use clap::Parser;
 
-    use crate::{
-        cli::BaseCli,
-        commands::BaseCommand,
-        config::ChainArg,
-    };
+    use crate::{cli::BaseCli, commands::BaseCommand, config::ChainArg};
 
     const RPC_FORWARDING_ENDPOINT_ENV: &str = "OP_RETH_SEQUENCER_HTTP";
     const RPC_FORWARDING_ENDPOINT_ENV_CHILD_TEST: &str =
