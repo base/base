@@ -1,7 +1,6 @@
 //! Upgrade signal metrics observer actor.
 
 use alloy_provider::RootProvider;
-use base_common_genesis::BaseUpgrade;
 use base_upgrade_signal::{
     AlloyUpgradeSignalReader, UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalError,
     UpgradeSignalMetricLayer, UpgradeSignalMonitor, UpgradeSignalRefresher,
@@ -71,8 +70,6 @@ impl UpgradeSignalNodeConfig {
 pub struct UpgradeSignalMetricsActor {
     /// L1 upgrade signal reader.
     pub reader: AlloyUpgradeSignalReader,
-    /// Contract-backed upgrades read from the L1 contract.
-    pub upgrade_ids: Vec<BaseUpgrade>,
     /// Live metrics state.
     pub monitor: UpgradeSignalMonitor,
     /// Runtime refresher applied automatically on observed live updates, when enabled.
@@ -90,16 +87,15 @@ impl UpgradeSignalMetricsActor {
         cancellation: CancellationToken,
     ) -> Self {
         let reader = config.reader(l1_provider);
-        let monitor =
-            UpgradeSignalMonitor::new(UpgradeSignalMetricLayer::Consensus, &config.upgrade_ids);
+        let monitor = UpgradeSignalMonitor::new(UpgradeSignalMetricLayer::Consensus);
 
-        Self { reader, upgrade_ids: config.upgrade_ids, monitor, refresher, cancellation }
+        Self { reader, monitor, refresher, cancellation }
     }
 
     /// Polls L1 upgrade signal state, records metrics, and auto-applies observed changes when
     /// runtime refresh is enabled.
     pub async fn poll_l1_signal(&mut self) {
-        let Some(schedule) = self.monitor.poll(&self.reader, &self.upgrade_ids).await else {
+        let Some(schedule) = self.monitor.poll(&self.reader).await else {
             return;
         };
         if let Some(refresher) = &self.refresher

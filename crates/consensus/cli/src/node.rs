@@ -406,7 +406,7 @@ impl ConsensusNodeArgs {
         startup_mode: UpgradeSignalStartupMode,
     ) -> eyre::Result<RollupNode> {
         self.validate_sequencer_key()?;
-        let upgrade_signal_config = self.config.upgrade_signal.config()?;
+        let upgrade_signal_config = self.config.upgrade_signal.config();
         let upgrade_signal_l1_rpc = overrides.upgrade_signal_l1_rpc.clone();
         if let Some(signal_config) = &upgrade_signal_config
             && startup_mode.reads_and_applies()
@@ -654,8 +654,6 @@ mod tests {
             "http://localhost:8551",
             "--upgrade-signal.contract",
             "0x0000000000000000000000000000000000000001",
-            "--upgrade-signal.upgrade-id",
-            "azul",
         ])
         .args;
 
@@ -663,7 +661,6 @@ mod tests {
             args.upgrade_signal.contract_address,
             Some(address!("0000000000000000000000000000000000000001"))
         );
-        assert_eq!(args.upgrade_signal.upgrade_ids, ["azul"]);
     }
 
     fn upgrade_schedule(signals: &[(BaseUpgrade, u64)]) -> UpgradeSignalSchedule {

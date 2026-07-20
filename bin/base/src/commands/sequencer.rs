@@ -241,8 +241,6 @@ mod tests {
             SEQUENCER_KEY,
             "--upgrade-signal.contract",
             "0x0000000000000000000000000000000000000001",
-            "--upgrade-signal.upgrade-id",
-            "azul",
         ]));
 
         let BaseCommand::Sequencer(sequencer) = cli.command else {
@@ -258,7 +256,6 @@ mod tests {
                 .map(|address| address.to_string()),
             Some("0x0000000000000000000000000000000000000001".to_string())
         );
-        assert_eq!(sequencer.builder.rollup_args.upgrade_signal.upgrade_ids, ["azul"]);
     }
 
     #[test]
