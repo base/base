@@ -4,7 +4,6 @@ use alloy_primitives::{Address, B256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer_local::PrivateKeySigner;
 use base_challenger::{AccountProofVerifier, DisputeIntent};
-use base_cli_utils::LogConfig;
 use base_common_consensus::Predeploys;
 use base_proof_contracts::{DisputeGameFactoryClient, DisputeGameFactoryContractClient};
 use base_proof_rpc::L2HttpProvider;
@@ -45,14 +44,12 @@ pub struct Config {
     pub poll_interval: std::time::Duration,
     /// Proof poll timeout.
     pub poll_timeout: std::time::Duration,
-    /// Logging configuration.
-    pub log: LogConfig,
 }
 
 impl Config {
     /// Builds config from clap CLI args, resolving the game on L1 via the factory.
     pub async fn from_cli(cli: Cli) -> Result<Self> {
-        let args = cli.fork;
+        let Cli { fork: args, logging: _ } = cli;
 
         let explicit_game = args.game_address;
         let explicit_index = args.game_index;
@@ -79,7 +76,6 @@ impl Config {
             patch_invalid_game: explicit_game.is_none(),
             poll_interval: args.poll_interval,
             poll_timeout: args.poll_timeout,
-            log: LogConfig::from(cli.logging),
         })
     }
 

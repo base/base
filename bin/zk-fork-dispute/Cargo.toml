@@ -18,6 +18,6 @@ workspace = true
 [dependencies]
 eyre.workspace = true
 base-cli-utils.workspace = true
-clap = { workspace = true, features = ["derive", "env"] }
 base-zk-fork-dispute = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+clap = { workspace = true, features = ["derive", "env"] }

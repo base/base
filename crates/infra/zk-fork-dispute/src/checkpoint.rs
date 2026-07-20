@@ -409,11 +409,16 @@ impl AnvilPatch {
                 offset += 1;
             }
         }
-        let replace_at = offsets.get(root_index).copied().or_else(|| offsets.first().copied());
-        let Some(replace_at) = replace_at else {
+        if offsets.is_empty() {
             bail!(
                 "could not find intermediate root {original_root} in game {} bytecode",
                 config.game_address
+            );
+        }
+        let Some(replace_at) = offsets.get(root_index).copied() else {
+            bail!(
+                "root index {root_index} out of range for {} bytecode matches of {original_root}",
+                offsets.len()
             );
         };
 
