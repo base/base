@@ -11,8 +11,8 @@
 //!
 //! Because the per-op suite resolves the version via `StablecoinVersionResolver::from_base_upgrade`,
 //! it breaks if dispatch ever routes to the wrong version. Privileged behavior is exercised via
-//! `inner_with_privilege`; the guard envelope (nonpayable / uninitialized / pre-Beryl) via the
-//! full `dispatch_with_observer`.
+//! `route` with `privileged = true`; the guard envelope (nonpayable / uninitialized / pre-Beryl)
+//! via the full `dispatch_with_observer`.
 //!
 //! ## Blessing storage hashes
 //! State-root constants below are pinned. To (re)generate them after an intentional change, run:
