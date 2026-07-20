@@ -10,6 +10,7 @@ use std::{
 
 use base_proof_rpc::RollupProvider;
 use futures::FutureExt;
+use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
@@ -23,9 +24,9 @@ use crate::{
 
 /// The proving pipeline.
 ///
-/// Runs concurrent dispatcher and collector tasks per [`Self::run`] session.
-/// The collector chains ready proofs internally and restarts both tasks only
-/// when it needs fresh onchain state.
+/// Runs concurrent recovery, dispatcher, and collector tasks per [`Self::run`]
+/// session. The collector chains ready proofs internally and restarts the
+/// session only when it needs fresh onchain state.
 pub struct ProvingPipeline<R>
 where
     R: RollupProvider + 'static,
@@ -61,11 +62,11 @@ where
 
     /// Runs the proving pipeline until cancelled.
     ///
-    /// Each session starts a dispatcher task and a collector task. The
-    /// dispatcher can run ahead up to the finalized head, while the collector
-    /// submits ready proofs in order from an internal cursor. Outcomes that
-    /// cannot safely advance that cursor restart both tasks from a fresh
-    /// recovery walk.
+    /// Each session starts recovery, dispatcher, and collector tasks. Recovery
+    /// publishes one shared onchain snapshot per poll. The dispatcher can run
+    /// ahead up to the finalized head, while the collector submits ready proofs
+    /// in order from an internal cursor. Outcomes that cannot safely advance
+    /// that cursor restart the session from a fresh recovery walk.
     pub async fn run(&self, cancel: CancellationToken) {
         info!(
             block_interval = self.config.block_interval,
@@ -76,21 +77,30 @@ where
 
         loop {
             let dispatched_through = Arc::new(AtomicU64::new(0));
+            let (recovery_tx, recovery_rx) = watch::channel(None);
 
-            // dispatcher_loop intentionally does not return; this branch keeps it
-            // polled while collector_loop remains the session restart signal.
-            // Dropping either loop mid-tick is safe: the next recovery walk
+            // The recovery and dispatcher loops intentionally do not return;
+            // collector_loop remains the session restart signal. Dropping any
+            // loop mid-tick is safe: the next recovery walk
             // rediscovers any already-broadcast L1 transaction from onchain state.
             let session = async {
                 tokio::select! {
                     biased;
                     () = cancel.cancelled() => false,
-                    () = self.dispatcher_loop(Arc::clone(&dispatched_through)) => true,
-                    () = self.collector_loop(&cancel, Arc::clone(&dispatched_through)) => true,
+                    () = self.recovery_loop(recovery_tx) => true,
+                    () = self.dispatcher_loop(
+                        recovery_rx.clone(),
+                        Arc::clone(&dispatched_through),
+                    ) => true,
+                    () = self.collector_loop(
+                        &cancel,
+                        recovery_rx,
+                        Arc::clone(&dispatched_through),
+                    ) => true,
                 }
             };
             // Unwind safety: this assertion is scoped to one pipeline session. Session progress
-            // lives in the loop-local caches/cursors above and is discarded on panic; `self` only
+            // lives in the session-local cache/cursors and is discarded on panic; `self` only
             // carries shared clients and static config that are reused after a fresh recovery walk.
             let restart = AssertUnwindSafe(session).catch_unwind().await.unwrap_or_else(|panic| {
                 let panic = panic
@@ -112,22 +122,37 @@ where
         info!("Proving pipeline stopped");
     }
 
-    async fn dispatcher_loop(&self, dispatched_through: Arc<AtomicU64>) {
+    async fn recovery_loop(&self, recovery_tx: watch::Sender<Option<(RecoveredState, u64)>>) {
         let mut cache: Option<ProofRecoveryCache> = None;
+
+        loop {
+            let plan = self.proof_recovery.try_recover_and_plan(&mut cache).await;
+            if let Some((state, finalized_head)) = plan {
+                Metrics::safe_head().set(finalized_head as f64);
+                Metrics::finalized_head().set(finalized_head as f64);
+                Metrics::last_proposed_block().set(state.l2_block_number as f64);
+            }
+            // Publish unchanged plans too so failed dispatches and pending proofs retry.
+            recovery_tx.send_replace(plan);
+
+            tokio::time::sleep(self.config.poll_interval).await;
+        }
+    }
+
+    async fn dispatcher_loop(
+        &self,
+        mut recovery_rx: watch::Receiver<Option<(RecoveredState, u64)>>,
+        dispatched_through: Arc<AtomicU64>,
+    ) {
         let mut cursor_source: Option<RecoveredState> = None;
         let mut cursor: Option<RecoveredState> = None;
 
-        loop {
+        while recovery_rx.changed().await.is_ok() {
             {
                 let _tick_timer = base_metrics::timed!(Metrics::tick_duration_seconds());
+                let plan = *recovery_rx.borrow_and_update();
 
-                if let Some((recovered, finalized_head)) =
-                    self.proof_recovery.try_recover_and_plan(&mut cache).await
-                {
-                    Metrics::safe_head().set(finalized_head as f64);
-                    Metrics::finalized_head().set(finalized_head as f64);
-                    Metrics::last_proposed_block().set(recovered.l2_block_number as f64);
-
+                if let Some((recovered, finalized_head)) = plan {
                     // Dispatch failures retry from the in-memory cursor. A fresh recovery walk is
                     // only needed when onchain state changes; try_recover_and_plan returns that as
                     // a different recovered state, which resets the cursor here.
@@ -144,27 +169,24 @@ where
                     dispatched_through.store(current.l2_block_number, Ordering::Relaxed);
                 }
             }
-
-            tokio::time::sleep(self.config.poll_interval).await;
         }
     }
 
-    async fn collector_loop(&self, cancel: &CancellationToken, dispatched_through: Arc<AtomicU64>) {
-        let mut cache: Option<ProofRecoveryCache> = None;
+    async fn collector_loop(
+        &self,
+        cancel: &CancellationToken,
+        mut recovery_rx: watch::Receiver<Option<(RecoveredState, u64)>>,
+        dispatched_through: Arc<AtomicU64>,
+    ) {
         let mut cursor_source: Option<RecoveredState> = None;
         let mut cursor: Option<RecoveredState> = None;
 
-        loop {
+        while recovery_rx.changed().await.is_ok() {
             let restart = {
                 let _tick_timer = base_metrics::timed!(Metrics::collector_tick_duration_seconds());
+                let plan = *recovery_rx.borrow_and_update();
 
-                if let Some((recovered, finalized_head)) =
-                    self.proof_recovery.try_recover_and_plan(&mut cache).await
-                {
-                    Metrics::safe_head().set(finalized_head as f64);
-                    Metrics::finalized_head().set(finalized_head as f64);
-                    Metrics::last_proposed_block().set(recovered.l2_block_number as f64);
-
+                if let Some((recovered, finalized_head)) = plan {
                     if cursor_source != Some(recovered) || cursor.is_none() {
                         cursor_source = Some(recovered);
                         cursor = Some(recovered);
@@ -188,8 +210,6 @@ where
             if restart {
                 break;
             }
-
-            tokio::time::sleep(self.config.poll_interval).await;
         }
     }
 }
@@ -330,12 +350,15 @@ mod tests {
     async fn dispatcher_failure_keeps_dispatcher_loop_running() {
         let requester = Arc::new(RejectingProofRequester::default());
         let pipeline = test_pipeline(Arc::clone(&requester));
+        let (recovery_tx, recovery_rx) = watch::channel(None);
 
         assert!(
-            tokio::time::timeout(
-                Duration::from_millis(100),
-                pipeline.dispatcher_loop(Arc::new(AtomicU64::new(0)))
-            )
+            tokio::time::timeout(Duration::from_millis(100), async {
+                tokio::join!(
+                    pipeline.recovery_loop(recovery_tx),
+                    pipeline.dispatcher_loop(recovery_rx, Arc::new(AtomicU64::new(0))),
+                );
+            })
             .await
             .is_err(),
             "dispatcher failures should not end the dispatcher loop"
