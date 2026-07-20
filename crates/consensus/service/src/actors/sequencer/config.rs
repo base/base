@@ -39,6 +39,13 @@ pub struct SequencerConfig {
     pub l1_conf_delay: u64,
 }
 
+impl SequencerConfig {
+    /// Returns whether shadow sequencer mode is enabled.
+    pub const fn is_shadow_sequencer(&self) -> bool {
+        self.shadow_blocks_per_cycle.is_some()
+    }
+}
+
 impl Default for SequencerConfig {
     fn default() -> Self {
         Self {

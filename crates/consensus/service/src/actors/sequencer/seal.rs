@@ -23,6 +23,8 @@ pub enum SealState {
     Committed,
     /// Gossiped to peers. Ready for engine insertion.
     Gossiped,
+    /// Shadow sequencer payload ready for private engine insertion without commit or gossip.
+    Private,
 }
 
 /// Result from one seal pipeline step.
@@ -40,7 +42,7 @@ impl SealState {
         match self {
             Self::Sealed => "conductor",
             Self::Committed => "gossip",
-            Self::Gossiped => "insert",
+            Self::Gossiped | Self::Private => "insert",
         }
     }
 }
@@ -79,6 +81,20 @@ impl PayloadSealer {
         );
 
         Self { envelope, state: SealState::Sealed, seal_span, started_at: Instant::now() }
+    }
+
+    /// Creates a private sealer that skips conductor commit and gossip.
+    pub fn new_private(envelope: BaseExecutionPayloadEnvelope) -> Self {
+        let block_hash = envelope.execution_payload.block_hash();
+        let block_num = envelope.execution_payload.block_number();
+        let seal_span = tracing::info_span!(
+            "seal_payload_pipeline",
+            block_hash = %block_hash,
+            block_number = block_num,
+            mode = "shadow",
+        );
+
+        Self { envelope, state: SealState::Private, seal_span, started_at: Instant::now() }
     }
 
     /// Performs one step of the seal pipeline.
@@ -127,10 +143,15 @@ impl PayloadSealer {
                 self.state = SealState::Gossiped;
                 Ok(SealStepOutcome::Pending)
             }
-            SealState::Gossiped => {
-                self.seal_span.in_scope(
-                    || debug!(target: "sequencer", step = "insert", "seal pipeline step"),
-                );
+            SealState::Gossiped | SealState::Private => {
+                self.seal_span.in_scope(|| {
+                    debug!(
+                        target: "sequencer",
+                        step = "insert",
+                        state = ?self.state,
+                        "seal pipeline step"
+                    );
+                });
                 let inserted_head = engine_client
                     .insert_unsafe_payload(self.envelope.clone())
                     .instrument(self.seal_span.clone())
