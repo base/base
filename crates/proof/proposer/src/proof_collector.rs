@@ -22,6 +22,14 @@ enum SubmitOutcome {
     Idle,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct BatchDeleteContext<'a> {
+    finalized_head: u64,
+    dispatched_through: u64,
+    delete_succeeded_proofs: bool,
+    cancel: &'a CancellationToken,
+}
+
 /// Polls the next expected proof and submits it when ready.
 pub struct ProofCollector<R>
 where
@@ -128,10 +136,12 @@ where
                         .delete_proof_request(
                             &session_id,
                             target_block,
-                            finalized_head,
-                            dispatched_through,
-                            false,
-                            cancel,
+                            BatchDeleteContext {
+                                finalized_head,
+                                dispatched_through,
+                                delete_succeeded_proofs: false,
+                                cancel,
+                            },
                         )
                         .await;
                 }
@@ -363,10 +373,12 @@ where
                     .delete_proof_request(
                         session_id,
                         target_block,
-                        finalized_head,
-                        dispatched_through,
-                        true,
-                        cancel,
+                        BatchDeleteContext {
+                            finalized_head,
+                            dispatched_through,
+                            delete_succeeded_proofs: true,
+                            cancel,
+                        },
                     )
                     .await
                 {
@@ -384,17 +396,14 @@ where
         &self,
         session_id: &str,
         mut target_block: u64,
-        finalized_head: u64,
-        dispatched_through: u64,
-        delete_succeeded_proofs: bool,
-        cancel: &CancellationToken,
+        context: BatchDeleteContext<'_>,
     ) -> bool {
         if !self.delete_single_proof_request(session_id, target_block).await {
             return false;
         }
 
         loop {
-            if cancel.is_cancelled() {
+            if context.cancel.is_cancelled() {
                 return true;
             }
 
@@ -404,7 +413,7 @@ where
             };
             target_block = next_target;
 
-            if target_block > finalized_head || target_block > dispatched_through {
+            if target_block > context.finalized_head || target_block > context.dispatched_through {
                 return true;
             }
 
@@ -418,7 +427,7 @@ where
             match Self::poll_proof(self.proof_requester.as_ref(), target_block, &session_id, false)
                 .await
             {
-                Ok(Some(_)) if delete_succeeded_proofs => {}
+                Ok(Some(_)) if context.delete_succeeded_proofs => {}
                 Ok(Some(_)) | Ok(None) => return true,
                 Err(error) => warn!(
                     target_block,
