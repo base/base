@@ -14,6 +14,7 @@ workspace = true
 [dependencies]
 eyre.workspace = true
 url.workspace = true
+# Required by `base_cli_utils::define_log_args!` macro expansion (serde derives).
 serde.workspace = true
 tracing.workspace = true
 humantime.workspace = true
