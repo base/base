@@ -160,7 +160,8 @@ impl Eip8130Contracts {
         code[..10].copy_from_slice(&[0x36, 0x3d, 0x3d, 0x37, 0x3d, 0x3d, 0x3d, 0x36, 0x3d, 0x73]);
         code[10..30].copy_from_slice(implementation.as_slice());
         code[30..].copy_from_slice(&[
-            0x5a, 0xf4, 0x3d, 0x82, 0x80, 0x3e, 0x90, 0x3d, 0x91, 0x60, 0x2b, 0x57, 0xfd, 0x5b, 0xf3,
+            0x5a, 0xf4, 0x3d, 0x82, 0x80, 0x3e, 0x90, 0x3d, 0x91, 0x60, 0x2b, 0x57, 0xfd, 0x5b,
+            0xf3,
         ]);
         code
     }
@@ -228,9 +229,6 @@ mod tests {
             Eip8130Contracts::CANONICAL_HIGH_RATE_PAYER_ACCOUNT,
         );
         assert_eq!(runtime.len(), 45);
-        assert_eq!(
-            keccak256(runtime),
-            Eip8130Contracts::CANONICAL_HIGH_RATE_PAYER_PROXY_CODE_HASH
-        );
+        assert_eq!(keccak256(runtime), Eip8130Contracts::CANONICAL_HIGH_RATE_PAYER_PROXY_CODE_HASH);
     }
 }
