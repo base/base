@@ -5,10 +5,10 @@ use std::io::{self, Write};
 use anyhow::Result;
 use base_consensus_peers::BootNode;
 use basectl_cli::{
-    JsonOutput, MonitoringConfig, P2pCommandError, P2pInfoJson, P2pInfoTable, P2pTargetError,
-    PeerListReport, PeerSummary, add_peer, ban_peer, connect_peer, disconnect_peer,
-    fetch_connected_peers, fetch_info, fetch_raw_info, fetch_raw_peers, list_banned_peers,
-    remove_peer, unban_peer,
+    ElReachabilityOutcome, JsonOutput, KeyValueTable, MonitoringConfig, P2pCommandError,
+    P2pInfoJson, P2pInfoTable, P2pTargetError, PeerListReport, PeerSummary, TelemetryClient,
+    add_peer, ban_peer, connect_peer, disconnect_peer, fetch_connected_peers, fetch_info,
+    fetch_raw_info, fetch_raw_peers, list_banned_peers, remove_peer, unban_peer,
 };
 use serde::Serialize;
 use url::Url;
@@ -18,19 +18,52 @@ use crate::{
         DestructiveClBulkArgs, DestructiveClPeerArgs, DestructivePeerArgs, P2pArgs, P2pCommands,
     },
     confirm::confirm,
+    helpers::CommandOutcome,
 };
 
 /// Runs the `basectl p2p` command group.
-pub(crate) async fn run(config: MonitoringConfig, command: P2pCommands) -> Result<()> {
+pub(crate) async fn run(config: &str, command: P2pCommands) -> Result<CommandOutcome> {
     match command {
-        P2pCommands::Peers(args) => run_peers(config, args).await,
-        P2pCommands::Info(args) => run_info(config, args).await,
-        P2pCommands::AddPeer(args) => run_add_peer(config, args).await,
-        P2pCommands::RemovePeer(args) => run_remove_peer(config, args).await,
-        P2pCommands::Ban(args) => run_ban_peer(config, args).await,
-        P2pCommands::Unban(args) => run_unban_peer(config, args).await,
-        P2pCommands::UnbanAll(args) => run_unban_all(config, args).await,
+        P2pCommands::Reachability { enode, telemetry_url, json } => {
+            run_reachability(&enode, telemetry_url, json).await
+        }
+        other => {
+            let config = MonitoringConfig::load(config).await?;
+            match other {
+                P2pCommands::Peers(args) => run_peers(config, args).await?,
+                P2pCommands::Info(args) => run_info(config, args).await?,
+                P2pCommands::AddPeer(args) => run_add_peer(config, args).await?,
+                P2pCommands::RemovePeer(args) => run_remove_peer(config, args).await?,
+                P2pCommands::Ban(args) => run_ban_peer(config, args).await?,
+                P2pCommands::Unban(args) => run_unban_peer(config, args).await?,
+                P2pCommands::UnbanAll(args) => run_unban_all(config, args).await?,
+                P2pCommands::Reachability { .. } => unreachable!(),
+            }
+            Ok(CommandOutcome::Success)
+        }
     }
+}
+
+/// Runs `basectl p2p reachability`, exiting non-zero when the probe completed
+/// but the node was not reachable.
+async fn run_reachability(enode: &str, telemetry_url: Url, json: bool) -> Result<CommandOutcome> {
+    let response = TelemetryClient::new(telemetry_url)?.check_el_reachability(enode).await?;
+    let reachable = response.outcome == ElReachabilityOutcome::Reachable;
+    if json {
+        JsonOutput::print(&response)?;
+    } else {
+        let mut table = KeyValueTable::new();
+        table
+            .row("outcome", response.outcome.as_str())
+            .row("stage", response.stage.as_str())
+            .row("observed address", response.observed_address.to_string())
+            .row("elapsed", format!("{} ms", response.elapsed_ms));
+        if let Some(client_version) = response.client_version {
+            table.row("client version", client_version);
+        }
+        table.print()?;
+    }
+    Ok(CommandOutcome::from_failures(!reachable))
 }
 
 async fn run_peers(config: MonitoringConfig, args: P2pArgs) -> Result<()> {
@@ -624,6 +657,8 @@ fn write_peer_section<W: Write>(
 
 #[cfg(test)]
 mod tests {
+    use std::net::TcpListener;
+
     use alloy_primitives::Address;
     use basectl_cli::{P2pCommandError, P2pTargetError};
     use serde_json::json;
@@ -632,8 +667,9 @@ mod tests {
     use super::{
         AddTarget, PeerAction, PeerActionJson, PeerBulkActionResultJson, RemoveTarget,
         fail_unban_all_if_partial, parse_add_target, parse_cl_peer_id, parse_remove_target,
-        resolve_cl_rpc,
+        resolve_cl_rpc, run,
     };
+    use crate::cli::P2pCommands;
 
     const VALID_ENODE: &str = "enode://d7dfaea49c7ef37701e668652bcf1bc63d3abb2ae97593374a949e175e4ff128730a2f35199f3462a56298b981dfc395a5abebd2d6f0284ffe5bdc3d8e258b86@127.0.0.1:30304?discport=30301";
     const VALID_ENR: &str = "enr:-J64QBbwPjPLZ6IOOToOLsSjtFUjjzN66qmBZdUexpO32Klrc458Q24kbty2PdRaLacHM5z-cZQr8mjeQu3pik6jPSOGAYYFIqBfgmlkgnY0gmlwhDaRWFWHb3BzdGFja4SzlAUAiXNlY3AyNTZrMaECmeSnJh7zjKrDSPoNMGXoopeDF4hhpj5I0OsQUUt4u8uDdGNwgiQGg3VkcIIkBg";
@@ -690,6 +726,22 @@ mod tests {
                 ..
             } if config_name == "devnet" && command_name == "p2p info"
         ));
+    }
+
+    #[tokio::test]
+    async fn reachability_does_not_load_monitoring_config() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let command = P2pCommands::Reachability {
+            enode: VALID_ENODE.to_string(),
+            telemetry_url: Url::parse(&format!("http://{address}")).unwrap(),
+            json: false,
+        };
+
+        let error = run("/definitely/missing/basectl.yaml", command).await.unwrap_err();
+
+        assert!(error.to_string().starts_with("telemetry service unavailable:"));
     }
 
     #[test]

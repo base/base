@@ -51,5 +51,6 @@ alloy-provider = { workspace = true, features = ["admin-api", "net-api", "pubsub
 
 [dev-dependencies]
 jsonrpsee = { workspace = true, features = ["server"] }
+axum = { workspace = true, features = ["tokio", "http1", "json"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 base-prover-service-protocol = { workspace = true, features = ["rpc-server"] }
