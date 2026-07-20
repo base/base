@@ -15,9 +15,10 @@ use super::EngineTaskExt;
 use crate::{
     BuildTaskError, EngineBuildError, EngineClient, EngineForkchoiceVersion,
     EngineGetPayloadVersion, EngineState, EngineSyncStateUpdate, EngineTask, EngineTaskError,
-    EngineTaskErrorSeverity, ForkchoiceCheckpointReader, Metrics, NoopForkchoiceCheckpointReader,
-    SealTaskError, SyncStartError, SynchronizeTask, SynchronizeTaskError,
-    find_starting_forkchoice_with_checkpoint_reader, task_queue::EngineTaskErrors,
+    EngineTaskErrorSeverity, ForkchoiceCheckpointReader, InsertTask, InsertTaskError, Metrics,
+    NoopForkchoiceCheckpointReader, SealTaskError, SyncStartError, SynchronizeTask,
+    SynchronizeTaskError, find_starting_forkchoice_with_checkpoint_reader,
+    task_queue::EngineTaskErrors,
 };
 
 /// The [`Engine`] task queue.
@@ -395,6 +396,31 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         self.tasks.push((task, Reverse(sequence)));
         self.task_queue_length.send_replace(self.tasks.len());
         Metrics::engine_task_queue_depth().set(self.tasks.len() as f64);
+    }
+
+    /// Sequentially inserts payloads that authoritatively replace the current unsafe chain.
+    ///
+    /// Existing safe and finalized heads are preserved, while local-safe is reset to safe after
+    /// the unsafe-chain replacement. The caller is responsible for providing payloads in
+    /// contiguous canonical order.
+    pub async fn insert_authoritative_payloads(
+        &mut self,
+        client: Arc<EngineClient_>,
+        config: Arc<RollupConfig>,
+        payloads: Vec<BaseExecutionPayloadEnvelope>,
+    ) -> Result<L2BlockInfo, InsertTaskError> {
+        let mut head = self.state.sync_state.unsafe_head();
+        for envelope in payloads {
+            head = InsertTask::authoritative_payload(
+                Arc::clone(&client),
+                Arc::clone(&config),
+                envelope,
+            )
+            .execute_with_result(&mut self.state)
+            .await?;
+            self.state_sender.send_replace(self.state);
+        }
+        Ok(head)
     }
 
     /// Resets the engine by finding a plausible sync starting point via

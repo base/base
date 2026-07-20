@@ -47,6 +47,30 @@ impl InsertPayloadSafety {
     }
 }
 
+/// Determines whether an unsafe payload must extend the current unsafe head.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InsertPayloadPolicy {
+    /// Only insert payloads that can extend the current unsafe chain.
+    ExtendingOnly,
+    /// Insert an authoritative payload even when replacing the current unsafe chain.
+    Authoritative,
+}
+
+impl InsertPayloadPolicy {
+    /// Returns whether this policy permits replacing the current unsafe chain.
+    pub const fn is_authoritative(self) -> bool {
+        matches!(self, Self::Authoritative)
+    }
+
+    /// Returns the label used for structured logs.
+    pub const fn as_label(self) -> &'static str {
+        match self {
+            Self::ExtendingOnly => "extending_only",
+            Self::Authoritative => "authoritative",
+        }
+    }
+}
+
 /// The task to insert a payload into the execution engine.
 #[derive(Debug, Clone)]
 pub struct InsertTask<EngineClient_: EngineClient> {
@@ -58,6 +82,8 @@ pub struct InsertTask<EngineClient_: EngineClient> {
     envelope: BaseExecutionPayloadEnvelope,
     /// Whether the inserted payload should advance the safe head.
     payload_safety: InsertPayloadSafety,
+    /// Whether the payload must extend the current unsafe chain.
+    payload_policy: InsertPayloadPolicy,
     /// Optional response channel used by callers that need insertion acknowledgement.
     result_tx: Option<mpsc::Sender<InsertTaskResult>>,
 }
@@ -70,7 +96,14 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
         envelope: BaseExecutionPayloadEnvelope,
         payload_safety: InsertPayloadSafety,
     ) -> Self {
-        Self { client, rollup_config, envelope, payload_safety, result_tx: None }
+        Self {
+            client,
+            rollup_config,
+            envelope,
+            payload_safety,
+            payload_policy: InsertPayloadPolicy::ExtendingOnly,
+            result_tx: None,
+        }
     }
 
     /// Creates a new task to insert an unsafe payload.
@@ -94,7 +127,24 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
             rollup_config,
             envelope,
             payload_safety: InsertPayloadSafety::Unsafe,
+            payload_policy: InsertPayloadPolicy::ExtendingOnly,
             result_tx: Some(result_tx),
+        }
+    }
+
+    /// Creates a task that authoritatively replaces the current unsafe chain with this payload.
+    pub const fn authoritative_payload(
+        client: Arc<EngineClient_>,
+        rollup_config: Arc<RollupConfig>,
+        envelope: BaseExecutionPayloadEnvelope,
+    ) -> Self {
+        Self {
+            client,
+            rollup_config,
+            envelope,
+            payload_safety: InsertPayloadSafety::Unsafe,
+            payload_policy: InsertPayloadPolicy::Authoritative,
+            result_tx: None,
         }
     }
 
@@ -118,6 +168,10 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
         new_unsafe_ref: &L2BlockInfo,
     ) -> bool {
         if self.payload_safety.advances_safe_head() {
+            return true;
+        }
+
+        if self.payload_policy.is_authoritative() {
             return true;
         }
 
@@ -162,7 +216,8 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
         true
     }
 
-    async fn insert_payload(&self, state: &mut EngineState) -> InsertTaskResult {
+    /// Inserts the payload and returns the engine-acknowledged unsafe head.
+    pub async fn execute_with_result(&self, state: &mut EngineState) -> InsertTaskResult {
         let time_start = Instant::now();
 
         // Form a block ref before insertion so stale unsafe payloads can be dropped before import.
@@ -227,6 +282,7 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
                     target: "engine",
                     error = %e,
                     payload_safety = self.payload_safety.as_label(),
+                    payload_policy = self.payload_policy.as_label(),
                     "Failed to insert new payload"
                 );
                 return Err(InsertTaskError::InsertFailed(e));
@@ -239,21 +295,38 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
 
         let advances_safe_head = self.payload_safety.advances_safe_head();
         // Send a FCU to canonicalize the imported block.
-        SynchronizeTask::new(
-            Arc::clone(&self.client),
-            Arc::clone(&self.rollup_config),
-            EngineSyncStateUpdate {
-                unsafe_head: Some(new_block_ref),
-                local_safe_head: advances_safe_head.then_some(new_block_ref),
-                safe_head: advances_safe_head.then_some(new_block_ref),
-                ..Default::default()
-            },
-        )
-        .execute(state)
-        .await?;
+        let state_update = EngineSyncStateUpdate {
+            unsafe_head: Some(new_block_ref),
+            local_safe_head: advances_safe_head.then_some(new_block_ref),
+            safe_head: advances_safe_head.then_some(new_block_ref),
+            ..Default::default()
+        };
+        let synchronize_task = if self.payload_policy.is_authoritative() {
+            SynchronizeTask::new_forced(
+                Arc::clone(&self.client),
+                Arc::clone(&self.rollup_config),
+                state_update,
+            )
+        } else {
+            SynchronizeTask::new(
+                Arc::clone(&self.client),
+                Arc::clone(&self.rollup_config),
+                state_update,
+            )
+        };
+        synchronize_task.execute(state).await?;
 
-        if self.result_tx.is_some() && state.sync_state.unsafe_head() != new_block_ref {
+        if (self.result_tx.is_some() || self.payload_policy.is_authoritative())
+            && state.sync_state.unsafe_head() != new_block_ref
+        {
             return Err(InsertTaskError::ForkchoiceUpdateDidNotAdvance);
+        }
+
+        if self.payload_policy.is_authoritative() {
+            state.sync_state = state.sync_state.apply_update(EngineSyncStateUpdate {
+                local_safe_head: Some(state.sync_state.safe_head()),
+                ..Default::default()
+            });
         }
 
         let total_duration = time_start.elapsed();
@@ -263,6 +336,7 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
             hash = %new_block_ref.block_info.hash,
             number = new_block_ref.block_info.number,
             payload_safety = self.payload_safety.as_label(),
+            payload_policy = self.payload_policy.as_label(),
             total_duration = ?total_duration,
             insert_duration = ?insert_duration,
             "Inserted new payload"
@@ -286,7 +360,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for InsertTask<EngineClient_> {
     type Error = InsertTaskError;
 
     async fn execute(&self, state: &mut EngineState) -> Result<(), InsertTaskError> {
-        let result = self.insert_payload(state).await;
+        let result = self.execute_with_result(state).await;
         if self.result_tx.is_some() {
             self.send_channel_result(result).await;
             Ok(())
@@ -307,9 +381,9 @@ mod tests {
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
     use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
 
-    use super::{InsertPayloadSafety, InsertTask};
+    use super::{InsertPayloadPolicy, InsertPayloadSafety, InsertTask};
     use crate::{
-        EngineTaskExt,
+        Engine, EngineTaskExt,
         test_utils::{TestEngineStateBuilder, test_engine_client_builder},
     };
 
@@ -585,5 +659,117 @@ mod tests {
         );
         assert_eq!(state.sync_state.unsafe_head().block_info.number, 5);
         assert_eq!(state.sync_state.unsafe_head().block_info.parent_hash, current_unsafe.hash());
+    }
+
+    #[tokio::test]
+    async fn authoritative_payload_replaces_newer_unsafe_head() {
+        let client = test_client();
+        let current_unsafe = l2_block_info(10, B256::with_last_byte(10), B256::with_last_byte(9));
+        let canonical_anchor = l2_block_info(7, B256::with_last_byte(7), B256::with_last_byte(6));
+        let mut state = TestEngineStateBuilder::new()
+            .with_unsafe_head(current_unsafe)
+            .with_safe_head(canonical_anchor)
+            .with_finalized_head(canonical_anchor)
+            .build();
+        let envelope = BaseExecutionPayloadEnvelope {
+            parent_beacon_block_root: None,
+            execution_payload: bedrock_payload_with_parent(8, B256::with_last_byte(7)),
+        };
+
+        let inserted_head = InsertTask::authoritative_payload(
+            Arc::clone(&client),
+            Arc::new(base_common_genesis::RollupConfig::default()),
+            envelope,
+        )
+        .execute_with_result(&mut state)
+        .await
+        .expect("authoritative payload should replace the newer unsafe head");
+
+        assert!(client.last_new_payload_v2().await.is_some());
+        assert_eq!(inserted_head.block_info.number, 8);
+        assert_eq!(state.sync_state.unsafe_head(), inserted_head);
+        assert_eq!(state.sync_state.local_safe_head(), canonical_anchor);
+        assert_eq!(state.sync_state.safe_head(), canonical_anchor);
+        assert_eq!(state.sync_state.finalized_head(), canonical_anchor);
+    }
+
+    #[test]
+    fn insert_payload_policy_labels_are_stable() {
+        assert_eq!(InsertPayloadPolicy::ExtendingOnly.as_label(), "extending_only");
+        assert_eq!(InsertPayloadPolicy::Authoritative.as_label(), "authoritative");
+    }
+
+    #[tokio::test]
+    async fn engine_inserts_authoritative_payloads_in_order() {
+        let client = test_client();
+        let config = Arc::new(base_common_genesis::RollupConfig::default());
+        let current_unsafe = l2_block_info(10, B256::with_last_byte(10), B256::with_last_byte(9));
+        let canonical_anchor = l2_block_info(7, B256::with_last_byte(7), B256::with_last_byte(6));
+        let initial_state = TestEngineStateBuilder::new()
+            .with_unsafe_head(current_unsafe)
+            .with_safe_head(canonical_anchor)
+            .with_finalized_head(canonical_anchor)
+            .build();
+        let (state_tx, state_rx) = tokio::sync::watch::channel(initial_state);
+        let (queue_tx, _) = tokio::sync::watch::channel(0usize);
+        let mut engine = Engine::new(initial_state, state_tx, queue_tx);
+        let payloads = vec![
+            BaseExecutionPayloadEnvelope {
+                parent_beacon_block_root: None,
+                execution_payload: bedrock_payload_with_parent(8, B256::with_last_byte(7)),
+            },
+            BaseExecutionPayloadEnvelope {
+                parent_beacon_block_root: None,
+                execution_payload: bedrock_payload_with_parent(9, B256::with_last_byte(8)),
+            },
+        ];
+
+        let reconciled_head = engine
+            .insert_authoritative_payloads(client, config, payloads)
+            .await
+            .expect("ordered authoritative payloads should be inserted");
+
+        assert_eq!(reconciled_head.block_info.number, 9);
+        assert_eq!(engine.state().sync_state.unsafe_head(), reconciled_head);
+        assert_eq!(engine.state().sync_state.local_safe_head(), canonical_anchor);
+        assert_eq!(engine.state().sync_state.safe_head(), canonical_anchor);
+        assert_eq!(engine.state().sync_state.finalized_head(), canonical_anchor);
+        assert_eq!(state_rx.borrow().sync_state.unsafe_head(), reconciled_head);
+        assert_eq!(state_rx.borrow().sync_state.local_safe_head(), canonical_anchor);
+        assert_eq!(state_rx.borrow().sync_state.safe_head(), canonical_anchor);
+        assert_eq!(state_rx.borrow().sync_state.finalized_head(), canonical_anchor);
+    }
+
+    #[tokio::test]
+    async fn authoritative_duplicate_payload_forces_forkchoice_acknowledgement() {
+        let config = Arc::new(base_common_genesis::RollupConfig::default());
+        let envelope = BaseExecutionPayloadEnvelope {
+            parent_beacon_block_root: None,
+            execution_payload: bedrock_payload(1),
+        };
+        let mut state = TestEngineStateBuilder::new().build();
+        InsertTask::unsafe_payload(test_client(), Arc::clone(&config), envelope.clone())
+            .execute(&mut state)
+            .await
+            .expect("initial payload should be inserted");
+
+        let client_without_fcu = Arc::new(
+            test_engine_client_builder()
+                .with_new_payload_v2_response(valid_payload_status())
+                .build(),
+        );
+        let result = InsertTask::authoritative_payload(
+            client_without_fcu,
+            Arc::clone(&config),
+            envelope.clone(),
+        )
+        .execute_with_result(&mut state)
+        .await;
+        assert!(result.is_err(), "authoritative duplicate must require an FCU response");
+
+        InsertTask::authoritative_payload(test_client(), config, envelope)
+            .execute_with_result(&mut state)
+            .await
+            .expect("authoritative duplicate should accept a valid FCU response");
     }
 }

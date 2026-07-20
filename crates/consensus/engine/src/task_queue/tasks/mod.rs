@@ -9,7 +9,9 @@ mod synchronize;
 pub use synchronize::{SynchronizeTask, SynchronizeTaskError};
 
 mod insert;
-pub use insert::{InsertPayloadSafety, InsertTask, InsertTaskError, InsertTaskResult};
+pub use insert::{
+    InsertPayloadPolicy, InsertPayloadSafety, InsertTask, InsertTaskError, InsertTaskResult,
+};
 
 mod build;
 pub use build::{BuildTaskError, EngineBuildError};

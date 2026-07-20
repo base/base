@@ -6,7 +6,6 @@ use alloy_rpc_types_engine::{INVALID_FORK_CHOICE_STATE_ERROR, PayloadStatusEnum}
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_protocol::L2BlockInfo;
-use derive_more::Constructor;
 use tokio::time::Instant;
 
 use crate::{
@@ -36,7 +35,7 @@ use crate::{
 /// [`InsertTask`]: crate::InsertTask
 /// [`ConsolidateTask`]: crate::ConsolidateTask  
 /// [`FinalizeTask`]: crate::FinalizeTask
-#[derive(Debug, Clone, Constructor)]
+#[derive(Debug, Clone)]
 pub struct SynchronizeTask<EngineClient_: EngineClient> {
     /// The engine client.
     pub client: Arc<EngineClient_>,
@@ -44,9 +43,29 @@ pub struct SynchronizeTask<EngineClient_: EngineClient> {
     pub rollup: Arc<RollupConfig>,
     /// The sync state update to apply to the engine state.
     pub state_update: EngineSyncStateUpdate,
+    /// Whether to send an FCU when the requested state already matches the current state.
+    pub force: bool,
 }
 
 impl<EngineClient_: EngineClient> SynchronizeTask<EngineClient_> {
+    /// Creates a synchronization task that skips redundant forkchoice updates.
+    pub const fn new(
+        client: Arc<EngineClient_>,
+        rollup: Arc<RollupConfig>,
+        state_update: EngineSyncStateUpdate,
+    ) -> Self {
+        Self { client, rollup, state_update, force: false }
+    }
+
+    /// Creates a synchronization task that always sends a forkchoice update.
+    pub const fn new_forced(
+        client: Arc<EngineClient_>,
+        rollup: Arc<RollupConfig>,
+        state_update: EngineSyncStateUpdate,
+    ) -> Self {
+        Self { client, rollup, state_update, force: true }
+    }
+
     /// Computes the sync-state update to apply when the EL responds with `Syncing`.
     ///
     /// Until the EL has finished syncing, the state is left untouched. Once EL sync has
@@ -135,7 +154,10 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient
         // We shouldn't retry the synchronize task there. Since the `sync_state` is only updated
         // inside the `SynchronizeTask` (except inside the ConsolidateTask, when the block is not
         // the last in the batch) - the engine will get stuck retrying the `SynchronizeTask`
-        if state.sync_state != Default::default() && state.sync_state == new_sync_state {
+        if !self.force
+            && state.sync_state != Default::default()
+            && state.sync_state == new_sync_state
+        {
             debug!(target: "engine", ?new_sync_state, "No forkchoice update needed");
             return Ok(());
         }
