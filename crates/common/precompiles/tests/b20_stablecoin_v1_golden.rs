@@ -23,11 +23,10 @@ use alloy_primitives::{Address, B256, Bytes, LogData, U256, b256, keccak256};
 use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
 use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
-    B20_MAX_SUPPLY_CAP, B20PolicyType, B20StablecoinInit, B20StablecoinStorage, StablecoinContractContext,
-    B20TokenRole, FakePolicyAccounting, IB20, IB20Stablecoin, NoopPrecompileCallObserver,
-    PermitArgs, PolicyVersion, B20StablecoinLogic, B20StablecoinLogicV1, StablecoinVersion,
-    StablecoinVersionResolver,
-    TokenAccounting,
+    B20_MAX_SUPPLY_CAP, B20PolicyType, B20StablecoinInit, B20StablecoinLogic, B20StablecoinLogicV1,
+    B20StablecoinStorage, B20TokenRole, FakePolicyAccounting, IB20, IB20Stablecoin,
+    NoopPrecompileCallObserver, PermitArgs, PolicyVersion, StablecoinContractContext,
+    StablecoinVersion, StablecoinVersionResolver, TokenAccounting,
 };
 use base_precompile_storage::{BasePrecompileError, HashMapStorageProvider, StorageCtx};
 use k256::ecdsa::SigningKey;

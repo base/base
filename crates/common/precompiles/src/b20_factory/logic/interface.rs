@@ -32,11 +32,7 @@ pub trait B20FactoryLogic {
     }
 
     /// Returns whether `token` is a B-20 address that has been initialized by this factory.
-    fn is_b20_initialized(
-        &self,
-        ctx: &FactoryContractContext<'_>,
-        token: Address,
-    ) -> Result<bool> {
+    fn is_b20_initialized(&self, ctx: &FactoryContractContext<'_>, token: Address) -> Result<bool> {
         ctx.storage().is_b20_initialized(token)
     }
 }

@@ -269,7 +269,8 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         activate_and_init(&mut storage);
         let calldata =
-            IPolicyRegistry::policyExistsCall { policyId: PolicyRegistryLogicV1::ALWAYS_ALLOW_ID }.abi_encode();
+            IPolicyRegistry::policyExistsCall { policyId: PolicyRegistryLogicV1::ALWAYS_ALLOW_ID }
+                .abi_encode();
 
         let output = run_obs(&mut storage, &calldata, observer.clone());
 
@@ -324,7 +325,8 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         activate_and_init(&mut storage);
         let calldata =
-            IPolicyRegistry::policyExistsCall { policyId: PolicyRegistryLogicV1::ALWAYS_ALLOW_ID }.abi_encode();
+            IPolicyRegistry::policyExistsCall { policyId: PolicyRegistryLogicV1::ALWAYS_ALLOW_ID }
+                .abi_encode();
 
         let output = run(&mut storage, &calldata);
 
@@ -661,7 +663,8 @@ mod tests {
         let mut storage = HashMapStorageProvider::new(1);
         storage.set_call_value(alloy_primitives::U256::from(1u64));
         let calldata =
-            IPolicyRegistry::policyExistsCall { policyId: PolicyRegistryLogicV1::ALWAYS_ALLOW_ID }.abi_encode();
+            IPolicyRegistry::policyExistsCall { policyId: PolicyRegistryLogicV1::ALWAYS_ALLOW_ID }
+                .abi_encode();
 
         let out = run(&mut storage, &calldata);
 

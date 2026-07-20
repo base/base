@@ -11,9 +11,9 @@ use alloy_sol_types::{SolEvent, SolValue};
 use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
-    AssetAccounting, B20_MAX_SUPPLY_CAP, B20AssetStorage, B20Guards, B20PausableFeature,
-    B20PolicyType, B20TokenRole, ContractContext, Eip712Domain, IB20, IB20Asset, B20AssetLogic, PermitArgs,
-    PolicyAccounting, Token,
+    AssetAccounting, B20_MAX_SUPPLY_CAP, B20AssetLogic, B20AssetStorage, B20Guards,
+    B20PausableFeature, B20PolicyType, B20TokenRole, ContractContext, Eip712Domain, IB20,
+    IB20Asset, PermitArgs, PolicyAccounting, Token,
 };
 
 /// `keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)")`
@@ -779,8 +779,8 @@ mod tests {
     use k256::ecdsa::SigningKey;
 
     use crate::{
-        AssetAccounting, B20_MAX_SUPPLY_CAP, B20AssetStorage, B20PolicyType, B20TokenRole,
-        ContractContext, IB20, IB20Asset, B20AssetLogic, B20AssetLogicV1, PackedPolicy, PermitArgs,
+        AssetAccounting, B20_MAX_SUPPLY_CAP, B20AssetLogic, B20AssetLogicV1, B20AssetStorage,
+        B20PolicyType, B20TokenRole, ContractContext, IB20, IB20Asset, PackedPolicy, PermitArgs,
         PolicyAccounting, PolicyRegistryStorage, PolicyVersion, Token, TokenAccounting,
     };
 

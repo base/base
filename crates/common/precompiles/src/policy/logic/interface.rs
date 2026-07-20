@@ -5,7 +5,9 @@ use alloc::vec::Vec;
 use alloy_primitives::Address;
 use base_precompile_storage::Result;
 
-use crate::{IPolicyRegistry::PolicyType, PolicyAccounting, PolicyContractContext as ContractContext};
+use crate::{
+    IPolicyRegistry::PolicyType, PolicyAccounting, PolicyContractContext as ContractContext,
+};
 
 /// The policy-registry logic interface.
 ///

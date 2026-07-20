@@ -9,7 +9,7 @@ pub use context::ContractContext;
 mod dispatch;
 
 mod logic;
-pub use logic::{CommonParams, B20FactoryLogic, B20FactoryLogicV1, TokenCreateParams};
+pub use logic::{B20FactoryLogic, B20FactoryLogicV1, CommonParams, TokenCreateParams};
 
 mod precompile;
 pub use precompile::B20Factory;

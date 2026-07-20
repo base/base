@@ -166,7 +166,9 @@ impl B20StablecoinLogicV1 {
     }
 }
 
-impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinLogic<S, A> for B20StablecoinLogicV1 {
+impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinLogic<S, A>
+    for B20StablecoinLogicV1
+{
     fn transfer(
         &self,
         ctx: &mut ContractContext<S, A>,

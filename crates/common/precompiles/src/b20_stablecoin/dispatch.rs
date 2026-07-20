@@ -14,7 +14,7 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
-use super::{ContractContext, B20StablecoinLogicV1, Version, VersionResolver};
+use super::{B20StablecoinLogicV1, ContractContext, Version, VersionResolver};
 use crate::{
     B20PolicyType, B20TokenRole, B20Variant, BerylCallRecorder, BerylMetricLabels, BerylSelector,
     IB20::{self, IB20Calls as C},

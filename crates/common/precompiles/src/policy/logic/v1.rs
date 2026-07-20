@@ -673,7 +673,10 @@ mod tests {
         let mut rt = initialized();
         rt.storage_mut().next_counter = PolicyRegistryLogicV1::COUNTER_MASK - 1;
         let id = LOGIC.create_policy(&mut rt, ADMIN, PolicyType::ALLOWLIST).unwrap();
-        assert_eq!(id & PolicyRegistryLogicV1::COUNTER_MASK, PolicyRegistryLogicV1::COUNTER_MASK - 1);
+        assert_eq!(
+            id & PolicyRegistryLogicV1::COUNTER_MASK,
+            PolicyRegistryLogicV1::COUNTER_MASK - 1
+        );
         let err = LOGIC.create_policy(&mut rt, ADMIN, PolicyType::ALLOWLIST).unwrap_err();
         assert_eq!(err, BasePrecompileError::under_overflow());
     }
@@ -696,7 +699,8 @@ mod tests {
         let id = create_allowlist(&mut rt);
         LOGIC.update_allowlist(&mut rt, id, true, vec![ALICE]).unwrap();
         let updated =
-            IPolicyRegistry::AllowlistUpdated::decode_log_data(rt.storage().events.last().unwrap()).unwrap();
+            IPolicyRegistry::AllowlistUpdated::decode_log_data(rt.storage().events.last().unwrap())
+                .unwrap();
         assert_eq!(updated.policyId, id);
         assert_eq!(updated.updater, ADMIN);
         assert!(updated.allowed);
@@ -992,7 +996,9 @@ mod tests {
     #[test]
     fn builtin_policies_reject_admin_mutations() {
         let mut rt = initialized();
-        for policy_id in [PolicyRegistryLogicV1::ALWAYS_ALLOW_ID, PolicyRegistryLogicV1::ALWAYS_BLOCK_ID] {
+        for policy_id in
+            [PolicyRegistryLogicV1::ALWAYS_ALLOW_ID, PolicyRegistryLogicV1::ALWAYS_BLOCK_ID]
+        {
             let err = LOGIC.stage_update_admin(&mut rt, policy_id, ALICE).unwrap_err();
             assert!(matches!(err, BasePrecompileError::Revert(_)));
         }
@@ -1010,8 +1016,14 @@ mod tests {
     #[test]
     fn get_policy_admin_builtin_ids_return_zero_address() {
         let rt = initialized();
-        assert_eq!(LOGIC.get_policy_admin(&rt, PolicyRegistryLogicV1::ALWAYS_ALLOW_ID).unwrap(), Address::ZERO);
-        assert_eq!(LOGIC.get_policy_admin(&rt, PolicyRegistryLogicV1::ALWAYS_BLOCK_ID).unwrap(), Address::ZERO);
+        assert_eq!(
+            LOGIC.get_policy_admin(&rt, PolicyRegistryLogicV1::ALWAYS_ALLOW_ID).unwrap(),
+            Address::ZERO
+        );
+        assert_eq!(
+            LOGIC.get_policy_admin(&rt, PolicyRegistryLogicV1::ALWAYS_BLOCK_ID).unwrap(),
+            Address::ZERO
+        );
     }
 
     #[test]
@@ -1043,7 +1055,9 @@ mod tests {
     #[test]
     fn pending_policy_admin_builtin_ids_short_circuit_staged_slot() {
         let mut rt = initialized();
-        for policy_id in [PolicyRegistryLogicV1::ALWAYS_ALLOW_ID, PolicyRegistryLogicV1::ALWAYS_BLOCK_ID] {
+        for policy_id in
+            [PolicyRegistryLogicV1::ALWAYS_ALLOW_ID, PolicyRegistryLogicV1::ALWAYS_BLOCK_ID]
+        {
             rt.storage_mut().pending_admins.insert(policy_id, NEW_ADMIN);
             assert_eq!(
                 LOGIC.pending_policy_admin(&rt, policy_id).unwrap(),

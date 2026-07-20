@@ -8,4 +8,4 @@ mod interface;
 pub use interface::B20FactoryLogic;
 
 mod v1;
-pub use v1::{CommonParams, B20FactoryLogicV1, TokenCreateParams};
+pub use v1::{B20FactoryLogicV1, CommonParams, TokenCreateParams};

@@ -317,7 +317,9 @@ fn base_token_mutate(c: &mut Criterion) {
             b.iter(|| {
                 let token = black_box(&mut token);
                 let spender = black_box(spender);
-                B20AssetLogicV1.transfer_from(token, spender, owner, recipient, U256::ONE, false).unwrap();
+                B20AssetLogicV1
+                    .transfer_from(token, spender, owner, recipient, U256::ONE, false)
+                    .unwrap();
             });
         });
     });
@@ -360,7 +362,9 @@ fn base_token_mutate(c: &mut Criterion) {
             b.iter(|| {
                 let token = black_box(&mut token);
                 let spender = black_box(spender);
-                B20AssetLogicV1.transfer_from(token, spender, owner, recipient, U256::ONE, false).unwrap();
+                B20AssetLogicV1
+                    .transfer_from(token, spender, owner, recipient, U256::ONE, false)
+                    .unwrap();
                 B20AssetLogicV1.emit_memo(token, spender, memo).unwrap();
             });
         });
@@ -376,7 +380,9 @@ fn base_token_mutate(c: &mut Criterion) {
             b.iter(|| {
                 let token = black_box(&mut token);
                 let admin = black_box(admin);
-                B20AssetLogicV1.pause(token, admin, vec![IB20::PausableFeature::TRANSFER], true).unwrap();
+                B20AssetLogicV1
+                    .pause(token, admin, vec![IB20::PausableFeature::TRANSFER], true)
+                    .unwrap();
             });
         });
     });
@@ -387,12 +393,16 @@ fn base_token_mutate(c: &mut Criterion) {
             let admin = BaseTokenBenchSetup::admin();
             let mut token =
                 BaseTokenBenchSetup::create_token(ctx, B256::repeat_byte(0x14), U256::ZERO);
-            B20AssetLogicV1.pause(&mut token, admin, vec![IB20::PausableFeature::TRANSFER], true).unwrap();
+            B20AssetLogicV1
+                .pause(&mut token, admin, vec![IB20::PausableFeature::TRANSFER], true)
+                .unwrap();
 
             b.iter(|| {
                 let token = black_box(&mut token);
                 let admin = black_box(admin);
-                B20AssetLogicV1.unpause(token, admin, vec![IB20::PausableFeature::TRANSFER], true).unwrap();
+                B20AssetLogicV1
+                    .unpause(token, admin, vec![IB20::PausableFeature::TRANSFER], true)
+                    .unwrap();
             });
         });
     });
@@ -410,7 +420,9 @@ fn base_token_mutate(c: &mut Criterion) {
             b.iter(|| {
                 let token = black_box(&mut token);
                 let admin = black_box(admin);
-                B20AssetLogicV1.update_supply_cap(token, admin, U256::from(10_000u64), true).unwrap();
+                B20AssetLogicV1
+                    .update_supply_cap(token, admin, U256::from(10_000u64), true)
+                    .unwrap();
             });
         });
     });

@@ -7,7 +7,8 @@
 use alloy_primitives::Address;
 
 use crate::{
-    AssetAccounting, PolicyAccounting, PolicyContractContext, PolicyRegistryLogic, PolicyVersion, Token,
+    AssetAccounting, PolicyAccounting, PolicyContractContext, PolicyRegistryLogic, PolicyVersion,
+    Token,
 };
 
 /// Storage + policy binding the asset logic operates on.
@@ -30,11 +31,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> ContractContext<S, A> {
         policy: A,
         policy_version: PolicyVersion,
     ) -> Self {
-        Self {
-            storage,
-            policy: PolicyContractContext::with_storage(policy),
-            policy_version,
-        }
+        Self { storage, policy: PolicyContractContext::with_storage(policy), policy_version }
     }
 }
 

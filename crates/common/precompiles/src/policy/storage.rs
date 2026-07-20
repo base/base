@@ -235,8 +235,7 @@ mod tests {
         let mut s = HashMapStorageProvider::new(1);
         s.set_caller(ADMIN);
         StorageCtx::enter(&mut s, |ctx| {
-            let mut ctx =
-                PolicyContractContext::with_storage(PolicyRegistryStorage::new(ctx));
+            let mut ctx = PolicyContractContext::with_storage(PolicyRegistryStorage::new(ctx));
             PolicyRegistryLogicV1.ensure_initialized_and_get_counter(ctx.storage_mut())
         })
         .unwrap();
@@ -246,8 +245,7 @@ mod tests {
     /// Creates an ALLOWLIST policy through the pinned V1 logic.
     fn create_allowlist(s: &mut HashMapStorageProvider) -> u64 {
         StorageCtx::enter(s, |ctx| {
-            let mut ctx =
-                PolicyContractContext::with_storage(PolicyRegistryStorage::new(ctx));
+            let mut ctx = PolicyContractContext::with_storage(PolicyRegistryStorage::new(ctx));
             PolicyRegistryLogicV1.create_policy(&mut ctx, ADMIN, PolicyType::ALLOWLIST)
         })
         .unwrap()
@@ -301,8 +299,16 @@ mod tests {
         assert_eq!(id & PolicyRegistryLogicV1::COUNTER_MASK, 2);
         StorageCtx::enter(&mut s, |ctx| {
             let ctx = PolicyContractContext::with_storage(PolicyRegistryStorage::new(ctx));
-            assert!(PolicyRegistryLogicV1.policy_exists(&ctx, PolicyRegistryLogicV1::ALWAYS_ALLOW_ID).unwrap());
-            assert!(PolicyRegistryLogicV1.policy_exists(&ctx, PolicyRegistryLogicV1::ALWAYS_BLOCK_ID).unwrap());
+            assert!(
+                PolicyRegistryLogicV1
+                    .policy_exists(&ctx, PolicyRegistryLogicV1::ALWAYS_ALLOW_ID)
+                    .unwrap()
+            );
+            assert!(
+                PolicyRegistryLogicV1
+                    .policy_exists(&ctx, PolicyRegistryLogicV1::ALWAYS_BLOCK_ID)
+                    .unwrap()
+            );
         });
     }
 
@@ -313,8 +319,7 @@ mod tests {
         let mut s = seeded_storage();
         s.set_static(true);
         let err = StorageCtx::enter(&mut s, |ctx| {
-            let mut ctx =
-                PolicyContractContext::with_storage(PolicyRegistryStorage::new(ctx));
+            let mut ctx = PolicyContractContext::with_storage(PolicyRegistryStorage::new(ctx));
             PolicyRegistryLogicV1.create_policy(&mut ctx, ADMIN, PolicyType::ALLOWLIST)
         })
         .unwrap_err();
@@ -327,8 +332,7 @@ mod tests {
         let id = create_allowlist(&mut s);
         s.set_static(true);
         let err = StorageCtx::enter(&mut s, |ctx| {
-            let mut ctx =
-                PolicyContractContext::with_storage(PolicyRegistryStorage::new(ctx));
+            let mut ctx = PolicyContractContext::with_storage(PolicyRegistryStorage::new(ctx));
             PolicyRegistryLogicV1.update_allowlist(&mut ctx, id, true, alloc::vec![ALICE])
         })
         .unwrap_err();
