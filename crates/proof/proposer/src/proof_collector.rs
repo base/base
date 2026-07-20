@@ -130,6 +130,7 @@ where
                             target_block,
                             finalized_head,
                             dispatched_through,
+                            false,
                             cancel,
                         )
                         .await;
@@ -364,6 +365,7 @@ where
                         target_block,
                         finalized_head,
                         dispatched_through,
+                        true,
                         cancel,
                     )
                     .await
@@ -384,6 +386,7 @@ where
         mut target_block: u64,
         finalized_head: u64,
         dispatched_through: u64,
+        delete_succeeded_proofs: bool,
         cancel: &CancellationToken,
     ) -> bool {
         if !self.delete_single_proof_request(session_id, target_block).await {
@@ -415,8 +418,8 @@ where
             match Self::poll_proof(self.proof_requester.as_ref(), target_block, &session_id, false)
                 .await
             {
-                Ok(Some(_)) => {}
-                Ok(None) => return true,
+                Ok(Some(_)) if delete_succeeded_proofs => {}
+                Ok(Some(_)) | Ok(None) => return true,
                 Err(error) => warn!(
                     target_block,
                     session_id = %session_id,
@@ -893,6 +896,50 @@ mod tests {
         assert!(restart);
         assert!(!requester.failed_sessions.lock().unwrap().contains_key(&first_session));
         assert!(requester.pending_sessions.lock().unwrap().contains(&second_session));
+        assert!(requester.failed_sessions.lock().unwrap().contains_key(&third_session));
+    }
+
+    #[tokio::test]
+    async fn tick_batch_delete_stops_at_valid_proof_after_collection_failure() {
+        let requester = Arc::new(MockProofRequester::default());
+        let first_target = 200;
+        let second_target = 300;
+        let third_target = 400;
+        let first_root = B256::repeat_byte(0xaa);
+        let second_root = B256::repeat_byte(0xbb);
+        let third_root = B256::repeat_byte(0xcc);
+        let first_session = ProposerProofAdapter::tee_session_id_for_root(first_root);
+        let second_session = ProposerProofAdapter::tee_session_id_for_root(second_root);
+        let third_session = ProposerProofAdapter::tee_session_id_for_root(third_root);
+        dispatch_ready_proof(&requester, second_target, second_root).await;
+        requester.failed_sessions.lock().unwrap().extend([
+            (first_session.clone(), "simulated first proof failure".to_owned()),
+            (third_session.clone(), "simulated third proof failure".to_owned()),
+        ]);
+        let collector = make_collector(
+            Arc::clone(&requester) as Arc<dyn ProofRequesterProvider>,
+            Arc::new(MockRollupClient {
+                sync_status: test_sync_status(third_target, B256::ZERO),
+                output_roots: [
+                    (first_target, first_root),
+                    (second_target, second_root),
+                    (third_target, third_root),
+                ]
+                .into_iter()
+                .collect(),
+                max_safe_block: None,
+            }),
+            Arc::new(MockOutputProposer::default()),
+        );
+
+        let mut current = recovered(100);
+        let restart = collector
+            .tick(&mut current, third_target, third_target, &CancellationToken::new())
+            .await;
+
+        assert!(restart);
+        assert!(!requester.failed_sessions.lock().unwrap().contains_key(&first_session));
+        assert!(requester.requests.lock().unwrap().contains_key(&second_session));
         assert!(requester.failed_sessions.lock().unwrap().contains_key(&third_session));
     }
 
