@@ -488,7 +488,10 @@ async fn test_step_nullification_failure_preserves_proof() {
     // Entry must still be in pending_proofs as ReadyToSubmit.
     let entry =
         driver.proof_manager.pending_proofs().get(&addr(0)).expect("proof should be preserved");
-    assert!(entry.is_ready(), "phase should be ReadyToSubmit after tx failure");
+    assert!(
+        matches!(entry.phase, ProofPhase::ReadyToSubmit { .. }),
+        "phase should be ReadyToSubmit after tx failure"
+    );
 
     // Simulate the onchain effect of a successful challenge: game is resolved.
     verifier.update_game(
@@ -1061,7 +1064,7 @@ async fn test_step_nullified_game_not_reprocessed() {
     driver.step().await.unwrap();
 
     assert!(
-        driver.proof_manager.pending_proofs().is_empty(),
+        driver.proof_manager.pending_proofs_len() == 0,
         "no proofs should be pending for a nullified game"
     );
 }
@@ -1116,7 +1119,7 @@ async fn test_successful_nullify_does_not_track_anchor_update() {
         addr(0),
         PendingProof {
             phase: ProofPhase::ReadyToSubmit { proof_bytes: Bytes::from_static(&[0x00, 0xAA]) },
-            kind: ProofKind::Tee { zk_fallback_request: None, zk_fallback_intent: None },
+            kind: ProofKind::Tee { zk_fallback: None },
             invalid_index: 1,
             expected_root: BOGUS_ROOT,
             retry_count: 0,
@@ -1197,7 +1200,7 @@ async fn test_step_fraudulent_zk_challenge_legitimate_skips() {
     driver.step().await.unwrap();
 
     assert!(
-        driver.proof_manager.pending_proofs().is_empty(),
+        driver.proof_manager.pending_proofs_len() == 0,
         "no proof should be initiated when the ZK challenge is legitimate"
     );
 }
@@ -1297,7 +1300,7 @@ async fn test_step_valid_zk_proposal_skipped() {
     driver.step().await.unwrap();
 
     assert!(
-        driver.proof_manager.pending_proofs().is_empty(),
+        driver.proof_manager.pending_proofs_len() == 0,
         "valid ZK proposal should not trigger any proof"
     );
 }
@@ -1421,7 +1424,7 @@ async fn test_step_dual_proof_valid_skipped() {
     driver.step().await.unwrap();
 
     assert!(
-        driver.proof_manager.pending_proofs().is_empty(),
+        driver.proof_manager.pending_proofs_len() == 0,
         "valid dual-proof game should not trigger any proof"
     );
 }
@@ -1501,7 +1504,7 @@ async fn test_step_checkpoint_count_mismatch_surfaces_error() {
     driver.step().await.unwrap();
 
     assert!(
-        driver.proof_manager.pending_proofs().is_empty(),
+        driver.proof_manager.pending_proofs_len() == 0,
         "no proof should be initiated when checkpoint count mismatches — \
          the error should be surfaced, not silently swallowed"
     );
@@ -1836,8 +1839,7 @@ mod metrics_emission {
                         "tee-bad-root-session".to_string(),
                         0,
                         expected_root,
-                        Some(minimal_prove_request()),
-                        Some(DisputeIntent::Challenge),
+                        Some((minimal_prove_request(), DisputeIntent::Challenge)),
                     ),
                 );
 
