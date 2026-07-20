@@ -9,6 +9,7 @@ use std::{
 
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::ExecutionPayloadV1;
+use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BasePayloadAttributes,
 };
@@ -361,6 +362,37 @@ async fn test_stop_discards_queued_parent_and_restart_builds_immediately_on_fres
 
     cancellation_token.cancel();
     actor_task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn shadow_cycle_reconciles_after_configured_private_block_count() {
+    let cycle_start = head_at(0);
+    let private_head = head_at(1);
+    let cancellation_token = tokio_util::sync::CancellationToken::new();
+    let cancel_after_reconciliation = cancellation_token.clone();
+    let mut client = MockSequencerEngineClient::new();
+    client.expect_reset_engine_forkchoice_coordinated().times(1).return_once(|| Ok(()));
+    client.expect_get_unsafe_head().times(1).return_once(move || Ok(cycle_start));
+    client.expect_insert_unsafe_payload().times(1).return_once(move |_| Ok(private_head));
+    client
+        .expect_reconcile_shadow()
+        .withf(move |target| *target == private_head)
+        .times(1)
+        .return_once(move |_| {
+            cancel_after_reconciliation.cancel();
+            Ok(None)
+        });
+
+    let mut actor = test_actor();
+    let rollup_config = Arc::new(RollupConfig { block_time: 2, ..Default::default() });
+    actor.cancellation_token = cancellation_token;
+    actor.engine_client = Arc::new(client);
+    actor.builder.rollup_config = Arc::clone(&rollup_config);
+    actor.rollup_config = rollup_config;
+    actor.shadow_blocks_per_cycle = NonZeroU64::new(1);
+    actor.sealer = Some(PayloadSealer::new_private(dummy_envelope()));
+
+    actor.start(()).await.unwrap();
 }
 
 // --- try_seal_handle tests ---

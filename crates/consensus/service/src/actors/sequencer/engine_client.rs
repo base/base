@@ -11,7 +11,7 @@ use crate::{
     EngineClientError, EngineClientResult,
     actors::engine::{
         BuildRequest, EngineActorRequest, GetPayloadRequest, InsertUnsafePayloadRequest,
-        ResetRequest,
+        ReconcileShadowRequest, ResetRequest,
     },
 };
 
@@ -23,6 +23,11 @@ pub trait SequencerEngineClient: Debug + Send + Sync {
     /// Resets the engine's forkchoice, awaiting confirmation that it succeeded or returning the
     /// error in performing the reset.
     async fn reset_engine_forkchoice(&self) -> EngineClientResult<()>;
+
+    /// Resets forkchoice as part of a shadow cycle that the caller will explicitly rebuild.
+    async fn reset_engine_forkchoice_coordinated(&self) -> EngineClientResult<()> {
+        self.reset_engine_forkchoice().await
+    }
 
     /// Starts building a block with the provided attributes.
     ///
@@ -49,6 +54,15 @@ pub trait SequencerEngineClient: Debug + Send + Sync {
 
     /// Returns the current unsafe head [`L2BlockInfo`].
     async fn get_unsafe_head(&self) -> EngineClientResult<L2BlockInfo>;
+
+    /// Replaces the shadow branch with the active sequencer's buffered P2P branch.
+    async fn reconcile_shadow(
+        &self,
+        shadow_head: L2BlockInfo,
+    ) -> EngineClientResult<Option<L2BlockInfo>> {
+        let _ = shadow_head;
+        Err(EngineClientError::ShadowReconciliationDisabled)
+    }
 }
 
 /// Blanket implementation so [`Arc<T>`] can be used wherever `T: SequencerEngineClient`.
@@ -60,6 +74,10 @@ pub trait SequencerEngineClient: Debug + Send + Sync {
 impl<T: SequencerEngineClient> SequencerEngineClient for Arc<T> {
     async fn reset_engine_forkchoice(&self) -> EngineClientResult<()> {
         (**self).reset_engine_forkchoice().await
+    }
+
+    async fn reset_engine_forkchoice_coordinated(&self) -> EngineClientResult<()> {
+        (**self).reset_engine_forkchoice_coordinated().await
     }
 
     async fn start_build_block(
@@ -87,6 +105,13 @@ impl<T: SequencerEngineClient> SequencerEngineClient for Arc<T> {
     async fn get_unsafe_head(&self) -> EngineClientResult<L2BlockInfo> {
         (**self).get_unsafe_head().await
     }
+
+    async fn reconcile_shadow(
+        &self,
+        shadow_head: L2BlockInfo,
+    ) -> EngineClientResult<Option<L2BlockInfo>> {
+        (**self).reconcile_shadow(shadow_head).await
+    }
 }
 
 /// Queue-based implementation of the [`SequencerEngineClient`] trait. This handles all
@@ -99,18 +124,16 @@ pub struct QueuedSequencerEngineClient {
     pub unsafe_head_rx: watch::Receiver<L2BlockInfo>,
 }
 
-#[async_trait]
-impl SequencerEngineClient for QueuedSequencerEngineClient {
-    async fn get_unsafe_head(&self) -> EngineClientResult<L2BlockInfo> {
-        Ok(*self.unsafe_head_rx.borrow())
-    }
-
-    async fn reset_engine_forkchoice(&self) -> EngineClientResult<()> {
+impl QueuedSequencerEngineClient {
+    async fn send_reset(&self, shadow_cycle_coordinated: bool) -> EngineClientResult<()> {
         let (result_tx, mut result_rx) = mpsc::channel(1);
 
         info!(target: "sequencer", "Sending reset request to engine.");
         self.engine_actor_request_tx
-            .send(EngineActorRequest::ResetRequest(Box::new(ResetRequest { result_tx })))
+            .send(EngineActorRequest::ResetRequest(Box::new(ResetRequest {
+                result_tx,
+                shadow_cycle_coordinated,
+            })))
             .await
             .map_err(|_| EngineClientError::RequestError("request channel closed.".to_string()))?;
 
@@ -122,6 +145,38 @@ impl SequencerEngineClient for QueuedSequencerEngineClient {
                 error!(target: "block_engine", "Failed to receive forkchoice reset result");
                 EngineClientError::ResponseError("response channel closed.".to_string())
             })?
+    }
+}
+
+#[async_trait]
+impl SequencerEngineClient for QueuedSequencerEngineClient {
+    async fn get_unsafe_head(&self) -> EngineClientResult<L2BlockInfo> {
+        Ok(*self.unsafe_head_rx.borrow())
+    }
+
+    async fn reconcile_shadow(
+        &self,
+        shadow_head: L2BlockInfo,
+    ) -> EngineClientResult<Option<L2BlockInfo>> {
+        let (result_tx, mut result_rx) = mpsc::channel(1);
+        self.engine_actor_request_tx
+            .send(EngineActorRequest::ReconcileShadowRequest(Box::new(ReconcileShadowRequest {
+                shadow_head,
+                result_tx,
+            })))
+            .await
+            .map_err(|_| EngineClientError::RequestError("request channel closed.".to_string()))?;
+        result_rx.recv().await.ok_or_else(|| {
+            EngineClientError::ResponseError("response channel closed.".to_string())
+        })?
+    }
+
+    async fn reset_engine_forkchoice(&self) -> EngineClientResult<()> {
+        self.send_reset(false).await
+    }
+
+    async fn reset_engine_forkchoice_coordinated(&self) -> EngineClientResult<()> {
+        self.send_reset(true).await
     }
 
     async fn start_build_block(
@@ -297,5 +352,32 @@ mod tests {
         let result = insert_handle.await.expect("insert task");
 
         assert_eq!(result.expect("insert result"), inserted_head);
+    }
+
+    #[tokio::test]
+    async fn reconcile_shadow_returns_engine_ack() {
+        let (request_tx, mut request_rx) = mpsc::channel(1);
+        let (_, unsafe_head_rx) = watch::channel(L2BlockInfo::default());
+        let shadow_head = l2_head(12);
+        let reconciled_head = l2_head(12);
+        let client = QueuedSequencerEngineClient::new(request_tx, unsafe_head_rx);
+
+        let reconcile_handle =
+            tokio::spawn(async move { client.reconcile_shadow(shadow_head).await });
+
+        let request = request_rx.recv().await.expect("reconciliation request");
+        let EngineActorRequest::ReconcileShadowRequest(request) = request else {
+            panic!("expected shadow reconciliation request");
+        };
+        assert_eq!(request.shadow_head, shadow_head);
+        request
+            .result_tx
+            .send(Ok(Some(reconciled_head)))
+            .await
+            .expect("send reconciliation result");
+
+        let result = reconcile_handle.await.expect("reconciliation task");
+
+        assert_eq!(result.expect("reconciliation result"), Some(reconciled_head));
     }
 }

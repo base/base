@@ -39,7 +39,9 @@ pub struct SequencerArgs {
     /// Providing this value enables shadow sequencer mode.
     #[arg(
         long = "sequencer.shadow-blocks-per-cycle",
-        env = "BASE_NODE_SEQUENCER_SHADOW_BLOCKS_PER_CYCLE"
+        env = "BASE_NODE_SEQUENCER_SHADOW_BLOCKS_PER_CYCLE",
+        value_parser = clap::builder::RangedU64ValueParser::<NonZeroU64>::new()
+            .range(1..=SequencerConfig::MAX_SHADOW_BLOCKS_PER_CYCLE)
     )]
     pub shadow_blocks_per_cycle: Option<NonZeroU64>,
 
@@ -118,6 +120,26 @@ mod tests {
             "0",
         ]);
 
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn accepts_maximum_shadow_blocks_per_cycle() {
+        let result = SequencerArgs::try_parse_from([
+            "base-consensus",
+            "--sequencer.shadow-blocks-per-cycle",
+            "300",
+        ]);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn rejects_too_many_shadow_blocks_per_cycle() {
+        let result = SequencerArgs::try_parse_from([
+            "base-consensus",
+            "--sequencer.shadow-blocks-per-cycle",
+            "301",
+        ]);
         assert!(result.is_err());
     }
 }
