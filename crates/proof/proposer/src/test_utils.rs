@@ -508,8 +508,6 @@ pub struct MockOutputProposer {
     pub created: Mutex<u32>,
     /// Game addresses passed to `verify_proposal_proof()`.
     pub verified: Mutex<Vec<Address>>,
-    /// Error returned by the next `propose_output` call.
-    pub create_error: Mutex<Option<ProposerError>>,
     /// Errors returned by subsequent `propose_output` calls.
     pub create_errors: Mutex<VecDeque<ProposerError>>,
     /// Error returned by the next `verify_proposal_proof` call.
@@ -519,7 +517,7 @@ pub struct MockOutputProposer {
 impl MockOutputProposer {
     /// Creates a mock that fails the next output proposal.
     pub fn with_create_error(error: ProposerError) -> Self {
-        Self { create_error: Mutex::new(Some(error)), ..Default::default() }
+        Self::with_create_errors([error])
     }
 
     /// Creates a mock that fails subsequent output proposals.
@@ -537,9 +535,6 @@ impl OutputProposer for MockOutputProposer {
         _intermediate_roots: &[B256],
     ) -> Result<(), ProposerError> {
         *self.created.lock().unwrap() += 1;
-        if let Some(error) = self.create_error.lock().unwrap().take() {
-            return Err(error);
-        }
         if let Some(error) = self.create_errors.lock().unwrap().pop_front() {
             return Err(error);
         }

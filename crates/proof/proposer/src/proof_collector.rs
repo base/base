@@ -621,17 +621,7 @@ mod tests {
         let requester = Arc::new(MockProofRequester::default());
         let target_block = 200;
         let claimed_root = B256::repeat_byte(target_block as u8);
-        let proof_request = ProofRequest {
-            claimed_l2_output_root: claimed_root,
-            claimed_l2_block_number: target_block,
-            intermediate_block_interval: BLOCK_INTERVAL,
-            l1_head_number: 1000,
-            ..Default::default()
-        };
-        requester
-            .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(proof_request))
-            .await
-            .expect("test setup should dispatch root session");
+        dispatch_ready_proof(&requester, target_block, claimed_root).await;
         let collector = make_collector(
             requester,
             rollup_client(target_block, Some(claimed_root)),
@@ -659,19 +649,7 @@ mod tests {
         for (target_block, claimed_root) in
             [(first_target, first_root), (second_target, second_root)]
         {
-            let proof_request = ProofRequest {
-                claimed_l2_output_root: claimed_root,
-                claimed_l2_block_number: target_block,
-                intermediate_block_interval: BLOCK_INTERVAL,
-                l1_head_number: 1000,
-                ..Default::default()
-            };
-            requester
-                .prove_block_range(ProposerProofAdapter::tee_prove_block_range_request(
-                    proof_request,
-                ))
-                .await
-                .expect("test setup should dispatch root session");
+            dispatch_ready_proof(&requester, target_block, claimed_root).await;
         }
 
         let mut factory = MockDisputeGameFactory::default();
