@@ -106,6 +106,7 @@ impl AttestationVerifier {
     /// - `digest` == `"SHA384"`
     /// - `cabundle` has >= 1 certificate
     /// - PCR count between 1 and 32, each index 0-31
+    /// - PCRs are not all zero (AWS Nitro debug-mode attestations)
     /// - `public_key`: null or 1-1024 bytes (present-but-empty is rejected, matching Solidity)
     /// - `user_data`: null or <= 512 bytes
     /// - `nonce`: null or <= 512 bytes
@@ -143,6 +144,11 @@ impl AttestationVerifier {
                     "PCR index {index} out of range (must be 0-31)"
                 )));
             }
+        }
+        if doc.pcrs.values().all(|pcr| pcr.iter().all(|&byte| byte == 0)) {
+            return Err(VerifierError::ContentValidation(
+                "all PCRs are zero (Nitro debug mode)".into(),
+            ));
         }
 
         // Optional field size limits. public_key min=1 means present-but-empty is
@@ -203,7 +209,7 @@ mod tests {
     /// A minimal valid `AttestationDocument` for M-02 unit tests.
     fn valid_doc() -> AttestationDocument {
         let mut pcrs = BTreeMap::new();
-        pcrs.insert(0, ByteArray::new([0u8; 48]));
+        pcrs.insert(0, ByteArray::new([1u8; 48]));
         AttestationDocument {
             module_id: "test-module".into(),
             timestamp: 1_700_000_000_000,
@@ -315,6 +321,15 @@ mod tests {
         doc.pcrs.clear();
         let err = AttestationVerifier::validate_attestation_content(&doc).unwrap_err();
         assert!(err.to_string().contains("PCR count"));
+    }
+
+    #[rstest]
+    fn m02_all_zero_pcrs_rejected() {
+        let mut doc = valid_doc();
+        doc.pcrs.insert(0, ByteArray::new([0u8; 48]));
+        doc.pcrs.insert(1, ByteArray::new([0u8; 48]));
+        let err = AttestationVerifier::validate_attestation_content(&doc).unwrap_err();
+        assert!(err.to_string().contains("debug mode"));
     }
 
     #[rstest]
