@@ -1432,16 +1432,12 @@ where
     <<Node::Types as NodeTypes>::Primitives as NodePrimitives>::SignedTx: BaseTransaction,
 {
     type Validator = BaseEngineValidator<
-        Node::Provider,
         <<Node::Types as NodeTypes>::Primitives as NodePrimitives>::SignedTx,
         <Node::Types as NodeTypes>::ChainSpec,
     >;
 
     async fn build(self, ctx: &AddOnsContext<'_, Node>) -> eyre::Result<Self::Validator> {
-        Ok(BaseEngineValidator::new::<KeccakKeyHasher>(
-            Arc::clone(&ctx.config.chain),
-            ctx.node.provider().clone(),
-        ))
+        Ok(BaseEngineValidator::new::<KeccakKeyHasher>(Arc::clone(&ctx.config.chain)))
     }
 }
 

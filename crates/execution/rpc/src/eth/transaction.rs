@@ -48,6 +48,10 @@ where
         self.inner.eth_api.send_raw_transaction_sync_timeout()
     }
 
+    // Reth decodes and recovers raw RPC transactions into the pool's concrete transaction type
+    // before invoking this hook. The original bytes remain available for broadcasting and
+    // sequencer forwarding. `eth_sendRawTransaction` supplies a `Local` origin, so preserving
+    // `origin` here intentionally applies the configured local-transaction pool policy.
     #[instrument(skip_all, fields(tx_hash = %tx.1.hash()))]
     async fn send_pool_transaction(
         &self,
@@ -101,12 +105,16 @@ where
     ) -> impl Future<Output = Result<RpcReceipt<Self::NetworkTypes>, Self::Error>> + Send {
         let this = self.clone();
         let configured_timeout = self.send_raw_transaction_sync_timeout();
+        // A positive per-request timeout may shorten, but never extend, the configured maximum.
+        // Zero or no timeout uses the configured value. This only bounds the wait for canonical
+        // inclusion after submission; timing out does not cancel or remove the transaction.
         let timeout_duration = timeout_ms
             .filter(|timeout_ms| *timeout_ms > 0)
             .map(Duration::from_millis)
             .map(|timeout| timeout.min(configured_timeout))
             .unwrap_or(configured_timeout);
         async move {
+            // Subscribe before submission so immediate inclusion cannot race the receipt listener.
             let mut canonical_stream = this.provider().canonical_state_stream();
             let hash = EthTransactions::send_raw_transaction(&this, tx).await?;
 

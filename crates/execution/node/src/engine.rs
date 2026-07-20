@@ -28,7 +28,7 @@ use reth_node_api::{
 };
 use reth_payload_primitives::{InvalidPayloadAttributesError, PayloadAttributes};
 use reth_primitives_traits::{Block, RecoveredBlock, SealedBlock, SealedHeader, SignedTransaction};
-use reth_provider::{StateProvider, StateProviderFactory};
+use reth_provider::StateProvider;
 use reth_storage_api::{StateProviderBox, errors::ProviderResult};
 use reth_trie_common::{HashedPostState, KeyHasher};
 
@@ -81,42 +81,38 @@ where
 
 /// Validator for Base engine API.
 #[derive(Debug)]
-pub struct BaseEngineValidator<P, Tx, ChainSpec> {
+pub struct BaseEngineValidator<Tx, ChainSpec> {
     inner: BaseExecutionPayloadValidator<ChainSpec>,
-    provider: P,
     hashed_addr_l2tol1_msg_passer: B256,
     phantom: PhantomData<Tx>,
 }
 
-impl<P, Tx, ChainSpec> BaseEngineValidator<P, Tx, ChainSpec> {
+impl<Tx, ChainSpec> BaseEngineValidator<Tx, ChainSpec> {
     /// Instantiates a new validator.
-    pub fn new<KH: KeyHasher>(chain_spec: Arc<ChainSpec>, provider: P) -> Self {
+    pub fn new<KH: KeyHasher>(chain_spec: Arc<ChainSpec>) -> Self {
         let hashed_addr_l2tol1_msg_passer = KH::hash_key(Predeploys::L2_TO_L1_MESSAGE_PASSER);
         Self {
             inner: BaseExecutionPayloadValidator::new(chain_spec),
-            provider,
             hashed_addr_l2tol1_msg_passer,
             phantom: PhantomData,
         }
     }
 }
 
-impl<P, Tx, ChainSpec> Clone for BaseEngineValidator<P, Tx, ChainSpec>
+impl<Tx, ChainSpec> Clone for BaseEngineValidator<Tx, ChainSpec>
 where
-    P: Clone,
     ChainSpec: Upgrades,
 {
     fn clone(&self) -> Self {
         Self {
             inner: BaseExecutionPayloadValidator::new(self.inner.clone()),
-            provider: self.provider.clone(),
             hashed_addr_l2tol1_msg_passer: self.hashed_addr_l2tol1_msg_passer,
             phantom: Default::default(),
         }
     }
 }
 
-impl<P, Tx, ChainSpec> BaseEngineValidator<P, Tx, ChainSpec>
+impl<Tx, ChainSpec> BaseEngineValidator<Tx, ChainSpec>
 where
     ChainSpec: EthChainSpec + Upgrades,
 {
@@ -147,9 +143,8 @@ where
     }
 }
 
-impl<P, Tx, ChainSpec, Types> PayloadValidator<Types> for BaseEngineValidator<P, Tx, ChainSpec>
+impl<Tx, ChainSpec, Types> PayloadValidator<Types> for BaseEngineValidator<Tx, ChainSpec>
 where
-    P: StateProviderFactory + Unpin + 'static,
     Tx: BaseTransaction + SignedTransaction + Unpin + 'static,
     ChainSpec: EthChainSpec + Upgrades + Send + Sync + 'static,
     Types: PayloadTypes<ExecutionData = ExecutionData>,
@@ -209,14 +204,13 @@ where
     }
 }
 
-impl<Types, P, Tx, ChainSpec> EngineApiValidator<Types> for BaseEngineValidator<P, Tx, ChainSpec>
+impl<Types, Tx, ChainSpec> EngineApiValidator<Types> for BaseEngineValidator<Tx, ChainSpec>
 where
     Types: PayloadTypes<
             PayloadAttributes = BasePayloadBuilderAttributes<Tx>,
             ExecutionData = ExecutionData,
             BuiltPayload: BuiltPayload<Primitives: NodePrimitives<SignedTx = Tx>>,
         >,
-    P: StateProviderFactory + Unpin + 'static,
     Tx: SignedTransaction + Unpin + 'static,
     ChainSpec: EthChainSpec + Upgrades + Send + Sync + 'static,
 {
@@ -392,18 +386,17 @@ mod tests {
 
     fn validator_with_chain_spec(
         chain_spec: BaseChainSpec,
-    ) -> BaseEngineValidator<NoopProvider, BaseTxEnvelope, BaseChainSpec> {
-        BaseEngineValidator::<NoopProvider, BaseTxEnvelope, BaseChainSpec>::new::<KeccakKeyHasher>(
-            Arc::new(chain_spec),
-            NoopProvider::default(),
-        )
+    ) -> BaseEngineValidator<BaseTxEnvelope, BaseChainSpec> {
+        BaseEngineValidator::<BaseTxEnvelope, BaseChainSpec>::new::<KeccakKeyHasher>(Arc::new(
+            chain_spec,
+        ))
     }
 
-    fn validator() -> BaseEngineValidator<NoopProvider, BaseTxEnvelope, BaseChainSpec> {
+    fn validator() -> BaseEngineValidator<BaseTxEnvelope, BaseChainSpec> {
         validator_with_chain_spec(BaseChainSpec::sepolia())
     }
 
-    fn zombie_validator() -> BaseEngineValidator<NoopProvider, BaseTxEnvelope, BaseChainSpec> {
+    fn zombie_validator() -> BaseEngineValidator<BaseTxEnvelope, BaseChainSpec> {
         validator_with_chain_spec(
             BaseChainSpecBuilder::base_mainnet()
                 .with_fork(BaseUpgrade::Zombie, ForkCondition::Timestamp(ZOMBIE_TIMESTAMP))
@@ -461,7 +454,7 @@ mod tests {
         let validator = validator();
         let attributes = get_attributes(None, None, 1732633199);
 
-        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
@@ -474,7 +467,7 @@ mod tests {
         let validator = validator();
         let attributes = get_attributes(None, None, 1732633200);
 
-        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
@@ -487,7 +480,7 @@ mod tests {
         let validator = validator();
         let attributes = get_attributes(Some(b64!("0000000000000008")), None, 1732633200);
 
-        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
@@ -500,7 +493,7 @@ mod tests {
         let validator = validator();
         let attributes = get_attributes(Some(b64!("0000000800000000")), None, 1732633200);
 
-        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
@@ -513,7 +506,7 @@ mod tests {
         let validator = validator();
         let attributes = get_attributes(Some(b64!("0000000800000008")), None, 1732633200);
 
-        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
@@ -526,7 +519,7 @@ mod tests {
         let validator = validator();
         let attributes = get_attributes(Some(b64!("0000000000000000")), None, 1732633200);
 
-        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
@@ -543,7 +536,7 @@ mod tests {
             ChainConfig::sepolia().jovian_timestamp,
         );
 
-        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
@@ -557,7 +550,7 @@ mod tests {
         let validator = validator();
         let attributes = get_attributes(None, Some(1), ChainConfig::sepolia().jovian_timestamp);
 
-        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
@@ -571,7 +564,7 @@ mod tests {
         let validator = validator();
         let attributes = get_attributes(Some(b64!("0000000000000000")), Some(1), 1732633200);
 
-        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
@@ -589,7 +582,7 @@ mod tests {
             ChainConfig::sepolia().jovian_timestamp,
         );
 
-        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
@@ -603,7 +596,7 @@ mod tests {
         let mut attributes = get_attributes(None, None, 1732633199);
         attributes.timestamp_millis_part = Some(200);
 
-        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
@@ -616,7 +609,7 @@ mod tests {
         let validator = zombie_validator();
         let attributes = zombie_attributes(ZOMBIE_TIMESTAMP);
 
-        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
@@ -630,7 +623,7 @@ mod tests {
         let mut attributes = zombie_attributes(ZOMBIE_TIMESTAMP);
         attributes.timestamp_millis_part = Some(100);
 
-        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
@@ -644,7 +637,7 @@ mod tests {
         let mut attributes = zombie_attributes(ZOMBIE_TIMESTAMP);
         attributes.timestamp_millis_part = Some(200);
 
-        let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
+        let result = <engine::BaseEngineValidator<_, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
             &validator, EngineApiMessageVersion::V3, &attributes
@@ -653,7 +646,7 @@ mod tests {
     }
 
     fn validate_against_parent(
-        validator: &BaseEngineValidator<NoopProvider, BaseTxEnvelope, BaseChainSpec>,
+        validator: &BaseEngineValidator<BaseTxEnvelope, BaseChainSpec>,
         timestamp: u64,
         timestamp_millis_part: Option<u16>,
         parent_timestamp: u64,
@@ -662,7 +655,7 @@ mod tests {
         attributes.timestamp_millis_part = timestamp_millis_part;
         let header = Header { timestamp: parent_timestamp, ..Default::default() };
 
-        <engine::BaseEngineValidator<_, _, _> as PayloadValidator<BaseEngineTypes>>::
+        <engine::BaseEngineValidator<_, _> as PayloadValidator<BaseEngineTypes>>::
             validate_payload_attributes_against_header(validator, &attributes, &header)
     }
 
