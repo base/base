@@ -6,8 +6,8 @@ use alloy_primitives::{Address, B256, U256, keccak256};
 use alloy_sol_types::SolValue;
 use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
-    B20AssetLogic, B20AssetLogicV1, B20AssetStorage, B20FactoryLogic, B20FactoryLogicV1,
-    B20FactoryStorage, B20TokenRole, B20Variant, AssetContractContext, FactoryContractContext, IB20,
+    AssetContractContext, B20AssetLogic, B20AssetLogicV1, B20AssetStorage, B20FactoryLogic,
+    B20FactoryLogicV1, B20FactoryStorage, B20TokenRole, B20Variant, FactoryContractContext, IB20,
     IB20Factory, PolicyRegistryStorage, PolicyVersion, Token, TokenAccounting,
 };
 use base_precompile_storage::{HashMapStorageProvider, StorageCtx};

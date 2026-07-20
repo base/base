@@ -26,8 +26,7 @@ use base_common_precompiles::{
     ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
     B20AssetStorage, B20FactoryStorage, B20StablecoinStorage, B20TokenRole, B20Variant,
     FactoryContractContext, FactoryVersion, FactoryVersionResolver as FactoryVersions,
-    IActivationRegistry, IB20, IB20Factory, StablecoinAccounting,
-    TokenAccounting,
+    IActivationRegistry, IB20, IB20Factory, StablecoinAccounting, TokenAccounting,
 };
 use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
@@ -134,7 +133,11 @@ fn call_factory(
 ) -> (bool, Bytes) {
     storage.set_caller(caller);
     StorageCtx::enter(storage, |ctx| {
-        FactoryContractContext::with_storage(B20FactoryStorage::new(ctx)).dispatch(ctx, &calldata, BaseUpgrade::Beryl)
+        FactoryContractContext::with_storage(B20FactoryStorage::new(ctx)).dispatch(
+            ctx,
+            &calldata,
+            BaseUpgrade::Beryl,
+        )
     })
     .map(|out| (out.is_revert(), out.bytes))
     .expect("dispatch must not fatally error")
@@ -230,7 +233,11 @@ fn dispatch_reverts_before_beryl() {
     let calldata = IB20Factory::isB20Call { token: asset_addr(CREATOR, SALT) }.abi_encode();
     s.set_caller(ALICE);
     let (rev, bytes) = StorageCtx::enter(&mut s, |ctx| {
-        FactoryContractContext::with_storage(B20FactoryStorage::new(ctx)).dispatch(ctx, &calldata, BaseUpgrade::Azul)
+        FactoryContractContext::with_storage(B20FactoryStorage::new(ctx)).dispatch(
+            ctx,
+            &calldata,
+            BaseUpgrade::Azul,
+        )
     })
     .map(|out| (out.is_revert(), out.bytes))
     .expect("dispatch must not fatally error");
@@ -556,7 +563,11 @@ fn golden_create_reverts_nonzero_value() {
     s.set_caller(CREATOR);
     s.set_call_value(U256::ONE);
     let (rev, bytes) = StorageCtx::enter(&mut s, |ctx| {
-        FactoryContractContext::with_storage(B20FactoryStorage::new(ctx)).dispatch(ctx, &calldata, BaseUpgrade::Beryl)
+        FactoryContractContext::with_storage(B20FactoryStorage::new(ctx)).dispatch(
+            ctx,
+            &calldata,
+            BaseUpgrade::Beryl,
+        )
     })
     .map(|out| (out.is_revert(), out.bytes))
     .expect("dispatch must not fatally error");
@@ -694,7 +705,11 @@ fn gas(caller: Address, calldata: Vec<u8>) -> (u64, u64, u64) {
     s.set_caller(caller);
     s.reset_counters();
     let out = StorageCtx::enter(&mut s, |ctx| {
-        FactoryContractContext::with_storage(B20FactoryStorage::new(ctx)).dispatch(ctx, &calldata, BaseUpgrade::Beryl)
+        FactoryContractContext::with_storage(B20FactoryStorage::new(ctx)).dispatch(
+            ctx,
+            &calldata,
+            BaseUpgrade::Beryl,
+        )
     })
     .expect("gas-footprint op must not fatally error");
     assert!(!out.is_revert(), "gas-footprint op must succeed (not revert)");

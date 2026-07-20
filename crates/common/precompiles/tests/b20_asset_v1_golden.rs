@@ -27,11 +27,10 @@ use alloy_primitives::{Address, B256, Bytes, LogData, U256, b256, keccak256};
 use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
 use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
-    AssetAccounting, B20_MAX_SUPPLY_CAP, B20AssetInit, B20AssetLogic as Asset,
-    B20AssetLogicV1 as AssetV1, B20AssetStorage, B20PolicyType, B20TokenRole,
-    AssetContractContext as B20AssetToken, FakePolicyAccounting, IB20, IB20Asset,
-    NoopPrecompileCallObserver, PermitArgs, PolicyVersion, TokenAccounting,
-    Version as AssetVersion, VersionResolver as AssetVersions,
+    AssetAccounting, AssetContractContext as B20AssetToken, B20_MAX_SUPPLY_CAP, B20AssetInit,
+    B20AssetLogic as Asset, B20AssetLogicV1 as AssetV1, B20AssetStorage, B20PolicyType,
+    B20TokenRole, FakePolicyAccounting, IB20, IB20Asset, NoopPrecompileCallObserver, PermitArgs,
+    PolicyVersion, TokenAccounting, Version as AssetVersion, VersionResolver as AssetVersions,
 };
 use base_precompile_storage::{BasePrecompileError, HashMapStorageProvider, StorageCtx};
 use k256::ecdsa::SigningKey;

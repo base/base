@@ -172,8 +172,8 @@ fn op(
 ) -> Result<Bytes, BasePrecompileError> {
     storage.set_caller(caller);
     StorageCtx::enter(storage, |ctx| {
-        let version =
-            StablecoinVersionResolver::from_base_upgrade(BaseUpgrade::Beryl).expect("Beryl activates V1");
+        let version = StablecoinVersionResolver::from_base_upgrade(BaseUpgrade::Beryl)
+            .expect("Beryl activates V1");
         StablecoinContractContext::with_storage_and_policy(
             B20StablecoinStorage::from_address(TOKEN, ctx),
             policy,
