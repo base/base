@@ -183,6 +183,19 @@ pub trait B20StablecoinLogic<S: StablecoinAccounting, A: PolicyAccounting> {
         privileged: bool,
     ) -> Result<()>;
 
+    /// Grants `role` to `account` without checking caller authorization.
+    ///
+    /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and the
+    /// authorized [`grant_role`](Self::grant_role) path is not reachable. Bumps the `DefaultAdmin`
+    /// member count and emits `RoleGranted`.
+    fn grant_role_unchecked(
+        &self,
+        ctx: &mut ContractContext<S, A>,
+        role: B256,
+        account: Address,
+        sender: Address,
+    ) -> Result<()>;
+
     /// Revokes `role` from `account`.
     fn revoke_role(
         &self,

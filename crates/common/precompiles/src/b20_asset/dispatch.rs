@@ -17,7 +17,7 @@ use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    AssetAccounting, B20AssetLogicV1, B20AssetStorage, B20PolicyType, B20TokenRole,
+    AssetAccounting, B20AssetStorage, B20PolicyType, B20TokenRole,
     BerylAuxiliaryMetrics, BerylCallRecorder, BerylMetricLabels, BerylSelector, ContractContext,
     IB20::{self, IB20Calls as C},
     IB20Asset::{self, IB20AssetCalls as SC},
@@ -114,21 +114,6 @@ impl<S: AssetAccounting, A: PolicyAccounting> ContractContext<S, A> {
         privileged: bool,
     ) -> base_precompile_storage::Result<Bytes> {
         self.route(ctx, calldata, Version::V1, privileged, NoopPrecompileCallObserver)
-    }
-
-    /// Grants `role` to `account` without checking caller authorization.
-    ///
-    /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and the
-    /// authorized [`B20AssetLogic::grant_role`](crate::B20AssetLogic) path is not yet reachable. Pinned to
-    /// [`B20AssetLogicV1`], the token's introduction version.
-    // TODO: When the factory gains fork threading, remove this and pull versions into the factory.
-    pub fn grant_role_unchecked(
-        &mut self,
-        role: alloy_primitives::B256,
-        account: alloy_primitives::Address,
-        sender: alloy_primitives::Address,
-    ) -> base_precompile_storage::Result<()> {
-        B20AssetLogicV1.grant_role_unchecked(self, role, account, sender)
     }
 
     /// Decodes calldata, observes the decoded operation, and routes it to `version` with optional

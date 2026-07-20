@@ -13,7 +13,8 @@ use crate::{
     ActivationRegistryStorage, B20AssetInit, B20AssetStorage, B20FactoryStorage, B20StablecoinInit,
     B20StablecoinStorage, B20TokenRole, B20Variant, ContractContext, FactoryContractContext,
     IB20Factory, NoopPrecompileCallObserver, PolicyRegistryStorage, PolicyVersionResolver,
-    StablecoinContractContext, StablecoinVersion, Token, Version,
+    StablecoinContractContext, StablecoinVersionResolver, Token,
+    VersionResolver as AssetVersionResolver,
 };
 
 /// Version byte for `B20StablecoinEventParams` inside `B20Created.variantParams`.
@@ -50,6 +51,8 @@ impl B20FactoryLogicV1 {
         let storage = ctx.storage();
         let policy_version = PolicyVersionResolver::from_base_upgrade(upgrade)
             .ok_or_else(|| BasePrecompileError::Revert(Bytes::new()))?;
+        let stablecoin_version = StablecoinVersionResolver::from_base_upgrade(upgrade)
+            .ok_or_else(|| BasePrecompileError::Revert(Bytes::new()))?;
         let mut token = StablecoinContractContext::with_storage_and_policy(
             B20StablecoinStorage::from_address(token_address, storage.storage()),
             PolicyRegistryStorage::new(storage.storage()),
@@ -75,21 +78,22 @@ impl B20FactoryLogicV1 {
         )?;
 
         if !common.initial_admin.is_zero() {
-            token.grant_role_unchecked(
+            stablecoin_version.implementation().grant_role_unchecked(
+                &mut token,
                 B20TokenRole::DefaultAdmin.id(),
                 common.initial_admin,
                 B20FactoryStorage::ADDRESS,
             )?;
         }
 
-        // Pinned to V1: factory-init setup calls run before any later fork can be relevant.
+        // Fork-threaded: route factory-init setup calls against the version active at `upgrade`.
         storage.storage().with_caller(B20FactoryStorage::ADDRESS, || {
             for (index, calldata) in init_calls.into_iter().enumerate() {
                 token
                     .route(
                         storage.storage(),
                         &calldata,
-                        StablecoinVersion::V1,
+                        stablecoin_version,
                         true,
                         NoopPrecompileCallObserver,
                     )
@@ -111,6 +115,8 @@ impl B20FactoryLogicV1 {
     ) -> Result<()> {
         let storage = ctx.storage();
         let policy_version = PolicyVersionResolver::from_base_upgrade(upgrade)
+            .ok_or_else(|| BasePrecompileError::Revert(Bytes::new()))?;
+        let asset_version = AssetVersionResolver::from_base_upgrade(upgrade)
             .ok_or_else(|| BasePrecompileError::Revert(Bytes::new()))?;
         let mut token = ContractContext::with_storage_and_policy(
             B20AssetStorage::from_address(token_address, storage.storage()),
@@ -134,21 +140,22 @@ impl B20FactoryLogicV1 {
         )?;
 
         if !common.initial_admin.is_zero() {
-            token.grant_role_unchecked(
+            asset_version.implementation().grant_role_unchecked(
+                &mut token,
                 B20TokenRole::DefaultAdmin.id(),
                 common.initial_admin,
                 B20FactoryStorage::ADDRESS,
             )?;
         }
 
-        // Pinned to V1: factory-init setup calls run before any later fork can be relevant.
+        // Fork-threaded: route factory-init setup calls against the version active at `upgrade`.
         storage.storage().with_caller(B20FactoryStorage::ADDRESS, || {
             for (index, calldata) in init_calls.into_iter().enumerate() {
                 token
                     .route(
                         storage.storage(),
                         &calldata,
-                        Version::V1,
+                        asset_version,
                         true,
                         NoopPrecompileCallObserver,
                     )

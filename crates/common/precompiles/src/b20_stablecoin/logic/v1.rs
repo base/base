@@ -89,33 +89,6 @@ impl B20StablecoinLogicV1 {
             .emit_event(IB20::Transfer { from, to: Address::ZERO, amount }.encode_log_data())
     }
 
-    /// Grants `role` to `account` without checking caller authorization.
-    ///
-    /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and the
-    /// authorized [`grant_role`](B20StablecoinLogic::grant_role) path is not reachable. Bumps the
-    /// `DefaultAdmin` member count and emits `RoleGranted`. Kept inherent to V1 (off the `B20StablecoinLogic`
-    /// trait) so it stays frozen with this version and off `&dyn B20StablecoinLogic`.
-    pub(crate) fn grant_role_unchecked<S: StablecoinAccounting, A: PolicyAccounting>(
-        &self,
-        ctx: &mut ContractContext<S, A>,
-        role: B256,
-        account: Address,
-        sender: Address,
-    ) -> Result<()> {
-        if ctx.accounting().has_role(role, account)? {
-            return Ok(());
-        }
-        ctx.accounting_mut().set_role(role, account, true)?;
-        if role == B20TokenRole::DefaultAdmin.id() {
-            let current = ctx.accounting().role_member_count(role)?;
-            let next =
-                current.checked_add(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
-            ctx.accounting_mut().set_role_member_count(role, next)?;
-        }
-        ctx.accounting_mut()
-            .emit_event(IB20::RoleGranted { role, account, sender }.encode_log_data())
-    }
-
     /// Revokes `role` from `account` without checking caller authorization.
     fn revoke_role_unchecked<S: StablecoinAccounting, A: PolicyAccounting>(
         &self,
@@ -440,6 +413,27 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinLogic<S, A>
             B20Guards::ensure_role(ctx, caller, admin)?;
         }
         self.grant_role_unchecked(ctx, role, account, caller)
+    }
+
+    fn grant_role_unchecked(
+        &self,
+        ctx: &mut ContractContext<S, A>,
+        role: B256,
+        account: Address,
+        sender: Address,
+    ) -> Result<()> {
+        if ctx.accounting().has_role(role, account)? {
+            return Ok(());
+        }
+        ctx.accounting_mut().set_role(role, account, true)?;
+        if role == B20TokenRole::DefaultAdmin.id() {
+            let current = ctx.accounting().role_member_count(role)?;
+            let next =
+                current.checked_add(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
+            ctx.accounting_mut().set_role_member_count(role, next)?;
+        }
+        ctx.accounting_mut()
+            .emit_event(IB20::RoleGranted { role, account, sender }.encode_log_data())
     }
 
     fn revoke_role(
