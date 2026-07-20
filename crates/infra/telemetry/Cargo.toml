@@ -11,10 +11,13 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+ipnet.workspace = true
+governor.workspace = true
 tokio-util.workspace = true
 async-trait.workspace = true
 reth-ecies.workspace = true
 reth-eth-wire.workspace = true
+base-http-utils.workspace = true
 alloy-primitives.workspace = true
 anyhow = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }

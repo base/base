@@ -16,10 +16,10 @@ workspace = true
 
 [dependencies]
 http.workspace = true
-ipnet.workspace = true
 futures.workspace = true
 backoff.workspace = true
 tokio-util.workspace = true
+base-http-utils.workspace = true
 tokio-tungstenite.workspace = true
 metrics = { workspace = true, optional = true }
 brotli = { workspace = true, features = ["std"] }

@@ -7,14 +7,19 @@ use std::{
 };
 
 use anyhow::Context;
-use axum::Router;
+use axum::{Router, middleware};
 use base_health::HealthServer;
+use base_http_utils::TrustedProxyConfig;
 use clap::Args;
+use ipnet::IpNet;
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use crate::{P2P_REACHABILITY_MAX_CONCURRENT_PROBES, P2pRoutes, RlpxProber};
+use crate::{
+    CLIENT_IP_HEADER, IpRateLimiter, P2P_REACHABILITY_MAX_CONCURRENT_PROBES, P2pRoutes,
+    PerIpRateLimit, RATE_LIMIT_PER_IP_REQUESTS_PER_MINUTE, ReachabilityProber, RlpxProber,
+};
 
 /// Configuration for the Base telemetry HTTP server.
 #[derive(Args, Debug, Clone)]
@@ -22,6 +27,9 @@ pub struct ServerConfig {
     /// Socket address to bind the HTTP server to.
     #[arg(long, env = "BASE_TELEMETRY_LISTEN_ADDR", default_value = "0.0.0.0:8080")]
     pub listen_addr: SocketAddr,
+    /// Comma-separated CIDRs of proxies trusted to supply the `X-Forwarded-For` client IP.
+    #[arg(long, env = "BASE_TELEMETRY_TRUSTED_PROXY_CIDRS", value_delimiter = ',')]
+    pub trusted_proxy_cidrs: Vec<IpNet>,
 }
 
 /// Base telemetry Axum server scaffold.
@@ -29,19 +37,36 @@ pub struct ServerConfig {
 pub struct BaseTelemetryServer;
 
 impl BaseTelemetryServer {
-    /// Returns the application router for the telemetry service.
-    pub fn router(ready: Arc<AtomicBool>) -> Router {
-        HealthServer::router(ready).merge(P2pRoutes::router_with_prober(
-            P2P_REACHABILITY_MAX_CONCURRENT_PROBES,
-            Arc::new(RlpxProber::ephemeral()),
-        ))
+    /// Returns the application router using an injected prober.
+    pub fn router_with_prober<P>(
+        ready: Arc<AtomicBool>,
+        per_ip: PerIpRateLimit,
+        prober: Arc<P>,
+    ) -> Router
+    where
+        P: ReachabilityProber + 'static,
+    {
+        let p2p = P2pRoutes::router_with_prober(P2P_REACHABILITY_MAX_CONCURRENT_PROBES, prober)
+            .layer(middleware::from_fn_with_state(per_ip, PerIpRateLimit::enforce));
+        HealthServer::router(ready).merge(p2p)
     }
 
     /// Starts the telemetry service with the provided configuration.
     pub async fn serve(config: ServerConfig, cancel: CancellationToken) -> anyhow::Result<()> {
-        let ServerConfig { listen_addr } = config;
+        let listen_addr = config.listen_addr;
+        let proxy = Arc::new(TrustedProxyConfig::new(
+            CLIENT_IP_HEADER.to_string(),
+            config.trusted_proxy_cidrs,
+        ));
+        let limiter = Arc::new(IpRateLimiter::per_minute(RATE_LIMIT_PER_IP_REQUESTS_PER_MINUTE));
+        let eviction = limiter.spawn_eviction_task(cancel.clone());
+
         let ready = Arc::new(AtomicBool::new(false));
-        let app = Self::router(Arc::clone(&ready));
+        let app = Self::router_with_prober(
+            Arc::clone(&ready),
+            PerIpRateLimit::new(limiter, proxy),
+            Arc::new(RlpxProber::ephemeral()),
+        );
         let listener = TcpListener::bind(listen_addr)
             .await
             .with_context(|| format!("failed to bind base telemetry server to {listen_addr}"))?;
@@ -52,10 +77,12 @@ impl BaseTelemetryServer {
 
         info!(listen_addr = %listen_addr, "base telemetry server started");
 
-        axum::serve(listener, app)
+        axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
             .with_graceful_shutdown(async move { cancel.cancelled().await })
             .await
             .context("base telemetry server exited unexpectedly")?;
+
+        let _ = eviction.await;
 
         Ok(())
     }
@@ -65,20 +92,36 @@ impl BaseTelemetryServer {
 mod tests {
     use std::{
         net::SocketAddr,
+        num::NonZeroU32,
         sync::{Arc, atomic::AtomicBool},
         time::Duration,
     };
 
     use async_trait::async_trait;
     use axum::{Router, http::StatusCode};
-    use base_health::HealthServer;
+    use base_http_utils::TrustedProxyConfig;
     use tokio::{net::TcpListener, sync::Semaphore, task::JoinHandle};
 
     use crate::{
-        BaseTelemetryServer, P2P_REACHABILITY_PATH, P2pReachabilityRequest, P2pRoutes,
-        ReachabilityProber, RlpxProbeOutcome, RlpxProbeResult, RlpxProbeStage, RlpxProbeTarget,
-        TEST_NODE_ID,
+        BaseTelemetryServer, IpRateLimiter, P2P_REACHABILITY_PATH, P2pReachabilityRequest,
+        PerIpRateLimit, ReachabilityProber, RlpxProbeOutcome, RlpxProbeResult, RlpxProbeStage,
+        RlpxProbeTarget, TEST_NODE_ID,
     };
+
+    #[derive(Debug, Clone, Default)]
+    struct FakeProber;
+
+    #[async_trait]
+    impl ReachabilityProber for FakeProber {
+        async fn probe(&self, _: RlpxProbeTarget) -> RlpxProbeResult {
+            RlpxProbeResult {
+                outcome: RlpxProbeOutcome::Reachable,
+                stage: RlpxProbeStage::Devp2pHello,
+                elapsed: Duration::from_millis(1),
+                client_version: None,
+            }
+        }
+    }
 
     #[derive(Debug, Clone)]
     struct BlockingProber {
@@ -100,17 +143,36 @@ mod tests {
         }
     }
 
+    fn per_ip(per_minute: u32, trusted_proxy_cidrs: Vec<&str>) -> PerIpRateLimit {
+        let cidrs = trusted_proxy_cidrs.into_iter().map(|cidr| cidr.parse().unwrap()).collect();
+        PerIpRateLimit::new(
+            Arc::new(IpRateLimiter::per_minute(NonZeroU32::new(per_minute).unwrap())),
+            Arc::new(TrustedProxyConfig::new("x-forwarded-for".to_string(), cidrs)),
+        )
+    }
+
     async fn start_router(router: Router) -> (SocketAddr, JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let handle = tokio::spawn(async move {
-            axum::serve(listener, router).await.unwrap();
+            axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
+                .await
+                .unwrap();
         });
         (addr, handle)
     }
 
     async fn start_test_server() -> (SocketAddr, JoinHandle<()>) {
-        start_router(BaseTelemetryServer::router(Arc::new(AtomicBool::new(true)))).await
+        start_router(BaseTelemetryServer::router_with_prober(
+            Arc::new(AtomicBool::new(true)),
+            per_ip(1000, vec![]),
+            Arc::new(FakeProber),
+        ))
+        .await
+    }
+
+    fn test_request() -> P2pReachabilityRequest {
+        P2pReachabilityRequest { enode: format!("enode://{TEST_NODE_ID}@8.8.8.8:30303") }
     }
 
     #[tokio::test]
@@ -141,11 +203,13 @@ mod tests {
             entered: Arc::new(Semaphore::new(0)),
             release: Arc::new(Semaphore::new(0)),
         });
-        let router = HealthServer::router(Arc::new(AtomicBool::new(true)))
-            .merge(P2pRoutes::router_with_prober(1, Arc::clone(&prober)));
+        let router = BaseTelemetryServer::router_with_prober(
+            Arc::new(AtomicBool::new(true)),
+            per_ip(1000, vec![]),
+            Arc::clone(&prober),
+        );
         let (addr, handle) = start_router(router).await;
-        let request =
-            P2pReachabilityRequest { enode: format!("enode://{TEST_NODE_ID}@8.8.8.8:30303") };
+        let request = test_request();
         let client = reqwest::Client::new();
         let probe_client = client.clone();
 
@@ -172,6 +236,108 @@ mod tests {
 
         prober.release.add_permits(1);
         assert_eq!(probe.await.unwrap().status(), StatusCode::OK);
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn rate_limits_requests_per_client_ip() {
+        let router = BaseTelemetryServer::router_with_prober(
+            Arc::new(AtomicBool::new(true)),
+            per_ip(1, vec![]),
+            Arc::new(FakeProber),
+        );
+        let (addr, handle) = start_router(router).await;
+        let client = reqwest::Client::new();
+        let url = format!("http://{addr}{P2P_REACHABILITY_PATH}");
+
+        let first = client.post(&url).json(&test_request()).send().await.unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+
+        let second = client.post(&url).json(&test_request()).send().await.unwrap();
+        assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(second.headers().contains_key("retry-after"));
+        assert_eq!(second.text().await.unwrap(), r#"{"error":"rate_limited"}"#);
+
+        // Health routes are not subject to the per-IP limit.
+        let health = client.get(format!("http://{addr}/healthz")).send().await.unwrap();
+        assert_eq!(health.status(), StatusCode::OK);
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn ignores_forwarded_header_from_untrusted_peer() {
+        let router = BaseTelemetryServer::router_with_prober(
+            Arc::new(AtomicBool::new(true)),
+            per_ip(1, vec![]),
+            Arc::new(FakeProber),
+        );
+        let (addr, handle) = start_router(router).await;
+        let client = reqwest::Client::new();
+        let url = format!("http://{addr}{P2P_REACHABILITY_PATH}");
+
+        let first = client
+            .post(&url)
+            .header("x-forwarded-for", "198.51.100.1")
+            .json(&test_request())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+
+        // A spoofed header must not open a fresh rate-limit bucket.
+        let second = client
+            .post(&url)
+            .header("x-forwarded-for", "198.51.100.2")
+            .json(&test_request())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn honors_forwarded_header_from_trusted_proxy() {
+        let router = BaseTelemetryServer::router_with_prober(
+            Arc::new(AtomicBool::new(true)),
+            per_ip(1, vec!["127.0.0.0/8"]),
+            Arc::new(FakeProber),
+        );
+        let (addr, handle) = start_router(router).await;
+        let client = reqwest::Client::new();
+        let url = format!("http://{addr}{P2P_REACHABILITY_PATH}");
+
+        let first = client
+            .post(&url)
+            .header("x-forwarded-for", "198.51.100.1")
+            .json(&test_request())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+
+        // Distinct forwarded clients get independent buckets.
+        let second = client
+            .post(&url)
+            .header("x-forwarded-for", "198.51.100.2")
+            .json(&test_request())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(second.status(), StatusCode::OK);
+
+        // The same forwarded client is limited.
+        let third = client
+            .post(&url)
+            .header("x-forwarded-for", "198.51.100.1")
+            .json(&test_request())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(third.status(), StatusCode::TOO_MANY_REQUESTS);
+
         handle.abort();
     }
 }

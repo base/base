@@ -58,8 +58,19 @@ Invalid requests return `400`, bodies over 1 `KiB` return `413`, and exhausted
 probe capacity returns `429`. Probes have a 10-second deadline, with at most 32
 running globally. These limits do not apply to the health routes.
 
+## Rate limiting
+
+Reachability requests are rate limited to 2 per minute per client IP,
+enforced with in-memory GCRA token buckets. The client IP is taken from the
+peer socket address unless the peer is inside a configured set of trusted
+proxy CIDRs, in which case the last `X-Forwarded-For` entry is used. Limited
+requests return `429` with a `Retry-After` header and a JSON body of
+`{"error":"rate_limited"}`. Limits are tracked per replica; health routes are
+never rate limited.
+
 ## Target selection
 
 The service probes the exact literal `IPv4` or `IPv6` socket address advertised
-by the enode, including private and other non-public addresses. Routing,
-firewall, and egress policy determine whether the backend can reach the target.
+by the enode. Non-public addresses (loopback, private, link-local,
+carrier-grade NAT, unique-local, multicast, and unspecified) are rejected with
+`400` so untrusted enodes cannot steer probes at internal networks.
