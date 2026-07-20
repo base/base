@@ -13,16 +13,6 @@ use reth_rpc_eth_api::{
 
 use crate::{BaseEthApi, BaseEthApiError, eth::RpcNodeCore};
 
-trait TimestampMsHeader {
-    fn set_timestamp_ms(&mut self, timestamp_ms: Option<u64>);
-}
-
-impl TimestampMsHeader for BaseHeaderResponse {
-    fn set_timestamp_ms(&mut self, timestamp_ms: Option<u64>) {
-        self.timestamp_ms = timestamp_ms;
-    }
-}
-
 impl<N: RpcNodeCore, Rpc: RpcConvert> BaseEthApi<N, Rpc> {
     fn extract_timestamp_ms<B: BlockBody>(
         body: &B,
@@ -44,8 +34,8 @@ where
     N: RpcNodeCore,
     BaseEthApiError: FromEvmError<N::Evm>,
     Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
+    <Self as EthApiTypes>::NetworkTypes: RpcTypes<Header = BaseHeaderResponse>,
     <Self::Primitives as NodePrimitives>::SignedTx: BaseTransaction,
-    <Self::NetworkTypes as RpcTypes>::Header: TimestampMsHeader,
 {
     async fn rpc_block_header(
         &self,
@@ -59,7 +49,7 @@ where
             Self::extract_timestamp_ms(block.body(), block.number(), block.timestamp());
         let mut header =
             self.converter().convert_header(block.clone_sealed_header(), block.rlp_length())?;
-        header.set_timestamp_ms(timestamp_ms);
+        header.timestamp_ms = timestamp_ms;
         Ok(Some(header))
     }
 
@@ -79,7 +69,7 @@ where
             |tx, tx_info| self.converter().fill(tx, tx_info),
             |header, size| self.converter().convert_header(header, size),
         )?;
-        block.header.set_timestamp_ms(timestamp_ms);
+        block.header.timestamp_ms = timestamp_ms;
         Ok(Some(block))
     }
 }
