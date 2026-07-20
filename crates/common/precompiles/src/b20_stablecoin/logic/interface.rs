@@ -5,7 +5,7 @@ use alloc::{string::String, vec::Vec};
 use alloy_primitives::{Address, B256, U256};
 use base_precompile_storage::Result;
 
-use super::super::ContractContext;
+use super::super::StablecoinContractContext;
 use crate::{Eip712Domain, IB20, PermitArgs, PolicyAccounting, StablecoinAccounting, Token};
 
 /// The stablecoin logic interface.
@@ -13,7 +13,7 @@ pub trait B20StablecoinLogic<S: StablecoinAccounting, A: PolicyAccounting> {
     /// ERC-20 `transfer`.
     fn transfer(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         to: Address,
         amount: U256,
@@ -23,7 +23,7 @@ pub trait B20StablecoinLogic<S: StablecoinAccounting, A: PolicyAccounting> {
     /// ERC-20 `transferFrom`.
     fn transfer_from(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         from: Address,
         to: Address,
@@ -34,7 +34,7 @@ pub trait B20StablecoinLogic<S: StablecoinAccounting, A: PolicyAccounting> {
     /// ERC-20 `approve`.
     fn approve(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         spender: Address,
         amount: U256,
@@ -46,13 +46,17 @@ pub trait B20StablecoinLogic<S: StablecoinAccounting, A: PolicyAccounting> {
     /// by the default `*_with_memo` methods below as the base operation followed by this
     /// event, so the memo semantics stay version-defined without widening every
     /// operation's signature or leaking composition into the dispatcher.
-    fn emit_memo(&self, ctx: &mut ContractContext<S, A>, caller: Address, memo: B256)
-    -> Result<()>;
+    fn emit_memo(
+        &self,
+        ctx: &mut StablecoinContractContext<S, A>,
+        caller: Address,
+        memo: B256,
+    ) -> Result<()>;
 
     /// `transfer` followed by a `Memo` event (`transferWithMemo`).
     fn transfer_with_memo(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         call: IB20::transferWithMemoCall,
         privileged: bool,
@@ -64,7 +68,7 @@ pub trait B20StablecoinLogic<S: StablecoinAccounting, A: PolicyAccounting> {
     /// `transferFrom` followed by a `Memo` event (`transferFromWithMemo`).
     fn transfer_from_with_memo(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         call: IB20::transferFromWithMemoCall,
         privileged: bool,
@@ -76,7 +80,7 @@ pub trait B20StablecoinLogic<S: StablecoinAccounting, A: PolicyAccounting> {
     /// `mint` followed by a `Memo` event (`mintWithMemo`).
     fn mint_with_memo(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         call: IB20::mintWithMemoCall,
         privileged: bool,
@@ -88,7 +92,7 @@ pub trait B20StablecoinLogic<S: StablecoinAccounting, A: PolicyAccounting> {
     /// `burn` followed by a `Memo` event (`burnWithMemo`).
     fn burn_with_memo(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         call: IB20::burnWithMemoCall,
     ) -> Result<()> {
@@ -99,7 +103,7 @@ pub trait B20StablecoinLogic<S: StablecoinAccounting, A: PolicyAccounting> {
     /// Mints `amount` to `to`.
     fn mint(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         to: Address,
         amount: U256,
@@ -107,12 +111,17 @@ pub trait B20StablecoinLogic<S: StablecoinAccounting, A: PolicyAccounting> {
     ) -> Result<()>;
 
     /// Self-burn: the caller destroys `amount` of its own balance.
-    fn burn(&self, ctx: &mut ContractContext<S, A>, caller: Address, amount: U256) -> Result<()>;
+    fn burn(
+        &self,
+        ctx: &mut StablecoinContractContext<S, A>,
+        caller: Address,
+        amount: U256,
+    ) -> Result<()>;
 
     /// Destroys `amount` from a policy-blocked `from` account.
     fn burn_blocked(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         from: Address,
         amount: U256,
@@ -122,7 +131,7 @@ pub trait B20StablecoinLogic<S: StablecoinAccounting, A: PolicyAccounting> {
     /// Pauses the given features.
     fn pause(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         features: Vec<IB20::PausableFeature>,
         privileged: bool,
@@ -131,7 +140,7 @@ pub trait B20StablecoinLogic<S: StablecoinAccounting, A: PolicyAccounting> {
     /// Unpauses the given features.
     fn unpause(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         features: Vec<IB20::PausableFeature>,
         privileged: bool,
@@ -140,7 +149,7 @@ pub trait B20StablecoinLogic<S: StablecoinAccounting, A: PolicyAccounting> {
     /// Updates the maximum total supply.
     fn update_supply_cap(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         new_cap: U256,
         privileged: bool,
@@ -149,7 +158,7 @@ pub trait B20StablecoinLogic<S: StablecoinAccounting, A: PolicyAccounting> {
     /// Updates the token name.
     fn update_name(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         name: String,
         privileged: bool,
@@ -158,7 +167,7 @@ pub trait B20StablecoinLogic<S: StablecoinAccounting, A: PolicyAccounting> {
     /// Updates the token symbol.
     fn update_symbol(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         symbol: String,
         privileged: bool,
@@ -167,7 +176,7 @@ pub trait B20StablecoinLogic<S: StablecoinAccounting, A: PolicyAccounting> {
     /// Updates the contract URI.
     fn update_contract_uri(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         uri: String,
         privileged: bool,
@@ -176,7 +185,7 @@ pub trait B20StablecoinLogic<S: StablecoinAccounting, A: PolicyAccounting> {
     /// Grants `role` to `account`.
     fn grant_role(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         role: B256,
         account: Address,
@@ -190,7 +199,7 @@ pub trait B20StablecoinLogic<S: StablecoinAccounting, A: PolicyAccounting> {
     /// member count and emits `RoleGranted`.
     fn grant_role_unchecked(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         role: B256,
         account: Address,
         sender: Address,
@@ -199,7 +208,7 @@ pub trait B20StablecoinLogic<S: StablecoinAccounting, A: PolicyAccounting> {
     /// Revokes `role` from `account`.
     fn revoke_role(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         role: B256,
         account: Address,
@@ -209,19 +218,23 @@ pub trait B20StablecoinLogic<S: StablecoinAccounting, A: PolicyAccounting> {
     /// Renounces `role` for the caller.
     fn renounce_role(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         role: B256,
         confirmation: Address,
     ) -> Result<()>;
 
     /// Permanently removes the final default admin.
-    fn renounce_last_admin(&self, ctx: &mut ContractContext<S, A>, caller: Address) -> Result<()>;
+    fn renounce_last_admin(
+        &self,
+        ctx: &mut StablecoinContractContext<S, A>,
+        caller: Address,
+    ) -> Result<()>;
 
     /// Sets the admin role for `role`.
     fn set_role_admin(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         role: B256,
         new_admin_role: B256,
@@ -231,7 +244,7 @@ pub trait B20StablecoinLogic<S: StablecoinAccounting, A: PolicyAccounting> {
     /// Updates the policy ID configured for `policy_scope`.
     fn update_policy(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         policy_scope: B256,
         new_policy_id: u64,
@@ -241,7 +254,7 @@ pub trait B20StablecoinLogic<S: StablecoinAccounting, A: PolicyAccounting> {
     /// EIP-2612 `permit`.
     fn permit(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         chain_id: u64,
         now: U256,
         args: PermitArgs,
@@ -252,34 +265,34 @@ pub trait B20StablecoinLogic<S: StablecoinAccounting, A: PolicyAccounting> {
     //     every version; a version overrides one only if its read semantics change. ---
 
     /// Returns whether marker bytecode is deployed at this token's address.
-    fn is_initialized(&self, ctx: &ContractContext<S, A>) -> Result<bool> {
+    fn is_initialized(&self, ctx: &StablecoinContractContext<S, A>) -> Result<bool> {
         ctx.accounting().is_initialized()
     }
 
     /// Returns the token name.
-    fn name(&self, ctx: &ContractContext<S, A>) -> Result<String> {
+    fn name(&self, ctx: &StablecoinContractContext<S, A>) -> Result<String> {
         ctx.accounting().name()
     }
 
     /// Returns the token symbol.
-    fn symbol(&self, ctx: &ContractContext<S, A>) -> Result<String> {
+    fn symbol(&self, ctx: &StablecoinContractContext<S, A>) -> Result<String> {
         ctx.accounting().symbol()
     }
 
     /// Returns the total token supply currently in circulation.
-    fn total_supply(&self, ctx: &ContractContext<S, A>) -> Result<U256> {
+    fn total_supply(&self, ctx: &StablecoinContractContext<S, A>) -> Result<U256> {
         ctx.accounting().total_supply()
     }
 
     /// Returns the token balance of `account`.
-    fn balance_of(&self, ctx: &ContractContext<S, A>, account: Address) -> Result<U256> {
+    fn balance_of(&self, ctx: &StablecoinContractContext<S, A>, account: Address) -> Result<U256> {
         ctx.accounting().balance_of(account)
     }
 
     /// Returns the allowance granted by `owner` to `spender`.
     fn allowance(
         &self,
-        ctx: &ContractContext<S, A>,
+        ctx: &StablecoinContractContext<S, A>,
         owner: Address,
         spender: Address,
     ) -> Result<U256> {
@@ -287,27 +300,32 @@ pub trait B20StablecoinLogic<S: StablecoinAccounting, A: PolicyAccounting> {
     }
 
     /// Returns the maximum total supply enforced on mint.
-    fn supply_cap(&self, ctx: &ContractContext<S, A>) -> Result<U256> {
+    fn supply_cap(&self, ctx: &StablecoinContractContext<S, A>) -> Result<U256> {
         ctx.accounting().supply_cap()
     }
 
     /// Returns the current EIP-2612 permit nonce for `owner`.
-    fn nonce(&self, ctx: &ContractContext<S, A>, owner: Address) -> Result<U256> {
+    fn nonce(&self, ctx: &StablecoinContractContext<S, A>, owner: Address) -> Result<U256> {
         ctx.accounting().nonce(owner)
     }
 
     /// Returns the off-chain metadata URI for this token (ERC-7572).
-    fn contract_uri(&self, ctx: &ContractContext<S, A>) -> Result<String> {
+    fn contract_uri(&self, ctx: &StablecoinContractContext<S, A>) -> Result<String> {
         ctx.accounting().contract_uri()
     }
 
     /// Returns whether `account` has `role`.
-    fn has_role(&self, ctx: &ContractContext<S, A>, role: B256, account: Address) -> Result<bool> {
+    fn has_role(
+        &self,
+        ctx: &StablecoinContractContext<S, A>,
+        role: B256,
+        account: Address,
+    ) -> Result<bool> {
         ctx.accounting().has_role(role, account)
     }
 
     /// Returns the admin role for `role`.
-    fn role_admin(&self, ctx: &ContractContext<S, A>, role: B256) -> Result<B256> {
+    fn role_admin(&self, ctx: &StablecoinContractContext<S, A>, role: B256) -> Result<B256> {
         ctx.accounting().role_admin(role)
     }
 
@@ -316,23 +334,34 @@ pub trait B20StablecoinLogic<S: StablecoinAccounting, A: PolicyAccounting> {
     /// Returns whether the given pause `feature` is currently set.
     fn is_paused(
         &self,
-        ctx: &ContractContext<S, A>,
+        ctx: &StablecoinContractContext<S, A>,
         feature: IB20::PausableFeature,
     ) -> Result<bool>;
 
     /// Returns all currently paused features.
-    fn paused_features(&self, ctx: &ContractContext<S, A>) -> Result<Vec<IB20::PausableFeature>>;
+    fn paused_features(
+        &self,
+        ctx: &StablecoinContractContext<S, A>,
+    ) -> Result<Vec<IB20::PausableFeature>>;
 
     /// Returns the configured policy ID for `policy_scope`, validating the scope.
-    fn policy_id(&self, ctx: &ContractContext<S, A>, policy_scope: B256) -> Result<u64>;
+    fn policy_id(&self, ctx: &StablecoinContractContext<S, A>, policy_scope: B256) -> Result<u64>;
 
     /// Computes the EIP-712 domain separator for this ctx.
-    fn domain_separator(&self, ctx: &ContractContext<S, A>, chain_id: u64) -> Result<B256>;
+    fn domain_separator(
+        &self,
+        ctx: &StablecoinContractContext<S, A>,
+        chain_id: u64,
+    ) -> Result<B256>;
 
     /// Returns the ERC-5267 `eip712Domain()` tuple for this ctx.
-    fn eip712_domain(&self, ctx: &ContractContext<S, A>, chain_id: u64) -> Result<Eip712Domain>;
+    fn eip712_domain(
+        &self,
+        ctx: &StablecoinContractContext<S, A>,
+        chain_id: u64,
+    ) -> Result<Eip712Domain>;
 
     /// Returns the stablecoin currency identifier — the stablecoin-specific
     /// extension operation.
-    fn currency(&self, ctx: &ContractContext<S, A>) -> Result<String>;
+    fn currency(&self, ctx: &StablecoinContractContext<S, A>) -> Result<String>;
 }

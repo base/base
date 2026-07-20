@@ -6,13 +6,13 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::BasePrecompileError;
 
 use crate::{
-    B20AssetStorage, ContractContext, NoopPrecompileCallObserver, PolicyRegistryStorage,
+    AssetContractContext, B20AssetStorage, NoopPrecompileCallObserver, PolicyRegistryStorage,
     PolicyVersionResolver, PrecompileCallObserver, macros::base_precompile,
 };
 
 /// Entry point for the asset B-20 token precompile.
 ///
-/// Wraps [`ContractContext`] dispatch behind a [`DynPrecompile`] for
+/// Wraps [`AssetContractContext`] dispatch behind a [`DynPrecompile`] for
 /// registration in a [`PrecompilesMap`].
 #[derive(Debug)]
 pub struct B20AssetPrecompile;
@@ -39,7 +39,7 @@ impl B20AssetPrecompile {
             let Some(version) = PolicyVersionResolver::from_base_upgrade(upgrade) else {
                 return BasePrecompileError::Revert(Bytes::new()).into_precompile_result(0, 0);
             };
-            ContractContext::with_storage_and_policy(
+            AssetContractContext::with_storage_and_policy(
                 B20AssetStorage::from_address(token_address, ctx),
                 PolicyRegistryStorage::new(ctx),
                 version,

@@ -6,7 +6,7 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
-use super::{ContractContext, Version, VersionResolver};
+use super::{PolicyContractContext, Version, VersionResolver};
 use crate::{
     ActivationFeature, ActivationRegistryStorage, BerylAuxiliaryMetrics, BerylCallRecorder,
     BerylMetricLabels,
@@ -15,7 +15,7 @@ use crate::{
     macros::decode_precompile_call,
 };
 
-impl<S: PolicyAccounting> ContractContext<S> {
+impl<S: PolicyAccounting> PolicyContractContext<S> {
     /// ABI-dispatches policy registry calldata for `upgrade`.
     ///
     /// View (read-only) calls bypass the activation gate and remain accessible even when the
@@ -173,7 +173,7 @@ mod tests {
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
     use revm::precompile::PrecompileOutput;
 
-    use super::super::{ContractContext, PolicyRegistryLogicV1};
+    use super::super::{PolicyContractContext, PolicyRegistryLogicV1};
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, BerylErrorKind,
         IPolicyRegistry, PolicyRegistryStorage, PrecompileCallMetric, PrecompileCallObserver,
@@ -219,7 +219,7 @@ mod tests {
     fn activate_and_init(storage: &mut HashMapStorageProvider) {
         activate_policy_registry(storage);
         StorageCtx::enter(storage, |ctx| {
-            let mut rt = ContractContext::with_storage(PolicyRegistryStorage::new(ctx));
+            let mut rt = PolicyContractContext::with_storage(PolicyRegistryStorage::new(ctx));
             PolicyRegistryLogicV1.ensure_initialized_and_get_counter(rt.storage_mut())
         })
         .unwrap();
@@ -228,7 +228,7 @@ mod tests {
     /// Dispatches `calldata` against a Beryl runtime, expecting no fatal error.
     fn run(storage: &mut HashMapStorageProvider, calldata: &[u8]) -> PrecompileOutput {
         StorageCtx::enter(storage, |ctx| {
-            ContractContext::with_storage(PolicyRegistryStorage::new(ctx)).dispatch(
+            PolicyContractContext::with_storage(PolicyRegistryStorage::new(ctx)).dispatch(
                 ctx,
                 calldata,
                 BaseUpgrade::Beryl,
@@ -244,12 +244,8 @@ mod tests {
         observer: RecordingObserver,
     ) -> PrecompileOutput {
         StorageCtx::enter(storage, |ctx| {
-            ContractContext::with_storage(PolicyRegistryStorage::new(ctx)).dispatch_with_observer(
-                ctx,
-                calldata,
-                BaseUpgrade::Beryl,
-                observer,
-            )
+            PolicyContractContext::with_storage(PolicyRegistryStorage::new(ctx))
+                .dispatch_with_observer(ctx, calldata, BaseUpgrade::Beryl, observer)
         })
         .expect("dispatch should not fatally error")
     }

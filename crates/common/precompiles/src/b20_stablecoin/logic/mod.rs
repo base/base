@@ -3,7 +3,7 @@
 //! [`B20StablecoinLogic`] (in [`interface`](self)) is the append-only business-logic
 //! interface each version implements; [`B20StablecoinLogicV1`] is the first frozen
 //! implementation. The storage + policy bag they operate on is
-//! [`super::ContractContext`].
+//! [`super::StablecoinContractContext`].
 
 mod interface;
 pub use interface::B20StablecoinLogic;

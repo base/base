@@ -7,7 +7,7 @@ mod accounting;
 pub use accounting::StablecoinAccounting;
 
 mod context;
-pub use context::ContractContext;
+pub use context::StablecoinContractContext;
 
 mod dispatch;
 

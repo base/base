@@ -5,7 +5,7 @@ use alloy_primitives::{Address, Bytes};
 use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::BasePrecompileError;
 
-use super::ContractContext;
+use super::StablecoinContractContext;
 use crate::{
     B20StablecoinStorage, NoopPrecompileCallObserver, PolicyRegistryStorage, PolicyVersionResolver,
     PrecompileCallObserver, macros::base_precompile,
@@ -13,7 +13,7 @@ use crate::{
 
 /// Entry point for the stablecoin B-20 variant.
 ///
-/// Wraps [`ContractContext`] dispatch behind a [`DynPrecompile`].
+/// Wraps [`StablecoinContractContext`] dispatch behind a [`DynPrecompile`].
 #[derive(Debug)]
 pub struct B20StablecoinPrecompile;
 
@@ -39,7 +39,7 @@ impl B20StablecoinPrecompile {
             let Some(version) = PolicyVersionResolver::from_base_upgrade(upgrade) else {
                 return BasePrecompileError::Revert(Bytes::new()).into_precompile_result(0, 0);
             };
-            ContractContext::with_storage_and_policy(
+            StablecoinContractContext::with_storage_and_policy(
                 B20StablecoinStorage::from_address(token_address, ctx),
                 PolicyRegistryStorage::new(ctx),
                 version,

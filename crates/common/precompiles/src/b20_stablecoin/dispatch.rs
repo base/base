@@ -14,7 +14,7 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
-use super::{ContractContext, Version, VersionResolver};
+use super::{StablecoinContractContext, Version, VersionResolver};
 use crate::{
     B20PolicyType, B20TokenRole, B20Variant, BerylCallRecorder, BerylMetricLabels, BerylSelector,
     IB20::{self, IB20Calls as C},
@@ -24,7 +24,7 @@ use crate::{
     macros::decode_precompile_call,
 };
 
-impl<S: StablecoinAccounting, A: PolicyAccounting> ContractContext<S, A> {
+impl<S: StablecoinAccounting, A: PolicyAccounting> StablecoinContractContext<S, A> {
     /// ABI-dispatches `calldata` to the appropriate `IB20` handler for `upgrade`.
     pub fn dispatch(
         &mut self,
@@ -317,7 +317,7 @@ mod tests {
     use base_common_genesis::BaseUpgrade;
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
-    use super::{ContractContext, Version};
+    use super::{StablecoinContractContext, Version};
     use crate::{
         FakePolicyAccounting, IB20, InMemoryTokenAccounting, NoopPrecompileCallObserver,
         PolicyVersion, TestStablecoinToken,
@@ -345,8 +345,8 @@ mod tests {
         .to_vec()
     }
 
-    fn make_token() -> ContractContext<InMemoryTokenAccounting, FakePolicyAccounting> {
-        ContractContext::with_storage_and_policy(
+    fn make_token() -> StablecoinContractContext<InMemoryTokenAccounting, FakePolicyAccounting> {
+        StablecoinContractContext::with_storage_and_policy(
             InMemoryTokenAccounting::new(TOKEN),
             FakePolicyAccounting::new(),
             PolicyVersion::V1,

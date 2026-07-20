@@ -29,7 +29,7 @@ use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
     AssetAccounting, B20_MAX_SUPPLY_CAP, B20AssetInit, B20AssetLogic as Asset,
     B20AssetLogicV1 as AssetV1, B20AssetStorage, B20PolicyType, B20TokenRole,
-    ContractContext as B20AssetToken, FakePolicyAccounting, IB20, IB20Asset,
+    AssetContractContext as B20AssetToken, FakePolicyAccounting, IB20, IB20Asset,
     NoopPrecompileCallObserver, PermitArgs, PolicyVersion, TokenAccounting,
     Version as AssetVersion, VersionResolver as AssetVersions,
 };

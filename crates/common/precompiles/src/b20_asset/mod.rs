@@ -7,7 +7,7 @@ mod accounting;
 pub use accounting::AssetAccounting;
 
 mod context;
-pub use context::ContractContext;
+pub use context::AssetContractContext;
 
 mod dispatch;
 

@@ -1,6 +1,6 @@
 //! Contract context for the asset B-20 precompile.
 //!
-//! [`ContractContext`] is the minimal storage + policy holder the logic and
+//! [`AssetContractContext`] is the minimal storage + policy holder the logic and
 //! dispatcher operate on. It carries no business logic of its own — behavior
 //! lives in the version implementations resolved from [`crate::VersionResolver`].
 
@@ -18,13 +18,13 @@ use crate::{
 /// implementations resolved from [`crate::VersionResolver`]. Authorization goes
 /// through [`crate::PolicyRegistryLogic`] via [`Token::policy`].
 #[derive(Debug, Clone)]
-pub struct ContractContext<S: AssetAccounting, A: PolicyAccounting> {
+pub struct AssetContractContext<S: AssetAccounting, A: PolicyAccounting> {
     storage: S,
     policy: PolicyContractContext<A>,
     policy_version: PolicyVersion,
 }
 
-impl<S: AssetAccounting, A: PolicyAccounting> ContractContext<S, A> {
+impl<S: AssetAccounting, A: PolicyAccounting> AssetContractContext<S, A> {
     /// Creates a context backed by token storage, policy-registry storage, and version.
     pub const fn with_storage_and_policy(
         storage: S,
@@ -35,7 +35,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> ContractContext<S, A> {
     }
 }
 
-impl<S: AssetAccounting, A: PolicyAccounting> Token for ContractContext<S, A> {
+impl<S: AssetAccounting, A: PolicyAccounting> Token for AssetContractContext<S, A> {
     type Accounting = S;
     type PolicyAccounting = A;
 

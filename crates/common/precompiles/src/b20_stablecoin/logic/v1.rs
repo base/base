@@ -10,7 +10,7 @@ use alloy_primitives::{Address, B256, FixedBytes, U256, b256, keccak256};
 use alloy_sol_types::{SolEvent, SolValue};
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use super::{super::ContractContext, B20StablecoinLogic};
+use super::{super::StablecoinContractContext, B20StablecoinLogic};
 use crate::{
     B20_MAX_SUPPLY_CAP, B20Guards, B20PausableFeature, B20PolicyType, B20TokenRole, Eip712Domain,
     IB20, PermitArgs, PolicyAccounting, StablecoinAccounting, Token,
@@ -31,7 +31,7 @@ impl B20StablecoinLogicV1 {
     /// Balance-moving core of `transfer`/`transferFrom`, without the pause check.
     fn transfer_inner<S: StablecoinAccounting, A: PolicyAccounting>(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         from: Address,
         to: Address,
         amount: U256,
@@ -68,7 +68,7 @@ impl B20StablecoinLogicV1 {
     /// Supply-reducing core of the burn operations, without pause or role checks.
     fn burn_inner<S: StablecoinAccounting, A: PolicyAccounting>(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         from: Address,
         amount: U256,
     ) -> Result<()> {
@@ -92,7 +92,7 @@ impl B20StablecoinLogicV1 {
     /// Revokes `role` from `account` without checking caller authorization.
     fn revoke_role_unchecked<S: StablecoinAccounting, A: PolicyAccounting>(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         role: B256,
         account: Address,
         sender: Address,
@@ -114,7 +114,7 @@ impl B20StablecoinLogicV1 {
     /// Ensures role-admin mutations are still reachable.
     fn ensure_role_admin_mutations_available<S: StablecoinAccounting, A: PolicyAccounting>(
         &self,
-        ctx: &ContractContext<S, A>,
+        ctx: &StablecoinContractContext<S, A>,
         caller: Address,
     ) -> Result<()> {
         let admin_role = B20TokenRole::DefaultAdmin.id();
@@ -144,7 +144,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinLogic<S, A>
 {
     fn transfer(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         to: Address,
         amount: U256,
@@ -156,7 +156,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinLogic<S, A>
 
     fn transfer_from(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         from: Address,
         to: Address,
@@ -191,7 +191,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinLogic<S, A>
 
     fn approve(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         spender: Address,
         amount: U256,
@@ -209,7 +209,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinLogic<S, A>
 
     fn emit_memo(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         memo: B256,
     ) -> Result<()> {
@@ -218,7 +218,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinLogic<S, A>
 
     fn mint(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         to: Address,
         amount: U256,
@@ -251,7 +251,12 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinLogic<S, A>
             .emit_event(IB20::Transfer { from: Address::ZERO, to, amount }.encode_log_data())
     }
 
-    fn burn(&self, ctx: &mut ContractContext<S, A>, caller: Address, amount: U256) -> Result<()> {
+    fn burn(
+        &self,
+        ctx: &mut StablecoinContractContext<S, A>,
+        caller: Address,
+        amount: U256,
+    ) -> Result<()> {
         // Self-burn: `from == caller`, never factory-privileged.
         B20Guards::ensure_not_paused(ctx, IB20::PausableFeature::BURN)?;
         B20Guards::ensure_token_role(ctx, caller, B20TokenRole::Burn)?;
@@ -260,7 +265,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinLogic<S, A>
 
     fn burn_blocked(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         from: Address,
         amount: U256,
@@ -278,7 +283,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinLogic<S, A>
 
     fn pause(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         features: Vec<IB20::PausableFeature>,
         privileged: bool,
@@ -303,7 +308,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinLogic<S, A>
 
     fn unpause(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         features: Vec<IB20::PausableFeature>,
         privileged: bool,
@@ -328,7 +333,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinLogic<S, A>
 
     fn update_supply_cap(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         new_cap: U256,
         privileged: bool,
@@ -353,7 +358,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinLogic<S, A>
 
     fn update_name(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         name: String,
         privileged: bool,
@@ -369,7 +374,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinLogic<S, A>
 
     fn update_symbol(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         symbol: String,
         privileged: bool,
@@ -385,7 +390,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinLogic<S, A>
 
     fn update_contract_uri(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         uri: String,
         privileged: bool,
@@ -399,7 +404,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinLogic<S, A>
 
     fn grant_role(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         role: B256,
         account: Address,
@@ -417,7 +422,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinLogic<S, A>
 
     fn grant_role_unchecked(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         role: B256,
         account: Address,
         sender: Address,
@@ -438,7 +443,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinLogic<S, A>
 
     fn revoke_role(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         role: B256,
         account: Address,
@@ -460,7 +465,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinLogic<S, A>
 
     fn renounce_role(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         role: B256,
         confirmation: Address,
@@ -477,7 +482,11 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinLogic<S, A>
         self.revoke_role_unchecked(ctx, role, caller, caller)
     }
 
-    fn renounce_last_admin(&self, ctx: &mut ContractContext<S, A>, caller: Address) -> Result<()> {
+    fn renounce_last_admin(
+        &self,
+        ctx: &mut StablecoinContractContext<S, A>,
+        caller: Address,
+    ) -> Result<()> {
         let admin_role = B20TokenRole::DefaultAdmin.id();
         B20Guards::ensure_role(ctx, caller, admin_role)?;
         if ctx.accounting().role_member_count(admin_role)? != U256::ONE {
@@ -490,7 +499,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinLogic<S, A>
 
     fn set_role_admin(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         role: B256,
         new_admin_role: B256,
@@ -514,7 +523,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinLogic<S, A>
 
     fn update_policy(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         caller: Address,
         policy_scope: B256,
         new_policy_id: u64,
@@ -542,7 +551,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinLogic<S, A>
 
     fn permit(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut StablecoinContractContext<S, A>,
         chain_id: u64,
         now: U256,
         args: PermitArgs,
@@ -563,14 +572,17 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinLogic<S, A>
 
     fn is_paused(
         &self,
-        ctx: &ContractContext<S, A>,
+        ctx: &StablecoinContractContext<S, A>,
         feature: IB20::PausableFeature,
     ) -> Result<bool> {
         B20PausableFeature::ensure_valid(feature)?;
         Ok((ctx.accounting().paused()? & B20PausableFeature::mask(feature)) != U256::ZERO)
     }
 
-    fn paused_features(&self, ctx: &ContractContext<S, A>) -> Result<Vec<IB20::PausableFeature>> {
+    fn paused_features(
+        &self,
+        ctx: &StablecoinContractContext<S, A>,
+    ) -> Result<Vec<IB20::PausableFeature>> {
         let paused = ctx.accounting().paused()?;
         let mut features = Vec::new();
         for feature in [
@@ -585,12 +597,16 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinLogic<S, A>
         Ok(features)
     }
 
-    fn policy_id(&self, ctx: &ContractContext<S, A>, policy_scope: B256) -> Result<u64> {
+    fn policy_id(&self, ctx: &StablecoinContractContext<S, A>, policy_scope: B256) -> Result<u64> {
         Self::ensure_supported_policy_type(policy_scope)?;
         ctx.accounting().policy_id(policy_scope)
     }
 
-    fn domain_separator(&self, ctx: &ContractContext<S, A>, chain_id: u64) -> Result<B256> {
+    fn domain_separator(
+        &self,
+        ctx: &StablecoinContractContext<S, A>,
+        chain_id: u64,
+    ) -> Result<B256> {
         let name = ctx.accounting().name()?;
         let name_hash = keccak256(name.as_bytes());
         let version_hash = keccak256(VERSION);
@@ -600,7 +616,11 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinLogic<S, A>
         Ok(keccak256(&encoded))
     }
 
-    fn eip712_domain(&self, ctx: &ContractContext<S, A>, chain_id: u64) -> Result<Eip712Domain> {
+    fn eip712_domain(
+        &self,
+        ctx: &StablecoinContractContext<S, A>,
+        chain_id: u64,
+    ) -> Result<Eip712Domain> {
         let name = ctx.accounting().name()?;
         Ok((
             // bits 0+1+2+3: name + version + chainId + verifyingContract
@@ -614,7 +634,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinLogic<S, A>
         ))
     }
 
-    fn currency(&self, ctx: &ContractContext<S, A>) -> Result<String> {
+    fn currency(&self, ctx: &StablecoinContractContext<S, A>) -> Result<String> {
         ctx.accounting().currency()
     }
 }
@@ -637,7 +657,7 @@ mod tests {
     use crate::{
         B20_MAX_SUPPLY_CAP, B20PolicyType, B20TokenRole, IB20, PackedPolicy, PermitArgs,
         PolicyAccounting, PolicyRegistryStorage, PolicyVersion, StablecoinAccounting, Token,
-        TokenAccounting, b20_stablecoin::ContractContext,
+        TokenAccounting, b20_stablecoin::StablecoinContractContext,
     };
 
     // --- Self-contained in-memory fakes (no dependency on `common::test_utils`, so shared test
@@ -904,10 +924,10 @@ mod tests {
         }
     }
 
-    type Tok = ContractContext<FakeAccounting, FakePolicyAccounting>;
+    type Tok = StablecoinContractContext<FakeAccounting, FakePolicyAccounting>;
 
     fn make_ctx() -> Tok {
-        ContractContext::with_storage_and_policy(
+        StablecoinContractContext::with_storage_and_policy(
             FakeAccounting::new(),
             FakePolicyAccounting::new(),
             PolicyVersion::V1,

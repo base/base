@@ -7,7 +7,7 @@ use alloy_sol_types::SolValue;
 use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
     B20AssetLogic, B20AssetLogicV1, B20AssetStorage, B20FactoryLogic, B20FactoryLogicV1,
-    B20FactoryStorage, B20TokenRole, B20Variant, ContractContext, FactoryContractContext, IB20,
+    B20FactoryStorage, B20TokenRole, B20Variant, AssetContractContext, FactoryContractContext, IB20,
     IB20Factory, PolicyRegistryStorage, PolicyVersion, Token, TokenAccounting,
 };
 use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
@@ -60,7 +60,7 @@ impl BaseTokenBenchSetup {
         ctx: StorageCtx<'a>,
         salt: B256,
         initial_supply: U256,
-    ) -> ContractContext<B20AssetStorage<'a>, PolicyRegistryStorage<'a>> {
+    ) -> AssetContractContext<B20AssetStorage<'a>, PolicyRegistryStorage<'a>> {
         let params = Self::token_params("BaseToken", "BASE");
 
         let token_address = Self::create_b20(ctx, Self::caller(), params, salt, initial_supply);
@@ -82,8 +82,8 @@ impl BaseTokenBenchSetup {
     fn token_at<'a>(
         ctx: StorageCtx<'a>,
         token_address: Address,
-    ) -> ContractContext<B20AssetStorage<'a>, PolicyRegistryStorage<'a>> {
-        ContractContext::with_storage_and_policy(
+    ) -> AssetContractContext<B20AssetStorage<'a>, PolicyRegistryStorage<'a>> {
+        AssetContractContext::with_storage_and_policy(
             B20AssetStorage::from_address(token_address, ctx),
             PolicyRegistryStorage::new(ctx),
             PolicyVersion::V1,

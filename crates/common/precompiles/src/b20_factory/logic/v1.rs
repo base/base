@@ -10,10 +10,10 @@ use revm::state::Bytecode;
 
 use super::B20FactoryLogic;
 use crate::{
-    ActivationRegistryStorage, B20AssetInit, B20AssetStorage, B20FactoryStorage, B20StablecoinInit,
-    B20StablecoinStorage, B20TokenRole, B20Variant, ContractContext, FactoryContractContext,
-    IB20Factory, NoopPrecompileCallObserver, PolicyRegistryStorage, PolicyVersionResolver,
-    StablecoinContractContext, StablecoinVersionResolver, Token,
+    ActivationRegistryStorage, AssetContractContext, B20AssetInit, B20AssetStorage,
+    B20FactoryStorage, B20StablecoinInit, B20StablecoinStorage, B20TokenRole, B20Variant,
+    FactoryContractContext, IB20Factory, NoopPrecompileCallObserver, PolicyRegistryStorage,
+    PolicyVersionResolver, StablecoinContractContext, StablecoinVersionResolver, Token,
     VersionResolver as AssetVersionResolver,
 };
 
@@ -118,7 +118,7 @@ impl B20FactoryLogicV1 {
             .ok_or_else(|| BasePrecompileError::Revert(Bytes::new()))?;
         let asset_version = AssetVersionResolver::from_base_upgrade(upgrade)
             .ok_or_else(|| BasePrecompileError::Revert(Bytes::new()))?;
-        let mut token = ContractContext::with_storage_and_policy(
+        let mut token = AssetContractContext::with_storage_and_policy(
             B20AssetStorage::from_address(token_address, storage.storage()),
             PolicyRegistryStorage::new(storage.storage()),
             policy_version,
@@ -357,8 +357,8 @@ mod tests {
 
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
-        B20_MAX_SUPPLY_CAP, B20AssetLogic, B20AssetLogicV1, B20AssetStorage, B20FactoryLogic,
-        B20FactoryLogicV1, B20FactoryStorage, B20TokenRole, B20Variant, ContractContext,
+        AssetContractContext, B20_MAX_SUPPLY_CAP, B20AssetLogic, B20AssetLogicV1, B20AssetStorage,
+        B20FactoryLogic, B20FactoryLogicV1, B20FactoryStorage, B20TokenRole, B20Variant,
         FactoryContractContext, IB20, IB20Factory, PolicyRegistryStorage, PolicyVersion, Token,
         TokenAccounting,
     };
@@ -417,8 +417,8 @@ mod tests {
     fn token_at<'a>(
         addr: Address,
         ctx: StorageCtx<'a>,
-    ) -> ContractContext<B20AssetStorage<'a>, PolicyRegistryStorage<'a>> {
-        ContractContext::with_storage_and_policy(
+    ) -> AssetContractContext<B20AssetStorage<'a>, PolicyRegistryStorage<'a>> {
+        AssetContractContext::with_storage_and_policy(
             B20AssetStorage::from_address(addr, ctx),
             PolicyRegistryStorage::new(ctx),
             PolicyVersion::V1,
@@ -718,7 +718,7 @@ mod tests {
             let mut factory = FactoryContractContext::with_storage(B20FactoryStorage::new(ctx));
             let token_addr = create_b20(&mut factory, caller, call).unwrap();
 
-            let token = ContractContext::with_storage_and_policy(
+            let token = AssetContractContext::with_storage_and_policy(
                 B20AssetStorage::from_address(token_addr, ctx),
                 PolicyRegistryStorage::new(ctx),
                 PolicyVersion::V1,
@@ -756,7 +756,7 @@ mod tests {
             let mut factory = FactoryContractContext::with_storage(B20FactoryStorage::new(ctx));
             let token_addr = create_b20(&mut factory, caller, call_no_admin).unwrap();
 
-            let token = ContractContext::with_storage_and_policy(
+            let token = AssetContractContext::with_storage_and_policy(
                 B20AssetStorage::from_address(token_addr, ctx),
                 PolicyRegistryStorage::new(ctx),
                 PolicyVersion::V1,

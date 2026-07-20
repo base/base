@@ -9,7 +9,7 @@ use base_precompile_storage::{BasePrecompileError, Result};
 use super::PolicyRegistryLogic;
 use crate::{
     IPolicyRegistry, IPolicyRegistry::PolicyType, PackedPolicy, PolicyAccounting,
-    PolicyContractContext as ContractContext,
+    PolicyContractContext,
 };
 
 /// First `PolicyRegistry` implementation. Frozen as of its activation at Beryl.
@@ -211,7 +211,7 @@ impl PolicyRegistryLogicV1 {
 impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryLogicV1 {
     fn create_policy(
         &self,
-        ctx: &mut ContractContext<S>,
+        ctx: &mut PolicyContractContext<S>,
         admin: Address,
         policy_type: PolicyType,
     ) -> Result<u64> {
@@ -221,7 +221,7 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryLogicV1 {
 
     fn create_policy_with_accounts(
         &self,
-        ctx: &mut ContractContext<S>,
+        ctx: &mut PolicyContractContext<S>,
         admin: Address,
         policy_type: PolicyType,
         accounts: Vec<Address>,
@@ -260,7 +260,7 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryLogicV1 {
 
     fn stage_update_admin(
         &self,
-        ctx: &mut ContractContext<S>,
+        ctx: &mut PolicyContractContext<S>,
         policy_id: u64,
         new_admin: Address,
     ) -> Result<()> {
@@ -281,7 +281,11 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryLogicV1 {
         Ok(())
     }
 
-    fn finalize_update_admin(&self, ctx: &mut ContractContext<S>, policy_id: u64) -> Result<()> {
+    fn finalize_update_admin(
+        &self,
+        ctx: &mut PolicyContractContext<S>,
+        policy_id: u64,
+    ) -> Result<()> {
         let packed = self.require_custom(ctx.storage(), policy_id)?;
         let pending = ctx.storage().read_pending_admin(policy_id)?;
         if pending == Address::ZERO {
@@ -305,7 +309,7 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryLogicV1 {
         Ok(())
     }
 
-    fn renounce_admin(&self, ctx: &mut ContractContext<S>, policy_id: u64) -> Result<()> {
+    fn renounce_admin(&self, ctx: &mut PolicyContractContext<S>, policy_id: u64) -> Result<()> {
         let (packed, caller) = self.require_admin(ctx.storage(), policy_id)?;
         ctx.storage_mut()
             .write_policy_word(policy_id, packed.with_admin(Address::ZERO).into_u256())?;
@@ -323,7 +327,7 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryLogicV1 {
 
     fn update_allowlist(
         &self,
-        ctx: &mut ContractContext<S>,
+        ctx: &mut PolicyContractContext<S>,
         policy_id: u64,
         allowed: bool,
         accounts: Vec<Address>,
@@ -348,7 +352,7 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryLogicV1 {
 
     fn update_blocklist(
         &self,
-        ctx: &mut ContractContext<S>,
+        ctx: &mut PolicyContractContext<S>,
         policy_id: u64,
         blocked: bool,
         accounts: Vec<Address>,
@@ -373,7 +377,7 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryLogicV1 {
 
     fn is_authorized(
         &self,
-        ctx: &ContractContext<S>,
+        ctx: &PolicyContractContext<S>,
         policy_id: u64,
         account: Address,
     ) -> Result<bool> {
@@ -401,7 +405,7 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryLogicV1 {
         }
     }
 
-    fn policy_exists(&self, ctx: &ContractContext<S>, policy_id: u64) -> Result<bool> {
+    fn policy_exists(&self, ctx: &PolicyContractContext<S>, policy_id: u64) -> Result<bool> {
         // Malformed IDs (type byte > 1) are not well-formed, so they do not exist.
         if Self::policy_id_type(policy_id) > PolicyType::ALLOWLIST as u8 {
             return Ok(false);
@@ -413,7 +417,7 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryLogicV1 {
         Ok(packed.exists())
     }
 
-    fn get_policy_admin(&self, ctx: &ContractContext<S>, policy_id: u64) -> Result<Address> {
+    fn get_policy_admin(&self, ctx: &PolicyContractContext<S>, policy_id: u64) -> Result<Address> {
         if Self::policy_id_type(policy_id) > PolicyType::ALLOWLIST as u8 {
             return Ok(Address::ZERO);
         }
@@ -424,7 +428,11 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryLogicV1 {
         Ok(packed.admin())
     }
 
-    fn pending_policy_admin(&self, ctx: &ContractContext<S>, policy_id: u64) -> Result<Address> {
+    fn pending_policy_admin(
+        &self,
+        ctx: &PolicyContractContext<S>,
+        policy_id: u64,
+    ) -> Result<Address> {
         if Self::policy_id_type(policy_id) > PolicyType::ALLOWLIST as u8 {
             return Ok(Address::ZERO);
         }
@@ -445,8 +453,7 @@ mod tests {
 
     use super::{super::PolicyRegistryLogic, PolicyRegistryLogicV1};
     use crate::{
-        IPolicyRegistry, IPolicyRegistry::PolicyType, PolicyAccounting,
-        PolicyContractContext as ContractContext,
+        IPolicyRegistry, IPolicyRegistry::PolicyType, PolicyAccounting, PolicyContractContext,
     };
 
     const REGISTRY: Address = address!("0x8453000000000000000000000000000000000002");
@@ -539,11 +546,11 @@ mod tests {
         }
     }
 
-    type Ctx = ContractContext<FakePolicyAccounting>;
+    type Ctx = PolicyContractContext<FakePolicyAccounting>;
 
     /// Bare context (no built-ins seeded), caller = `ADMIN`.
     fn bare() -> Ctx {
-        ContractContext::with_storage(FakePolicyAccounting::new())
+        PolicyContractContext::with_storage(FakePolicyAccounting::new())
     }
 
     /// Context with both built-in policies seeded and the counter at 2.

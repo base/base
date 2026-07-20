@@ -4,7 +4,7 @@ mod abi;
 pub use abi::IB20Factory;
 
 mod context;
-pub use context::ContractContext;
+pub use context::FactoryContractContext;
 
 mod dispatch;
 

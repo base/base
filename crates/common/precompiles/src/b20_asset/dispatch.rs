@@ -17,8 +17,8 @@ use base_precompile_storage::{BasePrecompileError, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
-    AssetAccounting, B20AssetStorage, B20PolicyType, B20TokenRole,
-    BerylAuxiliaryMetrics, BerylCallRecorder, BerylMetricLabels, BerylSelector, ContractContext,
+    AssetAccounting, AssetContractContext, B20AssetStorage, B20PolicyType, B20TokenRole,
+    BerylAuxiliaryMetrics, BerylCallRecorder, BerylMetricLabels, BerylSelector,
     IB20::{self, IB20Calls as C},
     IB20Asset::{self, IB20AssetCalls as SC},
     NoopPrecompileCallObserver, PermitArgs, PolicyAccounting, PrecompileCallObserver, Version,
@@ -26,7 +26,7 @@ use crate::{
     macros::decode_precompile_call,
 };
 
-impl<S: AssetAccounting, A: PolicyAccounting> ContractContext<S, A> {
+impl<S: AssetAccounting, A: PolicyAccounting> AssetContractContext<S, A> {
     /// ABI-dispatches `calldata` to the appropriate handler for `upgrade`.
     pub fn dispatch(
         &mut self,
@@ -449,13 +449,13 @@ mod tests {
 
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
-        B20AssetLogicV1, B20AssetStorage, B20TokenRole, BerylErrorKind, ContractContext,
+        AssetContractContext, B20AssetLogicV1, B20AssetStorage, B20TokenRole, BerylErrorKind,
         FakePolicyAccounting, IB20, IB20Asset, InMemoryTokenAccounting, NoopPrecompileCallObserver,
         PolicyVersion, PrecompileCallMetric, PrecompileCallObserver, PrecompileCallOutcome,
         PrecompileCallStatus, Token, TokenAccounting, Version,
     };
 
-    type TestContractContext = ContractContext<InMemoryTokenAccounting, FakePolicyAccounting>;
+    type TestContractContext = AssetContractContext<InMemoryTokenAccounting, FakePolicyAccounting>;
 
     /// Upgrade at which the asset precompile is active for every dispatch test.
     const UPGRADE: BaseUpgrade = BaseUpgrade::Beryl;

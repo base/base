@@ -7,7 +7,7 @@ mod accounting;
 pub use accounting::PolicyAccounting;
 
 mod context;
-pub use context::ContractContext;
+pub use context::PolicyContractContext;
 
 mod dispatch;
 

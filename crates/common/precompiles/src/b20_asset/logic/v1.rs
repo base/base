@@ -11,9 +11,9 @@ use alloy_sol_types::{SolEvent, SolValue};
 use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
-    AssetAccounting, B20_MAX_SUPPLY_CAP, B20AssetLogic, B20AssetStorage, B20Guards,
-    B20PausableFeature, B20PolicyType, B20TokenRole, ContractContext, Eip712Domain, IB20,
-    IB20Asset, PermitArgs, PolicyAccounting, Token,
+    AssetAccounting, AssetContractContext, B20_MAX_SUPPLY_CAP, B20AssetLogic, B20AssetStorage,
+    B20Guards, B20PausableFeature, B20PolicyType, B20TokenRole, Eip712Domain, IB20, IB20Asset,
+    PermitArgs, PolicyAccounting, Token,
 };
 
 /// `keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)")`
@@ -38,7 +38,7 @@ impl B20AssetLogicV1 {
     /// Balance-moving core of `transfer`/`transferFrom`, without the pause check.
     fn transfer_inner<S: AssetAccounting, A: PolicyAccounting>(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut AssetContractContext<S, A>,
         from: Address,
         to: Address,
         amount: U256,
@@ -75,7 +75,7 @@ impl B20AssetLogicV1 {
     /// Supply-reducing core of the burn operations, without pause or role checks.
     fn burn_inner<S: AssetAccounting, A: PolicyAccounting>(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut AssetContractContext<S, A>,
         from: Address,
         amount: U256,
     ) -> Result<()> {
@@ -99,7 +99,7 @@ impl B20AssetLogicV1 {
     /// Revokes `role` from `account` without checking caller authorization.
     fn revoke_role_unchecked<S: AssetAccounting, A: PolicyAccounting>(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut AssetContractContext<S, A>,
         role: B256,
         account: Address,
         sender: Address,
@@ -121,7 +121,7 @@ impl B20AssetLogicV1 {
     /// Ensures role-admin mutations are still reachable.
     fn ensure_role_admin_mutations_available<S: AssetAccounting, A: PolicyAccounting>(
         &self,
-        ctx: &ContractContext<S, A>,
+        ctx: &AssetContractContext<S, A>,
         caller: Address,
     ) -> Result<()> {
         let admin_role = B20TokenRole::DefaultAdmin.id();
@@ -148,7 +148,7 @@ impl B20AssetLogicV1 {
     /// Ensures the caller holds the asset operator role (unless privileged).
     fn ensure_operator_role<S: AssetAccounting, A: PolicyAccounting>(
         &self,
-        ctx: &ContractContext<S, A>,
+        ctx: &AssetContractContext<S, A>,
         caller: Address,
         privileged: bool,
     ) -> Result<()> {
@@ -158,7 +158,7 @@ impl B20AssetLogicV1 {
     /// Ensures the caller holds the metadata role (unless privileged).
     fn ensure_metadata_role<S: AssetAccounting, A: PolicyAccounting>(
         &self,
-        ctx: &ContractContext<S, A>,
+        ctx: &AssetContractContext<S, A>,
         caller: Address,
         privileged: bool,
     ) -> Result<()> {
@@ -173,7 +173,7 @@ impl B20AssetLogicV1 {
 impl<S: AssetAccounting, A: PolicyAccounting> B20AssetLogic<S, A> for B20AssetLogicV1 {
     fn transfer(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut AssetContractContext<S, A>,
         caller: Address,
         to: Address,
         amount: U256,
@@ -185,7 +185,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetLogic<S, A> for B20AssetLo
 
     fn transfer_from(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut AssetContractContext<S, A>,
         caller: Address,
         from: Address,
         to: Address,
@@ -220,7 +220,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetLogic<S, A> for B20AssetLo
 
     fn approve(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut AssetContractContext<S, A>,
         caller: Address,
         spender: Address,
         amount: U256,
@@ -238,7 +238,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetLogic<S, A> for B20AssetLo
 
     fn emit_memo(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut AssetContractContext<S, A>,
         caller: Address,
         memo: B256,
     ) -> Result<()> {
@@ -247,7 +247,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetLogic<S, A> for B20AssetLo
 
     fn mint(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut AssetContractContext<S, A>,
         caller: Address,
         to: Address,
         amount: U256,
@@ -280,7 +280,12 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetLogic<S, A> for B20AssetLo
             .emit_event(IB20::Transfer { from: Address::ZERO, to, amount }.encode_log_data())
     }
 
-    fn burn(&self, ctx: &mut ContractContext<S, A>, caller: Address, amount: U256) -> Result<()> {
+    fn burn(
+        &self,
+        ctx: &mut AssetContractContext<S, A>,
+        caller: Address,
+        amount: U256,
+    ) -> Result<()> {
         // Self-burn: `from == caller`, never factory-privileged.
         B20Guards::ensure_not_paused(ctx, IB20::PausableFeature::BURN)?;
         B20Guards::ensure_token_role(ctx, caller, B20TokenRole::Burn)?;
@@ -289,7 +294,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetLogic<S, A> for B20AssetLo
 
     fn burn_blocked(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut AssetContractContext<S, A>,
         caller: Address,
         from: Address,
         amount: U256,
@@ -307,7 +312,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetLogic<S, A> for B20AssetLo
 
     fn pause(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut AssetContractContext<S, A>,
         caller: Address,
         features: Vec<IB20::PausableFeature>,
         privileged: bool,
@@ -332,7 +337,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetLogic<S, A> for B20AssetLo
 
     fn unpause(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut AssetContractContext<S, A>,
         caller: Address,
         features: Vec<IB20::PausableFeature>,
         privileged: bool,
@@ -357,7 +362,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetLogic<S, A> for B20AssetLo
 
     fn update_supply_cap(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut AssetContractContext<S, A>,
         caller: Address,
         new_cap: U256,
         privileged: bool,
@@ -382,7 +387,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetLogic<S, A> for B20AssetLo
 
     fn update_name(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut AssetContractContext<S, A>,
         caller: Address,
         name: String,
         privileged: bool,
@@ -398,7 +403,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetLogic<S, A> for B20AssetLo
 
     fn update_symbol(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut AssetContractContext<S, A>,
         caller: Address,
         symbol: String,
         privileged: bool,
@@ -414,7 +419,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetLogic<S, A> for B20AssetLo
 
     fn update_contract_uri(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut AssetContractContext<S, A>,
         caller: Address,
         uri: String,
         privileged: bool,
@@ -428,7 +433,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetLogic<S, A> for B20AssetLo
 
     fn grant_role(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut AssetContractContext<S, A>,
         caller: Address,
         role: B256,
         account: Address,
@@ -446,7 +451,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetLogic<S, A> for B20AssetLo
 
     fn grant_role_unchecked(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut AssetContractContext<S, A>,
         role: B256,
         account: Address,
         sender: Address,
@@ -467,7 +472,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetLogic<S, A> for B20AssetLo
 
     fn revoke_role(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut AssetContractContext<S, A>,
         caller: Address,
         role: B256,
         account: Address,
@@ -489,7 +494,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetLogic<S, A> for B20AssetLo
 
     fn renounce_role(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut AssetContractContext<S, A>,
         caller: Address,
         role: B256,
         confirmation: Address,
@@ -506,7 +511,11 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetLogic<S, A> for B20AssetLo
         self.revoke_role_unchecked(ctx, role, caller, caller)
     }
 
-    fn renounce_last_admin(&self, ctx: &mut ContractContext<S, A>, caller: Address) -> Result<()> {
+    fn renounce_last_admin(
+        &self,
+        ctx: &mut AssetContractContext<S, A>,
+        caller: Address,
+    ) -> Result<()> {
         let admin_role = B20TokenRole::DefaultAdmin.id();
         B20Guards::ensure_role(ctx, caller, admin_role)?;
         if ctx.accounting().role_member_count(admin_role)? != U256::ONE {
@@ -519,7 +528,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetLogic<S, A> for B20AssetLo
 
     fn set_role_admin(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut AssetContractContext<S, A>,
         caller: Address,
         role: B256,
         new_admin_role: B256,
@@ -543,7 +552,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetLogic<S, A> for B20AssetLo
 
     fn update_policy(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut AssetContractContext<S, A>,
         caller: Address,
         policy_scope: B256,
         new_policy_id: u64,
@@ -571,7 +580,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetLogic<S, A> for B20AssetLo
 
     fn permit(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut AssetContractContext<S, A>,
         chain_id: u64,
         now: U256,
         args: PermitArgs,
@@ -594,7 +603,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetLogic<S, A> for B20AssetLo
 
     fn update_multiplier(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut AssetContractContext<S, A>,
         caller: Address,
         new_multiplier: U256,
         privileged: bool,
@@ -611,7 +620,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetLogic<S, A> for B20AssetLo
 
     fn update_extra_metadata(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut AssetContractContext<S, A>,
         caller: Address,
         key: String,
         value: String,
@@ -628,7 +637,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetLogic<S, A> for B20AssetLo
 
     fn batch_mint(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut AssetContractContext<S, A>,
         caller: Address,
         recipients: Vec<Address>,
         amounts: Vec<U256>,
@@ -658,7 +667,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetLogic<S, A> for B20AssetLo
 
     fn begin_announce(
         &self,
-        ctx: &mut ContractContext<S, A>,
+        ctx: &mut AssetContractContext<S, A>,
         caller: Address,
         id: String,
         description: String,
@@ -674,7 +683,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetLogic<S, A> for B20AssetLo
             .emit_event(IB20Asset::Announcement { caller, id, description, uri }.encode_log_data())
     }
 
-    fn end_announce(&self, ctx: &mut ContractContext<S, A>, id: String) -> Result<()> {
+    fn end_announce(&self, ctx: &mut AssetContractContext<S, A>, id: String) -> Result<()> {
         ctx.accounting_mut().emit_event(IB20Asset::EndAnnouncement { id }.encode_log_data())
     }
 
@@ -682,14 +691,17 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetLogic<S, A> for B20AssetLo
 
     fn is_paused(
         &self,
-        ctx: &ContractContext<S, A>,
+        ctx: &AssetContractContext<S, A>,
         feature: IB20::PausableFeature,
     ) -> Result<bool> {
         B20PausableFeature::ensure_valid(feature)?;
         Ok((ctx.accounting().paused()? & B20PausableFeature::mask(feature)) != U256::ZERO)
     }
 
-    fn paused_features(&self, ctx: &ContractContext<S, A>) -> Result<Vec<IB20::PausableFeature>> {
+    fn paused_features(
+        &self,
+        ctx: &AssetContractContext<S, A>,
+    ) -> Result<Vec<IB20::PausableFeature>> {
         let paused = ctx.accounting().paused()?;
         let mut features = Vec::new();
         for feature in [
@@ -704,12 +716,12 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetLogic<S, A> for B20AssetLo
         Ok(features)
     }
 
-    fn policy_id(&self, ctx: &ContractContext<S, A>, policy_scope: B256) -> Result<u64> {
+    fn policy_id(&self, ctx: &AssetContractContext<S, A>, policy_scope: B256) -> Result<u64> {
         Self::ensure_supported_policy_type(policy_scope)?;
         ctx.accounting().policy_id(policy_scope)
     }
 
-    fn domain_separator(&self, ctx: &ContractContext<S, A>, chain_id: u64) -> Result<B256> {
+    fn domain_separator(&self, ctx: &AssetContractContext<S, A>, chain_id: u64) -> Result<B256> {
         let name = ctx.accounting().name()?;
         let name_hash = keccak256(name.as_bytes());
         let version_hash = keccak256(VERSION);
@@ -719,7 +731,11 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetLogic<S, A> for B20AssetLo
         Ok(keccak256(&encoded))
     }
 
-    fn eip712_domain(&self, ctx: &ContractContext<S, A>, chain_id: u64) -> Result<Eip712Domain> {
+    fn eip712_domain(
+        &self,
+        ctx: &AssetContractContext<S, A>,
+        chain_id: u64,
+    ) -> Result<Eip712Domain> {
         let name = ctx.accounting().name()?;
         Ok((
             // bits 0+1+2+3: name + version + chainId + verifyingContract
@@ -733,14 +749,14 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetLogic<S, A> for B20AssetLo
         ))
     }
 
-    fn to_scaled_balance(&self, ctx: &ContractContext<S, A>, balance: U256) -> Result<U256> {
+    fn to_scaled_balance(&self, ctx: &AssetContractContext<S, A>, balance: U256) -> Result<U256> {
         let multiplier = ctx.accounting().multiplier()?;
         let product =
             balance.checked_mul(multiplier).ok_or_else(BasePrecompileError::under_overflow)?;
         Ok(product / B20AssetStorage::WAD)
     }
 
-    fn to_raw_balance(&self, ctx: &ContractContext<S, A>, balance: U256) -> Result<U256> {
+    fn to_raw_balance(&self, ctx: &AssetContractContext<S, A>, balance: U256) -> Result<U256> {
         let multiplier = ctx.accounting().multiplier()?;
         let product = balance
             .checked_mul(B20AssetStorage::WAD)
@@ -748,7 +764,11 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetLogic<S, A> for B20AssetLo
         Ok(product / multiplier)
     }
 
-    fn scaled_balance_of(&self, ctx: &ContractContext<S, A>, account: Address) -> Result<U256> {
+    fn scaled_balance_of(
+        &self,
+        ctx: &AssetContractContext<S, A>,
+        account: Address,
+    ) -> Result<U256> {
         let balance = ctx.accounting().balance_of(account)?;
         self.to_scaled_balance(ctx, balance)
     }
@@ -773,8 +793,8 @@ mod tests {
     use k256::ecdsa::SigningKey;
 
     use crate::{
-        AssetAccounting, B20_MAX_SUPPLY_CAP, B20AssetLogic, B20AssetLogicV1, B20AssetStorage,
-        B20PolicyType, B20TokenRole, ContractContext, IB20, IB20Asset, PackedPolicy, PermitArgs,
+        AssetAccounting, AssetContractContext, B20_MAX_SUPPLY_CAP, B20AssetLogic, B20AssetLogicV1,
+        B20AssetStorage, B20PolicyType, B20TokenRole, IB20, IB20Asset, PackedPolicy, PermitArgs,
         PolicyAccounting, PolicyRegistryStorage, PolicyVersion, Token, TokenAccounting,
     };
 
@@ -1064,10 +1084,10 @@ mod tests {
         }
     }
 
-    type Ctx = ContractContext<FakeAccounting, FakePolicyAccounting>;
+    type Ctx = AssetContractContext<FakeAccounting, FakePolicyAccounting>;
 
     fn make_ctx() -> Ctx {
-        ContractContext::with_storage_and_policy(
+        AssetContractContext::with_storage_and_policy(
             FakeAccounting::new(),
             FakePolicyAccounting::new(),
             PolicyVersion::V1,

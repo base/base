@@ -11,13 +11,13 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, Result, StorageCtx};
 use revm::precompile::PrecompileResult;
 
-use super::{ContractContext, Version, VersionResolver};
+use super::{FactoryContractContext, Version, VersionResolver};
 use crate::{
     B20Variant, BerylAuxiliaryMetrics, BerylCallRecorder, BerylMetricLabels, IB20Factory,
     NoopPrecompileCallObserver, PrecompileCallObserver, macros::decode_precompile_call,
 };
 
-impl ContractContext<'_> {
+impl FactoryContractContext<'_> {
     /// ABI-dispatches `calldata` to the appropriate `IB20Factory` handler for `upgrade`.
     pub fn dispatch(
         &mut self,
@@ -126,7 +126,7 @@ mod tests {
 
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
-        B20AssetStorage, B20FactoryStorage, B20StablecoinStorage, B20Variant, ContractContext,
+        AssetContractContext, B20AssetStorage, B20FactoryStorage, B20StablecoinStorage, B20Variant,
         FactoryContractContext, IB20, IB20Factory, PolicyRegistryStorage, PolicyVersion,
     };
 
@@ -169,8 +169,8 @@ mod tests {
     fn token_at<'a>(
         addr: Address,
         ctx: StorageCtx<'a>,
-    ) -> ContractContext<B20AssetStorage<'a>, PolicyRegistryStorage<'a>> {
-        ContractContext::with_storage_and_policy(
+    ) -> AssetContractContext<B20AssetStorage<'a>, PolicyRegistryStorage<'a>> {
+        AssetContractContext::with_storage_and_policy(
             B20AssetStorage::from_address(addr, ctx),
             PolicyRegistryStorage::new(ctx),
             PolicyVersion::V1,
