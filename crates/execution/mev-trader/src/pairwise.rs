@@ -1376,6 +1376,12 @@ pub struct BackrunHop {
     pub token_in: Address,
     /// Exact output token.
     pub token_out: Address,
+    /// Canonical sizing fee in pips (denominator `1e6`) carried straight from the
+    /// hash-pinned [`PreparedPoolState`] the sizing engine read (R8 fee-SOURCE).
+    /// It feeds the plan digest (integrity), NOT the d44 candidate wire, and is the
+    /// SOLE fee the submitter converts to the executor ABI `feeBps` — the submitter
+    /// never re-derives or accepts a caller-trusted fee.
+    pub fee_pips: u32,
 }
 
 /// One internal d44-compatible pairwise candidate.
@@ -1596,12 +1602,15 @@ impl PairwiseEngine {
                             protocol: first.protocol,
                             token_in: WETH,
                             token_out: market.token,
+                            // R8: carry the chosen pool's hash-pinned sizing fee.
+                            fee_pips: first.fee_pips,
                         },
                         BackrunHop {
                             pool: second.pool,
                             protocol: second.protocol,
                             token_in: market.token,
                             token_out: WETH,
+                            fee_pips: second.fee_pips,
                         },
                     ];
                     candidates.push(PairwiseCandidate {
@@ -1849,7 +1858,9 @@ impl MeasurementEncoder {
         {
             return Err(PairwiseError::Invalid("measurement plan"));
         }
-        let mut encoder = CanonicalEncoder::with_domain(b"mev-trader-backrun-plan-v1")
+        // Domain bumped v1 -> v2 when `fee_pips` entered the digest preimage (R8):
+        // a v1 consumer must never accept a v2 digest and vice versa.
+        let mut encoder = CanonicalEncoder::with_domain(b"mev-trader-backrun-plan-v2")
             .map_err(|_| PairwiseError::LimitExceeded)?;
         encoder.push_b256(plan.parent_hash).map_err(|_| PairwiseError::LimitExceeded)?;
         encoder
@@ -1867,6 +1878,9 @@ impl MeasurementEncoder {
             encoder.push_u8(hop.protocol as u8).map_err(|_| PairwiseError::LimitExceeded)?;
             encoder.push_address(hop.token_in).map_err(|_| PairwiseError::LimitExceeded)?;
             encoder.push_address(hop.token_out).map_err(|_| PairwiseError::LimitExceeded)?;
+            // R8: fee_pips is part of the digest preimage so a tampered fee (which
+            // would change the executor's derived feeBps) fails self-validation.
+            encoder.push_u32(hop.fee_pips).map_err(|_| PairwiseError::LimitExceeded)?;
         }
         encoder.push_u256(plan.amount_in).map_err(|_| PairwiseError::LimitExceeded)?;
         encoder.push_u256(plan.amount_out).map_err(|_| PairwiseError::LimitExceeded)?;
@@ -1914,12 +1928,14 @@ mod tests {
                     protocol: ExactProtocol::UniswapV2,
                     token_in: WETH,
                     token_out: token,
+                    fee_pips: 3_000,
                 },
                 BackrunHop {
                     pool: Address::with_last_byte(first_pool + 1),
                     protocol: ExactProtocol::UniswapV2,
                     token_in: token,
                     token_out: WETH,
+                    fee_pips: 3_000,
                 },
             ],
             amount_in: U256::from(10),
@@ -2009,12 +2025,14 @@ mod tests {
                 protocol: first.protocol,
                 token_in: WETH,
                 token_out: token,
+                fee_pips: first.fee_pips,
             },
             BackrunHop {
                 pool: second.pool,
                 protocol: second.protocol,
                 token_in: token,
                 token_out: WETH,
+                fee_pips: second.fee_pips,
             },
         ];
         let candidate = PairwiseCandidate {
@@ -2036,6 +2054,126 @@ mod tests {
             candidate.directed_key, first.pool, WETH, token, second.pool, token, WETH,
         );
         assert_eq!(D44CandidateEncoder::encode(&[candidate]), Ok(expected.into_bytes()));
+    }
+
+    /// Builds a valid two-hop measurement plan whose hops carry `fee0`/`fee1`.
+    fn measurement_plan(token: Address, fee0: u32, fee1: u32) -> BackrunPlan {
+        BackrunPlan {
+            parent_hash: B256::repeat_byte(0x11),
+            block_number: 100,
+            predecessor_index: 2,
+            payload_id: PayloadId::new([7u8; 8]),
+            victim: B256::repeat_byte(0x22),
+            route: [
+                BackrunHop {
+                    pool: Address::with_last_byte(1),
+                    protocol: ExactProtocol::UniswapV2,
+                    token_in: WETH,
+                    token_out: token,
+                    fee_pips: fee0,
+                },
+                BackrunHop {
+                    pool: Address::with_last_byte(2),
+                    protocol: ExactProtocol::UniswapV2,
+                    token_in: token,
+                    token_out: WETH,
+                    fee_pips: fee1,
+                },
+            ],
+            amount_in: U256::from(1_000u64),
+            amount_out: U256::from(1_100u64),
+            gross_profit: U256::from(100u64),
+            digest: BackrunPlanDigest(B256::ZERO),
+        }
+    }
+
+    #[test]
+    fn discover_carries_each_prepared_pool_fee_pips_into_the_route() {
+        // Two activated pools for one token with DISTINCT sizing fees; discover must
+        // inject each chosen pool's own fee into its route hop (R8 fee-SOURCE carry).
+        let token = Address::with_last_byte(0xbb);
+        let pool_a_addr = Address::with_last_byte(1);
+        let mut a = v2(1, token, 1_000_000_000_000_000_000);
+        a.fee_pips = 3_000; // 0.30%
+        let mut b = v2(2, token, 1_000_000_000_000_000_000);
+        b.fee_pips = 500; // 0.05%
+        let pools = vec![a, b];
+        let candidates = PairwiseEngine::discover("fee-carry", &pools, &[pool_a_addr], &probe())
+            .expect("discover");
+        assert!(!candidates.is_empty(), "expected at least one directed pair");
+        let fee_of = |addr: Address| if addr == pool_a_addr { 3_000 } else { 500 };
+        for candidate in &candidates {
+            let [first, second] = candidate.route;
+            assert_eq!(first.fee_pips, fee_of(first.pool), "first hop fee not carried");
+            assert_eq!(second.fee_pips, fee_of(second.pool), "second hop fee not carried");
+        }
+    }
+
+    #[test]
+    fn measurement_digest_binds_fee_pips_under_domain_v2() {
+        let token = Address::with_last_byte(0xcc);
+        let base = measurement_plan(token, 3_000, 3_000);
+
+        // The canonical preimage is domain-tagged v2 (bumped when fee entered it).
+        let preimage = MeasurementEncoder::encode(&base).expect("encode");
+        let domain = b"mev-trader-backrun-plan-v2";
+        assert_eq!(&preimage[4..4 + domain.len()], domain, "digest domain must be v2");
+
+        // A self-consistent plan validates.
+        let mut bound = base.clone();
+        bound.digest = MeasurementEncoder::digest(&base).expect("digest");
+        assert!(MeasurementEncoder::validate(&bound).is_ok());
+
+        // Changing ONLY a hop fee changes the digest — fee_pips is bound.
+        let other_fee = measurement_plan(token, 3_000, 500);
+        assert_ne!(
+            MeasurementEncoder::digest(&base).expect("digest"),
+            MeasurementEncoder::digest(&other_fee).expect("digest"),
+            "fee_pips is not bound into the digest",
+        );
+
+        // Post-hoc fee tamper (keeping the old digest) fails self-validation.
+        let mut tampered = bound.clone();
+        tampered.route[0].fee_pips = 500;
+        assert_eq!(
+            MeasurementEncoder::validate(&tampered),
+            Err(PairwiseError::Invalid("measurement digest")),
+        );
+    }
+
+    #[test]
+    fn d44_candidate_wire_is_byte_invariant_under_fee_pips() {
+        // The d44 candidate wire feeds graph-arb parity and MUST be byte-identical
+        // regardless of fee_pips (fee lives only in the plan digest, never here).
+        let token = Address::with_last_byte(0xaa);
+        let first = v2(1, token, 1_000_000_000_000_000_000);
+        let second = v2(2, token, 1_000_000_000_000_000_000);
+        let make = |fee0: u32, fee1: u32| PairwiseCandidate {
+            fixture_id: "fee-invariant".to_owned(),
+            directed_key: PairwiseEngine::directed_key(&first, &second, token),
+            route: [
+                BackrunHop {
+                    pool: first.pool,
+                    protocol: first.protocol,
+                    token_in: WETH,
+                    token_out: token,
+                    fee_pips: fee0,
+                },
+                BackrunHop {
+                    pool: second.pool,
+                    protocol: second.protocol,
+                    token_in: token,
+                    token_out: WETH,
+                    fee_pips: fee1,
+                },
+            ],
+            amount_in: U256::from(1_000_000_000_000u64),
+            amount_out: U256::from(994_008_999_998u64),
+            gross_profit: I512::try_from(-5_991_000_002i64).expect("signed fixture"),
+        };
+        let low = D44CandidateEncoder::encode(&[make(3_000, 3_000)]).expect("low fee wire");
+        let high = D44CandidateEncoder::encode(&[make(10_000, 1)]).expect("high fee wire");
+        assert_eq!(low, high, "fee_pips must not change the d44 candidate wire");
     }
 
     #[test]

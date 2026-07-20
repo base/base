@@ -263,18 +263,11 @@ fn each_ephemeral_sign_uses_a_fresh_unfunded_keypair() {
     let plan = backrun_plan([ExactProtocol::UniswapV2, ExactProtocol::UniswapV2], victim_hash);
     let input = AssembleInput {
         plan: &plan,
+        current_frame: support::matching_frame(&plan),
         executor: EXECUTOR,
         hops: [
-            HopExecutionParams {
-                adapter: support::ADAPTER,
-                fee_pips: 3000,
-                min_amount_out: U256::from(1u64),
-            },
-            HopExecutionParams {
-                adapter: support::ADAPTER,
-                fee_pips: 3000,
-                min_amount_out: U256::from(1u64),
-            },
+            HopExecutionParams { adapter: support::ADAPTER, min_amount_out: U256::from(1u64) },
+            HopExecutionParams { adapter: support::ADAPTER, min_amount_out: U256::from(1u64) },
         ],
         chain_id: 8453,
         nonce: 0,
