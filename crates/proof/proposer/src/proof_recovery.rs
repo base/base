@@ -1,9 +1,11 @@
 //! Recovers proposer onchain state from submitted dispute games.
 
-use std::sync::Arc;
+use std::{future::Future, sync::Arc, time::Duration};
 
 use alloy_primitives::Address;
-use base_proof_contracts::{AnchorStateRegistryClient, DisputeGameFactoryClient, game_lookup_key};
+use base_proof_contracts::{
+    AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, game_lookup_key,
+};
 use base_proof_rpc::{RollupProvider, RpcError};
 use futures::{StreamExt, TryStreamExt, stream};
 use tracing::{debug, info, warn};
@@ -26,6 +28,8 @@ pub struct ProofRecoveryConfig {
     pub anchor_state_registry_address: Address,
     /// Maximum number of concurrent rollup RPC calls during root fetching.
     pub scan_concurrency: usize,
+    /// Maximum duration for each contract RPC used during recovery.
+    pub rpc_timeout: Duration,
 }
 
 /// Cached result from the last successful recovery walk.
@@ -113,6 +117,21 @@ impl ProofRecovery {
         Some((state, finalized_head))
     }
 
+    async fn contract_call<T>(
+        &self,
+        operation: &str,
+        call: impl Future<Output = Result<T, ContractError>>,
+    ) -> Result<T, ProposerError> {
+        match tokio::time::timeout(self.config.rpc_timeout, call).await {
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(error)) => Err(ProposerError::Contract(format!("{operation} failed: {error}"))),
+            Err(_) => Err(ProposerError::Contract(format!(
+                "{operation} timed out after {}s",
+                self.config.rpc_timeout.as_secs_f64()
+            ))),
+        }
+    }
+
     /// Recovers the latest onchain state using a deterministic forward walk
     /// from the anchor root, bounded by `finalized_head`.
     pub async fn recover_latest_state(
@@ -120,19 +139,13 @@ impl ProofRecovery {
         cache: &mut Option<ProofRecoveryCache>,
         finalized_head: u64,
     ) -> Result<RecoveredState, ProposerError> {
-        let count = self
-            .factory_client
-            .game_count()
-            .await
-            .map_err(|e| ProposerError::Contract(format!("recovery game_count failed: {e}")))?;
+        let count =
+            self.contract_call("recovery game_count", self.factory_client.game_count()).await?;
 
         // Read the anchor root and anchor game from one L1 snapshot so
         // recovery cannot combine an old root with a newer anchor game.
-        let anchor_snapshot = self
-            .anchor_registry
-            .anchor_snapshot()
-            .await
-            .map_err(|e| ProposerError::Contract(format!("anchor_snapshot failed: {e}")))?;
+        let anchor_snapshot =
+            self.contract_call("anchor_snapshot", self.anchor_registry.anchor_snapshot()).await?;
         let anchor = anchor_snapshot.anchor_root;
         let usable_cache =
             cache.as_ref().filter(|cached| anchor.l2_block_number <= cached.state.l2_block_number);
@@ -247,16 +260,17 @@ impl ProofRecovery {
             )
             .map_err(|e| ProposerError::Config(e.to_string()))?;
 
+            let operation = format!("games lookup at block {}", key.target_block);
             let lookup = self
-                .factory_client
-                .games(self.config.game_type, key.root_claim, key.extra_data)
-                .await
-                .map_err(|e| {
-                    ProposerError::Contract(format!(
-                        "games lookup failed at block {}: {e}",
-                        key.target_block
-                    ))
-                })?;
+                .contract_call(
+                    &operation,
+                    self.factory_client.games(
+                        self.config.game_type,
+                        key.root_claim,
+                        key.extra_data,
+                    ),
+                )
+                .await?;
 
             if lookup == Address::ZERO {
                 info!(
@@ -289,7 +303,7 @@ impl ProofRecovery {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, sync::Arc};
+    use std::{collections::HashMap, sync::Arc, time::Duration};
 
     use alloy_primitives::{Address, B256};
     use base_proof_contracts::AnchorRoot;
@@ -390,6 +404,7 @@ mod tests {
                 game_type: TEST_GAME_TYPE,
                 anchor_state_registry_address: Address::ZERO,
                 scan_concurrency: 8,
+                rpc_timeout: Duration::from_secs(30),
             },
             Arc::new(MockRollupClient {
                 sync_status: test_sync_status(0, B256::ZERO),
@@ -487,6 +502,28 @@ mod tests {
         let result = recovery.recover_latest_state(&mut cache, u64::MAX).await;
 
         assert!(matches!(result, Err(ProposerError::Contract(_))));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_recovery_times_out_contract_calls() {
+        let factory = MockDisputeGameFactory {
+            game_count_delay: Some(Duration::from_secs(1)),
+            ..Default::default()
+        };
+        let mut recovery = recovery(factory, HashMap::new());
+        recovery.config.rpc_timeout = Duration::from_millis(10);
+        let mut cache: Option<ProofRecoveryCache> = None;
+
+        let result = recovery.recover_latest_state(&mut cache, u64::MAX).await;
+
+        assert!(
+            matches!(
+                result,
+                Err(ProposerError::Contract(message))
+                    if message.contains("recovery game_count timed out")
+            ),
+            "hung contract calls should be bounded by the configured RPC timeout"
+        );
     }
 
     #[tokio::test]

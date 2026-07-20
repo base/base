@@ -169,6 +169,9 @@ where
                     dispatched_through.store(current.l2_block_number, Ordering::Relaxed);
                 }
             }
+
+            // A pending watch update must not bypass the configured retry delay.
+            tokio::time::sleep(self.config.poll_interval).await;
         }
     }
 
@@ -210,6 +213,9 @@ where
             if restart {
                 break;
             }
+
+            // A pending watch update must not bypass the configured retry delay.
+            tokio::time::sleep(self.config.poll_interval).await;
         }
     }
 }
@@ -231,7 +237,7 @@ mod tests {
     use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
     use base_prover_service_protocol::{
         DeleteProofRequest, GetProofRequest, GetProofResponse, ListProofsRequest,
-        ListProofsResponse, ProveBlockRangeRequest, ProveBlockRangeResponse,
+        ListProofsResponse, ProofStatus, ProveBlockRangeRequest, ProveBlockRangeResponse,
     };
     use tokio_util::sync::CancellationToken;
 
@@ -247,6 +253,8 @@ mod tests {
     #[derive(Debug, Default)]
     struct RejectingProofRequester {
         prove_count: AtomicUsize,
+        get_count: AtomicUsize,
+        request_delay: Duration,
         panic_on_first_prove: bool,
     }
 
@@ -257,6 +265,7 @@ mod tests {
             _request: ProveBlockRangeRequest,
         ) -> Result<ProveBlockRangeResponse, ProverServiceClientError> {
             let prove_count = self.prove_count.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(self.request_delay).await;
             if self.panic_on_first_prove && prove_count == 0 {
                 panic!("simulated dispatch panic");
             }
@@ -267,7 +276,9 @@ mod tests {
             &self,
             _request: GetProofRequest,
         ) -> Result<GetProofResponse, ProverServiceClientError> {
-            Err(ProverServiceClientError::Timeout("simulated poll failure".into()))
+            self.get_count.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(self.request_delay).await;
+            Ok(GetProofResponse { status: ProofStatus::Running, error_message: None, result: None })
         }
 
         async fn delete_proof_request(
@@ -285,7 +296,9 @@ mod tests {
         }
     }
 
-    fn test_pipeline(requester: Arc<RejectingProofRequester>) -> ProvingPipeline<MockRollupClient> {
+    fn test_pipeline(
+        requester: Arc<RejectingProofRequester>,
+    ) -> (ProvingPipeline<MockRollupClient>, Arc<MockDisputeGameFactory>) {
         let proof_requester: Arc<dyn ProofRequesterProvider> =
             Arc::<RejectingProofRequester>::clone(&requester);
         let l1 = Arc::new(MockL1::new(1000));
@@ -300,8 +313,9 @@ mod tests {
                 anchor_root: test_anchor_root(0),
                 anchor_game: Address::ZERO,
             });
-        let factory: Arc<dyn DisputeGameFactoryClient> =
-            Arc::new(MockDisputeGameFactory::default());
+        let factory = Arc::new(MockDisputeGameFactory::default());
+        let recovery_factory: Arc<dyn DisputeGameFactoryClient> =
+            Arc::<MockDisputeGameFactory>::clone(&factory);
         let verifier = Arc::new(MockAggregateVerifier::default());
         let output_proposer: Arc<dyn OutputProposer> = Arc::new(MockOutputProposer::default());
         let config = DriverConfig {
@@ -324,10 +338,11 @@ mod tests {
                 game_type: config.game_type,
                 anchor_state_registry_address: config.anchor_state_registry_address,
                 scan_concurrency: config.recovery_scan_concurrency,
+                rpc_timeout: Duration::from_secs(30),
             },
             Arc::<MockRollupClient>::clone(&rollup),
             anchor_registry,
-            factory,
+            recovery_factory,
         ));
         let proof_submitter = ProofSubmitter::new(
             output_proposer,
@@ -343,29 +358,42 @@ mod tests {
             config.block_interval,
             config.submit_timeout,
         );
-        ProvingPipeline::new(config, proof_dispatcher, proof_recovery, proof_collector)
+        (ProvingPipeline::new(config, proof_dispatcher, proof_recovery, proof_collector), factory)
     }
 
-    #[tokio::test]
-    async fn dispatcher_failure_keeps_dispatcher_loop_running() {
-        let requester = Arc::new(RejectingProofRequester::default());
-        let pipeline = test_pipeline(Arc::clone(&requester));
+    #[tokio::test(start_paused = true)]
+    async fn shared_recovery_polls_once_and_retries_both_slow_consumers() {
+        let requester = Arc::new(RejectingProofRequester {
+            request_delay: Duration::from_millis(15),
+            ..Default::default()
+        });
+        let (pipeline, factory) = test_pipeline(Arc::clone(&requester));
         let (recovery_tx, recovery_rx) = watch::channel(None);
+        let cancel = CancellationToken::new();
 
         assert!(
-            tokio::time::timeout(Duration::from_millis(100), async {
+            tokio::time::timeout(Duration::from_millis(49), async {
                 tokio::join!(
                     pipeline.recovery_loop(recovery_tx),
-                    pipeline.dispatcher_loop(recovery_rx, Arc::new(AtomicU64::new(0))),
+                    pipeline.dispatcher_loop(recovery_rx.clone(), Arc::new(AtomicU64::new(0)),),
+                    pipeline.collector_loop(&cancel, recovery_rx, Arc::new(AtomicU64::new(0)),),
                 );
             })
             .await
             .is_err(),
-            "dispatcher failures should not end the dispatcher loop"
+            "pipeline loops should keep running"
         );
-        assert!(
-            requester.prove_count.load(Ordering::SeqCst) > 1,
-            "dispatcher should keep retrying after failures"
+        let recovery_count = factory.game_count_calls.load(Ordering::SeqCst);
+        assert_eq!(recovery_count, 5, "recovery should run once per 10ms poll");
+        assert_eq!(
+            requester.prove_count.load(Ordering::SeqCst),
+            2,
+            "dispatcher retries should preserve the post-tick delay"
+        );
+        assert_eq!(
+            requester.get_count.load(Ordering::SeqCst),
+            2,
+            "pending proof retries should preserve the post-tick delay"
         );
     }
 
@@ -373,7 +401,7 @@ mod tests {
     async fn dispatcher_panic_restarts_pipeline_session() {
         let requester =
             Arc::new(RejectingProofRequester { panic_on_first_prove: true, ..Default::default() });
-        let pipeline = test_pipeline(Arc::clone(&requester));
+        let (pipeline, _) = test_pipeline(Arc::clone(&requester));
         let cancel = CancellationToken::new();
         let run = pipeline.run(cancel.clone());
         tokio::pin!(run);

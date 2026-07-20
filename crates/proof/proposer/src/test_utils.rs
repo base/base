@@ -2,7 +2,11 @@
 
 use std::{
     collections::{HashMap, VecDeque},
-    sync::Mutex,
+    sync::{
+        Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
 };
 
 use alloy_eips::BlockNumberOrTag;
@@ -188,6 +192,10 @@ impl AnchorStateRegistryClient for MockAnchorStateRegistry {
 pub struct MockDisputeGameFactory {
     /// The game count returned by `game_count()`.
     pub game_count: u64,
+    /// Number of calls to `game_count()`.
+    pub game_count_calls: AtomicUsize,
+    /// Optional delay before `game_count()` returns.
+    pub game_count_delay: Option<Duration>,
     /// UUID-keyed game proxy lookups for `games()`.
     pub uuid_games: HashMap<(u32, B256, Bytes), Address>,
     /// Ordered responses for repeated `games()` calls.
@@ -206,6 +214,10 @@ impl MockDisputeGameFactory {
 #[async_trait]
 impl DisputeGameFactoryClient for MockDisputeGameFactory {
     async fn game_count(&self) -> Result<u64, ContractError> {
+        self.game_count_calls.fetch_add(1, Ordering::SeqCst);
+        if let Some(delay) = self.game_count_delay {
+            tokio::time::sleep(delay).await;
+        }
         Ok(self.game_count)
     }
     async fn game_at_index(&self, _: u64) -> Result<GameAtIndex, ContractError> {

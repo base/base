@@ -248,6 +248,7 @@ impl ProposerService {
                 game_type: driver_config.game_type,
                 anchor_state_registry_address: driver_config.anchor_state_registry_address,
                 scan_concurrency: driver_config.recovery_scan_concurrency,
+                rpc_timeout: config.rpc_timeout,
             },
             Arc::<RollupClient>::clone(&rollup_client),
             anchor_registry,

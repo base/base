@@ -285,6 +285,7 @@ mod tests {
                 game_type: config.game_type,
                 anchor_state_registry_address: config.anchor_state_registry_address,
                 scan_concurrency: config.recovery_scan_concurrency,
+                rpc_timeout: Duration::from_secs(30),
             },
             Arc::<MockRollupClient>::clone(&rollup),
             anchor_registry,
