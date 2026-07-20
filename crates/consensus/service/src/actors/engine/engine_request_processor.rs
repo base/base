@@ -219,6 +219,10 @@ where
             )
             .await?;
 
+        if self.is_shadow_sequencer() {
+            self.clear_shadow_payload_buffer();
+        }
+
         self.checkpoint_forkchoice_state_if_updated().await;
 
         // Signal the derivation actor to reset.
@@ -337,6 +341,9 @@ where
         }
 
         self.checkpoint_forkchoice_state_if_updated().await;
+        if self.is_shadow_sequencer() {
+            self.prune_shadow_payloads();
+        }
         self.send_derivation_actor_safe_head_if_updated().await?;
 
         if !self.el_sync_complete && self.engine.state().el_sync_finished {
@@ -479,6 +486,16 @@ where
             "Buffered shadow reconciliation payload"
         );
         self.shadow_payloads.insert(block_number, envelope);
+    }
+
+    fn prune_shadow_payloads(&mut self) {
+        let safe_head_number = self.engine.state().sync_state.safe_head().block_info.number;
+        self.shadow_payloads.retain(|block_number, _| *block_number > safe_head_number);
+    }
+
+    fn clear_shadow_payload_buffer(&mut self) {
+        self.shadow_payloads.clear();
+        self.shadow_payload_buffer_faulted = false;
     }
 
     /// Handles an unsafe payload supplied through the admin API.
@@ -1384,6 +1401,50 @@ mod tests {
         assert!(processor.shadow_payload_buffer_faulted);
         assert_eq!(processor.shadow_payloads.len(), EngineProcessorOptions::MAX_SHADOW_PAYLOADS);
         assert!(processor.shadow_payloads.contains_key(&1));
+    }
+
+    #[test]
+    fn shadow_payload_pruning_discards_payloads_at_or_below_safe_head() {
+        let (mut processor, queue_rx) = unsafe_payload_processor(
+            NodeMode::Sequencer,
+            true,
+            l2_head(11, B256::with_last_byte(11)),
+            Some(l2_head(10, B256::with_last_byte(10))),
+        );
+        processor.shadow_sequencer = true;
+
+        for block_number in 9..=11 {
+            processor.buffer_shadow_payload(unsafe_payload(
+                block_number,
+                B256::ZERO,
+                B256::with_last_byte(block_number as u8),
+            ));
+        }
+        processor.prune_shadow_payloads();
+
+        assert_eq!(*queue_rx.borrow(), 0);
+        assert_eq!(processor.shadow_payloads.keys().copied().collect::<Vec<_>>(), vec![11]);
+    }
+
+    #[test]
+    fn clearing_shadow_payload_buffer_removes_payloads_and_fault() {
+        let (mut processor, queue_rx) = unsafe_payload_processor(
+            NodeMode::Sequencer,
+            true,
+            l2_head(10, B256::with_last_byte(10)),
+            None,
+        );
+        processor.shadow_sequencer = true;
+        processor
+            .shadow_payloads
+            .insert(11, unsafe_payload(11, B256::with_last_byte(10), B256::with_last_byte(11)));
+        processor.shadow_payload_buffer_faulted = true;
+
+        processor.clear_shadow_payload_buffer();
+
+        assert_eq!(*queue_rx.borrow(), 0);
+        assert!(processor.shadow_payloads.is_empty());
+        assert!(!processor.shadow_payload_buffer_faulted);
     }
 
     /// Verifies that when a standalone sequencer (no conductor) is beyond genesis and reth

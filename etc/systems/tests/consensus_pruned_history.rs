@@ -265,6 +265,7 @@ fn validator_options() -> EngineProcessorOptions {
         unsafe_head_tx: None,
         conductor: None,
         sequencer_stopped: false,
+        shadow_sequencer: false,
     }
 }
 

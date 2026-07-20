@@ -19,7 +19,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 
-use crate::actors::network::TestNetwork;
+use crate::actors::network::{ForwardedUnsafeBlock, TestNetwork};
 
 pub(crate) struct TestNetworkBuilder {
     chain_id: u64,
@@ -114,7 +114,7 @@ impl TestNetworkBuilder {
 
 #[derive(Debug)]
 struct ForwardingNetworkEngineClient {
-    blocks_tx: mpsc::Sender<BaseExecutionPayloadEnvelope>,
+    blocks_tx: mpsc::Sender<ForwardedUnsafeBlock>,
 }
 
 #[async_trait]
@@ -125,7 +125,7 @@ impl NetworkEngineClient for ForwardingNetworkEngineClient {
     ) -> EngineClientResult<()> {
         let _ = self
             .blocks_tx
-            .send(block)
+            .send(ForwardedUnsafeBlock::P2p(block))
             .await
             .inspect_err(|e| error!(target: "net", error = ?e, "Failed to send block"));
         Ok(())
@@ -135,6 +135,11 @@ impl NetworkEngineClient for ForwardingNetworkEngineClient {
         &self,
         block: BaseExecutionPayloadEnvelope,
     ) -> EngineClientResult<()> {
-        self.send_unsafe_block(block).await
+        let _ = self
+            .blocks_tx
+            .send(ForwardedUnsafeBlock::Admin(block))
+            .await
+            .inspect_err(|e| error!(target: "net", error = ?e, "Failed to send admin block"));
+        Ok(())
     }
 }
