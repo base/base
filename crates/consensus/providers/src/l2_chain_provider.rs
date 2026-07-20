@@ -140,8 +140,10 @@ impl AlloyL2ChainProvider {
 
             match block {
                 Some(block) => {
-                    let consensus_block =
-                        block.into_consensus().map_transactions(|t| t.inner.inner);
+                    let consensus_block = block
+                        .map_header(|header| header.into_inner())
+                        .into_consensus()
+                        .map_transactions(|t| t.inner.inner);
 
                     let l2_block = L2BlockInfo::from_block_and_genesis(
                         &consensus_block,
@@ -251,7 +253,10 @@ impl BatchValidationProvider for AlloyL2ChainProvider {
                 })?;
 
             if let Some(block) = block {
-                let block = block.into_consensus().map_transactions(|t| t.inner.inner.into_inner());
+                let block = block
+                    .map_header(|header| header.into_inner())
+                    .into_consensus()
+                    .map_transactions(|t| t.inner.inner.into_inner());
                 self.block_by_number_cache.put(number, block.clone());
                 return Ok(block);
             }

@@ -152,16 +152,19 @@ impl BaseTime {
         Ok(())
     }
 
-    /// Fetches the `timestamp_millis_part` directly from the `BaseTime` predeploy storage.
-    pub fn fetch_timestamp_millis_part<DB: Database>(db: &mut DB) -> Result<u16, DB::Error> {
-        let slot = db
-            .storage(Predeploys::BASE_TIME, Self::TIMESTAMP_MILLIS_PART_SLOT)?
-            .to_be_bytes::<32>();
-
-        Ok(u16::from_be_bytes([
+    /// Decodes the packed low `uint16` millisecond component from a storage word.
+    pub const fn decode_timestamp_millis_part(value: U256) -> u16 {
+        let slot = value.to_be_bytes::<32>();
+        u16::from_be_bytes([
             slot[Self::TIMESTAMP_MILLIS_PART_OFFSET],
             slot[Self::TIMESTAMP_MILLIS_PART_OFFSET + 1],
-        ]))
+        ])
+    }
+
+    /// Fetches the `timestamp_millis_part` directly from the `BaseTime` predeploy storage.
+    pub fn fetch_timestamp_millis_part<DB: Database>(db: &mut DB) -> Result<u16, DB::Error> {
+        let slot = db.storage(Predeploys::BASE_TIME, Self::TIMESTAMP_MILLIS_PART_SLOT)?;
+        Ok(Self::decode_timestamp_millis_part(slot))
     }
 
     /// Loads the current `BaseTime` state from the database.
@@ -203,6 +206,12 @@ mod tests {
         let mut db = base_time_db(600);
 
         assert_eq!(BaseTime::fetch_timestamp_millis_part(&mut db).unwrap(), 600);
+    }
+
+    #[test]
+    fn decode_timestamp_millis_part_reads_only_low_uint16() {
+        let value = (U256::from(1) << 200) | U256::from(800);
+        assert_eq!(BaseTime::decode_timestamp_millis_part(value), 800);
     }
 
     #[test]

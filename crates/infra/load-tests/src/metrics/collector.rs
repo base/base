@@ -79,10 +79,15 @@ impl MetricsCollector {
         } else {
             self.rolling.push_gas(live_gas, at);
         }
-        if let Some(flashblocks_latency) = metrics.flashblocks_latency {
-            self.flashblocks_rolling.push_latency(flashblocks_latency, at);
-        }
         self.transactions.push(metrics);
+    }
+
+    /// Records a flashblock observation from the WS stream.
+    ///
+    /// Called when a transaction is first seen in the flashblock websocket, using
+    /// the actual WS observation time — not canonical block confirmation time.
+    pub fn record_flashblock_observed(&mut self, latency: Duration, observed_at: Instant) {
+        self.flashblocks_rolling.push_latency(latency, observed_at);
     }
 
     /// Backfills gas, effective gas price, and revert status onto landed transactions

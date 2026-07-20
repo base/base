@@ -51,7 +51,10 @@ impl FollowLocalClient for LocalL2Client {
             return Ok(None);
         };
         L2BlockInfo::from_block_and_genesis(
-            &block.into_consensus().map_transactions(|tx| tx.inner.inner.into_inner()),
+            &block
+                .map_header(|header| header.into_inner())
+                .into_consensus()
+                .map_transactions(|tx| tx.inner.inner.into_inner()),
             &self.rollup_config.genesis,
         )
         .map(Some)

@@ -80,6 +80,10 @@ struct ProverRuntimeArgs {
     #[arg(long, env = "L2_ETH_URL")]
     l2_eth_url: String,
 
+    /// L2 rollup RPC URL.
+    #[arg(long, env = "L2_NODE_URL")]
+    l2_node_url: String,
+
     /// L1 beacon API URL.
     #[arg(long, env = "L1_BEACON_URL")]
     l1_beacon_url: String,
@@ -119,6 +123,7 @@ impl ProverRuntimeArgs {
         Ok(ProverConfig {
             l1_eth_url: self.l1_eth_url,
             l2_eth_url: self.l2_eth_url,
+            l2_node_url: self.l2_node_url,
             l1_beacon_url: self.l1_beacon_url,
             l2_chain_id: self.l2_chain_id,
             rollup_config,

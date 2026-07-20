@@ -25,6 +25,7 @@ cargo run --package base-prover-nitro-host --features local -- local \
   --prover-service-endpoint "$PROVER_SERVICE_ENDPOINT" \
   --l1-eth-url "$L1_ETH_URL" \
   --l2-eth-url "$L2_ETH_URL" \
+  --l2-node-url "$L2_NODE_URL" \
   --l1-beacon-url "$L1_BEACON_URL" \
   --l2-chain-id "$L2_CHAIN_ID"
 ```

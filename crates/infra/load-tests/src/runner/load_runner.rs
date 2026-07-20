@@ -1222,6 +1222,11 @@ impl LoadRunner {
                 &mut self.collector,
             );
 
+            // Drain flashblock observations for the rolling window (separate from
+            // confirmed metrics to avoid double-counting in the final summary).
+            for (latency, observed_at) in results_tracker.drain_flashblock_observations() {
+                self.collector.record_flashblock_observed(latency, observed_at);
+            }
             // Drain confirmed metrics non-blocking so the rolling window stays
             // current during the run (not just during the post-run drain).
             for metrics in results_tracker.drain_confirmed_metrics() {
@@ -1462,6 +1467,9 @@ impl LoadRunner {
         let mut last_confirmed_at = start.elapsed();
 
         while drain_start.elapsed() < CONFIRMATION_DRAIN_TIMEOUT {
+            for (latency, observed_at) in results_tracker.drain_flashblock_observations() {
+                self.collector.record_flashblock_observed(latency, observed_at);
+            }
             let metrics = results_tracker.drain_confirmed_metrics();
             if !metrics.is_empty() {
                 last_confirmed_at = start.elapsed();
@@ -1485,6 +1493,9 @@ impl LoadRunner {
             tokio::time::sleep(results_poll_interval).await;
         }
 
+        for (latency, observed_at) in results_tracker.drain_flashblock_observations() {
+            self.collector.record_flashblock_observed(latency, observed_at);
+        }
         for metrics in results_tracker.drain_confirmed_metrics() {
             self.collector.record_confirmed(metrics);
             last_confirmed_at = start.elapsed();

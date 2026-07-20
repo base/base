@@ -715,6 +715,7 @@ mod tests {
                 "l2_block_number": aggregate_proposal.l2_block_number,
                 "prev_output_root": format!("{:#x}", aggregate_proposal.prev_output_root),
                 "config_hash": format!("{:#x}", aggregate_proposal.config_hash),
+                "schedule_id": format!("{:#x}", aggregate_proposal.schedule_id),
             })
         );
         assert_eq!(
@@ -727,6 +728,7 @@ mod tests {
                 "l2_block_number": proposal.l2_block_number,
                 "prev_output_root": format!("{:#x}", proposal.prev_output_root),
                 "config_hash": format!("{:#x}", proposal.config_hash),
+                "schedule_id": format!("{:#x}", proposal.schedule_id),
             })
         );
     }
@@ -832,6 +834,7 @@ mod tests {
                 "l2_block_number": aggregate_proposal.l2_block_number,
                 "prev_output_root": format!("{:#x}", aggregate_proposal.prev_output_root),
                 "config_hash": format!("{:#x}", aggregate_proposal.config_hash),
+                "schedule_id": format!("{:#x}", aggregate_proposal.schedule_id),
             })
         );
         assert_eq!(
@@ -844,6 +847,7 @@ mod tests {
                 "l2_block_number": proposal.l2_block_number,
                 "prev_output_root": format!("{:#x}", proposal.prev_output_root),
                 "config_hash": format!("{:#x}", proposal.config_hash),
+                "schedule_id": format!("{:#x}", proposal.schedule_id),
             })
         );
     }
@@ -981,6 +985,7 @@ mod tests {
             l2_block_number,
             prev_output_root: B256::repeat_byte(byte + 2),
             config_hash: B256::repeat_byte(byte + 3),
+            schedule_id: B256::repeat_byte(byte + 4),
         }
     }
 }

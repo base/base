@@ -3184,7 +3184,6 @@ dependencies = [
  "base-common-genesis",
  "base-common-network",
  "base-common-precompiles",
- "base-common-rpc-types",
  "base-common-rpc-types-engine",
  "base-consensus-derive",
  "base-consensus-engine",
@@ -3330,7 +3329,6 @@ dependencies = [
  "base-common-consensus",
  "base-common-genesis",
  "base-common-network",
- "base-common-rpc-types",
  "base-consensus-derive",
  "base-consensus-providers",
  "base-consensus-rpc",
@@ -3819,7 +3817,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-provider 2.0.5",
  "alloy-rpc-types-engine",
- "alloy-rpc-types-eth 2.0.5",
  "alloy-transport 2.0.5",
  "async-trait",
  "base-common-consensus",
@@ -3863,6 +3860,7 @@ dependencies = [
  "base-common-evm",
  "derive_more 2.1.1",
  "rand 0.9.4",
+ "reth-primitives-traits",
  "reth-rpc-convert",
  "revm",
  "serde",
@@ -4448,6 +4446,7 @@ dependencies = [
  "base-common-genesis",
  "base-execution-chainspec",
  "base-node-core",
+ "base-protocol",
  "reth-chainspec",
  "reth-consensus",
  "reth-consensus-common",
@@ -4976,7 +4975,6 @@ dependencies = [
  "futures",
  "indicatif 0.18.4",
  "tokio",
- "tokio-util",
  "tracing",
  "tracing-subscriber 0.3.23",
  "url",
@@ -4995,6 +4993,7 @@ dependencies = [
  "alloy-signer 2.0.5",
  "alloy-signer-local 2.0.5",
  "alloy-sol-types",
+ "base-cli-utils",
  "base-common-flashblocks",
  "base-common-network",
  "base-common-precompiles",
@@ -5415,6 +5414,7 @@ dependencies = [
  "base-common-rpc-types-engine",
  "base-consensus-providers",
  "base-metrics",
+ "base-optimism-rpc",
  "base-proof",
  "base-proof-client",
  "base-proof-mpt",
@@ -5593,7 +5593,6 @@ dependencies = [
  "base-proof-host",
  "base-proof-preimage",
  "base-proof-primitives",
- "base-proof-rpc",
  "base-proof-succinct-client-utils",
  "base-protocol",
  "bincode 2.0.1",
@@ -6030,7 +6029,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
- "tracing-subscriber 0.3.23",
  "uuid",
 ]
 
@@ -6301,7 +6299,6 @@ dependencies = [
  "base-node-core",
  "base-node-runner",
  "base-optimism-rpc",
- "base-proof-rpc",
  "base-protocol",
  "base-prover-service-client",
  "base-prover-service-protocol",
@@ -6537,6 +6534,33 @@ checksum = "4cbbc9d0964165b47557570cce6c952866c2678457aca742aafc9fb771d30270"
 [[package]]
 name = "base-zk-benchmarks"
 version = "0.0.0"
+dependencies = [
+ "alloy-eips 2.0.5",
+ "alloy-primitives",
+ "base-load-tests",
+ "base-optimism-rpc",
+ "base-prover-service-client",
+ "base-prover-service-protocol",
+ "eyre",
+ "nanoid",
+ "serde",
+ "serde_json",
+ "tokio",
+ "url",
+]
+
+[[package]]
+name = "base-zk-benchmarks-bin"
+version = "0.0.0"
+dependencies = [
+ "base-cli-utils",
+ "base-load-tests",
+ "base-prover-service-protocol",
+ "base-zk-benchmarks",
+ "clap",
+ "eyre",
+ "url",
+]
 
 [[package]]
 name = "base16ct"

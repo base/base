@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 use alloy_primitives::U256;
 use base_common_genesis::BaseUpgrade;
+use tracing::info;
 
 use crate::{AlloyUpgradeSignalReader, UpgradeSignalMetricLayer, UpgradeSignalMetrics};
 
@@ -59,6 +60,18 @@ enum UpgradeSignalStateUpdate {
     Changed,
 }
 
+impl UpgradeSignalStateUpdate {
+    /// Returns true when this update requires re-applying the schedule.
+    ///
+    /// [`Self::Initialized`] requires apply: a signal observed live for the first time may carry
+    /// a schedule change that landed after the baseline should have been established (an upgrade
+    /// registered on L1 after node start, or a startup window of failed reads), so it must not be
+    /// silently adopted as the baseline.
+    const fn requires_apply(self) -> bool {
+        matches!(self, Self::Initialized | Self::Changed)
+    }
+}
+
 /// Stateful live metrics tracker for one contract-backed upgrade.
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 struct UpgradeSignalState {
@@ -107,21 +120,35 @@ impl UpgradeSignalMonitor {
         Self { metrics_layer, states }
     }
 
-    /// Tolerantly polls the reader, records live metrics, and returns the number of changed signals.
+    /// Tolerantly polls the reader, records live metrics, and returns the schedule that was read
+    /// when any signals updated.
     ///
     /// This is the single live-poll routine shared by the consensus actor and the execution
-    /// metrics extension; read failures are recorded but do not abort the poll.
+    /// metrics extension; read failures are recorded but do not abort the poll. See
+    /// [`UpgradeSignalStateUpdate::requires_apply`] for why a first observation counts as an
+    /// update.
     pub async fn poll(
         &mut self,
         reader: &AlloyUpgradeSignalReader,
         upgrade_ids: &[BaseUpgrade],
-    ) -> usize {
+    ) -> Option<UpgradeSignalSchedule> {
         let metrics_layers = [self.metrics_layer];
         let schedule = reader.read_schedule_tolerant(upgrade_ids, &metrics_layers).await;
-        self.update_schedule(schedule)
+        let updated_signals = self
+            .update_schedule(schedule.clone())
             .iter()
-            .filter(|update| matches!(update, UpgradeSignalStateUpdate::Changed))
-            .count()
+            .filter(|update| update.requires_apply())
+            .count();
+        if updated_signals == 0 {
+            return None;
+        }
+
+        info!(
+            target: "upgrade_signal",
+            updated_signals,
+            "observed live L1 upgrade signal update"
+        );
+        Some(schedule)
     }
 
     /// Applies signals read from L1 and records corresponding live metrics.
@@ -197,5 +224,50 @@ mod tests {
         updated_signal.l1_block_number = 2;
 
         assert_eq!(state.update_signal(updated_signal), UpgradeSignalStateUpdate::Unchanged);
+    }
+
+    fn monitor() -> UpgradeSignalMonitor {
+        UpgradeSignalMonitor::new(UpgradeSignalMetricLayer::Consensus, &[BaseUpgrade::Azul])
+    }
+
+    fn schedule(timestamp: u64) -> UpgradeSignalSchedule {
+        UpgradeSignalSchedule::new(vec![signal(timestamp)])
+    }
+
+    #[test]
+    fn first_observation_and_change_require_apply_but_unchanged_does_not() {
+        assert!(UpgradeSignalStateUpdate::Initialized.requires_apply());
+        assert!(UpgradeSignalStateUpdate::Changed.requires_apply());
+        assert!(!UpgradeSignalStateUpdate::Unchanged.requires_apply());
+    }
+
+    #[test]
+    fn monitor_counts_first_observation_as_update() {
+        let mut monitor = monitor();
+
+        let updates = monitor.update_schedule(schedule(10));
+
+        assert_eq!(updates, vec![UpgradeSignalStateUpdate::Initialized]);
+    }
+
+    #[test]
+    fn monitor_ignores_unchanged_signal() {
+        let mut monitor = monitor();
+
+        monitor.update_schedule(schedule(10));
+
+        assert_eq!(
+            monitor.update_schedule(schedule(10)),
+            vec![UpgradeSignalStateUpdate::Unchanged]
+        );
+    }
+
+    #[test]
+    fn monitor_detects_changed_signal() {
+        let mut monitor = monitor();
+
+        monitor.update_schedule(schedule(10));
+
+        assert_eq!(monitor.update_schedule(schedule(12)), vec![UpgradeSignalStateUpdate::Changed]);
     }
 }

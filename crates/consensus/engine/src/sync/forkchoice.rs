@@ -5,11 +5,9 @@ use std::fmt::Display;
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::B256;
 use alloy_provider::Network;
-use alloy_rpc_types_eth::Block as RpcBlock;
 use alloy_transport::TransportResult;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
-use base_common_rpc_types::Transaction;
 use base_protocol::{BlockInfo, FromBlockError, L2BlockInfo};
 use tracing::{error, warn};
 
@@ -131,7 +129,10 @@ impl L2ForkchoiceState {
                 .await?
                 .ok_or(SyncStartError::BlockNotFound(BlockNumberOrTag::Latest.into()))?;
             L2BlockInfo::from_block_and_genesis(
-                &rpc_block.into_consensus().map_transactions(|tx| tx.inner.inner.into_inner()),
+                &rpc_block
+                    .map_header(|header| header.into_inner())
+                    .into_consensus()
+                    .map_transactions(|tx| tx.inner.inner.into_inner()),
                 &cfg.genesis,
             )?
         };
@@ -159,10 +160,13 @@ async fn block_info_from_reth_or_checkpoint<
 >(
     cfg: &RollupConfig,
     label: ForkchoiceCheckpointLabel,
-    rpc_block: RpcBlock<Transaction>,
+    rpc_block: <Base as Network>::BlockResponse,
     checkpoint_reader: &CheckpointReader,
 ) -> Result<L2BlockInfo, SyncStartError> {
-    let block = rpc_block.into_consensus().map_transactions(|tx| tx.inner.inner.into_inner());
+    let block = rpc_block
+        .map_header(|header| header.into_inner())
+        .into_consensus()
+        .map_transactions(|tx| tx.inner.inner.into_inner());
     match L2BlockInfo::from_block_and_genesis(&block, &cfg.genesis) {
         Ok(block_info) => Ok(block_info),
         Err(err @ FromBlockError::MissingL1InfoDeposit(_)) => {
@@ -233,8 +237,10 @@ async fn find_earliest_unpruned_block<EngineClient_: EngineClient>(
         .await?
         .ok_or(SyncStartError::BlockNotFound(BlockNumberOrTag::Latest.into()))?;
     let latest_number = latest.header.number;
-    let latest_consensus =
-        latest.into_consensus().map_transactions(|tx| tx.inner.inner.into_inner());
+    let latest_consensus = latest
+        .map_header(|header| header.into_inner())
+        .into_consensus()
+        .map_transactions(|tx| tx.inner.inner.into_inner());
 
     let mut last_known_unpruned =
         match L2BlockInfo::from_block_and_genesis(&latest_consensus, &cfg.genesis) {
@@ -285,8 +291,10 @@ async fn find_earliest_unpruned_block<EngineClient_: EngineClient>(
             .full()
             .await?
             .ok_or(SyncStartError::BlockNotFound(mid.into()))?;
-        let consensus_block =
-            block.into_consensus().map_transactions(|tx| tx.inner.inner.into_inner());
+        let consensus_block = block
+            .map_header(|header| header.into_inner())
+            .into_consensus()
+            .map_transactions(|tx| tx.inner.inner.into_inner());
 
         match L2BlockInfo::from_block_and_genesis(&consensus_block, &cfg.genesis) {
             Ok(info) => {

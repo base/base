@@ -126,6 +126,12 @@ impl BaseUpgrade {
     /// These are the upgrades addressable by the L1 upgrade-signal contract and stored in the
     /// genesis [`UpgradeConfig`]. Excludes block-activated [`Bedrock`](Self::Bedrock) and the
     /// [`Zombie`](Self::Zombie) gate, which is never signaled or configured.
+    ///
+    /// Order is load-bearing: `map_schedule` and `ScheduleId::from_upgrades` attribute onchain
+    /// schedule entries to hardforks *by position*, and the `ProtocolVersions` contract keys
+    /// upgrades by ascending append-only registration id with names kept offchain. This order MUST
+    /// match the contract's registration order — reordering silently misattributes every
+    /// activation timestamp. Only ever append.
     pub const CONTRACT_VARIANTS: [Self; 13] = [
         Self::Regolith,
         Self::Canyon,
@@ -657,24 +663,16 @@ impl UpgradeConfig {
         }
     }
 
-    /// Returns an iterator of upgrade names -> their activation times (if scheduled.)
-    pub fn iter(&self) -> impl Iterator<Item = (&'static str, Option<u64>)> {
-        [
-            ("Regolith", self.regolith_time),
-            ("Canyon", self.canyon_time),
-            ("Delta", self.delta_time),
-            ("Ecotone", self.ecotone_time),
-            ("Fjord", self.fjord_time),
-            ("Granite", self.granite_time),
-            ("Holocene", self.holocene_time),
-            ("Pectra Blob Schedule", self.pectra_blob_schedule_time),
-            ("Isthmus", self.isthmus_time),
-            ("Jovian", self.jovian_time),
-            ("Azul", self.base.azul),
-            ("Beryl", self.base.beryl),
-            ("Cobalt", self.base.cobalt),
-        ]
-        .into_iter()
+    /// Returns an iterator of contract-backed upgrades -> their activation times (if scheduled),
+    /// in [`BaseUpgrade::CONTRACT_VARIANTS`] order.
+    ///
+    /// Derived from `CONTRACT_VARIANTS` (the single source of ordering) via the exhaustive
+    /// [`activation_timestamp`](Self::activation_timestamp) match, so this can never drift from the
+    /// registration order the schedule id and metrics rely on.
+    pub fn iter(&self) -> impl Iterator<Item = (BaseUpgrade, Option<u64>)> + '_ {
+        BaseUpgrade::CONTRACT_VARIANTS
+            .iter()
+            .map(move |&upgrade| (upgrade, self.activation_timestamp(upgrade)))
     }
 }
 
@@ -791,21 +789,14 @@ mod tests {
             base: BaseUpgradeConfig { azul: Some(11), beryl: Some(12), cobalt: Some(13) },
         };
 
-        let mut iter = upgrades.iter();
-        assert_eq!(iter.next(), Some(("Regolith", Some(1))));
-        assert_eq!(iter.next(), Some(("Canyon", Some(2))));
-        assert_eq!(iter.next(), Some(("Delta", Some(3))));
-        assert_eq!(iter.next(), Some(("Ecotone", Some(4))));
-        assert_eq!(iter.next(), Some(("Fjord", Some(5))));
-        assert_eq!(iter.next(), Some(("Granite", Some(6))));
-        assert_eq!(iter.next(), Some(("Holocene", Some(7))));
-        assert_eq!(iter.next(), Some(("Pectra Blob Schedule", Some(8))));
-        assert_eq!(iter.next(), Some(("Isthmus", Some(9))));
-        assert_eq!(iter.next(), Some(("Jovian", Some(10))));
-        assert_eq!(iter.next(), Some(("Azul", Some(11))));
-        assert_eq!(iter.next(), Some(("Beryl", Some(12))));
-        assert_eq!(iter.next(), Some(("Cobalt", Some(13))));
-        assert_eq!(iter.next(), None);
+        // iter() yields entries in CONTRACT_VARIANTS order with each variant's activation time.
+        let expected: Vec<(BaseUpgrade, Option<u64>)> = BaseUpgrade::CONTRACT_VARIANTS
+            .iter()
+            .enumerate()
+            .map(|(index, &upgrade)| (upgrade, Some(index as u64 + 1)))
+            .collect();
+
+        assert_eq!(upgrades.iter().collect::<Vec<_>>(), expected);
     }
 
     #[test]

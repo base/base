@@ -556,7 +556,7 @@ impl PendingBlocks {
         };
 
         RpcBlock::<Base> {
-            header: RPCHeader::from_consensus(header, None, None),
+            header: RPCHeader::from_consensus(header, None, None).into(),
             transactions,
             uncles: Vec::new(),
             withdrawals: Some(self.get_withdrawals().into()),
