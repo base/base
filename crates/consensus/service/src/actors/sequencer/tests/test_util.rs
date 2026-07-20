@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::test_utils::TestAttributesBuilder;
@@ -28,6 +28,7 @@ pub(super) fn test_actor() -> SequencerActor<
     let rollup_config = Arc::new(RollupConfig::default());
     let recovery_mode = RecoveryModeGuard::new(false);
     let engine_client = Arc::new(MockSequencerEngineClient::new());
+    let block_interval = Duration::from_secs(rollup_config.block_time.max(1));
     SequencerActor {
         admin_api_rx,
         builder: PayloadBuilder {
@@ -36,6 +37,7 @@ pub(super) fn test_actor() -> SequencerActor<
             origin_selector: MockOriginSelector::new(),
             recovery_mode: recovery_mode.clone(),
             rollup_config: Arc::clone(&rollup_config),
+            block_interval,
         },
         cancellation_token: CancellationToken::new(),
         conductor: None,
@@ -44,6 +46,7 @@ pub(super) fn test_actor() -> SequencerActor<
         shadow_blocks_per_cycle: None,
         recovery_mode,
         rollup_config,
+        block_interval,
         unsafe_payload_gossip_client: MockUnsafePayloadGossipClient::new(),
         sealer: None,
         pending_stop: None,

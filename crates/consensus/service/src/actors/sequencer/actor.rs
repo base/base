@@ -3,7 +3,7 @@
 use std::{
     num::NonZeroU64,
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use alloy_primitives::B256;
@@ -74,6 +74,8 @@ pub struct SequencerActor<
     pub recovery_mode: RecoveryModeGuard,
     /// The rollup configuration.
     pub rollup_config: Arc<RollupConfig>,
+    /// Wall-clock interval between consecutive block builds.
+    pub block_interval: Duration,
     /// A client to asynchronously sign and gossip built payloads to the network actor.
     pub unsafe_payload_gossip_client: UnsafePayloadGossipClient_,
     /// In-flight seal pipeline. [`Some`] while a sealed payload is being committed,
@@ -241,7 +243,7 @@ where
             }
             // Wait one block time before retrying the reset, but service admin queries
             // and honour cancellation throughout the backoff window.
-            let sleep = tokio::time::sleep(Duration::from_secs(self.rollup_config.block_time));
+            let sleep = tokio::time::sleep(self.block_interval);
             tokio::pin!(sleep);
             loop {
                 select! {
@@ -274,8 +276,11 @@ where
         pending_build_parent.take();
         let canonical_head = self.engine_client.get_unsafe_head().await?;
         *shadow_cycle = Some(ShadowCycle::building(canonical_head)?);
-        *next_payload_to_seal =
-            if self.is_active { self.builder.build_on(canonical_head).await? } else { None };
+        *next_payload_to_seal = if self.is_active {
+            self.builder.build_on(canonical_head, None).await?
+        } else {
+            None
+        };
         if self.is_active && next_payload_to_seal.is_none() {
             build_ticker.reset_immediately();
         }
@@ -307,6 +312,62 @@ where
             )
             .inspect_err(|_| self.cancellation_token.cancel())
     }
+
+    /// Wall-clock time at which a block with the given absolute timestamp should be sealed,
+    /// compensating for the time already spent sealing the previous block. A present
+    /// `timestamp_millis_part` selects millisecond-accurate (Zombie 200ms) scheduling.
+    ///
+    /// The compensation is capped at half the block interval so a single slow seal cannot
+    /// collapse the next block's build window to zero. Uncapped, a seal that overruns the
+    /// interval schedules the next seal in the past (immediate build, near-empty block, fast
+    /// seal), which then grants the following block a full build window — a self-sustaining
+    /// fat/thin oscillation. Clamping guarantees every block at least `block_interval / 2` of
+    /// build time and damps that loop. The raw `last_seal_duration` is still recorded for
+    /// metrics; only the scheduling compensation is clamped.
+    fn block_seal_target(
+        &self,
+        timestamp: u64,
+        timestamp_millis_part: Option<u16>,
+        last_seal_duration: Duration,
+    ) -> SystemTime {
+        let target = timestamp_millis_part.map_or_else(
+            || UNIX_EPOCH + Duration::from_secs(timestamp),
+            |part| {
+                let millis = timestamp.saturating_mul(1_000).saturating_add(part as u64);
+                UNIX_EPOCH + Duration::from_millis(millis)
+            },
+        );
+        let compensation = last_seal_duration.min(self.block_interval / 2);
+        target - compensation
+    }
+
+    fn next_block_seal_target(
+        &self,
+        timestamp: u64,
+        timestamp_millis_part: Option<u16>,
+        last_seal_duration: Duration,
+    ) -> SystemTime {
+        timestamp_millis_part.map_or_else(
+            || {
+                self.block_seal_target(
+                    timestamp.saturating_add(self.rollup_config.block_time),
+                    None,
+                    last_seal_duration,
+                )
+            },
+            |part| {
+                let millis = timestamp
+                    .saturating_mul(1_000)
+                    .saturating_add(part as u64)
+                    .saturating_add(self.block_interval.as_millis() as u64);
+                self.block_seal_target(
+                    millis / 1_000,
+                    Some((millis % 1_000) as u16),
+                    last_seal_duration,
+                )
+            },
+        )
+    }
 }
 
 #[async_trait]
@@ -335,8 +396,7 @@ where
     type StartData = ();
 
     async fn start(mut self, _: Self::StartData) -> Result<(), Self::Error> {
-        let mut build_ticker =
-            ScheduledTicker::new(Duration::from_secs(self.rollup_config.block_time));
+        let mut build_ticker = ScheduledTicker::new(self.block_interval);
 
         self.update_metrics();
 
@@ -359,6 +419,11 @@ where
             tokio::time::interval(Duration::from_secs(self.rollup_config.block_time));
         reconciliation_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut last_seal_duration = Duration::from_secs(0);
+
+        // Sub-second remainder of the most recently sealed block. `L2BlockInfo` records
+        // only whole seconds, so this is threaded into the next `build_on` to keep the
+        // Zombie timestamp planner's monotonicity guard strict.
+        let mut last_sealed_millis_part: Option<u16> = None;
 
         let mut last_block_complete_at: Option<Instant> = None;
 
@@ -490,18 +555,29 @@ where
                                     warn!(target: "sequencer", "Failed to send deferred stop_sequencer response");
                                 }
                             }
-                            if self.is_active
-                                && shadow_cycle
-                                    .and_then(ShadowCycle::reconciliation_target)
-                                    .is_none()
-                            {
-                                // Queue the acknowledged parent instead of starting its child
-                                // here. Its timestamp is a hard lower bound for the steady-state
-                                // child build because variable getPayload durations can make
-                                // insertion complete early.
-                                let parent_timestamp = inserted_head.block_info.timestamp;
-                                pending_build_parent = Some(inserted_head);
-                                build_ticker.reset_at_unix_timestamp(parent_timestamp);
+                            if self.is_active {
+                                if self.is_shadow_sequencer() {
+                                    if shadow_cycle
+                                        .and_then(ShadowCycle::reconciliation_target)
+                                        .is_none()
+                                    {
+                                        // Queue the acknowledged parent instead of starting its child
+                                        // here. Its timestamp is a hard lower bound for the steady-state
+                                        // child build because variable getPayload durations can make
+                                        // insertion complete early.
+                                        let parent_timestamp = inserted_head.block_info.timestamp;
+                                        pending_build_parent = Some(inserted_head);
+                                        build_ticker.reset_at_unix_timestamp(parent_timestamp);
+                                    }
+                                } else {
+                                    next_payload_to_seal = self
+                                        .builder
+                                        .build_on(inserted_head, last_sealed_millis_part)
+                                        .await?;
+                                    if next_payload_to_seal.is_none() {
+                                        build_ticker.reset_immediately();
+                                    }
+                                }
                             }
                         }
                         Ok(SealStepOutcome::Pending) => {}
@@ -521,18 +597,16 @@ where
                     if let Some(parent) = pending_build_parent.take() {
                         // Do not start a steady-state child build before its inserted parent's
                         // timestamp. If it is already past, the ticker is immediately runnable.
-                        next_payload_to_seal = self.builder.build_on(parent).await?;
+                        next_payload_to_seal =
+                            self.builder.build_on(parent, last_sealed_millis_part).await?;
                         if let Some(ref payload) = next_payload_to_seal {
-                            let next_block_seconds = payload
-                                .attributes_with_parent
-                                .parent()
-                                .block_info
-                                .timestamp
-                                .saturating_add(self.rollup_config.block_time);
-                            build_ticker.reset_before_unix_timestamp(
-                                next_block_seconds,
+                            let attributes = payload.attributes_with_parent.attributes();
+                            let next_block_time = self.block_seal_target(
+                                attributes.payload_attributes.timestamp,
+                                attributes.timestamp_millis_part,
                                 last_seal_duration,
                             );
+                            build_ticker.reset_at(next_block_time);
                         } else {
                             // Retry through build() so the next attempt refreshes the unsafe head
                             // instead of retaining a parent that may have become stale.
@@ -545,19 +619,24 @@ where
                             .attributes()
                             .payload_attributes
                             .timestamp;
+                        let handle_timestamp_millis_part = handle
+                            .attributes_with_parent
+                            .attributes()
+                            .timestamp_millis_part;
                         match self.try_seal_handle(handle).await? {
                             Some((new_sealer, dur)) => {
                                 last_seal_duration = dur;
+                                last_sealed_millis_part = handle_timestamp_millis_part;
                                 self.sealer = Some(new_sealer);
                                 // Schedule the next tick for the next block's target seal time.
                                 // Use the just-sealed block's timestamp; the next block's
                                 // timestamp is one block_time later.
-                                let next_block_seconds =
-                                    handle_timestamp.saturating_add(self.rollup_config.block_time);
-                                build_ticker.reset_before_unix_timestamp(
-                                    next_block_seconds,
+                                let next_block_time = self.next_block_seal_target(
+                                    handle_timestamp,
+                                    handle_timestamp_millis_part,
                                     last_seal_duration,
                                 );
+                                build_ticker.reset_at(next_block_time);
                                 // Do not call build() here. The next payload is built after the
                                 // engine acknowledges insertion of the sealed payload.
                             }
@@ -566,16 +645,13 @@ where
                                 // the current unsafe head.
                                 next_payload_to_seal = self.builder.build().await?;
                                 if let Some(ref payload) = next_payload_to_seal {
-                                    let next_block_seconds = payload
-                                        .attributes_with_parent
-                                        .parent()
-                                        .block_info
-                                        .timestamp
-                                        .saturating_add(self.rollup_config.block_time);
-                                    build_ticker.reset_before_unix_timestamp(
-                                        next_block_seconds,
+                                    let attributes = payload.attributes_with_parent.attributes();
+                                    let next_block_time = self.block_seal_target(
+                                        attributes.payload_attributes.timestamp,
+                                        attributes.timestamp_millis_part,
                                         last_seal_duration,
                                     );
+                                    build_ticker.reset_at(next_block_time);
                                 } else {
                                     build_ticker.reset_immediately();
                                 }
@@ -584,16 +660,13 @@ where
                     } else {
                         next_payload_to_seal = self.builder.build().await?;
                         if let Some(ref payload) = next_payload_to_seal {
-                            let next_block_seconds = payload
-                                .attributes_with_parent
-                                .parent()
-                                .block_info
-                                .timestamp
-                                .saturating_add(self.rollup_config.block_time);
-                            build_ticker.reset_before_unix_timestamp(
-                                next_block_seconds,
+                            let attributes = payload.attributes_with_parent.attributes();
+                            let next_block_time = self.block_seal_target(
+                                attributes.payload_attributes.timestamp,
+                                attributes.timestamp_millis_part,
                                 last_seal_duration,
                             );
+                            build_ticker.reset_at(next_block_time);
                         } else {
                             build_ticker.reset_immediately();
                         }

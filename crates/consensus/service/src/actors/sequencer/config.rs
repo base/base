@@ -37,6 +37,8 @@ pub struct SequencerConfig {
     pub conductor_rpc_timeout: Duration,
     /// The confirmation delay for the sequencer.
     pub l1_conf_delay: u64,
+    /// Block-production interval override. `None` derives from `rollup_config.block_time`.
+    pub block_interval: Option<Duration>,
 }
 
 impl SequencerConfig {
@@ -59,6 +61,7 @@ impl Default for SequencerConfig {
             conductor_binary_commit: false,
             conductor_rpc_timeout: DEFAULT_CONDUCTOR_RPC_TIMEOUT,
             l1_conf_delay: 0,
+            block_interval: None,
         }
     }
 }

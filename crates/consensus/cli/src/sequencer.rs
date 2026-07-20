@@ -1,9 +1,6 @@
 //! Sequencer consensus-control CLI flags.
 
-use std::{
-    num::{NonZeroU64, ParseIntError},
-    time::Duration,
-};
+use std::{num::NonZeroU64, time::Duration};
 
 use base_consensus_node::SequencerConfig;
 use clap::Parser;
@@ -52,9 +49,9 @@ pub struct SequencerArgs {
     /// Conductor service RPC timeout.
     #[arg(
         long = "conductor.rpc.timeout",
-        default_value = "1",
+        default_value = "1s",
         env = "BASE_NODE_CONDUCTOR_RPC_TIMEOUT",
-        value_parser = |arg: &str| -> Result<Duration, ParseIntError> {Ok(Duration::from_secs(arg.parse()?))}
+        value_parser = parse_duration
     )]
     pub conductor_rpc_timeout: Duration,
 
@@ -67,6 +64,19 @@ pub struct SequencerArgs {
         env = "BASE_NODE_CONDUCTOR_BINARY_COMMIT"
     )]
     pub conductor_binary_commit: bool,
+
+    /// Block-production interval override (e.g. `200ms`, `2s`). Defaults to rollup config `block_time`.
+    #[arg(
+        id = "sequencer_block_interval",
+        long = "sequencer.block-time",
+        env = "BASE_NODE_SEQUENCER_BLOCK_TIME",
+        value_parser = parse_duration
+    )]
+    pub sequencer_block_interval: Option<Duration>,
+}
+
+fn parse_duration(arg: &str) -> Result<Duration, String> {
+    humantime::parse_duration(arg).map_err(|error| error.to_string())
 }
 
 impl Default for SequencerArgs {
@@ -88,6 +98,7 @@ impl SequencerArgs {
             conductor_binary_commit: self.conductor_binary_commit,
             conductor_rpc_timeout: self.conductor_rpc_timeout,
             l1_conf_delay: self.l1_confs,
+            block_interval: self.sequencer_block_interval,
         }
     }
 }
