@@ -120,7 +120,6 @@ where
                 target_block,
                 &session_id,
                 target_block <= dispatched_through,
-                true,
             )
             .await
             {
@@ -173,7 +172,32 @@ where
         target_block: u64,
         session_id: &str,
         request_dispatched: bool,
-        record_metrics: bool,
+    ) -> Result<Option<(Proposal, Vec<Proposal>)>, ProposerError> {
+        let result =
+            Self::poll_proof_inner(proof_requester, target_block, session_id, request_dispatched)
+                .await;
+
+        match &result {
+            Ok(Some(_)) => {
+                Metrics::proof_status_received_total(Metrics::PROOF_STATUS_SUCCEEDED).increment(1);
+                Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_READY).increment(1);
+                Metrics::last_collected_block().set(target_block as f64);
+            }
+            Err(error) => {
+                Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_FAILED).increment(1);
+                Metrics::errors_total(error.metric_label()).increment(1);
+            }
+            Ok(None) => {}
+        }
+
+        result
+    }
+
+    async fn poll_proof_inner(
+        proof_requester: &dyn ProofRequesterProvider,
+        target_block: u64,
+        session_id: &str,
+        request_dispatched: bool,
     ) -> Result<Option<(Proposal, Vec<Proposal>)>, ProposerError> {
         let response = match proof_requester
             .get_proof(GetProofRequest { session_id: session_id.to_owned() })
@@ -191,11 +215,6 @@ where
                 }
 
                 let error = ProposerError::Prover(format!("proof session {session_id} not found"));
-                if record_metrics {
-                    Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_FAILED)
-                        .increment(1);
-                    Metrics::errors_total(error.metric_label()).increment(1);
-                }
                 warn!(
                     target_block,
                     session_id = %session_id,
@@ -205,9 +224,6 @@ where
                 return Err(error);
             }
             Err(e) => {
-                if record_metrics {
-                    Metrics::errors_total("prover").increment(1);
-                }
                 warn!(
                     target_block,
                     session_id = %session_id,
@@ -217,16 +233,6 @@ where
                 return Ok(None);
             }
         };
-
-        if record_metrics {
-            Metrics::proof_status_received_total(match response.status {
-                ProofStatus::Queued => Metrics::PROOF_STATUS_QUEUED,
-                ProofStatus::Running => Metrics::PROOF_STATUS_RUNNING,
-                ProofStatus::Succeeded => Metrics::PROOF_STATUS_SUCCEEDED,
-                ProofStatus::Failed => Metrics::PROOF_STATUS_FAILED,
-            })
-            .increment(1);
-        }
 
         match response.status {
             ProofStatus::Queued | ProofStatus::Running => {
@@ -243,11 +249,6 @@ where
                     format!("proof session {session_id} failed without an error message")
                 });
                 let error = ProposerError::Prover(message);
-                if record_metrics {
-                    Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_FAILED)
-                        .increment(1);
-                    Metrics::errors_total(error.metric_label()).increment(1);
-                }
                 warn!(
                     target_block,
                     session_id = %session_id,
@@ -261,11 +262,6 @@ where
                     let error = ProposerError::Prover(format!(
                         "proof session {session_id} succeeded without a result"
                     ));
-                    if record_metrics {
-                        Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_FAILED)
-                            .increment(1);
-                        Metrics::errors_total(error.metric_label()).increment(1);
-                    }
                     warn!(
                         target_block,
                         session_id = %session_id,
@@ -278,19 +274,9 @@ where
                 match ProposerProofAdapter::tee_proof_result(result) {
                     Ok(proof) => {
                         info!(target_block, session_id = %session_id, "Proof request succeeded");
-                        if record_metrics {
-                            Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_READY)
-                                .increment(1);
-                            Metrics::last_collected_block().set(target_block as f64);
-                        }
                         Ok(Some(proof))
                     }
                     Err(error) => {
-                        if record_metrics {
-                            Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_FAILED)
-                                .increment(1);
-                            Metrics::errors_total(error.metric_label()).increment(1);
-                        }
                         warn!(
                             target_block,
                             session_id = %session_id,
@@ -416,43 +402,54 @@ where
         mut target_block: u64,
         context: BatchDeleteContext<'_>,
     ) -> bool {
+        let first_block = target_block;
+        let mut last_block = target_block;
+        let mut deleted_count = 0_u64;
+
         if !self.delete_single_proof_request(session_id, target_block).await {
             return false;
         }
+        deleted_count += 1;
 
         loop {
             if context.cancel.is_cancelled() {
+                Self::log_batch_delete_summary(deleted_count, first_block, last_block);
                 return true;
             }
 
             let Some(next_target) = ProofTarget::next_block(target_block, self.block_interval)
             else {
+                Self::log_batch_delete_summary(deleted_count, first_block, last_block);
                 return true;
             };
             target_block = next_target;
 
             if target_block > context.finalized_head || target_block > context.dispatched_through {
+                Self::log_batch_delete_summary(deleted_count, first_block, last_block);
                 return true;
             }
 
             let Some(claimed_l2_output_root) =
                 ProofTarget::canonical_output_root(self.rollup_client.as_ref(), target_block).await
             else {
+                Self::log_batch_delete_summary(deleted_count, first_block, last_block);
                 return true;
             };
 
             let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_l2_output_root);
-            match Self::poll_proof(
+            match Self::poll_proof_inner(
                 self.proof_requester.as_ref(),
                 target_block,
                 &session_id,
-                false,
                 false,
             )
             .await
             {
                 Ok(Some(_)) if context.delete_succeeded_proofs => {}
-                Ok(Some(_)) | Ok(None) => return true,
+                Ok(Some(_)) | Ok(None) => {
+                    Self::log_batch_delete_summary(deleted_count, first_block, last_block);
+                    return true;
+                }
                 Err(error) => warn!(
                     target_block,
                     session_id = %session_id,
@@ -462,8 +459,20 @@ where
             }
 
             if !self.delete_single_proof_request(&session_id, target_block).await {
+                Self::log_batch_delete_summary(deleted_count, first_block, last_block);
                 return true;
             }
+            deleted_count += 1;
+            last_block = target_block;
+        }
+    }
+
+    fn log_batch_delete_summary(deleted_count: u64, first_block: u64, last_block: u64) {
+        if deleted_count > 1 {
+            info!(
+                deleted_count,
+                first_block, last_block, "Batch-deleted consecutive invalid proofs"
+            );
         }
     }
 
