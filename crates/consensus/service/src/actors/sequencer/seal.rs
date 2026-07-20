@@ -23,6 +23,8 @@ pub enum SealState {
     Committed,
     /// Gossiped to peers. Ready for engine insertion.
     Gossiped,
+    /// Private payload ready for engine insertion without conductor commit or gossip.
+    Private,
 }
 
 /// Result from one seal pipeline step.
@@ -40,7 +42,7 @@ impl SealState {
         match self {
             Self::Sealed => "conductor",
             Self::Committed => "gossip",
-            Self::Gossiped => "insert",
+            Self::Gossiped | Self::Private => "insert",
         }
     }
 }
@@ -79,6 +81,13 @@ impl PayloadSealer {
         );
 
         Self { envelope, state: SealState::Sealed, seal_span, started_at: Instant::now() }
+    }
+
+    /// Creates a private sealer that skips conductor commit and gossip.
+    pub fn new_private(envelope: BaseExecutionPayloadEnvelope) -> Self {
+        let mut sealer = Self::new(envelope);
+        sealer.state = SealState::Private;
+        sealer
     }
 
     /// Performs one step of the seal pipeline.
@@ -127,7 +136,7 @@ impl PayloadSealer {
                 self.state = SealState::Gossiped;
                 Ok(SealStepOutcome::Pending)
             }
-            SealState::Gossiped => {
+            SealState::Gossiped | SealState::Private => {
                 self.seal_span.in_scope(
                     || debug!(target: "sequencer", step = "insert", "seal pipeline step"),
                 );
