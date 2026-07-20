@@ -29,7 +29,7 @@ use alloy_sol_types::{SolCall, SolError, SolEvent};
 use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
     ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, IPolicyRegistry,
-    PolicyRegistryStorage, PolicyVersion, PolicyVersions,
+    PolicyContractContext, PolicyRegistryStorage, PolicyVersion, PolicyVersionResolver,
 };
 use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
@@ -104,7 +104,11 @@ fn call_policy(
 ) -> (bool, Bytes) {
     storage.set_caller(caller);
     StorageCtx::enter(storage, |ctx| {
-        PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata, BaseUpgrade::Beryl)
+        PolicyContractContext::with_storage(PolicyRegistryStorage::new(ctx)).dispatch(
+            ctx,
+            &calldata,
+            BaseUpgrade::Beryl,
+        )
     })
     .map(|out| (out.is_revert(), out.bytes))
     .expect("dispatch must not fatally error")
@@ -176,9 +180,15 @@ fn assert_root(label: &str, storage: HashMapStorageProvider, expected: B256) {
 
 #[test]
 fn resolver_maps_forks_to_versions() {
-    assert_eq!(PolicyVersions::from_base_upgrade(BaseUpgrade::Azul), None);
-    assert_eq!(PolicyVersions::from_base_upgrade(BaseUpgrade::Beryl), Some(PolicyVersion::V1));
-    assert_eq!(PolicyVersions::from_base_upgrade(BaseUpgrade::Cobalt), Some(PolicyVersion::V1));
+    assert_eq!(PolicyVersionResolver::from_base_upgrade(BaseUpgrade::Azul), None);
+    assert_eq!(
+        PolicyVersionResolver::from_base_upgrade(BaseUpgrade::Beryl),
+        Some(PolicyVersion::V1)
+    );
+    assert_eq!(
+        PolicyVersionResolver::from_base_upgrade(BaseUpgrade::Cobalt),
+        Some(PolicyVersion::V1)
+    );
 }
 
 #[test]
@@ -187,7 +197,11 @@ fn dispatch_reverts_before_beryl() {
     let calldata = IPolicyRegistry::isAuthorizedCall { policyId: 0, account: ALICE }.abi_encode();
     s.set_caller(ALICE);
     let (rev, bytes) = StorageCtx::enter(&mut s, |ctx| {
-        PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata, BaseUpgrade::Azul)
+        PolicyContractContext::with_storage(PolicyRegistryStorage::new(ctx)).dispatch(
+            ctx,
+            &calldata,
+            BaseUpgrade::Azul,
+        )
     })
     .map(|out| (out.is_revert(), out.bytes))
     .expect("dispatch must not fatally error");
@@ -718,7 +732,11 @@ fn golden_reverts_nonzero_value() {
     s.set_caller(ALICE);
     s.set_call_value(U256::ONE);
     let (rev, bytes) = StorageCtx::enter(&mut s, |ctx| {
-        PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata, BaseUpgrade::Beryl)
+        PolicyContractContext::with_storage(PolicyRegistryStorage::new(ctx)).dispatch(
+            ctx,
+            &calldata,
+            BaseUpgrade::Beryl,
+        )
     })
     .map(|out| (out.is_revert(), out.bytes))
     .expect("dispatch must not fatally error");
@@ -762,7 +780,11 @@ fn gas(
     s.set_caller(caller);
     s.reset_counters();
     StorageCtx::enter(&mut s, |ctx| {
-        PolicyRegistryStorage::new(ctx).dispatch(ctx, &calldata, BaseUpgrade::Beryl)
+        PolicyContractContext::with_storage(PolicyRegistryStorage::new(ctx)).dispatch(
+            ctx,
+            &calldata,
+            BaseUpgrade::Beryl,
+        )
     })
     .expect("gas-footprint op must succeed");
     (s.counter_sload(), s.counter_sstore(), s.counter_keccak256())

@@ -2,7 +2,7 @@
 //!
 //! [`PolicyRegistryLogic`] (in [`interface`](self)) is the append-only business-logic
 //! interface each version implements; [`PolicyRegistryLogicV1`] is the first frozen
-//! implementation. PolicyRegistryLogic methods take a [`crate::policy::ContractContext`]
+//! implementation. `PolicyRegistryLogic` methods take a [`crate::policy::ContractContext`]
 //! wrapping the storage port.
 
 mod interface;

@@ -23,12 +23,12 @@ impl<S: PolicyAccounting> ContractContext<S> {
     }
 
     /// Returns a shared reference to the underlying storage port.
-    pub fn storage(&self) -> &S {
+    pub const fn storage(&self) -> &S {
         &self.storage
     }
 
     /// Returns an exclusive reference to the underlying storage port.
-    pub fn storage_mut(&mut self) -> &mut S {
+    pub const fn storage_mut(&mut self) -> &mut S {
         &mut self.storage
     }
 }

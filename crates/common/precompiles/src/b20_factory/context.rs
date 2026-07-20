@@ -4,6 +4,8 @@
 //! operate on. It carries no business logic of its own — behavior lives in the
 //! version implementations resolved from [`super::VersionResolver`].
 
+use core::fmt;
+
 use super::B20FactoryStorage;
 
 /// Storage binding the factory logic operates on.
@@ -15,6 +17,12 @@ pub struct ContractContext<'a> {
     storage: B20FactoryStorage<'a>,
 }
 
+impl fmt::Debug for ContractContext<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ContractContext").finish_non_exhaustive()
+    }
+}
+
 impl<'a> ContractContext<'a> {
     /// Creates a context backed by factory storage.
     pub const fn with_storage(storage: B20FactoryStorage<'a>) -> Self {
@@ -22,12 +30,12 @@ impl<'a> ContractContext<'a> {
     }
 
     /// Returns a shared reference to the underlying storage.
-    pub fn storage(&self) -> &B20FactoryStorage<'a> {
+    pub const fn storage(&self) -> &B20FactoryStorage<'a> {
         &self.storage
     }
 
     /// Returns an exclusive reference to the underlying storage.
-    pub fn storage_mut(&mut self) -> &mut B20FactoryStorage<'a> {
+    pub const fn storage_mut(&mut self) -> &mut B20FactoryStorage<'a> {
         &mut self.storage
     }
 }
