@@ -28,10 +28,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # base_anvil_ref / base_std_ref are release tags (readable, per-repo).
+          # A future backport can re-point the tag without editing this workflow;
+          # the resolved commit SHA is recorded in the result artifact and PR comment.
           - fork: Beryl
             key: beryl
-            base_anvil_ref: dccbdfd0b37d364cc50e0e15f1686ab029543c6f
-            base_std_ref: 4658f1b7b54ccc61b036adc32830594018ea507e
+            base_anvil_ref: v1.1.1
+            base_std_ref: v1.0.0
     env:
       FORK_NAME: ${{ matrix.fork }}
       FORK_KEY: ${{ matrix.key }}
@@ -69,29 +72,25 @@ jobs:
           rm -rf "$workdir"
           mkdir -p "$workdir"
 
+          # Fetch from the tag namespace so a same-named branch can't be used and
+          # annotated tags (e.g. base-anvil v1.1.1) resolve to their target commit.
+          # A missing tag makes the fetch fail (set -e) — that is the checkout guard.
           gh repo clone base/base-std "$workdir/base-std" -- \
             --filter=blob:none --no-checkout
-          git -C "$workdir/base-std" fetch --depth 1 origin "$BASE_STD_REF"
-          git -C "$workdir/base-std" checkout --detach "$BASE_STD_REF"
+          git -C "$workdir/base-std" fetch --depth 1 origin "refs/tags/${BASE_STD_REF}:refs/tags/${BASE_STD_REF}"
+          git -C "$workdir/base-std" checkout --detach "refs/tags/${BASE_STD_REF}"
           git -C "$workdir/base-std" submodule update --init --recursive --depth 1
 
           git clone --filter=blob:none --no-checkout \
             https://github.com/base/base-anvil.git "$workdir/base-anvil"
-          git -C "$workdir/base-anvil" fetch --depth 1 origin "$BASE_ANVIL_REF"
-          git -C "$workdir/base-anvil" checkout --detach "$BASE_ANVIL_REF"
+          git -C "$workdir/base-anvil" fetch --depth 1 origin "refs/tags/${BASE_ANVIL_REF}:refs/tags/${BASE_ANVIL_REF}"
+          git -C "$workdir/base-anvil" checkout --detach "refs/tags/${BASE_ANVIL_REF}"
 
+          # Record the resolved commit SHAs for the audit trail. Tags are readable
+          # pointers; the SHA below is the source of truth for what actually ran.
           base_sha=$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)
           base_std_sha=$(git -C "$workdir/base-std" rev-parse HEAD)
           base_anvil_sha=$(git -C "$workdir/base-anvil" rev-parse HEAD)
-
-          if [ "$base_std_sha" != "$BASE_STD_REF" ]; then
-            echo "::error::base-std checkout mismatch: expected $BASE_STD_REF, got $base_std_sha"
-            exit 1
-          fi
-          if [ "$base_anvil_sha" != "$BASE_ANVIL_REF" ]; then
-            echo "::error::base-anvil checkout mismatch: expected $BASE_ANVIL_REF, got $base_anvil_sha"
-            exit 1
-          fi
 
           echo "BASE_SHA=$base_sha" >> "$GITHUB_ENV"
           echo "BASE_STD_SHA=$base_std_sha" >> "$GITHUB_ENV"
