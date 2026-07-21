@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use base_proof_host::Metrics;
 use base_proof_preimage::PreimageKey;
 use base_proof_primitives::ProofResult;
 use base_proof_tee_nitro_enclave::Server;
@@ -37,6 +38,9 @@ impl NitroTransport {
         &self,
         preimages: Vec<(PreimageKey, Vec<u8>)>,
     ) -> Result<ProofResult, NitroHostError> {
+        Metrics::witness_size_bytes()
+            .record(preimages.iter().map(|(_, value)| value.len()).sum::<usize>() as f64);
+
         Ok(match self {
             #[cfg(target_os = "linux")]
             Self::Vsock(t) => t.prove(preimages).await?,
