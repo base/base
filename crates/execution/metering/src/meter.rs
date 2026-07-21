@@ -3,6 +3,7 @@
 use std::{sync::Arc, time::Instant};
 
 use alloy_consensus::{BlockHeader, Transaction as _};
+use alloy_evm::block::TxResult as _;
 use alloy_primitives::{
     Address, B256, U256,
     map::{HashMap, HashSet},
@@ -17,7 +18,10 @@ use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use eyre::{Result as EyreResult, eyre};
 use reth_evm::{ConfigureEvm, Evm as _, execute::BlockBuilder};
 use reth_primitives_traits::{Account, SealedHeader};
-use reth_revm::{database::StateProviderDatabase, db::State, primitives::KECCAK_EMPTY};
+use reth_revm::{
+    database::StateProviderDatabase, db::State, primitives::KECCAK_EMPTY,
+    revm::context_interface::cfg::GasParams,
+};
 use revm_bytecode::opcode::OpCode;
 use revm_database::states::{BundleState, CacheState};
 
@@ -72,6 +76,93 @@ pub struct MeterBundleOutput {
     pub total_time_us: u128,
 }
 
+/// Transaction-level pseudo-opcodes exposed by bundle metering.
+///
+/// The string representation is the stable CLI/RPC name. Internally, metering
+/// uses this enum so comparisons do not depend on repeated string literals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PseudoOpcode {
+    /// Aggregate of the active transaction intrinsic components.
+    IntrinsicTotal,
+    /// EIP-2028/EIP-7623 zero-byte transaction data cost.
+    IntrinsicTxDataZeroByteCost,
+    /// EIP-2028/EIP-7623 non-zero-byte transaction data cost.
+    IntrinsicTxDataNonZeroByteCost,
+    /// EIP-2930 prepaid access-list address cost.
+    IntrinsicAccessListAddressCost,
+    /// EIP-2930 prepaid access-list storage-key cost.
+    IntrinsicAccessListStorageKeyCost,
+    /// EIP-3860 transaction initcode word cost.
+    IntrinsicInitcodeWordCost,
+    /// EIP-7623 transaction floor-gas candidate.
+    TxFloorGas,
+    /// Pre-Amsterdam legacy transaction base cost.
+    IntrinsicLegacyTxBaseCost,
+    /// Pre-Amsterdam legacy contract-creation cost.
+    IntrinsicLegacyCreateCost,
+    /// EIP-7702 legacy authorization-list empty-account cost.
+    IntrinsicPerEmptyAccountCost,
+    /// EIP-2780 resource-based transaction base cost.
+    IntrinsicTxBaseCost,
+    /// EIP-2780 cold account access cost.
+    IntrinsicColdAccountAccess,
+    /// EIP-2780 transaction value cost.
+    IntrinsicTxValueCost,
+    /// EIP-2780/EIP-7708 transfer-log cost.
+    IntrinsicTransferLogCost,
+    /// EIP-2780 account-creation access cost.
+    IntrinsicCreateAccess,
+    /// EIP-2780 regular authorization base cost.
+    IntrinsicRegularPerAuthBaseCost,
+    /// Successful top-level ETH transfer to a nonexistent account.
+    TxEffectEthTransferToNonexistentAccount,
+    /// Successful top-level ETH transfer to an existing account.
+    TxEffectEthTransferToExistingAccount,
+    /// Successful top-level ETH self-transfer.
+    TxEffectEthSelfTransfer,
+}
+
+impl PseudoOpcode {
+    /// Returns the stable CLI/RPC name for this pseudo-opcode.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::IntrinsicTotal => "INTRINSIC_TOTAL",
+            Self::IntrinsicTxDataZeroByteCost => "INTRINSIC_TX_DATA_ZERO_BYTE_COST",
+            Self::IntrinsicTxDataNonZeroByteCost => "INTRINSIC_TX_DATA_NON_ZERO_BYTE_COST",
+            Self::IntrinsicAccessListAddressCost => "INTRINSIC_ACCESS_LIST_ADDRESS_COST",
+            Self::IntrinsicAccessListStorageKeyCost => "INTRINSIC_ACCESS_LIST_STORAGE_KEY_COST",
+            Self::IntrinsicInitcodeWordCost => "INTRINSIC_INITCODE_WORD_COST",
+            Self::TxFloorGas => "TX_FLOOR_GAS",
+            Self::IntrinsicLegacyTxBaseCost => "INTRINSIC_LEGACY_TX_BASE_COST",
+            Self::IntrinsicLegacyCreateCost => "INTRINSIC_LEGACY_CREATE_COST",
+            Self::IntrinsicPerEmptyAccountCost => "INTRINSIC_PER_EMPTY_ACCOUNT_COST",
+            Self::IntrinsicTxBaseCost => "INTRINSIC_TX_BASE_COST",
+            Self::IntrinsicColdAccountAccess => "INTRINSIC_COLD_ACCOUNT_ACCESS",
+            Self::IntrinsicTxValueCost => "INTRINSIC_TX_VALUE_COST",
+            Self::IntrinsicTransferLogCost => "INTRINSIC_TRANSFER_LOG_COST",
+            Self::IntrinsicCreateAccess => "INTRINSIC_CREATE_ACCESS",
+            Self::IntrinsicRegularPerAuthBaseCost => "INTRINSIC_REGULAR_PER_AUTH_BASE_COST",
+            Self::TxEffectEthTransferToNonexistentAccount => {
+                "TX_EFFECT_ETH_TRANSFER_TO_NONEXISTENT_ACCOUNT"
+            }
+            Self::TxEffectEthTransferToExistingAccount => {
+                "TX_EFFECT_ETH_TRANSFER_TO_EXISTING_ACCOUNT"
+            }
+            Self::TxEffectEthSelfTransfer => "TX_EFFECT_ETH_SELF_TRANSFER",
+        }
+    }
+
+    /// Returns whether this pseudo-opcode classifies a top-level ETH transfer.
+    pub const fn is_eth_transfer_effect(self) -> bool {
+        matches!(
+            self,
+            Self::TxEffectEthTransferToNonexistentAccount
+                | Self::TxEffectEthTransferToExistingAccount
+                | Self::TxEffectEthSelfTransfer
+        )
+    }
+}
+
 /// Opcodes and precompiles to track during bundle metering.
 ///
 /// This is for targeted transaction and bundle simulation. It is not the primary production
@@ -86,6 +177,8 @@ pub struct MeteredOpcodes {
     pub beryl_b20_asset_precompiles: bool,
     /// Whether to track dynamic Beryl B-20 stablecoin-token precompile addresses.
     pub beryl_b20_stablecoin_precompiles: bool,
+    /// Synthetic transaction-level gas buckets to track.
+    pub pseudo_opcodes: HashSet<PseudoOpcode>,
 }
 
 /// Constructs a precompile address from a `u16` value.
@@ -131,6 +224,37 @@ const BERYL_PRECOMPILES: &[(&str, Address)] = &[
     (BERYL_POLICY_REGISTRY_PRECOMPILE, PolicyRegistryStorage::ADDRESS),
 ];
 
+const PSEUDO_OPCODES: &[PseudoOpcode] = &[
+    // EIP-2780: aggregate of the active transaction intrinsic components.
+    PseudoOpcode::IntrinsicTotal,
+    // EIP-2028 and EIP-7623: transaction data cost.
+    PseudoOpcode::IntrinsicTxDataZeroByteCost,
+    PseudoOpcode::IntrinsicTxDataNonZeroByteCost,
+    // EIP-2930: prepaid access-list entry costs.
+    PseudoOpcode::IntrinsicAccessListAddressCost,
+    PseudoOpcode::IntrinsicAccessListStorageKeyCost,
+    // EIP-3860: transaction initcode jumpdest-analysis cost.
+    PseudoOpcode::IntrinsicInitcodeWordCost,
+    // EIP-7623: floor candidate, separate from intrinsic gas.
+    PseudoOpcode::TxFloorGas,
+    // Pre-Amsterdam legacy aggregates. These are not EIP-2780 primitives.
+    PseudoOpcode::IntrinsicLegacyTxBaseCost,
+    PseudoOpcode::IntrinsicLegacyCreateCost,
+    // EIP-7702: legacy authorization-list charge.
+    PseudoOpcode::IntrinsicPerEmptyAccountCost,
+    // EIP-2780: resource-based intrinsic transaction primitives.
+    PseudoOpcode::IntrinsicTxBaseCost,
+    PseudoOpcode::IntrinsicColdAccountAccess,
+    PseudoOpcode::IntrinsicTxValueCost,
+    PseudoOpcode::IntrinsicTransferLogCost,
+    PseudoOpcode::IntrinsicCreateAccess,
+    PseudoOpcode::IntrinsicRegularPerAuthBaseCost,
+    // EIP-2780/EIP-7708: zero-gas top-level ETH-transfer classifiers.
+    PseudoOpcode::TxEffectEthTransferToNonexistentAccount,
+    PseudoOpcode::TxEffectEthTransferToExistingAccount,
+    PseudoOpcode::TxEffectEthSelfTransfer,
+];
+
 impl MeteredOpcodes {
     /// Returns true if no opcodes or precompiles are configured.
     pub fn is_empty(&self) -> bool {
@@ -138,6 +262,7 @@ impl MeteredOpcodes {
             && self.precompiles.is_empty()
             && !self.beryl_b20_asset_precompiles
             && !self.beryl_b20_stablecoin_precompiles
+            && self.pseudo_opcodes.is_empty()
     }
 
     /// Returns true if any fixed or dynamic precompile metering is configured.
@@ -215,6 +340,8 @@ impl MeteredOpcodes {
             .chain(BERYL_PRECOMPILES.iter())
             .map(|&(name, addr)| (name, (addr, name)))
             .collect();
+        let pseudo_lookup: HashMap<&str, PseudoOpcode> =
+            PSEUDO_OPCODES.iter().map(|&opcode| (opcode.as_str(), opcode)).collect();
 
         let mut result = Self::default();
         for name in names {
@@ -227,12 +354,208 @@ impl MeteredOpcodes {
                 result.beryl_b20_asset_precompiles = true;
             } else if upper == BERYL_B20_STABLECOIN_PRECOMPILE {
                 result.beryl_b20_stablecoin_precompiles = true;
+            } else if let Some(&pseudo_opcode) = pseudo_lookup.get(upper.as_str()) {
+                result.pseudo_opcodes.insert(pseudo_opcode);
             } else {
                 return Err(eyre!("unknown opcode or precompile: {name}"));
             }
         }
         Ok(result)
     }
+}
+
+fn is_dead_provider_account(account: &Account) -> bool {
+    account.nonce == 0
+        && account.balance.is_zero()
+        && account.bytecode_hash.is_none_or(|hash| hash == KECCAK_EMPTY)
+}
+
+fn is_dead_account_info(account: &reth_revm::state::AccountInfo) -> bool {
+    account.nonce == 0 && account.balance.is_zero() && account.code_hash == KECCAK_EMPTY
+}
+
+fn lookup_value_recipient_is_dead<SP>(
+    state_provider: &SP,
+    pending_state: Option<&PendingState>,
+    address: &Address,
+) -> EyreResult<bool>
+where
+    SP: reth_provider::StateProvider,
+{
+    if let Some(pending_account) =
+        pending_state.and_then(|pending_state| pending_state.bundle_state.account(address))
+    {
+        return Ok(pending_account.info.as_ref().is_none_or(is_dead_account_info));
+    }
+
+    Ok(state_provider.basic_account(address)?.as_ref().is_none_or(is_dead_provider_account))
+}
+
+fn intrinsic_gas_entries<T: alloy_consensus::Transaction>(
+    tx: &alloy_consensus::transaction::Recovered<T>,
+    recipient_is_dead: bool,
+    tx_succeeded: bool,
+    metered: &MeteredOpcodes,
+    spec: BaseSpecId,
+) -> Vec<OpcodeGas> {
+    if metered.pseudo_opcodes.is_empty() {
+        return Vec::new();
+    }
+
+    let requested = |opcode: PseudoOpcode| metered.pseudo_opcodes.contains(&opcode);
+    let mut entries = Vec::new();
+    let gas_params = GasParams::new_spec(spec.into());
+
+    // EIP-2028/EIP-7623: revm's active token schedule is the source of truth for
+    // calldata pricing. In particular, do not hardcode the Istanbul non-zero
+    // byte price because future schedules may change the multiplier.
+    let zero_bytes = tx.input().iter().filter(|&&byte| byte == 0).count() as u64;
+    let non_zero_bytes = tx.input().len() as u64 - zero_bytes;
+    let zero_byte_cost = gas_params.tx_token_cost();
+    let non_zero_byte_cost =
+        zero_byte_cost.saturating_mul(gas_params.tx_token_non_zero_byte_multiplier());
+    let calldata_zero_gas = zero_bytes.saturating_mul(zero_byte_cost);
+    let calldata_non_zero_gas = non_zero_bytes.saturating_mul(non_zero_byte_cost);
+
+    let is_create = tx.to().is_none();
+    // Pre-Amsterdam Base execution uses this legacy aggregate. The exact
+    // EIP-2780 primitive names are registered above but are deliberately not
+    // emitted until a Base execution schedule implements that decomposition.
+    let legacy_tx_base_gas = gas_params.tx_base_stipend();
+    let legacy_create_gas = if is_create { gas_params.tx_create_cost() } else { 0 };
+    let initcode_words = if is_create { tx.input().len().div_ceil(32) as u64 } else { 0 };
+    let initcode_gas = if is_create { gas_params.tx_initcode_cost(tx.input().len()) } else { 0 };
+
+    // EIP-2930: these are prepaid access-list entries, not EIP-7928 BAL
+    // observations. The active schedule can update their per-entry prices.
+    let access_list_addresses = tx.access_list().map_or(0, |access_list| access_list.len() as u64);
+    let access_list_storage_keys = tx.access_list().map_or(0, |access_list| {
+        access_list.iter().map(|item| item.storage_keys.len() as u64).sum()
+    });
+    let access_list_address_gas =
+        access_list_addresses.saturating_mul(gas_params.tx_access_list_address_cost());
+    let access_list_storage_key_gas =
+        access_list_storage_keys.saturating_mul(gas_params.tx_access_list_storage_key_cost());
+
+    // EIP-7702: `tx_eip7702_per_empty_account_cost` includes the active
+    // regular/state portions, so it remains correct if the schedule changes.
+    let authorization_count = tx.authorization_count().unwrap_or_default();
+    let per_empty_account_cost = gas_params.tx_eip7702_per_empty_account_cost();
+    let authorization_gas = authorization_count.saturating_mul(per_empty_account_cost);
+
+    let initial_gas = gas_params.initial_tx_gas(
+        tx.input(),
+        is_create,
+        access_list_addresses,
+        access_list_storage_keys,
+        authorization_count,
+    );
+    let intrinsic_gas = initial_gas.initial_total_gas();
+    let floor_gas = initial_gas.floor_gas();
+
+    if requested(PseudoOpcode::IntrinsicTotal) {
+        entries.push(OpcodeGas {
+            contract_address: Address::ZERO,
+            opcode: PseudoOpcode::IntrinsicTotal.as_str().to_string(),
+            count: 1,
+            gas_used: intrinsic_gas,
+        });
+    }
+    if requested(PseudoOpcode::IntrinsicTxDataZeroByteCost) && zero_bytes > 0 {
+        entries.push(OpcodeGas {
+            contract_address: Address::ZERO,
+            opcode: PseudoOpcode::IntrinsicTxDataZeroByteCost.as_str().to_string(),
+            count: zero_bytes,
+            gas_used: calldata_zero_gas,
+        });
+    }
+    if requested(PseudoOpcode::IntrinsicTxDataNonZeroByteCost) && non_zero_bytes > 0 {
+        entries.push(OpcodeGas {
+            contract_address: Address::ZERO,
+            opcode: PseudoOpcode::IntrinsicTxDataNonZeroByteCost.as_str().to_string(),
+            count: non_zero_bytes,
+            gas_used: calldata_non_zero_gas,
+        });
+    }
+    if requested(PseudoOpcode::IntrinsicInitcodeWordCost) && initcode_words > 0 {
+        entries.push(OpcodeGas {
+            contract_address: Address::ZERO,
+            opcode: PseudoOpcode::IntrinsicInitcodeWordCost.as_str().to_string(),
+            count: initcode_words,
+            gas_used: initcode_gas,
+        });
+    }
+    if requested(PseudoOpcode::IntrinsicAccessListAddressCost) && access_list_addresses > 0 {
+        entries.push(OpcodeGas {
+            contract_address: Address::ZERO,
+            opcode: PseudoOpcode::IntrinsicAccessListAddressCost.as_str().to_string(),
+            count: access_list_addresses,
+            gas_used: access_list_address_gas,
+        });
+    }
+    if requested(PseudoOpcode::IntrinsicAccessListStorageKeyCost) && access_list_storage_keys > 0 {
+        entries.push(OpcodeGas {
+            contract_address: Address::ZERO,
+            opcode: PseudoOpcode::IntrinsicAccessListStorageKeyCost.as_str().to_string(),
+            count: access_list_storage_keys,
+            gas_used: access_list_storage_key_gas,
+        });
+    }
+    if requested(PseudoOpcode::IntrinsicLegacyTxBaseCost) {
+        entries.push(OpcodeGas {
+            contract_address: Address::ZERO,
+            opcode: PseudoOpcode::IntrinsicLegacyTxBaseCost.as_str().to_string(),
+            count: 1,
+            gas_used: legacy_tx_base_gas,
+        });
+    }
+    if requested(PseudoOpcode::IntrinsicLegacyCreateCost) && is_create {
+        entries.push(OpcodeGas {
+            contract_address: Address::ZERO,
+            opcode: PseudoOpcode::IntrinsicLegacyCreateCost.as_str().to_string(),
+            count: 1,
+            gas_used: legacy_create_gas,
+        });
+    }
+    if requested(PseudoOpcode::IntrinsicPerEmptyAccountCost) && authorization_count > 0 {
+        entries.push(OpcodeGas {
+            contract_address: Address::ZERO,
+            opcode: PseudoOpcode::IntrinsicPerEmptyAccountCost.as_str().to_string(),
+            count: authorization_count,
+            gas_used: authorization_gas,
+        });
+    }
+    if requested(PseudoOpcode::TxFloorGas) && floor_gas > 0 {
+        entries.push(OpcodeGas {
+            contract_address: Address::ZERO,
+            opcode: PseudoOpcode::TxFloorGas.as_str().to_string(),
+            count: 1,
+            gas_used: floor_gas,
+        });
+    }
+
+    if tx_succeeded
+        && tx.value() > U256::ZERO
+        && let Some(to) = tx.to()
+    {
+        let opcode = if to == tx.signer() {
+            PseudoOpcode::TxEffectEthSelfTransfer
+        } else if recipient_is_dead {
+            PseudoOpcode::TxEffectEthTransferToNonexistentAccount
+        } else {
+            PseudoOpcode::TxEffectEthTransferToExistingAccount
+        };
+        if requested(opcode) {
+            entries.push(OpcodeGas {
+                contract_address: Address::ZERO,
+                opcode: opcode.as_str().to_string(),
+                count: 1,
+                gas_used: 0,
+            });
+        }
+    }
+
+    entries
 }
 
 /// Inputs for [`meter_bundle`].
@@ -283,6 +606,22 @@ where
     let metered_opcodes = metered_opcodes.as_ref();
     // Get bundle hash
     let bundle_hash = bundle.bundle_hash();
+
+    let meters_value_transfer_effects =
+        metered_opcodes.pseudo_opcodes.iter().any(|opcode| opcode.is_eth_transfer_effect());
+    let mut initial_value_recipient_is_dead: HashMap<Address, bool> = HashMap::default();
+    if meters_value_transfer_effects {
+        for tx in bundle.transactions() {
+            if let Some(to) = tx.to()
+                && tx.value() > U256::ZERO
+                && !initial_value_recipient_is_dead.contains_key(&to)
+            {
+                let is_dead =
+                    lookup_value_recipient_is_dead(&state_provider, pending_state.as_ref(), &to)?;
+                initial_value_recipient_is_dead.insert(to, is_dead);
+            }
+        }
+    }
 
     // Create state database
     let state_db = StateProviderDatabase::new(state_provider);
@@ -374,6 +713,11 @@ where
         block.basefee = block.basefee.min(MIN_BASEFEE);
         builder.apply_pre_execution_changes()?;
 
+        // TX_EFFECT_ETH_* classifies top-level ETH transfers. Within a
+        // bundle, only earlier successful top-level value transfers update this
+        // liveness cache; internal CALL/CREATE effects from prior transactions
+        // are intentionally not re-read here.
+        let mut live_value_recipients: HashSet<Address> = HashSet::default();
         for tx in bundle.transactions() {
             let tx_start = Instant::now();
             let tx_hash = tx.tx_hash();
@@ -381,6 +725,18 @@ where
             let to = tx.to();
             let value = tx.value();
             let gas_price = tx.max_fee_per_gas();
+            let recipient_is_dead = if meters_value_transfer_effects
+                && let Some(to) = to
+                && value > U256::ZERO
+            {
+                if live_value_recipients.contains(&to) {
+                    false
+                } else {
+                    initial_value_recipient_is_dead.get(&to).copied().unwrap_or(false)
+                }
+            } else {
+                false
+            };
             let account = account_infos
                 .get(&from)
                 .ok_or_else(|| eyre!("Account not found for address: {from}"))?
@@ -389,10 +745,19 @@ where
             validate_tx(account, tx, &mut l1_block_info, spec)
                 .map_err(|e| eyre!("Transaction {tx_hash} validation failed: {e}"))?;
 
+            let mut tx_succeeded = false;
             let gas_used = builder
-                .execute_transaction(tx.clone())
+                .execute_transaction_with_result_closure(tx.clone(), |result| {
+                    tx_succeeded = result.result().result.is_success();
+                })
                 .map_err(|e| eyre!("Transaction {tx_hash} execution failed: {e}"))?
                 .tx_gas_used();
+            if tx_succeeded
+                && let Some(to) = to
+                && value > U256::ZERO
+            {
+                live_value_recipients.insert(to);
+            }
 
             let gas_fees = U256::from(gas_used) * U256::from(gas_price);
             total_gas_used = total_gas_used.saturating_add(gas_used);
@@ -403,16 +768,16 @@ where
             let opcode_data = inspector.take_opcode_gas();
             let precompile_data = inspector.take_precompile_gas();
 
-            let mut opcode_gas: Vec<OpcodeGas> = opcode_data
-                .iter()
-                .filter(|(_, usage)| usage.count > 0)
-                .map(|(&(contract_address, opcode), usage)| OpcodeGas {
+            let mut opcode_gas =
+                intrinsic_gas_entries(tx, recipient_is_dead, tx_succeeded, &metered_opcodes, spec);
+            opcode_gas.extend(opcode_data.iter().filter(|(_, usage)| usage.count > 0).map(
+                |(&(contract_address, opcode), usage)| OpcodeGas {
                     contract_address,
                     opcode: opcode.as_str().to_string(),
                     count: usage.count,
                     gas_used: usage.gas_used,
-                })
-                .collect();
+                },
+            ));
 
             for (addr, usage) in &precompile_data {
                 if let Some(name) = metered_opcodes.precompile_name(*addr)
@@ -453,6 +818,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use alloy_consensus::transaction::Recovered;
     use alloy_eips::Encodable2718;
     use alloy_primitives::{Address, Bytes, keccak256, utils::Unit};
     use alloy_sol_types::{SolCall, SolValue};
@@ -532,6 +898,53 @@ mod tests {
 
         assert!(entry.count > 0, "{opcode} count should be non-zero");
         assert!(entry.gas_used > 0, "{opcode} gas_used should be non-zero");
+    }
+
+    fn value_call_contract_initcode(target: Address) -> Bytes {
+        // Runtime:
+        //   CALL(gas(), target, 1 wei, 0, 0, 0, 0)
+        //   STOP
+        let mut runtime = Vec::new();
+        runtime.extend_from_slice(&[0x60, 0x00]); // out size
+        runtime.extend_from_slice(&[0x60, 0x00]); // out offset
+        runtime.extend_from_slice(&[0x60, 0x00]); // in size
+        runtime.extend_from_slice(&[0x60, 0x00]); // in offset
+        runtime.extend_from_slice(&[0x60, 0x01]); // value
+        runtime.push(0x73); // PUSH20 target
+        runtime.extend_from_slice(target.as_slice());
+        runtime.push(0x5a); // GAS
+        runtime.push(0xf1); // CALL
+        runtime.push(0x00); // STOP
+
+        assert!(runtime.len() <= u8::MAX as usize);
+        let runtime_len = runtime.len() as u8;
+
+        let mut initcode = Vec::new();
+        initcode.extend_from_slice(&[
+            0x60,
+            runtime_len,
+            0x60,
+            0x0a,
+            0x5f,
+            0x39, // CODECOPY(0, 10, runtime_len)
+            0x60,
+            runtime_len,
+            0x5f,
+            0xf3, // RETURN(0, runtime_len)
+        ]);
+        initcode.extend_from_slice(&runtime);
+        Bytes::from(initcode)
+    }
+
+    async fn deploy_value_call_contract(
+        harness: &TestHarness,
+        target: Address,
+        nonce: u64,
+    ) -> eyre::Result<Address> {
+        let (deployment_tx, contract_address, _) =
+            Account::Deployer.create_deployment_tx(value_call_contract_initcode(target), nonce)?;
+        harness.build_block_from_transactions(vec![deployment_tx]).await?;
+        Ok(contract_address)
     }
 
     #[tokio::test]
@@ -628,6 +1041,65 @@ mod tests {
         assert_eq!(output.bundle_hash, keccak256(concatenated));
 
         assert!(result.execution_time_us > 0, "execution_time_us should be greater than zero");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn meter_bundle_reports_active_intrinsic_components_and_floor() -> eyre::Result<()> {
+        let harness = TestHarness::new().await?;
+        let latest = harness.latest_block();
+        let header = latest.sealed_header().clone();
+        let to = Address::random();
+        let signed_tx = TransactionBuilder::default()
+            .signer(Account::Alice.signer_b256())
+            .chain_id(harness.chain_id())
+            .nonce(0)
+            .to(to)
+            .gas_limit(100_000)
+            .max_fee_per_gas(MIN_BASEFEE as u128)
+            .max_priority_fee_per_gas(0)
+            .input(Bytes::from_static(&[0, 1]))
+            .into_eip1559();
+        let tx = BaseTransactionSigned::Eip1559(
+            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        );
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
+            .context("getting state provider")?;
+        let parsed_bundle = create_parsed_bundle(vec![tx])?;
+        let metered = MeteredOpcodes::parse(&[
+            "INTRINSIC_TOTAL".to_string(),
+            "INTRINSIC_TX_DATA_ZERO_BYTE_COST".to_string(),
+            "INTRINSIC_TX_DATA_NON_ZERO_BYTE_COST".to_string(),
+            "INTRINSIC_LEGACY_TX_BASE_COST".to_string(),
+            "TX_FLOOR_GAS".to_string(),
+        ])?;
+
+        let output = meter_bundle(MeterBundleInput {
+            state_provider,
+            chain_spec: harness.chain_spec(),
+            bundle: parsed_bundle,
+            header: header.clone(),
+            parent_beacon_block_root: header.parent_beacon_block_root(),
+            pending_state: None,
+            l1_block_info: L1BlockInfo::default(),
+            metered_opcodes: Arc::new(metered),
+        })?;
+
+        let entries = &output.results[0].opcode_gas;
+        let gas = |opcode: &str| {
+            entries.iter().find(|entry| entry.opcode == opcode).map(|entry| entry.gas_used)
+        };
+        // Osaka inherits EIP-2028's 4/16 calldata prices and EIP-7623's
+        // 21,000 + 10 * (zero + 4 * non-zero) floor candidate.
+        assert_eq!(gas("INTRINSIC_LEGACY_TX_BASE_COST"), Some(21_000));
+        assert_eq!(gas("INTRINSIC_TX_DATA_ZERO_BYTE_COST"), Some(4));
+        assert_eq!(gas("INTRINSIC_TX_DATA_NON_ZERO_BYTE_COST"), Some(16));
+        assert_eq!(gas("INTRINSIC_TOTAL"), Some(21_020));
+        assert_eq!(gas("TX_FLOOR_GAS"), Some(21_050));
+        assert_ne!(gas("INTRINSIC_TOTAL"), gas("TX_FLOOR_GAS"));
 
         Ok(())
     }
@@ -958,6 +1430,205 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn meter_bundle_opcode_gas_for_top_level_value_transfer() -> eyre::Result<()> {
+        let harness = TestHarness::new().await?;
+
+        let existing_account = Address::random();
+        let create_existing_account_tx = TransactionBuilder::default()
+            .signer(Account::Bob.signer_b256())
+            .chain_id(harness.chain_id())
+            .nonce(0)
+            .to(existing_account)
+            .value(1)
+            .gas_limit(21_000)
+            .max_fee_per_gas(MIN_BASEFEE as u128)
+            .max_priority_fee_per_gas(0)
+            .into_eip1559();
+        harness
+            .build_block_from_transactions(vec![Bytes::from(
+                BaseTransactionSigned::Eip1559(
+                    create_existing_account_tx.as_eip1559().expect("eip1559 transaction").clone(),
+                )
+                .encoded_2718(),
+            )])
+            .await?;
+
+        let latest = harness.latest_block();
+        let header = latest.sealed_header().clone();
+        let new_account = Address::random();
+        let transfers = [new_account, existing_account, Account::Alice.address()]
+            .into_iter()
+            .enumerate()
+            .map(|(idx, to)| {
+                let signed_tx = TransactionBuilder::default()
+                    .signer(Account::Alice.signer_b256())
+                    .chain_id(harness.chain_id())
+                    .nonce(idx as u64)
+                    .to(to)
+                    .value(1)
+                    .gas_limit(21_000)
+                    .max_fee_per_gas(MIN_BASEFEE as u128)
+                    .max_priority_fee_per_gas(0)
+                    .into_eip1559();
+                BaseTransactionSigned::Eip1559(
+                    signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+                )
+            })
+            .collect();
+
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
+            .context("getting state provider")?;
+        let parsed_bundle = create_parsed_bundle(transfers)?;
+        let metered = MeteredOpcodes::parse(&[
+            "CALL".to_string(),
+            "INTRINSIC_TOTAL".to_string(),
+            "TX_EFFECT_ETH_TRANSFER_TO_NONEXISTENT_ACCOUNT".to_string(),
+            "TX_EFFECT_ETH_TRANSFER_TO_EXISTING_ACCOUNT".to_string(),
+            "TX_EFFECT_ETH_SELF_TRANSFER".to_string(),
+        ])
+        .unwrap();
+
+        let output = meter_bundle(MeterBundleInput {
+            state_provider,
+            chain_spec: harness.chain_spec(),
+            bundle: parsed_bundle,
+            header: header.clone(),
+            parent_beacon_block_root: header.parent_beacon_block_root(),
+            pending_state: None,
+            l1_block_info: L1BlockInfo::default(),
+            metered_opcodes: Arc::new(metered),
+        })?;
+
+        assert_eq!(output.results.len(), 3);
+        for result in &output.results {
+            assert_eq!(result.gas_used, 21_000);
+            assert!(
+                result
+                    .opcode_gas
+                    .iter()
+                    .any(|entry| entry.opcode == "INTRINSIC_TOTAL" && entry.gas_used == 21_000),
+                "top-level value transfers should report intrinsic gas"
+            );
+            assert!(
+                result.opcode_gas.iter().all(|entry| entry.opcode != "CALL"),
+                "top-level value transfers do not execute a CALL opcode"
+            );
+        }
+        assert!(output.results[0].opcode_gas.iter().any(|entry| {
+            entry.opcode == "TX_EFFECT_ETH_TRANSFER_TO_NONEXISTENT_ACCOUNT" && entry.count == 1
+        }));
+        assert!(output.results[1].opcode_gas.iter().any(|entry| {
+            entry.opcode == "TX_EFFECT_ETH_TRANSFER_TO_EXISTING_ACCOUNT" && entry.count == 1
+        }));
+        assert!(
+            output.results[2]
+                .opcode_gas
+                .iter()
+                .any(|entry| { entry.opcode == "TX_EFFECT_ETH_SELF_TRANSFER" && entry.count == 1 })
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn meter_bundle_call_value_distinguishes_new_and_existing_accounts() -> eyre::Result<()> {
+        let harness = TestHarness::new().await?;
+
+        let existing_account = Address::random();
+        let create_existing_account_tx = TransactionBuilder::default()
+            .signer(Account::Bob.signer_b256())
+            .chain_id(harness.chain_id())
+            .nonce(0)
+            .to(existing_account)
+            .value(1)
+            .gas_limit(21_000)
+            .max_fee_per_gas(MIN_BASEFEE as u128)
+            .max_priority_fee_per_gas(0)
+            .into_eip1559();
+        harness
+            .build_block_from_transactions(vec![Bytes::from(
+                BaseTransactionSigned::Eip1559(
+                    create_existing_account_tx.as_eip1559().expect("eip1559 transaction").clone(),
+                )
+                .encoded_2718(),
+            )])
+            .await?;
+
+        let new_account = Address::random();
+        let call_new_contract = deploy_value_call_contract(&harness, new_account, 0).await?;
+        let call_existing_contract =
+            deploy_value_call_contract(&harness, existing_account, 1).await?;
+
+        let latest = harness.latest_block();
+        let header = latest.sealed_header().clone();
+        let calls = [call_new_contract, call_existing_contract]
+            .into_iter()
+            .enumerate()
+            .map(|(idx, to)| {
+                let signed_tx = TransactionBuilder::default()
+                    .signer(Account::Alice.signer_b256())
+                    .chain_id(harness.chain_id())
+                    .nonce(idx as u64)
+                    .to(to)
+                    .value(1)
+                    .gas_limit(100_000)
+                    .max_fee_per_gas(MIN_BASEFEE as u128)
+                    .max_priority_fee_per_gas(0)
+                    .into_eip1559();
+                BaseTransactionSigned::Eip1559(
+                    signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+                )
+            })
+            .collect();
+
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
+            .context("getting state provider")?;
+        let parsed_bundle = create_parsed_bundle(calls)?;
+        let metered = MeteredOpcodes::parse(&["CALL".to_string()]).unwrap();
+
+        let output = meter_bundle(MeterBundleInput {
+            state_provider,
+            chain_spec: harness.chain_spec(),
+            bundle: parsed_bundle,
+            header: header.clone(),
+            parent_beacon_block_root: header.parent_beacon_block_root(),
+            pending_state: None,
+            l1_block_info: L1BlockInfo::default(),
+            metered_opcodes: Arc::new(metered),
+        })?;
+
+        assert_eq!(output.results.len(), 2);
+        let call_new = output.results[0]
+            .opcode_gas
+            .iter()
+            .find(|entry| entry.opcode == "CALL")
+            .expect("CALL to new account should be metered");
+        let call_existing = output.results[1]
+            .opcode_gas
+            .iter()
+            .find(|entry| entry.opcode == "CALL")
+            .expect("CALL to existing account should be metered");
+
+        assert_eq!(call_new.count, 1);
+        assert_eq!(call_existing.count, 1);
+        assert!(
+            call_new.gas_used > call_existing.gas_used,
+            "CALL with value to a new account should include the account-creation surcharge"
+        );
+        assert_eq!(
+            call_new.gas_used - call_existing.gas_used,
+            25_000,
+            "new-account CALL value surcharge should be visible in opcode gas"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn meter_bundle_opcode_gas_empty_when_disabled() -> eyre::Result<()> {
         let harness = TestHarness::new().await?;
         let latest = harness.latest_block();
@@ -1239,6 +1910,111 @@ mod tests {
         assert_eq!(metered.precompiles.len(), 2);
         assert!(metered.precompiles.values().any(|n| n == "BLAKE2F"));
         assert!(metered.precompiles.values().any(|n| n == "ECREC"));
+    }
+
+    #[test]
+    fn metered_opcodes_parse_recognizes_intrinsic_pseudo_opcodes() {
+        let result = MeteredOpcodes::parse(&[
+            "INTRINSIC_TOTAL".to_string(),
+            "intrinsic_tx_data_zero_byte_cost".to_string(),
+            "intrinsic_tx_data_non_zero_byte_cost".to_string(),
+            "intrinsic_access_list_address_cost".to_string(),
+            "INTRINSIC_ACCESS_LIST_STORAGE_KEY_COST".to_string(),
+            "intrinsic_initcode_word_cost".to_string(),
+            "tx_floor_gas".to_string(),
+            "intrinsic_legacy_tx_base_cost".to_string(),
+            "intrinsic_legacy_create_cost".to_string(),
+            "intrinsic_per_empty_account_cost".to_string(),
+            "intrinsic_tx_base_cost".to_string(),
+            "intrinsic_cold_account_access".to_string(),
+            "intrinsic_tx_value_cost".to_string(),
+            "intrinsic_transfer_log_cost".to_string(),
+            "intrinsic_create_access".to_string(),
+            "intrinsic_regular_per_auth_base_cost".to_string(),
+            "tx_effect_eth_transfer_to_nonexistent_account".to_string(),
+            "tx_effect_eth_transfer_to_existing_account".to_string(),
+            "tx_effect_eth_self_transfer".to_string(),
+        ])
+        .unwrap();
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicTotal));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicTxDataZeroByteCost));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicTxDataNonZeroByteCost));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicAccessListAddressCost));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicAccessListStorageKeyCost));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicInitcodeWordCost));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::TxFloorGas));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicLegacyTxBaseCost));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicLegacyCreateCost));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicPerEmptyAccountCost));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicTxBaseCost));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicColdAccountAccess));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicTxValueCost));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicTransferLogCost));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicCreateAccess));
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::IntrinsicRegularPerAuthBaseCost));
+        assert!(
+            result.pseudo_opcodes.contains(&PseudoOpcode::TxEffectEthTransferToNonexistentAccount)
+        );
+        assert!(
+            result.pseudo_opcodes.contains(&PseudoOpcode::TxEffectEthTransferToExistingAccount)
+        );
+        assert!(result.pseudo_opcodes.contains(&PseudoOpcode::TxEffectEthSelfTransfer));
+    }
+
+    #[test]
+    fn old_intrinsic_names_are_not_compatibility_aliases() {
+        for name in [
+            "INTRINSIC_BASE",
+            "INTRINSIC_CALLDATA_ZERO",
+            "INTRINSIC_CALLDATA_NON_ZERO",
+            "INTRINSIC_CREATE",
+            "INTRINSIC_INITCODE_WORD",
+            "INTRINSIC_ACCESS_LIST_ADDRESS",
+            "INTRINSIC_ACCESS_LIST_STORAGE_KEY",
+            "INTRINSIC_AUTHORIZATION",
+            "TX_EFFECT_VALUE_TO_NEW_ACCOUNT",
+            "TX_EFFECT_VALUE_TO_EXISTING_ACCOUNT",
+        ] {
+            assert!(MeteredOpcodes::parse(&[name.to_string()]).is_err(), "{name} must be rejected");
+        }
+    }
+
+    #[test]
+    fn osaka_schedule_does_not_emit_eip2780_primitives() {
+        let signed_tx = create_call_tx(
+            DEVNET_CHAIN_ID,
+            0,
+            Address::repeat_byte(0x11),
+            Bytes::from_static(&[0, 1]),
+            100_000,
+        );
+        let tx = Recovered::new_unchecked(signed_tx, Account::Alice.address());
+        let metered = MeteredOpcodes::parse(&[
+            "INTRINSIC_LEGACY_TX_BASE_COST".to_string(),
+            "INTRINSIC_TX_BASE_COST".to_string(),
+            "INTRINSIC_COLD_ACCOUNT_ACCESS".to_string(),
+            "INTRINSIC_TX_VALUE_COST".to_string(),
+            "INTRINSIC_TRANSFER_LOG_COST".to_string(),
+            "INTRINSIC_CREATE_ACCESS".to_string(),
+            "INTRINSIC_REGULAR_PER_AUTH_BASE_COST".to_string(),
+        ])
+        .unwrap();
+
+        // Azul is Base's Osaka execution schedule. EIP-2780 is not active, so its
+        // primitive names must not be populated with legacy gas values.
+        let entries =
+            intrinsic_gas_entries(&tx, false, true, &metered, BaseSpecId::new(BaseUpgrade::Azul));
+        assert!(entries.iter().any(|entry| entry.opcode == "INTRINSIC_LEGACY_TX_BASE_COST"));
+        for name in [
+            "INTRINSIC_TX_BASE_COST",
+            "INTRINSIC_COLD_ACCOUNT_ACCESS",
+            "INTRINSIC_TX_VALUE_COST",
+            "INTRINSIC_TRANSFER_LOG_COST",
+            "INTRINSIC_CREATE_ACCESS",
+            "INTRINSIC_REGULAR_PER_AUTH_BASE_COST",
+        ] {
+            assert!(!entries.iter().any(|entry| entry.opcode == name), "{name} must be gated");
+        }
     }
 
     #[test]
