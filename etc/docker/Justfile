@@ -47,6 +47,14 @@ accounts:
 smoke:
     ./etc/scripts/devnet/smoke.sh
 
+# Deploys, updates, or inspects the normal devnet L1 upgrade-signal contract
+upgrade-signal *args:
+    ./etc/scripts/devnet/upgrade-signal.sh {{ args }}
+
+# Moves one devnet upgrade to latest L2 timestamp + offset seconds
+upgrade-signal-future upgrade='azul' offset='120':
+    ./etc/scripts/devnet/upgrade-signal.sh move-future {{ quote(upgrade) }} --offset {{ quote(offset) }}
+
 # Runs full devnet checks (status + smoke tests)
 checks: status smoke
 
@@ -187,12 +195,37 @@ _up-devnet compose_profile zk:
         ;;
     esac
 
+    # Starts L1 + setup, deploys the upgrade-signal contract, then starts the rest.
+    # Extra arguments are passed to `docker compose` (e.g. `--env-file`).
+    start_devnet_with_upgrade_signal() {
+      local setup_l2_status
+      local compose_cmd=(docker compose {{ _env }} "$@")
+      local upgrade_signal_env_files="${UPGRADE_SIGNAL_ENV_FILES:-}"
+      compose_cmd+=("${compose_files[@]}")
+
+      "${compose_cmd[@]}" up -d --no-build --remove-orphans setup-l1 l1-el l1-cl l1-vc
+      mkdir -p .devnet/l2/configs
+      "${compose_cmd[@]}" up -d --no-build --remove-orphans setup-l2
+      setup_l2_status="$(docker wait setup-l2)"
+      if [ "$setup_l2_status" != "0" ]; then
+        docker logs setup-l2 >&2 || true
+        exit "$setup_l2_status"
+      fi
+
+      if [ -n "$upgrade_signal_env_files" ]; then
+        UPGRADE_SIGNAL_ENV_FILES="$upgrade_signal_env_files" ./etc/scripts/devnet/upgrade-signal.sh setup
+      else
+        ./etc/scripts/devnet/upgrade-signal.sh setup
+      fi
+      "${compose_cmd[@]}" up -d --no-build --remove-orphans
+    }
+
     case "$zk_mode" in
       dry-run)
         just --justfile {{ source_file() }} down
         just --justfile {{ source_file() }} _build-setup-image
         just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
-        docker compose {{ _env }} "${compose_files[@]}" up -d --no-build --remove-orphans
+        start_devnet_with_upgrade_signal
         ;;
       cluster)
         if [ -z "${AWS_ACCESS_KEY_ID:-}" ] || [ -z "${AWS_SECRET_ACCESS_KEY:-}" ]; then
@@ -239,7 +272,7 @@ _up-devnet compose_profile zk:
         just --justfile {{ source_file() }} down
         just --justfile {{ source_file() }} _build-setup-image
         just --justfile {{ source_file() }} _build-rust-images "devnet" "dev"
-        docker compose {{ _env }} --env-file "$cluster_env" "${compose_files[@]}" up -d --no-build --remove-orphans
+        UPGRADE_SIGNAL_ENV_FILES="$cluster_env" start_devnet_with_upgrade_signal --env-file "$cluster_env"
         ;;
       *)
         echo "ERROR: zk must be 'dry-run' or 'cluster' (got '${zk_mode}')" >&2
