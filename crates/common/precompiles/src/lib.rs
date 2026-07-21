@@ -11,7 +11,7 @@ mod provider;
 pub use provider::BasePrecompiles;
 
 mod lookup;
-pub use lookup::{BerylLookup, BerylLookupWithObserver};
+pub use lookup::{B20_PRECOMPILE_EXCLUDE_ENV, BerylLookup, BerylLookupWithObserver};
 
 mod spec;
 pub use spec::BasePrecompileSpec;
