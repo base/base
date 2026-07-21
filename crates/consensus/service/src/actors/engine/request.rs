@@ -42,6 +42,22 @@ pub enum EngineClientError {
     /// The EL is still syncing; the reset cannot proceed yet. Retry after a delay.
     #[error("EL sync in progress; reset deferred")]
     ELSyncing,
+
+    /// Shadow reconciliation is unavailable in this mode.
+    #[error("shadow reconciliation is disabled")]
+    ShadowReconciliationDisabled,
+
+    /// The shadow payload buffer can no longer be reconciled safely.
+    #[error("shadow reconciliation payload buffer is faulted")]
+    ShadowBufferFaulted,
+
+    /// The requested shadow reconciliation range or payload chain is invalid.
+    #[error("invalid shadow reconciliation range: {0}")]
+    InvalidShadowReconciliation(String),
+
+    /// A deferred safe or finalized forkchoice update failed during reconciliation.
+    #[error("shadow reconciliation forkchoice update failed: {0}")]
+    ShadowForkchoiceUpdate(String),
 }
 
 /// Inbound requests that the [`crate::EngineActor`] can process.
@@ -62,8 +78,19 @@ pub enum EngineActorRequest {
     ProcessAdminUnsafeL2BlockRequest(Box<BaseExecutionPayloadEnvelope>),
     /// Request to insert a locally produced sequencer unsafe block.
     ProcessLocalUnsafeL2BlockRequest(Box<InsertUnsafePayloadRequest>),
+    /// Reconcile private blocks to an authenticated P2P payload range.
+    ReconcileShadowRequest(Box<ReconcileShadowRequest>),
     /// Request to reset engine forkchoice.
     ResetRequest(Box<ResetRequest>),
+}
+
+/// Request to replace a private shadow range with the active sequencer's P2P branch.
+#[derive(Debug)]
+pub struct ReconcileShadowRequest {
+    /// Last head built by the shadow sequencer before reconciliation.
+    pub shadow_head: L2BlockInfo,
+    /// Channel on which readiness, success, or failure is returned.
+    pub result_tx: mpsc::Sender<EngineClientResult<Option<L2BlockInfo>>>,
 }
 
 /// RPC Request for the engine to handle.
@@ -92,6 +119,9 @@ pub struct BuildRequest {
 pub struct ResetRequest {
     /// response will be sent to this channel, if `Some`.
     pub result_tx: mpsc::Sender<EngineClientResult<()>>,
+    /// Whether the caller coordinates rebuilding its shadow-cycle state around this reset.
+    /// Uncoordinated successful resets terminate an active shadow handler after responding.
+    pub shadow_cycle_coordinated: bool,
 }
 
 /// A request to insert a local unsafe payload.
