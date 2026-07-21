@@ -44,3 +44,12 @@ ark-ff.workspace = true
 # Misc
 thiserror.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+# Base
+base-common-chains.workspace = true
+base-proof-host.workspace = true
+base-proof-tee-nitro-enclave.workspace = true
+
+# Async
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

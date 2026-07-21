@@ -639,10 +639,23 @@ impl WitnessGenerator {
 
 #[cfg(test)]
 mod tests {
+    use std::{env, thread, time::Instant};
+
+    use alloy_eips::BlockNumberOrTag;
     use alloy_genesis::ChainConfig;
+    use alloy_provider::Provider;
+    use base_common_chains::L1_CONFIGS;
     use base_common_genesis::RollupConfig;
+    use base_proof_host::{Host, HostConfig, ProverConfig};
+    use base_proof_preimage::WitnessOracle;
+    use base_proof_tee_nitro_enclave::Oracle;
 
     use super::*;
+
+    const MAINNET_L2_CHAIN_ID: u64 = 8453;
+    const MAINNET_BLOCK_RANGE: u64 = 600;
+    const MAINNET_INTERMEDIATE_ROOT_INTERVAL: u64 = 30;
+    const WITNESS_BENCH_STACK_SIZE: usize = 32 * 1024 * 1024;
 
     #[test]
     fn boot_preimages_contains_every_local_input() {
@@ -662,5 +675,183 @@ mod tests {
         let generator = WitnessGenerator::new(config, WitnessProviders::new(l1, l2, blobs));
 
         assert_eq!(generator.boot_preimages().unwrap().len(), 10);
+    }
+
+    #[test]
+    #[ignore = "requires archive mainnet RPCs; see the crate README for the required environment"]
+    fn benchmark_mainnet_witness_generation() {
+        thread::Builder::new()
+            .name("witness-benchmark".to_string())
+            .stack_size(WITNESS_BENCH_STACK_SIZE)
+            .spawn(|| {
+                tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()
+                    .expect("start witness benchmark runtime")
+                    .block_on(benchmark_mainnet_witness_generation_inner());
+            })
+            .expect("start witness benchmark thread")
+            .join()
+            .expect("witness benchmark thread must not panic");
+    }
+
+    async fn benchmark_mainnet_witness_generation_inner() {
+        let l1_eth_url = required_env("L1_ETH_URL");
+        let l2_eth_url = required_env("L2_ETH_URL");
+        let l2_node_url = required_env("L2_NODE_URL");
+        let l1_beacon_url = required_env("L1_BEACON_URL");
+        let block_range = env::var("WITNESS_BENCH_BLOCK_RANGE")
+            .map_or(MAINNET_BLOCK_RANGE, |value| {
+                value.parse().expect("WITNESS_BENCH_BLOCK_RANGE must be a positive integer")
+            });
+        assert!(block_range > 0, "WITNESS_BENCH_BLOCK_RANGE must be greater than zero");
+        let request_l1 = alloy_provider::RootProvider::new_http(
+            l1_eth_url.parse().expect("L1_ETH_URL must be a valid URL"),
+        );
+        let request_l2 = alloy_provider::RootProvider::new_http(
+            l2_eth_url.parse().expect("L2_ETH_URL must be a valid URL"),
+        );
+        let rollup_config = mainnet_rollup_config(&l2_node_url).await;
+        assert_eq!(rollup_config.l2_chain_id.id(), MAINNET_L2_CHAIN_ID);
+        let l1_config = L1_CONFIGS
+            .get(&rollup_config.l1_chain_id)
+            .expect("mainnet rollup config must use a known L1 config")
+            .clone();
+        let request = mainnet_request(&request_l1, &request_l2, &rollup_config, block_range).await;
+
+        let legacy_host = Host::new(HostConfig {
+            request: request.clone(),
+            prover: ProverConfig {
+                l1_eth_url: l1_eth_url.clone(),
+                l2_eth_url: l2_eth_url.clone(),
+                l2_node_url: l2_node_url.clone(),
+                l1_beacon_url: l1_beacon_url.clone(),
+                l2_chain_id: MAINNET_L2_CHAIN_ID,
+                rollup_config: rollup_config.clone(),
+                l1_config: l1_config.clone(),
+                enable_experimental_witness_endpoint: true,
+            },
+            data_dir: None,
+        });
+        let legacy_start = Instant::now();
+        let legacy_witness = legacy_host
+            .build_witness(Oracle::empty())
+            .await
+            .expect("Nitro host witness generation must succeed");
+        let legacy_elapsed = legacy_start.elapsed();
+
+        let generator_start = Instant::now();
+        let l1 = alloy_provider::RootProvider::new_http(
+            l1_eth_url.parse().expect("L1_ETH_URL must be a valid URL"),
+        );
+        let l2 = alloy_provider::RootProvider::new_http(
+            l2_eth_url.parse().expect("L2_ETH_URL must be a valid URL"),
+        );
+        let rollup_config = mainnet_rollup_config(&l2_node_url).await;
+        assert_eq!(rollup_config.l2_chain_id.id(), MAINNET_L2_CHAIN_ID);
+        let l1_config = L1_CONFIGS
+            .get(&rollup_config.l1_chain_id)
+            .expect("mainnet rollup config must use a known L1 config")
+            .clone();
+        let blobs = OnlineBlobProvider::init(OnlineBeaconClient::new_http(l1_beacon_url)).await;
+        let generator = WitnessGenerator::new(
+            WitnessConfig { request, l2_chain_id: MAINNET_L2_CHAIN_ID, rollup_config, l1_config },
+            WitnessProviders::new(l1, l2, blobs),
+        );
+        let generated_witness =
+            generator.generate().await.expect("parallel witness generation must succeed");
+        let generator_elapsed = generator_start.elapsed();
+        let speedup = legacy_elapsed.as_secs_f64() / generator_elapsed.as_secs_f64();
+        let legacy_preimage_count = legacy_witness.preimage_count().expect("legacy witness count");
+        let generated_preimage_count = generated_witness.len();
+
+        assert!(generated_preimage_count > 0);
+        assert!(legacy_preimage_count > 0);
+        println!(
+            "mainnet witness benchmark (range: {block_range} L2 blocks)\n  Nitro host replay: {legacy_elapsed:?} ({legacy_preimage_count} preimages)\n  parallel generator: {generator_elapsed:?} ({generated_preimage_count} preimages)\n  speedup: {speedup:.2}x",
+        );
+    }
+
+    async fn mainnet_request(
+        l1: &alloy_provider::RootProvider,
+        l2: &alloy_provider::RootProvider<Base>,
+        rollup_config: &RollupConfig,
+        block_range: u64,
+    ) -> ProofRequest {
+        let claimed = l2
+            .get_block_by_number(BlockNumberOrTag::Safe)
+            .full()
+            .await
+            .expect("fetch mainnet safe L2 block")
+            .expect("mainnet safe L2 block must exist");
+        let agreed_number = claimed
+            .header
+            .inner
+            .number
+            .checked_sub(block_range)
+            .expect("mainnet safe L2 block must cover the requested range");
+        let agreed = l2
+            .get_block_by_number(agreed_number.into())
+            .full()
+            .await
+            .expect("fetch agreed L2 block")
+            .expect("agreed L2 block must exist");
+        let claimed_l2_info = claimed
+            .clone()
+            .map_header(|header| header.into_inner())
+            .into_consensus()
+            .map_transactions(|tx| tx.inner.inner.into_inner());
+        let claimed_l2_info =
+            L2BlockInfo::from_block_and_genesis(&claimed_l2_info, &rollup_config.genesis)
+                .expect("safe L2 block must encode L1 origin information");
+        let l1_head = l1
+            .get_block_by_number(BlockNumberOrTag::Latest)
+            .await
+            .expect("fetch latest L1 block")
+            .expect("latest L1 block must exist");
+        assert!(
+            l1_head.header.number >= claimed_l2_info.l1_origin.number,
+            "latest L1 block must not precede the claimed L2 origin"
+        );
+        let (agreed_l2_output_root, claimed_l2_output_root) =
+            tokio::join!(output_root(l2, &agreed), output_root(l2, &claimed),);
+
+        ProofRequest {
+            l1_head: l1_head.header.hash,
+            agreed_l2_head_hash: agreed.header.hash,
+            agreed_l2_output_root,
+            claimed_l2_output_root,
+            claimed_l2_block_number: claimed.header.inner.number,
+            intermediate_block_interval: MAINNET_INTERMEDIATE_ROOT_INTERVAL,
+            l1_head_number: l1_head.header.number,
+            ..Default::default()
+        }
+    }
+
+    async fn output_root(l2: &alloy_provider::RootProvider<Base>, block: &L2RpcBlock) -> B256 {
+        let proof = l2
+            .get_proof(Predeploys::L2_TO_L1_MESSAGE_PASSER, Vec::new())
+            .block_id(block.header.hash.into())
+            .await
+            .expect("fetch L2ToL1MessagePasser proof");
+
+        OutputRoot::from_parts(block.header.inner.state_root, proof.storage_hash, block.header.hash)
+            .hash()
+    }
+
+    async fn mainnet_rollup_config(l2_node_url: &str) -> RollupConfig {
+        let l2_node: alloy_provider::RootProvider = alloy_provider::RootProvider::new_http(
+            l2_node_url.parse().expect("L2_NODE_URL must be a valid URL"),
+        );
+
+        l2_node
+            .client()
+            .request("optimism_rollupConfig", ())
+            .await
+            .expect("L2_NODE_URL must return an optimism rollup config")
+    }
+
+    fn required_env(name: &str) -> String {
+        env::var(name).unwrap_or_else(|_| panic!("{name} must be set"))
     }
 }
