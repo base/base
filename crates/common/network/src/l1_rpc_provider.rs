@@ -316,13 +316,13 @@ mod tests {
         })
     }
 
-    /// A type-`0x7d` EIP-8130 transaction, as a Base RPC endpoint returns it.
+    /// A type-`0x79` EIP-8130 transaction, as a Base RPC endpoint returns it.
     ///
     /// Built to match the wire format produced by
     /// `base_common_rpc_types::Transaction::from_transaction` for the `Eip8130` variant.
     fn eip8130_tx_json() -> Value {
         json!({
-            "type": "0x7d",
+            "type": "0x79",
             "hash": "0x4242424242424242424242424242424242424242424242424242424242424242",
             "blockHash": "0x1111111111111111111111111111111111111111111111111111111111111111",
             "blockNumber": "0x2a",
@@ -340,6 +340,7 @@ mod tests {
                 "gasLimit": 1_000_000,
                 "accountChanges": [],
                 "calls": [],
+                "metadata": "0x",
                 "payer": null
             },
             "senderAuth": format!("0x{}", "ab".repeat(32)),
@@ -347,10 +348,10 @@ mod tests {
         })
     }
 
-    /// A type-`0x7d` EIP-8130 receipt, as a Base RPC endpoint returns it.
+    /// A type-`0x79` EIP-8130 receipt, as a Base RPC endpoint returns it.
     fn eip8130_receipt_json() -> Value {
         json!({
-            "type": "0x7d",
+            "type": "0x79",
             "status": "0x1",
             "cumulativeGasUsed": "0x5208",
             "logsBloom": format!("0x{}", "00".repeat(256)),

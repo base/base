@@ -300,7 +300,7 @@ mod tests {
 
     fn eip8130_tx_json() -> Value {
         json!({
-            "type": "0x7d",
+            "type": "0x79",
             "hash": "0x4242424242424242424242424242424242424242424242424242424242424242",
             "blockHash": "0x1111111111111111111111111111111111111111111111111111111111111111",
             "blockNumber": "0x2a",
@@ -318,6 +318,7 @@ mod tests {
                 "gasLimit": 1_000_000,
                 "accountChanges": [],
                 "calls": [],
+                "metadata": "0x",
                 "payer": null
             },
             "senderAuth": format!("0x{}", "ab".repeat(32)),
