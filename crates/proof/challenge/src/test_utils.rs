@@ -472,11 +472,7 @@ pub const DEFAULT_L1_HEAD: B256 = B256::repeat_byte(0xAA);
 ///
 /// Uses [`DEFAULT_TEE_PROVER`] as the TEE prover address. Use
 /// [`mock_state_with_tee`] to override.
-pub fn mock_state(
-    status: GameStatus,
-    zk_prover: Address,
-    block_number: u64,
-) -> MockGameState {
+pub fn mock_state(status: GameStatus, zk_prover: Address, block_number: u64) -> MockGameState {
     mock_state_with_tee(status, zk_prover, DEFAULT_TEE_PROVER, block_number)
 }
 
