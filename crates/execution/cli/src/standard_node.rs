@@ -491,7 +491,7 @@ fn transaction_event_writer_config(
             || {
                 eyre::eyre!(
                     "--enable-transaction-event-journal requires --transaction-event-journal-path \
-                 or BASE_TRANSACTION_EVENTS_PATH/TRANSACTION_EVENTS_PATH"
+                 or BASE_TRANSACTION_EVENTS_PATH"
                 )
             },
         )?;
@@ -517,9 +517,7 @@ impl TransactionEventEnv {
     fn read() -> Self {
         Self {
             enabled: transaction_event_journal_env_enabled(),
-            path: env::var_os("BASE_TRANSACTION_EVENTS_PATH")
-                .or_else(|| env::var_os("TRANSACTION_EVENTS_PATH"))
-                .map(PathBuf::from),
+            path: env::var_os("BASE_TRANSACTION_EVENTS_PATH").map(PathBuf::from),
             network: env::var("BASE_TRANSACTION_EVENTS_NETWORK")
                 .or_else(|_| env::var("BASE_NODE_NETWORK"))
                 .unwrap_or_else(|_| "unknown".to_string()),
@@ -529,7 +527,6 @@ impl TransactionEventEnv {
 
 fn transaction_event_journal_env_enabled() -> bool {
     env::var("BASE_TRANSACTION_EVENTS_ENABLED")
-        .or_else(|_| env::var("TRANSACTION_EVENTS_ENABLED"))
         .map(transaction_event_env_bool)
         .unwrap_or(false)
 }
