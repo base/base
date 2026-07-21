@@ -131,7 +131,7 @@ where
         let l1_origin = self.origin_selector.next_l1_origin(parent, false).await?;
         let attributes = self
             .attributes_builder
-            .prepare_payload_attributes(parent, l1_origin.id())
+            .prepare_payload_attributes(parent, l1_origin.id(), None)
             .await?;
         let attrs_with_parent = AttributesWithParent::new(attributes, parent, None, false);
 
