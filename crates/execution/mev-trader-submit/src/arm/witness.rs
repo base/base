@@ -15,8 +15,8 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use base_mev_trader::{
-    ArmedCriteria, CampaignId, DrawdownInput, KillReason, StoreIdentity, SubmitContext,
-    SubmitDecision, VictimClaim, submit_gate,
+    ArmedCriteria, CampaignId, DrawdownInput, KillReason, StartupError, StoreIdentity,
+    SubmitContext, SubmitDecision, VictimClaim, open_anchored_killstate, submit_gate,
 };
 
 use crate::assembler::ValidatedUnsignedAtomicTx;
@@ -426,15 +426,14 @@ impl<'a> FreshnessSources<'a> {
     /// The full egress-moment re-validation conjunction (§3.3). `true` only when
     /// EVERY source is fresh and every binding still holds.
     pub fn revalidate(&self, bindings: &ProofBindings, id: &ValidatedExecutionIdentity) -> bool {
-        // (1) submit gate open with a FRESH drawdown + kill read. Evaluated here so
-        // the real gate is always exercised; the test seam only OR-injects an open
-        // gate (a dependent crate cannot self-forge an armed `ArmedCriteria`; B5
-        // injects a verified value), never a closed one.
+        // Kill observation is first and authoritative. In particular, the test-only forced-open
+        // seam can never override a non-clear durable state or an already-poisoned process.
+        let Ok(kill) = self.sink.observe_kill() else { return false };
         let ctx = SubmitContext {
             armed: self.armed,
             amount_in_wei: id.amount(),
             drawdown: self.drawdown.load(),
-            kill: self.sink.kill_state(),
+            kill,
         };
         let gate_open = matches!(submit_gate(ctx), SubmitDecision::Open);
         #[cfg(test)]
@@ -531,13 +530,40 @@ pub struct ArmRuntime {
     sink: Arc<ArmedFailSink>,
 }
 
+/// Failure to open the production arm runtime.
+#[derive(Debug)]
+pub enum ArmRuntimeOpenError {
+    /// The pinned anchor-backed kill-state owner or its initial clear observation failed.
+    Startup(StartupError),
+    /// The pinned suppression high-water store failed to open.
+    Suppression(SuppressionRollbackError),
+}
+
+impl core::fmt::Display for ArmRuntimeOpenError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Startup(error) => write!(formatter, "arm runtime startup failed: {error}"),
+            Self::Suppression(error) => {
+                write!(formatter, "arm suppression startup failed: {error}")
+            }
+        }
+    }
+}
+
+impl core::error::Error for ArmRuntimeOpenError {}
+
 impl ArmRuntime {
-    /// Open the runtime, building the compile-pinned suppression stores internally.
-    /// Fails closed if the pinned high-water anchor is absent/corrupt.
-    pub fn open(sink: Arc<ArmedFailSink>) -> Result<Self, SuppressionRollbackError> {
+    /// Open the runtime from the compile-pinned anchor and suppression stores.
+    ///
+    /// No production caller can inject a kill store, sink, or filesystem path.
+    pub fn open() -> Result<Self, ArmRuntimeOpenError> {
+        let kill = open_anchored_killstate().map_err(ArmRuntimeOpenError::Startup)?;
+        let sink =
+            Arc::new(ArmedFailSink::from_anchored(kill).map_err(ArmRuntimeOpenError::Startup)?);
         Ok(Self {
             suppression_file: SuppressionFileStore::at_pinned_path(),
-            suppression_epoch: SuppressionEpochStore::open_pinned()?,
+            suppression_epoch: SuppressionEpochStore::open_pinned()
+                .map_err(ArmRuntimeOpenError::Suppression)?,
             clock: SystemClock,
             sink,
         })
@@ -582,15 +608,56 @@ impl ArmRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::arm::testkit as tk;
     use crate::arm::custody::{CustodyError, HotWalletKey};
-    use crate::arm::proofs::SubmitSuppressionClear;
+    use crate::arm::proofs::{ProviderError, SubmitSuppressionClear};
     use crate::arm::suppression::SuppressionFileStore;
+    use crate::arm::testkit as tk;
     use alloy_primitives::B256;
     use base_mev_trader::CampaignId;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn campaign() -> CampaignId {
         CampaignId::new([0x0Au8; 32])
+    }
+
+    struct PanicDrawdown(AtomicUsize);
+
+    impl DrawdownSource for PanicDrawdown {
+        fn load(&self) -> base_mev_trader::DrawdownInput {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            panic!("drawdown source reached before kill refusal")
+        }
+    }
+
+    struct PanicCodeHash;
+
+    impl CodeHashProvider for PanicCodeHash {
+        fn code_hash_at_latest_committed(
+            &self,
+            _address: alloy_primitives::Address,
+        ) -> Result<B256, ProviderError> {
+            panic!("code-hash provider reached before kill refusal")
+        }
+
+        fn current_block(&self) -> Result<u64, ProviderError> {
+            panic!("block provider reached before kill refusal")
+        }
+    }
+
+    struct PanicDeploymentIdentity;
+
+    impl DeploymentIdentitySource for PanicDeploymentIdentity {
+        fn current(&self) -> Option<DeploymentIdentity> {
+            panic!("deployment identity reached before kill refusal")
+        }
+    }
+
+    struct PanicClock;
+
+    impl TimeSource for PanicClock {
+        fn now_unix(&self) -> Option<u64> {
+            panic!("clock reached before kill refusal")
+        }
     }
 
     struct Setup {
@@ -676,14 +743,24 @@ mod tests {
         let cand = CheckedCandidate::new(vtx, campaign());
         let (claim, store) = tk::victim_claim(&dir.path, victim, campaign());
         let provider = tk::FakeProvider { code_hash, block: 100, fail: false };
-        let deploy = tk::deployment(&provider, tk::EXECUTOR, code_hash, B256::repeat_byte(1), B256::repeat_byte(2), store);
+        let deploy = tk::deployment(
+            &provider,
+            tk::EXECUTOR,
+            code_hash,
+            B256::repeat_byte(1),
+            B256::repeat_byte(2),
+            store,
+        );
         let g7 = tk::g7(campaign(), now + 100, now);
         let live = tk::live(campaign(), now + 100, now);
         let path = tk::write_suppression_file(&dir.path, 5, false);
         let epoch_store = tk::epoch_store(&dir.path);
-        let sup = SubmitSuppressionClear::read(&SuppressionFileStore::new(&path), &epoch_store).unwrap();
+        let sup =
+            SubmitSuppressionClear::read(&SuppressionFileStore::new(&path), &epoch_store).unwrap();
         // gate_open = false -> fail-closed.
-        assert!(AuthorizedCandidate::issue_checked(false, sup, g7, claim, live, deploy, cand).is_none());
+        assert!(
+            AuthorizedCandidate::issue_checked(false, sup, g7, claim, live, deploy, cand).is_none()
+        );
     }
 
     #[test]
@@ -696,13 +773,23 @@ mod tests {
         // Claim a DIFFERENT victim than the candidate binds.
         let (claim, store) = tk::victim_claim(&dir.path, B256::repeat_byte(0xBB), campaign());
         let provider = tk::FakeProvider { code_hash, block: 100, fail: false };
-        let deploy = tk::deployment(&provider, tk::EXECUTOR, code_hash, B256::repeat_byte(1), B256::repeat_byte(2), store);
+        let deploy = tk::deployment(
+            &provider,
+            tk::EXECUTOR,
+            code_hash,
+            B256::repeat_byte(1),
+            B256::repeat_byte(2),
+            store,
+        );
         let g7 = tk::g7(campaign(), now + 100, now);
         let live = tk::live(campaign(), now + 100, now);
         let path = tk::write_suppression_file(&dir.path, 5, false);
         let epoch_store = tk::epoch_store(&dir.path);
-        let sup = SubmitSuppressionClear::read(&SuppressionFileStore::new(&path), &epoch_store).unwrap();
-        assert!(AuthorizedCandidate::issue_checked(true, sup, g7, claim, live, deploy, cand).is_none());
+        let sup =
+            SubmitSuppressionClear::read(&SuppressionFileStore::new(&path), &epoch_store).unwrap();
+        assert!(
+            AuthorizedCandidate::issue_checked(true, sup, g7, claim, live, deploy, cand).is_none()
+        );
     }
 
     #[test]
@@ -716,13 +803,23 @@ mod tests {
         // Deployment bound to a DIFFERENT store identity than the claim's.
         let rogue = base_mev_trader::StoreIdentity::new([0xEE; 32]);
         let provider = tk::FakeProvider { code_hash, block: 100, fail: false };
-        let deploy = tk::deployment(&provider, tk::EXECUTOR, code_hash, B256::repeat_byte(1), B256::repeat_byte(2), rogue);
+        let deploy = tk::deployment(
+            &provider,
+            tk::EXECUTOR,
+            code_hash,
+            B256::repeat_byte(1),
+            B256::repeat_byte(2),
+            rogue,
+        );
         let g7 = tk::g7(campaign(), now + 100, now);
         let live = tk::live(campaign(), now + 100, now);
         let path = tk::write_suppression_file(&dir.path, 5, false);
         let epoch_store = tk::epoch_store(&dir.path);
-        let sup = SubmitSuppressionClear::read(&SuppressionFileStore::new(&path), &epoch_store).unwrap();
-        assert!(AuthorizedCandidate::issue_checked(true, sup, g7, claim, live, deploy, cand).is_none());
+        let sup =
+            SubmitSuppressionClear::read(&SuppressionFileStore::new(&path), &epoch_store).unwrap();
+        assert!(
+            AuthorizedCandidate::issue_checked(true, sup, g7, claim, live, deploy, cand).is_none()
+        );
     }
 
     #[test]
@@ -736,13 +833,23 @@ mod tests {
         let provider = tk::FakeProvider { code_hash, block: 100, fail: false };
         // Deployment for a different executor address.
         let other_exec = alloy_primitives::Address::repeat_byte(0x77);
-        let deploy = tk::deployment(&provider, other_exec, code_hash, B256::repeat_byte(1), B256::repeat_byte(2), store);
+        let deploy = tk::deployment(
+            &provider,
+            other_exec,
+            code_hash,
+            B256::repeat_byte(1),
+            B256::repeat_byte(2),
+            store,
+        );
         let g7 = tk::g7(campaign(), now + 100, now);
         let live = tk::live(campaign(), now + 100, now);
         let path = tk::write_suppression_file(&dir.path, 5, false);
         let epoch_store = tk::epoch_store(&dir.path);
-        let sup = SubmitSuppressionClear::read(&SuppressionFileStore::new(&path), &epoch_store).unwrap();
-        assert!(AuthorizedCandidate::issue_checked(true, sup, g7, claim, live, deploy, cand).is_none());
+        let sup =
+            SubmitSuppressionClear::read(&SuppressionFileStore::new(&path), &epoch_store).unwrap();
+        assert!(
+            AuthorizedCandidate::issue_checked(true, sup, g7, claim, live, deploy, cand).is_none()
+        );
     }
 
     #[test]
@@ -754,15 +861,25 @@ mod tests {
         let cand = CheckedCandidate::new(vtx, campaign());
         let (claim, store) = tk::victim_claim(&dir.path, victim, campaign());
         let provider = tk::FakeProvider { code_hash, block: 100, fail: false };
-        let deploy = tk::deployment(&provider, tk::EXECUTOR, code_hash, B256::repeat_byte(1), B256::repeat_byte(2), store);
+        let deploy = tk::deployment(
+            &provider,
+            tk::EXECUTOR,
+            code_hash,
+            B256::repeat_byte(1),
+            B256::repeat_byte(2),
+            store,
+        );
         // g7/live for a DIFFERENT campaign -> covers() false.
         let other = CampaignId::new([0x0Bu8; 32]);
         let g7 = tk::g7(other, now + 100, now);
         let live = tk::live(other, now + 100, now);
         let path = tk::write_suppression_file(&dir.path, 5, false);
         let epoch_store = tk::epoch_store(&dir.path);
-        let sup = SubmitSuppressionClear::read(&SuppressionFileStore::new(&path), &epoch_store).unwrap();
-        assert!(AuthorizedCandidate::issue_checked(true, sup, g7, claim, live, deploy, cand).is_none());
+        let sup =
+            SubmitSuppressionClear::read(&SuppressionFileStore::new(&path), &epoch_store).unwrap();
+        assert!(
+            AuthorizedCandidate::issue_checked(true, sup, g7, claim, live, deploy, cand).is_none()
+        );
     }
 
     #[test]
@@ -781,14 +898,66 @@ mod tests {
     }
 
     #[test]
+    fn sign_is_first_observer_after_clear_becomes_unknown() {
+        let setup = positive();
+        let (sink, store) = tk::mutable_sink();
+        store.set(base_mev_trader::KillState::Unknown);
+
+        let err = setup
+            .authorized
+            .load_and_sign_with(&sink, || panic!("signing loader reached before kill refusal"))
+            .unwrap_err();
+
+        assert!(matches!(err, ArmError::Poisoned));
+        assert!(sink.is_poisoned());
+    }
+
+    #[test]
+    fn egress_is_first_observer_after_clear_becomes_unknown() {
+        let setup = positive();
+        let dir = tk::TempDir::new("witness-egress-kill");
+        let (key, address) = tk::hot_wallet_key();
+        let wallet = tk::write_hot_wallet(&dir.path, &key);
+        let (sink, store) = tk::mutable_sink();
+        let signed = setup
+            .authorized
+            .load_and_sign_with(&sink, || HotWalletKey::load_from(&wallet, address))
+            .expect("signed");
+        let paired = PairedSubmission::assemble(signed);
+
+        let suppression_path =
+            tk::write_suppression_file(&dir.path, paired.bindings.suppression_epoch, false);
+        let suppression_file = SuppressionFileStore::new(&suppression_path);
+        let suppression_epoch = tk::epoch_store(&dir.path);
+        let provider = PanicCodeHash;
+        let deployment = PanicDeploymentIdentity;
+        let drawdown = PanicDrawdown(AtomicUsize::new(0));
+        let clock = PanicClock;
+        let armed = tk::unarmed_criteria();
+        let sources = FreshnessSources::new(
+            &armed,
+            &drawdown,
+            &suppression_file,
+            &suppression_epoch,
+            &provider,
+            &deployment,
+            &clock,
+            Arc::clone(&sink),
+        )
+        .with_forced_gate(true);
+
+        store.set(base_mev_trader::KillState::Unknown);
+        assert!(!sources.revalidate(&paired.bindings, &paired.id));
+        assert_eq!(drawdown.0.load(Ordering::SeqCst), 0);
+        assert!(sink.is_poisoned());
+    }
+
+    #[test]
     fn load_and_sign_failure_latches_and_poisons() {
         let setup = positive();
         let dir = tk::TempDir::new("witness-fail");
         let sink = tk::sink(&dir.path);
-        let err = setup
-            .authorized
-            .load_and_sign_with(&sink, || Err(CustodyError::Io))
-            .unwrap_err();
+        let err = setup.authorized.load_and_sign_with(&sink, || Err(CustodyError::Io)).unwrap_err();
         // Fail-stop: engaged the kill latch AND poisoned the process.
         assert!(matches!(err, ArmError::KillReason(_) | ArmError::LatchPersistFailed));
         assert!(sink.is_poisoned());

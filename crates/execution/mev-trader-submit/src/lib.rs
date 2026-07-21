@@ -51,21 +51,21 @@ pub mod signer;
 #[cfg(feature = "arm")]
 mod arm;
 #[cfg(feature = "arm")]
-pub use arm::{
-    ArmError, ArmRuntime, ArmedFailSink, AttributionRetryToken, AuthorizedCandidate,
-    AuthorizedSignedSubmission, CHAIN_ID_BASE, CheckedCandidate, CodeHashProvider,
-    DeploymentEvidence, DeploymentIdentity, DeploymentIdentitySource, DeploymentPayload,
-    DrawdownSource, EgressPlan, FreshnessSources, G7Attestation, G7Payload, LiveRunAttestation,
-    LiveRunPayload, PairedSubmission, ProofBindings, ProviderError, RawBackend, RawEgress,
-    RequestSpec, SubmissionAttempt, SubmitOutcome, SubmitSuppressionClear, SuppressionRollbackError,
-    ValidatedExecutionIdentity, send_gated, try_claim_arm,
-};
-#[cfg(feature = "arm")]
 pub use arm::Channel;
 #[cfg(all(feature = "arm", feature = "arm-live-egress", not(test)))]
 pub use arm::ProdBackend;
 #[cfg(all(feature = "arm", feature = "arm-provisioning"))]
 pub use arm::provision_suppression_anchor;
+#[cfg(feature = "arm")]
+pub use arm::{
+    ArmError, ArmRuntime, ArmRuntimeOpenError, ArmedFailSink, AttributionRetryToken,
+    AuthorizedCandidate, AuthorizedSignedSubmission, CHAIN_ID_BASE, CheckedCandidate,
+    CodeHashProvider, DeploymentEvidence, DeploymentIdentity, DeploymentIdentitySource,
+    DeploymentPayload, DrawdownSource, EgressPlan, FreshnessSources, G7Attestation, G7Payload,
+    LiveRunAttestation, LiveRunPayload, PairedSubmission, ProofBindings, ProviderError, RawBackend,
+    RawEgress, RequestSpec, SubmissionAttempt, SubmitOutcome, SubmitSuppressionClear,
+    SuppressionRollbackError, ValidatedExecutionIdentity, send_gated, try_claim_arm,
+};
 
 /// The Blink OFA native-ETH kickback recipient enforced inside the executor
 /// backrun. Mirrors `BLINK_OFA_KICKBACK_RECIPIENT` in the TS prototype and the

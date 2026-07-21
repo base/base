@@ -73,7 +73,7 @@ reqwest = { workspace = true, features = ["blocking"], optional = true }
 serde_json = { workspace = true, features = ["std"] }
 # AST-based capability-seal parsing (module visibility + `use`-path normalization +
 # constructor-surface). Dev-only; never linked into any node binary.
-syn = { workspace = true }
+syn = { workspace = true, features = ["visit"] }
 # r9-provisioning lets the arm claim-façade tests bootstrap a VictimClaimStore
 # fixture (the dependency is compiled without cfg(test), so `bootstrap` needs the
 # feature explicitly). Not a node build — dev-only.

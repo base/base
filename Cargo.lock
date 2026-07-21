@@ -5045,6 +5045,7 @@ dependencies = [
  "base-execution-chainspec",
  "base-execution-evm",
  "futures",
+ "getrandom 0.4.2",
  "rayon",
  "redb",
  "reth-evm",

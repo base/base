@@ -8,7 +8,7 @@ use std::{
 
 use serde_json::Value;
 
-const NORMAL_DEPENDENCIES: [&str; 23] = [
+const NORMAL_DEPENDENCIES: [&str; 24] = [
     "alloy-consensus",
     "alloy-eips",
     "alloy-primitives",
@@ -17,6 +17,7 @@ const NORMAL_DEPENDENCIES: [&str; 23] = [
     "base-execution-chainspec",
     "base-execution-evm",
     "futures",
+    "getrandom",
     "rayon",
     "redb",
     "reth-evm",
@@ -47,6 +48,7 @@ const SOURCE_FILES: [&str; 12] = [
     "safety.rs",
     "storage.rs",
 ];
+const KILLSTATE_ANCHOR_FILES: [&str; 3] = ["external_store.rs", "mod.rs", "types.rs"];
 const FORBIDDEN_DEPENDENCY_PREFIXES: [&str; 25] = [
     "alloy-json-rpc",
     "alloy-network",
@@ -74,7 +76,7 @@ const FORBIDDEN_DEPENDENCY_PREFIXES: [&str; 25] = [
     "tungstenite",
     "url",
 ];
-const FORBIDDEN_IDENTIFIERS: [&str; 38] = [
+const FORBIDDEN_IDENTIFIERS: [&str; 35] = [
     "AwsSigner",
     "Encodable2718",
     "GcpSigner",
@@ -110,9 +112,6 @@ const FORBIDDEN_IDENTIFIERS: [&str; 38] = [
     "sign_transaction",
     "signature_hash",
     "with_signature",
-    "encode_enveloped",
-    "network_encode",
-    "encoded_2718",
 ];
 
 fn workspace_root() -> PathBuf {
@@ -147,6 +146,7 @@ fn dependency_features() -> BTreeMap<&'static str, (&'static [&'static str], boo
         ("base-execution-chainspec", (&[][..], true)),
         ("base-execution-evm", (&[][..], true)),
         ("futures", (&[][..], true)),
+        ("getrandom", (&[][..], true)),
         ("rayon", (&[][..], true)),
         // R9 victim at-most-once claim store: node-local redb, no network/keys.
         ("redb", (&[][..], true)),
@@ -241,6 +241,7 @@ fn lockfile_contains_exact_resolved_pins() {
         ("thiserror", "2.0.18", "registry+https://github.com/rust-lang/crates.io-index"),
         ("tracing", "0.1.44", "registry+https://github.com/rust-lang/crates.io-index"),
         ("futures", "0.3.32", "registry+https://github.com/rust-lang/crates.io-index"),
+        ("getrandom", "0.4.2", "registry+https://github.com/rust-lang/crates.io-index"),
         ("serde", "1.0.228", "registry+https://github.com/rust-lang/crates.io-index"),
         ("serde_json", "1.0.150", "registry+https://github.com/rust-lang/crates.io-index"),
         ("tokio", "1.52.3", "registry+https://github.com/rust-lang/crates.io-index"),
@@ -575,6 +576,8 @@ fn a2_proof_binding_and_test_support_have_bounded_api_shape() {
 
 #[test]
 fn scanner_ignores_non_code_and_rejects_malformed_source() {
+    let unique_forbidden_identifiers: BTreeSet<_> = FORBIDDEN_IDENTIFIERS.iter().copied().collect();
+    assert_eq!(unique_forbidden_identifiers.len(), FORBIDDEN_IDENTIFIERS.len());
     let source = r###"
         // send_raw_transaction
         /* nested /* PrivateKeySigner */ comment */
@@ -608,16 +611,16 @@ fn r9_claim_store_is_sealed_and_bootstrap_is_provisioning_gated() {
     // build never compiles it.
     let modrs = fs::read_to_string(src.join("mod.rs")).expect("victim_claim mod.rs");
     assert!(
-        modrs.contains(
-            "#[cfg(any(test, feature = \"r9-provisioning\"))]\n    pub fn bootstrap("
-        ),
+        modrs.contains("#[cfg(any(test, feature = \"r9-provisioning\"))]\n    pub fn bootstrap("),
         "VictimClaimStore::bootstrap must be gated behind the r9-provisioning feature"
     );
 
     // No production (non-test) callsite of `bootstrap` may exist anywhere in the
     // crate: the only permitted `bootstrap(` token is the gated definition.
-    let mut production_files: Vec<PathBuf> =
-        SOURCE_FILES.iter().map(|name| Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join(name)).collect();
+    let mut production_files: Vec<PathBuf> = SOURCE_FILES
+        .iter()
+        .map(|name| Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join(name))
+        .collect();
     production_files.extend(module_files.iter().map(|name| src.join(name)));
     for path in &production_files {
         let source = fs::read_to_string(path).unwrap_or_else(|_| panic!("source {path:?}"));
@@ -643,6 +646,176 @@ fn r9_claim_store_is_sealed_and_bootstrap_is_provisioning_gated() {
     }
 }
 
+#[test]
+fn p0a_killstate_anchor_has_exact_nested_surface_and_transition_owner() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let src = root.join("src/killstate_anchor");
+    let actual: BTreeSet<_> = fs::read_dir(&src)
+        .expect("killstate_anchor directory")
+        .map(|entry| entry.expect("anchor source entry"))
+        .filter(|entry| entry.path().extension().is_some_and(|extension| extension == "rs"))
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(actual, KILLSTATE_ANCHOR_FILES.iter().map(|name| (*name).to_owned()).collect());
+    assert!(!actual.contains("local.rs"));
+
+    for name in KILLSTATE_ANCHOR_FILES {
+        let source = fs::read_to_string(src.join(name)).expect("anchor source");
+        let found =
+            identifiers(&source).unwrap_or_else(|error| panic!("malformed {name}: {error}"));
+        for forbidden in FORBIDDEN_IDENTIFIERS {
+            assert!(
+                !found.contains(forbidden),
+                "forbidden identifier {forbidden} in killstate_anchor/{name}"
+            );
+        }
+    }
+
+    let module = fs::read_to_string(src.join("mod.rs")).expect("anchor module");
+    let external = fs::read_to_string(src.join("external_store.rs")).expect("external store");
+    let safety = fs::read_to_string(root.join("src/safety.rs")).expect("safety source");
+    let crate_root = fs::read_to_string(root.join("src/lib.rs")).expect("crate root");
+
+    assert_eq!(module.matches("impl KillStateStore for AnchoredKillStateStore").count(), 1);
+    assert_eq!(safety.matches("impl KillStateStore for FileKillStateStore").count(), 1);
+    assert!(safety.contains("#[cfg(test)]\nimpl KillStateStore for FileKillStateStore"));
+    assert!(
+        safety.contains(
+            "#[cfg(test)]\n#[derive(Debug, Clone)]\npub(crate) struct FileKillStateStore"
+        )
+    );
+    assert!(!crate_root.contains("FileKillStateStore"));
+    assert!(!module.contains("pub fn new("));
+    assert!(!module.contains("pub fn open_for_test("));
+    assert!(!module.contains("pub fn from_opened("));
+    assert_eq!(crate_root.matches("open_anchored_killstate").count(), 1);
+
+    for lifecycle in ["bootstrap", "activate"] {
+        assert!(
+            external.contains(&format!(
+                "#[cfg(any(test, feature = \"p0-provisioning\"))]\nimpl AnchorProvisioner"
+            )),
+            "{lifecycle} must be confined to the provisioning implementation"
+        );
+        assert_eq!(
+            external.matches(&format!("pub fn {lifecycle}(")).count(),
+            1,
+            "one feature-gated provisioning definition for {lifecycle}"
+        );
+        assert!(
+            crate_root.contains(
+                "#[cfg(any(test, feature = \"p0-provisioning\"))]\npub use killstate_anchor::{AnchorProvisioner, BootstrapEvidence, SeedAuthorization};"
+            ),
+            "provisioning re-export must be absent from default builds"
+        );
+        let test_module = module.find("\n#[cfg(test)]\nmod tests").expect("final test module");
+        for (callsite, _) in module.match_indices(&format!("AnchorProvisioner::{lifecycle}(")) {
+            assert!(
+                callsite > test_module,
+                "production lifecycle callsite in the transition owner"
+            );
+        }
+    }
+
+    let open_start = external.find("fn open_existing_at(").expect("open_existing implementation");
+    let open_tail = &external[open_start..];
+    let open_end = open_tail
+        .find("\n}\n\n#[cfg(any(test, feature = \"p0-provisioning\"))]")
+        .expect("open_existing end");
+    let open_existing = &open_tail[..open_end];
+    for forbidden in
+        ["create(", "create_new", "truncate(true)", "bootstrap", "activate", "adopt", "reseed"]
+    {
+        assert!(
+            !open_existing.contains(forbidden),
+            "production open_existing contains forbidden lifecycle token {forbidden}"
+        );
+    }
+    assert!(open_existing.contains("open_database_file(&paths.db_path, false)"));
+    assert!(open_existing.contains("db_path: paths.db_path"));
+    assert!(open_existing.contains("leaf_identity: opened.leaf_identity"));
+    assert!(external.contains("options.read(true).write(true).create(false).truncate(false);"));
+    assert!(external.contains("let db = redb::Database::open(path)"));
+    assert!(!external.contains("redb::Database::create(path)"));
+    assert!(external.contains("let process_uid = process_uid()?;"));
+    assert!(external.contains("if actual_uid != expected_uid"));
+    assert!(external.contains("if actual_mode & 0o777 != expected_mode"));
+
+    let read_start = external.find("pub(super) fn read_hwm(&self)").expect("read_hwm");
+    let read_tail = &external[read_start..];
+    let read_end = read_tail.find("    /// Durably advances").expect("read_hwm end");
+    let read_hwm = &read_tail[..read_end];
+    assert_eq!(read_hwm.matches("self.verify_live_leaf()?;").count(), 2);
+    assert!(
+        read_hwm.find("self.verify_live_leaf()?;").expect("pre-read validation")
+            < read_hwm.find("read_row(&self.db)?").expect("redb row read")
+    );
+    assert!(
+        read_hwm.rfind("self.verify_live_leaf()?;").expect("post-read validation")
+            > read_hwm.find("read_row(&self.db)?").expect("redb row read")
+    );
+
+    let observe_start = external.find("pub(super) fn observe(&self").expect("observe");
+    let observe_tail = &external[observe_start..];
+    let observe_end = observe_tail.find("\n    fn verify_live_leaf").expect("observe end");
+    let observe = &observe_tail[..observe_end];
+    assert_eq!(observe.matches("self.verify_live_leaf()?;").count(), 2);
+    assert!(
+        observe.find("self.verify_live_leaf()?;").expect("pre-observe validation")
+            < observe.find("self.db.begin_write()").expect("write transaction")
+    );
+    assert!(
+        observe.rfind("self.verify_live_leaf()?;").expect("post-observe validation")
+            > observe.find("write.commit()").expect("Immediate commit")
+    );
+
+    let verifier_start = external.find("fn verify_live_leaf(&self)").expect("live leaf verifier");
+    let verifier_tail = &external[verifier_start..];
+    let verifier_end = verifier_tail.find("\n}\n\n/// Narrow").expect("live leaf verifier end");
+    let verifier = &verifier_tail[..verifier_end];
+    assert!(verifier.contains("std::fs::symlink_metadata(&self.db_path)"));
+    assert!(verifier.contains("metadata.len() == 0"));
+    assert!(verifier.contains("current != self.leaf_identity"));
+    assert!(verifier.contains("validate_unix_owner_mode("));
+    for forbidden in [
+        "open_database_file",
+        "redb::Database::open",
+        "OpenOptions",
+        "create",
+        "repair",
+        "adopt",
+        "reseed",
+    ] {
+        for (name, body) in
+            [("read_hwm", read_hwm), ("observe", observe), ("verify_live_leaf", verifier)]
+        {
+            assert!(!body.contains(forbidden), "{name} contains bypass token {forbidden}");
+        }
+    }
+}
+
+fn anchor_negative_fixture_is_rejected(source: &str) -> bool {
+    let found = identifiers(source).expect("fixture source");
+    FORBIDDEN_IDENTIFIERS.iter().any(|forbidden| found.contains(*forbidden))
+        || source.contains("pub fn new(")
+        || source.contains("redb::Database::create(path)")
+        || source.contains("pub use killstate_anchor::AnchorProvisioner;")
+}
+
+#[test]
+fn p0a_killstate_anchor_negative_fixtures_fail_the_seal() {
+    for fixture in [
+        "fn bypass() { send_raw_transaction(); }",
+        "impl AnchoredKillStateStore { pub fn new(path: PathBuf) {} }",
+        "fn open() { redb::Database::create(path); }",
+        "pub use killstate_anchor::AnchorProvisioner;",
+    ] {
+        assert!(anchor_negative_fixture_is_rejected(fixture), "fixture was not rejected");
+    }
+    assert!(!anchor_negative_fixture_is_rejected(
+        "pub fn open_anchored_killstate() -> Result<AnchoredKillStateStore, StartupError> {}"
+    ));
+}
 #[test]
 fn runtime_wiring_is_receive_only_and_preserves_forwarding_semantics() {
     let root = workspace_root();
