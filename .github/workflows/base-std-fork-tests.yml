@@ -54,6 +54,7 @@ jobs:
           foundry: "true"
           native-deps: "true"
           rust-cache-shared-key: "base-std-fork-tests"
+          just: "false"
 
       - name: Checkout pinned fork-test pair
         shell: bash
