@@ -29,7 +29,7 @@ use futures::{StreamExt, TryStreamExt, stream};
 use crate::{PreimageMap, Result, WitnessError};
 
 /// Number of prior L2 headers available to the EVM `BLOCKHASH` opcode.
-// ponytail: 256 covers EVM history; increase `l2_lookback` if span-batch overlap needs older blocks.
+// Increase `l2_lookback` if span-batch overlap needs older blocks.
 pub const L2_HEADER_LOOKBACK: u64 = 256;
 
 /// L2 RPC block type used to reconstruct payload attributes.
@@ -144,7 +144,9 @@ impl WitnessGenerator {
             )));
         }
 
-        let l2_start = agreed_number.saturating_sub(self.l2_lookback);
+        let l2_start = agreed_number
+            .saturating_sub(self.l2_lookback)
+            .max(self.config.rollup_config.genesis.l2.number);
         let (l2_chunks, l1_chunks, output_chunk) = tokio::try_join!(
             self.fetch_l2_range(l2_start, claimed_number, agreed_number),
             self.fetch_l1_range(l1_start, l1_end),
