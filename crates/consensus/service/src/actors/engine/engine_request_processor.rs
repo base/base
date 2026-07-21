@@ -353,6 +353,10 @@ where
                 trace!(target: "engine", %error, "Temporary engine task error");
                 Ok(ResetOutcome::NotReset)
             }
+            EngineTaskErrorSeverity::Deferred => {
+                trace!(target: "engine", %error, "Deferred engine task error");
+                Ok(ResetOutcome::NotReset)
+            }
         }
     }
 

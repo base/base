@@ -21,9 +21,13 @@ use crate::{
 /// This is used to determine how to handle the error when draining the engine task queue.
 #[derive(Debug, PartialEq, Eq, Display, Clone, Copy)]
 pub enum EngineTaskErrorSeverity {
-    /// The error is temporary and the task is retried.
+    /// The error is temporary and the task is retried in-place.
     #[display("temporary")]
     Temporary,
+    /// The error should be handed back to the next engine drain cycle rather than retried
+    /// in-place (avoids hot-looping while the EL catches up).
+    #[display("deferred")]
+    Deferred,
     /// The error is critical and is propagated to the engine actor.
     #[display("critical")]
     Critical,
@@ -82,6 +86,7 @@ impl EngineTaskErrorSeverity {
     pub const fn as_label(self) -> &'static str {
         match self {
             Self::Temporary => "temporary",
+            Self::Deferred => "deferred",
             Self::Critical => "critical",
             Self::Reset => "reset",
             Self::Flush => "flush",
@@ -197,18 +202,6 @@ impl<EngineClient_: EngineClient> EngineTaskExt for EngineTask<EngineClient_> {
             Metrics::engine_task_failure(self.task_metrics_label(), severity.as_label())
                 .increment(1);
 
-            if matches!(
-                &e,
-                EngineTaskErrors::Consolidate(ConsolidateTaskError::ForkchoiceUpdateDidNotApply)
-            ) {
-                trace!(
-                    target: "engine",
-                    error = %e,
-                    "Deferring consolidation retry to the next engine drain"
-                );
-                return Err(e);
-            }
-
             match severity {
                 EngineTaskErrorSeverity::Temporary => {
                     trace!(target: "engine", error = %e, "Temporary engine error");
@@ -217,6 +210,14 @@ impl<EngineClient_: EngineClient> EngineTaskExt for EngineTask<EngineClient_> {
                     yield_now().await;
 
                     continue;
+                }
+                EngineTaskErrorSeverity::Deferred => {
+                    trace!(
+                        target: "engine",
+                        error = %e,
+                        "Deferring engine task retry to the next engine drain"
+                    );
+                    return Err(e);
                 }
                 EngineTaskErrorSeverity::Critical => {
                     error!(target: "engine", error = %e, "Critical engine error");

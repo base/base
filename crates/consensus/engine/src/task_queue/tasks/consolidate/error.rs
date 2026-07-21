@@ -46,9 +46,10 @@ impl EngineTaskError for ConsolidateTaskError {
     fn severity(&self) -> EngineTaskErrorSeverity {
         match self {
             Self::MissingUnsafeL2Block(_) => EngineTaskErrorSeverity::Reset,
-            Self::FailedToFetchUnsafeL2Block
-            | Self::FailedToFetchDerivedL2Block
-            | Self::ForkchoiceUpdateDidNotApply => EngineTaskErrorSeverity::Temporary,
+            Self::FailedToFetchUnsafeL2Block | Self::FailedToFetchDerivedL2Block => {
+                EngineTaskErrorSeverity::Temporary
+            }
+            Self::ForkchoiceUpdateDidNotApply => EngineTaskErrorSeverity::Deferred,
             Self::BuildTaskFailed(inner) => inner.severity(),
             Self::SealTaskFailed(inner) => inner.severity(),
             Self::ForkchoiceUpdateFailed(inner) => inner.severity(),

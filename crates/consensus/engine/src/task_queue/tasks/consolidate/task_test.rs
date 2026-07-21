@@ -328,11 +328,11 @@ async fn consolidate_syncing_yields_until_a_later_drain() {
 
     let err = timeout(Duration::from_secs(1), engine.drain())
         .await
-        .expect("a temporary consolidation failure must yield to the engine processor")
+        .expect("a deferred consolidation failure must yield to the engine processor")
         .expect_err("SYNCING must keep the consolidation task pending");
 
-    assert_eq!(err.severity(), EngineTaskErrorSeverity::Temporary);
-    assert_eq!(*queue_rx.borrow(), 1, "temporary task must remain queued");
+    assert_eq!(err.severity(), EngineTaskErrorSeverity::Deferred);
+    assert_eq!(*queue_rx.borrow(), 1, "deferred task must remain queued");
     assert_eq!(engine.state().sync_state.unsafe_head(), pinned_head);
 
     client.set_fork_choice_updated_v3_response(valid_fcu()).await;
