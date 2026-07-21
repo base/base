@@ -22,7 +22,7 @@ use base_proof_contracts::{
     AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,
     GameStatus,
 };
-use base_proof_rpc::{BaseHeader, L2Provider, RpcError, RpcResult};
+use base_proof_rpc::{BaseHeader, L1Provider, L2Provider, RpcError, RpcResult};
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
 use base_prover_service_protocol::{
     DeleteProofRequest, GetProofRequest, GetProofResponse, ProofResult as ApiProofResult,
@@ -30,8 +30,6 @@ use base_prover_service_protocol::{
     ZkProofResult, ZkVm,
 };
 use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager};
-
-use crate::L1HeadProvider;
 
 /// Discovery interval used in tests (5 minutes).
 pub const TEST_DISCOVERY_INTERVAL: Duration = Duration::from_secs(300);
@@ -868,47 +866,79 @@ impl ProofRequesterProvider for MockZkProofProvider {
     }
 }
 
-/// Mock L1 head provider for testing the driver.
+/// Mock L1 provider for testing the driver.
 #[derive(Debug)]
-pub struct MockL1HeadProvider {
-    /// Queue of `(expected_hash, result)` pairs returned by
-    /// [`block_number_by_hash`](L1HeadProvider::block_number_by_hash).
-    /// When `expected_hash` is `Some`, the mock asserts that the caller
-    /// passes the correct hash.
-    pub block_number_results: Mutex<VecDeque<(Option<B256>, eyre::Result<u64>)>>,
+pub struct MockL1 {
+    /// Headers returned by [`L1Provider::header_by_hash`].
+    pub headers_by_hash: HashMap<B256, RpcHeader>,
+    /// Error returned by [`L1Provider::header_by_hash`], when configured.
+    pub header_error: Option<String>,
+    /// Hashes requested through [`L1Provider::header_by_hash`].
+    pub header_by_hash_requests: Mutex<Vec<B256>>,
 }
 
-impl MockL1HeadProvider {
-    /// Creates a mock whose [`block_number_by_hash`](L1HeadProvider::block_number_by_hash)
-    /// returns `number` and asserts it is called with `hash`.
+impl MockL1 {
+    /// Creates a mock that returns a header with `number` for `hash`.
     pub fn success(hash: B256, number: u64) -> Self {
-        Self { block_number_results: Mutex::new(VecDeque::from([(Some(hash), Ok(number))])) }
+        Self {
+            headers_by_hash: HashMap::from([(
+                hash,
+                RpcHeader {
+                    hash,
+                    inner: ConsensusHeader { number, ..Default::default() },
+                    ..Default::default()
+                },
+            )]),
+            header_error: None,
+            header_by_hash_requests: Mutex::new(Vec::new()),
+        }
     }
 
     /// Creates a mock that returns a single error.
     pub fn failure(msg: &str) -> Self {
         Self {
-            block_number_results: Mutex::new(VecDeque::from([(None, Err(eyre::eyre!("{msg}")))])),
+            headers_by_hash: HashMap::new(),
+            header_error: Some(msg.to_owned()),
+            header_by_hash_requests: Mutex::new(Vec::new()),
         }
     }
 }
 
 #[async_trait]
-impl L1HeadProvider for MockL1HeadProvider {
-    async fn block_number_by_hash(&self, hash: B256) -> eyre::Result<u64> {
-        let (expected_hash, result) = self
-            .block_number_results
-            .lock()
-            .unwrap()
-            .pop_front()
-            .expect("MockL1HeadProvider has no more block_number_by_hash results");
-        if let Some(expected) = expected_hash {
-            assert_eq!(
-                hash, expected,
-                "MockL1HeadProvider::block_number_by_hash called with unexpected hash"
-            );
+impl L1Provider for MockL1 {
+    async fn block_number(&self) -> RpcResult<u64> {
+        unimplemented!("tests only use header_by_hash")
+    }
+
+    async fn header_by_number(&self, _: BlockNumberOrTag) -> RpcResult<RpcHeader> {
+        unimplemented!("tests only use header_by_hash")
+    }
+
+    async fn header_by_hash(&self, hash: B256) -> RpcResult<RpcHeader> {
+        self.header_by_hash_requests.lock().unwrap().push(hash);
+        if let Some(error) = &self.header_error {
+            return Err(RpcError::HeaderNotFound(error.clone()));
         }
-        result
+        self.headers_by_hash
+            .get(&hash)
+            .cloned()
+            .ok_or_else(|| RpcError::HeaderNotFound(format!("mock: no header for hash {hash}")))
+    }
+
+    async fn block_receipts(&self, _: B256) -> RpcResult<Vec<TransactionReceipt>> {
+        unimplemented!("tests only use header_by_hash")
+    }
+
+    async fn code_at(&self, _: Address, _: BlockNumberOrTag) -> RpcResult<Bytes> {
+        unimplemented!("tests only use header_by_hash")
+    }
+
+    async fn call_contract(&self, _: Address, _: Bytes, _: BlockNumberOrTag) -> RpcResult<Bytes> {
+        unimplemented!("tests only use header_by_hash")
+    }
+
+    async fn get_balance(&self, _: Address) -> RpcResult<U256> {
+        unimplemented!("tests only use header_by_hash")
     }
 }
 
