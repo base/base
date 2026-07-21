@@ -892,15 +892,11 @@ mod tests {
 
     #[test]
     fn test_shadow_canary_defaults_when_disabled() {
-        let args =
-            CommandParser::<StandardNodeArgs>::parse_from(["reth"]).args.shadow_canary;
+        let args = CommandParser::<StandardNodeArgs>::parse_from(["reth"]).args.shadow_canary;
 
         assert!(!args.enable_shadow_canary);
         assert_eq!(args.shadow_canary_db_url, None);
-        assert_eq!(
-            args.shadow_canary_max_connections,
-            DEFAULT_SHADOW_CANARY_MAX_CONNECTIONS
-        );
+        assert_eq!(args.shadow_canary_max_connections, DEFAULT_SHADOW_CANARY_MAX_CONNECTIONS);
         assert_eq!(args.shadow_canary_connection_timeout, Duration::from_secs(5));
         assert_eq!(args.shadow_canary_builder_version, None);
     }

@@ -285,12 +285,12 @@ impl L2Stack {
                 L2ClientConsensus::Follow(client_consensus)
             }
             L2ClientConsensusMode::ShadowDrive => {
-                let build_deadline = config.shadow_drive_build_deadline.ok_or_else(|| {
-                    eyre::eyre!("shadow drive build deadline is required")
-                })?;
-                let max_reorg_depth = config.shadow_drive_max_reorg_depth.ok_or_else(|| {
-                    eyre::eyre!("shadow drive max reorg depth is required")
-                })?;
+                let build_deadline = config
+                    .shadow_drive_build_deadline
+                    .ok_or_else(|| eyre::eyre!("shadow drive build deadline is required"))?;
+                let max_reorg_depth = config
+                    .shadow_drive_max_reorg_depth
+                    .ok_or_else(|| eyre::eyre!("shadow drive max reorg depth is required"))?;
                 let shadow_drive_config = ShadowDriveConfig {
                     source_l2_rpc: builder.rpc_url()?,
                     build_deadline,

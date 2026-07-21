@@ -43,8 +43,8 @@ pub use actors::{
     RpcActor, RpcActorError, RpcContext, ScheduledTicker, SealState, SealStepError,
     SealStepOutcome, SequencerActor, SequencerActorError, SequencerAdminQuery, SequencerConfig,
     SequencerEngineClient, ShadowDriveActor, ShadowDriveActorError, ShadowReanchorRequest,
-    UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
-    UnsealedPayloadHandle, UpgradeSignalMetricsActor, UpgradeSignalNodeConfig,
+    SlotOutcome, UnsafePayloadGossipClient, UnsafePayloadGossipClientError, UnsealedPayloadHandle,
+    UpgradeSignalMetricsActor, UpgradeSignalNodeConfig, WaitOutcome,
 };
 
 mod metrics;

@@ -66,7 +66,8 @@ impl<EngineClient_: EngineClient> ReanchorTask<EngineClient_> {
 
         let response = match execution_payload {
             BaseExecutionPayload::V1(payload) => {
-                let payload_input = ExecutionPayloadInputV2 { execution_payload: payload, withdrawals: None };
+                let payload_input =
+                    ExecutionPayloadInputV2 { execution_payload: payload, withdrawals: None };
                 self.client.new_payload_v2(payload_input).await
             }
             BaseExecutionPayload::V2(payload) => {
@@ -77,10 +78,14 @@ impl<EngineClient_: EngineClient> ReanchorTask<EngineClient_> {
                 self.client.new_payload_v2(payload_input).await
             }
             BaseExecutionPayload::V3(payload) => {
-                self.client.new_payload_v3(payload, parent_beacon_block_root.unwrap_or_default()).await
+                self.client
+                    .new_payload_v3(payload, parent_beacon_block_root.unwrap_or_default())
+                    .await
             }
             BaseExecutionPayload::V4(payload) => {
-                self.client.new_payload_v4(payload, parent_beacon_block_root.unwrap_or_default()).await
+                self.client
+                    .new_payload_v4(payload, parent_beacon_block_root.unwrap_or_default())
+                    .await
             }
         };
 

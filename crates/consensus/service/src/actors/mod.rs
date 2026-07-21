@@ -70,4 +70,4 @@ pub use sequencer::{
 pub use sequencer::{MockConductor, MockOriginSelector, MockSequencerEngineClient};
 
 mod shadow_drive;
-pub use shadow_drive::{ShadowDriveActor, ShadowDriveActorError};
+pub use shadow_drive::{ShadowDriveActor, ShadowDriveActorError, SlotOutcome, WaitOutcome};

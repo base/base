@@ -18,11 +18,12 @@ pub struct ShadowDriveArgs {
     )]
     pub source_l2_rpc: Url,
 
-    /// Deadline for building shadow payloads, in milliseconds.
+    /// Deadline for building shadow payloads, in milliseconds. Must be > 0 (a zero deadline
+    /// expires immediately, forcing every slot to fall back to re-anchoring to the parent).
     #[arg(
         long = "shadow-build-deadline-ms",
         visible_alias = "shadow.build-deadline-ms",
-        default_value = "0",
+        default_value = "2000",
         value_parser = |arg: &str| -> Result<Duration, ParseIntError> {
             Ok(Duration::from_millis(arg.parse()?))
         },

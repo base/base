@@ -1,15 +1,19 @@
 use std::time::Duration;
 
+use base_shadow_canary_db::{ShadowBlockRepo, ShadowBlockRow, ShadowDbConfig};
 use chrono::Utc;
 use reth_tasks::TaskExecutor;
-use tokio::sync::mpsc;
-use tokio::time::{MissedTickBehavior, interval};
-use tracing::{error, info};
-
-use base_shadow_canary_db::{ShadowBlockRepo, ShadowBlockRow, ShadowDbConfig};
+use tokio::{
+    sync::mpsc,
+    time::{MissedTickBehavior, interval},
+};
+use tracing::{error, info, warn};
 
 const BATCH_SIZE: usize = 100;
 const FLUSH_INTERVAL: Duration = Duration::from_secs(1);
+/// Upper bound on buffered rows retained across failed flushes. Beyond this the oldest rows are
+/// dropped so a persistent DB failure cannot grow the buffer unboundedly.
+const MAX_BUFFERED_ROWS: usize = BATCH_SIZE * 100;
 
 /// Shadow canary writer task.
 #[derive(Debug)]
@@ -104,6 +108,16 @@ impl ShadowWriter {
                     batch_size,
                     "Failed to insert shadow canary rows"
                 );
+                if buffer.len() > MAX_BUFFERED_ROWS {
+                    let dropped = buffer.len() - MAX_BUFFERED_ROWS;
+                    buffer.drain(0..dropped);
+                    warn!(
+                        target: "base::shadow-canary",
+                        dropped,
+                        retained = buffer.len(),
+                        "Shadow canary buffer exceeded cap after repeated flush failures; dropped oldest rows"
+                    );
+                }
             }
         }
     }

@@ -67,6 +67,9 @@ pub enum ShadowDriveActorError {
     /// Shadow-drive configuration is invalid.
     #[error("shadow-drive max reorg depth must be > 0")]
     InvalidMaxReorgDepth,
+    /// Shadow-drive build deadline is zero.
+    #[error("shadow-drive build deadline must be > 0")]
+    InvalidBuildDeadline,
     /// Failed to fetch from the canonical source.
     #[error(transparent)]
     Source(#[from] crate::RemoteL2ClientError),
@@ -88,17 +91,34 @@ pub enum ShadowDriveActorError {
     /// Re-anchor response channel closed unexpectedly.
     #[error("re-anchor response channel closed")]
     ReanchorResponseClosed,
-    /// The build deadline elapsed before the source produced the next head.
-    #[error("shadow-drive build deadline exceeded waiting for block {expected} (latest={latest})")]
-    BuildDeadlineExceeded {
-        /// The block number the actor was waiting for.
-        expected: u64,
-        /// The latest block number observed from the source at time of failure.
-        latest: u64,
-    },
     /// Re-anchor task failed.
     #[error(transparent)]
     Reanchor(#[from] ReanchorTaskError),
+}
+
+/// Outcome of waiting for the canonical source to produce the next real payload.
+#[derive(Debug)]
+pub enum WaitOutcome {
+    /// The source produced the expected block; carries its payload and decoded block info.
+    Ready(Box<BaseExecutionPayloadEnvelope>, L2BlockInfo),
+    /// The build deadline elapsed before the source produced the next head.
+    DeadlineExceeded {
+        /// The block number the actor was waiting for.
+        expected: u64,
+        /// The latest block number observed from the source at the deadline.
+        latest: u64,
+    },
+    /// Cancellation was observed while waiting; the actor should shut down.
+    Cancelled,
+}
+
+/// Outcome of running a single shadow-drive slot.
+#[derive(Debug)]
+pub enum SlotOutcome {
+    /// The slot completed and the unsafe head advanced to the contained block.
+    Advanced(L2BlockInfo),
+    /// Cancellation was observed mid-slot; the actor should exit its loop.
+    Shutdown,
 }
 
 impl<AttributesBuilder_, OriginSelector_, SequencerEngineClient_, Source_>
@@ -109,7 +129,10 @@ where
     SequencerEngineClient_: SequencerEngineClient + Send + Sync,
     Source_: RemoteClient + Send + Sync,
 {
-    async fn fetch_source_payload(&self, number: u64) -> Result<BaseExecutionPayloadEnvelope, ShadowDriveActorError> {
+    async fn fetch_source_payload(
+        &self,
+        number: u64,
+    ) -> Result<BaseExecutionPayloadEnvelope, ShadowDriveActorError> {
         Ok(self.source.get_payload_by_number(number).await?)
     }
 
@@ -145,7 +168,7 @@ where
     async fn wait_for_real_next_payload(
         &self,
         expected_number: u64,
-    ) -> Result<(BaseExecutionPayloadEnvelope, L2BlockInfo), ShadowDriveActorError> {
+    ) -> Result<WaitOutcome, ShadowDriveActorError> {
         let deadline = Instant::now() + self.shadow_config.build_deadline;
 
         loop {
@@ -157,17 +180,41 @@ where
                     payload.parent_beacon_block_root,
                     &self.rollup_config.genesis,
                 )?;
-                return Ok((payload, info));
+                return Ok(WaitOutcome::Ready(Box::new(payload), info));
             }
 
             if Instant::now() >= deadline {
-                return Err(ShadowDriveActorError::BuildDeadlineExceeded {
-                    expected: expected_number,
-                    latest,
-                });
+                return Ok(WaitOutcome::DeadlineExceeded { expected: expected_number, latest });
             }
 
-            sleep(SOURCE_POLL_INTERVAL).await;
+            // Only the poll sleep is cancellable; `biased` ensures a pending cancellation wins the
+            // race so shutdown is not delayed by a full poll interval. The build -> re-anchor
+            // sequence itself stays atomic (outside any cancellation select).
+            select! {
+                biased;
+                _ = self.cancellation_token.cancelled() => return Ok(WaitOutcome::Cancelled),
+                _ = sleep(SOURCE_POLL_INTERVAL) => {}
+            }
+        }
+    }
+
+    async fn reanchor_or_resync(
+        &self,
+        payload: BaseExecutionPayloadEnvelope,
+    ) -> Result<L2BlockInfo, ShadowDriveActorError> {
+        match self.reanchor_to(payload).await {
+            Ok(head) => Ok(head),
+            Err(err) => {
+                // A re-anchor failure must not terminate the actor (which would cancel the root
+                // token and bring down the whole node). The orphan candidate is only reorg-depth-1
+                // and self-heals via derivation; resync the parent from ground truth and continue.
+                error!(
+                    target: "shadow_drive",
+                    error = %err,
+                    "ShadowDrive re-anchor failed; resyncing parent from source"
+                );
+                self.fetch_source_head().await
+            }
         }
     }
 
@@ -178,7 +225,11 @@ where
         let (result_tx, mut result_rx) = mpsc::channel(1);
         self.engine_actor_request_tx
             .send(EngineActorRequest::ProcessShadowReanchorRequest(Box::new(
-                ShadowReanchorRequest { envelope: payload, result_tx, otel_cx: OtelContext::current() },
+                ShadowReanchorRequest {
+                    envelope: payload,
+                    result_tx,
+                    otel_cx: OtelContext::current(),
+                },
             )))
             .await
             .map_err(|_| ShadowDriveActorError::ReanchorRequestSend)?;
@@ -194,17 +245,17 @@ where
         let mut state_rx = self.engine_state_rx.clone();
         let expected_hash = expected.block_info.hash;
         let expected_number = expected.block_info.number;
-        let wait_result = timeout(Duration::from_secs(2), state_rx.wait_for(|state| {
-            let head = state.sync_state.unsafe_head();
-            head.block_info.hash == expected_hash && head.block_info.number == expected_number
-        }))
+        let wait_result = timeout(
+            Duration::from_secs(2),
+            state_rx.wait_for(|state| {
+                let head = state.sync_state.unsafe_head();
+                head.block_info.hash == expected_hash && head.block_info.number == expected_number
+            }),
+        )
         .await;
-        let success = matches!(wait_result, Ok(Ok(_)));
+        let updated = matches!(wait_result, Ok(Ok(_)));
         drop(wait_result);
-
-        if success {
-            debug_assert!(state_rx.borrow().sync_state.unsafe_head() == expected);
-        } else {
+        if !updated {
             let current = state_rx.borrow().sync_state.unsafe_head();
             error!(
                 target: "shadow_drive",
@@ -217,7 +268,13 @@ where
         }
     }
 
-    async fn run_slot(&mut self, parent: L2BlockInfo) -> Result<L2BlockInfo, ShadowDriveActorError> {
+    async fn run_slot(
+        &mut self,
+        parent: L2BlockInfo,
+    ) -> Result<SlotOutcome, ShadowDriveActorError> {
+        // TODO(shadow-drive): reorg depth is fixed at 1 (build one candidate, re-anchor back one).
+        // This guard is a forward-looking placeholder for configurable multi-block reorg depths;
+        // it is currently unreachable because `max_reorg_depth` is validated to be >= 1 at startup.
         let reorg_depth = 1u64;
         if reorg_depth > self.shadow_config.max_reorg_depth {
             warn!(
@@ -226,7 +283,7 @@ where
                 max_reorg_depth = self.shadow_config.max_reorg_depth,
                 "ShadowDrive reorg depth exceeds configured maximum; skipping slot"
             );
-            return self.fetch_source_head().await;
+            return Ok(SlotOutcome::Advanced(self.fetch_source_head().await?));
         }
 
         let candidate_head = self.build_candidate(parent).await?;
@@ -238,12 +295,20 @@ where
             "ShadowDrive candidate committed"
         );
 
-        let (real_payload, real_head) = match self
-            .wait_for_real_next_payload(parent.block_info.number.saturating_add(1))
-            .await
-        {
-            Ok(result) => result,
-            Err(ShadowDriveActorError::BuildDeadlineExceeded { expected, latest }) => {
+        match self.wait_for_real_next_payload(parent.block_info.number.saturating_add(1)).await? {
+            WaitOutcome::Ready(real_payload, real_head) => {
+                let reanchored = self.reanchor_or_resync(*real_payload).await?;
+                info!(
+                    target: "shadow_drive",
+                    reanchor_number = reanchored.block_info.number,
+                    reanchor_hash = %reanchored.block_info.hash,
+                    reorg_depth,
+                    "ShadowDrive re-anchor applied"
+                );
+                self.assert_engine_head(real_head).await;
+                Ok(SlotOutcome::Advanced(reanchored))
+            }
+            WaitOutcome::DeadlineExceeded { expected, latest } => {
                 warn!(
                     target: "shadow_drive",
                     expected,
@@ -252,24 +317,25 @@ where
                     "ShadowDrive build deadline exceeded; re-anchoring to parent"
                 );
                 let parent_payload = self.fetch_source_payload(parent.block_info.number).await?;
-                let reanchored = self.reanchor_to(parent_payload).await?;
-                return Ok(reanchored);
+                let reanchored = self.reanchor_or_resync(parent_payload).await?;
+                Ok(SlotOutcome::Advanced(reanchored))
             }
-            Err(err) => return Err(err),
-        };
-
-        let reanchored = self.reanchor_to(real_payload).await?;
-        info!(
-            target: "shadow_drive",
-            reanchor_number = reanchored.block_info.number,
-            reanchor_hash = %reanchored.block_info.hash,
-            reorg_depth,
-            "ShadowDrive re-anchor applied"
-        );
-
-        self.assert_engine_head(real_head).await;
-
-        Ok(real_head)
+            WaitOutcome::Cancelled => {
+                warn!(
+                    target: "shadow_drive",
+                    "ShadowDrive cancelled mid-slot; best-effort re-anchor to parent before exit"
+                );
+                let parent_payload = self.fetch_source_payload(parent.block_info.number).await?;
+                if let Err(err) = self.reanchor_to(parent_payload).await {
+                    warn!(
+                        target: "shadow_drive",
+                        error = %err,
+                        "ShadowDrive shutdown re-anchor failed; engine likely already stopped"
+                    );
+                }
+                Ok(SlotOutcome::Shutdown)
+            }
+        }
     }
 }
 
@@ -289,19 +355,25 @@ where
         if self.shadow_config.max_reorg_depth == 0 {
             return Err(ShadowDriveActorError::InvalidMaxReorgDepth);
         }
+        if self.shadow_config.build_deadline.is_zero() {
+            return Err(ShadowDriveActorError::InvalidBuildDeadline);
+        }
 
         info!(target: "shadow_drive", "ShadowDrive active");
         let mut parent = self.fetch_source_head().await?;
-        let cancellation = self.cancellation_token.clone();
 
         loop {
-            select! {
-                _ = cancellation.cancelled() => {
-                    info!(target: "shadow_drive", "Received shutdown signal. Exiting ShadowDrive task.");
+            // Cancellation is only checked between slots and inside the poll wait, never between
+            // `build_candidate` and its re-anchor, so a slot's build -> re-anchor is always atomic.
+            if self.cancellation_token.is_cancelled() {
+                info!(target: "shadow_drive", "Received shutdown signal. Exiting ShadowDrive task.");
+                return Ok(());
+            }
+            match self.run_slot(parent).await? {
+                SlotOutcome::Advanced(next) => parent = next,
+                SlotOutcome::Shutdown => {
+                    info!(target: "shadow_drive", "ShadowDrive slot observed shutdown. Exiting.");
                     return Ok(());
-                }
-                result = self.run_slot(parent) => {
-                    parent = result?;
                 }
             }
         }
@@ -330,13 +402,15 @@ mod tests {
     use alloy_rpc_types_engine::ExecutionPayloadV1;
     use base_common_consensus::{BaseTxEnvelope, TxDeposit};
     use base_common_genesis::RollupConfig;
-    use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope, BasePayloadAttributes};
-    use base_protocol::{BlockInfo, L2BlockInfo, L1BlockInfoBedrock};
+    use base_common_rpc_types_engine::{
+        BaseExecutionPayload, BaseExecutionPayloadEnvelope, BasePayloadAttributes,
+    };
     use base_consensus_derive::test_utils::TestAttributesBuilder;
+    use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
     use tokio::sync::{mpsc, watch};
     use tokio_util::sync::CancellationToken;
 
-    use super::ShadowDriveActor;
+    use super::{ShadowDriveActor, SlotOutcome};
     use crate::{
         EngineActorRequest, MockOriginSelector, MockRemoteClient, MockSequencerEngineClient,
         ShadowDriveConfig,
@@ -350,7 +424,11 @@ mod tests {
         .encoded_2718()
     }
 
-    fn payload_envelope(block_number: u64, parent_hash: B256, block_hash: B256) -> BaseExecutionPayloadEnvelope {
+    fn payload_envelope(
+        block_number: u64,
+        parent_hash: B256,
+        block_hash: B256,
+    ) -> BaseExecutionPayloadEnvelope {
         BaseExecutionPayloadEnvelope {
             parent_beacon_block_root: None,
             execution_payload: BaseExecutionPayload::V1(ExecutionPayloadV1 {
@@ -373,7 +451,10 @@ mod tests {
     }
 
     fn block_info(number: u64, hash: B256, parent_hash: B256) -> L2BlockInfo {
-        L2BlockInfo { block_info: BlockInfo::new(hash, number, parent_hash, number), ..Default::default() }
+        L2BlockInfo {
+            block_info: BlockInfo::new(hash, number, parent_hash, number),
+            ..Default::default()
+        }
     }
 
     #[tokio::test]
@@ -399,7 +480,9 @@ mod tests {
             .returning(|_, _| Ok(BlockInfo::new(B256::with_last_byte(9), 10, B256::ZERO, 0)));
 
         let mut engine_client = MockSequencerEngineClient::new();
-        engine_client.expect_start_build_block().returning(|_| Ok(alloy_rpc_types_engine::PayloadId::new([1; 8])));
+        engine_client
+            .expect_start_build_block()
+            .returning(|_| Ok(alloy_rpc_types_engine::PayloadId::new([1; 8])));
         engine_client
             .expect_get_sealed_payload()
             .returning(move |_, _| Ok(candidate_payload.clone()));
@@ -437,21 +520,21 @@ mod tests {
             let EngineActorRequest::ProcessShadowReanchorRequest(request) = request else {
                 panic!("expected reanchor request");
             };
-            request
-                .result_tx
-                .send(Ok(reanchor_head))
-                .await
-                .expect("send reanchor result");
+            request.result_tx.send(Ok(reanchor_head)).await.expect("send reanchor result");
 
             let mut state = base_consensus_engine::EngineState::default();
-            state.sync_state = state.sync_state.apply_update(base_consensus_engine::EngineSyncStateUpdate {
-                unsafe_head: Some(reanchor_head),
-                ..Default::default()
-            });
+            state.sync_state =
+                state.sync_state.apply_update(base_consensus_engine::EngineSyncStateUpdate {
+                    unsafe_head: Some(reanchor_head),
+                    ..Default::default()
+                });
             state_tx.send_replace(state);
         });
 
-        let next = actor.run_slot(parent).await.expect("shadow drive slot");
+        let SlotOutcome::Advanced(next) = actor.run_slot(parent).await.expect("shadow drive slot")
+        else {
+            panic!("expected slot to advance");
+        };
         assert_eq!(next.block_info.hash, reanchor_head.block_info.hash);
         reanchor_task.await.expect("reanchor task");
     }

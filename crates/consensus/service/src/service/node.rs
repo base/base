@@ -558,79 +558,75 @@ impl RollupNode {
             .map(|c| c.metrics_actor(upgrade_signal_refresher.clone(), cancellation.clone()));
         let node_mode = self.mode();
         // Create the sequencer or shadow-drive actor if needed.
-        let (sequencer_actor, sequencer_admin_client, shadow_drive_actor) = if node_mode.is_sequencer() {
-            let delayed_origin_selector =
-                delayed_origin_selector.take().expect("origin selector must be available");
-            let sequencer_engine_client = QueuedSequencerEngineClient {
-                engine_actor_request_tx: engine_actor_request_tx.clone(),
-                unsafe_head_rx,
-            };
+        let (sequencer_actor, sequencer_admin_client, shadow_drive_actor) =
+            if node_mode.is_sequencer() {
+                let delayed_origin_selector =
+                    delayed_origin_selector.take().expect("origin selector must be available");
+                let sequencer_engine_client = QueuedSequencerEngineClient {
+                    engine_actor_request_tx: engine_actor_request_tx.clone(),
+                    unsafe_head_rx,
+                };
 
-            // Create the admin API channel
-            let (sequencer_admin_api_tx, sequencer_admin_api_rx) = mpsc::channel(1024);
-            let queued_gossip_client =
-                QueuedUnsafePayloadGossipClient::new(gossip_payload_tx.clone());
+                // Create the admin API channel
+                let (sequencer_admin_api_tx, sequencer_admin_api_rx) = mpsc::channel(1024);
+                let queued_gossip_client =
+                    QueuedUnsafePayloadGossipClient::new(gossip_payload_tx.clone());
 
-            let recovery_mode =
-                RecoveryModeGuard::new(self.sequencer_config.sequencer_recovery_mode);
-            let engine_client = Arc::new(sequencer_engine_client);
-            (
-                Some(SequencerActor {
-                    admin_api_rx: sequencer_admin_api_rx,
-                    builder: PayloadBuilder {
-                        attributes_builder: self.create_attributes_builder(),
-                        engine_client: Arc::clone(&engine_client),
-                        origin_selector: delayed_origin_selector,
-                        recovery_mode: recovery_mode.clone(),
+                let recovery_mode =
+                    RecoveryModeGuard::new(self.sequencer_config.sequencer_recovery_mode);
+                let engine_client = Arc::new(sequencer_engine_client);
+                (
+                    Some(SequencerActor {
+                        admin_api_rx: sequencer_admin_api_rx,
+                        builder: PayloadBuilder {
+                            attributes_builder: self.create_attributes_builder(),
+                            engine_client: Arc::clone(&engine_client),
+                            origin_selector: delayed_origin_selector,
+                            recovery_mode: recovery_mode.clone(),
+                            rollup_config: Arc::clone(&self.config),
+                        },
+                        cancellation_token: cancellation.clone(),
+                        conductor,
+                        engine_client,
+                        is_active: self.sequencer_config.sequencer_stopped.not(),
+                        shadow_blocks_per_cycle: self.sequencer_config.shadow_blocks_per_cycle,
+                        recovery_mode,
                         rollup_config: Arc::clone(&self.config),
-                    },
-                    cancellation_token: cancellation.clone(),
-                    conductor,
-                    engine_client,
-                    is_active: self.sequencer_config.sequencer_stopped.not(),
-                    shadow_blocks_per_cycle: self.sequencer_config.shadow_blocks_per_cycle,
-                    recovery_mode,
+                        unsafe_payload_gossip_client: queued_gossip_client,
+                        sealer: None,
+                        pending_stop: None,
+                    }),
+                    Some(QueuedSequencerAdminAPIClient::new(sequencer_admin_api_tx)),
+                    None,
+                )
+            } else if node_mode.is_shadow_drive() {
+                let delayed_origin_selector =
+                    delayed_origin_selector.take().expect("origin selector must be available");
+                let shadow_drive_config = self.shadow_drive_config.clone().ok_or_else(|| {
+                    "shadow-drive config missing for shadow-drive mode".to_string()
+                })?;
+                let shadow_engine_client = QueuedSequencerEngineClient {
+                    engine_actor_request_tx: engine_actor_request_tx.clone(),
+                    unsafe_head_rx,
+                };
+                let source = RemoteL2Client::new(shadow_drive_config.source_l2_rpc.clone());
+                let actor = ShadowDriveActor {
+                    attributes_builder: self.create_attributes_builder(),
+                    origin_selector: delayed_origin_selector,
+                    engine_client: Arc::new(shadow_engine_client),
+                    engine_actor_request_tx: engine_actor_request_tx.clone(),
+                    source: Arc::new(source),
                     rollup_config: Arc::clone(&self.config),
-                    unsafe_payload_gossip_client: queued_gossip_client,
-                    sealer: None,
-                    pending_stop: None,
-                }),
-                Some(QueuedSequencerAdminAPIClient::new(sequencer_admin_api_tx)),
-                None,
-            )
-        } else if node_mode.is_shadow_drive() {
-            let delayed_origin_selector =
-                delayed_origin_selector.take().expect("origin selector must be available");
-            let shadow_drive_config = self
-                .shadow_drive_config
-                .clone()
-                .ok_or_else(|| "shadow-drive config missing for shadow-drive mode".to_string())?;
-            let shadow_engine_client = QueuedSequencerEngineClient {
-                engine_actor_request_tx: engine_actor_request_tx.clone(),
-                unsafe_head_rx,
+                    shadow_config: shadow_drive_config,
+                    cancellation_token: cancellation.clone(),
+                    engine_state_rx: engine_state_rx_shadow
+                        .take()
+                        .expect("engine state receiver must be available"),
+                };
+                (None, None, Some(actor))
+            } else {
+                (None, None, None)
             };
-            let source = RemoteL2Client::new(shadow_drive_config.source_l2_rpc.clone());
-            let actor = ShadowDriveActor {
-                attributes_builder: self.create_attributes_builder(),
-                origin_selector: delayed_origin_selector,
-                engine_client: Arc::new(shadow_engine_client),
-                engine_actor_request_tx: engine_actor_request_tx.clone(),
-                source: Arc::new(source),
-                rollup_config: Arc::clone(&self.config),
-                shadow_config: shadow_drive_config,
-                cancellation_token: cancellation.clone(),
-                engine_state_rx: engine_state_rx_shadow
-                    .take()
-                    .expect("engine state receiver must be available"),
-            };
-            (
-                None,
-                None,
-                Some(actor),
-            )
-        } else {
-            (None, None, None)
-        };
         let _ = delayed_origin_selector;
 
         // Create the RPC server actor.

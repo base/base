@@ -1,28 +1,27 @@
+use base_shadow_canary_db::ShadowBlockRow;
 use chrono::Utc;
 use eyre::Result;
 use futures::TryStreamExt;
-use reth_exex::{ExExContext, ExExEvent, ExExNotification};
 use reth_execution_types::Chain;
+use reth_exex::{ExExContext, ExExEvent, ExExNotification};
 use reth_node_api::FullNodeComponents;
 use reth_primitives_traits::{AlloyBlockHeader, NodePrimitives};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-use base_shadow_canary_db::ShadowBlockRow;
-
-/// Shadow canary ExEx handler.
+/// Shadow canary `ExEx` handler.
 #[derive(Debug)]
 pub struct ShadowCanaryExEx {
     tx: mpsc::Sender<ShadowBlockRow>,
 }
 
 impl ShadowCanaryExEx {
-    /// Create a new shadow canary ExEx handler.
+    /// Create a new shadow canary `ExEx` handler.
     pub const fn new(tx: mpsc::Sender<ShadowBlockRow>) -> Self {
         Self { tx }
     }
 
-    /// Runs the shadow canary ExEx loop.
+    /// Runs the shadow canary `ExEx` loop.
     pub async fn run<Node>(self, mut ctx: ExExContext<Node>) -> Result<()>
     where
         Node: FullNodeComponents,
@@ -92,18 +91,15 @@ impl ShadowCanaryExEx {
         reorged_out: bool,
         canonical_hash: Option<String>,
     ) -> Result<ShadowBlockRow> {
-        let number = i64::try_from(header.number()).map_err(|error| {
-            eyre::eyre!("block number overflow for shadow canary row: {error}")
-        })?;
-        let timestamp = i64::try_from(header.timestamp()).map_err(|error| {
-            eyre::eyre!("timestamp overflow for shadow canary row: {error}")
-        })?;
+        let number = i64::try_from(header.number())
+            .map_err(|error| eyre::eyre!("block number overflow for shadow canary row: {error}"))?;
+        let timestamp = i64::try_from(header.timestamp())
+            .map_err(|error| eyre::eyre!("timestamp overflow for shadow canary row: {error}"))?;
         let tx_count = i32::try_from(tx_count).map_err(|error| {
             eyre::eyre!("transaction count overflow for shadow canary row: {error}")
         })?;
-        let gas_used = i64::try_from(header.gas_used()).map_err(|error| {
-            eyre::eyre!("gas used overflow for shadow canary row: {error}")
-        })?;
+        let gas_used = i64::try_from(header.gas_used())
+            .map_err(|error| eyre::eyre!("gas used overflow for shadow canary row: {error}"))?;
         let created_at = Utc::now();
 
         Ok(ShadowBlockRow {
@@ -218,11 +214,8 @@ impl ShadowCanaryExEx {
     }
 }
 
-/// Runs the shadow canary ExEx loop.
-pub async fn run_exex<Node>(
-    ctx: ExExContext<Node>,
-    tx: mpsc::Sender<ShadowBlockRow>,
-) -> Result<()>
+/// Runs the shadow canary `ExEx` loop.
+pub async fn run_exex<Node>(ctx: ExExContext<Node>, tx: mpsc::Sender<ShadowBlockRow>) -> Result<()>
 where
     Node: FullNodeComponents,
 {

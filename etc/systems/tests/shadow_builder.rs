@@ -15,7 +15,7 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_provider::{Provider, RootProvider};
 use base_common_network::Base;
 use base_shadow_canary::ShadowCanaryConfig;
-use base_shadow_canary_db::{ShadowBlockRepo, ShadowDbConfig, ShadowBlockRow};
+use base_shadow_canary_db::{ShadowBlockRepo, ShadowBlockRow, ShadowDbConfig};
 use base_system_tests::SystemTestStackBuilder;
 use eyre::{Result, WrapErr};
 use testcontainers::runners::AsyncRunner;
@@ -166,10 +166,7 @@ async fn shadow_s6_reorg_capture() -> Result<()> {
         max_connections: 5,
         connection_timeout: Duration::from_secs(5),
     };
-    let pool = db_config
-        .init_pool()
-        .await
-        .map_err(|error| eyre::eyre!(error))?;
+    let pool = db_config.init_pool().await.map_err(|error| eyre::eyre!(error))?;
     let repo = ShadowBlockRepo::new(pool);
 
     let system = SystemTestStackBuilder::new()
@@ -206,12 +203,9 @@ async fn shadow_s6_reorg_capture() -> Result<()> {
             .wrap_err_with(|| format!("shadow-drive head drifted at block {number}"))?;
     }
 
-    let shadow_rows = wait_for_shadow_rows(
-        &repo,
-        i64::try_from(observe_start)?,
-        i64::try_from(observe_end)?,
-    )
-    .await?;
+    let shadow_rows =
+        wait_for_shadow_rows(&repo, i64::try_from(observe_start)?, i64::try_from(observe_end)?)
+            .await?;
 
     let mut reorged_numbers = Vec::new();
     for row in &shadow_rows {
@@ -244,9 +238,8 @@ async fn shadow_s6_reorg_capture() -> Result<()> {
             "missing reorged-out shadow row with canonical hash at block {number}"
         );
 
-        let candidate_row = shadow_rows
-            .iter()
-            .find(|row| row.number == number_i64 && !row.reorged_out);
+        let candidate_row =
+            shadow_rows.iter().find(|row| row.number == number_i64 && !row.reorged_out);
         assert!(
             candidate_row.is_some(),
             "missing committed shadow candidate row at block {number}"
@@ -303,10 +296,8 @@ async fn wait_for_shadow_rows(
 ) -> Result<Vec<ShadowBlockRow>> {
     timeout(FOLLOWER_SYNC_TIMEOUT, async {
         loop {
-            let rows = repo
-                .list_by_number_range(start, end)
-                .await
-                .map_err(|error| eyre::eyre!(error))?;
+            let rows =
+                repo.list_by_number_range(start, end).await.map_err(|error| eyre::eyre!(error))?;
             if shadow_rows_ready(&rows, start, end) {
                 return Ok::<_, eyre::Error>(rows);
             }

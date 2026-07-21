@@ -958,7 +958,8 @@ where
                         self.handle_local_unsafe_l2_block(envelope, result_tx);
                     }
                     EngineActorRequest::ProcessShadowReanchorRequest(reanchor_request) => {
-                        let ShadowReanchorRequest { envelope, result_tx, otel_cx } = *reanchor_request;
+                        let ShadowReanchorRequest { envelope, result_tx, otel_cx } =
+                            *reanchor_request;
                         let _guard = otel_cx.attach();
                         self.handle_shadow_reanchor(envelope, result_tx);
                     }
