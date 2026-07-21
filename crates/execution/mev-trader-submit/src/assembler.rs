@@ -380,6 +380,91 @@ pub fn assemble_unsigned_atomic_tx(
     })
 }
 
+// -- B3-arm assembler-only validated witness ---------------------------------
+
+/// A validated unsigned atomic backrun tx whose bytes are bound, by the ONLY
+/// constructor [`assemble_validated`], to the exact plan/frame the assembler
+/// verified. Every field is private and captured from an authoritative source:
+/// the tx bytes come from [`assemble_unsigned_atomic_tx`]; the executor is
+/// extracted from the tx `TxKind::Call` target (a `Create` is fail-closed
+/// rejected); the victim/amount/digest come from the digest- and frame-checked
+/// plan; `valid_until_block` is the deadline re-validated at egress. Because only
+/// the assembler can build one, downstream witness code cannot pair arbitrary tx
+/// bytes with a safe id. (`chain_id`/`nonce`/`gas`/`priority` live inside the
+/// signed `unsigned_tx` bytes and are not duplicated here.)
+// NO `Clone`/`Copy`: this is the assembler-only LINEAR witness — duplicating it
+// would let one validated set of tx bytes be paired with two candidates.
+#[cfg(feature = "arm")]
+#[derive(Debug)]
+pub struct ValidatedUnsignedAtomicTx {
+    unsigned_tx: alloy_consensus::TxEip1559,
+    victim: B256,
+    plan_digest: B256,
+    amount: U256,
+    executor: Address,
+    valid_until_block: u64,
+}
+
+#[cfg(feature = "arm")]
+impl ValidatedUnsignedAtomicTx {
+    /// The unsigned EIP-1559 backrun to be signed by the arm custody path.
+    pub(crate) const fn unsigned_tx(&self) -> &alloy_consensus::TxEip1559 {
+        &self.unsigned_tx
+    }
+    /// Bound victim transaction hash.
+    pub(crate) const fn victim(&self) -> B256 {
+        self.victim
+    }
+    /// The digest of the plan these bytes were assembled from.
+    pub(crate) const fn plan_digest(&self) -> B256 {
+        self.plan_digest
+    }
+    /// The plan principal (`amount_in`) bound into the calldata.
+    pub(crate) const fn amount(&self) -> U256 {
+        self.amount
+    }
+    /// The executor (backrun `to`) extracted from the tx.
+    pub(crate) const fn executor(&self) -> Address {
+        self.executor
+    }
+    /// The executor `validUntilBlock` deadline (re-validated at egress).
+    pub(crate) const fn valid_until_block(&self) -> u64 {
+        self.valid_until_block
+    }
+}
+
+/// The ONLY constructor of [`ValidatedUnsignedAtomicTx`]. Runs the full
+/// fail-closed [`assemble_unsigned_atomic_tx`] (digest + frame + victim binding +
+/// fee parity) and then captures the per-field authoritative values alongside the
+/// tx bytes. A tx whose `to` is not a `Call` (a contract creation) is rejected.
+#[cfg(feature = "arm")]
+pub fn assemble_validated(
+    input: &AssembleInput<'_>,
+) -> Result<ValidatedUnsignedAtomicTx, AssembleError> {
+    // The backrun MUST be on Base (8453): both the policy input AND the assembled
+    // signed-tx chain id, so a non-Base tx can never bind to a Base claim/executor.
+    const CHAIN_ID_BASE: u64 = 8453;
+    if input.chain_id != CHAIN_ID_BASE {
+        return Err(AssembleError::InvalidField("chainId"));
+    }
+    let assembled = assemble_unsigned_atomic_tx(input)?;
+    if assembled.unsigned_tx.chain_id != CHAIN_ID_BASE {
+        return Err(AssembleError::InvalidField("chainId"));
+    }
+    let executor = match assembled.unsigned_tx.to {
+        TxKind::Call(address) => address,
+        TxKind::Create => return Err(AssembleError::InvalidField("executorKind")),
+    };
+    Ok(ValidatedUnsignedAtomicTx {
+        victim: assembled.target_tx_hash,
+        plan_digest: input.plan.digest.0,
+        amount: input.plan.amount_in,
+        executor,
+        valid_until_block: input.valid_until_block,
+        unsigned_tx: assembled.unsigned_tx,
+    })
+}
+
 // -- Two-channel dummy assembly (inclusion + attribution) --------------------
 
 /// A reference to a transaction inside the attribution bundle.

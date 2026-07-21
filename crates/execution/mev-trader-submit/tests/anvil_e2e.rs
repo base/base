@@ -478,7 +478,7 @@ fn inject_drift(rpc: &Rpc, fixture: &Fixture) {
     assert_eq!(swap["status"], "0x1", "drift swap reverted");
 }
 
-/// Deployed AerodromeVolatile fixture + sized expectations.
+/// Deployed `AerodromeVolatile` fixture + sized expectations.
 #[derive(Clone, Copy)]
 struct AeroFixture {
     token: Address,

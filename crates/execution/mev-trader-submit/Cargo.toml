@@ -27,8 +27,32 @@ phase-b = [
     "dep:rand_08",
 ]
 
+# B3-arm tier: the real hot-wallet key loader + real signer core + proof witness +
+# two-channel transport builders. Everything it adds lives in `src/arm/` behind
+# `#[cfg(feature="arm")]`. It does NOT compile a real network egress path — that
+# is the further-gated `arm-live-egress`. `arm` alone is broadcastability-0.
+arm = ["phase-b", "dep:zeroize", "dep:redb", "dep:serde_json"]
+
+# The ONLY configuration in which a real `reqwest` egress (`ProdBackend::execute`)
+# compiles. Even here the call is reachable only through the full proof witness and
+# a fresh egress-moment re-validation. Never enabled by the pinned `--features arm`
+# CI lane.
+#
+# Adaptation vs ralplan v6 (which listed `dep:tokio`): the egress uses the
+# synchronous `reqwest::blocking` client, so `send_gated`/`ProdBackend::execute`
+# are plain (non-async) fns. This keeps `ProdBackend::execute` the sole network
+# call site, removes the need for an async runtime dependency in the test lane, and
+# is compatible with the crate-root `#![forbid(unsafe_code)]` (no hand-rolled
+# `block_on`/`Waker`). `tokio` is therefore no longer a required feature dep.
+arm-live-egress = ["arm", "dep:reqwest"]
+
+# Provisioning-only surface: makes `SuppressionEpochStore::bootstrap` compile
+# (create-a-new high-water DB). Not the node build; the activation path uses
+# `open_existing` which never auto-creates.
+arm-provisioning = ["arm"]
+
 [dependencies]
-# All optional: none are pulled unless `phase-b` is explicitly enabled.
+# All optional: none are pulled unless `phase-b`/`arm` is explicitly enabled.
 base-mev-trader = { workspace = true, optional = true }
 alloy-consensus = { workspace = true, features = ["k256", "std"], optional = true }
 alloy-eips = { workspace = true, features = ["std"], optional = true }
@@ -36,13 +60,24 @@ alloy-primitives = { workspace = true, features = ["std"], optional = true }
 alloy-sol-types = { workspace = true, features = ["std"], optional = true }
 k256 = { workspace = true, optional = true }
 rand_08 = { workspace = true, optional = true }
+# arm-tier optional deps (pulled only by `arm` / `arm-live-egress`).
+zeroize = { workspace = true, optional = true }
+redb = { workspace = true, optional = true }
+serde_json = { workspace = true, features = ["std"], optional = true }
+reqwest = { workspace = true, features = ["blocking"], optional = true }
 
 [dev-dependencies]
 # Test-only (never linked into any node binary). The anvil e2e talks JSON-RPC to a
 # spawned loopback anvil over a raw std::net TCP socket; serde_json only frames the
 # request/response bodies. The remaining crates build BackrunPlan/victim fixtures.
 serde_json = { workspace = true, features = ["std"] }
-base-mev-trader = { workspace = true }
+# AST-based capability-seal parsing (module visibility + `use`-path normalization +
+# constructor-surface). Dev-only; never linked into any node binary.
+syn = { workspace = true }
+# r9-provisioning lets the arm claim-façade tests bootstrap a VictimClaimStore
+# fixture (the dependency is compiled without cfg(test), so `bootstrap` needs the
+# feature explicitly). Not a node build — dev-only.
+base-mev-trader = { workspace = true, features = ["r9-provisioning"] }
 alloy-consensus = { workspace = true, features = ["k256", "std"] }
 alloy-eips = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["std"] }

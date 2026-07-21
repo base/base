@@ -326,7 +326,7 @@ fn workspace_metadata() -> serde_json::Value {
 }
 
 #[test]
-fn every_dependency_is_optional_and_the_only_feature_is_phase_b() {
+fn feature_surface_and_deps_are_pinned() {
     let metadata = workspace_metadata();
     let packages = metadata["packages"].as_array().expect("packages");
     let package = packages
@@ -334,10 +334,18 @@ fn every_dependency_is_optional_and_the_only_feature_is_phase_b() {
         .find(|package| package["name"] == "mev-trader-submit")
         .expect("mev-trader-submit package");
 
-    // The single gate feature; optional deps use `dep:` so no implicit features leak.
+    // The exact gate-feature surface. `phase-b` = assembler + ephemeral signer;
+    // `arm` = the B3-arm tier (key loader + witness + transport builders, no real
+    // egress); `arm-live-egress` = the ONLY config that compiles a real reqwest
+    // egress; `arm-provisioning` = the SuppressionEpochStore bootstrap surface.
+    // Any NEW feature must be added here (and re-reviewed) before it can ship.
     let features = package["features"].as_object().expect("features map");
     let feature_names: BTreeSet<&str> = features.keys().map(String::as_str).collect();
-    assert_eq!(feature_names, BTreeSet::from(["phase-b"]), "unexpected feature surface");
+    assert_eq!(
+        feature_names,
+        BTreeSet::from(["phase-b", "arm", "arm-live-egress", "arm-provisioning"]),
+        "unexpected feature surface"
+    );
 
     // Every NORMAL (non-dev) dependency must be optional: with `phase-b` off the
     // crate pulls nothing and compiles to an empty lib.

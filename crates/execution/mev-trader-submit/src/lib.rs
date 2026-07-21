@@ -30,10 +30,42 @@
 
 // Without `phase-b` the crate is intentionally empty: zero submit surface.
 #![cfg(feature = "phase-b")]
+// Crate-wide: no module (arm or otherwise) may forge an `unsafe` block. This is a
+// stronger seal than a per-module attribute — a sibling module cannot re-enable it.
+#![forbid(unsafe_code)]
 
 pub mod assembler;
 pub mod fee;
 pub mod signer;
+
+// B3-arm tier — the real key loader + signer core + proof witness + transport
+// builders. Entered through this single line and gated behind `arm`; the default
+// and `phase-b` builds never compile it.
+//
+// B3-arm tier. The module is PRIVATE; only a curated forward-B5 surface is
+// re-exported (facade). This is the public API the owner-gated B5 node-linkage will
+// invoke — reachable public API (no dead-code allow needed) — while every low-level
+// injection point (arbitrary store paths, fixture source impls, request builders,
+// custody loaders) stays crate-private. The seal proves no workspace crate links
+// this crate yet, so the tier is inert until B5.
+#[cfg(feature = "arm")]
+mod arm;
+#[cfg(feature = "arm")]
+pub use arm::{
+    ArmError, ArmRuntime, ArmedFailSink, AttributionRetryToken, AuthorizedCandidate,
+    AuthorizedSignedSubmission, CHAIN_ID_BASE, CheckedCandidate, CodeHashProvider,
+    DeploymentEvidence, DeploymentIdentity, DeploymentIdentitySource, DeploymentPayload,
+    DrawdownSource, EgressPlan, FreshnessSources, G7Attestation, G7Payload, LiveRunAttestation,
+    LiveRunPayload, PairedSubmission, ProofBindings, ProviderError, RawBackend, RawEgress,
+    RequestSpec, SubmissionAttempt, SubmitOutcome, SubmitSuppressionClear, SuppressionRollbackError,
+    ValidatedExecutionIdentity, send_gated, try_claim_arm,
+};
+#[cfg(feature = "arm")]
+pub use arm::Channel;
+#[cfg(all(feature = "arm", feature = "arm-live-egress", not(test)))]
+pub use arm::ProdBackend;
+#[cfg(all(feature = "arm", feature = "arm-provisioning"))]
+pub use arm::provision_suppression_anchor;
 
 /// The Blink OFA native-ETH kickback recipient enforced inside the executor
 /// backrun. Mirrors `BLINK_OFA_KICKBACK_RECIPIENT` in the TS prototype and the
