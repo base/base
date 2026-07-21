@@ -9,8 +9,8 @@ use std::{
 use alloy_primitives::{Address, B256, Bytes};
 use base_challenger::{
     AnchorUpdater, ChallengeSubmitter, ChallengerProofAdapter, DisputeIntent, DisputeProofManager,
-    Driver, DriverComponents, GameScanner, OutputValidator, PendingProof, PendingProofs,
-    ProofKind, ProofPhase, ProofUpdate,
+    Driver, DriverComponents, GameScanner, OutputValidator, PendingProof, PendingProofs, ProofKind,
+    ProofPhase, ProofUpdate,
     test_utils::{
         DEFAULT_L1_HEAD, DEFAULT_TEE_PROVER, MockAggregateVerifier, MockDisputeGameFactory,
         MockGameState, MockL1, MockL2Provider, MockTxManager, MockZkProofProvider,

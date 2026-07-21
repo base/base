@@ -879,7 +879,10 @@ impl MockL1 {
     /// Creates a mock that returns a header with `number` for `hash`.
     pub fn success(hash: B256, number: u64) -> Self {
         Self {
-            headers_by_hash: HashMap::from([(hash, RpcHeader { hash, number, ..Default::default() })]),
+            headers_by_hash: HashMap::from([(
+                hash,
+                RpcHeader { hash, number, ..Default::default() },
+            )]),
             header_error: None,
         }
     }
@@ -918,12 +921,7 @@ impl L1Provider for MockL1 {
         unimplemented!("tests only use header_by_hash")
     }
 
-    async fn call_contract(
-        &self,
-        _: Address,
-        _: Bytes,
-        _: BlockNumberOrTag,
-    ) -> RpcResult<Bytes> {
+    async fn call_contract(&self, _: Address, _: Bytes, _: BlockNumberOrTag) -> RpcResult<Bytes> {
         unimplemented!("tests only use header_by_hash")
     }
 
