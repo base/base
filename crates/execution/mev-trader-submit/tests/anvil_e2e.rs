@@ -249,6 +249,18 @@ fn send_impersonated(
     wait_for_receipt(rpc, &hash)
 }
 
+fn assert_r61_executor_dispatcher_seal(creation_hex: &str) {
+    let creation = hex::decode(creation_hex).expect("sealed executor creation bytecode");
+    assert!(
+        creation.windows(4).any(|window| window == [0x3b, 0x83, 0xf2, 0x72]),
+        "R6-1 executor creation must contain the new dispatcher selector"
+    );
+    assert!(
+        !creation.windows(4).any(|window| window == [0x21, 0xde, 0xf2, 0x96]),
+        "R6-1 executor creation must not contain the retired dispatcher selector"
+    );
+}
+
 fn deploy(rpc: &Rpc, creation_hex: &str, constructor_args: &[u8]) -> Address {
     let mut data = hex::decode(creation_hex).expect("creation bytecode");
     data.extend_from_slice(constructor_args);
@@ -312,9 +324,11 @@ fn deploy_fixture(rpc: &Rpc, ephemeral_signer: Address) -> Fixture {
     let second_pair =
         deploy(rpc, bytecode::MOCK_PAIR_CREATION, &encode_addresses(&[token, BASE_WETH]));
     let adapter = deploy(rpc, bytecode::UNIV2_ADAPTER_CREATION, &[]);
+    let executor_creation = bytecode::executor_creation();
+    assert_r61_executor_dispatcher_seal(executor_creation);
     let executor = deploy(
         rpc,
-        bytecode::EXECUTOR_CREATION,
+        executor_creation,
         &encode_addresses(&[ephemeral_signer, BASE_WETH, PROFIT_RECIPIENT]),
     );
 
@@ -500,11 +514,10 @@ fn deploy_aero_fixture(rpc: &Rpc, caller: Address) -> AeroFixture {
     let second_pool =
         deploy(rpc, bytecode::MOCK_AERODROME_POOL_CREATION, &encode_addresses(&[token, BASE_WETH]));
     let adapter = deploy(rpc, bytecode::AERODROME_ADAPTER_CREATION, &[]);
-    let executor = deploy(
-        rpc,
-        bytecode::EXECUTOR_CREATION,
-        &encode_addresses(&[caller, BASE_WETH, PROFIT_RECIPIENT]),
-    );
+    let executor_creation = bytecode::executor_creation();
+    assert_r61_executor_dispatcher_seal(executor_creation);
+    let executor =
+        deploy(rpc, executor_creation, &encode_addresses(&[caller, BASE_WETH, PROFIT_RECIPIENT]));
 
     let deposit = send_impersonated(
         rpc,
