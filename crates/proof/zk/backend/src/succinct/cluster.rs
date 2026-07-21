@@ -933,9 +933,7 @@ impl ZkProver for ClusterZkProver {
         }
 
         let proof = self.download_cluster_proof(&session).await?;
-        let proof = bincode::serde::encode_to_vec(&proof, bincode::config::standard())
-            .map_err(|e| backend_error!("failed to serialize proof: {e}"))?;
-
+        let proof = super::encode_downloaded_proof(&proof, session_type)?;
         let proof = ZkProofResult { zk_vm: ZkVm::Sp1, proof: proof.into(), execution_stats: None };
         match session_type {
             SessionType::Snark => Ok(ProofResult::SnarkPlonk(SnarkPlonkProofResult { proof })),
