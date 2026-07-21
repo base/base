@@ -12,7 +12,12 @@ use super::{
 };
 
 /// Maximum allowed decoded flashblock payload size, in bytes.
-pub const MAX_DECOMPRESSED_FLASHBLOCK_BYTES: usize = 5 * 1024 * 1024;
+///
+/// Sized above the largest flashblock a fully saturated builder emits: at over a
+/// billion gas per flashblock a single delta can exceed ten megabytes of transaction
+/// bytes, so a smaller cap would reject valid producer output. This value covers
+/// observed peaks while still bounding decompression memory.
+pub const MAX_DECOMPRESSED_FLASHBLOCK_BYTES: usize = 32 * 1024 * 1024;
 
 /// A flashblock containing partial block data.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
@@ -169,6 +174,24 @@ mod tests {
                 max: MAX_DECOMPRESSED_FLASHBLOCK_BYTES,
             } if given == MAX_DECOMPRESSED_FLASHBLOCK_BYTES + 1
         ));
+    }
+
+    #[test]
+    fn try_decode_message_accepts_multi_megabyte_saturated_flashblock() {
+        let mut payload = sample_payload(serde_json::json!({ "block_number": 1234 }));
+        let tx = PrimitiveBytes::from(vec![0x11u8; 256]);
+        payload.diff.transactions = vec![tx; 40_000];
+
+        let encoded = encode_plain(&payload);
+        assert!(
+            encoded.len() > 5 * 1024 * 1024,
+            "fixture must exceed the former 5 MiB cap to be a regression"
+        );
+        assert!(encoded.len() < MAX_DECOMPRESSED_FLASHBLOCK_BYTES);
+
+        let decoded = Flashblock::try_decode_message(encoded)
+            .expect("a saturated multi-megabyte flashblock must decode");
+        assert_eq!(decoded.diff.transactions.len(), 40_000);
     }
 
     fn encode_plain(payload: &FlashblocksPayloadV1) -> Bytes {
