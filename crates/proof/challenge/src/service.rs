@@ -145,7 +145,7 @@ impl ChallengerService {
         info!(endpoint = %config.zk_rpc_url, "Prover-service requester client initialized");
 
         let l1_client = L1Client::new(L1ClientConfig::new(l1_rpc_url.clone()))
-            .map_err(|e| eyre::eyre!("failed to create TEE L1 client: {e}"))?;
+            .map_err(|e| eyre::eyre!("failed to create L1 client: {e}"))?;
         let l1_provider: Arc<dyn L1Provider> = Arc::new(l1_client);
 
         let scanner = GameScanner::new(
