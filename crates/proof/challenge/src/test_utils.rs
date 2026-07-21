@@ -881,7 +881,11 @@ impl MockL1 {
         Self {
             headers_by_hash: HashMap::from([(
                 hash,
-                RpcHeader { hash, number, ..Default::default() },
+                RpcHeader {
+                    hash,
+                    inner: ConsensusHeader { number, ..Default::default() },
+                    ..Default::default()
+                },
             )]),
             header_error: None,
         }

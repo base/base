@@ -645,12 +645,13 @@ mod tests {
 
     use alloy_primitives::{Address, B256, Bytes};
     use base_proof_contracts::{AggregateVerifierClient, GameStatus, l1_origin_too_old_selector};
+    use base_proof_rpc::L1Provider;
     use base_prover_service_protocol::{SnarkPlonkProofRequest, ZkProofRequest, ZkVm};
     use base_tx_manager::TxManagerError;
 
     use super::*;
     use crate::test_utils::{
-        MockAggregateVerifier, MockL2Provider, MockTxManager, MockZkProofProvider, addr,
+        MockAggregateVerifier, MockL1, MockL2Provider, MockTxManager, MockZkProofProvider, addr,
         mock_state, receipt_with_status,
     };
 
@@ -689,7 +690,7 @@ mod tests {
         let manager = DisputeProofManager::new(
             OutputValidator::new(Arc::new(MockL2Provider::new())),
             Arc::clone(&proof_requester),
-            None,
+            Arc::new(MockL1::failure("unused")) as Arc<dyn L1Provider>,
             verifier as Arc<dyn AggregateVerifierClient>,
             Duration::from_secs(60),
             3,
