@@ -137,9 +137,6 @@ pub(crate) struct DoctorArgs {
     /// Path to the local `reth.toml` file.
     #[arg(long = "reth-config", value_name = "PATH")]
     pub(crate) reth_config: Option<PathBuf>,
-    /// Base telemetry service URL used for external EL reachability checks.
-    #[arg(long = "telemetry-url", env = "BASECTL_TELEMETRY_URL", value_name = "URL")]
-    pub(crate) telemetry_url: Option<Url>,
     /// Connected peer count below which peer checks warn.
     #[arg(long = "peer-warn-threshold", value_name = "COUNT", default_value_t = 5)]
     pub(crate) peer_warn_threshold: u32,
@@ -277,9 +274,6 @@ pub(crate) enum P2pCommands {
         /// Execution-layer `enode://` URL to probe.
         #[arg(value_name = "ENODE")]
         enode: String,
-        /// Base telemetry service URL.
-        #[arg(long = "telemetry-url", env = "BASECTL_TELEMETRY_URL", value_name = "URL")]
-        telemetry_url: Url,
         /// Emit the telemetry response as JSON.
         #[arg(long)]
         json: bool,
@@ -673,6 +667,7 @@ mod tests {
 
     #[test]
     fn p2p_reachability_parses() {
+        assert!(try_parse(["basectl", "p2p", "reachability", "enode://example", "--json"]).is_ok());
         assert!(
             try_parse([
                 "basectl",
@@ -681,9 +676,16 @@ mod tests {
                 "enode://example",
                 "--telemetry-url",
                 "http://127.0.0.1:8080",
-                "--json",
             ])
-            .is_ok()
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn doctor_rejects_removed_telemetry_url_flag() {
+        assert!(try_parse(["basectl", "doctor"]).is_ok());
+        assert!(
+            try_parse(["basectl", "doctor", "--telemetry-url", "http://127.0.0.1:8080",]).is_err()
         );
     }
 

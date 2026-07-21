@@ -2,13 +2,13 @@
 
 use std::io::{self, Write};
 
-use anyhow::Result;
+use anyhow::{Context, Result, anyhow};
 use base_consensus_peers::BootNode;
 use basectl_cli::{
     ElReachabilityOutcome, JsonOutput, KeyValueTable, MonitoringConfig, P2pCommandError,
     P2pInfoJson, P2pInfoTable, P2pTargetError, PeerListReport, PeerSummary, TelemetryClient,
     add_peer, ban_peer, connect_peer, disconnect_peer, fetch_connected_peers, fetch_info,
-    fetch_raw_info, fetch_raw_peers, list_banned_peers, remove_peer, unban_peer,
+    fetch_l2_chain_id, fetch_raw_info, fetch_raw_peers, list_banned_peers, remove_peer, unban_peer,
 };
 use serde::Serialize;
 use url::Url;
@@ -24,8 +24,9 @@ use crate::{
 /// Runs the `basectl p2p` command group.
 pub(crate) async fn run(config: &str, command: P2pCommands) -> Result<CommandOutcome> {
     match command {
-        P2pCommands::Reachability { enode, telemetry_url, json } => {
-            run_reachability(&enode, telemetry_url, json).await
+        P2pCommands::Reachability { enode, json } => {
+            let config = MonitoringConfig::load(config).await?;
+            run_reachability(&config, &enode, json).await
         }
         other => {
             let config = MonitoringConfig::load(config).await?;
@@ -46,7 +47,20 @@ pub(crate) async fn run(config: &str, command: P2pCommands) -> Result<CommandOut
 
 /// Runs `basectl p2p reachability`, exiting non-zero when the probe completed
 /// but the node was not reachable.
-async fn run_reachability(enode: &str, telemetry_url: Url, json: bool) -> Result<CommandOutcome> {
+async fn run_reachability(
+    config: &MonitoringConfig,
+    enode: &str,
+    json: bool,
+) -> Result<CommandOutcome> {
+    let chain_id = fetch_l2_chain_id(&config.rpc).await.with_context(|| {
+        format!("could not detect network from selected config RPC {}", config.rpc)
+    })?;
+    let telemetry_url =
+        TelemetryClient::reachability_url_for_chain_id(chain_id).ok_or_else(|| {
+            anyhow!(
+                "hosted reachability checks are unavailable for chain ID {chain_id}; supported chain IDs are 8453 (Base mainnet) and 84532 (Base Sepolia)"
+            )
+        })?;
     let response = TelemetryClient::new(telemetry_url)?.check_el_reachability(enode).await?;
     let reachable = response.outcome == ElReachabilityOutcome::Reachable;
     if json {
@@ -667,7 +681,7 @@ mod tests {
     use super::{
         AddTarget, PeerAction, PeerActionJson, PeerBulkActionResultJson, RemoveTarget,
         fail_unban_all_if_partial, parse_add_target, parse_cl_peer_id, parse_remove_target,
-        resolve_cl_rpc, run,
+        resolve_cl_rpc, run, run_reachability,
     };
     use crate::cli::P2pCommands;
 
@@ -729,19 +743,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reachability_does_not_load_monitoring_config() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        drop(listener);
-        let command = P2pCommands::Reachability {
-            enode: VALID_ENODE.to_string(),
-            telemetry_url: Url::parse(&format!("http://{address}")).unwrap(),
-            json: false,
-        };
+    async fn reachability_loads_selected_monitoring_config() {
+        let command = P2pCommands::Reachability { enode: VALID_ENODE.to_string(), json: false };
 
         let error = run("/definitely/missing/basectl.yaml", command).await.unwrap_err();
 
-        assert!(error.to_string().starts_with("telemetry service unavailable:"));
+        assert!(
+            error.to_string().starts_with("Config '/definitely/missing/basectl.yaml' not found")
+        );
+    }
+
+    #[tokio::test]
+    async fn reachability_reports_network_detection_failure() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let mut config = test_config(None);
+        config.rpc = Url::parse(&format!("http://{address}")).unwrap();
+
+        let error = run_reachability(&config, VALID_ENODE, false).await.unwrap_err();
+
+        assert!(
+            format!("{error:#}").starts_with("could not detect network from selected config RPC")
+        );
     }
 
     #[test]
