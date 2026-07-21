@@ -395,26 +395,26 @@ where
 
         loop {
             if cancel.is_cancelled() {
-                Self::log_batch_delete_summary(deleted_count, first_block, last_block);
+                Self::record_batch_delete_summary(deleted_count, first_block, last_block);
                 return true;
             }
 
             let Some(next_target) = ProofTarget::next_block(target_block, self.block_interval)
             else {
-                Self::log_batch_delete_summary(deleted_count, first_block, last_block);
+                Self::record_batch_delete_summary(deleted_count, first_block, last_block);
                 return true;
             };
             target_block = next_target;
 
             if target_block > delete_through {
-                Self::log_batch_delete_summary(deleted_count, first_block, last_block);
+                Self::record_batch_delete_summary(deleted_count, first_block, last_block);
                 return true;
             }
 
             let Some(claimed_l2_output_root) =
                 ProofTarget::canonical_output_root(self.rollup_client.as_ref(), target_block).await
             else {
-                Self::log_batch_delete_summary(deleted_count, first_block, last_block);
+                Self::record_batch_delete_summary(deleted_count, first_block, last_block);
                 return true;
             };
 
@@ -429,7 +429,7 @@ where
             {
                 Ok(Some(_)) if delete_succeeded_proofs => {}
                 Ok(Some(_)) | Ok(None) => {
-                    Self::log_batch_delete_summary(deleted_count, first_block, last_block);
+                    Self::record_batch_delete_summary(deleted_count, first_block, last_block);
                     return true;
                 }
                 Err(error) => warn!(
@@ -441,7 +441,7 @@ where
             }
 
             if !self.delete_single_proof_request(&session_id, target_block).await {
-                Self::log_batch_delete_summary(deleted_count, first_block, last_block);
+                Self::record_batch_delete_summary(deleted_count, first_block, last_block);
                 return true;
             }
             deleted_count += 1;
@@ -449,7 +449,8 @@ where
         }
     }
 
-    fn log_batch_delete_summary(deleted_count: u64, first_block: u64, last_block: u64) {
+    fn record_batch_delete_summary(deleted_count: u64, first_block: u64, last_block: u64) {
+        Metrics::proof_cleanup_deleted_total().increment(deleted_count);
         if deleted_count > 1 {
             info!(
                 deleted_count,
@@ -1054,6 +1055,7 @@ mod tests {
                     .is_none()
                 );
             });
+            ProofCollector::<MockRollupClient>::record_batch_delete_summary(3, 100, 300);
         });
 
         let snapshot = snapshotter.snapshot().into_vec();
@@ -1073,6 +1075,11 @@ mod tests {
                     .labels()
                     .any(|label| label.key() == "error_type" && label.value() == "prover")
                 && matches!(value, DebugValue::Counter(1))
+        }));
+        assert!(snapshot.iter().any(|(key, _, _, value)| {
+            key.kind() == MetricKind::Counter
+                && key.key().name() == "base_proposer.proof_cleanup_deleted_total"
+                && matches!(value, DebugValue::Counter(3))
         }));
     }
 }
