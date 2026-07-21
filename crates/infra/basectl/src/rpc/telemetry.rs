@@ -131,6 +131,16 @@ pub struct TelemetryClient {
 }
 
 impl TelemetryClient {
+    /// Returns the hosted reachability service URL for a supported Base chain.
+    pub fn reachability_url_for_chain_id(chain_id: u64) -> Option<Url> {
+        Url::parse(match chain_id {
+            8453 => "https://mainnet.telemetry.base.org",
+            84532 => "https://sepolia.telemetry.base.org",
+            _ => return None,
+        })
+        .ok()
+    }
+
     /// Creates a telemetry client with a timeout longer than the backend probe deadline.
     pub fn new(base_url: Url) -> Result<Self, TelemetryClientError> {
         let http = reqwest::Client::builder().timeout(TELEMETRY_REQUEST_TIMEOUT).build()?;
@@ -242,6 +252,19 @@ mod tests {
         assert_eq!(ElReachabilityStage::TcpConnect.as_str(), "tcp_connect");
         assert_eq!(ElReachabilityStage::EncryptedHandshake.as_str(), "encrypted_handshake");
         assert_eq!(ElReachabilityStage::Devp2pHello.as_str(), "devp2p_hello");
+    }
+
+    #[test]
+    fn maps_supported_chain_ids_to_hosted_reachability_services() {
+        assert_eq!(
+            TelemetryClient::reachability_url_for_chain_id(8453),
+            Url::parse("https://mainnet.telemetry.base.org").ok(),
+        );
+        assert_eq!(
+            TelemetryClient::reachability_url_for_chain_id(84532),
+            Url::parse("https://sepolia.telemetry.base.org").ok(),
+        );
+        assert_eq!(TelemetryClient::reachability_url_for_chain_id(1), None);
     }
 
     #[tokio::test]

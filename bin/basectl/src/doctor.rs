@@ -24,7 +24,6 @@ pub(crate) async fn run(config: MonitoringConfig, args: DoctorArgs) -> Result<Co
         el_rpc: args.el_rpc.unwrap_or_else(|| config.rpc.clone()),
         cl_rpc: args.cl_rpc.or_else(|| config.consensus_node_rpc.clone()),
         reth_config: args.reth_config,
-        telemetry_url: args.telemetry_url,
         thresholds: DoctorThresholds {
             peer_warn_threshold: args.peer_warn_threshold,
             head_lag_warn_blocks: args.head_lag_warn_blocks,
@@ -304,7 +303,6 @@ mod tests {
             el_rpc: Some(Url::parse("http://127.0.0.1:8545").unwrap()),
             cl_rpc: None,
             reth_config: Option::<PathBuf>::None,
-            telemetry_url: None,
             peer_warn_threshold: 5,
             head_lag_warn_blocks: 10,
             head_lag_fail_blocks: 20,
