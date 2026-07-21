@@ -3,13 +3,20 @@
 //! `--features arm` (the acceptance lane); absent otherwise.
 #![cfg(feature = "arm")]
 
-use std::{collections::BTreeSet, path::PathBuf, process::Command};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+    process::Command,
+    sync::atomic::{AtomicU64, Ordering},
+};
+use syn::ext::IdentExt;
 
 /// The exact production files under `src/arm/`. A NEW arm file must be added here
 /// (and re-reviewed) before it can ship (b7, fail-closed).
-const ARM_FILES: [&str; 8] = [
+const ARM_FILES: [&str; 9] = [
     "claim.rs",
     "custody.rs",
+    "fail_sink.rs",
     "mod.rs",
     "proofs.rs",
     "request.rs",
@@ -28,9 +35,7 @@ fn arm_dir() -> PathBuf {
 
 /// Strip `//` line and `/* */` block comments, keeping string literals, so scans
 /// see real code but never trip on doc comments that legitimately name forbidden
-/// things. Also drops any `#[cfg(test)] mod tests { .. }` tail so test scaffolding
-/// (which legitimately signs, loads keys, and drives fakes) is not scanned as
-/// production capability.
+/// things.
 fn strip_comments(source: &str) -> String {
     let bytes = source.as_bytes();
     let mut out = String::with_capacity(source.len());
@@ -76,25 +81,89 @@ fn strip_comments(source: &str) -> String {
     out
 }
 
-/// Production code of one arm file: comments stripped and the `#[cfg(test)] mod
-/// tests` tail removed.
-fn arm_production(file: &str) -> String {
-    let raw = std::fs::read_to_string(arm_dir().join(file)).expect("arm source");
-    let stripped = strip_comments(&raw);
-    match stripped.find("#[cfg(test)]\nmod tests") {
-        Some(index) => stripped[..index].to_string(),
-        None => stripped,
+/// Return the raw production prefix before the structurally validated terminal
+/// test-module tail. The exact marker must occur once in the raw source: a copy
+/// hidden in a string or comment therefore fails closed rather than moving the cut.
+fn production_prefix<'a>(source: &'a str, file: &str) -> Result<&'a str, String> {
+    let parsed = syn::parse_file(source).map_err(|error| format!("parse {file}: {error}"))?;
+    let expected: &[(&str, bool, &str)] = if file == "mod.rs" {
+        &[
+            ("testkit", true, "#[cfg(test)]\npub(crate) mod testkit"),
+            ("tests", false, "#[cfg(test)]\nmod tests"),
+        ]
+    } else {
+        &[("tests", false, "#[cfg(test)]\nmod tests")]
+    };
+    let Some(first_tail) = parsed.items.iter().position(|item| {
+        matches!(item, syn::Item::Mod(module) if has_cfg_test(&module.attrs)
+            && expected.first().is_some_and(|entry| ident_name(&module.ident) == entry.0))
+    }) else {
+        for (_, _, marker) in expected {
+            if source.contains(marker) {
+                return Err(format!("{file} contains a test-tail marker without that module"));
+            }
+        }
+        return Ok(source);
+    };
+
+    let tail = &parsed.items[first_tail..];
+    if tail.len() != expected.len() {
+        return Err(format!("{file} has production or an unexpected module in its test tail"));
     }
+    for (item, (name, crate_visible, _)) in tail.iter().zip(expected) {
+        let syn::Item::Mod(module) = item else {
+            return Err(format!("{file} has a non-module item after its test tail starts"));
+        };
+        let exact_visibility = if *crate_visible {
+            matches!(
+                &module.vis,
+                syn::Visibility::Restricted(restricted)
+                    if restricted.in_token.is_none() && restricted.path.is_ident("crate")
+            )
+        } else {
+            matches!(module.vis, syn::Visibility::Inherited)
+        };
+        if ident_name(&module.ident) != *name
+            || !exact_visibility
+            || module.content.is_none()
+            || module.attrs.len() != 1
+            || !has_exact_cfg_test(&module.attrs[0])
+        {
+            return Err(format!("{file} has a non-canonical terminal test module `{name}`"));
+        }
+    }
+
+    let mut cut = None;
+    for (name, _, marker) in expected {
+        let mut occurrences = source.match_indices(marker);
+        let Some((index, _)) = occurrences.next() else {
+            return Err(format!(
+                "{file} structurally has `{name}` but its exact raw marker is absent"
+            ));
+        };
+        if occurrences.next().is_some() {
+            return Err(format!(
+                "{file} contains multiple raw copies of `{name}` test-tail marker"
+            ));
+        }
+        cut.get_or_insert(index);
+    }
+    Ok(&source[..cut.expect("non-empty expected test tail")])
 }
 
-/// The testkit lives inside `mod.rs` under `#[cfg(test)]`; drop it too for scans.
+fn test_modules_are_terminal(source: &str) -> bool {
+    production_prefix(source, "fixture.rs").is_ok()
+}
+
+/// Production code of one arm file: the structurally validated test tail is
+/// removed from raw source before comments are stripped.
+fn arm_production(file: &str) -> String {
+    let raw = std::fs::read_to_string(arm_dir().join(file)).expect("arm source");
+    strip_comments(production_prefix(&raw, file).unwrap_or_else(|error| panic!("{error}")))
+}
+
 fn arm_production_mod() -> String {
-    let raw = std::fs::read_to_string(arm_dir().join("mod.rs")).expect("arm mod");
-    let stripped = strip_comments(&raw);
-    match stripped.find("#[cfg(test)]\npub(crate) mod testkit") {
-        Some(index) => stripped[..index].to_string(),
-        None => stripped,
-    }
+    arm_production("mod.rs")
 }
 
 fn all_arm_production() -> Vec<(&'static str, String)> {
@@ -126,9 +195,10 @@ fn arm_source_is_exactly_the_declared_set() {
 /// to the exported surface must update this allowlist (and be re-reviewed). No
 /// low-level injection API (arbitrary suppression paths, fixture source impls,
 /// request/custody internals) may appear here.
-const PUBLIC_API_ALLOWLIST: [&str; 36] = [
+const PUBLIC_API_ALLOWLIST: [&str; 37] = [
     "ArmError",
     "ArmRuntime",
+    "ArmRuntimeOpenError",
     "ArmedFailSink",
     "AttributionRetryToken",
     "AuthorizedCandidate",
@@ -165,8 +235,38 @@ const PUBLIC_API_ALLOWLIST: [&str; 36] = [
     "try_claim_arm",
 ];
 
-fn lib_source() -> String {
-    std::fs::read_to_string(manifest_dir().join("src").join("lib.rs")).expect("lib.rs")
+static MODULE_FIXTURE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+struct ModuleFixture {
+    root: PathBuf,
+}
+
+impl ModuleFixture {
+    fn new(tag: &str) -> Self {
+        let unique = MODULE_FIXTURE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir()
+            .join(format!("arm-capability-seal-{tag}-{}-{unique}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("create module fixture");
+        Self { root }
+    }
+
+    fn write(&self, relative: &str, source: &str) {
+        let path = self.root.join(relative);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create fixture module directory");
+        }
+        std::fs::write(path, source).expect("write module fixture");
+    }
+
+    fn lib(&self) -> PathBuf {
+        self.root.join("lib.rs")
+    }
+}
+
+impl Drop for ModuleFixture {
+    fn drop(&mut self) {
+        std::fs::remove_dir_all(&self.root).expect("remove module fixture");
+    }
 }
 
 // -- AST-based seal primitives (syn) — robust against the evasion vectors -------
@@ -177,44 +277,163 @@ fn parse(src: &str) -> syn::File {
     syn::parse_file(src).expect("parse rust source")
 }
 
-/// Vector 1: the named `mod` item is present AND declared with NO visibility
-/// modifier (plain `mod X;`). Returns `false` for a missing module OR any of
-/// `pub mod` / `pub(crate) mod` / `pub(...) mod` (only `Visibility::Inherited`
-/// passes).
-fn mod_is_private(src: &str, name: &str) -> bool {
-    parse(src).items.iter().any(|item| {
-        matches!(item, syn::Item::Mod(module)
-            if module.ident == name && matches!(module.vis, syn::Visibility::Inherited))
-    })
+fn module_attrs_are_exact(module: &syn::ItemMod, expected_cfg: Option<&str>) -> bool {
+    match expected_cfg {
+        None => module.attrs.is_empty(),
+        Some(tokens) => {
+            module.attrs.len() == 1
+                && matches!(
+                    &module.attrs[0].meta,
+                    syn::Meta::List(list)
+                        if list.path.is_ident("cfg") && list.tokens.to_string() == tokens
+                )
+        }
+    }
 }
 
-/// A fully-flattened `use` leaf: the full SOURCE path segments (before crate/self
-/// normalization) plus either the PUBLIC exported name (the `as` alias if present,
-/// else the leaf) or a glob marker.
+fn exact_module_declaration(
+    src: &str,
+    name: &str,
+    expected_cfg: Option<&str>,
+) -> Option<syn::ItemMod> {
+    let parsed = parse(src);
+    let mut modules = parsed.items.into_iter().filter_map(|item| {
+        let syn::Item::Mod(module) = item else { return None };
+        (ident_name(&module.ident) == name).then_some(module)
+    });
+    let module = modules.next()?;
+    if modules.next().is_some()
+        || !matches!(module.vis, syn::Visibility::Inherited)
+        || module.content.is_some()
+        || module.semi.is_none()
+        || !module_attrs_are_exact(&module, expected_cfg)
+    {
+        return None;
+    }
+    Some(module)
+}
+
+fn mod_is_private(src: &str, name: &str) -> bool {
+    exact_module_declaration(src, name, None).is_some()
+}
+
+fn exact_module_resolves_to(
+    src: &str,
+    name: &str,
+    expected_cfg: Option<&str>,
+    current_dir: &Path,
+    graph_root: &Path,
+    expected_file: &Path,
+) -> Result<(), String> {
+    let module = exact_module_declaration(src, name, expected_cfg).ok_or_else(|| {
+        format!("module `{name}` is not an exact private out-of-line declaration")
+    })?;
+    let mut visited = BTreeSet::new();
+    load_local_module(&module, Some(current_dir), Some(graph_root), &mut visited)?;
+    let resolved = visited
+        .into_iter()
+        .next()
+        .ok_or_else(|| format!("module `{name}` did not resolve to a file"))?;
+    let expected = std::fs::canonicalize(expected_file)
+        .map_err(|error| format!("canonicalize {}: {error}", expected_file.display()))?;
+    if resolved != expected {
+        return Err(format!(
+            "module `{name}` resolves to {}, expected reviewed {}",
+            resolved.display(),
+            expected.display()
+        ));
+    }
+    Ok(())
+}
+
+fn reviewed_arm_module_tree(root: &Path) -> Result<(), String> {
+    let root = std::fs::canonicalize(root)
+        .map_err(|error| format!("canonicalize {}: {error}", root.display()))?;
+    let src_dir = root.parent().ok_or_else(|| "root source has no parent".to_string())?;
+    let root_source = std::fs::read_to_string(&root)
+        .map_err(|error| format!("read {}: {error}", root.display()))?;
+    let arm_mod = src_dir.join("arm").join("mod.rs");
+    exact_module_resolves_to(
+        &root_source,
+        "arm",
+        Some("feature = \"arm\""),
+        src_dir,
+        src_dir,
+        &arm_mod,
+    )?;
+
+    let arm_dir = arm_mod.parent().ok_or_else(|| "arm mod has no parent".to_string())?;
+    let arm_source = std::fs::read_to_string(&arm_mod)
+        .map_err(|error| format!("read {}: {error}", arm_mod.display()))?;
+    let expected_children = [
+        "claim",
+        "custody",
+        "fail_sink",
+        "proofs",
+        "request",
+        "suppression",
+        "transport",
+        "witness",
+    ];
+    let parsed_arm = parse(&arm_source);
+    let actual_children: Vec<String> = parsed_arm
+        .items
+        .iter()
+        .filter_map(|item| {
+            let syn::Item::Mod(module) = item else { return None };
+            (!has_cfg_test(&module.attrs)).then(|| ident_name(&module.ident))
+        })
+        .collect();
+    let actual_set: BTreeSet<&str> = actual_children.iter().map(String::as_str).collect();
+    let expected_set: BTreeSet<&str> = expected_children.into_iter().collect();
+    if actual_children.len() != expected_children.len() || actual_set != expected_set {
+        return Err(format!(
+            "arm production child module set differs from reviewed set: {actual_children:?}"
+        ));
+    }
+    for child in expected_children {
+        exact_module_resolves_to(
+            &arm_source,
+            child,
+            None,
+            arm_dir,
+            src_dir,
+            &arm_dir.join(format!("{child}.rs")),
+        )?;
+    }
+    Ok(())
+}
+
+/// A fully-flattened `use` leaf: the canonical source path segments (raw
+/// identifiers are unrawed) plus either the exported name or a glob marker.
 #[derive(Debug)]
 enum UseLeaf {
     Item { source_path: Vec<String>, public_name: String },
     Glob { source_path: Vec<String> },
 }
 
-/// Vectors 1+2: fully flatten a `use` tree into leaves, recursing through `Group`
-/// at ANY position (leading, nested, trailing), `Path`, `Name`, `Rename`, `Glob`.
+fn ident_name(ident: &syn::Ident) -> String {
+    ident.unraw().to_string()
+}
+
+/// Flatten a `use` tree through groups at every position. Rust raw identifiers
+/// are canonicalized here, before any security decision is made.
 fn flatten_use(tree: &syn::UseTree, prefix: &[String], out: &mut Vec<UseLeaf>) {
     match tree {
         syn::UseTree::Name(name) => {
             let mut path = prefix.to_vec();
-            path.push(name.ident.to_string());
-            out.push(UseLeaf::Item { source_path: path, public_name: name.ident.to_string() });
+            let name = ident_name(&name.ident);
+            path.push(name.clone());
+            out.push(UseLeaf::Item { source_path: path, public_name: name });
         }
         syn::UseTree::Rename(rename) => {
             let mut path = prefix.to_vec();
-            path.push(rename.ident.to_string());
-            // The EXPORTED name is the `as` alias.
-            out.push(UseLeaf::Item { source_path: path, public_name: rename.rename.to_string() });
+            path.push(ident_name(&rename.ident));
+            out.push(UseLeaf::Item { source_path: path, public_name: ident_name(&rename.rename) });
         }
         syn::UseTree::Path(inner) => {
             let mut path = prefix.to_vec();
-            path.push(inner.ident.to_string());
+            path.push(ident_name(&inner.ident));
             flatten_use(&inner.tree, &path, out);
         }
         syn::UseTree::Group(group) => {
@@ -226,7 +445,7 @@ fn flatten_use(tree: &syn::UseTree, prefix: &[String], out: &mut Vec<UseLeaf>) {
     }
 }
 
-/// Strip leading `crate` / `self` / `super` path segments (normalization).
+/// Strip the path anchors that can precede a crate-local path.
 fn strip_crate_self(path: &[String]) -> &[String] {
     let mut start = 0;
     while start < path.len() && matches!(path[start].as_str(), "crate" | "self" | "super") {
@@ -235,45 +454,510 @@ fn strip_crate_self(path: &[String]) -> &[String] {
     &path[start..]
 }
 
-/// Vector 2: collect the arm re-export surface across EVERY `pub use` leaf. Each
-/// arm-rooted leaf must be a DIRECT `arm::<name>` (rejecting `arm::<sub>::…` deeper
-/// paths and globs). Returns `(source_names, public_names)` — the source item AND
-/// the exported (alias-aware) name — or `Err` on a glob / non-direct path.
-fn arm_reexports(src: &str) -> Result<(BTreeSet<String>, BTreeSet<String>), String> {
-    let file = parse(src);
-    let mut source = BTreeSet::new();
-    let mut public = BTreeSet::new();
-    for item in &file.items {
-        let syn::Item::Use(use_item) = item else {
-            continue;
-        };
-        if !matches!(use_item.vis, syn::Visibility::Public(_)) {
+fn path_names_arm(path: &[String]) -> bool {
+    path.iter().any(|segment| segment == "arm")
+}
+
+fn module_path_redirect(module: &syn::ItemMod) -> Result<Option<PathBuf>, String> {
+    let mut redirect = None;
+    for attr in &module.attrs {
+        if attr.path().is_ident("cfg_attr") {
+            return Err(format!(
+                "#[cfg_attr] is forbidden on traversed module `{}`",
+                ident_name(&module.ident)
+            ));
+        }
+        if !attr.path().is_ident("path") {
             continue;
         }
-        let mut leaves = Vec::new();
-        flatten_use(&use_item.tree, &[], &mut leaves);
-        for leaf in leaves {
-            match leaf {
-                UseLeaf::Glob { source_path } => {
-                    if strip_crate_self(&source_path).first().map(String::as_str) == Some("arm") {
-                        return Err(format!("glob re-export into arm: {source_path:?}"));
-                    }
+        if redirect.is_some() {
+            return Err(format!("duplicate #[path] on module `{}`", ident_name(&module.ident)));
+        }
+        let syn::Meta::NameValue(name_value) = &attr.meta else {
+            return Err(format!("malformed #[path] on module `{}`", ident_name(&module.ident)));
+        };
+        let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(path), .. }) = &name_value.value
+        else {
+            return Err(format!("non-string #[path] on module `{}`", ident_name(&module.ident)));
+        };
+        let value = path.value();
+        if value.is_empty() || value.contains('\0') {
+            return Err(format!("malformed #[path] on module `{}`", ident_name(&module.ident)));
+        }
+        redirect = Some(PathBuf::from(value));
+    }
+    Ok(redirect)
+}
+
+fn normalize_local_path(path: &Path) -> Result<PathBuf, String> {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Prefix(_) | std::path::Component::RootDir => {
+                normalized.push(component.as_os_str());
+            }
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if !normalized.pop() {
+                    return Err(format!("path escapes local module graph: {}", path.display()));
                 }
-                UseLeaf::Item { source_path, public_name } => {
+            }
+            std::path::Component::Normal(segment) => normalized.push(segment),
+        }
+    }
+    Ok(normalized)
+}
+
+fn redirected_module_path(
+    current_dir: &Path,
+    graph_root: &Path,
+    redirect: &Path,
+    module_name: &str,
+) -> Result<PathBuf, String> {
+    if redirect.is_absolute() {
+        return Err(format!("absolute #[path] for module `{module_name}`"));
+    }
+    let resolved = normalize_local_path(&current_dir.join(redirect))?;
+    let root = normalize_local_path(graph_root)?;
+    if !resolved.starts_with(&root) {
+        return Err(format!(
+            "#[path] for module `{module_name}` leaves graph root {}",
+            root.display()
+        ));
+    }
+    Ok(resolved)
+}
+
+fn child_module_dir(path: &Path, module_name: &str) -> Result<PathBuf, String> {
+    let parent =
+        path.parent().ok_or_else(|| format!("module file has no parent: {}", path.display()))?;
+    if path.file_name().is_some_and(|name| name == "mod.rs") {
+        Ok(parent.to_path_buf())
+    } else {
+        Ok(parent.join(module_name))
+    }
+}
+
+/// The one loader used by every graph traversal. It resolves inline modules,
+/// conventional flat/mod.rs files, and safe `#[path]` redirects identically.
+fn load_local_module(
+    module: &syn::ItemMod,
+    current_dir: Option<&Path>,
+    graph_root: Option<&Path>,
+    visited: &mut BTreeSet<PathBuf>,
+) -> Result<(Vec<syn::Item>, Option<PathBuf>), String> {
+    let name = ident_name(&module.ident);
+    let redirect = module_path_redirect(module)?;
+    if let Some((_, inner)) = &module.content {
+        let child_dir = match (current_dir, graph_root, redirect.as_deref()) {
+            (Some(dir), Some(root), Some(path)) => {
+                let resolved = redirected_module_path(dir, root, path, &name)?;
+                Some(child_module_dir(&resolved, &name)?)
+            }
+            (_, _, Some(_)) => {
+                return Err(format!("cannot resolve inline #[path] module `{name}`"));
+            }
+            (Some(dir), _, None) => Some(dir.join(&name)),
+            (None, _, None) => None,
+        };
+        return Ok((inner.clone(), child_dir));
+    }
+
+    let current_dir = current_dir.ok_or_else(|| format!("no directory for module `{name}`"))?;
+    let graph_root = graph_root.ok_or_else(|| format!("no graph root for module `{name}`"))?;
+    let path = if let Some(redirect) = redirect {
+        let path = redirected_module_path(current_dir, graph_root, &redirect, &name)?;
+        if !path.is_file() {
+            return Err(format!("unresolved redirected module `{name}` at {}", path.display()));
+        }
+        path
+    } else {
+        let flat = current_dir.join(format!("{name}.rs"));
+        let nested = current_dir.join(&name).join("mod.rs");
+        match (flat.is_file(), nested.is_file()) {
+            (true, false) => flat,
+            (false, true) => nested,
+            (true, true) => {
+                return Err(format!(
+                    "ambiguous local module `{name}`: {} and {}",
+                    flat.display(),
+                    nested.display()
+                ));
+            }
+            (false, false) => {
+                return Err(format!(
+                    "unresolved local module `{name}` below {}",
+                    current_dir.display()
+                ));
+            }
+        }
+    };
+    let path = std::fs::canonicalize(&path)
+        .map_err(|error| format!("canonicalize {}: {error}", path.display()))?;
+    let canonical_root = std::fs::canonicalize(graph_root)
+        .map_err(|error| format!("canonicalize {}: {error}", graph_root.display()))?;
+    if !path.starts_with(&canonical_root) {
+        return Err(format!(
+            "module `{name}` resolves outside graph root {}",
+            canonical_root.display()
+        ));
+    }
+    if !visited.insert(path.clone()) {
+        return Err(format!("local module cycle or duplicate at {}", path.display()));
+    }
+    let child_source = std::fs::read_to_string(&path)
+        .map_err(|error| format!("read {}: {error}", path.display()))?;
+    let child_file = syn::parse_file(&child_source)
+        .map_err(|error| format!("parse {}: {error}", path.display()))?;
+    let child_dir = child_module_dir(&path, &name)?;
+    Ok((child_file.items, Some(child_dir)))
+}
+
+fn items_name_arm(items: &[syn::Item]) -> bool {
+    struct ArmReference {
+        found: bool,
+    }
+
+    impl<'ast> syn::visit::Visit<'ast> for ArmReference {
+        fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+            if !has_cfg_test(&item.attrs) {
+                syn::visit::visit_item_mod(self, item);
+            }
+        }
+        fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
+            let mut leaves = Vec::new();
+            flatten_use(&item.tree, &[], &mut leaves);
+            self.found |= leaves.iter().any(|leaf| match leaf {
+                UseLeaf::Item { source_path, .. } | UseLeaf::Glob { source_path } => {
+                    path_names_arm(source_path)
+                }
+            });
+            syn::visit::visit_item_use(self, item);
+        }
+
+        fn visit_path(&mut self, path: &'ast syn::Path) {
+            self.found |= path.segments.iter().any(|segment| ident_name(&segment.ident) == "arm");
+            syn::visit::visit_path(self, path);
+        }
+
+        fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+            self.found |=
+                mac.path.segments.iter().any(|segment| ident_name(&segment.ident) == "arm");
+            syn::visit::visit_macro(self, mac);
+        }
+    }
+
+    let mut reference = ArmReference { found: false };
+    syn::visit::Visit::visit_file(
+        &mut reference,
+        &syn::File { shebang: None, attrs: Vec::new(), items: items.to_vec() },
+    );
+    reference.found
+}
+
+fn has_exact_cfg_test(attr: &syn::Attribute) -> bool {
+    matches!(
+        &attr.meta,
+        syn::Meta::List(list) if list.path.is_ident("cfg") && list.tokens.to_string() == "test"
+    )
+}
+
+fn reviewed_attribute(attr: &syn::Attribute) -> bool {
+    match &attr.meta {
+        syn::Meta::NameValue(value) if value.path.is_ident("doc") => {
+            matches!(&value.value, syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(_), .. }))
+        }
+        syn::Meta::List(list) if list.path.is_ident("cfg") => true,
+        syn::Meta::List(list) if list.path.is_ident("derive") => matches!(
+            list.tokens.to_string().as_str(),
+            "Debug"
+                | "Debug , Clone"
+                | "Debug , Clone , Copy"
+                | "Debug , Clone , PartialEq , Eq"
+                | "Debug , Clone , Copy , PartialEq , Eq"
+        ),
+        syn::Meta::List(list) if list.path.is_ident("allow") => matches!(
+            list.tokens.to_string().as_str(),
+            "clippy :: large_enum_variant"
+                | "clippy :: too_many_arguments"
+                | "missing_docs"
+                | "unnameable_types"
+        ),
+        _ => false,
+    }
+}
+
+fn item_attrs(item: &syn::Item) -> &[syn::Attribute] {
+    match item {
+        syn::Item::Const(item) => &item.attrs,
+        syn::Item::Enum(item) => &item.attrs,
+        syn::Item::ExternCrate(item) => &item.attrs,
+        syn::Item::Fn(item) => &item.attrs,
+        syn::Item::ForeignMod(item) => &item.attrs,
+        syn::Item::Impl(item) => &item.attrs,
+        syn::Item::Macro(item) => &item.attrs,
+        syn::Item::Mod(item) => &item.attrs,
+        syn::Item::Static(item) => &item.attrs,
+        syn::Item::Struct(item) => &item.attrs,
+        syn::Item::Trait(item) => &item.attrs,
+        syn::Item::TraitAlias(item) => &item.attrs,
+        syn::Item::Type(item) => &item.attrs,
+        syn::Item::Union(item) => &item.attrs,
+        syn::Item::Use(item) => &item.attrs,
+        _ => &[],
+    }
+}
+
+fn production_attributes_are_reviewed(items: &[syn::Item]) -> bool {
+    struct AttributeSeal {
+        reviewed: bool,
+    }
+
+    impl<'ast> syn::visit::Visit<'ast> for AttributeSeal {
+        fn visit_item(&mut self, item: &'ast syn::Item) {
+            let attrs = item_attrs(item);
+            if has_cfg_test(attrs) {
+                return;
+            }
+            self.reviewed &= attrs.iter().all(reviewed_attribute);
+            syn::visit::visit_item(self, item);
+        }
+
+        fn visit_impl_item(&mut self, item: &'ast syn::ImplItem) {
+            let attrs: &[syn::Attribute] = match item {
+                syn::ImplItem::Const(item) => &item.attrs,
+                syn::ImplItem::Fn(item) => &item.attrs,
+                syn::ImplItem::Type(item) => &item.attrs,
+                syn::ImplItem::Macro(item) => &item.attrs,
+                _ => &[],
+            };
+            if has_cfg_test(attrs) {
+                return;
+            }
+            self.reviewed &= attrs.iter().all(reviewed_attribute);
+            syn::visit::visit_impl_item(self, item);
+        }
+
+        fn visit_trait_item(&mut self, item: &'ast syn::TraitItem) {
+            let attrs: &[syn::Attribute] = match item {
+                syn::TraitItem::Const(item) => &item.attrs,
+                syn::TraitItem::Fn(item) => &item.attrs,
+                syn::TraitItem::Type(item) => &item.attrs,
+                syn::TraitItem::Macro(item) => &item.attrs,
+                _ => &[],
+            };
+            if has_cfg_test(attrs) {
+                return;
+            }
+            self.reviewed &= attrs.iter().all(reviewed_attribute);
+            syn::visit::visit_trait_item(self, item);
+        }
+
+        fn visit_attribute(&mut self, attr: &'ast syn::Attribute) {
+            self.reviewed &= reviewed_attribute(attr);
+        }
+    }
+
+    let file = syn::File { shebang: None, attrs: Vec::new(), items: items.to_vec() };
+    let mut seal = AttributeSeal { reviewed: true };
+    syn::visit::Visit::visit_file(&mut seal, &file);
+    seal.reviewed
+}
+/// Item-position macros can emit imports, modules, and other public surface that
+/// `syn` cannot expand. Reject them throughout the traversed production graph,
+/// except for the single reviewed Solidity declaration in root `assembler.rs`.
+fn item_macro_surface_is_reviewed(
+    items: &[syn::Item],
+    allow_assembler_sol: bool,
+) -> Result<(), String> {
+    if !production_attributes_are_reviewed(items) {
+        return Err(
+            "unknown or unreviewed production attribute in sealed local module graph".into()
+        );
+    }
+    let sol_bindings: Vec<Vec<String>> = items
+        .iter()
+        .filter_map(|item| match item {
+            syn::Item::Use(item_use) if !has_cfg_test(&item_use.attrs) => Some(item_use),
+            _ => None,
+        })
+        .flat_map(|item_use| {
+            let mut leaves = Vec::new();
+            flatten_use(&item_use.tree, &[], &mut leaves);
+            leaves
+        })
+        .filter_map(|leaf| match leaf {
+            UseLeaf::Item { source_path, public_name } if public_name == "sol" => Some(source_path),
+            _ => None,
+        })
+        .collect();
+    let exact_sol_binding =
+        sol_bindings == [vec!["alloy_sol_types".to_string(), "sol".to_string()]];
+    let mut reviewed_sol = 0;
+    for item in items {
+        let syn::Item::Macro(item_macro) = item else {
+            continue;
+        };
+        if has_cfg_test(&item_macro.attrs) {
+            continue;
+        }
+        let is_reviewed_sol = allow_assembler_sol
+            && exact_sol_binding
+            && item_macro.ident.is_none()
+            && item_macro.mac.path.leading_colon.is_none()
+            && item_macro.mac.path.segments.len() == 1
+            && ident_name(&item_macro.mac.path.segments[0].ident) == "sol";
+        if !is_reviewed_sol {
+            return Err("item macro definition/invocation in sealed local module graph".to_string());
+        }
+        reviewed_sol += 1;
+    }
+    if reviewed_sol > 1 {
+        return Err("multiple sol! item macros in assembler.rs".to_string());
+    }
+    Ok(())
+}
+
+/// Walk every local production module except the reviewed private `arm` subtree.
+/// Any direct `arm` import/reference there is rejected, irrespective of visibility
+/// or how many private aliases later carry it to a public re-export.
+fn seal_local_module_graph(
+    items: &[syn::Item],
+    current_dir: Option<&Path>,
+    graph_root: Option<&Path>,
+    visited: &mut BTreeSet<PathBuf>,
+    allow_assembler_sol: bool,
+) -> Result<(), String> {
+    item_macro_surface_is_reviewed(items, allow_assembler_sol)?;
+    if items_name_arm(items) {
+        return Err("direct arm import/reference outside reviewed root facade".to_string());
+    }
+    for item in items {
+        let syn::Item::Mod(module) = item else {
+            continue;
+        };
+        if has_cfg_test(&module.attrs) {
+            continue;
+        }
+        let (child_items, child_dir) = load_local_module(module, current_dir, graph_root, visited)?;
+        seal_local_module_graph(&child_items, child_dir.as_deref(), graph_root, visited, false)?;
+    }
+    Ok(())
+}
+
+/// Collect only the reviewed root facade. Every non-arm root module is then
+/// traversed by the conservative whole-local-module-graph seal.
+fn collect_arm_reexports(
+    items: &[syn::Item],
+    current_dir: Option<&Path>,
+    graph_root: Option<&Path>,
+    source: &mut BTreeSet<String>,
+    public: &mut BTreeSet<String>,
+    visited: &mut BTreeSet<PathBuf>,
+) -> Result<(), String> {
+    item_macro_surface_is_reviewed(items, false)?;
+    let non_facade_items: Vec<syn::Item> = items
+        .iter()
+        .filter(|item| {
+            !matches!(item, syn::Item::Use(_))
+                && !matches!(
+                    item,
+                    syn::Item::Mod(module)
+                        if ident_name(&module.ident) == "arm" || has_cfg_test(&module.attrs)
+                )
+        })
+        .cloned()
+        .collect();
+    if items_name_arm(&non_facade_items) {
+        return Err("direct arm reference in root outside reviewed facade".to_string());
+    }
+    for item in items {
+        match item {
+            syn::Item::Use(use_item) => {
+                let mut leaves = Vec::new();
+                flatten_use(&use_item.tree, &[], &mut leaves);
+                for leaf in leaves {
+                    let (source_path, public_name) = match leaf {
+                        UseLeaf::Item { source_path, public_name } => {
+                            (source_path, Some(public_name))
+                        }
+                        UseLeaf::Glob { source_path } => (source_path, None),
+                    };
                     let norm = strip_crate_self(&source_path);
-                    if norm.first().map(String::as_str) != Some("arm") {
-                        continue; // not an arm re-export
+                    if !path_names_arm(norm) {
+                        continue;
                     }
-                    // Must be EXACTLY `arm::<name>` — never `arm::<submodule>::…`.
-                    if norm.len() != 2 {
-                        return Err(format!("non-direct arm re-export path: {norm:?}"));
+                    if !matches!(use_item.vis, syn::Visibility::Public(_)) {
+                        return Err(format!("non-public root arm import: {source_path:?}"));
                     }
+                    if norm.first().map(String::as_str) != Some("arm") || norm.len() != 2 {
+                        return Err(format!("non-direct root arm re-export: {norm:?}"));
+                    }
+                    let Some(public_name) = public_name else {
+                        return Err(format!("glob re-export into arm: {source_path:?}"));
+                    };
                     source.insert(norm[1].clone());
                     public.insert(public_name);
                 }
             }
+            syn::Item::Mod(module) if ident_name(&module.ident) == "arm" => {
+                if !matches!(module.vis, syn::Visibility::Inherited)
+                    || module.content.is_some()
+                    || module.semi.is_none()
+                    || !module_attrs_are_exact(module, Some("feature = \"arm\""))
+                {
+                    return Err(
+                        "reviewed root arm module must be exact private out-of-line source".into(),
+                    );
+                }
+            }
+            syn::Item::Mod(module) if has_cfg_test(&module.attrs) => {}
+            syn::Item::Mod(module) => {
+                let allow_assembler_sol = ident_name(&module.ident) == "assembler";
+                let (child_items, child_dir) =
+                    load_local_module(module, current_dir, graph_root, visited)?;
+                seal_local_module_graph(
+                    &child_items,
+                    child_dir.as_deref(),
+                    graph_root,
+                    visited,
+                    allow_assembler_sol,
+                )?;
+            }
+            _ => {}
         }
     }
+    Ok(())
+}
+
+fn arm_reexports(src: &str) -> Result<(BTreeSet<String>, BTreeSet<String>), String> {
+    let file = parse(src);
+    let mut source = BTreeSet::new();
+    let mut public = BTreeSet::new();
+    collect_arm_reexports(&file.items, None, None, &mut source, &mut public, &mut BTreeSet::new())?;
+    Ok((source, public))
+}
+
+fn arm_reexports_from_path(root: &Path) -> Result<(BTreeSet<String>, BTreeSet<String>), String> {
+    let root = std::fs::canonicalize(root)
+        .map_err(|error| format!("canonicalize {}: {error}", root.display()))?;
+    let src = std::fs::read_to_string(&root)
+        .map_err(|error| format!("read {}: {error}", root.display()))?;
+    let file =
+        syn::parse_file(&src).map_err(|error| format!("parse {}: {error}", root.display()))?;
+    let graph_root =
+        root.parent().ok_or_else(|| format!("root source has no parent: {}", root.display()))?;
+    let mut source = BTreeSet::new();
+    let mut public = BTreeSet::new();
+    let mut visited = BTreeSet::from([root.clone()]);
+    collect_arm_reexports(
+        &file.items,
+        Some(graph_root),
+        Some(graph_root),
+        &mut source,
+        &mut public,
+        &mut visited,
+    )?;
     Ok((source, public))
 }
 
@@ -344,11 +1028,8 @@ fn inherent_method_surface(src: &str, ty_name: &str) -> BTreeSet<String> {
 
 #[test]
 fn arm_module_is_private() {
-    // Rejects `pub mod arm;` AND `pub(crate) mod arm;` AND `pub(...) mod arm;`.
-    assert!(
-        mod_is_private(&lib_source(), "arm"),
-        "the `arm` module must be a plain `mod arm;` (no visibility modifier)"
-    );
+    reviewed_arm_module_tree(&manifest_dir().join("src").join("lib.rs"))
+        .expect("root arm and every production child must resolve to canonical reviewed source");
 }
 
 #[test]
@@ -356,7 +1037,16 @@ fn arm_submodules_are_private() {
     let modrs = std::fs::read_to_string(arm_dir().join("mod.rs")).expect("mod.rs");
     // Rejects `pub mod <sub>;` AND `pub(crate) mod <sub>;` for every real sub-module.
     // (The `#[cfg(test)] pub(crate) mod testkit` is a test utility and is NOT scanned.)
-    for sub in ["claim", "custody", "proofs", "request", "suppression", "transport", "witness"] {
+    for sub in [
+        "claim",
+        "custody",
+        "fail_sink",
+        "proofs",
+        "request",
+        "suppression",
+        "transport",
+        "witness",
+    ] {
         assert!(
             mod_is_private(&modrs, sub),
             "arm sub-module `{sub}` must be a plain `mod {sub};` (no visibility modifier)"
@@ -368,7 +1058,8 @@ fn arm_submodules_are_private() {
 
 #[test]
 fn public_api_surface_is_exactly_the_curated_allowlist() {
-    let (source, public) = arm_reexports(&lib_source()).expect("no glob/deep arm re-export");
+    let (source, public) = arm_reexports_from_path(&manifest_dir().join("src").join("lib.rs"))
+        .expect("no glob/deep arm re-export across the public module graph");
     let expected: BTreeSet<String> =
         PUBLIC_API_ALLOWLIST.iter().map(|name| (*name).to_string()).collect();
     // The SOURCE items re-exported from arm must equal the allowlist...
@@ -392,17 +1083,555 @@ fn arm_runtime_methods() -> BTreeSet<String> {
 fn freshness_sources_methods() -> BTreeSet<String> {
     ["revalidate"].iter().map(|s| (*s).to_string()).collect()
 }
+fn armed_fail_sink_methods() -> BTreeSet<String> {
+    ["from_anchored", "is_poisoned", "observe_kill", "check", "latch"]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect()
+}
+
+fn all_inherent_method_names(src: &str, ty_name: &str) -> BTreeSet<String> {
+    fn walk(items: &[syn::Item], ty_name: &str, out: &mut BTreeSet<String>) {
+        for item in items {
+            match item {
+                syn::Item::Impl(imp) if imp.trait_.is_none() => {
+                    let syn::Type::Path(type_path) = &*imp.self_ty else {
+                        continue;
+                    };
+                    if type_path
+                        .path
+                        .segments
+                        .last()
+                        .is_some_and(|segment| segment.ident == ty_name)
+                    {
+                        for impl_item in &imp.items {
+                            if let syn::ImplItem::Fn(method) = impl_item {
+                                out.insert(method.sig.ident.to_string());
+                            }
+                        }
+                    }
+                }
+                syn::Item::Mod(module) => {
+                    if let Some((_, inner)) = &module.content {
+                        walk(inner, ty_name, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let file = parse(src);
+    let mut out = BTreeSet::new();
+    walk(&file.items, ty_name, &mut out);
+    out
+}
+
+fn has_direct_generic_sink_construction(source: &str) -> bool {
+    struct GenericConstructor {
+        found: bool,
+    }
+
+    impl<'ast> syn::visit::Visit<'ast> for GenericConstructor {
+        fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+            if !has_cfg_test(&item.attrs) {
+                syn::visit::visit_item_mod(self, item);
+            }
+        }
+
+        fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
+            if !has_cfg_test(&item.attrs) {
+                syn::visit::visit_item_fn(self, item);
+            }
+        }
+
+        fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
+            if !has_cfg_test(&item.attrs) {
+                syn::visit::visit_item_impl(self, item);
+            }
+        }
+        fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
+            if !has_cfg_test(&item.attrs) {
+                syn::visit::visit_impl_item_fn(self, item);
+            }
+        }
+
+        fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+            if let syn::Expr::Path(function) = &*call.func {
+                let segments: Vec<String> = function
+                    .path
+                    .segments
+                    .iter()
+                    .map(|segment| ident_name(&segment.ident))
+                    .collect();
+                self.found |= segments.ends_with(&["ArmedFailSink".to_string(), "new".to_string()]);
+            }
+            syn::visit::visit_expr_call(self, call);
+        }
+    }
+
+    let mut inventory = GenericConstructor { found: false };
+    syn::visit::Visit::visit_file(&mut inventory, &parse(source));
+    inventory.found
+}
+
+fn path_name(path: &syn::Path) -> String {
+    path.segments.iter().map(|segment| ident_name(&segment.ident)).collect::<Vec<_>>().join("::")
+}
+
+#[derive(Default)]
+struct ProductionInventory {
+    sink_alias: bool,
+    free_functions: BTreeSet<String>,
+    helper_references: Vec<(String, String, bool)>,
+    sink_expressions: Vec<SinkStructExpression>,
+    function: Option<String>,
+    sink_impl: bool,
+}
+
+impl<'ast> syn::visit::Visit<'ast> for ProductionInventory {
+    fn visit_item(&mut self, item: &'ast syn::Item) {
+        if !has_cfg_test(item_attrs(item)) {
+            syn::visit::visit_item(self, item);
+        }
+    }
+    fn visit_impl_item(&mut self, item: &'ast syn::ImplItem) {
+        let attrs: &[syn::Attribute] = match item {
+            syn::ImplItem::Const(item) => &item.attrs,
+            syn::ImplItem::Fn(item) => &item.attrs,
+            syn::ImplItem::Type(item) => &item.attrs,
+            syn::ImplItem::Macro(item) => &item.attrs,
+            _ => &[],
+        };
+        if !has_cfg_test(attrs) {
+            syn::visit::visit_impl_item(self, item);
+        }
+    }
+
+    fn visit_trait_item(&mut self, item: &'ast syn::TraitItem) {
+        let attrs: &[syn::Attribute] = match item {
+            syn::TraitItem::Const(item) => &item.attrs,
+            syn::TraitItem::Fn(item) => &item.attrs,
+            syn::TraitItem::Type(item) => &item.attrs,
+            syn::TraitItem::Macro(item) => &item.attrs,
+            _ => &[],
+        };
+        if !has_cfg_test(attrs) {
+            syn::visit::visit_trait_item(self, item);
+        }
+    }
+    fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+        if !has_cfg_test(&item.attrs) {
+            syn::visit::visit_item_mod(self, item);
+        }
+    }
+
+    fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
+        if has_cfg_test(&item.attrs) {
+            return;
+        }
+        let prior = self.sink_impl;
+        self.sink_impl = matches!(
+            &*item.self_ty,
+            syn::Type::Path(path)
+                if path.path.segments.last().is_some_and(
+                    |segment| ident_name(&segment.ident) == "ArmedFailSink"
+                )
+        );
+        syn::visit::visit_item_impl(self, item);
+        self.sink_impl = prior;
+    }
+
+    fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
+        if has_cfg_test(&item.attrs) {
+            return;
+        }
+        let name = ident_name(&item.sig.ident);
+        self.free_functions.insert(name.clone());
+        let prior = self.function.replace(name);
+        syn::visit::visit_item_fn(self, item);
+        self.function = prior;
+    }
+
+    fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
+        if has_cfg_test(&item.attrs) {
+            return;
+        }
+        let prior = self.function.replace(ident_name(&item.sig.ident));
+        syn::visit::visit_impl_item_fn(self, item);
+        self.function = prior;
+    }
+    fn visit_trait_item_fn(&mut self, item: &'ast syn::TraitItemFn) {
+        if has_cfg_test(&item.attrs) {
+            return;
+        }
+        let prior = self.function.replace(ident_name(&item.sig.ident));
+        syn::visit::visit_trait_item_fn(self, item);
+        self.function = prior;
+    }
+
+    fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
+        if has_cfg_test(&item.attrs) {
+            return;
+        }
+        let mut leaves = Vec::new();
+        flatten_use(&item.tree, &[], &mut leaves);
+        self.sink_alias |= leaves.iter().any(|leaf| {
+            matches!(
+                leaf,
+                UseLeaf::Item { source_path, public_name }
+                    if source_path.last().is_some_and(|name| name == "ArmedFailSink")
+                        && public_name != "ArmedFailSink"
+            )
+        });
+        syn::visit::visit_item_use(self, item);
+    }
+
+    fn visit_item_type(&mut self, item: &'ast syn::ItemType) {
+        if has_cfg_test(&item.attrs) {
+            return;
+        }
+        self.sink_alias |= matches!(
+            &*item.ty,
+            syn::Type::Path(type_path)
+                if type_path.path.segments.last().is_some_and(
+                    |segment| ident_name(&segment.ident) == "ArmedFailSink"
+                )
+        );
+        syn::visit::visit_item_type(self, item);
+    }
+    fn visit_local(&mut self, local: &'ast syn::Local) {
+        if !has_cfg_test(&local.attrs) {
+            syn::visit::visit_local(self, local);
+        }
+    }
+
+    fn visit_expr_block(&mut self, block: &'ast syn::ExprBlock) {
+        if !has_cfg_test(&block.attrs) {
+            syn::visit::visit_expr_block(self, block);
+        }
+    }
+
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        if let syn::Expr::Path(function) = &*call.func
+            && function
+                .path
+                .segments
+                .last()
+                .is_some_and(|segment| ident_name(&segment.ident) == "from_store_checked")
+        {
+            self.helper_references.push((
+                self.function.clone().unwrap_or_default(),
+                path_name(&function.path),
+                true,
+            ));
+            for argument in &call.args {
+                syn::visit::Visit::visit_expr(self, argument);
+            }
+            return;
+        }
+        syn::visit::visit_expr_call(self, call);
+    }
+
+    fn visit_expr_path(&mut self, expression: &'ast syn::ExprPath) {
+        if expression
+            .path
+            .segments
+            .last()
+            .is_some_and(|segment| ident_name(&segment.ident) == "from_store_checked")
+        {
+            self.helper_references.push((
+                self.function.clone().unwrap_or_default(),
+                path_name(&expression.path),
+                false,
+            ));
+        }
+        syn::visit::visit_expr_path(self, expression);
+    }
+
+    fn visit_expr_struct(&mut self, expression: &'ast syn::ExprStruct) {
+        let is_named_sink = expression
+            .path
+            .segments
+            .last()
+            .is_some_and(|segment| ident_name(&segment.ident) == "ArmedFailSink");
+        let is_sink_self = self.sink_impl
+            && expression.path.segments.len() == 1
+            && ident_name(&expression.path.segments[0].ident) == "Self";
+        if is_named_sink || is_sink_self {
+            let fields = expression
+                .fields
+                .iter()
+                .map(|field| {
+                    let member = match &field.member {
+                        syn::Member::Named(ident) => ident_name(ident),
+                        syn::Member::Unnamed(index) => index.index.to_string(),
+                    };
+                    let direct_ident = match &field.expr {
+                        syn::Expr::Path(path) if path.path.segments.len() == 1 => {
+                            Some(ident_name(&path.path.segments[0].ident))
+                        }
+                        _ => None,
+                    };
+                    (member, field.colon_token.is_none(), direct_ident)
+                })
+                .collect();
+            self.sink_expressions.push(SinkStructExpression {
+                function: self.function.clone(),
+                fields,
+                has_rest: expression.rest.is_some(),
+            });
+        }
+        syn::visit::visit_expr_struct(self, expression);
+    }
+}
+
+fn production_inventory(source: &str) -> ProductionInventory {
+    let mut inventory = ProductionInventory::default();
+    syn::visit::Visit::visit_file(&mut inventory, &parse(source));
+    inventory
+}
+
+fn sink_alias_surface_is_empty(source: &str) -> bool {
+    !production_inventory(source).sink_alias
+}
+
+fn sink_trait_surface(source: &str) -> BTreeSet<String> {
+    fn walk(items: &[syn::Item], out: &mut BTreeSet<String>) {
+        for item in items {
+            match item {
+                syn::Item::Impl(item_impl) if !has_cfg_test(&item_impl.attrs) => {
+                    let sink_impl = matches!(
+                        &*item_impl.self_ty,
+                        syn::Type::Path(type_path)
+                            if type_path.path.segments.last().is_some_and(
+                                |segment| ident_name(&segment.ident) == "ArmedFailSink"
+                            )
+                    );
+                    if sink_impl && let Some((_, trait_path, _)) = &item_impl.trait_ {
+                        out.insert(path_name(trait_path));
+                    }
+                }
+                syn::Item::Mod(module) if !has_cfg_test(&module.attrs) => {
+                    if let Some((_, inner)) = &module.content {
+                        walk(inner, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mut out = BTreeSet::new();
+    walk(&parse(source).items, &mut out);
+    out
+}
+
+fn production_free_function_surface(source: &str) -> BTreeSet<String> {
+    production_inventory(source).free_functions
+}
+
+fn from_store_checked_calls(source: &str) -> Vec<(String, String, bool)> {
+    production_inventory(source).helper_references
+}
+
+fn armed_fail_sink_fields_are_private(source: &str) -> bool {
+    parse(source).items.iter().any(|item| {
+        let syn::Item::Struct(item_struct) = item else {
+            return false;
+        };
+        if item_struct.ident != "ArmedFailSink" {
+            return false;
+        }
+        let names: Vec<String> = item_struct
+            .fields
+            .iter()
+            .filter_map(|field| field.ident.as_ref().map(ToString::to_string))
+            .collect();
+        names == ["kill".to_string(), "process_poison".to_string()]
+            && item_struct
+                .fields
+                .iter()
+                .all(|field| matches!(field.vis, syn::Visibility::Inherited))
+    })
+}
+
+#[derive(Debug)]
+struct SinkStructExpression {
+    function: Option<String>,
+    fields: Vec<(String, bool, Option<String>)>,
+    has_rest: bool,
+}
+
+fn sink_struct_expressions(source: &str) -> Vec<SinkStructExpression> {
+    production_inventory(source).sink_expressions
+}
+
+fn has_exact_canonical_sink_construction(source: &str) -> bool {
+    let expressions = sink_struct_expressions(source);
+    expressions.len() == 1
+        && expressions[0].function.as_deref() == Some("from_store_checked")
+        && !expressions[0].has_rest
+        && expressions[0].fields
+            == [
+                ("kill".to_string(), true, Some("kill".to_string())),
+                ("process_poison".to_string(), true, Some("process_poison".to_string())),
+            ]
+}
+fn sink_macro_surface_is_reviewed(source: &str) -> bool {
+    struct MacroInventory {
+        reviewed_matches: usize,
+        rejected: bool,
+    }
+
+    impl<'ast> syn::visit::Visit<'ast> for MacroInventory {
+        fn visit_attribute(&mut self, attr: &'ast syn::Attribute) {
+            let reviewed = match &attr.meta {
+                syn::Meta::List(list) if list.path.is_ident("cfg") => {
+                    matches!(list.tokens.to_string().as_str(), "test" | "not (test)")
+                }
+                syn::Meta::List(list) if list.path.is_ident("derive") => {
+                    list.tokens.to_string() == "Debug"
+                }
+                _ => false,
+            };
+            if !reviewed {
+                self.rejected = true;
+            }
+            syn::visit::visit_attribute(self, attr);
+        }
+        fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
+            let mut leaves = Vec::new();
+            flatten_use(&item.tree, &[], &mut leaves);
+            if leaves.iter().any(
+                |leaf| matches!(leaf, UseLeaf::Item { public_name, .. } if public_name == "matches"),
+            ) {
+                self.rejected = true;
+            }
+            syn::visit::visit_item_use(self, item);
+        }
+        fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+            let is_reviewed_matches = mac.path.leading_colon.is_none()
+                && mac.path.segments.len() == 1
+                && ident_name(&mac.path.segments[0].ident) == "matches"
+                && mac.tokens.to_string() == "state , KillState :: Clear { .. }";
+            if is_reviewed_matches {
+                self.reviewed_matches += 1;
+            } else {
+                self.rejected = true;
+            }
+            syn::visit::visit_macro(self, mac);
+        }
+    }
+
+    let file = parse(source);
+    let mut inventory = MacroInventory { reviewed_matches: 0, rejected: false };
+    syn::visit::Visit::visit_file(&mut inventory, &file);
+    !inventory.rejected && inventory.reviewed_matches == 1
+}
+
+fn has_sibling_sink_construction_or_child_path(source: &str) -> bool {
+    let compact: String = strip_comments(source).chars().filter(|ch| !ch.is_whitespace()).collect();
+    compact.contains("ArmedFailSink{") || compact.contains("fail_sink::ArmedFailSink")
+}
+
+fn has_arbitrary_kill_path(source: &str) -> bool {
+    strip_comments(source).contains("\"/")
+}
 
 #[test]
 fn constructor_surface_is_sealed() {
     let witness = std::fs::read_to_string(arm_dir().join("witness.rs")).expect("witness.rs");
-    // `ArmRuntime`: only `open` (pins stores internally), `freshness` (takes ONLY
-    // keyless node providers), `sink`, `suppression_clear` are non-test surface. A
-    // new `from_path`/`with_store`/`set_path` mutator would appear here and FAIL.
+    let modrs = std::fs::read_to_string(arm_dir().join("mod.rs")).expect("mod.rs");
+    let fail_sink = std::fs::read_to_string(arm_dir().join("fail_sink.rs")).expect("fail_sink.rs");
+    let fail_sink_production = arm_production("fail_sink.rs");
+    assert!(
+        modrs.contains("mod fail_sink;\npub use fail_sink::ArmedFailSink;"),
+        "fail sink must be a private child module grouped with its sole public re-export"
+    );
+    assert!(
+        armed_fail_sink_fields_are_private(&fail_sink),
+        "ArmedFailSink must retain exactly its two child-private fields"
+    );
+    for file in ARM_FILES.iter().filter(|file| !matches!(**file, "fail_sink.rs" | "mod.rs")) {
+        let source = std::fs::read_to_string(arm_dir().join(file)).expect("arm sibling source");
+        assert!(
+            !has_sibling_sink_construction_or_child_path(&source),
+            "arm sibling `{file}` constructs ArmedFailSink or bypasses its canonical re-export"
+        );
+    }
+    // `ArmRuntime`: only zero-argument `open` (pins stores internally), `freshness`, `sink`, and
+    // `suppression_clear` are non-test surface.
     assert_eq!(
         inherent_method_surface(&witness, "ArmRuntime"),
         arm_runtime_methods(),
         "ArmRuntime non-#[cfg(test)] method surface changed — review before allowlisting"
+    );
+    assert_eq!(
+        inherent_method_surface(&fail_sink, "ArmedFailSink"),
+        armed_fail_sink_methods(),
+        "ArmedFailSink production surface changed — arbitrary store construction may be exposed"
+    );
+    assert_eq!(
+        all_inherent_method_names(&fail_sink, "ArmedFailSink"),
+        [
+            "check",
+            "from_anchored",
+            "from_store_checked",
+            "is_poisoned",
+            "latch",
+            "new",
+            "new_with_process_poison",
+            "observe_kill",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect(),
+        "ArmedFailSink must expose only the canonical production/test constructors and operations"
+    );
+    assert!(
+        has_exact_canonical_sink_construction(&fail_sink_production),
+        "the production defining module must contain exactly the canonical ArmedFailSink \
+         struct expression inside from_store_checked"
+    );
+    assert!(
+        sink_macro_surface_is_reviewed(&fail_sink_production),
+        "fail_sink production must contain only the exact reviewed matches! invocation and no \
+         macro definitions or other invocations"
+    );
+    assert!(
+        sink_alias_surface_is_empty(&fail_sink_production),
+        "production fail_sink may not alias ArmedFailSink through use or type aliases"
+    );
+    assert_eq!(
+        sink_trait_surface(&fail_sink_production),
+        BTreeSet::from(["core::fmt::Debug".to_string()]),
+        "ArmedFailSink production trait surface must remain exactly the reviewed Debug impl"
+    );
+    assert!(
+        production_free_function_surface(&fail_sink_production).is_empty(),
+        "fail_sink production may not add free constructor/delegation functions"
+    );
+    assert_eq!(
+        from_store_checked_calls(&fail_sink_production),
+        vec![("from_anchored".to_string(), "Self::from_store_checked".to_string(), true)],
+        "from_store_checked must have exactly the reviewed production caller"
+    );
+    assert!(
+        fail_sink.contains(
+            "pub fn from_anchored(kill: AnchoredKillStateStore) -> Result<Self, StartupError>"
+        ),
+        "production sink constructor must accept only the concrete anchored store"
+    );
+    assert!(
+        fail_sink.contains(
+            "#[cfg(test)]\n    pub(crate) fn new(kill: Box<dyn KillStateStore + Send + Sync>) -> Result<Self, StartupError>"
+        ),
+        "generic store injection constructor must retain its exact test-only definition"
+    );
+    assert!(
+        witness.contains("pub fn open() -> Result<Self, ArmRuntimeOpenError>"),
+        "production runtime open must be zero-argument and preserve composite causes"
     );
     // `FreshnessSources`: only `revalidate` is non-test surface (`new`/`with_forced_gate`
     // are `#[cfg(test)]`; production builds it only via `ArmRuntime::freshness`).
@@ -425,6 +1654,57 @@ fn constructor_surface_is_sealed() {
     }
 }
 
+#[test]
+fn anchored_kill_consumption_and_observation_are_exact() {
+    let fail_sink = arm_production("fail_sink.rs");
+    let witness = arm_production("witness.rs");
+    let all = all_arm_production();
+
+    assert_eq!(
+        witness.matches("open_anchored_killstate()").count(),
+        1,
+        "runtime must call the sole trader factory exactly once"
+    );
+    assert_eq!(
+        witness.matches("ArmedFailSink::from_anchored(kill)").count(),
+        1,
+        "factory output must flow directly into the concrete sink constructor"
+    );
+    assert!(
+        all.iter().all(|(_, body)| !has_direct_generic_sink_construction(body)),
+        "production may not call the test-only generic sink constructor"
+    );
+    assert_eq!(
+        fail_sink.matches("self.kill.load()").count(),
+        1,
+        "raw durable load must exist only in observe_kill"
+    );
+    let observe = fail_sink.find("pub fn observe_kill").expect("observe_kill");
+    let check = fail_sink.find("pub fn check").expect("check");
+    assert!(
+        fail_sink[observe..check].contains("self.kill.load()"),
+        "the sole raw load must be inside observe_kill"
+    );
+    assert!(
+        fail_sink[check..].contains("self.observe_kill()"),
+        "check must delegate to observe_kill"
+    );
+    assert!(
+        witness.contains("let Ok(kill) = self.sink.observe_kill() else")
+            && witness.contains("kill,\n        };"),
+        "egress must observe first and pass the returned Clear state into submit_gate"
+    );
+    let egress_observe = witness.find("self.sink.observe_kill()").expect("egress observe");
+    assert!(
+        witness[egress_observe..].find("self.force_gate_open").is_some(),
+        "egress durable observation must precede the forced-open test seam"
+    );
+    assert!(
+        !has_arbitrary_kill_path(&fail_sink) && !has_arbitrary_kill_path(&witness),
+        "sink/runtime production contains an arbitrary store or alternate anchor path literal"
+    );
+}
+
 // -- b12: NEGATIVE FIXTURES — the seal catches every evasion vector -------------
 
 #[test]
@@ -436,6 +1716,80 @@ fn negative_fixture_pub_crate_module_is_rejected() {
     // Sanity: a genuinely-plain declaration passes; a missing module fails.
     assert!(mod_is_private("mod arm;", "arm"), "plain mod wrongly rejected");
     assert!(!mod_is_private("mod other;", "arm"), "missing module wrongly accepted");
+}
+#[test]
+fn negative_fixtures_reviewed_arm_modules_require_exact_source() {
+    assert!(
+        exact_module_declaration(
+            "#[cfg(feature = \"arm\")] mod arm;",
+            "arm",
+            Some("feature = \"arm\""),
+        )
+        .is_some(),
+        "canonical root arm declaration was rejected"
+    );
+    for source in [
+        "#[cfg(feature = \"arm\")] mod arm {}",
+        "#[cfg(feature = \"arm\")]\n#[path = \"decoy.rs\"] mod arm;",
+        "#[cfg(feature = \"arm\")]\n#[cfg_attr(test, path = \"decoy.rs\")] mod arm;",
+        "#[cfg(feature = \"arm\")]\n#[unknown] mod arm;",
+    ] {
+        assert!(
+            exact_module_declaration(source, "arm", Some("feature = \"arm\"")).is_none(),
+            "non-canonical root arm declaration escaped: {source}"
+        );
+    }
+
+    for source in [
+        "mod fail_sink {}",
+        "#[path = \"decoy.rs\"] mod fail_sink;",
+        "#[cfg_attr(feature = \"arm\", path = \"decoy.rs\")] mod fail_sink;",
+        "#[path = \"../outside.rs\"] mod fail_sink;",
+        "#[unknown] mod fail_sink;",
+    ] {
+        assert!(
+            exact_module_declaration(source, "fail_sink", None).is_none(),
+            "inline/redirected/attributed arm child escaped: {source}"
+        );
+    }
+}
+
+#[test]
+fn negative_fixtures_fake_test_tail_markers_fail_closed() {
+    let marker = "#[cfg(test)]\nmod tests";
+    let real_tail = format!("{marker} {{}}\n");
+    let normal = format!("const FAKE: &str = \"{marker}\";\n{real_tail}");
+    let raw = format!("const FAKE: &str = r#\"{marker}\"#;\n{real_tail}");
+    let comment = format!("/* {marker} */\n{real_tail}");
+    for (kind, source) in
+        [("normal string", normal), ("raw string", raw), ("block comment", comment)]
+    {
+        assert!(
+            production_prefix(&source, "fixture.rs").is_err(),
+            "{kind} fake marker did not fail closed"
+        );
+    }
+    assert!(
+        production_prefix(&format!("const FAKE: &str = r#\"{marker}\"#;"), "fixture.rs").is_err(),
+        "marker with no structural terminal test module did not fail closed"
+    );
+    assert_eq!(
+        production_prefix(&format!("fn production() {{}}\n{real_tail}"), "fixture.rs")
+            .expect("canonical tail"),
+        "fn production() {}\n"
+    );
+}
+
+#[test]
+fn negative_fixture_attribute_macro_generated_arm_reexport_is_rejected() {
+    assert!(
+        arm_reexports("#[expose_arm] mod generated {}").is_err(),
+        "unknown attribute macro capable of generating an arm re-export escaped"
+    );
+    assert!(
+        arm_reexports("#[cfg_attr(feature = \"arm\", expose_arm)] mod generated {}").is_err(),
+        "cfg_attr attribute-macro payload escaped"
+    );
 }
 
 #[test]
@@ -477,6 +1831,242 @@ fn negative_fixture_alias_to_nonallowlisted_name_is_caught() {
     let (source2, _public2) =
         arm_reexports("pub use arm::EgressPlan as Backdoor;").expect("direct");
     assert!(source2.contains("EgressPlan"), "aliased source item not captured");
+}
+
+#[test]
+fn negative_fixture_public_inline_module_alias_is_caught() {
+    let fixture = "pub mod escape { pub use crate::arm::ArmRuntime as UnsafeRuntime; }";
+    assert!(
+        arm_reexports(fixture).is_err(),
+        "arm alias outside the reviewed root facade escaped the local graph seal"
+    );
+}
+
+#[test]
+fn negative_fixture_public_out_of_line_module_alias_is_caught() {
+    let fixture = ModuleFixture::new("alias");
+    fixture.write("lib.rs", "pub mod escape;");
+    fixture.write("escape.rs", "pub use crate::arm::ArmRuntime as UnsafeRuntime;");
+
+    assert!(
+        arm_reexports_from_path(&fixture.lib()).is_err(),
+        "out-of-line arm alias outside the reviewed root facade escaped the graph seal"
+    );
+}
+
+#[test]
+fn negative_fixture_public_out_of_line_module_deep_path_is_rejected() {
+    let fixture = ModuleFixture::new("deep");
+    fixture.write("lib.rs", "pub mod outer;");
+    fixture.write("outer/mod.rs", "pub mod inner;");
+    fixture.write("outer/inner.rs", "pub use crate::arm::witness::SystemClock;");
+
+    assert!(
+        arm_reexports_from_path(&fixture.lib()).is_err(),
+        "recursive out-of-line deep arm path escaped graph walk"
+    );
+}
+
+#[test]
+fn negative_fixture_public_out_of_line_module_glob_is_rejected() {
+    let fixture = ModuleFixture::new("glob");
+    fixture.write("lib.rs", "pub mod escape;");
+    fixture.write("escape.rs", "pub use crate::arm::*;");
+
+    assert!(
+        arm_reexports_from_path(&fixture.lib()).is_err(),
+        "out-of-line arm glob escaped graph walk"
+    );
+}
+
+#[test]
+fn negative_fixture_private_out_of_line_module_alias_is_rejected() {
+    let fixture = ModuleFixture::new("private-alias");
+    fixture.write("lib.rs", "mod escape; pub use escape::UnsafeSink;");
+    fixture.write("escape.rs", "pub use crate::arm::ArmedFailSink as UnsafeSink;");
+
+    assert!(
+        arm_reexports_from_path(&fixture.lib()).is_err(),
+        "arm alias through a private out-of-line module escaped graph resolution"
+    );
+}
+
+#[test]
+fn negative_fixture_private_out_of_line_module_deep_alias_chain_is_rejected() {
+    let fixture = ModuleFixture::new("private-deep-alias");
+    fixture.write("lib.rs", "mod escape; pub use escape::UnsafeSink;");
+    fixture.write("escape.rs", "mod deeper; pub use deeper::UnsafeSink;");
+    fixture.write("escape/deeper.rs", "pub use crate::arm::ArmedFailSink as UnsafeSink;");
+
+    assert!(
+        arm_reexports_from_path(&fixture.lib()).is_err(),
+        "arm alias through a deep private-module chain escaped graph resolution"
+    );
+}
+
+#[test]
+fn negative_fixture_private_out_of_line_module_glob_is_rejected() {
+    let fixture = ModuleFixture::new("private-glob");
+    fixture.write("lib.rs", "mod escape; pub use escape::*;");
+    fixture.write("escape.rs", "pub use crate::arm::ArmedFailSink;");
+
+    assert!(
+        arm_reexports_from_path(&fixture.lib()).is_err(),
+        "arm glob through a private out-of-line module escaped graph resolution"
+    );
+}
+#[test]
+fn negative_fixture_private_import_alias_is_rejected() {
+    let fixture = "use crate::arm as hidden; pub use hidden::ArmedFailSink;";
+    assert!(
+        arm_reexports(fixture).is_err(),
+        "private arm import alias escaped the root facade seal"
+    );
+}
+
+#[test]
+fn negative_fixture_crate_qualified_sibling_chain_is_rejected() {
+    let fixture = "mod sibling { use crate::arm as hidden; pub use hidden::ArmedFailSink; }";
+    assert!(
+        arm_reexports(fixture).is_err(),
+        "crate-qualified arm import in a sibling module escaped the graph seal"
+    );
+}
+
+#[test]
+fn negative_fixture_super_qualified_ancestor_chain_is_rejected() {
+    let fixture = r"
+        mod outer {
+            mod inner {
+                use super::super::arm as hidden;
+                pub use hidden::ArmedFailSink;
+            }
+        }
+    ";
+    assert!(
+        arm_reexports(fixture).is_err(),
+        "super-qualified ancestor arm import escaped the graph seal"
+    );
+}
+
+#[test]
+fn negative_fixtures_raw_arm_identifiers_are_canonicalized() {
+    let (source, public) =
+        arm_reexports("pub use r#arm::UnsafeSink;").expect("raw direct root facade leaf");
+    assert!(
+        source.contains("UnsafeSink") && public.contains("UnsafeSink"),
+        "raw direct arm identifier was not canonicalized into the reviewed facade inventory"
+    );
+    let expected: BTreeSet<String> =
+        PUBLIC_API_ALLOWLIST.iter().map(|name| (*name).to_string()).collect();
+    assert_ne!(public, expected, "raw direct fixture matched the curated allowlist");
+    assert!(
+        arm_reexports("pub use crate::{r#arm::*};").is_err(),
+        "raw grouped arm glob escaped canonicalization"
+    );
+    assert!(
+        arm_reexports("use crate::r#arm as hidden; pub use hidden::ArmedFailSink;").is_err(),
+        "raw aliased arm import escaped canonicalization"
+    );
+}
+
+#[test]
+fn negative_fixture_path_redirect_wins_over_benign_decoy() {
+    let fixture = ModuleFixture::new("path-redirect");
+    fixture.write("lib.rs", "#[path = \"redirected.rs\"] mod escape;");
+    fixture.write("escape.rs", "pub struct Harmless;");
+    fixture.write("redirected.rs", "use crate::arm as hidden; pub use hidden::ArmedFailSink;");
+
+    assert!(
+        arm_reexports_from_path(&fixture.lib()).is_err(),
+        "#[path] redirect was ignored in favor of the benign conventional-path decoy"
+    );
+}
+
+#[test]
+fn negative_fixture_cfg_attr_path_redirect_with_benign_decoy_fails_closed() {
+    let fixture = ModuleFixture::new("cfg-attr-path-redirect");
+    fixture.write("lib.rs", "#[cfg_attr(feature = \"arm\", path = \"redirected.rs\")] mod escape;");
+    fixture.write("escape.rs", "pub struct Harmless;");
+    fixture.write("redirected.rs", "pub use crate::arm::ArmedFailSink;");
+
+    assert!(
+        arm_reexports_from_path(&fixture.lib()).is_err(),
+        "#[cfg_attr(..., path = ...)] redirect was ignored in favor of its benign decoy"
+    );
+}
+
+#[test]
+fn negative_fixtures_item_macros_in_local_graph_fail_closed() {
+    let macro_rules = ModuleFixture::new("macro-rules-reexport");
+    macro_rules.write("lib.rs", "mod escape;");
+    macro_rules.write(
+        "escape.rs",
+        "macro_rules! expose { () => { pub use crate::arm::ArmedFailSink; } } expose!();",
+    );
+    assert!(
+        arm_reexports_from_path(&macro_rules.lib()).is_err(),
+        "macro_rules re-export escaped the local module graph seal"
+    );
+
+    let include = ModuleFixture::new("include-reexport");
+    include.write("lib.rs", "mod escape;");
+    include.write("escape.rs", "include!(\"generated.rs\");");
+    include.write("generated.rs", "pub use crate::arm::ArmedFailSink;");
+    assert!(
+        arm_reexports_from_path(&include.lib()).is_err(),
+        "include! item injection escaped the local module graph seal"
+    );
+
+    assert!(
+        arm_reexports("expose_arm_surface! { pub use crate::arm::ArmedFailSink; }").is_err(),
+        "item-macro invocation capable of generating a re-export escaped the root seal"
+    );
+}
+
+#[test]
+fn negative_fixture_production_after_test_module_fails_closed() {
+    let fixture = r"
+        #[cfg(test)]
+        mod tests {}
+        fn delegated_constructor(kill: K, process_poison: P) -> ArmedFailSink {
+            ArmedFailSink::from_store_checked(kill, process_poison)
+        }
+    ";
+    assert!(
+        !test_modules_are_terminal(fixture),
+        "production item after a test module was masked as a test tail"
+    );
+    assert_eq!(
+        from_store_checked_calls(fixture),
+        vec![(
+            "delegated_constructor".to_string(),
+            "ArmedFailSink::from_store_checked".to_string(),
+            true,
+        )],
+        "AST call inventory failed to preserve production code after a test module"
+    );
+}
+#[test]
+fn negative_fixtures_unsafe_or_malformed_path_redirects_fail_closed() {
+    let outside = ModuleFixture::new("path-outside");
+    outside.write("lib.rs", "#[path = \"../outside.rs\"] mod escape;");
+    assert!(
+        arm_reexports_from_path(&outside.lib()).is_err(),
+        "out-of-tree #[path] redirect did not fail closed"
+    );
+
+    let absolute = ModuleFixture::new("path-absolute");
+    absolute.write("lib.rs", "#[path = \"/tmp/escape.rs\"] mod escape;");
+    assert!(
+        arm_reexports_from_path(&absolute.lib()).is_err(),
+        "absolute #[path] redirect did not fail closed"
+    );
+
+    assert!(
+        arm_reexports("#[path(misdirected)] mod escape {}").is_err(),
+        "malformed inline #[path] redirect did not fail closed"
+    );
 }
 
 #[test]
@@ -545,6 +2135,406 @@ fn negative_fixture_inline_module_and_mutator_are_caught() {
     );
 }
 
+#[test]
+fn negative_fixture_direct_sink_new_is_rejected() {
+    let fixture =
+        "fn bypass(store: Box<dyn KillStateStore + Send + Sync>) { ArmedFailSink::new(store); }";
+    assert!(
+        has_direct_generic_sink_construction(fixture),
+        "direct generic ArmedFailSink::new fixture escaped detection"
+    );
+}
+
+#[test]
+fn negative_fixture_canonical_and_alias_sink_literals_are_rejected() {
+    let fixture = r"
+        use self::ArmedFailSink as SinkAlias;
+        type OtherSinkAlias = self::ArmedFailSink;
+        impl ArmedFailSink {
+            fn from_store_checked(kill: K, process_poison: P) -> Self {
+                Self { kill, process_poison }
+            }
+        }
+        fn forge(kill: K, process_poison: P) -> SinkAlias {
+            SinkAlias { kill, process_poison }
+        }
+    ";
+    assert!(
+        has_exact_canonical_sink_construction(fixture),
+        "fixture must demonstrate that literal inventory alone misses the alias literal"
+    );
+    assert!(
+        !sink_alias_surface_is_empty(fixture),
+        "use/type aliases of ArmedFailSink escaped the defining-module alias seal"
+    );
+    assert!(
+        !sink_alias_surface_is_empty("use self::ArmedFailSink as SinkAlias;"),
+        "renamed ArmedFailSink import escaped the alias seal"
+    );
+    assert!(
+        !sink_alias_surface_is_empty("type SinkAlias = self::ArmedFailSink;"),
+        "ArmedFailSink type alias escaped the alias seal"
+    );
+}
+#[test]
+fn negative_fixtures_block_scoped_aliases_and_local_helpers_are_rejected() {
+    let import_alias = r"
+        fn forge(kill: K, process_poison: P) -> ArmedFailSink {
+            use self::ArmedFailSink as SinkAlias;
+            SinkAlias { kill, process_poison }
+        }
+    ";
+    let type_alias = r"
+        fn forge(kill: K, process_poison: P) -> ArmedFailSink {
+            type SinkAlias = self::ArmedFailSink;
+            SinkAlias { kill, process_poison }
+        }
+    ";
+    assert!(
+        !sink_alias_surface_is_empty(import_alias),
+        "block-scoped import alias escaped production inventory"
+    );
+    assert!(
+        !sink_alias_surface_is_empty(type_alias),
+        "block-scoped type alias escaped production inventory"
+    );
+
+    let local_helper = r"
+        fn outer() {
+            fn delegated(kill: K, process_poison: P) -> ArmedFailSink {
+                ArmedFailSink::from_store_checked(kill, process_poison)
+            }
+        }
+    ";
+    let functions = production_free_function_surface(local_helper);
+    assert!(
+        functions.contains("outer") && functions.contains("delegated"),
+        "block-scoped delegated constructor escaped free-function inventory"
+    );
+    assert_eq!(
+        from_store_checked_calls(local_helper),
+        vec![("delegated".to_string(), "ArmedFailSink::from_store_checked".to_string(), true,)],
+        "block-scoped delegated constructor escaped helper-reference inventory"
+    );
+}
+
+#[test]
+fn negative_fixtures_indirect_private_helper_references_are_rejected() {
+    let parenthesized = r"
+        impl ArmedFailSink {
+            fn from_anchored(kill: K) -> Self {
+                (Self::from_store_checked)(kill, process_poison())
+            }
+        }
+    ";
+    let cast = r"
+        impl ArmedFailSink {
+            fn from_anchored(kill: K) -> Self {
+                (Self::from_store_checked as fn(K, P) -> Self)(kill, process_poison())
+            }
+        }
+    ";
+    let bound = r"
+        impl ArmedFailSink {
+            fn from_anchored(kill: K) -> Self {
+                let checked = Self::from_store_checked;
+                checked(kill, process_poison())
+            }
+        }
+    ";
+    let indirect = r"
+        impl ArmedFailSink {
+            fn from_anchored(kill: K) -> Self {
+                let checked = Self::from_store_checked;
+                (checked)(kill, process_poison())
+            }
+        }
+    ";
+    let canonical =
+        vec![("from_anchored".to_string(), "Self::from_store_checked".to_string(), true)];
+    for (kind, source) in [
+        ("parenthesized", parenthesized),
+        ("cast", cast),
+        ("bound function item", bound),
+        ("indirect call", indirect),
+    ] {
+        let references = from_store_checked_calls(source);
+        assert_ne!(references, canonical, "{kind} helper reference matched the canonical call");
+        assert!(
+            references
+                .iter()
+                .any(|(_, path, direct)| { path == "Self::from_store_checked" && !direct }),
+            "{kind} helper reference was not inventoried as indirect"
+        );
+    }
+}
+
+#[test]
+fn negative_fixture_trait_method_delegating_to_private_helper_is_rejected() {
+    let fixture = r"
+        impl ArmedFailSink {
+            fn from_anchored(kill: K) -> Self {
+                Self::from_store_checked(kill, process_poison())
+            }
+            fn from_store_checked(kill: K, process_poison: P) -> Self {
+                Self { kill, process_poison }
+            }
+        }
+        impl Forge for ArmedFailSink {
+            fn forge(kill: K, process_poison: P) -> Self {
+                Self::from_store_checked(kill, process_poison)
+            }
+        }
+    ";
+    assert!(
+        sink_trait_surface(fixture).contains("Forge"),
+        "delegating trait impl escaped the exact trait surface"
+    );
+    assert_ne!(
+        from_store_checked_calls(fixture),
+        vec![("from_anchored".to_string(), "Self::from_store_checked".to_string(), true)],
+        "delegating trait method escaped the private-helper caller inventory"
+    );
+}
+
+#[test]
+fn negative_fixture_free_function_delegating_to_private_helper_is_rejected() {
+    let fixture = r"
+        impl ArmedFailSink {
+            fn from_anchored(kill: K) -> Self {
+                Self::from_store_checked(kill, process_poison())
+            }
+            fn from_store_checked(kill: K, process_poison: P) -> Self {
+                Self { kill, process_poison }
+            }
+        }
+        fn forge(kill: K, process_poison: P) -> ArmedFailSink {
+            ArmedFailSink::from_store_checked(kill, process_poison)
+        }
+    ";
+    assert!(
+        production_free_function_surface(fixture).contains("forge"),
+        "delegating free function escaped the production free-function surface"
+    );
+    assert_ne!(
+        from_store_checked_calls(fixture),
+        vec![("from_anchored".to_string(), "Self::from_store_checked".to_string(), true)],
+        "delegating free function escaped the private-helper caller inventory"
+    );
+}
+#[test]
+fn negative_fixture_free_helper_sink_expression_is_rejected() {
+    let fixture = r"
+        impl ArmedFailSink {
+            fn from_store_checked(kill: K, process_poison: P) -> Self {
+                Self { kill: kill, process_poison: process_poison }
+            }
+        }
+        fn forge(kill: K, process_poison: P) -> ArmedFailSink {
+            ArmedFailSink { kill: kill, process_poison: process_poison }
+        }
+    ";
+    assert!(
+        !has_exact_canonical_sink_construction(fixture),
+        "free-helper ArmedFailSink expression escaped AST inventory"
+    );
+}
+
+#[test]
+fn negative_fixture_trait_impl_self_sink_expression_is_rejected() {
+    let fixture = r"
+        impl ArmedFailSink {
+            fn from_store_checked(kill: K, process_poison: P) -> Self {
+                Self { kill: kill, process_poison: process_poison }
+            }
+        }
+        impl Forge for ArmedFailSink {
+            fn forge(kill: K, process_poison: P) -> Self {
+                Self { kill: kill, process_poison: process_poison }
+            }
+        }
+    ";
+    assert!(
+        !has_exact_canonical_sink_construction(fixture),
+        "trait-impl Self sink expression escaped AST inventory"
+    );
+}
+
+#[test]
+fn negative_fixture_qualified_sink_expression_is_rejected() {
+    let fixture = r"
+        impl ArmedFailSink {
+            fn from_store_checked(kill: K, process_poison: P) -> Self {
+                Self { kill: kill, process_poison: process_poison }
+            }
+        }
+        fn forge(kill: K, process_poison: P) -> self::ArmedFailSink {
+            self::ArmedFailSink { kill: kill, process_poison: process_poison }
+        }
+    ";
+    assert!(
+        !has_exact_canonical_sink_construction(fixture),
+        "qualified ArmedFailSink expression escaped AST inventory"
+    );
+}
+
+#[test]
+fn negative_fixture_defining_descendant_sink_expression_is_rejected() {
+    let fixture = r"
+        impl ArmedFailSink {
+            fn from_store_checked(kill: K, process_poison: P) -> Self {
+                Self { kill: kill, process_poison: process_poison }
+            }
+        }
+        mod descendant {
+            fn forge(kill: K, process_poison: P) -> super::ArmedFailSink {
+                super::ArmedFailSink { kill: kill, process_poison: process_poison }
+            }
+        }
+    ";
+    assert!(
+        !has_exact_canonical_sink_construction(fixture),
+        "defining-descendant ArmedFailSink expression escaped AST inventory"
+    );
+}
+
+#[test]
+fn negative_fixture_reordered_sink_fields_are_rejected() {
+    let fixture = r"
+        impl ArmedFailSink {
+            fn from_store_checked(kill: K, process_poison: P) -> Self {
+                Self { process_poison: process_poison, kill: kill }
+            }
+        }
+    ";
+    assert!(
+        !has_exact_canonical_sink_construction(fixture),
+        "reordered sink fields escaped canonical-expression check"
+    );
+}
+
+#[test]
+fn negative_fixture_shorthand_sink_fields_in_alternate_constructor_are_rejected() {
+    let fixture = r"
+        impl ArmedFailSink {
+            fn alternate(kill: K, process_poison: P) -> Self {
+                Self { kill, process_poison }
+            }
+        }
+    ";
+    assert!(
+        !has_exact_canonical_sink_construction(fixture),
+        "alternate-constructor shorthand sink fields escaped canonical-expression check"
+    );
+}
+
+#[test]
+fn negative_fixture_computed_sink_fields_are_rejected() {
+    let fixture = r"
+        impl ArmedFailSink {
+            fn from_store_checked(kill: K, process_poison: P) -> Self {
+                Self { kill: wrap(kill), process_poison: choose(process_poison) }
+            }
+        }
+    ";
+    assert!(
+        !has_exact_canonical_sink_construction(fixture),
+        "computed sink field expressions escaped canonical-expression check"
+    );
+}
+
+#[test]
+fn negative_fixture_defining_module_alternate_sink_constructor_is_rejected() {
+    let fixture = r"
+        impl ArmedFailSink {
+            fn from_store_checked(kill: K, process_poison: P) -> Self {
+                Self { kill: kill, process_poison: process_poison }
+            }
+            fn alternate(kill: K, process_poison: P) -> Self {
+                Self { kill: kill, process_poison: process_poison }
+            }
+        }
+    ";
+    let expressions = sink_struct_expressions(fixture);
+    assert_eq!(expressions.len(), 2, "defining-module alternate expression was not inventoried");
+    assert!(
+        !has_exact_canonical_sink_construction(fixture),
+        "defining-module alternate constructor escaped canonical-expression check"
+    );
+}
+
+#[test]
+fn negative_fixture_descendant_relative_struct_construction_is_rejected() {
+    let fixture = r"
+        mod descendant {
+            fn forge() -> super::ArmedFailSink {
+                super::fail_sink::ArmedFailSink {
+                    kill: computed_store(),
+                    process_poison: computed_poison(),
+                }
+            }
+        }
+    ";
+    assert!(
+        has_sibling_sink_construction_or_child_path(fixture),
+        "relative-path computed ArmedFailSink struct literal escaped the source seal"
+    );
+    assert!(
+        armed_fail_sink_fields_are_private(
+            &std::fs::read_to_string(arm_dir().join("fail_sink.rs")).expect("fail_sink.rs")
+        ),
+        "child-private fields no longer make descendant struct literals compiler errors"
+    );
+}
+
+#[test]
+fn negative_fixture_alternate_store_constructor_is_rejected() {
+    let fixture = r"
+        impl ArmedFailSink {
+            pub fn from_store(store: AlternateStore) -> Self { unimplemented!() }
+        }
+    ";
+    assert_ne!(
+        inherent_method_surface(fixture, "ArmedFailSink"),
+        armed_fail_sink_methods(),
+        "alternate store constructor fixture escaped the exact method allowlist"
+    );
+}
+#[test]
+fn negative_fixture_macro_generated_sink_literal_is_rejected() {
+    let fixture = r"
+        impl ArmedFailSink {
+            fn from_store_checked(kill: K, process_poison: P) -> Self {
+                let state = KillState::Clear { verified_at: 0 };
+                let _ = matches!(state, KillState::Clear { .. });
+                Self { kill, process_poison }
+            }
+        }
+        macro_rules! forge_sink {
+            ($kill:expr, $poison:expr) => {
+                ArmedFailSink { kill: $kill, process_poison: $poison }
+            };
+        }
+        fn alternate(kill: K, process_poison: P) -> ArmedFailSink {
+            forge_sink!(kill, process_poison)
+        }
+    ";
+    assert!(
+        has_exact_canonical_sink_construction(fixture),
+        "fixture must retain the canonical literal while hiding the second in macro tokens"
+    );
+    assert!(
+        !sink_macro_surface_is_reviewed(fixture),
+        "macro-generated alternate sink construction escaped the reviewed macro surface"
+    );
+}
+
+#[test]
+fn negative_fixture_alternate_kill_path_is_rejected() {
+    let fixture = r#"fn open_alt() { let path = "/tmp/mev-killstate-anchor/epoch.redb"; }"#;
+    assert!(has_arbitrary_kill_path(fixture), "alternate path fixture escaped detection");
+}
+
 // -- b1: witness capability types carry no Clone/Copy + single ownership -------
 
 #[test]
@@ -577,8 +2567,10 @@ fn witness_capability_types_are_not_duplicable() {
 
 #[test]
 fn exactly_one_send_gated() {
-    let definitions: usize =
-        all_arm_production().iter().map(|(_file, body)| body.matches("fn send_gated").count()).sum();
+    let definitions: usize = all_arm_production()
+        .iter()
+        .map(|(_file, body)| body.matches("fn send_gated").count())
+        .sum();
     assert_eq!(definitions, 1, "there must be exactly one send_gated definition");
     // It lives in transport.rs.
     assert!(arm_production("transport.rs").contains("pub fn send_gated"));
@@ -613,10 +2605,7 @@ fn reqwest_is_confined_to_gated_prodbackend() {
     assert!(transport.contains("fn into_plan"));
     // `RawBackend` is SEALED: it has a private-supertrait bound, so no external
     // crate can implement another egress backend.
-    assert!(
-        transport.contains("pub trait RawBackend: sealed::Sealed"),
-        "RawBackend is not sealed"
-    );
+    assert!(transport.contains("pub trait RawBackend: sealed::Sealed"), "RawBackend is not sealed");
     // The ONLY `impl RawBackend for` blocks are ProdBackend (gated) and FakeBackend
     // (test) — no third egress backend.
     let backends: BTreeSet<&str> = transport
@@ -641,10 +2630,7 @@ fn reqwest_is_confined_to_gated_prodbackend() {
 /// `open_existing_missing_...`.
 fn arm_raw(file: &str) -> String {
     let raw = std::fs::read_to_string(arm_dir().join(file)).expect("arm source");
-    match raw.find("#[cfg(test)]\nmod tests") {
-        Some(index) => raw[..index].to_string(),
-        None => raw,
-    }
+    production_prefix(&raw, file).unwrap_or_else(|error| panic!("{error}")).to_string()
 }
 
 /// Assert every `fn <seam>` DEFINITION in `raw` is `#[cfg(test)]`-gated (the
@@ -688,8 +2674,8 @@ fn gate_and_custody_seams_are_test_only() {
 
 #[test]
 fn validated_unsigned_atomic_tx_has_no_clone() {
-    let assembler =
-        std::fs::read_to_string(manifest_dir().join("src").join("assembler.rs")).expect("assembler");
+    let assembler = std::fs::read_to_string(manifest_dir().join("src").join("assembler.rs"))
+        .expect("assembler");
     // The struct derives EXACTLY `Debug` (no Clone/Copy): duplicating the linear
     // witness would let one validated tx bind to two candidates.
     assert!(
@@ -735,7 +2721,13 @@ fn custody_paths_pinned_and_key_confined() {
         "funded wallet address pin"
     );
     // The signing key never leaves custody: no return/exposed-key shape.
-    for escape in ["-> SigningKey", "-> &SigningKey", "Result<SigningKey", "pub signing_key", "fn signing_key"] {
+    for escape in [
+        "-> SigningKey",
+        "-> &SigningKey",
+        "Result<SigningKey",
+        "pub signing_key",
+        "fn signing_key",
+    ] {
         assert!(!custody.contains(escape), "hot-wallet key escape shape present: {escape}");
     }
     // No logging surface anywhere in the arm production tree.

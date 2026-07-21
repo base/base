@@ -75,11 +75,19 @@ pub use victim_claim::{
     VictimClaimStore,
 };
 
+mod killstate_anchor;
+pub use killstate_anchor::{
+    ANCHOR_DB, ANCHOR_DIR, AnchorError, AnchorStoreIdentity, AnchoredKillStateStore,
+    EXPECTED_ANCHOR_IDENTITY, KILLSTATE_DIR, PATHS_MOUNT_DOMAIN, Rollback, SEED_AUTH_DOMAIN,
+    StartupError, open_anchored_killstate,
+};
+#[cfg(any(test, feature = "p0-provisioning"))]
+pub use killstate_anchor::{AnchorProvisioner, BootstrapEvidence, SeedAuthorization};
 mod safety;
 pub use safety::{
-    ArmedCriteria, ClosedReason, CRITERIA_SHA, CriteriaArtifact, Decision, DrawdownInput,
-    EXPECTED_CRITERIA_COMMIT, EXPECTED_CRITERIA_VERSION, FileKillStateStore, GuardReason, KillReason,
-    KillState, KillStateStore, KillStoreError, LossProvenance, OWNER_ATTEST_ADDRESS, ResetAttestation,
+    ArmedCriteria, CRITERIA_SHA, ClosedReason, CriteriaArtifact, Decision, DrawdownInput,
+    EXPECTED_CRITERIA_COMMIT, EXPECTED_CRITERIA_VERSION, GuardReason, KillReason, KillState,
+    KillStateStore, KillStoreError, LossProvenance, OWNER_ATTEST_ADDRESS, ResetAttestation,
     SubmitContext, SubmitDecision, UnarmedReason, drawdown_floor, kill_switch, per_tx_cap,
     production_arming_criteria, submit_gate,
 };

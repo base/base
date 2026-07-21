@@ -24,9 +24,11 @@
 // All sub-modules are PRIVATE: the crate exposes ONLY the curated forward-B5
 // surface re-exported below. Low-level constructors (arbitrary suppression paths,
 // fixture source injection, request builders, custody loaders) are NOT reachable
-// from outside the crate.
+// from outside the crate; fail_sink privately owns the process-lifetime poison anchor.
 mod claim;
 mod custody;
+mod fail_sink;
+pub use fail_sink::ArmedFailSink;
 mod proofs;
 mod request;
 mod suppression;
@@ -43,21 +45,19 @@ pub use request::{Channel, RequestSpec};
 pub use suppression::SuppressionRollbackError;
 #[cfg(feature = "arm-provisioning")]
 pub use suppression::provision_suppression_anchor;
+#[cfg(all(feature = "arm-live-egress", not(test)))]
+pub use transport::ProdBackend;
 pub use transport::{
     AttributionRetryToken, EgressPlan, RawBackend, RawEgress, SubmissionAttempt, SubmitOutcome,
     send_gated,
 };
-#[cfg(all(feature = "arm-live-egress", not(test)))]
-pub use transport::ProdBackend;
 pub use witness::{
-    ArmRuntime, AuthorizedCandidate, AuthorizedSignedSubmission, CHAIN_ID_BASE, CheckedCandidate,
-    DeploymentIdentity, DeploymentIdentitySource, DrawdownSource, FreshnessSources,
-    PairedSubmission, ProofBindings, ValidatedExecutionIdentity,
+    ArmRuntime, ArmRuntimeOpenError, AuthorizedCandidate, AuthorizedSignedSubmission,
+    CHAIN_ID_BASE, CheckedCandidate, DeploymentIdentity, DeploymentIdentitySource, DrawdownSource,
+    FreshnessSources, PairedSubmission, ProofBindings, ValidatedExecutionIdentity,
 };
 
-use std::sync::atomic::{AtomicBool, Ordering};
-
-use base_mev_trader::{KillReason, KillState, KillStateStore};
+use base_mev_trader::KillReason;
 
 /// Failure modes of the arm entrypoints.
 #[derive(Debug)]
@@ -90,66 +90,6 @@ impl core::fmt::Display for ArmError {
 
 impl core::error::Error for ArmError {}
 
-/// The single shared fail-stop sink: a durable [`KillStateStore`] handle plus a
-/// process-local poison flag. Shared (via `Arc`) by the claim façade, the custody
-/// load-and-sign path, and the egress re-validation. Once poisoned it stays
-/// poisoned for the process lifetime; every entrypoint checks it first.
-///
-/// [`latch`](Self::latch) engages the durable kill AND sets the poison flag on
-/// BOTH the success and failure of the durable `engage` — a signing/claim failure
-/// is fail-stop regardless of whether the latch persisted.
-pub struct ArmedFailSink {
-    kill: Box<dyn KillStateStore + Send + Sync>,
-    poisoned: AtomicBool,
-}
-
-impl core::fmt::Debug for ArmedFailSink {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        formatter
-            .debug_struct("ArmedFailSink")
-            .field("poisoned", &self.poisoned.load(Ordering::Acquire))
-            .finish_non_exhaustive()
-    }
-}
-
-impl ArmedFailSink {
-    /// Builds a sink over a durable kill-state store.
-    pub fn new(kill: Box<dyn KillStateStore + Send + Sync>) -> Self {
-        Self { kill, poisoned: AtomicBool::new(false) }
-    }
-
-    /// Whether this process has been poisoned by a prior fail-stop latch.
-    pub fn is_poisoned(&self) -> bool {
-        self.poisoned.load(Ordering::SeqCst)
-    }
-
-    /// Fail-closed if already poisoned.
-    pub fn check(&self) -> Result<(), ArmError> {
-        if self.is_poisoned() { Err(ArmError::Poisoned) } else { Ok(()) }
-    }
-
-    /// The current durable kill state (fails closed to `Unknown`).
-    pub fn kill_state(&self) -> KillState {
-        self.kill.load()
-    }
-
-    /// Fail-stop latch: engage the durable kill with `reason` and poison the
-    /// process. The poison is set whether or not the durable engage succeeds, so a
-    /// persistence failure does NOT weaken the fail-stop. Returns the corresponding
-    /// [`ArmError`] the caller should surface.
-    pub fn latch(&self, reason: KillReason) -> ArmError {
-        // Poison FIRST (SeqCst): during a durable-engage fsync delay or failure no
-        // other thread may pass `check()`. The poison is unconditional (fail-stop),
-        // so a failed durable engage does not weaken the halt.
-        self.poisoned.store(true, Ordering::SeqCst);
-        let engaged = self.kill.engage(reason);
-        match engaged {
-            Ok(()) => ArmError::KillReason(reason),
-            Err(_) => ArmError::LatchPersistFailed,
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Shared test kit (test-only; never compiled into any build without cfg(test)).
 // ---------------------------------------------------------------------------
@@ -172,8 +112,9 @@ pub(crate) mod testkit {
     use alloy_rpc_types_engine::PayloadId;
     use base_mev_trader::{
         ArmedCriteria, BackrunHop, BackrunPlan, BackrunPlanDigest, CampaignId, DrawdownInput,
-        ExactProtocol, FileKillStateStore, LossProvenance, MeasurementContext, MeasurementEncoder,
-        StoreIdentity, VictimClaim, VictimClaimConfig, VictimClaimStore,
+        ExactProtocol, KillReason, KillState, KillStateStore, KillStoreError, LossProvenance,
+        MeasurementContext, MeasurementEncoder, ResetAttestation, StartupError, StoreIdentity,
+        VictimClaim, VictimClaimConfig, VictimClaimStore,
     };
     use k256::ecdsa::SigningKey;
 
@@ -188,7 +129,9 @@ pub(crate) mod testkit {
         LiveRunAttestation, LiveRunPayload, ProviderError,
     };
     use super::suppression::SuppressionEpochStore;
-    use super::witness::{DeploymentIdentity, DeploymentIdentitySource, DrawdownSource, TimeSource};
+    use super::witness::{
+        DeploymentIdentity, DeploymentIdentitySource, DrawdownSource, TimeSource,
+    };
 
     pub(crate) const WETH: Address = address!("4200000000000000000000000000000000000006");
     pub(crate) const EXECUTOR: Address = address!("2000000000000000000000000000000000000002");
@@ -199,6 +142,47 @@ pub(crate) mod testkit {
     pub(crate) const CHAIN_ID: u64 = 8453;
 
     static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    #[derive(Clone)]
+    pub(crate) struct MutableKillStateStore {
+        state: Arc<std::sync::Mutex<KillState>>,
+        fail_engage: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl MutableKillStateStore {
+        pub(crate) fn clear() -> Self {
+            Self {
+                state: Arc::new(std::sync::Mutex::new(KillState::Clear { verified_at: 0 })),
+                fail_engage: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            }
+        }
+
+        pub(crate) fn set(&self, state: KillState) {
+            *self.state.lock().expect("mutable kill state lock") = state;
+        }
+
+        pub(crate) fn fail_engage(&self) {
+            self.fail_engage.store(true, Ordering::SeqCst);
+        }
+    }
+
+    impl KillStateStore for MutableKillStateStore {
+        fn load(&self) -> KillState {
+            *self.state.lock().expect("mutable kill state lock")
+        }
+
+        fn engage(&self, reason: KillReason) -> Result<(), KillStoreError> {
+            if self.fail_engage.load(Ordering::SeqCst) {
+                return Err(KillStoreError::Io);
+            }
+            self.set(KillState::Engaged { reason });
+            Ok(())
+        }
+
+        fn owner_reset(&self, _attestation: &ResetAttestation) -> Result<(), KillStoreError> {
+            Err(KillStoreError::OwnerSignatureMismatch)
+        }
+    }
 
     /// A self-cleaning private (0700) temp directory.
     pub(crate) struct TempDir {
@@ -241,8 +225,7 @@ pub(crate) mod testkit {
 
     pub(crate) fn eip191_sign(message: &[u8], key: &SigningKey) -> [u8; 65] {
         let hash = eip191_hash(message);
-        let (signature, recovery_id) =
-            key.sign_prehash_recoverable(hash.as_slice()).expect("sign");
+        let (signature, recovery_id) = key.sign_prehash_recoverable(hash.as_slice()).expect("sign");
         let bytes = signature.to_bytes();
         let mut out = [0u8; 65];
         out[..64].copy_from_slice(&bytes);
@@ -307,9 +290,22 @@ pub(crate) mod testkit {
         ArmedCriteria::load_optional(None)
     }
 
-    pub(crate) fn sink(dir: &Path) -> Arc<ArmedFailSink> {
-        let kill = FileKillStateStore::new(dir.join("kill"));
-        Arc::new(ArmedFailSink::new(Box::new(kill)))
+    pub(crate) fn sink(_dir: &Path) -> Arc<ArmedFailSink> {
+        Arc::new(
+            ArmedFailSink::new(Box::new(MutableKillStateStore::clear())).expect("clear test sink"),
+        )
+    }
+
+    pub(crate) fn mutable_sink() -> (Arc<ArmedFailSink>, MutableKillStateStore) {
+        let store = MutableKillStateStore::clear();
+        let sink = Arc::new(ArmedFailSink::new(Box::new(store.clone())).expect("clear test sink"));
+        (sink, store)
+    }
+
+    pub(crate) fn checked_sink(
+        store: MutableKillStateStore,
+    ) -> Result<ArmedFailSink, StartupError> {
+        ArmedFailSink::new(Box::new(store))
     }
 
     // -- proof builders ------------------------------------------------------
@@ -497,5 +493,72 @@ pub(crate) mod testkit {
             base_mev_trader::ClaimResult::AlreadyClaimed => panic!("unexpected already claimed"),
         };
         (claim, identity)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use alloy_primitives::B256;
+    use base_mev_trader::{
+        CampaignId, ClaimResult, KillReason, KillState, VictimClaimConfig, VictimClaimStore,
+    };
+
+    use super::{ArmError, testkit as tk, try_claim_arm};
+
+    #[test]
+    fn startup_non_clear_refuses_without_sink() {
+        let store = tk::MutableKillStateStore::clear();
+        store.set(KillState::Unknown);
+        assert!(matches!(
+            tk::checked_sink(store),
+            Err(base_mev_trader::StartupError::KillStateNotClear)
+        ));
+    }
+
+    #[test]
+    fn claim_is_first_observer_after_clear_becomes_unknown() {
+        let dir = tk::TempDir::new("claim-observe-kill");
+        let config = VictimClaimConfig { db_path: dir.path.join("claims.redb") };
+        let claims = VictimClaimStore::bootstrap(&config).expect("bootstrap claim store");
+        let victim = B256::repeat_byte(0xA1);
+        let campaign = CampaignId::new([0xA2; 32]);
+        let (sink, store) = tk::mutable_sink();
+        store.set(KillState::Unknown);
+
+        let result = try_claim_arm(&claims, 8453, victim, campaign, &sink);
+
+        assert!(matches!(result, Err(ArmError::Poisoned)));
+        assert!(sink.is_poisoned());
+        assert!(matches!(
+            claims.try_claim(8453, victim, campaign).expect("direct claim after refusal"),
+            ClaimResult::Claimed(_)
+        ));
+    }
+
+    #[test]
+    fn poison_is_sticky_after_store_returns_clear() {
+        let (sink, store) = tk::mutable_sink();
+        store.set(KillState::Unknown);
+        assert!(matches!(sink.check(), Err(ArmError::Poisoned)));
+
+        store.set(KillState::Clear { verified_at: 1 });
+        assert!(matches!(sink.check(), Err(ArmError::Poisoned)));
+        assert!(sink.is_poisoned());
+    }
+
+    #[test]
+    fn latch_poison_persists_when_engage_fails() {
+        let store = tk::MutableKillStateStore::clear();
+        store.fail_engage();
+        let sink = Arc::new(tk::checked_sink(store).expect("clear startup"));
+
+        assert!(matches!(
+            sink.latch(KillReason::KeyOrSignatureFailure),
+            ArmError::LatchPersistFailed
+        ));
+        assert!(sink.is_poisoned());
+        assert!(matches!(sink.check(), Err(ArmError::Poisoned)));
     }
 }

@@ -11,13 +11,6 @@ repository.workspace = true
 [lints]
 workspace = true
 
-[features]
-# R9 claim-store provisioning surface (bootstrap = create-a-new-store). NOT in
-# default features: the live-node build never compiles `bootstrap`, so a running
-# node cannot mint a fresh store. Enabled only for a dedicated provisioning
-# binary (and implicitly under `cfg(test)` so the test suite can build fixtures).
-r9-provisioning = []
-
 [dependencies]
 # alloy
 alloy-rpc-types-engine.workspace = true
@@ -44,6 +37,7 @@ revm-database = { workspace = true, features = ["std"] }
 redb.workspace = true
 rayon.workspace = true
 futures.workspace = true
+getrandom.workspace = true
 sha2 = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
@@ -51,3 +45,13 @@ serde_json = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive", "std"] }
 tokio = { workspace = true, features = ["net", "rt", "sync", "time"] }
 tokio-tungstenite = { workspace = true, features = ["native-tls"] }
+
+[features]
+# P0-A external-anchor fresh-leaf bootstrap and activation. This is deliberately
+# absent from default features so production cannot create, adopt, or reseed an anchor.
+p0-provisioning = []
+# R9 claim-store provisioning surface (bootstrap = create-a-new-store). NOT in
+# default features: the live-node build never compiles `bootstrap`, so a running
+# node cannot mint a fresh store. Enabled only for a dedicated provisioning
+# binary (and implicitly under `cfg(test)` so the test suite can build fixtures).
+r9-provisioning = []

@@ -15,6 +15,7 @@
 //! signature exists. Enforcement wiring (blocking real sends) is B3; this rung
 //! only computes decisions.
 
+#[cfg(test)]
 use std::{
     fs::{self, File, OpenOptions},
     io::Write,
@@ -56,8 +57,10 @@ pub const EXPECTED_CRITERIA_VERSION: &str = "2.0.0";
 /// the `embedded_payload_binds_to_pinned_criteria_sha` build-time binding test). This
 /// is the sole production source of the payload; [`production_arming_criteria`] and
 /// every test reuse it (no shadow/duplicate copy).
-const CANONICAL_PAYLOAD: &[u8] =
-    include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/resources/criteria_canonical_payload_v2.txt"));
+const CANONICAL_PAYLOAD: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/resources/criteria_canonical_payload_v2.txt"
+));
 
 /// Owner arm-attestation signature over the domain-separated arm message (r‖s‖v).
 /// PLACEHOLDER `[0u8; 65]` (unarmed): recovery fails, so [`production_arming_criteria`]
@@ -394,8 +397,11 @@ impl ArmedCriteria {
         let Some(owner) = owner else {
             return Self::unarmed(UnarmedReason::OwnerAddressUnset);
         };
-        let message =
-            arm_message(&parsed.criteria_version, &payload_sha, &artifact.criteria_source_commit_sha);
+        let message = arm_message(
+            &parsed.criteria_version,
+            &payload_sha,
+            &artifact.criteria_source_commit_sha,
+        );
         let Ok(signature) = Signature::from_raw_array(&artifact.owner_signature) else {
             return Self::unarmed(UnarmedReason::SignatureMalformed);
         };
@@ -530,8 +536,12 @@ fn parse_criteria_payload(payload: &[u8]) -> Option<ParsedCriteria> {
         match key {
             "criteria_version" => criteria_version = Some(value.to_owned()),
             "per_tx_cap_wei" => per_tx_cap_wei = Some(U256::from_str_radix(value, 10).ok()?),
-            "drawdown_floor_wei" => drawdown_floor_wei = Some(U256::from_str_radix(value, 10).ok()?),
-            "hot_wallet_cap_wei" => hot_wallet_cap_wei = Some(U256::from_str_radix(value, 10).ok()?),
+            "drawdown_floor_wei" => {
+                drawdown_floor_wei = Some(U256::from_str_radix(value, 10).ok()?)
+            }
+            "hot_wallet_cap_wei" => {
+                hot_wallet_cap_wei = Some(U256::from_str_radix(value, 10).ok()?)
+            }
             _ => {}
         }
     }
@@ -583,7 +593,8 @@ fn push_lower_hex(out: &mut String, bytes: &[u8]) {
 /// Builds the byte-exact domain-separated arm message:
 /// `base-mev:p2-prereg-v2:arm:<version>:<hex64(sha256)>:<hex40(commit)>`.
 fn arm_message(version: &str, payload_sha: &[u8; 32], commit_hex: &str) -> String {
-    let mut message = String::with_capacity(ARM_DOMAIN_PREFIX.len() + version.len() + 1 + 64 + 1 + 40);
+    let mut message =
+        String::with_capacity(ARM_DOMAIN_PREFIX.len() + version.len() + 1 + 64 + 1 + 40);
     message.push_str(ARM_DOMAIN_PREFIX);
     message.push_str(version);
     message.push(':');
@@ -607,6 +618,29 @@ pub struct ResetAttestation {
     pub nonce: u64,
     /// Owner EIP-191 signature over the killreset domain message (r‖s‖v).
     pub signature: [u8; 65],
+}
+impl ResetAttestation {
+    /// Verifies this attestation against the compile-time owner using recovery only.
+    ///
+    /// This method never accepts or constructs signing key material.
+    pub fn verify_only(&self, expected_epoch: u64) -> Result<(), KillStoreError> {
+        if self.engagement_epoch != expected_epoch {
+            return Err(KillStoreError::ResetEpochMismatch);
+        }
+        let Some(owner) = OWNER_ATTEST_ADDRESS else {
+            return Err(KillStoreError::OwnerAddressUnset);
+        };
+        let message = killreset_message(self.engagement_epoch, self.nonce);
+        let signature = Signature::from_raw_array(&self.signature)
+            .map_err(|_| KillStoreError::SignatureMalformed)?;
+        let recovered = signature
+            .recover_address_from_msg(message.as_bytes())
+            .map_err(|_| KillStoreError::SignatureRecoveryFailed)?;
+        if recovered != owner {
+            return Err(KillStoreError::OwnerSignatureMismatch);
+        }
+        Ok(())
+    }
 }
 
 /// Kill-state persistence contract. Transitions are split: `engage` (automatic,
@@ -656,53 +690,21 @@ pub enum KillStoreError {
     NotEngaged,
 }
 
-/// Minimal purpose-built kill-state file store backed by a dedicated private
-/// directory holding three files: the state record, the monotonic epoch anchor,
-/// and an advisory lock. All writer transitions (`engage`/`owner_reset`) run the
-/// entire read-check-write under a process- and thread-exclusive advisory lock;
-/// every load path fails closed to `Unknown`.
+/// Test-only legacy two-file store retained solely for its existing regression corpus.
 ///
-/// ## Anti-replay and the epoch anchor
-/// The `epoch.hwm` anchor is a high-water mark that only ever increases; `engage`
-/// advances it past both the record epoch and the anchor. A persisted `Clear` is
-/// honored ONLY when its epoch equals the current anchor, so an old valid
-/// `Clear{epoch:n}` restored (rolled back) after a later `engage` no longer
-/// matches the anchor and fails closed. Because `engage` bases the next epoch on
-/// the surviving anchor, losing/corrupting only the record cannot reuse a past
-/// epoch and let a stale reset attestation match.
-///
-/// ## Durable, fail-closed commits (safety asymmetry)
-/// `owner_reset` (Engaged→Clear, the UNSAFE direction) uses `rename` as its commit
-/// point: it stages a temp Clear and renames it over the record. Returning `Err`
-/// implies the rename did NOT occur, so the record is still Engaged and
-/// `load() != Clear` — there is no post-commit compensation that could itself fail.
-/// The directory fsync after a successful reset rename is best-effort: its only
-/// failure mode is a crash that loses the un-fsynced rename and reverts to the SAFE
-/// Engaged state, so a fsync failure does not fail the reset. `engage` (→Engaged,
-/// the SAFE/halt direction) instead validates an fsync-able directory handle BEFORE
-/// its rename and PROPAGATES a fsync failure as `Err` — the Engaged record is
-/// visible/effective immediately, and the `Err` signals "halt active but not
-/// crash-durable" so the trigger can escalate. The state directory is created 0700
-/// and verified to be a real, private, non-symlink directory on every transition (a
-/// non-private/symlinked path is surfaced as an error).
-///
-/// ## Residual (pre-arm requirement, not a silent gap)
-/// A *simultaneous* rollback of BOTH the record AND the `epoch.hwm` anchor (e.g. a
-/// whole-directory snapshot restore) removes all in-store memory of past epochs and
-/// could let an old reset attestation clear a re-engaged state. Defending it needs
-/// an external monotonic anchor established at arm time plus host filesystem
-/// isolation. The reset/Clear path is moot while `OWNER_ATTEST_ADDRESS` is unset,
-/// and it is correct for the reachable single-file rollback cases proven by tests —
-/// but arming remains FORBIDDEN until that pre-arm gate (external monotonic anchor +
-/// host-isolation P0) is resolved. Pinning `OWNER_ATTEST_ADDRESS` alone does NOT
-/// authorize arming.
+/// Production construction and transitions are owned exclusively by the external-anchor-backed
+/// store. The anchor records both kill and anchor device evidence, but P0-C must still establish
+/// and review mount separation. Arming remains FORBIDDEN until P0-A merge, P0-B host isolation,
+/// P0-C provisioning evidence and identity pinning, and G4 re-review are all complete.
+#[cfg(test)]
 #[derive(Debug, Clone)]
-pub struct FileKillStateStore {
+pub(crate) struct FileKillStateStore {
     dir: PathBuf,
 }
 
 /// On-disk record. A `Clear` is stored with its full attestation (never a bare
 /// flag) so restart re-verification can reject tampering.
+#[cfg(test)]
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 enum PersistedRecord {
@@ -710,6 +712,7 @@ enum PersistedRecord {
     Clear { epoch: u64, reset: PersistedReset },
 }
 
+#[cfg(test)]
 /// Persisted reset attestation (signature carried as lowercase hex).
 #[derive(Serialize, Deserialize)]
 struct PersistedReset {
@@ -717,23 +720,25 @@ struct PersistedReset {
     nonce: u64,
     signature_hex: String,
 }
+#[cfg(test)]
 
 /// Persisted monotonic high-water epoch anchor.
 #[derive(Serialize, Deserialize)]
 struct HighWaterMark {
     high_water_epoch: u64,
 }
+#[cfg(test)]
 
 /// RAII holder for the exclusive advisory lock; releasing it (drop, which closes
 /// the file descriptor) releases the underlying `flock`.
 struct StateLock {
     _file: File,
 }
-
+#[cfg(test)]
 impl FileKillStateStore {
     /// Creates a store backed by a dedicated private directory (a node-config
     /// location). The directory and its files are created on first write.
-    pub fn new(dir: impl Into<PathBuf>) -> Self {
+    pub(crate) fn new(dir: impl Into<PathBuf>) -> Self {
         Self { dir: dir.into() }
     }
 
@@ -914,22 +919,7 @@ impl FileKillStateStore {
         attestation: &ResetAttestation,
         expected_epoch: u64,
     ) -> Result<(), KillStoreError> {
-        if attestation.engagement_epoch != expected_epoch {
-            return Err(KillStoreError::ResetEpochMismatch);
-        }
-        let Some(owner) = OWNER_ATTEST_ADDRESS else {
-            return Err(KillStoreError::OwnerAddressUnset);
-        };
-        let message = killreset_message(attestation.engagement_epoch, attestation.nonce);
-        let signature = Signature::from_raw_array(&attestation.signature)
-            .map_err(|_| KillStoreError::SignatureMalformed)?;
-        let recovered = signature
-            .recover_address_from_msg(message.as_bytes())
-            .map_err(|_| KillStoreError::SignatureRecoveryFailed)?;
-        if recovered != owner {
-            return Err(KillStoreError::OwnerSignatureMismatch);
-        }
-        Ok(())
+        attestation.verify_only(expected_epoch)
     }
 
     /// Test-only view of `(record_epoch, high_water_anchor)`.
@@ -939,6 +929,7 @@ impl FileKillStateStore {
     }
 }
 
+#[cfg(test)]
 impl KillStateStore for FileKillStateStore {
     fn load(&self) -> KillState {
         // Lock-free: each file write is atomic, so a reader sees old-or-new (never
@@ -1011,6 +1002,7 @@ impl KillStateStore for FileKillStateStore {
     }
 }
 
+#[cfg(test)]
 impl From<&ResetAttestation> for PersistedReset {
     fn from(attestation: &ResetAttestation) -> Self {
         let mut signature_hex = String::with_capacity(130);
@@ -1034,6 +1026,7 @@ fn killreset_message(engagement_epoch: u64, nonce: u64) -> String {
 }
 
 /// Decodes an exactly-130-char lowercase-hex string into a 65-byte signature.
+#[cfg(test)]
 fn decode_signature_hex(hex: &str) -> Option<[u8; 65]> {
     let bytes = hex.as_bytes();
     if bytes.len() != 130 {
@@ -1050,6 +1043,7 @@ fn decode_signature_hex(hex: &str) -> Option<[u8; 65]> {
 
 /// Builds a process-, time-, and sequence-unique temp sibling for `path`, so the
 /// O_EXCL create in `atomic_write` never collides with a concurrent or prior temp.
+#[cfg(test)]
 fn temp_path(path: &Path) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let pid = std::process::id();
@@ -1065,6 +1059,7 @@ fn temp_path(path: &Path) -> PathBuf {
 
 /// fsyncs a directory handle. A `#[cfg(test)]` one-shot seam can force a single
 /// failure to exercise the fail-closed post-rename commit path deterministically.
+#[cfg(test)]
 fn dir_sync(handle: &File) -> std::io::Result<()> {
     #[cfg(test)]
     {
@@ -1089,6 +1084,7 @@ fn arm_dir_sync_failure() {
 
 /// Renames `from` to `to` — the reset commit point. A `#[cfg(test)]` one-shot seam
 /// can force a single failure to exercise the fail-closed rename-failure path.
+#[cfg(test)]
 fn rename_commit(from: &Path, to: &Path) -> std::io::Result<()> {
     #[cfg(test)]
     {
@@ -1235,10 +1231,7 @@ mod tests {
     #[test]
     fn kill_switch_allows_only_verified_clear() {
         assert_eq!(kill_switch(&KillState::Clear { verified_at: 7 }), Decision::Allow);
-        assert_eq!(
-            kill_switch(&KillState::Unknown),
-            Decision::Halt(GuardReason::KillNotClear)
-        );
+        assert_eq!(kill_switch(&KillState::Unknown), Decision::Halt(GuardReason::KillNotClear));
         assert_eq!(
             kill_switch(&KillState::Engaged { reason: KillReason::DrawdownFloorBreach }),
             Decision::Halt(GuardReason::KillNotClear)
@@ -1298,8 +1291,7 @@ mod tests {
     #[test]
     fn loader_unarmed_on_source_commit_mismatch() {
         let mut artifact = valid_artifact();
-        artifact.criteria_source_commit_sha =
-            "0000000000000000000000000000000000000000".to_owned();
+        artifact.criteria_source_commit_sha = "0000000000000000000000000000000000000000".to_owned();
         let criteria = ArmedCriteria::load(&artifact);
         assert!(!criteria.is_armed());
         assert_eq!(criteria.unarmed_reason(), Some(UnarmedReason::SourceCommitMismatch));
@@ -1308,11 +1300,11 @@ mod tests {
     #[test]
     fn loader_unarmed_on_source_commit_format_violations() {
         for bad in [
-            "4f789f2e85a9dfdaff990d505b3793a4fa23a47",    // 39 chars
-            "4f789f2e85a9dfdaff990d505b3793a4fa23a4766",  // 41 chars
+            "4f789f2e85a9dfdaff990d505b3793a4fa23a47",   // 39 chars
+            "4f789f2e85a9dfdaff990d505b3793a4fa23a4766", // 41 chars
             "4f789f2e85a9dfdaff990d505b3793a4fa23a4764f789f2e85a9dfdaff990d505", // 64 chars
-            "0x789f2e85a9dfdaff990d505b3793a4fa23a476",   // 0x-prefixed, length 40
-            "4F789F2E85A9DFDAFF990D505B3793A4FA23A476",   // uppercase
+            "0x789f2e85a9dfdaff990d505b3793a4fa23a476",  // 0x-prefixed, length 40
+            "4F789F2E85A9DFDAFF990D505B3793A4FA23A476",  // uppercase
         ] {
             let mut artifact = valid_artifact();
             artifact.criteria_source_commit_sha = bad.to_owned();
@@ -1432,7 +1424,8 @@ mod tests {
     #[test]
     fn drawdown_incomplete_inputs_all_halt() {
         let criteria = armed();
-        for input in [DrawdownInput::PendingOrUnresolved, DrawdownInput::Missing, DrawdownInput::Error]
+        for input in
+            [DrawdownInput::PendingOrUnresolved, DrawdownInput::Missing, DrawdownInput::Error]
         {
             assert_eq!(
                 drawdown_floor(input, &criteria),
@@ -1474,9 +1467,7 @@ mod tests {
         let dir = temp_dir("reset-ok");
         let store = FileKillStateStore::new(&dir);
         store.engage(KillReason::DrawdownFloorBreach).expect("engage");
-        store
-            .owner_reset(&reset_attestation(1, SIG_RESET_EPOCH1))
-            .expect("valid reset clears");
+        store.owner_reset(&reset_attestation(1, SIG_RESET_EPOCH1)).expect("valid reset clears");
         assert_eq!(store.load(), KillState::Clear { verified_at: 1 });
         // Restart re-verifies the persisted attestation against the epoch anchor.
         assert_eq!(FileKillStateStore::new(&dir).load(), KillState::Clear { verified_at: 1 });
@@ -1515,9 +1506,7 @@ mod tests {
         let store = FileKillStateStore::new(&dir);
         store.engage(KillReason::DrawdownFloorBreach).expect("epoch 1");
         store.engage(KillReason::DrawdownFloorBreach).expect("epoch 2");
-        store
-            .owner_reset(&reset_attestation(2, SIG_RESET_EPOCH2))
-            .expect("epoch-2 reset clears");
+        store.owner_reset(&reset_attestation(2, SIG_RESET_EPOCH2)).expect("epoch-2 reset clears");
         assert_eq!(store.load(), KillState::Clear { verified_at: 2 });
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1628,7 +1617,11 @@ mod tests {
         for handle in handles {
             handle.join().expect("join");
         }
-        assert_eq!(store.debug_epochs(), (THREADS, Some(THREADS)), "no lost update; anchor monotonic");
+        assert_eq!(
+            store.debug_epochs(),
+            (THREADS, Some(THREADS)),
+            "no lost update; anchor monotonic"
+        );
         assert!(matches!(store.load(), KillState::Engaged { .. }));
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1695,7 +1688,10 @@ mod tests {
         fs::write(&blocker, b"x").expect("write blocker file");
         let store = FileKillStateStore::new(blocker.join("state-dir"));
         let result = store.engage(KillReason::KeyOrSignatureFailure);
-        assert!(matches!(result, Err(KillStoreError::Io)), "engage into uncreatable dir must error");
+        assert!(
+            matches!(result, Err(KillStoreError::Io)),
+            "engage into uncreatable dir must error"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -1774,7 +1770,10 @@ mod tests {
         assert_eq!(store.debug_epochs(), (u64::MAX, Some(u64::MAX)));
 
         // Engage refuses to reuse the exhausted epoch.
-        assert!(matches!(store.engage(KillReason::DrawdownFloorBreach), Err(KillStoreError::EpochExhausted)));
+        assert!(matches!(
+            store.engage(KillReason::DrawdownFloorBreach),
+            Err(KillStoreError::EpochExhausted)
+        ));
         assert_eq!(store.debug_epochs(), (u64::MAX, Some(u64::MAX)), "no epoch reuse at MAX");
         // A stale epoch-1 reset attestation cannot clear the MAX-epoch latch.
         let result = store.owner_reset(&reset_attestation(1, SIG_RESET_EPOCH1));
@@ -1981,6 +1980,9 @@ mod tests {
 
     #[test]
     fn expected_commit_hex_and_bytes_agree() {
-        assert_eq!(parse_commit_sha(EXPECTED_CRITERIA_COMMIT), Some(EXPECTED_CRITERIA_COMMIT_BYTES));
+        assert_eq!(
+            parse_commit_sha(EXPECTED_CRITERIA_COMMIT),
+            Some(EXPECTED_CRITERIA_COMMIT_BYTES)
+        );
     }
 }
