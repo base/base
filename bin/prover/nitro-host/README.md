@@ -32,6 +32,20 @@ cargo run --package base-prover-nitro-host --features local -- local \
 
 The `just tee nitro-local-worker` recipe wraps the same command.
 
+## Security Model
+
+The Nitro host JSON-RPC listener is an internal control-plane endpoint. It
+intentionally does not implement application-layer caller authentication and
+must be reachable only by trusted components within a private network, enforced
+through VPC routing, security groups, or equivalent network controls. It must
+not be exposed to the public internet or other untrusted networks.
+
+The default `0.0.0.0` bind address supports container and EC2 networking; it
+does not mean that the port should be publicly routed. The production worker
+listener exposes only health and registrar-facing signer operations. Proof jobs
+are claimed from the configured prover-service endpoint rather than accepted by
+this listener.
+
 ## Inspecting the enclave
 
 **Remotely (from your local machine):**
