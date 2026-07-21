@@ -125,11 +125,10 @@ where
                         "Deleting proof request after proof collection failure"
                     );
                     return self
-                        .delete_proof_request(
+                        .delete_proof_batch(
                             &session_id,
                             target_block,
                             finalized_head.min(dispatched_through),
-                            false,
                             cancel,
                         )
                         .await;
@@ -363,7 +362,7 @@ where
                     "Submission discarded, deleting proof request for re-prove"
                 );
                 return if self
-                    .delete_proof_request(session_id, target_block, delete_through, true, cancel)
+                    .delete_proof_batch(session_id, target_block, delete_through, cancel)
                     .await
                 {
                     SubmitOutcome::Restart
@@ -376,12 +375,11 @@ where
         SubmitOutcome::Restart
     }
 
-    async fn delete_proof_request(
+    async fn delete_proof_batch(
         &self,
         session_id: &str,
         mut target_block: u64,
         delete_through: u64,
-        delete_succeeded_proofs: bool,
         cancel: &CancellationToken,
     ) -> bool {
         let first_block = target_block;
@@ -422,8 +420,8 @@ where
             )
             .await
             {
-                Ok(Some(_)) if delete_succeeded_proofs => {}
-                Ok(Some(_)) | Ok(None) => break,
+                Ok(Some(_)) => {}
+                Ok(None) => break,
                 Err(error) => warn!(
                     target_block,
                     session_id = %session_id,
@@ -439,7 +437,6 @@ where
             last_block = target_block;
         }
 
-        Metrics::proof_cleanup_delete_success_total().increment(successful_delete_calls);
         if successful_delete_calls > 1 {
             info!(
                 successful_delete_calls,
@@ -918,7 +915,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tick_batch_delete_stops_at_valid_proof_after_collection_failure() {
+    async fn tick_batch_delete_removes_succeeded_proof_after_collection_failure() {
         let requester = Arc::new(MockProofRequester::default());
         let first_target = 200;
         let second_target = 300;
@@ -957,8 +954,8 @@ mod tests {
 
         assert!(restart);
         assert!(!requester.failed_sessions.lock().unwrap().contains_key(&first_session));
-        assert!(requester.requests.lock().unwrap().contains_key(&second_session));
-        assert!(requester.failed_sessions.lock().unwrap().contains_key(&third_session));
+        assert!(!requester.requests.lock().unwrap().contains_key(&second_session));
+        assert!(!requester.failed_sessions.lock().unwrap().contains_key(&third_session));
     }
 
     #[tokio::test]

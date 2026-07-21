@@ -29,9 +29,6 @@ base_metrics::define_metrics! {
     #[label(name = "status", default = ["queued", "running", "succeeded", "failed"])]
     proof_status_received_total: counter,
 
-    #[describe("Total successful proof cleanup delete calls")]
-    proof_cleanup_delete_success_total: counter,
-
     // `safe_head` is kept as a deprecated alias for a zero-downtime metric rename;
     // drop it once every Datadog monitor/dashboard uses `finalized_head`.
     #[describe("Deprecated alias of finalized_head. Latest finalized L2 block number")]
