@@ -32,6 +32,13 @@ cargo run --package base-prover-nitro-host --features local -- local \
 
 The `just tee nitro-local-worker` recipe wraps the same command.
 
+## Security Model
+
+This unauthenticated RPC listener is an internal control-plane endpoint. Restrict
+it to trusted components with private-network controls; never expose it publicly.
+The wildcard bind supports EC2 and container networking. Production exposes only
+health and signer operations; proof jobs are pulled from prover-service.
+
 ## Inspecting the enclave
 
 **Remotely (from your local machine):**

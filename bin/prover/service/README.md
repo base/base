@@ -9,3 +9,9 @@ submitted results.
 This binary does not run proving backends in-process. ZK and TEE proof
 generation runs in separate worker processes that claim jobs through the worker
 API.
+
+## Security Model
+
+The unauthenticated requester and worker APIs are internal service endpoints.
+Restrict them to trusted components with private-network controls; never expose
+them publicly. Wildcard binds support container networking.

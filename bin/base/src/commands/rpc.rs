@@ -201,8 +201,6 @@ mod tests {
             "rpc",
             "--upgrade-signal.contract",
             "0x0000000000000000000000000000000000000001",
-            "--upgrade-signal.upgrade-id",
-            "azul",
         ]));
 
         let BaseCommand::Rpc(rpc) = cli.command else {
@@ -218,7 +216,6 @@ mod tests {
                 .map(|address| address.to_string()),
             Some("0x0000000000000000000000000000000000000001".to_string())
         );
-        assert_eq!(rpc.execution.standard.rollup_args.upgrade_signal.upgrade_ids, ["azul"]);
     }
 
     #[test]

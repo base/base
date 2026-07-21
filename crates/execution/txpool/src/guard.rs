@@ -446,6 +446,14 @@ impl MempoolGuard {
         dropped
     }
 
+    /// Invalidates all transactions in occupied expiry buckets at or below
+    /// `horizon`, returning the dropped hashes and number of buckets fired.
+    pub fn invalidate_expiry_buckets_through(&mut self, horizon: u64) -> (Vec<TxHash>, usize) {
+        let due = self.index.due_expiry_buckets(horizon);
+        let bucket_count = due.len();
+        (self.invalidate_exact(due), bucket_count)
+    }
+
     /// Re-evaluates a payer's balance against its sponsored transactions.
     ///
     /// * Balance-bounded (trusted) payers evict from the low-priority end until
@@ -703,6 +711,25 @@ mod tests {
         let dropped = guard.invalidate_exact([watched]);
         assert_eq!(dropped, vec![hash(1)]);
         assert!(guard.is_empty());
+    }
+
+    #[test]
+    fn expiry_invalidation_fires_only_occupied_due_buckets() {
+        let mut guard = MempoolGuard::new(GuardLimits::default());
+        let make = |id, bucket| Admission {
+            watch_set: WatchSet::new().watch(InvalidationKey::ExpiryBucket(bucket)),
+            ..self_pay(id, addr(id), 10)
+        };
+
+        assert!(guard.try_admit(make(1, 1)).is_ok());
+        assert!(guard.try_admit(make(2, 850_000_000)).is_ok());
+        assert!(guard.try_admit(make(3, 900_000_000)).is_ok());
+
+        let (mut dropped, buckets) = guard.invalidate_expiry_buckets_through(850_000_000);
+        dropped.sort_unstable();
+        assert_eq!(dropped, vec![hash(1), hash(2)]);
+        assert_eq!(buckets, 2);
+        assert!(guard.contains(&hash(3)));
     }
 
     #[test]

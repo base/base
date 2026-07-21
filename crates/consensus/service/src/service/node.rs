@@ -264,6 +264,8 @@ impl RollupNode {
                 unsafe_head_tx: if mode.is_sequencer() { Some(unsafe_head_tx) } else { None },
                 conductor,
                 sequencer_stopped: self.sequencer_config.sequencer_stopped,
+                shadow_sequencer: mode.is_sequencer()
+                    && self.sequencer_config.is_shadow_sequencer(),
             },
             checkpoint_reader,
             checkpoint_writer,

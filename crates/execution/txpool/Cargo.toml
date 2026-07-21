@@ -45,6 +45,7 @@ base-metrics.workspace = true
 metrics = { workspace = true, optional = true }
 
 # misc
+lru.workspace = true
 url.workspace = true
 serde.workspace = true
 serde_json.workspace = true

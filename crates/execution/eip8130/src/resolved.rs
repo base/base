@@ -22,6 +22,11 @@ pub struct ResolvedActor {
     /// The actor's policy gate target (the policy *manager*), or
     /// [`Address::ZERO`] when ungated. Never the signed policy commitment.
     pub policy_target: Address,
+    /// The actor's Unix-seconds authorization expiry (`0 = no expiry`). The
+    /// authorization is valid while `now <= expiry`; surfaced so the mempool can
+    /// evict transactions that depend on a key whose authorization expires before
+    /// inclusion (a wall-clock surface no storage diff reports).
+    pub expiry: u64,
 }
 
 impl ResolvedActor {
@@ -29,7 +34,7 @@ impl ResolvedActor {
     /// shape of any actor with `scope == 0` and no policy.
     #[must_use]
     pub const fn unrestricted(actor_id: B256) -> Self {
-        Self { actor_id, scope: 0, policy_target: Address::ZERO }
+        Self { actor_id, scope: 0, policy_target: Address::ZERO, expiry: 0 }
     }
 
     /// `true` if the actor is an unrestricted administrator (`scope == 0`).
@@ -64,7 +69,7 @@ mod tests {
     use super::*;
 
     fn actor(scope: u8) -> ResolvedActor {
-        ResolvedActor { actor_id: B256::ZERO, scope, policy_target: Address::ZERO }
+        ResolvedActor { actor_id: B256::ZERO, scope, policy_target: Address::ZERO, expiry: 0 }
     }
 
     #[test]
