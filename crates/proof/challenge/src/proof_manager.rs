@@ -14,7 +14,7 @@ use std::{
 use alloy_primitives::{Address, B256};
 use base_proof_contracts::{AggregateVerifierClient, GameStatus};
 use base_proof_primitives::ProofRequest as TeeProofRequest;
-use base_proof_rpc::L2Provider;
+use base_proof_rpc::{L1Provider, L2Provider};
 use base_proof_submission::KnownRevert;
 use base_prover_service_client::ProofRequesterProvider;
 use base_prover_service_protocol::{SnarkPlonkProofRequest, ZkBackend, ZkProofRequest, ZkVm};
@@ -23,9 +23,9 @@ use tracing::{debug, info, warn};
 
 use crate::{
     CandidateGame, ChallengeSubmitError, ChallengeSubmitter, ChallengerMetrics,
-    ChallengerProofAdapter, DisputeIntent, IntermediateValidationParams, L1HeadProvider,
-    OutputValidator, PendingProof, PendingProofs, ProofKind, ProofPhase, ProofUpdate,
-    ValidationResult, ValidatorError,
+    ChallengerProofAdapter, DisputeIntent, IntermediateValidationParams, OutputValidator,
+    PendingProof, PendingProofs, ProofKind, ProofPhase, ProofUpdate, ValidationResult,
+    ValidatorError,
 };
 
 /// Manages the lifecycle of proofs used to dispute invalid games.
@@ -34,7 +34,7 @@ pub struct DisputeProofManager<L2: L2Provider, P: ProofRequesterProvider> {
     validator: OutputValidator<L2>,
     /// Prover-service requester used to generate and poll fault proofs.
     proof_requester: Arc<P>,
-    tee: Option<Arc<dyn L1HeadProvider>>,
+    tee: Option<Arc<dyn L1Provider>>,
     verifier_client: Arc<dyn AggregateVerifierClient>,
     /// In-flight proof sessions keyed by game address.
     pending_proofs: PendingProofs,
@@ -67,7 +67,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
     pub fn new(
         validator: OutputValidator<L2>,
         proof_requester: Arc<P>,
-        tee: Option<Arc<dyn L1HeadProvider>>,
+        tee: Option<Arc<dyn L1Provider>>,
         verifier_client: Arc<dyn AggregateVerifierClient>,
         max_proof_duration: Duration,
         tee_submit_retry_limit: u32,
@@ -294,7 +294,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
         candidate: &CandidateGame,
         invalid_index: u64,
         expected_root: B256,
-        l1_head_provider: &dyn L1HeadProvider,
+        l1_provider: &dyn L1Provider,
     ) -> eyre::Result<TeeProofRequest> {
         let start_block_number = candidate.checkpoint_start_block(invalid_index)?;
 
@@ -303,11 +303,11 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
             .ok_or_else(|| eyre::eyre!("claimed_l2_block_number overflow"))?;
 
         let l1_head = candidate.l1_head;
-        let (l1_head_number_result, output_root_result) = tokio::join!(
-            l1_head_provider.block_number_by_hash(l1_head),
+        let (l1_header_result, output_root_result) = tokio::join!(
+            l1_provider.header_by_hash(l1_head),
             self.validator.compute_output_root_with_hash(start_block_number),
         );
-        let l1_head_number = l1_head_number_result?;
+        let l1_head_number = l1_header_result?.number;
         let (agreed_l2_head_hash, agreed_l2_output_root) = output_root_result?;
 
         Ok(TeeProofRequest {

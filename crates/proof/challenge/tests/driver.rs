@@ -9,11 +9,11 @@ use std::{
 use alloy_primitives::{Address, B256, Bytes};
 use base_challenger::{
     AnchorUpdater, ChallengeSubmitter, ChallengerProofAdapter, DisputeIntent, DisputeProofManager,
-    Driver, DriverComponents, GameScanner, L1HeadProvider, OutputValidator, PendingProof,
-    PendingProofs, ProofKind, ProofPhase, ProofUpdate,
+    Driver, DriverComponents, GameScanner, OutputValidator, PendingProof, PendingProofs,
+    ProofKind, ProofPhase, ProofUpdate,
     test_utils::{
         DEFAULT_L1_HEAD, DEFAULT_TEE_PROVER, MockAggregateVerifier, MockDisputeGameFactory,
-        MockGameState, MockL1HeadProvider, MockL2Provider, MockTxManager, MockZkProofProvider,
+        MockGameState, MockL1, MockL2Provider, MockTxManager, MockZkProofProvider,
         MockZkProofState, addr, build_test_header_and_account, factory_game, mock_anchor_registry,
         mock_state, mock_state_with_tee, receipt_with_status,
     },
@@ -22,6 +22,7 @@ use base_proof_contracts::{
     AggregateVerifierClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameStatus,
 };
 use base_proof_primitives::Proposal;
+use base_proof_rpc::L1Provider;
 use base_protocol::OutputRoot;
 use base_prover_service_protocol::{
     ProofResult as ApiProofResult, ProofStatus, SnarkPlonkProofRequest, TeeKind, TeeProofResult,
@@ -67,14 +68,14 @@ fn test_driver(
     test_driver_with_tee(factory, verifier, l2_provider, zk_prover, tx_manager, None)
 }
 
-/// Builds a test driver with an optional TEE L1 head provider.
+/// Builds a test driver with an optional L1 provider for TEE proof requests.
 fn test_driver_with_tee(
     factory: Arc<MockDisputeGameFactory>,
     verifier: Arc<MockAggregateVerifier>,
     l2_provider: Arc<MockL2Provider>,
     zk_prover: Arc<MockZkProofProvider>,
     tx_manager: MockTxManager,
-    tee: Option<Arc<dyn L1HeadProvider>>,
+    tee: Option<Arc<dyn L1Provider>>,
 ) -> Driver<MockL2Provider, MockZkProofProvider, MockTxManager> {
     let anchor_registry = mock_anchor_registry(Address::ZERO);
     let scanner = GameScanner::new(
@@ -760,7 +761,7 @@ async fn test_step_invalid_game_tee_fails_zk_fallback() {
         l2,
         default_zk_prover(),
         tx_manager,
-        Some(Arc::new(MockL1HeadProvider::failure("dummy"))),
+        Some(Arc::new(MockL1::failure("dummy"))),
     );
 
     driver.step().await.unwrap();
@@ -808,7 +809,7 @@ async fn test_step_invalid_game_tee_fails_zk_succeeds() {
         l2,
         zk,
         tx_manager,
-        Some(Arc::new(MockL1HeadProvider::failure("dummy"))),
+        Some(Arc::new(MockL1::failure("dummy"))),
     );
 
     // Step 1: TEE path is attempted (fails building request), falls back
@@ -845,7 +846,7 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
         ..game_state(20)
     });
 
-    let l1_head = Arc::new(MockL1HeadProvider::success(DEFAULT_L1_HEAD, 100));
+    let l1_head = Arc::new(MockL1::success(DEFAULT_L1_HEAD, 100));
 
     let aggregate_proposal = Proposal {
         output_root: root_20,
@@ -907,7 +908,7 @@ async fn test_step_tee_contract_revert_falls_back_to_zk() {
         ..game_state(20)
     });
 
-    let l1_head = Arc::new(MockL1HeadProvider::success(DEFAULT_L1_HEAD, 100));
+    let l1_head = Arc::new(MockL1::success(DEFAULT_L1_HEAD, 100));
 
     let aggregate_proposal = Proposal {
         output_root: root_20,
@@ -1002,7 +1003,7 @@ async fn test_step_invalid_tee_result_falls_back_to_zk_without_timeout() {
         ..game_state(20)
     });
 
-    let l1_head = Arc::new(MockL1HeadProvider::success(DEFAULT_L1_HEAD, 100));
+    let l1_head = Arc::new(MockL1::success(DEFAULT_L1_HEAD, 100));
 
     let bad_aggregate_proposal = Proposal {
         output_root: B256::repeat_byte(0x42),
@@ -1353,7 +1354,7 @@ async fn test_step_dual_proof_invalid_with_tee_provider_nullifies_tee_first() {
         ..game_state(20)
     });
 
-    let l1_head = Arc::new(MockL1HeadProvider::success(DEFAULT_L1_HEAD, 100));
+    let l1_head = Arc::new(MockL1::success(DEFAULT_L1_HEAD, 100));
 
     let aggregate_proposal = Proposal {
         output_root: root_20,
@@ -1448,7 +1449,7 @@ async fn test_step_dual_proof_tee_fails_falls_back_to_zk_nullify() {
         l2,
         default_zk_prover(),
         default_tx_manager(),
-        Some(Arc::new(MockL1HeadProvider::failure("dummy"))),
+        Some(Arc::new(MockL1::failure("dummy"))),
     );
 
     driver.step().await.unwrap();

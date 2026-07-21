@@ -14,7 +14,7 @@ use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryClient,
     AnchorStateRegistryContractClient, DisputeGameFactoryClient, DisputeGameFactoryContractClient,
 };
-use base_proof_rpc::{L1Client, L1ClientConfig, L2Client, L2ClientConfig, L2Provider};
+use base_proof_rpc::{L1Client, L1ClientConfig, L1Provider, L2Client, L2ClientConfig, L2Provider};
 use base_prover_service_client::{ProofRequesterClient, ProverServiceClientConfig};
 use base_runtime::TokioRuntime;
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
@@ -146,7 +146,7 @@ impl ChallengerService {
 
         let l1_client = L1Client::new(L1ClientConfig::new(l1_rpc_url.clone()))
             .map_err(|e| eyre::eyre!("failed to create TEE L1 client: {e}"))?;
-        let tee: Option<Arc<dyn crate::L1HeadProvider>> = Some(Arc::new(l1_client));
+        let tee: Option<Arc<dyn L1Provider>> = Some(Arc::new(l1_client));
 
         let scanner = GameScanner::new(
             Arc::clone(&factory_client),
