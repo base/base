@@ -40,22 +40,21 @@ pub(crate) struct BaseCli {
 impl BaseCli {
     /// Runs the selected command with shared process initialization.
     pub(crate) fn run(self) -> eyre::Result<()> {
-        let Self { chain, logging, metrics, command } = self;
-
-        LogConfig::from(logging)
+        LogConfig::from(self.logging)
             .init_tracing_subscriber()
             .wrap_err("failed to initialize tracing")?;
 
-        let metrics_enabled = metrics.enabled;
-        MetricsConfig::from(metrics)
+        let metrics_enabled = self.metrics.enabled;
+        MetricsConfig::from(self.metrics)
             .init_with(|| {
                 base_cli_utils::register_version_metrics!();
             })
             .wrap_err("failed to install Prometheus recorder")?;
 
-        command.run(ChainResolver::new(chain), metrics_enabled)
+        self.command.run(ChainResolver::new(self.chain), metrics_enabled)
     }
 }
+
 #[cfg(test)]
 mod tests {
     use std::ffi::OsStr;
@@ -63,7 +62,6 @@ mod tests {
     use clap::{CommandFactory, Parser};
 
     use super::*;
-    use crate::config::BuiltInChain;
 
     #[test]
     fn parses_default_chain_for_rpc() {
@@ -76,7 +74,7 @@ mod tests {
             "http://localhost:5052",
         ]);
 
-        assert!(matches!(cli.chain, ChainArg::BuiltIn(BuiltInChain::Mainnet)));
+        assert!(matches!(cli.chain, ChainArg::BuiltIn(ref name) if name == "mainnet"));
         assert!(matches!(cli.command, BaseCommand::Rpc(_)));
     }
 
@@ -84,14 +82,14 @@ mod tests {
     fn parses_named_chain_selector() {
         let cli = BaseCli::parse_from(["base", "-c", "sepolia", "bootnode"]);
 
-        assert!(matches!(cli.chain, ChainArg::BuiltIn(BuiltInChain::Sepolia)));
+        assert!(matches!(cli.chain, ChainArg::BuiltIn(ref name) if name == "sepolia"));
     }
 
     #[test]
     fn parses_global_chain_after_subcommand() {
         let cli = BaseCli::parse_from(["base", "bootnode", "--chain", "sepolia"]);
 
-        assert!(matches!(cli.chain, ChainArg::BuiltIn(BuiltInChain::Sepolia)));
+        assert!(matches!(cli.chain, ChainArg::BuiltIn(ref name) if name == "sepolia"));
     }
 
     #[test]

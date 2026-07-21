@@ -157,11 +157,7 @@ mod tests {
     use base_execution_chainspec::BaseChainSpec;
     use clap::Parser;
 
-    use crate::{
-        cli::BaseCli,
-        commands::BaseCommand,
-        config::{BuiltInChain, ChainArg},
-    };
+    use crate::{cli::BaseCli, commands::BaseCommand, config::ChainArg};
 
     const RPC_FORWARDING_ENDPOINT_ENV: &str = "OP_RETH_SEQUENCER_HTTP";
     const RPC_FORWARDING_ENDPOINT_ENV_CHILD_TEST: &str =
@@ -352,7 +348,7 @@ mod tests {
             "-vvv",
         ]);
 
-        assert!(matches!(cli.chain, ChainArg::BuiltIn(BuiltInChain::Dev)));
+        assert!(matches!(cli.chain, ChainArg::BuiltIn(ref name) if name == "dev"));
         let BaseCommand::Rpc(rpc) = cli.command else {
             panic!("expected rpc command");
         };
