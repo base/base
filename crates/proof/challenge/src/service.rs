@@ -146,7 +146,7 @@ impl ChallengerService {
 
         let l1_client = L1Client::new(L1ClientConfig::new(l1_rpc_url.clone()))
             .map_err(|e| eyre::eyre!("failed to create TEE L1 client: {e}"))?;
-        let tee: Option<Arc<dyn L1Provider>> = Some(Arc::new(l1_client));
+        let l1_provider: Arc<dyn L1Provider> = Arc::new(l1_client);
 
         let scanner = GameScanner::new(
             Arc::clone(&factory_client),
@@ -196,7 +196,7 @@ impl ChallengerService {
             validator,
             proof_requester,
             submitter,
-            tee,
+            l1_provider,
             verifier_client,
             bond_manager,
             anchor_updater,

@@ -34,7 +34,8 @@ pub struct DisputeProofManager<L2: L2Provider, P: ProofRequesterProvider> {
     validator: OutputValidator<L2>,
     /// Prover-service requester used to generate and poll fault proofs.
     proof_requester: Arc<P>,
-    tee: Option<Arc<dyn L1Provider>>,
+    /// L1 provider used to construct TEE proof requests.
+    l1_provider: Arc<dyn L1Provider>,
     verifier_client: Arc<dyn AggregateVerifierClient>,
     /// In-flight proof sessions keyed by game address.
     pending_proofs: PendingProofs,
@@ -67,7 +68,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
     pub fn new(
         validator: OutputValidator<L2>,
         proof_requester: Arc<P>,
-        tee: Option<Arc<dyn L1Provider>>,
+        l1_provider: Arc<dyn L1Provider>,
         verifier_client: Arc<dyn AggregateVerifierClient>,
         max_proof_duration: Duration,
         tee_submit_retry_limit: u32,
@@ -75,7 +76,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
         Self {
             validator,
             proof_requester,
-            tee,
+            l1_provider,
             verifier_client,
             pending_proofs: PendingProofs::new(),
             ignored_games: HashSet::new(),
@@ -170,10 +171,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
     ) -> eyre::Result<()> {
         let game_address = candidate.factory.proxy;
 
-        if candidate.tee_prover != Address::ZERO
-            && try_tee_first
-            && let Some(tee) = &self.tee
-        {
+        if candidate.tee_prover != Address::ZERO && try_tee_first {
             ChallengerMetrics::tee_proof_attempts_total().increment(1);
             match self
                 .build_tee_request(
@@ -181,7 +179,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
                     &candidate,
                     invalid_index,
                     expected_root,
-                    tee.as_ref(),
+                    self.l1_provider.as_ref(),
                 )
                 .await
             {
