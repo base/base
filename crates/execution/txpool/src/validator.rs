@@ -14,7 +14,7 @@ use alloy_primitives::{Address, B256, LogData, U256, map::AddressSet};
 use base_common_chains::Upgrades;
 use base_common_consensus::{
     AccountChange, ActorChange, ActorChangeType, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
-    InitialActor,
+    Eip8130TimestampError, InitialActor,
 };
 use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_common_genesis::DaFootprintGasScalarUpdate;
@@ -1301,7 +1301,9 @@ where
             ApplyError::MalformedPolicyData => "actor policy data is malformed",
             ApplyError::NotAnActor { .. } => "revoked actor is not authorized",
             ApplyError::NoInitialActors => "create entry has no initial actors",
-            ApplyError::UnsortedInitialActors => "create initial actors are not strictly ascending",
+            ApplyError::ActorsNotSortedOrDuplicate => {
+                "create initial actors are not strictly ascending"
+            }
             ApplyError::BytecodeTooLarge => "create bytecode exceeds the size limit",
             ApplyError::AlreadyCreated { .. } => "create account already exists",
             ApplyError::CreateAddressMismatch { .. } => "create address does not match the sender",
@@ -1321,6 +1323,53 @@ where
             NonceError::Replay => Self::eip8130_error("nonce-free replay detected"),
             NonceError::Storage(_) => Self::eip8130_error("nonce state read failed"),
         }
+    }
+
+    /// Maps an [`Eip8130TimestampError`] (from
+    /// [`Eip8130Signed::validate_timestamp`]) to a named pool-rejection reason
+    /// and logs the mismatch. This deliberately does *not* collapse into
+    /// `TxTypeNotSupported`: the transaction type is supported, its `expiry` is
+    /// simply outside this node's admission window relative to `now` (the
+    /// head-block timestamp). Emitting the reason plus `now`/`expiry` here makes
+    /// the otherwise-silent, node-local expiry rejection greppable.
+    fn map_timestamp_error(
+        error: Eip8130TimestampError,
+        signed: &Eip8130Signed,
+        now: u64,
+    ) -> InvalidPoolTransactionError {
+        let reason = match error {
+            Eip8130TimestampError::NonceFreeMalformed => {
+                "nonce-free transaction must set a non-zero expiry and a zero nonce sequence"
+            }
+            Eip8130TimestampError::NonceFreeExpired => "nonce-free transaction expiry has elapsed",
+            Eip8130TimestampError::NonceFreeExpiryTooFar => {
+                "nonce-free transaction expiry exceeds the admission window"
+            }
+            Eip8130TimestampError::Expired => "transaction expiry has elapsed",
+        };
+        let tx = signed.tx();
+        // The `window` bound only governs the nonce-free "too far in the future"
+        // rejection; logging it for the other variants (e.g. a nonce-bearing
+        // `Expired`) would wrongly imply the nonce-free window was involved.
+        if matches!(error, Eip8130TimestampError::NonceFreeExpiryTooFar) {
+            tracing::debug!(
+                reason,
+                now,
+                expiry = tx.expiry,
+                nonce_key = %tx.nonce_key,
+                window = Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW,
+                "EIP-8130 timestamp validation failed",
+            );
+        } else {
+            tracing::debug!(
+                reason,
+                now,
+                expiry = tx.expiry,
+                nonce_key = %tx.nonce_key,
+                "EIP-8130 timestamp validation failed",
+            );
+        }
+        Self::eip8130_error(reason)
     }
 
     fn eip8130_error(reason: &'static str) -> InvalidPoolTransactionError {
@@ -1367,7 +1416,9 @@ where
         }
         let local_chain_id = self.inner.chain_spec().chain().id();
         signed.validate_static(local_chain_id).map_err(InvalidPoolTransactionError::from)?;
-        signed.validate_timestamp(now).map_err(InvalidPoolTransactionError::from)?;
+        signed
+            .validate_timestamp(now)
+            .map_err(|error| Self::map_timestamp_error(error, signed, now))?;
         Self::validate_eoa_sender_signature(signed)?;
         Self::validate_sender_auth(signed)?;
         Self::validate_payer_auth(signed)?;
@@ -1933,6 +1984,26 @@ mod tests {
         }
     }
 
+    /// Helper: assert a structural (`()`-returning) validation failed with a
+    /// named [`BaseTxPoolError::Eip8130Validation`] reason.
+    #[track_caller]
+    fn assert_structural_reason(
+        result: Result<(), InvalidPoolTransactionError>,
+        expected: &'static str,
+    ) {
+        match result {
+            Err(InvalidPoolTransactionError::Other(error)) => {
+                match error.as_any().downcast_ref::<BaseTxPoolError>() {
+                    Some(BaseTxPoolError::Eip8130Validation { reason }) => {
+                        assert_eq!(*reason, expected);
+                    }
+                    other => panic!("expected Eip8130Validation, got {other:?}"),
+                }
+            }
+            other => panic!("expected Eip8130Validation, got {other:?}"),
+        }
+    }
+
     #[track_caller]
     fn assert_eip8130_validation_reason(
         result: Result<Eip8130ValidationState, InvalidPoolTransactionError>,
@@ -2020,7 +2091,10 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         let signed = sign_eoa_eip8130(tx);
-        assert_unsupported(validator.validate_eip8130_structural(&signed));
+        assert_structural_reason(
+            validator.validate_eip8130_structural(&signed),
+            "nonce-free transaction must set a non-zero expiry and a zero nonce sequence",
+        );
     }
 
     #[test]
@@ -2033,7 +2107,10 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         let signed = sign_eoa_eip8130(tx);
-        assert_unsupported(validator.validate_eip8130_structural(&signed));
+        assert_structural_reason(
+            validator.validate_eip8130_structural(&signed),
+            "nonce-free transaction must set a non-zero expiry and a zero nonce sequence",
+        );
     }
 
     #[test]
@@ -2051,13 +2128,16 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         let signed = sign_eoa_eip8130(tx);
-        assert_unsupported(validator.validate_eip8130_structural(&signed));
+        assert_structural_reason(
+            validator.validate_eip8130_structural(&signed),
+            "nonce-free transaction expiry has elapsed",
+        );
     }
 
     #[test]
     fn rejects_eip8130_nonce_free_expiry_too_far_in_future() {
         let validator = build_test_validator();
-        // block_timestamp returns 0 by default; cap is NONCE_FREE_MAX_EXPIRY_WINDOW (10).
+        // block_timestamp returns 0 by default; cap is NONCE_FREE_MAX_EXPIRY_WINDOW.
         let tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
             nonce_sequence: 0,
@@ -2065,7 +2145,10 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         let signed = sign_eoa_eip8130(tx);
-        assert_unsupported(validator.validate_eip8130_structural(&signed));
+        assert_structural_reason(
+            validator.validate_eip8130_structural(&signed),
+            "nonce-free transaction expiry exceeds the admission window",
+        );
     }
 
     #[test]
@@ -2079,6 +2162,25 @@ mod tests {
         };
         let signed = sign_eoa_eip8130(tx);
         assert!(validator.validate_eip8130_structural(&signed).is_ok());
+    }
+
+    /// The mempool pre-filter window must never exceed the authoritative,
+    /// consensus-critical on-chain inclusion window. If it did, the pool would
+    /// admit nonce-free transactions whose `expiry` the block-inclusion replay
+    /// check (`NonceManagerStorage::check_and_mark_expiring_nonce`) rejects,
+    /// wasting block space on transactions that can never land. See the note on
+    /// `Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW`.
+    #[test]
+    fn mempool_expiry_window_within_onchain_inclusion_window() {
+        const {
+            assert!(
+                Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW
+                    <= NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW,
+                "mempool expiry window exceeds the on-chain inclusion window; raising it is a \
+                 fork-level change (bump NONCE_FREE_EXPIRY_WINDOW and resize \
+                 REPLAY_BUFFER_CAPACITY)",
+            );
+        }
     }
 
     #[test]
