@@ -1,6 +1,6 @@
 //! System test stack orchestration and lifecycle management.
 
-use std::path::PathBuf;
+use std::{num::NonZeroU64, path::PathBuf};
 
 use alloy_network::Ethereum;
 use alloy_primitives::B256;
@@ -25,6 +25,7 @@ use crate::{
 const DEFAULT_L1_CHAIN_ID: u64 = 1337;
 const DEFAULT_L2_CHAIN_ID: u64 = 84538453;
 const DEFAULT_SLOT_DURATION: u64 = 2;
+const DEFAULT_SHADOW_BLOCKS_PER_CYCLE: NonZeroU64 = NonZeroU64::new(3).unwrap();
 
 /// A complete L1+L2 stack for system tests.
 pub struct SystemTestStack {
@@ -155,6 +156,7 @@ pub struct SystemTestStackBuilder {
     verifier_l1_confs: u64,
     client_consensus_mode: L2ClientConsensusMode,
     shadow_sequencer_count: usize,
+    shadow_blocks_per_cycle: Option<NonZeroU64>,
 }
 
 impl SystemTestStackBuilder {
@@ -245,6 +247,13 @@ impl SystemTestStackBuilder {
     /// the network.
     pub const fn with_shadow_sequencers(mut self, count: usize) -> Self {
         self.shadow_sequencer_count = count;
+        self
+    }
+
+    /// Sets the number of private blocks each shadow sequencer builds per
+    /// reconciliation cycle. Defaults to [`DEFAULT_SHADOW_BLOCKS_PER_CYCLE`].
+    pub const fn with_shadow_blocks_per_cycle(mut self, blocks: NonZeroU64) -> Self {
+        self.shadow_blocks_per_cycle = Some(blocks);
         self
     }
 
@@ -371,6 +380,9 @@ impl SystemTestStackBuilder {
             verifier_l1_confs: self.verifier_l1_confs,
             client_consensus_mode: self.client_consensus_mode,
             shadow_sequencer_keys,
+            shadow_blocks_per_cycle: self
+                .shadow_blocks_per_cycle
+                .unwrap_or(DEFAULT_SHADOW_BLOCKS_PER_CYCLE),
         };
 
         let l2_stack = L2Stack::start(l2_config).await.wrap_err("Failed to start L2 stack")?;

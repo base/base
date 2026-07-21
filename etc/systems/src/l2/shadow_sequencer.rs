@@ -8,15 +8,18 @@
 //! design: build candidate blocks to validate new code without ever advancing
 //! the canonical chain tip observed by other nodes.
 //!
-//! The build-but-forget reorg behavior (a shadow re-orging itself back to the
-//! active sequencer's canonical state) is intentionally NOT implemented here; it
-//! is the subject of a follow-up change. Tests may therefore assert the desired
-//! end state and observe it fail against the current node implementation.
+//! To enable the build-then-reconcile behavior, the shadow runs with
+//! `shadow_blocks_per_cycle` set: it buffers the active sequencer's gossiped
+//! canonical payloads, builds that many private blocks per cycle, then reorgs
+//! back to the canonical chain (forgetting its private blocks) before starting
+//! the next cycle. Accepting the canonical gossip requires the shadow's
+//! `unsafe_block_signer` to match the active sequencer's address.
+
+use std::num::NonZeroU64;
 
 use alloy_genesis::ChainConfig;
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256};
 use alloy_rpc_types_engine::JwtSecret;
-use alloy_signer_local::PrivateKeySigner;
 use base_common_genesis::RollupConfig;
 use base_consensus_node::NodeMode;
 use eyre::{Result, WrapErr};
@@ -34,6 +37,12 @@ pub struct ShadowSequencerConfig {
     /// Distinct sequencer signing key. Must differ from the active sequencer key
     /// so that blocks built by this shadow are rejected as non-canonical.
     pub sequencer_key: B256,
+    /// Address of the active sequencer. Used as this shadow's `unsafe_block_signer`
+    /// so the shadow accepts the active sequencer's gossiped canonical payloads
+    /// (a prerequisite for reconciliation).
+    pub active_sequencer_address: Address,
+    /// Number of private blocks the shadow builds per reconciliation cycle.
+    pub shadow_blocks_per_cycle: NonZeroU64,
     /// L2 genesis JSON content (shared with the active stack).
     pub l2_genesis: Vec<u8>,
     /// Parsed rollup configuration (shared with the active stack).
@@ -66,16 +75,12 @@ impl ShadowSequencer {
     /// first, then the consensus node (Sequencer mode, started stopped), which is
     /// peered to the active sequencer before block production is enabled.
     ///
-    /// The consensus node uses its own signing address as `unsafe_block_signer`,
-    /// so it does not accept the active sequencer's gossiped blocks and instead
-    /// builds an independent chain from its own mempool. Its own blocks are in
-    /// turn rejected by the active network because they are signed with a key the
-    /// rest of the network does not trust.
+    /// The consensus node signs its own gossiped blocks with `sequencer_key` (a
+    /// key the rest of the network does not trust, so its blocks are rejected as
+    /// non-canonical), but sets `unsafe_block_signer` to the active sequencer's
+    /// address so it accepts the canonical payloads gossiped by the active
+    /// sequencer. Those buffered canonical payloads drive reconciliation.
     pub async fn start(config: ShadowSequencerConfig) -> Result<Self> {
-        let unsafe_block_signer = PrivateKeySigner::from_bytes(&config.sequencer_key)
-            .wrap_err("Failed to derive shadow sequencer address")?
-            .address();
-
         let builder = InProcessBuilder::start(InProcessBuilderConfig {
             genesis_json: config.l2_genesis,
             jwt_secret: config.jwt_secret,
@@ -101,10 +106,11 @@ impl ShadowSequencer {
             rpc_port: None,
             p2p_tcp_port: None,
             p2p_udp_port: None,
-            unsafe_block_signer,
+            unsafe_block_signer: config.active_sequencer_address,
             l1_slot_duration_override: Some(4),
             sequencer_stopped: true,
             verifier_l1_confs: 0,
+            shadow_blocks_per_cycle: Some(config.shadow_blocks_per_cycle),
         })
         .await
         .wrap_err("Failed to start shadow consensus")?;

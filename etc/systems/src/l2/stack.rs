@@ -6,7 +6,7 @@
 //! - Batcher (in-process, submits L2 transaction batches to L1)
 //! - Client execution layer (in-process, follows the L2 and builds pending state using Flashblocks)
 
-use std::time::Duration;
+use std::{num::NonZeroU64, time::Duration};
 
 use alloy_genesis::ChainConfig;
 use alloy_primitives::B256;
@@ -71,6 +71,8 @@ pub struct L2StackConfig {
     /// [`sequencer_key`](Self::sequencer_key) so the shadow's blocks are rejected
     /// as non-canonical by the rest of the network.
     pub shadow_sequencer_keys: Vec<B256>,
+    /// Number of private blocks each shadow sequencer builds per reconciliation cycle.
+    pub shadow_blocks_per_cycle: NonZeroU64,
 }
 
 /// Running L2 client consensus node.
@@ -180,6 +182,7 @@ impl L2Stack {
             l1_slot_duration_override: Some(4),
             sequencer_stopped: true,
             verifier_l1_confs: 0,
+            shadow_blocks_per_cycle: None,
         };
         let builder_consensus = InProcessConsensus::start(builder_consensus_config)
             .await
@@ -245,6 +248,7 @@ impl L2Stack {
                     l1_slot_duration_override: Some(4),
                     sequencer_stopped: false,
                     verifier_l1_confs: config.verifier_l1_confs,
+                    shadow_blocks_per_cycle: None,
                 };
                 let client_consensus = InProcessConsensus::start(client_consensus_config)
                     .await
@@ -298,6 +302,8 @@ impl L2Stack {
                 l1_rpc_url: l1_rpc_url.clone(),
                 l1_beacon_url: l1_beacon_url.clone(),
                 active_consensus_p2p_addr: active_consensus_p2p_addr.clone(),
+                active_sequencer_address: SEQUENCER.address,
+                shadow_blocks_per_cycle: config.shadow_blocks_per_cycle,
             })
             .await
             .wrap_err_with(|| format!("Failed to start shadow sequencer {index}"))?;

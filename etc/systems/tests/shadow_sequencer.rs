@@ -2,14 +2,23 @@
 //!
 //! A shadow sequencer builds real blocks from its own mempool but signs them
 //! with a distinct key, so the rest of the network treats those blocks as
-//! non-canonical. These tests assert that a shadow sequencer builds blocks
-//! successfully while the canonical chain tip continues to reflect the active
-//! sequencer.
+//! non-canonical. It also runs with `shadow_blocks_per_cycle` set, so after
+//! building a cycle of private blocks it reconciles back to the active
+//! sequencer's canonical chain: it reorgs away its private blocks and adopts the
+//! canonical payloads it buffered from gossip.
+//!
+//! These tests assert both halves of that behavior: shadow-only transactions
+//! never leak onto the canonical chain, and the shadow eventually converges to
+//! the canonical chain (adopting canonical blocks and discarding its private
+//! ones).
 
-use std::time::{Duration, Instant};
+use std::{
+    num::NonZeroU64,
+    time::{Duration, Instant},
+};
 
 use alloy_consensus::SignableTransaction;
-use alloy_eips::eip2718::Encodable2718;
+use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718};
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::{Provider, RootProvider};
@@ -28,12 +37,12 @@ const BLOCK_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const TX_RECEIPT_TIMEOUT: Duration = Duration::from_secs(60);
 const BALANCE_SYNC_TIMEOUT: Duration = Duration::from_secs(30);
 const NON_CANONICAL_OBSERVATION_WINDOW: Duration = Duration::from_secs(15);
-const SHADOW_REORG_TIMEOUT: Duration = Duration::from_secs(30);
+const SHADOW_CONVERGENCE_TIMEOUT: Duration = Duration::from_secs(90);
 
 static SHADOW_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[tokio::test]
-async fn shadow_builds_blocks_but_canonical_tip_reflects_active() -> Result<()> {
+async fn shadow_builds_privately_then_reconciles_to_canonical() -> Result<()> {
     let _guard = SHADOW_TEST_LOCK.lock().await;
     let system = SystemTestStackBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
@@ -78,10 +87,10 @@ async fn shadow_builds_blocks_but_canonical_tip_reflects_active() -> Result<()> 
     let shadow_receipt = wait_for_receipt(&shadow_builder, shadow_tx, TX_RECEIPT_TIMEOUT)
         .await
         .wrap_err("shadow sequencer failed to build a block containing the shadow-only tx")?;
-    assert!(
-        shadow_receipt.inner.block_number.is_some(),
-        "shadow receipt should reference a block number",
-    );
+    let divergence_height = shadow_receipt
+        .inner
+        .block_number
+        .ok_or_else(|| eyre::eyre!("shadow receipt should reference a block number"))?;
 
     assert_never_included(&active_builder, shadow_tx, NON_CANONICAL_OBSERVATION_WINDOW)
         .await
@@ -90,13 +99,60 @@ async fn shadow_builds_blocks_but_canonical_tip_reflects_active() -> Result<()> 
         .await
         .wrap_err("shadow-only tx unexpectedly appeared on the client")?;
 
-    // TARGET BEHAVIOR (future PR): once the shadow sequencer follows the
-    // canonical chain, it reorgs away its shadow-built blocks and forgets the
-    // shadow-only tx. This assertion is expected to FAIL today because the
-    // shadow reorg logic does not exist yet.
-    wait_for_shadow_to_forget(&shadow_builder, shadow_tx, SHADOW_REORG_TIMEOUT)
+    // Reconciliation: the shadow reorgs away its private block at
+    // `divergence_height` and adopts the canonical block at that height. Proving
+    // the shadow's block hash at that height now equals the canonical block hash
+    // shows the private block (and its shadow-only tx) was discarded in favor of
+    // canonical state — a robust check that does not race with the shadow-only tx
+    // being re-injected into the shadow mempool after the reorg.
+    wait_for_shadow_convergence(
+        &shadow_builder,
+        &active_builder,
+        divergence_height,
+        SHADOW_CONVERGENCE_TIMEOUT,
+    )
+    .await
+    .wrap_err("shadow did not reconcile its private block to the canonical chain")?;
+
+    // Adopting canonical payloads means the shadow now serves the canonical tx it
+    // never saw in its own mempool.
+    wait_for_receipt(&shadow_builder, canonical_tx, TX_RECEIPT_TIMEOUT)
         .await
-        .wrap_err("shadow sequencer did not reorg to canonical and forget its shadow-only tx")?;
+        .wrap_err("shadow did not adopt the canonical tx after reconciliation")?;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn shadow_reconciles_across_multiple_cycles() -> Result<()> {
+    let _guard = SHADOW_TEST_LOCK.lock().await;
+    let blocks_per_cycle = NonZeroU64::new(2).expect("nonzero");
+    let system = SystemTestStackBuilder::new()
+        .with_l1_chain_id(L1_CHAIN_ID)
+        .with_l2_chain_id(L2_CHAIN_ID)
+        .with_shadow_sequencers(1)
+        .with_shadow_blocks_per_cycle(blocks_per_cycle)
+        .build()
+        .await?;
+
+    let active_builder = system.l2_builder_provider()?;
+    let shadow_builder = system.l2_shadow_builder_provider(0)?;
+
+    // A height that can only be reached after several reconciliation cycles have
+    // advanced the shadow's anchor (3 cycles at 2 blocks/cycle).
+    let target_height = blocks_per_cycle.get() * 3;
+    wait_for_block(&active_builder, target_height + 2)
+        .await
+        .wrap_err("active sequencer did not advance far enough")?;
+
+    wait_for_shadow_convergence(
+        &shadow_builder,
+        &active_builder,
+        target_height,
+        SHADOW_CONVERGENCE_TIMEOUT,
+    )
+    .await
+    .wrap_err("shadow did not stay converged to canonical across multiple cycles")?;
 
     Ok(())
 }
@@ -194,19 +250,31 @@ async fn assert_never_included(
     Ok(())
 }
 
-async fn wait_for_shadow_to_forget(
-    provider: &RootProvider<Base>,
-    tx_hash: B256,
+async fn block_hash_at(provider: &RootProvider<Base>, height: u64) -> Result<Option<B256>> {
+    Ok(provider
+        .get_block_by_number(BlockNumberOrTag::Number(height))
+        .await?
+        .map(|block| block.header.hash))
+}
+
+async fn wait_for_shadow_convergence(
+    shadow: &RootProvider<Base>,
+    canonical: &RootProvider<Base>,
+    height: u64,
     within: Duration,
 ) -> Result<()> {
     timeout(within, async {
         loop {
-            if provider.get_transaction_receipt(tx_hash).await?.is_none() {
+            let canonical_hash = block_hash_at(canonical, height).await?;
+            let shadow_hash = block_hash_at(shadow, height).await?;
+            if let (Some(canonical_hash), Some(shadow_hash)) = (canonical_hash, shadow_hash)
+                && canonical_hash == shadow_hash
+            {
                 return Ok::<_, eyre::Error>(());
             }
-            sleep(Duration::from_secs(2)).await;
+            sleep(Duration::from_secs(1)).await;
         }
     })
     .await
-    .wrap_err("shadow sequencer still reports the shadow-only tx as included")?
+    .wrap_err("shadow chain did not converge to canonical at the target height")?
 }
