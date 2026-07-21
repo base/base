@@ -69,6 +69,12 @@ pub use pairwise::{
 mod runtime;
 pub use runtime::{MevTraderRuntime, MevTraderRuntimeConfig, RuntimeInstallError};
 
+mod victim_claim;
+pub use victim_claim::{
+    CampaignId, ClaimResult, ClaimStoreError, StoreIdentity, VictimClaim, VictimClaimConfig,
+    VictimClaimStore,
+};
+
 mod safety;
 pub use safety::{
     ArmedCriteria, ClosedReason, CRITERIA_SHA, CriteriaArtifact, Decision, DrawdownInput,

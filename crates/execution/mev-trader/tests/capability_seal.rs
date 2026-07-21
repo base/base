@@ -8,7 +8,7 @@ use std::{
 
 use serde_json::Value;
 
-const NORMAL_DEPENDENCIES: [&str; 22] = [
+const NORMAL_DEPENDENCIES: [&str; 23] = [
     "alloy-consensus",
     "alloy-eips",
     "alloy-primitives",
@@ -18,6 +18,7 @@ const NORMAL_DEPENDENCIES: [&str; 22] = [
     "base-execution-evm",
     "futures",
     "rayon",
+    "redb",
     "reth-evm",
     "reth-provider",
     "reth-revm",
@@ -147,6 +148,8 @@ fn dependency_features() -> BTreeMap<&'static str, (&'static [&'static str], boo
         ("base-execution-evm", (&[][..], true)),
         ("futures", (&[][..], true)),
         ("rayon", (&[][..], true)),
+        // R9 victim at-most-once claim store: node-local redb, no network/keys.
+        ("redb", (&[][..], true)),
         ("reth-evm", (&[][..], true)),
         ("reth-provider", (&[][..], true)),
         ("reth-revm", (&[][..], true)),
@@ -233,6 +236,7 @@ fn lockfile_contains_exact_resolved_pins() {
         ("revm-database", "15.0.2", "registry+https://github.com/rust-lang/crates.io-index"),
         ("revm-bytecode", "11.0.1", "registry+https://github.com/rust-lang/crates.io-index"),
         ("rayon", "1.12.0", "registry+https://github.com/rust-lang/crates.io-index"),
+        ("redb", "2.6.3", "registry+https://github.com/rust-lang/crates.io-index"),
         ("sha2", "0.10.9", "registry+https://github.com/rust-lang/crates.io-index"),
         ("thiserror", "2.0.18", "registry+https://github.com/rust-lang/crates.io-index"),
         ("tracing", "0.1.44", "registry+https://github.com/rust-lang/crates.io-index"),
@@ -587,6 +591,56 @@ fn scanner_ignores_non_code_and_rejects_malformed_source() {
     assert!(identifiers("/* unterminated").is_err());
     assert!(identifiers("\"unterminated").is_err());
     assert!(identifiers("r###\"unterminated").is_err());
+}
+
+/// Production source with any trailing `#[cfg(test)]` items removed.
+fn production_prefix(source: &str) -> &str {
+    source.split_once("\n#[cfg(test)]").map_or(source, |(prefix, _)| prefix)
+}
+
+#[test]
+fn r9_claim_store_is_sealed_and_bootstrap_is_provisioning_gated() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/victim_claim");
+    let module_files = ["mod.rs", "store.rs", "types.rs"];
+
+    // The provisioning surface (`bootstrap`) must be gated behind the
+    // `r9-provisioning` feature (plus cfg(test)), so the default live-node
+    // build never compiles it.
+    let modrs = fs::read_to_string(src.join("mod.rs")).expect("victim_claim mod.rs");
+    assert!(
+        modrs.contains(
+            "#[cfg(any(test, feature = \"r9-provisioning\"))]\n    pub fn bootstrap("
+        ),
+        "VictimClaimStore::bootstrap must be gated behind the r9-provisioning feature"
+    );
+
+    // No production (non-test) callsite of `bootstrap` may exist anywhere in the
+    // crate: the only permitted `bootstrap(` token is the gated definition.
+    let mut production_files: Vec<PathBuf> =
+        SOURCE_FILES.iter().map(|name| Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join(name)).collect();
+    production_files.extend(module_files.iter().map(|name| src.join(name)));
+    for path in &production_files {
+        let source = fs::read_to_string(path).unwrap_or_else(|_| panic!("source {path:?}"));
+        let production = production_prefix(&source);
+        let calls = production.matches("bootstrap(").count();
+        let definitions = production.matches("pub fn bootstrap(").count();
+        assert_eq!(calls, definitions, "unexpected production bootstrap() callsite in {path:?}");
+    }
+
+    // The victim_claim production source carries none of the forbidden
+    // capability identifiers (the seal's SOURCE_FILES scan is top-level only).
+    for name in module_files {
+        let source = fs::read_to_string(src.join(name)).unwrap_or_else(|_| panic!("source {name}"));
+        let production = production_prefix(&source);
+        let identifiers =
+            identifiers(production).unwrap_or_else(|error| panic!("malformed {name}: {error}"));
+        for forbidden in FORBIDDEN_IDENTIFIERS {
+            assert!(
+                !identifiers.contains(forbidden),
+                "forbidden identifier {forbidden} in victim_claim/{name}"
+            );
+        }
+    }
 }
 
 #[test]
