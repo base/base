@@ -259,7 +259,7 @@ jobs:
           echo "overall=$overall" >> "$GITHUB_OUTPUT"
 
       - name: Comment fork-test results on PR
-        if: github.event_name == 'pull_request' && always()
+        if: github.event_name == 'pull_request' && steps.aggregate.outcome == 'success'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
