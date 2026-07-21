@@ -181,10 +181,6 @@ impl Default for LimitClassCache {
     }
 }
 
-fn b256_from_u256(slot: U256) -> B256 {
-    B256::from(slot.to_be_bytes::<32>())
-}
-
 /// Read-only precompile storage adapter backed by a reth state provider.
 struct StateProviderPrecompileStorage<'a> {
     state: &'a dyn StateProvider,
@@ -714,6 +710,10 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
     /// Invalidates classifications affected by canonical state changes.
     pub fn invalidate_limit_class_cache(&self, diffs: &[crate::AccountStateDiff]) {
         let mut cache = self.limit_class_cache.write();
+        // Advance the generation for every classification surface change, even
+        // on a cache miss: a validation may have read the old state but not yet
+        // inserted it. Its guarded insertion or later pool admission must see a
+        // changed generation rather than retain that stale classification.
         let mut changed = false;
         for diff in diffs {
             if diff.code_changed {
@@ -1014,7 +1014,7 @@ where
         .unwrap_or(u64::MAX);
         let mut watch_set = WatchSet::new().watch(InvalidationKey::Balance(payer));
         for (address, slot) in authorization_reads {
-            watch_set.push(InvalidationKey::Slot { address, slot: b256_from_u256(slot) });
+            watch_set.push(InvalidationKey::Slot { address, slot: B256::from(slot) });
         }
         for address in authorization_code_reads {
             watch_set.push(InvalidationKey::CodeHash(address));
@@ -1030,7 +1030,7 @@ where
         {
             watch_set.push(InvalidationKey::Slot {
                 address: NonceManagerStorage::ADDRESS,
-                slot: b256_from_u256(slot),
+                slot: B256::from(slot),
             });
         }
 
@@ -1198,10 +1198,7 @@ where
         let Some(code) = state.bytecode_by_hash(&hash)? else {
             return Ok(None);
         };
-        let bytes = code.original_bytes();
-        let prefix = &Eip8130Constants::DELEGATION_INDICATOR_PREFIX;
-        Ok((bytes.len() == prefix.len() + 20 && bytes.starts_with(prefix))
-            .then(|| Address::from_slice(&bytes[prefix.len()..])))
+        Ok(code.eip7702_address())
     }
 
     fn validate_eip8130_create_freshness(

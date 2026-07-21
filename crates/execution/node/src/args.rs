@@ -381,7 +381,11 @@ pub struct RollupArgs {
     #[arg(long = "rollup.mempool-payer-limit", default_value_t = DEFAULT_PAYMENT_LIMIT)]
     pub mempool_payer_limit: u32,
 
-    /// Additional trusted delegation targets for balance-bounded locked payers.
+    /// Additional operator-trusted delegation targets for balance-bounded locked payers.
+    ///
+    /// This is local, non-consensus mempool policy and may intentionally differ between nodes.
+    /// Only configure implementations whose locked mode prevents ETH outflows other than the gas
+    /// they sponsor; an unsafe target weakens this node's aggregate payer-balance admission bound.
     #[arg(long = "rollup.mempool-trusted-delegation-targets", value_delimiter = ',')]
     pub mempool_trusted_delegation_targets: Vec<Address>,
 

@@ -70,27 +70,6 @@ impl AccountStateDiff {
     }
 }
 
-fn admission_for<T>(transaction: &T) -> Option<Admission>
-where
-    T: BasePooledTx + reth_transaction_pool::EthPoolTransaction,
-{
-    transaction.as_eip8130()?;
-    let watch_set = transaction.watch_set().cloned()?;
-    let class = *transaction.limit_class()?;
-    Some(Admission {
-        hash: *transaction.hash(),
-        sender: class.sender,
-        payer: class.payer,
-        sender_locked: class.sender_locked,
-        payer_locked: class.payer_locked,
-        payer_trusted: class.payer_trusted,
-        payer_balance: class.payer_balance,
-        max_cost: class.max_cost,
-        priority: transaction.priority_fee_or_price(),
-        watch_set,
-    })
-}
-
 /// Wrapper around reth's transaction pool that adds a 2D nonce sidecar for EIP-8130 channels.
 pub struct BaseTransactionPool<
     Client,
@@ -197,6 +176,25 @@ where
     pub fn with_guard_limits(self, limits: GuardLimits) -> Self {
         *self.guard.write() = MempoolGuard::new(limits);
         self
+    }
+
+    /// Builds guard admission metadata carried by a validated EIP-8130 transaction.
+    pub fn admission_for(transaction: &T) -> Option<Admission> {
+        transaction.as_eip8130()?;
+        let watch_set = transaction.watch_set().cloned()?;
+        let class = *transaction.limit_class()?;
+        Some(Admission {
+            hash: *transaction.hash(),
+            sender: class.sender,
+            payer: class.payer,
+            sender_locked: class.sender_locked,
+            payer_locked: class.payer_locked,
+            payer_trusted: class.payer_trusted,
+            payer_balance: class.payer_balance,
+            max_cost: class.max_cost,
+            priority: transaction.priority_fee_or_price(),
+            watch_set,
+        })
     }
 
     /// Returns the wrapped reth pool.
@@ -399,7 +397,7 @@ where
         }
         let Some(admission) = validated
             .as_valid_transaction()
-            .and_then(|transaction| admission_for(transaction.transaction()))
+            .and_then(|transaction| Self::admission_for(transaction.transaction()))
         else {
             return Ok(false);
         };
@@ -466,7 +464,7 @@ where
         };
         let mut guard = self.guard.write();
         let replaced_was_tracked = replaced.is_some_and(|hash| guard.release(&hash));
-        let Some(admission) = admission_for(&transaction.transaction) else {
+        let Some(admission) = Self::admission_for(&transaction.transaction) else {
             debug_assert!(!pre_admitted, "non-EIP-8130 transaction was pre-admitted");
             if pre_admitted {
                 guard.release(&hash);
@@ -562,7 +560,7 @@ where
                     .transaction
                     .limit_class()
                     .map(|class| class.classification_generation);
-                let admission = admission_for(&validated.transaction);
+                let admission = Self::admission_for(&validated.transaction);
                 let outcome = nonce_pool.insert_validated(validated, state_nonce)?;
                 // nonce_pool serializes sidecar replacement. Never acquire it while holding guard.
                 let mut guard = self.guard.write();
@@ -1727,7 +1725,7 @@ mod tests {
             max_cost: U256::from(1_000),
         });
 
-        let admission = admission_for(&transaction).expect("EIP-8130 admission");
+        let admission = IntegrationPool::admission_for(&transaction).expect("EIP-8130 admission");
         assert_eq!(admission.hash, *transaction.hash());
         assert_eq!(admission.sender, address);
     }
@@ -2299,7 +2297,7 @@ mod tests {
             max_cost: U256::from(1_000),
         });
         let hash = *transaction.hash();
-        let admission = admission_for(&transaction).unwrap();
+        let admission = IntegrationPool::admission_for(&transaction).unwrap();
         pool.nonce_pool.write().insert_validated(valid_pool_transaction(transaction), 0).unwrap();
         pool.guard.write().try_admit(admission).unwrap();
 
