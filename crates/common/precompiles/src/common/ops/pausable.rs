@@ -93,8 +93,8 @@ mod tests {
     use base_precompile_storage::BasePrecompileError;
 
     use crate::{
-        B20PausableFeature, B20TokenRole, IB20, InMemoryPolicy, InMemoryTokenAccounting, Pausable,
-        TestToken, Token,
+        B20PausableFeature, B20TokenRole, FakePolicyAccounting, IB20, InMemoryTokenAccounting,
+        Pausable, TestToken, Token,
     };
 
     const CALLER: Address = Address::repeat_byte(0xaa);
@@ -103,14 +103,14 @@ mod tests {
     fn make_token() -> TestToken {
         TestToken::with_storage_and_policy(
             InMemoryTokenAccounting::new(TOKEN_ADDR),
-            InMemoryPolicy::new(),
+            FakePolicyAccounting::new(),
         )
     }
 
     fn token_with_role(role: B20TokenRole, account: Address) -> TestToken {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
         accounting.roles.insert((role.id(), account), true);
-        TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
+        TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new())
     }
 
     #[test]
@@ -155,7 +155,7 @@ mod tests {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
         accounting.paused = B20PausableFeature::mask(IB20::PausableFeature::TRANSFER)
             | B20PausableFeature::mask(IB20::PausableFeature::BURN);
-        let token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+        let token = TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new());
 
         assert_eq!(
             token.paused_features().unwrap(),
@@ -209,7 +209,7 @@ mod tests {
     fn non_privileged_unpause_without_role_reverts() {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
         accounting.paused = B20PausableFeature::mask(IB20::PausableFeature::TRANSFER);
-        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+        let mut token = TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new());
 
         assert_eq!(
             token.unpause(CALLER, vec![IB20::PausableFeature::TRANSFER], false).unwrap_err(),
@@ -225,7 +225,7 @@ mod tests {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
         accounting.paused = B20PausableFeature::mask(IB20::PausableFeature::TRANSFER);
         accounting.roles.insert((B20TokenRole::Unpause.id(), CALLER), true);
-        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+        let mut token = TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new());
 
         token.unpause(CALLER, vec![IB20::PausableFeature::TRANSFER], false).unwrap();
 

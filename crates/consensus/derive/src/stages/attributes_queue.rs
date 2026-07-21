@@ -121,7 +121,8 @@ where
 
         // Prepare the payload attributes
         let tx_count = batch.transactions.len();
-        let mut attributes = self.builder.prepare_payload_attributes(parent, batch.epoch()).await?;
+        let mut attributes =
+            self.builder.prepare_payload_attributes(parent, batch.epoch(), None).await?;
         attributes.no_tx_pool = Some(true);
         match attributes.transactions {
             Some(ref mut txs) => txs.extend(batch.transactions),
@@ -240,6 +241,7 @@ mod tests {
             gas_limit: None,
             eip_1559_params: None,
             min_base_fee: None,
+            timestamp_millis_part: None,
         }
     }
 

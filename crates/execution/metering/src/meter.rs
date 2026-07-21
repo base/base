@@ -8,40 +8,20 @@ use alloy_primitives::{
     map::{HashMap, HashSet},
 };
 use base_bundles::{BundleExtensions, BundleTxs, OpcodeGas, ParsedBundle, TransactionResult};
-use base_common_evm::L1BlockInfo;
+use base_common_evm::{BaseSpecId, BaseUpgrade, L1BlockInfo};
+use base_common_precompiles::{
+    ActivationRegistryStorage, B20FactoryStorage, B20Variant, PolicyRegistryStorage,
+};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use eyre::{Result as EyreResult, eyre};
 use reth_evm::{ConfigureEvm, Evm as _, execute::BlockBuilder};
 use reth_primitives_traits::{Account, SealedHeader};
 use reth_revm::{database::StateProviderDatabase, db::State, primitives::KECCAK_EMPTY};
-use reth_trie_common::{HashedPostState, TrieInput};
 use revm_bytecode::opcode::OpCode;
-use revm_database::states::{BundleState, CacheState, bundle_state::BundleRetention};
+use revm_database::states::{BundleState, CacheState};
 
-use crate::{inspector::MeteringInspector, metrics::Metrics, transaction::validate_tx};
-
-/// Computes the pending trie input from a pre-built [`HashedPostState`].
-///
-/// This function records metrics for cache misses and compute duration.
-pub(crate) fn compute_pending_trie_input<SP>(
-    state_provider: &SP,
-    hashed_state: HashedPostState,
-) -> EyreResult<PendingTrieInput>
-where
-    SP: reth_provider::StateProvider + ?Sized,
-{
-    Metrics::pending_trie_cache_misses().increment(1);
-    let start = Instant::now();
-
-    let (_state_root, trie_updates) =
-        state_provider.state_root_with_updates(hashed_state.clone())?;
-
-    let elapsed = start.elapsed();
-    Metrics::pending_trie_compute_duration().record(elapsed.as_secs_f64());
-
-    Ok(PendingTrieInput { trie_updates, hashed_state })
-}
+use crate::{inspector::MeteringInspector, transaction::validate_tx};
 
 /// Converts a pending [`BundleState`] into a [`CacheState`] for use with
 /// `with_cached_prestate()`.
@@ -60,19 +40,6 @@ fn cache_state_from_bundle_state(bundle_state: &BundleState) -> CacheState {
     }
 }
 
-/// Pre-computed trie input from pending state for efficient state root calculation.
-///
-/// When metering bundles on top of pending flashblocks, we first compute the trie updates
-/// and hashed state for the pending state. This can then be prepended to the bundle's
-/// trie input, so state root calculation only performs I/O for the bundle's changes.
-#[derive(Debug, Clone)]
-pub struct PendingTrieInput {
-    /// Trie updates from computing pending state root.
-    pub trie_updates: reth_trie_common::updates::TrieUpdates,
-    /// Hashed state from pending flashblocks.
-    pub hashed_state: reth_trie_common::HashedPostState,
-}
-
 /// Pending state from flashblocks used as the base for bundle metering.
 ///
 /// This contains the accumulated state changes from pending flashblocks,
@@ -81,9 +48,6 @@ pub struct PendingTrieInput {
 pub struct PendingState {
     /// The accumulated bundle of state changes from pending flashblocks.
     pub bundle_state: Arc<BundleState>,
-    /// Optional pre-computed trie input for faster state root calculation.
-    /// If provided, state root calculation skips recomputing the pending state's trie.
-    pub trie_input: Option<PendingTrieInput>,
 }
 
 const BLOCK_TIME: u64 = 2; // 2 seconds per block
@@ -104,86 +68,24 @@ pub struct MeterBundleOutput {
     pub total_gas_fees: U256,
     /// Bundle hash
     pub bundle_hash: B256,
-    /// Total time in microseconds (includes transaction execution and state root calculation)
+    /// Total time spent executing the bundle in microseconds.
     pub total_time_us: u128,
-    /// State root calculation time in microseconds
-    pub state_root_time_us: u128,
-    /// Count of account leaves in the bundle's `HashedPostState`: one per modified account that
-    /// survives in the post-state trie. Proportional to gas (each account touch costs gas) and
-    /// does not reflect trie depth.
-    pub state_root_account_leaf_count: u64,
-    /// Count of account branch/removal nodes emitted by `TrieUpdates` during state root
-    /// calculation. These are intermediate trie nodes that were rebuilt or removed, and their
-    /// count scales with trie depth — the structural cost that gas does not price.
-    pub state_root_account_branch_count: u64,
-    /// Count of storage slot leaves in the bundle's `HashedPostState`: one per modified non-zero
-    /// storage slot. Like account leaves, proportional to gas and does not reflect trie depth.
-    pub state_root_storage_leaf_count: u64,
-    /// Count of storage branch/removal nodes emitted by `TrieUpdates` during state root
-    /// calculation, restricted to tries the bundle actually modified. Like account branches,
-    /// these scale with trie depth.
-    pub state_root_storage_branch_count: u64,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-struct StateRootTrieNodeCounts {
-    account_leaves: u64,
-    account_branches: u64,
-    storage_leaves: u64,
-    storage_branches: u64,
-}
-
-/// Counts surviving leaves in the bundle's `HashedPostState`.
-///
-/// These are the values that changed, not intermediate trie structure. Account leaves are one per
-/// modified surviving account; storage leaves are one per modified non-zero storage slot. Deleted
-/// accounts and zero-valued storage removals are represented through trie updates, not here.
-fn count_state_root_leaf_nodes(hashed_state: &HashedPostState) -> StateRootTrieNodeCounts {
-    let account_leaves =
-        hashed_state.accounts.values().filter(|account| account.is_some()).count() as u64;
-    let storage_leaves = hashed_state
-        .storages
-        .values()
-        .map(|storage| storage.storage.values().filter(|value| !value.is_zero()).count())
-        .sum::<usize>() as u64;
-
-    StateRootTrieNodeCounts { account_leaves, storage_leaves, ..Default::default() }
-}
-
-/// Adds branch/removal counts from `TrieUpdates` emitted during state root calculation.
-///
-/// These are intermediate trie nodes that were rebuilt or removed — the structural work whose cost
-/// scales with trie depth. The `changed_storage_tries` filter restricts storage-side attribution
-/// to tries the bundle actually modified, excluding cached pending-state tries and empty-storage
-/// deletion markers.
-fn add_state_root_trie_update_counts(
-    counts: &mut StateRootTrieNodeCounts,
-    changed_storage_tries: &HashSet<B256>,
-    trie_updates: &reth_trie_common::updates::TrieUpdates,
-) {
-    counts.account_branches = counts.account_branches.saturating_add(
-        trie_updates
-            .account_nodes_ref()
-            .len()
-            .saturating_add(trie_updates.removed_nodes_ref().len()) as u64,
-    );
-    counts.storage_branches = counts.storage_branches.saturating_add(
-        trie_updates
-            .storage_tries_ref()
-            .iter()
-            .filter(|(hashed_address, _)| changed_storage_tries.contains(*hashed_address))
-            .map(|(_, updates)| updates.len())
-            .sum::<usize>() as u64,
-    );
 }
 
 /// Opcodes and precompiles to track during bundle metering.
+///
+/// This is for targeted transaction and bundle simulation. It is not the primary production
+/// failure-rate monitoring path for Beryl precompiles.
 #[derive(Debug, Clone, Default)]
 pub struct MeteredOpcodes {
     /// EVM opcodes to track.
     pub opcodes: HashSet<OpCode>,
     /// Precompile addresses to track, keyed by address with display name.
     pub precompiles: HashMap<Address, String>,
+    /// Whether to track dynamic Beryl B-20 asset-token precompile addresses.
+    pub beryl_b20_asset_precompiles: bool,
+    /// Whether to track dynamic Beryl B-20 stablecoin-token precompile addresses.
+    pub beryl_b20_stablecoin_precompiles: bool,
 }
 
 /// Constructs a precompile address from a `u16` value.
@@ -216,30 +118,103 @@ const PRECOMPILES: &[(&str, Address)] = &[
     ("P256VERIFY", precompile_addr(0x100)),
 ];
 
+const BERYL_B20_FACTORY_PRECOMPILE: &str = "BERYL_B20_FACTORY";
+const BERYL_ACTIVATION_REGISTRY_PRECOMPILE: &str = "BERYL_ACTIVATION_REGISTRY";
+const BERYL_POLICY_REGISTRY_PRECOMPILE: &str = "BERYL_POLICY_REGISTRY";
+const BERYL_B20_ASSET_PRECOMPILE: &str = "BERYL_B20_ASSET";
+const BERYL_B20_STABLECOIN_PRECOMPILE: &str = "BERYL_B20_STABLECOIN";
+
+/// Beryl singleton precompile names and their fixed addresses.
+const BERYL_PRECOMPILES: &[(&str, Address)] = &[
+    (BERYL_B20_FACTORY_PRECOMPILE, B20FactoryStorage::ADDRESS),
+    (BERYL_ACTIVATION_REGISTRY_PRECOMPILE, ActivationRegistryStorage::ADDRESS),
+    (BERYL_POLICY_REGISTRY_PRECOMPILE, PolicyRegistryStorage::ADDRESS),
+];
+
 impl MeteredOpcodes {
     /// Returns true if no opcodes or precompiles are configured.
     pub fn is_empty(&self) -> bool {
-        self.opcodes.is_empty() && self.precompiles.is_empty()
+        self.opcodes.is_empty()
+            && self.precompiles.is_empty()
+            && !self.beryl_b20_asset_precompiles
+            && !self.beryl_b20_stablecoin_precompiles
     }
 
-    /// Adds all known precompiles to the metered set.
+    /// Returns true if any fixed or dynamic precompile metering is configured.
+    pub fn meters_any_precompile(&self) -> bool {
+        !self.precompiles.is_empty()
+            || self.beryl_b20_asset_precompiles
+            || self.beryl_b20_stablecoin_precompiles
+    }
+
+    /// Adds all known standard and Beryl precompiles to the metered set.
     pub fn with_all_precompiles(mut self) -> Self {
         for &(name, addr) in PRECOMPILES {
             self.precompiles.insert(addr, name.to_string());
         }
+        for &(name, addr) in BERYL_PRECOMPILES {
+            self.precompiles.insert(addr, name.to_string());
+        }
+        self.beryl_b20_asset_precompiles = true;
+        self.beryl_b20_stablecoin_precompiles = true;
         self
+    }
+
+    /// Filters the precompile set to those active in `spec`, consuming `self`.
+    pub fn for_spec(mut self, spec: BaseSpecId) -> Self {
+        if spec.is_enabled_in(BaseUpgrade::Beryl) {
+            return self;
+        }
+
+        for &(_, addr) in BERYL_PRECOMPILES {
+            self.precompiles.remove(&addr);
+        }
+        self.beryl_b20_asset_precompiles = false;
+        self.beryl_b20_stablecoin_precompiles = false;
+        self
+    }
+
+    /// Returns the configured display name for a metered precompile address.
+    pub fn precompile_name(&self, address: Address) -> Option<&str> {
+        self.precompiles
+            .get(&address)
+            .map(String::as_str)
+            .or_else(|| self.beryl_b20_token_precompile_name(address))
+    }
+
+    /// Returns true when `address` is in the metered precompile set.
+    pub fn meters_precompile(&self, address: Address) -> bool {
+        self.precompile_name(address).is_some()
+    }
+
+    /// Returns the dynamic Beryl B-20 token precompile name for `address`, when enabled.
+    pub fn beryl_b20_token_precompile_name(&self, address: Address) -> Option<&'static str> {
+        match B20Variant::from_address(address) {
+            Some(B20Variant::Asset) if self.beryl_b20_asset_precompiles => {
+                Some(BERYL_B20_ASSET_PRECOMPILE)
+            }
+            Some(B20Variant::Stablecoin) if self.beryl_b20_stablecoin_precompiles => {
+                Some(BERYL_B20_STABLECOIN_PRECOMPILE)
+            }
+            _ => None,
+        }
     }
 
     /// Parses opcode and precompile name strings into a [`MeteredOpcodes`] filter.
     ///
-    /// Recognizes EVM opcode names (e.g., `SSTORE`, `CALL`) and precompile names
-    /// (e.g., `ECREC`, `BLAKE2F`). Matching is case-insensitive.
+    /// Recognizes EVM opcode names (e.g., `SSTORE`, `CALL`), fixed precompile
+    /// names (e.g., `ECREC`, `BLAKE2F`, `BERYL_B20_FACTORY`), and dynamic Beryl
+    /// B-20 token address family names (`BERYL_B20_ASSET`, `BERYL_B20_STABLECOIN`).
+    /// Matching is case-insensitive.
     pub fn parse(names: &[String]) -> EyreResult<Self> {
         let opcode_lookup: HashMap<&str, OpCode> =
             (0..=255u8).filter_map(|byte| OpCode::new(byte).map(|op| (op.as_str(), op))).collect();
 
-        let precompile_lookup: HashMap<&str, (Address, &str)> =
-            PRECOMPILES.iter().map(|&(name, addr)| (name, (addr, name))).collect();
+        let precompile_lookup: HashMap<&str, (Address, &str)> = PRECOMPILES
+            .iter()
+            .chain(BERYL_PRECOMPILES.iter())
+            .map(|&(name, addr)| (name, (addr, name)))
+            .collect();
 
         let mut result = Self::default();
         for name in names {
@@ -248,6 +223,10 @@ impl MeteredOpcodes {
                 result.opcodes.insert(opcode);
             } else if let Some(&(addr, display_name)) = precompile_lookup.get(upper.as_str()) {
                 result.precompiles.insert(addr, display_name.to_string());
+            } else if upper == BERYL_B20_ASSET_PRECOMPILE {
+                result.beryl_b20_asset_precompiles = true;
+            } else if upper == BERYL_B20_STABLECOIN_PRECOMPILE {
+                result.beryl_b20_stablecoin_precompiles = true;
             } else {
                 return Err(eyre!("unknown opcode or precompile: {name}"));
             }
@@ -305,40 +284,11 @@ where
     // Get bundle hash
     let bundle_hash = bundle.bundle_hash();
 
-    // Get pending trie input before starting timers. This ensures we only measure
-    // the bundle's incremental I/O cost, not I/O from pending flashblocks.
-    let pending_trie = pending_state
-        .as_ref()
-        .map(|ps| -> EyreResult<PendingTrieInput> {
-            // Use cached trie input if available, otherwise compute it
-            ps.trie_input.as_ref().map_or_else(
-                || {
-                    let hashed = state_provider.hashed_post_state(&ps.bundle_state);
-                    compute_pending_trie_input(&state_provider, hashed)
-                },
-                |cached| {
-                    Metrics::pending_trie_cache_hits().increment(1);
-                    Ok(cached.clone())
-                },
-            )
-        })
-        .transpose()?;
-
     // Create state database
     let state_db = StateProviderDatabase::new(state_provider);
 
-    // Track bundle state changes. When metering on top of pending flashblocks, seed execution
-    // from a cache prestate instead of `with_bundle_prestate()`. The two approaches produce
-    // identical execution results, but differ in what `take_bundle()` returns:
-    //
-    // - `with_bundle_prestate()`: `take_bundle()` includes the pending prestate in its output,
-    //   so `hashed_post_state()` generates prefix sets for every pending path. The trie walker
-    //   then rebuilds all of them — even though `prepend_cached` already provides those nodes —
-    //   making state root time proportional to pending state size.
-    //
-    // - `with_cached_prestate()`: `take_bundle()` returns only the bundle's delta, so prefix
-    //   sets cover only bundle-changed paths. The trie walker skips pending paths (reusing
-    //   cached nodes) and state root time is proportional to bundle size alone.
+    // Seed execution from the pending cache prestate so bundles observe non-canonical state
+    // already published by flashblocks.
     let mut db = if let Some(ref ps) = pending_state {
         State::builder()
             .with_database(state_db)
@@ -414,8 +364,8 @@ where
         let evm_config = BaseEvmConfig::base(chain_spec);
         let evm_env = evm_config.next_evm_env(header, &attributes)?;
         let spec = evm_env.cfg_env.spec;
-        let precompile_addrs = metered_opcodes.precompiles.keys().copied().collect();
-        let inspector = MeteringInspector::new(precompile_addrs, metered_opcodes.opcodes.clone());
+        let metered_opcodes = Arc::new(metered_opcodes.clone().for_spec(spec));
+        let inspector = MeteringInspector::new(Arc::clone(&metered_opcodes));
         let evm = evm_config.evm_with_env_and_inspector(&mut db, evm_env, inspector);
         let ctx = evm_config.context_for_next_block(header, attributes)?;
         let mut builder = evm_config.create_block_builder(evm, header, ctx);
@@ -465,12 +415,12 @@ where
                 .collect();
 
             for (addr, usage) in &precompile_data {
-                if let Some(name) = metered_opcodes.precompiles.get(addr)
+                if let Some(name) = metered_opcodes.precompile_name(*addr)
                     && usage.count > 0
                 {
                     opcode_gas.push(OpcodeGas {
                         contract_address: *addr,
-                        opcode: name.clone(),
+                        opcode: name.to_string(),
                         count: usage.count,
                         gas_used: usage.gas_used,
                     });
@@ -496,94 +446,26 @@ where
         }
     }
 
-    // Calculate state root and measure its calculation time. If pending flashblocks were present,
-    // `bundle_update` now contains only this bundle's delta; the cached pending trie is prepended
-    // below so state-root work stays incremental.
-    db.merge_transitions(BundleRetention::Reverts);
-    let bundle_update = db.take_bundle();
-
-    // Gets the number of storage slots modified from every account
-    let storage_slots_modified: usize =
-        bundle_update.state().values().map(|account| account.storage.len()).sum();
-    Metrics::storage_slots_modified().record(storage_slots_modified as f64);
-
-    // Gets the number of accounts modified
-    let accounts_modified: usize = bundle_update.state().len();
-    Metrics::accounts_modified().record(accounts_modified as f64);
-    // `state_root_*_with_updates` reports structural trie updates for the entire overlay we hand
-    // to `reth`, not just the bundle delta. When the bundle made no state changes, those updates
-    // can come entirely from cached pending trie nodes or root-maintenance bookkeeping. In that
-    // case we still time the calculation, but we intentionally attribute zero trie nodes to the
-    // bundle itself.
-    let has_bundle_state_changes = accounts_modified > 0;
-
-    let state_provider = db.database.as_ref();
-
-    let state_root_start = Instant::now();
-    let hashed_state = state_provider.hashed_post_state(&bundle_update);
-    let changed_storage_tries = hashed_state.storages.keys().copied().collect::<HashSet<_>>();
-    let mut trie_node_counts = count_state_root_leaf_nodes(&hashed_state);
-
-    if let Some(cached_trie) = pending_trie {
-        // Build the trie input so the state root reflects canonical + pending + bundle.
-        //
-        // `from_state` generates prefix sets only for bundle-changed paths.
-        // `prepend_cached` merges the pending state's trie nodes and hashed values
-        // WITHOUT adding prefix sets — so the trie walker reuses cached nodes for
-        // pending-only paths and only rebuilds paths the bundle actually changed.
-        //
-        // Note: `prepend_cached` (not `prepend_self`) is essential here.
-        // `prepend_self` would merge prefix sets from the pending state, causing the
-        // walker to redundantly rebuild every pending path and defeating the
-        // optimization.
-        let mut trie_input = TrieInput::from_state(hashed_state);
-        trie_input.prepend_cached(cached_trie.trie_updates, cached_trie.hashed_state);
-        let (_, trie_updates) = state_provider.state_root_from_nodes_with_updates(trie_input)?;
-        if has_bundle_state_changes {
-            add_state_root_trie_update_counts(
-                &mut trie_node_counts,
-                &changed_storage_tries,
-                &trie_updates,
-            );
-        }
-    } else {
-        // No pending state, just calculate bundle state root
-        let (_, trie_updates) = state_provider.state_root_with_updates(hashed_state)?;
-        if has_bundle_state_changes {
-            add_state_root_trie_update_counts(
-                &mut trie_node_counts,
-                &changed_storage_tries,
-                &trie_updates,
-            );
-        }
-    }
-
-    let state_root_time_us = state_root_start.elapsed().as_micros();
     let total_time_us = total_start.elapsed().as_micros();
 
-    Ok(MeterBundleOutput {
-        results,
-        total_gas_used,
-        total_gas_fees,
-        bundle_hash,
-        total_time_us,
-        state_root_time_us,
-        state_root_account_leaf_count: trie_node_counts.account_leaves,
-        state_root_account_branch_count: trie_node_counts.account_branches,
-        state_root_storage_leaf_count: trie_node_counts.storage_leaves,
-        state_root_storage_branch_count: trie_node_counts.storage_branches,
-    })
+    Ok(MeterBundleOutput { results, total_gas_used, total_gas_fees, bundle_hash, total_time_us })
 }
 
 #[cfg(test)]
 mod tests {
     use alloy_eips::Encodable2718;
     use alloy_primitives::{Address, Bytes, keccak256, utils::Unit};
-    use alloy_sol_types::SolCall;
+    use alloy_sol_types::{SolCall, SolValue};
     use base_bundles::{Bundle, ParsedBundle};
     use base_common_consensus::BaseTransactionSigned;
+    use base_common_precompiles::{
+        ActivationFeature, IActivationRegistry, IB20, IB20Factory, IB20Stablecoin, IPolicyRegistry,
+    };
+    use base_execution_chainspec::BaseChainSpecBuilder;
     use base_node_runner::test_utils::TestHarness;
-    use base_test_utils::{Account, ContractFactory, SimpleStorage};
+    use base_test_utils::{
+        Account, ContractFactory, DEVNET_CHAIN_ID, SimpleStorage, build_test_genesis,
+    };
     use eyre::Context;
     use reth_provider::StateProviderFactory;
     use reth_revm::{bytecode::Bytecode, state::AccountInfo};
@@ -607,6 +489,49 @@ mod tests {
         };
 
         ParsedBundle::try_from(bundle).map_err(|e| eyre::eyre!(e))
+    }
+
+    fn create_call_tx(
+        chain_id: u64,
+        nonce: u64,
+        to: Address,
+        input: impl Into<Bytes>,
+        gas_limit: u64,
+    ) -> BaseTransactionSigned {
+        let signed_tx = TransactionBuilder::default()
+            .signer(Account::Alice.signer_b256())
+            .chain_id(chain_id)
+            .nonce(nonce)
+            .to(to)
+            .gas_limit(gas_limit)
+            .max_fee_per_gas(MIN_BASEFEE as u128)
+            .max_priority_fee_per_gas(0)
+            .input(input.into())
+            .into_eip1559();
+
+        BaseTransactionSigned::Eip1559(signed_tx.as_eip1559().expect("eip1559 transaction").clone())
+    }
+
+    fn assert_precompile_gas(
+        output: &MeterBundleOutput,
+        tx_index: usize,
+        address: Address,
+        opcode: &str,
+    ) {
+        let tx_result = output.results.get(tx_index).expect("transaction result should exist");
+        let entry = tx_result
+            .opcode_gas
+            .iter()
+            .find(|entry| entry.contract_address == address && entry.opcode == opcode)
+            .unwrap_or_else(|| {
+                panic!(
+                    "tx {tx_index} should report {opcode} gas for {address}; got {:?}",
+                    tx_result.opcode_gas
+                )
+            });
+
+        assert!(entry.count > 0, "{opcode} count should be non-zero");
+        assert!(entry.gas_used > 0, "{opcode} gas_used should be non-zero");
     }
 
     #[tokio::test]
@@ -638,11 +563,6 @@ mod tests {
         assert_eq!(output.total_gas_fees, U256::ZERO);
         // Even empty bundles have some EVM setup overhead
         assert!(output.total_time_us > 0);
-        assert!(output.state_root_time_us > 0);
-        assert_eq!(output.state_root_account_leaf_count, 0);
-        assert_eq!(output.state_root_account_branch_count, 0);
-        assert_eq!(output.state_root_storage_leaf_count, 0);
-        assert_eq!(output.state_root_storage_branch_count, 0);
         assert_eq!(output.bundle_hash, keccak256([]));
 
         Ok(())
@@ -692,12 +612,6 @@ mod tests {
         assert_eq!(output.results.len(), 1);
         let result = &output.results[0];
         assert!(output.total_time_us > 0);
-        assert!(output.state_root_time_us > 0);
-        assert!(
-            output.state_root_account_leaf_count > 0 || output.state_root_account_branch_count > 0
-        );
-        assert_eq!(output.state_root_storage_leaf_count, 0);
-        assert_eq!(output.state_root_storage_branch_count, 0);
 
         assert_eq!(result.from_address, Account::Alice.address());
         assert_eq!(result.to_address, Some(to));
@@ -763,13 +677,8 @@ mod tests {
         })?;
 
         assert_eq!(output.results.len(), 1);
-        assert!(
-            output.state_root_account_leaf_count > 0 || output.state_root_account_branch_count > 0
-        );
-        assert!(
-            output.state_root_storage_leaf_count > 0 || output.state_root_storage_branch_count > 0,
-            "storage-writing transactions should attribute storage trie work"
-        );
+        assert!(output.total_time_us > 0);
+        assert!(output.results[0].execution_time_us > 0);
 
         Ok(())
     }
@@ -1152,6 +1061,157 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn meter_bundle_precompile_gas_for_beryl_calls() -> eyre::Result<()> {
+        let chain_spec = Arc::new(
+            BaseChainSpecBuilder::default()
+                .chain(DEVNET_CHAIN_ID.into())
+                .genesis(build_test_genesis())
+                .activation_admin_address(Account::Alice.address())
+                .beryl_activated()
+                .build(),
+        );
+        let harness = TestHarness::builder().with_chain_spec(chain_spec).build().await?;
+        let chain_id = harness.chain_id();
+        let sender = Account::Alice.address();
+        let asset_salt = B256::repeat_byte(0x11);
+        let stablecoin_salt = B256::repeat_byte(0x22);
+        let (asset_address, _) = B20Variant::Asset.compute_address(sender, asset_salt);
+        let (stablecoin_address, _) =
+            B20Variant::Stablecoin.compute_address(sender, stablecoin_salt);
+
+        let asset_params = IB20Factory::B20AssetCreateParams {
+            version: B20Variant::Asset.supported_version(),
+            name: "Metered Asset".to_string(),
+            symbol: "MTA".to_string(),
+            initialAdmin: sender,
+            decimals: 6,
+        };
+        let stablecoin_params = IB20Factory::B20StablecoinCreateParams {
+            version: B20Variant::Stablecoin.supported_version(),
+            name: "Metered Stablecoin".to_string(),
+            symbol: "MTS".to_string(),
+            initialAdmin: sender,
+            currency: "USD".to_string(),
+        };
+
+        let txs = vec![
+            create_call_tx(
+                chain_id,
+                0,
+                ActivationRegistryStorage::ADDRESS,
+                IActivationRegistry::activateCall { feature: ActivationFeature::B20Asset.id() }
+                    .abi_encode(),
+                100_000,
+            ),
+            create_call_tx(
+                chain_id,
+                1,
+                ActivationRegistryStorage::ADDRESS,
+                IActivationRegistry::activateCall {
+                    feature: ActivationFeature::B20Stablecoin.id(),
+                }
+                .abi_encode(),
+                100_000,
+            ),
+            create_call_tx(
+                chain_id,
+                2,
+                B20FactoryStorage::ADDRESS,
+                IB20Factory::createB20Call {
+                    variant: IB20Factory::B20Variant::ASSET,
+                    salt: asset_salt,
+                    params: asset_params.abi_encode().into(),
+                    initCalls: Vec::new(),
+                }
+                .abi_encode(),
+                2_000_000,
+            ),
+            create_call_tx(
+                chain_id,
+                3,
+                asset_address,
+                IB20::totalSupplyCall {}.abi_encode(),
+                200_000,
+            ),
+            create_call_tx(
+                chain_id,
+                4,
+                B20FactoryStorage::ADDRESS,
+                IB20Factory::createB20Call {
+                    variant: IB20Factory::B20Variant::STABLECOIN,
+                    salt: stablecoin_salt,
+                    params: stablecoin_params.abi_encode().into(),
+                    initCalls: Vec::new(),
+                }
+                .abi_encode(),
+                2_000_000,
+            ),
+            create_call_tx(
+                chain_id,
+                5,
+                stablecoin_address,
+                IB20Stablecoin::currencyCall {}.abi_encode(),
+                200_000,
+            ),
+            create_call_tx(
+                chain_id,
+                6,
+                PolicyRegistryStorage::ADDRESS,
+                IPolicyRegistry::policyExistsCall {
+                    policyId: PolicyRegistryStorage::ALWAYS_ALLOW_ID,
+                }
+                .abi_encode(),
+                200_000,
+            ),
+        ];
+
+        let latest = harness.latest_block();
+        let header = latest.sealed_header().clone();
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
+            .context("getting state provider")?;
+        let parsed_bundle = create_parsed_bundle(txs)?;
+
+        let output = meter_bundle(MeterBundleInput {
+            state_provider,
+            chain_spec: harness.chain_spec(),
+            bundle: parsed_bundle,
+            header: header.clone(),
+            parent_beacon_block_root: header.parent_beacon_block_root(),
+            pending_state: None,
+            l1_block_info: L1BlockInfo::default(),
+            metered_opcodes: Arc::new(MeteredOpcodes::default().with_all_precompiles()),
+        })?;
+
+        assert_eq!(output.results.len(), 7);
+        assert_precompile_gas(
+            &output,
+            0,
+            ActivationRegistryStorage::ADDRESS,
+            BERYL_ACTIVATION_REGISTRY_PRECOMPILE,
+        );
+        assert_precompile_gas(
+            &output,
+            1,
+            ActivationRegistryStorage::ADDRESS,
+            BERYL_ACTIVATION_REGISTRY_PRECOMPILE,
+        );
+        assert_precompile_gas(&output, 2, B20FactoryStorage::ADDRESS, BERYL_B20_FACTORY_PRECOMPILE);
+        assert_precompile_gas(&output, 3, asset_address, BERYL_B20_ASSET_PRECOMPILE);
+        assert_precompile_gas(&output, 4, B20FactoryStorage::ADDRESS, BERYL_B20_FACTORY_PRECOMPILE);
+        assert_precompile_gas(&output, 5, stablecoin_address, BERYL_B20_STABLECOIN_PRECOMPILE);
+        assert_precompile_gas(
+            &output,
+            6,
+            PolicyRegistryStorage::ADDRESS,
+            BERYL_POLICY_REGISTRY_PRECOMPILE,
+        );
+
+        Ok(())
+    }
+
     #[test]
     fn metered_opcodes_parse_rejects_unknown() {
         let result = MeteredOpcodes::parse(&["NOTAREALOPCODE".to_string()]);
@@ -1188,6 +1248,84 @@ mod tests {
         let result = MeteredOpcodes::parse(&["CLZ".to_string(), "P256VERIFY".to_string()]).unwrap();
         assert_eq!(result.opcodes.len(), 1, "CLZ should be recognized as an opcode");
         assert!(result.precompiles.values().any(|n| n == "P256VERIFY"));
+    }
+
+    #[test]
+    fn metered_opcodes_parse_recognizes_beryl_precompiles() {
+        let result = MeteredOpcodes::parse(&[
+            "BERYL_B20_FACTORY".to_string(),
+            "beryl_b20_asset".to_string(),
+            "Beryl_B20_Stablecoin".to_string(),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            result.precompile_name(B20FactoryStorage::ADDRESS),
+            Some(BERYL_B20_FACTORY_PRECOMPILE)
+        );
+        assert!(result.beryl_b20_asset_precompiles);
+        assert!(result.beryl_b20_stablecoin_precompiles);
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn metered_opcodes_with_all_precompiles_includes_beryl_precompiles() {
+        let result = MeteredOpcodes::default().with_all_precompiles();
+        let (asset, _) =
+            B20Variant::Asset.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22));
+        let (stablecoin, _) = B20Variant::Stablecoin
+            .compute_address(Address::repeat_byte(0x33), B256::repeat_byte(0x44));
+        let (unsupported, _) = B20Variant::compute_address_for_discriminant(
+            Address::repeat_byte(0x55),
+            2,
+            B256::repeat_byte(0x66),
+        );
+
+        assert_eq!(
+            result.precompile_name(B20FactoryStorage::ADDRESS),
+            Some(BERYL_B20_FACTORY_PRECOMPILE)
+        );
+        assert_eq!(
+            result.precompile_name(ActivationRegistryStorage::ADDRESS),
+            Some(BERYL_ACTIVATION_REGISTRY_PRECOMPILE)
+        );
+        assert_eq!(
+            result.precompile_name(PolicyRegistryStorage::ADDRESS),
+            Some(BERYL_POLICY_REGISTRY_PRECOMPILE)
+        );
+        assert_eq!(result.precompile_name(asset), Some(BERYL_B20_ASSET_PRECOMPILE));
+        assert_eq!(result.precompile_name(stablecoin), Some(BERYL_B20_STABLECOIN_PRECOMPILE));
+        assert_eq!(result.precompile_name(unsupported), None);
+    }
+
+    #[test]
+    fn metered_opcodes_for_spec_filters_beryl_before_activation() {
+        let result = MeteredOpcodes::default()
+            .with_all_precompiles()
+            .for_spec(BaseSpecId::new(BaseUpgrade::Azul));
+        let (asset, _) =
+            B20Variant::Asset.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22));
+
+        assert_eq!(result.precompile_name(B20FactoryStorage::ADDRESS), None);
+        assert_eq!(result.precompile_name(ActivationRegistryStorage::ADDRESS), None);
+        assert_eq!(result.precompile_name(PolicyRegistryStorage::ADDRESS), None);
+        assert_eq!(result.precompile_name(asset), None);
+        assert!(result.precompile_name(precompile_addr(0x01)).is_some());
+    }
+
+    #[test]
+    fn metered_opcodes_for_spec_keeps_beryl_after_activation() {
+        let result = MeteredOpcodes::default()
+            .with_all_precompiles()
+            .for_spec(BaseSpecId::new(BaseUpgrade::Beryl));
+        let (asset, _) =
+            B20Variant::Asset.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22));
+
+        assert_eq!(
+            result.precompile_name(B20FactoryStorage::ADDRESS),
+            Some(BERYL_B20_FACTORY_PRECOMPILE)
+        );
+        assert_eq!(result.precompile_name(asset), Some(BERYL_B20_ASSET_PRECOMPILE));
     }
 
     #[tokio::test]
@@ -1241,7 +1379,6 @@ mod tests {
         })?;
 
         assert!(output.total_time_us > 0);
-        assert!(output.state_root_time_us > 0);
 
         Ok(())
     }
@@ -1310,7 +1447,6 @@ mod tests {
 
         assert_eq!(output.results.len(), 2);
         assert!(output.total_time_us > 0);
-        assert!(output.state_root_time_us > 0);
 
         // Check first transaction
         let result_1 = &output.results[0];
@@ -1344,61 +1480,6 @@ mod tests {
 
         assert!(result_1.execution_time_us > 0, "execution_time_us should be greater than zero");
         assert!(result_2.execution_time_us > 0, "execution_time_us should be greater than zero");
-
-        Ok(())
-    }
-
-    /// Test that `state_root_time_us` is always <= `total_time_us`
-    #[tokio::test]
-    async fn meter_bundle_state_root_time_invariant() -> eyre::Result<()> {
-        let harness = TestHarness::new().await?;
-        let latest = harness.latest_block();
-        let header = latest.sealed_header().clone();
-
-        let to = Address::random();
-        let signed_tx = TransactionBuilder::default()
-            .signer(Account::Alice.signer_b256())
-            .chain_id(harness.chain_id())
-            .nonce(0)
-            .to(to)
-            .value(1_000)
-            .gas_limit(21_000)
-            .max_fee_per_gas(10)
-            .max_priority_fee_per_gas(1)
-            .into_eip1559();
-
-        let tx = BaseTransactionSigned::Eip1559(
-            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
-        );
-
-        let state_provider = harness
-            .blockchain_provider()
-            .state_by_block_hash(latest.hash())
-            .context("getting state provider")?;
-
-        let parsed_bundle = create_parsed_bundle(vec![tx])?;
-
-        let output = meter_bundle(MeterBundleInput {
-            state_provider,
-            chain_spec: harness.chain_spec(),
-            bundle: parsed_bundle,
-            header: header.clone(),
-            parent_beacon_block_root: header.parent_beacon_block_root(),
-            pending_state: None,
-            l1_block_info: L1BlockInfo::default(),
-            metered_opcodes: Arc::new(MeteredOpcodes::default()),
-        })?;
-
-        // Verify invariant: total time must include state root time
-        assert!(
-            output.total_time_us >= output.state_root_time_us,
-            "total_time_us ({}) should be >= state_root_time_us ({})",
-            output.total_time_us,
-            output.state_root_time_us
-        );
-
-        // State root time should be non-zero
-        assert!(output.state_root_time_us > 0, "state_root_time_us should be greater than zero");
 
         Ok(())
     }
@@ -1493,7 +1574,7 @@ mod tests {
             Vec::<Vec<(Address, Option<Option<AccountInfo>>, Vec<(U256, U256)>)>>::new(),
             Vec::<(B256, Bytecode)>::new(),
         );
-        let pending_state = PendingState { bundle_state: Arc::new(bundle_state), trie_input: None };
+        let pending_state = PendingState { bundle_state: Arc::new(bundle_state) };
 
         // Transaction with nonce=0 — "too low" relative to pending nonce of 5
         let to = Address::random();
@@ -1542,8 +1623,7 @@ mod tests {
         Ok(())
     }
 
-    /// Verifies pending flashblock prestate is loaded into the execution cache, not the output
-    /// bundle. This keeps later trie prefix invalidation scoped to the simulated bundle delta.
+    /// Verifies pending flashblock prestate is loaded into the execution cache.
     #[test]
     fn cached_prestate_does_not_leak_into_bundle_output() -> eyre::Result<()> {
         let pending_bundle = BundleState::new(
@@ -1579,14 +1659,6 @@ mod tests {
             pending_account.account.as_ref().expect("pending account").info.nonce,
             5,
             "execution must read the pending prestate nonce from the cache"
-        );
-
-        db.merge_transitions(BundleRetention::Reverts);
-        let bundle_update = db.take_bundle();
-
-        assert!(
-            bundle_update.state().is_empty(),
-            "cached prestate must not be included in the simulated bundle output"
         );
 
         Ok(())
@@ -1756,13 +1828,9 @@ mod tests {
         Ok(())
     }
 
-    /// Exercises the full optimized path: pending state with a cached trie input.
-    ///
-    /// Computes a real [`PendingTrieInput`] from pending state, then meters a bundle
-    /// on top of it. This covers the `prepend_cached` code path with the
-    /// `with_cached_prestate` change, verifying the two work correctly together.
+    /// Meters a bundle on top of pending flashblock state.
     #[tokio::test]
-    async fn meter_bundle_with_pending_state_and_cached_trie() -> eyre::Result<()> {
+    async fn meter_bundle_with_pending_state_and_cached_prestate() -> eyre::Result<()> {
         let harness = TestHarness::new().await?;
         let latest = harness.latest_block();
         let header = latest.sealed_header().clone();
@@ -1792,17 +1860,7 @@ mod tests {
             Vec::<(B256, Bytecode)>::new(),
         );
 
-        // Compute the pending trie input
-        let state_provider = harness
-            .blockchain_provider()
-            .state_by_block_hash(latest.hash())
-            .context("getting state provider for trie")?;
-        let hashed = state_provider.hashed_post_state(&bundle_state);
-        let trie_input = compute_pending_trie_input(&state_provider, hashed)?;
-        drop(state_provider);
-
-        let pending_state =
-            PendingState { bundle_state: Arc::new(bundle_state), trie_input: Some(trie_input) };
+        let pending_state = PendingState { bundle_state: Arc::new(bundle_state) };
 
         // Create a bundle tx: Alice (nonce=1 from pending) sends to a random address
         let to = Address::random();
@@ -1841,13 +1899,7 @@ mod tests {
         assert_eq!(output.results.len(), 1);
         assert_eq!(output.total_gas_used, 21_000);
         assert!(output.total_time_us > 0);
-        assert!(output.state_root_time_us > 0);
-        assert!(
-            output.total_time_us >= output.state_root_time_us,
-            "total_time_us ({}) should be >= state_root_time_us ({})",
-            output.total_time_us,
-            output.state_root_time_us
-        );
+        assert!(output.results[0].execution_time_us > 0);
 
         Ok(())
     }

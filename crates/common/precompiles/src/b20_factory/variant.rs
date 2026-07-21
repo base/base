@@ -93,10 +93,12 @@ impl B20Variant {
         }
     }
 
-    /// Returns the default fixed decimal precision for variants without stored decimals.
-    pub const fn decimals(self) -> u8 {
+    /// Returns the fixed decimal precision for this variant, or `None` for variants (like
+    /// `Asset`) where decimals are per-token and supplied at creation time via init params.
+    pub const fn decimals(self) -> Option<u8> {
         match self {
-            Self::Asset | Self::Stablecoin => 6,
+            Self::Stablecoin => Some(6),
+            Self::Asset => None,
         }
     }
 
@@ -105,6 +107,14 @@ impl B20Variant {
         match self {
             Self::Asset => ActivationFeature::B20Asset,
             Self::Stablecoin => ActivationFeature::B20Stablecoin,
+        }
+    }
+
+    /// Returns the stable metric label for this B-20 variant.
+    pub const fn as_label(self) -> &'static str {
+        match self {
+            Self::Asset => "asset",
+            Self::Stablecoin => "stablecoin",
         }
     }
 
@@ -118,7 +128,14 @@ impl B20Variant {
     /// Returns the address and the 9-byte hash tail embedded in the address.
     pub fn compute_address(self, creator: Address, salt: B256) -> (Address, [u8; 9]) {
         let hash = keccak256((creator, salt).abi_encode());
+        self.compute_address_from_hash(hash)
+    }
 
+    /// Computes the deterministic token address from a pre-computed `keccak256(creator, salt)` hash.
+    ///
+    /// Use when the hash is already available (e.g. after charging keccak gas via `ctx.metered_keccak256`)
+    /// to avoid re-encoding and re-hashing.
+    pub fn compute_address_from_hash(self, hash: B256) -> (Address, [u8; 9]) {
         let mut tail = [0u8; 9];
         tail.copy_from_slice(&hash[..9]);
 

@@ -109,7 +109,7 @@ mod tests {
             index,
             base: None,
             diff: ExecutionPayloadFlashblockDeltaV1::default(),
-            metadata: Metadata { block_number },
+            metadata: Metadata::new(block_number),
         }
     }
 

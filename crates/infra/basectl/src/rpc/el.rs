@@ -1,21 +1,81 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use alloy_consensus::{Transaction, transaction::SignerRecoverable};
-use alloy_eips::eip2718::{Decodable2718, Encodable2718};
+use alloy_eips::{
+    BlockId,
+    eip2718::{Decodable2718, Encodable2718},
+};
 use alloy_primitives::{Address, B256, Bytes};
-use alloy_provider::{Provider, ProviderBuilder, network::TransactionResponse};
+use alloy_provider::{Network, Provider, ProviderBuilder, network::TransactionResponse};
+use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_eth::BlockNumberOrTag;
-use anyhow::Result;
+use alloy_transport_http::Http;
+use anyhow::{Context, Result, anyhow};
 use base_common_consensus::BaseTxEnvelope;
 use base_common_network::Base;
 use futures::{StreamExt, stream};
 use tokio::sync::mpsc;
 use tracing::warn;
+use url::Url;
 
 use super::fetch_safe_and_latest;
 use crate::tui::Toast;
 
 const CONCURRENT_BLOCK_FETCHES: usize = 16;
+
+/// Fetches a single L2 block via `eth_getBlockByHash` or `eth_getBlockByNumber`.
+///
+/// `reference` selects the block by hash, number, or tag (alloy's `BlockId`
+/// dispatches between the two RPC methods internally). The `pending` tag is
+/// not supported because alloy's typed `Block` does not accept a null
+/// number/hash; pass a number, hash, or `latest` / `safe` / `finalized` /
+/// `earliest`.
+pub async fn fetch_block(
+    rpc: &Url,
+    reference: BlockId,
+) -> Result<<Base as Network>::BlockResponse> {
+    let provider = ProviderBuilder::new()
+        .disable_recommended_fillers()
+        .network::<Base>()
+        .connect(rpc.as_str())
+        .await
+        .with_context(|| format!("connecting to L2 RPC at {rpc}"))?;
+    provider
+        .get_block(reference)
+        .await
+        .with_context(|| format!("fetching block {reference}"))?
+        .ok_or_else(|| anyhow!("block {reference} not found"))
+}
+
+/// Fetches the L2 chain ID via `eth_chainId` with an explicit request timeout.
+pub async fn fetch_l2_chain_id(rpc: &Url) -> Result<u64> {
+    connect_l2_provider(rpc)
+        .await?
+        .get_chain_id()
+        .await
+        .with_context(|| format!("fetching eth_chainId from {rpc}"))
+}
+
+/// Fetches the latest L2 block number via `eth_blockNumber` with an explicit request timeout.
+pub async fn fetch_l2_block_number(rpc: &Url) -> Result<u64> {
+    connect_l2_provider(rpc)
+        .await?
+        .get_block_number()
+        .await
+        .with_context(|| format!("fetching eth_blockNumber from {rpc}"))
+}
+
+async fn connect_l2_provider(rpc: &Url) -> Result<impl Provider<Base>> {
+    let http_client = alloy_transport_http::reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .with_context(|| format!("building L2 HTTP client for {rpc}"))?;
+    let transport = Http::with_client(http_client, rpc.clone());
+    Ok(ProviderBuilder::new()
+        .disable_recommended_fillers()
+        .network::<Base>()
+        .connect_client(RpcClient::new(transport, false)))
+}
 
 /// DA and gas information for a single L2 block.
 #[derive(Debug, Clone)]

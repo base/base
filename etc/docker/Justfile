@@ -69,6 +69,10 @@ smoke:
 # Runs full devnet checks (status + smoke tests)
 checks: status smoke
 
+# Sends an ingress transaction and verifies transaction events reached audit-archiver Postgres
+tx-observability-smoke:
+    ./etc/scripts/devnet/transaction-events-smoke.sh
+
 # Stream FB's from the builder via websocket
 flashblocks:
     @command -v flashblocks-websocket-client >/dev/null 2>&1 || go install github.com/danyalprout/flashblocks-websocket-client@latest
@@ -78,20 +82,20 @@ flashblocks:
 logs *containers:
     docker compose {{ _env }} {{ _ha }} {{ _all_profiles }} logs -f {{ containers }}
 
-# Stream logs from the sequencer's execution (EL) and consensus (CL) layers
+# Stream logs from the primary unified sequencer
 sequencer-logs:
-    docker compose {{ _env }} {{ _ha }} logs -f base-builder base-builder-cl
+    docker compose {{ _env }} {{ _ha }} logs -f base-builder
 
 # Stream logs from the devnet ZK prover services
 zk-logs *containers:
-    docker compose {{ _env }} {{ _ha }} logs -f {{ if containers == "" { "base-prover-zk zk-prover-postgres" } else { containers } }}
+    docker compose {{ _env }} {{ _ha }} logs -f {{ if containers == "" { "base-prover-service base-prover-zk-host prover-service-postgres" } else { containers } }}
 
 # Stop only the devnet ZK prover services, leaving the rest of devnet running
 zk-down:
-    -docker compose {{ _env }} {{ _ha }} stop base-prover-zk zk-prover-postgres
-    -docker compose {{ _env }} {{ _ha }} rm -f base-prover-zk zk-prover-postgres
+    -docker compose {{ _env }} {{ _ha }} stop base-prover-zk-host base-prover-service prover-service-postgres
+    -docker compose {{ _env }} {{ _ha }} rm -f base-prover-zk-host base-prover-service prover-service-postgres
 
-# Follow the active raft leader's CL logs, switching automatically on failover
+# Follow the active raft leader's unified sequencer logs, switching automatically on failover
 follow-leader:
     ./etc/scripts/devnet/follow-leader.sh
 
@@ -105,19 +109,19 @@ conductor:
 
 # Stops devnet+ingress, deletes data, and starts fresh with full ingress stack (eth-l1)
 ingress: ingress-down _build-setup-image (_build-rust-images "ingress" "dev")
-    docker compose {{ _env_eth }} {{ _ha }} -f etc/docker/docker-compose.ingress.yml {{ _eth }} up -d --no-build
+    docker compose {{ _env_eth }} {{ _base }} -f etc/docker/docker-compose.ingress.yml {{ _eth }} up -d --no-build
 
 # Stops devnet+ingress and deletes all data
 ingress-down:
-    -docker compose {{ _env }} {{ _ha }} -f etc/docker/docker-compose.ingress.yml {{ _all_profiles }} down
+    -docker compose {{ _env }} {{ _base }} -f etc/docker/docker-compose.ingress.yml {{ _all_profiles }} down
     -docker run --rm -v "$(pwd)/.devnet:/devnet" alpine sh -c 'rm -rf /devnet/*'
 
 # Stream logs from devnet+ingress containers (optionally specify container names)
 ingress-logs *containers:
-    docker compose {{ _env }} {{ _ha }} -f etc/docker/docker-compose.ingress.yml {{ _all_profiles }} logs -f {{ containers }}
+    docker compose {{ _env }} {{ _base }} -f etc/docker/docker-compose.ingress.yml {{ _all_profiles }} logs -f {{ containers }}
 
-# Builds one of the shared Rust service images (default: client)
-build-image target='client' profile='dev':
+# Builds one of the shared Rust service images (default: base)
+build-image target='base' profile='dev':
     #!/usr/bin/env bash
     set -euo pipefail
     case "$(uname -m)" in
@@ -129,11 +133,11 @@ build-image target='client' profile='dev':
     case "{{ profile }}" in
       dev|profiling)
         case "{{ target }}" in
-          zk-prover|devnet) elf_require=0 ;;
+          zk-host|devnet) elf_require=0 ;;
         esac
         ;;
     esac
-    PROFILE="{{ profile }}" BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" PLATFORM_PAIR="${platform_pair}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ target }}" --load
+    PROFILE="{{ profile }}" ZK_HOST_PROFILE=release BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" PLATFORM_PAIR="${platform_pair}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ target }}" --load
 
 # Prepares Docker images needed for system tests
 pull-images:
@@ -190,11 +194,11 @@ _build-rust-images group profile='dev':
     case "{{ profile }}" in
       dev|profiling)
         case "{{ group }}" in
-          devnet) elf_require=0 ;;
+          devnet|ingress) elf_require=0 ;;
         esac
         ;;
     esac
-    PROFILE="{{ profile }}" BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" PLATFORM_PAIR="${platform_pair}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ group }}" --load
+    PROFILE="{{ profile }}" ZK_HOST_PROFILE=release BASE_SUCCINCT_ELF_REQUIRE="${elf_require}" PLATFORM_PAIR="${platform_pair}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ group }}" --load
 
 [private]
 _up-devnet compose_profile l1_mode zk:
@@ -246,7 +250,7 @@ _up-devnet compose_profile l1_mode zk:
           just --justfile {{ source_file() }} _build-nitro-host-local
           just --justfile {{ source_file() }} _build-rust-images "devnet-l3" "dev"
         fi
-        SP1_PROVER=dry-run docker compose "${env_files[@]}" "${compose_files[@]}" "${l1_profile[@]}" up -d --no-build
+        docker compose "${env_files[@]}" "${compose_files[@]}" "${l1_profile[@]}" up -d --no-build --remove-orphans
         ;;
       cluster)
         if [ -z "${AWS_ACCESS_KEY_ID:-}" ] || [ -z "${AWS_SECRET_ACCESS_KEY:-}" ]; then
@@ -261,7 +265,6 @@ _up-devnet compose_profile l1_mode zk:
           echo "  mkdir -p \"$(dirname "$cluster_config")\"" >&2
           echo "  cat > \"$cluster_config\" <<'EOF'" >&2
           echo "sp1:" >&2
-          echo "  prover: cluster" >&2
           echo "  cluster_api_endpoint: https://your-sp1-cluster.example" >&2
           echo "  cluster_timeout_hours: 24" >&2
           echo "artifact:" >&2
@@ -275,7 +278,6 @@ _up-devnet compose_profile l1_mode zk:
         cluster_env="$(mktemp)"
         trap 'rm -f "$cluster_env"' EXIT
         python3 {{ _yaml_to_env }} "$cluster_config" "$cluster_env" \
-          --map sp1.prover=SP1_PROVER \
           --map sp1.cluster_api_endpoint=SP1_CLUSTER_API_ENDPOINT \
           --map sp1.cluster_timeout_hours=SP1_CLUSTER_TIMEOUT_HOURS \
           --map artifact.s3_bucket=CLI_S3_BUCKET \
@@ -284,7 +286,6 @@ _up-devnet compose_profile l1_mode zk:
           --map aws.default_region=AWS_DEFAULT_REGION \
           --map prover.default_sequence_window=DEFAULT_SEQUENCE_WINDOW \
           --map logging.rust_log=RUST_LOG \
-          --default SP1_PROVER=cluster \
           --default SP1_CLUSTER_TIMEOUT_HOURS=24 \
           --default CLI_S3_REGION=us-east-1 \
           --default AWS_DEFAULT_REGION=us-east-1 \
@@ -300,7 +301,7 @@ _up-devnet compose_profile l1_mode zk:
           just --justfile {{ source_file() }} _build-nitro-host-local
           just --justfile {{ source_file() }} _build-rust-images "devnet-l3" "dev"
         fi
-        docker compose "${env_files[@]}" --env-file "$cluster_env" "${compose_files[@]}" "${l1_profile[@]}" up -d --no-build
+        docker compose "${env_files[@]}" --env-file "$cluster_env" "${compose_files[@]}" "${l1_profile[@]}" up -d --no-build --remove-orphans
         ;;
       *)
         echo "ERROR: zk must be 'dry-run' or 'cluster' (got '${zk_mode}')" >&2

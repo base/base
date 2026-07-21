@@ -22,7 +22,7 @@ use reth_codecs::{
 
 use crate::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, BaseTypedTransaction, DEPOSIT_TX_TYPE_ID,
-    DepositReceipt, EIP8130_TX_TYPE_ID, OpTxType, TxDeposit,
+    DepositReceipt, EIP8130_TX_TYPE_ID, Eip8130Receipt, OpTxType, TxDeposit, TxEip8130,
 };
 
 // ---------------------------------------------------------------------------
@@ -157,9 +157,7 @@ impl Compact for BaseTypedTransaction {
             Self::Eip1559(tx) => tx.to_compact(out),
             Self::Eip7702(tx) => tx.to_compact(out),
             Self::Deposit(tx) => tx.to_compact(out),
-            Self::Eip8130(_) => unimplemented!(
-                "Compact encoding for EIP-8130 BaseTypedTransaction is not yet implemented"
-            ),
+            Self::Eip8130(tx) => tx.to_compact(out),
         };
         identifier
     }
@@ -187,9 +185,10 @@ impl Compact for BaseTypedTransaction {
                 let (tx, buf) = Compact::from_compact(buf, buf.len());
                 (Self::Deposit(tx), buf)
             }
-            OpTxType::Eip8130 => unimplemented!(
-                "Compact decoding for EIP-8130 BaseTypedTransaction is not yet implemented"
-            ),
+            OpTxType::Eip8130 => {
+                let (tx, buf) = TxEip8130::from_compact(buf, buf.len());
+                (Self::Eip8130(tx), buf)
+            }
         }
     }
 }
@@ -201,14 +200,24 @@ impl Compact for BaseTypedTransaction {
 impl reth_codecs::alloy::transaction::ToTxCompact for BaseTxEnvelope {
     fn to_tx_compact(&self, buf: &mut (impl BufMut + AsMut<[u8]>)) {
         match self {
-            Self::Legacy(tx) => tx.tx().to_compact(buf),
-            Self::Eip2930(tx) => tx.tx().to_compact(buf),
-            Self::Eip1559(tx) => tx.tx().to_compact(buf),
-            Self::Eip7702(tx) => tx.tx().to_compact(buf),
-            Self::Deposit(tx) => tx.to_compact(buf),
-            Self::Eip8130(_) => unimplemented!(
-                "Compact encoding for EIP-8130 BaseTxEnvelope is not yet implemented"
-            ),
+            Self::Legacy(tx) => {
+                tx.tx().to_compact(buf);
+            }
+            Self::Eip2930(tx) => {
+                tx.tx().to_compact(buf);
+            }
+            Self::Eip1559(tx) => {
+                tx.tx().to_compact(buf);
+            }
+            Self::Eip7702(tx) => {
+                tx.tx().to_compact(buf);
+            }
+            Self::Deposit(tx) => {
+                tx.to_compact(buf);
+            }
+            Self::Eip8130(tx) => {
+                tx.to_compact(buf);
+            }
         };
     }
 }
@@ -243,9 +252,14 @@ impl reth_codecs::alloy::transaction::FromTxCompact for BaseTxEnvelope {
                 let tx = Sealed::new(tx);
                 (Self::Deposit(tx), buf)
             }
-            OpTxType::Eip8130 => unimplemented!(
-                "Compact decoding for EIP-8130 BaseTxEnvelope is not yet implemented"
-            ),
+            OpTxType::Eip8130 => {
+                let (tx, buf) = Compact::from_compact(buf, buf.len());
+                // EIP-8130 carries sender_auth / payer_auth inside the signed
+                // payload itself, so the outer envelope signature is only a
+                // placeholder mandated by the trait contract.
+                let _ = signature;
+                (Self::Eip8130(tx), buf)
+            }
         }
     }
 }
@@ -254,8 +268,8 @@ impl reth_codecs::alloy::transaction::FromTxCompact for BaseTxEnvelope {
 // Envelope – BaseTxEnvelope
 // ---------------------------------------------------------------------------
 
-/// Deposit signature placeholder (all zeros).
-const DEPOSIT_SIGNATURE: Signature = Signature::new(U256::ZERO, U256::ZERO, false);
+/// Placeholder signature used for transaction types without an ECDSA signature.
+const PLACEHOLDER_SIGNATURE: Signature = Signature::new(U256::ZERO, U256::ZERO, false);
 
 impl reth_codecs::alloy::transaction::Envelope for BaseTxEnvelope {
     fn signature(&self) -> &Signature {
@@ -269,7 +283,7 @@ impl reth_codecs::alloy::transaction::Envelope for BaseTxEnvelope {
             // does. Both Deposit and EIP-8130 AA transactions carry their own auth model
             // and have no meaningful ECDSA signature: callers MUST NOT feed this value
             // into ECDSA recovery — it is an all-zero placeholder.
-            Self::Deposit(_) | Self::Eip8130(_) => &DEPOSIT_SIGNATURE,
+            Self::Deposit(_) | Self::Eip8130(_) => &PLACEHOLDER_SIGNATURE,
         }
     }
 
@@ -299,6 +313,46 @@ impl Compact for BaseTxEnvelope {
 // Compact – BaseReceipt (via CompactZstd helper)
 // ---------------------------------------------------------------------------
 
+/// Backward-compatible `Compact` wrapper for the EIP-8130 per-phase statuses
+/// stored as the trailing field of [`CompactBaseReceipt`].
+///
+/// The reth `Compact` derive reads a trailing `Vec`/`Cow` field by calling
+/// `decode_varuint` on the remaining buffer, which panics when that buffer is
+/// empty. Receipts written before this field existed (every legacy/EIP-1559/
+/// deposit receipt already on disk) have no trailing bytes, so decoding them
+/// with the derive would panic. This wrapper makes the addition backward
+/// compatible:
+///
+/// * `from_compact` returns an empty value when no trailing bytes remain, so
+///   pre-existing on-disk receipts decode unchanged.
+/// * `to_compact` writes nothing when the statuses are empty, so non-EIP-8130
+///   receipts (and EIP-8130 receipts with empty `calls`) stay byte-identical to
+///   the current on-disk format and never grow the encoding.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct CompactPhaseStatuses(Vec<u8>);
+
+impl Compact for CompactPhaseStatuses {
+    fn to_compact<B>(&self, buf: &mut B) -> usize
+    where
+        B: BufMut + AsMut<[u8]>,
+    {
+        if self.0.is_empty() {
+            return 0;
+        }
+        self.0.to_compact(buf)
+    }
+
+    fn from_compact(buf: &[u8], len: usize) -> (Self, &[u8]) {
+        // Receipts written before this field existed have no trailing bytes;
+        // decode them as empty rather than reading past the end of the buffer.
+        if buf.is_empty() {
+            return (Self(Vec::new()), buf);
+        }
+        let (statuses, buf) = Vec::<u8>::from_compact(buf, len);
+        (Self(statuses), buf)
+    }
+}
+
 #[derive(CompactZstd)]
 #[reth_codecs(crate = "reth_codecs")]
 #[reth_zstd(
@@ -313,6 +367,12 @@ struct CompactBaseReceipt<'a> {
     logs: Cow<'a, Vec<alloy_primitives::Log>>,
     deposit_nonce: Option<u64>,
     deposit_receipt_version: Option<u64>,
+    /// EIP-8130 per-phase execution statuses. Persisted to the node-local
+    /// database so `eth_getTransactionReceipt` can surface `phaseStatuses`;
+    /// excluded from the consensus receipt encoding. Empty for non-8130
+    /// receipts. Must remain the last field — see [`CompactPhaseStatuses`] for
+    /// the backward-compatibility contract with pre-existing on-disk receipts.
+    eip8130_phase_statuses: CompactPhaseStatuses,
 }
 
 impl<'a> From<&'a BaseReceipt> for CompactBaseReceipt<'a> {
@@ -331,6 +391,11 @@ impl<'a> From<&'a BaseReceipt> for CompactBaseReceipt<'a> {
             } else {
                 None
             },
+            eip8130_phase_statuses: if let BaseReceipt::Eip8130(receipt) = receipt {
+                CompactPhaseStatuses(receipt.phase_statuses.clone())
+            } else {
+                CompactPhaseStatuses(Vec::new())
+            },
             tx_type: receipt.tx_type(),
         }
     }
@@ -345,6 +410,7 @@ impl From<CompactBaseReceipt<'_>> for BaseReceipt {
             logs,
             deposit_nonce,
             deposit_receipt_version,
+            eip8130_phase_statuses,
         } = receipt;
 
         let inner =
@@ -359,7 +425,7 @@ impl From<CompactBaseReceipt<'_>> for BaseReceipt {
                 Self::Deposit(DepositReceipt { inner, deposit_nonce, deposit_receipt_version })
             }
             OpTxType::Eip8130 => {
-                unimplemented!("Compact decoding for EIP-8130 BaseReceipt is not yet implemented")
+                Self::Eip8130(Eip8130Receipt::new(inner, eip8130_phase_statuses.0))
             }
         }
     }
@@ -460,4 +526,85 @@ impl reth_primitives_traits::NodePrimitives for BasePrimitives {
     type BlockBody = BaseBlockBody;
     type SignedTx = BaseTxEnvelope;
     type Receipt = BaseReceipt;
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_consensus::Receipt;
+    use alloy_primitives::Log;
+
+    use super::*;
+
+    #[test]
+    fn compact_phase_statuses_empty_writes_nothing_and_decodes_empty() {
+        // Empty statuses must encode to zero bytes so non-8130 receipts (and
+        // empty-`calls` 8130 receipts) keep the pre-existing on-disk format.
+        let mut buf = Vec::new();
+        let written = CompactPhaseStatuses(Vec::new()).to_compact(&mut buf);
+        assert_eq!(written, 0);
+        assert!(buf.is_empty());
+
+        // An empty trailing buffer (a receipt written before this field existed)
+        // must decode to empty rather than panic.
+        let (decoded, rest) = CompactPhaseStatuses::from_compact(&[], 0);
+        assert_eq!(decoded, CompactPhaseStatuses(Vec::new()));
+        assert!(rest.is_empty());
+    }
+
+    #[test]
+    fn compact_phase_statuses_nonempty_roundtrips() {
+        let statuses = CompactPhaseStatuses(vec![0x01, 0x00]);
+        let mut buf = Vec::new();
+        statuses.to_compact(&mut buf);
+        assert!(!buf.is_empty());
+        let (decoded, _) = CompactPhaseStatuses::from_compact(&buf, buf.len());
+        assert_eq!(decoded, statuses);
+    }
+
+    #[test]
+    fn base_receipt_compact_decode_tolerates_missing_phase_statuses() {
+        // A non-8130 receipt encodes with zero trailing phase-status bytes, so
+        // its `Compact` byte stream is identical to receipts written before the
+        // `eip8130_phase_statuses` field existed. Decoding must not panic and
+        // must reproduce the original receipt — proving the field addition is
+        // backward compatible with pre-existing on-disk receipts.
+        let receipt = BaseReceipt::Legacy(Receipt {
+            status: true.into(),
+            cumulative_gas_used: 21_000,
+            logs: vec![Log::default()],
+        });
+
+        let mut buf = Vec::new();
+        let len = receipt.to_compact(&mut buf);
+        let (decoded, _) = BaseReceipt::from_compact(&buf, len);
+
+        assert_eq!(decoded, receipt);
+    }
+
+    #[test]
+    fn base_receipt_compact_roundtrips_eip8130_phase_statuses() {
+        // Pins that `eip8130_phase_statuses` is wired through `CompactBaseReceipt`
+        // as the trailing field: a non-empty status array must survive a full
+        // encode/decode round-trip. Reordering or dropping the field (so an 8130
+        // receipt decodes via the empty-trailing tolerance path) would lose the
+        // statuses and fail this assertion.
+        let receipt = BaseReceipt::Eip8130(crate::Eip8130Receipt::new(
+            Receipt {
+                status: true.into(),
+                cumulative_gas_used: 21_000,
+                logs: vec![Log::default()],
+            },
+            vec![0x01, 0x00, 0x01],
+        ));
+
+        let mut buf = Vec::new();
+        let len = receipt.to_compact(&mut buf);
+        let (decoded, _) = BaseReceipt::from_compact(&buf, len);
+
+        assert_eq!(decoded, receipt);
+        let BaseReceipt::Eip8130(decoded) = decoded else {
+            panic!("decoded receipt must remain an EIP-8130 receipt");
+        };
+        assert_eq!(decoded.phase_statuses, vec![0x01, 0x00, 0x01]);
+    }
 }

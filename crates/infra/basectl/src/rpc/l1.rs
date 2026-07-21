@@ -3,13 +3,16 @@ use std::time::Duration;
 use alloy_consensus::Transaction;
 use alloy_primitives::Address;
 use alloy_provider::{Provider, ProviderBuilder, layers::CallBatchLayer};
+use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use alloy_sol_types::sol;
-use anyhow::Result;
+use alloy_transport_http::Http;
+use anyhow::{Context, Result};
 use base_common_genesis::SystemConfig;
 use futures::StreamExt;
 use tokio::sync::mpsc;
 use tracing::warn;
+use url::Url;
 
 use crate::tui::Toast;
 
@@ -87,6 +90,20 @@ pub async fn fetch_full_system_config(
         blob_base_fee_scalar: blobbasefee_scalar.ok().map(|v| v as u64),
         ..Default::default()
     })
+}
+
+/// Fetches the latest L1 block number via `eth_blockNumber` with an explicit request timeout.
+pub async fn fetch_l1_block_number(l1_rpc: &Url) -> Result<u64> {
+    let http_client = alloy_transport_http::reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .with_context(|| format!("building L1 HTTP client for {l1_rpc}"))?;
+    let transport = Http::with_client(http_client, l1_rpc.clone());
+    let provider = ProviderBuilder::new().connect_client(RpcClient::new(transport, false));
+    provider
+        .get_block_number()
+        .await
+        .with_context(|| format!("fetching eth_blockNumber from {l1_rpc}"))
 }
 
 /// Information about an L1 block and its blob counts.

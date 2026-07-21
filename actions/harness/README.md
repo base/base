@@ -47,9 +47,9 @@ Action tests are currently strongest for deterministic protocol-level
 scenarios where the important behavior lives inside the Rust components:
 
 - Batcher channel construction, frame ordering, gap filling, requeueing, and
-  hardfork behavior.
+  upgrade behavior.
 - Sequencer/verifier agreement on derived payloads and state roots.
-- Derivation behavior across hardfork transitions, origin changes, drift,
+- Derivation behavior across upgrade transitions, origin changes, drift,
   deposits, system-config updates, and L1 reorgs.
 - `SafeDB` persistence behavior tied to derived safe heads.
 - Unsafe gossip acceptance and rejection when in-memory signing validation is

@@ -88,8 +88,8 @@ mod tests {
     use alloc::sync::Arc;
 
     use alloy_primitives::Bytes;
-    use base_common_chains::BaseUpgrade;
     use base_common_consensus::JovianExtraData;
+    use base_common_genesis::BaseUpgrade;
     use reth_chainspec::{ChainSpec, ForkCondition, Hardfork};
 
     use super::*;

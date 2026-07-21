@@ -1,6 +1,6 @@
 use alloy_primitives::Address;
 use base_common_chains::{ChainConfig, rollup_config};
-use base_common_genesis::{HardForkConfig, RollupConfig};
+use base_common_genesis::{RollupConfig, UpgradeConfig};
 
 use crate::BatcherConfig;
 
@@ -34,10 +34,10 @@ impl TestRollupConfigBuilder {
         config.genesis.l2_time = 0;
         config.genesis.l1 = Default::default();
         config.genesis.l2 = Default::default();
-        config.hardforks.canyon_time = Some(0);
-        config.hardforks.delta_time = Some(0);
-        config.hardforks.ecotone_time = Some(0);
-        config.hardforks.fjord_time = Some(0);
+        config.upgrades.canyon_time = Some(0);
+        config.upgrades.delta_time = Some(0);
+        config.upgrades.ecotone_time = Some(0);
+        config.upgrades.fjord_time = Some(0);
 
         Self { config }
     }
@@ -79,22 +79,22 @@ impl TestRollupConfigBuilder {
         self
     }
 
-    /// Replaces the entire hardfork schedule with the supplied [`HardForkConfig`].
+    /// Replaces the entire upgrade schedule with the supplied [`UpgradeConfig`].
     ///
     /// Use this when a test needs fine-grained control over which forks are active
-    /// at which timestamps (e.g. hardfork boundary tests, span-batch gating tests).
-    pub const fn with_hardforks(mut self, hardforks: HardForkConfig) -> Self {
-        self.config.hardforks = hardforks;
+    /// at which timestamps (e.g. upgrade boundary tests, span-batch gating tests).
+    pub const fn with_upgrades(mut self, upgrades: UpgradeConfig) -> Self {
+        self.config.upgrades = upgrades;
         self
     }
 
     /// Activates all forks from Canyon through Granite at genesis, leaving Holocene
     /// and later as `None`.
     ///
-    /// Replaces the entire hardfork schedule. Use when a test needs the last
+    /// Replaces the entire upgrade schedule. Use when a test needs the last
     /// pre-Holocene cumulative schedule.
     pub fn through_granite(mut self) -> Self {
-        self.config.hardforks = HardForkConfig {
+        self.config.upgrades = UpgradeConfig {
             canyon_time: Some(0),
             delta_time: Some(0),
             ecotone_time: Some(0),
@@ -108,10 +108,10 @@ impl TestRollupConfigBuilder {
     /// Activates all forks from Canyon through Holocene at genesis, leaving Isthmus
     /// and later as `None`.
     ///
-    /// Replaces the entire hardfork schedule. Use when a test needs a cumulative
+    /// Replaces the entire upgrade schedule. Use when a test needs a cumulative
     /// schedule up to Holocene with no later forks reachable.
     pub fn through_holocene(mut self) -> Self {
-        self.config.hardforks = HardForkConfig {
+        self.config.upgrades = UpgradeConfig {
             canyon_time: Some(0),
             delta_time: Some(0),
             ecotone_time: Some(0),
@@ -126,11 +126,11 @@ impl TestRollupConfigBuilder {
     /// Activates all forks from Canyon through Isthmus at genesis, leaving Jovian
     /// and later as `None`.
     ///
-    /// Replaces the entire hardfork schedule. Use when a test needs Isthmus active
+    /// Replaces the entire upgrade schedule. Use when a test needs Isthmus active
     /// from genesis with no later forks reachable.
     pub fn through_isthmus(self) -> Self {
         let mut this = self.through_holocene();
-        this.config.hardforks.isthmus_time = Some(0);
+        this.config.upgrades.isthmus_time = Some(0);
         this
     }
 
@@ -139,7 +139,7 @@ impl TestRollupConfigBuilder {
     /// Typically chained after [`through_holocene`](Self::through_holocene) to
     /// schedule Isthmus at a specific future timestamp.
     pub const fn with_isthmus_at(mut self, t: u64) -> Self {
-        self.config.hardforks.isthmus_time = Some(t);
+        self.config.upgrades.isthmus_time = Some(t);
         self
     }
 
@@ -148,7 +148,7 @@ impl TestRollupConfigBuilder {
     /// Typically chained after [`through_isthmus`](Self::through_isthmus) to
     /// schedule Jovian at a specific future timestamp.
     pub const fn with_jovian_at(mut self, t: u64) -> Self {
-        self.config.hardforks.jovian_time = Some(t);
+        self.config.upgrades.jovian_time = Some(t);
         self
     }
 
@@ -157,7 +157,7 @@ impl TestRollupConfigBuilder {
     /// Base Azul is a standalone Base-specific fork, independent of the
     /// inherited fork cascade. Chaining after any `through_*` method is fine.
     pub const fn with_azul_at(mut self, t: u64) -> Self {
-        self.config.hardforks.base.azul = Some(t);
+        self.config.upgrades.base.azul = Some(t);
         self
     }
 
@@ -165,7 +165,15 @@ impl TestRollupConfigBuilder {
     ///
     /// Beryl is a standalone Base-specific fork, independent of the inherited fork cascade.
     pub const fn with_beryl_at(mut self, t: u64) -> Self {
-        self.config.hardforks.base.beryl = Some(t);
+        self.config.upgrades.base.beryl = Some(t);
+        self
+    }
+
+    /// Sets the Cobalt activation timestamp.
+    ///
+    /// Cobalt is a standalone Base-specific fork, independent of the inherited fork cascade.
+    pub const fn with_cobalt_at(mut self, t: u64) -> Self {
+        self.config.upgrades.base.cobalt = Some(t);
         self
     }
 
@@ -174,18 +182,18 @@ impl TestRollupConfigBuilder {
     /// `base_mainnet` intentionally keeps the harness's existing "Canyon through
     /// Fjord active" behavior; this opt-in extends that to the later upgrades.
     pub const fn all_forks_active(mut self) -> Self {
-        self.config.hardforks.regolith_time = Some(0);
-        self.config.hardforks.canyon_time = Some(0);
-        self.config.hardforks.delta_time = Some(0);
-        self.config.hardforks.ecotone_time = Some(0);
-        self.config.hardforks.fjord_time = Some(0);
-        self.config.hardforks.granite_time = Some(0);
-        self.config.hardforks.holocene_time = Some(0);
-        self.config.hardforks.pectra_blob_schedule_time = Some(0);
-        self.config.hardforks.isthmus_time = Some(0);
-        self.config.hardforks.jovian_time = Some(0);
-        self.config.hardforks.base.azul = Some(0);
-        self.config.hardforks.base.beryl = Some(0);
+        self.config.upgrades.regolith_time = Some(0);
+        self.config.upgrades.canyon_time = Some(0);
+        self.config.upgrades.delta_time = Some(0);
+        self.config.upgrades.ecotone_time = Some(0);
+        self.config.upgrades.fjord_time = Some(0);
+        self.config.upgrades.granite_time = Some(0);
+        self.config.upgrades.holocene_time = Some(0);
+        self.config.upgrades.pectra_blob_schedule_time = Some(0);
+        self.config.upgrades.isthmus_time = Some(0);
+        self.config.upgrades.jovian_time = Some(0);
+        self.config.upgrades.base.azul = Some(0);
+        self.config.upgrades.base.beryl = Some(0);
         self
     }
 

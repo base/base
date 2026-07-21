@@ -1,7 +1,7 @@
-//! Engine API version selection based on Base hardfork activations.
+//! Engine API version selection based on Base upgrade activations.
 //!
 //! Automatically selects the appropriate Engine API method versions based on
-//! the rollup configuration and block timestamps. Different Base hardforks
+//! the rollup configuration and block timestamps. Different Base upgrades
 //! require different Engine API versions to support new features.
 //!
 //! # Version Mapping
@@ -17,20 +17,20 @@ use base_common_genesis::RollupConfig;
 
 /// Engine API version for `engine_forkchoiceUpdated` method calls.
 ///
-/// Selects between V2 and V3 based on hardfork activation. V3 is required
-/// for Ecotone/Cancun and later hardforks to support new consensus features.
+/// Selects between V2 and V3 based on upgrade activation. V3 is required
+/// for Ecotone/Cancun and later upgrades to support new consensus features.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EngineForkchoiceVersion {
-    /// Version 2: Used for Bedrock, Canyon, and Delta hardforks.
+    /// Version 2: Used for Bedrock, Canyon, and Delta upgrades.
     V2,
-    /// Version 3: Required for Ecotone/Cancun and later hardforks.
+    /// Version 3: Required for Ecotone/Cancun and later upgrades.
     V3,
 }
 
 impl EngineForkchoiceVersion {
     /// Returns the appropriate [`EngineForkchoiceVersion`] for the chain at the given attributes.
     ///
-    /// Uses the [`RollupConfig`] to check which hardfork is active at the given timestamp.
+    /// Uses the [`RollupConfig`] to check which upgrade is active at the given timestamp.
     pub fn from_cfg(cfg: &RollupConfig, timestamp: u64) -> Self {
         if cfg.is_ecotone_active(timestamp) {
             // Cancun+
@@ -44,24 +44,24 @@ impl EngineForkchoiceVersion {
 
 /// Engine API version for `engine_newPayload` method calls.
 ///
-/// Progressive version selection based on hardfork activation:
+/// Progressive version selection based on upgrade activation:
 /// - V2: Basic payload processing
 /// - V3: Adds Cancun/Ecotone support
-/// - V4: Adds Isthmus hardfork support (also used for Jovian and Base Azul)
+/// - V4: Adds Isthmus upgrade support (also used for Jovian and Base Azul)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EngineNewPayloadVersion {
-    /// Version 2: Basic payload processing for early hardforks.
+    /// Version 2: Basic payload processing for early upgrades.
     V2,
     /// Version 3: Adds Cancun/Ecotone consensus features.
     V3,
-    /// Version 4: Adds Isthmus hardfork support.
+    /// Version 4: Adds Isthmus upgrade support.
     V4,
 }
 
 impl EngineNewPayloadVersion {
     /// Returns the appropriate [`EngineNewPayloadVersion`] for the chain at the given timestamp.
     ///
-    /// Uses the [`RollupConfig`] to check which hardfork is active at the given timestamp.
+    /// Uses the [`RollupConfig`] to check which upgrade is active at the given timestamp.
     pub fn from_cfg(cfg: &RollupConfig, timestamp: u64) -> Self {
         if cfg.is_isthmus_active(timestamp) {
             Self::V4
@@ -93,7 +93,7 @@ pub enum EngineGetPayloadVersion {
 impl EngineGetPayloadVersion {
     /// Returns the appropriate [`EngineGetPayloadVersion`] for the chain at the given timestamp.
     ///
-    /// Uses the [`RollupConfig`] to check which hardfork is active at the given timestamp.
+    /// Uses the [`RollupConfig`] to check which upgrade is active at the given timestamp.
     pub fn from_cfg(cfg: &RollupConfig, timestamp: u64) -> Self {
         if cfg.is_base_azul_active(timestamp) {
             Self::V5
@@ -110,16 +110,16 @@ impl EngineGetPayloadVersion {
 
 #[cfg(test)]
 mod tests {
-    use base_common_genesis::{HardForkConfig, HardforkConfig};
+    use base_common_genesis::{BaseUpgradeConfig, UpgradeConfig};
 
     use super::*;
 
     fn test_rollup_config() -> RollupConfig {
         RollupConfig {
-            hardforks: HardForkConfig {
+            upgrades: UpgradeConfig {
                 ecotone_time: Some(20),
                 jovian_time: Some(30),
-                base: HardforkConfig { azul: Some(40), beryl: Some(50), cobalt: Some(60) },
+                base: BaseUpgradeConfig { azul: Some(40), beryl: Some(50), cobalt: Some(60) },
                 ..Default::default()
             },
             ..Default::default()

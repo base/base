@@ -28,7 +28,7 @@ pub use alt_da::{
 };
 
 mod submissions;
-pub use submissions::SubmissionQueue;
+pub use submissions::{BatchTxCandidateBuilder, SubmissionQueue};
 
 mod config;
 pub use config::BatchDriverConfig;

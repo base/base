@@ -128,10 +128,8 @@ jobs:
         with:
           free-disk: "true"
           native-deps: "true"
-          mold: "true"
           foundry: "true"
           sp1: "true"
-          elf-cache: "true"
           rust-cache-shared-key: "stable"
           rust-cache-save: ${{ inputs.save_rust_cache }}
       - name: Run build
@@ -158,7 +156,6 @@ jobs:
         with:
           free-disk: "true"
           native-deps: "true"
-          mold: "true"
           foundry: "true"
           components: clippy
           rust-cache-shared-key: "stable"
@@ -187,10 +184,8 @@ jobs:
         with:
           free-disk: "true"
           native-deps: "true"
-          mold: "true"
           foundry: "true"
           sp1: "true"
-          elf-cache: "true"
           tools: cargo-nextest
           rust-cache-shared-key: "stable"
           rust-cache-save: ${{ inputs.save_rust_cache }}
@@ -229,7 +224,6 @@ jobs:
         with:
           free-disk: "true"
           native-deps: "true"
-          mold: "true"
           rust-cache-shared-key: "stable"
       - run: cargo bench --locked -p base-proof-mpt --bench trie_node -- --test
 
@@ -260,7 +254,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build Docker image
-        run: docker buildx bake -f etc/docker/docker-bake.hcl client --load
+        run: docker buildx bake -f etc/docker/docker-bake.hcl base --load
 
   test-musl-sigsegv:
     name: Test SIGSEGV (musl)
@@ -300,10 +294,8 @@ jobs:
         with:
           free-disk: "true"
           native-deps: "true"
-          mold: "true"
           foundry: "true"
           sp1: "true"
-          elf-cache: "true"
           tools: cargo-nextest
           rust-cache-shared-key: "stable"
       - name: Clear prior JUnit report

@@ -14,7 +14,9 @@ use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_eth::state::StateOverride;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BasePrimitives, BaseReceipt, BaseTxEnvelope, Predeploys};
-use base_common_evm::{BaseHaltReason, L1BlockInfo, ensure_create2_deployer};
+use base_common_evm::{
+    BaseHaltReason, L1BlockInfo, ensure_create2_deployer, ensure_eip8130_system_accounts,
+};
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_common_rpc_types::{BaseTransactionReceipt, Transaction};
 use base_execution_rpc::BaseReceiptBuilder as BaseRpcReceiptBuilder;
@@ -109,6 +111,22 @@ where
         self.evm.db_mut()
     }
 
+    /// Seeds block-level offsets when appending transactions to an already-executed pending block.
+    pub const fn set_execution_offsets(&mut self, cumulative_gas_used: u64, next_log_index: usize) {
+        self.cumulative_gas_used = cumulative_gas_used;
+        self.next_log_index = next_log_index;
+    }
+
+    /// Returns the cumulative gas used for the current pending block.
+    pub const fn cumulative_gas_used(&self) -> u64 {
+        self.cumulative_gas_used
+    }
+
+    /// Returns the next log index for the current pending block.
+    pub const fn next_log_index(&self) -> usize {
+        self.next_log_index
+    }
+
     /// Executes a single transaction and updates internal state.
     /// Should be called in order for each transaction.
     #[instrument(level = "debug", skip_all, fields(tx_hash = %transaction.tx_hash(), idx = idx))]
@@ -174,6 +192,13 @@ where
             .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?;
 
         ensure_create2_deployer(spec, self.pending_block.timestamp, self.evm.db_mut())
+            .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?;
+
+        // At the Cobalt (EIP-8130) transition, plant a code stub on the code-less
+        // enshrined system accounts (the 2D nonce manager) so the persistent state
+        // the enshrined path writes to them is not reaped by EIP-161 end-of-block
+        // state clearing.
+        ensure_eip8130_system_accounts(spec, self.pending_block.timestamp, self.evm.db_mut())
             .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?;
 
         Ok(())
@@ -620,7 +645,7 @@ mod tests {
                 withdrawals_root: B256::ZERO,
                 blob_gas_used: None,
             },
-            metadata: Metadata { block_number: header.number },
+            metadata: Metadata::new(header.number),
         }]);
         pending_blocks_builder.with_receipt(tx_hash, first_result.receipt.clone());
         pending_blocks_builder.with_transaction_state(tx_hash, first_result.state.clone());
@@ -910,7 +935,7 @@ mod tests {
                 withdrawals_root: B256::ZERO,
                 blob_gas_used: None,
             },
-            metadata: Metadata { block_number: header.number },
+            metadata: Metadata::new(header.number),
         }]);
         pending_blocks_builder.with_transaction_sender(tx_a_hash, sender);
         pending_blocks_builder.with_receipt(tx_a_hash, first_result.receipt.clone());

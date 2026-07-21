@@ -7,12 +7,12 @@ use alloy_rpc_types_debug::ExecutionWitness;
 use base_common_chains::Upgrades;
 use base_execution_payload_builder::{Attributes, BasePayloadBuilder, PayloadPrimitives};
 use base_execution_txpool::BasePooledTx;
+use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::{RpcResult, async_trait};
 use reth_chainspec::ChainSpecProvider;
 use reth_evm::ConfigureEvm;
 use reth_node_api::{BuildNextEnv, NodePrimitives};
 use reth_primitives_traits::{SealedHeader, TxTy};
-use reth_rpc_api::DebugExecutionWitnessApiServer;
 use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
 use reth_storage_api::{
     BlockReaderIdExt, NodePrimitivesProvider, StateProviderFactory,
@@ -21,6 +21,19 @@ use reth_storage_api::{
 use reth_tasks::Runtime;
 use reth_transaction_pool::TransactionPool;
 use tokio::sync::{Semaphore, oneshot};
+
+#[cfg_attr(not(test), rpc(server, namespace = "debug"))]
+#[cfg_attr(test, rpc(server, client, namespace = "debug"))]
+/// RPC trait for the `debug_executePayload` endpoint.
+pub trait DebugExecutionWitnessApi<Attributes> {
+    /// Executes a payload and returns the execution witness.
+    #[method(name = "executePayload")]
+    async fn execute_payload(
+        &self,
+        parent_block_hash: B256,
+        attributes: Attributes,
+    ) -> RpcResult<ExecutionWitness>;
+}
 
 /// An extension to the `debug_` namespace of the RPC API.
 pub struct BaseDebugWitnessApi<Pool, Provider, EvmConfig, Attrs> {

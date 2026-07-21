@@ -12,7 +12,8 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{any, get},
 };
-use http::{HeaderMap, HeaderValue};
+use http::HeaderMap;
+use ipnet::IpNet;
 use serde::Deserialize;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
@@ -27,12 +28,76 @@ use crate::{
     registry::Registry,
 };
 
+/// Configuration for resolving client IPs through trusted proxies.
+#[derive(Clone, Debug)]
+pub struct TrustedProxyConfig {
+    ip_addr_http_header: String,
+    trusted_proxy_cidrs: Vec<IpNet>,
+}
+
+impl TrustedProxyConfig {
+    /// Creates a trusted proxy configuration for the given header and proxy CIDRs.
+    pub const fn new(ip_addr_http_header: String, trusted_proxy_cidrs: Vec<IpNet>) -> Self {
+        Self { ip_addr_http_header, trusted_proxy_cidrs }
+    }
+
+    /// Resolves the client IP, trusting forwarding headers only from configured proxy CIDRs.
+    pub fn client_ip(&self, connect_addr: IpAddr, headers: &HeaderMap) -> IpAddr {
+        // Dual-stack listeners present IPv4 peers as IPv4-mapped IPv6 (`::ffff:x.x.x.x`).
+        // Canonicalize so IPv4 CIDRs still match those peers and rate-limit buckets stay
+        // consistent across address forms.
+        let connect_addr = Self::canonicalize_ip(connect_addr);
+
+        if !self.trusted_proxy_cidrs.iter().any(|cidr| cidr.contains(&connect_addr)) {
+            return connect_addr;
+        }
+
+        let Some(header) = headers.get(&self.ip_addr_http_header) else {
+            return connect_addr;
+        };
+
+        let header_value = match header.to_str() {
+            Ok(header_value) => header_value,
+            Err(error) => {
+                warn!(error = %error, "Could not read client IP header");
+                return connect_addr;
+            }
+        };
+
+        header_value
+            .split(',')
+            .next_back()
+            .and_then(|ip| {
+                let trimmed = ip.trim();
+                match trimmed.parse::<IpAddr>() {
+                    Ok(addr) => Some(Self::canonicalize_ip(addr)),
+                    Err(error) => {
+                        warn!(
+                            error = %error,
+                            value = %trimmed,
+                            "Failed to parse forwarded client IP"
+                        );
+                        None
+                    }
+                }
+            })
+            .unwrap_or(connect_addr)
+    }
+
+    fn canonicalize_ip(addr: IpAddr) -> IpAddr {
+        match addr {
+            IpAddr::V6(v6) => v6.to_ipv4_mapped().map(IpAddr::V4).unwrap_or(addr),
+            addr => addr,
+        }
+    }
+}
+
 #[derive(Clone)]
 struct ServerState {
     registry: Registry,
     rate_limiter: Arc<dyn RateLimit>,
     auth: Authentication,
-    ip_addr_http_header: String,
+    trusted_proxy_config: TrustedProxyConfig,
 }
 
 /// WebSocket proxy server that accepts client connections and forwards messages
@@ -42,7 +107,7 @@ pub struct Server {
     listen_addr: SocketAddr,
     registry: Registry,
     rate_limiter: Arc<dyn RateLimit>,
-    ip_addr_http_header: String,
+    trusted_proxy_config: TrustedProxyConfig,
     authentication: Option<Authentication>,
     public_access_enabled: bool,
 }
@@ -52,7 +117,7 @@ impl fmt::Debug for Server {
         f.debug_struct("Server")
             .field("listen_addr", &self.listen_addr)
             .field("registry", &self.registry)
-            .field("ip_addr_http_header", &self.ip_addr_http_header)
+            .field("trusted_proxy_config", &self.trusted_proxy_config)
             .field("authentication", &self.authentication)
             .field("public_access_enabled", &self.public_access_enabled)
             .finish_non_exhaustive()
@@ -73,7 +138,7 @@ impl Server {
         registry: Registry,
         rate_limiter: Arc<dyn RateLimit>,
         authentication: Option<Authentication>,
-        ip_addr_http_header: String,
+        trusted_proxy_config: TrustedProxyConfig,
         public_access_enabled: bool,
     ) -> Self {
         Self {
@@ -81,7 +146,7 @@ impl Server {
             registry,
             rate_limiter,
             authentication,
-            ip_addr_http_header,
+            trusted_proxy_config,
             public_access_enabled,
         }
     }
@@ -110,7 +175,7 @@ impl Server {
             registry: self.registry.clone(),
             rate_limiter: Arc::clone(&self.rate_limiter),
             auth: self.authentication.clone().unwrap_or_else(Authentication::none),
-            ip_addr_http_header: self.ip_addr_http_header.clone(),
+            trusted_proxy_config: self.trusted_proxy_config.clone(),
         });
 
         let listener = tokio::net::TcpListener::bind(self.listen_addr).await.unwrap();
@@ -231,10 +296,7 @@ fn websocket_handler(
     filter: FilterType,
 ) -> Response {
     let connect_addr = addr.ip();
-
-    let client_addr = headers
-        .get(state.ip_addr_http_header)
-        .map_or(connect_addr, |value| extract_addr(value, connect_addr));
+    let client_addr = state.trusted_proxy_config.client_ip(connect_addr, &headers);
 
     let ticket = match state.rate_limiter.try_acquire(client_addr) {
         Ok(ticket) => ticket,
@@ -282,31 +344,11 @@ fn websocket_handler(
         })
 }
 
-fn extract_addr(header: &HeaderValue, fallback: IpAddr) -> IpAddr {
-    if header.is_empty() {
-        return fallback;
-    }
-
-    match header.to_str() {
-        Ok(header_value) => {
-            let raw_value = header_value.split(',').map(|ip| ip.trim().to_string()).next_back();
-
-            if let Some(raw_value) = raw_value {
-                return raw_value.parse::<IpAddr>().unwrap_or(fallback);
-            }
-
-            fallback
-        }
-        Err(e) => {
-            warn!(message = "could not get header value", error = e.to_string());
-            fallback
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::net::Ipv4Addr;
+
+    use http::HeaderValue;
 
     use super::*;
     use crate::filter::FilterType;
@@ -374,21 +416,44 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_header_addr() {
-        let fb = Ipv4Addr::new(127, 0, 0, 1);
+    #[test]
+    fn trusted_proxy_config_resolves_client_ip() {
+        let config = TrustedProxyConfig::new(
+            "x-forwarded-for".to_string(),
+            vec!["127.0.0.0/8".parse().unwrap()],
+        );
+        let trusted_proxy = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let untrusted_peer = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1));
+        let client = IpAddr::V4(Ipv4Addr::new(130, 1, 1, 1));
 
-        let test = |header: &str, expected: Ipv4Addr| {
-            let hv = HeaderValue::from_str(header).unwrap();
-            let result = extract_addr(&hv, IpAddr::V4(fb));
-            assert_eq!(result, expected);
-        };
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", HeaderValue::from_static("129.1.1.1, 130.1.1.1"));
 
-        test("129.1.1.1", Ipv4Addr::new(129, 1, 1, 1));
-        test("129.1.1.1,130.1.1.1", Ipv4Addr::new(130, 1, 1, 1));
-        test("129.1.1.1  ,  130.1.1.1   ", Ipv4Addr::new(130, 1, 1, 1));
-        test("nonsense", fb);
-        test("400.0.0.1", fb);
-        test("120.0.0.1.0", fb);
+        assert_eq!(config.client_ip(trusted_proxy, &headers), client);
+        assert_eq!(config.client_ip(untrusted_peer, &headers), untrusted_peer);
+
+        headers.insert("x-forwarded-for", HeaderValue::from_static("nonsense"));
+        assert_eq!(config.client_ip(trusted_proxy, &headers), trusted_proxy);
+
+        headers.clear();
+        assert_eq!(config.client_ip(trusted_proxy, &headers), trusted_proxy);
+    }
+
+    #[test]
+    fn trusted_proxy_config_matches_ipv4_mapped_peers() {
+        let config = TrustedProxyConfig::new(
+            "x-forwarded-for".to_string(),
+            vec!["10.0.0.0/8".parse().unwrap()],
+        );
+        let mapped_proxy = IpAddr::V6("::ffff:10.0.0.1".parse().unwrap());
+        let client = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10));
+
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", HeaderValue::from_static("203.0.113.10"));
+
+        assert_eq!(config.client_ip(mapped_proxy, &headers), client);
+
+        headers.insert("x-forwarded-for", HeaderValue::from_static("::ffff:203.0.113.10"));
+        assert_eq!(config.client_ip(mapped_proxy, &headers), client);
     }
 }

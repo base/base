@@ -1,6 +1,9 @@
 //! Receipt types for RPC
 
+use alloc::vec::Vec;
+
 use alloy_consensus::{Receipt, ReceiptWithBloom, TxReceipt};
+use alloy_primitives::{Address, Bytes};
 use alloy_rpc_types_eth::Log;
 use alloy_serde::OtherFields;
 use base_common_consensus::{
@@ -19,6 +22,26 @@ pub struct BaseTransactionReceipt {
     /// L1 block info of the transaction.
     #[serde(flatten)]
     pub l1_block_info: L1BlockInfo,
+    /* --------------------------------------- EIP-8130 --------------------------------------- */
+    /// Gas payer address for EIP-8130 transactions: the sender for self-pay, or the
+    /// specified payer for sponsored transactions.
+    ///
+    /// Always null for non-EIP-8130 transactions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payer: Option<Address>,
+    /// Per-phase execution statuses for EIP-8130 transactions.
+    ///
+    /// Each entry is `0x01` (success) or `0x00` (reverted); phases after a revert are
+    /// not executed and reported as `0x00`. Empty for non-EIP-8130 transactions or when
+    /// the transaction's `calls` was empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty", with = "alloy_serde::quantity::vec")]
+    pub phase_statuses: Vec<u8>,
+    /// Opaque transaction metadata for EIP-8130 transactions, committed to by the sender
+    /// and payer signatures but otherwise uninterpreted by the protocol.
+    ///
+    /// Always null for non-EIP-8130 transactions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Bytes>,
 }
 
 impl alloy_network_primitives::ReceiptResponse for BaseTransactionReceipt {
@@ -89,13 +112,13 @@ pub struct TransactionReceiptFields {
     /* --------------------------------------- Regolith --------------------------------------- */
     /// Deposit nonce for deposit transactions.
     ///
-    /// Always null prior to the Regolith hardfork.
+    /// Always null prior to the Regolith upgrade.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub deposit_nonce: Option<u64>,
     /* ---------------------------------------- Canyon ---------------------------------------- */
     /// Deposit receipt version for deposit transactions.
     ///
-    /// Always null prior to the Canyon hardfork.
+    /// Always null prior to the Canyon upgrade.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub deposit_receipt_version: Option<u64>,
 }
@@ -168,34 +191,34 @@ pub struct L1BlockInfo {
     /* ---------------------------------------- Ecotone ---------------------------------------- */
     /// L1 base fee scalar. Applied to base fee to compute weighted gas price multiplier.
     ///
-    /// Always null prior to the Ecotone hardfork.
+    /// Always null prior to the Ecotone upgrade.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub l1_base_fee_scalar: Option<u128>,
     /// L1 blob base fee.
     ///
-    /// Always null prior to the Ecotone hardfork.
+    /// Always null prior to the Ecotone upgrade.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub l1_blob_base_fee: Option<u128>,
     /// L1 blob base fee scalar. Applied to blob base fee to compute weighted gas price multiplier.
     ///
-    /// Always null prior to the Ecotone hardfork.
+    /// Always null prior to the Ecotone upgrade.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub l1_blob_base_fee_scalar: Option<u128>,
     /* ---------------------------------------- Isthmus ---------------------------------------- */
     /// Operator fee scalar.
     ///
-    /// Always null prior to the Isthmus hardfork.
+    /// Always null prior to the Isthmus upgrade.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub operator_fee_scalar: Option<u128>,
     /// Operator fee constant.
     ///
-    /// Always null prior to the Isthmus hardfork.
+    /// Always null prior to the Isthmus upgrade.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub operator_fee_constant: Option<u128>,
     /* ---------------------------------------- Jovian ---------------------------------------- */
     /// DA footprint gas scalar. Used to set the DA footprint block limit on the L2.
     ///
-    /// Always null prior to the Jovian hardfork.
+    /// Always null prior to the Jovian upgrade.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub da_footprint_gas_scalar: Option<u16>,
 }
@@ -238,7 +261,9 @@ impl From<BaseTransactionReceipt> for BaseReceiptEnvelope {
                 Self::Eip7702(convert_standard_receipt(receipt, logs_bloom))
             }
             BaseReceipt::Eip8130(receipt) => {
-                Self::Eip8130(convert_standard_receipt(receipt, logs_bloom))
+                // The consensus envelope only carries the standard receipt; the
+                // EIP-8130 `phaseStatuses` live on the RPC receipt, not in RLP.
+                Self::Eip8130(convert_standard_receipt(receipt.inner, logs_bloom))
             }
             BaseReceipt::Deposit(receipt) => {
                 let consensus_logs = receipt.inner.logs.into_iter().map(|log| log.inner).collect();

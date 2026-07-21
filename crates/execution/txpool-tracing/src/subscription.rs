@@ -22,13 +22,14 @@ pub async fn tracex_subscription<N, Pool, FB>(
     flashblocks_api: Arc<FB>,
     pool: Pool,
     enable_logs: bool,
+    node_role: Option<String>,
 ) where
     N: NodePrimitives,
     Pool: TransactionPool + 'static,
     FB: FlashblocksAPI + 'static,
 {
     debug!(target: "tracex", "Starting transaction tracking subscription");
-    let mut tracker = Tracker::new(enable_logs);
+    let mut tracker = Tracker::new_with_node_role(enable_logs, node_role);
 
     // Subscribe to events from the mempool.
     let mut all_events_stream = pool.all_transactions_event_listener();

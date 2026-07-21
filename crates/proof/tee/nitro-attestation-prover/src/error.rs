@@ -17,6 +17,10 @@ pub enum ProverError {
     #[error("boundless error: {0}")]
     Boundless(String),
 
+    /// The prover configuration is invalid.
+    #[error("config error: {0}")]
+    Config(String),
+
     /// The guest ELF or image ID is invalid.
     #[error("image ID error: {0}")]
     ImageId(String),
@@ -57,6 +61,10 @@ mod tests {
     #[case::boundless(
         ProverError::Boundless("timeout".into()),
         "boundless error: timeout"
+    )]
+    #[case::config(
+        ProverError::Config("bad option".into()),
+        "config error: bad option"
     )]
     #[case::image_id(
         ProverError::ImageId("not an ELF".into()),

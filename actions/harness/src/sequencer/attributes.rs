@@ -35,8 +35,10 @@ impl AttributesBuilder for ActionSequencerAttributesBuilder {
         &mut self,
         l2_parent: L2BlockInfo,
         epoch: alloy_eips::BlockNumHash,
+        timestamp_millis_part: Option<u16>,
     ) -> PipelineResult<BasePayloadAttributes> {
-        let mut attrs = self.inner.prepare_payload_attributes(l2_parent, epoch).await?;
+        let mut attrs =
+            self.inner.prepare_payload_attributes(l2_parent, epoch, timestamp_millis_part).await?;
         let user_txs = self
             .user_txs
             .lock()

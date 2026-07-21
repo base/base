@@ -18,9 +18,15 @@ workspace = true
 [dependencies]
 # workspace
 base-cli-utils.workspace = true
+base-txpool-rpc.workspace = true
+base-node-runner.workspace = true
+base-builder-cli.workspace = true
+base-builder-core.workspace = true
 base-common-chains.workspace = true
 base-consensus-cli.workspace = true
 base-execution-cli.workspace = true
+base-upgrade-signal.workspace = true
+base-builder-metering.workspace = true
 base-execution-chainspec.workspace = true
 
 # alloy
@@ -42,4 +48,5 @@ serde = { workspace = true, features = ["derive"] }
 figment = { workspace = true, features = ["env", "toml"] }
 
 [dev-dependencies]
+base-common-genesis.workspace = true
 figment = { workspace = true, features = ["test"] }

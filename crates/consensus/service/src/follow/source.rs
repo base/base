@@ -83,6 +83,7 @@ impl RemoteClient for RemoteL2Client {
             .await
             .map_err(|e| RemoteL2ClientError::FetchBlock { tag: format!("{tag:?}"), source: e })?
             .ok_or_else(|| RemoteL2ClientError::BlockNotFound(format!("{tag:?}")))?;
+        let block = block.map_header(|header| header.into_inner());
 
         Ok(BlockInfo::from(&block))
     }
@@ -98,6 +99,7 @@ impl RemoteClient for RemoteL2Client {
             .await
             .map_err(|e| RemoteL2ClientError::FetchBlock { tag: format!("{number}"), source: e })?
             .ok_or_else(|| RemoteL2ClientError::BlockNotFound(format!("{number}")))?;
+        let rpc_block = rpc_block.map_header(|header| header.into_inner());
 
         let block_hash = rpc_block.header.hash;
         let parent_beacon_block_root = rpc_block.header.parent_beacon_block_root;

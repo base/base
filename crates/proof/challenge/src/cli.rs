@@ -60,6 +60,10 @@ pub struct ChallengerArgs {
     #[arg(long = "anchor-state-registry-addr", env = cli_env!("ANCHOR_STATE_REGISTRY_ADDR"))]
     pub anchor_state_registry_addr: Address,
 
+    /// Game type ID for `AggregateVerifier` dispute games.
+    #[arg(long = "game-type", env = cli_env!("GAME_TYPE"))]
+    pub game_type: u32,
+
     /// Polling interval for new dispute games (e.g., "12s", "1m").
     #[arg(
         long = "poll-interval",
@@ -77,16 +81,6 @@ pub struct ChallengerArgs {
     /// bond/anchor lifecycle. Requires `--bond-claim-addresses`; forbids `--zk-rpc-url`.
     #[arg(long = "no-dispute", env = cli_env!("NO_DISPUTE"), default_value_t = false)]
     pub no_dispute: bool,
-
-    /// Timeout for establishing the initial gRPC connection to the ZK proof
-    /// service (e.g., "10s", "1m").
-    #[arg(
-        long = "zk-connect-timeout",
-        env = cli_env!("ZK_CONNECT_TIMEOUT"),
-        default_value = "10s",
-        value_parser = humantime::parse_duration
-    )]
-    pub zk_connect_timeout: Duration,
 
     /// Timeout for individual gRPC requests to the ZK proof service
     /// (e.g., "30s", "1m").
@@ -108,18 +102,14 @@ pub struct ChallengerArgs {
     )]
     pub max_proof_duration: Duration,
 
-    /// URL of the TEE enclave RPC endpoint (optional; enables TEE-first proof sourcing).
-    #[arg(long = "tee-rpc-url", env = cli_env!("TEE_RPC_URL"))]
-    pub tee_rpc_url: Option<Url>,
-
-    /// Timeout for individual TEE proof requests (e.g., "1m", "10m").
+    /// Retryable TEE submission failures to tolerate before falling back to ZK.
+    /// Set to 0 to fall back immediately on the first retryable TEE tx error.
     #[arg(
-        long = "tee-request-timeout",
-        env = cli_env!("TEE_REQUEST_TIMEOUT"),
-        default_value = "10m",
-        value_parser = humantime::parse_duration
+        long = "tee-submit-retry-limit",
+        env = cli_env!("TEE_SUBMIT_RETRY_LIMIT"),
+        default_value = "3"
     )]
-    pub tee_request_timeout: Duration,
+    pub tee_submit_retry_limit: u32,
 
     /// Signer configuration (local private key or remote sidecar).
     #[command(flatten)]
@@ -129,7 +119,7 @@ pub struct ChallengerArgs {
     #[command(flatten)]
     pub tx_manager: TxManagerCli,
 
-    /// Number of recent factory games scanned by bond discovery.
+    /// Number of recent factory games scanned by each bond discovery pass.
     #[arg(
         long = "bond-discovery-lookback-games",
         env = cli_env!("BOND_DISCOVERY_LOOKBACK_GAMES"),
@@ -137,8 +127,7 @@ pub struct ChallengerArgs {
     )]
     pub bond_discovery_lookback_games: u64,
 
-    /// How often a full rescan of the bond lookback window is performed to
-    /// catch state transitions (games challenged or resolved by other actors).
+    /// How often the bond lookback window is scanned from scratch.
     #[arg(
         long = "bond-discovery-interval",
         env = cli_env!("BOND_DISCOVERY_INTERVAL"),
@@ -146,16 +135,6 @@ pub struct ChallengerArgs {
         value_parser = humantime::parse_duration
     )]
     pub bond_discovery_interval: Duration,
-
-    /// Maximum time to keep a completed bond game tracked while waiting for
-    /// its anchor update to complete.
-    #[arg(
-        long = "anchor-update-retention",
-        env = cli_env!("ANCHOR_UPDATE_RETENTION"),
-        default_value = "24h",
-        value_parser = humantime::parse_duration
-    )]
-    pub anchor_update_retention: Duration,
 
     /// Comma-separated list of addresses to claim bonds on behalf of.
     ///

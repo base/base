@@ -12,12 +12,15 @@ use reth_db_api as _;
 
 /// CLI argument parsing for the Base node.
 pub mod args;
-pub use args::TxpoolOrdering;
+pub use args::{
+    DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS, ProofsHistoryDbBackend, ProofsHistoryRocksdbArgs,
+    TWELVE_HOURS_IN_BLOCKS, TxpoolOrdering,
+};
 
 /// Exports Base-specific implementations of the [`EngineTypes`](reth_node_api::EngineTypes)
 /// trait.
 pub mod engine;
-pub use engine::{BaseEngineTypes, BasePostExecutionValidator};
+pub use engine::BaseEngineTypes;
 
 pub mod node;
 pub use node::*;

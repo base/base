@@ -26,9 +26,24 @@ use tokio::sync::RwLock;
 
 use crate::{EngineClient, EngineClientError};
 
+type L2RpcBlock = <Base as Network>::BlockResponse;
+
+fn l2_rpc_block(block: Block<BaseTransaction>) -> L2RpcBlock {
+    block.map_header(Into::into)
+}
+
 /// Builder for creating test `MockEngineClient` instances with sensible defaults
 pub fn test_engine_client_builder() -> MockEngineClientBuilder {
     MockEngineClientBuilder::new().with_config(Arc::new(RollupConfig::default()))
+}
+
+/// A configurable error for [`MockEngineClient::get_l2_block`].
+#[derive(Debug, Clone)]
+pub enum MockL2BlockError {
+    /// JSON-RPC error response with a structured [`ErrorPayload`].
+    ErrorResp(ErrorPayload),
+    /// Transport-layer custom error whose `to_string()` contains the given string.
+    Custom(String),
 }
 
 /// Mock storage for engine client responses.
@@ -38,7 +53,7 @@ pub fn test_engine_client_builder() -> MockEngineClientBuilder {
 #[derive(Debug, Clone, Default)]
 pub struct MockEngineStorage {
     /// Storage for block responses by tag.
-    pub l2_blocks_by_label: HashMap<BlockNumberOrTag, Block<BaseTransaction>>,
+    pub l2_blocks_by_label: HashMap<BlockNumberOrTag, L2RpcBlock>,
     /// Storage for block info responses by tag.
     pub block_info_by_tag: HashMap<BlockNumberOrTag, L2BlockInfo>,
 
@@ -92,7 +107,9 @@ pub struct MockEngineStorage {
     pub l1_blocks_by_id: HashMap<String, Block<EthTransaction>>,
     /// Storage for L2 blocks by stringified `BlockId`.
     /// L2 blocks use Base transactions.
-    pub l2_blocks_by_id: HashMap<String, Block<BaseTransaction>>,
+    pub l2_blocks_by_id: HashMap<String, L2RpcBlock>,
+    /// Errors returned for L2 block requests by stringified `BlockId`.
+    pub l2_block_errors_by_id: HashMap<String, MockL2BlockError>,
     /// Storage for proofs by (address, stringified `BlockId`) key.
     pub proofs_by_address: HashMap<(Address, String), EIP1186AccountProofResponse>,
 }
@@ -143,7 +160,7 @@ impl MockEngineClientBuilder {
         tag: BlockNumberOrTag,
         block: Block<BaseTransaction>,
     ) -> Self {
-        self.storage.l2_blocks_by_label.insert(tag, block);
+        self.storage.l2_blocks_by_label.insert(tag, l2_rpc_block(block));
         self
     }
 
@@ -259,7 +276,7 @@ impl MockEngineClientBuilder {
     /// Sets an L2 block response for a specific `BlockId`.
     pub fn with_l2_block(mut self, block_id: BlockId, block: Block<BaseTransaction>) -> Self {
         let key = block_id_to_key(&block_id);
-        self.storage.l2_blocks_by_id.insert(key, block);
+        self.storage.l2_blocks_by_id.insert(key, l2_rpc_block(block));
         self
     }
 
@@ -272,6 +289,13 @@ impl MockEngineClientBuilder {
     ) -> Self {
         let key = block_id_to_key(&block_id);
         self.storage.proofs_by_address.insert((address, key), proof);
+        self
+    }
+
+    /// Sets an error to return for `get_l2_block` for a specific `BlockId`.
+    pub fn with_l2_block_error(mut self, block_id: BlockId, error: MockL2BlockError) -> Self {
+        let key = block_id_to_key(&block_id);
+        self.storage.l2_block_errors_by_id.insert(key, error);
         self
     }
 
@@ -328,7 +352,7 @@ impl MockEngineClient {
         tag: BlockNumberOrTag,
         block: Block<BaseTransaction>,
     ) {
-        self.storage.write().await.l2_blocks_by_label.insert(tag, block);
+        self.storage.write().await.l2_blocks_by_label.insert(tag, l2_rpc_block(block));
     }
 
     /// Sets a block info response for a specific tag.
@@ -415,7 +439,7 @@ impl MockEngineClient {
     /// Sets an L2 block response for a specific `BlockId`.
     pub async fn set_l2_block(&self, block_id: BlockId, block: Block<BaseTransaction>) {
         let key = block_id_to_key(&block_id);
-        self.storage.write().await.l2_blocks_by_id.insert(key, block);
+        self.storage.write().await.l2_blocks_by_id.insert(key, l2_rpc_block(block));
     }
 
     /// Sets a proof response for a specific address and `BlockId`.
@@ -427,6 +451,12 @@ impl MockEngineClient {
     ) {
         let key = block_id_to_key(&block_id);
         self.storage.write().await.proofs_by_address.insert((address, key), proof);
+    }
+
+    /// Sets an error to return for `get_l2_block` for a specific `BlockId`.
+    pub async fn set_l2_block_error(&self, block_id: BlockId, error: MockL2BlockError) {
+        let key = block_id_to_key(&block_id);
+        self.storage.write().await.l2_block_errors_by_id.insert(key, error);
     }
 }
 
@@ -466,6 +496,17 @@ impl EngineClient for MockEngineClient {
 
                 ProviderCall::BoxedFuture(Box::pin(async move {
                     let storage_guard = storage.read().await;
+                    if let Some(err) = storage_guard.l2_block_errors_by_id.get(&block_key).cloned()
+                    {
+                        return Err(match err {
+                            MockL2BlockError::ErrorResp(payload) => {
+                                TransportError::ErrorResp(payload)
+                            }
+                            MockL2BlockError::Custom(msg) => {
+                                TransportError::from(TransportErrorKind::custom_str(&msg))
+                            }
+                        });
+                    }
                     Ok(storage_guard.l2_blocks_by_id.get(&block_key).cloned())
                 }))
             }),
@@ -501,7 +542,7 @@ impl EngineClient for MockEngineClient {
     async fn l2_block_by_label(
         &self,
         numtag: BlockNumberOrTag,
-    ) -> Result<Option<Block<BaseTransaction>>, EngineClientError> {
+    ) -> Result<Option<L2RpcBlock>, EngineClientError> {
         let storage = self.storage.read().await;
         Ok(storage.l2_blocks_by_label.get(&numtag).cloned())
     }

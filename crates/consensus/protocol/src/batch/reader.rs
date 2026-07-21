@@ -7,7 +7,7 @@ use alloy_rlp::Decodable;
 use base_common_genesis::RollupConfig;
 use miniz_oxide::inflate::{TINFLStatus, decompress_to_vec_zlib_with_limit};
 
-use crate::{Batch, Brotli, BrotliDecompressionError};
+use crate::{Batch, BatchDecodingError, Brotli, BrotliDecompressionError};
 
 /// Error type for decompression failures.
 #[derive(Debug, thiserror::Error)]
@@ -24,6 +24,20 @@ pub enum DecompressionError {
     /// A zlib decompression error.
     #[error("zlib decompression error")]
     ZlibError,
+}
+
+/// Error type for strict batch reader failures.
+#[derive(Debug, thiserror::Error)]
+pub enum BatchReaderError {
+    /// The channel failed decompression.
+    #[error("failed to decompress channel: {0}")]
+    Decompression(#[from] DecompressionError),
+    /// The decompressed channel failed RLP payload decoding.
+    #[error("failed to decode channel RLP payload: {0}")]
+    Rlp(#[from] alloy_rlp::Error),
+    /// A decompressed channel payload failed batch decoding.
+    #[error("failed to decode batch: {0}")]
+    Batch(#[from] BatchDecodingError),
 }
 
 /// Batch Reader provides a function that iteratively consumes batches from the reader.
@@ -130,25 +144,35 @@ impl BatchReader {
 
     /// Pulls out the next batch from the reader.
     pub fn next_batch(&mut self, cfg: &RollupConfig) -> Option<Batch> {
+        self.next_batch_strict(cfg).ok().flatten()
+    }
+
+    /// Pulls out the next batch from the reader, preserving decode failures.
+    pub fn next_batch_strict(
+        &mut self,
+        cfg: &RollupConfig,
+    ) -> Result<Option<Batch>, BatchReaderError> {
         // Ensure the data is decompressed.
-        self.decompress().ok()?;
+        self.decompress()?;
+
+        if self.cursor >= self.decompressed.len() {
+            return Ok(None);
+        }
 
         // Decompress and RLP decode the batch data, before finally decoding the batch itself.
         let decompressed_reader = &mut self.decompressed.as_slice()[self.cursor..].as_ref();
-        let bytes = Bytes::decode(decompressed_reader).ok()?;
-        let Ok(batch) = Batch::decode(&mut bytes.as_ref(), cfg) else {
-            return None;
-        };
+        let bytes = Bytes::decode(decompressed_reader)?;
+        let batch = Batch::decode(&mut bytes.as_ref(), cfg)?;
 
         // Advance the cursor on the reader.
         self.cursor = self.decompressed.len() - decompressed_reader.len();
-        Some(batch)
+        Ok(Some(batch))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use base_common_genesis::{HardForkConfig, RollupConfig};
+    use base_common_genesis::{RollupConfig, UpgradeConfig};
     use miniz_oxide::{
         deflate::{CompressionLevel, compress_to_vec_zlib},
         inflate::decompress_to_vec_zlib,
@@ -182,7 +206,7 @@ mod tests {
             BatchReader::new(raw, RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize, true);
         reader
             .next_batch(&RollupConfig {
-                hardforks: HardForkConfig { fjord_time: Some(0), ..Default::default() },
+                upgrades: UpgradeConfig { fjord_time: Some(0), ..Default::default() },
                 ..Default::default()
             })
             .unwrap();

@@ -2,9 +2,7 @@
 
 use alloy_primitives::{Address, B256, Bytes, address, b256};
 use base_precompile_macros::contract;
-use base_precompile_storage::{
-    BasePrecompileError, Handler, IntoPrecompileResult, Mapping, Result,
-};
+use base_precompile_storage::{BasePrecompileError, Handler, Mapping, Result};
 use revm::precompile::PrecompileResult;
 
 use crate::IActivationRegistry;
@@ -15,6 +13,37 @@ use crate::IActivationRegistry;
 pub struct ActivationRegistryStorage {
     /// Runtime activation flags keyed by feature id.
     pub features: Mapping<B256, bool>,
+    /// Mutable activation registry admin address.
+    ///
+    /// Zero means "unset" and falls back to the static chain-config admin while the Cobalt
+    /// state-backed admin path is active.
+    pub admin: Address,
+}
+
+/// Activation admin source configured for one installed activation registry precompile.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ActivationAdminConfig {
+    /// Static chain-config activation admin used for Beryl replay and as the Cobalt fallback.
+    pub fallback: Option<Address>,
+    /// Whether the activation registry should consult its admin storage slot.
+    pub state_enabled: bool,
+}
+
+impl ActivationAdminConfig {
+    /// Creates a new activation admin configuration.
+    pub const fn new(fallback: Option<Address>, state_enabled: bool) -> Self {
+        Self { fallback, state_enabled }
+    }
+
+    /// Creates a static-only activation admin configuration.
+    pub const fn static_fallback(fallback: Option<Address>) -> Self {
+        Self::new(fallback, false)
+    }
+
+    /// Creates a state-backed activation admin configuration.
+    pub const fn state_backed(fallback: Option<Address>) -> Self {
+        Self::new(fallback, true)
+    }
 }
 
 /// Identifies a Base-native precompile feature in the activation registry.
@@ -58,12 +87,30 @@ impl ActivationRegistryStorage<'_> {
     /// Activation registry precompile address.
     pub const ADDRESS: Address = address!("8453000000000000000000000000000000000001");
 
-    /// Returns the activation admin.
-    pub const fn admin(&self, activation_admin_address: Option<Address>) -> Address {
-        match activation_admin_address {
-            Some(address) => address,
-            None => Address::ZERO,
+    /// Returns the stored activation admin address.
+    pub fn stored_admin(&self) -> Result<Address> {
+        self.admin.read()
+    }
+
+    /// Returns the effective activation admin address.
+    ///
+    /// When state-backed admin storage is disabled, this always returns the static fallback. When
+    /// state-backed admin storage is enabled, a non-zero storage value wins; a zero storage value
+    /// falls back to the static chain-config admin so Cobalt can replay historical Beryl activation
+    /// transactions before the first admin rotation.
+    ///
+    /// [`Address::ZERO`] here means "no admin is set": it is not a valid admin address.
+    /// Configuration-time validation rejects `Some(Address::ZERO)`, so in a correctly
+    /// constructed chain spec the zero return always means `activation_admin_address` was
+    /// `None`. Callers must not treat the zero return as a meaningful admin address.
+    pub fn admin(&self, admin_config: ActivationAdminConfig) -> Result<Address> {
+        if admin_config.state_enabled {
+            let stored_admin = self.stored_admin()?;
+            if !stored_admin.is_zero() {
+                return Ok(stored_admin);
+            }
         }
+        Ok(admin_config.fallback.unwrap_or(Address::ZERO))
     }
 
     /// Returns true when the feature is activated.
@@ -77,11 +124,7 @@ impl ActivationRegistryStorage<'_> {
     /// [`revm::precompile::PrecompileOutput::reverted`] to distinguish an activated feature from an
     /// ABI revert.
     pub fn assert_activated(&self, feature: B256) -> PrecompileResult {
-        self.ensure_activated(feature).into_precompile_result(
-            self.storage.gas_used(),
-            self.storage.state_gas_used(),
-            |()| Bytes::new(),
-        )
+        self.storage.result_output(self.ensure_activated(feature), |()| Bytes::new())
     }
 
     /// Returns `Ok(())` when the feature is activated.
@@ -94,29 +137,52 @@ impl ActivationRegistryStorage<'_> {
     }
 
     /// Activates the feature.
-    pub fn activate(
-        &mut self,
-        feature: B256,
-        activation_admin_address: Option<Address>,
-    ) -> Result<()> {
-        self.set_activated(feature, true, activation_admin_address)
+    pub fn activate(&mut self, feature: B256, admin_config: ActivationAdminConfig) -> Result<()> {
+        self.set_activated(feature, true, admin_config)
     }
 
     /// Deactivates the feature.
-    pub fn deactivate(
+    pub fn deactivate(&mut self, feature: B256, admin_config: ActivationAdminConfig) -> Result<()> {
+        self.set_activated(feature, false, admin_config)
+    }
+
+    /// Sets the activation registry admin address.
+    pub fn set_admin(
         &mut self,
-        feature: B256,
-        activation_admin_address: Option<Address>,
+        new_admin: Address,
+        admin_config: ActivationAdminConfig,
     ) -> Result<()> {
-        self.set_activated(feature, false, activation_admin_address)
+        if self.storage.is_static() {
+            return Err(BasePrecompileError::revert(IActivationRegistry::StaticCallNotAllowed {}));
+        }
+        if !admin_config.state_enabled {
+            return Err(BasePrecompileError::revert(
+                IActivationRegistry::AdminStorageNotEnabled {},
+            ));
+        }
+        if new_admin.is_zero() {
+            return Err(BasePrecompileError::revert(IActivationRegistry::ZeroAdminAddress {}));
+        }
+
+        let caller = self.require_admin_caller(admin_config)?;
+
+        self.__initialize()?;
+        self.admin.write(new_admin)?;
+        self.emit_event(IActivationRegistry::AdminChanged {
+            previousAdmin: caller,
+            newAdmin: new_admin,
+            caller,
+        })?;
+
+        Ok(())
     }
 
     /// Sets the feature activation state.
     pub fn set_activated(
         &mut self,
         feature: B256,
-        activated: bool,
-        activation_admin_address: Option<Address>,
+        to_activated_state: bool,
+        admin_config: ActivationAdminConfig,
     ) -> Result<()> {
         // Keep this guard at the shared mutation boundary so `activate`, `deactivate`, and direct
         // `set_activated` callers all get the same static-call behavior after calldata validation.
@@ -124,28 +190,26 @@ impl ActivationRegistryStorage<'_> {
             return Err(BasePrecompileError::revert(IActivationRegistry::StaticCallNotAllowed {}));
         }
 
-        let caller = self.storage.caller();
-        let Some(admin) = activation_admin_address else {
-            return Err(BasePrecompileError::revert(IActivationRegistry::Unauthorized { caller }));
-        };
-        if caller != admin {
-            return Err(BasePrecompileError::revert(IActivationRegistry::Unauthorized { caller }));
+        let caller = self.require_admin_caller(admin_config)?;
+
+        let current_activated_state = self.features.at(&feature).read()?;
+
+        let is_activating_and_already_activated = to_activated_state && current_activated_state;
+        let is_deactivating_and_already_deactivated =
+            !to_activated_state && !current_activated_state;
+
+        if is_activating_and_already_activated {
+            return Err(BasePrecompileError::revert(IActivationRegistry::AlreadyActivated {
+                feature,
+            }));
         }
-
-        let current = self.features.at(&feature).read()?;
-        if current == activated {
-            if activated {
-                return Err(BasePrecompileError::revert(IActivationRegistry::AlreadyActivated {
-                    feature,
-                }));
-            }
-
+        if is_deactivating_and_already_deactivated {
             return Err(BasePrecompileError::revert(IActivationRegistry::FeatureNotActivated {
                 feature,
             }));
         }
 
-        if activated {
+        if to_activated_state {
             self.__initialize()?;
             self.features.at_mut(&feature).write(true)?;
             self.emit_event(IActivationRegistry::FeatureActivated { feature, caller })?;
@@ -156,11 +220,35 @@ impl ActivationRegistryStorage<'_> {
 
         Ok(())
     }
+
+    /// Returns the effective admin if one is configured and the caller address can be authorized.
+    pub fn authorized_admin(&self, admin_config: ActivationAdminConfig) -> Result<Address> {
+        let caller = self.storage.caller();
+        if caller.is_zero() {
+            return Err(BasePrecompileError::revert(IActivationRegistry::Unauthorized { caller }));
+        }
+        let admin = self.admin(admin_config)?;
+        if admin.is_zero() {
+            return Err(BasePrecompileError::revert(IActivationRegistry::Unauthorized { caller }));
+        }
+        Ok(admin)
+    }
+
+    /// Reverts unless the current caller is the effective activation admin.
+    pub fn require_admin_caller(&self, admin_config: ActivationAdminConfig) -> Result<Address> {
+        let caller = self.storage.caller();
+        let admin = self.authorized_admin(admin_config)?;
+        if caller != admin {
+            return Err(BasePrecompileError::revert(IActivationRegistry::Unauthorized { caller }));
+        }
+        Ok(caller)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256, address, keccak256, uint};
+    use alloy_sol_types::{SolCall, SolEvent};
     use base_precompile_storage::{
         BasePrecompileError, HashMapStorageProvider, Result, StorageCtx, StorageKey,
     };
@@ -168,12 +256,17 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        ActivationFeature, ActivationRegistryStorage, IActivationRegistry,
+        ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, IActivationRegistry,
         activation::storage::slots,
     };
 
     const FEATURE: B256 = ActivationFeature::B20Asset.id();
     const ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
+    const NEW_ADMIN: Address = address!("0xcd00000000000000000000000000000000000000");
+    const STATIC_ADMIN_CONFIG: ActivationAdminConfig =
+        ActivationAdminConfig::static_fallback(Some(ADMIN));
+    const STATE_ADMIN_CONFIG: ActivationAdminConfig =
+        ActivationAdminConfig::state_backed(Some(ADMIN));
     const ACTIVATION_REGISTRY_ROOT: U256 =
         uint!(0x43ee1bbe25e988521cccd8b2c8fbd38c8287ebff8e074e825a70dfd3885cce00_U256);
 
@@ -206,8 +299,8 @@ mod tests {
         StorageCtx::enter(storage, |ctx| {
             let mut registry = ActivationRegistryStorage::new(ctx);
             match transition {
-                Transition::Activate => registry.activate(FEATURE, Some(ADMIN)),
-                Transition::Deactivate => registry.deactivate(FEATURE, Some(ADMIN)),
+                Transition::Activate => registry.activate(FEATURE, STATIC_ADMIN_CONFIG),
+                Transition::Deactivate => registry.deactivate(FEATURE, STATIC_ADMIN_CONFIG),
             }
         })
     }
@@ -233,14 +326,14 @@ mod tests {
     fn activate_feature(storage: &mut HashMapStorageProvider) -> Result<()> {
         storage.set_caller(ADMIN);
         StorageCtx::enter(storage, |ctx| {
-            ActivationRegistryStorage::new(ctx).activate(FEATURE, Some(ADMIN))
+            ActivationRegistryStorage::new(ctx).activate(FEATURE, STATIC_ADMIN_CONFIG)
         })
     }
 
     fn deactivate_feature(storage: &mut HashMapStorageProvider) -> Result<()> {
         storage.set_caller(ADMIN);
         StorageCtx::enter(storage, |ctx| {
-            ActivationRegistryStorage::new(ctx).deactivate(FEATURE, Some(ADMIN))
+            ActivationRegistryStorage::new(ctx).deactivate(FEATURE, STATIC_ADMIN_CONFIG)
         })
     }
 
@@ -281,6 +374,7 @@ mod tests {
         assert_eq!(slots::NAMESPACE_ID, "base.activation_registry");
         assert_eq!(slots::NAMESPACE_ROOT, ACTIVATION_REGISTRY_ROOT);
         assert_eq!(slots::FEATURES, ACTIVATION_REGISTRY_ROOT);
+        assert_eq!(slots::ADMIN, ACTIVATION_REGISTRY_ROOT + U256::ONE);
     }
 
     #[test]
@@ -330,7 +424,8 @@ mod tests {
 
         storage.set_caller(ADMIN);
         let err = StorageCtx::enter(&mut storage, |ctx| {
-            ActivationRegistryStorage::new(ctx).activate(FEATURE, Some(configured_admin))
+            ActivationRegistryStorage::new(ctx)
+                .activate(FEATURE, ActivationAdminConfig::static_fallback(Some(configured_admin)))
         })
         .unwrap_err();
         assert!(matches!(err, BasePrecompileError::Revert(_)));
@@ -338,10 +433,122 @@ mod tests {
 
         storage.set_caller(configured_admin);
         StorageCtx::enter(&mut storage, |ctx| {
-            ActivationRegistryStorage::new(ctx).activate(FEATURE, Some(configured_admin))
+            ActivationRegistryStorage::new(ctx)
+                .activate(FEATURE, ActivationAdminConfig::static_fallback(Some(configured_admin)))
         })
         .unwrap();
         assert_activated(&mut storage, true);
+    }
+
+    #[test]
+    fn state_backed_admin_falls_back_until_storage_slot_is_set() {
+        let mut storage = HashMapStorageProvider::new(1);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let registry = ActivationRegistryStorage::new(ctx);
+            assert_eq!(registry.stored_admin().unwrap(), Address::ZERO);
+            assert_eq!(registry.admin(STATE_ADMIN_CONFIG).unwrap(), ADMIN);
+            assert_eq!(registry.admin(STATIC_ADMIN_CONFIG).unwrap(), ADMIN);
+        });
+    }
+
+    #[test]
+    fn set_admin_updates_storage_and_authorization() {
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_caller(ADMIN);
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            ActivationRegistryStorage::new(ctx).set_admin(NEW_ADMIN, STATE_ADMIN_CONFIG).unwrap()
+        });
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let registry = ActivationRegistryStorage::new(ctx);
+            assert_eq!(registry.stored_admin().unwrap(), NEW_ADMIN);
+            assert_eq!(registry.admin(STATE_ADMIN_CONFIG).unwrap(), NEW_ADMIN);
+            assert_eq!(registry.admin(STATIC_ADMIN_CONFIG).unwrap(), ADMIN);
+        });
+
+        let events = storage.get_events(ActivationRegistryStorage::ADDRESS);
+        let event = IActivationRegistry::AdminChanged::decode_log_data(events.last().unwrap())
+            .expect("admin change event decodes");
+        assert_eq!(event.previousAdmin, ADMIN);
+        assert_eq!(event.newAdmin, NEW_ADMIN);
+        assert_eq!(event.caller, ADMIN);
+
+        let old_admin_err = StorageCtx::enter(&mut storage, |ctx| {
+            ActivationRegistryStorage::new(ctx).activate(FEATURE, STATE_ADMIN_CONFIG)
+        })
+        .unwrap_err();
+        assert_eq!(
+            old_admin_err,
+            BasePrecompileError::revert(IActivationRegistry::Unauthorized { caller: ADMIN })
+        );
+
+        storage.set_caller(NEW_ADMIN);
+        StorageCtx::enter(&mut storage, |ctx| {
+            ActivationRegistryStorage::new(ctx).activate(FEATURE, STATE_ADMIN_CONFIG)
+        })
+        .unwrap();
+        assert_activated(&mut storage, true);
+    }
+
+    #[test]
+    fn set_admin_reverts_when_state_backed_admin_is_disabled() {
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_caller(ADMIN);
+
+        let err = StorageCtx::enter(&mut storage, |ctx| {
+            ActivationRegistryStorage::new(ctx).set_admin(NEW_ADMIN, STATIC_ADMIN_CONFIG)
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IActivationRegistry::AdminStorageNotEnabled {})
+        );
+    }
+
+    #[test]
+    fn set_admin_reverts_for_zero_address() {
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_caller(ADMIN);
+
+        let err = StorageCtx::enter(&mut storage, |ctx| {
+            ActivationRegistryStorage::new(ctx).set_admin(Address::ZERO, STATE_ADMIN_CONFIG)
+        })
+        .unwrap_err();
+
+        assert_eq!(err, BasePrecompileError::revert(IActivationRegistry::ZeroAdminAddress {}));
+    }
+
+    #[test]
+    fn set_admin_reverts_for_unauthorized_caller() {
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_caller(NEW_ADMIN);
+
+        let err = StorageCtx::enter(&mut storage, |ctx| {
+            ActivationRegistryStorage::new(ctx).set_admin(NEW_ADMIN, STATE_ADMIN_CONFIG)
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IActivationRegistry::Unauthorized { caller: NEW_ADMIN })
+        );
+    }
+
+    #[test]
+    fn set_admin_reverts_in_static_context() {
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_caller(ADMIN);
+        storage.set_static(true);
+
+        let err = StorageCtx::enter(&mut storage, |ctx| {
+            ActivationRegistryStorage::new(ctx).set_admin(NEW_ADMIN, STATE_ADMIN_CONFIG)
+        })
+        .unwrap_err();
+
+        assert_eq!(err, BasePrecompileError::revert(IActivationRegistry::StaticCallNotAllowed {}));
     }
 
     #[test]
@@ -351,8 +558,11 @@ mod tests {
         storage.set_caller(ADMIN);
         let err = StorageCtx::enter(&mut storage, |ctx| {
             let mut registry = ActivationRegistryStorage::new(ctx);
-            assert_eq!(registry.admin(None), Address::ZERO);
-            registry.activate(FEATURE, None)
+            assert_eq!(
+                registry.admin(ActivationAdminConfig::static_fallback(None)).unwrap(),
+                Address::ZERO
+            );
+            registry.activate(FEATURE, ActivationAdminConfig::static_fallback(None))
         })
         .unwrap_err();
 
@@ -479,5 +689,66 @@ mod tests {
                 feature: FEATURE,
             })
         );
+    }
+
+    /// A zero-address caller must be rejected even when the admin is also configured as
+    /// `Address::ZERO`. This prevents deposit transactions with `msg.sender == Address::ZERO` from
+    /// toggling activation state on a misconfigured chain.
+    #[test]
+    fn zero_address_caller_with_zero_admin_is_rejected() {
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_caller(Address::ZERO);
+
+        let err = StorageCtx::enter(&mut storage, |ctx| {
+            ActivationRegistryStorage::new(ctx)
+                .activate(FEATURE, ActivationAdminConfig::static_fallback(Some(Address::ZERO)))
+        })
+        .unwrap_err();
+
+        assert!(matches!(err, BasePrecompileError::Revert(_)));
+        assert_activated(&mut storage, false);
+    }
+
+    /// End-to-end test: activate a feature, then deactivate it through `dispatch`. Deactivation
+    /// clears the feature storage slot (nonzero to zero SSTORE), which earns an EIP-3529 refund
+    /// that must appear in `PrecompileOutput::gas_refunded`.
+    #[test]
+    fn dispatch_deactivate_propagates_sstore_refund() {
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_caller(ADMIN);
+
+        // Activate first so deactivation has a nonzero slot to clear.
+        activate_feature(&mut storage).unwrap();
+
+        let calldata = IActivationRegistry::deactivateCall { feature: FEATURE }.abi_encode();
+
+        let output = StorageCtx::enter(&mut storage, |ctx| {
+            ActivationRegistryStorage::new(ctx).dispatch(ctx, &calldata, STATIC_ADMIN_CONFIG)
+        })
+        .expect("dispatch must not fatally error");
+
+        assert!(output.is_success(), "deactivate must succeed");
+        assert!(
+            output.gas_refunded > 0,
+            "deactivating a feature clears a storage slot and must propagate an EIP-3529 refund"
+        );
+    }
+
+    /// Activating a feature writes to a zero slot (nonzero-to-zero refunds do not apply to
+    /// zero-to-nonzero writes), so `gas_refunded` must be zero on the activate path.
+    #[test]
+    fn dispatch_activate_has_no_sstore_refund() {
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_caller(ADMIN);
+
+        let calldata = IActivationRegistry::activateCall { feature: FEATURE }.abi_encode();
+
+        let output = StorageCtx::enter(&mut storage, |ctx| {
+            ActivationRegistryStorage::new(ctx).dispatch(ctx, &calldata, STATIC_ADMIN_CONFIG)
+        })
+        .expect("dispatch must not fatally error");
+
+        assert!(output.is_success());
+        assert_eq!(output.gas_refunded, 0, "writing to a zero slot earns no refund");
     }
 }

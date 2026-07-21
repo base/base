@@ -18,8 +18,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use base_common_consensus::BaseBlock;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
+use base_optimism_rpc::DebugProviderExt;
 use base_proof_host::HostConfig;
-use base_proof_rpc::DebugProviderExt;
 use base_proof_succinct_client_utils::boot::BootInfoStruct;
 use base_protocol::L2BlockInfo;
 use futures::{StreamExt, stream};
@@ -209,7 +209,7 @@ impl OPSuccinctDataFetcher {
         let unix_timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
         if !rollup_config.is_holocene_active(unix_timestamp) {
             tracing::warn!(
-                "Chain is not using Holocene hard fork. This will cause significant performance degradation compared to chains that have activated Holocene."
+                "Chain is not using Holocene upgrade. This will cause significant performance degradation compared to chains that have activated Holocene."
             );
         }
 
@@ -235,7 +235,7 @@ impl OPSuccinctDataFetcher {
     pub async fn get_l2_head(&self) -> Result<Header> {
         let block = self.l2_provider.get_block_by_number(BlockNumberOrTag::Latest).await?;
         if let Some(block) = block {
-            Ok(block.header.inner)
+            Ok(block.header.inner.into())
         } else {
             bail!("Failed to get L2 head");
         }
@@ -300,7 +300,7 @@ impl OPSuccinctDataFetcher {
         let block = self.l2_provider.get_block(block_number).await?;
 
         if let Some(block) = block {
-            Ok(block.header.inner)
+            Ok(block.header.inner.into())
         } else {
             bail!("Failed to get L2 header for block {block_number}");
         }
@@ -834,6 +834,7 @@ impl OPSuccinctDataFetcher {
         let prover = base_proof_host::ProverConfig {
             l1_eth_url: self.rpc_config.l1_rpc.as_str().trim_end_matches('/').to_string(),
             l2_eth_url: self.rpc_config.l2_rpc.as_str().trim_end_matches('/').to_string(),
+            l2_node_url: self.rpc_config.l2_node_rpc.as_str().trim_end_matches('/').to_string(),
             l1_beacon_url,
             l2_chain_id: rollup_config.l2_chain_id.id(),
             rollup_config: rollup_config.clone(),

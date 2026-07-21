@@ -5,7 +5,10 @@
 
 use alloy_consensus::{Eip658Value, Receipt, transaction::Recovered};
 use base_common_chains::Upgrades;
-use base_common_consensus::{BaseReceipt, BaseTxEnvelope, DepositReceipt, OpTxType};
+use base_common_consensus::{
+    BaseReceipt, BaseTxEnvelope, DepositReceipt, Eip8130Receipt, OpTxType,
+};
+use base_common_evm::Eip8130PhaseStatuses;
 use reth_evm::Evm;
 use revm::{Database, context::result::ExecutionResult};
 
@@ -60,7 +63,7 @@ impl<C: Upgrades> UnifiedReceiptBuilder<C> {
     /// * `transaction` - The recovered transaction to build a receipt for
     /// * `result` - The execution result
     /// * `cumulative_gas_used` - Cumulative gas used up to and including this transaction
-    /// * `timestamp` - The block timestamp, used to determine active hardforks
+    /// * `timestamp` - The block timestamp, used to determine active upgrades
     ///
     /// # Returns
     ///
@@ -118,7 +121,11 @@ impl<C: Upgrades> UnifiedReceiptBuilder<C> {
                 OpTxType::Eip1559 => BaseReceipt::Eip1559(receipt),
                 OpTxType::Eip7702 => BaseReceipt::Eip7702(receipt),
                 OpTxType::Deposit => unreachable!(),
-                OpTxType::Eip8130 => BaseReceipt::Eip8130(receipt),
+                // Consume the per-phase statuses published by the executor for
+                // this transaction (see [`Eip8130PhaseStatuses`]).
+                OpTxType::Eip8130 => {
+                    BaseReceipt::Eip8130(Eip8130Receipt::new(receipt, Eip8130PhaseStatuses::take()))
+                }
             })
         }
     }

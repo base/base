@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use base_retry::RetryConfig;
 use jsonrpsee::{
     core::client::Error as JsonRpcClientError,
     http_client::{HttpClient, HttpClientBuilder},
@@ -34,6 +35,12 @@ pub enum ProverServiceClientConfigError {
     /// The configured poll interval is greater than the maximum wait duration.
     #[error("poll interval must be less than or equal to max wait")]
     PollIntervalExceedsMaxWait,
+    /// The configured retry initial delay is greater than the retry max delay.
+    #[error("retry initial delay must be less than or equal to retry max delay")]
+    RetryInitialDelayExceedsMaxDelay,
+    /// The configured retry policy is unbounded.
+    #[error("unbounded retries are not allowed for prover-service clients")]
+    UnboundedRetryNotAllowed,
 }
 
 /// Errors that can occur when building a prover-service client.
@@ -54,6 +61,7 @@ pub struct ProverServiceClientConfig {
     request_timeout: Duration,
     poll_interval: Duration,
     max_wait: Duration,
+    retry: RetryConfig,
 }
 
 impl ProverServiceClientConfig {
@@ -73,6 +81,7 @@ impl ProverServiceClientConfig {
             request_timeout: Self::DEFAULT_REQUEST_TIMEOUT,
             poll_interval: Self::DEFAULT_POLL_INTERVAL,
             max_wait: Self::DEFAULT_MAX_WAIT,
+            retry: RetryConfig::default(),
         }
     }
 
@@ -96,6 +105,12 @@ impl ProverServiceClientConfig {
         self.max_wait
     }
 
+    /// Return the retry configuration applied by [`crate::ProofRequesterClient`] and
+    /// idempotent [`crate::ProverWorkerClient`] JSON-RPC methods.
+    pub const fn retry_config(&self) -> RetryConfig {
+        self.retry
+    }
+
     /// Set the per-request timeout used by the JSON-RPC HTTP client.
     pub const fn with_request_timeout(mut self, request_timeout: Duration) -> Self {
         self.request_timeout = request_timeout;
@@ -111,6 +126,13 @@ impl ProverServiceClientConfig {
     /// Set the maximum time to wait for proof completion.
     pub const fn with_max_wait(mut self, max_wait: Duration) -> Self {
         self.max_wait = max_wait;
+        self
+    }
+
+    /// Set the retry configuration applied by [`crate::ProofRequesterClient`] and
+    /// idempotent [`crate::ProverWorkerClient`] JSON-RPC methods.
+    pub const fn with_retry_config(mut self, retry: RetryConfig) -> Self {
+        self.retry = retry;
         self
     }
 
@@ -141,6 +163,15 @@ impl ProverServiceClientConfig {
 
         if self.poll_interval > self.max_wait {
             return Err(ProverServiceClientConfigError::PollIntervalExceedsMaxWait);
+        }
+
+        // `max_attempts == 0` disables retries; `None` is not allowed for this RPC client.
+        if self.retry.max_attempts.is_none() {
+            return Err(ProverServiceClientConfigError::UnboundedRetryNotAllowed);
+        }
+
+        if self.retry.initial_delay > self.retry.max_delay {
+            return Err(ProverServiceClientConfigError::RetryInitialDelayExceedsMaxDelay);
         }
 
         Ok(())
@@ -233,5 +264,37 @@ mod tests {
         let err = config.validate().expect_err("invalid config should fail validation");
 
         assert!(err.to_string().contains(expected_message));
+    }
+
+    #[test]
+    fn config_validation_rejects_retry_initial_delay_greater_than_max_delay() {
+        let config = ProverServiceClientConfig::new("http://localhost:8545").with_retry_config(
+            RetryConfig::new(3, Duration::from_secs(60), Duration::from_millis(50)),
+        );
+
+        let err = config.validate().expect_err("invalid retry config should fail validation");
+
+        assert_eq!(err, ProverServiceClientConfigError::RetryInitialDelayExceedsMaxDelay);
+    }
+
+    #[test]
+    fn config_validation_accepts_zero_retry_max_attempts() {
+        // `max_attempts == 0` disables retries; validation must not reject it.
+        let config = ProverServiceClientConfig::new("http://localhost:8545").with_retry_config(
+            RetryConfig::new(0, Duration::from_millis(10), Duration::from_millis(20)),
+        );
+
+        config.validate().expect("zero max_attempts retry config should pass validation");
+    }
+
+    #[test]
+    fn config_validation_rejects_unbounded_retry() {
+        let config = ProverServiceClientConfig::new("http://localhost:8545").with_retry_config(
+            RetryConfig::unbounded(Duration::from_millis(10), Duration::from_millis(20)),
+        );
+
+        let err = config.validate().expect_err("unbounded retry config should fail validation");
+
+        assert_eq!(err, ProverServiceClientConfigError::UnboundedRetryNotAllowed);
     }
 }

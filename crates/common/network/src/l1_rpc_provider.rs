@@ -79,9 +79,10 @@ impl L1RpcProvider {
             Self::Ethereum(p) => {
                 p.get_block_by_hash(hash).await.map(|b| b.map(|b| b.header.into_consensus()))
             }
-            Self::Base(p) => {
-                p.get_block_by_hash(hash).await.map(|b| b.map(|b| b.header.into_consensus()))
-            }
+            Self::Base(p) => p
+                .get_block_by_hash(hash)
+                .await
+                .map(|b| b.map(|b| b.header.into_inner().into_consensus())),
         }?
         .ok_or(L1RpcProviderError::BlockNotFound(hash.into()))
     }
@@ -96,7 +97,7 @@ impl L1RpcProvider {
             Self::Base(p) => p
                 .get_block_by_number(number.into())
                 .await
-                .map(|b| b.map(|b| b.header.into_consensus())),
+                .map(|b| b.map(|b| b.header.into_inner().into_consensus())),
         }?
         .ok_or(L1RpcProviderError::BlockNotFound(number.into()))
     }
@@ -173,7 +174,7 @@ impl L1RpcProvider {
 fn base_block_into_header_and_txs(
     block: <Base as Network>::BlockResponse,
 ) -> (Header, Vec<TxEnvelope>) {
-    let header = block.header.into_consensus();
+    let header = block.header.into_inner().into_consensus();
     let transactions = block
         .transactions
         .into_transactions()

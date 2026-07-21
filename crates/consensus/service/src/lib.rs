@@ -13,6 +13,7 @@ mod service;
 pub use service::{
     DerivationDelegateConfig, FollowNode, FollowNodeConfig, HEAD_STREAM_POLL_INTERVAL, L1Config,
     L1ConfigBuilder, L1TxFormat, NodeMode, RollupNode, RollupNodeBuilder, ShutdownSignal,
+    UpgradeSignalBuilderConfig,
 };
 
 mod follow;
@@ -42,7 +43,7 @@ pub use actors::{
     RpcActor, RpcActorError, RpcContext, ScheduledTicker, SealState, SealStepError,
     SealStepOutcome, SequencerActor, SequencerActorError, SequencerAdminQuery, SequencerConfig,
     SequencerEngineClient, UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
-    UnsealedPayloadHandle,
+    UnsealedPayloadHandle, UpgradeSignalMetricsActor, UpgradeSignalNodeConfig,
 };
 
 mod metrics;

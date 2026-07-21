@@ -1,0 +1,102 @@
+data_dir: /vector-data
+
+sources:
+  transaction_event_files:
+    type: file
+    include:
+      - /var/log/transaction-events/*/events.jsonl
+    read_from: beginning
+
+  vector_internal_metrics:
+    type: internal_metrics
+
+transforms:
+  parse_transaction_events:
+    type: remap
+    inputs:
+      - transaction_event_files
+    drop_on_error: true
+    reroute_dropped: true
+    source: |-
+      source_file = to_string(.file) ?? ""
+      source_match = parse_regex(source_file, r'/var/log/transaction-events/(?P<container_name>[^/]+)/events\.jsonl') ?? {}
+      source_container = to_string(source_match.container_name)
+      if source_container == "" {
+        source_container = "unknown"
+      }
+
+      parsed = parse_json!(string!(.message))
+      . = parsed
+      if !exists(.data) || !is_object(.data) {
+        .data = {}
+      }
+      .data.observability_source = {
+        "deployment": {
+          "config_name": get_env_var("TRANSACTION_EVENTS_CONFIG_NAME") ?? "local-devnet",
+          "environment_name": get_env_var("TRANSACTION_EVENTS_ENVIRONMENT_NAME") ?? "devnet",
+          "project_name": get_env_var("TRANSACTION_EVENTS_PROJECT_NAME") ?? "base"
+        },
+        "runtime": {
+          "type": "docker-compose",
+          "container_name": source_container,
+          "collector_container_name": get_env_var("TRANSACTION_EVENTS_COLLECTOR_CONTAINER_NAME") ?? "transaction-events-vector"
+        },
+        "event_source_file": source_file
+      }
+
+  validate_transaction_events:
+    type: remap
+    inputs:
+      - parse_transaction_events
+    drop_on_error: true
+    reroute_dropped: true
+    source: |-
+      unsafe_data_key_regex = r'(?i)"(?:body|headers|secret|secrets|calldata|authorization|raw[_-]?transactions?|raw[_-]?transaction[_-]?(?:bytes|body|payload)|raw[_-]?txs?|raw[_-]?tx[_-]?(?:bytes|body|payload)|transaction[_-]?(?:body|payload)|tx[_-]?(?:body|payload)|request[_-]?body|x[_-]?forwarded[_-]?for|forwarded[_-]?headers|api[_-]?keys?|secret[_-]?keys?|private[_-]?keys?|bearer[_-]?tokens?)"\s*:'
+      data_json = encode_json(.data)
+      if match(data_json, unsafe_data_key_regex) {
+        abort "transaction event data contains unsafe key"
+      }
+
+sinks:
+  audit_archiver:
+    type: http
+    inputs:
+      - validate_transaction_events
+    # Keep this in sync with AUDIT_RPC_PORT in devnet-env. Vector config is not
+    # interpolated by Docker Compose.
+    uri: http://audit-archiver:9100/v1/transaction-events/batch
+    method: post
+    request:
+      headers:
+        content-type: application/x-ndjson
+      retry_attempts: 10
+      retry_initial_backoff_secs: 1
+      retry_max_duration_secs: 300
+    healthcheck:
+      enabled: false
+    framing:
+      method: newline_delimited
+    encoding:
+      codec: json
+    batch:
+      max_bytes: 1048576
+      max_events: 1000
+      timeout_secs: 5
+    buffer:
+      type: disk
+      max_size: 1073741824
+      when_full: block
+  malformed_transaction_events:
+    type: console
+    inputs:
+      - parse_transaction_events.dropped
+      - validate_transaction_events.dropped
+    target: stderr
+    encoding:
+      codec: json
+
+  vector_metrics:
+    type: prometheus_exporter
+    inputs:
+      - vector_internal_metrics
+    address: 0.0.0.0:8686

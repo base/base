@@ -1,4 +1,4 @@
-use std::{fmt, sync::Arc};
+use std::{collections::BTreeMap, fmt, sync::Arc};
 
 use alloy_eips::BlockNumberOrTag;
 use base_common_genesis::RollupConfig;
@@ -11,6 +11,7 @@ use base_consensus_engine::{
     NoopForkchoiceCheckpointReader, SealTaskError,
 };
 use base_protocol::L2BlockInfo;
+use opentelemetry::context::FutureExt as OtelFutureExt;
 use tokio::{
     sync::{mpsc, watch},
     task::JoinHandle,
@@ -58,6 +59,8 @@ pub struct EngineProcessorOptions {
     pub conductor: Option<Arc<dyn Conductor>>,
     /// Whether the sequencer starts in a stopped state.
     pub sequencer_stopped: bool,
+    /// Whether the sequencer privately builds blocks and reconciles from P2P payloads.
+    pub shadow_sequencer: bool,
 }
 
 impl EngineProcessorOptions {
@@ -66,6 +69,9 @@ impl EngineProcessorOptions {
     /// Larger gaps are treated as deep CL/EL sync and are left to derivation/EL sync rather than
     /// admitting far-future live gossip into reth.
     pub const MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP: u64 = 300;
+
+    /// Maximum number of active-sequencer payloads retained for shadow reconciliation.
+    pub const MAX_SHADOW_PAYLOADS: usize = 300;
 }
 
 impl fmt::Debug for EngineProcessorOptions {
@@ -75,6 +81,7 @@ impl fmt::Debug for EngineProcessorOptions {
             .field("has_unsafe_head_tx", &self.unsafe_head_tx.is_some())
             .field("has_conductor", &self.conductor.is_some())
             .field("sequencer_stopped", &self.sequencer_stopped)
+            .field("shadow_sequencer", &self.shadow_sequencer)
             .finish()
     }
 }
@@ -99,6 +106,12 @@ where
     /// like a [`BootstrapRole::ConductorFollower`] so it does not issue an active-sequencer
     /// forkchoice update before being explicitly started.
     sequencer_stopped: bool,
+    /// Whether the sequencer privately builds blocks and reconciles from P2P payloads.
+    shadow_sequencer: bool,
+    /// Active-sequencer payloads received from authenticated P2P gossip, keyed by block number.
+    shadow_payloads: BTreeMap<u64, BaseExecutionPayloadEnvelope>,
+    /// Whether a conflicting payload or buffer overflow has made reconciliation unsafe.
+    shadow_payload_buffer_faulted: bool,
     /// The configured node mode.
     node_mode: NodeMode,
     /// The last safe head update sent.
@@ -181,8 +194,16 @@ where
             node_mode: options.node_mode,
             rollup: config,
             sequencer_stopped: options.sequencer_stopped,
+            shadow_sequencer: options.shadow_sequencer,
+            shadow_payloads: BTreeMap::new(),
+            shadow_payload_buffer_faulted: false,
             unsafe_head_tx: options.unsafe_head_tx,
         }
+    }
+
+    /// Returns whether this processor belongs to a shadow sequencer.
+    pub const fn is_shadow_sequencer(&self) -> bool {
+        self.shadow_sequencer
     }
 
     /// Resets the inner [`Engine`] and propagates the reset to the derivation actor.
@@ -197,6 +218,10 @@ where
                 self.checkpoint_reader.as_ref(),
             )
             .await?;
+
+        if self.is_shadow_sequencer() {
+            self.clear_shadow_payload_buffer();
+        }
 
         self.checkpoint_forkchoice_state_if_updated().await;
 
@@ -316,6 +341,9 @@ where
         }
 
         self.checkpoint_forkchoice_state_if_updated().await;
+        if self.is_shadow_sequencer() {
+            self.prune_shadow_payloads();
+        }
         self.send_derivation_actor_safe_head_if_updated().await?;
 
         if !self.el_sync_complete && self.engine.state().el_sync_finished {
@@ -351,6 +379,11 @@ where
 
     fn handle_external_unsafe_l2_block(&mut self, envelope: BaseExecutionPayloadEnvelope) {
         let block_number = envelope.execution_payload.block_number();
+        if self.is_shadow_sequencer() {
+            self.buffer_shadow_payload(envelope);
+            return;
+        }
+
         let sync_state = self.engine.state().sync_state;
         let unsafe_head = sync_state.unsafe_head();
 
@@ -396,8 +429,95 @@ where
         );
     }
 
-    fn handle_local_unsafe_l2_block(&mut self, request: InsertUnsafePayloadRequest) {
-        let InsertUnsafePayloadRequest { envelope, result_tx } = request;
+    /// Buffers an authenticated active-sequencer payload for later shadow reconciliation.
+    pub fn buffer_shadow_payload(&mut self, envelope: BaseExecutionPayloadEnvelope) {
+        let block_number = envelope.execution_payload.block_number();
+        let block_hash = envelope.execution_payload.block_hash();
+
+        if self.shadow_payload_buffer_faulted {
+            warn!(
+                target: "engine",
+                block_number,
+                %block_hash,
+                "Ignoring shadow reconciliation payload after buffer fault"
+            );
+            return;
+        }
+
+        if let Some(buffered) = self.shadow_payloads.get(&block_number) {
+            let buffered_hash = buffered.execution_payload.block_hash();
+            if buffered_hash == block_hash {
+                debug!(
+                    target: "engine",
+                    block_number,
+                    %block_hash,
+                    "Ignoring duplicate shadow reconciliation payload"
+                );
+                return;
+            }
+
+            self.shadow_payload_buffer_faulted = true;
+            error!(
+                target: "engine",
+                block_number,
+                %block_hash,
+                %buffered_hash,
+                "Conflicting shadow reconciliation payloads received"
+            );
+            return;
+        }
+
+        if self.shadow_payloads.len() >= EngineProcessorOptions::MAX_SHADOW_PAYLOADS {
+            self.shadow_payload_buffer_faulted = true;
+            error!(
+                target: "engine",
+                block_number,
+                %block_hash,
+                max_shadow_payloads = EngineProcessorOptions::MAX_SHADOW_PAYLOADS,
+                "Shadow reconciliation payload buffer is full"
+            );
+            return;
+        }
+
+        debug!(
+            target: "engine",
+            block_number,
+            %block_hash,
+            "Buffered shadow reconciliation payload"
+        );
+        self.shadow_payloads.insert(block_number, envelope);
+    }
+
+    fn prune_shadow_payloads(&mut self) {
+        let safe_head_number = self.engine.state().sync_state.safe_head().block_info.number;
+        self.shadow_payloads.retain(|block_number, _| *block_number > safe_head_number);
+    }
+
+    fn clear_shadow_payload_buffer(&mut self) {
+        self.shadow_payloads.clear();
+        self.shadow_payload_buffer_faulted = false;
+    }
+
+    /// Handles an unsafe payload supplied through the admin API.
+    pub fn handle_admin_unsafe_l2_block(&mut self, envelope: BaseExecutionPayloadEnvelope) {
+        if self.is_shadow_sequencer() {
+            warn!(
+                target: "engine",
+                block_number = envelope.execution_payload.block_number(),
+                block_hash = %envelope.execution_payload.block_hash(),
+                "Ignoring admin unsafe payload on shadow sequencer"
+            );
+            return;
+        }
+
+        self.handle_external_unsafe_l2_block(envelope);
+    }
+
+    fn handle_local_unsafe_l2_block(
+        &mut self,
+        envelope: BaseExecutionPayloadEnvelope,
+        result_tx: Option<mpsc::Sender<InsertTaskResult>>,
+    ) {
         debug!(
             target: "engine",
             block_number = envelope.execution_payload.block_number(),
@@ -462,6 +582,7 @@ where
         self.rollup.log_upgrade_activation(
             envelope.execution_payload.block_number(),
             envelope.execution_payload.timestamp(),
+            envelope.execution_payload.timestamp().saturating_sub(self.rollup.block_time),
         );
     }
 
@@ -744,12 +865,13 @@ where
 
                 match request {
                     EngineActorRequest::BuildRequest(build_request) => {
-                        let BuildRequest { attributes, result_tx } = *build_request;
-                        match self
+                        let BuildRequest { attributes, result_tx, otel_cx } = *build_request;
+                        let build_result = self
                             .engine
                             .build(Arc::clone(&self.client), Arc::clone(&self.rollup), attributes)
-                            .await
-                        {
+                            .with_context(otel_cx)
+                            .await;
+                        match build_result {
                             Ok(payload_id) => {
                                 result_tx
                                     .send(Ok(payload_id))
@@ -768,7 +890,7 @@ where
                         }
                     }
                     EngineActorRequest::GetPayloadRequest(get_payload_request) => {
-                        let GetPayloadRequest { payload_id, attributes, result_tx } =
+                        let GetPayloadRequest { payload_id, attributes, result_tx, otel_cx } =
                             *get_payload_request;
                         let result = self
                             .engine
@@ -778,6 +900,7 @@ where
                                 payload_id,
                                 attributes,
                             )
+                            .with_context(otel_cx)
                             .await;
 
                         let error =
@@ -811,8 +934,14 @@ where
                     EngineActorRequest::ProcessUnsafeL2BlockRequest(envelope) => {
                         self.handle_external_unsafe_l2_block(*envelope);
                     }
+                    EngineActorRequest::ProcessAdminUnsafeL2BlockRequest(envelope) => {
+                        self.handle_admin_unsafe_l2_block(*envelope);
+                    }
                     EngineActorRequest::ProcessLocalUnsafeL2BlockRequest(envelope) => {
-                        self.handle_local_unsafe_l2_block(*envelope);
+                        let InsertUnsafePayloadRequest { envelope, result_tx, otel_cx } = *envelope;
+                        // Attach for the synchronous enqueue call only — no await, no Send issue.
+                        let _guard = otel_cx.attach();
+                        self.handle_local_unsafe_l2_block(envelope, result_tx);
                     }
                     EngineActorRequest::ResetRequest(reset_request) => {
                         // Do not reset the engine while the EL is still syncing. A Reset sends a
@@ -885,9 +1014,8 @@ mod tests {
 
     use crate::{
         BuildRequest, EngineActorRequest, EngineClientError, EngineProcessor,
-        EngineProcessorOptions, EngineRequestReceiver, InsertUnsafePayloadRequest, MockConductor,
-        NodeMode, NoopCheckpointWriter, ResetRequest,
-        actors::engine::client::MockEngineDerivationClient,
+        EngineProcessorOptions, EngineRequestReceiver, MockConductor, NodeMode,
+        NoopCheckpointWriter, ResetRequest, actors::engine::client::MockEngineDerivationClient,
     };
 
     /// Test-only [`ForkchoiceCheckpointReader`] that returns pre-seeded safe/finalized heads.
@@ -1019,6 +1147,7 @@ mod tests {
                     unsafe_head_tx,
                     conductor: None,
                     sequencer_stopped: false,
+                    shadow_sequencer: false,
                 },
             ),
             queue_rx,
@@ -1146,15 +1275,176 @@ mod tests {
             unsafe_payload_processor(node_mode, el_sync_finished, unsafe_head, safe_head);
 
         if local_payload {
-            processor.handle_local_unsafe_l2_block(InsertUnsafePayloadRequest {
-                envelope,
-                result_tx: None,
-            });
+            processor.handle_local_unsafe_l2_block(envelope, None);
         } else {
             processor.handle_external_unsafe_l2_block(envelope);
         }
 
         assert_eq!(*queue_rx.borrow(), expected_queue_len);
+    }
+
+    #[test]
+    fn shadow_sequencer_buffers_external_payloads_without_enqueuing() {
+        let (mut processor, queue_rx) = unsafe_payload_processor(
+            NodeMode::Sequencer,
+            true,
+            l2_head(10, B256::with_last_byte(10)),
+            None,
+        );
+        processor.shadow_sequencer = true;
+
+        let later = unsafe_payload(12, B256::with_last_byte(11), B256::with_last_byte(12));
+        let earlier = unsafe_payload(11, B256::with_last_byte(10), B256::with_last_byte(11));
+        processor.handle_external_unsafe_l2_block(later);
+        processor.handle_external_unsafe_l2_block(earlier.clone());
+        processor.handle_external_unsafe_l2_block(earlier);
+
+        assert_eq!(*queue_rx.borrow(), 0);
+        assert_eq!(processor.shadow_payloads.len(), 2);
+        assert_eq!(processor.shadow_payloads.keys().copied().collect::<Vec<_>>(), vec![11, 12]);
+        assert!(!processor.shadow_payload_buffer_faulted);
+    }
+
+    #[test]
+    fn shadow_sequencer_rejects_admin_payloads() {
+        let (mut processor, queue_rx) = unsafe_payload_processor(
+            NodeMode::Sequencer,
+            true,
+            l2_head(10, B256::with_last_byte(10)),
+            None,
+        );
+        processor.shadow_sequencer = true;
+
+        processor.handle_admin_unsafe_l2_block(unsafe_payload(
+            11,
+            B256::with_last_byte(10),
+            B256::with_last_byte(11),
+        ));
+
+        assert_eq!(*queue_rx.borrow(), 0);
+        assert!(processor.shadow_payloads.is_empty());
+        assert!(!processor.shadow_payload_buffer_faulted);
+    }
+
+    #[test]
+    fn normal_sequencer_preserves_admin_payload_insertion() {
+        let (mut processor, queue_rx) = unsafe_payload_processor(
+            NodeMode::Sequencer,
+            true,
+            l2_head(10, B256::with_last_byte(10)),
+            None,
+        );
+
+        processor.handle_admin_unsafe_l2_block(unsafe_payload(
+            11,
+            B256::with_last_byte(10),
+            B256::with_last_byte(11),
+        ));
+
+        assert_eq!(*queue_rx.borrow(), 1);
+        assert!(processor.shadow_payloads.is_empty());
+    }
+
+    #[test]
+    fn shadow_payload_conflict_faults_buffer_and_preserves_first_payload() {
+        let (mut processor, queue_rx) = unsafe_payload_processor(
+            NodeMode::Sequencer,
+            true,
+            l2_head(10, B256::with_last_byte(10)),
+            None,
+        );
+        processor.shadow_sequencer = true;
+
+        let first_hash = B256::with_last_byte(11);
+        processor.handle_external_unsafe_l2_block(unsafe_payload(
+            11,
+            B256::with_last_byte(10),
+            first_hash,
+        ));
+        processor.handle_external_unsafe_l2_block(unsafe_payload(
+            11,
+            B256::with_last_byte(10),
+            B256::with_last_byte(12),
+        ));
+        processor.handle_external_unsafe_l2_block(unsafe_payload(
+            12,
+            first_hash,
+            B256::with_last_byte(13),
+        ));
+
+        assert_eq!(*queue_rx.borrow(), 0);
+        assert!(processor.shadow_payload_buffer_faulted);
+        assert_eq!(processor.shadow_payloads.len(), 1);
+        assert_eq!(processor.shadow_payloads[&11].execution_payload.block_hash(), first_hash);
+    }
+
+    #[test]
+    fn shadow_payload_overflow_faults_buffer_without_eviction() {
+        let (mut processor, queue_rx) =
+            unsafe_payload_processor(NodeMode::Sequencer, true, l2_head(0, B256::ZERO), None);
+        processor.shadow_sequencer = true;
+
+        for block_number in 1..=EngineProcessorOptions::MAX_SHADOW_PAYLOADS as u64 {
+            processor.handle_external_unsafe_l2_block(unsafe_payload(
+                block_number,
+                B256::ZERO,
+                B256::with_last_byte(block_number as u8),
+            ));
+        }
+        processor.handle_external_unsafe_l2_block(unsafe_payload(
+            EngineProcessorOptions::MAX_SHADOW_PAYLOADS as u64 + 1,
+            B256::ZERO,
+            B256::with_last_byte(1),
+        ));
+
+        assert_eq!(*queue_rx.borrow(), 0);
+        assert!(processor.shadow_payload_buffer_faulted);
+        assert_eq!(processor.shadow_payloads.len(), EngineProcessorOptions::MAX_SHADOW_PAYLOADS);
+        assert!(processor.shadow_payloads.contains_key(&1));
+    }
+
+    #[test]
+    fn shadow_payload_pruning_discards_payloads_at_or_below_safe_head() {
+        let (mut processor, queue_rx) = unsafe_payload_processor(
+            NodeMode::Sequencer,
+            true,
+            l2_head(11, B256::with_last_byte(11)),
+            Some(l2_head(10, B256::with_last_byte(10))),
+        );
+        processor.shadow_sequencer = true;
+
+        for block_number in 9..=11 {
+            processor.buffer_shadow_payload(unsafe_payload(
+                block_number,
+                B256::ZERO,
+                B256::with_last_byte(block_number as u8),
+            ));
+        }
+        processor.prune_shadow_payloads();
+
+        assert_eq!(*queue_rx.borrow(), 0);
+        assert_eq!(processor.shadow_payloads.keys().copied().collect::<Vec<_>>(), vec![11]);
+    }
+
+    #[test]
+    fn clearing_shadow_payload_buffer_removes_payloads_and_fault() {
+        let (mut processor, queue_rx) = unsafe_payload_processor(
+            NodeMode::Sequencer,
+            true,
+            l2_head(10, B256::with_last_byte(10)),
+            None,
+        );
+        processor.shadow_sequencer = true;
+        processor
+            .shadow_payloads
+            .insert(11, unsafe_payload(11, B256::with_last_byte(10), B256::with_last_byte(11)));
+        processor.shadow_payload_buffer_faulted = true;
+
+        processor.clear_shadow_payload_buffer();
+
+        assert_eq!(*queue_rx.borrow(), 0);
+        assert!(processor.shadow_payloads.is_empty());
+        assert!(!processor.shadow_payload_buffer_faulted);
     }
 
     /// Verifies that when a standalone sequencer (no conductor) is beyond genesis and reth
@@ -1203,6 +1493,7 @@ mod tests {
                 unsafe_head_tx: Some(unsafe_head_tx),
                 conductor: None,
                 sequencer_stopped: false,
+                shadow_sequencer: false,
             },
         );
 
@@ -1269,6 +1560,7 @@ mod tests {
                 unsafe_head_tx: Some(unsafe_head_tx),
                 conductor: None,
                 sequencer_stopped: false,
+                shadow_sequencer: false,
             },
         );
 
@@ -1347,6 +1639,7 @@ mod tests {
                 unsafe_head_tx: Some(unsafe_head_tx),
                 conductor: Some(Arc::new(mock_conductor)),
                 sequencer_stopped: false,
+                shadow_sequencer: false,
             },
         );
 
@@ -1421,6 +1714,7 @@ mod tests {
                 unsafe_head_tx: None,
                 conductor: None,
                 sequencer_stopped: false,
+                shadow_sequencer: false,
             },
         );
 
@@ -1489,6 +1783,7 @@ mod tests {
                 unsafe_head_tx: None,
                 conductor: None,
                 sequencer_stopped: false,
+                shadow_sequencer: false,
             },
         );
 
@@ -1556,6 +1851,7 @@ mod tests {
                 unsafe_head_tx,
                 conductor,
                 sequencer_stopped,
+                shadow_sequencer: false,
             },
         )
     }
@@ -1712,6 +2008,7 @@ mod tests {
                 unsafe_head_tx: None,
                 conductor: None,
                 sequencer_stopped: false,
+                shadow_sequencer: false,
             },
         );
 
@@ -1904,6 +2201,7 @@ mod tests {
                 unsafe_head_tx: None,
                 conductor: None,
                 sequencer_stopped: false,
+                shadow_sequencer: false,
             },
             Arc::new(TestCheckpointReader { safe: Some(safe_checkpoint), finalized: None }),
             Arc::new(NoopCheckpointWriter),
@@ -1936,7 +2234,7 @@ mod tests {
         let attributes_timestamp = unsafe_block.block_info.timestamp;
 
         let mut cfg = RollupConfig::default();
-        cfg.hardforks.ecotone_time = Some(attributes_timestamp);
+        cfg.upgrades.ecotone_time = Some(attributes_timestamp);
         let cfg = Arc::new(cfg);
 
         let invalid_fcu = ForkchoiceUpdated {
@@ -1989,6 +2287,7 @@ mod tests {
                 unsafe_head_tx: None,
                 conductor: None,
                 sequencer_stopped: false,
+                shadow_sequencer: false,
             },
         );
 
@@ -2004,6 +2303,7 @@ mod tests {
             .send(EngineActorRequest::BuildRequest(Box::new(BuildRequest {
                 attributes,
                 result_tx: build_result_tx,
+                otel_cx: opentelemetry::Context::new(),
             })))
             .await
             .expect("failed to send build request");

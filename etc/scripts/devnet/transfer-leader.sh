@@ -1,13 +1,13 @@
 #!/bin/bash
 # Simulates a sequencer failover: stops the active sequencer on the current
-# raft leader's CL node via admin_stopSequencer, then transfers raft leadership
+# raft leader's unified sequencer node via admin_stopSequencer, then transfers raft leadership
 # via op-conductor, and waits to confirm the new leader.
 #
 # Usage:
 #   transfer-leader.sh          # transfer to any available node
-#   transfer-leader.sh 0        # transfer to op-conductor-0 (base-builder-cl)
-#   transfer-leader.sh 1        # transfer to op-conductor-1 (base-sequencer-1-cl)
-#   transfer-leader.sh 2        # transfer to op-conductor-2 (base-sequencer-2-cl)
+#   transfer-leader.sh 0        # transfer to op-conductor-0 (base-builder)
+#   transfer-leader.sh 1        # transfer to op-conductor-1 (base-sequencer-1)
+#   transfer-leader.sh 2        # transfer to op-conductor-2 (base-sequencer-2)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -32,8 +32,7 @@ CONDUCTOR_PORTS=("$CONDUCTOR0_RPC_PORT" "$CONDUCTOR1_RPC_PORT" "$CONDUCTOR2_RPC_
 CONDUCTOR_SERVER_IDS=("sequencer-0" "sequencer-1" "sequencer-2")
 CONDUCTOR_RAFT_ADDRS=("op-conductor-0:$CONDUCTOR0_RAFT_PORT" "op-conductor-1:$CONDUCTOR1_RAFT_PORT" "op-conductor-2:$CONDUCTOR2_RAFT_PORT")
 CONDUCTOR_NAMES=("op-conductor-0" "op-conductor-1" "op-conductor-2")
-CONDUCTOR_CL_NAMES=("base-builder-cl" "base-sequencer-1-cl" "base-sequencer-2-cl")
-CONDUCTOR_CL_PORTS=("$L2_BUILDER_CL_RPC_PORT" "$L2_SEQ1_CL_RPC_PORT" "$L2_SEQ2_CL_RPC_PORT")
+CONDUCTOR_NODE_NAMES=("base-builder" "base-sequencer-1" "base-sequencer-2")
 
 TARGET="${1:-}"
 
@@ -41,9 +40,9 @@ if [ -n "$TARGET" ] && ! [[ "$TARGET" =~ ^[0-2]$ ]]; then
   echo "ERROR: target must be 0, 1, or 2 (got: $TARGET)"
   echo ""
   echo "Usage: $0 [0|1|2]"
-  echo "  0 → op-conductor-0 (base-builder-cl)"
-  echo "  1 → op-conductor-1 (base-sequencer-1-cl)"
-  echo "  2 → op-conductor-2 (base-sequencer-2-cl)"
+  echo "  0 → op-conductor-0 (base-builder)"
+  echo "  1 → op-conductor-1 (base-sequencer-1)"
+  echo "  2 → op-conductor-2 (base-sequencer-2)"
   exit 1
 fi
 
@@ -68,10 +67,10 @@ if [ -z "$LEADER_IDX" ]; then
 fi
 
 LEADER_CONDUCTOR_PORT="${CONDUCTOR_PORTS[$LEADER_IDX]}"
-LEADER_CL_NAME="${CONDUCTOR_CL_NAMES[$LEADER_IDX]}"
+LEADER_NODE_NAME="${CONDUCTOR_NODE_NAMES[$LEADER_IDX]}"
 LEADER_CONDUCTOR_NAME="${CONDUCTOR_NAMES[$LEADER_IDX]}"
 
-echo "Current leader: $LEADER_CONDUCTOR_NAME ($LEADER_CL_NAME)"
+echo "Current leader: $LEADER_CONDUCTOR_NAME ($LEADER_NODE_NAME)"
 
 if [ -n "$TARGET" ] && [ "$TARGET" = "$LEADER_IDX" ]; then
   echo "Target is already the leader, nothing to do."
@@ -91,10 +90,10 @@ if [ -z "$TARGET" ]; then
     "http://localhost:$LEADER_CONDUCTOR_PORT" >/dev/null
 else
   TARGET_NAME="${CONDUCTOR_NAMES[$TARGET]}"
-  TARGET_CL="${CONDUCTOR_CL_NAMES[$TARGET]}"
+  TARGET_NODE="${CONDUCTOR_NODE_NAMES[$TARGET]}"
   TARGET_SERVER_ID="${CONDUCTOR_SERVER_IDS[$TARGET]}"
   TARGET_RAFT_ADDR="${CONDUCTOR_RAFT_ADDRS[$TARGET]}"
-  echo "Transferring raft leadership to $TARGET_NAME ($TARGET_CL)..."
+  echo "Transferring raft leadership to $TARGET_NAME ($TARGET_NODE)..."
   curl -s --max-time 5 \
     -X POST -H "Content-Type: application/json" \
     --data "{\"jsonrpc\":\"2.0\",\"method\":\"conductor_transferLeaderToServer\",\"params\":[\"$TARGET_SERVER_ID\",\"$TARGET_RAFT_ADDR\"],\"id\":1}" \
@@ -115,7 +114,7 @@ for _ in $(seq 1 30); do
       | jq -r '.result // empty' 2>/dev/null || true)
     if [ "$result" = "true" ] && [ "$i" != "$LEADER_IDX" ]; then
       echo ""
-      echo "Leadership transferred: $LEADER_CONDUCTOR_NAME → ${CONDUCTOR_NAMES[$i]} (${CONDUCTOR_CL_NAMES[$i]})"
+      echo "Leadership transferred: $LEADER_CONDUCTOR_NAME → ${CONDUCTOR_NAMES[$i]} (${CONDUCTOR_NODE_NAMES[$i]})"
       exit 0
     fi
   done

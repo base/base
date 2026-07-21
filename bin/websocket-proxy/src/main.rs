@@ -6,6 +6,7 @@ use axum::{extract::ws::Message, http::Uri};
 use base_cli_utils::LogConfig;
 use clap::Parser;
 use dotenvy::dotenv;
+use ipnet::IpNet;
 use metrics_exporter_prometheus::PrometheusBuilder;
 use tokio::{
     signal::unix::{SignalKind, signal},
@@ -16,7 +17,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, trace, warn};
 use websocket_proxy::{
     Authentication, InMemoryRateLimit, Metrics, RateLimit, Registry, Server, SubscriberOptions,
-    WebsocketSubscriber,
+    TrustedProxyConfig, WebsocketSubscriber,
 };
 
 base_cli_utils::define_log_args!("WEBSOCKET_PROXY");
@@ -78,6 +79,14 @@ struct Args {
         help = "Header to use to determine the clients origin IP"
     )]
     ip_addr_http_header: String,
+
+    #[arg(
+        long,
+        env,
+        value_delimiter = ',',
+        help = "Proxy CIDRs trusted to provide the client IP header"
+    )]
+    trusted_proxy_cidrs: Vec<IpNet>,
 
     #[command(flatten)]
     log: LogArgs,
@@ -304,7 +313,7 @@ async fn main() {
         registry.clone(),
         rate_limiter,
         authentication,
-        args.ip_addr_http_header,
+        TrustedProxyConfig::new(args.ip_addr_http_header, args.trusted_proxy_cidrs),
         args.public_access_enabled,
     );
     let server_task = server.listen(token.clone());
@@ -367,7 +376,9 @@ fn parse_global_metrics(metrics: String) -> Vec<(String, String)> {
 
 #[cfg(test)]
 mod test {
-    use crate::parse_global_metrics;
+    use clap::Parser;
+
+    use crate::{Args, parse_global_metrics};
 
     #[test]
     fn test_parse_global_metrics() {
@@ -385,6 +396,22 @@ mod test {
         assert_eq!(
             parse_global_metrics("key=value,key2=,".into()),
             vec![("key".into(), "value".into())],
+        );
+    }
+
+    #[test]
+    fn trusted_proxy_cidrs_are_validated() {
+        let args = Args::try_parse_from([
+            "websocket-proxy",
+            "--trusted-proxy-cidrs",
+            "10.0.0.0/8,192.168.0.0/16",
+        ])
+        .unwrap();
+        assert_eq!(args.trusted_proxy_cidrs.len(), 2);
+
+        assert!(
+            Args::try_parse_from(["websocket-proxy", "--trusted-proxy-cidrs", "not-a-cidr",])
+                .is_err()
         );
     }
 }

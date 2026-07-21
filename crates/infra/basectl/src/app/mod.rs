@@ -8,7 +8,8 @@ pub use core::App;
 
 mod resources;
 pub use resources::{
-    ConductorState, DaState, FlashState, ProofsState, Resources, SourceLabel, ValidatorState,
+    ConductorState, DaState, FlashState, PodsState, ProofsState, Resources, SourceLabel,
+    ValidatorState,
 };
 
 mod router;
@@ -31,6 +32,6 @@ pub use view::View;
 mod views;
 pub use views::{
     ActionMenuItem, CommandCenterView, ConductorView, ConfigView, ConfirmButton, DaMonitorView,
-    FlashblocksView, HomeView, Overlay, PendingAction, ProofsView, TransactionPane, UpgradesView,
-    create_view,
+    FlashblocksView, HomeView, Overlay, PendingAction, PodsView, ProofsView, TransactionPane,
+    UpgradesView, create_view,
 };

@@ -76,6 +76,11 @@ pub enum TxManagerError {
     #[error("mempool deadline expired")]
     MempoolDeadlineExpired,
 
+    /// A runtime-backed mempool deadline was checked without a runtime
+    /// timestamp.
+    #[error("runtime mempool deadline requires critical_error_at")]
+    RuntimeMempoolDeadlineMissingTimestamp,
+
     /// Nonce slot was already reserved.
     #[error("nonce already reserved")]
     AlreadyReserved,
@@ -426,6 +431,10 @@ mod tests {
     #[case::intrinsic_gas_too_low(TxManagerError::IntrinsicGasTooLow, false)]
     #[case::execution_reverted(TxManagerError::ExecutionReverted { reason: None, data: None }, false)]
     #[case::mempool_deadline(TxManagerError::MempoolDeadlineExpired, false)]
+    #[case::runtime_mempool_deadline_missing_timestamp(
+        TxManagerError::RuntimeMempoolDeadlineMissingTimestamp,
+        false
+    )]
     #[case::already_reserved(TxManagerError::AlreadyReserved, false)]
     #[case::channel_closed(TxManagerError::ChannelClosed, false)]
     #[case::fee_limit_exceeded(TxManagerError::FeeLimitExceeded { fee: 0, ceiling: 0 }, false)]
@@ -481,6 +490,10 @@ mod tests {
     #[case::intrinsic_gas_too_low(TxManagerError::IntrinsicGasTooLow, "intrinsic gas too low")]
     #[case::execution_reverted(TxManagerError::ExecutionReverted { reason: None, data: None }, "execution reverted")]
     #[case::mempool_deadline(TxManagerError::MempoolDeadlineExpired, "mempool deadline expired")]
+    #[case::runtime_mempool_deadline_missing_timestamp(
+        TxManagerError::RuntimeMempoolDeadlineMissingTimestamp,
+        "runtime mempool deadline requires critical_error_at"
+    )]
     #[case::already_reserved(TxManagerError::AlreadyReserved, "nonce already reserved")]
     #[case::underpriced(TxManagerError::Underpriced, "transaction underpriced")]
     #[case::replacement_underpriced(

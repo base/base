@@ -28,7 +28,6 @@ alloy-rpc-client.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
 alloy-consensus = { workspace = true, features = ["std"] }
-alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 
 # misc
 thiserror.workspace = true
@@ -47,7 +46,6 @@ std = [
 	"alloy-consensus/std",
 	"alloy-primitives/std",
 	"alloy-rpc-types-engine/std",
-	"alloy-rpc-types-eth/std",
 	"base-common-consensus/std",
 	"base-common-rpc-types-engine/std",
 	"base-common-rpc-types/std",
@@ -56,7 +54,6 @@ serde = [
 	"alloy-consensus/serde",
 	"alloy-primitives/serde",
 	"alloy-rpc-types-engine/serde",
-	"alloy-rpc-types-eth/serde",
 	"base-common-consensus/serde",
 	"base-common-rpc-types-engine/serde",
 	"base-common-rpc-types/serde",

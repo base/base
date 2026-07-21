@@ -4,6 +4,7 @@ use base_consensus_engine::{
     BuildTaskError, ConsolidateInput, EngineQueries, InsertTaskError, SealTaskError,
 };
 use base_protocol::{AttributesWithParent, L2BlockInfo};
+use opentelemetry::Context;
 use thiserror::Error;
 use tokio::sync::mpsc;
 
@@ -55,8 +56,10 @@ pub enum EngineActorRequest {
     ProcessSafeL2SignalRequest(ConsolidateInput),
     /// Request to finalize the L2 block at the provided block number.
     ProcessFinalizedL2BlockNumberRequest(Box<u64>),
-    /// Request to insert the provided external unsafe block.
+    /// Request to process an unsafe block authenticated by the P2P gossip layer.
     ProcessUnsafeL2BlockRequest(Box<BaseExecutionPayloadEnvelope>),
+    /// Request to insert an unsafe block supplied through the admin API.
+    ProcessAdminUnsafeL2BlockRequest(Box<BaseExecutionPayloadEnvelope>),
     /// Request to insert a locally produced sequencer unsafe block.
     ProcessLocalUnsafeL2BlockRequest(Box<InsertUnsafePayloadRequest>),
     /// Request to reset engine forkchoice.
@@ -78,6 +81,8 @@ pub struct BuildRequest {
     pub attributes: AttributesWithParent,
     /// The channel on which the result, successful or not, will be sent.
     pub result_tx: mpsc::Sender<Result<PayloadId, BuildTaskError>>,
+    /// [`opentelemetry::Context`] from the requester, for trace propagation.
+    pub otel_cx: Context,
 }
 
 /// A request to reset the engine forkchoice.
@@ -96,6 +101,8 @@ pub struct InsertUnsafePayloadRequest {
     pub envelope: BaseExecutionPayloadEnvelope,
     /// Optional response channel used by the sequencer to wait for actual insertion.
     pub result_tx: Option<mpsc::Sender<Result<L2BlockInfo, InsertTaskError>>>,
+    /// [`opentelemetry::Context`] from the requester, for trace propagation.
+    pub otel_cx: Context,
 }
 
 /// A request to get the sealed payload without inserting it into the engine.
@@ -108,4 +115,6 @@ pub struct GetPayloadRequest {
     pub attributes: AttributesWithParent,
     /// The channel on which the result, successful or not, will be sent.
     pub result_tx: mpsc::Sender<Result<BaseExecutionPayloadEnvelope, SealTaskError>>,
+    /// [`opentelemetry::Context`] from the requester, for trace propagation.
+    pub otel_cx: Context,
 }

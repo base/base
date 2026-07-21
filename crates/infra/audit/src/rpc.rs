@@ -16,7 +16,11 @@ use moka::sync::Cache;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
-use crate::{metrics::Metrics, reader::Event, storage::S3EventReaderWriter, types::BundleEvent};
+use crate::{
+    DEFAULT_TRANSACTION_EVENT_QUERY_LIMIT, PgTransactionEventSink, RejectedTransactionEventQuery,
+    TransactionEventRecord, metrics::Metrics, reader::Event, storage::S3EventReaderWriter,
+    types::BundleEvent,
+};
 
 const MAX_BATCH_SIZE: usize = 500;
 
@@ -37,6 +41,45 @@ pub trait AuditArchiverApi {
     /// forwarded (after dedup).
     #[method(name = "persistBatchedBundleEvent")]
     async fn persist_batched_bundle_event(&self, batch: Vec<BundleEvent>) -> RpcResult<u32>;
+
+    /// Returns Postgres-backed transaction event history for one transaction hash.
+    #[method(name = "getTransactionEventsByHash")]
+    async fn get_transaction_events_by_hash(
+        &self,
+        tx_hash: String,
+        limit: Option<i64>,
+    ) -> RpcResult<Vec<TransactionEventRecord>>;
+
+    /// Returns Postgres-backed transaction/block event history for one block number.
+    #[method(name = "getTransactionEventsByBlockNumber")]
+    async fn get_transaction_events_by_block_number(
+        &self,
+        block_number: u64,
+        limit: Option<i64>,
+    ) -> RpcResult<Vec<TransactionEventRecord>>;
+
+    /// Returns Postgres-backed transaction/block event history for one block hash.
+    #[method(name = "getTransactionEventsByBlockHash")]
+    async fn get_transaction_events_by_block_hash(
+        &self,
+        block_hash: String,
+        limit: Option<i64>,
+    ) -> RpcResult<Vec<TransactionEventRecord>>;
+
+    /// Returns Postgres-backed transaction event history for one bundle UUID or hash.
+    #[method(name = "getTransactionEventsByBundle")]
+    async fn get_transaction_events_by_bundle(
+        &self,
+        bundle_key: String,
+        limit: Option<i64>,
+    ) -> RpcResult<Vec<TransactionEventRecord>>;
+
+    /// Returns rejected transaction events by block/time range.
+    #[method(name = "getRejectedTransactionEvents")]
+    async fn get_rejected_transaction_events(
+        &self,
+        query: RejectedTransactionEventQuery,
+    ) -> RpcResult<Vec<TransactionEventRecord>>;
 }
 
 /// RPC handler for audit archiver requests.
@@ -44,6 +87,7 @@ pub trait AuditArchiverApi {
 pub struct AuditArchiverRpc {
     storage: Arc<S3EventReaderWriter>,
     bundle_events: Option<BundleEventForwarder>,
+    transaction_events: Option<PgTransactionEventSink>,
 }
 
 /// In-memory dedup + forwarding pipeline for bundle events received over RPC.
@@ -104,7 +148,7 @@ impl AuditArchiverRpc {
     /// Creates a new `AuditArchiverRpc` that only handles rejected-transaction
     /// batches. The bundle-event RPC method will return an error.
     pub const fn new(storage: Arc<S3EventReaderWriter>) -> Self {
-        Self { storage, bundle_events: None }
+        Self { storage, bundle_events: None, transaction_events: None }
     }
 
     /// Creates a new `AuditArchiverRpc` configured to also accept bundle-event
@@ -115,7 +159,27 @@ impl AuditArchiverRpc {
         cache: Cache<String, ()>,
         event_tx: mpsc::Sender<Event>,
     ) -> Self {
-        Self { storage, bundle_events: Some(BundleEventForwarder { cache, event_tx }) }
+        Self {
+            storage,
+            bundle_events: Some(BundleEventForwarder { cache, event_tx }),
+            transaction_events: None,
+        }
+    }
+
+    /// Attaches the Postgres transaction event store used by read APIs.
+    pub fn with_transaction_event_store(mut self, store: PgTransactionEventSink) -> Self {
+        self.transaction_events = Some(store);
+        self
+    }
+
+    fn transaction_event_store(&self) -> RpcResult<&PgTransactionEventSink> {
+        self.transaction_events.as_ref().ok_or_else(|| {
+            ErrorObjectOwned::owned(
+                ErrorCode::InternalError.code(),
+                "Transaction event Postgres store is not configured on this audit archiver",
+                None::<()>,
+            )
+        })
     }
 }
 
@@ -203,6 +267,78 @@ impl AuditArchiverApiServer for AuditArchiverRpc {
         debug!(batch_size, forwarded, "Forwarded bundle event batch");
         Ok(forwarded)
     }
+
+    async fn get_transaction_events_by_hash(
+        &self,
+        tx_hash: String,
+        limit: Option<i64>,
+    ) -> RpcResult<Vec<TransactionEventRecord>> {
+        self.transaction_event_store()?
+            .events_by_transaction_hash(
+                &tx_hash,
+                limit.unwrap_or(DEFAULT_TRANSACTION_EVENT_QUERY_LIMIT),
+            )
+            .await
+            .map_err(internal_rpc_error)
+    }
+
+    async fn get_transaction_events_by_block_number(
+        &self,
+        block_number: u64,
+        limit: Option<i64>,
+    ) -> RpcResult<Vec<TransactionEventRecord>> {
+        self.transaction_event_store()?
+            .events_by_block_number(
+                block_number,
+                limit.unwrap_or(DEFAULT_TRANSACTION_EVENT_QUERY_LIMIT),
+            )
+            .await
+            .map_err(internal_rpc_error)
+    }
+
+    async fn get_transaction_events_by_block_hash(
+        &self,
+        block_hash: String,
+        limit: Option<i64>,
+    ) -> RpcResult<Vec<TransactionEventRecord>> {
+        self.transaction_event_store()?
+            .events_by_block_hash(
+                &block_hash,
+                limit.unwrap_or(DEFAULT_TRANSACTION_EVENT_QUERY_LIMIT),
+            )
+            .await
+            .map_err(internal_rpc_error)
+    }
+
+    async fn get_transaction_events_by_bundle(
+        &self,
+        bundle_key: String,
+        limit: Option<i64>,
+    ) -> RpcResult<Vec<TransactionEventRecord>> {
+        self.transaction_event_store()?
+            .events_by_bundle(&bundle_key, limit.unwrap_or(DEFAULT_TRANSACTION_EVENT_QUERY_LIMIT))
+            .await
+            .map_err(internal_rpc_error)
+    }
+
+    async fn get_rejected_transaction_events(
+        &self,
+        query: RejectedTransactionEventQuery,
+    ) -> RpcResult<Vec<TransactionEventRecord>> {
+        self.transaction_event_store()?
+            .rejected_transaction_events(query)
+            .await
+            .map_err(internal_rpc_error)
+    }
+}
+
+fn internal_rpc_error(error: anyhow::Error) -> ErrorObjectOwned {
+    error!(error = %error, "transaction event query failed");
+    ErrorObjectOwned::owned(
+        ErrorCode::InternalError.code(),
+        "internal server error".to_string(),
+        None::<()>,
+    )
 }
 
 #[cfg(test)]

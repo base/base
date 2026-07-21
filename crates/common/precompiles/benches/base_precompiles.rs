@@ -4,9 +4,10 @@ use std::hint::black_box;
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolValue;
+use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
-    B20AssetStorage, B20AssetToken, B20FactoryStorage, B20Variant, Burnable, Configurable, IB20,
-    IB20Factory, Mintable, Pausable, PolicyHandle, Token, TokenAccounting, Transferable,
+    Asset, AssetV1, B20AssetStorage, B20AssetToken, B20FactoryStorage, B20TokenRole, B20Variant,
+    IB20, IB20Factory, PolicyRegistryStorage, PolicyVersion, Token, TokenAccounting,
 };
 use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 use criterion::{Criterion, criterion_group, criterion_main};
@@ -50,21 +51,27 @@ impl BaseTokenBenchSetup {
             initCalls: Vec::new(),
         };
         let mut factory = B20FactoryStorage::new(ctx);
-        factory.create_b20(caller, call).unwrap()
+        factory.create_b20(caller, call, BaseUpgrade::Beryl).unwrap()
     }
 
     fn create_token<'a>(
         ctx: StorageCtx<'a>,
         salt: B256,
         initial_supply: U256,
-    ) -> B20AssetToken<B20AssetStorage<'a>, PolicyHandle<'a>> {
+    ) -> B20AssetToken<B20AssetStorage<'a>, PolicyRegistryStorage<'a>> {
         let params = Self::token_params("BaseToken", "BASE");
 
         let token_address = Self::create_b20(ctx, Self::caller(), params, salt, initial_supply);
         let mut token = Self::token_at(ctx, token_address);
         if initial_supply > U256::ZERO {
-            token
-                .mint(Self::admin(), Self::initial_supply_recipient(), initial_supply, true)
+            AssetV1
+                .mint(
+                    &mut token,
+                    Self::admin(),
+                    Self::initial_supply_recipient(),
+                    initial_supply,
+                    true,
+                )
                 .unwrap();
         }
         token
@@ -73,10 +80,11 @@ impl BaseTokenBenchSetup {
     fn token_at<'a>(
         ctx: StorageCtx<'a>,
         token_address: Address,
-    ) -> B20AssetToken<B20AssetStorage<'a>, PolicyHandle<'a>> {
+    ) -> B20AssetToken<B20AssetStorage<'a>, PolicyRegistryStorage<'a>> {
         B20AssetToken::with_storage_and_policy(
             B20AssetStorage::from_address(token_address, ctx),
-            PolicyHandle::new(ctx),
+            PolicyRegistryStorage::new(ctx),
+            PolicyVersion::V1,
         )
     }
 }
@@ -179,7 +187,7 @@ fn base_token_view(c: &mut Criterion) {
             let spender = Address::repeat_byte(0x02);
             let mut token =
                 BaseTokenBenchSetup::create_token(ctx, B256::repeat_byte(0x07), U256::ZERO);
-            token.approve(owner, spender, U256::from(500u64)).unwrap();
+            AssetV1.approve(&mut token, owner, spender, U256::from(500u64)).unwrap();
 
             b.iter(|| {
                 let token = black_box(&token);
@@ -229,7 +237,7 @@ fn base_token_mutate(c: &mut Criterion) {
             b.iter(|| {
                 let token = black_box(&mut token);
                 let user = black_box(user);
-                token.mint(user, user, U256::ONE, true).unwrap();
+                AssetV1.mint(token, user, user, U256::ONE, true).unwrap();
             });
         });
     });
@@ -243,11 +251,14 @@ fn base_token_mutate(c: &mut Criterion) {
                 B256::repeat_byte(0x0d),
                 U256::from(u128::MAX),
             );
+            // Self-burn checks the Burn role (the production path never privileges burn), so grant
+            // it once during setup rather than skipping it.
+            token.accounting_mut().set_role(B20TokenRole::Burn.id(), holder, true).unwrap();
 
             b.iter(|| {
                 let token = black_box(&mut token);
                 let holder = black_box(holder);
-                token.burn(holder, holder, U256::ONE, true).unwrap();
+                AssetV1.burn(token, holder, U256::ONE).unwrap();
             });
         });
     });
@@ -264,7 +275,7 @@ fn base_token_mutate(c: &mut Criterion) {
                 let token = black_box(&mut token);
                 let owner = black_box(owner);
                 let spender = black_box(spender);
-                token.approve(owner, spender, U256::from(500u64)).unwrap();
+                AssetV1.approve(token, owner, spender, U256::from(500u64)).unwrap();
             });
         });
     });
@@ -283,7 +294,7 @@ fn base_token_mutate(c: &mut Criterion) {
             b.iter(|| {
                 let token = black_box(&mut token);
                 let from = black_box(from);
-                token.transfer(from, to, U256::ONE, false).unwrap();
+                AssetV1.transfer(token, from, to, U256::ONE, false).unwrap();
             });
         });
     });
@@ -299,12 +310,12 @@ fn base_token_mutate(c: &mut Criterion) {
                 B256::repeat_byte(0x10),
                 U256::from(u128::MAX),
             );
-            token.approve(owner, spender, U256::MAX).unwrap();
+            AssetV1.approve(&mut token, owner, spender, U256::MAX).unwrap();
 
             b.iter(|| {
                 let token = black_box(&mut token);
                 let spender = black_box(spender);
-                token.transfer_from(spender, owner, recipient, U256::ONE, false).unwrap();
+                AssetV1.transfer_from(token, spender, owner, recipient, U256::ONE, false).unwrap();
             });
         });
     });
@@ -324,7 +335,8 @@ fn base_token_mutate(c: &mut Criterion) {
             b.iter(|| {
                 let token = black_box(&mut token);
                 let from = black_box(from);
-                token.transfer_with_memo(from, to, U256::ONE, memo, false).unwrap();
+                AssetV1.transfer(token, from, to, U256::ONE, false).unwrap();
+                AssetV1.emit_memo(token, from, memo).unwrap();
             });
         });
     });
@@ -341,14 +353,13 @@ fn base_token_mutate(c: &mut Criterion) {
                 B256::repeat_byte(0x12),
                 U256::from(u128::MAX),
             );
-            token.approve(owner, spender, U256::MAX).unwrap();
+            AssetV1.approve(&mut token, owner, spender, U256::MAX).unwrap();
 
             b.iter(|| {
                 let token = black_box(&mut token);
                 let spender = black_box(spender);
-                token
-                    .transfer_from_with_memo(spender, owner, recipient, U256::ONE, memo, false)
-                    .unwrap();
+                AssetV1.transfer_from(token, spender, owner, recipient, U256::ONE, false).unwrap();
+                AssetV1.emit_memo(token, spender, memo).unwrap();
             });
         });
     });
@@ -363,7 +374,7 @@ fn base_token_mutate(c: &mut Criterion) {
             b.iter(|| {
                 let token = black_box(&mut token);
                 let admin = black_box(admin);
-                token.pause(admin, vec![IB20::PausableFeature::TRANSFER], true).unwrap();
+                AssetV1.pause(token, admin, vec![IB20::PausableFeature::TRANSFER], true).unwrap();
             });
         });
     });
@@ -374,12 +385,12 @@ fn base_token_mutate(c: &mut Criterion) {
             let admin = BaseTokenBenchSetup::admin();
             let mut token =
                 BaseTokenBenchSetup::create_token(ctx, B256::repeat_byte(0x14), U256::ZERO);
-            token.pause(admin, vec![IB20::PausableFeature::TRANSFER], true).unwrap();
+            AssetV1.pause(&mut token, admin, vec![IB20::PausableFeature::TRANSFER], true).unwrap();
 
             b.iter(|| {
                 let token = black_box(&mut token);
                 let admin = black_box(admin);
-                token.unpause(admin, vec![IB20::PausableFeature::TRANSFER], true).unwrap();
+                AssetV1.unpause(token, admin, vec![IB20::PausableFeature::TRANSFER], true).unwrap();
             });
         });
     });
@@ -397,7 +408,7 @@ fn base_token_mutate(c: &mut Criterion) {
             b.iter(|| {
                 let token = black_box(&mut token);
                 let admin = black_box(admin);
-                token.update_supply_cap(admin, U256::from(10_000u64), true).unwrap();
+                AssetV1.update_supply_cap(token, admin, U256::from(10_000u64), true).unwrap();
             });
         });
     });

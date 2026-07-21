@@ -1,13 +1,10 @@
 //! CLI definition for the Nitro TEE prover host binary.
 
-#[cfg(any(
-    all(target_os = "linux", not(feature = "worker")),
-    all(feature = "local", not(feature = "worker"))
-))]
+#[cfg(any(target_os = "linux", feature = "local"))]
 use std::net::SocketAddr;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use std::sync::Arc;
-#[cfg(all(feature = "worker", any(target_os = "linux", feature = "local")))]
+#[cfg(any(target_os = "linux", feature = "local"))]
 use std::time::Duration;
 
 use alloy_primitives::Address;
@@ -22,32 +19,25 @@ use base_proof_primitives::PerChainConfig;
 use base_proof_tee_nitro_enclave::Server as EnclaveServer;
 #[cfg(target_os = "linux")]
 use base_proof_tee_nitro_enclave::VSOCK_PORT;
-#[cfg(any(
-    all(target_os = "linux", not(feature = "worker")),
-    all(feature = "local", not(feature = "worker"))
-))]
-use base_proof_tee_nitro_host::NitroProverServer;
-#[cfg(all(feature = "worker", any(target_os = "linux", feature = "local")))]
+#[cfg(any(target_os = "linux", feature = "local"))]
 use base_proof_tee_nitro_host::{
     DEFAULT_JOB_DISCOVERY_LOCK_DURATION_SECONDS, DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS,
     DEFAULT_PROOF_GENERATOR_HEARTBEAT_LOCK_DURATION_SECONDS,
     DEFAULT_PROOF_GENERATOR_MAX_CONSECUTIVE_HEARTBEAT_FAILURES, JobDiscovery, JobDiscoveryConfig,
-    NitroEnclavePool, ProofGenerator, ProofGeneratorHeartbeatConfig, ProofSubmitter,
-    RegistrationChecker,
+    NitroEnclavePool, NitroProverServer, NitroTransport, ProofGenerator,
+    ProofGeneratorHeartbeatConfig, ProofSubmitter, RegistrationChecker, RegistrationHealthConfig,
 };
 #[cfg(any(target_os = "linux", feature = "local"))]
-use base_proof_tee_nitro_host::{NitroTransport, RegistrationHealthConfig};
-#[cfg(all(feature = "worker", any(target_os = "linux", feature = "local")))]
 use base_prover_service_client::{ProverServiceClientConfig, ProverWorkerClient};
 use clap::{Parser, Subcommand};
 use eyre::eyre;
-#[cfg(all(feature = "worker", any(target_os = "linux", feature = "local")))]
+#[cfg(any(target_os = "linux", feature = "local"))]
 use tokio_util::sync::CancellationToken;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use tracing::info;
-#[cfg(any(feature = "local", all(target_os = "linux", feature = "worker")))]
+#[cfg(feature = "local")]
 use tracing::warn;
-#[cfg(all(feature = "worker", any(target_os = "linux", feature = "local")))]
+#[cfg(any(target_os = "linux", feature = "local"))]
 use uuid::Uuid;
 
 base_cli_utils::define_log_args!("BASE_PROVER_NITRO_HOST");
@@ -80,21 +70,11 @@ enum Command {
     /// Available on all targets — no enclave/NSM required.
     ConfigHash(ConfigHashArgs),
 
-    /// Run the JSON-RPC server on the EC2 host.
-    ///
-    /// Accepts proving requests over JSON-RPC and forwards them to the Nitro
-    /// Enclave over vsock.
-    #[cfg(all(target_os = "linux", not(feature = "worker")))]
+    /// Claim Nitro TEE jobs from prover-service and forward them to the enclave over vsock.
+    #[cfg(target_os = "linux")]
     Server(ServerArgs),
 
-    /// Run as a prover-service worker on the EC2 host.
-    ///
-    /// Claims Nitro proof jobs from prover-service and forwards them to the
-    /// Nitro Enclave over vsock.
-    #[cfg(all(target_os = "linux", feature = "worker"))]
-    Server(ServerArgs),
-
-    /// Run with in-process local enclave instances for local development.
+    /// Claim Nitro TEE jobs from prover-service using in-process local enclave instances.
     #[cfg(feature = "local")]
     Local(LocalArgs),
 }
@@ -130,6 +110,10 @@ struct ProverRuntimeArgs {
     #[arg(long, env = "L2_ETH_URL")]
     l2_eth_url: String,
 
+    /// L2 rollup RPC URL.
+    #[arg(long, env = "L2_NODE_URL")]
+    l2_node_url: String,
+
     /// L1 beacon API URL.
     #[arg(long, env = "L1_BEACON_URL")]
     l1_beacon_url: Option<String>,
@@ -147,7 +131,7 @@ struct ProverRuntimeArgs {
     enable_experimental_witness_endpoint: bool,
 
     /// `TEEProverRegistry` contract address on L1. When set, proving is guarded
-    /// by on-chain signer validity and server `/healthz` is registration-gated.
+    /// by onchain signer validity and server `/healthz` is registration-gated.
     #[arg(long, env = "TEE_PROVER_REGISTRY_ADDRESS")]
     tee_prover_registry_address: Option<Address>,
 
@@ -240,6 +224,7 @@ impl ProverRuntimeArgs {
         Ok(ProverConfig {
             l1_eth_url: self.l1_eth_url,
             l2_eth_url: self.l2_eth_url,
+            l2_node_url: self.l2_node_url,
             l1_beacon_url,
             l2_chain_id: self.l2_chain_id,
             rollup_config,
@@ -249,24 +234,8 @@ impl ProverRuntimeArgs {
     }
 }
 
-/// Arguments for the `server` subcommand.
-#[cfg(all(target_os = "linux", not(feature = "worker")))]
-#[derive(Parser)]
-struct ServerArgs {
-    #[command(flatten)]
-    runtime: ProverRuntimeArgs,
-
-    /// Socket address to listen on for JSON-RPC.
-    #[arg(long, env = "LISTEN_ADDR")]
-    listen_addr: SocketAddr,
-
-    /// Vsock CID(s) of the enclave(s), comma-separated for multi-enclave mode.
-    #[arg(long, env = "VSOCK_CID", value_delimiter = ',')]
-    vsock_cid: Vec<u32>,
-}
-
-/// Arguments for the `server` subcommand when the `worker` feature is enabled.
-#[cfg(all(target_os = "linux", feature = "worker"))]
+/// Arguments for the worker `server` subcommand.
+#[cfg(target_os = "linux")]
 #[derive(Parser)]
 struct ServerArgs {
     #[command(flatten)]
@@ -275,13 +244,17 @@ struct ServerArgs {
     #[command(flatten)]
     worker: WorkerArgs,
 
+    /// Socket address for the registrar-facing signer JSON-RPC API.
+    #[arg(long, env = "LISTEN_ADDR", default_value = "0.0.0.0:8000")]
+    listen_addr: SocketAddr,
+
     /// Vsock CID(s) of the enclave(s), comma-separated for multi-enclave mode.
     #[arg(long, env = "VSOCK_CID", value_delimiter = ',')]
     vsock_cid: Vec<u32>,
 }
 
-/// Worker-mode arguments for claiming and generating Nitro proof jobs.
-#[cfg(all(feature = "worker", any(target_os = "linux", feature = "local")))]
+/// Arguments for claiming and generating Nitro proof jobs.
+#[cfg(any(target_os = "linux", feature = "local"))]
 #[derive(Parser)]
 struct WorkerArgs {
     /// Prover-service JSON-RPC endpoint.
@@ -341,11 +314,9 @@ impl Cli {
         base_cli_utils::MetricsConfig::from(metrics).init_with(|| {
             base_cli_utils::register_version_metrics!();
         })?;
-        let runtime = RuntimeManager::new().with_thread_stack_size(8 * 1024 * 1024);
 
-        #[cfg(feature = "worker")]
-        {
-            runtime.run_until_shutdown(|cancel| async move {
+        RuntimeManager::new().with_thread_stack_size(8 * 1024 * 1024).run_until_shutdown(
+            |cancel| async move {
                 #[cfg(not(any(target_os = "linux", feature = "local")))]
                 let _ = cancel;
 
@@ -356,54 +327,12 @@ impl Cli {
                     #[cfg(feature = "local")]
                     Command::Local(args) => args.run(cancel).await,
                 }
-            })
-        }
-
-        #[cfg(not(feature = "worker"))]
-        {
-            runtime.run_until_ctrl_c(async move {
-                match command {
-                    Command::ConfigHash(args) => args.run().await,
-                    #[cfg(target_os = "linux")]
-                    Command::Server(args) => args.run().await,
-                    #[cfg(feature = "local")]
-                    Command::Local(args) => args.run().await,
-                }
-            })
-        }
+            },
+        )
     }
 }
 
-#[cfg(all(target_os = "linux", not(feature = "worker")))]
-impl ServerArgs {
-    async fn run(self) -> eyre::Result<()> {
-        let registration_health = self.runtime.registration_health_config();
-        let registry_configured = registration_health.is_some();
-        let config = self.runtime.prover_config().await?;
-
-        if self.vsock_cid.is_empty() {
-            return Err(eyre!("at least one --vsock-cid is required"));
-        }
-        if self.vsock_cid.len() > 1 && !registry_configured {
-            return Err(eyre!(
-                "multi-CID requires --tee-prover-registry-address for on-chain routing"
-            ));
-        }
-        let transports = vsock_transports(&self.vsock_cid);
-        let mut server = NitroProverServer::new_multi(config, transports);
-        if let Some(reg) = registration_health {
-            server = server.with_registration_health(reg);
-        }
-
-        info!(cids = ?self.vsock_cid, "configured vsock CIDs");
-        info!(addr = %self.listen_addr, "starting nitro prover host server");
-        let handle = server.run(self.listen_addr).await?;
-        handle.stopped().await;
-        Ok(())
-    }
-}
-
-#[cfg(all(target_os = "linux", feature = "worker"))]
+#[cfg(target_os = "linux")]
 impl ServerArgs {
     async fn run(self, cancel: CancellationToken) -> eyre::Result<()> {
         if self.vsock_cid.is_empty() {
@@ -412,57 +341,20 @@ impl ServerArgs {
         let transports = vsock_transports(&self.vsock_cid);
 
         info!(cids = ?self.vsock_cid, "configured vsock CIDs");
-        run_worker(self.runtime, self.worker, transports, WorkerTransportMode::Vsock, cancel).await
-    }
-}
-
-/// Arguments for the `local` subcommand.
-#[cfg(all(feature = "local", not(feature = "worker")))]
-#[derive(Parser)]
-struct LocalArgs {
-    #[command(flatten)]
-    runtime: ProverRuntimeArgs,
-
-    /// Socket address to listen on for JSON-RPC.
-    #[arg(long, env = "LISTEN_ADDR")]
-    listen_addr: SocketAddr,
-
-    /// Number of local enclave instances to run (minimum 1).
-    #[arg(long, env = "LOCAL_ENCLAVE_COUNT", default_value = "1")]
-    local_enclave_count: usize,
-}
-
-#[cfg(all(feature = "local", not(feature = "worker")))]
-impl LocalArgs {
-    async fn run(self) -> eyre::Result<()> {
-        let registration_health = self.runtime.registration_health_config();
-        let registry_configured = registration_health.is_some();
-        let prover_config = self.runtime.prover_config().await?;
-
-        if self.local_enclave_count == 0 {
-            return Err(eyre!("--local-enclave-count must be at least 1"));
-        }
-        if self.local_enclave_count > 1 && !registry_configured {
-            warn!(
-                count = self.local_enclave_count,
-                "multiple local enclaves without registry; defaulting to index 0 for routing"
-            );
-        }
-        let transports = local_transports(self.local_enclave_count)?;
-        let mut server = NitroProverServer::new_multi(prover_config, transports);
-        if let Some(reg) = registration_health {
-            server = server.with_registration_health(reg);
-        }
-
-        info!(addr = %self.listen_addr, "starting nitro prover server (local mode)");
-        let handle = server.run(self.listen_addr).await?;
-        handle.stopped().await;
-        Ok(())
+        run_worker(
+            self.runtime,
+            self.worker,
+            transports,
+            WorkerTransportMode::Vsock,
+            Some(self.listen_addr),
+            cancel,
+        )
+        .await
     }
 }
 
 /// Arguments for the worker `local` subcommand.
-#[cfg(all(feature = "local", feature = "worker"))]
+#[cfg(feature = "local")]
 #[derive(Parser)]
 struct LocalArgs {
     #[command(flatten)]
@@ -476,7 +368,7 @@ struct LocalArgs {
     local_enclave_count: usize,
 }
 
-#[cfg(all(feature = "local", feature = "worker"))]
+#[cfg(feature = "local")]
 impl LocalArgs {
     async fn run(self, cancel: CancellationToken) -> eyre::Result<()> {
         if self.local_enclave_count == 0 {
@@ -484,7 +376,8 @@ impl LocalArgs {
         }
 
         let transports = local_transports(self.local_enclave_count)?;
-        run_worker(self.runtime, self.worker, transports, WorkerTransportMode::Local, cancel).await
+        run_worker(self.runtime, self.worker, transports, WorkerTransportMode::Local, None, cancel)
+            .await
     }
 }
 
@@ -503,12 +396,13 @@ fn vsock_transports(cids: &[u32]) -> Vec<Arc<NitroTransport>> {
     cids.iter().map(|&cid| Arc::new(NitroTransport::vsock(cid, VSOCK_PORT))).collect()
 }
 
-#[cfg(all(feature = "worker", any(target_os = "linux", feature = "local")))]
+#[cfg(any(target_os = "linux", feature = "local"))]
 async fn run_worker(
     runtime: ProverRuntimeArgs,
     worker: WorkerArgs,
     transports: Vec<Arc<NitroTransport>>,
     transport_mode: WorkerTransportMode,
+    registrar_listen_addr: Option<SocketAddr>,
     cancel: CancellationToken,
 ) -> eyre::Result<()> {
     let registration_health = runtime.registration_health_config();
@@ -520,28 +414,38 @@ async fn run_worker(
     }
     let enclave_count = transports.len();
     if enclave_count > 1 && !registry_configured {
-        if transport_mode.requires_registry_for_multi_transport() {
-            return Err(eyre!(
-                "multi-CID requires --tee-prover-registry-address for on-chain routing"
-            ));
+        match transport_mode {
+            #[cfg(target_os = "linux")]
+            WorkerTransportMode::Vsock => {
+                return Err(eyre!(
+                    "multi-CID requires --tee-prover-registry-address for onchain routing"
+                ));
+            }
+            #[cfg(feature = "local")]
+            WorkerTransportMode::Local => {
+                warn!(
+                    count = enclave_count,
+                    "multiple local enclaves without registry; all signers are eligible for routing"
+                );
+            }
         }
-
-        warn!(
-            count = enclave_count,
-            "multiple local enclaves without registry; all signers are eligible for routing"
-        );
     }
 
     let mut pool = NitroEnclavePool::new_multi(config, transports);
-    if let Some(registration_health) = registration_health {
-        let checker = Arc::new(
-            RegistrationChecker::from_health_config(pool.transports(), &registration_health)
+    let registration_checker = if let Some(registration_health) = &registration_health {
+        Some(Arc::new(
+            RegistrationChecker::from_health_config(pool.transports(), registration_health)
                 .map_err(|e| eyre!("registration checker init failed: {e}"))?,
-        );
+        ))
+    } else {
+        None
+    };
+    if let Some(checker) = &registration_checker {
         pool = pool
-            .with_registration_checker(checker)
+            .with_registration_checker(Arc::clone(checker))
             .map_err(|e| eyre!("registration checker init failed: {e}"))?;
     }
+    let registrar_transports = pool.transports();
 
     let prover_service = ProverServiceClientConfig::new(worker.prover_service_endpoint.clone())
         .with_request_timeout(Duration::from_secs(worker.prover_service_request_timeout_secs));
@@ -560,6 +464,18 @@ async fn run_worker(
         .with_lock_duration_seconds(worker.job_discovery_lock_duration_seconds)
         .with_max_concurrent_jobs(worker.job_discovery_max_concurrent_jobs);
     let discovery = JobDiscovery::new(client, proof_generator, discovery_config);
+    let registrar_handle = if let Some(addr) = registrar_listen_addr {
+        Some(
+            NitroProverServer::run_registrar_rpc_server(
+                addr,
+                registrar_transports,
+                registration_checker,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
 
     match transport_mode {
         #[cfg(target_os = "linux")]
@@ -571,6 +487,7 @@ async fn run_worker(
                 "starting nitro prover host worker"
             );
         }
+        #[cfg(feature = "local")]
         WorkerTransportMode::Local => {
             info!(
                 worker_id = %worker_id,
@@ -581,26 +498,20 @@ async fn run_worker(
         }
     }
     discovery.run_until_cancelled(cancel).await;
+    if let Some(handle) = registrar_handle {
+        let _ = handle.stop();
+        handle.stopped().await;
+    }
     Ok(())
 }
 
-#[cfg(all(feature = "worker", any(target_os = "linux", feature = "local")))]
+#[cfg(any(target_os = "linux", feature = "local"))]
 #[derive(Clone, Copy)]
 enum WorkerTransportMode {
     #[cfg(target_os = "linux")]
     Vsock,
+    #[cfg(feature = "local")]
     Local,
-}
-
-#[cfg(all(feature = "worker", any(target_os = "linux", feature = "local")))]
-impl WorkerTransportMode {
-    const fn requires_registry_for_multi_transport(self) -> bool {
-        match self {
-            #[cfg(target_os = "linux")]
-            Self::Vsock => true,
-            Self::Local => false,
-        }
-    }
 }
 
 async fn fetch_rollup_config_from_rpc(
@@ -627,6 +538,7 @@ mod tests {
         ProverRuntimeArgs {
             l1_eth_url: "http://localhost:8545".to_string(),
             l2_eth_url: "http://localhost:9545".to_string(),
+            l2_node_url: "http://localhost:9546".to_string(),
             l1_beacon_url: l1_beacon_url.map(str::to_string),
             l1_calldata_only,
             l2_chain_id: 8453,

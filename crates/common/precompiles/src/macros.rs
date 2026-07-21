@@ -46,21 +46,6 @@ macro_rules! base_precompile {
 
 pub(crate) use base_precompile;
 
-/// Deducts the per-word calldata gas charged by Base native precompile dispatch.
-macro_rules! deduct_calldata_cost {
-    ($ctx:expr, $calldata:expr $(,)?) => {{
-        const G_SHA3WORD: u64 = 6;
-
-        let calldata_len = $calldata.len();
-        let calldata_cost = calldata_len.div_ceil(32).saturating_mul(G_SHA3WORD as usize) as u64;
-        if let Err(e) = $ctx.deduct_gas(calldata_cost) {
-            return e.into_precompile_result($ctx.gas_used(), $ctx.state_gas_used());
-        }
-    }};
-}
-
-pub(crate) use deduct_calldata_cost;
-
 /// Decodes calldata into the requested ABI interface call or returns an unknown selector error.
 macro_rules! decode_precompile_call {
     ($calldata:expr, $call_ty:ty $(,)?) => {{
@@ -80,9 +65,24 @@ macro_rules! decode_precompile_call {
             }
         };
 
-        <$call_ty as ::alloy_sol_types::SolInterface>::abi_decode(calldata).map_err(|_| {
-            ::base_precompile_storage::BasePrecompileError::UnknownFunctionSelector(selector)
-        })?
+        match <$call_ty as ::alloy_sol_types::SolInterface>::abi_decode_validate(calldata) {
+            Ok(call) => call,
+            Err(error)
+                if <$call_ty as ::alloy_sol_types::SolInterface>::valid_selector(selector) =>
+            {
+                return Err(::base_precompile_storage::BasePrecompileError::AbiDecodeFailed {
+                    selector,
+                    error: ::alloc::string::ToString::to_string(&error),
+                });
+            }
+            Err(_) => {
+                return Err(
+                    ::base_precompile_storage::BasePrecompileError::UnknownFunctionSelector(
+                        selector,
+                    ),
+                );
+            }
+        }
     }};
 }
 
@@ -114,10 +114,41 @@ mod tests {
     }
 
     #[test]
+    fn decode_precompile_call_classifies_known_selector_decode_failure() {
+        let err = decode_policy_call(&IPolicyRegistry::createPolicyCall::SELECTOR).unwrap_err();
+
+        assert!(matches!(
+            err,
+            BasePrecompileError::AbiDecodeFailed {
+                selector: IPolicyRegistry::createPolicyCall::SELECTOR,
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn decode_precompile_call_decodes_known_call() {
         let calldata = IPolicyRegistry::policyExistsCall { policyId: 0 }.abi_encode();
         let call = decode_policy_call(&calldata).unwrap();
 
         assert!(matches!(call, IPolicyRegistry::IPolicyRegistryCalls::policyExists(_)));
+    }
+
+    #[test]
+    fn decode_precompile_call_rejects_dirty_padding_bytes() {
+        // policyExists(uint64 policyId) encodes policyId as a right-aligned 32-byte word.
+        // Injecting 0xFF into the high-padding byte triggers abi_decode_validate's canonical
+        // check, confirming the macro uses the validating decoder.
+        let mut calldata = IPolicyRegistry::policyExistsCall { policyId: 0 }.abi_encode();
+        calldata[4] = 0xFF;
+        let err = decode_policy_call(&calldata).unwrap_err();
+
+        assert!(matches!(
+            err,
+            BasePrecompileError::AbiDecodeFailed {
+                selector: IPolicyRegistry::policyExistsCall::SELECTOR,
+                ..
+            }
+        ));
     }
 }

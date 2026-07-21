@@ -15,6 +15,8 @@ pub enum ViewId {
     Conductor,
     /// Proof system monitor (dispute games, anchor state).
     Proofs,
+    /// Kubernetes pods monitor.
+    Pods,
     /// Network upgrade activation countdown and history.
     Upgrades,
 }

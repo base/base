@@ -1,8 +1,8 @@
 //! Handler related to Base chain
 use alloc::{boxed::Box, vec::Vec};
 
-use base_common_chains::BaseUpgrade;
 use base_common_consensus::Predeploys;
+use base_common_genesis::BaseUpgrade;
 use revm::{
     context::{
         LocalContextTr,
@@ -185,6 +185,7 @@ where
     fn last_frame_result(
         &mut self,
         evm: &mut Self::Evm,
+        _original_reservoir: u64,
         frame_result: &mut <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameResult,
     ) -> Result<(), Self::Error> {
         let ctx = evm.ctx();
@@ -197,9 +198,11 @@ where
         let gas = frame_result.gas_mut();
         let remaining = gas.remaining();
         let refunded = gas.refunded();
+        let reservoir = gas.reservoir();
+        let state_gas_spent = gas.state_gas_spent();
 
         // Spend the gas limit. Gas is reimbursed when the tx returns successfully.
-        *gas = Gas::new_spent(tx_gas_limit);
+        *gas = Gas::new_spent_with_reservoir(tx_gas_limit, reservoir);
 
         if instruction_result.is_ok() {
             if !is_deposit || is_regolith {
@@ -211,6 +214,14 @@ where
         } else if instruction_result.is_revert() && (!is_deposit || is_regolith) {
             gas.erase_cost(remaining);
         }
+
+        if instruction_result.is_ok() {
+            gas.set_state_gas_spent(state_gas_spent);
+        } else {
+            gas.set_state_gas_spent(0);
+            gas.set_reservoir(reservoir.saturating_add_signed(state_gas_spent));
+        }
+
         Ok(())
     }
 
@@ -374,6 +385,8 @@ where
                 gas: ResultGas::new_with_state_gas(gas_used, 0, 0, 0),
                 logs: Vec::new(),
             })
+        } else {
+            evm.ctx().journal_mut().discard_tx();
         }
 
         // do the cleanup
@@ -403,11 +416,13 @@ mod tests {
     use alloy_primitives::uint;
     use base_common_consensus::Predeploys;
     use revm::{
+        InspectEvm,
         bytecode::Bytecode,
         context::{BlockEnv, CfgEnv, Context, TxEnv},
         database::InMemoryDB,
         database_interface::EmptyDB,
         handler::{EthFrame, Handler},
+        inspector::NoOpInspector,
         interpreter::{CallOutcome, InstructionResult, InterpreterResult},
         primitives::{Address, B256, Bytes, TxKind, bytes, hardfork::SpecId},
         state::AccountInfo,
@@ -432,7 +447,7 @@ mod tests {
         let mut handler =
             BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
 
-        handler.last_frame_result(&mut evm, &mut exec_result).unwrap();
+        handler.last_frame_result(&mut evm, 0, &mut exec_result).unwrap();
         handler.refund(&mut evm, &mut exec_result, 0);
         *exec_result.gas()
     }
@@ -799,5 +814,137 @@ mod tests {
     fn test_clz_opcode_not_on_jovian() {
         let result = run_clz_bytecode(BaseSpecId::new(BaseUpgrade::Jovian));
         assert!(!result.is_success(), "CLZ opcode should not be available on JOVIAN (pre-OSAKA)");
+    }
+
+    fn tx_error_cleanup_db_with_warmed_account(
+        warmed: Address,
+        warmed_account_info: AccountInfo,
+        probe: Address,
+        caller: Address,
+    ) -> InMemoryDB {
+        let mut probe_code = vec![0x73];
+        probe_code.extend_from_slice(warmed.as_slice());
+        probe_code.extend_from_slice(&[0x3b, 0x50, 0x00]);
+
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(warmed, warmed_account_info);
+        db.insert_account_info(
+            probe,
+            AccountInfo {
+                code: Some(Bytecode::new_legacy(probe_code.into())),
+                ..Default::default()
+            },
+        );
+        db.insert_account_info(
+            caller,
+            AccountInfo { balance: U256::from(1_000_000), ..Default::default() },
+        );
+        db
+    }
+
+    fn tx_error_cleanup_db(warmed: Address, probe: Address, caller: Address) -> InMemoryDB {
+        tx_error_cleanup_db_with_warmed_account(
+            warmed,
+            AccountInfo {
+                balance: U256::from(1_000_000),
+                code: Some(Bytecode::new_legacy(bytes!("00"))),
+                ..Default::default()
+            },
+            probe,
+            caller,
+        )
+    }
+
+    fn tx_error_cleanup_context(db: InMemoryDB) -> BaseContext<InMemoryDB> {
+        Context::base()
+            .with_db(db)
+            .with_chain(L1BlockInfo {
+                l2_block: Some(U256::ZERO),
+                operator_fee_scalar: Some(U256::ZERO),
+                operator_fee_constant: Some(U256::ZERO),
+                ..Default::default()
+            })
+            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Isthmus)))
+    }
+
+    fn invalid_contract_caller_tx(caller: Address) -> BaseTransaction<TxEnv> {
+        BaseTransaction::builder()
+            .base(TxEnv::builder().caller(caller).gas_limit(100_000))
+            .enveloped_tx(Some(bytes!("FACADE")))
+            .build_fill()
+    }
+
+    fn stale_nonce_tx(caller: Address) -> BaseTransaction<TxEnv> {
+        BaseTransaction::builder()
+            .base(TxEnv::builder().caller(caller).nonce(0).gas_limit(100_000))
+            .enveloped_tx(Some(bytes!("FACADE")))
+            .build_fill()
+    }
+
+    fn probe_tx(caller: Address, probe: Address) -> BaseTransaction<TxEnv> {
+        BaseTransaction::builder()
+            .base(TxEnv::builder().caller(caller).kind(TxKind::Call(probe)).gas_limit(100_000))
+            .enveloped_tx(Some(bytes!("FACADE")))
+            .build_fill()
+    }
+
+    #[test]
+    fn non_deposit_tx_error_discards_journal_in_inspector_path() {
+        let warmed = Address::repeat_byte(0x33);
+        let probe = Address::repeat_byte(0x44);
+        let caller = Address::repeat_byte(0x55);
+
+        let mut dirty_evm = tx_error_cleanup_context(tx_error_cleanup_db(warmed, probe, caller))
+            .build_with_inspector(NoOpInspector {});
+        InspectEvm::inspect_tx(&mut dirty_evm, invalid_contract_caller_tx(warmed))
+            .expect_err("contract caller should fail EIP-3607 validation");
+        let dirty_result = InspectEvm::inspect_tx(&mut dirty_evm, probe_tx(caller, probe))
+            .expect("probe transaction should execute");
+
+        let mut clean_evm = tx_error_cleanup_context(tx_error_cleanup_db(warmed, probe, caller))
+            .build_with_inspector(NoOpInspector {});
+        let clean_result = InspectEvm::inspect_tx(&mut clean_evm, probe_tx(caller, probe))
+            .expect("probe transaction should execute");
+
+        assert_eq!(
+            dirty_result.result.tx_gas_used(),
+            clean_result.result.tx_gas_used(),
+            "failed transaction must not leave the probed account warm"
+        );
+    }
+
+    #[test]
+    fn nonce_too_low_error_discards_authorizer_warmth_in_inspector_path() {
+        let authorizer = Address::repeat_byte(0xd6);
+        let probe = Address::repeat_byte(0x44);
+        let relayer = Address::repeat_byte(0x63);
+
+        let db = tx_error_cleanup_db_with_warmed_account(
+            authorizer,
+            AccountInfo { nonce: 1, balance: U256::from(1_000_000), ..Default::default() },
+            probe,
+            relayer,
+        );
+        let mut dirty_evm = tx_error_cleanup_context(db).build_with_inspector(NoOpInspector {});
+        InspectEvm::inspect_tx(&mut dirty_evm, stale_nonce_tx(authorizer))
+            .expect_err("stale authorizer transaction should fail nonce validation");
+        let dirty_result = InspectEvm::inspect_tx(&mut dirty_evm, probe_tx(relayer, probe))
+            .expect("authorizer code-size probe transaction should execute");
+
+        let db = tx_error_cleanup_db_with_warmed_account(
+            authorizer,
+            AccountInfo { nonce: 1, balance: U256::from(1_000_000), ..Default::default() },
+            probe,
+            relayer,
+        );
+        let mut clean_evm = tx_error_cleanup_context(db).build_with_inspector(NoOpInspector {});
+        let clean_result = InspectEvm::inspect_tx(&mut clean_evm, probe_tx(relayer, probe))
+            .expect("authorizer code-size probe transaction should execute");
+
+        assert_eq!(
+            dirty_result.result.tx_gas_used(),
+            clean_result.result.tx_gas_used(),
+            "stale authorizer transaction must not make the next EXTCODESIZE(authorizer) warm"
+        );
     }
 }

@@ -1,7 +1,7 @@
 //! Contains the `[L1BlockInfo]` type and its implementation.
-use base_common_chains::BaseUpgrade;
 use base_common_consensus::Predeploys;
 use base_common_flz::{NON_ZERO_BYTE_COST, tx_estimated_size_fjord as estimate_tx_compressed_size};
+use base_common_genesis::BaseUpgrade;
 use revm::{
     context_interface::cfg::gas::{NON_ZERO_BYTE_MULTIPLIER_ISTANBUL, STANDARD_TOKEN_COST},
     database_interface::Database,
@@ -41,7 +41,7 @@ pub struct L1BlockInfo {
     pub operator_fee_scalar: Option<U256>,
     /// The operator fee constant. None if Isthmus is not activated.
     pub operator_fee_constant: Option<U256>,
-    /// Da footprint gas scalar. Used to set the DA footprint block limit on the L2. Always null prior to the Jovian hardfork.
+    /// Da footprint gas scalar. Used to set the DA footprint block limit on the L2. Always null prior to the Jovian upgrade.
     pub da_footprint_gas_scalar: Option<u16>,
     /// True if Ecotone is activated, but the L1 fee scalars have not yet been set.
     pub empty_ecotone_scalars: bool,

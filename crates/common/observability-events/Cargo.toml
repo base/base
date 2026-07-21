@@ -1,0 +1,33 @@
+[package]
+name = "base-observability-events"
+description = "Shared observability event envelopes and JSONL writers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy-primitives = { workspace = true, features = ["serde"] }
+base-metrics.workspace = true
+chrono = { workspace = true, features = ["serde"] }
+eyre.workspace = true
+hex.workspace = true
+metrics = { workspace = true, optional = true }
+serde = { workspace = true, features = ["derive", "std"] }
+serde_json = { workspace = true, features = ["std"] }
+sha2.workspace = true
+thiserror.workspace = true
+tracing = { workspace = true, features = ["std"] }
+tracing-appender.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[features]
+default = [ "metrics" ]
+metrics = [ "base-metrics/metrics", "dep:metrics" ]

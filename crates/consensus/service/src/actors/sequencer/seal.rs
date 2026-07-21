@@ -7,6 +7,7 @@ use std::time::Instant;
 
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_protocol::L2BlockInfo;
+use tracing::Instrument;
 
 use crate::{
     Metrics, UnsafePayloadGossipClient,
@@ -22,6 +23,8 @@ pub enum SealState {
     Committed,
     /// Gossiped to peers. Ready for engine insertion.
     Gossiped,
+    /// Shadow sequencer payload ready for private engine insertion without commit or gossip.
+    Private,
 }
 
 /// Result from one seal pipeline step.
@@ -39,7 +42,7 @@ impl SealState {
         match self {
             Self::Sealed => "conductor",
             Self::Committed => "gossip",
-            Self::Gossiped => "insert",
+            Self::Gossiped | Self::Private => "insert",
         }
     }
 }
@@ -58,6 +61,8 @@ pub struct PayloadSealer {
     pub envelope: BaseExecutionPayloadEnvelope,
     /// Current pipeline stage.
     pub state: SealState,
+    /// Span for the end-to-end seal pipeline lifecycle.
+    pub seal_span: tracing::Span,
     /// Wall-clock instant the sealer was constructed (start of the seal pipeline).
     /// Read by the actor on `Ok(true)` to record
     /// [`crate::Metrics::sequencer_seal_pipeline_duration`].
@@ -67,7 +72,29 @@ pub struct PayloadSealer {
 impl PayloadSealer {
     /// Creates a new sealer starting at the [`SealState::Sealed`] stage.
     pub fn new(envelope: BaseExecutionPayloadEnvelope) -> Self {
-        Self { envelope, state: SealState::Sealed, started_at: Instant::now() }
+        let block_hash = envelope.execution_payload.block_hash();
+        let block_num = envelope.execution_payload.block_number();
+        let seal_span = tracing::info_span!(
+            "seal_payload_pipeline",
+            block_hash = %block_hash,
+            block_number = block_num,
+        );
+
+        Self { envelope, state: SealState::Sealed, seal_span, started_at: Instant::now() }
+    }
+
+    /// Creates a private sealer that skips conductor commit and gossip.
+    pub fn new_private(envelope: BaseExecutionPayloadEnvelope) -> Self {
+        let block_hash = envelope.execution_payload.block_hash();
+        let block_num = envelope.execution_payload.block_number();
+        let seal_span = tracing::info_span!(
+            "seal_payload_pipeline",
+            block_hash = %block_hash,
+            block_number = block_num,
+            mode = "shadow",
+        );
+
+        Self { envelope, state: SealState::Private, seal_span, started_at: Instant::now() }
     }
 
     /// Performs one step of the seal pipeline.
@@ -91,9 +118,13 @@ impl PayloadSealer {
 
         let result = match self.state {
             SealState::Sealed => {
+                self.seal_span.in_scope(
+                    || debug!(target: "sequencer", step = "commit", "seal pipeline step"),
+                );
                 if let Some(conductor) = conductor {
                     conductor
                         .commit_unsafe_payload(&self.envelope)
+                        .instrument(self.seal_span.clone())
                         .await
                         .map_err(SealStepError::Conductor)?;
                 }
@@ -101,16 +132,29 @@ impl PayloadSealer {
                 Ok(SealStepOutcome::Pending)
             }
             SealState::Committed => {
+                self.seal_span.in_scope(
+                    || debug!(target: "sequencer", step = "gossip", "seal pipeline step"),
+                );
                 gossip_client
                     .schedule_execution_payload_gossip(self.envelope.clone())
+                    .instrument(self.seal_span.clone())
                     .await
                     .map_err(SealStepError::Gossip)?;
                 self.state = SealState::Gossiped;
                 Ok(SealStepOutcome::Pending)
             }
-            SealState::Gossiped => {
+            SealState::Gossiped | SealState::Private => {
+                self.seal_span.in_scope(|| {
+                    debug!(
+                        target: "sequencer",
+                        step = "insert",
+                        state = ?self.state,
+                        "seal pipeline step"
+                    );
+                });
                 let inserted_head = engine_client
                     .insert_unsafe_payload(self.envelope.clone())
+                    .instrument(self.seal_span.clone())
                     .await
                     .map_err(SealStepError::Insert)?;
                 Ok(SealStepOutcome::Inserted(inserted_head))

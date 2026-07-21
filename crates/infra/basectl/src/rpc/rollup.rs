@@ -2,10 +2,15 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, B256};
 use alloy_provider::{Provider, ProviderBuilder};
-use alloy_rpc_types_eth::BlockNumberOrTag;
+use alloy_rpc_client::RpcClient;
+use alloy_rpc_types_eth::{BlockNumberOrTag, SyncStatus as EthSyncStatus};
 use alloy_sol_types::sol;
-use anyhow::Result;
+use alloy_transport_http::Http;
+use anyhow::{Context, Result};
+use base_common_genesis::UpgradeConfig;
+use base_common_network::Base;
 use base_consensus_rpc::{BaseP2PApiClient, RollupNodeApiClient};
+use base_protocol::SyncStatus;
 use jsonrpsee::{core::client::ClientT, http_client::HttpClientBuilder, rpc_params};
 use tokio::sync::mpsc;
 use tracing::warn;
@@ -15,6 +20,59 @@ use crate::{
     config::{ProofsConfig, ValidatorNodeConfig},
     tui::Toast,
 };
+
+const ROLLUP_CONFIG_POLL_INTERVAL: Duration = Duration::from_secs(5);
+
+/// Combined CL `optimism_syncStatus` + EL `eth_syncing` snapshot.
+///
+/// The CL `SyncStatus` carries every L1/L2 head ref the rollup node knows
+/// about, including timestamps on `unsafe_l2`/`safe_l2`/`finalized_l2` via
+/// `L2BlockInfo.block_info.timestamp`. The EL `EthSyncStatus` is alloy's
+/// typed `eth_syncing` response (`Info(SyncInfo)` while syncing, `None`
+/// otherwise).
+///
+/// Doctor (Phase 2.8) reuses this to compute `unsafe.timestamp -
+/// safe.timestamp` for its safe-head-recency check, gated on whether the
+/// EL is actively syncing.
+#[derive(Debug, Clone)]
+pub struct SyncStatusReport {
+    /// Rollup node `optimism_syncStatus` response.
+    pub cl: SyncStatus,
+    /// Execution-layer `eth_syncing` response.
+    pub el: EthSyncStatus,
+}
+
+/// Fetches a combined CL + EL sync-status snapshot.
+///
+/// Calls `optimism_syncStatus` against the consensus-node RPC and
+/// `eth_syncing` against the execution-layer RPC in parallel; either error
+/// short-circuits the call.
+pub async fn fetch_sync_status(rpc: &Url, cl_rpc: &Url) -> Result<SyncStatusReport> {
+    let cl_client = HttpClientBuilder::default()
+        .request_timeout(Duration::from_secs(10))
+        .build(cl_rpc.as_str())
+        .with_context(|| format!("connecting to consensus node RPC at {cl_rpc}"))?;
+    let http_client = alloy_transport_http::reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .with_context(|| format!("building L2 EL HTTP client for {rpc}"))?;
+    let transport = Http::with_client(http_client, rpc.clone());
+    let el_provider = ProviderBuilder::new()
+        .disable_recommended_fillers()
+        .network::<Base>()
+        .connect_client(RpcClient::new(transport, false));
+    let (cl, el) = tokio::try_join!(
+        async {
+            RollupNodeApiClient::sync_status(&cl_client)
+                .await
+                .with_context(|| format!("fetching optimism_syncStatus from {cl_rpc}"))
+        },
+        async {
+            el_provider.syncing().await.with_context(|| format!("fetching eth_syncing from {rpc}"))
+        },
+    )?;
+    Ok(SyncStatusReport { cl, el })
+}
 
 /// Fetches the safe and latest L2 block numbers.
 pub async fn fetch_safe_and_latest(l2_rpc: &str) -> Result<(u64, u64)> {
@@ -413,4 +471,57 @@ async fn find_latest_proposal<P: Provider + Clone>(
     }
 
     None
+}
+
+/// Polls the consensus node's live rollup config for upgrade schedule updates.
+pub async fn run_rollup_config_poller(
+    consensus_rpc: Url,
+    tx: mpsc::Sender<UpgradeConfig>,
+    toast_tx: mpsc::Sender<Toast>,
+) {
+    let client = match HttpClientBuilder::default()
+        .request_timeout(ROLLUP_CONFIG_POLL_INTERVAL)
+        .build(consensus_rpc.as_str())
+    {
+        Ok(client) => client,
+        Err(error) => {
+            warn!(
+                error = %error,
+                consensus_rpc = %consensus_rpc,
+                "failed to create consensus RPC client for rollup config polling"
+            );
+            let _ = toast_tx.try_send(Toast::warning("Rollup config poller connection failed"));
+            return;
+        }
+    };
+
+    let mut interval = tokio::time::interval(ROLLUP_CONFIG_POLL_INTERVAL);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut last_upgrades = None;
+
+    loop {
+        interval.tick().await;
+        let config = match RollupNodeApiClient::rollup_config(&client).await {
+            Ok(config) => config,
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    consensus_rpc = %consensus_rpc,
+                    "failed to poll live rollup config"
+                );
+                continue;
+            }
+        };
+
+        if last_upgrades == Some(config.upgrades) {
+            continue;
+        }
+        if tx.send(config.upgrades).await.is_err() {
+            break;
+        }
+        if last_upgrades.is_some() {
+            let _ = toast_tx.try_send(Toast::info("Upgrade schedule updated"));
+        }
+        last_upgrades = Some(config.upgrades);
+    }
 }

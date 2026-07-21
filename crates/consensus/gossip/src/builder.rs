@@ -272,6 +272,7 @@ impl GossipDriverBuilder {
                 GossipDriverConfig {
                     max_identify_peerstore_peers,
                     peer_monitoring: self.peer_monitoring,
+                    connection_limits_config,
                 },
             ),
             signer_tx,

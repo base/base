@@ -4,6 +4,7 @@ use alloc::string::String;
 
 use alloy_eips::BlockNumHash;
 use alloy_primitives::B256;
+use base_protocol::BaseTimeUpdateError;
 use thiserror::Error;
 
 /// An [`AttributesBuilder`] Error.
@@ -30,6 +31,12 @@ pub enum BuilderError {
     /// Attributes unavailable.
     #[error("Attributes unavailable")]
     AttributesUnavailable,
+    /// The `BaseTime` timestamp millisecond part is missing.
+    #[error("missing BaseTime timestamp millis part")]
+    MissingBaseTimeTimestampMillisPart,
+    /// The `BaseTime` metadata deposit could not be built.
+    #[error(transparent)]
+    BaseTimeUpdate(#[from] BaseTimeUpdateError),
     /// A custom error.
     #[error("Error in attributes builder: {0}")]
     Custom(String),

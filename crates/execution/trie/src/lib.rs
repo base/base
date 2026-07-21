@@ -14,11 +14,11 @@ use reth_ethereum_primitives as _;
 pub mod api;
 pub use api::{
     BaseProofsBatchSession, BaseProofsBatchStore, BaseProofsInitialStateStore, BaseProofsStore,
-    BlockStateDiff,
+    BlockStateDiff, StorageBranchEntries,
 };
 
 pub mod initialize;
-pub use initialize::InitializationJob;
+pub use initialize::{InitializationJob, RethTrieStorageLayout};
 
 pub mod in_memory;
 pub use in_memory::{
@@ -28,7 +28,12 @@ pub use in_memory::{
 
 pub mod db;
 pub use db::{
-    MdbxAccountCursor, MdbxBatchSession, MdbxProofsStorage, MdbxStorageCursor, MdbxTrieCursor,
+    MdbxAccountCursor, MdbxBatchSession, MdbxProofsStorage, MdbxProofsStorageOptions,
+    MdbxStorageCursor, MdbxTrieCursor, ProofWindowValue, RocksDbHistoryTable,
+    RocksDbLatestVersionResult, RocksdbAccountCursor, RocksdbBatchSession,
+    RocksdbHistoryDeleteBatch, RocksdbPreparedHistoryDeletes, RocksdbPreparedPrune,
+    RocksdbProofsStorage, RocksdbProofsStorageOptions, RocksdbPrunePlan, RocksdbReadSnapshot,
+    RocksdbReplacementState, RocksdbStorageCursor, RocksdbTrieCursor, RocksdbVersionedCursor,
 };
 
 pub mod metrics;

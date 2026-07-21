@@ -5,7 +5,7 @@ use std::{
 };
 
 use base_common_flashblocks::Flashblock;
-use base_common_genesis::SystemConfig;
+use base_common_genesis::{SystemConfig, UpgradeConfig};
 use base_consensus_rpc::ClusterMembership;
 use tokio::sync::{mpsc, watch};
 use url::Url;
@@ -15,7 +15,7 @@ use crate::{
     config::{ConductorNodeConfig, MonitoringConfig},
     rpc::{
         BacklogFetchResult, BlockDaInfo, ConductorNodeStatus, ConductorPollUpdate, L1BlockInfo,
-        L1ConnectionMode, ProofsSnapshot, TimestampedFlashblock, ValidatorNodeStatus,
+        L1ConnectionMode, PodsSnapshot, ProofsSnapshot, TimestampedFlashblock, ValidatorNodeStatus,
     },
     tui::ToastState,
 };
@@ -192,6 +192,29 @@ impl ProofsState {
     }
 }
 
+/// State for Kubernetes pod monitoring.
+#[derive(Debug, Default)]
+pub struct PodsState {
+    /// Most recent Kubernetes pods snapshot.
+    pub snapshot: Option<PodsSnapshot>,
+    rx: Option<mpsc::Receiver<PodsSnapshot>>,
+}
+
+impl PodsState {
+    /// Sets the channel for receiving pods snapshots.
+    pub fn set_channel(&mut self, rx: mpsc::Receiver<PodsSnapshot>) {
+        self.rx = Some(rx);
+    }
+
+    /// Drains the latest pods snapshot from the background poller.
+    pub fn poll(&mut self) {
+        let Some(ref mut rx) = self.rx else { return };
+        while let Ok(snapshot) = rx.try_recv() {
+            self.snapshot = Some(snapshot);
+        }
+    }
+}
+
 /// Shared resources available to all TUI views.
 #[derive(Debug)]
 pub struct Resources {
@@ -209,9 +232,12 @@ pub struct Resources {
     pub validators: ValidatorState,
     /// Proof system monitoring state.
     pub proofs: ProofsState,
+    /// Kubernetes pod monitoring state.
+    pub pods: PodsState,
     /// L1 system config fetched from the contract.
     pub system_config: Option<SystemConfig>,
     sys_config_rx: Option<mpsc::Receiver<SystemConfig>>,
+    upgrades_rx: Option<mpsc::Receiver<UpgradeConfig>>,
 }
 
 /// State for DA (data availability) monitoring.
@@ -269,8 +295,10 @@ impl Resources {
             conductor: ConductorState::default(),
             validators: ValidatorState::default(),
             proofs: ProofsState::default(),
+            pods: PodsState::default(),
             system_config: None,
             sys_config_rx: None,
+            upgrades_rx: None,
         }
     }
 
@@ -284,12 +312,26 @@ impl Resources {
         self.sys_config_rx = Some(rx);
     }
 
+    /// Sets the channel for receiving live upgrade schedule updates.
+    pub fn set_upgrades_channel(&mut self, rx: mpsc::Receiver<UpgradeConfig>) {
+        self.upgrades_rx = Some(rx);
+    }
+
     /// Polls for a new system config from the background task.
     pub fn poll_sys_config(&mut self) {
         if let Some(ref mut rx) = self.sys_config_rx
             && let Ok(cfg) = rx.try_recv()
         {
             self.system_config = Some(cfg);
+        }
+    }
+
+    /// Polls for live upgrade schedule updates from the consensus node.
+    pub fn poll_upgrades(&mut self) {
+        if let Some(ref mut rx) = self.upgrades_rx {
+            while let Ok(upgrades) = rx.try_recv() {
+                self.config.upgrades = Some(upgrades);
+            }
         }
     }
 }

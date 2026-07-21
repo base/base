@@ -2,13 +2,18 @@ use std::time::Instant;
 
 use alloy_consensus::transaction::Recovered;
 use alloy_eips::Decodable2718;
+use alloy_primitives::TxHash;
 use base_common_consensus::BaseTransactionSigned;
+use base_observability_events::{
+    TransactionEventProducer, TransactionEventType, transaction_event,
+};
 use jsonrpsee::{
     core::RpcResult,
     proc_macros::rpc,
     types::{ErrorCode, ErrorObjectOwned},
 };
 use reth_transaction_pool::TransactionPool;
+use serde_json::{Map, json};
 use tracing::debug;
 
 use super::metrics::Metrics as BuilderApiMetrics;
@@ -67,6 +72,7 @@ where
                     None::<()>,
                 )
             })?;
+        let tx_hash = *consensus_tx.hash();
         let encoded_len = tx.raw.len();
 
         let recovered = Recovered::new_unchecked(consensus_tx, sender);
@@ -83,11 +89,25 @@ where
 
         match result {
             Ok(_) => {
+                self.emit_validated_insert_event(
+                    TransactionEventType::TxpoolValidatedInsertAccepted,
+                    tx_hash,
+                    Map::from_iter([("encoded_len".to_string(), json!(encoded_len))]),
+                );
                 debug!(sender = %sender, "inserted validated transaction");
                 BuilderApiMetrics::txs_inserted().increment(1);
                 Ok(())
             }
             Err(e) => {
+                self.emit_validated_insert_event(
+                    TransactionEventType::TxpoolValidatedInsertRejected,
+                    tx_hash,
+                    Map::from_iter([
+                        ("rejection_stage".to_string(), json!("pool_insert")),
+                        ("encoded_len".to_string(), json!(encoded_len)),
+                        ("error".to_string(), json!(e.to_string())),
+                    ]),
+                );
                 debug!(sender = %sender, error = %e, "pool rejected transaction");
                 BuilderApiMetrics::txs_rejected(PoolRejectionLabel::from_error(&e)).increment(1);
                 Err(ErrorObjectOwned::owned(
@@ -97,6 +117,28 @@ where
                 ))
             }
         }
+    }
+}
+
+impl<P> BuilderApiImpl<P> {
+    fn emit_validated_insert_event(
+        &self,
+        event_type: TransactionEventType,
+        tx_hash: TxHash,
+        mut data: Map<String, serde_json::Value>,
+    ) {
+        data.entry("rpc_method".to_string())
+            .or_insert_with(|| json!("base_insertValidatedTransaction"));
+
+        let _ = transaction_event!(
+            producer: TransactionEventProducer::BaseBuilder,
+            event_type: event_type,
+            tx_hash: tx_hash,
+            id: {
+                "tx_hash" => format!("{tx_hash:#x}"),
+            },
+            data: data,
+        );
     }
 }
 

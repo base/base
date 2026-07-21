@@ -1,8 +1,11 @@
 //! Full proposer service lifecycle.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
 };
 
 use alloy_primitives::Address;
@@ -11,16 +14,17 @@ use base_balance_monitor::BalanceMonitorLayer;
 use base_cli_utils::RuntimeManager;
 use base_health::HealthServer;
 use base_proof_contracts::{
-    AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryContractClient,
-    DisputeGameFactoryClient, DisputeGameFactoryContractClient,
+    AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryClient,
+    AnchorStateRegistryContractClient, DisputeGameFactoryClient, DisputeGameFactoryContractClient,
 };
 use base_proof_rpc::{
     L1Client, L1ClientConfig, L2Client, L2ClientConfig, RollupClient, RollupClientConfig,
 };
-use base_prover_service_client::{ProofRequesterClient, ProverServiceClientConfig};
+use base_prover_service_client::{
+    ProofRequesterClient, ProofRequesterProvider, ProverServiceClientConfig,
+};
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
 use eyre::{Result, WrapErr};
-use jsonrpsee::http_client::HttpClientBuilder;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -28,11 +32,19 @@ use tracing::{info, warn};
 use crate::{
     Metrics,
     config::ProposerConfig,
-    constants::MAX_PROOF_RETRIES,
     driver::{DriverConfig, PipelineHandle, ProposerDriverControl},
-    output_proposer::ProposalSubmitter,
-    pipeline::{PipelineConfig, ProofBackend, ProvingPipeline},
+    output_proposer::{OutputProposer, ProposalSubmitter},
+    pipeline::ProvingPipeline,
+    proof_collector::ProofCollector,
+    proof_dispatcher::{ProofDispatcher, ProofDispatcherConfig},
+    proof_recovery::{ProofRecovery, ProofRecoveryConfig},
+    proof_submitter::ProofSubmitter,
 };
+
+const SUBMIT_TIMEOUT_SLACK: Duration = Duration::from_mins(2);
+const DEFAULT_TX_SEND_TIMEOUT: Duration = Duration::from_mins(10);
+const DEFAULT_SUBMIT_TIMEOUT: Duration =
+    Duration::from_secs(DEFAULT_TX_SEND_TIMEOUT.as_secs() + SUBMIT_TIMEOUT_SLACK.as_secs());
 
 /// Top-level proposer service.
 #[derive(Debug)]
@@ -48,8 +60,6 @@ impl ProposerService {
         info!(version = env!("CARGO_PKG_VERSION"), "Proposer starting");
         info!(
             dry_run = config.dry_run,
-            allow_non_finalized = config.allow_non_finalized,
-            direct_prover_rpc = config.direct_prover_rpc,
             anchor_state_registry = %config.anchor_state_registry_addr,
             dispute_game_factory = %config.dispute_game_factory_addr,
             game_type = config.game_type,
@@ -57,10 +67,8 @@ impl ProposerService {
             prover_timeout = ?config.prover_timeout,
             poll_interval = ?config.poll_interval,
             rpc_timeout = ?config.rpc_timeout,
-            max_parallel_proofs = config.max_parallel_proofs,
             health_addr = %config.health_addr,
             admin_addr = ?config.admin_addr,
-            tee_prover_registry = ?config.tee_prover_registry_address,
             "Resolved configuration"
         );
 
@@ -69,7 +77,7 @@ impl ProposerService {
 
         let l1_config = L1ClientConfig::new(config.l1_eth_rpc.clone())
             .with_timeout(config.rpc_timeout)
-            .with_retry_config(config.retry.clone())
+            .with_retry_config(config.retry)
             .with_skip_tls_verify(config.skip_tls_verify)
             .with_metrics_prefix("base_proposer");
         let l1_client = Arc::new(L1Client::new(l1_config)?);
@@ -77,7 +85,7 @@ impl ProposerService {
 
         let l2_config = L2ClientConfig::new(config.l2_eth_rpc.clone())
             .with_timeout(config.rpc_timeout)
-            .with_retry_config(config.retry.clone())
+            .with_retry_config(config.retry)
             .with_skip_tls_verify(config.skip_tls_verify)
             .with_metrics_prefix("base_proposer");
         let l2_client = Arc::new(L2Client::new(l2_config)?);
@@ -85,35 +93,23 @@ impl ProposerService {
 
         let rollup_config = RollupClientConfig::new(config.rollup_rpc.clone())
             .with_timeout(config.rpc_timeout)
-            .with_retry_config(config.retry.clone())
+            .with_retry_config(config.retry)
             .with_skip_tls_verify(config.skip_tls_verify);
         let rollup_client = Arc::new(RollupClient::new(rollup_config)?);
         info!(endpoint = %config.rollup_rpc, "Rollup client initialized");
 
-        let backend = if config.direct_prover_rpc {
-            let client = HttpClientBuilder::default()
-                .request_timeout(config.prover_timeout)
-                .build(config.prover_rpc.as_str())
-                .wrap_err("failed to create direct prover HTTP client")?;
-            info!(
-                endpoint = %config.prover_rpc,
-                "Direct prover RPC client initialized (bypassing prover-service)"
-            );
-            ProofBackend::direct(Arc::new(client))
-        } else {
-            let prover_service_config =
-                ProverServiceClientConfig::new(config.prover_rpc.to_string())
-                    .with_max_wait(config.prover_timeout);
-            let requester = ProofRequesterClient::connect(&prover_service_config)
-                .wrap_err("failed to create prover-service requester client")?;
-            info!(endpoint = %config.prover_rpc, "Prover-service requester client initialized");
-            ProofBackend::service(Arc::new(requester))
-        };
+        let prover_service_config = ProverServiceClientConfig::new(config.prover_rpc.to_string())
+            .with_max_wait(config.prover_timeout);
+        let proof_requester = ProofRequesterClient::connect(&prover_service_config)
+            .wrap_err("failed to create prover-service requester client")?;
+        let proof_requester: Arc<dyn ProofRequesterProvider> = Arc::new(proof_requester);
+        info!(endpoint = %config.prover_rpc, "Prover-service requester client initialized");
 
-        let anchor_registry = Arc::new(AnchorStateRegistryContractClient::new(
-            config.anchor_state_registry_addr,
-            config.l1_eth_rpc.clone(),
-        )?);
+        let anchor_registry: Arc<dyn AnchorStateRegistryClient> =
+            Arc::new(AnchorStateRegistryContractClient::new(
+                config.anchor_state_registry_addr,
+                config.l1_eth_rpc.clone(),
+            )?);
         info!(address = %config.anchor_state_registry_addr, "AnchorStateRegistry client initialized");
 
         let factory_client = DisputeGameFactoryContractClient::new(
@@ -152,15 +148,20 @@ impl ProposerService {
             init_bond = %init_bond,
             impl_address = %impl_address,
             game_type = config.game_type,
-            "Read on-chain config from AggregateVerifier and DisputeGameFactory"
+            "Read onchain config from AggregateVerifier and DisputeGameFactory"
         );
 
-        let factory_client = Arc::new(factory_client);
+        let factory_client: Arc<dyn DisputeGameFactoryClient> = Arc::new(factory_client);
         let verifier_client: Arc<dyn AggregateVerifierClient> = Arc::new(verifier_client);
+        let submit_timeout =
+            config.tx_manager.as_ref().map_or(Some(DEFAULT_SUBMIT_TIMEOUT), |tx| {
+                (!tx.tx_send_timeout.is_zero())
+                    .then(|| tx.tx_send_timeout.saturating_add(SUBMIT_TIMEOUT_SLACK))
+            });
 
-        let (output_proposer, proposer_address): (Arc<dyn crate::OutputProposer>, Option<Address>) =
+        let (output_proposer, proposer_address): (Arc<dyn OutputProposer>, Option<Address>) =
             if config.dry_run {
-                info!("Dry-run mode enabled — proofs will be sourced but NOT submitted on-chain");
+                info!("Dry-run mode enabled - proofs will be sourced but NOT submitted onchain");
                 (Arc::new(crate::DryRunProposer), None)
             } else {
                 let signing = config.signing.ok_or_else(|| {
@@ -215,35 +216,53 @@ impl ProposerService {
             };
         info!("Output proposer initialized");
 
-        let pipeline_config = PipelineConfig {
-            max_parallel_proofs: config.max_parallel_proofs,
-            max_retries: MAX_PROOF_RETRIES,
+        let driver_config = DriverConfig {
+            poll_interval: config.poll_interval,
             recovery_scan_concurrency: config.recovery_scan_concurrency,
-            tee_prover_registry_address: config.tee_prover_registry_address,
-            driver: DriverConfig {
-                poll_interval: config.poll_interval,
-                block_interval,
-                intermediate_block_interval,
-                game_type: config.game_type,
-                allow_non_finalized: config.allow_non_finalized,
-                proposer_address: proposer_address.unwrap_or_default(),
-                tee_image_hash: config.tee_image_hash,
-                anchor_state_registry_address: config.anchor_state_registry_addr,
-            },
+            submit_timeout,
+            block_interval,
+            intermediate_block_interval,
+            game_type: config.game_type,
+            proposer_address: proposer_address.unwrap_or_default(),
+            tee_image_hash: config.tee_image_hash,
+            anchor_state_registry_address: config.anchor_state_registry_addr,
         };
-        let pipeline = ProvingPipeline::new(
-            pipeline_config,
-            backend,
-            l1_client,
-            l2_client,
-            rollup_client,
+        let proof_dispatcher = ProofDispatcher::new(
+            Arc::clone(&proof_requester),
+            Arc::<L1Client>::clone(&l1_client),
+            Arc::<L2Client>::clone(&l2_client),
+            Arc::<RollupClient>::clone(&rollup_client),
+            ProofDispatcherConfig::from(&driver_config),
+        );
+        let proof_submitter = ProofSubmitter::new(
+            output_proposer,
+            Arc::<RollupClient>::clone(&rollup_client),
+            Arc::clone(&factory_client),
+            Arc::clone(&verifier_client),
+            &driver_config,
+        );
+        let proof_recovery = Arc::new(ProofRecovery::new(
+            ProofRecoveryConfig {
+                block_interval: driver_config.block_interval,
+                intermediate_block_interval: driver_config.intermediate_block_interval,
+                game_type: driver_config.game_type,
+                anchor_state_registry_address: driver_config.anchor_state_registry_address,
+                scan_concurrency: driver_config.recovery_scan_concurrency,
+            },
+            Arc::<RollupClient>::clone(&rollup_client),
             anchor_registry,
             factory_client,
-            verifier_client,
-            output_proposer,
-            cancel.child_token(),
+        ));
+        let proof_collector = ProofCollector::new(
+            Arc::clone(&proof_requester),
+            Arc::clone(&rollup_client),
+            proof_submitter,
+            driver_config.block_interval,
+            driver_config.submit_timeout,
         );
-        info!(max_parallel_proofs = config.max_parallel_proofs, "Proving pipeline initialized");
+        let pipeline =
+            ProvingPipeline::new(driver_config, proof_dispatcher, proof_recovery, proof_collector);
+        info!("Proving pipeline initialized");
         let driver_handle: Arc<dyn ProposerDriverControl> =
             Arc::new(PipelineHandle::new(pipeline, cancel.clone()));
 
@@ -258,7 +277,7 @@ impl ProposerService {
         let admin_server = if let Some(admin_addr) = config.admin_addr {
             info!("Admin RPC enabled");
             let driver = Arc::clone(&driver_handle);
-            Some(crate::admin::AdminServer::spawn(admin_addr, driver).await?)
+            Some(crate::admin::ProposerAdminApiServerImpl::spawn(admin_addr, driver).await?)
         } else {
             None
         };
@@ -289,7 +308,8 @@ impl ProposerService {
         }
 
         if let Some(admin_server) = admin_server {
-            admin_server.shutdown().await;
+            let _ = admin_server.stop();
+            admin_server.stopped().await;
         }
 
         match health_handle.await {

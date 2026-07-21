@@ -10,6 +10,7 @@ use std::{
 use alloy_consensus::{
     Eip658Value, Header as ConsensusHeader, Receipt, ReceiptEnvelope, ReceiptWithBloom,
 };
+use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, Bloom, Bytes, U256, keccak256};
 use alloy_rlp::Encodable;
 use alloy_rpc_types_eth::{EIP1186AccountProofResponse, Header as RpcHeader, TransactionReceipt};
@@ -21,11 +22,12 @@ use base_proof_contracts::{
     AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,
     GameStatus,
 };
-use base_proof_rpc::{L2Provider, RpcError, RpcResult};
+use base_proof_rpc::{BaseHeader, L2Provider, RpcError, RpcResult};
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
 use base_prover_service_protocol::{
-    GetProofRequest, GetProofResponse, ProofResult as ApiProofResult, ProofStatus,
-    ProveBlockRangeRequest, ProveBlockRangeResponse, SnarkGroth16ProofResult, ZkProofResult, ZkVm,
+    DeleteProofRequest, GetProofRequest, GetProofResponse, ProofResult as ApiProofResult,
+    ProofStatus, ProveBlockRangeRequest, ProveBlockRangeResponse, SnarkPlonkProofResult,
+    ZkProofResult, ZkVm,
 };
 use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager};
 
@@ -131,17 +133,30 @@ impl Default for MockGameState {
 pub struct MockDisputeGameFactory {
     /// Ordered list of games in the factory.
     pub games: Mutex<Vec<GameAtIndex>>,
+    /// Games keyed by `(game_type, root_claim, extra_data)` for UUID lookups.
+    pub uuid_games: Mutex<HashMap<(u32, B256, Bytes), Address>>,
 }
 
 impl MockDisputeGameFactory {
     /// Creates a new mock from an initial set of games.
-    pub const fn new(games: Vec<GameAtIndex>) -> Self {
-        Self { games: Mutex::new(games) }
+    pub fn new(games: Vec<GameAtIndex>) -> Self {
+        Self { games: Mutex::new(games), uuid_games: Mutex::new(HashMap::new()) }
     }
 
     /// Appends a single game to the factory.
     pub fn push(&self, game: GameAtIndex) {
         self.games.lock().unwrap().push(game);
+    }
+
+    /// Inserts a UUID-addressable game.
+    pub fn insert_uuid_game(
+        &self,
+        game_type: u32,
+        root_claim: B256,
+        extra_data: Bytes,
+        proxy: Address,
+    ) {
+        self.uuid_games.lock().unwrap().insert((game_type, root_claim, extra_data), proxy);
     }
 }
 
@@ -170,11 +185,17 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
 
     async fn games(
         &self,
-        _game_type: u32,
-        _root_claim: B256,
-        _extra_data: Bytes,
+        game_type: u32,
+        root_claim: B256,
+        extra_data: Bytes,
     ) -> Result<Address, ContractError> {
-        Ok(Address::ZERO)
+        Ok(self
+            .uuid_games
+            .lock()
+            .unwrap()
+            .get(&(game_type, root_claim, extra_data))
+            .copied()
+            .unwrap_or(Address::ZERO))
     }
 }
 
@@ -235,15 +256,38 @@ pub struct MockAggregateVerifier {
     /// Per-address game state lookup, wrapped in a `Mutex` for interior
     /// mutability in multi-step tests.
     pub games: Mutex<HashMap<Address, MockGameState>>,
-    /// Addresses passed to `bond_recipient`, used by tests that assert polling
-    /// avoids redundant lifecycle reads.
-    pub bond_recipient_reads: Mutex<Vec<Address>>,
+    /// Addresses passed to `game_info`, used by tests that assert cached reads.
+    pub game_info_reads: Mutex<Vec<Address>>,
+    /// Addresses passed to `status`, used by tests that assert cached reads.
+    pub status_reads: Mutex<Vec<Address>>,
+    /// Addresses passed to `zk_prover`, used by tests that assert cheap pending polls.
+    pub zk_prover_reads: Mutex<Vec<Address>>,
+    /// Addresses passed to `tee_prover`, used by tests that assert cheap pending polls.
+    pub tee_prover_reads: Mutex<Vec<Address>>,
+    /// Addresses passed to `countered_index`, used by tests that assert cheap pending polls.
+    pub countered_index_reads: Mutex<Vec<Address>>,
+    /// Addresses passed to `game_over`, used by tests that assert cheap pending polls.
+    pub game_over_reads: Mutex<Vec<Address>>,
+    /// Addresses passed to `anchor_state_registry`, used by tests that assert cached reads.
+    pub anchor_state_registry_reads: Mutex<Vec<Address>>,
+    /// Addresses passed to `delayed_weth`, used by tests that assert cached reads.
+    pub delayed_weth_reads: Mutex<Vec<Address>>,
 }
 
 impl MockAggregateVerifier {
     /// Creates a new mock verifier from a pre-built game state map.
     pub const fn new(games: HashMap<Address, MockGameState>) -> Self {
-        Self { games: Mutex::new(games), bond_recipient_reads: Mutex::new(Vec::new()) }
+        Self {
+            games: Mutex::new(games),
+            game_info_reads: Mutex::new(Vec::new()),
+            status_reads: Mutex::new(Vec::new()),
+            zk_prover_reads: Mutex::new(Vec::new()),
+            tee_prover_reads: Mutex::new(Vec::new()),
+            countered_index_reads: Mutex::new(Vec::new()),
+            game_over_reads: Mutex::new(Vec::new()),
+            anchor_state_registry_reads: Mutex::new(Vec::new()),
+            delayed_weth_reads: Mutex::new(Vec::new()),
+        }
     }
 
     /// Updates the state for a specific game address.
@@ -254,9 +298,29 @@ impl MockAggregateVerifier {
         self.games.lock().unwrap().insert(address, state);
     }
 
-    /// Returns how many times `bond_recipient` was read for a game.
-    pub fn bond_recipient_read_count(&self, game_address: Address) -> usize {
-        self.bond_recipient_reads
+    /// Returns how many times `game_info` was read for a game.
+    pub fn game_info_read_count(&self, game_address: Address) -> usize {
+        self.game_info_reads
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|&&read_address| read_address == game_address)
+            .count()
+    }
+
+    /// Returns how many times `status` was read for a game.
+    pub fn status_read_count(&self, game_address: Address) -> usize {
+        self.status_reads
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|&&read_address| read_address == game_address)
+            .count()
+    }
+
+    /// Returns how many times `anchor_state_registry` was read for a game.
+    pub fn anchor_state_registry_read_count(&self, game_address: Address) -> usize {
+        self.anchor_state_registry_reads
             .lock()
             .unwrap()
             .iter()
@@ -281,18 +345,22 @@ impl MockAggregateVerifier {
 #[async_trait]
 impl AggregateVerifierClient for MockAggregateVerifier {
     async fn game_info(&self, game_address: Address) -> Result<GameInfo, ContractError> {
+        self.game_info_reads.lock().unwrap().push(game_address);
         self.get(game_address, |s| s.game_info)
     }
 
     async fn status(&self, game_address: Address) -> Result<GameStatus, ContractError> {
+        self.status_reads.lock().unwrap().push(game_address);
         self.get(game_address, |s| s.status)
     }
 
     async fn zk_prover(&self, game_address: Address) -> Result<Address, ContractError> {
+        self.zk_prover_reads.lock().unwrap().push(game_address);
         self.get(game_address, |s| s.zk_prover)
     }
 
     async fn tee_prover(&self, game_address: Address) -> Result<Address, ContractError> {
+        self.tee_prover_reads.lock().unwrap().push(game_address);
         self.get(game_address, |s| s.tee_prover)
     }
 
@@ -337,10 +405,12 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     }
 
     async fn countered_index(&self, game_address: Address) -> Result<u64, ContractError> {
+        self.countered_index_reads.lock().unwrap().push(game_address);
         self.get(game_address, |s| s.countered_index)
     }
 
     async fn game_over(&self, game_address: Address) -> Result<bool, ContractError> {
+        self.game_over_reads.lock().unwrap().push(game_address);
         self.get(game_address, |s| s.game_over)
     }
 
@@ -349,7 +419,6 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     }
 
     async fn bond_recipient(&self, game_address: Address) -> Result<Address, ContractError> {
-        self.bond_recipient_reads.lock().unwrap().push(game_address);
         self.get(game_address, |s| s.bond_recipient)
     }
 
@@ -374,10 +443,12 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     }
 
     async fn delayed_weth(&self, game_address: Address) -> Result<Address, ContractError> {
+        self.delayed_weth_reads.lock().unwrap().push(game_address);
         self.get(game_address, |s| s.delayed_weth)
     }
 
     async fn anchor_state_registry(&self, game_address: Address) -> Result<Address, ContractError> {
+        self.anchor_state_registry_reads.lock().unwrap().push(game_address);
         self.get(game_address, |s| s.anchor_state_registry)
     }
 
@@ -555,7 +626,7 @@ pub struct RecordingDisputeGameFactory {
 
 impl RecordingDisputeGameFactory {
     /// Creates a new recording factory.
-    pub const fn new(games: Vec<GameAtIndex>, error_indices: Vec<u64>) -> Self {
+    pub fn new(games: Vec<GameAtIndex>, error_indices: Vec<u64>) -> Self {
         Self {
             inner: MockDisputeGameFactory::new(games),
             error_indices,
@@ -614,6 +685,8 @@ pub struct MockL2Provider {
     pub proofs: HashMap<B256, EIP1186AccountProofResponse>,
     /// Block numbers that should return an error (simulating missing blocks).
     pub error_blocks: Vec<u64>,
+    /// Delay applied before returning a header.
+    pub header_delay: Option<Duration>,
 }
 
 impl MockL2Provider {
@@ -657,18 +730,28 @@ impl L2Provider for MockL2Provider {
             .ok_or_else(|| RpcError::ProofNotFound(format!("no proof for hash {block_hash}")))
     }
 
-    async fn header_by_number(&self, number: Option<u64>) -> RpcResult<RpcHeader> {
-        let block_number = number.unwrap_or(0);
+    async fn header_by_number(&self, block: BlockNumberOrTag) -> RpcResult<BaseHeader> {
+        let block_number = match block {
+            BlockNumberOrTag::Number(number) => number,
+            other => panic!("MockL2Provider::header_by_number does not support tag {other:?}"),
+        };
+        if let Some(delay) = self.header_delay {
+            tokio::time::sleep(delay).await;
+        }
         if self.error_blocks.contains(&block_number) {
             return Err(RpcError::BlockNotFound(format!("block {block_number} not available")));
         }
         self.headers
             .get(&block_number)
             .cloned()
+            .map(Into::into)
             .ok_or_else(|| RpcError::HeaderNotFound(format!("no header for block {block_number}")))
     }
 
-    async fn block_by_number(&self, _number: Option<u64>) -> RpcResult<base_proof_rpc::BaseBlock> {
+    async fn block_by_number(
+        &self,
+        _block: BlockNumberOrTag,
+    ) -> RpcResult<base_proof_rpc::BaseBlock> {
         Err(RpcError::BlockNotFound("not implemented in mock".into()))
     }
 
@@ -695,6 +778,10 @@ pub struct MockZkProofState {
     pub proof: Vec<u8>,
     /// Optional full prover-service result returned when status is [`ProofStatus::Succeeded`].
     pub result: Option<ApiProofResult>,
+    /// When `true`, [`get_proof`](ProofRequesterProvider::get_proof) returns `None` for
+    /// `result` even when `proof_status` is [`ProofStatus::Succeeded`]. Used to simulate
+    /// the "succeeded without result" malformed-response path.
+    pub omit_result_on_success: bool,
     /// Error message returned when status is `Failed`.
     pub error_message: Option<String>,
     /// Every [`ProveBlockRangeRequest`] received by `prove_block_range`, in call order.
@@ -707,6 +794,7 @@ impl Default for MockZkProofState {
             proof_status: ProofStatus::Queued,
             proof: Vec::new(),
             result: None,
+            omit_result_on_success: false,
             error_message: None,
             prove_block_range_log: Vec::new(),
         }
@@ -725,8 +813,7 @@ impl ProofRequesterProvider for MockZkProofProvider {
         &self,
         request: ProveBlockRangeRequest,
     ) -> Result<ProveBlockRangeResponse, ProverServiceClientError> {
-        let session_id =
-            request.proof.session_id.clone().unwrap_or_else(|| self.session_id.clone());
+        let session_id = request.proof.session_id.clone();
         self.state.lock().unwrap().prove_block_range_log.push(request);
         Ok(ProveBlockRangeResponse { session_id })
     }
@@ -737,11 +824,19 @@ impl ProofRequesterProvider for MockZkProofProvider {
     ) -> Result<GetProofResponse, ProverServiceClientError> {
         let state = self.state.lock().unwrap().clone();
         let result = if state.proof_status == ProofStatus::Succeeded {
-            state.result.or_else(|| {
-                Some(ApiProofResult::SnarkGroth16(SnarkGroth16ProofResult {
-                    proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: state.proof.into() },
-                }))
-            })
+            if state.omit_result_on_success {
+                None
+            } else {
+                state.result.or_else(|| {
+                    Some(ApiProofResult::SnarkPlonk(SnarkPlonkProofResult {
+                        proof: ZkProofResult {
+                            zk_vm: ZkVm::Sp1,
+                            proof: state.proof.into(),
+                            execution_stats: None,
+                        },
+                    }))
+                })
+            }
         } else {
             None
         };
@@ -751,6 +846,16 @@ impl ProofRequesterProvider for MockZkProofProvider {
             result,
         })
     }
+
+    async fn delete_proof_request(
+        &self,
+        request: DeleteProofRequest,
+    ) -> Result<(), ProverServiceClientError> {
+        let mut state = self.state.lock().unwrap();
+        state.prove_block_range_log.retain(|entry| entry.proof.session_id != request.session_id);
+        Ok(())
+    }
+
     async fn list_proofs(
         &self,
         _request: base_prover_service_protocol::ListProofsRequest,
@@ -808,22 +913,49 @@ impl L1HeadProvider for MockL1HeadProvider {
 pub struct MockTxManager {
     /// Queue of responses returned by [`send`](TxManager::send).
     pub responses: Mutex<VecDeque<SendResponse>>,
+    /// Transaction candidates submitted through [`send`](TxManager::send).
+    pub calls: Mutex<Vec<TxCandidate>>,
 }
 
 impl MockTxManager {
     /// Creates a new mock with a single pre-configured response.
     pub fn new(response: SendResponse) -> Self {
-        Self { responses: Mutex::new(VecDeque::from([response])) }
+        Self { responses: Mutex::new(VecDeque::from([response])), calls: Mutex::new(Vec::new()) }
     }
 
     /// Creates a new mock with multiple responses returned in order.
     pub fn with_responses(responses: Vec<SendResponse>) -> Self {
-        Self { responses: Mutex::new(VecDeque::from(responses)) }
+        Self { responses: Mutex::new(VecDeque::from(responses)), calls: Mutex::new(Vec::new()) }
+    }
+
+    /// Returns the recorded transaction candidates.
+    pub fn recorded_calls(&self) -> Vec<TxCandidate> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+/// Cloneable handle around [`MockTxManager`] for tests that need to inspect
+/// calls after moving a tx manager into another type.
+#[derive(Debug, Clone)]
+pub struct SharedMockTxManager {
+    inner: Arc<MockTxManager>,
+}
+
+impl SharedMockTxManager {
+    /// Creates a shared mock with multiple responses returned in order.
+    pub fn with_responses(responses: Vec<SendResponse>) -> Self {
+        Self { inner: Arc::new(MockTxManager::with_responses(responses)) }
+    }
+
+    /// Returns the recorded transaction candidates.
+    pub fn recorded_calls(&self) -> Vec<TxCandidate> {
+        self.inner.recorded_calls()
     }
 }
 
 impl TxManager for MockTxManager {
-    async fn send(&self, _candidate: TxCandidate) -> SendResponse {
+    async fn send(&self, candidate: TxCandidate) -> SendResponse {
+        self.calls.lock().unwrap().push(candidate);
         self.responses.lock().unwrap().pop_front().expect("MockTxManager has no more responses")
     }
 
@@ -833,6 +965,20 @@ impl TxManager for MockTxManager {
 
     fn sender_address(&self) -> Address {
         Address::ZERO
+    }
+}
+
+impl TxManager for SharedMockTxManager {
+    async fn send(&self, candidate: TxCandidate) -> SendResponse {
+        self.inner.send(candidate).await
+    }
+
+    async fn send_async(&self, candidate: TxCandidate) -> SendHandle {
+        self.inner.send_async(candidate).await
+    }
+
+    fn sender_address(&self) -> Address {
+        self.inner.sender_address()
     }
 }
 
@@ -914,56 +1060,19 @@ pub fn build_test_header_and_account_for_address(
     (header, account_result)
 }
 
-/// Mock bond transaction submitter for testing the [`BondManager`](crate::BondManager).
-///
-/// Records all submitted transactions and returns pre-configured responses.
-#[derive(Debug)]
-pub struct MockBondTransactionSubmitter {
-    /// Queue of results returned by [`send_bond_tx`](crate::BondTransactionSubmitter::send_bond_tx).
-    pub responses: Mutex<VecDeque<Result<B256, crate::ChallengeSubmitError>>>,
-    /// Recorded `(game_address, to, calldata)` tuples for each submitted transaction.
-    pub calls: Mutex<Vec<(Address, Address, Bytes)>>,
-}
-
-impl MockBondTransactionSubmitter {
-    /// Creates a mock that returns a single successful transaction hash.
-    pub fn success(tx_hash: B256) -> Self {
-        Self { responses: Mutex::new(VecDeque::from([Ok(tx_hash)])), calls: Mutex::new(Vec::new()) }
-    }
-
-    /// Creates a mock with multiple responses returned in order.
-    pub fn with_responses(responses: Vec<Result<B256, crate::ChallengeSubmitError>>) -> Self {
-        Self { responses: Mutex::new(VecDeque::from(responses)), calls: Mutex::new(Vec::new()) }
-    }
-
-    /// Returns the recorded calls as `(game_address, to, calldata)` tuples.
-    pub fn recorded_calls(&self) -> Vec<(Address, Address, Bytes)> {
-        self.calls.lock().unwrap().clone()
-    }
-}
-
-#[async_trait]
-impl crate::BondTransactionSubmitter for MockBondTransactionSubmitter {
-    async fn send_bond_tx(
-        &self,
-        game_address: Address,
-        to: Address,
-        calldata: Bytes,
-    ) -> Result<B256, crate::ChallengeSubmitError> {
-        self.calls.lock().unwrap().push((game_address, to, calldata));
-        self.responses
-            .lock()
-            .unwrap()
-            .pop_front()
-            .expect("MockBondTransactionSubmitter has no more responses")
-    }
-}
-
 #[cfg(test)]
 mod tests {
 
     use super::*;
     use crate::scanner::{GameCategory, GameScanner};
+
+    #[tokio::test]
+    #[should_panic(expected = "MockL2Provider::header_by_number does not support tag finalized")]
+    async fn test_mock_l2_provider_rejects_block_tags() {
+        let provider = MockL2Provider::new();
+
+        let _ = provider.header_by_number(BlockNumberOrTag::Finalized).await;
+    }
 
     /// Happy path: mixed games, only `IN_PROGRESS` / non-nullified returned.
     #[tokio::test]
@@ -991,7 +1100,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1035,7 +1144,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1054,7 +1163,7 @@ mod tests {
         let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
         let verifier = Arc::new(MockAggregateVerifier::new(HashMap::new()));
 
-        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1077,7 +1186,7 @@ mod tests {
         let factory = Arc::new(MockDisputeGameFactory::new(games));
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(addr(96)));
+        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(addr(96)));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1158,7 +1267,7 @@ mod tests {
         let factory = Arc::new(MockDisputeGameFactory::new(games));
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
         let anchor_registry = Arc::new(MockAnchorStateRegistry::new(addr(2)));
-        let scanner = GameScanner::new(
+        let mut scanner = GameScanner::new(
             factory,
             verifier,
             Arc::clone(&anchor_registry) as Arc<dyn AnchorStateRegistryClient>,
@@ -1189,7 +1298,7 @@ mod tests {
         let factory = Arc::new(MockDisputeGameFactory::new(games));
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
         let anchor_registry = Arc::new(MockAnchorStateRegistry::new(Address::ZERO));
-        let scanner = GameScanner::new(
+        let mut scanner = GameScanner::new(
             factory,
             verifier,
             Arc::clone(&anchor_registry) as Arc<dyn AnchorStateRegistryClient>,
@@ -1227,7 +1336,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         // Index 0 -> candidate. Index 1 errors -> skipped. Index 2 -> candidate.
         let candidates = scanner.scan().await.unwrap();
@@ -1265,7 +1374,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1287,7 +1396,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1315,7 +1424,7 @@ mod tests {
         verifier_games.insert(addr(0), state);
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
-        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1342,7 +1451,7 @@ mod tests {
         );
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
-        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1360,7 +1469,7 @@ mod tests {
         verifier_games.insert(addr(0), mock_state(GameStatus::InProgress, Address::ZERO, 100));
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
-        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1383,7 +1492,7 @@ mod tests {
             .insert(addr(0), mock_state_with_tee(GameStatus::InProgress, zk_addr, tee_addr, 100));
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
-        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1423,7 +1532,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
+        let mut scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1460,7 +1569,7 @@ mod tests {
         );
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(
+        let mut scanner = GameScanner::new(
             Arc::clone(&factory) as Arc<dyn DisputeGameFactoryClient>,
             Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
             mock_anchor_registry(Address::ZERO),
@@ -1515,7 +1624,7 @@ mod tests {
         );
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(
+        let mut scanner = GameScanner::new(
             Arc::clone(&factory) as Arc<dyn DisputeGameFactoryClient>,
             Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
             mock_anchor_registry(Address::ZERO),
@@ -1562,7 +1671,7 @@ mod tests {
         );
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(
+        let mut scanner = GameScanner::new(
             Arc::clone(&factory) as Arc<dyn DisputeGameFactoryClient>,
             Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
             mock_anchor_registry(Address::ZERO),

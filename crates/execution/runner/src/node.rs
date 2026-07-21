@@ -1,7 +1,6 @@
 //! Base Node types config.
 
 use base_common_consensus::BasePrimitives;
-use base_engine_tree::BaseEngineValidatorBuilder;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
 use base_execution_rpc::eth::BaseEthApiBuilder;
@@ -16,6 +15,7 @@ use reth_node_builder::{
     Node, NodeAdapter, NodeComponentsBuilder,
     components::{BasicPayloadServiceBuilder, ComponentsBuilder},
     node::{FullNodeTypes, NodeTypes},
+    rpc::BasicEngineValidatorBuilder,
 };
 use reth_provider::providers::ProviderFactoryBuilder;
 use reth_rpc_api::eth::RpcTypes;
@@ -72,7 +72,6 @@ impl BaseNode {
             disable_txpool_gossip,
             compute_pending_block,
             discovery_v4,
-            base_protocol,
             max_inflight_delegated_slots,
             ..
         } = self.args;
@@ -88,7 +87,7 @@ impl BaseNode {
                     .with_da_config(self.da_config.clone())
                     .with_gas_limit_config(self.gas_limit_config.clone()),
             ))
-            .network(BaseNetworkBuilder::new(disable_txpool_gossip, !discovery_v4, base_protocol))
+            .network(BaseNetworkBuilder::new(disable_txpool_gossip, !discovery_v4))
             .consensus(BaseConsensusBuilder::default())
     }
 
@@ -171,7 +170,7 @@ where
         BaseEthApiBuilder,
         BasePayloadValidatorBuilder,
         BaseEngineApiBuilder<BasePayloadValidatorBuilder>,
-        BaseEngineValidatorBuilder<BasePayloadValidatorBuilder>,
+        BasicEngineValidatorBuilder<BasePayloadValidatorBuilder>,
     >;
 
     fn components_builder(&self) -> Self::ComponentsBuilder {

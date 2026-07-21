@@ -24,6 +24,7 @@ alloy-hardforks.workspace = true
 alloy-primitives.workspace = true
 
 # Misc
+spin.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 derive_more = { workspace = true, features = ["display", "from", "from_str", "try_from"] }
@@ -44,6 +45,7 @@ alloy-primitives = { workspace = true, features = ["rand", "arbitrary"] }
 
 [features]
 default = []
+test-utils = []
 std = [
 	"alloy-chains/std",
 	"alloy-consensus/std",
@@ -53,6 +55,7 @@ std = [
 	"alloy-sol-types/std",
 	"derive_more/std",
 	"serde?/std",
+	"spin/std",
 	"thiserror/std",
 	"tracing/std",
 ]

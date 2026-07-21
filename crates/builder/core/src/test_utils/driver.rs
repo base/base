@@ -186,6 +186,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
                 no_tx_pool,
                 min_base_fee,
                 eip_1559_params: Some(B64::from(eip_1559_params)),
+                timestamp_millis_part: None,
             })
             .await?;
 
@@ -230,6 +231,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
             self.provider.get_block_by_number(BlockNumberOrTag::Latest).full().await?.ok_or_else(
                 || eyre::eyre!("Failed to get latest block after building new block"),
             )?;
+        let block = block.map_header(|header| header.into_inner());
 
         assert_eq!(
             block.header.hash, new_block_hash,
@@ -270,20 +272,24 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
     /// Retrieves the latest built block and returns only a list of transaction
     /// hashes from its body.
     pub async fn latest(&self) -> eyre::Result<Block<Transaction>> {
-        self.provider
+        Ok(self
+            .provider
             .get_block_by_number(alloy_eips::BlockNumberOrTag::Latest)
             .await?
-            .ok_or_else(|| eyre::eyre!("Failed to get latest block"))
+            .ok_or_else(|| eyre::eyre!("Failed to get latest block"))?
+            .map_header(|header| header.into_inner()))
     }
 
     /// Retrieves the latest built block and returns a list of full transaction
     /// contents in its body.
     pub async fn latest_full(&self) -> eyre::Result<Block<Transaction>> {
-        self.provider
+        Ok(self
+            .provider
             .get_block_by_number(alloy_eips::BlockNumberOrTag::Latest)
             .full()
             .await?
-            .ok_or_else(|| eyre::eyre!("Failed to get latest full block"))
+            .ok_or_else(|| eyre::eyre!("Failed to get latest full block"))?
+            .map_header(|header| header.into_inner()))
     }
 
     /// retrieves a specific block by its number or tag and returns a list of transaction
@@ -292,7 +298,11 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
         &self,
         number: BlockNumberOrTag,
     ) -> eyre::Result<Option<Block<Transaction>>> {
-        Ok(self.provider.get_block_by_number(number).await?)
+        Ok(self
+            .provider
+            .get_block_by_number(number)
+            .await?
+            .map(|block| block.map_header(|header| header.into_inner())))
     }
 
     /// retrieves a specific block by its number or tag and returns a list of full transaction
@@ -301,7 +311,12 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
         &self,
         number: BlockNumberOrTag,
     ) -> eyre::Result<Option<Block<Transaction>>> {
-        Ok(self.provider.get_block_by_number(number).full().await?)
+        Ok(self
+            .provider
+            .get_block_by_number(number)
+            .full()
+            .await?
+            .map(|block| block.map_header(|header| header.into_inner())))
     }
 
     /// Returns a transaction builder that can be used to create and send transactions.

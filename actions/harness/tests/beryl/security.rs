@@ -100,6 +100,11 @@ async fn security_creation_initializes_identifiers_and_factory_views() {
                     U256::from(100),
                 ),
                 StaticcallCase::word(
+                    "toRawBalance",
+                    IB20Asset::toRawBalanceCall { scaledBalance: U256::from(100) }.abi_encode(),
+                    U256::from(100),
+                ),
+                StaticcallCase::word(
                     "scaledBalanceOf((alice)",
                     IB20Asset::scaledBalanceOfCall { account: BerylTestEnv::alice() }.abi_encode(),
                     U256::from(BerylTestEnv::B20_INITIAL_SUPPLY),
@@ -238,6 +243,11 @@ async fn security_mutations_update_state_and_emit_events() {
                     "toScaledBalance after update",
                     IB20Asset::toScaledBalanceCall { rawBalance: U256::from(50) }.abi_encode(),
                     U256::from(100),
+                ),
+                StaticcallCase::word(
+                    "toRawBalance after update",
+                    IB20Asset::toRawBalanceCall { scaledBalance: U256::from(100) }.abi_encode(),
+                    U256::from(50),
                 ),
                 StaticcallCase::word(
                     "scaledBalanceOf((alice) after update",

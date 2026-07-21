@@ -34,7 +34,6 @@ jobs:
         with:
           free-disk: "true"
           native-deps: "true"
-          mold: "true"
           foundry: "true"
           components: clippy
           tools: cargo-nextest

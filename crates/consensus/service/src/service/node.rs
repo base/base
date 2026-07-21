@@ -37,6 +37,7 @@ use crate::{
     QueuedEngineDerivationClient, QueuedEngineRpcClient, QueuedL1WatcherDerivationClient,
     QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient,
     RecoveryModeGuard, RpcActor, RpcContext, SequencerActor, SequencerConfig,
+    UpgradeSignalNodeConfig,
     actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
 };
 
@@ -133,6 +134,8 @@ pub struct RollupNode {
     /// and ignores inline calldata, so the node derives purely from off-chain DA. When `None`
     /// (the default), the node derives from calldata or blobs as usual.
     pub alt_da_resolver: Option<DynAltDaResolver>,
+    /// Optional upgrade signal configuration for the consensus node.
+    pub upgrade_signal_config: Option<UpgradeSignalNodeConfig>,
 }
 
 /// A RollupNode-level derivation actor wrapper.
@@ -286,6 +289,8 @@ impl RollupNode {
                 unsafe_head_tx: if mode.is_sequencer() { Some(unsafe_head_tx) } else { None },
                 conductor,
                 sequencer_stopped: self.sequencer_config.sequencer_stopped,
+                shadow_sequencer: mode.is_sequencer()
+                    && self.sequencer_config.is_shadow_sequencer(),
             },
             checkpoint_reader,
             checkpoint_writer,
@@ -557,9 +562,17 @@ impl RollupNode {
             derivation_origin_rx,
             cancellation.clone(),
         );
-
+        // One refresher instance is shared between the metrics actor (live auto-apply) and the
+        // sequencer admin RPC.
+        let upgrade_signal_refresher =
+            self.upgrade_signal_config.as_ref().and_then(|c| c.refresher());
+        let upgrade_signal_metrics_actor = self
+            .upgrade_signal_config
+            .as_ref()
+            .map(|c| c.metrics_actor(upgrade_signal_refresher.clone(), cancellation.clone()));
+        let node_mode = self.mode();
         // Create the sequencer if needed
-        let (sequencer_actor, sequencer_admin_client) = if self.mode().is_sequencer() {
+        let (sequencer_actor, sequencer_admin_client) = if node_mode.is_sequencer() {
             let sequencer_engine_client = QueuedSequencerEngineClient {
                 engine_actor_request_tx: engine_actor_request_tx.clone(),
                 unsafe_head_rx,
@@ -587,6 +600,7 @@ impl RollupNode {
                     conductor,
                     engine_client,
                     is_active: self.sequencer_config.sequencer_stopped.not(),
+                    shadow_blocks_per_cycle: self.sequencer_config.shadow_blocks_per_cycle,
                     recovery_mode,
                     rollup_config: Arc::clone(&self.config),
                     unsafe_payload_gossip_client: queued_gossip_client,
@@ -610,6 +624,7 @@ impl RollupNode {
                 QueuedEngineRpcClient::new(engine_rpc_request_tx),
                 sequencer_admin_client,
                 safe_db_reader,
+                upgrade_signal_refresher,
             )
         });
 
@@ -629,6 +644,7 @@ impl RollupNode {
                 Some((network, ())),
                 Some((l1_watcher, ())),
                 Some((l1_query_processor, ())),
+                upgrade_signal_metrics_actor.map(|actor| (actor, ())),
                 Some((derivation, ())),
                 Some((checkpoint_actor, cancellation.clone())),
                 Some((engine_actor, ())),

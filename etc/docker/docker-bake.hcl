@@ -2,16 +2,16 @@ variable "PROFILE" {
   default = "release"
 }
 
-variable "ZK_PROVER_PROFILE" {
-  default = "release"
-}
-
 variable "RUST_VERSION" {
-  default = "1.93"
+  default = "1.94.1"
 }
 
 variable "BASE_SUCCINCT_ELF_REQUIRE" {
   default = "1"
+}
+
+variable "ZK_HOST_PROFILE" {
+  default = "release"
 }
 
 variable "REGISTRY_IMAGE" {
@@ -22,16 +22,26 @@ variable "PLATFORM_PAIR" {
   default = "linux-amd64"
 }
 
+variable "DEVNET_TARGETS" {
+  default = ["base", "batcher", "prover-service", "zk-host"]
+}
+
+variable "INGRESS_EXTRA_TARGETS" {
+  default = ["ingress-rpc", "audit-archiver"]
+}
+
 group "default" {
-  targets = ["client"]
+  targets = ["base"]
 }
 
 group "rust-services" {
   targets = [
     "base",
-    "client",
-    "builder",
+    "execution",
     "consensus",
+    "builder",
+    "basectl",
+    "snapshotter",
     "proposer",
     "challenger",
     "websocket-proxy",
@@ -39,12 +49,14 @@ group "rust-services" {
     "audit-archiver",
     "batcher",
     "da-server",
-    "zk-prover",
+    "sidecrush",
+    "prover-service",
+    "zk-host",
   ]
 }
 
 group "devnet" {
-  targets = ["builder", "consensus", "client", "base", "batcher", "da-server", "zk-prover"]
+  targets = concat(DEVNET_TARGETS, ["da-server"])
 }
 
 # L3 dev-multiproof services, built only on the `up-l3` path (alongside nitro-host-local).
@@ -54,15 +66,7 @@ group "devnet-l3" {
 }
 
 group "ingress" {
-  targets = [
-    "builder",
-    "consensus",
-    "client",
-    "base",
-    "ingress-rpc",
-    "audit-archiver",
-    "batcher",
-  ]
+  targets = concat(DEVNET_TARGETS, INGRESS_EXTRA_TARGETS)
 }
 
 target "_rust-service-common" {
@@ -75,16 +79,30 @@ target "_rust-service-common" {
   cache-from = ["type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}"]
 }
 
-target "client" {
-  inherits = ["_rust-service-common"]
-  target = "client"
-  tags = ["base-reth-node:local"]
-}
-
 target "base" {
   inherits = ["_rust-service-common"]
   target = "base"
   tags = ["base:local"]
+}
+
+target "execution" {
+  inherits = ["_rust-service-common"]
+  target = "execution"
+  tags = ["base-execution:local"]
+  cache-from = [
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-execution-${PLATFORM_PAIR}",
+  ]
+}
+
+target "consensus" {
+  inherits = ["_rust-service-common"]
+  target = "consensus"
+  tags = ["base-consensus:local"]
+  cache-from = [
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-consensus-${PLATFORM_PAIR}",
+  ]
 }
 
 target "builder" {
@@ -97,14 +115,16 @@ target "builder" {
   ]
 }
 
-target "consensus" {
+target "basectl" {
   inherits = ["_rust-service-common"]
-  target = "consensus"
-  tags = ["base-consensus:local"]
-  cache-from = [
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-consensus-${PLATFORM_PAIR}",
-  ]
+  target = "basectl"
+  tags = ["base-basectl:local"]
+}
+
+target "snapshotter" {
+  inherits = ["_rust-service-common"]
+  target = "snapshotter"
+  tags = ["base-snapshotter:local"]
 }
 
 target "proposer" {
@@ -157,16 +177,36 @@ target "da-server" {
   ]
 }
 
-target "zk-prover" {
+target "sidecrush" {
   inherits = ["_rust-service-common"]
-  target = "zk-prover"
-  args = {
-    PROFILE                   = "${ZK_PROVER_PROFILE}"
-    BASE_SUCCINCT_ELF_REQUIRE = "${BASE_SUCCINCT_ELF_REQUIRE}"
-  }
-  tags = ["base-prover-zk:local"]
+  target = "sidecrush"
+  tags = ["sidecrush:local"]
   cache-from = [
     "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
-    "type=registry,ref=${REGISTRY_IMAGE}:cache-zk-prover-${PLATFORM_PAIR}",
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-sidecrush-${PLATFORM_PAIR}",
+  ]
+}
+
+target "prover-service" {
+  inherits = ["_rust-service-common"]
+  target = "prover-service"
+  tags = ["base-prover-service:local"]
+  cache-from = [
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-prover-service-${PLATFORM_PAIR}",
+  ]
+}
+
+target "zk-host" {
+  inherits = ["_rust-service-common"]
+  target = "zk-host"
+  args = {
+    PROFILE                   = "${ZK_HOST_PROFILE}"
+    BASE_SUCCINCT_ELF_REQUIRE = "${BASE_SUCCINCT_ELF_REQUIRE}"
+  }
+  tags = ["base-prover-zk-host:local"]
+  cache-from = [
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-zk-host-${PLATFORM_PAIR}",
   ]
 }

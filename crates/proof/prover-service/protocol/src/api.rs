@@ -3,9 +3,11 @@
 use jsonrpsee::proc_macros::rpc;
 
 use crate::{
-    GetNextProofRequest, GetNextProofResponse, GetProofRequest, GetProofResponse, HeartbeatRequest,
+    DeleteProofRequest, GetNextProofRequest, GetNextProofResponse, GetProofRequest,
+    GetProofResponse, GetProofSessionRequest, GetProofSessionResponse, HeartbeatRequest,
     HeartbeatResponse, ListProofsRequest, ListProofsResponse, ProveBlockRangeRequest,
-    ProveBlockRangeResponse, WorkerSubmitProofRequest, WorkerSubmitProofResponse,
+    ProveBlockRangeResponse, RecordProofSessionRequest, RecordProofSessionResponse,
+    WorkerSubmitProofRequest, WorkerSubmitProofResponse,
 };
 
 #[cfg_attr(
@@ -35,6 +37,13 @@ pub trait ProverRequesterApi {
         &self,
         request: GetProofRequest,
     ) -> jsonrpsee::core::RpcResult<GetProofResponse>;
+
+    /// Delete a completed proof request so it can be retried with the same session id.
+    #[method(name = "deleteProofRequest")]
+    async fn delete_proof_request(
+        &self,
+        request: DeleteProofRequest,
+    ) -> jsonrpsee::core::RpcResult<()>;
 
     /// List submitted proof requests.
     #[method(name = "listProofs")]
@@ -78,4 +87,18 @@ pub trait ProverWorkerApi {
         &self,
         request: WorkerSubmitProofRequest,
     ) -> jsonrpsee::core::RpcResult<WorkerSubmitProofResponse>;
+
+    /// Look up the active backend session recorded for a claimed proof job.
+    #[method(name = "getProofSession")]
+    async fn get_proof_session(
+        &self,
+        request: GetProofSessionRequest,
+    ) -> jsonrpsee::core::RpcResult<GetProofSessionResponse>;
+
+    /// Record (insert or update) the backend session for a claimed proof job.
+    #[method(name = "recordProofSession")]
+    async fn record_proof_session(
+        &self,
+        request: RecordProofSessionRequest,
+    ) -> jsonrpsee::core::RpcResult<RecordProofSessionResponse>;
 }

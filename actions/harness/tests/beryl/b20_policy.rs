@@ -7,7 +7,9 @@
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_sol_types::SolCall;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
-use base_common_precompiles::{B20PolicyType, IB20, IPolicyRegistry, PolicyRegistryStorage};
+use base_common_precompiles::{
+    B20PolicyType, B20TokenRole, IB20, IPolicyRegistry, PolicyRegistryStorage,
+};
 
 use crate::env::BerylTestEnv;
 
@@ -219,6 +221,134 @@ async fn b20_allowlist_receiver_policy_blocks_non_members() {
     );
     scenario.assert_balance(BerylTestEnv::alice(), BerylTestEnv::B20_INITIAL_SUPPLY - 1);
     scenario.assert_balance(BerylTestEnv::bob(), 1);
+
+    scenario.derive().await;
+}
+
+/// `TRANSFER_EXECUTOR_POLICY` gates delegated transfers independently from the sender/receiver.
+#[tokio::test]
+async fn b20_always_block_executor_policy_blocks_transfer_from_spender() {
+    let mut scenario = B20PolicyScenario::new().await;
+
+    let approve_bob = scenario
+        .token_tx(IB20::approveCall { spender: BerylTestEnv::bob(), amount: U256::from(2) });
+    let block = scenario.build_block(vec![approve_bob]).await;
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "approve must succeed");
+
+    let first_transfer = scenario.bob_token_tx(IB20::transferFromCall {
+        from: BerylTestEnv::alice(),
+        to: BerylTestEnv::carol(),
+        amount: TRANSFER_AMOUNT,
+    });
+    let block = scenario.build_block(vec![first_transfer]).await;
+    assert!(
+        scenario.env.user_tx_succeeded(&block, 0),
+        "transferFrom must succeed before executor policy is blocked"
+    );
+    scenario.assert_balance(BerylTestEnv::alice(), BerylTestEnv::B20_INITIAL_SUPPLY - 1);
+    scenario.assert_balance(BerylTestEnv::carol(), 1);
+
+    let wire_executor = scenario.token_tx(IB20::updatePolicyCall {
+        policyScope: B20PolicyType::TransferExecutor.id(),
+        newPolicyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+    });
+    let block = scenario.build_block(vec![wire_executor]).await;
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "executor updatePolicy must succeed");
+
+    let blocked = scenario.bob_token_tx(IB20::transferFromCall {
+        from: BerylTestEnv::alice(),
+        to: BerylTestEnv::carol(),
+        amount: TRANSFER_AMOUNT,
+    });
+    let block = scenario.build_block(vec![blocked]).await;
+    assert!(
+        !scenario.env.user_tx_succeeded(&block, 0),
+        "transferFrom must revert when spender is blocked by TRANSFER_EXECUTOR_POLICY"
+    );
+    scenario.assert_balance(BerylTestEnv::alice(), BerylTestEnv::B20_INITIAL_SUPPLY - 1);
+    scenario.assert_balance(BerylTestEnv::carol(), 1);
+
+    scenario.derive().await;
+}
+
+/// `MINT_RECEIVER_POLICY` gates the recipient for direct mint calls.
+#[tokio::test]
+async fn b20_always_block_mint_receiver_policy_blocks_mint_recipient() {
+    let mut scenario = B20PolicyScenario::new().await;
+
+    let grant_mint_role = scenario.token_tx(IB20::grantRoleCall {
+        role: B20TokenRole::Mint.id(),
+        account: BerylTestEnv::alice(),
+    });
+    let block = scenario.build_block(vec![grant_mint_role]).await;
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "MINT_ROLE grant must succeed");
+
+    let mint_allowed =
+        scenario.token_tx(IB20::mintCall { to: BerylTestEnv::bob(), amount: TRANSFER_AMOUNT });
+    let block = scenario.build_block(vec![mint_allowed]).await;
+    assert!(
+        scenario.env.user_tx_succeeded(&block, 0),
+        "mint must succeed before policy is blocked"
+    );
+    scenario.assert_balance(BerylTestEnv::bob(), 1);
+
+    let wire_mint_receiver = scenario.token_tx(IB20::updatePolicyCall {
+        policyScope: B20PolicyType::MintReceiver.id(),
+        newPolicyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+    });
+    let block = scenario.build_block(vec![wire_mint_receiver]).await;
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "mint receiver updatePolicy must succeed");
+
+    let blocked =
+        scenario.token_tx(IB20::mintCall { to: BerylTestEnv::carol(), amount: TRANSFER_AMOUNT });
+    let block = scenario.build_block(vec![blocked]).await;
+    assert!(
+        !scenario.env.user_tx_succeeded(&block, 0),
+        "mint must revert when recipient is blocked by MINT_RECEIVER_POLICY"
+    );
+    scenario.assert_balance(BerylTestEnv::bob(), 1);
+    scenario.assert_balance(BerylTestEnv::carol(), 0);
+
+    scenario.derive().await;
+}
+
+/// `burnBlocked` burns only accounts denied by the current transfer-sender policy.
+#[tokio::test]
+async fn b20_burn_blocked_requires_blocked_account() {
+    let mut scenario = B20PolicyScenario::new().await;
+
+    let seed_bob =
+        scenario.token_tx(IB20::transferCall { to: BerylTestEnv::bob(), amount: SEED_AMOUNT });
+    let grant_burn_blocked = scenario.token_tx(IB20::grantRoleCall {
+        role: B20TokenRole::BurnBlocked.id(),
+        account: BerylTestEnv::alice(),
+    });
+    let block = scenario.build_block(vec![seed_bob, grant_burn_blocked]).await;
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "seeding bob must succeed");
+    assert!(scenario.env.user_tx_succeeded(&block, 1), "BURN_BLOCKED_ROLE grant must succeed");
+    scenario.assert_balance(BerylTestEnv::bob(), 100_000);
+
+    let not_blocked = scenario
+        .token_tx(IB20::burnBlockedCall { from: BerylTestEnv::bob(), amount: TRANSFER_AMOUNT });
+    let block = scenario.build_block(vec![not_blocked]).await;
+    assert!(
+        !scenario.env.user_tx_succeeded(&block, 0),
+        "burnBlocked must revert while account is allowed by the sender policy"
+    );
+    scenario.assert_balance(BerylTestEnv::bob(), 100_000);
+
+    let wire_sender_block = scenario.token_tx(IB20::updatePolicyCall {
+        policyScope: B20PolicyType::TransferSender.id(),
+        newPolicyId: PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+    });
+    let block = scenario.build_block(vec![wire_sender_block]).await;
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "sender updatePolicy must succeed");
+
+    let burned = scenario
+        .token_tx(IB20::burnBlockedCall { from: BerylTestEnv::bob(), amount: TRANSFER_AMOUNT });
+    let block = scenario.build_block(vec![burned]).await;
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "burnBlocked must burn blocked account");
+    scenario.assert_balance(BerylTestEnv::bob(), 99_999);
 
     scenario.derive().await;
 }

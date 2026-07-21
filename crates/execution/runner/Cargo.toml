@@ -13,7 +13,6 @@ workspace = true
 
 [dependencies]
 # workspace
-base-engine-tree.workspace = true
 base-test-utils = { workspace = true, optional = true }
 
 # reth

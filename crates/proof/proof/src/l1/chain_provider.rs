@@ -305,6 +305,7 @@ mod tests {
             gas_limit: 100_000,
             account_changes: vec![],
             calls: vec![],
+            metadata: Bytes::new(),
             payer: None,
         };
         let signed = Eip8130Signed::new(tx, Bytes::from_static(&[0xab; 32]), Bytes::new());

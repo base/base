@@ -1,6 +1,6 @@
 use crate::actors::{
     generator::{block_builder::PayloadVersion, seed::SEED_GENERATOR_BUILDER},
-    network::mocks::builder::TestNetworkBuilder,
+    network::mocks::{ForwardedUnsafeBlock, builder::TestNetworkBuilder},
 };
 
 /// Test that we can properly gossip blocks to the sequencer.
@@ -23,11 +23,17 @@ async fn test_sequencer_network_conn() -> anyhow::Result<()> {
 
     sequencer_network.inbound_data.gossip_payload_tx.send(envelope.clone()).await?;
 
-    let block = validator_network
+    let forwarded_block = validator_network
         .blocks_rx
         .recv()
         .await
         .ok_or_else(|| anyhow::anyhow!("No block received"))?;
+    let block = match forwarded_block {
+        ForwardedUnsafeBlock::P2p(block) => block,
+        ForwardedUnsafeBlock::Admin(block) => {
+            anyhow::bail!("P2P block was forwarded through the admin path: {block:?}")
+        }
+    };
 
     assert_eq!(block.parent_beacon_block_root, envelope.parent_beacon_block_root);
     assert_eq!(block.execution_payload, envelope.execution_payload);
@@ -71,8 +77,14 @@ async fn test_sequencer_network_propagation() -> anyhow::Result<()> {
 
     // Check that the block propagates to all networks.
     for network in &mut validator_networks {
-        let block =
+        let forwarded_block =
             network.blocks_rx.recv().await.ok_or_else(|| anyhow::anyhow!("No block received"))?;
+        let block = match forwarded_block {
+            ForwardedUnsafeBlock::P2p(block) => block,
+            ForwardedUnsafeBlock::Admin(block) => {
+                anyhow::bail!("P2P block was forwarded through the admin path: {block:?}")
+            }
+        };
 
         assert_eq!(block.parent_beacon_block_root, envelope.parent_beacon_block_root);
         assert_eq!(block.execution_payload, envelope.execution_payload);

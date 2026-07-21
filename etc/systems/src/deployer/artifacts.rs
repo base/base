@@ -113,15 +113,15 @@ mod tests {
         assert_eq!(config.l1_chain_id, 1337);
         assert_eq!(config.l2_chain_id.id(), 84538453);
         assert_eq!(config.block_time, 2);
-        assert_eq!(config.hardforks.regolith_time, Some(0));
-        assert_eq!(config.hardforks.canyon_time, Some(0));
-        assert_eq!(config.hardforks.delta_time, Some(0));
-        assert_eq!(config.hardforks.ecotone_time, Some(0));
-        assert_eq!(config.hardforks.fjord_time, Some(0));
-        assert_eq!(config.hardforks.granite_time, Some(0));
-        assert_eq!(config.hardforks.holocene_time, Some(0));
-        assert_eq!(config.hardforks.isthmus_time, Some(0));
-        assert_eq!(config.hardforks.jovian_time, Some(0));
+        assert_eq!(config.upgrades.regolith_time, Some(0));
+        assert_eq!(config.upgrades.canyon_time, Some(0));
+        assert_eq!(config.upgrades.delta_time, Some(0));
+        assert_eq!(config.upgrades.ecotone_time, Some(0));
+        assert_eq!(config.upgrades.fjord_time, Some(0));
+        assert_eq!(config.upgrades.granite_time, Some(0));
+        assert_eq!(config.upgrades.holocene_time, Some(0));
+        assert_eq!(config.upgrades.isthmus_time, Some(0));
+        assert_eq!(config.upgrades.jovian_time, Some(0));
     }
 
     /// Verifies that `deny_unknown_fields` on [`RollupConfig`] rejects extra fields.

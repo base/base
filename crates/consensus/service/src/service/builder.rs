@@ -11,12 +11,22 @@ use base_consensus_derive::DynAltDaResolver;
 use base_consensus_engine::BaseEngineClient;
 use base_consensus_providers::{HttpAltDaResolver, OnlineBeaconClient};
 use base_consensus_rpc::RpcBuilder;
+use base_upgrade_signal::UpgradeSignalConfig;
 use url::Url;
 
 use crate::{
-    EngineConfig, L1TxFormat, NetworkConfig, RollupNode, SequencerConfig,
+    EngineConfig, L1TxFormat, NetworkConfig, RollupNode, SequencerConfig, UpgradeSignalNodeConfig,
     actors::DerivationDelegateClient, service::node::L1Config,
 };
+
+/// Upgrade signal configuration for the [`RollupNodeBuilder`].
+#[derive(Debug, Clone, Default)]
+pub struct UpgradeSignalBuilderConfig {
+    /// Optional L1 upgrade signal metrics observer configuration.
+    pub metrics_config: Option<UpgradeSignalConfig>,
+    /// Optional L1 RPC endpoint override for upgrade signal reads.
+    pub l1_rpc: Option<Url>,
+}
 
 /// Configuration for Derivation Delegate mode.
 #[derive(Debug, Clone)]
@@ -91,6 +101,8 @@ pub struct RollupNodeBuilder {
     /// When set, derivation resolves `0x01` alt-DA commitments to off-chain batch bytes from
     /// this server and derives purely from off-chain DA (skipping inline calldata).
     pub alt_da_server: Option<Url>,
+    /// Upgrade signal configuration.
+    pub upgrade_signal_config: UpgradeSignalBuilderConfig,
 }
 
 impl RollupNodeBuilder {
@@ -130,6 +142,10 @@ impl RollupNodeBuilder {
             checkpoint_path: None,
             safedb_path: None,
             alt_da_server: None,
+            upgrade_signal_config: UpgradeSignalBuilderConfig {
+                metrics_config: None,
+                l1_rpc: None,
+            },
         }
     }
 
@@ -182,6 +198,11 @@ impl RollupNodeBuilder {
     /// off-chain DA.
     pub fn with_alt_da_server(self, server: Option<Url>) -> Self {
         Self { alt_da_server: server, ..self }
+    }
+
+    /// Sets the upgrade signal configuration.
+    pub fn with_upgrade_signal_config(self, config: UpgradeSignalBuilderConfig) -> Self {
+        Self { upgrade_signal_config: config, ..self }
     }
 
     /// Assembles the [`RollupNode`] service.
@@ -247,6 +268,15 @@ impl RollupNodeBuilder {
                 )
             })?;
 
+        let upgrade_signal_config = self.upgrade_signal_config.metrics_config.map(|config| {
+            UpgradeSignalNodeConfig::resolve(
+                config,
+                self.upgrade_signal_config.l1_rpc.as_ref(),
+                l1_config.engine_provider.clone(),
+                rollup_config.l2_chain_id.id(),
+            )
+        });
+
         Ok(RollupNode {
             config: rollup_config,
             l1_config,
@@ -260,6 +290,7 @@ impl RollupNodeBuilder {
             checkpoint_path,
             safedb_path: self.safedb_path,
             alt_da_resolver,
+            upgrade_signal_config,
         })
     }
 

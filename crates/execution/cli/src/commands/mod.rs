@@ -15,6 +15,7 @@ use reth_cli_commands::{
 use crate::chainspec::BaseChainSpecParser;
 
 pub mod base_proofs;
+pub mod download;
 pub mod init_state;
 pub mod p2p;
 
@@ -63,6 +64,9 @@ pub enum Commands<Ext: clap::Args + fmt::Debug = NoArgs> {
     /// Generate modular chunk archives and a snapshot manifest from a source datadir.
     #[command(name = "snapshot-manifest")]
     SnapshotManifest(SnapshotManifestCommand),
+    /// Download Base node snapshots from R2 storage.
+    #[command(name = "download")]
+    Download(download::BaseDownloadCommand<BaseChainSpecParser>),
 }
 
 impl<Ext: clap::Args + fmt::Debug> Commands<Ext> {
@@ -83,6 +87,7 @@ impl<Ext: clap::Args + fmt::Debug> Commands<Ext> {
             Self::ReExecute(cmd) => cmd.chain_spec(),
             Self::BaseProofs(cmd) => cmd.chain_spec(),
             Self::SnapshotManifest(_) => None,
+            Self::Download(cmd) => cmd.chain_spec(),
         }
     }
 

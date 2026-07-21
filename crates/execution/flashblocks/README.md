@@ -42,7 +42,7 @@ base-flashblocks = { git = "https://github.com/base/base" }
 Subscribe to flashblocks and process state updates:
 
 ```rust,ignore
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use base_flashblocks::{
     FlashblocksAPI, FlashblocksState, FlashblocksSubscriber, PendingBlocksAPI,
@@ -56,7 +56,8 @@ let state = Arc::new(FlashblocksState::new(3));
 state.start(provider.clone());
 
 // Connect to the builder's flashblocks WebSocket and forward decoded payloads into state.
-let mut subscriber = FlashblocksSubscriber::new(Arc::clone(&state), flashblocks_url);
+let mut subscriber =
+    FlashblocksSubscriber::new(Arc::clone(&state), flashblocks_url, Duration::from_secs(30));
 subscriber.start();
 
 // Read the current pending snapshot.

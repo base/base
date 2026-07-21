@@ -33,7 +33,6 @@ jobs:
 
       - uses: ./.github/actions/setup
         with:
-          mold: "true"
           rust-cache-shared-key: "no-std"
           rust-cache-save: ${{ github.ref == 'refs/heads/main' }}
 
@@ -62,7 +61,6 @@ jobs:
         with:
           toolchain: "nightly"
           components: "rust-src"
-          mold: "true"
           rust-cache-shared-key: "no-std-proof"
           rust-cache-save: ${{ github.ref == 'refs/heads/main' }}
 

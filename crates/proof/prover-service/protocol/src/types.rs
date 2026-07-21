@@ -1,9 +1,25 @@
 //! JSON-RPC request and response types for the shared prover service protocol.
 
+use std::{collections::HashMap, fmt};
+
 use alloy_primitives::{Address, B256, Bytes};
 use base_proof_primitives::{ProofRequest as PrimitiveProofRequest, Proposal};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+
+/// JSON-RPC error message returned when a proof request session cannot be found.
+pub const PROOF_REQUEST_NOT_FOUND_MESSAGE: &str = "Proof request not found";
+
+/// JSON-RPC error message returned when a session id is reused for a different request.
+#[derive(Debug, Clone, Copy)]
+pub struct ProofRequestIdCollisionMessage;
+
+impl ProofRequestIdCollisionMessage {
+    /// Builds the proof request id collision message for the mismatched field.
+    pub fn for_field(session_id: impl fmt::Display, field: &str) -> String {
+        format!("session_id {session_id} already exists with a different {field}")
+    }
+}
 
 /// Type of proof requested from the prover service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -11,8 +27,8 @@ use serde::{Deserialize, Serialize};
 pub enum ProofType {
     /// Compressed ZK proof.
     Compressed,
-    /// Groth16 SNARK proof.
-    SnarkGroth16,
+    /// PLONK SNARK proof.
+    SnarkPlonk,
     /// Trusted execution environment proof.
     Tee,
 }
@@ -31,6 +47,49 @@ pub enum TeeKind {
 pub enum ZkVm {
     /// Succinct SP1.
     Sp1,
+}
+
+/// ZK proving backend that executes a proof request.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ZkBackend {
+    /// Local SP1 execution statistics without proof bytes.
+    DryRun,
+    /// Self-hosted SP1 cluster.
+    #[default]
+    Cluster,
+    /// Succinct SP1 prover network.
+    Network,
+}
+
+impl ZkBackend {
+    /// Returns the canonical wire and database representation.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::DryRun => "dry_run",
+            Self::Cluster => "cluster",
+            Self::Network => "network",
+        }
+    }
+}
+
+impl fmt::Display for ZkBackend {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl TryFrom<&str> for ZkBackend {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "dry_run" => Ok(Self::DryRun),
+            "cluster" => Ok(Self::Cluster),
+            "network" => Ok(Self::Network),
+            other => Err(format!("Unknown ZK backend: {other}")),
+        }
+    }
 }
 
 /// Status of a submitted proof request.
@@ -71,16 +130,22 @@ pub struct ProveBlockRangeRequest {
 /// Response returned after a prove-block-range request is accepted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProveBlockRangeResponse {
-    /// Server-assigned or client-supplied session identifier.
+    /// Accepted client-supplied session identifier.
+    pub session_id: String,
+}
+
+/// Request to delete a completed proof request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeleteProofRequest {
+    /// Proof session identifier.
     pub session_id: String,
 }
 
 /// Submitted proof request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProofRequest {
-    /// Optional client-provided idempotency key.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
+    /// Client-provided idempotency key.
+    pub session_id: String,
     /// Proof request details.
     pub request: ProofRequestKind,
 }
@@ -91,8 +156,8 @@ pub struct ProofRequest {
 pub enum ProofRequestKind {
     /// Request a compressed ZK proof.
     Compressed(ZkProofRequest),
-    /// Request a Groth16 SNARK proof.
-    SnarkGroth16(SnarkGroth16ProofRequest),
+    /// Request a PLONK SNARK proof.
+    SnarkPlonk(SnarkPlonkProofRequest),
     /// Request a TEE proof.
     Tee(TeeProofRequest),
 }
@@ -115,11 +180,16 @@ pub struct ZkProofRequest {
     pub intermediate_root_interval: Option<u64>,
     /// ZK virtual machine implementation to use.
     pub zk_vm: ZkVm,
+    /// Proving backend that should execute this request.
+    ///
+    /// Defaults to [`ZkBackend::Cluster`] when omitted so older clients keep working.
+    #[serde(default)]
+    pub zk_backend: ZkBackend,
 }
 
-/// Groth16 SNARK proof request parameters.
+/// PLONK SNARK proof request parameters.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SnarkGroth16ProofRequest {
+pub struct SnarkPlonkProofRequest {
     /// Underlying ZK proof request.
     pub proof: ZkProofRequest,
     /// On-chain prover address.
@@ -141,8 +211,8 @@ pub struct TeeProofRequest {
 pub enum ProofResult {
     /// Compressed ZK proof result.
     Compressed(ZkProofResult),
-    /// Groth16 SNARK proof result.
-    SnarkGroth16(SnarkGroth16ProofResult),
+    /// PLONK SNARK proof result.
+    SnarkPlonk(SnarkPlonkProofResult),
     /// TEE proof result.
     Tee(TeeProofResult),
 }
@@ -154,11 +224,29 @@ pub struct ZkProofResult {
     pub zk_vm: ZkVm,
     /// Serialized proof bytes.
     pub proof: Bytes,
+    /// Local execution statistics, present for dry-run ZK results.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_stats: Option<ExecutionStats>,
 }
 
-/// Groth16 SNARK proof result.
+/// Local SP1 execution statistics for a dry-run ZK proof.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SnarkGroth16ProofResult {
+pub struct ExecutionStats {
+    /// Total RISC-V instruction cycles reported by SP1.
+    pub total_instruction_cycles: u64,
+    /// Total SP1 gas reported by SP1.
+    pub total_sp1_gas: u64,
+    /// Per-section cycle tracker values reported by the range program.
+    pub cycle_tracker: HashMap<String, u64>,
+    /// Time spent generating the witness, in milliseconds.
+    pub witness_generation_ms: u64,
+    /// Time spent executing the SP1 range program, in milliseconds.
+    pub execution_ms: u64,
+}
+
+/// PLONK SNARK proof result.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnarkPlonkProofResult {
     /// Wrapped ZK proof result.
     pub proof: ZkProofResult,
 }
@@ -287,6 +375,9 @@ pub struct GetNextProofRequest {
     /// ZK virtual machines this worker can execute for ZK proofs.
     #[serde(default)]
     pub zk_vms: Vec<ZkVm>,
+    /// ZK proving backends this worker can execute for ZK proofs.
+    #[serde(default)]
+    pub zk_backends: Vec<ZkBackend>,
     /// Requested lock duration in seconds. Zero uses the server default.
     pub lock_duration_seconds: u32,
 }
@@ -339,8 +430,88 @@ pub struct WorkerSubmitProofResponse {
     pub job: ProofJob,
 }
 
+/// Kind of backend session tracked for a proof job.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionType {
+    /// STARK proving session.
+    Stark,
+    /// SNARK proving session.
+    Snark,
+}
+
+/// Lifecycle state of a tracked backend session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BackendSessionState {
+    /// Reservation placeholder before the backend job has been submitted.
+    Submitting,
+    /// Backend session is actively running.
+    Running,
+    /// Backend session completed successfully.
+    Completed,
+    /// Backend session failed.
+    Failed,
+}
+
+/// A backend session tracked in the prover service for a proof job.
+///
+/// Workers record the backend-issued identifier (for example an SP1 cluster or
+/// network proof id) so a restart or reclaim resumes the in-flight backend job
+/// rather than re-running it. The worker itself holds no local state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BackendSession {
+    /// Backend-specific session identifier used to resume polling.
+    pub backend_session_id: String,
+    /// Current backend session lifecycle state.
+    pub state: BackendSessionState,
+}
+
+/// Request to look up the active backend session for a proof job.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GetProofSessionRequest {
+    /// Proof session identifier.
+    pub session_id: String,
+    /// Backend session type to look up.
+    pub session_type: SessionType,
+}
+
+/// Response carrying the active backend session, if one exists.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GetProofSessionResponse {
+    /// Active backend session, if one is recorded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session: Option<BackendSession>,
+}
+
+/// Request to record (insert or update) the backend session for a proof job.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordProofSessionRequest {
+    /// Proof session identifier.
+    pub session_id: String,
+    /// Server-issued lock identifier for this worker claim.
+    pub lock_id: String,
+    /// Worker identifier.
+    pub worker_id: String,
+    /// Backend session type being recorded.
+    pub session_type: SessionType,
+    /// Backend-specific session identifier to persist.
+    pub backend_session_id: String,
+    /// Backend session lifecycle state to persist.
+    pub state: BackendSessionState,
+}
+
+/// Response returned after recording a backend session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordProofSessionResponse {
+    /// The recorded backend session.
+    pub session: BackendSession,
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use alloy_primitives::{Bytes, address};
     use serde_json::json;
 
@@ -350,7 +521,7 @@ mod tests {
     fn proof_request_serializes_as_json_rpc_payload() {
         let request = ProveBlockRangeRequest {
             proof: ProofRequest {
-                session_id: Some("proof-session".to_owned()),
+                session_id: "proof-session".to_owned(),
                 request: ProofRequestKind::Compressed(ZkProofRequest {
                     start_block_number: 10,
                     number_of_blocks_to_prove: 20,
@@ -358,6 +529,7 @@ mod tests {
                     l1_head: Some(B256::repeat_byte(0xab)),
                     intermediate_root_interval: Some(128),
                     zk_vm: ZkVm::Sp1,
+                    zk_backend: ZkBackend::Cluster,
                 }),
             },
         };
@@ -376,8 +548,68 @@ mod tests {
                             "number_of_blocks_to_prove": 20,
                             "l1_head": format!("{:#x}", B256::repeat_byte(0xab)),
                             "intermediate_root_interval": 128,
-                            "zk_vm": "sp1"
+                            "zk_vm": "sp1",
+                            "zk_backend": "cluster"
                         }
+                    }
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn proof_request_requires_session_id() {
+        let result = serde_json::from_value::<ProofRequest>(json!({
+            "request": {
+                "proof_type": "compressed",
+                "payload": {
+                    "start_block_number": 10,
+                    "number_of_blocks_to_prove": 20,
+                    "zk_vm": "sp1"
+                }
+            }
+        }));
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn zk_result_omits_execution_stats_unless_present() {
+        let result = ProofResult::Compressed(ZkProofResult {
+            zk_vm: ZkVm::Sp1,
+            proof: Bytes::from_static(&[0xab, 0xcd]),
+            execution_stats: None,
+        });
+        let value = serde_json::to_value(result).expect("zk result should serialize");
+        assert!(value["payload"].get("execution_stats").is_none());
+
+        let result = ProofResult::Compressed(ZkProofResult {
+            zk_vm: ZkVm::Sp1,
+            proof: Bytes::new(),
+            execution_stats: Some(ExecutionStats {
+                total_instruction_cycles: 10,
+                total_sp1_gas: 20,
+                cycle_tracker: HashMap::from([("section".to_owned(), 30)]),
+                witness_generation_ms: 40,
+                execution_ms: 50,
+            }),
+        });
+        let value = serde_json::to_value(result).expect("zk result should serialize");
+        assert_eq!(
+            value,
+            json!({
+                "proof_type": "compressed",
+                "payload": {
+                    "zk_vm": "sp1",
+                    "proof": "0x",
+                    "execution_stats": {
+                        "total_instruction_cycles": 10,
+                        "total_sp1_gas": 20,
+                        "cycle_tracker": {
+                            "section": 30
+                        },
+                        "witness_generation_ms": 40,
+                        "execution_ms": 50
                     }
                 }
             })
@@ -483,6 +715,7 @@ mod tests {
                 "l2_block_number": aggregate_proposal.l2_block_number,
                 "prev_output_root": format!("{:#x}", aggregate_proposal.prev_output_root),
                 "config_hash": format!("{:#x}", aggregate_proposal.config_hash),
+                "schedule_id": format!("{:#x}", aggregate_proposal.schedule_id),
             })
         );
         assert_eq!(
@@ -495,6 +728,7 @@ mod tests {
                 "l2_block_number": proposal.l2_block_number,
                 "prev_output_root": format!("{:#x}", proposal.prev_output_root),
                 "config_hash": format!("{:#x}", proposal.config_hash),
+                "schedule_id": format!("{:#x}", proposal.schedule_id),
             })
         );
     }
@@ -600,6 +834,7 @@ mod tests {
                 "l2_block_number": aggregate_proposal.l2_block_number,
                 "prev_output_root": format!("{:#x}", aggregate_proposal.prev_output_root),
                 "config_hash": format!("{:#x}", aggregate_proposal.config_hash),
+                "schedule_id": format!("{:#x}", aggregate_proposal.schedule_id),
             })
         );
         assert_eq!(
@@ -612,6 +847,7 @@ mod tests {
                 "l2_block_number": proposal.l2_block_number,
                 "prev_output_root": format!("{:#x}", proposal.prev_output_root),
                 "config_hash": format!("{:#x}", proposal.config_hash),
+                "schedule_id": format!("{:#x}", proposal.schedule_id),
             })
         );
     }
@@ -634,6 +870,7 @@ mod tests {
                 l1_head: None,
                 intermediate_root_interval: None,
                 zk_vm: ZkVm::Sp1,
+                zk_backend: ZkBackend::Cluster,
             }
         );
     }
@@ -657,6 +894,7 @@ mod tests {
             proof_type: ProofType::Compressed,
             tee_kinds: Vec::new(),
             zk_vms: vec![ZkVm::Sp1],
+            zk_backends: vec![ZkBackend::Cluster, ZkBackend::DryRun],
             lock_duration_seconds: 30,
         };
 
@@ -669,6 +907,7 @@ mod tests {
                 "proof_type": "compressed",
                 "tee_kinds": [],
                 "zk_vms": ["sp1"],
+                "zk_backends": ["cluster", "dry_run"],
                 "lock_duration_seconds": 30
             })
         );
@@ -685,6 +924,7 @@ mod tests {
 
         assert_eq!(request.tee_kinds, Vec::new());
         assert_eq!(request.zk_vms, Vec::new());
+        assert_eq!(request.zk_backends, Vec::new());
     }
 
     #[test]
@@ -714,6 +954,7 @@ mod tests {
             result: ProofResult::Compressed(ZkProofResult {
                 zk_vm: ZkVm::Sp1,
                 proof: vec![1, 2, 3].into(),
+                execution_stats: None,
             }),
         };
 
@@ -744,6 +985,7 @@ mod tests {
             l2_block_number,
             prev_output_root: B256::repeat_byte(byte + 2),
             config_hash: B256::repeat_byte(byte + 3),
+            schedule_id: B256::repeat_byte(byte + 4),
         }
     }
 }

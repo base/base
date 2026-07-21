@@ -2,14 +2,20 @@
 
 use std::{
     collections::{BTreeMap, HashMap},
+    num::NonZeroUsize,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use anyhow::Result;
 use async_trait::async_trait;
 use base_snapshotter::{
-    ContainerManager, DockerContainerManager, SnapshotGenerator, SnapshotManifest, SnapshotUploader,
+    ChunkedArchive, ComponentManifest, ContainerManager, DockerContainerManager,
+    OutputFileChecksum, SnapshotGenerator, SnapshotManifest, SnapshotUploader, TipChecker,
+    TipStatus,
 };
 use bollard::{
     Docker,
@@ -29,6 +35,8 @@ struct MockContainerManager {
     running: AtomicBool,
     stop_called: AtomicBool,
     start_called: AtomicBool,
+    stopped_containers: Mutex<Vec<String>>,
+    started_containers: Mutex<Vec<String>>,
 }
 
 impl MockContainerManager {
@@ -37,6 +45,8 @@ impl MockContainerManager {
             running: AtomicBool::new(true),
             stop_called: AtomicBool::new(false),
             start_called: AtomicBool::new(false),
+            stopped_containers: Mutex::new(Vec::new()),
+            started_containers: Mutex::new(Vec::new()),
         }
     }
 
@@ -47,24 +57,94 @@ impl MockContainerManager {
     fn was_started(&self) -> bool {
         self.start_called.load(Ordering::Relaxed)
     }
+
+    fn stopped_container(&self, container_name: &str) -> bool {
+        self.stopped_containers
+            .lock()
+            .expect("lock should not be poisoned")
+            .iter()
+            .any(|name| name == container_name)
+    }
+
+    fn started_container(&self, container_name: &str) -> bool {
+        self.started_containers
+            .lock()
+            .expect("lock should not be poisoned")
+            .iter()
+            .any(|name| name == container_name)
+    }
 }
 
 #[async_trait]
 impl ContainerManager for MockContainerManager {
-    async fn stop(&self, _container_name: &str) -> Result<()> {
+    async fn stop(&self, container_name: &str) -> Result<()> {
         self.running.store(false, Ordering::Relaxed);
         self.stop_called.store(true, Ordering::Relaxed);
+        self.stopped_containers
+            .lock()
+            .expect("lock should not be poisoned")
+            .push(container_name.to_string());
         Ok(())
     }
 
-    async fn start(&self, _container_name: &str) -> Result<()> {
+    async fn start(&self, container_name: &str) -> Result<()> {
         self.running.store(true, Ordering::Relaxed);
         self.start_called.store(true, Ordering::Relaxed);
+        self.started_containers
+            .lock()
+            .expect("lock should not be poisoned")
+            .push(container_name.to_string());
         Ok(())
     }
 
     async fn is_running(&self, _container_name: &str) -> Result<bool> {
         Ok(self.running.load(Ordering::Relaxed))
+    }
+}
+
+/// Mock tip checker that returns a fixed at-tip status without any RPC calls.
+struct MockTipChecker {
+    at_tip: bool,
+}
+
+impl MockTipChecker {
+    const fn new(at_tip: bool) -> Self {
+        Self { at_tip }
+    }
+}
+
+#[async_trait]
+impl TipChecker for MockTipChecker {
+    async fn check_tip(&self, _threshold: std::time::Duration) -> Result<TipStatus> {
+        Ok(TipStatus { block_number: 100, at_tip: self.at_tip })
+    }
+}
+
+/// Builds a `SnapshotterConfig` for orchestrator tests. `source_datadir` is set
+/// to a nonexistent path so `generate_and_upload` fails deterministically.
+fn test_config(bucket: &str, tmp: &Path) -> base_snapshotter::SnapshotterConfig {
+    base_snapshotter::SnapshotterConfig {
+        container_name: "fake-el".to_string(),
+        consensus_container_name: "fake-cl".to_string(),
+        el_rpc_url: "http://127.0.0.1:8545".parse().expect("valid test URL"),
+        tip_threshold_secs: base_snapshotter::DEFAULT_TIP_THRESHOLD_SECS,
+        source_datadir: tmp.join("nonexistent-datadir"),
+        output_dir: tmp.join("output"),
+        upload_existing_run_timestamp: None,
+        bucket: bucket.to_string(),
+        prefix: "test".to_string(),
+        chain_id: 8453,
+        block: None,
+        blocks_per_file: Some(500_000),
+        snapshot_threads: None,
+        retain_runs: NonZeroUsize::new(3).expect("retain runs should be non-zero"),
+        docker_socket: "/var/run/docker.sock".to_string(),
+        s3_config_type: base_snapshotter::S3ConfigType::Aws,
+        s3_endpoint: None,
+        s3_region: "us-east-1".to_string(),
+        s3_access_key_id: None,
+        s3_secret_access_key: None,
+        public_base_url: None,
     }
 }
 
@@ -183,6 +263,8 @@ const fn empty_manifest(block: u64) -> SnapshotManifest {
         chain_id: 8453,
         storage_version: 2,
         timestamp: 0,
+        base_url: None,
+        reth_version: None,
         components: BTreeMap::new(),
     }
 }
@@ -198,39 +280,46 @@ fn manifest_with_seeded_hashes(
     hash_seed: &str,
 ) -> SnapshotManifest {
     let num_chunks = block.div_ceil(blocks_per_file);
-    let mut comps: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+    let mut comps = BTreeMap::new();
     for &component in components {
-        let chunk_output_files: Vec<serde_json::Value> = (0..num_chunks)
+        let chunk_output_files: Vec<Vec<OutputFileChecksum>> = (0..num_chunks)
             .map(|i| {
                 let start = i * blocks_per_file;
                 let end = start + blocks_per_file - 1;
-                serde_json::json!([
-                    {
-                        "path": format!("static_files/static_file_{component}_{start}_{end}"),
-                        "size": 100,
-                        "blake3": format!("{hash_seed}-{component}-{i}-main")
+                vec![
+                    OutputFileChecksum {
+                        path: format!("static_files/static_file_{component}_{start}_{end}"),
+                        size: 100,
+                        blake3: format!("{hash_seed}-{component}-{i}-main"),
                     },
-                    {
-                        "path": format!("static_files/static_file_{component}_{start}_{end}.off"),
-                        "size": 100,
-                        "blake3": format!("{hash_seed}-{component}-{i}-off")
-                    }
-                ])
+                    OutputFileChecksum {
+                        path: format!("static_files/static_file_{component}_{start}_{end}.off"),
+                        size: 100,
+                        blake3: format!("{hash_seed}-{component}-{i}-off"),
+                    },
+                ]
             })
             .collect();
         comps.insert(
             component.to_string(),
-            serde_json::json!({
-                "blocks_per_file": blocks_per_file,
-                "total_blocks": block,
-                "chunk_sizes": vec![100u64; num_chunks as usize],
-                "chunk_decompressed_sizes": vec![200u64; num_chunks as usize],
-                "chunk_output_files": chunk_output_files,
-                "chunk_skipped": vec![false; num_chunks as usize],
+            ComponentManifest::Chunked(ChunkedArchive {
+                blocks_per_file,
+                total_blocks: block,
+                chunk_sizes: vec![100u64; num_chunks as usize],
+                chunk_decompressed_sizes: vec![200u64; num_chunks as usize],
+                chunk_output_files,
             }),
         );
     }
-    SnapshotManifest { block, chain_id: 8453, storage_version: 2, timestamp: 0, components: comps }
+    SnapshotManifest {
+        block,
+        chain_id: 8453,
+        storage_version: 2,
+        timestamp: 0,
+        base_url: None,
+        reth_version: None,
+        components: comps,
+    }
 }
 
 #[tokio::test]
@@ -241,6 +330,7 @@ async fn upload_artifacts_to_minio() -> Result<()> {
         harness.storage_client.clone(),
         harness.bucket_name.clone(),
         "mainnet".to_string(),
+        Some("https://snapshots.example.com".to_string()),
     );
 
     let tmp = tempfile::tempdir()?;
@@ -249,7 +339,7 @@ async fn upload_artifacts_to_minio() -> Result<()> {
     let local_manifest = parse_local_manifest(&output_dir)?;
 
     let upload_prefix =
-        uploader.upload(&output_dir, &files, 1_700_000_000, &local_manifest, None).await?;
+        uploader.upload(&output_dir, &files, 1_700_000_000, 100, &local_manifest, None).await?;
     assert_eq!(upload_prefix, "mainnet/1700000000", "run prefix should be date-based");
 
     let s3 = &harness.storage_client;
@@ -267,6 +357,14 @@ async fn upload_artifacts_to_minio() -> Result<()> {
     let manifest: serde_json::Value = serde_json::from_slice(&manifest_body)?;
     assert_eq!(manifest["block"], 1_000_000, "manifest block mismatch");
     assert_eq!(manifest["chain_id"], 8453, "manifest chain_id mismatch");
+    assert_eq!(
+        manifest["base_url"], "https://snapshots.example.com/mainnet/static_files",
+        "manifest should point chunk downloads at top-level static_files"
+    );
+    assert_eq!(
+        manifest["components"]["state"]["file"], "../1700000000/state.tar.zst",
+        "manifest should point state back to the dated run dir"
+    );
 
     let components = manifest["components"].as_object().expect("components should be an object");
     assert_eq!(components.len(), 8, "should have all 8 component types");
@@ -298,6 +396,7 @@ async fn upload_with_empty_prefix() -> Result<()> {
         harness.storage_client.clone(),
         harness.bucket_name.clone(),
         String::new(),
+        Some("https://snapshots.example.com".to_string()),
     );
 
     let tmp = tempfile::tempdir()?;
@@ -306,7 +405,7 @@ async fn upload_with_empty_prefix() -> Result<()> {
     let local_manifest = parse_local_manifest(&output_dir)?;
 
     let upload_prefix =
-        uploader.upload(&output_dir, &files, 1_700_000_000, &local_manifest, None).await?;
+        uploader.upload(&output_dir, &files, 1_700_000_000, 100, &local_manifest, None).await?;
     assert_eq!(upload_prefix, "1700000000", "empty prefix should produce bare date");
 
     let s3 = &harness.storage_client;
@@ -321,6 +420,14 @@ async fn upload_with_empty_prefix() -> Result<()> {
     let manifest_body = get_object_bytes(s3, bucket, "1700000000/manifest.json").await?;
     let manifest: serde_json::Value = serde_json::from_slice(&manifest_body)?;
     assert_eq!(manifest["block"], 100, "manifest should be in date dir");
+    assert_eq!(
+        manifest["base_url"], "https://snapshots.example.com/static_files",
+        "manifest should point chunk downloads at top-level static_files"
+    );
+    assert_eq!(
+        manifest["components"]["state"]["file"], "../1700000000/state.tar.zst",
+        "manifest should point state back to the dated run dir"
+    );
 
     let headers_body =
         get_object_bytes(s3, bucket, "static_files/headers-0-499999.tar.zst").await?;
@@ -387,6 +494,7 @@ async fn diff_upload_skips_chunks_when_blake3_matches() -> Result<()> {
         harness.storage_client.clone(),
         harness.bucket_name.clone(),
         "diff-match".to_string(),
+        None,
     );
 
     // Pre-seed static_files/ with the prior run's chunks and a previous manifest.json
@@ -425,7 +533,7 @@ async fn diff_upload_skips_chunks_when_blake3_matches() -> Result<()> {
     assert!(remote_manifest.is_some(), "should find the pre-seeded previous manifest");
 
     uploader
-        .upload(&output_dir, &files, 1_700_000_000, &local_manifest, remote_manifest.as_ref())
+        .upload(&output_dir, &files, 1_700_000_000, 100, &local_manifest, remote_manifest.as_ref())
         .await?;
 
     // Verify: pre-seeded chunks were NOT overwritten (skipped due to blake3 match).
@@ -442,6 +550,18 @@ async fn diff_upload_skips_chunks_when_blake3_matches() -> Result<()> {
             );
         }
     }
+
+    let manifest_body = get_object_bytes(s3, bucket, "diff-match/1700000000/manifest.json").await?;
+    let manifest: serde_json::Value = serde_json::from_slice(&manifest_body)?;
+    let chunk_output_files = manifest["components"]["headers"]["chunk_output_files"]
+        .as_array()
+        .expect("headers chunk_output_files should be an array");
+    assert!(
+        chunk_output_files
+            .iter()
+            .all(|entry| entry.as_array().is_some_and(|files| !files.is_empty())),
+        "download manifest should preserve output-file metadata for skipped chunks"
+    );
 
     Ok(())
 }
@@ -460,6 +580,7 @@ async fn diff_upload_reuploads_on_blake3_mismatch_even_when_size_matches() -> Re
         harness.storage_client.clone(),
         harness.bucket_name.clone(),
         "diff-mismatch".to_string(),
+        None,
     );
 
     // Previous run published hashes with seed "v1".
@@ -507,7 +628,7 @@ async fn diff_upload_reuploads_on_blake3_mismatch_even_when_size_matches() -> Re
     let remote_manifest = uploader.fetch_previous_manifest().await?;
 
     uploader
-        .upload(&output_dir, &files, 1_700_000_000, &local_manifest, remote_manifest.as_ref())
+        .upload(&output_dir, &files, 1_700_000_000, 100, &local_manifest, remote_manifest.as_ref())
         .await?;
 
     // Verify every chunk was re-uploaded with the fresh bytes.
@@ -539,6 +660,7 @@ async fn diff_upload_uploads_everything_on_first_run() -> Result<()> {
         harness.storage_client.clone(),
         harness.bucket_name.clone(),
         "first-run".to_string(),
+        None,
     );
 
     let tmp = tempfile::tempdir()?;
@@ -549,7 +671,7 @@ async fn diff_upload_uploads_everything_on_first_run() -> Result<()> {
     assert!(remote_manifest.is_none(), "fresh bucket should have no previous manifest");
 
     uploader
-        .upload(&output_dir, &files, 1_700_000_000, &local_manifest, remote_manifest.as_ref())
+        .upload(&output_dir, &files, 1_700_000_000, 100, &local_manifest, remote_manifest.as_ref())
         .await?;
 
     let body =
@@ -655,6 +777,7 @@ async fn always_upload_overwrites_existing_state_and_rocksdb() -> Result<()> {
         harness.storage_client.clone(),
         harness.bucket_name.clone(),
         "overwrite-test".to_string(),
+        None,
     );
 
     // Simulate a previous run's date dir with old state + rocksdb
@@ -690,7 +813,7 @@ async fn always_upload_overwrites_existing_state_and_rocksdb() -> Result<()> {
     ];
 
     let upload_prefix = uploader
-        .upload(&output_dir, &files, 1_700_000_000, &empty_manifest(2_000_000), None)
+        .upload(&output_dir, &files, 1_700_000_000, 100, &empty_manifest(2_000_000), None)
         .await?;
     assert_eq!(upload_prefix, "overwrite-test/1700000000");
 
@@ -741,35 +864,131 @@ async fn orchestrator_always_restarts_on_failure() -> Result<()> {
         harness.storage_client.clone(),
         harness.bucket_name.clone(),
         "test".to_string(),
+        None,
     );
 
     let tmp = tempfile::tempdir()?;
+    let config = test_config(&harness.bucket_name, tmp.path());
 
-    let config = base_snapshotter::SnapshotterConfig {
-        container_name: "fake-el".to_string(),
-        source_datadir: tmp.path().join("nonexistent-datadir"),
-        output_dir: tmp.path().join("output"),
-        bucket: harness.bucket_name.clone(),
-        prefix: "test".to_string(),
-        chain_id: 8453,
-        block: Some(100),
-        blocks_per_file: Some(500_000),
-        snapshot_threads: None,
-        docker_socket: "/var/run/docker.sock".to_string(),
-        s3_config_type: base_snapshotter::S3ConfigType::Aws,
-        s3_endpoint: None,
-        s3_region: "us-east-1".to_string(),
-        s3_access_key_id: None,
-        s3_secret_access_key: None,
-    };
-
-    let snapshotter =
-        base_snapshotter::Snapshotter::new(std::sync::Arc::clone(&manager), uploader, config);
+    let snapshotter = base_snapshotter::Snapshotter::new(
+        std::sync::Arc::clone(&manager),
+        MockTipChecker::new(true),
+        uploader,
+        config,
+    );
 
     let result = snapshotter.run().await;
     assert!(result.is_err(), "should fail because source_datadir doesn't exist");
     assert!(manager.was_stopped(), "container should have been stopped");
     assert!(manager.was_started(), "container should always be restarted even on failure");
+    assert!(manager.stopped_container("fake-el"), "EL container should have been stopped");
+    assert!(manager.stopped_container("fake-cl"), "CL container should have been stopped");
+    assert!(manager.started_container("fake-el"), "EL container should have been restarted");
+    assert!(manager.started_container("fake-cl"), "CL container should have been restarted");
+
+    Ok(())
+}
+
+/// When the EL is not at tip, the run must be skipped entirely: neither container
+/// is stopped or started, and `run` returns `Ok`.
+#[tokio::test]
+#[serial]
+async fn orchestrator_skips_when_not_at_tip() -> Result<()> {
+    let harness = TestHarness::new().await?;
+    let manager = std::sync::Arc::new(MockContainerManager::new());
+    let uploader = SnapshotUploader::new(
+        harness.storage_client.clone(),
+        harness.bucket_name.clone(),
+        "test".to_string(),
+        None,
+    );
+
+    let tmp = tempfile::tempdir()?;
+    let config = test_config(&harness.bucket_name, tmp.path());
+
+    let snapshotter = base_snapshotter::Snapshotter::new(
+        std::sync::Arc::clone(&manager),
+        MockTipChecker::new(false),
+        uploader,
+        config,
+    );
+
+    let result = snapshotter.run().await;
+    assert!(result.is_ok(), "run should return Ok when skipping a not-at-tip node");
+    assert!(!manager.was_stopped(), "container must not be stopped when EL is not at tip");
+    assert!(!manager.was_started(), "container must not be started when EL is not at tip");
+
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn upload_existing_run_skips_container_lifecycle() -> Result<()> {
+    let harness = TestHarness::new().await?;
+    let manager = std::sync::Arc::new(MockContainerManager::new());
+    let uploader = SnapshotUploader::new(
+        harness.storage_client.clone(),
+        harness.bucket_name.clone(),
+        "test".to_string(),
+        None,
+    );
+
+    let tmp = tempfile::tempdir()?;
+    let output_dir = tmp.path().join("output");
+    let run_timestamp = 1_700_000_123u64;
+    let run_dir = output_dir.join(format!("run-{run_timestamp}"));
+    create_fake_snapshot(&run_dir, 1_000_000)?;
+
+    let mut config = test_config(&harness.bucket_name, tmp.path());
+    config.output_dir = output_dir;
+    config.upload_existing_run_timestamp = Some(run_timestamp);
+
+    let snapshotter = base_snapshotter::Snapshotter::new(
+        std::sync::Arc::clone(&manager),
+        MockTipChecker::new(true),
+        uploader,
+        config,
+    );
+
+    snapshotter.run().await?;
+    assert!(!manager.was_stopped(), "upload-only mode should not stop the container");
+    assert!(!manager.was_started(), "upload-only mode should not restart the container");
+
+    Ok(())
+}
+
+/// When the EL is at tip, the run proceeds to stop the container (and, here,
+/// fails downstream on the nonexistent datadir but still restarts).
+#[tokio::test]
+#[serial]
+async fn orchestrator_proceeds_when_at_tip() -> Result<()> {
+    let harness = TestHarness::new().await?;
+    let manager = std::sync::Arc::new(MockContainerManager::new());
+    let uploader = SnapshotUploader::new(
+        harness.storage_client.clone(),
+        harness.bucket_name.clone(),
+        "test".to_string(),
+        None,
+    );
+
+    let tmp = tempfile::tempdir()?;
+    let config = test_config(&harness.bucket_name, tmp.path());
+
+    let snapshotter = base_snapshotter::Snapshotter::new(
+        std::sync::Arc::clone(&manager),
+        MockTipChecker::new(true),
+        uploader,
+        config,
+    );
+
+    let result = snapshotter.run().await;
+    assert!(result.is_err(), "should fail downstream because source_datadir doesn't exist");
+    assert!(manager.was_stopped(), "container should have been stopped when EL is at tip");
+    assert!(manager.was_started(), "container should always be restarted");
+    assert!(manager.stopped_container("fake-el"), "EL container should have been stopped");
+    assert!(manager.stopped_container("fake-cl"), "CL container should have been stopped");
+    assert!(manager.started_container("fake-el"), "EL container should have been restarted");
+    assert!(manager.started_container("fake-cl"), "CL container should have been restarted");
 
     Ok(())
 }
@@ -819,9 +1038,10 @@ async fn e2e_stop_upload_restart_real_container() -> Result<()> {
         harness.storage_client.clone(),
         harness.bucket_name.clone(),
         "e2e-test".to_string(),
+        None,
     );
     let upload_prefix =
-        uploader.upload(&output_dir, &files, 1_700_000_000, &local_manifest, None).await?;
+        uploader.upload(&output_dir, &files, 1_700_000_000, 100, &local_manifest, None).await?;
 
     let manifest_body = get_object_bytes(
         &harness.storage_client,

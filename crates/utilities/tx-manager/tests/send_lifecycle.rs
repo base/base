@@ -1,7 +1,7 @@
 //! Integration tests for the transaction send lifecycle with Anvil.
 //!
 //! Covers [`SimpleTxManager::send`], [`SimpleTxManager::publish_tx`], and
-//! [`SimpleTxManager::query_receipt`] — the methods that drive a transaction
+//! [`SimpleTxManager::<RootProvider>::query_receipt`] — the methods that drive a transaction
 //! from publication through confirmation.
 
 mod common;
@@ -130,7 +130,7 @@ async fn query_receipt_returns_none_for_unknown_tx() {
     let send_state = SendState::new(SAFE_ABORT_DEPTH).expect("should create send state");
     let fake_hash = B256::with_last_byte(0xFF);
 
-    let result = SimpleTxManager::query_receipt(
+    let result = SimpleTxManager::<RootProvider>::query_receipt(
         &send_state,
         manager.provider(),
         fake_hash,
@@ -158,7 +158,7 @@ async fn query_receipt_returns_confirmed_receipt() {
     // Under CI load, query_receipt may see a stale tip on a single-block test.
     mine_block(manager.provider()).await;
 
-    let result = SimpleTxManager::query_receipt(
+    let result = SimpleTxManager::<RootProvider>::query_receipt(
         &send_state,
         manager.provider(),
         tx_hash,
@@ -187,7 +187,7 @@ async fn query_receipt_returns_none_when_not_enough_confirmations() {
 
     // Require 100 confirmations — far more than the single block Anvil
     // has mined. The receipt exists but is not sufficiently confirmed.
-    let result = SimpleTxManager::query_receipt(
+    let result = SimpleTxManager::<RootProvider>::query_receipt(
         &send_state,
         manager.provider(),
         tx_hash,
@@ -213,7 +213,7 @@ async fn wait_mined_returns_confirmed_receipt() {
     let (tx_hash, send_state, _) = publish_simple_tx(&manager).await;
     let closed = AtomicBool::new(false);
 
-    let receipt = SimpleTxManager::wait_mined(
+    let receipt = SimpleTxManager::<RootProvider>::wait_mined(
         &send_state,
         manager.provider(),
         tx_hash,
@@ -233,7 +233,7 @@ async fn wait_mined_returns_none_on_shutdown() {
     let (tx_hash, send_state, _) = publish_simple_tx(&manager).await;
     let closed = AtomicBool::new(true);
 
-    let receipt = SimpleTxManager::wait_mined(
+    let receipt = SimpleTxManager::<RootProvider>::wait_mined(
         &send_state,
         manager.provider(),
         tx_hash,
@@ -256,7 +256,7 @@ async fn wait_mined_returns_none_on_timeout() {
     let (tx_hash, send_state, _) = publish_simple_tx(&manager).await;
     let closed = AtomicBool::new(false);
 
-    let receipt = SimpleTxManager::wait_mined(
+    let receipt = SimpleTxManager::<RootProvider>::wait_mined(
         &send_state,
         manager.provider(),
         tx_hash,
@@ -278,7 +278,7 @@ async fn wait_for_tx_delivers_receipt() {
     let closed = Arc::new(AtomicBool::new(false));
     let (receipt_tx, mut receipt_rx) = mpsc::channel(1);
 
-    let _handle = SimpleTxManager::wait_for_tx(
+    let _handle = SimpleTxManager::<RootProvider>::wait_for_tx(
         Arc::new(send_state),
         manager.provider().clone(),
         tx_hash,
@@ -302,7 +302,7 @@ async fn wait_for_tx_closes_channel_on_shutdown() {
     let closed = Arc::new(AtomicBool::new(true));
     let (receipt_tx, mut receipt_rx) = mpsc::channel(1);
 
-    let _handle = SimpleTxManager::wait_for_tx(
+    let _handle = SimpleTxManager::<RootProvider>::wait_for_tx(
         Arc::new(send_state),
         manager.provider().clone(),
         tx_hash,
@@ -326,7 +326,7 @@ async fn wait_for_tx_does_not_panic_on_dropped_receiver() {
     let closed = Arc::new(AtomicBool::new(false));
     let (receipt_tx, receipt_rx) = mpsc::channel(1);
 
-    let handle = SimpleTxManager::wait_for_tx(
+    let handle = SimpleTxManager::<RootProvider>::wait_for_tx(
         Arc::new(send_state),
         manager.provider().clone(),
         tx_hash,
@@ -354,7 +354,7 @@ async fn query_receipt_returns_error_on_unreachable_provider() {
     let send_state = SendState::new(SAFE_ABORT_DEPTH).expect("should create send state");
     let fake_hash = B256::with_last_byte(0xFF);
 
-    let result = SimpleTxManager::query_receipt(
+    let result = SimpleTxManager::<RootProvider>::query_receipt(
         &send_state,
         &provider,
         fake_hash,

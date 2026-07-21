@@ -7,7 +7,7 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use base_action_harness::TEST_ACCOUNT_KEY;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
-use base_common_precompiles::{B20TokenRole, IB20};
+use base_common_precompiles::{B20_MAX_SUPPLY_CAP, B20TokenRole, IB20};
 
 use crate::env::BerylTestEnv;
 
@@ -297,7 +297,11 @@ async fn b20_staticcall_abi_covers_all_read_methods() {
                 IB20::isPausedCall { feature: IB20::PausableFeature::TRANSFER }.abi_encode(),
                 U256::ZERO,
             ),
-            StaticcallCase::word("supplyCap", IB20::supplyCapCall {}.abi_encode(), U256::MAX),
+            StaticcallCase::word(
+                "supplyCap",
+                IB20::supplyCapCall {}.abi_encode(),
+                B20_MAX_SUPPLY_CAP,
+            ),
             StaticcallCase::word(
                 "DOMAIN_SEPARATOR",
                 IB20::DOMAIN_SEPARATORCall {}.abi_encode(),
@@ -328,6 +332,157 @@ async fn b20_staticcall_abi_covers_all_read_methods() {
                 "contractURI",
                 IB20::contractURICall {}.abi_encode(),
                 IB20::contractURICall::abi_encode_returns(&String::new()),
+            ),
+        ])
+        .await;
+
+    scenario.derive().await;
+}
+
+#[tokio::test]
+async fn b20_role_lifecycle_updates_state_and_emits_events() {
+    let mut scenario = B20TokenScenario::new().await;
+
+    scenario
+        .assert_staticcall_cases(vec![
+            StaticcallCase::output(
+                "DEFAULT_ADMIN_ROLE",
+                IB20::DEFAULT_ADMIN_ROLECall {}.abi_encode(),
+                B20TokenRole::DefaultAdmin.id().abi_encode(),
+            ),
+            StaticcallCase::output(
+                "MINT_ROLE",
+                IB20::MINT_ROLECall {}.abi_encode(),
+                B20TokenRole::Mint.id().abi_encode(),
+            ),
+            StaticcallCase::word(
+                "hasRole(default admin, alice)",
+                IB20::hasRoleCall {
+                    role: B20TokenRole::DefaultAdmin.id(),
+                    account: BerylTestEnv::alice(),
+                }
+                .abi_encode(),
+                U256::ONE,
+            ),
+            StaticcallCase::output(
+                "getRoleAdmin(MINT_ROLE)",
+                IB20::getRoleAdminCall { role: B20TokenRole::Mint.id() }.abi_encode(),
+                B20TokenRole::DefaultAdmin.id().abi_encode(),
+            ),
+        ])
+        .await;
+
+    let grant_bob = scenario.call_tx(IB20::grantRoleCall {
+        role: B20TokenRole::Mint.id(),
+        account: BerylTestEnv::bob(),
+    });
+    let block = scenario.build_block_with_transactions(vec![grant_bob]).await;
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "grantRole must succeed");
+    scenario.assert_log(
+        &block,
+        0,
+        IB20::RoleGranted {
+            role: B20TokenRole::Mint.id(),
+            account: BerylTestEnv::bob(),
+            sender: BerylTestEnv::alice(),
+        }
+        .encode_log_data(),
+    );
+    scenario
+        .assert_staticcall_cases(vec![StaticcallCase::word(
+            "hasRole(MINT_ROLE, bob)",
+            IB20::hasRoleCall { role: B20TokenRole::Mint.id(), account: BerylTestEnv::bob() }
+                .abi_encode(),
+            U256::ONE,
+        )])
+        .await;
+
+    let revoke_bob = scenario.call_tx(IB20::revokeRoleCall {
+        role: B20TokenRole::Mint.id(),
+        account: BerylTestEnv::bob(),
+    });
+    let block = scenario.build_block_with_transactions(vec![revoke_bob]).await;
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "revokeRole must succeed");
+    scenario.assert_log(
+        &block,
+        0,
+        IB20::RoleRevoked {
+            role: B20TokenRole::Mint.id(),
+            account: BerylTestEnv::bob(),
+            sender: BerylTestEnv::alice(),
+        }
+        .encode_log_data(),
+    );
+
+    let grant_alice_mint = scenario.call_tx(IB20::grantRoleCall {
+        role: B20TokenRole::Mint.id(),
+        account: BerylTestEnv::alice(),
+    });
+    let renounce_alice_mint = scenario.call_tx(IB20::renounceRoleCall {
+        role: B20TokenRole::Mint.id(),
+        callerConfirmation: BerylTestEnv::alice(),
+    });
+    let set_pause_admin = scenario.call_tx(IB20::setRoleAdminCall {
+        role: B20TokenRole::Pause.id(),
+        newAdminRole: B20TokenRole::Mint.id(),
+    });
+    let renounce_last_admin = scenario.call_tx(IB20::renounceLastAdminCall {});
+    let block = scenario
+        .build_block_with_transactions(vec![
+            grant_alice_mint,
+            renounce_alice_mint,
+            set_pause_admin,
+            renounce_last_admin,
+        ])
+        .await;
+    for index in 0..4 {
+        assert!(
+            scenario.env.user_tx_succeeded(&block, index),
+            "role lifecycle tx {index} must succeed"
+        );
+    }
+    scenario.assert_log(
+        &block,
+        2,
+        IB20::RoleAdminChanged {
+            role: B20TokenRole::Pause.id(),
+            previousAdminRole: B20TokenRole::DefaultAdmin.id(),
+            newAdminRole: B20TokenRole::Mint.id(),
+        }
+        .encode_log_data(),
+    );
+    scenario.assert_log(
+        &block,
+        3,
+        IB20::LastAdminRenounced { previousAdmin: BerylTestEnv::alice() }.encode_log_data(),
+    );
+    scenario
+        .assert_staticcall_cases(vec![
+            StaticcallCase::word(
+                "hasRole(MINT_ROLE, bob) after revoke",
+                IB20::hasRoleCall { role: B20TokenRole::Mint.id(), account: BerylTestEnv::bob() }
+                    .abi_encode(),
+                U256::ZERO,
+            ),
+            StaticcallCase::word(
+                "hasRole(MINT_ROLE, alice) after renounce",
+                IB20::hasRoleCall { role: B20TokenRole::Mint.id(), account: BerylTestEnv::alice() }
+                    .abi_encode(),
+                U256::ZERO,
+            ),
+            StaticcallCase::word(
+                "hasRole(DEFAULT_ADMIN_ROLE, alice) after renounceLastAdmin",
+                IB20::hasRoleCall {
+                    role: B20TokenRole::DefaultAdmin.id(),
+                    account: BerylTestEnv::alice(),
+                }
+                .abi_encode(),
+                U256::ZERO,
+            ),
+            StaticcallCase::output(
+                "getRoleAdmin(PAUSE_ROLE) after setRoleAdmin",
+                IB20::getRoleAdminCall { role: B20TokenRole::Pause.id() }.abi_encode(),
+                B20TokenRole::Mint.id().abi_encode(),
             ),
         ])
         .await;
@@ -432,7 +587,7 @@ async fn b20_extended_mutations_update_state_and_emit_events() {
         3,
         IB20::SupplyCapUpdated {
             updater: BerylTestEnv::alice(),
-            oldSupplyCap: U256::MAX,
+            oldSupplyCap: B20_MAX_SUPPLY_CAP,
             newSupplyCap: new_cap,
         }
         .encode_log_data(),
@@ -576,6 +731,100 @@ async fn b20_permit_updates_allowance_and_nonce() {
     scenario
         .assert_staticcall_cases(vec![StaticcallCase::word(
             "nonces after permit",
+            IB20::noncesCall { owner: BerylTestEnv::alice() }.abi_encode(),
+            U256::ONE,
+        )])
+        .await;
+
+    scenario.derive().await;
+}
+
+#[tokio::test]
+async fn b20_permit_rejects_replay_expired_and_wrong_signature() {
+    let mut scenario = B20TokenScenario::new().await;
+    let value = U256::from(123);
+    let deadline = U256::MAX;
+    let domain_sep =
+        domain_separator(scenario.env.chain_id(), scenario.token, BerylTestEnv::B20_NAME);
+    let (v, r, s) = sign_permit(
+        domain_sep,
+        BerylTestEnv::alice(),
+        BerylTestEnv::bob(),
+        value,
+        U256::ZERO,
+        deadline,
+    );
+
+    let valid = scenario.call_tx(IB20::permitCall {
+        owner: BerylTestEnv::alice(),
+        spender: BerylTestEnv::bob(),
+        value,
+        deadline,
+        v,
+        r,
+        s,
+    });
+    let block = scenario.build_block_with_transactions(vec![valid]).await;
+    assert!(scenario.env.user_tx_succeeded(&block, 0), "initial permit must succeed");
+    scenario.assert_allowance(BerylTestEnv::alice(), BerylTestEnv::bob(), 123);
+
+    let replay = scenario.call_tx(IB20::permitCall {
+        owner: BerylTestEnv::alice(),
+        spender: BerylTestEnv::bob(),
+        value,
+        deadline,
+        v,
+        r,
+        s,
+    });
+    let expired_deadline = U256::ZERO;
+    let (expired_v, expired_r, expired_s) = sign_permit(
+        domain_sep,
+        BerylTestEnv::alice(),
+        BerylTestEnv::bob(),
+        U256::from(456),
+        U256::ONE,
+        expired_deadline,
+    );
+    let expired = scenario.call_tx(IB20::permitCall {
+        owner: BerylTestEnv::alice(),
+        spender: BerylTestEnv::bob(),
+        value: U256::from(456),
+        deadline: expired_deadline,
+        v: expired_v,
+        r: expired_r,
+        s: expired_s,
+    });
+    let (wrong_v, wrong_r, wrong_s) = sign_permit(
+        domain_sep,
+        BerylTestEnv::bob(),
+        BerylTestEnv::bob(),
+        U256::from(789),
+        U256::ONE,
+        deadline,
+    );
+    let wrong_signature = scenario.call_tx(IB20::permitCall {
+        owner: BerylTestEnv::alice(),
+        spender: BerylTestEnv::bob(),
+        value: U256::from(789),
+        deadline,
+        v: wrong_v,
+        r: wrong_r,
+        s: wrong_s,
+    });
+    let block =
+        scenario.build_block_with_transactions(vec![replay, expired, wrong_signature]).await;
+
+    for index in 0..3 {
+        assert!(
+            !scenario.env.user_tx_succeeded(&block, index),
+            "invalid permit {index} must revert"
+        );
+    }
+    scenario.assert_allowance(BerylTestEnv::alice(), BerylTestEnv::bob(), 123);
+    scenario
+        .assert_staticcall_cases(vec![StaticcallCase::word(
+            "nonces after invalid permits",
             IB20::noncesCall { owner: BerylTestEnv::alice() }.abi_encode(),
             U256::ONE,
         )])

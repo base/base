@@ -1,125 +1,41 @@
 //! Configuration types and validation for the challenger.
 
-use std::{fmt, net::SocketAddr, ops::Deref, time::Duration};
+use std::{net::SocketAddr, time::Duration};
 
 use alloy_primitives::Address;
-use base_cli_utils::{LogConfig, MetricsConfig};
+use base_cli_utils::MetricsConfig;
 use base_tx_manager::{SignerConfig, TxManagerConfig};
-use thiserror::Error;
+use eyre::{Result, WrapErr, ensure};
 use url::Url;
 
 use crate::cli::Cli;
 
-/// Error returned when URL validation fails.
-#[derive(Debug, Error)]
-#[error("missing host")]
-pub struct UrlValidationError;
-
-/// A wrapper that guarantees the inner value has been validated.
-#[derive(Debug, Clone)]
-pub struct Validated<T>(T);
-
-impl TryFrom<Url> for Validated<Url> {
-    type Error = UrlValidationError;
-
-    fn try_from(url: Url) -> Result<Self, Self::Error> {
-        if url.host().is_none() {
-            return Err(UrlValidationError);
-        }
-        Ok(Self(url))
-    }
-}
-
-impl<T> Deref for Validated<T> {
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        &self.0
-    }
-}
-
-impl<T> AsRef<T> for Validated<T> {
-    fn as_ref(&self) -> &T {
-        &self.0
-    }
-}
-
-impl<T: fmt::Display> fmt::Display for Validated<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-/// Errors that can occur during configuration validation.
-#[derive(Debug, Error)]
-pub enum ConfigError {
-    /// Invalid URL format.
-    #[error("invalid {field} URL: missing host")]
-    InvalidUrl {
-        /// The field name that contains the invalid URL.
-        field: &'static str,
-    },
-    /// A field value is out of the allowed range.
-    #[error("{field} must be {constraint}, got {value}")]
-    OutOfRange {
-        /// The field name that is out of range.
-        field: &'static str,
-        /// The constraint description.
-        constraint: &'static str,
-        /// The actual value.
-        value: &'static str,
-    },
-    /// `--zk-rpc-url` was provided in `--no-dispute` mode.
-    #[error("--zk-rpc-url must not be set in --no-dispute mode")]
-    ZkRpcUrlNotAllowedInNoDisputeMode,
-    /// `--tee-rpc-url` was provided in `--no-dispute` mode.
-    #[error("--tee-rpc-url must not be set in --no-dispute mode")]
-    TeeRpcUrlNotAllowedInNoDisputeMode,
-    /// `--zk-rpc-url` is required when not in `--no-dispute` mode.
-    #[error("--zk-rpc-url is required unless --no-dispute is set")]
-    MissingZkRpcUrl,
-    /// `--bond-claim-addresses` is required in `--no-dispute` mode.
-    #[error("--bond-claim-addresses is required in --no-dispute mode")]
-    MissingBondClaimAddressesInNoDisputeMode,
-    /// Invalid metrics configuration.
-    #[error("invalid metrics config: {0}")]
-    Metrics(&'static str),
-    /// Invalid signing configuration.
-    #[error("invalid signing config: {0}")]
-    Signer(base_tx_manager::ConfigError),
-    /// Invalid transaction manager configuration.
-    #[error("invalid tx manager config: {0}")]
-    TxManager(base_tx_manager::ConfigError),
-}
-
-/// Validated challenger configuration.
+/// Challenger configuration.
 #[derive(Debug)]
 pub struct ChallengerConfig {
     /// URL of the L1 Ethereum RPC endpoint.
-    pub l1_eth_rpc: Validated<Url>,
+    pub l1_eth_rpc: Url,
     /// URL of the L2 Ethereum RPC endpoint.
-    pub l2_eth_rpc: Validated<Url>,
+    pub l2_eth_rpc: Url,
     /// Address of the `DisputeGameFactory` contract on L1.
     pub dispute_game_factory_addr: Address,
     /// Address of the `AnchorStateRegistry` contract on L1.
     pub anchor_state_registry_addr: Address,
+    /// Game type ID for `AggregateVerifier` dispute games.
+    pub game_type: u32,
     /// Polling interval for new dispute games.
     pub poll_interval: Duration,
     /// Run in no-dispute mode: skip all ZK/proof-dispute paths and run only the
     /// bond/anchor lifecycle.
     pub no_dispute: bool,
     /// URL of the ZK RPC endpoint. `None` in `--no-dispute` mode.
-    pub zk_rpc_url: Option<Validated<Url>>,
-    /// Timeout for establishing the initial gRPC connection to the ZK proof service.
-    pub zk_connect_timeout: Duration,
+    pub zk_rpc_url: Option<Url>,
     /// Timeout for individual gRPC requests to the ZK proof service.
     pub zk_request_timeout: Duration,
     /// Maximum wall-clock time to wait for a ZK proof session before treating it as failed.
     pub max_proof_duration: Duration,
-    /// URL of the TEE enclave RPC endpoint (optional).
-    pub tee_rpc_url: Option<Validated<Url>>,
-    /// Timeout for individual TEE proof requests (only `Some` when TEE is enabled).
-    pub tee_request_timeout: Option<Duration>,
+    /// Retryable TEE submission failures to tolerate before falling back to ZK.
+    pub tee_submit_retry_limit: u32,
     /// Signing configuration for L1 transaction submission.
     pub signing: SignerConfig,
     /// Transaction manager configuration (fee limits, confirmations, timeouts).
@@ -128,15 +44,10 @@ pub struct ChallengerConfig {
     pub bond_discovery_lookback_games: u64,
     /// How often a full rescan of the bond lookback window is performed.
     pub bond_discovery_interval: Duration,
-    /// Maximum time to keep a completed bond game tracked while waiting for
-    /// its anchor update to complete.
-    pub anchor_update_retention: Duration,
     /// Addresses to claim bonds on behalf of.
     pub bond_claim_addresses: Vec<Address>,
     /// Health server socket address.
     pub health_addr: SocketAddr,
-    /// Logging configuration (from base-cli-utils).
-    pub log: LogConfig,
     /// Metrics server configuration.
     pub metrics: MetricsConfig,
 }
@@ -144,156 +55,100 @@ pub struct ChallengerConfig {
 impl ChallengerConfig {
     /// Creates a validated [`ChallengerConfig`] from parsed CLI arguments.
     ///
-    /// # Validation
-    ///
-    /// - Every URL field must have a scheme and host.
-    /// - `poll_interval` must be greater than zero.
-    /// - When metrics are enabled, the metrics port must be non-zero.
-    /// - Exactly one signing method must be configured: either
-    ///   `--private-key` (local/dev) **or** both
-    ///   `--signer-endpoint` and `--signer-address` (remote/production).
-    ///
     /// # Errors
     ///
-    /// Returns [`ConfigError`] if any validation check fails.
-    pub fn from_cli(cli: Cli) -> Result<Self, ConfigError> {
-        let validate_url = |url: Url, field: &'static str| -> Result<Validated<Url>, ConfigError> {
-            Validated::try_from(url).map_err(|_| ConfigError::InvalidUrl { field })
-        };
+    /// Returns an error if any validation check fails.
+    pub fn from_cli(cli: Cli) -> Result<Self> {
+        let Cli { challenger, metrics, health, .. } = cli;
 
-        let require_nonzero = |value: u64, field: &'static str| -> Result<(), ConfigError> {
-            if value == 0 {
-                return Err(ConfigError::OutOfRange {
-                    field,
-                    constraint: "greater than 0",
-                    value: "0",
-                });
-            }
-            Ok(())
-        };
-
-        let require_nonzero_duration =
-            |d: Duration, field: &'static str| -> Result<(), ConfigError> {
-                if d.is_zero() {
-                    return Err(ConfigError::OutOfRange {
-                        field,
-                        constraint: "greater than 0",
-                        value: "0",
-                    });
-                }
-                Ok(())
-            };
-
-        let l1_eth_rpc = validate_url(cli.challenger.l1_eth_rpc, "l1-eth-rpc")?;
-        let l2_eth_rpc = validate_url(cli.challenger.l2_eth_rpc, "l2-eth-rpc")?;
-        let no_dispute = cli.challenger.no_dispute;
-        let zk_rpc_url =
-            cli.challenger.zk_rpc_url.map(|url| validate_url(url, "zk-rpc-url")).transpose()?;
-        let tee_rpc_url =
-            cli.challenger.tee_rpc_url.map(|url| validate_url(url, "tee-rpc-url")).transpose()?;
+        for (url, message) in [
+            (&challenger.l1_eth_rpc, "invalid l1-eth-rpc URL: missing host"),
+            (&challenger.l2_eth_rpc, "invalid l2-eth-rpc URL: missing host"),
+        ] {
+            ensure!(url.has_host(), message);
+        }
 
         // Mode gating: `--no-dispute` strips the proving path, so it forbids
-        // both proof endpoints (`--zk-rpc-url`, `--tee-rpc-url`) and requires
-        // `--bond-claim-addresses` (otherwise the driver would be a silent
-        // no-op). When disputing, `--zk-rpc-url` is mandatory because the
-        // prover-service is the only proof backend.
+        // `--zk-rpc-url` and requires `--bond-claim-addresses` (otherwise the
+        // driver would be a silent no-op). When disputing, `--zk-rpc-url` is
+        // mandatory because the prover-service is the only proof backend.
+        let no_dispute = challenger.no_dispute;
         if no_dispute {
-            if zk_rpc_url.is_some() {
-                return Err(ConfigError::ZkRpcUrlNotAllowedInNoDisputeMode);
-            }
-            if tee_rpc_url.is_some() {
-                return Err(ConfigError::TeeRpcUrlNotAllowedInNoDisputeMode);
-            }
-            if cli.challenger.bond_claim_addresses.is_empty() {
-                return Err(ConfigError::MissingBondClaimAddressesInNoDisputeMode);
-            }
-        } else if zk_rpc_url.is_none() {
-            return Err(ConfigError::MissingZkRpcUrl);
-        }
-
-        if cli.challenger.anchor_state_registry_addr == Address::ZERO {
-            return Err(ConfigError::OutOfRange {
-                field: "anchor-state-registry-addr",
-                constraint: "non-zero",
-                value: "0x0000000000000000000000000000000000000000",
-            });
-        }
-
-        require_nonzero_duration(cli.challenger.poll_interval, "poll-interval")?;
-        require_nonzero_duration(cli.challenger.zk_connect_timeout, "zk-connect-timeout")?;
-        require_nonzero_duration(cli.challenger.zk_request_timeout, "zk-request-timeout")?;
-        require_nonzero_duration(cli.challenger.max_proof_duration, "max-proof-duration")?;
-
-        let tee_request_timeout = if tee_rpc_url.is_some() {
-            require_nonzero_duration(cli.challenger.tee_request_timeout, "tee-request-timeout")?;
-            Some(cli.challenger.tee_request_timeout)
+            ensure!(
+                challenger.zk_rpc_url.is_none(),
+                "--zk-rpc-url must not be set in --no-dispute mode"
+            );
+            ensure!(
+                !challenger.bond_claim_addresses.is_empty(),
+                "--bond-claim-addresses is required in --no-dispute mode"
+            );
         } else {
-            None
-        };
-
-        require_nonzero(
-            cli.challenger.bond_discovery_lookback_games,
-            "bond-discovery-lookback-games",
-        )?;
-        require_nonzero_duration(
-            cli.challenger.bond_discovery_interval,
-            "bond-discovery-interval",
-        )?;
-        require_nonzero_duration(
-            cli.challenger.anchor_update_retention,
-            "anchor-update-retention",
-        )?;
-
-        // Health server is always started, so the port must be valid.
-        require_nonzero(cli.health.port.into(), "health.port")?;
-
-        if cli.metrics.enabled && cli.metrics.port == 0 {
-            return Err(ConfigError::Metrics(
-                "metrics port must be non-zero when metrics are enabled",
-            ));
+            ensure!(
+                challenger.zk_rpc_url.is_some(),
+                "--zk-rpc-url is required unless --no-dispute is set"
+            );
+        }
+        if let Some(zk_rpc_url) = &challenger.zk_rpc_url {
+            ensure!(zk_rpc_url.has_host(), "invalid zk-rpc-url URL: missing host");
         }
 
-        let signing = SignerConfig::try_from(cli.challenger.signer).map_err(ConfigError::Signer)?;
+        ensure!(
+            challenger.anchor_state_registry_addr != Address::ZERO,
+            "anchor-state-registry-addr must be non-zero"
+        );
 
-        let tx_manager =
-            TxManagerConfig::try_from(cli.challenger.tx_manager).map_err(ConfigError::TxManager)?;
+        for (duration, message) in [
+            (challenger.poll_interval, "poll-interval must be greater than 0"),
+            (challenger.zk_request_timeout, "zk-request-timeout must be greater than 0"),
+            (challenger.max_proof_duration, "max-proof-duration must be greater than 0"),
+            (challenger.bond_discovery_interval, "bond-discovery-interval must be greater than 0"),
+        ] {
+            ensure!(!duration.is_zero(), message);
+        }
 
-        let health_addr = cli.health.socket_addr();
+        ensure!(
+            challenger.bond_discovery_lookback_games != 0,
+            "bond-discovery-lookback-games must be greater than 0"
+        );
+
+        ensure!(health.port != 0, "health.port must be greater than 0");
+
+        ensure!(
+            !metrics.enabled || metrics.port != 0,
+            "metrics.port must be greater than 0 when metrics are enabled"
+        );
 
         Ok(Self {
-            l1_eth_rpc,
-            l2_eth_rpc,
-            dispute_game_factory_addr: cli.challenger.dispute_game_factory_addr,
-            anchor_state_registry_addr: cli.challenger.anchor_state_registry_addr,
-            poll_interval: cli.challenger.poll_interval,
+            l1_eth_rpc: challenger.l1_eth_rpc,
+            l2_eth_rpc: challenger.l2_eth_rpc,
+            dispute_game_factory_addr: challenger.dispute_game_factory_addr,
+            anchor_state_registry_addr: challenger.anchor_state_registry_addr,
+            game_type: challenger.game_type,
+            poll_interval: challenger.poll_interval,
             no_dispute,
-            zk_rpc_url,
-            zk_connect_timeout: cli.challenger.zk_connect_timeout,
-            zk_request_timeout: cli.challenger.zk_request_timeout,
-            max_proof_duration: cli.challenger.max_proof_duration,
-            tee_rpc_url,
-            tee_request_timeout,
-            signing,
-            tx_manager,
-            bond_discovery_lookback_games: cli.challenger.bond_discovery_lookback_games,
-            bond_discovery_interval: cli.challenger.bond_discovery_interval,
-            anchor_update_retention: cli.challenger.anchor_update_retention,
-            bond_claim_addresses: cli.challenger.bond_claim_addresses,
-            health_addr,
-            log: LogConfig::from(cli.logging),
-            metrics: cli.metrics.into(),
+            zk_rpc_url: challenger.zk_rpc_url,
+            zk_request_timeout: challenger.zk_request_timeout,
+            max_proof_duration: challenger.max_proof_duration,
+            tee_submit_retry_limit: challenger.tee_submit_retry_limit,
+            signing: SignerConfig::try_from(challenger.signer)
+                .wrap_err("invalid signing config")?,
+            tx_manager: TxManagerConfig::try_from(challenger.tx_manager)
+                .wrap_err("invalid tx manager config")?,
+            bond_discovery_lookback_games: challenger.bond_discovery_lookback_games,
+            bond_discovery_interval: challenger.bond_discovery_interval,
+            bond_claim_addresses: challenger.bond_claim_addresses,
+            health_addr: health.socket_addr(),
+            metrics: metrics.into(),
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use base_cli_utils::LogFormat;
     use clap::Parser;
     use rstest::rstest;
 
     use super::*;
-    use crate::cli::{LogArgs, MetricsArgs};
 
     /// Parse a mock CLI command with required args plus any overrides.
     ///
@@ -309,6 +164,7 @@ mod tests {
             ("--l2-eth-rpc", "http://localhost:9545"),
             ("--dispute-game-factory-addr", "0x1234567890123456789012345678901234567890"),
             ("--anchor-state-registry-addr", "0x2234567890123456789012345678901234567890"),
+            ("--game-type", "1"),
             ("--zk-rpc-url", "http://localhost:5000"),
         ];
 
@@ -339,8 +195,8 @@ mod tests {
     fn test_valid_config() {
         let cli = cli_from_args(&SIGNER_ARGS);
         let config = ChallengerConfig::from_cli(cli).unwrap();
+        assert_eq!(config.game_type, 1);
         assert_eq!(config.poll_interval, Duration::from_secs(12));
-        assert_eq!(config.zk_connect_timeout, Duration::from_secs(10));
         assert_eq!(config.zk_request_timeout, Duration::from_secs(30));
         assert_eq!(
             config.anchor_state_registry_addr,
@@ -348,7 +204,6 @@ mod tests {
         );
         assert_eq!(config.bond_discovery_lookback_games, 1000);
         assert_eq!(config.bond_discovery_interval, Duration::from_secs(300));
-        assert_eq!(config.anchor_update_retention, Duration::from_secs(24 * 60 * 60));
         assert_eq!(config.health_addr, "0.0.0.0:8080".parse::<SocketAddr>().unwrap());
         assert!(matches!(config.signing, SignerConfig::Remote { .. }));
         assert_eq!(config.tx_manager.num_confirmations, 10);
@@ -365,22 +220,32 @@ mod tests {
     }
 
     #[rstest]
-    #[case::poll_interval("--poll-interval", "0s", "poll-interval")]
-    #[case::zk_connect_timeout("--zk-connect-timeout", "0s", "zk-connect-timeout")]
-    #[case::zk_request_timeout("--zk-request-timeout", "0s", "zk-request-timeout")]
+    #[case::poll_interval("--poll-interval", "0s", "poll-interval must be greater than 0")]
+    #[case::zk_request_timeout(
+        "--zk-request-timeout",
+        "0s",
+        "zk-request-timeout must be greater than 0"
+    )]
     #[case::bond_discovery_lookback_games(
         "--bond-discovery-lookback-games",
         "0",
-        "bond-discovery-lookback-games"
+        "bond-discovery-lookback-games must be greater than 0"
     )]
-    #[case::bond_discovery_interval("--bond-discovery-interval", "0s", "bond-discovery-interval")]
-    #[case::anchor_update_retention("--anchor-update-retention", "0s", "anchor-update-retention")]
-    #[case::max_proof_duration("--max-proof-duration", "0s", "max-proof-duration")]
-    fn test_zero_value_rejected(#[case] flag: &str, #[case] value: &str, #[case] field: &str) {
+    #[case::bond_discovery_interval(
+        "--bond-discovery-interval",
+        "0s",
+        "bond-discovery-interval must be greater than 0"
+    )]
+    #[case::max_proof_duration(
+        "--max-proof-duration",
+        "0s",
+        "max-proof-duration must be greater than 0"
+    )]
+    fn test_zero_value_rejected(#[case] flag: &str, #[case] value: &str, #[case] expected: &str) {
         let all_args = [&LOCAL_SIGNER_ARGS[..], &[flag, value]].concat();
         let cli = cli_from_args(&all_args);
         let result = ChallengerConfig::from_cli(cli);
-        assert!(matches!(result, Err(ConfigError::OutOfRange { field: f, .. }) if f == field));
+        assert_eq!(result.unwrap_err().to_string(), expected);
     }
 
     #[test]
@@ -388,7 +253,7 @@ mod tests {
         let all_args = [&SIGNER_ARGS[..], &["--health.port", "0"]].concat();
         let cli = cli_from_args(&all_args);
         let result = ChallengerConfig::from_cli(cli);
-        assert!(matches!(result, Err(ConfigError::OutOfRange { field: "health.port", .. })));
+        assert_eq!(result.unwrap_err().to_string(), "health.port must be greater than 0");
     }
 
     #[test]
@@ -400,10 +265,7 @@ mod tests {
         .concat();
         let cli = cli_from_args(&all_args);
         let result = ChallengerConfig::from_cli(cli);
-        assert!(matches!(
-            result,
-            Err(ConfigError::OutOfRange { field: "anchor-state-registry-addr", .. })
-        ));
+        assert_eq!(result.unwrap_err().to_string(), "anchor-state-registry-addr must be non-zero");
     }
 
     #[rstest]
@@ -414,72 +276,13 @@ mod tests {
         let cli = cli_from_args(&all_args);
         let result = ChallengerConfig::from_cli(cli);
         if expect_error {
-            assert!(matches!(result, Err(ConfigError::Metrics(_))));
+            assert_eq!(
+                result.unwrap_err().to_string(),
+                "metrics.port must be greater than 0 when metrics are enabled"
+            );
         } else {
             assert!(result.is_ok());
         }
-    }
-
-    #[test]
-    fn test_log_config_from_args() {
-        use tracing::level_filters::LevelFilter;
-
-        let args = LogArgs {
-            level: 4,
-            stdout_quiet: false,
-            stdout_format: LogFormat::Json,
-            ..Default::default()
-        };
-        let config = LogConfig::from(args);
-        assert_eq!(config.global_level, LevelFilter::DEBUG);
-        assert!(config.stdout_logs.is_some());
-        assert!(config.file_logs.is_none());
-
-        let args = LogArgs {
-            level: 3,
-            stdout_quiet: true,
-            stdout_format: LogFormat::Full,
-            ..Default::default()
-        };
-        let config = LogConfig::from(args);
-        assert!(config.stdout_logs.is_none());
-    }
-
-    #[test]
-    fn test_metrics_config_from_args() {
-        let args = MetricsArgs {
-            enabled: true,
-            addr: "127.0.0.1".parse().unwrap(),
-            port: 9090,
-            ..Default::default()
-        };
-        let config = MetricsConfig::from(args);
-        assert!(config.enabled);
-        assert_eq!(config.port, 9090);
-    }
-
-    #[test]
-    fn test_url_without_host() {
-        let url = Url::parse("file:///some/path").unwrap();
-        let result = Validated::try_from(url);
-        assert!(matches!(result, Err(UrlValidationError)));
-    }
-
-    #[rstest]
-    #[case::invalid_url(
-        ConfigError::InvalidUrl { field: "l1-eth-rpc" },
-        "invalid l1-eth-rpc URL: missing host"
-    )]
-    #[case::out_of_range(
-        ConfigError::OutOfRange { field: "poll-interval", constraint: "greater than 0", value: "0" },
-        "poll-interval must be greater than 0, got 0"
-    )]
-    #[case::metrics(
-        ConfigError::Metrics("port must be non-zero"),
-        "invalid metrics config: port must be non-zero"
-    )]
-    fn test_config_error_display(#[case] error: ConfigError, #[case] expected: &str) {
-        assert_eq!(error.to_string(), expected);
     }
 
     #[test]
@@ -502,7 +305,7 @@ mod tests {
     fn test_signing_config_none_provided() {
         let cli = cli_from_args(&[]);
         let result = ChallengerConfig::from_cli(cli);
-        assert!(matches!(result, Err(ConfigError::Signer(_))));
+        assert_eq!(result.unwrap_err().to_string(), "invalid signing config");
     }
 
     #[test]
@@ -517,6 +320,8 @@ mod tests {
             "0x1234567890123456789012345678901234567890",
             "--anchor-state-registry-addr",
             "0x2234567890123456789012345678901234567890",
+            "--game-type",
+            "1",
             "--zk-rpc-url",
             "http://localhost:5000",
             "--private-key",
@@ -541,6 +346,8 @@ mod tests {
             "0x1234567890123456789012345678901234567890",
             "--anchor-state-registry-addr",
             "0x2234567890123456789012345678901234567890",
+            "--game-type",
+            "1",
             "--zk-rpc-url",
             "http://localhost:5000",
             "--signer-endpoint",
@@ -558,22 +365,7 @@ mod tests {
             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
         ]);
         let result = ChallengerConfig::from_cli(cli);
-        assert!(matches!(result, Err(ConfigError::InvalidUrl { field: "zk-rpc-url", .. })));
-    }
-
-    #[test]
-    fn test_zero_tee_request_timeout_rejected_when_tee_enabled() {
-        let all_args = [
-            &LOCAL_SIGNER_ARGS[..],
-            &["--tee-rpc-url", "http://localhost:9999", "--tee-request-timeout", "0s"],
-        ]
-        .concat();
-        let cli = cli_from_args(&all_args);
-        let result = ChallengerConfig::from_cli(cli);
-        assert!(matches!(
-            result,
-            Err(ConfigError::OutOfRange { field: "tee-request-timeout", .. })
-        ));
+        assert_eq!(result.unwrap_err().to_string(), "invalid zk-rpc-url URL: missing host");
     }
 
     #[test]
@@ -592,6 +384,7 @@ mod tests {
             ("--l2-eth-rpc", "http://localhost:9545"),
             ("--dispute-game-factory-addr", "0x1234567890123456789012345678901234567890"),
             ("--anchor-state-registry-addr", "0x2234567890123456789012345678901234567890"),
+            ("--game-type", "1"),
         ];
 
         let mut args = vec!["challenger"];
@@ -613,30 +406,28 @@ mod tests {
         let args = [&LOCAL_SIGNER_ARGS[..], &["--no-dispute", "--bond-claim-addresses", BOND_ADDR]]
             .concat();
         let result = ChallengerConfig::from_cli(cli_from_args(&args));
-        assert!(matches!(result, Err(ConfigError::ZkRpcUrlNotAllowedInNoDisputeMode)));
-    }
-
-    #[test]
-    fn test_no_dispute_with_tee_rpc_url_rejected() {
-        let args = [
-            &LOCAL_SIGNER_ARGS[..],
-            &["--no-dispute", "--bond-claim-addresses", BOND_ADDR, "--tee-rpc-url", "http://t:1"],
-        ]
-        .concat();
-        let result = ChallengerConfig::from_cli(cli_without_zk(&args));
-        assert!(matches!(result, Err(ConfigError::TeeRpcUrlNotAllowedInNoDisputeMode)));
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "--zk-rpc-url must not be set in --no-dispute mode"
+        );
     }
 
     #[test]
     fn test_no_dispute_without_bond_addresses_rejected() {
         let args = [&LOCAL_SIGNER_ARGS[..], &["--no-dispute"]].concat();
         let result = ChallengerConfig::from_cli(cli_without_zk(&args));
-        assert!(matches!(result, Err(ConfigError::MissingBondClaimAddressesInNoDisputeMode)));
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "--bond-claim-addresses is required in --no-dispute mode"
+        );
     }
 
     #[test]
     fn test_missing_zk_rpc_url_rejected_when_disputing() {
         let result = ChallengerConfig::from_cli(cli_without_zk(&LOCAL_SIGNER_ARGS));
-        assert!(matches!(result, Err(ConfigError::MissingZkRpcUrl)));
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "--zk-rpc-url is required unless --no-dispute is set"
+        );
     }
 }

@@ -33,7 +33,7 @@ mod r#type;
 pub use r#type::BatchType;
 
 mod reader;
-pub use reader::{BatchReader, DecompressionError};
+pub use reader::{BatchReader, BatchReaderError, DecompressionError};
 
 mod tx;
 pub use tx::BatchTransaction;
@@ -77,7 +77,8 @@ pub use single::SingleBatch;
 mod tx_data;
 pub use tx_data::{
     SpanBatchEip1559TransactionData, SpanBatchEip2930TransactionData,
-    SpanBatchEip7702TransactionData, SpanBatchLegacyTransactionData, SpanBatchTransactionData,
+    SpanBatchEip7702TransactionData, SpanBatchEip8130TransactionData,
+    SpanBatchLegacyTransactionData, SpanBatchTransactionData,
 };
 
 mod traits;

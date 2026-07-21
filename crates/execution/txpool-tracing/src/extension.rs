@@ -18,6 +18,8 @@ pub struct TxpoolConfig {
     pub tracing_enabled: bool,
     /// Emits `info`-level logs for transaction tracing when enabled.
     pub tracing_logs_enabled: bool,
+    /// Optional node role label attached to durable transaction events.
+    pub transaction_event_node_role: Option<String>,
     /// Optional Flashblocks configuration (includes state).
     pub flashblocks_config: Option<FlashblocksConfig>,
 }
@@ -43,6 +45,7 @@ impl BaseNodeExtension for TxPoolExtension {
 
         let tracing_enabled = config.tracing_enabled;
         let logs_enabled = config.tracing_logs_enabled;
+        let node_role = config.transaction_event_node_role;
         let flashblocks_config = config.flashblocks_config;
 
         // Start tracing subscription if enabled
@@ -60,7 +63,10 @@ impl BaseNodeExtension for TxPoolExtension {
             let fb_state: Arc<FlashblocksState> =
                 flashblocks_config.as_ref().map(|cfg| Arc::clone(&cfg.state)).unwrap_or_default();
 
-            tokio::spawn(tracex_subscription(canonical_stream, fb_state, pool, logs_enabled));
+            tokio::spawn(async move {
+                tracex_subscription(canonical_stream, fb_state, pool, logs_enabled, node_role)
+                    .await;
+            });
 
             Ok(())
         })

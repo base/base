@@ -2,7 +2,8 @@ use std::convert::TryFrom;
 
 use base_prover_service_protocol::{
     ProofRequest as ProtocolProofRequest, ProofRequestKind as ProtocolProofRequestKind,
-    ProofResult as ProtocolProofResult, TeeKind as ProtocolTeeKind, ZkVm as ProtocolZkVm,
+    ProofResult as ProtocolProofResult, TeeKind as ProtocolTeeKind, ZkBackend,
+    ZkVm as ProtocolZkVm,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -59,11 +60,7 @@ impl TryFrom<&str> for ProofStatus {
     }
 }
 
-/// Worker-owned job lifecycle status, distinct from the requester [`ProofStatus`].
-///
-/// The worker API (`getNextProof` / `heartbeat` / `submitProof`) drives this field
-/// on the same `proof_requests` row, while `status` continues to model the
-/// requester-facing proof lifecycle.
+/// Worker-owned job lifecycle status, distinct from requester [`ProofStatus`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "VARCHAR", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ProofJobStatus {
@@ -135,6 +132,11 @@ impl SessionStatus {
             Self::Failed => "FAILED",
         }
     }
+
+    /// Whether this status represents a terminal backend session.
+    pub const fn is_terminal(&self) -> bool {
+        matches!(self, Self::Completed | Self::Failed)
+    }
 }
 
 impl std::fmt::Display for SessionStatus {
@@ -196,12 +198,12 @@ impl TryFrom<&str> for SessionType {
 }
 
 /// Outcome of attempting to retry or fail a stuck proof request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum RetryOutcome {
     /// Request was reset to CREATED with incremented `retry_count`.
     Retried,
     /// Request was permanently marked FAILED (max retries exceeded).
-    PermanentlyFailed,
+    PermanentlyFailed(Box<ProofJob>),
     /// Request was no longer in PENDING state (already claimed or transitioned).
     Skipped,
 }
@@ -211,13 +213,12 @@ pub enum RetryOutcome {
 pub enum CreateProofRequestOutcome {
     /// A new proof request row was inserted.
     Created(Uuid),
-    /// An existing terminal `FAILED` row was reset to `CREATED` and a fresh
-    /// worker job was made claimable again.
+    /// An existing failed row was reset to `CREATED` and a fresh worker job
+    /// was made claimable again.
     Requeued(Uuid),
-    /// An existing non-terminal or `SUCCEEDED` row was returned unchanged for
-    /// idempotent replay.
+    /// An existing non-failed row was returned unchanged for idempotent replay.
     Replayed(Uuid),
-    /// An existing terminal `FAILED` row is at the retry cap; no requeue.
+    /// An existing failed row is at the retry cap; no requeue.
     RetryExhausted(Uuid),
 }
 
@@ -231,6 +232,17 @@ impl CreateProofRequestOutcome {
             | Self::RetryExhausted(id) => *id,
         }
     }
+}
+
+/// Outcome of deleting a completed proof request by session id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteProofRequestOutcome {
+    /// A terminal proof request was deleted.
+    Deleted,
+    /// No proof request exists for the session id.
+    NotFound,
+    /// The proof request exists but is not terminal.
+    NotCompleted(ProofStatus),
 }
 
 /// Errors returned while creating proof requests.
@@ -307,29 +319,32 @@ pub enum CreateProofRequestValidationError {
     },
 }
 
-/// Type of proof that determines success criteria
+/// Legacy SP1 proof-shape discriminator retained for receipt compatibility.
+///
+/// Backend routing uses [`ZkBackend`]; the persisted strings keep their
+/// historical `cluster` names for schema compatibility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "VARCHAR")]
 pub enum ProofType {
-    /// Compressed proof generated via the Succinct SP1 cluster.
+    /// Compressed SP1 proof.
     #[sqlx(rename = "op_succinct_sp1_cluster_compressed")]
     OpSuccinctSp1ClusterCompressed,
-    /// SNARK Groth16 proof generated via the Succinct SP1 cluster.
-    #[sqlx(rename = "op_succinct_sp1_cluster_snark_groth16")]
-    OpSuccinctSp1ClusterSnarkGroth16,
+    /// PLONK SNARK SP1 proof.
+    #[sqlx(rename = "op_succinct_sp1_cluster_snark_plonk")]
+    OpSuccinctSp1ClusterSnarkPlonk,
 }
 
 impl ProofType {
     /// Proto discriminant for `PROOF_TYPE_COMPRESSED`.
     pub const PROTO_COMPRESSED: i32 = 3;
-    /// Proto discriminant for `PROOF_TYPE_SNARK_GROTH16`.
-    pub const PROTO_SNARK_GROTH16: i32 = 4;
+    /// Proto discriminant for `PROOF_TYPE_SNARK_PLONK`.
+    pub const PROTO_SNARK_PLONK: i32 = 4;
 
     /// Returns the proto wire value for this proof type.
     pub const fn proto_i32(&self) -> i32 {
         match self {
             Self::OpSuccinctSp1ClusterCompressed => Self::PROTO_COMPRESSED,
-            Self::OpSuccinctSp1ClusterSnarkGroth16 => Self::PROTO_SNARK_GROTH16,
+            Self::OpSuccinctSp1ClusterSnarkPlonk => Self::PROTO_SNARK_PLONK,
         }
     }
 
@@ -337,7 +352,7 @@ impl ProofType {
     pub const fn as_str(&self) -> &'static str {
         match self {
             Self::OpSuccinctSp1ClusterCompressed => "op_succinct_sp1_cluster_compressed",
-            Self::OpSuccinctSp1ClusterSnarkGroth16 => "op_succinct_sp1_cluster_snark_groth16",
+            Self::OpSuccinctSp1ClusterSnarkPlonk => "op_succinct_sp1_cluster_snark_plonk",
         }
     }
 }
@@ -354,7 +369,7 @@ impl TryFrom<&str> for ProofType {
     fn try_from(s: &str) -> Result<Self, Self::Error> {
         match s {
             "op_succinct_sp1_cluster_compressed" => Ok(Self::OpSuccinctSp1ClusterCompressed),
-            "op_succinct_sp1_cluster_snark_groth16" => Ok(Self::OpSuccinctSp1ClusterSnarkGroth16),
+            "op_succinct_sp1_cluster_snark_plonk" => Ok(Self::OpSuccinctSp1ClusterSnarkPlonk),
             other => Err(format!("Unknown proof type: {other}")),
         }
     }
@@ -367,7 +382,7 @@ impl TryFrom<i32> for ProofType {
     fn try_from(value: i32) -> Result<Self, Self::Error> {
         match value {
             Self::PROTO_COMPRESSED => Ok(Self::OpSuccinctSp1ClusterCompressed),
-            Self::PROTO_SNARK_GROTH16 => Ok(Self::OpSuccinctSp1ClusterSnarkGroth16),
+            Self::PROTO_SNARK_PLONK => Ok(Self::OpSuccinctSp1ClusterSnarkPlonk),
             _ => Err(format!("Unknown proof type: {value}")),
         }
     }
@@ -380,9 +395,9 @@ pub enum ApiProofType {
     /// Compressed ZK proof.
     #[sqlx(rename = "compressed")]
     Compressed,
-    /// Groth16 SNARK proof.
-    #[sqlx(rename = "snark_groth16")]
-    SnarkGroth16,
+    /// PLONK SNARK proof.
+    #[sqlx(rename = "snark_plonk")]
+    SnarkPlonk,
     /// Trusted execution environment proof.
     #[sqlx(rename = "tee")]
     Tee,
@@ -393,7 +408,7 @@ impl ApiProofType {
     pub const fn as_str(&self) -> &'static str {
         match self {
             Self::Compressed => "compressed",
-            Self::SnarkGroth16 => "snark_groth16",
+            Self::SnarkPlonk => "snark_plonk",
             Self::Tee => "tee",
         }
     }
@@ -411,7 +426,7 @@ impl TryFrom<&str> for ApiProofType {
     fn try_from(s: &str) -> Result<Self, Self::Error> {
         match s {
             "compressed" => Ok(Self::Compressed),
-            "snark_groth16" => Ok(Self::SnarkGroth16),
+            "snark_plonk" => Ok(Self::SnarkPlonk),
             "tee" => Ok(Self::Tee),
             other => Err(format!("Unknown API proof type: {other}")),
         }
@@ -604,12 +619,67 @@ pub struct ProofJob {
     pub last_heartbeat_at: Option<DateTime<Utc>>,
     /// Error message when the job failed.
     pub error_message: Option<String>,
+    /// Stored protocol result payload once the job has completed.
+    pub result_payload: Option<serde_json::Value>,
     /// Timestamp when the job was created.
     pub created_at: DateTime<Utc>,
     /// Timestamp of the last update.
     pub updated_at: DateTime<Utc>,
     /// Timestamp when the job completed.
     pub completed_at: Option<DateTime<Utc>>,
+}
+
+impl ProofJob {
+    /// Reject a submitted result whose variant or capability discriminator
+    /// (`zk_vm`/`tee_kind`) does not match this claimed job, returning the
+    /// mismatch reason. Guards against a worker storing the wrong proof type.
+    pub fn validate_submitted_result(&self, result: &ProtocolProofResult) -> Result<(), String> {
+        match result {
+            ProtocolProofResult::Compressed(zk) => {
+                self.check_api_proof_type(ApiProofType::Compressed)?;
+                self.check_zk_vm(ZkVmKind::from(zk.zk_vm))
+            }
+            ProtocolProofResult::SnarkPlonk(snark) => {
+                self.check_api_proof_type(ApiProofType::SnarkPlonk)?;
+                self.check_zk_vm(ZkVmKind::from(snark.proof.zk_vm))
+            }
+            ProtocolProofResult::Tee(tee) => {
+                self.check_api_proof_type(ApiProofType::Tee)?;
+                self.check_tee_kind(TeeKind::from(tee.tee_kind))
+            }
+        }
+    }
+
+    fn check_api_proof_type(&self, expected: ApiProofType) -> Result<(), String> {
+        if self.api_proof_type == expected {
+            Ok(())
+        } else {
+            Err(format!(
+                "submitted {expected} result but claimed job proof type is {}",
+                self.api_proof_type
+            ))
+        }
+    }
+
+    fn check_zk_vm(&self, submitted: ZkVmKind) -> Result<(), String> {
+        match self.zk_vm {
+            Some(expected) if expected == submitted => Ok(()),
+            Some(expected) => {
+                Err(format!("submitted zk_vm {submitted} but claimed job zk_vm is {expected}"))
+            }
+            None => Err(format!("submitted zk_vm {submitted} but claimed job has no zk_vm")),
+        }
+    }
+
+    fn check_tee_kind(&self, submitted: TeeKind) -> Result<(), String> {
+        match self.tee_kind {
+            Some(expected) if expected == submitted => Ok(()),
+            Some(expected) => Err(format!(
+                "submitted tee_kind {submitted} but claimed job tee_kind is {expected}"
+            )),
+            None => Err(format!("submitted tee_kind {submitted} but claimed job has no tee_kind")),
+        }
+    }
 }
 
 /// Offset pagination parameters.
@@ -672,7 +742,7 @@ pub struct ProofSession {
 #[derive(Debug, Clone)]
 pub struct CreateProofRequest {
     /// Public protocol session identifier.
-    pub session_id: Option<String>,
+    pub session_id: String,
     /// Original protocol request payload.
     pub request_payload: ProtocolProofRequest,
     /// Protocol-level proof type requested by API callers.
@@ -681,6 +751,8 @@ pub struct CreateProofRequest {
     pub zk_vm: Option<ZkVmKind>,
     /// Protocol-level TEE discriminator for TEE proofs.
     pub tee_kind: Option<TeeKind>,
+    /// Protocol-level ZK proving backend for ZK proofs.
+    pub zk_backend: Option<ZkBackend>,
     /// Backend-specific proof type for current OP Succinct backends.
     pub proof_type: Option<ProofType>,
     /// Starting L2 block number.
@@ -689,7 +761,7 @@ pub struct CreateProofRequest {
     pub number_of_blocks_to_prove: u64,
     /// Optional sequence window.
     pub sequence_window: Option<u64>,
-    /// Ethereum address of the on-chain prover (required for SNARK Groth16 proofs).
+    /// Ethereum address of the on-chain prover (required for SNARK PLONK proofs).
     pub prover_address: Option<String>,
     /// Explicit L1 head hash for witness generation.
     pub l1_head: Option<String>,
@@ -710,6 +782,7 @@ impl CreateProofRequest {
             api_proof_type: fields.api_proof_type,
             zk_vm: fields.zk_vm,
             tee_kind: fields.tee_kind,
+            zk_backend: fields.zk_backend,
             proof_type: fields.proof_type,
             start_block_number: fields.start_block_number,
             number_of_blocks_to_prove: fields.number_of_blocks_to_prove,
@@ -723,13 +796,10 @@ impl CreateProofRequest {
     /// Validate that explicit DB fields match the protocol payload and supported backends.
     pub fn validate(&self) -> Result<(), CreateProofRequestValidationError> {
         let expected = DerivedProofRequestFields::from_protocol(&self.request_payload)?;
-        let session_id = canonical_session_id_opt(self.session_id.as_deref())?;
-        let payload_session_id =
-            canonical_session_id_opt(self.request_payload.session_id.as_deref())?;
+        let session_id = canonical_session_id(&self.session_id)?;
+        let payload_session_id = canonical_session_id(&self.request_payload.session_id)?;
 
-        if let (Some(session_id), Some(payload_session_id)) = (&session_id, &payload_session_id)
-            && session_id != payload_session_id
-        {
+        if session_id != payload_session_id {
             return Err(CreateProofRequestValidationError::SessionIdMismatch);
         }
         if self.api_proof_type != expected.api_proof_type {
@@ -742,6 +812,9 @@ impl CreateProofRequest {
         }
         if self.tee_kind != expected.tee_kind {
             return Err(CreateProofRequestValidationError::FieldMismatch { field: "tee_kind" });
+        }
+        if self.zk_backend != expected.zk_backend {
+            return Err(CreateProofRequestValidationError::FieldMismatch { field: "zk_backend" });
         }
         if self.proof_type != expected.proof_type {
             return Err(CreateProofRequestValidationError::FieldMismatch { field: "proof_type" });
@@ -788,6 +861,8 @@ pub struct DerivedProofRequestFields {
     pub zk_vm: Option<ZkVmKind>,
     /// Protocol-level TEE discriminator for TEE proofs.
     pub tee_kind: Option<TeeKind>,
+    /// Protocol-level ZK proving backend for ZK proofs.
+    pub zk_backend: Option<ZkBackend>,
     /// Backend-specific proof type for current OP Succinct backends.
     pub proof_type: Option<ProofType>,
     /// Starting L2 block number.
@@ -814,6 +889,7 @@ impl DerivedProofRequestFields {
                 api_proof_type: ApiProofType::Compressed,
                 zk_vm: Some(protocol_zk_vm(proof.zk_vm)),
                 tee_kind: None,
+                zk_backend: Some(proof.zk_backend),
                 proof_type: Some(ProofType::OpSuccinctSp1ClusterCompressed),
                 start_block_number: proof.start_block_number,
                 number_of_blocks_to_prove: proof.number_of_blocks_to_prove,
@@ -822,11 +898,12 @@ impl DerivedProofRequestFields {
                 l1_head: proof.l1_head.map(|hash| format!("{hash:#x}")),
                 intermediate_root_interval: proof.intermediate_root_interval,
             }),
-            ProtocolProofRequestKind::SnarkGroth16(request) => Ok(Self {
-                api_proof_type: ApiProofType::SnarkGroth16,
+            ProtocolProofRequestKind::SnarkPlonk(request) => Ok(Self {
+                api_proof_type: ApiProofType::SnarkPlonk,
                 zk_vm: Some(protocol_zk_vm(request.proof.zk_vm)),
                 tee_kind: None,
-                proof_type: Some(ProofType::OpSuccinctSp1ClusterSnarkGroth16),
+                zk_backend: Some(request.proof.zk_backend),
+                proof_type: Some(ProofType::OpSuccinctSp1ClusterSnarkPlonk),
                 start_block_number: request.proof.start_block_number,
                 number_of_blocks_to_prove: request.proof.number_of_blocks_to_prove,
                 sequence_window: request.proof.sequence_window,
@@ -838,6 +915,7 @@ impl DerivedProofRequestFields {
                 api_proof_type: ApiProofType::Tee,
                 zk_vm: None,
                 tee_kind: Some(protocol_tee_kind(request.tee_kind)),
+                zk_backend: None,
                 proof_type: None,
                 start_block_number: request.proof.claimed_l2_block_number,
                 number_of_blocks_to_prove: 1,
@@ -861,12 +939,6 @@ const fn protocol_tee_kind(tee_kind: ProtocolTeeKind) -> TeeKind {
     match tee_kind {
         ProtocolTeeKind::AwsNitro => TeeKind::AwsNitro,
     }
-}
-
-fn canonical_session_id_opt(
-    session_id: Option<&str>,
-) -> Result<Option<String>, CreateProofRequestValidationError> {
-    session_id.map(canonical_session_id).transpose()
 }
 
 /// Canonicalize a public proof request session id.
@@ -947,9 +1019,11 @@ pub struct ClaimProofJob {
     pub tee_kinds: Vec<TeeKind>,
     /// ZK virtual machines this worker can execute (matched for ZK proofs).
     pub zk_vms: Vec<ZkVmKind>,
+    /// ZK proving backends this worker can execute (matched for ZK proofs).
+    pub zk_backends: Vec<ZkBackend>,
     /// Lock duration in seconds. Callers must resolve the server default first.
     pub lock_duration_seconds: u32,
-    /// Reclaim budget: expired claims are only reclaimable while `attempt < max_attempts`.
+    /// Reclaim budget for expired claims.
     pub max_attempts: u32,
 }
 
@@ -969,15 +1043,15 @@ pub struct HeartbeatProofJob {
 /// Outcome of attempting to heartbeat a worker proof job.
 #[derive(Debug, Clone)]
 pub enum HeartbeatOutcome {
-    /// The heartbeat succeeded and the returned job has the updated lock expiry.
+    /// Heartbeat succeeded.
     Updated(ProofJob),
     /// No proof job exists for the supplied `session_id`.
     NotFound,
     /// The job exists but is not currently claimed.
     NotClaimed(ProofJob),
-    /// The supplied `worker_id` or `lock_id` no longer owns the job.
+    /// The supplied worker or lock no longer owns the job.
     StaleLock(ProofJob),
-    /// The supplied lock matched the job, but it had already expired.
+    /// The lock matched the job but had expired.
     Expired(ProofJob),
     /// The job is already terminal.
     Terminal(ProofJob),
@@ -1001,15 +1075,31 @@ pub struct CompleteClaimedProofJob {
 /// Outcome of attempting to complete a worker proof job.
 #[derive(Debug, Clone)]
 pub enum SubmitProofOutcome {
-    /// The submit succeeded and the returned job is terminal `SUCCEEDED`.
+    /// Submit succeeded and transitioned the job to terminal success.
     Completed(ProofJob),
+    /// Submit replayed an already completed result from the same worker/lock.
+    AlreadyCompleted(ProofJob),
+    /// The submitted result does not match the claimed job's proof type or
+    /// capability discriminator. The stored job is left unchanged.
+    ResultMismatch {
+        /// The claimed job whose proof type was violated.
+        job: ProofJob,
+        /// Human-readable description of the mismatch.
+        reason: String,
+    },
+    /// An idempotent retry from the owning worker/lock submitted a result that
+    /// differs from the one already stored. The stored result is kept.
+    ResultConflict {
+        /// The already-completed job whose stored result was retained.
+        job: ProofJob,
+    },
     /// No proof job exists for the supplied `session_id`.
     NotFound,
     /// The job exists but is not currently claimed.
     NotClaimed(ProofJob),
-    /// The supplied `worker_id` or `lock_id` no longer owns the job.
+    /// The supplied worker or lock no longer owns the job.
     StaleLock(ProofJob),
-    /// The supplied lock matched the job, but it had already expired.
+    /// The lock matched the job but had expired.
     Expired(ProofJob),
     /// The job is already terminal.
     Terminal(ProofJob),
@@ -1017,26 +1107,160 @@ pub enum SubmitProofOutcome {
     Unknown(ProofJob),
 }
 
+/// A proof job's current lock columns, as read under a row lock, against which a
+/// worker write is authorized.
+///
+/// Grouping the job-side values keeps them from being confused with the
+/// worker-supplied fencing token at `ClaimAuth::classify` call sites.
+#[derive(Debug, Clone, Copy)]
+pub struct JobLockState<'a> {
+    /// Current lifecycle status of the job.
+    pub status: ProofJobStatus,
+    /// Active lock identifier, set while the job is claimed.
+    pub lock_id: Option<Uuid>,
+    /// Worker that currently holds the lock, if any.
+    pub worker_id: Option<&'a str>,
+    /// When the active lock expires, if any.
+    pub lock_expires_at: Option<DateTime<Utc>>,
+}
+
+/// Parameters for an external worker recording a backend session id against a
+/// claimed job, so a restart or reclaim resumes the in-flight backend job.
+#[derive(Debug, Clone)]
+pub struct WorkerSessionUpsert {
+    /// Public proof session identifier.
+    pub session_id: String,
+    /// Current worker fencing token.
+    pub lock_id: Uuid,
+    /// Worker identifier that owns the claim.
+    pub worker_id: String,
+    /// Backend session type being recorded.
+    pub session_type: SessionType,
+    /// Backend-issued session identifier to persist.
+    pub backend_session_id: String,
+    /// Backend session lifecycle state to persist.
+    pub status: SessionStatus,
+    /// Failure reason to persist, typically set alongside a `Failed` status.
+    pub error_message: Option<String>,
+}
+
+/// Outcome of attempting to record a backend session for a worker job.
+#[derive(Debug, Clone)]
+pub enum RecordSessionOutcome {
+    /// The session was inserted or updated and the active row is returned.
+    Recorded(ProofSession),
+    /// A row for the requested backend session already reached a terminal state.
+    TerminalBackendSession(ProofSession),
+    /// No proof job exists for the supplied `session_id`.
+    NotFound,
+    /// The job exists but is not currently claimed.
+    NotClaimed,
+    /// The supplied `worker_id` or `lock_id` no longer owns the job.
+    StaleLock,
+    /// The supplied lock matched the job, but it had already expired.
+    Expired,
+    /// The job is already terminal.
+    Terminal,
+    /// The requested session status is terminal and must be coordinated with job completion.
+    TerminalSessionStatus,
+}
+
+/// Result of checking a worker's fencing token against a claimed job's lock.
+///
+/// Shared by `heartbeat_proof_job` and `record_worker_proof_session` so both
+/// authorize worker writes against identical lock rules.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClaimAuth {
+    /// The requesting worker holds the active lock; the write may proceed.
+    Authorized,
+    /// The job has already reached a terminal state.
+    Terminal,
+    /// The job is not currently claimed.
+    NotClaimed,
+    /// The lock is held by another worker or has been rotated.
+    StaleLock,
+    /// The lock has expired.
+    Expired,
+}
+
+impl ClaimAuth {
+    /// Classify a worker claim from a job's current lock columns (`job`) against
+    /// the fencing token (`req_lock_id`, `req_worker_id`) the worker presented.
+    ///
+    /// `now` is supplied by the caller so the expiry check stays pure and
+    /// deterministically testable.
+    pub fn classify(
+        job: JobLockState<'_>,
+        req_lock_id: Uuid,
+        req_worker_id: &str,
+        now: DateTime<Utc>,
+    ) -> Self {
+        if matches!(job.status, ProofJobStatus::Succeeded | ProofJobStatus::Failed) {
+            return Self::Terminal;
+        }
+        if job.status != ProofJobStatus::Claimed {
+            return Self::NotClaimed;
+        }
+        if job.lock_id != Some(req_lock_id) || job.worker_id != Some(req_worker_id) {
+            return Self::StaleLock;
+        }
+        if job.lock_expires_at.is_none_or(|expires_at| expires_at <= now) {
+            return Self::Expired;
+        }
+        Self::Authorized
+    }
+}
+
 /// Parameters for terminally failing expired worker jobs that exhausted attempts.
 #[derive(Debug, Clone)]
-pub struct FailExpiredProofJobs {
+pub struct FailExpiredProofJobs<'a> {
     /// Jobs with `attempt >= max_attempts` are failed once their lock has expired.
     pub max_attempts: u32,
     /// Maximum number of expired jobs to fail in this batch.
     pub batch_size: u32,
     /// Error message stored on newly failed jobs.
-    pub error_message: String,
+    pub error_message: &'a str,
 }
 
 #[cfg(test)]
 mod tests {
-    use base_prover_service_protocol::{ZkProofRequest, ZkVm};
+    use base_prover_service_protocol::{
+        SnarkPlonkProofResult, ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
+    };
 
     use super::*;
 
-    fn compressed_protocol_request(session_id: Option<String>) -> ProtocolProofRequest {
+    fn proof_job_with(
+        api_proof_type: ApiProofType,
+        zk_vm: Option<ZkVmKind>,
+        tee_kind: Option<TeeKind>,
+    ) -> ProofJob {
+        let now = Utc::now();
+        ProofJob {
+            id: Uuid::new_v4(),
+            session_id: "session-1".to_owned(),
+            request_payload: serde_json::Value::Null,
+            api_proof_type,
+            zk_vm,
+            tee_kind,
+            job_status: ProofJobStatus::Claimed,
+            attempt: 1,
+            worker_id: Some("worker-1".to_owned()),
+            lock_id: Some(Uuid::new_v4()),
+            lock_expires_at: Some(now),
+            claimed_at: Some(now),
+            last_heartbeat_at: Some(now),
+            error_message: None,
+            result_payload: None,
+            created_at: now,
+            updated_at: now,
+            completed_at: None,
+        }
+    }
+
+    fn compressed_protocol_request(session_id: impl Into<String>) -> ProtocolProofRequest {
         ProtocolProofRequest {
-            session_id,
+            session_id: session_id.into(),
             request: ProtocolProofRequestKind::Compressed(ZkProofRequest {
                 start_block_number: 100,
                 number_of_blocks_to_prove: 5,
@@ -1044,6 +1268,7 @@ mod tests {
                 l1_head: None,
                 intermediate_root_interval: None,
                 zk_vm: ZkVm::Sp1,
+                zk_backend: ZkBackend::Cluster,
             }),
         }
     }
@@ -1051,7 +1276,7 @@ mod tests {
     #[test]
     fn test_proof_type_try_from_proto() {
         assert_eq!(ProofType::try_from(3).unwrap(), ProofType::OpSuccinctSp1ClusterCompressed);
-        assert_eq!(ProofType::try_from(4).unwrap(), ProofType::OpSuccinctSp1ClusterSnarkGroth16);
+        assert_eq!(ProofType::try_from(4).unwrap(), ProofType::OpSuccinctSp1ClusterSnarkPlonk);
 
         assert!(ProofType::try_from(0).is_err());
         assert!(ProofType::try_from(1).is_err());
@@ -1061,13 +1286,13 @@ mod tests {
 
     #[test]
     fn validate_rejects_empty_session_ids() {
-        let mut req = CreateProofRequest::new(compressed_protocol_request(None)).unwrap();
-        req.session_id = Some(String::new());
+        let mut req = CreateProofRequest::new(compressed_protocol_request("session-1")).unwrap();
+        req.session_id = String::new();
 
         assert_eq!(req.validate(), Err(CreateProofRequestValidationError::EmptySessionId));
 
-        let mut req = CreateProofRequest::new(compressed_protocol_request(None)).unwrap();
-        req.request_payload.session_id = Some(String::new());
+        let mut req = CreateProofRequest::new(compressed_protocol_request("session-1")).unwrap();
+        req.request_payload.session_id = String::new();
 
         assert_eq!(req.validate(), Err(CreateProofRequestValidationError::EmptySessionId));
     }
@@ -1075,14 +1300,126 @@ mod tests {
     #[test]
     fn validate_compares_canonical_session_ids_when_both_are_present() {
         let id = Uuid::new_v4();
-        let mut req =
-            CreateProofRequest::new(compressed_protocol_request(Some(id.to_string()))).unwrap();
-        req.session_id = Some(id.to_string().to_uppercase());
+        let mut req = CreateProofRequest::new(compressed_protocol_request(id.to_string())).unwrap();
+        req.session_id = id.to_string().to_uppercase();
 
         assert_eq!(req.validate(), Ok(()));
 
-        req.session_id = Some("other-session".to_owned());
+        req.session_id = "other-session".to_owned();
 
         assert_eq!(req.validate(), Err(CreateProofRequestValidationError::SessionIdMismatch));
+    }
+
+    #[test]
+    fn validate_submitted_result_accepts_matching_compressed() {
+        let job = proof_job_with(ApiProofType::Compressed, Some(ZkVmKind::Sp1), None);
+        let result = ProtocolProofResult::Compressed(ZkProofResult {
+            zk_vm: ZkVm::Sp1,
+            proof: vec![0x01].into(),
+            execution_stats: None,
+        });
+
+        assert_eq!(job.validate_submitted_result(&result), Ok(()));
+    }
+
+    #[test]
+    fn validate_submitted_result_rejects_wrong_variant() {
+        let job = proof_job_with(ApiProofType::Tee, None, Some(TeeKind::AwsNitro));
+        let result = ProtocolProofResult::Compressed(ZkProofResult {
+            zk_vm: ZkVm::Sp1,
+            proof: vec![0x01].into(),
+            execution_stats: None,
+        });
+
+        assert!(job.validate_submitted_result(&result).is_err());
+    }
+
+    #[test]
+    fn validate_submitted_result_rejects_snark_for_compressed_job() {
+        let job = proof_job_with(ApiProofType::Compressed, Some(ZkVmKind::Sp1), None);
+        let result = ProtocolProofResult::SnarkPlonk(SnarkPlonkProofResult {
+            proof: ZkProofResult {
+                zk_vm: ZkVm::Sp1,
+                proof: vec![0x01].into(),
+                execution_stats: None,
+            },
+        });
+
+        assert!(job.validate_submitted_result(&result).is_err());
+    }
+
+    #[test]
+    fn validate_submitted_result_rejects_missing_zk_vm_capability() {
+        let job = proof_job_with(ApiProofType::Compressed, None, None);
+        let result = ProtocolProofResult::Compressed(ZkProofResult {
+            zk_vm: ZkVm::Sp1,
+            proof: vec![0x01].into(),
+            execution_stats: None,
+        });
+
+        assert!(job.validate_submitted_result(&result).is_err());
+    }
+
+    #[test]
+    fn claim_auth_classify_covers_every_branch() {
+        let now = Utc::now();
+        let lock = Uuid::new_v4();
+        let worker = "worker-1";
+        let unexpired = Some(now + chrono::Duration::seconds(30));
+
+        let claimed = |lock_id, worker_id, lock_expires_at| JobLockState {
+            status: ProofJobStatus::Claimed,
+            lock_id,
+            worker_id,
+            lock_expires_at,
+        };
+
+        let authorized =
+            ClaimAuth::classify(claimed(Some(lock), Some(worker), unexpired), lock, worker, now);
+        assert_eq!(authorized, ClaimAuth::Authorized);
+
+        for status in [ProofJobStatus::Succeeded, ProofJobStatus::Failed] {
+            let job = JobLockState {
+                status,
+                lock_id: Some(lock),
+                worker_id: Some(worker),
+                lock_expires_at: unexpired,
+            };
+            assert_eq!(ClaimAuth::classify(job, lock, worker, now), ClaimAuth::Terminal);
+        }
+
+        let pending = JobLockState {
+            status: ProofJobStatus::Pending,
+            lock_id: Some(lock),
+            worker_id: Some(worker),
+            lock_expires_at: unexpired,
+        };
+        assert_eq!(ClaimAuth::classify(pending, lock, worker, now), ClaimAuth::NotClaimed);
+
+        let wrong_lock = ClaimAuth::classify(
+            claimed(Some(Uuid::new_v4()), Some(worker), unexpired),
+            lock,
+            worker,
+            now,
+        );
+        assert_eq!(wrong_lock, ClaimAuth::StaleLock);
+
+        let wrong_worker = ClaimAuth::classify(
+            claimed(Some(lock), Some("worker-2"), unexpired),
+            lock,
+            worker,
+            now,
+        );
+        assert_eq!(wrong_worker, ClaimAuth::StaleLock);
+
+        // Expiry is evaluated against the supplied `now`, so the boundary is
+        // deterministic: an `expires_at` equal to `now` counts as expired.
+        let expired =
+            ClaimAuth::classify(claimed(Some(lock), Some(worker), Some(now)), lock, worker, now);
+        assert_eq!(expired, ClaimAuth::Expired);
+
+        let missing_expiry =
+            ClaimAuth::classify(claimed(Some(lock), Some(worker), None), lock, worker, now);
+        assert_eq!(missing_expiry, ClaimAuth::Expired);
     }
 }

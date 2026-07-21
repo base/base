@@ -14,7 +14,7 @@ use alloy_sol_types::{SolCall, SolValue};
 use base_common_network::Base;
 use base_common_precompiles::{
     ActivationRegistryStorage, B20FactoryStorage, B20PausableFeature, B20Variant,
-    IActivationRegistry, IB20, IB20Factory,
+    IActivationRegistry, IB20, IB20Factory, IB20Stablecoin,
 };
 use base_common_rpc_types::{BaseTransactionReceipt, BaseTransactionRequest};
 use eyre::{ContextCompat, Result, WrapErr, ensure};
@@ -23,8 +23,8 @@ use tokio::time::{sleep, timeout};
 /// Creation settings used by the system test B-20 factory client.
 #[derive(Debug, Clone)]
 pub struct B20CreateConfig {
-    /// ABI-level creation params sent to `IB20Factory.createB20`.
-    pub create: IB20Factory::B20AssetCreateParams,
+    /// ABI-encoded creation params sent to `IB20Factory.createB20`.
+    pub encoded_params: Bytes,
     /// Initial supply to mint during the factory init-call window.
     pub initial_supply: U256,
     /// Account receiving the initial supply.
@@ -110,13 +110,41 @@ impl<'a> B20PrecompileClient<'a> {
         initial_supply_recipient: Address,
     ) -> B20CreateConfig {
         B20CreateConfig {
-            create: IB20Factory::B20AssetCreateParams {
+            encoded_params: IB20Factory::B20AssetCreateParams {
                 version: B20Variant::Asset.supported_version(),
                 name: name.to_string(),
                 symbol: symbol.to_string(),
                 initialAdmin: initial_admin,
                 decimals: 6,
-            },
+            }
+            .abi_encode()
+            .into(),
+            initial_supply,
+            initial_supply_recipient,
+            supply_cap: U256::MAX,
+            contract_uri: String::new(),
+        }
+    }
+
+    /// Builds the required B-20 stablecoin params for factory creation.
+    pub fn stablecoin_params(
+        name: &str,
+        symbol: &str,
+        initial_admin: Address,
+        initial_supply: U256,
+        initial_supply_recipient: Address,
+        currency: &str,
+    ) -> B20CreateConfig {
+        B20CreateConfig {
+            encoded_params: IB20Factory::B20StablecoinCreateParams {
+                version: B20Variant::Stablecoin.supported_version(),
+                name: name.to_string(),
+                symbol: symbol.to_string(),
+                initialAdmin: initial_admin,
+                currency: currency.to_string(),
+            }
+            .abi_encode()
+            .into(),
             initial_supply,
             initial_supply_recipient,
             supply_cap: U256::MAX,
@@ -131,6 +159,17 @@ impl<'a> B20PrecompileClient<'a> {
         params: B20CreateConfig,
         salt: B256,
     ) -> Result<Address> {
+        let (token, _) = self.create_token_with_receipt(variant, params, salt).await?;
+        Ok(token)
+    }
+
+    /// Creates a B-20 token through the factory and returns the token address plus receipt.
+    pub async fn create_token_with_receipt(
+        &self,
+        variant: B20Variant,
+        params: B20CreateConfig,
+        salt: B256,
+    ) -> Result<(Address, BaseTransactionReceipt)> {
         let token = self.predict_token_address(variant, salt);
         let mut init_calls = Vec::new();
         if params.initial_supply > U256::ZERO {
@@ -156,11 +195,12 @@ impl<'a> B20PrecompileClient<'a> {
         let call = IB20Factory::createB20Call {
             variant: variant.abi(),
             salt,
-            params: params.create.abi_encode().into(),
+            params: params.encoded_params,
             initCalls: init_calls,
         };
-        self.send_call(B20FactoryStorage::ADDRESS, call, "create B-20 token").await?;
-        Ok(token)
+        let receipt =
+            self.send_call_receipt(B20FactoryStorage::ADDRESS, call, "create B-20 token").await?;
+        Ok((token, receipt))
     }
 
     /// Activates an activation-registry feature.
@@ -366,6 +406,13 @@ impl<'a> B20PrecompileClient<'a> {
             .wrap_err("Failed to decode contractURI")
     }
 
+    /// Reads the stablecoin currency code.
+    pub async fn currency(&self, token: Address) -> Result<String> {
+        let output = self.call(token, IB20Stablecoin::currencyCall {}).await?;
+        IB20Stablecoin::currencyCall::abi_decode_returns(output.as_ref())
+            .wrap_err("Failed to decode currency")
+    }
+
     /// Updates the contract URI.
     pub async fn update_contract_uri(&self, token: Address, new_uri: &str) -> Result<()> {
         self.send_call(
@@ -409,6 +456,15 @@ impl<'a> B20PrecompileClient<'a> {
             .wrap_err("Failed to decode isB20")
     }
 
+    /// Returns true if `token` has been initialized by the B-20 factory.
+    pub async fn is_b20_initialized(&self, token: Address) -> Result<bool> {
+        let output = self
+            .call(B20FactoryStorage::ADDRESS, IB20Factory::isB20InitializedCall { token })
+            .await?;
+        IB20Factory::isB20InitializedCall::abi_decode_returns(output.as_ref())
+            .wrap_err("Failed to decode isB20Initialized")
+    }
+
     /// Calls `getB20Address` on the factory precompile via RPC.
     pub async fn predict_token_address_rpc(
         &self,
@@ -432,6 +488,19 @@ impl<'a> B20PrecompileClient<'a> {
         C: SolCall,
     {
         Ok(self.send_and_wait(to, Bytes::from(call.abi_encode()), label).await?.status())
+    }
+
+    /// Sends a transaction and returns the receipt without requiring success.
+    pub async fn send_call_unchecked_receipt<C>(
+        &self,
+        to: Address,
+        call: C,
+        label: &'static str,
+    ) -> Result<BaseTransactionReceipt>
+    where
+        C: SolCall,
+    {
+        self.send_and_wait(to, Bytes::from(call.abi_encode()), label).await
     }
 
     /// Executes an `eth_call` against `to`.
@@ -482,7 +551,7 @@ impl<'a> B20PrecompileClient<'a> {
         input: Bytes,
         label: &'static str,
     ) -> Result<BaseTransactionReceipt> {
-        let nonce = self.provider.get_transaction_count(self.signer.address()).await?;
+        let nonce = self.provider.get_transaction_count(self.signer.address()).pending().await?;
         let (raw_tx, expected_tx_hash) = self.create_signed_tx(to, nonce, input).wrap_err(label)?;
 
         let pending_tx = self

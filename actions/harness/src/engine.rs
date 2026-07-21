@@ -24,7 +24,6 @@ use async_trait::async_trait;
 use base_common_consensus::{BaseBlock, BasePrimitives, BaseReceipt};
 use base_common_genesis::RollupConfig;
 use base_common_network::{Base, BaseEngineApi};
-use base_common_rpc_types::Transaction as BaseTransaction;
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadEnvelopeV3,
     BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5, BaseExecutionPayloadV4,
@@ -71,6 +70,9 @@ pub type TestBlockchainProvider = BlockchainProvider<TestNodeTypes>;
 
 /// Type alias for the noop pool used by the engine client.
 pub type TestPool = NoopTransactionPool<BasePooledTransaction>;
+
+/// Type alias for Base L2 RPC blocks returned by the action engine.
+type ActionL2RpcBlock = <Base as Network>::BlockResponse;
 
 /// A payload built in-process during sequencer mode, waiting to be sealed or inserted.
 #[derive(Debug, Clone)]
@@ -130,7 +132,7 @@ pub struct ActionEngineClient {
 }
 
 impl ActionEngineClient {
-    /// Build a test genesis whose hardfork schedule and chain ID match `rollup_config`.
+    /// Build a test genesis whose upgrade schedule and chain ID match `rollup_config`.
     ///
     /// Starts from [`build_test_genesis`] (pre-funded test accounts, all forks through
     /// Jovian at timestamp 0) and overrides each fork timestamp and the chain ID from the
@@ -148,7 +150,7 @@ impl ActionEngineClient {
             GenesisAccount::default().with_balance(test_balance),
         );
 
-        let hf = &rollup_config.hardforks;
+        let hf = &rollup_config.upgrades;
         // Helper: set or clear a JSON extra-field that BaseChainSpec::from_genesis reads.
         macro_rules! set_ts {
             ($key:expr, $val:expr) => {
@@ -178,6 +180,13 @@ impl ActionEngineClient {
                 "azul activation timestamp ({azul}) must be <= beryl activation timestamp ({beryl})",
             );
         }
+        if let Some(cobalt) = hf.base.cobalt {
+            let beryl = hf.base.beryl.expect("cobalt requires beryl to be configured");
+            assert!(
+                beryl <= cobalt,
+                "beryl activation timestamp ({beryl}) must be <= cobalt activation timestamp ({cobalt})",
+            );
+        }
 
         // Base Azul requires Osaka (the EL counterpart).
         genesis.config.osaka_time = hf.base.azul;
@@ -187,6 +196,9 @@ impl ActionEngineClient {
         }
         if let Some(ts) = hf.base.beryl {
             base.insert("beryl".to_string(), serde_json::json!(ts));
+        }
+        if let Some(ts) = hf.base.cobalt {
+            base.insert("cobalt".to_string(), serde_json::json!(ts));
         }
         if base.is_empty() {
             genesis.config.extra_fields.remove("base");
@@ -224,7 +236,7 @@ impl ActionEngineClient {
         block_registry: SharedBlockHashRegistry,
         l1_chain: SharedL1Chain,
     ) -> Self {
-        // Build a genesis whose chain ID and hardfork schedule matches the rollup config.
+        // Build a genesis whose chain ID and upgrade schedule matches the rollup config.
         // build_test_genesis() provides the genesis accounts and sets all forks through
         // Jovian at timestamp 0; we override per-fork times and the chain ID here.
         let chain_spec =
@@ -508,6 +520,7 @@ impl ActionEngineClient {
             // The spec notes: "as long as MinBaseFee is not explicitly set, the
             // default value (0) will be systematically applied."
             min_base_fee: Some(0),
+            timestamp_millis_part: None,
         };
 
         let built = Self::build_payload(inner, payload.parent_hash, attrs)?;
@@ -585,11 +598,11 @@ impl ActionEngineClient {
         }
     }
 
-    fn header_to_l2_rpc_block(header: &Header, block_hash: B256) -> Block<BaseTransaction> {
+    fn header_to_l2_rpc_block(header: &Header, block_hash: B256) -> ActionL2RpcBlock {
         let sealed = Sealed::new_unchecked(header.clone(), block_hash);
         let rpc_header = alloy_rpc_types_eth::Header::from_sealed(sealed);
         Block {
-            header: rpc_header,
+            header: rpc_header.into(),
             uncles: vec![],
             transactions: BlockTransactions::Hashes(vec![]),
             withdrawals: None,
@@ -698,7 +711,7 @@ impl EngineClient for ActionEngineClient {
     async fn l2_block_by_label(
         &self,
         numtag: BlockNumberOrTag,
-    ) -> Result<Option<Block<BaseTransaction>>, EngineClientError> {
+    ) -> Result<Option<ActionL2RpcBlock>, EngineClientError> {
         let guard = self.inner.lock().expect("action engine inner lock poisoned");
         let block = match numtag {
             BlockNumberOrTag::Number(n) => guard

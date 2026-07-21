@@ -35,6 +35,7 @@ reth-basic-payload-builder.workspace = true
 reth-tasks = { workspace = true, features = ["rayon"] }
 
 # op-reth
+base-protocol.workspace = true
 base-common-evm.workspace = true
 base-execution-evm.workspace = true
 base-execution-trie.workspace = true
@@ -67,11 +68,15 @@ serde.workspace = true
 tokio.workspace = true
 futures.workspace = true
 async-trait.workspace = true
+opentelemetry.workspace = true
 
 # rpc
+http.workspace = true
+tower.workspace = true
 jsonrpsee = { workspace = true, features = ["macros", "server"] }
 jsonrpsee-core.workspace = true
 jsonrpsee-types.workspace = true
+opentelemetry-http.workspace = true
 
 # misc
 eyre.workspace = true
@@ -94,6 +99,7 @@ client = [
 	"reth-rpc-eth-api/client",
 ]
 metrics = [
+	"base-common-evm/metrics",
 	"base-execution-trie/metrics",
 	"base-metrics/metrics",
 	"dep:metrics",

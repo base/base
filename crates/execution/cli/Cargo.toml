@@ -39,37 +39,50 @@ base-node-core.workspace = true
 base-txpool-rpc.workspace = true
 base-flashblocks.workspace = true
 base-node-runner.workspace = true
+base-observability-events.workspace = true
 base-common-chains.workspace = true
 base-execution-evm.workspace = true
 base-tx-forwarding.workspace = true
 base-txpool-tracing.workspace = true
 base-flashblocks-node.workspace = true
 base-execution-trie.workspace = true
+base-execution-eip8130-rpc-node.workspace = true
 base-bundle-extension.workspace = true
 base-proofs-extension.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-consensus.workspace = true
+base-upgrade-signal = { workspace = true, features = ["metrics"] }
 
 # misc
-futures.workspace = true
-clap = { workspace = true, features = ["derive", "env"] }
-
+tar.workspace = true
+zstd.workspace = true
 eyre.workspace = true
+humantime.workspace = true
 url.workspace = true
-tokio.workspace = true
 backon.workspace = true
+futures.workspace = true
 tracing.workspace = true
+serde_json.workspace = true
+jsonrpsee = { workspace = true, features = ["server"] }
+reqwest = { workspace = true, features = ["json", "stream"] }
 alloy-eips.workspace = true
+alloy-provider.workspace = true
 secp256k1.workspace = true
 tokio-stream.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
+tokio = { workspace = true, features = ["macros", "time"] }
 
 # reth test-vectors
 proptest = { workspace = true, optional = true }
 base-common-consensus = { workspace = true, features = ["reth"] }
 
 [dev-dependencies]
+alloy-primitives.workspace = true
+base-common-genesis.workspace = true
 rstest.workspace = true
 tempfile.workspace = true
+axum = { workspace = true, features = ["tokio", "http1"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [build-dependencies]
 base-execution-chainspec = { workspace = true, features = ["std"] }
@@ -108,4 +121,5 @@ serde = [
 	"base-execution-chainspec/serde",
 	"reth-network/serde",
 	"secp256k1/serde",
+	"url/serde",
 ]

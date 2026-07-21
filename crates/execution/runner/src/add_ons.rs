@@ -8,7 +8,7 @@ use base_execution_rpc::{
     config::{BaseEthConfigApiServer, BaseEthConfigHandler},
     eth::BaseEthApiBuilder,
     miner::{BaseMinerExtApi, MinerApiExtServer},
-    witness::BaseDebugWitnessApi,
+    witness::{BaseDebugWitnessApi, DebugExecutionWitnessApiServer},
 };
 use base_execution_txpool::BasePooledTx;
 use base_node_core::{BaseEngineApiBuilder, BaseNodeTypes, BasePayloadValidatorBuilder};
@@ -23,7 +23,7 @@ use reth_node_builder::{
     },
 };
 use reth_primitives_traits::header::HeaderMut;
-use reth_rpc_api::{DebugApiServer, DebugExecutionWitnessApiServer};
+use reth_rpc_api::DebugApiServer;
 use reth_rpc_server_types::RethRpcModule;
 use reth_tracing::tracing::debug;
 use reth_transaction_pool::TransactionPool;

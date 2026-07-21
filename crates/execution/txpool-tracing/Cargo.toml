@@ -15,6 +15,7 @@ workspace = true
 # workspace
 base-flashblocks.workspace = true
 base-node-runner.workspace = true
+base-observability-events.workspace = true
 
 # reth
 reth-tracing.workspace = true
@@ -38,6 +39,7 @@ base-metrics.workspace = true
 metrics = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["std"] }
 derive_more = { workspace = true, features = ["display"] }
+serde_json.workspace = true
 
 [dev-dependencies]
 # workspace

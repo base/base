@@ -9,7 +9,7 @@
 mod common;
 
 use alloy_primitives::{Address, B256, U256};
-use alloy_provider::RootProvider;
+use alloy_provider::{Provider, RootProvider};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolCall;
 use base_common_network::Base;
@@ -22,7 +22,7 @@ use eyre::{Result, WrapErr};
 const INITIAL_SUPPLY: u64 = 1_000_000;
 const TRANSFER_AMOUNT: u64 = 100_000;
 
-// Salts must not overlap with those used in b20_precompile.rs (0x10–0x18, 0x42).
+// Salts must not overlap with those used in b20_precompile.rs (0x10-0x1a, 0x42).
 const SALT_ALLOWLIST: B256 = B256::repeat_byte(0x50);
 const SALT_BLOCKLIST: B256 = B256::repeat_byte(0x51);
 const SALT_ALWAYS_BLOCK: B256 = B256::repeat_byte(0x52);
@@ -181,6 +181,9 @@ async fn test_allowlist_gates_transfer() -> Result<()> {
             "updateAllowlist add non-member",
         )
         .await?;
+
+    let current_block = provider.get_block_number().await?;
+    common::wait_for_block(&provider, current_block + 1).await?;
 
     // Non-member is now authorized.
     assert!(

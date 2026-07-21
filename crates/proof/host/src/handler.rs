@@ -22,7 +22,7 @@ use base_proof_preimage::{PreimageKey, PreimageKeyType};
 use base_protocol::{BlockInfo, OutputRoot};
 use futures::FutureExt;
 use tokio::sync::Semaphore;
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 use crate::{
     HostConfig, HostError, HostProviders, L1PreimageProvider, Metrics, Result, SharedKeyValueStore,
@@ -375,7 +375,7 @@ impl PayloadWitnessPrefetcher {
         {
             Ok(response) => response,
             Err(err) => {
-                warn!(
+                error!(
                     target: HOST_SERVER_TARGET,
                     block_number,
                     ?parent_block_hash,
@@ -1154,8 +1154,7 @@ async fn handle_hint_inner(
 
             let hash: B256 = hint.data.as_ref().try_into()?;
 
-            warn!(node_hash = %hash, "L2StateNode hint sent");
-            warn!("debug_executePayload failed to return a complete witness");
+            error!(node_hash = %hash, "debug_executePayload failed to return a complete witness");
 
             let preimage: Bytes = providers.l2.client().request("debug_dbGet", &[hash]).await?;
             let actual_hash = keccak256(preimage.as_ref());
@@ -1267,7 +1266,7 @@ async fn handle_hint_inner(
             {
                 Ok(response) => response,
                 Err(e) => {
-                    warn!(error = %e, "debug_executePayload failed");
+                    error!(error = %e, "debug_executePayload failed");
                     return Ok(());
                 }
             };
@@ -1321,6 +1320,7 @@ mod tests {
             prover: ProverConfig {
                 l1_eth_url: "http://127.0.0.1:1".to_string(),
                 l2_eth_url: "http://127.0.0.1:1".to_string(),
+                l2_node_url: "http://127.0.0.1:1".to_string(),
                 l1_beacon_url: Some("http://127.0.0.1:1".to_string()),
                 l2_chain_id: 0,
                 rollup_config: RollupConfig::default(),
@@ -1338,7 +1338,13 @@ mod tests {
             genesis_time: 0,
             slot_interval: 12,
         });
-        HostProviders { l1: base_consensus_providers::L1RpcProvider::Ethereum(l1), blobs, l2 }
+        let l2_node = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
+        HostProviders {
+            l1: base_consensus_providers::L1RpcProvider::Ethereum(l1),
+            blobs,
+            l2,
+            l2_node,
+        }
     }
 
     fn test_providers(l2: RootProvider<Base>) -> HostProviders {

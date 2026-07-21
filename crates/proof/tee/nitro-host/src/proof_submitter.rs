@@ -306,8 +306,9 @@ mod tests {
     use async_trait::async_trait;
     use base_proof_primitives::{ProofRequest as PrimitiveProofRequest, Proposal};
     use base_prover_service_protocol::{
-        GetNextProofRequest, GetNextProofResponse, HeartbeatRequest, HeartbeatResponse, ProofJob,
-        ProofJobStatus, ProofRequest, ProofRequestKind, TeeProofRequest,
+        GetNextProofRequest, GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse,
+        HeartbeatRequest, HeartbeatResponse, ProofJob, ProofJobStatus, ProofRequest,
+        ProofRequestKind, RecordProofSessionRequest, RecordProofSessionResponse, TeeProofRequest,
     };
     use chrono::Utc;
     use tokio::time::{sleep, timeout};
@@ -398,6 +399,20 @@ mod tests {
 
             Ok(WorkerSubmitProofResponse { job: proof_job_for_submission(&request) })
         }
+
+        async fn get_proof_session(
+            &self,
+            _request: GetProofSessionRequest,
+        ) -> Result<GetProofSessionResponse, ProverServiceClientError> {
+            panic!("get_proof_session is not used by proof submitter tests")
+        }
+
+        async fn record_proof_session(
+            &self,
+            _request: RecordProofSessionRequest,
+        ) -> Result<RecordProofSessionResponse, ProverServiceClientError> {
+            panic!("record_proof_session is not used by proof submitter tests")
+        }
     }
 
     fn retryable_error() -> ProverServiceClientError {
@@ -419,6 +434,7 @@ mod tests {
             l2_block_number: block,
             prev_output_root: B256::repeat_byte(3),
             config_hash: B256::repeat_byte(4),
+            schedule_id: B256::repeat_byte(5),
         }
     }
 
@@ -445,7 +461,7 @@ mod tests {
             session_id: request.session_id.clone(),
             status: ProofJobStatus::Succeeded,
             request: ProofRequest {
-                session_id: Some(request.session_id.clone()),
+                session_id: request.session_id.clone(),
                 request: ProofRequestKind::Tee(TeeProofRequest {
                     proof: PrimitiveProofRequest::default(),
                     tee_kind: TeeKind::AwsNitro,

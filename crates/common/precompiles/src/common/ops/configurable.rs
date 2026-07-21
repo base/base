@@ -4,7 +4,7 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use crate::{B20Guards, B20TokenRole, IB20, Token, TokenAccounting};
+use crate::{B20_MAX_SUPPLY_CAP, B20Guards, B20TokenRole, IB20, Token, TokenAccounting};
 
 /// Mutable configuration operations: supply cap, metadata, and contract URI updates.
 ///
@@ -22,7 +22,7 @@ pub trait Configurable: Token {
             B20Guards::ensure_token_role::<Self>(self, caller, B20TokenRole::DefaultAdmin)?;
         }
         let supply = self.accounting().total_supply()?;
-        if new_cap < supply {
+        if new_cap < supply || new_cap > B20_MAX_SUPPLY_CAP {
             return Err(BasePrecompileError::revert(IB20::InvalidSupplyCap {
                 currentSupply: supply,
                 proposedCap: new_cap,
@@ -79,8 +79,8 @@ mod tests {
     use base_precompile_storage::BasePrecompileError;
 
     use crate::{
-        B20TokenRole, Configurable, IB20, InMemoryPolicy, InMemoryTokenAccounting, TestToken,
-        Token, TokenAccounting,
+        B20_MAX_SUPPLY_CAP, B20TokenRole, Configurable, FakePolicyAccounting, IB20,
+        InMemoryTokenAccounting, TestToken, Token, TokenAccounting,
     };
 
     const CALLER: Address = Address::repeat_byte(0xaa);
@@ -89,14 +89,14 @@ mod tests {
     fn make_token() -> TestToken {
         TestToken::with_storage_and_policy(
             InMemoryTokenAccounting::new(TOKEN_ADDR),
-            InMemoryPolicy::new(),
+            FakePolicyAccounting::new(),
         )
     }
 
     fn token_with_default_admin(account: Address) -> TestToken {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
         accounting.roles.insert((B20TokenRole::DefaultAdmin.id(), account), true);
-        TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
+        TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new())
     }
 
     #[test]
@@ -119,6 +119,20 @@ mod tests {
             BasePrecompileError::revert(IB20::InvalidSupplyCap {
                 currentSupply: U256::from(100u64),
                 proposedCap: U256::from(99u64),
+            })
+        );
+    }
+
+    #[test]
+    fn update_supply_cap_above_max_supply_cap_reverts() {
+        let mut token = make_token();
+        let proposed_cap = B20_MAX_SUPPLY_CAP + U256::ONE;
+
+        assert_eq!(
+            token.update_supply_cap(CALLER, proposed_cap, true).unwrap_err(),
+            BasePrecompileError::revert(IB20::InvalidSupplyCap {
+                currentSupply: U256::ZERO,
+                proposedCap: proposed_cap,
             })
         );
     }
@@ -200,7 +214,7 @@ mod tests {
     fn token_with_metadata_role(account: Address) -> TestToken {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
         accounting.roles.insert((B20TokenRole::Metadata.id(), account), true);
-        TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
+        TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new())
     }
 
     #[test]

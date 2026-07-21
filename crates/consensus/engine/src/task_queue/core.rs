@@ -15,9 +15,10 @@ use super::EngineTaskExt;
 use crate::{
     BuildTaskError, EngineBuildError, EngineClient, EngineForkchoiceVersion,
     EngineGetPayloadVersion, EngineState, EngineSyncStateUpdate, EngineTask, EngineTaskError,
-    EngineTaskErrorSeverity, ForkchoiceCheckpointReader, Metrics, NoopForkchoiceCheckpointReader,
-    SealTaskError, SyncStartError, SynchronizeTask, SynchronizeTaskError,
-    find_starting_forkchoice_with_checkpoint_reader, task_queue::EngineTaskErrors,
+    EngineTaskErrorSeverity, ForkchoiceCheckpointReader, InsertTask, InsertTaskError, Metrics,
+    NoopForkchoiceCheckpointReader, SealTaskError, SyncStartError, SynchronizeTask,
+    SynchronizeTaskError, find_starting_forkchoice_with_checkpoint_reader,
+    task_queue::EngineTaskErrors,
 };
 
 /// The [`Engine`] task queue.
@@ -395,6 +396,41 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         self.tasks.push((task, Reverse(sequence)));
         self.task_queue_length.send_replace(self.tasks.len());
         Metrics::engine_task_queue_depth().set(self.tasks.len() as f64);
+    }
+
+    /// Sequentially inserts payloads that authoritatively replace the current unsafe chain.
+    ///
+    /// Existing safe and finalized heads are preserved, while local-safe is reset to safe after
+    /// the unsafe-chain replacement. The caller is responsible for providing payloads in
+    /// contiguous canonical order.
+    ///
+    /// Each acknowledged payload is applied and published immediately. If a later insertion
+    /// fails, earlier progress is retained. Callers may safely retry the full sequence because
+    /// authoritative duplicate payloads still require an acknowledged forkchoice update.
+    ///
+    /// Returns [`InsertTaskError::EmptyAuthoritativePayloads`] when `payloads` is empty.
+    pub async fn insert_authoritative_payloads(
+        &mut self,
+        client: Arc<EngineClient_>,
+        config: Arc<RollupConfig>,
+        payloads: Vec<BaseExecutionPayloadEnvelope>,
+    ) -> Result<L2BlockInfo, InsertTaskError> {
+        if payloads.is_empty() {
+            return Err(InsertTaskError::EmptyAuthoritativePayloads);
+        }
+
+        let mut head = self.state.sync_state.unsafe_head();
+        for envelope in payloads {
+            head = InsertTask::authoritative_payload(
+                Arc::clone(&client),
+                Arc::clone(&config),
+                envelope,
+            )
+            .execute_with_result(&mut self.state)
+            .await?;
+            self.state_sender.send_replace(self.state);
+        }
+        Ok(head)
     }
 
     /// Resets the engine by finding a plausible sync starting point via
@@ -862,7 +898,7 @@ mod tests {
 
         let mut cfg = RollupConfig::default();
         // Force the FCU-with-attrs codepath through V3 (Ecotone active at attr timestamp).
-        cfg.hardforks.ecotone_time = Some(attributes_timestamp);
+        cfg.upgrades.ecotone_time = Some(attributes_timestamp);
 
         let client = Arc::new(
             test_engine_client_builder()

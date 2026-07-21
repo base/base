@@ -34,14 +34,13 @@ revm.workspace = true
 # misc
 spin.workspace = true
 auto_impl.workspace = true
-serde = { workspace = true, optional = true }
 serde_json = { workspace = true, features = ["alloc"] }
 
 [dev-dependencies]
 alloy-chains.workspace = true
 
 [[test]]
-name = "hardfork_consistency"
+name = "upgrade_consistency"
 required-features = ["test-utils"]
 
 [features]
@@ -54,7 +53,6 @@ std = [
 	"alloy-serde/std",
 	"base-common-genesis/std",
 	"revm/std",
-	"serde?/std",
 	"serde_json/std",
 	"spin/std",
 ]
@@ -64,7 +62,6 @@ serde = [
 	"alloy-hardforks/serde",
 	"alloy-primitives/serde",
 	"base-common-genesis/serde",
-	"dep:serde",
 	"revm/serde",
 ]
 test-utils = []

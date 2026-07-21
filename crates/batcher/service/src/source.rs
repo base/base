@@ -64,6 +64,7 @@ impl PollingSource for RpcPollingSource {
                     .await
                     .map_err(|e| SourceError::Provider(e.to_string()))?
                     .ok_or_else(|| SourceError::Provider(format!("block {n} not found")))?
+                    .map_header(|header| header.into_inner())
                     .into_consensus()
                     .map_transactions(|t| t.inner.into_inner());
                 *self.next_sequential.lock().unwrap() = Some(n + 1);
@@ -78,6 +79,7 @@ impl PollingSource for RpcPollingSource {
             .await
             .map_err(|e| SourceError::Provider(e.to_string()))?
             .ok_or_else(|| SourceError::Provider("latest block not found".to_string()))?
+            .map_header(|header| header.into_inner())
             .into_consensus()
             .map_transactions(|t| t.inner.into_inner());
         Ok(block)

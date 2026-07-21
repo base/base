@@ -85,6 +85,9 @@ pub enum SpanDecodingError {
     /// Invalid transaction data
     #[error("Invalid transaction data")]
     InvalidTransactionData,
+    /// Invalid EIP-8130 authentication data
+    #[error("Invalid EIP-8130 auth data")]
+    InvalidAuthData,
     /// Invalid transaction signature
     #[error("Invalid transaction signature")]
     InvalidTransactionSignature,

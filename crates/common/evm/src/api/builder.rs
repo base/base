@@ -8,7 +8,7 @@ use revm::{
     interpreter::interpreter::EthInterpreter,
 };
 
-use crate::{BaseContext, BaseEvm, BasePrecompiles, BaseSpecId};
+use crate::{BaseContext, BaseEvm, BasePrecompiles, BaseSpecId, BerylPrecompileMetricsObserver};
 
 /// Trait that allows constructing a [`BaseEvm`] from a [`BaseContext`].
 ///
@@ -21,6 +21,13 @@ pub trait Builder: Sized {
 
     /// Returns the active [`BaseSpecId`] for this builder.
     fn spec(&self) -> BaseSpecId;
+
+    /// Installs Base precompiles for node execution with the production Beryl metrics observer.
+    fn precompiles_for_node(&self, activation_admin_address: Option<Address>) -> PrecompilesMap {
+        BasePrecompiles::new_with_spec(self.spec())
+            .with_activation_admin_address(activation_admin_address)
+            .install_with_observer(BerylPrecompileMetricsObserver)
+    }
 
     /// Builds a [`BaseEvm`] with a `()` inspector. The inspect flag is `false`,
     /// so [`Inspector`][revm::Inspector] callbacks are never invoked via
@@ -37,10 +44,7 @@ pub trait Builder: Sized {
         self,
         activation_admin_address: Option<Address>,
     ) -> BaseEvm<Self::Db, (), PrecompilesMap> {
-        let spec = self.spec();
-        let precompiles = BasePrecompiles::new_with_spec(spec)
-            .with_activation_admin_address(activation_admin_address)
-            .install();
+        let precompiles = self.precompiles_for_node(activation_admin_address);
         self.build_base_with_precompiles(precompiles)
     }
 
@@ -69,10 +73,7 @@ pub trait Builder: Sized {
         inspector: INSP,
         activation_admin_address: Option<Address>,
     ) -> BaseEvm<Self::Db, INSP, PrecompilesMap> {
-        let spec = self.spec();
-        let precompiles = BasePrecompiles::new_with_spec(spec)
-            .with_activation_admin_address(activation_admin_address)
-            .install();
+        let precompiles = self.precompiles_for_node(activation_admin_address);
         self.build_with_inspector_and_precompiles(inspector, precompiles)
     }
 
@@ -134,8 +135,8 @@ mod tests {
     use alloy_primitives::{Address, B256};
     use alloy_sol_types::SolCall;
     use base_common_precompiles::{
-        ActivationRegistryStorage, B20FactoryStorage, B20Variant, IActivationRegistry,
-        PolicyRegistryStorage,
+        ActivationFeature, ActivationRegistryStorage, B20FactoryStorage, B20Variant,
+        IActivationRegistry, PolicyRegistryStorage,
     };
     use revm::{
         Context, DatabaseRef, ExecuteEvm,
@@ -148,7 +149,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::{BaseTransaction, BaseUpgrade, DefaultBase};
+    use crate::{BaseTransaction, BaseUpgrade, BerylPrecompileMetricsObserver, DefaultBase};
 
     fn b20_token_address() -> Address {
         B20Variant::Asset.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22)).0
@@ -193,6 +194,8 @@ mod tests {
 
     #[test]
     fn build_base_with_activation_admin_address_configures_activation_registry() {
+        BerylPrecompileMetricsObserver::reset_recorded_calls_for_test();
+
         let admin = Address::repeat_byte(0xaa);
         let ctx =
             Context::base().with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Beryl)));
@@ -212,6 +215,91 @@ mod tests {
         let actual = IActivationRegistry::adminCall::abi_decode_returns(output).unwrap();
 
         assert_eq!(actual, admin);
+        assert!(BerylPrecompileMetricsObserver::recorded_calls_for_test() > 0);
+    }
+
+    #[test]
+    fn cobalt_activation_admin_rotates_through_registry_state() {
+        let admin = Address::repeat_byte(0xaa);
+        let new_admin = Address::repeat_byte(0xbb);
+        let ctx =
+            Context::base().with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Cobalt)));
+        let mut evm = ctx.build_base_with_activation_admin_address(Some(admin));
+
+        let set_admin = activation_registry_tx(
+            admin,
+            0,
+            Bytes::from(IActivationRegistry::setAdminCall { newAdmin: new_admin }.abi_encode()),
+        );
+        assert!(evm.transact_one(set_admin).unwrap().is_success());
+
+        let admin_result = evm
+            .transact_one(activation_registry_tx(
+                new_admin,
+                0,
+                Bytes::from(IActivationRegistry::adminCall {}.abi_encode()),
+            ))
+            .unwrap();
+        let actual_admin =
+            IActivationRegistry::adminCall::abi_decode_returns(admin_result.output().unwrap())
+                .unwrap();
+        assert_eq!(actual_admin, new_admin);
+
+        let feature = ActivationFeature::B20Asset.id();
+        let old_admin_activate = activation_registry_tx(
+            admin,
+            1,
+            Bytes::from(IActivationRegistry::activateCall { feature }.abi_encode()),
+        );
+        assert!(!evm.transact_one(old_admin_activate).unwrap().is_success());
+
+        let new_admin_activate = activation_registry_tx(
+            new_admin,
+            1,
+            Bytes::from(IActivationRegistry::activateCall { feature }.abi_encode()),
+        );
+        assert!(evm.transact_one(new_admin_activate).unwrap().is_success());
+    }
+
+    #[test]
+    fn beryl_activation_admin_rejects_state_rotation() {
+        let admin = Address::repeat_byte(0xaa);
+        let new_admin = Address::repeat_byte(0xbb);
+        let ctx =
+            Context::base().with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Beryl)));
+        let mut evm = ctx.build_base_with_activation_admin_address(Some(admin));
+
+        let set_admin = activation_registry_tx(
+            admin,
+            0,
+            Bytes::from(IActivationRegistry::setAdminCall { newAdmin: new_admin }.abi_encode()),
+        );
+        assert!(!evm.transact_one(set_admin).unwrap().is_success());
+
+        let admin_result = evm
+            .transact_one(activation_registry_tx(
+                admin,
+                1,
+                Bytes::from(IActivationRegistry::adminCall {}.abi_encode()),
+            ))
+            .unwrap();
+        let actual_admin =
+            IActivationRegistry::adminCall::abi_decode_returns(admin_result.output().unwrap())
+                .unwrap();
+        assert_eq!(actual_admin, admin);
+    }
+
+    fn activation_registry_tx(caller: Address, nonce: u64, data: Bytes) -> BaseTransaction<TxEnv> {
+        BaseTransaction::builder()
+            .base(
+                TxEnv::builder()
+                    .caller(caller)
+                    .nonce(nonce)
+                    .kind(TxKind::Call(ActivationRegistryStorage::ADDRESS))
+                    .data(data)
+                    .gas_limit(500_000),
+            )
+            .build_fill()
     }
 
     struct ReadOnlyDbAdapter;

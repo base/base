@@ -17,15 +17,16 @@ use std::time::Duration;
 
 use base_prover_service_db::{
     ApiProofType, ClaimProofJob, CompleteClaimedProofJob, CreateProofRequest,
-    CreateProofRequestOutcome, CreateProofSession, FailExpiredProofJobs, HeartbeatOutcome,
-    HeartbeatProofJob, ProofJobStatus, ProofRequestPage, ProofRequestRepo, ProofStatus, ProofType,
-    RetryOutcome, SessionStatus, SessionType, SubmitProofOutcome, TeeKind, UpdateProofSession,
-    UpdateReceipt, ZkVmKind,
+    CreateProofRequestError, CreateProofRequestOutcome, CreateProofSession,
+    DeleteProofRequestOutcome, FailExpiredProofJobs, HeartbeatOutcome, HeartbeatProofJob,
+    ProofJobStatus, ProofRequestPage, ProofRequestRepo, ProofStatus, ProofType,
+    RecordSessionOutcome, RetryOutcome, SessionStatus, SessionType, SubmitProofOutcome, TeeKind,
+    UpdateProofSession, UpdateReceipt, WorkerSessionUpsert, ZkVmKind,
 };
 use base_prover_service_protocol::{
     ProofRequest as ProtocolProofRequest, ProofRequestKind as ProtocolProofRequestKind,
-    ProofResult as ProtocolProofResult, SnarkGroth16ProofRequest, SnarkGroth16ProofResult,
-    TeeKind as ProtocolTeeKind, TeeProofRequest, ZkProofRequest, ZkProofResult, ZkVm,
+    ProofResult as ProtocolProofResult, SnarkPlonkProofRequest, SnarkPlonkProofResult,
+    TeeKind as ProtocolTeeKind, TeeProofRequest, ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
 };
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
@@ -55,8 +56,15 @@ fn compressed_request() -> CreateProofRequest {
 }
 
 fn compressed_request_at(start_block_number: u64) -> CreateProofRequest {
+    compressed_request_at_with_backend(start_block_number, ZkBackend::Cluster)
+}
+
+fn compressed_request_at_with_backend(
+    start_block_number: u64,
+    zk_backend: ZkBackend,
+) -> CreateProofRequest {
     CreateProofRequest::new(ProtocolProofRequest {
-        session_id: None,
+        session_id: Uuid::new_v4().to_string(),
         request: ProtocolProofRequestKind::Compressed(ZkProofRequest {
             start_block_number,
             number_of_blocks_to_prove: 5,
@@ -64,6 +72,23 @@ fn compressed_request_at(start_block_number: u64) -> CreateProofRequest {
             l1_head: None,
             intermediate_root_interval: None,
             zk_vm: ZkVm::Sp1,
+            zk_backend,
+        }),
+    })
+    .expect("compressed request should validate")
+}
+
+fn compressed_request_with_l1_head(l1_head: &str) -> CreateProofRequest {
+    CreateProofRequest::new(ProtocolProofRequest {
+        session_id: Uuid::new_v4().to_string(),
+        request: ProtocolProofRequestKind::Compressed(ZkProofRequest {
+            start_block_number: 100,
+            number_of_blocks_to_prove: 5,
+            sequence_window: Some(50),
+            l1_head: Some(l1_head.parse().expect("valid hash")),
+            intermediate_root_interval: None,
+            zk_vm: ZkVm::Sp1,
+            zk_backend: ZkBackend::Cluster,
         }),
     })
     .expect("compressed request should validate")
@@ -71,8 +96,8 @@ fn compressed_request_at(start_block_number: u64) -> CreateProofRequest {
 
 fn snark_request() -> CreateProofRequest {
     CreateProofRequest::new(ProtocolProofRequest {
-        session_id: None,
-        request: ProtocolProofRequestKind::SnarkGroth16(SnarkGroth16ProofRequest {
+        session_id: Uuid::new_v4().to_string(),
+        request: ProtocolProofRequestKind::SnarkPlonk(SnarkPlonkProofRequest {
             proof: ZkProofRequest {
                 start_block_number: 200,
                 number_of_blocks_to_prove: 10,
@@ -84,6 +109,7 @@ fn snark_request() -> CreateProofRequest {
                 ),
                 intermediate_root_interval: None,
                 zk_vm: ZkVm::Sp1,
+                zk_backend: ZkBackend::Cluster,
             },
             prover_address: "0x1234567890abcdef1234567890abcdef12345678"
                 .parse()
@@ -95,13 +121,19 @@ fn snark_request() -> CreateProofRequest {
 
 fn tee_request() -> CreateProofRequest {
     CreateProofRequest::new(ProtocolProofRequest {
-        session_id: None,
+        session_id: Uuid::new_v4().to_string(),
         request: ProtocolProofRequestKind::Tee(TeeProofRequest {
             proof: Default::default(),
             tee_kind: ProtocolTeeKind::AwsNitro,
         }),
     })
     .expect("TEE request should validate")
+}
+
+fn set_request_session_id(req: &mut CreateProofRequest, session_id: impl Into<String>) {
+    let session_id = session_id.into();
+    req.session_id = session_id.clone();
+    req.request_payload.session_id = session_id;
 }
 
 /// Create a request in RUNNING state with an associated proof session.
@@ -167,7 +199,7 @@ async fn test_create_and_get_snark() {
 
     assert_eq!(req.start_block_number, 200);
     assert_eq!(req.number_of_blocks_to_prove, 10);
-    assert_eq!(req.proof_type, Some(ProofType::OpSuccinctSp1ClusterSnarkGroth16));
+    assert_eq!(req.proof_type, Some(ProofType::OpSuccinctSp1ClusterSnarkPlonk));
     assert_eq!(req.prover_address.as_deref(), Some("0x1234567890abcdef1234567890abcdef12345678"));
     assert_eq!(
         req.l1_head.as_deref(),
@@ -183,7 +215,7 @@ async fn test_create_with_session_id() {
 
     let explicit_id = Uuid::new_v4();
     let mut req = compressed_request();
-    req.session_id = Some(explicit_id.to_string());
+    set_request_session_id(&mut req, explicit_id.to_string());
 
     let id = repo.create(req).await.unwrap();
     assert_eq!(id, explicit_id);
@@ -201,7 +233,7 @@ async fn test_create_with_uppercase_session_id_is_canonicalized() {
 
     let explicit_id = Uuid::new_v4();
     let mut req = compressed_request();
-    req.session_id = Some(explicit_id.to_string().to_uppercase());
+    set_request_session_id(&mut req, explicit_id.to_string().to_uppercase());
 
     let id = repo.create(req).await.unwrap();
     assert_eq!(id, explicit_id);
@@ -223,7 +255,7 @@ async fn test_legacy_rollout_request_without_protocol_storage_is_readable_and_re
 
     let explicit_id = Uuid::new_v4();
     let mut req = compressed_request();
-    req.session_id = Some(explicit_id.to_string());
+    set_request_session_id(&mut req, explicit_id.to_string());
 
     sqlx::query(
         r#"
@@ -836,7 +868,7 @@ async fn test_retry_or_fail_stuck_request_retries() {
     .unwrap();
 
     let outcome = repo.retry_or_fail_stuck_request(id, 3, "stuck in PENDING").await.unwrap();
-    assert_eq!(outcome, RetryOutcome::Retried);
+    assert!(matches!(outcome, RetryOutcome::Retried));
 
     let req = repo.get(id).await.unwrap().unwrap();
     assert_eq!(req.status, ProofStatus::Created);
@@ -861,12 +893,12 @@ async fn test_retry_or_fail_stuck_request_retries_tee_request() {
 
     let stuck_requests = repo.get_stuck_requests(-1).await.unwrap();
     assert!(
-        stuck_requests.iter().all(|request| request.id != id),
-        "TEE requests should not enter legacy backend-session stuck detection"
+        stuck_requests.iter().any(|request| request.id == id),
+        "TEE requests should enter generic worker stuck detection"
     );
 
     let outcome = repo.retry_or_fail_stuck_request(id, 3, "stuck in PENDING").await.unwrap();
-    assert_eq!(outcome, RetryOutcome::Retried);
+    assert!(matches!(outcome, RetryOutcome::Retried));
 
     let req = repo.get(id).await.unwrap().unwrap();
     assert_eq!(req.status, ProofStatus::Created);
@@ -886,7 +918,7 @@ async fn test_retry_or_fail_stuck_request_exhausted() {
     for i in 0..3 {
         repo.atomic_claim_task(id).await.unwrap();
         let outcome = repo.retry_or_fail_stuck_request(id, 3, "stuck").await.unwrap();
-        assert_eq!(outcome, RetryOutcome::Retried, "retry {i} should succeed");
+        assert!(matches!(outcome, RetryOutcome::Retried), "retry {i} should succeed");
     }
 
     // retry_count is now 3, claim once more
@@ -894,7 +926,12 @@ async fn test_retry_or_fail_stuck_request_exhausted() {
 
     // This time should permanently fail (retry_count >= max_retries)
     let outcome = repo.retry_or_fail_stuck_request(id, 3, "stuck").await.unwrap();
-    assert_eq!(outcome, RetryOutcome::PermanentlyFailed);
+    let RetryOutcome::PermanentlyFailed(job) = outcome else {
+        panic!("expected permanent failure outcome");
+    };
+    assert_eq!(job.id, id);
+    assert_eq!(job.job_status, ProofJobStatus::Failed);
+    assert!(job.completed_at.is_some());
 
     let req = repo.get(id).await.unwrap().unwrap();
     assert_eq!(req.status, ProofStatus::Failed);
@@ -912,10 +949,85 @@ async fn test_retry_or_fail_stuck_request_wrong_state() {
 
     // Request is RUNNING, not PENDING — should be skipped
     let outcome = repo.retry_or_fail_stuck_request(id, 3, "stuck").await.unwrap();
-    assert_eq!(outcome, RetryOutcome::Skipped);
+    assert!(matches!(outcome, RetryOutcome::Skipped));
 
     let req = repo.get(id).await.unwrap().unwrap();
     assert_eq!(req.status, ProofStatus::Running); // unchanged
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_get_stuck_requests_includes_migration_parked_running_request() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool.clone());
+
+    let (id, _backend_id) = setup_running_request(&repo).await;
+    sqlx::query(
+        "UPDATE proof_requests SET job_status = 'CLAIMED', lock_expires_at = NULL WHERE id = $1",
+    )
+    .bind(id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let stuck_requests = repo.get_stuck_requests(-1).await.unwrap();
+
+    assert!(
+        stuck_requests.iter().any(|request| request.id == id),
+        "migration-parked RUNNING request should be recovered by stuck detection"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_retry_or_fail_stuck_request_requeues_migration_parked_running_request() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool.clone());
+
+    let (id, backend_id) = setup_running_request(&repo).await;
+    sqlx::query(
+        "UPDATE proof_requests SET job_status = 'CLAIMED', lock_expires_at = NULL WHERE id = $1",
+    )
+    .bind(id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let outcome =
+        repo.retry_or_fail_stuck_request(id, 3, "migration-parked RUNNING request").await.unwrap();
+
+    assert!(matches!(outcome, RetryOutcome::Retried));
+
+    let req = repo.get(id).await.unwrap().unwrap();
+    assert_eq!(req.status, ProofStatus::Created);
+    assert_eq!(req.retry_count, 1);
+    assert!(req.error_message.is_none());
+    assert!(req.completed_at.is_none());
+
+    let (job_status, lock_expires_at, attempt): (
+        String,
+        Option<chrono::DateTime<chrono::Utc>>,
+        i32,
+    ) = sqlx::query_as(
+        "SELECT job_status, lock_expires_at, attempt FROM proof_requests WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(job_status, ProofJobStatus::Pending.as_str());
+    assert!(lock_expires_at.is_none());
+    assert_eq!(attempt, 0);
+
+    let session_status: String =
+        sqlx::query_scalar("SELECT status FROM proof_sessions WHERE backend_session_id = $1")
+            .bind(backend_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    assert_eq!(session_status, SessionStatus::Failed.as_str());
 }
 
 // ============================================================
@@ -940,7 +1052,7 @@ async fn test_create_for_worker_queue_creates_claimable_job() {
     drain_claimable_compressed_jobs(&repo).await;
     let explicit_id = Uuid::new_v4();
     let mut req = compressed_request();
-    req.session_id = Some(explicit_id.to_string());
+    set_request_session_id(&mut req, explicit_id.to_string());
 
     let outcome = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
     assert!(matches!(outcome, CreateProofRequestOutcome::Created(id) if id == explicit_id));
@@ -962,7 +1074,7 @@ async fn test_create_for_worker_queue_accepts_tee_requests() {
     drain_claimable_tee_jobs(&repo).await;
     let explicit_id = format!("tee-worker-queue-{}", Uuid::new_v4());
     let mut req = tee_request();
-    req.session_id = Some(explicit_id.clone());
+    set_request_session_id(&mut req, explicit_id.clone());
 
     let outcome = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
     let id = outcome.id();
@@ -983,19 +1095,49 @@ async fn test_create_for_worker_queue_accepts_tee_requests() {
 
 #[tokio::test]
 #[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
-async fn test_create_for_worker_queue_idempotent() {
+async fn test_create_for_worker_queue_idempotent_for_legacy_null_backend() {
     let pool = test_pool().await;
-    let repo = test_repo(pool);
+    let repo = test_repo(pool.clone());
 
     let explicit_id = Uuid::new_v4();
     let mut req = compressed_request();
-    req.session_id = Some(explicit_id.to_string());
+    set_request_session_id(&mut req, explicit_id.to_string());
 
     let first = repo.create_for_worker_queue(req.clone(), TEST_MAX_PROOF_RETRIES).await.unwrap();
+    sqlx::query("UPDATE proof_requests SET zk_backend = NULL WHERE id = $1")
+        .bind(explicit_id)
+        .execute(&pool)
+        .await
+        .unwrap();
     let second = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
 
     assert!(matches!(first, CreateProofRequestOutcome::Created(id) if id == explicit_id));
     assert!(matches!(second, CreateProofRequestOutcome::Replayed(id) if id == explicit_id));
+    let claimed = repo
+        .claim_next_proof_job(compressed_claim("legacy-cluster-worker", 3))
+        .await
+        .unwrap()
+        .expect("legacy NULL backend should be claimable as cluster");
+    assert_eq!(claimed.id, explicit_id);
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_create_for_worker_queue_rejects_backend_collision() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool);
+
+    let explicit_id = Uuid::new_v4();
+    let mut cluster = compressed_request_at_with_backend(100, ZkBackend::Cluster);
+    set_request_session_id(&mut cluster, explicit_id.to_string());
+    repo.create_for_worker_queue(cluster, TEST_MAX_PROOF_RETRIES).await.unwrap();
+
+    let mut network = compressed_request_at_with_backend(100, ZkBackend::Network);
+    set_request_session_id(&mut network, explicit_id.to_string());
+    assert!(matches!(
+        repo.create_for_worker_queue(network, TEST_MAX_PROOF_RETRIES).await.unwrap_err(),
+        CreateProofRequestError::IdCollision { id, field: "zk_backend" } if id == explicit_id
+    ));
 }
 
 #[tokio::test]
@@ -1006,7 +1148,7 @@ async fn test_create_for_worker_queue_requeues_failed_row() {
 
     let explicit_id = Uuid::new_v4();
     let mut req = compressed_request();
-    req.session_id = Some(explicit_id.to_string());
+    set_request_session_id(&mut req, explicit_id.to_string());
 
     let first = repo.create_for_worker_queue(req.clone(), TEST_MAX_PROOF_RETRIES).await.unwrap();
     assert!(matches!(first, CreateProofRequestOutcome::Created(id) if id == explicit_id));
@@ -1040,6 +1182,140 @@ async fn test_create_for_worker_queue_requeues_failed_row() {
     assert_eq!(job_status, "PENDING");
     assert_eq!(attempt, 0);
     assert!(worker_id.is_none());
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_create_for_worker_queue_replays_succeeded_row() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool.clone());
+
+    let explicit_id = Uuid::new_v4();
+    let mut req = compressed_request();
+    set_request_session_id(&mut req, explicit_id.to_string());
+
+    let first = repo.create_for_worker_queue(req.clone(), TEST_MAX_PROOF_RETRIES).await.unwrap();
+    assert!(matches!(first, CreateProofRequestOutcome::Created(id) if id == explicit_id));
+
+    sqlx::query(
+        "UPDATE proof_requests SET status = 'SUCCEEDED', job_status = 'SUCCEEDED', \
+         result_payload = '{}'::jsonb, completed_at = NOW(), attempt = 4 WHERE id = $1",
+    )
+    .bind(explicit_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let second = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
+    assert!(matches!(second, CreateProofRequestOutcome::Replayed(id) if id == explicit_id));
+
+    let after = repo.get(explicit_id).await.unwrap().unwrap();
+    assert_eq!(after.status, ProofStatus::Succeeded);
+    assert_eq!(after.retry_count, 0);
+    assert!(after.result_payload.is_some());
+    assert!(after.completed_at.is_some());
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_create_for_worker_queue_rejects_succeeded_row_with_new_l1_head() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool.clone());
+
+    let explicit_id = Uuid::new_v4();
+    let mut req = compressed_request_with_l1_head(
+        "0x0101010101010101010101010101010101010101010101010101010101010101",
+    );
+    set_request_session_id(&mut req, explicit_id.to_string());
+
+    let first = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
+    assert!(matches!(first, CreateProofRequestOutcome::Created(id) if id == explicit_id));
+
+    sqlx::query(
+        "UPDATE proof_requests SET status = 'SUCCEEDED', job_status = 'SUCCEEDED', \
+         result_payload = '{}'::jsonb, completed_at = NOW() WHERE id = $1",
+    )
+    .bind(explicit_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let mut req = compressed_request_with_l1_head(
+        "0x0202020202020202020202020202020202020202020202020202020202020202",
+    );
+    set_request_session_id(&mut req, explicit_id.to_string());
+
+    let err = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES).await.unwrap_err();
+    assert!(matches!(
+        err,
+        CreateProofRequestError::IdCollision { id, field: "l1_head" } if id == explicit_id
+    ));
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_delete_proof_request_by_session_id_deletes_terminal_rows() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool.clone());
+
+    for status in ["SUCCEEDED", "FAILED"] {
+        let explicit_id = Uuid::new_v4();
+        let mut req = compressed_request();
+        set_request_session_id(&mut req, explicit_id.to_string());
+
+        let first = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
+        assert!(matches!(first, CreateProofRequestOutcome::Created(id) if id == explicit_id));
+
+        sqlx::query(
+            "INSERT INTO proof_request_outbox (proof_request_id, request_params) VALUES ($1, '{}'::jsonb)",
+        )
+        .bind(explicit_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE proof_requests SET status = $1, job_status = $1, \
+             result_payload = CASE WHEN $1 = 'SUCCEEDED' THEN '{}'::jsonb ELSE NULL END, \
+             error_message = CASE WHEN $1 = 'FAILED' THEN 'simulated failure' ELSE NULL END, \
+             completed_at = NOW() WHERE id = $2",
+        )
+        .bind(status)
+        .bind(explicit_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let outcome =
+            repo.delete_proof_request_by_session_id(&explicit_id.to_string()).await.unwrap();
+        assert_eq!(outcome, DeleteProofRequestOutcome::Deleted);
+        assert!(repo.get(explicit_id).await.unwrap().is_none());
+
+        let outbox_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM proof_request_outbox WHERE proof_request_id = $1",
+        )
+        .bind(explicit_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(outbox_count, 0);
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_delete_proof_request_by_session_id_rejects_non_terminal_row() {
+    let repo = test_repo(test_pool().await);
+
+    let explicit_id = Uuid::new_v4();
+    let mut req = compressed_request();
+    set_request_session_id(&mut req, explicit_id.to_string());
+
+    let first = repo.create_for_worker_queue(req, TEST_MAX_PROOF_RETRIES).await.unwrap();
+    assert!(matches!(first, CreateProofRequestOutcome::Created(id) if id == explicit_id));
+
+    let outcome = repo.delete_proof_request_by_session_id(&explicit_id.to_string()).await.unwrap();
+    assert_eq!(outcome, DeleteProofRequestOutcome::NotCompleted(ProofStatus::Created));
+    assert!(repo.get(explicit_id).await.unwrap().is_some());
 }
 
 // ============================================================
@@ -1212,8 +1488,12 @@ async fn test_full_snark_pipeline() {
         serde_json::from_value(result_payload).expect("SNARK result payload should deserialize");
     assert_eq!(
         result,
-        ProtocolProofResult::SnarkGroth16(SnarkGroth16ProofResult {
-            proof: ZkProofResult { zk_vm: ZkVm::Sp1, proof: snark_receipt.into() }
+        ProtocolProofResult::SnarkPlonk(SnarkPlonkProofResult {
+            proof: ZkProofResult {
+                zk_vm: ZkVm::Sp1,
+                proof: snark_receipt.into(),
+                execution_stats: None
+            }
         })
     );
     assert!(req.completed_at.is_some());
@@ -1243,6 +1523,11 @@ fn claim_job(
         api_proof_type,
         tee_kinds,
         zk_vms,
+        zk_backends: if api_proof_type == ApiProofType::Tee {
+            Vec::new()
+        } else {
+            vec![ZkBackend::Cluster]
+        },
         lock_duration_seconds: 3600,
         max_attempts,
     }
@@ -1294,7 +1579,11 @@ async fn expire_lock(pool: &PgPool, id: Uuid) {
 }
 
 fn compressed_result(bytes: Vec<u8>) -> ProtocolProofResult {
-    ProtocolProofResult::Compressed(ZkProofResult { zk_vm: ZkVm::Sp1, proof: bytes.into() })
+    ProtocolProofResult::Compressed(ZkProofResult {
+        zk_vm: ZkVm::Sp1,
+        proof: bytes.into(),
+        execution_stats: None,
+    })
 }
 
 fn uppercase_uuid_session_id() -> (Uuid, String) {
@@ -1338,9 +1627,10 @@ async fn test_claim_next_proof_job_claim_and_capabilities() {
     repo.create(compressed_request()).await.unwrap();
     assert!(repo.claim_next_proof_job(tee_claim("worker-2", 3)).await.unwrap().is_none());
 
-    // A ZK worker can claim a compressed job (block-number ordering may surface a
-    // lower-block pending ZK job from another test, so we only assert the proof type).
-    let zk = claim_job("zk-worker", ApiProofType::Compressed, vec![], vec![ZkVmKind::Sp1], 3);
+    // An empty backend list defaults to cluster. Block-number ordering may surface a lower-block
+    // pending ZK job from another test, so we only assert the proof type.
+    let mut zk = claim_job("zk-worker", ApiProofType::Compressed, vec![], vec![ZkVmKind::Sp1], 3);
+    zk.zk_backends.clear();
     let job = repo
         .claim_next_proof_job(zk)
         .await
@@ -1440,7 +1730,7 @@ async fn test_heartbeat_proof_job_guards_current_expired_and_reclaimed_locks() {
     drain_claimable_tee_jobs(&repo).await;
     let (explicit_id, uppercase_session_id) = uppercase_uuid_session_id();
     let mut request = tee_request();
-    request.session_id = Some(uppercase_session_id.clone());
+    set_request_session_id(&mut request, uppercase_session_id.clone());
     let id = repo.create(request).await.unwrap();
     assert_eq!(id, explicit_id);
     let first = repo
@@ -1520,7 +1810,7 @@ async fn test_complete_claimed_proof_job_guards_and_stores_result() {
     drain_claimable_compressed_jobs(&repo).await;
     let (explicit_id, uppercase_session_id) = uppercase_uuid_session_id();
     let mut request = compressed_request();
-    request.session_id = Some(uppercase_session_id.clone());
+    set_request_session_id(&mut request, uppercase_session_id.clone());
     let id = repo.create(request).await.unwrap();
     assert_eq!(id, explicit_id);
     let claimed = repo
@@ -1570,20 +1860,118 @@ async fn test_complete_claimed_proof_job_guards_and_stores_result() {
             .expect("stored result should deserialize");
     assert_eq!(stored, result);
 
-    let duplicate = repo
+    // An identical retry from the same worker/lock is idempotent.
+    let replay = repo
         .complete_claimed_proof_job(CompleteClaimedProofJob {
-            session_id: uppercase_session_id,
+            session_id: uppercase_session_id.clone(),
+            lock_id,
+            worker_id: "submit-worker".to_owned(),
+            result: result.clone(),
+        })
+        .await
+        .unwrap();
+    let SubmitProofOutcome::AlreadyCompleted(replayed) = replay else {
+        panic!("identical retry should be idempotent");
+    };
+    assert_eq!(replayed.job_status, ProofJobStatus::Succeeded);
+    assert_eq!(
+        repo.get(id).await.unwrap().unwrap().stark_receipt.as_deref(),
+        Some(&[0xca, 0xfe][..])
+    );
+
+    // Same worker/lock, different payload: conflict, stored result kept.
+    let conflict = repo
+        .complete_claimed_proof_job(CompleteClaimedProofJob {
+            session_id: uppercase_session_id.clone(),
             lock_id,
             worker_id: "submit-worker".to_owned(),
             result: compressed_result(vec![0xba, 0xad]),
         })
         .await
         .unwrap();
-    assert!(matches!(duplicate, SubmitProofOutcome::Terminal(_)));
+    assert!(matches!(conflict, SubmitProofOutcome::ResultConflict { .. }));
     assert_eq!(
         repo.get(id).await.unwrap().unwrap().stark_receipt.as_deref(),
         Some(&[0xca, 0xfe][..])
     );
+
+    // A retry that no longer owns the lock still sees a terminal job.
+    let foreign = repo
+        .complete_claimed_proof_job(CompleteClaimedProofJob {
+            session_id: uppercase_session_id,
+            lock_id: Uuid::new_v4(),
+            worker_id: "submit-worker".to_owned(),
+            result: result.clone(),
+        })
+        .await
+        .unwrap();
+    assert!(matches!(foreign, SubmitProofOutcome::Terminal(_)));
+    assert_eq!(
+        repo.get(id).await.unwrap().unwrap().stark_receipt.as_deref(),
+        Some(&[0xca, 0xfe][..])
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_complete_claimed_proof_job_rejects_mismatched_result() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool);
+
+    drain_claimable_compressed_jobs(&repo).await;
+    let id = repo.create(compressed_request()).await.unwrap();
+    let claimed = repo
+        .claim_next_proof_job(compressed_claim("mismatch-worker", 3))
+        .await
+        .unwrap()
+        .expect("compressed job should be claimed");
+    let lock_id = claimed.lock_id.expect("claimed job has lock");
+
+    // Non-owners are rejected before result-type validation, so mismatched
+    // submissions do not expose the job's expected proof result shape.
+    let stale_mismatch = repo
+        .complete_claimed_proof_job(CompleteClaimedProofJob {
+            session_id: claimed.session_id.clone(),
+            lock_id: Uuid::new_v4(),
+            worker_id: "non-owner".to_owned(),
+            result: ProtocolProofResult::SnarkPlonk(SnarkPlonkProofResult {
+                proof: ZkProofResult {
+                    zk_vm: ZkVm::Sp1,
+                    proof: vec![0x01].into(),
+                    execution_stats: None,
+                },
+            }),
+        })
+        .await
+        .unwrap();
+    assert!(matches!(stale_mismatch, SubmitProofOutcome::StaleLock(_)));
+
+    // A valid lock for a compressed job must not store a SNARK result.
+    let mismatch = repo
+        .complete_claimed_proof_job(CompleteClaimedProofJob {
+            session_id: claimed.session_id.clone(),
+            lock_id,
+            worker_id: "mismatch-worker".to_owned(),
+            result: ProtocolProofResult::SnarkPlonk(SnarkPlonkProofResult {
+                proof: ZkProofResult {
+                    zk_vm: ZkVm::Sp1,
+                    proof: vec![0x01].into(),
+                    execution_stats: None,
+                },
+            }),
+        })
+        .await
+        .unwrap();
+    assert!(matches!(mismatch, SubmitProofOutcome::ResultMismatch { .. }));
+
+    // The job is left untouched.
+    let job = repo
+        .get_proof_job_by_session_id(&claimed.session_id)
+        .await
+        .unwrap()
+        .expect("job still exists");
+    assert_eq!(job.job_status, ProofJobStatus::Claimed);
+    assert!(repo.get(id).await.unwrap().unwrap().result_payload.is_none());
 }
 
 #[tokio::test]
@@ -1605,7 +1993,7 @@ async fn test_fail_expired_proof_jobs_enforces_retry_exhaustion() {
         .fail_expired_proof_jobs(FailExpiredProofJobs {
             max_attempts: 2,
             batch_size: 100,
-            error_message: "worker lock expired after retry budget".to_owned(),
+            error_message: "worker lock expired after retry budget",
         })
         .await
         .unwrap();
@@ -1625,7 +2013,7 @@ async fn test_fail_expired_proof_jobs_enforces_retry_exhaustion() {
         .fail_expired_proof_jobs(FailExpiredProofJobs {
             max_attempts: 2,
             batch_size: 100,
-            error_message: "worker lock expired after retry budget".to_owned(),
+            error_message: "worker lock expired after retry budget",
         })
         .await
         .unwrap();
@@ -1678,7 +2066,7 @@ async fn test_fail_expired_proof_jobs_honors_batch_size() {
         .fail_expired_proof_jobs(FailExpiredProofJobs {
             max_attempts: 1,
             batch_size: 2,
-            error_message: "worker lock expired after retry budget".to_owned(),
+            error_message: "worker lock expired after retry budget",
         })
         .await
         .unwrap();
@@ -1689,7 +2077,7 @@ async fn test_fail_expired_proof_jobs_honors_batch_size() {
         .fail_expired_proof_jobs(FailExpiredProofJobs {
             max_attempts: 1,
             batch_size: 2,
-            error_message: "worker lock expired after retry budget".to_owned(),
+            error_message: "worker lock expired after retry budget",
         })
         .await
         .unwrap();
@@ -1700,9 +2088,353 @@ async fn test_fail_expired_proof_jobs_honors_batch_size() {
         .fail_expired_proof_jobs(FailExpiredProofJobs {
             max_attempts: 1,
             batch_size: 2,
-            error_message: "worker lock expired after retry budget".to_owned(),
+            error_message: "worker lock expired after retry budget",
         })
         .await
         .unwrap();
     assert!(final_batch.is_empty());
+}
+
+// ============================================================
+// Worker backend session tracking (`record_worker_proof_session` / `get_active_session`)
+// ============================================================
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_record_worker_proof_session_records_resumes_and_updates() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool);
+
+    drain_claimable_compressed_jobs(&repo).await;
+    let id = repo.create(compressed_request()).await.unwrap();
+    let claimed = repo
+        .claim_next_proof_job(compressed_claim("session-record-worker", 3))
+        .await
+        .unwrap()
+        .expect("compressed job should be claimed");
+    assert_eq!(claimed.id, id);
+    let session_id = claimed.session_id.clone();
+    let lock_id = claimed.lock_id.expect("claimed job has lock");
+    let backend_id = format!("cluster-proof-{}", Uuid::new_v4());
+    let updated_backend_id = format!("cluster-proof-{}", Uuid::new_v4());
+
+    assert!(repo.get_active_session(&session_id, SessionType::Stark).await.unwrap().is_none());
+
+    let recorded = repo
+        .record_worker_proof_session(WorkerSessionUpsert {
+            session_id: session_id.clone(),
+            lock_id,
+            worker_id: "session-record-worker".to_owned(),
+            session_type: SessionType::Stark,
+            backend_session_id: backend_id.clone(),
+            status: SessionStatus::Running,
+            error_message: None,
+        })
+        .await
+        .unwrap();
+    let RecordSessionOutcome::Recorded(session) = recorded else {
+        panic!("record should succeed for the current lock holder");
+    };
+    assert_eq!(session.backend_session_id, backend_id);
+    assert_eq!(session.status, SessionStatus::Running);
+
+    let active = repo
+        .get_active_session(&session_id, SessionType::Stark)
+        .await
+        .unwrap()
+        .expect("running session should be active");
+    assert_eq!(active.backend_session_id, backend_id);
+
+    // Re-recording updates the single active row in place rather than inserting a new one.
+    let updated = repo
+        .record_worker_proof_session(WorkerSessionUpsert {
+            session_id: session_id.clone(),
+            lock_id,
+            worker_id: "session-record-worker".to_owned(),
+            session_type: SessionType::Stark,
+            backend_session_id: updated_backend_id.clone(),
+            status: SessionStatus::Running,
+            error_message: None,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(updated, RecordSessionOutcome::Recorded(_)));
+
+    for status in [SessionStatus::Completed, SessionStatus::Failed] {
+        let terminal_status = repo
+            .record_worker_proof_session(WorkerSessionUpsert {
+                session_id: session_id.clone(),
+                lock_id,
+                worker_id: "session-record-worker".to_owned(),
+                session_type: SessionType::Stark,
+                backend_session_id: format!("cluster-proof-{}", Uuid::new_v4()),
+                status,
+                error_message: Some("terminal status should not be written".to_owned()),
+            })
+            .await
+            .unwrap();
+        assert!(matches!(terminal_status, RecordSessionOutcome::TerminalSessionStatus));
+    }
+
+    let active = repo
+        .get_active_session(&session_id, SessionType::Stark)
+        .await
+        .unwrap()
+        .expect("running session should stay active after terminal status rejection");
+    assert_eq!(active.backend_session_id, updated_backend_id);
+
+    let stored = repo
+        .get_session_by_backend_id(&updated_backend_id)
+        .await
+        .unwrap()
+        .expect("session row should persist");
+    assert_eq!(stored.status, SessionStatus::Running);
+    assert!(stored.error_message.is_none());
+    assert_eq!(stored.proof_request_id, id);
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_record_worker_proof_session_preserves_terminal_backend_sessions() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool);
+
+    drain_claimable_compressed_jobs(&repo).await;
+    let id = repo.create(compressed_request()).await.unwrap();
+    let claimed = repo
+        .claim_next_proof_job(compressed_claim("session-terminal-backend-worker", 3))
+        .await
+        .unwrap()
+        .expect("compressed job should be claimed");
+    assert_eq!(claimed.id, id);
+    let session_id = claimed.session_id.clone();
+    let lock_id = claimed.lock_id.expect("claimed job has lock");
+    let terminal_backend_id = format!("cluster-proof-{}", Uuid::new_v4());
+    let active_backend_id = format!("cluster-proof-{}", Uuid::new_v4());
+
+    let recorded = repo
+        .record_worker_proof_session(WorkerSessionUpsert {
+            session_id: session_id.clone(),
+            lock_id,
+            worker_id: "session-terminal-backend-worker".to_owned(),
+            session_type: SessionType::Stark,
+            backend_session_id: terminal_backend_id.clone(),
+            status: SessionStatus::Running,
+            error_message: None,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(recorded, RecordSessionOutcome::Recorded(_)));
+
+    repo.update_proof_session(UpdateProofSession {
+        backend_session_id: terminal_backend_id.clone(),
+        status: SessionStatus::Completed,
+        error_message: None,
+        metadata: None,
+    })
+    .await
+    .unwrap();
+
+    let retry = repo
+        .record_worker_proof_session(WorkerSessionUpsert {
+            session_id: session_id.clone(),
+            lock_id,
+            worker_id: "session-terminal-backend-worker".to_owned(),
+            session_type: SessionType::Stark,
+            backend_session_id: terminal_backend_id.clone(),
+            status: SessionStatus::Running,
+            error_message: None,
+        })
+        .await
+        .unwrap();
+    let RecordSessionOutcome::TerminalBackendSession(terminal) = retry else {
+        panic!("terminal backend session retry should be idempotent");
+    };
+    assert_eq!(terminal.backend_session_id, terminal_backend_id);
+    assert_eq!(terminal.status, SessionStatus::Completed);
+    assert!(repo.get_active_session(&session_id, SessionType::Stark).await.unwrap().is_none());
+
+    let recorded = repo
+        .record_worker_proof_session(WorkerSessionUpsert {
+            session_id: session_id.clone(),
+            lock_id,
+            worker_id: "session-terminal-backend-worker".to_owned(),
+            session_type: SessionType::Stark,
+            backend_session_id: active_backend_id.clone(),
+            status: SessionStatus::Running,
+            error_message: None,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(recorded, RecordSessionOutcome::Recorded(_)));
+
+    let retry = repo
+        .record_worker_proof_session(WorkerSessionUpsert {
+            session_id: session_id.clone(),
+            lock_id,
+            worker_id: "session-terminal-backend-worker".to_owned(),
+            session_type: SessionType::Stark,
+            backend_session_id: terminal_backend_id.clone(),
+            status: SessionStatus::Running,
+            error_message: None,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(retry, RecordSessionOutcome::TerminalBackendSession(_)));
+
+    let active = repo
+        .get_active_session(&session_id, SessionType::Stark)
+        .await
+        .unwrap()
+        .expect("active backend session should not be overwritten");
+    assert_eq!(active.backend_session_id, active_backend_id);
+
+    let sessions = repo.get_sessions_for_request(id).await.unwrap();
+    let terminal_rows =
+        sessions.iter().filter(|session| session.backend_session_id == terminal_backend_id).count();
+    assert_eq!(terminal_rows, 1);
+    assert!(sessions.iter().any(|session| session.backend_session_id == terminal_backend_id
+        && session.status == SessionStatus::Completed));
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_record_worker_proof_session_guards_ownership() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool.clone());
+
+    drain_claimable_compressed_jobs(&repo).await;
+    let id = repo.create(compressed_request()).await.unwrap();
+    let claimed = repo
+        .claim_next_proof_job(compressed_claim("session-guard-worker", 3))
+        .await
+        .unwrap()
+        .expect("compressed job should be claimed");
+    let session_id = claimed.session_id.clone();
+    let lock_id = claimed.lock_id.expect("claimed job has lock");
+
+    let not_found = repo
+        .record_worker_proof_session(WorkerSessionUpsert {
+            session_id: Uuid::new_v4().to_string(),
+            lock_id,
+            worker_id: "session-guard-worker".to_owned(),
+            session_type: SessionType::Stark,
+            backend_session_id: "x".to_owned(),
+            status: SessionStatus::Running,
+            error_message: None,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(not_found, RecordSessionOutcome::NotFound));
+
+    let stale = repo
+        .record_worker_proof_session(WorkerSessionUpsert {
+            session_id: session_id.clone(),
+            lock_id: Uuid::new_v4(),
+            worker_id: "session-guard-worker".to_owned(),
+            session_type: SessionType::Stark,
+            backend_session_id: "x".to_owned(),
+            status: SessionStatus::Running,
+            error_message: None,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(stale, RecordSessionOutcome::StaleLock));
+
+    expire_lock(&pool, id).await;
+    let expired = repo
+        .record_worker_proof_session(WorkerSessionUpsert {
+            session_id,
+            lock_id,
+            worker_id: "session-guard-worker".to_owned(),
+            session_type: SessionType::Stark,
+            backend_session_id: "x".to_owned(),
+            status: SessionStatus::Running,
+            error_message: None,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(expired, RecordSessionOutcome::Expired));
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_record_worker_proof_session_rejects_not_claimed_and_terminal() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool.clone());
+
+    drain_claimable_compressed_jobs(&repo).await;
+
+    // Terminal: a job that exhausts its retry budget fails terminally and can no
+    // longer accept a worker session write.
+    let terminal_id = repo.create(compressed_request()).await.unwrap();
+    let terminal_claim = repo
+        .claim_next_proof_job(compressed_claim("session-terminal-worker", 1))
+        .await
+        .unwrap()
+        .expect("compressed job should be claimed");
+    assert_eq!(terminal_claim.id, terminal_id);
+    let terminal_session_id = terminal_claim.session_id.clone();
+    let terminal_lock = terminal_claim.lock_id.expect("claimed job has lock");
+    expire_lock(&pool, terminal_id).await;
+    let failed = repo
+        .fail_expired_proof_jobs(FailExpiredProofJobs {
+            max_attempts: 1,
+            batch_size: 100,
+            error_message: "retry budget exhausted",
+        })
+        .await
+        .unwrap();
+    assert!(failed.iter().any(|job| job.id == terminal_id), "job should fail terminally");
+
+    let terminal = repo
+        .record_worker_proof_session(WorkerSessionUpsert {
+            session_id: terminal_session_id,
+            lock_id: terminal_lock,
+            worker_id: "session-terminal-worker".to_owned(),
+            session_type: SessionType::Stark,
+            backend_session_id: "x".to_owned(),
+            status: SessionStatus::Running,
+            error_message: None,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(terminal, RecordSessionOutcome::Terminal));
+
+    // NotClaimed: a job that has been released back to the pending pool (e.g.
+    // after a reclaim) is no longer claimed, so the original holder's token is
+    // rejected before the lock columns are even consulted.
+    let pending_id = repo.create(compressed_request()).await.unwrap();
+    let pending_claim = repo
+        .claim_next_proof_job(compressed_claim("session-pending-worker", 2))
+        .await
+        .unwrap()
+        .expect("compressed job should be claimed");
+    assert_eq!(pending_claim.id, pending_id);
+    let pending_session_id = pending_claim.session_id.clone();
+    let pending_lock = pending_claim.lock_id.expect("claimed job has lock");
+    // Release the job back to PENDING and clear its lock, as a requeue would.
+    sqlx::query(
+        "UPDATE proof_requests
+         SET job_status = 'PENDING', lock_id = NULL, worker_id = NULL, lock_expires_at = NULL
+         WHERE id = $1",
+    )
+    .bind(pending_id)
+    .execute(&pool)
+    .await
+    .expect("release to pending should succeed");
+
+    let not_claimed = repo
+        .record_worker_proof_session(WorkerSessionUpsert {
+            session_id: pending_session_id,
+            lock_id: pending_lock,
+            worker_id: "session-pending-worker".to_owned(),
+            session_type: SessionType::Stark,
+            backend_session_id: "x".to_owned(),
+            status: SessionStatus::Running,
+            error_message: None,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(not_claimed, RecordSessionOutcome::NotClaimed));
 }

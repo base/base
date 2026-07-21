@@ -70,9 +70,12 @@ duration: "30s"
 distributed across the configured HTTP endpoints.
 `txpool_nodes` is optional and defaults to an empty list; when present, the load tester calls
 `admin_dropSenderTransactions` for every sender address on every configured node before funding.
-Canonical confirmation and gas metrics are collected by polling `query_rpc` for new blocks and
-fetching `eth_getBlockReceipts` for each observed block, so `query_rpc` must support
-`eth_getBlockReceipts`.
+Transaction landing is detected by polling `query_rpc` with `eth_getBlockByNumber` every 500ms and
+matching submitted transaction hashes against each block's transaction list; the recorded block
+latency therefore includes the block poll and scan cost. Gas usage and revert status are backfilled
+in a single `eth_getBlockReceipts` batch pass at the very end of the run, scoped only to the blocks
+that contained our transactions, so `query_rpc` must support `eth_getBlockReceipts`. Receipt-fetch
+delay is measured for logging but is no longer included in the JSON output.
 
 ### Available Configs
 
@@ -83,6 +86,7 @@ fetching `eth_getBlockReceipts` for each observed block, so `query_rpc` must sup
 | `sepolia.yaml` | Base Sepolia | Requires `FUNDER_KEY` |
 | `real-token-sepolia.yaml` | Base Sepolia | Uses predeployed WETH/USDC and the Uniswap V3 swap router; run with `just load-test real-token sepolia`; recover with `just load-test real-token-recover sepolia` |
 | `real-token-mainnet-snapshot.yaml` | Local/shadow Base mainnet snapshot | Wraps funded ETH into WETH, acquires USDC, then runs random-direction Uniswap V3 and Aerodrome CL swaps; run with `just load-test real-token mainnet-snapshot` |
+| `zeronet.yaml` | Base Zeronet | Requires `FUNDER_KEY` |
 
 ### Contract Addresses
 
@@ -172,22 +176,18 @@ The `PrecompileLooper` contract enables batch testing by calling a precompile mu
 #### B-20 Token Testing
 
 B-20 precompile tokens can be load-tested to benchmark the precompile's `transfer` performance.
-The load tester handles the full lifecycle: token creation via the B-20 factory, role grants
-(`MINT_ROLE` / `BURN_ROLE` to every sender), minting during setup, and burning during teardown.
+Each sender creates and owns its own B-20 token: during setup every sender sends one `createB20`
+factory tx (in parallel) whose privileged init calls grant the sender `BURN_ROLE` and mint its
+supply, during the load phase each sender transfers its own token, and during teardown each sender
+burns its remaining balance. A fresh per-run salt keeps each run's token addresses distinct.
 
 Requires Beryl activation (B-20 factory and token features must be active on the target chain).
 
 ```yaml
-# Auto-create a new B-20 token per run (devnet/zeronet)
+# Each sender creates and transfers its own B-20 token per run
 transactions:
   - weight: 100
     type: b20
-
-# Use a pre-deployed B-20 token
-transactions:
-  - weight: 100
-    type: b20
-    contract: "0x..."
 ```
 
 #### Swap Testing
@@ -214,3 +214,20 @@ real_token_setup:
 ```
 
 `reverse_min_amount` and `reverse_max_amount` on `uniswap_v3` and `aerodrome_cl` set the amount range for `token_out → token_in` swaps. Use these when the two tokens have different decimal scales; when omitted, the reverse range matches the forward range.
+
+#### Running multiple load tests
+
+- You may need to tune `target_gps` and sender count appropriately.
+
+#### Account Create
+
+By default, transfer recipients are picked from the bounded sender pool, so long runs keep targeting the same `sender_count` addresses. Set `fresh_recipient_ratio` to a value from `0.0` to `1.0` to derive that fraction of recipient signing keys from the configured mnemonic, or from `seed` when no mnemonic is set. This drives account-trie fan-out for workloads like the account-create performance baseline.
+
+```yaml
+fresh_recipient_ratio: 1.0
+transactions:
+  - weight: 100
+    type: transfer
+```
+
+Recipient keys are advanced past the sender keys. The runner prints `recipient_offset` at startup and writes `fresh_recipient_count` to the final summary. Recover recipients with `AccountPool::from_mnemonic(mnemonic, fresh_recipient_count, recipient_offset)` or `AccountPool::with_offset(seed, fresh_recipient_count, recipient_offset)`.

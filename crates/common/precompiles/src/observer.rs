@@ -1,5 +1,7 @@
 //! Native precompile observation hooks.
 
+use crate::{PrecompileCallMetric, PrecompileCallOutcome};
+
 /// Observer that does not record native precompile calls.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct NoopPrecompileCallObserver;
@@ -21,6 +23,18 @@ pub trait PrecompileCallObserver: Clone + Send + Sync + 'static {
         let _guard = EndGuard { observer: self, label };
         f()
     }
+
+    /// Records one completed native precompile call.
+    fn record_call(&self, _call: &PrecompileCallMetric, _outcome: &PrecompileCallOutcome) {}
+
+    /// Records a B-20 token creation.
+    fn record_b20_created(&self, _variant: &'static str) {}
+
+    /// Records the number of logical items in a Beryl batch call.
+    fn record_batch_items(&self, _call: &PrecompileCallMetric, _count: usize) {}
+
+    /// Records internal calls made by Beryl precompile logic.
+    fn record_internal_calls(&self, _call: &PrecompileCallMetric, _calls: usize, _bytes: usize) {}
 }
 
 impl PrecompileCallObserver for NoopPrecompileCallObserver {}

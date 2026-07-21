@@ -5,15 +5,16 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
+use alloy_primitives::Address;
 use alloy_provider::{Provider, ProviderBuilder};
 use base_balance_monitor::BalanceMonitorLayer;
 use base_cli_utils::RuntimeManager;
 use base_health::HealthServer;
 use base_proof_contracts::{
-    AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryContractClient,
-    DisputeGameFactoryClient, DisputeGameFactoryContractClient,
+    AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryClient,
+    AnchorStateRegistryContractClient, DisputeGameFactoryClient, DisputeGameFactoryContractClient,
 };
-use base_proof_rpc::{L1Client, L1ClientConfig, L2Client, L2ClientConfig};
+use base_proof_rpc::{L1Client, L1ClientConfig, L2Client, L2ClientConfig, L2Provider};
 use base_prover_service_client::{ProofRequesterClient, ProverServiceClientConfig};
 use base_runtime::TokioRuntime;
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
@@ -22,8 +23,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::{
-    BondManager, ChallengeSubmitter, ChallengerConfig, ChallengerMetrics, DisputeComponents,
-    Driver, DriverComponents, DriverConfig, GameScanner, OutputValidator,
+    AnchorUpdater, BondManager, BondManagerConfig, ChallengeSubmitter, ChallengerConfig,
+    ChallengerMetrics, DisputeComponents, Driver, DriverComponents, GameScanner, L1HeadProvider,
+    OutputValidator,
 };
 
 /// Top-level challenger service.
@@ -38,12 +40,16 @@ impl ChallengerService {
     /// 1. Install TLS provider
     /// 2. Create the cancellation token and signal handler
     /// 3. Create L1 provider, tx-manager, and challenge submitter
-    /// 4. Create dispute-game-factory and aggregate-verifier clients
-    /// 5. Build the bond manager
-    /// 6. Build the dispute pipeline dependencies (skipped in no-dispute mode)
-    /// 7. Start health HTTP server
-    /// 8. Assemble and run the driver
-    /// 9. Graceful shutdown
+    /// 4. Create dispute-game-factory and aggregate-verifier clients; read
+    ///    onchain block-interval configuration from the registered
+    ///    `AggregateVerifier` implementation
+    /// 5. Create the anchor-state-registry client, L2 client, and anchor updater
+    ///    (the anchor/bond lifecycle runs in both dispute and no-dispute modes)
+    /// 6. Build the bond manager
+    /// 7. Build the dispute pipeline dependencies (skipped in no-dispute mode)
+    /// 8. Start health HTTP server
+    /// 9. Assemble and run the driver
+    /// 10. Graceful shutdown
     ///
     /// # Errors
     ///
@@ -61,9 +67,8 @@ impl ChallengerService {
         let signal_handle = RuntimeManager::install_signal_handler(cancel.clone());
 
         // ── 3. Construct tx-manager and challenge submitter ──────────────────
-        let signer_config = config.signing;
-        let sender_addr = signer_config.address();
-        let l1_rpc_url = config.l1_eth_rpc.as_ref().clone();
+        let sender_addr = config.signing.address();
+        let l1_rpc_url = config.l1_eth_rpc.clone();
         let l1_provider = if config.metrics.enabled {
             let (layer, mut balance_rx) = BalanceMonitorLayer::new(
                 sender_addr,
@@ -88,7 +93,7 @@ impl ChallengerService {
             .map_err(|e| eyre::eyre!("failed to fetch L1 chain ID: {e}"))?;
         let tx_manager = SimpleTxManager::new(
             l1_provider,
-            signer_config,
+            config.signing,
             config.tx_manager,
             chain_id,
             Arc::new(BaseTxMetrics::new("challenger")),
@@ -108,112 +113,141 @@ impl ChallengerService {
         );
 
         let verifier_client = AggregateVerifierContractClient::new(l1_rpc_url.clone())?;
+        let impl_address = factory_client.game_impls(config.game_type).await?;
+        if impl_address == Address::ZERO {
+            return Err(eyre::eyre!(
+                "no AggregateVerifier implementation registered for game type {}",
+                config.game_type
+            ));
+        }
+        let (block_interval, intermediate_block_interval) = tokio::try_join!(
+            verifier_client.read_block_interval(impl_address),
+            verifier_client.read_intermediate_block_interval(impl_address),
+        )?;
+        if block_interval == 0 || intermediate_block_interval == 0 {
+            return Err(eyre::eyre!(
+                "BLOCK_INTERVAL ({block_interval}) and INTERMEDIATE_BLOCK_INTERVAL ({intermediate_block_interval}) must be non-zero"
+            ));
+        }
+        if block_interval % intermediate_block_interval != 0 {
+            return Err(eyre::eyre!(
+                "BLOCK_INTERVAL ({block_interval}) is not divisible by INTERMEDIATE_BLOCK_INTERVAL ({intermediate_block_interval})"
+            ));
+        }
+        info!(
+            block_interval,
+            intermediate_block_interval,
+            intermediate_roots_count = block_interval / intermediate_block_interval,
+            impl_address = %impl_address,
+            game_type = config.game_type,
+            "Read onchain config from AggregateVerifier"
+        );
 
-        let factory_client = Arc::new(factory_client);
+        let anchor_registry_client = AnchorStateRegistryContractClient::new(
+            config.anchor_state_registry_addr,
+            l1_rpc_url.clone(),
+        )?;
+        info!(
+            address = %config.anchor_state_registry_addr,
+            "AnchorStateRegistry client initialized"
+        );
+
+        let factory_client: Arc<dyn DisputeGameFactoryClient> = Arc::new(factory_client);
         let verifier_client: Arc<dyn AggregateVerifierClient> = Arc::new(verifier_client);
+        let anchor_registry_client: Arc<dyn AnchorStateRegistryClient> =
+            Arc::new(anchor_registry_client);
 
-        // ── 5. Bond manager ─────────────────────────────────────────────────
+        // ── 5. L2 client and anchor updater ──────────────────────────────────
+        let l2_client = Arc::new(L2Client::new(L2ClientConfig::new(config.l2_eth_rpc.clone()))?);
+        info!(endpoint = %config.l2_eth_rpc, "L2 client initialized");
+
+        let anchor_updater = AnchorUpdater::new(
+            Arc::clone(&factory_client),
+            Arc::clone(&anchor_registry_client),
+            Arc::clone(&l2_client) as Arc<dyn L2Provider>,
+            config.anchor_state_registry_addr,
+            config.game_type,
+            block_interval,
+            intermediate_block_interval,
+        );
+
+        // ── 6. Bond manager ─────────────────────────────────────────────────
         // Required in no-dispute mode (enforced by config validation); optional
         // otherwise.
         let bond_manager = if !config.bond_claim_addresses.is_empty() {
-            let mut bm = BondManager::new(
-                config.bond_claim_addresses,
-                l1_rpc_url.clone(),
-                Arc::clone(&factory_client) as Arc<dyn DisputeGameFactoryClient>,
-                config.bond_discovery_lookback_games,
-                config.bond_discovery_interval,
+            Some(BondManager::new(
+                BondManagerConfig {
+                    claim_addresses: config.bond_claim_addresses,
+                    l1_rpc_url: l1_rpc_url.clone(),
+                    lookback: config.bond_discovery_lookback_games,
+                    discovery_interval: config.bond_discovery_interval,
+                    metrics_enabled: config.metrics.enabled,
+                },
+                Arc::clone(&factory_client),
+                Arc::clone(&l2_client) as Arc<dyn L2Provider>,
                 TokioRuntime::new(),
-            );
-            bm.set_anchor_update_retention(config.anchor_update_retention);
-            info!("starting bond recovery scan");
-            if let Err(e) = bm.startup_scan(&*verifier_client).await {
-                // On failure `bond_scan_head` stays at 0, so
-                // `discover_claimable_games` will progressively scan the
-                // factory over multiple ticks (capped at `lookback` games
-                // per tick). This is intentional: progressive catch-up
-                // is preferable to disabling bond claiming entirely.
-                warn!(error = %e, "bond startup scan failed, continuing without recovery");
-            }
-            info!(tracked = bm.tracked_count(), "bond manager ready");
-            Some(bm)
+            ))
         } else {
             info!("bond claiming disabled (no --bond-claim-addresses)");
             None
         };
 
-        // ── 6. Dispute pipeline dependencies (skipped in no-dispute mode) ───
+        // ── 7. Dispute pipeline dependencies (skipped in no-dispute mode) ────
         // No-dispute mode runs only the bond/anchor lifecycle, so the
-        // prover-service client, L2 client, scanner, and validator are never
-        // constructed. The type annotation pins the `Driver`'s `L2`/`P`
+        // prover-service client, scanner, validator, and TEE head provider are
+        // never constructed. The type annotation pins the `Driver`'s `L2`/`P`
         // generics, which are otherwise unconstrained when `dispute` is `None`.
         let dispute: Option<DisputeComponents<L2Client, ProofRequesterClient>> = if config
             .no_dispute
         {
-            info!("no-dispute mode: skipping prover-service, L2 client, scanner, and validator");
+            info!("no-dispute mode: skipping prover-service, scanner, and validator");
             None
         } else {
-            let anchor_registry_client = Arc::new(AnchorStateRegistryContractClient::new(
-                config.anchor_state_registry_addr,
-                l1_rpc_url.clone(),
-            )?);
-            info!(
-                address = %config.anchor_state_registry_addr,
-                "AnchorStateRegistry client initialized"
-            );
-
-            let l2_config = L2ClientConfig::new(config.l2_eth_rpc.as_ref().clone());
-            let l2_client = Arc::new(L2Client::new(l2_config)?);
-            info!(endpoint = %config.l2_eth_rpc, "L2 client initialized");
-
             let zk_rpc_url = config.zk_rpc_url.as_ref().expect("zk_rpc_url is Some when disputing");
             let proof_requester_config = ProverServiceClientConfig::new(zk_rpc_url.to_string())
                 .with_request_timeout(config.zk_request_timeout);
             let proof_requester = Arc::new(ProofRequesterClient::connect(&proof_requester_config)?);
             info!(endpoint = %zk_rpc_url, "Prover-service requester client initialized");
 
-            let tee = if let Some(ref tee_url) = config.tee_rpc_url {
-                // TODO(C4): consolidate proof-client config and replace tee_rpc_url as a feature gate.
-                info!(endpoint = %tee_url, "TEE proof sourcing enabled");
-                let l1_config = L1ClientConfig::new(l1_rpc_url.clone());
-                let l1_client = L1Client::new(l1_config)
-                    .map_err(|e| eyre::eyre!("failed to create TEE L1 client: {e}"))?;
-                Some(crate::TeeConfig { l1_head_provider: Arc::new(l1_client) })
-            } else {
-                info!("TEE proof sourcing disabled (no --tee-rpc-url)");
-                None
-            };
+            let l1_client = L1Client::new(L1ClientConfig::new(l1_rpc_url.clone()))
+                .map_err(|e| eyre::eyre!("failed to create TEE L1 client: {e}"))?;
+            let tee: Option<Arc<dyn L1HeadProvider>> =
+                Some(Arc::new(l1_client) as Arc<dyn L1HeadProvider>);
 
             let scanner = GameScanner::new(
-                Arc::clone(&factory_client) as Arc<dyn DisputeGameFactoryClient>,
+                Arc::clone(&factory_client),
                 Arc::clone(&verifier_client),
-                anchor_registry_client,
+                Arc::clone(&anchor_registry_client),
             );
-            let validator = OutputValidator::new(l2_client);
+            let validator = OutputValidator::new(Arc::clone(&l2_client));
             Some(DisputeComponents {
                 scanner,
                 validator,
                 proof_requester,
                 tee,
                 max_proof_duration: config.max_proof_duration,
+                tee_submit_retry_limit: config.tee_submit_retry_limit,
             })
         };
 
-        // ── 7. Start health HTTP server ──────────────────────────────────────
+        // ── 8. Start health HTTP server ──────────────────────────────────────
         let ready = Arc::new(AtomicBool::new(false));
-        let health_handle = {
-            let addr = config.health_addr;
-            let ready_flag = Arc::clone(&ready);
-            let health_cancel = cancel.clone();
-            tokio::spawn(async move { HealthServer::serve(addr, ready_flag, health_cancel).await })
-        };
+        let health_handle = tokio::spawn(HealthServer::serve(
+            config.health_addr,
+            Arc::clone(&ready),
+            cancel.clone(),
+        ));
 
-        // ── 8. Run driver ────────────────────────────────────────────────────
-        let driver_config =
-            DriverConfig { poll_interval: config.poll_interval, cancel: cancel.child_token() };
-        let driver = Driver::new(
-            driver_config,
-            DriverComponents { dispute, submitter, verifier_client, bond_manager },
-        );
+        // ── 9. Run driver ────────────────────────────────────────────────────
+        let driver = Driver::new(DriverComponents {
+            dispute,
+            submitter,
+            verifier_client,
+            bond_manager,
+            anchor_updater,
+            poll_interval: config.poll_interval,
+            cancel: cancel.child_token(),
+        });
 
         // Signal readiness immediately after initialization — the driver loop
         // itself is purely operational work that should not gate readiness probes.
@@ -225,7 +259,7 @@ impl ChallengerService {
         driver.run().await;
         drop(cancel_guard);
 
-        // ── 9. Graceful shutdown ─────────────────────────────────────────────
+        // ── 10. Graceful shutdown ─────────────────────────────────────────────
         info!("Driver stopped, shutting down...");
         ready.store(false, Ordering::SeqCst);
 

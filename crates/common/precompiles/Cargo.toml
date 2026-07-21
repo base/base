@@ -20,6 +20,7 @@ alloy-primitives.workspace = true
 
 # base
 base-common-chains.workspace = true
+base-common-genesis.workspace = true
 base-precompile-macros.workspace = true
 base-precompile-storage.workspace = true
 
@@ -37,6 +38,22 @@ name = "base_precompiles"
 harness = false
 required-features = ["test-utils"]
 
+[[test]]
+name = "b20_stablecoin_v1_golden"
+required-features = ["test-utils"]
+
+[[test]]
+name = "b20_asset_v1_golden"
+required-features = ["test-utils"]
+
+[[test]]
+name = "b20_policy_v1_golden"
+required-features = ["test-utils"]
+
+[[test]]
+name = "b20_factory_v1_golden"
+required-features = ["test-utils"]
+
 [features]
 default = [ "blst", "c-kzg", "portable", "secp256k1", "std" ]
 std = [
@@ -44,6 +61,7 @@ std = [
 	"alloy-primitives/std",
 	"alloy-sol-types/std",
 	"base-common-chains/std",
+	"base-common-genesis/std",
 	"base-precompile-storage/std",
 	"revm/std",
 ]
@@ -59,4 +77,7 @@ optional_eip3607 = [ "revm/optional_eip3607" ]
 optional_fee_charge = [ "revm/optional_fee_charge" ]
 optional_balance_check = [ "revm/optional_balance_check" ]
 optional_block_gas_limit = [ "revm/optional_block_gas_limit" ]
-test-utils = [ "base-precompile-storage/test-utils" ]
+test-utils = [
+	"base-common-chains/test-utils",
+	"base-precompile-storage/test-utils",
+]

@@ -233,7 +233,13 @@ mod tests {
             genesis_time: 0,
             slot_interval: 12,
         });
-        HostProviders { l1: base_consensus_providers::L1RpcProvider::Ethereum(l1), blobs, l2 }
+        let l2_node = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
+        HostProviders {
+            l1: base_consensus_providers::L1RpcProvider::Ethereum(l1),
+            blobs,
+            l2,
+            l2_node,
+        }
     }
 
     fn test_cfg() -> HostConfig {
@@ -242,6 +248,7 @@ mod tests {
             prover: ProverConfig {
                 l1_eth_url: "http://127.0.0.1:1".to_string(),
                 l2_eth_url: "http://127.0.0.1:1".to_string(),
+                l2_node_url: "http://127.0.0.1:1".to_string(),
                 l1_beacon_url: Some("http://127.0.0.1:1".to_string()),
                 l2_chain_id: 0,
                 rollup_config: RollupConfig::default(),

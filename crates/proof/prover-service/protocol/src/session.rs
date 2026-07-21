@@ -67,7 +67,7 @@ mod tests {
         );
         assert_ne!(
             ProofSessionId::derive(b"namespace", "tee/aws_nitro", root),
-            ProofSessionId::derive(b"namespace", "zk/sp1/snark_groth16", root),
+            ProofSessionId::derive(b"namespace", "zk/sp1/snark_plonk", root),
         );
         assert_ne!(
             ProofSessionId::derive(b"namespace", "tee/aws_nitro", root),
@@ -80,12 +80,12 @@ mod tests {
         assert_ne!(
             ProofSessionId::derive_from_components(
                 b"namespace",
-                "zk/sp1/snark_groth16",
+                "zk/sp1/snark_plonk",
                 &[b"a", b"bc"]
             ),
             ProofSessionId::derive_from_components(
                 b"namespace",
-                "zk/sp1/snark_groth16",
+                "zk/sp1/snark_plonk",
                 &[b"ab", b"c"]
             ),
         );

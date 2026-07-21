@@ -34,7 +34,7 @@ get_next_rc_number() {
 
 tag_exists() {
     local tag="$1"
-    git rev-parse "$tag" >/dev/null 2>&1
+    git rev-parse --verify "refs/tags/$tag" >/dev/null 2>&1
 }
 
 configure_git() {

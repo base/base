@@ -52,7 +52,7 @@ pub struct BatchEncoder {
     rng: SmallRng,
     /// Accumulated (`SingleBatch`, `sequence_number`) pairs when operating in
     /// [`BatchType::Span`] mode. Blocks are collected here during `step()` and
-    /// flushed as a single [`SpanBatch`] when `close_current_channel()` is called.
+    /// flushed as a single [`SpanBatch`] when a span-batch or channel boundary is reached.
     span_accumulator: Vec<(SingleBatch, u64)>,
     /// Running sum of the estimated raw (uncompressed) byte size of all blocks currently
     /// in `span_accumulator`. Incremented by [`Self::SPAN_BATCH_PER_BLOCK_OVERHEAD`] plus raw
@@ -64,13 +64,15 @@ pub struct BatchEncoder {
     /// L1 head block number when the first block was accumulated into the current span
     /// (Span mode only). Used by `check_channel_timeout()` to detect when the span has
     /// been open too long and must be flushed, since `current_channel` is `None` between
-    /// span flushes. Cleared when `close_current_channel()` drains the accumulator.
+    /// span flushes. Cleared when the accumulator is written into a channel.
     span_opened_at_l1: Option<u64>,
     /// Driver-controlled override that forces [`DaType::Blob`] on every emitted
     /// submission, regardless of the configured `da_type`. Toggled by the driver
     /// when DA-backlog throttling activates and `force_blobs_when_throttling` is
     /// set. No-op when the configured `da_type` is already [`DaType::Blob`].
     blob_override: bool,
+    /// Fatal error observed from trait methods that cannot return [`StepError`].
+    deferred_step_error: Option<StepError>,
 }
 
 impl fmt::Debug for BatchEncoder {
@@ -117,6 +119,7 @@ impl BatchEncoder {
             span_da_backlog_bytes: 0,
             span_opened_at_l1: None,
             blob_override: false,
+            deferred_step_error: None,
         }
     }
 
@@ -147,10 +150,10 @@ impl BatchEncoder {
         loop {
             match self.step()? {
                 StepResult::Idle => break,
-                StepResult::BlockEncoded | StepResult::ChannelClosed => {}
+                StepResult::BlockEncoded | StepResult::SpanFlushed | StepResult::ChannelClosed => {}
             }
         }
-        self.force_close_channel();
+        self.close_current_channel("force")?;
         let mut frames = Vec::new();
         while let Some(sub) = self.next_submission() {
             frames.extend(sub.frames);
@@ -158,91 +161,91 @@ impl BatchEncoder {
         Ok(frames)
     }
 
-    /// Close the current channel, drain its frames, and push it to `ready_channels`.
-    ///
-    /// In [`BatchType::Span`] mode the span accumulator is flushed as a single
-    /// [`SpanBatch`] into a freshly-opened channel before draining frames.
-    /// If both the channel and the accumulator are empty the call is a no-op.
-    ///
-    /// `close_reason` is recorded as the `reason` label on the
-    /// `batcher_channel_closed_total` counter.
-    fn close_current_channel(&mut self, close_reason: &'static str) {
-        // In Span mode: build a SpanBatch from the accumulator, then open a channel
-        // and write it. The accumulator is only consumed if all appends succeed, so
-        // blocks are never silently lost on error — they remain in the accumulator for
-        // the next close attempt.
-        //
-        // Importantly, both the channel open and the accumulator drain happen only
-        // after successful batch construction: this prevents writing a zero-block (or
-        // partial) SpanBatch to the channel, which would be silently ignored by the
-        // derivation pipeline and waste L1 DA space.
-        if self.config.batch_type == BatchType::Span && !self.span_accumulator.is_empty() {
-            let chain_id = self.rollup_config.l2_chain_id.id();
-            let mut span_batch = SpanBatch {
-                chain_id,
-                genesis_timestamp: self.rollup_config.genesis.l2_time,
-                ..Default::default()
-            };
-            let total = self.span_accumulator.len();
-            let mut append_failed = false;
+    /// Build a span batch from the current accumulator.
+    fn build_span_batch(&self) -> Result<SpanBatch, StepError> {
+        let chain_id = self.rollup_config.l2_chain_id.id();
+        let mut span_batch = SpanBatch {
+            chain_id,
+            genesis_timestamp: self.rollup_config.genesis.l2_time,
+            ..Default::default()
+        };
+        let total = self.span_accumulator.len();
 
-            for (single, seq_num) in &self.span_accumulator {
-                if let Err(e) = span_batch.append_singular_batch(single.clone(), *seq_num) {
-                    warn!(
-                        error = %e,
-                        total,
-                        "span batch append failed; blocks preserved in accumulator"
-                    );
-                    append_failed = true;
-                    break;
-                }
-            }
-
-            if !append_failed {
-                // All blocks encoded into the SpanBatch. Now open a channel and write it.
-                // The accumulator is only cleared *after* a successful add_batch so that
-                // blocks are never silently lost if the channel rejects the batch (e.g.
-                // if the span batch exceeds MAX_RLP_BYTES_PER_CHANNEL).
-                if self.current_channel.is_none() {
-                    self.open_new_channel(self.block_cursor.saturating_sub(total));
-                }
-
-                let add_ok = self
-                    .current_channel
-                    .as_mut()
-                    .map(|open| {
-                        let ok = open.out.add_batch(Batch::Span(span_batch)).map_err(|e| {
-                            warn!(error = %e, total, "failed to add span batch to channel; blocks preserved in accumulator");
-                        }).is_ok();
-                        if ok {
-                            open.blocks_added += total;
-                            open.da_backlog_bytes += self.span_da_backlog_bytes;
-                        }
-                        ok
-                    })
-                    .unwrap_or(false);
-
-                if add_ok {
-                    self.span_accumulator.clear();
-                    self.span_raw_bytes = 0;
-                    self.span_da_backlog_bytes = 0;
-                    self.span_opened_at_l1 = None;
-                } else {
-                    // Discard the channel we just opened so that the drain logic below
-                    // (`self.current_channel.take()`) short-circuits and returns early.
-                    // Without this, the empty channel (0 frames) would be pushed to
-                    // `ready_channels`, where it can never be confirmed and never removed,
-                    // leaking memory and growing the O(N) scan in `next_submission`.
-                    // Emit a closed counter to keep opened/closed balanced.
-                    BatcherMetrics::channel_closed_total(BatcherMetrics::REASON_DISCARD)
-                        .increment(1);
-                    self.current_channel = None;
-                }
-            }
-            // On failure (append or add_batch): accumulator is untouched so blocks
-            // are retried on the next close attempt. No partial SpanBatch is submitted.
+        for (single, seq_num) in &self.span_accumulator {
+            span_batch
+                .append_singular_batch(single.clone(), *seq_num)
+                .map_err(|source| StepError::SpanBatchBuildFailed { blocks: total, source })?;
         }
 
+        Ok(span_batch)
+    }
+
+    /// Reset span accumulator counters after the accumulator has been flushed.
+    fn clear_span_accumulator(&mut self) {
+        self.span_accumulator.clear();
+        self.span_raw_bytes = 0;
+        self.span_da_backlog_bytes = 0;
+        self.span_opened_at_l1 = None;
+    }
+
+    /// Flush the span accumulator into the current channel without closing it.
+    ///
+    /// Returns `Ok(true)` when there is no accumulator to flush or the flush succeeds.
+    /// Returns `Ok(false)` when an existing channel should be closed before retrying.
+    /// Returns an error when the span cannot fit in a fresh channel.
+    fn flush_span_accumulator_to_channel(&mut self) -> Result<bool, StepError> {
+        if self.config.batch_type != BatchType::Span || self.span_accumulator.is_empty() {
+            return Ok(true);
+        }
+
+        let total = self.span_accumulator.len();
+        let span_batch = self.build_span_batch()?;
+        let opened_new_channel = self.current_channel.is_none();
+
+        if opened_new_channel {
+            self.open_new_channel(self.block_cursor.saturating_sub(total));
+        }
+
+        let add_result = self
+            .current_channel
+            .as_mut()
+            .expect("channel exists after optional open_new_channel")
+            .out
+            .add_batch(Batch::Span(span_batch));
+
+        match add_result {
+            Ok(()) => {
+                if let Some(open) = self.current_channel.as_mut() {
+                    open.blocks_added += total;
+                    open.da_backlog_bytes += self.span_da_backlog_bytes;
+                }
+                self.clear_span_accumulator();
+                Ok(true)
+            }
+            Err(source) => {
+                warn!(
+                    error = %source,
+                    total,
+                    opened_new_channel,
+                    "failed to add span batch to channel; blocks preserved in accumulator"
+                );
+                if opened_new_channel {
+                    if self.current_channel.take().is_some() {
+                        BatcherMetrics::channel_closed_total(BatcherMetrics::REASON_DISCARD)
+                            .increment(1);
+                    }
+                    return Err(StepError::SpanBatchRejectedByEmptyChannel {
+                        blocks: total,
+                        source,
+                    });
+                }
+                Ok(false)
+            }
+        }
+    }
+
+    /// Close the currently open channel, drain its frames, and push it to `ready_channels`.
+    fn close_open_channel(&mut self, close_reason: &'static str) {
         let Some(mut open) = self.current_channel.take() else {
             return;
         };
@@ -277,8 +280,9 @@ impl BatchEncoder {
         // channel confirms first pops the correct prefix of the deque, and
         // subsequent confirmations find their .end adjusted to 0 and are no-ops.
         // This correctly handles out-of-order confirmations without double-pruning.
-        let block_range = 0..self.block_cursor;
-        let encoded_block_range = open.block_start..self.block_cursor;
+        let encoded_block_end = open.block_start.saturating_add(blocks_added);
+        let block_range = 0..encoded_block_end;
+        let encoded_block_range = open.block_start..encoded_block_end;
         let frame_count = frames.len();
         let duration_blocks = self.l1_head.saturating_sub(opened_at_l1);
         let compressed_bytes: usize = frames.iter().map(|f| f.data.len()).sum();
@@ -302,6 +306,11 @@ impl BatchEncoder {
         BatcherMetrics::channel_closed_total(close_reason).increment(1);
         BatcherMetrics::channel_duration_blocks().record(duration_blocks as f64);
         BatcherMetrics::l2_blocks_per_channel().record(blocks_added as f64);
+        BatcherMetrics::input_bytes(BatcherMetrics::STAGE_CLOSED).set(input_bytes as f64);
+        BatcherMetrics::output_bytes().set(compressed_bytes as f64);
+        BatcherMetrics::input_bytes_total().increment(input_bytes);
+        BatcherMetrics::output_bytes_total().increment(closed_da_backlog_bytes);
+        BatcherMetrics::channel_num_frames().set(frame_count as f64);
         if input_bytes > 0 {
             let ratio = compressed_bytes as f64 / input_bytes as f64;
             BatcherMetrics::channel_compression_ratio().record(ratio);
@@ -321,6 +330,66 @@ impl BatchEncoder {
             first_confirmed_l1_block: None,
             last_confirmed_l1_block: None,
         });
+    }
+
+    /// Close the current channel, drain its frames, and push it to `ready_channels`.
+    ///
+    /// In [`BatchType::Span`] mode any pending accumulator is first flushed as a
+    /// [`SpanBatch`] into the currently open channel. If both the channel and the
+    /// accumulator are empty the call is a no-op.
+    ///
+    /// `close_reason` is recorded as the `reason` label on the
+    /// `batcher_channel_closed_total` counter.
+    fn close_current_channel(&mut self, close_reason: &'static str) -> Result<(), StepError> {
+        if !self.try_flush_span_or_close(close_reason)? {
+            return Ok(());
+        }
+
+        self.close_open_channel(close_reason);
+        Ok(())
+    }
+
+    /// Flush the span accumulator or close the current channel so the next step can retry.
+    fn try_flush_span_or_close(&mut self, close_reason: &'static str) -> Result<bool, StepError> {
+        let had_open_channel = self.current_channel.is_some();
+        if self.flush_span_accumulator_to_channel()? {
+            return Ok(true);
+        }
+
+        self.close_or_discard_after_failed_span_flush(had_open_channel, close_reason);
+        Ok(false)
+    }
+
+    /// Close a pre-existing channel or discard a channel opened by a failed span flush.
+    fn close_or_discard_after_failed_span_flush(
+        &mut self,
+        had_open_channel: bool,
+        close_reason: &'static str,
+    ) {
+        if had_open_channel {
+            self.close_open_channel(close_reason);
+        } else if self.current_channel.is_some() {
+            BatcherMetrics::channel_closed_total(BatcherMetrics::REASON_DISCARD).increment(1);
+            self.current_channel = None;
+        }
+    }
+
+    /// Store a fatal encoding error so the next [`BatchPipeline::step`] reports it.
+    fn defer_step_error(&mut self, error: StepError, operation: &'static str) {
+        warn!(
+            error = %error,
+            operation = %operation,
+            "deferred fatal encoder error from non-fallible pipeline method"
+        );
+        if self.deferred_step_error.is_none() {
+            self.deferred_step_error = Some(error);
+        } else {
+            warn!(
+                dropped_error = %error,
+                operation = %operation,
+                "dropping additional deferred encoder error; earlier error takes precedence"
+            );
+        }
     }
 
     /// Create a new open channel with a random `ChannelId`.
@@ -356,7 +425,7 @@ impl BatchEncoder {
     }
 
     /// Check if the current channel (or span accumulator) has timed out and close it if so.
-    fn check_channel_timeout(&mut self) -> bool {
+    fn check_channel_timeout(&mut self) -> Result<bool, StepError> {
         // Apply the safety margin so channels are closed `sub_safety_margin` L1 blocks
         // before the configured `max_channel_duration`, ensuring frames land well within
         // the protocol's `channel_timeout` inclusion window.
@@ -381,10 +450,10 @@ impl BatchEncoder {
 
         if should_close {
             debug!(l1_head = %self.l1_head, "channel timed out, closing");
-            self.close_current_channel("timeout");
+            self.close_current_channel("timeout")?;
         }
 
-        should_close
+        Ok(should_close)
     }
 
     /// Returns the conservative protocol channel timeout used for confirmation windows.
@@ -480,13 +549,27 @@ impl BatchPipeline for BatchEncoder {
     }
 
     fn step(&mut self) -> Result<StepResult, StepError> {
+        if let Some(error) = self.deferred_step_error.take() {
+            return Err(error);
+        }
+
         // Check for channel timeout first.
-        if self.check_channel_timeout() {
+        if self.check_channel_timeout()? {
             return Ok(StepResult::ChannelClosed);
         }
 
         // If there are no blocks to encode, we're idle.
         if self.block_cursor >= self.blocks.len() {
+            if self.config.batch_type == BatchType::Span
+                && let Some(max_blocks_per_span_batch) = self.config.max_blocks_per_span_batch
+                && self.span_accumulator.len() >= max_blocks_per_span_batch
+            {
+                if !self.try_flush_span_or_close("size_full")? {
+                    return Ok(StepResult::ChannelClosed);
+                }
+                return Ok(StepResult::SpanFlushed);
+            }
+
             return Ok(StepResult::Idle);
         }
 
@@ -502,7 +585,7 @@ impl BatchPipeline for BatchEncoder {
         match self.config.batch_type {
             BatchType::Span => {
                 // In Span mode blocks are accumulated in memory; the span batch is
-                // written to the channel only when close_current_channel() is called.
+                // written to the channel only when a span-batch or channel boundary is reached.
                 let seq_num = l1_info.sequence_number();
                 // Maintain a running byte counter so the size check below is O(1) per
                 // step rather than O(N·M) over the entire accumulator.
@@ -543,12 +626,26 @@ impl BatchPipeline for BatchEncoder {
                     "accumulated block for span batch"
                 );
 
+                if let Some(max_blocks_per_span_batch) = self.config.max_blocks_per_span_batch
+                    && self.span_accumulator.len() >= max_blocks_per_span_batch
+                {
+                    debug!(
+                        span_len = self.span_accumulator.len(),
+                        max_blocks_per_span_batch,
+                        "span accumulator reached max block count, flushing span batch"
+                    );
+                    if !self.try_flush_span_or_close("size_full")? {
+                        return Ok(StepResult::ChannelClosed);
+                    }
+                    return Ok(StepResult::BlockEncoded);
+                }
+
                 if compressed_estimate >= size_target {
                     debug!(
                         span_len = self.span_accumulator.len(),
                         compressed_estimate, size_target, "span accumulator full, closing channel"
                     );
-                    self.close_current_channel("size_full");
+                    self.close_current_channel("size_full")?;
                     return Ok(StepResult::ChannelClosed);
                 }
 
@@ -567,6 +664,8 @@ impl BatchPipeline for BatchEncoder {
                     Ok(()) => {
                         open.blocks_added += 1;
                         open.da_backlog_bytes += block_da_backlog_bytes;
+                        BatcherMetrics::input_bytes(BatcherMetrics::STAGE_ADDED)
+                            .set(open.out.input_bytes() as f64);
                         self.block_cursor += 1;
 
                         debug!(
@@ -581,7 +680,7 @@ impl BatchPipeline for BatchEncoder {
                         // Channel is full (ExceedsMaxRlpBytesPerChannel or compression full).
                         // Close the current channel and the caller will retry on the next step.
                         debug!(error = %e, "channel rejected batch, closing");
-                        self.close_current_channel("size_full");
+                        self.close_current_channel("size_full")?;
                         StepResult::ChannelClosed
                     }
                 })
@@ -790,7 +889,12 @@ impl BatchPipeline for BatchEncoder {
 
     fn force_close_channel(&mut self) {
         debug!("force-closing current channel");
-        self.close_current_channel("force");
+        if self.deferred_step_error.is_some() {
+            return;
+        }
+        if let Err(error) = self.close_current_channel("force") {
+            self.defer_step_error(error, "force_close_channel");
+        }
     }
 
     fn advance_l1_head(&mut self, l1_block: u64) {
@@ -798,7 +902,12 @@ impl BatchPipeline for BatchEncoder {
             return;
         }
         self.l1_head = l1_block;
-        self.check_channel_timeout();
+        if self.deferred_step_error.is_some() {
+            return;
+        }
+        if let Err(error) = self.check_channel_timeout() {
+            self.defer_step_error(error, "advance_l1_head");
+        }
         self.invalidate_expired_ready_channels();
     }
 
@@ -819,6 +928,7 @@ impl BatchPipeline for BatchEncoder {
         self.span_raw_bytes = 0;
         self.span_da_backlog_bytes = 0;
         self.span_opened_at_l1 = None;
+        self.deferred_step_error = None;
         // Intentionally not resetting `next_id`: keeping it monotonically
         // increasing across resets means post-reset submissions can never
         // share an ID with any pre-reset in-flight submission, eliminating
@@ -1645,6 +1755,243 @@ mod tests {
         // A submission must be immediately available.
         let sub = encoder.next_submission();
         assert!(sub.is_some(), "span batch should produce a submission after size-based close");
+    }
+
+    #[test]
+    fn test_span_batch_max_blocks_flushes_without_closing_channel() {
+        let rollup_config = Arc::new(RollupConfig::default());
+        let config = EncoderConfig {
+            batch_type: BatchType::Span,
+            target_frame_size: EncoderConfig::MAX_BLOB_FRAME_SIZE, // large: size won't trigger
+            max_frame_size: EncoderConfig::MAX_BLOB_FRAME_SIZE,
+            max_channel_duration: 1000,
+            max_blocks_per_span_batch: Some(2),
+            ..EncoderConfig::default()
+        };
+        let mut encoder = BatchEncoder::new(Arc::clone(&rollup_config), config);
+
+        let first = make_block(B256::ZERO);
+        let first_hash = first.header.hash_slow();
+        let second = make_block(first_hash);
+        let second_hash = second.header.hash_slow();
+        let third = make_block(second_hash);
+        let third_hash = third.header.hash_slow();
+        let fourth = make_block(third_hash);
+
+        encoder.add_block(first).unwrap();
+        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
+        assert!(encoder.ready_channels.is_empty());
+        assert_eq!(encoder.span_accumulator.len(), 1);
+
+        encoder.add_block(second).unwrap();
+        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
+        assert!(encoder.span_accumulator.is_empty());
+        assert!(encoder.span_opened_at_l1.is_none());
+        assert!(encoder.current_channel.is_some());
+        assert!(encoder.ready_channels.is_empty());
+        assert!(encoder.next_submission().is_none());
+
+        encoder.add_block(third).unwrap();
+        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
+        assert_eq!(encoder.span_accumulator.len(), 1);
+
+        encoder.add_block(fourth).unwrap();
+        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
+        assert!(encoder.span_accumulator.is_empty());
+        assert!(encoder.current_channel.is_some());
+        assert!(encoder.ready_channels.is_empty());
+
+        encoder.force_close_channel();
+
+        let submission = encoder.next_submission().expect("submission should be available");
+        let channel_data = submission
+            .frames
+            .iter()
+            .flat_map(|frame| frame.data.iter().copied())
+            .collect::<Vec<_>>();
+        let mut reader = BatchReader::new(
+            channel_data,
+            RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize,
+            true,
+        );
+        let decoded = reader.next_batch(rollup_config.as_ref()).expect("decoded span batch");
+        let Batch::Span(span_batch) = decoded else {
+            panic!("expected span batch");
+        };
+        assert_eq!(span_batch.batches.len(), 2);
+
+        let decoded = reader.next_batch(rollup_config.as_ref()).expect("decoded second span batch");
+        let Batch::Span(span_batch) = decoded else {
+            panic!("expected span batch");
+        };
+        assert_eq!(span_batch.batches.len(), 2);
+        assert!(reader.next_batch(rollup_config.as_ref()).is_none());
+    }
+
+    #[test]
+    fn test_span_batch_failed_flush_closes_current_channel_then_retries() {
+        let config = EncoderConfig {
+            batch_type: BatchType::Span,
+            target_frame_size: EncoderConfig::MAX_BLOB_FRAME_SIZE,
+            max_frame_size: EncoderConfig::MAX_BLOB_FRAME_SIZE,
+            max_channel_duration: 1000,
+            max_blocks_per_span_batch: Some(2),
+            ..EncoderConfig::default()
+        };
+        let mut encoder = BatchEncoder::new(Arc::new(RollupConfig::default()), config);
+
+        encoder.block_cursor = 3;
+        encoder.span_accumulator = vec![
+            (SingleBatch { timestamp: 1, ..Default::default() }, 0),
+            (SingleBatch { timestamp: 2, ..Default::default() }, 1),
+        ];
+        encoder.span_raw_bytes = 2 * BatchEncoder::SPAN_BATCH_PER_BLOCK_OVERHEAD;
+        encoder.span_opened_at_l1 = Some(0);
+        encoder.open_new_channel(0);
+
+        let open = encoder.current_channel.as_mut().expect("channel should be open");
+        open.out.add_batch(Batch::Single(SingleBatch::default())).expect("single batch fits");
+        open.out.rlp_length = RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_BEDROCK;
+        open.blocks_added = 1;
+
+        assert_eq!(encoder.step().unwrap(), StepResult::ChannelClosed);
+        assert!(encoder.current_channel.is_none());
+        assert_eq!(encoder.ready_channels[0].encoded_block_range, 0..1);
+        assert_eq!(encoder.span_accumulator.len(), 2);
+
+        assert_eq!(encoder.step().unwrap(), StepResult::SpanFlushed);
+        let open = encoder.current_channel.as_ref().expect("fresh channel should be open");
+        assert_eq!(open.block_start, 1);
+        assert_eq!(open.blocks_added, 2);
+        assert!(encoder.span_accumulator.is_empty());
+    }
+
+    #[test]
+    fn test_span_batch_unbuildable_accumulator_returns_step_error() {
+        let config = EncoderConfig {
+            batch_type: BatchType::Span,
+            max_blocks_per_span_batch: Some(2),
+            ..EncoderConfig::default()
+        };
+        let mut encoder = BatchEncoder::new(Arc::new(RollupConfig::default()), config);
+        encoder.block_cursor = 2;
+        encoder.span_accumulator = vec![
+            (SingleBatch { timestamp: 1, ..Default::default() }, 0),
+            (
+                SingleBatch {
+                    timestamp: 2,
+                    transactions: vec![Bytes::from_static(b"not-a-valid-transaction")],
+                    ..Default::default()
+                },
+                1,
+            ),
+        ];
+
+        let err = encoder.step().expect_err("invalid span accumulator should halt");
+
+        assert!(matches!(err, StepError::SpanBatchBuildFailed { blocks: 2, .. }));
+        assert!(encoder.current_channel.is_none());
+        assert_eq!(encoder.span_accumulator.len(), 2);
+    }
+
+    #[test]
+    fn test_force_close_defers_span_flush_error_to_next_step() {
+        let config = EncoderConfig {
+            batch_type: BatchType::Span,
+            max_blocks_per_span_batch: Some(2),
+            ..EncoderConfig::default()
+        };
+        let mut encoder = BatchEncoder::new(Arc::new(RollupConfig::default()), config);
+        encoder.block_cursor = 2;
+        encoder.span_accumulator = vec![
+            (SingleBatch { timestamp: 1, ..Default::default() }, 0),
+            (
+                SingleBatch {
+                    timestamp: 2,
+                    transactions: vec![Bytes::from_static(b"not-a-valid-transaction")],
+                    ..Default::default()
+                },
+                1,
+            ),
+        ];
+
+        encoder.force_close_channel();
+
+        assert!(encoder.deferred_step_error.is_some());
+        let err = encoder.step().expect_err("deferred span flush error should halt");
+        assert!(matches!(err, StepError::SpanBatchBuildFailed { blocks: 2, .. }));
+        assert!(encoder.deferred_step_error.is_none());
+    }
+
+    #[test]
+    fn test_advance_l1_head_defers_span_flush_error_to_next_step() {
+        let config = EncoderConfig {
+            batch_type: BatchType::Span,
+            max_channel_duration: 1,
+            ..EncoderConfig::default()
+        };
+        let mut encoder = BatchEncoder::new(Arc::new(RollupConfig::default()), config);
+        encoder.block_cursor = 2;
+        encoder.span_opened_at_l1 = Some(0);
+        encoder.span_accumulator = vec![
+            (SingleBatch { timestamp: 1, ..Default::default() }, 0),
+            (
+                SingleBatch {
+                    timestamp: 2,
+                    transactions: vec![Bytes::from_static(b"not-a-valid-transaction")],
+                    ..Default::default()
+                },
+                1,
+            ),
+        ];
+
+        encoder.advance_l1_head(1);
+
+        assert!(encoder.deferred_step_error.is_some());
+        assert_eq!(encoder.l1_head, 1);
+        encoder.advance_l1_head(2);
+        assert_eq!(
+            encoder.l1_head, 2,
+            "L1 head updates should be retained while a step error is deferred"
+        );
+        let err = encoder.step().expect_err("deferred timeout flush error should halt");
+        assert!(matches!(err, StepError::SpanBatchBuildFailed { blocks: 2, .. }));
+        assert!(encoder.deferred_step_error.is_none());
+    }
+
+    #[test]
+    fn test_deferred_step_error_keeps_first_error() {
+        let config = EncoderConfig { batch_type: BatchType::Span, ..EncoderConfig::default() };
+        let mut encoder = BatchEncoder::new(Arc::new(RollupConfig::default()), config);
+        encoder.span_accumulator = vec![
+            (SingleBatch { timestamp: 1, ..Default::default() }, 0),
+            (
+                SingleBatch {
+                    timestamp: 2,
+                    transactions: vec![Bytes::from_static(b"not-a-valid-transaction")],
+                    ..Default::default()
+                },
+                1,
+            ),
+        ];
+        let first =
+            encoder.build_span_batch().expect_err("first invalid span accumulator should fail");
+        encoder.span_accumulator.push((
+            SingleBatch {
+                timestamp: 3,
+                transactions: vec![Bytes::from_static(b"also-not-a-valid-transaction")],
+                ..Default::default()
+            },
+            2,
+        ));
+        let second =
+            encoder.build_span_batch().expect_err("second invalid span accumulator should fail");
+
+        encoder.defer_step_error(first, "force_close_channel");
+        encoder.defer_step_error(second, "advance_l1_head");
+
+        let err = encoder.step().expect_err("first deferred error should halt");
+        assert!(matches!(err, StepError::SpanBatchBuildFailed { blocks: 2, .. }));
     }
 
     /// Span batches encode their timestamp relative to the rollup genesis timestamp.

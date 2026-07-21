@@ -20,6 +20,8 @@ pub struct HostProviders {
     pub blobs: L1BlobProvider,
     /// The L2 EL provider.
     pub l2: RootProvider<Base>,
+    /// The L2 rollup RPC provider.
+    pub l2_node: RootProvider,
 }
 
 /// Supplies raw L1 data needed to populate preimage storage.
@@ -59,6 +61,8 @@ pub struct ProverConfig {
     pub l1_eth_url: String,
     /// L2 execution layer RPC URL.
     pub l2_eth_url: String,
+    /// L2 rollup RPC URL.
+    pub l2_node_url: String,
     /// L1 beacon API URL, or `None` when the L1 parent has no beacon/blob DA endpoint.
     pub l1_beacon_url: Option<String>,
     /// L2 chain ID.
@@ -80,11 +84,4 @@ pub struct HostConfig {
     pub prover: ProverConfig,
     /// Data directory for preimage data storage. When set, enables offline mode.
     pub data_dir: Option<PathBuf>,
-}
-
-impl HostConfig {
-    /// Returns `true` if the host is running in offline mode.
-    pub const fn is_offline(&self) -> bool {
-        self.data_dir.is_some()
-    }
 }

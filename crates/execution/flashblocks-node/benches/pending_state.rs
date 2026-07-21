@@ -2,7 +2,7 @@
 
 use std::{
     sync::{Arc, Once},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use alloy_eips::{BlockHashOrNumber, Encodable2718};
@@ -20,7 +20,7 @@ use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
 use reth_provider::BlockReader;
 use reth_transaction_pool::test_utils::TransactionBuilder;
-use tokio::{runtime::Runtime, time::sleep};
+use tokio::{runtime::Runtime, sync::broadcast, time::timeout};
 use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 
 const DEPOSIT_GAS_USED: u64 = 21_000;
@@ -39,6 +39,21 @@ struct BenchSetup {
     _harness: Arc<TestHarness>,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum PendingStateScenario {
+    RepeatedRecipient,
+    FanoutRecipients,
+}
+
+impl PendingStateScenario {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::RepeatedRecipient => "repeated_recipient",
+            Self::FanoutRecipients => "fanout_recipients",
+        }
+    }
+}
+
 impl BenchSetup {
     #[allow(clippy::arc_with_non_send_sync)]
     async fn new(tx_counts: &[usize]) -> Self {
@@ -53,14 +68,17 @@ impl BenchSetup {
             .try_into_recovered()
             .expect("recovered block should build");
 
-        let flashblocks = tx_counts
-            .iter()
-            .map(|count| {
-                let txs = sample_transactions(&provider, *count);
+        let mut flashblocks = Vec::new();
+        for scenario in
+            [PendingStateScenario::RepeatedRecipient, PendingStateScenario::FanoutRecipients]
+        {
+            for &count in tx_counts {
+                let txs = sample_transactions(&provider, count, scenario);
                 let blocks = build_flashblocks(&canonical_block, &txs);
-                (format!("pending_state_{count}_txs"), blocks)
-            })
-            .collect();
+                flashblocks
+                    .push((format!("pending_state_{}_{}_txs", scenario.label(), count), blocks));
+            }
+        }
 
         Self {
             target_block: canonical_block.number + 1,
@@ -84,7 +102,7 @@ fn pending_state_benches(c: &mut Criterion) {
     init_bench_tracing();
 
     let runtime = Runtime::new().expect("tokio runtime should start");
-    let setup = runtime.block_on(BenchSetup::new(&[5, 25, 100]));
+    let setup = runtime.block_on(BenchSetup::new(&[5, 25, 100, 500, 1000, 1500]));
     let mut group = c.benchmark_group("pending_state_build");
 
     for (label, flashblocks) in setup.flashblocks {
@@ -118,13 +136,14 @@ fn pending_state_benches(c: &mut Criterion) {
 async fn build_pending_state(input: BenchInput) {
     let state = FlashblocksState::new(5);
     state.start(input.provider);
+    let receiver = state.subscribe_to_flashblocks();
     state.on_canonical_block_received(input.canonical_block);
 
     for flashblock in input.flashblocks {
         state.on_flashblock_received(flashblock);
     }
 
-    wait_for_pending_state(&state, input.target_block, input.last_index).await;
+    wait_for_pending_state(receiver, input.target_block, input.last_index).await;
 }
 
 fn init_bench_tracing() {
@@ -150,25 +169,23 @@ fn init_bench_tracing() {
 }
 
 async fn wait_for_pending_state(
-    state: &FlashblocksState,
+    mut receiver: broadcast::Receiver<Arc<base_flashblocks::PendingBlocks>>,
     target_block: BlockNumber,
     expected_index: u64,
 ) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        if let Some(pending) = state.get_pending_blocks().as_ref()
-            && pending.latest_block_number() == target_block
-            && pending.latest_flashblock_index() == expected_index
-        {
-            return;
+    let deadline = Duration::from_secs(10);
+    timeout(deadline, async move {
+        loop {
+            let pending = receiver.recv().await.expect("pending state receiver should remain open");
+            if pending.latest_block_number() == target_block
+                && pending.latest_flashblock_index() == expected_index
+            {
+                return;
+            }
         }
-
-        if Instant::now() > deadline {
-            panic!("pending state was not built in time");
-        }
-
-        sleep(Duration::from_millis(10)).await;
-    }
+    })
+    .await
+    .expect("pending state was not built in time");
 }
 
 fn build_flashblocks(
@@ -223,7 +240,7 @@ fn base_flashblock(
             transactions: vec![BLOCK_INFO_TXN],
             blob_gas_used: Default::default(),
         },
-        metadata: Metadata { block_number },
+        metadata: Metadata::new(block_number),
     }
 }
 
@@ -255,20 +272,32 @@ fn transaction_flashblock(
             transactions: tx_bytes,
             blob_gas_used: Default::default(),
         },
-        metadata: Metadata { block_number },
+        metadata: Metadata::new(block_number),
     }
 }
 
-fn sample_transactions(provider: &LocalNodeProvider, count: usize) -> Vec<BaseTransactionSigned> {
+fn sample_transactions(
+    provider: &LocalNodeProvider,
+    count: usize,
+    scenario: PendingStateScenario,
+) -> Vec<BaseTransactionSigned> {
     let signer = B256::from_hex(Account::Alice.private_key()).expect("valid private key hex");
     let chain_id = provider.chain_spec().chain_id();
 
     (0..count as u64)
         .map(|nonce| {
+            let recipient = match scenario {
+                PendingStateScenario::RepeatedRecipient => Account::Bob.address(),
+                PendingStateScenario::FanoutRecipients => {
+                    let mut bytes = [0u8; 20];
+                    bytes[12..].copy_from_slice(&(nonce + 1).to_be_bytes());
+                    Address::from(bytes)
+                }
+            };
             let txn = TransactionBuilder::default()
                 .signer(signer)
                 .chain_id(chain_id)
-                .to(Account::Bob.address())
+                .to(recipient)
                 .nonce(nonce)
                 .value(1_000_000_000u128)
                 .gas_limit(TX_GAS_USED)

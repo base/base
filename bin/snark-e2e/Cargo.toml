@@ -1,0 +1,22 @@
+[package]
+name = "base-snark-e2e-bin"
+description = "Standalone SNARK PLONK E2E test binary for K8s CronJob execution"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "base-snark-e2e"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+tracing = { workspace = true }
+base-snark-e2e = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+tracing-subscriber = { workspace = true, features = ["fmt", "json", "env-filter"] }

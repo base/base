@@ -2,7 +2,7 @@ use alloy_evm::{Database, EvmEnv, EvmFactory, precompiles::PrecompilesMap};
 use alloy_primitives::Address;
 use revm::{
     Context, Inspector,
-    context::{BlockEnv, TxEnv},
+    context::{BlockEnv, DBErrorMarker, TxEnv},
     context_interface::result::EVMError,
     inspector::NoOpInspector,
 };
@@ -63,8 +63,7 @@ impl EvmFactory for BaseEvmFactory {
     type Evm<DB: Database, I: Inspector<BaseContext<DB>>> = BaseEvm<DB, I, PrecompilesMap>;
     type Context<DB: Database> = BaseContext<DB>;
     type Tx = BaseTransaction<TxEnv>;
-    type Error<DBError: core::error::Error + Send + Sync + 'static> =
-        EVMError<DBError, BaseTransactionError>;
+    type Error<DBError: DBErrorMarker> = EVMError<DBError, BaseTransactionError>;
     type HaltReason = BaseHaltReason;
     type Spec = BaseSpecId;
     type BlockEnv = BlockEnv;
@@ -79,10 +78,8 @@ impl EvmFactory for BaseEvmFactory {
             .with_db(db)
             .with_block(input.block_env)
             .with_cfg(input.cfg_env)
-            .build_with_inspector_and_activation_admin_address(
-                NoOpInspector {},
-                self.activation_admin_address,
-            )
+            .build_base_with_activation_admin_address(self.activation_admin_address)
+            .with_inspector(NoOpInspector {})
     }
 
     fn create_evm_with_inspector<DB: Database, I: Inspector<Self::Context<DB>>>(
@@ -99,5 +96,37 @@ impl EvmFactory for BaseEvmFactory {
                 inspector,
                 self.activation_admin_address,
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_evm::EvmEnv;
+    use revm::{
+        context::{BlockEnv, CfgEnv},
+        database::EmptyDB,
+        inspector::NoOpInspector,
+    };
+
+    use super::*;
+    use crate::BaseUpgrade;
+
+    fn default_env() -> EvmEnv<BaseSpecId> {
+        EvmEnv::new(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Beryl)), BlockEnv::default())
+    }
+
+    #[test]
+    fn create_evm_has_inspect_false() {
+        let factory = BaseEvmFactory::default();
+        let evm = factory.create_evm(EmptyDB::default(), default_env());
+        assert!(!evm.inspect);
+    }
+
+    #[test]
+    fn create_evm_with_inspector_has_inspect_true() {
+        let factory = BaseEvmFactory::default();
+        let evm =
+            factory.create_evm_with_inspector(EmptyDB::default(), default_env(), NoOpInspector {});
+        assert!(evm.inspect);
     }
 }

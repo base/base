@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use chrono::DateTime;
 use ratatui::prelude::Color;
 
 const BLOCK_COLORS: [Color; 24] = [
@@ -178,4 +179,14 @@ pub fn time_diff_color(ms: i64) -> Color {
     } else {
         Color::Red
     }
+}
+
+/// Formats a Unix timestamp (seconds since epoch) as `YYYY-MM-DD HH:MM:SS UTC`.
+///
+/// Falls back to the raw seconds string when the timestamp is out of range.
+pub fn format_unix_timestamp(secs: u64) -> String {
+    i64::try_from(secs)
+        .ok()
+        .and_then(|s| DateTime::from_timestamp(s, 0))
+        .map_or_else(|| secs.to_string(), |t| t.format("%Y-%m-%d %H:%M:%S UTC").to_string())
 }

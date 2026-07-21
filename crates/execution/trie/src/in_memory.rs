@@ -542,7 +542,10 @@ impl BaseProofsStore for InMemoryProofsStorage {
     type AccountTrieCursor<'tx> = InMemoryTrieCursor;
     type StorageCursor<'tx> = InMemoryStorageCursor;
     type AccountHashedCursor<'tx> = InMemoryAccountCursor;
-    type Tx = ();
+    type Tx<'tx>
+        = ()
+    where
+        Self: 'tx;
 
     fn get_earliest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {
         let inner = self.inner.read();
@@ -557,7 +560,7 @@ impl BaseProofsStore for InMemoryProofsStorage {
     }
 
     fn storage_trie_cursor<'tx>(
-        &self,
+        &'tx self,
         hashed_address: B256,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'tx>> {
@@ -565,14 +568,14 @@ impl BaseProofsStore for InMemoryProofsStorage {
     }
 
     fn account_trie_cursor<'tx>(
-        &self,
+        &'tx self,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'tx>> {
         Ok(InMemoryTrieCursor::new(Arc::clone(&self.inner), None, max_block_number))
     }
 
     fn storage_hashed_cursor<'tx>(
-        &self,
+        &'tx self,
         hashed_address: B256,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageCursor<'tx>> {
@@ -580,59 +583,63 @@ impl BaseProofsStore for InMemoryProofsStorage {
     }
 
     fn account_hashed_cursor<'tx>(
-        &self,
+        &'tx self,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>> {
         let inner = self.inner.try_read().ok_or(BaseProofsStorageError::TryLockError)?;
         Ok(InMemoryAccountCursor::new(&inner, max_block_number))
     }
 
-    fn ro_tx(&self) -> BaseProofsStorageResult<Self::Tx> {
+    fn ro_tx<'tx>(&'tx self) -> BaseProofsStorageResult<Self::Tx<'tx>> {
         Ok(())
     }
 
-    fn storage_trie_cursor_with_tx<'tx>(
+    fn storage_trie_cursor_with_tx<'tx, 'db>(
         &self,
-        _tx: &'tx Self::Tx,
+        _tx: &'tx Self::Tx<'db>,
         hashed_address: B256,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'tx>>
     where
-        Self: 'tx,
+        Self: 'db,
+        'db: 'tx,
     {
         self.storage_trie_cursor(hashed_address, max_block_number)
     }
 
-    fn account_trie_cursor_with_tx<'tx>(
+    fn account_trie_cursor_with_tx<'tx, 'db>(
         &self,
-        _tx: &'tx Self::Tx,
+        _tx: &'tx Self::Tx<'db>,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'tx>>
     where
-        Self: 'tx,
+        Self: 'db,
+        'db: 'tx,
     {
         self.account_trie_cursor(max_block_number)
     }
 
-    fn storage_hashed_cursor_with_tx<'tx>(
+    fn storage_hashed_cursor_with_tx<'tx, 'db>(
         &self,
-        _tx: &'tx Self::Tx,
+        _tx: &'tx Self::Tx<'db>,
         hashed_address: B256,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageCursor<'tx>>
     where
-        Self: 'tx,
+        Self: 'db,
+        'db: 'tx,
     {
         self.storage_hashed_cursor(hashed_address, max_block_number)
     }
 
-    fn account_hashed_cursor_with_tx<'tx>(
+    fn account_hashed_cursor_with_tx<'tx, 'db>(
         &self,
-        _tx: &'tx Self::Tx,
+        _tx: &'tx Self::Tx<'db>,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>>
     where
-        Self: 'tx,
+        Self: 'db,
+        'db: 'tx,
     {
         self.account_hashed_cursor(max_block_number)
     }

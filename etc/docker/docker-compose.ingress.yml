@@ -5,6 +5,23 @@ x-rust-service-build: &rust-service-build
     PROFILE: "${CARGO_PROFILE:-dev}"
 
 services:
+  base-builder:
+    volumes:
+      - ../../.devnet/transaction-events:/var/log/transaction-events
+    environment:
+      - BUILDER_TRANSACTION_EVENTS_ENABLED=true
+      - BUILDER_TRANSACTION_EVENTS_PATH=/var/log/transaction-events/base-builder/events.jsonl
+      - BUILDER_TRANSACTION_EVENTS_NETWORK=base-devnet
+
+  base-client:
+    volumes:
+      - ../../.devnet/transaction-events:/var/log/transaction-events
+    environment:
+      - BASE_TRANSACTION_EVENTS_ENABLED=true
+      - BASE_TRANSACTION_EVENTS_PATH=/var/log/transaction-events/base-client/events.jsonl
+      - BASE_TRANSACTION_EVENTS_NETWORK=base-devnet
+      - BASE_TRANSACTION_EVENTS_NODE_ROLE=devnet-client
+
   minio:
     image: minio/minio:latest
     container_name: minio
@@ -50,12 +67,14 @@ services:
     ports:
       - "${L2_INGRESS_HEALTH_PORT}:${L2_INGRESS_HEALTH_PORT}"
       - "${L2_INGRESS_METRICS_PORT}:${L2_INGRESS_METRICS_PORT}"
+    volumes:
+      - ../../.devnet/transaction-events:/var/log/transaction-events
     environment:
       - TIPS_INGRESS_PORT=${L2_INGRESS_HTTP_PORT}
       - TIPS_INGRESS_HEALTH_CHECK_ADDR=0.0.0.0:${L2_INGRESS_HEALTH_PORT}
       - TIPS_INGRESS_METRICS_ADDR=0.0.0.0
       - TIPS_INGRESS_METRICS_PORT=${L2_INGRESS_METRICS_PORT}
-      - TIPS_INGRESS_RPC_MEMPOOL=http://base-builder:${L2_BUILDER_HTTP_PORT}
+      - TIPS_INGRESS_AUDIT_RPC_URL=http://audit-archiver:${AUDIT_RPC_PORT}
       - TIPS_INGRESS_RPC_SIMULATION=http://base-client:${L2_CLIENT_HTTP_PORT}
       # Fan out metering data to both builder and client; both expose
       # `base_setMeteringInformation` for trusted ingestion.
@@ -63,6 +82,9 @@ services:
       - TIPS_INGRESS_SEND_TO_BUILDER=true
       - TIPS_INGRESS_CHAIN_ID=${L2_CHAIN_ID}
       - TIPS_INGRESS_BLOCK_TIME_MILLISECONDS=2000
+      - TIPS_INGRESS_TRANSACTION_EVENTS_ENABLED=true
+      - TIPS_INGRESS_TRANSACTION_EVENTS_FILE_PATH=/var/log/transaction-events/ingress-rpc/events.jsonl
+      - TIPS_INGRESS_TRANSACTION_EVENTS_NETWORK=base-devnet
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:${L2_INGRESS_HEALTH_PORT}/health"]
       interval: 5s
@@ -74,7 +96,9 @@ services:
   proxyd:
     build:
       context: .
-      dockerfile: Dockerfile.proxyd
+      dockerfile: Dockerfile.proxyd.transaction-events
+      additional_contexts:
+        base-routing: ${BASE_ROUTING_CONTEXT:-https://github.com/base/infra-routing.git#release-rb}
     container_name: proxyd
     depends_on:
       ingress-rpc:
@@ -87,9 +111,15 @@ services:
       - "${L2_INGRESS_HTTP_PORT}:8080"
     volumes:
       - ./proxyd:/config:ro
+      - ../../.devnet/transaction-events:/var/log/transaction-events
+    environment:
+      - TRANSACTION_EVENTS_ENABLED=true
+      - TRANSACTION_EVENTS_PATH=/var/log/transaction-events/proxyd/events.jsonl
+      - TRANSACTION_EVENTS_PRODUCER=base-routing/proxyd
+      - TRANSACTION_EVENTS_NETWORK=base-devnet
     command: ["/config/proxyd.toml"]
     healthcheck:
-      test: ["CMD", "curl", "-sf", "-X", "POST", "-H", "Content-Type: application/json", "--data", "{\"jsonrpc\":\"2.0\",\"method\":\"eth_chainId\",\"params\":[],\"id\":1}", "http://localhost:8080"]
+      test: ["CMD", "curl", "-sf", "-X", "POST", "-H", "Content-Type: application/json", "-H", "X-Forwarded-For: 127.0.0.1", "--data", "{\"jsonrpc\":\"2.0\",\"method\":\"eth_chainId\",\"params\":[],\"id\":1}", "http://localhost:8080"]
       interval: 5s
       timeout: 5s
       retries: 30
@@ -105,15 +135,84 @@ services:
     depends_on:
       minio-init:
         condition: service_completed_successfully
+      transaction-events-postgres:
+        condition: service_healthy
+      audit-archiver-migrate:
+        condition: service_completed_successfully
     ports:
       - "${AUDIT_METRICS_PORT}:${AUDIT_METRICS_PORT}"
+      - "${AUDIT_RPC_PORT}:${AUDIT_RPC_PORT}"
     environment:
       - TIPS_AUDIT_METRICS_ADDR=0.0.0.0
       - TIPS_AUDIT_METRICS_PORT=${AUDIT_METRICS_PORT}
+      - TIPS_AUDIT_RPC_PORT=${AUDIT_RPC_PORT}
       - TIPS_AUDIT_S3_BUCKET=tips
       - TIPS_AUDIT_S3_CONFIG_TYPE=manual
       - TIPS_AUDIT_S3_ENDPOINT=http://minio:9000
       - TIPS_AUDIT_S3_REGION=us-east-1
       - TIPS_AUDIT_S3_ACCESS_KEY_ID=minioadmin
       - TIPS_AUDIT_S3_SECRET_ACCESS_KEY=minioadmin
+      - TIPS_AUDIT_POSTGRES_URL=postgres://audit_archiver:audit_archiver@transaction-events-postgres:5432/transaction_events?sslmode=disable
+    networks:
+      default:
+        ipv4_address: ${AUDIT_ARCHIVER_ADVERTISE_IP}
+    restart: unless-stopped
+
+  audit-archiver-migrate:
+    image: audit-archiver:local
+    build:
+      <<: *rust-service-build
+      target: audit-archiver
+    container_name: audit-archiver-migrate
+    depends_on:
+      transaction-events-postgres:
+        condition: service_healthy
+    environment:
+      - TIPS_AUDIT_POSTGRES_URL=postgres://audit_archiver:audit_archiver@transaction-events-postgres:5432/transaction_events?sslmode=disable
+    command: ["migrate", "up"]
+    restart: "no"
+
+  transaction-events-postgres:
+    image: postgres:17-alpine
+    container_name: transaction-events-postgres
+    ports:
+      - "${TRANSACTION_EVENTS_POSTGRES_PORT}:5432"
+    environment:
+      - POSTGRES_DB=transaction_events
+      - POSTGRES_USER=audit_archiver
+      - POSTGRES_PASSWORD=audit_archiver
+    volumes:
+      - ../../.devnet/transaction-events/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U audit_archiver -d transaction_events"]
+      interval: 250ms
+      timeout: 1s
+      retries: 240
+      start_period: 250ms
+    networks:
+      default:
+        ipv4_address: ${TRANSACTION_EVENTS_POSTGRES_ADVERTISE_IP}
+    restart: unless-stopped
+
+  transaction-events-vector:
+    image: ${TRANSACTION_EVENTS_VECTOR_IMAGE}
+    container_name: transaction-events-vector
+    depends_on:
+      audit-archiver:
+        condition: service_started
+    ports:
+      - "${TRANSACTION_EVENTS_VECTOR_METRICS_PORT}:8686"
+    environment:
+      TRANSACTION_EVENTS_CONFIG_NAME: local-devnet-ingress
+      TRANSACTION_EVENTS_ENVIRONMENT_NAME: devnet
+      TRANSACTION_EVENTS_PROJECT_NAME: base
+      TRANSACTION_EVENTS_COLLECTOR_CONTAINER_NAME: transaction-events-vector
+    volumes:
+      - ../../etc/docker/transaction-events-vector.yaml:/etc/vector/vector.yaml:ro
+      - ../../.devnet/transaction-events:/var/log/transaction-events:ro
+      - ../../.devnet/transaction-events-vector:/vector-data
+    command: ["--config", "/etc/vector/vector.yaml"]
+    networks:
+      default:
+        ipv4_address: ${TRANSACTION_EVENTS_VECTOR_ADVERTISE_IP}
     restart: unless-stopped

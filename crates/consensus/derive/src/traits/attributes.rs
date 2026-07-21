@@ -43,10 +43,13 @@ pub trait AttributesBuilder: Debug + Send {
     /// By default, the [`BasePayloadAttributes`] template will have `no_tx_pool` set to true,
     /// and no sequencer transactions. The caller has to modify the template to add transactions.
     /// This can be done by either setting the `no_tx_pool` to false as sequencer, or by appending
-    /// batch transactions as the verifier.
+    /// batch transactions as the verifier. `timestamp_millis_part` is the child block's sub-second
+    /// timestamp component. It is ignored before the gated `BaseTime` metadata deposit activates;
+    /// once active, it is required and must be one of `0`, `200`, `400`, `600`, or `800`.
     async fn prepare_payload_attributes(
         &mut self,
         l2_parent: L2BlockInfo,
         epoch: BlockNumHash,
+        timestamp_millis_part: Option<u16>,
     ) -> PipelineResult<BasePayloadAttributes>;
 }

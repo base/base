@@ -186,6 +186,7 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
         };
         let block_fetch_duration = fetch_start.elapsed();
         let block_hash = block.header.hash;
+        let block = block.map_header(|header| header.into_inner());
 
         if self.input.is_consistent_with_block(&self.cfg, &block) {
             trace!(

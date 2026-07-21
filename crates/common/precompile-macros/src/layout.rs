@@ -124,11 +124,15 @@ pub(crate) fn gen_struct(
     allocated_fields: &[LayoutField<'_>],
 ) -> proc_macro2::TokenStream {
     let handler_fields = allocated_fields.iter().map(gen_handler_field_decl);
-    let doc_str = format!("Storage layout for the [`{name}`] precompile.");
+    let has_user_doc = attrs.iter().any(|attr| attr.path().is_ident("doc"));
+    let fallback_doc = (!has_user_doc).then(|| {
+        let doc_str = format!("Storage layout for the [`{name}`] precompile.");
+        quote! { #[doc = #doc_str] }
+    });
 
     quote! {
         #(#attrs)*
-        #[doc = #doc_str]
+        #fallback_doc
         #vis struct #name<'a> {
             #(#handler_fields,)*
             address: ::alloy_primitives::Address,

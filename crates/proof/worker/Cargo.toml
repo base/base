@@ -1,0 +1,31 @@
+[package]
+name = "base-proof-worker"
+description = "Shared proof worker loop for prover-service hosts."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# base
+base-retry.workspace = true
+base-prover-service-client.workspace = true
+base-prover-service-protocol.workspace = true
+
+# async
+tokio-util.workspace = true
+async-trait.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+
+# misc
+backon.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+chrono.workspace = true

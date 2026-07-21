@@ -6,8 +6,8 @@ Ingress RPC library.
 
 Handles incoming transaction and bundle submission for the Base block builder pipeline.
 `IngressService` exposes a JSON-RPC endpoint that validates bundles (`validate_bundle`),
-meters them via `BuilderConnector`, and routes accepted transactions to the mempool. Also
-provides `HealthServer` for liveness checks and `Metrics` for request tracking.
+meters them via `BuilderConnector`, and emits audit events. Also provides `HealthServer`
+for liveness checks and `Metrics` for request tracking.
 
 ## Usage
 

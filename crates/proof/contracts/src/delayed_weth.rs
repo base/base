@@ -19,6 +19,9 @@ alloy_sol_types::sol! {
     interface IDelayedWETH {
         /// Returns the withdrawal delay in seconds.
         function delay() external view returns (uint256);
+
+        /// Returns the unlocked withdrawal request for an owner/sub-account pair.
+        function withdrawals(address owner, address guy) external view returns (uint256 amount, uint256 timestamp);
     }
 }
 
@@ -27,6 +30,13 @@ alloy_sol_types::sol! {
 pub trait DelayedWETHClient: Send + Sync {
     /// Returns the withdrawal delay enforced between `unlock()` and `withdraw()`.
     async fn delay(&self) -> Result<Duration, ContractError>;
+
+    /// Returns the timestamp at which `owner` unlocked withdrawals for `guy`.
+    async fn withdrawal_timestamp(
+        &self,
+        owner: Address,
+        guy: Address,
+    ) -> Result<u64, ContractError>;
 }
 
 /// Concrete implementation backed by Alloy's sol-generated contract bindings.
@@ -53,5 +63,19 @@ impl DelayedWETHClient for DelayedWETHContractClient {
             delay_u256.try_into().map_err(|_| ContractError::validation("delay overflows u64"))?;
 
         Ok(Duration::from_secs(delay_secs))
+    }
+
+    async fn withdrawal_timestamp(
+        &self,
+        owner: Address,
+        guy: Address,
+    ) -> Result<u64, ContractError> {
+        let withdrawal =
+            contract_call!(self.contract.withdrawals(owner, guy).call(), "withdrawals failed")?;
+
+        withdrawal
+            .timestamp
+            .try_into()
+            .map_err(|_| ContractError::validation("withdrawal timestamp overflows u64"))
     }
 }
