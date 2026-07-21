@@ -4772,6 +4772,7 @@ dependencies = [
  "derive_more 2.1.1",
  "futures",
  "jsonrpsee",
+ "lru 0.16.4",
  "metrics",
  "parking_lot",
  "reth-chainspec",
@@ -5111,6 +5112,7 @@ dependencies = [
  "eyre",
  "futures",
  "humantime",
+ "reth-chain-state",
  "reth-chainspec",
  "reth-codecs",
  "reth-consensus",
@@ -5149,6 +5151,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tokio-stream",
  "tracing",
 ]
 
