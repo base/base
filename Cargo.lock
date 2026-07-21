@@ -4390,6 +4390,8 @@ dependencies = [
  "base-node-runner",
  "base-observability-events",
  "base-proofs-extension",
+ "base-shadow-canary",
+ "base-shadow-canary-db",
  "base-tx-forwarding",
  "base-txpool-rpc",
  "base-txpool-tracing",

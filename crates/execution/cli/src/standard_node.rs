@@ -14,6 +14,8 @@ use base_observability_events::{
     TransactionEventWriterConfig,
 };
 use base_proofs_extension::ProofsHistoryExtension;
+use base_shadow_canary::{ShadowCanaryConfig, ShadowCanaryExtension};
+use base_shadow_canary_db::ShadowDbConfig;
 use base_tx_forwarding::{
     DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS, DEFAULT_RESEND_AFTER_MS, TxForwardingConfig,
     TxForwardingExtension,
@@ -27,6 +29,61 @@ use url::Url;
 use crate::upgrade_signal::{
     ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalRuntimeExtension,
 };
+
+/// Default maximum number of shadow-canary database pool connections.
+const DEFAULT_SHADOW_CANARY_MAX_CONNECTIONS: u32 = 5;
+
+/// CLI arguments for the shadow-canary block-capture pipeline.
+///
+/// All arguments are optional. Persistence stays disabled unless
+/// `--enable-shadow-canary` is set, in which case `--shadow-canary.db-url`
+/// becomes required.
+#[derive(Debug, Clone, PartialEq, Eq, Default, clap::Args)]
+pub struct ShadowCanaryArgs {
+    /// Enable the shadow-canary `ExEx` that captures committed blocks to Postgres.
+    #[arg(long = "enable-shadow-canary", value_name = "ENABLE_SHADOW_CANARY")]
+    pub enable_shadow_canary: bool,
+
+    /// Postgres connection URL for shadow-canary block persistence.
+    ///
+    /// Required when `--enable-shadow-canary` is set.
+    #[arg(
+        long = "shadow-canary.db-url",
+        env = "BASE_NODE_SHADOW_CANARY_DB_URL",
+        value_name = "SHADOW_CANARY_DB_URL",
+        requires = "enable_shadow_canary"
+    )]
+    pub shadow_canary_db_url: Option<String>,
+
+    /// Maximum number of open connections in the shadow-canary database pool.
+    #[arg(
+        long = "shadow-canary.max-connections",
+        value_name = "SHADOW_CANARY_MAX_CONNECTIONS",
+        default_value_t = DEFAULT_SHADOW_CANARY_MAX_CONNECTIONS,
+        requires = "enable_shadow_canary"
+    )]
+    pub shadow_canary_max_connections: u32,
+
+    /// Timeout when acquiring a shadow-canary database connection.
+    #[arg(
+        long = "shadow-canary.connection-timeout",
+        value_name = "SHADOW_CANARY_CONNECTION_TIMEOUT",
+        default_value = "5s",
+        value_parser = humantime::parse_duration,
+        requires = "enable_shadow_canary"
+    )]
+    pub shadow_canary_connection_timeout: Duration,
+
+    /// Builder version string attached to persisted shadow-canary rows.
+    ///
+    /// Defaults to the node's crate version when omitted.
+    #[arg(
+        long = "shadow-canary.builder-version",
+        value_name = "SHADOW_CANARY_BUILDER_VERSION",
+        requires = "enable_shadow_canary"
+    )]
+    pub shadow_canary_builder_version: Option<String>,
+}
 
 /// CLI arguments for metering RPC and priority-fee resource budgets.
 #[derive(Debug, Clone, PartialEq, Eq, Default, clap::Args)]
@@ -85,6 +142,10 @@ pub struct StandardNodeArgs {
     /// Metering RPC and priority-fee resource budget arguments.
     #[command(flatten)]
     pub metering: MeteringArgs,
+
+    /// Shadow-canary block-capture arguments.
+    #[command(flatten)]
+    pub shadow_canary: ShadowCanaryArgs,
 
     /// Enable transaction forwarding for mempool nodes to builder RPC endpoints
     #[arg(
@@ -208,6 +269,7 @@ impl From<RpcStandardNodeArgs> for StandardNodeArgs {
         Self {
             rpc: args,
             metering: MeteringArgs::default(),
+            shadow_canary: ShadowCanaryArgs::default(),
             enable_tx_forwarding: false,
             builder_rpc_urls: Vec::new(),
             tx_forwarding_resend_after_ms: DEFAULT_RESEND_AFTER_MS,
@@ -244,6 +306,36 @@ impl From<&StandardNodeArgs> for TxForwardingConfig {
             .with_resend_after_ms(args.tx_forwarding_resend_after_ms)
             .with_max_batch_size(args.tx_forwarding_batch_size)
             .with_max_rps(args.tx_forwarding_max_rps)
+    }
+}
+
+impl TryFrom<&ShadowCanaryArgs> for ShadowCanaryConfig {
+    type Error = eyre::Error;
+
+    fn try_from(args: &ShadowCanaryArgs) -> eyre::Result<Self> {
+        let db = ShadowDbConfig {
+            url: args.shadow_canary_db_url.clone().unwrap_or_default(),
+            max_connections: args.shadow_canary_max_connections,
+            connection_timeout: args.shadow_canary_connection_timeout,
+        };
+
+        if !args.enable_shadow_canary {
+            return Ok(Self { enabled: false, db, builder_version: String::new() });
+        }
+
+        if args.shadow_canary_db_url.is_none() {
+            eyre::bail!(
+                "--enable-shadow-canary requires --shadow-canary.db-url (env \
+                 BASE_NODE_SHADOW_CANARY_DB_URL)"
+            );
+        }
+
+        let builder_version = args
+            .shadow_canary_builder_version
+            .clone()
+            .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
+
+        Ok(Self { enabled: true, db, builder_version })
     }
 }
 
@@ -428,6 +520,7 @@ impl StandardBaseRethNode {
         };
         runner.install_ext::<FlashblocksExtension>(flashblocks_config);
         runner.install_ext::<Eip8130RpcExtension>(eip8130_rpc_mode);
+        runner.install_ext::<ShadowCanaryExtension>((&args.shadow_canary).try_into()?);
         Ok(runner)
     }
 
@@ -771,5 +864,116 @@ mod tests {
 
         assert_eq!(args.metering.metering_execution_time_us, Some(5_000_000));
         assert_eq!(args.metering.metering_state_root_time_us, Some(1_000_000));
+    }
+
+    #[test]
+    fn test_shadow_canary_flags_parse_into_args() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "reth",
+            "--enable-shadow-canary",
+            "--shadow-canary.db-url",
+            "postgres://localhost/shadow",
+            "--shadow-canary.max-connections",
+            "12",
+            "--shadow-canary.connection-timeout",
+            "10s",
+            "--shadow-canary.builder-version",
+            "v1.2.3",
+        ])
+        .args
+        .shadow_canary;
+
+        assert!(args.enable_shadow_canary);
+        assert_eq!(args.shadow_canary_db_url.as_deref(), Some("postgres://localhost/shadow"));
+        assert_eq!(args.shadow_canary_max_connections, 12);
+        assert_eq!(args.shadow_canary_connection_timeout, Duration::from_secs(10));
+        assert_eq!(args.shadow_canary_builder_version.as_deref(), Some("v1.2.3"));
+    }
+
+    #[test]
+    fn test_shadow_canary_defaults_when_disabled() {
+        let args =
+            CommandParser::<StandardNodeArgs>::parse_from(["reth"]).args.shadow_canary;
+
+        assert!(!args.enable_shadow_canary);
+        assert_eq!(args.shadow_canary_db_url, None);
+        assert_eq!(
+            args.shadow_canary_max_connections,
+            DEFAULT_SHADOW_CANARY_MAX_CONNECTIONS
+        );
+        assert_eq!(args.shadow_canary_connection_timeout, Duration::from_secs(5));
+        assert_eq!(args.shadow_canary_builder_version, None);
+    }
+
+    #[test]
+    fn test_shadow_canary_db_url_requires_enable() {
+        let error = CommandParser::<StandardNodeArgs>::try_parse_from([
+            "reth",
+            "--shadow-canary.db-url",
+            "postgres://localhost/shadow",
+        ])
+        .expect_err("db url should require --enable-shadow-canary");
+
+        assert!(error.to_string().contains("--enable-shadow-canary"));
+    }
+
+    #[test]
+    fn test_shadow_canary_config_disabled_by_default() {
+        let config = ShadowCanaryConfig::try_from(&ShadowCanaryArgs::default())
+            .expect("disabled config is valid");
+
+        assert!(!config.enabled);
+        assert_eq!(config.db.max_connections, 0);
+        assert!(config.builder_version.is_empty());
+    }
+
+    #[test]
+    fn test_shadow_canary_config_requires_db_url_when_enabled() {
+        let args = ShadowCanaryArgs {
+            enable_shadow_canary: true,
+            shadow_canary_db_url: None,
+            shadow_canary_max_connections: DEFAULT_SHADOW_CANARY_MAX_CONNECTIONS,
+            shadow_canary_connection_timeout: Duration::from_secs(5),
+            shadow_canary_builder_version: None,
+        };
+
+        let error = ShadowCanaryConfig::try_from(&args)
+            .expect_err("enabled shadow canary should require a db url");
+
+        assert!(error.to_string().contains("--shadow-canary.db-url"));
+    }
+
+    #[test]
+    fn test_shadow_canary_config_builds_when_enabled() {
+        let args = ShadowCanaryArgs {
+            enable_shadow_canary: true,
+            shadow_canary_db_url: Some("postgres://localhost/shadow".to_string()),
+            shadow_canary_max_connections: 7,
+            shadow_canary_connection_timeout: Duration::from_secs(9),
+            shadow_canary_builder_version: Some("v9.9.9".to_string()),
+        };
+
+        let config = ShadowCanaryConfig::try_from(&args).expect("enabled config is valid");
+
+        assert!(config.enabled);
+        assert_eq!(config.db.url, "postgres://localhost/shadow");
+        assert_eq!(config.db.max_connections, 7);
+        assert_eq!(config.db.connection_timeout, Duration::from_secs(9));
+        assert_eq!(config.builder_version, "v9.9.9");
+    }
+
+    #[test]
+    fn test_shadow_canary_config_defaults_builder_version_to_crate_version() {
+        let args = ShadowCanaryArgs {
+            enable_shadow_canary: true,
+            shadow_canary_db_url: Some("postgres://localhost/shadow".to_string()),
+            shadow_canary_max_connections: DEFAULT_SHADOW_CANARY_MAX_CONNECTIONS,
+            shadow_canary_connection_timeout: Duration::from_secs(5),
+            shadow_canary_builder_version: None,
+        };
+
+        let config = ShadowCanaryConfig::try_from(&args).expect("enabled config is valid");
+
+        assert_eq!(config.builder_version, env!("CARGO_PKG_VERSION"));
     }
 }
