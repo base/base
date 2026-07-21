@@ -275,6 +275,15 @@ impl PrecompileStorageProvider for StateProviderPrecompileStorage<'_> {
         Ok(U256::ZERO)
     }
 
+    fn tload_unmetered(
+        &mut self,
+        _address: Address,
+        _key: U256,
+    ) -> Result<U256, BasePrecompileError> {
+        // No transient state during validation; the read is trivially unmetered.
+        Ok(U256::ZERO)
+    }
+
     fn sstore(
         &mut self,
         _address: Address,
@@ -471,6 +480,15 @@ impl PrecompileStorageProvider for OverlayPrecompileStorage<'_> {
     }
 
     fn tload(&mut self, address: Address, key: U256) -> Result<U256, BasePrecompileError> {
+        Ok(self.transient.get(&(address, key)).copied().unwrap_or_default())
+    }
+
+    fn tload_unmetered(
+        &mut self,
+        address: Address,
+        key: U256,
+    ) -> Result<U256, BasePrecompileError> {
+        // Overlay backend: `tload` never deducts gas, so the raw read is unmetered.
         Ok(self.transient.get(&(address, key)).copied().unwrap_or_default())
     }
 

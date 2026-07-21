@@ -74,6 +74,17 @@ impl Eip8130GasSchedule {
         Self::CODE_DEPOSIT_PER_BYTE * Eip8130Constants::DELEGATION_INDICATOR_SIZE as u64;
 
     // ── Config-change actor slot writes ──────────────────────────────────────
+    //
+    // `ACTOR_SLOT_SET_COST`, `ACCOUNT_STATE_SET_COST`, and
+    // `CONFIG_CHANGE_STATE_COST` all currently equal one fresh-slot write (cold
+    // SLOAD + SSTORE set = 22,100). They are kept as three distinct named
+    // constants — rather than a single shared `FRESH_SLOT_SET_COST` — because
+    // they price semantically different accesses (an actor/policy slot, the
+    // packed-state bootstrap, and a config-change sequence bump) that may be
+    // repriced independently. `CONFIG_CHANGE_STATE_COST` aliasing
+    // `ACCOUNT_STATE_SET_COST` documents that today they share the conservative
+    // zero-to-nonzero bound; a future reset-vs-set split would touch only the
+    // relevant name.
     /// Writing a fresh actor slot (`actor_config`, or a policy slot) — cold SLOAD
     /// + SSTORE set.
     pub const ACTOR_SLOT_SET_COST: u64 = Self::COLD_SLOAD + Self::SSTORE_SET;

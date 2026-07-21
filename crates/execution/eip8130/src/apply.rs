@@ -450,25 +450,39 @@ impl AccountChangeApplier {
         state: &mut AccountState,
     ) -> Result<(), ApplyError> {
         let config = storage.get_actor_config(account, actor_id)?;
+        let is_self = actor_id == AccountConfigurationStorage::self_actor_id(account);
         if config.authenticator != Address::ZERO {
-            // An explicit self actor is necessarily non-k1. Installing it sets
-            // DEFAULT_EOA_REVOKED and clears the inline scope/expiry, so revoking
-            // its explicit home requires no further account-state mutation.
-            return Self::revoke_explicit_actor(storage, account, actor_id, config);
+            Self::revoke_explicit_actor(storage, account, actor_id, config)?;
+            // Defense-in-depth: an explicit self actor is necessarily non-k1, and
+            // `authorize_actor_with_account_state`/`apply_create` already set
+            // DEFAULT_EOA_REVOKED and zeroed the inline scope/expiry when it was
+            // installed. Re-assert that invariant here (a no-op on the in-tree
+            // install paths) instead of depending on the authorize path, so a
+            // future direct `set_actor_config` writer cannot leave a live inline
+            // secp256k1 home behind an explicit self entry. `state` is already
+            // loaded and flushed by the caller, so this adds no storage access.
+            if is_self {
+                Self::disable_inline_self(state);
+            }
+            return Ok(());
         }
-        if actor_id != AccountConfigurationStorage::self_actor_id(account)
-            || state.default_eoa_revoked()
-        {
+        if !is_self || state.default_eoa_revoked() {
             return Err(ApplyError::NotAnActor { actor_id });
         }
 
         storage.clear_actor_config(account, actor_id)?;
         storage.clear_policy(account, actor_id)?;
+        Self::disable_inline_self(state);
+        AccountConfigurationEvents::emit_actor_revoked(storage, account, actor_id)?;
+        Ok(())
+    }
+
+    /// Disables the inline secp256k1 self key in the packed account-state slot:
+    /// sets `DEFAULT_EOA_REVOKED` and zeroes the inline scope/expiry.
+    const fn disable_inline_self(state: &mut AccountState) {
         state.flags |= Eip8130Constants::DEFAULT_EOA_REVOKED;
         state.default_eoa_scope = 0;
         state.default_eoa_expiry = 0;
-        AccountConfigurationEvents::emit_actor_revoked(storage, account, actor_id)?;
-        Ok(())
     }
 
     /// Revokes an actor represented by an explicit `actor_config` entry.

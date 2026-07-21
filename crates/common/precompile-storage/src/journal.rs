@@ -143,6 +143,11 @@ impl PrecompileStorageProvider for JournalStorageProvider<'_> {
         Ok(self.internals.tload(address, key))
     }
 
+    fn tload_unmetered(&mut self, address: Address, key: U256) -> Result<U256> {
+        // Gas-free journal view: the raw read is already unmetered.
+        Ok(self.internals.tload(address, key))
+    }
+
     fn sstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
         // Writing only mutates the storage trie; it deliberately does not touch
         // nonce/balance/code. Code-less enshrined system accounts that hold

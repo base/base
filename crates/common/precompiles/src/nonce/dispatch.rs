@@ -11,7 +11,11 @@ use crate::{
     nonce::storage::NonceManagerStorage,
 };
 
-/// Per-word calldata gas charge (`G_SHA3WORD`), matching common Base precompile dispatch.
+/// Per-word *input* calldata gas charge (`G_SHA3WORD`, revm's
+/// `gas::KECCAK256WORD`), matching common Base precompile dispatch. This is the
+/// input-word model; the sibling transaction-context dispatcher instead prices
+/// *output* words at `W_copy` (see [`crate::tx_context::dispatch`]), so the two
+/// dispatchers deliberately use different word costs.
 const CALLDATA_WORD_GAS: u64 = 6;
 
 impl NonceManagerStorage<'_> {
@@ -60,6 +64,14 @@ mod tests {
     ) -> revm::precompile::PrecompileOutput {
         StorageCtx::enter(storage, |ctx| NonceManagerStorage::new(ctx).dispatch(ctx, calldata))
             .expect("dispatch should not fail fatally")
+    }
+
+    /// Drift tripwire: `CALLDATA_WORD_GAS` is `G_SHA3WORD`. If revm reprices
+    /// `gas::KECCAK256WORD`, this fails so the input-word charge is re-decided
+    /// deliberately rather than tracked silently.
+    #[test]
+    fn gas_matches_evm_reference() {
+        assert_eq!(super::CALLDATA_WORD_GAS, revm::interpreter::gas::KECCAK256WORD);
     }
 
     #[test]

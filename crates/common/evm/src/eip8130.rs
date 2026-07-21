@@ -628,6 +628,29 @@ impl Eip8130Executor {
     /// `acting_actor_hint` is the optional `senderActorId` from the estimate
     /// request. Without it, simulation publishes the self-actor (backward
     /// compatible).
+    /// Resolves an actor's `scope` from the post-apply journal without recovering
+    /// it from an auth blob: an explicit `actor_config` when set, else the inline
+    /// secp256k1 self-key scope from `account_state` for the account's own
+    /// self-actor (a revoked default EOA resolves as ungated, mirroring
+    /// `get_policy`), else `0`. Used to derive the policy gate for both the sender
+    /// and the payer during estimation.
+    fn resolve_actor_scope(
+        acc: &AccountConfigurationStorage<'_>,
+        account: Address,
+        actor_id: B256,
+    ) -> Result<u8, BaseTransactionError> {
+        let actor_config =
+            acc.get_actor_config(account, actor_id).map_err(BaseTransactionError::eip8130)?;
+        if !actor_config.authenticator.is_zero() {
+            Ok(actor_config.scope)
+        } else if actor_id == AccountConfigurationStorage::self_actor_id(account) {
+            let state = acc.get_account_state(account).map_err(BaseTransactionError::eip8130)?;
+            Ok(if state.default_eoa_revoked() { 0 } else { state.default_eoa_scope })
+        } else {
+            Ok(0)
+        }
+    }
+
     fn simulate_resolve<DB>(
         ctx: &mut BaseContext<DB>,
         signed: &base_common_consensus::Eip8130Signed,
@@ -697,25 +720,29 @@ impl Eip8130Executor {
             // `get_policy_manager` only when gated avoids `get_policy`'s extra
             // `actor_config`/`account_state`/`policy_commitment` SLOADs on this
             // estimation hot path (the commitment is unused here).
-            let actor_config = acc
-                .get_actor_config(sender, sender_actor_id)
-                .map_err(BaseTransactionError::eip8130)?;
-            let actor_scope = if !actor_config.authenticator.is_zero() {
-                actor_config.scope
-            } else if sender_actor_id == AccountConfigurationStorage::self_actor_id(sender) {
-                // Inline secp256k1 self key: scope lives in `account_state`, and a
-                // revoked default EOA resolves as ungated (mirrors `get_policy`).
-                let state = acc.get_account_state(sender).map_err(BaseTransactionError::eip8130)?;
-                if state.default_eoa_revoked() { 0 } else { state.default_eoa_scope }
-            } else {
-                0
-            };
+            let actor_scope = Self::resolve_actor_scope(&acc, sender, sender_actor_id)?;
             let policy_gated = actor_scope & Eip8130Constants::SCOPE_POLICY != 0;
             let policy_target = if policy_gated {
                 acc.get_policy_manager(sender, sender_actor_id)
                     .map_err(BaseTransactionError::eip8130)?
             } else {
                 Address::ZERO
+            };
+            // Resolve the payer's policy gate from storage the same way the
+            // sender's is resolved. The payer's unsigned representative blob is
+            // not authenticable during estimation, so price its self-actor (the
+            // default acting actor). This keeps a policy-gated sponsor's estimate
+            // from omitting the payer's `policy_manager` SLOAD — a
+            // `gas_limit == estimate` submission would otherwise OOG on
+            // execution — without overcharging an ungated payer.
+            let payer_policy_gated = match tx.payer {
+                Some(payer_addr) => {
+                    let payer_actor_id = AccountConfigurationStorage::self_actor_id(payer_addr);
+                    Self::resolve_actor_scope(&acc, payer_addr, payer_actor_id)?
+                        & Eip8130Constants::SCOPE_POLICY
+                        != 0
+                }
+                None => false,
             };
 
             // 4. Auto-delegate a code-less sender only when the transaction did
@@ -729,9 +756,9 @@ impl Eip8130Executor {
 
             // 5. Intrinsic gas (auth gas is priced from the auth-blob shape, so a
             //    stub signature of the right authenticator type estimates exactly).
-            //    Payer policy state cannot be resolved without authenticating the
-            //    payer's unsigned representative blob, so estimation does not add
-            //    the state-dependent policy-manager SLOAD.
+            //    Sender and payer policy gates are resolved from their self-actor
+            //    storage (see above), so the estimate matches execution's
+            //    policy-manager SLOAD accounting for the common self-actor path.
             let (sender_intrinsic, payer_auth, execution_gas_available) =
                 Self::resolve_execution_gas(
                     signed,
@@ -739,7 +766,7 @@ impl Eip8130Executor {
                     nonce_key_first_use,
                     sender_auto_delegated,
                     policy_gated,
-                    false,
+                    payer_policy_gated,
                     gas_limit,
                 )?;
 
