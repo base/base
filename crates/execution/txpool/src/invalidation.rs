@@ -21,7 +21,7 @@
 //! The index is a pure data structure: it does not decide *whether* a watched
 //! transaction is still valid, only *which* transactions watch a changed key.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use alloy_primitives::{Address, B256, TxHash};
 
@@ -58,9 +58,10 @@ pub enum InvalidationKey {
     /// A transaction's effective expiry is the minimum of its own `expiry` and
     /// the expiries of the sender/payer key authorizations it relies on. Expiry
     /// is a time surface, not a state surface: no storage diff reports it, so the
-    /// pool fires the due bucket(s) each block. Bucketing avoids an ordered
-    /// structure — insertion is O(1) and each block fires only the newly-due
-    /// bucket(s). Exact-match semantics (a fired bucket drops every member).
+    /// pool fires the due bucket(s) each block. Occupied buckets are kept in a
+    /// sparse ordered set, so canonical timestamp jumps visit only buckets that
+    /// contain transactions. Exact-match semantics (a fired bucket drops every
+    /// member).
     ExpiryBucket(u64),
 }
 
@@ -192,6 +193,7 @@ impl<'a> IntoIterator for &'a WatchSet {
 pub struct InvalidationIndex {
     by_key: HashMap<InvalidationKey, HashSet<TxHash>>,
     watch_sets: HashMap<TxHash, WatchSet>,
+    expiry_buckets: BTreeSet<u64>,
 }
 
 impl InvalidationIndex {
@@ -209,6 +211,9 @@ impl InvalidationIndex {
         let was_present = self.remove(&hash).is_some();
         for key in watch.keys() {
             self.by_key.entry(*key).or_default().insert(hash);
+            if let InvalidationKey::ExpiryBucket(bucket) = key {
+                self.expiry_buckets.insert(*bucket);
+            }
         }
         self.watch_sets.insert(hash, watch);
         !was_present
@@ -224,6 +229,9 @@ impl InvalidationIndex {
                 bucket.remove(hash);
                 if bucket.is_empty() {
                     self.by_key.remove(key);
+                    if let InvalidationKey::ExpiryBucket(bucket) = key {
+                        self.expiry_buckets.remove(bucket);
+                    }
                 }
             }
         }
@@ -264,6 +272,14 @@ impl InvalidationIndex {
     #[must_use]
     pub fn key_count(&self) -> usize {
         self.by_key.len()
+    }
+
+    /// Returns the occupied expiry buckets at or below `horizon`.
+    ///
+    /// Work is proportional to the number of buckets containing transactions,
+    /// not the wall-clock distance to `horizon`.
+    pub fn due_expiry_buckets(&self, horizon: u64) -> Vec<InvalidationKey> {
+        self.expiry_buckets.range(..=horizon).copied().map(InvalidationKey::ExpiryBucket).collect()
     }
 
     /// Collects every transaction that must be dropped because one of the given
@@ -389,6 +405,35 @@ mod tests {
         assert!(index.watchers(&new_slot).expect("new key linked").contains(&tx));
         assert_eq!(index.len(), 1);
         assert_eq!(index.key_count(), 1);
+    }
+
+    #[test]
+    fn due_expiry_buckets_are_sparse_across_large_timestamp_gaps() {
+        let mut index = InvalidationIndex::new();
+        let near = InvalidationKey::ExpiryBucket(1);
+        let far = InvalidationKey::ExpiryBucket(850_000_000);
+        let future = InvalidationKey::ExpiryBucket(900_000_000);
+
+        index.insert(hash(1), WatchSet::new().watch(near));
+        index.insert(hash(2), WatchSet::new().watch(far));
+        index.insert(hash(3), WatchSet::new().watch(future));
+
+        assert_eq!(index.due_expiry_buckets(850_000_000), vec![near, far]);
+    }
+
+    #[test]
+    fn removing_last_expiry_watcher_prunes_ordered_bucket() {
+        let mut index = InvalidationIndex::new();
+        let bucket = InvalidationKey::ExpiryBucket(7);
+        let (first, second) = (hash(1), hash(2));
+
+        index.insert(first, WatchSet::new().watch(bucket));
+        index.insert(second, WatchSet::new().watch(bucket));
+        index.remove(&first);
+        assert_eq!(index.due_expiry_buckets(7), vec![bucket]);
+
+        index.remove(&second);
+        assert!(index.due_expiry_buckets(u64::MAX).is_empty());
     }
 
     #[test]

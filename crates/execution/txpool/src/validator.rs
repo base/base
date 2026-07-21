@@ -1,6 +1,7 @@
 use std::{
     any::Any,
     collections::{BTreeMap, BTreeSet, HashMap},
+    num::NonZeroUsize,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -25,6 +26,7 @@ use base_execution_eip8130::{
 use base_precompile_storage::{
     BasePrecompileError, PrecompileStorageProvider, StorageCtx, validate_loaded_code_presence,
 };
+use lru::LruCache;
 use parking_lot::RwLock;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::ConfigureEvm;
@@ -91,10 +93,93 @@ struct Eip8130ValidationState {
     payer_max_cost: U256,
 }
 
-const LIMIT_CLASS_CACHE_CAPACITY: usize = 100_000;
+const LIMIT_CLASS_CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(100_000).unwrap();
 
 /// Cached lock state and trusted-delegation classification by account.
-pub type LimitClassCache = HashMap<Address, (Option<AccountState>, Option<bool>)>;
+#[derive(Debug)]
+pub struct LimitClassCache {
+    entries: LruCache<Address, (Option<AccountState>, Option<bool>)>,
+    // A slot mapping exists exactly while its account's cached lock state is present.
+    slots: HashMap<B256, Address>,
+}
+
+impl LimitClassCache {
+    /// Creates an empty cache with the supplied non-zero account capacity.
+    pub fn new(capacity: NonZeroUsize) -> Self {
+        Self { entries: LruCache::new(capacity), slots: HashMap::new() }
+    }
+
+    /// Returns and marks as recently used the cached account state, if present.
+    pub fn account_state(&mut self, account: Address) -> Option<AccountState> {
+        self.entries.get(&account).and_then(|entry| entry.0)
+    }
+
+    /// Returns and marks as recently used the cached trusted-delegation class, if present.
+    pub fn trusted(&mut self, account: Address) -> Option<bool> {
+        self.entries.get(&account).and_then(|entry| entry.1)
+    }
+
+    /// Inserts an account-state classification and removes any reverse slot
+    /// belonging to the least-recently-used account evicted by the insertion.
+    pub fn insert_account_state(&mut self, account: Address, state: AccountState) {
+        if let Some(entry) = self.entries.get_mut(&account) {
+            entry.0 = Some(state);
+        } else if let Some((evicted, entry)) = self.entries.push(account, (Some(state), None))
+            && entry.0.is_some()
+        {
+            self.slots.remove(&AccountConfigurationStorage::account_state_slot(evicted));
+        }
+        self.slots.insert(AccountConfigurationStorage::account_state_slot(account), account);
+    }
+
+    /// Inserts a trusted-delegation classification and removes any reverse slot
+    /// belonging to the least-recently-used account evicted by the insertion.
+    pub fn insert_trusted(&mut self, account: Address, trusted: bool) {
+        if let Some(entry) = self.entries.get_mut(&account) {
+            entry.1 = Some(trusted);
+        } else if let Some((evicted, entry)) = self.entries.push(account, (None, Some(trusted)))
+            && entry.0.is_some()
+        {
+            self.slots.remove(&AccountConfigurationStorage::account_state_slot(evicted));
+        }
+    }
+
+    /// Invalidates an account's trusted-delegation classification.
+    pub fn invalidate_code(&mut self, account: Address) {
+        let remove = self.entries.get_mut(&account).is_some_and(|entry| {
+            entry.1 = None;
+            entry.0.is_none()
+        });
+        if remove {
+            self.entries.pop(&account);
+        }
+    }
+
+    /// Invalidates the account-state classification associated with `slot`.
+    pub fn invalidate_slot(&mut self, slot: &B256) {
+        if let Some(account) = self.slots.remove(slot) {
+            let remove = self.entries.get_mut(&account).is_some_and(|entry| {
+                entry.0 = None;
+                entry.1.is_none()
+            });
+            if remove {
+                self.entries.pop(&account);
+            }
+        }
+    }
+
+    /// Clears all cached classifications and reverse slot mappings.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.slots.clear();
+    }
+}
+
+impl Default for LimitClassCache {
+    fn default() -> Self {
+        Self::new(LIMIT_CLASS_CACHE_CAPACITY)
+    }
+}
 
 fn b256_from_u256(slot: U256) -> B256 {
     B256::from(slot.to_be_bytes::<32>())
@@ -546,8 +631,6 @@ pub struct BaseTransactionValidator<Client, Tx, Evm> {
     require_l1_data_gas_fee: bool,
     trusted_delegation_targets: Arc<AddressSet>,
     limit_class_cache: Arc<RwLock<LimitClassCache>>,
-    // A slot mapping exists exactly while its account's cached lock state is present.
-    limit_class_cache_slots: Arc<RwLock<HashMap<B256, Address>>>,
     limit_class_cache_generation: Arc<AtomicU64>,
 }
 
@@ -604,7 +687,7 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
     /// Returns the canonical trusted delegation target set.
     pub fn default_trusted_delegation_targets() -> AddressSet {
         let mut targets = AddressSet::default();
-        targets.insert(Eip8130Contracts::DEFAULT_HIGH_RATE_ACCOUNT);
+        targets.insert(Eip8130Contracts::CANONICAL_HIGH_RATE_PAYER_ACCOUNT);
         targets
     }
 
@@ -618,7 +701,6 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
         Self {
             trusted_delegation_targets: Arc::new(merged),
             limit_class_cache: Arc::default(),
-            limit_class_cache_slots: Arc::default(),
             limit_class_cache_generation: Arc::default(),
             ..self
         }
@@ -632,31 +714,16 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
     /// Invalidates classifications affected by canonical state changes.
     pub fn invalidate_limit_class_cache(&self, diffs: &[crate::AccountStateDiff]) {
         let mut cache = self.limit_class_cache.write();
-        let mut slots = self.limit_class_cache_slots.write();
         let mut changed = false;
         for diff in diffs {
             if diff.code_changed {
                 changed = true;
-                let remove = cache.get_mut(&diff.address).is_some_and(|entry| {
-                    entry.1 = None;
-                    entry.0.is_none()
-                });
-                if remove {
-                    cache.remove(&diff.address);
-                }
+                cache.invalidate_code(diff.address);
             }
             if diff.address == AccountConfigurationStorage::ADDRESS {
                 for slot in &diff.changed_slots {
                     changed = true;
-                    if let Some(account) = slots.remove(slot) {
-                        let remove = cache.get_mut(&account).is_some_and(|entry| {
-                            entry.0 = None;
-                            entry.1.is_none()
-                        });
-                        if remove {
-                            cache.remove(&account);
-                        }
-                    }
+                    cache.invalidate_slot(slot);
                 }
             }
         }
@@ -667,10 +734,7 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
 
     /// Clears classifications after a state-diff feed gap.
     pub fn clear_limit_class_cache(&self) {
-        let mut cache = self.limit_class_cache.write();
-        let mut slots = self.limit_class_cache_slots.write();
-        cache.clear();
-        slots.clear();
+        self.limit_class_cache.write().clear();
         self.limit_class_cache_generation.fetch_add(1, Ordering::Release);
     }
 }
@@ -710,7 +774,6 @@ where
             require_l1_data_gas_fee: true,
             trusted_delegation_targets: Arc::new(Self::default_trusted_delegation_targets()),
             limit_class_cache: Arc::default(),
-            limit_class_cache_slots: Arc::default(),
             limit_class_cache_generation: Arc::default(),
         }
     }
@@ -1061,9 +1124,8 @@ where
     ) -> (bool, Option<u64>) {
         // Invalidation may advance the generation immediately after this read.
         // Pool admission rejects the captured classification if that happens.
-        let account_state = if let Some(value) =
-            self.limit_class_cache.read().get(&account).and_then(|entry| entry.0)
-        {
+        let cached = self.limit_class_cache.write().account_state(account);
+        let account_state = if let Some(value) = cached {
             value
         } else {
             let mut storage = StateProviderPrecompileStorage::new(state, local_chain_id, now);
@@ -1081,12 +1143,8 @@ where
                 }
             };
             let mut cache = self.limit_class_cache.write();
-            let mut slots = self.limit_class_cache_slots.write();
-            if generation == self.limit_class_cache_generation()
-                && (cache.contains_key(&account) || cache.len() < LIMIT_CLASS_CACHE_CAPACITY)
-            {
-                cache.entry(account).or_default().0 = Some(value);
-                slots.insert(Self::account_state_slot(account), account);
+            if generation == self.limit_class_cache_generation() {
+                cache.insert_account_state(account, value);
             }
             value
         };
@@ -1105,7 +1163,8 @@ where
     ) -> bool {
         // Invalidation may advance the generation immediately after this read.
         // Pool admission rejects the captured classification if that happens.
-        if let Some(value) = self.limit_class_cache.read().get(&account).and_then(|entry| entry.1) {
+        let cached = self.limit_class_cache.write().trusted(account);
+        if let Some(value) = cached {
             return value;
         }
         let trusted = match Self::delegation_target(state, account) {
@@ -1122,10 +1181,8 @@ where
             }
         };
         let mut cache = self.limit_class_cache.write();
-        if generation == self.limit_class_cache_generation()
-            && (cache.contains_key(&account) || cache.len() < LIMIT_CLASS_CACHE_CAPACITY)
-        {
-            cache.entry(account).or_default().1 = Some(trusted);
+        if generation == self.limit_class_cache_generation() {
+            cache.insert_trusted(account, trusted);
         }
         trusted
     }
@@ -1796,6 +1853,26 @@ mod tests {
     /// Returns the chain id the [`build_test_validator`] is configured against.
     fn test_chain_id() -> u64 {
         ChainConfig::mainnet().chain_id
+    }
+
+    #[test]
+    fn limit_class_cache_evicts_lru_account_and_reverse_slot() {
+        let mut cache = LimitClassCache::new(NonZeroUsize::new(2).expect("non-zero capacity"));
+        let (first, second, third) =
+            (Address::repeat_byte(1), Address::repeat_byte(2), Address::repeat_byte(3));
+        let state = AccountState::from_word(U256::ZERO);
+
+        cache.insert_account_state(first, state);
+        cache.insert_trusted(second, true);
+        assert_eq!(cache.trusted(second), Some(true), "second account becomes most recent");
+
+        cache.insert_trusted(third, false);
+
+        assert_eq!(cache.entries.len(), 2);
+        assert_eq!(cache.account_state(first), None, "least-recent account must be evicted");
+        assert!(!cache.slots.contains_key(&AccountConfigurationStorage::account_state_slot(first)));
+        assert_eq!(cache.trusted(second), Some(true));
+        assert_eq!(cache.trusted(third), Some(false));
     }
 
     /// Signs `tx` as an EOA-path EIP-8130 transaction and returns the resulting

@@ -12,7 +12,7 @@ base_metrics::define_metrics! {
         default = ["state_diff", "balance_update", "expiry", "feed_gap", "reconcile"]
     )]
     invalidated: counter,
-    #[describe("Expiry buckets fired on canonical updates (one-block lookahead eviction)")]
+    #[describe("Occupied expiry buckets fired on canonical updates (one-block lookahead eviction)")]
     expiry_buckets_fired: counter,
     #[describe("Transactions currently tracked by the admission/invalidation guard")]
     tracked: gauge,

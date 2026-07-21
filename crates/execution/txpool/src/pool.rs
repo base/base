@@ -115,8 +115,6 @@ pub struct BaseTransactionPool<
     /// concurrent same-nonce replacement cannot leave a stale guard record.
     /// Validation remains outside this lock.
     protocol_admission_lock: Arc<Mutex<()>>,
-    /// Highest expiry bucket fired by canonical maintenance.
-    last_fired_expiry_bucket: Arc<RwLock<Option<u64>>>,
 }
 
 impl<Client, S, Evm, T, O> fmt::Debug for BaseTransactionPool<Client, S, Evm, T, O>
@@ -150,7 +148,6 @@ where
             listeners: Arc::clone(&self.listeners),
             guard: Arc::clone(&self.guard),
             protocol_admission_lock: Arc::clone(&self.protocol_admission_lock),
-            last_fired_expiry_bucket: Arc::clone(&self.last_fired_expiry_bucket),
         }
     }
 }
@@ -192,7 +189,6 @@ where
             listeners: Arc::new(RwLock::new(SidecarListeners::default())),
             guard: Arc::new(RwLock::new(MempoolGuard::unlimited())),
             protocol_admission_lock: Arc::new(Mutex::new(())),
-            last_fired_expiry_bucket: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -317,19 +313,8 @@ where
         let _admission_guard = self.protocol_admission_lock.lock();
         let horizon = now.saturating_add(InvalidationKey::EXPIRY_BUCKET_SECS)
             / InvalidationKey::EXPIRY_BUCKET_SECS;
-        let recent = (now / InvalidationKey::EXPIRY_BUCKET_SECS).saturating_sub(1);
-        let keys: Vec<InvalidationKey> = {
-            let mut last = self.last_fired_expiry_bucket.write();
-            // Bootstrap from one bucket before `now`, clamped at zero and the
-            // horizon. This bounds the first sweep to at most three buckets,
-            // including for the timestamp-zero edge case.
-            let start =
-                last.map_or(recent.min(horizon), |previous| previous.min(recent).min(horizon));
-            *last = Some(last.map_or(horizon, |previous| previous.max(horizon)));
-            (start..=horizon).map(InvalidationKey::ExpiryBucket).collect()
-        };
-        GuardMetrics::expiry_buckets_fired().increment(keys.len() as u64);
-        let dropped = self.guard.write().invalidate_exact(keys);
+        let (dropped, bucket_count) = self.guard.write().invalidate_expiry_buckets_through(horizon);
+        GuardMetrics::expiry_buckets_fired().increment(bucket_count as u64);
         let removed = self.remove_dropped_across_pools(dropped);
         GuardMetrics::record_expiry_invalidations(removed.len());
         if !removed.is_empty() {
@@ -586,7 +571,8 @@ where
                 });
                 if !current {
                     let hash = outcome.outcome.hash;
-                    nonce_pool.remove_transactions(&[hash]);
+                    let removed = nonce_pool.remove_transactions(&[hash]);
+                    listeners.on_discarded(&removed);
                     if let Some(replaced) = &outcome.replaced {
                         let restored = ValidPoolTransaction {
                             transaction_id: replaced.transaction_id,
@@ -614,7 +600,8 @@ where
                     (None, Some(admission)) => {
                         if let Err(rejection) = guard.try_admit(admission) {
                             let hash = outcome.outcome.hash;
-                            nonce_pool.remove_transactions(&[hash]);
+                            let removed = nonce_pool.remove_transactions(&[hash]);
+                            listeners.on_discarded(&removed);
                             return Err(Self::limit_rejection_error(hash, rejection));
                         }
                     }
@@ -2033,12 +2020,14 @@ mod tests {
         }
         let over = self_paid_eoa_8130(&sidecar_signer, U256::from(cap + 1), 0, 0, 1_000);
         let over_hash = *over.hash();
+        let mut over_events = sidecar_pool.listeners.write().subscribe_hash(over_hash).0;
         let error = sidecar_pool
             .add_transaction(TransactionOrigin::Local, over)
             .await
             .expect_err("sidecar transaction above the cap must be rejected");
         assert!(error.to_string().contains("sender EIP-8130 signature limit"));
         assert!(sidecar_pool.get(&over_hash).is_none());
+        assert!(matches!(over_events.next().await, Some(TransactionEvent::Discarded)));
     }
 
     #[tokio::test]
@@ -2173,6 +2162,7 @@ mod tests {
 
         let replacement = self_paid_eoa_8130(&signer, U256::from(1), 0, 0, 1_250);
         let replacement_hash = *replacement.hash();
+        let mut replacement_events = pool.listeners.write().subscribe_hash(replacement_hash).0;
         let validated =
             pool.validator().validate_transaction(TransactionOrigin::Local, replacement).await;
         pool.validator().validator().clear_limit_class_cache();
@@ -2185,6 +2175,7 @@ mod tests {
         assert!(pool.get(&original_hash).is_some());
         assert!(pool.guard.read().contains(&original_hash));
         assert!(!pool.guard.read().contains(&replacement_hash));
+        assert!(matches!(replacement_events.next().await, Some(TransactionEvent::Discarded)));
     }
 
     #[tokio::test]
