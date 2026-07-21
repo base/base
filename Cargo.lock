@@ -5046,6 +5046,7 @@ dependencies = [
  "base-execution-evm",
  "futures",
  "rayon",
+ "redb",
  "reth-evm",
  "reth-provider",
  "reth-revm",
