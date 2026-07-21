@@ -23,6 +23,7 @@ members = [
   "crates/proof/executor",
   "crates/proof/preimage",
   "crates/proof/primitives",
+  "crates/proof/witness",
   "crates/proof/host",
   "crates/proof/prover-service",
   "crates/proof/prover-service/client",
@@ -232,6 +233,7 @@ base-proof-rpc = { path = "crates/proof/rpc" }
 base-proposer = { path = "crates/proof/proposer" }
 base-proof-worker = { path = "crates/proof/worker" }
 base-challenger = { path = "crates/proof/challenge" }
+base-proof-witness = { path = "crates/proof/witness" }
 base-proof-zk-host = { path = "crates/proof/zk/host" }
 base-proof-contracts = { path = "crates/proof/contracts" }
 base-proof-submission = { path = "crates/proof/submission" }

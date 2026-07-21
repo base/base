@@ -5825,6 +5825,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-proof-witness"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus 2.0.5",
+ "alloy-eips 2.0.5",
+ "alloy-genesis 2.0.5",
+ "alloy-network 2.0.5",
+ "alloy-primitives",
+ "alloy-provider 2.0.5",
+ "alloy-rlp",
+ "alloy-rpc-types 2.0.5",
+ "ark-ff 0.5.0",
+ "base-common-consensus",
+ "base-common-genesis",
+ "base-common-network",
+ "base-common-rpc-types-engine",
+ "base-consensus-providers",
+ "base-proof",
+ "base-proof-mpt",
+ "base-proof-preimage",
+ "base-proof-primitives",
+ "base-protocol",
+ "futures",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "base-proof-worker"
 version = "0.0.0"
 dependencies = [
