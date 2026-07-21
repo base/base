@@ -680,7 +680,7 @@ impl Eip8130Executor {
             //    calls run against post-change code and create/delegation gas is
             //    priced. Must precede actor/policy resolution so an actor
             //    authorized in this same estimate request is visible.
-            Self::apply_account_changes(signed, sctx, sender)?;
+            let has_explicit_delegation = Self::apply_account_changes(signed, sctx, sender)?;
 
             // 3. Resolve the acting actor. No signature recovery: the optional
             //    RPC hint names the intended actor (e.g. a session key); absent
@@ -718,11 +718,14 @@ impl Eip8130Executor {
                 Address::ZERO
             };
 
-            // 4. Auto-delegate a code-less sender to the default account. Unlike
-            //    the verifying path this is unconditional on a code-less sender: a
-            //    configured account already has code, so the check is a no-op for
-            //    it, and a basic-account sender is delegated to `DEFAULT_ACCOUNT`.
-            let sender_auto_delegated = Self::auto_delegate_codeless_sender(sctx, sender)?;
+            // 4. Auto-delegate a code-less sender only when the transaction did
+            //    not explicitly set its delegation. In particular, an explicit
+            //    zero target is an owner-authorized request to remain undelegated.
+            let sender_auto_delegated = if has_explicit_delegation {
+                false
+            } else {
+                Self::auto_delegate_codeless_sender(sctx, sender)?
+            };
 
             // 5. Intrinsic gas (auth gas is priced from the auth-blob shape, so a
             //    stub signature of the right authenticator type estimates exactly).
@@ -807,6 +810,7 @@ impl Eip8130Executor {
             let applied_tx =
                 TransactionAuthorizer::authorize_and_apply(signed, &mut acc, chain_id, now)
                     .map_err(BaseTransactionError::eip8130)?;
+            let has_explicit_delegation = applied_tx.applied.delegation.is_some();
             let sender_actor = applied_tx.actors.sender.resolved;
             let sender = applied_tx.actors.sender.account;
             let payer = applied_tx.actors.payer.as_ref().map_or(sender, |p| p.account);
@@ -870,14 +874,15 @@ impl Eip8130Executor {
                 false
             };
 
-            // 5. Auto-delegate any code-less sender to the default account so the
-            // account can dispatch its calls. An explicit delegation applied in
-            // step 2 with a non-zero target leaves non-empty code and is preserved
-            // here. Clearing the sender's delegation in the same transaction leaves
-            // it code-less and is intentionally re-delegated — any basic-account
-            // sender is always delegated to `DEFAULT_ACCOUNT` regardless of which
-            // signing key or authenticator was used.
-            let sender_auto_delegated = Self::auto_delegate_codeless_sender(sctx, sender)?;
+            // 5. Auto-delegate a code-less sender only when no explicit
+            //    delegation owner change was supplied. A zero target deliberately
+            //    clears the sender's delegation and must not be overwritten with
+            //    `DEFAULT_ACCOUNT`.
+            let sender_auto_delegated = if has_explicit_delegation {
+                false
+            } else {
+                Self::auto_delegate_codeless_sender(sctx, sender)?
+            };
 
             // 6. Intrinsic gas under the EIP-8130 schedule.
             let (sender_intrinsic, payer_auth, execution_gas_available) =
@@ -1362,7 +1367,7 @@ impl Eip8130Executor {
         signed: &base_common_consensus::Eip8130Signed,
         sctx: StorageCtx<'_>,
         sender: Address,
-    ) -> Result<(), BaseTransactionError> {
+    ) -> Result<bool, BaseTransactionError> {
         let mut acc_mut = AccountConfigurationStorage::new(sctx);
         let mut created_effect: Option<(Address, Bytes)> = None;
         let mut delegation_effect: Option<DelegationEffect> = None;
@@ -1405,19 +1410,19 @@ impl Eip8130Executor {
             sctx.set_code(address, Bytecode::new_raw(code))
                 .map_err(BaseTransactionError::eip8130)?;
         }
+        let has_explicit_delegation = delegation_effect.is_some();
         if let Some(delegation) = delegation_effect {
             delegation.install(sctx).map_err(BaseTransactionError::eip8130)?;
         }
-        Ok(())
+        Ok(has_explicit_delegation)
     }
 
     /// Auto-delegates a code-less sender to [`Eip8130Contracts::DEFAULT_ACCOUNT`]
     /// so the account can dispatch its `calls`, returning whether the delegation
-    /// was installed (which feeds the intrinsic-gas schedule). Both the verifying
-    /// and estimation paths call this unconditionally: a configured account
-    /// already has code so the check is a no-op for it, and any basic-account
-    /// sender — regardless of signing path or authenticator — is delegated to
-    /// `DEFAULT_ACCOUNT`.
+    /// was installed (which feeds the intrinsic-gas schedule). The verifying and
+    /// estimation paths call this only when the transaction has no explicit
+    /// delegation change; an owner-authorized zero target must remain cleared.
+    /// A configured account already has code, so this is otherwise a no-op for it.
     fn auto_delegate_codeless_sender(
         sctx: StorageCtx<'_>,
         sender: Address,
@@ -1480,12 +1485,12 @@ impl Eip8130Executor {
 mod tests {
     use alloy_evm::{Evm, FromTxWithEncoded, precompiles::PrecompilesMap};
     use alloy_primitives::{Address, B256, Bytes, U256, address, bytes, keccak256};
-    use alloy_sol_types::{SolValue, sol};
+    use alloy_sol_types::{SolEvent, SolValue, sol};
     use base_common_consensus::{
         AccountChange, ActorChange, ActorChangeType, BaseTxEnvelope, Call, ConfigChange,
         CreateEntry, Eip8130Signed, InitialActor, Predeploys, TxEip8130,
     };
-    use base_execution_eip8130::AccountChangeApplier;
+    use base_execution_eip8130::{AccountChangeApplier, DelegationApplied};
     use k256::ecdsa::SigningKey;
     use revm::{
         Database,
@@ -1674,8 +1679,36 @@ mod tests {
     }
 
     #[test]
-    fn simulate_rejects_delegation_over_ordinary_sender_code_and_rolls_back() {
+    fn explicit_zero_delegation_remains_cleared() {
         let key = signing_key(0x24);
+        let sender = eoa_address(&key);
+        let mut tx = base_tx();
+        tx.account_changes = vec![AccountChange::Delegation(Delegation { target: Address::ZERO })];
+        let signed = eoa_signed(tx, &key);
+        let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), sender);
+        seed_account_code(
+            &mut evm,
+            sender,
+            Bytecode::new_eip7702(Eip8130Contracts::DEFAULT_ACCOUNT).original_bytes(),
+        );
+
+        let outcome = evm.transact_raw(into_base_tx(&signed)).expect("clear should execute");
+        let sender_acc = outcome.state.get(&sender).expect("sender in state");
+        assert!(sender_acc.info.is_empty_code_hash(), "explicit zero target must remain cleared");
+
+        let ExecutionResult::Success { logs, .. } = &outcome.result else {
+            panic!("expected successful clear, got {:?}", outcome.result);
+        };
+        assert_eq!(logs.len(), 1, "clear must not be followed by auto-delegation");
+        assert_eq!(logs[0].address, AccountConfigurationStorage::ADDRESS);
+        let event = DelegationApplied::decode_log_data(&logs[0].data).unwrap();
+        assert_eq!(event.account, sender);
+        assert_eq!(event.target, Address::ZERO);
+    }
+
+    #[test]
+    fn simulate_rejects_delegation_over_ordinary_sender_code_and_rolls_back() {
+        let key = signing_key(0x25);
         let sender = eoa_address(&key);
         let ordinary_code = bytes!("60016000");
         let target = address!("0x00000000000000000000000000000000000000dd");
@@ -1698,6 +1731,32 @@ mod tests {
             "unexpected delegation rejection: {reason}"
         );
         assert_eq!(journal_account_code(&mut evm, sender), ordinary_code);
+    }
+
+    #[test]
+    fn simulate_explicit_zero_delegation_emits_only_clear() {
+        let key = signing_key(0x26);
+        let sender = eoa_address(&key);
+        let mut tx = base_tx();
+        tx.account_changes = vec![AccountChange::Delegation(Delegation { target: Address::ZERO })];
+        let signed = eoa_signed(tx, &key);
+        let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), sender);
+        seed_account_code(
+            &mut evm,
+            sender,
+            Bytecode::new_eip7702(Eip8130Contracts::DEFAULT_ACCOUNT).original_bytes(),
+        );
+        evm.ctx_mut().tx = into_base_tx(&signed);
+        evm.ctx_mut().tx.base.caller = sender;
+
+        let result = Eip8130Executor::simulate(&mut evm).expect("clear should simulate");
+        let ExecutionResult::Success { logs, .. } = result else {
+            panic!("expected successful simulation, got {result:?}");
+        };
+        assert_eq!(logs.len(), 1, "clear must not be followed by auto-delegation");
+        let event = DelegationApplied::decode_log_data(&logs[0].data).unwrap();
+        assert_eq!(event.account, sender);
+        assert_eq!(event.target, Address::ZERO);
     }
 
     #[test]

@@ -7,7 +7,9 @@ use std::{
     time::Duration,
 };
 
+use alloy_primitives::Address;
 use base_execution_trie::{MdbxProofsStorageOptions, RocksdbProofsStorageOptions};
+use base_execution_txpool::{DEFAULT_PAYMENT_LIMIT, DEFAULT_SIGNATURE_LIMIT};
 use base_upgrade_signal::{UpgradeSignalArgs, UpgradeSignalL1RpcArgs};
 use clap::{ArgAction, ValueEnum, builder::ArgPredicate};
 
@@ -371,6 +373,22 @@ pub struct RollupArgs {
     #[arg(long = "rollup.txpool-max-inflight-delegated-slots", default_value_t = 4)]
     pub max_inflight_delegated_slots: usize,
 
+    /// Maximum inflight EIP-8130 transactions per non-locked sender account.
+    #[arg(long = "rollup.mempool-sender-limit", default_value_t = DEFAULT_SIGNATURE_LIMIT)]
+    pub mempool_sender_limit: u32,
+
+    /// Maximum inflight EIP-8130 transactions per count-limited payer account.
+    #[arg(long = "rollup.mempool-payer-limit", default_value_t = DEFAULT_PAYMENT_LIMIT)]
+    pub mempool_payer_limit: u32,
+
+    /// Additional operator-trusted delegation targets for balance-bounded locked payers.
+    ///
+    /// This is local, non-consensus mempool policy and may intentionally differ between nodes.
+    /// Only configure implementations whose locked mode prevents ETH outflows other than the gas
+    /// they sponsor; an unsafe target weakens this node's aggregate payer-balance admission bound.
+    #[arg(long = "rollup.mempool-trusted-delegation-targets", value_delimiter = ',')]
+    pub mempool_trusted_delegation_targets: Vec<Address>,
+
     /// If true, initialize external-proofs exex to save and serve trie nodes to provide proofs
     /// faster.
     #[arg(
@@ -467,6 +485,9 @@ impl Default for RollupArgs {
             min_suggested_priority_fee: 1_000_000,
             txpool_ordering: TxpoolOrdering::default(),
             max_inflight_delegated_slots: 4,
+            mempool_sender_limit: DEFAULT_SIGNATURE_LIMIT,
+            mempool_payer_limit: DEFAULT_PAYMENT_LIMIT,
+            mempool_trusted_delegation_targets: Vec::new(),
             proofs_history: false,
             proofs_history_storage_path: None,
             proofs_history_db: ProofsHistoryDbBackend::default(),
@@ -582,6 +603,37 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_mempool_limits_default() {
+        let args = CommandParser::<RollupArgs>::parse_from(["reth"]).args;
+        assert_eq!(args.mempool_sender_limit, DEFAULT_SIGNATURE_LIMIT);
+        assert_eq!(args.mempool_payer_limit, DEFAULT_PAYMENT_LIMIT);
+        assert!(args.mempool_trusted_delegation_targets.is_empty());
+    }
+
+    #[test]
+    fn test_parse_mempool_limits() {
+        let args = CommandParser::<RollupArgs>::parse_from([
+            "reth",
+            "--rollup.mempool-sender-limit",
+            "8",
+            "--rollup.mempool-payer-limit",
+            "16",
+            "--rollup.mempool-trusted-delegation-targets",
+            "0x0000000000000000000000000000000000000001,0x0000000000000000000000000000000000000002",
+        ])
+        .args;
+        assert_eq!(args.mempool_sender_limit, 8);
+        assert_eq!(args.mempool_payer_limit, 16);
+        assert_eq!(
+            args.mempool_trusted_delegation_targets,
+            vec![
+                "0x0000000000000000000000000000000000000001".parse::<Address>().unwrap(),
+                "0x0000000000000000000000000000000000000002".parse::<Address>().unwrap(),
+            ]
+        );
+    }
+
+    #[test]
     fn test_parse_txpool_ordering_default() {
         let args = CommandParser::<RollupArgs>::parse_from(["reth"]).args;
         assert_eq!(args.txpool_ordering, TxpoolOrdering::CoinbaseTip);
@@ -616,15 +668,12 @@ mod tests {
             "reth",
             "--upgrade-signal.contract",
             "0x0000000000000000000000000000000000000001",
-            "--upgrade-signal.upgrade-id",
-            "azul",
             "--upgrade-signal.l1-rpc",
             "http://localhost:8545",
         ])
         .args;
 
         assert_eq!(args.upgrade_signal.contract_address, Some(contract));
-        assert_eq!(args.upgrade_signal.upgrade_ids, ["azul"]);
         assert_eq!(
             args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.as_ref().map(|url| url.as_str()),
             Some("http://localhost:8545/")

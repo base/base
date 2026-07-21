@@ -1,11 +1,10 @@
 //! Upgrade signal metrics observer actor.
 
 use alloy_provider::RootProvider;
-use base_common_genesis::BaseUpgrade;
+use base_consensus_providers::L1RpcProvider;
 use base_upgrade_signal::{
     AlloyUpgradeSignalReader, UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalError,
     UpgradeSignalMetricLayer, UpgradeSignalMonitor, UpgradeSignalRefresher,
-    UpgradeSignalRuntimeValidation,
 };
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
@@ -22,27 +21,21 @@ pub struct UpgradeSignalNodeConfig {
     pub l1_provider: RootProvider,
     /// L2 chain ID.
     pub chain_id: u64,
-    /// Runtime validation context.
-    pub runtime_validation: UpgradeSignalRuntimeValidation,
 }
 
 impl UpgradeSignalNodeConfig {
     /// Builds consensus upgrade signal config from builder inputs.
     ///
-    /// Uses `l1_rpc` when provided, otherwise falls back to the node's L1 provider. Missing runtime
-    /// validation is fail-closed so positive Beryl signals are rejected without an activation admin.
+    /// Uses `l1_rpc` when provided, otherwise falls back to the node's L1 provider.
     pub fn resolve(
         config: UpgradeSignalConfig,
         l1_rpc: Option<&Url>,
         default_l1_provider: RootProvider,
         chain_id: u64,
-        runtime_validation: Option<UpgradeSignalRuntimeValidation>,
     ) -> Self {
         let l1_provider =
-            l1_rpc.map(|url| RootProvider::new_http(url.clone())).unwrap_or(default_l1_provider);
-        let runtime_validation =
-            runtime_validation.unwrap_or_else(UpgradeSignalRuntimeValidation::fail_closed);
-        Self { config, l1_provider, chain_id, runtime_validation }
+            l1_rpc.map(|url| L1RpcProvider::new_http(url.clone())).unwrap_or(default_l1_provider);
+        Self { config, l1_provider, chain_id }
     }
 
     /// Builds the consensus metrics actor, with live auto-apply when runtime refresh is enabled.
@@ -66,7 +59,6 @@ impl UpgradeSignalNodeConfig {
                 self.config.clone(),
                 self.l1_provider.clone(),
                 self.chain_id,
-                self.runtime_validation,
                 UpgradeSignalMetricLayer::Consensus,
             )
         })
@@ -79,8 +71,6 @@ impl UpgradeSignalNodeConfig {
 pub struct UpgradeSignalMetricsActor {
     /// L1 upgrade signal reader.
     pub reader: AlloyUpgradeSignalReader,
-    /// Contract-backed upgrades read from the L1 contract.
-    pub upgrade_ids: Vec<BaseUpgrade>,
     /// Live metrics state.
     pub monitor: UpgradeSignalMonitor,
     /// Runtime refresher applied automatically on observed live updates, when enabled.
@@ -98,16 +88,15 @@ impl UpgradeSignalMetricsActor {
         cancellation: CancellationToken,
     ) -> Self {
         let reader = config.reader(l1_provider);
-        let monitor =
-            UpgradeSignalMonitor::new(UpgradeSignalMetricLayer::Consensus, &config.upgrade_ids);
+        let monitor = UpgradeSignalMonitor::new(UpgradeSignalMetricLayer::Consensus);
 
-        Self { reader, upgrade_ids: config.upgrade_ids, monitor, refresher, cancellation }
+        Self { reader, monitor, refresher, cancellation }
     }
 
     /// Polls L1 upgrade signal state, records metrics, and auto-applies observed changes when
     /// runtime refresh is enabled.
     pub async fn poll_l1_signal(&mut self) {
-        let Some(schedule) = self.monitor.poll(&self.reader, &self.upgrade_ids).await else {
+        let Some(schedule) = self.monitor.poll(&self.reader).await else {
             return;
         };
         if let Some(refresher) = &self.refresher

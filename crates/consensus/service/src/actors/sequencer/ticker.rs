@@ -5,7 +5,7 @@
 //! between target and actual fire is recorded to
 //! [`Metrics::sequencer_ticker_drift_seconds`]. Early fires record `0`.
 
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::time::{Instant, Interval};
 
@@ -42,6 +42,20 @@ impl ScheduledTicker {
         }
     }
 
+    /// Reschedules the next tick for a Unix timestamp in seconds.
+    ///
+    /// If the timestamp has already passed, the ticker fires immediately.
+    pub fn reset_at_unix_timestamp(&mut self, timestamp: u64) {
+        self.reset_at(UNIX_EPOCH + Duration::from_secs(timestamp));
+    }
+
+    /// Reschedules the next tick to fire `lead_time` before a Unix timestamp.
+    ///
+    /// If the resulting target has already passed, the ticker fires immediately.
+    pub fn reset_before_unix_timestamp(&mut self, timestamp: u64, lead_time: Duration) {
+        self.reset_at(UNIX_EPOCH + Duration::from_secs(timestamp) - lead_time);
+    }
+
     /// Reschedules the next tick to fire immediately, with `now` as the
     /// drift target (so the recorded drift is approximately zero plus any
     /// scheduler latency).
@@ -63,5 +77,11 @@ impl ScheduledTicker {
             Metrics::sequencer_ticker_drift_seconds().record(drift);
         }
         instant
+    }
+
+    /// Returns the wall-clock target for the next tick.
+    #[cfg(test)]
+    pub const fn target(&self) -> Option<SystemTime> {
+        self.target
     }
 }

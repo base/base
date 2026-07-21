@@ -2,7 +2,7 @@
 
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolCall;
-use base_precompile_storage::{IntoPrecompileResult, StorageCtx};
+use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
@@ -17,6 +17,11 @@ const CALLDATA_WORD_GAS: u64 = 6;
 impl TxContextStorage<'_> {
     /// ABI-dispatches transaction context calldata.
     pub fn dispatch(&self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
+        // Transaction-context getters are nonpayable; reject attached ETH first.
+        if !ctx.call_value().is_zero() {
+            return BasePrecompileError::revert(ITransactionContext::NonPayable {})
+                .into_precompile_result(ctx.gas_used(), ctx.state_gas_used());
+        }
         let calldata_cost = (calldata.len() as u64).div_ceil(32).saturating_mul(CALLDATA_WORD_GAS);
         if let Err(error) = ctx.deduct_gas(calldata_cost) {
             return error.into_precompile_result(ctx.gas_used(), ctx.state_gas_used());
@@ -52,8 +57,8 @@ impl TxContextStorage<'_> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, B256, address, b256};
-    use alloy_sol_types::SolCall;
+    use alloy_primitives::{Address, B256, Bytes, U256, address, b256};
+    use alloy_sol_types::{SolCall, SolError};
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
     use crate::{ITransactionContext, TxContextStorage};
@@ -124,6 +129,21 @@ mod tests {
             ITransactionContext::getTransactionPayerCall::abi_decode_returns(&payer).unwrap(),
             ORIGIN
         );
+    }
+
+    #[test]
+    fn dispatch_rejects_call_with_nonzero_value() {
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_call_value(U256::from(1u64));
+        let calldata = ITransactionContext::getTransactionSenderCall {}.abi_encode();
+
+        let output = StorageCtx::enter(&mut storage, |ctx| {
+            TxContextStorage::new(ctx).dispatch(ctx, &calldata)
+        })
+        .expect("nonzero value should revert, not fail fatally");
+
+        assert!(output.is_revert());
+        assert_eq!(output.bytes, Bytes::from(ITransactionContext::NonPayable {}.abi_encode()));
     }
 
     #[test]

@@ -16,6 +16,9 @@ sol! {
         /// Precompile cannot be executed via delegatecall or callcode.
         error DelegateCallNotAllowed();
 
+        /// ETH was attached to a call targeting a nonpayable transaction-context selector.
+        error NonPayable();
+
         /// Returns the resolved sender of the in-flight transaction.
         function getTransactionSender() external view returns (address);
 

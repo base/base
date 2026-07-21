@@ -3,7 +3,6 @@
 use std::{path::PathBuf, sync::Arc};
 
 use alloy_primitives::Address;
-use alloy_provider::RootProvider;
 use alloy_rpc_types_engine::JwtSecret;
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_chains::ChainConfig;
@@ -12,9 +11,10 @@ use base_consensus_node::{
     EngineConfig, L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder,
     UpgradeSignalBuilderConfig,
 };
+use base_consensus_providers::L1RpcProvider;
 use base_upgrade_signal::{
     UpgradeSignalArgs, UpgradeSignalConfig, UpgradeSignalMetricLayer, UpgradeSignalRuntimeApplier,
-    UpgradeSignalRuntimeValidation, UpgradeSignalSchedule, UpgradeSignalStartupMode,
+    UpgradeSignalSchedule, UpgradeSignalStartupMode,
 };
 use clap::Args;
 use eyre::Context;
@@ -37,8 +37,6 @@ pub struct ConsensusNodeOverrides {
     pub l2_engine_rpc: Option<Url>,
     /// Override for the L2 Engine API JWT secret.
     pub l2_engine_jwt_secret: Option<JwtSecret>,
-    /// Runtime upgrade signal validation supplied by an embedded execution node.
-    pub upgrade_signal_runtime_validation: Option<UpgradeSignalRuntimeValidation>,
     /// Override for the L1 RPC endpoint used by consensus upgrade-signal reads.
     pub upgrade_signal_l1_rpc: Option<Url>,
 }
@@ -46,17 +44,14 @@ pub struct ConsensusNodeOverrides {
 impl ConsensusNodeOverrides {
     /// Creates overrides for consensus embedded alongside an execution node.
     ///
-    /// Runtime admin refresh is validated against the embedded execution chain spec, and consensus
-    /// uses the same upgrade-signal L1 RPC as execution when one is configured.
+    /// Consensus uses the same upgrade-signal L1 RPC as execution when one is configured.
     pub const fn embedded_execution(
         l2_engine_rpc: Url,
-        upgrade_signal_runtime_validation: UpgradeSignalRuntimeValidation,
         upgrade_signal_l1_rpc: Option<Url>,
     ) -> Self {
         Self {
             l2_engine_rpc: Some(l2_engine_rpc),
             l2_engine_jwt_secret: None,
-            upgrade_signal_runtime_validation: Some(upgrade_signal_runtime_validation),
             upgrade_signal_l1_rpc,
         }
     }
@@ -360,9 +355,11 @@ impl ConsensusNodeArgs {
         self.config.l2_config.load(&self.chain.l2_chain_id).map_err(|e| eyre::eyre!(e))
     }
 
-    /// Validates that a sequencer signing key is configured when running in sequencer mode.
+    /// Validates that a non-shadow sequencer has a signing key configured.
     pub fn validate_sequencer_key(&self) -> eyre::Result<()> {
-        if self.config.node_mode.is_sequencer() {
+        if self.config.node_mode.is_sequencer()
+            && !self.config.sequencer_flags.config().is_shadow_sequencer()
+        {
             let signer = &self.config.p2p_flags.signer;
             if signer.sequencer_key.is_none()
                 && signer.sequencer_key_path.is_none()
@@ -409,10 +406,7 @@ impl ConsensusNodeArgs {
         startup_mode: UpgradeSignalStartupMode,
     ) -> eyre::Result<RollupNode> {
         self.validate_sequencer_key()?;
-        let upgrade_signal_config = self.config.upgrade_signal.config()?;
-        let runtime_validation = overrides
-            .upgrade_signal_runtime_validation
-            .unwrap_or_else(|| self.upgrade_signal_runtime_validation());
+        let upgrade_signal_config = self.config.upgrade_signal.config();
         let upgrade_signal_l1_rpc = overrides.upgrade_signal_l1_rpc.clone();
         if let Some(signal_config) = &upgrade_signal_config
             && startup_mode.reads_and_applies()
@@ -421,7 +415,6 @@ impl ConsensusNodeArgs {
             self.apply_initial_upgrade_signal(
                 &mut cfg,
                 signal_config,
-                runtime_validation,
                 upgrade_signal_l1_rpc.as_ref(),
             )
             .await?;
@@ -492,7 +485,6 @@ impl ConsensusNodeArgs {
         .with_upgrade_signal_config(UpgradeSignalBuilderConfig {
             metrics_config: upgrade_signal_config,
             l1_rpc: upgrade_signal_l1_rpc,
-            runtime_validation: Some(runtime_validation),
         });
 
         if let Some(path) = self.config.checkpoint_path.clone() {
@@ -506,18 +498,13 @@ impl ConsensusNodeArgs {
     }
 
     /// Applies the configured L1 upgrade signal to the rollup config before startup.
-    ///
-    /// `runtime_validation` enforces the same activation-admin invariant as the execution layer.
-    /// A standalone consensus node has no activation admin source and therefore receives a
-    /// fail-closed context that rejects positive Beryl signals.
     pub async fn apply_initial_upgrade_signal(
         &self,
         cfg: &mut RollupConfig,
         signal_config: &UpgradeSignalConfig,
-        runtime_validation: UpgradeSignalRuntimeValidation,
         upgrade_signal_l1_rpc: Option<&Url>,
     ) -> eyre::Result<()> {
-        let reader = signal_config.reader(RootProvider::new_http(
+        let reader = signal_config.reader(L1RpcProvider::new_http(
             self.resolved_upgrade_signal_l1_rpc(upgrade_signal_l1_rpc),
         ));
         let schedule = signal_config
@@ -527,7 +514,6 @@ impl ConsensusNodeArgs {
                 &[UpgradeSignalMetricLayer::Consensus],
             )
             .await?;
-        runtime_validation.validate_schedule(cfg.l2_chain_id.id(), &schedule)?;
 
         Self::apply_schedule_to_rollup_config(cfg, &schedule);
 
@@ -550,18 +536,6 @@ impl ConsensusNodeArgs {
         summary.log("rollup config");
 
         summary.applied_upgrades
-    }
-
-    /// Returns the runtime validation context for the selected standalone consensus chain.
-    pub fn upgrade_signal_runtime_validation(&self) -> UpgradeSignalRuntimeValidation {
-        ChainConfig::by_chain_id(self.chain.l2_chain_id.id()).map_or_else(
-            UpgradeSignalRuntimeValidation::fail_closed,
-            |config| {
-                UpgradeSignalRuntimeValidation::with_activation_admin_address(
-                    config.beryl_activation_admin_address(),
-                )
-            },
-        )
     }
 
     /// Starts a rollup node with default external endpoint configuration.
@@ -680,8 +654,6 @@ mod tests {
             "http://localhost:8551",
             "--upgrade-signal.contract",
             "0x0000000000000000000000000000000000000001",
-            "--upgrade-signal.upgrade-id",
-            "azul",
         ])
         .args;
 
@@ -689,7 +661,6 @@ mod tests {
             args.upgrade_signal.contract_address,
             Some(address!("0000000000000000000000000000000000000001"))
         );
-        assert_eq!(args.upgrade_signal.upgrade_ids, ["azul"]);
     }
 
     fn upgrade_schedule(signals: &[(BaseUpgrade, u64)]) -> UpgradeSignalSchedule {
@@ -750,44 +721,12 @@ mod tests {
     }
 
     #[test]
-    fn standalone_runtime_validation_uses_builtin_activation_admin() {
-        let args = ConsensusNodeArgs::new(
-            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
-            default_node_config_args(),
-        );
-
-        let validation = args.upgrade_signal_runtime_validation();
-
-        assert!(validation.require_activation_admin_for_beryl);
-        assert_eq!(
-            validation.activation_admin_address,
-            ChainConfig::mainnet().beryl_activation_admin_address()
-        );
-    }
-
-    #[test]
-    fn standalone_runtime_validation_fails_closed_for_unknown_chain() {
-        let args = ConsensusNodeArgs::new(
-            ConsensusChainArgs { l2_chain_id: Chain::from(9_999_999_u64) },
-            default_node_config_args(),
-        );
-
-        let validation = args.upgrade_signal_runtime_validation();
-
-        assert!(validation.require_activation_admin_for_beryl);
-        assert_eq!(validation.activation_admin_address, None);
-    }
-
-    #[test]
     fn embedded_execution_overrides_preserve_upgrade_signal_context() {
-        let validation = UpgradeSignalRuntimeValidation::with_activation_admin_address(None);
         let overrides = ConsensusNodeOverrides::embedded_execution(
             Url::parse("http://localhost:8551").unwrap(),
-            validation,
             Some(Url::parse("http://localhost:8545").unwrap()),
         );
 
-        assert_eq!(overrides.upgrade_signal_runtime_validation, Some(validation));
         assert_eq!(
             overrides.upgrade_signal_l1_rpc.as_ref().map(Url::as_str),
             Some("http://localhost:8545/")
@@ -901,6 +840,23 @@ mod tests {
             },
         );
         assert_eq!(args.validate_sequencer_key().is_ok(), expected_ok);
+    }
+
+    #[test]
+    fn shadow_sequencer_does_not_require_signing_key() {
+        let args = ConsensusNodeArgs::new(
+            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
+            ConsensusNodeConfigArgs {
+                node_mode: NodeMode::Sequencer,
+                sequencer_flags: SequencerArgs {
+                    shadow_blocks_per_cycle: std::num::NonZeroU64::new(10),
+                    ..SequencerArgs::default()
+                },
+                ..default_node_config_args()
+            },
+        );
+
+        assert!(args.validate_sequencer_key().is_ok());
     }
 
     #[test]

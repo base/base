@@ -9,8 +9,8 @@
 
 mod config;
 pub use config::{
-    UpgradeSignalArgs, UpgradeSignalBlockTag, UpgradeSignalConfig, UpgradeSignalConfigError,
-    UpgradeSignalDefaults, UpgradeSignalL1RpcArgs, UpgradeSignalMode, UpgradeSignalStartupConfig,
+    UpgradeSignalArgs, UpgradeSignalBlockTag, UpgradeSignalConfig, UpgradeSignalDefaults,
+    UpgradeSignalL1RpcArgs, UpgradeSignalMode, UpgradeSignalStartupConfig,
     UpgradeSignalStartupMode,
 };
 
@@ -27,7 +27,6 @@ mod runtime;
 pub use runtime::{
     RuntimeRegistrySink, UpgradeSignalApplyAction, UpgradeSignalApplyChange,
     UpgradeSignalApplySummary, UpgradeSignalRefresher, UpgradeSignalRuntimeApplier,
-    UpgradeSignalRuntimeValidation,
 };
 
 mod state;

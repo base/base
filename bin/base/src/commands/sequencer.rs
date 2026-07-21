@@ -15,7 +15,7 @@ use base_execution_cli::{
 };
 use base_node_runner::BaseNodeRunner;
 use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
-use base_upgrade_signal::{UpgradeSignalRuntimeValidation, UpgradeSignalStartupMode};
+use base_upgrade_signal::UpgradeSignalStartupMode;
 use clap::Args;
 use reth_cli_runner::CliRunner;
 use tokio_util::sync::CancellationToken;
@@ -73,16 +73,11 @@ impl SequencerCommand {
         let gas_limit_config = builder_config.gas_limit_config.clone();
 
         CliRunner::try_default_runtime()?.run_command_until_exit(|ctx| async move {
-            let upgrade_signal_runtime_validation =
-                UpgradeSignalRuntimeValidation::with_activation_admin_address(
-                    execution_chain.activation_admin_address,
-                );
             rollup_args
                 .upgrade_signal
                 .apply_startup_to_sinks(
                     &rollup_args.upgrade_signal_l1_rpc,
                     "integrated sequencer startup",
-                    upgrade_signal_runtime_validation,
                     execution_chain.chain().id(),
                     Arc::make_mut(&mut execution_chain),
                     &mut rollup_config,
@@ -126,7 +121,6 @@ impl SequencerCommand {
                 ConsensusNodeStartOptions::new(rollup_config)
                     .with_overrides(ConsensusNodeOverrides::embedded_execution(
                         l2_engine_rpc,
-                        upgrade_signal_runtime_validation,
                         upgrade_signal_l1_rpc,
                     ))
                     .with_cancellation(consensus_cancellation.clone())
@@ -247,8 +241,6 @@ mod tests {
             SEQUENCER_KEY,
             "--upgrade-signal.contract",
             "0x0000000000000000000000000000000000000001",
-            "--upgrade-signal.upgrade-id",
-            "azul",
         ]));
 
         let BaseCommand::Sequencer(sequencer) = cli.command else {
@@ -264,7 +256,6 @@ mod tests {
                 .map(|address| address.to_string()),
             Some("0x0000000000000000000000000000000000000001".to_string())
         );
-        assert_eq!(sequencer.builder.rollup_args.upgrade_signal.upgrade_ids, ["azul"]);
     }
 
     #[test]

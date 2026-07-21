@@ -24,7 +24,7 @@
 //!    --test b20_policy_v1_golden -- --nocapture` and copy the printed `GOLDEN_ROOT` values.
 
 use IPolicyRegistry::PolicyType;
-use alloy_primitives::{Address, B256, Bytes, LogData, U256, address, b256, keccak256};
+use alloy_primitives::{Address, B256, Bytes, LogData, U256, b256, keccak256};
 use alloy_sol_types::{SolCall, SolError, SolEvent};
 use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
@@ -33,14 +33,14 @@ use base_common_precompiles::{
 };
 use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
+mod common;
+use common::{
+    ACTIVATION_ADMIN, ADMIN, ALICE, BOB, CHAIN_ID, bless_or_assert_gas, bless_or_assert_root,
+};
+
 // --- fixtures ---------------------------------------------------------------
 
-const CHAIN_ID: u64 = 8453;
-const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
-const ADMIN: Address = Address::repeat_byte(0xAD);
 const ADMIN2: Address = Address::repeat_byte(0xA2);
-const ALICE: Address = Address::repeat_byte(0xA1);
-const BOB: Address = Address::repeat_byte(0xB0);
 const OUTSIDER: Address = Address::repeat_byte(0x0F);
 
 /// First custom BLOCKLIST id in a fresh registry: `(0 << 56) | 2`.
@@ -162,12 +162,7 @@ fn hash_state(storage: HashMapStorageProvider) -> B256 {
 /// Asserts the storage hash, or prints it under `BLESS_GOLDEN` for (re)pinning.
 #[track_caller]
 fn assert_root(label: &str, storage: HashMapStorageProvider, expected: B256) {
-    let got = hash_state(storage);
-    if std::env::var("BLESS_GOLDEN").ok().as_deref() == Some("1") {
-        println!("GOLDEN_ROOT {label} = {got:#x}");
-        return;
-    }
-    assert_eq!(got, expected, "V1 storage hash drift for `{label}`");
+    bless_or_assert_root(label, hash_state(storage), expected);
 }
 
 // ============================================================================
@@ -818,13 +813,7 @@ fn golden_gas_footprints() {
         ("is_authorized", (1, 0, 0)),
     ];
 
-    if std::env::var("BLESS_GOLDEN").ok().as_deref() == Some("1") {
-        for (label, counts) in &actual {
-            println!("GAS {label} = {counts:?}");
-        }
-        return;
-    }
-    assert_eq!(actual, expected, "storage-access footprint (sload, sstore, keccak256) drift");
+    bless_or_assert_gas(&actual, expected);
 }
 
 // ============================================================================

@@ -92,6 +92,16 @@ impl BaseTimeUpdateTx {
         Ok(base_time)
     }
 
+    /// Extracts the block timestamp in milliseconds from its transactions and header fields.
+    pub fn extract_timestamp_ms<T: BaseTransaction>(
+        transactions: &[T],
+        block_number: u64,
+        timestamp: u64,
+    ) -> Result<u64, BaseTimeMetadataError> {
+        let base_time = Self::extract_from_transactions(transactions, block_number)?;
+        Ok(timestamp.wrapping_mul(1_000).wrapping_add(u64::from(base_time.timestamp_millis_part())))
+    }
+
     /// Validates and decodes a `BaseTime` metadata deposit.
     pub fn validate_deposit(
         deposit: &TxDeposit,
@@ -310,6 +320,16 @@ mod tests {
         let base_time = BaseTimeUpdateTx::extract_from_transactions(&transactions, 9).unwrap();
 
         assert_eq!(base_time.timestamp_millis_part(), 600);
+    }
+
+    #[test]
+    fn extracts_timestamp_ms() {
+        let transactions: Vec<BaseTransactionSigned> = vec![
+            TxDeposit::default().seal_slow().into(),
+            base_time_deposit(9, 600).seal_slow().into(),
+        ];
+
+        assert_eq!(BaseTimeUpdateTx::extract_timestamp_ms(&transactions, 9, 42), Ok(42_600));
     }
 
     #[test]
