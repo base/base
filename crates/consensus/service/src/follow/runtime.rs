@@ -1137,17 +1137,14 @@ mod tests {
             .expect_get_block_info()
             .with(eq(BlockNumberOrTag::Finalized))
             .returning(|_| Ok(source_block_info(6)));
-        let engine = Arc::new(RecordingEngine {
-            inserted: Mutex::new(Vec::new()),
-            labels: Mutex::new(Vec::new()),
-            delay: Duration::ZERO,
-        });
+        let engine = Arc::new(RecordingEngine::new(Duration::ZERO));
         let engine_for_update: Arc<dyn FollowEngine> = Arc::<RecordingEngine>::clone(&engine);
 
         FollowRuntime::<MockFollowLocalClient, MockRemoteClient, NoopProofGate>::update_safe_and_finalized(
             Arc::new(local),
             Arc::new(source),
             engine_for_update,
+            CancellationToken::new(),
         )
         .await
         .expect("labels");
@@ -1257,11 +1254,7 @@ mod tests {
             .expect_get_block_info()
             .with(eq(BlockNumberOrTag::Safe))
             .returning(|_| Ok(source_block_info(9)));
-        let engine = Arc::new(RecordingEngine {
-            inserted: Mutex::new(Vec::new()),
-            labels: Mutex::new(Vec::new()),
-            delay: Duration::ZERO,
-        });
+        let engine = Arc::new(RecordingEngine::new(Duration::ZERO));
         let engine_for_update: Arc<dyn FollowEngine> = Arc::<RecordingEngine>::clone(&engine);
 
         let error =
