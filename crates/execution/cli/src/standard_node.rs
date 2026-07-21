@@ -526,9 +526,7 @@ impl TransactionEventEnv {
 }
 
 fn transaction_event_journal_env_enabled() -> bool {
-    env::var("BASE_TRANSACTION_EVENTS_ENABLED")
-        .map(transaction_event_env_bool)
-        .unwrap_or(false)
+    env::var("BASE_TRANSACTION_EVENTS_ENABLED").map(transaction_event_env_bool).unwrap_or(false)
 }
 
 fn transaction_event_env_bool(value: String) -> bool {
