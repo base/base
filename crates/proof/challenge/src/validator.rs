@@ -416,7 +416,7 @@ mod tests {
     /// Creates a mock L2 provider with multiple blocks and returns a vec of
     /// expected output roots (one per block).
     fn mock_with_blocks(block_numbers: &[u64]) -> (MockL2Provider, Vec<B256>) {
-        let mut provider = MockL2Provider::new();
+        let mut provider = MockL2Provider::default();
         let mut roots = Vec::new();
 
         for &block_number in block_numbers {
@@ -555,7 +555,7 @@ mod tests {
     /// Missing L2 block: returns `ValidatorError::BlockNotAvailable` instead of panicking.
     #[tokio::test]
     async fn test_missing_l2_block() {
-        let mut provider = MockL2Provider::new();
+        let mut provider = MockL2Provider::default();
         // Mark block 100 as an error block (not yet produced)
         provider.error_blocks.push(100);
 
@@ -575,7 +575,7 @@ mod tests {
     /// Zero intermediate block interval returns `ValidatorError::InvalidInterval`.
     #[tokio::test]
     async fn test_zero_intermediate_interval() {
-        let provider = MockL2Provider::new();
+        let provider = MockL2Provider::default();
         let validator = OutputValidator::new(Arc::new(provider));
         let game_address = Address::repeat_byte(0x07);
 
@@ -606,7 +606,7 @@ mod tests {
         #[case] expected: usize,
         #[case] actual: usize,
     ) {
-        let provider = MockL2Provider::new();
+        let provider = MockL2Provider::default();
         let validator = OutputValidator::new(Arc::new(provider));
         let game_address = Address::repeat_byte(0x08);
 
@@ -731,7 +731,7 @@ mod tests {
         let (header_100, _) = build_test_header_and_account(100, storage_hash);
         let hash_100 = header_100.hash_slow();
 
-        let mut provider = MockL2Provider::new();
+        let mut provider = MockL2Provider::default();
         provider.insert_block(95, header_95, account_95);
         // Insert header for block 100 but omit the proof so get_proof fails.
         let rpc_header_100 = RpcHeader { hash: hash_100, inner: header_100, ..Default::default() };
@@ -766,7 +766,7 @@ mod tests {
         let (consensus_header, account) = build_test_header_and_account(100, storage_hash);
         let correct_hash = consensus_header.hash_slow();
 
-        let mut provider = MockL2Provider::new();
+        let mut provider = MockL2Provider::default();
         // Insert block normally first, then tamper with the header hash
         provider.insert_block(100, consensus_header.clone(), account);
         // Overwrite the header with a mismatched hash
@@ -808,7 +808,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut provider = MockL2Provider::new();
+        let mut provider = MockL2Provider::default();
         // Insert the wrong-root header but the account proof built for a
         // different state root.
         let block_hash = header_wrong_root.hash_slow();
@@ -841,7 +841,7 @@ mod tests {
         let substituted_root =
             OutputRoot::from_parts(header.state_root, storage_hash, header.hash_slow()).hash();
 
-        let mut provider = MockL2Provider::new();
+        let mut provider = MockL2Provider::default();
         provider.insert_block(100, header, account);
 
         let validator = OutputValidator::new(Arc::new(provider));
