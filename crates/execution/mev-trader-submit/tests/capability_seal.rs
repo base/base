@@ -309,6 +309,23 @@ fn each_ephemeral_sign_uses_a_fresh_unfunded_keypair() {
     assert!(assemble_unsigned_atomic_tx(&wrong).is_err(), "victim hash binding not enforced");
 }
 
+#[test]
+fn production_never_self_loads_or_aliases_production_arming_criteria() {
+    // Alias-bypass guard for the arming self-load seal. `production_arming_criteria`
+    // is a public producer in `base_mev_trader`; the arm seal forbids its token in
+    // src/arm/*. A re-export/alias would instead have to live in the clean-4 surface
+    // (lib/fee/assembler/signer), so that surface must not name the token either.
+    // Together the two seals close every submit production file, so no submit code can
+    // obtain its own armed criteria — B5 injects a verified value (a dependent cannot
+    // self-forge). Comments are stripped, so an explanatory mention would not trip.
+    let source = read_production_source();
+    assert!(
+        !source.contains("production_arming_criteria"),
+        "clean-4 production source references production_arming_criteria \
+         (submit must not self-load or alias arming criteria)"
+    );
+}
+
 // -- Default-build / dependency-shape machine-checks --------------------------
 
 fn workspace_metadata() -> serde_json::Value {

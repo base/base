@@ -80,5 +80,6 @@ pub use safety::{
     ArmedCriteria, ClosedReason, CRITERIA_SHA, CriteriaArtifact, Decision, DrawdownInput,
     EXPECTED_CRITERIA_COMMIT, EXPECTED_CRITERIA_VERSION, FileKillStateStore, GuardReason, KillReason,
     KillState, KillStateStore, KillStoreError, LossProvenance, OWNER_ATTEST_ADDRESS, ResetAttestation,
-    SubmitContext, SubmitDecision, UnarmedReason, drawdown_floor, kill_switch, per_tx_cap, submit_gate,
+    SubmitContext, SubmitDecision, UnarmedReason, drawdown_floor, kill_switch, per_tx_cap,
+    production_arming_criteria, submit_gate,
 };
