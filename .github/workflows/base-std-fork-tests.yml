@@ -28,9 +28,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # base_anvil_ref / base_std_ref are release tags (readable, per-repo).
-          # A future backport can re-point the tag without editing this workflow;
-          # the resolved commit SHA is recorded in the result artifact and PR comment.
+          # Refs may be release tags or commit SHAs. The resolved commit SHA is
+          # recorded in the result artifact and PR comment.
           - fork: Beryl
             key: beryl
             base_anvil_ref: v1.1.1
@@ -72,19 +71,18 @@ jobs:
           rm -rf "$workdir"
           mkdir -p "$workdir"
 
-          # Fetch from the tag namespace so a same-named branch can't be used and
-          # annotated tags (e.g. base-anvil v1.1.1) resolve to their target commit.
-          # A missing tag makes the fetch fail (set -e) — that is the checkout guard.
+          # FETCH_HEAD supports commit SHAs and tags (including annotated tags),
+          # keeping refs independently configurable for each repository.
           gh repo clone base/base-std "$workdir/base-std" -- \
             --filter=blob:none --no-checkout
-          git -C "$workdir/base-std" fetch --depth 1 origin "refs/tags/${BASE_STD_REF}:refs/tags/${BASE_STD_REF}"
-          git -C "$workdir/base-std" checkout --detach "refs/tags/${BASE_STD_REF}"
+          git -C "$workdir/base-std" fetch --depth 1 origin "$BASE_STD_REF"
+          git -C "$workdir/base-std" checkout --detach FETCH_HEAD
           git -C "$workdir/base-std" submodule update --init --recursive --depth 1
 
           git clone --filter=blob:none --no-checkout \
             https://github.com/base/base-anvil.git "$workdir/base-anvil"
-          git -C "$workdir/base-anvil" fetch --depth 1 origin "refs/tags/${BASE_ANVIL_REF}:refs/tags/${BASE_ANVIL_REF}"
-          git -C "$workdir/base-anvil" checkout --detach "refs/tags/${BASE_ANVIL_REF}"
+          git -C "$workdir/base-anvil" fetch --depth 1 origin "$BASE_ANVIL_REF"
+          git -C "$workdir/base-anvil" checkout --detach FETCH_HEAD
 
           # Record the resolved commit SHAs for the audit trail. Tags are readable
           # pointers; the SHA below is the source of truth for what actually ran.
