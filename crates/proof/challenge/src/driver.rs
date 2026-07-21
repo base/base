@@ -40,6 +40,16 @@ pub struct DisputeComponents<L2: L2Provider, P: ProofRequesterProvider> {
     pub tee_submit_retry_limit: u32,
 }
 
+impl<L2: L2Provider, P: ProofRequesterProvider> std::fmt::Debug for DisputeComponents<L2, P> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DisputeComponents")
+            .field("tee", &self.tee.as_ref().map(|_| ".."))
+            .field("max_proof_duration", &self.max_proof_duration)
+            .field("tee_submit_retry_limit", &self.tee_submit_retry_limit)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Dependencies and runtime settings injected into the [`Driver`].
 pub struct DriverComponents<L2: L2Provider, P: ProofRequesterProvider, T: TxManager> {
     /// Dispute-pipeline dependencies. `None` in no-dispute mode.
@@ -75,6 +85,12 @@ pub struct DisputePipeline<L2: L2Provider, P: ProofRequesterProvider> {
     pub scanner: GameScanner,
     /// Manages proof sessions, retries, submissions, and TEE-to-ZK fallback.
     pub proof_manager: DisputeProofManager<L2, P>,
+}
+
+impl<L2: L2Provider, P: ProofRequesterProvider> std::fmt::Debug for DisputePipeline<L2, P> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DisputePipeline").finish_non_exhaustive()
+    }
 }
 
 /// Orchestrates the challenger: the bond/anchor lifecycle always, plus the
