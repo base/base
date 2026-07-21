@@ -25,8 +25,8 @@ use base_proof_primitives::Proposal;
 use base_proof_rpc::L1Provider;
 use base_protocol::OutputRoot;
 use base_prover_service_protocol::{
-    ProofResult as ApiProofResult, ProofStatus, SnarkPlonkProofRequest, TeeKind, TeeProofResult,
-    ZkBackend, ZkProofRequest, ZkVm,
+    ProofRequestKind, ProofResult as ApiProofResult, ProofStatus, SnarkPlonkProofRequest, TeeKind,
+    TeeProofResult, ZkBackend, ZkProofRequest, ZkVm,
 };
 use base_tx_manager::TxManagerError;
 use tokio_util::sync::CancellationToken;
@@ -762,13 +762,14 @@ async fn test_step_invalid_game_tee_fails_zk_fallback() {
     let (l2, factory, verifier) = invalid_game_mocks();
 
     let tx_manager = default_tx_manager();
+    let l1_provider = Arc::new(MockL1::failure("dummy"));
     let mut driver = test_driver_with_l1_provider(
         factory,
         Arc::clone(&verifier),
         l2,
         default_zk_prover(),
         tx_manager,
-        Arc::new(MockL1::failure("dummy")),
+        Arc::clone(&l1_provider) as Arc<dyn L1Provider>,
     );
 
     driver.step().await.unwrap();
@@ -781,6 +782,12 @@ async fn test_step_invalid_game_tee_fails_zk_fallback() {
     assert!(
         matches!(entry.phase, ProofPhase::AwaitingProof { .. }),
         "phase should be AwaitingProof (ZK fallback)"
+    );
+    assert!(matches!(entry.kind, ProofKind::Zk { .. }), "fallback must use a ZK proof");
+    assert_eq!(
+        *l1_provider.header_by_hash_requests.lock().unwrap(),
+        vec![DEFAULT_L1_HEAD],
+        "TEE attempt must resolve the game's L1 head before falling back",
     );
 }
 
@@ -862,12 +869,23 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
         factory,
         Arc::clone(&verifier),
         l2,
-        proof_requester,
+        Arc::clone(&proof_requester),
         tx_manager,
         l1_head,
     );
 
     driver.step().await.unwrap();
+    {
+        let prove_block_range_log = &proof_requester.state.lock().unwrap().prove_block_range_log;
+        assert_eq!(prove_block_range_log.len(), 1, "TEE proof should be requested once");
+        assert!(
+            matches!(
+                &prove_block_range_log[0].proof.request,
+                ProofRequestKind::Tee(request) if request.proof.l1_head_number == 100
+            ),
+            "TEE request must include the resolved L1 head number",
+        );
+    }
     verifier.update_game(
         addr(0),
         MockGameState {

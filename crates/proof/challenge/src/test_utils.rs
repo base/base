@@ -873,6 +873,8 @@ pub struct MockL1 {
     pub headers_by_hash: HashMap<B256, RpcHeader>,
     /// Error returned by [`L1Provider::header_by_hash`], when configured.
     pub header_error: Option<String>,
+    /// Hashes requested through [`L1Provider::header_by_hash`].
+    pub header_by_hash_requests: Mutex<Vec<B256>>,
 }
 
 impl MockL1 {
@@ -888,12 +890,17 @@ impl MockL1 {
                 },
             )]),
             header_error: None,
+            header_by_hash_requests: Mutex::new(Vec::new()),
         }
     }
 
     /// Creates a mock that returns a single error.
     pub fn failure(msg: &str) -> Self {
-        Self { headers_by_hash: HashMap::new(), header_error: Some(msg.to_owned()) }
+        Self {
+            headers_by_hash: HashMap::new(),
+            header_error: Some(msg.to_owned()),
+            header_by_hash_requests: Mutex::new(Vec::new()),
+        }
     }
 }
 
@@ -908,6 +915,7 @@ impl L1Provider for MockL1 {
     }
 
     async fn header_by_hash(&self, hash: B256) -> RpcResult<RpcHeader> {
+        self.header_by_hash_requests.lock().unwrap().push(hash);
         if let Some(error) = &self.header_error {
             return Err(RpcError::HeaderNotFound(error.clone()));
         }
