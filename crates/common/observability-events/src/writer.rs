@@ -1,20 +1,21 @@
 use std::{
     fmt,
-    fs::{File, OpenOptions, create_dir_all},
+    fs::{File, OpenOptions, create_dir_all, read_dir, remove_file, rename},
     io::{self, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     },
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use tracing::warn;
 use tracing_appender::non_blocking::{ErrorCounter, NonBlocking, NonBlockingBuilder, WorkerGuard};
 
 use crate::{
-    DEFAULT_QUEUE_CAPACITY, Metrics, TransactionEvent, TransactionEventProducer,
-    TransactionEventValidationError,
+    DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, Metrics, TransactionEvent,
+    TransactionEventProducer, TransactionEventValidationError,
 };
 
 /// Configuration for the dedicated transaction event JSONL writer.
@@ -26,6 +27,10 @@ pub struct TransactionEventWriterConfig {
     pub file_path: PathBuf,
     /// Bounded queue capacity before producers drop instead of blocking.
     pub queue_capacity: usize,
+    /// Maximum size of one JSONL segment before it is rotated.
+    pub max_file_bytes: u64,
+    /// Maximum number of JSONL segments to retain, including the active file.
+    pub max_files: usize,
     /// If true, initialization errors are returned to the caller.
     pub required: bool,
     /// Producer identity expected for events written through this handle.
@@ -45,6 +50,8 @@ impl TransactionEventWriterConfig {
             enabled: false,
             file_path: file_path.into(),
             queue_capacity: DEFAULT_QUEUE_CAPACITY,
+            max_file_bytes: DEFAULT_MAX_FILE_BYTES,
+            max_files: DEFAULT_MAX_FILES,
             required: false,
             producer,
             network: network.into(),
@@ -126,7 +133,7 @@ impl TransactionEventWriter {
             return Ok(Self::disabled(config));
         }
 
-        let file = open_file(&config);
+        let file = SizeRollingFile::new(&config);
 
         let file = match file {
             Ok(file) => file,
@@ -248,11 +255,165 @@ pub enum WriteEventError {
     Invalid(TransactionEventValidationError),
 }
 
-fn open_file(config: &TransactionEventWriterConfig) -> io::Result<File> {
-    if let Some(parent) = config.file_path.parent() {
+struct SizeRollingFile {
+    file: Option<File>,
+    path: PathBuf,
+    current_size: u64,
+    max_file_bytes: u64,
+    max_files: usize,
+}
+
+impl SizeRollingFile {
+    fn new(config: &TransactionEventWriterConfig) -> io::Result<Self> {
+        let file = open_file(&config.file_path)?;
+        let current_size = file.metadata()?.len();
+
+        Ok(Self {
+            file: Some(file),
+            path: config.file_path.clone(),
+            current_size,
+            max_file_bytes: config.max_file_bytes.max(1),
+            max_files: config.max_files.max(1),
+        })
+    }
+
+    fn should_rotate(&self, incoming_bytes: usize) -> bool {
+        self.current_size > 0
+            && self
+                .current_size
+                .saturating_add(incoming_bytes as u64)
+                > self.max_file_bytes
+    }
+
+    fn rotate(&mut self) -> io::Result<()> {
+        let mut file = self.file.take().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::NotConnected, "transaction event file is closed")
+        })?;
+        if let Err(err) = file.flush() {
+            self.file = Some(file);
+            return Err(err);
+        }
+        drop(file);
+
+        let rotated_path = match self.next_rotated_path() {
+            Ok(path) => path,
+            Err(err) => {
+                self.file = open_file(&self.path).ok();
+                return Err(err);
+            }
+        };
+        if let Err(err) = rename(&self.path, &rotated_path) {
+            self.file = open_file(&self.path).ok();
+            return Err(err);
+        }
+
+        match open_file(&self.path) {
+            Ok(file) => {
+                self.file = Some(file);
+                self.current_size = 0;
+                self.prune_rotated_files()?;
+                Ok(())
+            }
+            Err(err) => {
+                let _ = rename(&rotated_path, &self.path);
+                self.file = open_file(&self.path).ok();
+                Err(err)
+            }
+        }
+    }
+
+    fn next_rotated_path(&self) -> io::Result<PathBuf> {
+        let (parent, stem, extension) = file_name_parts(&self.path)?;
+        let mut timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+
+        loop {
+            let candidate = parent.join(format!("{stem}.{timestamp}.{extension}"));
+            if !candidate.exists() {
+                return Ok(candidate);
+            }
+            timestamp = timestamp.saturating_add(1);
+        }
+    }
+
+    fn prune_rotated_files(&self) -> io::Result<()> {
+        let (parent, stem, extension) = file_name_parts(&self.path)?;
+        let prefix = format!("{stem}.");
+        let suffix = format!(".{extension}");
+        let mut rotated_files = read_dir(parent)?
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                let name = entry.file_name().into_string().ok()?;
+                let timestamp = name
+                    .strip_prefix(&prefix)?
+                    .strip_suffix(&suffix)?
+                    .parse::<u128>()
+                    .ok()?;
+                Some((timestamp, name, entry.path()))
+            })
+            .collect::<Vec<_>>();
+
+        rotated_files.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+        let keep_rotated = self.max_files.saturating_sub(1);
+        while rotated_files.len() > keep_rotated {
+            let (_, _, path) = rotated_files.remove(0);
+            remove_file(path)?;
+        }
+        Ok(())
+    }
+}
+
+impl Write for SizeRollingFile {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.should_rotate(buf.len()) {
+            self.rotate()?;
+        }
+
+        let file = self.file.as_mut().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::NotConnected, "transaction event file is closed")
+        })?;
+        let written = file.write(buf)?;
+        self.current_size = self.current_size.saturating_add(written as u64);
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.file
+            .as_mut()
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::NotConnected, "transaction event file is closed")
+            })?
+            .flush()
+    }
+}
+
+fn open_file(path: &Path) -> io::Result<File> {
+    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
         create_dir_all(parent)?;
     }
-    OpenOptions::new().create(true).append(true).open(&config.file_path)
+    OpenOptions::new().create(true).append(true).open(path)
+}
+
+fn file_name_parts(path: &Path) -> io::Result<(&Path, String, String)> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let file_name = path.file_name().and_then(|name| name.to_str()).ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "transaction event path has no valid filename")
+    })?;
+    let stem = path.file_stem().and_then(|name| name.to_str()).ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "transaction event path has no valid stem")
+    })?;
+    let extension = path.extension().and_then(|name| name.to_str()).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("transaction event path has no extension: {file_name}"),
+        )
+    })?;
+    Ok((parent, stem.to_string(), extension.to_string()))
 }
 
 #[cfg(test)]
@@ -302,6 +463,8 @@ mod tests {
             enabled: true,
             file_path: PathBuf::from("test.jsonl"),
             queue_capacity,
+            max_file_bytes: DEFAULT_MAX_FILE_BYTES,
+            max_files: DEFAULT_MAX_FILES,
             required: true,
             producer: TransactionEventProducer::BaseRethNode,
             network: "base-mainnet".to_string(),
@@ -510,6 +673,8 @@ mod tests {
             enabled: true,
             file_path: path.clone(),
             queue_capacity: 8,
+            max_file_bytes: DEFAULT_MAX_FILE_BYTES,
+            max_files: DEFAULT_MAX_FILES,
             required: true,
             producer: TransactionEventProducer::BaseRethNode,
             network: "base-mainnet".to_string(),
@@ -524,6 +689,42 @@ mod tests {
         assert_eq!(lines.len(), 1);
         let value: Value = serde_json::from_str(lines[0]).unwrap();
         assert_eq!(value["schema_version"], SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn size_rolling_file_rotates_and_prunes_old_segments() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("events.jsonl");
+        let config = TransactionEventWriterConfig {
+            enabled: true,
+            file_path: path.clone(),
+            queue_capacity: 8,
+            max_file_bytes: 4,
+            max_files: 3,
+            required: true,
+            producer: TransactionEventProducer::BaseRethNode,
+            network: "base-mainnet".to_string(),
+        };
+        let mut writer = SizeRollingFile::new(&config).unwrap();
+
+        for payload in [&b"aaaa"[..], &b"bbbb"[..], &b"cccc"[..], &b"dddd"[..], &b"eeee"[..]] {
+            writer.write_all(payload).unwrap();
+        }
+        writer.flush().unwrap();
+
+        assert_eq!(fs::metadata(&path).unwrap().len(), 4);
+        let rotated_count = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                name != "events.jsonl"
+                    && name.starts_with("events.")
+                    && name.ends_with(".jsonl")
+            })
+            .count();
+        assert_eq!(rotated_count, 2);
     }
 
     #[test]
@@ -562,6 +763,8 @@ mod tests {
             enabled: true,
             file_path: path.clone(),
             queue_capacity: 8,
+            max_file_bytes: DEFAULT_MAX_FILE_BYTES,
+            max_files: DEFAULT_MAX_FILES,
             required: true,
             producer: TransactionEventProducer::BaseRethNode,
             network: "base-mainnet".to_string(),
@@ -583,6 +786,8 @@ mod tests {
             enabled: true,
             file_path: path,
             queue_capacity: 8,
+            max_file_bytes: DEFAULT_MAX_FILE_BYTES,
+            max_files: DEFAULT_MAX_FILES,
             required: true,
             producer: TransactionEventProducer::BaseRethNode,
             network: "base-mainnet".to_string(),
