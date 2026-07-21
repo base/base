@@ -397,6 +397,8 @@ pub struct MockProofRequester {
     pub pending_sessions: Mutex<HashSet<String>>,
     /// Sessions whose delete call should fail.
     pub reject_delete_sessions: Mutex<HashSet<String>>,
+    /// Reject every `get_proof` call with a timeout.
+    pub reject_get: bool,
     /// Reject every `prove_block_range` call with an L1 head conflict.
     pub reject_l1_head_conflict: bool,
     /// Return a mismatched session id from `prove_block_range`.
@@ -434,6 +436,9 @@ impl ProofRequesterProvider for MockProofRequester {
         &self,
         request: GetProofRequest,
     ) -> Result<GetProofResponse, ProverServiceClientError> {
+        if self.reject_get {
+            return Err(ProverServiceClientError::Timeout("simulated poll failure".into()));
+        }
         if let Some(message) = self.failed_sessions.lock().unwrap().get(&request.session_id) {
             return Ok(GetProofResponse {
                 status: ProofStatus::Failed,

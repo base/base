@@ -22,14 +22,6 @@ enum SubmitOutcome {
     Idle,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct BatchDeleteContext<'a> {
-    finalized_head: u64,
-    dispatched_through: u64,
-    delete_succeeded_proofs: bool,
-    cancel: &'a CancellationToken,
-}
-
 /// Polls the next expected proof and submits it when ready.
 pub struct ProofCollector<R>
 where
@@ -115,7 +107,7 @@ where
             };
 
             let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_l2_output_root);
-            let (aggregate_proposal, proposals) = match Self::poll_proof(
+            let proof = match Self::poll_proof(
                 self.proof_requester.as_ref(),
                 target_block,
                 &session_id,
@@ -136,12 +128,9 @@ where
                         .delete_proof_request(
                             &session_id,
                             target_block,
-                            BatchDeleteContext {
-                                finalized_head,
-                                dispatched_through,
-                                delete_succeeded_proofs: false,
-                                cancel,
-                            },
+                            finalized_head.min(dispatched_through),
+                            false,
+                            cancel,
                         )
                         .await;
                 }
@@ -151,11 +140,9 @@ where
                 .submit_proof(
                     target_block,
                     &session_id,
-                    aggregate_proposal,
-                    proposals,
+                    proof,
                     current.parent_address,
-                    finalized_head,
-                    dispatched_through,
+                    finalized_head.min(dispatched_through),
                     cancel,
                 )
                 .await
@@ -179,7 +166,6 @@ where
 
         match &result {
             Ok(Some(_)) => {
-                Metrics::proof_status_received_total(Metrics::PROOF_STATUS_SUCCEEDED).increment(1);
                 Metrics::proof_collection_total(Metrics::COLLECTION_OUTCOME_READY).increment(1);
                 Metrics::last_collected_block().set(target_block as f64);
             }
@@ -224,6 +210,7 @@ where
                 return Err(error);
             }
             Err(e) => {
+                Metrics::errors_total("prover").increment(1);
                 warn!(
                     target_block,
                     session_id = %session_id,
@@ -233,6 +220,14 @@ where
                 return Ok(None);
             }
         };
+
+        Metrics::proof_status_received_total(match response.status {
+            ProofStatus::Queued => Metrics::PROOF_STATUS_QUEUED,
+            ProofStatus::Running => Metrics::PROOF_STATUS_RUNNING,
+            ProofStatus::Succeeded => Metrics::PROOF_STATUS_SUCCEEDED,
+            ProofStatus::Failed => Metrics::PROOF_STATUS_FAILED,
+        })
+        .increment(1);
 
         match response.status {
             ProofStatus::Queued | ProofStatus::Running => {
@@ -294,11 +289,9 @@ where
         &self,
         target_block: u64,
         session_id: &str,
-        aggregate_proposal: Proposal,
-        proposals: Vec<Proposal>,
+        proof: (Proposal, Vec<Proposal>),
         parent_address: Address,
-        finalized_head: u64,
-        dispatched_through: u64,
+        delete_through: u64,
         cancel: &CancellationToken,
     ) -> SubmitOutcome {
         info!(target_block, parent_address = %parent_address, "Submitting proof");
@@ -306,12 +299,8 @@ where
         let mut submit_timer = base_metrics::timed!(Metrics::proposal_total_duration_seconds());
         let result = match cancel
             .run_until_cancelled(async {
-                let submit = self.submitter.submit(
-                    &aggregate_proposal,
-                    &proposals,
-                    target_block,
-                    parent_address,
-                );
+                let submit =
+                    self.submitter.submit(&proof.0, &proof.1, target_block, parent_address);
                 match self.submit_timeout {
                     Some(timeout) => tokio::time::timeout(timeout, submit).await,
                     None => Ok(submit.await),
@@ -374,16 +363,7 @@ where
                     "Submission discarded, deleting proof request for re-prove"
                 );
                 return if self
-                    .delete_proof_request(
-                        session_id,
-                        target_block,
-                        BatchDeleteContext {
-                            finalized_head,
-                            dispatched_through,
-                            delete_succeeded_proofs: true,
-                            cancel,
-                        },
-                    )
+                    .delete_proof_request(session_id, target_block, delete_through, true, cancel)
                     .await
                 {
                     SubmitOutcome::Restart
@@ -400,7 +380,9 @@ where
         &self,
         session_id: &str,
         mut target_block: u64,
-        context: BatchDeleteContext<'_>,
+        delete_through: u64,
+        delete_succeeded_proofs: bool,
+        cancel: &CancellationToken,
     ) -> bool {
         let first_block = target_block;
         let mut last_block = target_block;
@@ -412,7 +394,7 @@ where
         deleted_count += 1;
 
         loop {
-            if context.cancel.is_cancelled() {
+            if cancel.is_cancelled() {
                 Self::log_batch_delete_summary(deleted_count, first_block, last_block);
                 return true;
             }
@@ -424,7 +406,7 @@ where
             };
             target_block = next_target;
 
-            if target_block > context.finalized_head || target_block > context.dispatched_through {
+            if target_block > delete_through {
                 Self::log_batch_delete_summary(deleted_count, first_block, last_block);
                 return true;
             }
@@ -445,7 +427,7 @@ where
             )
             .await
             {
-                Ok(Some(_)) if context.delete_succeeded_proofs => {}
+                Ok(Some(_)) if delete_succeeded_proofs => {}
                 Ok(Some(_)) | Ok(None) => {
                     Self::log_batch_delete_summary(deleted_count, first_block, last_block);
                     return true;
@@ -513,6 +495,11 @@ mod tests {
     };
     use base_proof_primitives::ProofRequest;
     use base_proof_submission::ProofSubmissionError;
+    #[cfg(feature = "metrics")]
+    use metrics_util::{
+        MetricKind,
+        debugging::{DebugValue, DebuggingRecorder},
+    };
     use tokio_util::sync::CancellationToken;
 
     use super::*;
@@ -822,10 +809,8 @@ mod tests {
             .submit_proof(
                 target_block,
                 &session_id,
-                aggregate_proposal,
-                vec![],
+                (aggregate_proposal, vec![]),
                 Address::ZERO,
-                target_block,
                 target_block,
                 &CancellationToken::new(),
             )
@@ -1028,5 +1013,66 @@ mod tests {
         assert!(!requester.failed_sessions.lock().unwrap().contains_key(&first_session));
         assert!(requester.failed_sessions.lock().unwrap().contains_key(&second_session));
         assert!(requester.failed_sessions.lock().unwrap().contains_key(&third_session));
+    }
+
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn poll_proof_records_statuses_and_transport_errors() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+
+        ::metrics::with_local_recorder(&recorder, || {
+            let runtime =
+                tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            runtime.block_on(async {
+                let requester = MockProofRequester::default();
+                requester.pending_sessions.lock().unwrap().insert("running".to_owned());
+
+                let target_block = 200;
+                assert!(
+                    ProofCollector::<MockRollupClient>::poll_proof(
+                        &requester,
+                        target_block,
+                        "running",
+                        true,
+                    )
+                    .await
+                    .unwrap()
+                    .is_none()
+                );
+
+                let rejected = MockProofRequester { reject_get: true, ..Default::default() };
+                assert!(
+                    ProofCollector::<MockRollupClient>::poll_proof(
+                        &rejected,
+                        target_block,
+                        "rejected",
+                        true,
+                    )
+                    .await
+                    .unwrap()
+                    .is_none()
+                );
+            });
+        });
+
+        let snapshot = snapshotter.snapshot().into_vec();
+        assert!(snapshot.iter().any(|(key, _, _, value)| {
+            key.kind() == MetricKind::Counter
+                && key.key().name() == "base_proposer.proof_status_received_total"
+                && key.key().labels().any(|label| {
+                    label.key() == "status" && label.value() == Metrics::PROOF_STATUS_RUNNING
+                })
+                && matches!(value, DebugValue::Counter(1))
+        }));
+        assert!(snapshot.iter().any(|(key, _, _, value)| {
+            key.kind() == MetricKind::Counter
+                && key.key().name() == "base_proposer.errors_total"
+                && key
+                    .key()
+                    .labels()
+                    .any(|label| label.key() == "error_type" && label.value() == "prover")
+                && matches!(value, DebugValue::Counter(1))
+        }));
     }
 }
