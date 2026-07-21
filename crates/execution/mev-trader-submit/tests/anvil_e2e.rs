@@ -5,8 +5,8 @@
 //!
 //! Red-line: the RPC endpoint is a `127.0.0.1` socket constructed here from
 //! `Ipv4Addr::LOCALHOST` (there is NO url/endpoint parameter). The child is a
-//! spawned anvil. There is no real sequencer/Blink connection. If anvil is not
-//! installed the test skips (matching the repo's live-tier skip convention).
+//! spawned anvil. There is no real sequencer/Blink connection. `ANVIL_BIN` is
+//! mandatory and every harness startup/readiness failure fails the test.
 #![cfg(feature = "phase-b")]
 
 mod support;
@@ -86,6 +86,7 @@ mod exec_abi {
             address tokenOut;
             uint24 feeBps;
             uint256 minAmountOut;
+            address fundingTarget;
         }
         function executeBlinkOfaAtomic(
             SwapHop firstHop,
@@ -97,21 +98,12 @@ mod exec_abi {
     }
 }
 
-fn anvil_bin() -> Option<PathBuf> {
-    if let Some(bin) = std::env::var_os("ANVIL_BIN") {
-        let path = PathBuf::from(bin);
-        if path.exists() {
-            return Some(path);
-        }
-    }
-    if let Some(home) = std::env::var_os("HOME") {
-        let path = PathBuf::from(home).join(".foundry/bin/anvil");
-        if path.exists() {
-            return Some(path);
-        }
-    }
-    // Fall back to PATH resolution via a bare name (anvil resolves it itself).
-    Some(PathBuf::from("anvil"))
+fn anvil_bin() -> PathBuf {
+    let path = PathBuf::from(
+        std::env::var_os("ANVIL_BIN").expect("ANVIL_BIN must name the local anvil executable"),
+    );
+    assert!(path.is_file(), "ANVIL_BIN is not a file: {}", path.display());
+    path
 }
 
 /// Kills the spawned anvil on drop so an assertion panic never leaks the child.
@@ -189,8 +181,8 @@ fn find_free_port() -> u16 {
     listener.local_addr().expect("local addr").port()
 }
 
-fn spawn_anvil() -> Option<(AnvilGuard, Rpc)> {
-    let bin = anvil_bin()?;
+fn spawn_anvil() -> (AnvilGuard, Rpc) {
+    let bin = anvil_bin();
     let port = find_free_port();
     let child = Command::new(&bin)
         .args([
@@ -202,11 +194,8 @@ fn spawn_anvil() -> Option<(AnvilGuard, Rpc)> {
             &CHAIN_ID.to_string(),
             "--silent",
         ])
-        .spawn();
-    let child = match child {
-        Ok(child) => child,
-        Err(_) => return None, // anvil not runnable → skip.
-    };
+        .spawn()
+        .unwrap_or_else(|error| panic!("failed to spawn ANVIL_BIN {}: {error}", bin.display()));
     let guard = AnvilGuard(child);
     let rpc = Rpc::new(port);
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -214,11 +203,13 @@ fn spawn_anvil() -> Option<(AnvilGuard, Rpc)> {
         if let Ok(result) = rpc.try_call("eth_chainId", serde_json::json!([]))
             && parse_u256(result.as_str().unwrap_or("0x0")) == U256::from(CHAIN_ID)
         {
-            return Some((guard, rpc));
+            return (guard, rpc);
         }
-        if Instant::now() > deadline {
-            return None;
-        }
+        assert!(
+            Instant::now() <= deadline,
+            "ANVIL_BIN {} failed readiness on 127.0.0.1:{port}",
+            bin.display()
+        );
         std::thread::sleep(Duration::from_millis(50));
     }
 }
@@ -504,16 +495,10 @@ fn deploy_aero_fixture(rpc: &Rpc, caller: Address) -> AeroFixture {
     rpc.call("anvil_setCode", serde_json::json!([BASE_WETH.to_string(), weth_runtime]));
 
     let token = deploy(rpc, bytecode::MOCK_ERC20_CREATION, &[]);
-    let first_pool = deploy(
-        rpc,
-        bytecode::MOCK_AERODROME_POOL_CREATION,
-        &encode_addresses(&[BASE_WETH, token]),
-    );
-    let second_pool = deploy(
-        rpc,
-        bytecode::MOCK_AERODROME_POOL_CREATION,
-        &encode_addresses(&[token, BASE_WETH]),
-    );
+    let first_pool =
+        deploy(rpc, bytecode::MOCK_AERODROME_POOL_CREATION, &encode_addresses(&[BASE_WETH, token]));
+    let second_pool =
+        deploy(rpc, bytecode::MOCK_AERODROME_POOL_CREATION, &encode_addresses(&[token, BASE_WETH]));
     let adapter = deploy(rpc, bytecode::AERODROME_ADAPTER_CREATION, &[]);
     let executor = deploy(
         rpc,
@@ -586,10 +571,7 @@ fn aero_plan_for(fixture: &AeroFixture, victim: B256) -> base_mev_trader::Backru
 
 #[test]
 fn aerodrome_volatile_fee_parity_and_passthrough_revert() {
-    let Some((_anvil, rpc)) = spawn_anvil() else {
-        eprintln!("SKIP anvil_e2e aerodrome: anvil binary not available");
-        return;
-    };
+    let (_anvil, rpc) = spawn_anvil();
     for funded in [OWNER, DRIFTER, AERO_CALLER] {
         rpc.call(
             "anvil_setBalance",
@@ -664,6 +646,7 @@ fn aerodrome_volatile_fee_parity_and_passthrough_revert() {
             // NAIVE mispricing: fee_pips as feeBps (30% fee, not the correct 0.30%).
             feeBps: U24::from(FEE_PIPS),
             minAmountOut: drifted.expected_intermediate,
+            fundingTarget: drifted.first_pool,
         },
         secondHop: exec_abi::SwapHop {
             adapter: drifted.adapter,
@@ -672,6 +655,7 @@ fn aerodrome_volatile_fee_parity_and_passthrough_revert() {
             tokenOut: BASE_WETH,
             feeBps: U24::from(FEE_PIPS),
             minAmountOut: U256::from(1u64),
+            fundingTarget: drifted.second_pool,
         },
         amountIn: U256::from(AMOUNT_IN),
         minFinalAmount: drifted.expected_final,
@@ -697,10 +681,7 @@ fn aerodrome_volatile_fee_parity_and_passthrough_revert() {
 
 #[test]
 fn ephemeral_backrun_executes_and_reverts_on_drift() {
-    let Some((_anvil, rpc)) = spawn_anvil() else {
-        eprintln!("SKIP anvil_e2e: anvil binary not available");
-        return;
-    };
+    let (_anvil, rpc) = spawn_anvil();
     for funded in [OWNER, DRIFTER] {
         rpc.call(
             "anvil_setBalance",

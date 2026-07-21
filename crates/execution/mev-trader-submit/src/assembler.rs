@@ -28,6 +28,7 @@ sol! {
         address tokenOut;
         uint24 feeBps;
         uint256 minAmountOut;
+        address fundingTarget;
     }
 
     /// The two-hop atomic executor entrypoint.
@@ -96,7 +97,8 @@ pub struct AssembleInput<'a> {
     /// The `BlinkAtomicExecutor` address (backrun `to`). Not carried by the
     /// plan — a deployment property supplied by the caller.
     pub executor: Address,
-    /// Adapter + fee + min-out for `[firstHop, secondHop]`.
+    /// Adapter + min-out for `[firstHop, secondHop]`; the funding target and fee
+    /// are derived from each digest-bound route hop.
     pub hops: [HopExecutionParams; 2],
     /// Chain id (Base = 8453).
     pub chain_id: u64,
@@ -241,13 +243,22 @@ fn build_swap_hop(
 ) -> Result<SwapHop, AssembleError> {
     let hop = &plan.route[index];
     let fee_bps = fee_bps_for_executor(hop.protocol, hop.fee_pips)?;
+    let adapter = require_non_zero(label, params.adapter)?;
+    let pool = require_non_zero("hop.pool", hop.pool)?;
+    let funding_target = match hop.protocol {
+        base_mev_trader::ExactProtocol::UniswapV2
+        | base_mev_trader::ExactProtocol::AerodromeVolatile
+        | base_mev_trader::ExactProtocol::AerodromeStable => pool,
+        base_mev_trader::ExactProtocol::UniswapV3 => adapter,
+    };
     Ok(SwapHop {
-        adapter: require_non_zero(label, params.adapter)?,
-        pool: require_non_zero("hop.pool", hop.pool)?,
+        adapter,
+        pool,
         tokenIn: require_non_zero("hop.tokenIn", hop.token_in)?,
         tokenOut: require_non_zero("hop.tokenOut", hop.token_out)?,
         feeBps: alloy_primitives::aliases::U24::from(fee_bps),
         minAmountOut: params.min_amount_out,
+        fundingTarget: funding_target,
     })
 }
 
