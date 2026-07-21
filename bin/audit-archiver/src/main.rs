@@ -246,6 +246,8 @@ async fn run_server(args: Args) -> Result<()> {
     // stop handle passed into the service builder; axum owns the HTTP server
     // lifecycle for this combined RPC and transaction-event endpoint.
     let (rpc_stop_handle, _rpc_server_handle) = stop_channel();
+    // SECURITY: These unauthenticated ingest APIs are internal endpoints.
+    // Deployments must restrict them to trusted producers on a private network.
     let rpc_service =
         ServerBuilder::default().to_service_builder().build(rpc_module.into_rpc(), rpc_stop_handle);
     let rpc_service = ServiceBuilder::new()

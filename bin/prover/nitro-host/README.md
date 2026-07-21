@@ -34,17 +34,10 @@ The `just tee nitro-local-worker` recipe wraps the same command.
 
 ## Security Model
 
-The Nitro host JSON-RPC listener is an internal control-plane endpoint. It
-intentionally does not implement application-layer caller authentication and
-must be reachable only by trusted components within a private network, enforced
-through VPC routing, security groups, or equivalent network controls. It must
-not be exposed to the public internet or other untrusted networks.
-
-The default `0.0.0.0` bind address supports container and EC2 networking; it
-does not mean that the port should be publicly routed. The production worker
-listener exposes only health and registrar-facing signer operations. Proof jobs
-are claimed from the configured prover-service endpoint rather than accepted by
-this listener.
+This unauthenticated RPC listener is an internal control-plane endpoint. Restrict
+it to trusted components with private-network controls; never expose it publicly.
+The wildcard bind supports EC2 and container networking. Production exposes only
+health and signer operations; proof jobs are pulled from prover-service.
 
 ## Inspecting the enclave
 
