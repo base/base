@@ -1767,15 +1767,15 @@ mod tests {
     /// `Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW`.
     #[test]
     fn mempool_expiry_window_within_onchain_inclusion_window() {
-        assert!(
-            Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW
-                <= NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW,
-            "mempool expiry window ({}) exceeds the on-chain inclusion window ({}); \
-             raising it is a fork-level change (bump NONCE_FREE_EXPIRY_WINDOW and \
-             resize REPLAY_BUFFER_CAPACITY)",
-            Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW,
-            NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW,
-        );
+        const {
+            assert!(
+                Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW
+                    <= NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW,
+                "mempool expiry window exceeds the on-chain inclusion window; raising it is a \
+                 fork-level change (bump NONCE_FREE_EXPIRY_WINDOW and resize \
+                 REPLAY_BUFFER_CAPACITY)",
+            );
+        }
     }
 
     #[test]
