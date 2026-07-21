@@ -29,8 +29,8 @@ base_metrics::define_metrics! {
     #[label(name = "status", default = ["queued", "running", "succeeded", "failed"])]
     proof_status_received_total: counter,
 
-    #[describe("Total proof requests deleted by cleanup scans")]
-    proof_cleanup_deleted_total: counter,
+    #[describe("Total successful proof cleanup delete calls")]
+    proof_cleanup_delete_success_total: counter,
 
     // `safe_head` is kept as a deprecated alias for a zero-downtime metric rename;
     // drop it once every Datadog monitor/dashboard uses `finalized_head`.

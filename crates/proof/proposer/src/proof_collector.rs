@@ -390,7 +390,7 @@ where
         if !self.delete_single_proof_request(session_id, target_block).await {
             return false;
         }
-        let mut deleted_count = 1_u64;
+        let mut successful_delete_calls = 1_u64;
 
         loop {
             if cancel.is_cancelled() {
@@ -435,15 +435,15 @@ where
             if !self.delete_single_proof_request(&session_id, target_block).await {
                 break;
             }
-            deleted_count += 1;
+            successful_delete_calls += 1;
             last_block = target_block;
         }
 
-        Metrics::proof_cleanup_deleted_total().increment(deleted_count);
-        if deleted_count > 1 {
+        Metrics::proof_cleanup_delete_success_total().increment(successful_delete_calls);
+        if successful_delete_calls > 1 {
             info!(
-                deleted_count,
-                first_block, last_block, "Batch-deleted consecutive invalid proofs"
+                successful_delete_calls,
+                first_block, last_block, "Completed consecutive proof cleanup delete calls"
             );
         }
         true
@@ -459,7 +459,7 @@ where
                 info!(
                     target_block,
                     session_id = %session_id,
-                    "Deleted proof request for re-prove"
+                    "Proof cleanup delete call succeeded"
                 );
                 true
             }
