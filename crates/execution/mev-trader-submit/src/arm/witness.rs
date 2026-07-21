@@ -117,8 +117,10 @@ impl AuthorizedCandidate {
     /// the suppression clear, the G7 + live-run attestations, the R9 claim, and the
     /// deployment evidence, binding them to the candidate. Any mismatch is `None`.
     // Production entrypoint (forward B5 API); tests drive `issue_checked` (a
-    // dependent crate cannot ARM `ArmedCriteria`, so the real gate can never open
-    // in-crate). `too_many_arguments`: the proof-conjunction deliberately consumes
+    // dependent crate cannot self-forge an armed `ArmedCriteria` — the armed
+    // constructor is `#[cfg(test)]`-only — so B5 injects a verified value from
+    // `base_mev_trader::production_arming_criteria`, which this crate never calls).
+    // `too_many_arguments`: the proof-conjunction deliberately consumes
     // all five proofs + claim + candidate by value (linear ownership).
     #[allow(clippy::too_many_arguments)]
     pub fn issue(
@@ -426,7 +428,8 @@ impl<'a> FreshnessSources<'a> {
     pub fn revalidate(&self, bindings: &ProofBindings, id: &ValidatedExecutionIdentity) -> bool {
         // (1) submit gate open with a FRESH drawdown + kill read. Evaluated here so
         // the real gate is always exercised; the test seam only OR-injects an open
-        // gate (a dependent crate cannot ARM `ArmedCriteria`), never a closed one.
+        // gate (a dependent crate cannot self-forge an armed `ArmedCriteria`; B5
+        // injects a verified value), never a closed one.
         let ctx = SubmitContext {
             armed: self.armed,
             amount_in_wei: id.amount(),

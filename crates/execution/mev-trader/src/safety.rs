@@ -50,6 +50,22 @@ const EXPECTED_CRITERIA_COMMIT_BYTES: [u8; 20] = [
 /// Expected criteria schema version.
 pub const EXPECTED_CRITERIA_VERSION: &str = "2.0.0";
 
+/// The SINGLE canonical G4 criteria payload (base-mev prereg v2 §1, anchored
+/// `^# ===== BEGIN/END CANONICAL CRITERIA` bytes @ [`EXPECTED_CRITERIA_COMMIT`]),
+/// embedded at compile time. Its SHA-256 is the pinned [`CRITERIA_SHA`] (asserted by
+/// the `embedded_payload_binds_to_pinned_criteria_sha` build-time binding test). This
+/// is the sole production source of the payload; [`production_arming_criteria`] and
+/// every test reuse it (no shadow/duplicate copy).
+const CANONICAL_PAYLOAD: &[u8] =
+    include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/resources/criteria_canonical_payload_v2.txt"));
+
+/// Owner arm-attestation signature over the domain-separated arm message (r‖s‖v).
+/// PLACEHOLDER `[0u8; 65]` (unarmed): recovery fails, so [`production_arming_criteria`]
+/// is structurally UNARMED. This is the G4 owner-injection point — arming requires the
+/// owner to replace this with the real 65-byte `cast wallet sign` output AND pin
+/// [`OWNER_ATTEST_ADDRESS`], then rebuild + re-review (never a runtime toggle).
+const OWNER_ARM_SIGNATURE: [u8; 65] = [0u8; 65];
+
 /// Domain-separator prefix for the owner arm attestation (byte-exact ASCII).
 const ARM_DOMAIN_PREFIX: &str = "base-mev:p2-prereg-v2:arm:";
 
@@ -466,6 +482,22 @@ impl ArmedCriteria {
             hot_wallet_cap_wei: U256::ZERO,
         }
     }
+}
+
+/// Builds the production arming criteria from the compile-time-embedded canonical
+/// payload, the pinned source commit, and the owner arm signature, then runs the
+/// fail-closed [`ArmedCriteria::load`]. Pure, argument-free, and fail-closed: in a
+/// production (non-test) build [`OWNER_ATTEST_ADDRESS`] is `None`, so the load closes
+/// on `OwnerAddressUnset` and the result is ALWAYS unarmed until the G4 owner
+/// injection (real address pin + real [`OWNER_ARM_SIGNATURE`] + rebuild/review). This
+/// crate wires NO production callsite; B5 links and injects the returned value.
+pub fn production_arming_criteria() -> ArmedCriteria {
+    let artifact = CriteriaArtifact {
+        canonical_payload: CANONICAL_PAYLOAD.to_vec(),
+        criteria_source_commit_sha: EXPECTED_CRITERIA_COMMIT.to_owned(),
+        owner_signature: OWNER_ARM_SIGNATURE,
+    };
+    ArmedCriteria::load(&artifact)
 }
 
 /// Parsed criteria values bound to the SHA-pinned payload.
@@ -1108,11 +1140,8 @@ mod tests {
 
     const RESET_NONCE: u64 = 424242;
 
-    // Embedded canonical payload = base-mev prereg v2 §1 @ EXPECTED_CRITERIA_COMMIT
-    // (anchored `^# ===== BEGIN/END CANONICAL CRITERIA` bytes). Its SHA-256 is the
-    // pinned CRITERIA_SHA; the build-time binding test asserts that below.
-    const CANONICAL_PAYLOAD: &[u8] =
-        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/resources/criteria_canonical_payload_v2.txt"));
+    // The canonical payload is the single module-level production `CANONICAL_PAYLOAD`
+    // const (reused here via `use super::*`), not a test-local copy.
 
     // Values carried by the canonical payload (bound to CRITERIA_SHA).
     const PAYLOAD_PER_TX_CAP_WEI: u64 = 630_000_000_000_000;
@@ -1333,6 +1362,25 @@ mod tests {
         unrecoverable[64] = 0x1b; // valid parity, but r = s = 0 cannot recover
         artifact.owner_signature = unrecoverable;
         let criteria = ArmedCriteria::load(&artifact);
+        assert!(!criteria.is_armed());
+        assert_eq!(criteria.unarmed_reason(), Some(UnarmedReason::SignatureRecoveryFailed));
+    }
+
+    // LOCK B (pre-G4): the production `OWNER_ARM_SIGNATURE` placeholder closes the
+    // load with an EXACT single reason even under an explicit valid owner. This
+    // exercises the production canonical payload/commit/signature triple (not a test
+    // fixture signature) against a known trust root, proving the placeholder cannot
+    // arm. It is intentionally an EXACT (non-OR) reason: G4 (real signature) will make
+    // this reason change under a test owner, so at G4 this test is removed/converted
+    // per the arming-loader spec §4 two-stage gate contract.
+    #[test]
+    fn production_placeholder_signature_closes_under_explicit_owner() {
+        let artifact = CriteriaArtifact {
+            canonical_payload: CANONICAL_PAYLOAD.to_vec(),
+            criteria_source_commit_sha: EXPECTED_CRITERIA_COMMIT.to_owned(),
+            owner_signature: OWNER_ARM_SIGNATURE,
+        };
+        let criteria = ArmedCriteria::load_with_owner(&artifact, Some(TEST_OWNER_ADDRESS));
         assert!(!criteria.is_armed());
         assert_eq!(criteria.unarmed_reason(), Some(UnarmedReason::SignatureRecoveryFailed));
     }

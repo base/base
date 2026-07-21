@@ -746,6 +746,29 @@ fn custody_paths_pinned_and_key_confined() {
     }
 }
 
+// -- arming self-load seal: submit's arm production may not obtain its own armed
+//    criteria via `base_mev_trader::production_arming_criteria` --------------------
+
+/// `production_arming_criteria` is a PUBLIC producer in `base_mev_trader` (a submit
+/// dependency under `phase-b`), so Rust visibility alone cannot bar a call. The
+/// design invariant is that B5 injects the verified value and submit NEVER self-loads
+/// its own arming criteria. A token scan over the arm production sources rejects any
+/// direct call OR `use …::production_arming_criteria [as alias]` import that would
+/// have to name the source identifier here. (Comments and the `#[cfg(test)] mod
+/// tests` tail are stripped, so the witness.rs doc reference does not trip this.) The
+/// clean-4 alias-bypass path — an import/re-export living in lib/fee/assembler/signer
+/// — is closed by the identical check in `capability_seal.rs`.
+#[test]
+fn arm_source_never_self_loads_production_arming_criteria() {
+    for (file, body) in all_arm_production() {
+        assert!(
+            !body.contains("production_arming_criteria"),
+            "arm production source {file} references production_arming_criteria \
+             (submit must not self-load arming criteria; B5 injects a verified value)"
+        );
+    }
+}
+
 // -- b8: no workspace crate links the submit crate (re-run) --------------------
 
 fn workspace_metadata() -> serde_json::Value {
