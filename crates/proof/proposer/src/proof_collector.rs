@@ -386,36 +386,31 @@ where
     ) -> bool {
         let first_block = target_block;
         let mut last_block = target_block;
-        let mut deleted_count = 0_u64;
 
         if !self.delete_single_proof_request(session_id, target_block).await {
             return false;
         }
-        deleted_count += 1;
+        let mut deleted_count = 1_u64;
 
         loop {
             if cancel.is_cancelled() {
-                Self::record_batch_delete_summary(deleted_count, first_block, last_block);
-                return true;
+                break;
             }
 
             let Some(next_target) = ProofTarget::next_block(target_block, self.block_interval)
             else {
-                Self::record_batch_delete_summary(deleted_count, first_block, last_block);
-                return true;
+                break;
             };
             target_block = next_target;
 
             if target_block > delete_through {
-                Self::record_batch_delete_summary(deleted_count, first_block, last_block);
-                return true;
+                break;
             }
 
             let Some(claimed_l2_output_root) =
                 ProofTarget::canonical_output_root(self.rollup_client.as_ref(), target_block).await
             else {
-                Self::record_batch_delete_summary(deleted_count, first_block, last_block);
-                return true;
+                break;
             };
 
             let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_l2_output_root);
@@ -428,10 +423,7 @@ where
             .await
             {
                 Ok(Some(_)) if delete_succeeded_proofs => {}
-                Ok(Some(_)) | Ok(None) => {
-                    Self::record_batch_delete_summary(deleted_count, first_block, last_block);
-                    return true;
-                }
+                Ok(Some(_)) | Ok(None) => break,
                 Err(error) => warn!(
                     target_block,
                     session_id = %session_id,
@@ -441,15 +433,12 @@ where
             }
 
             if !self.delete_single_proof_request(&session_id, target_block).await {
-                Self::record_batch_delete_summary(deleted_count, first_block, last_block);
-                return true;
+                break;
             }
             deleted_count += 1;
             last_block = target_block;
         }
-    }
 
-    fn record_batch_delete_summary(deleted_count: u64, first_block: u64, last_block: u64) {
         Metrics::proof_cleanup_deleted_total().increment(deleted_count);
         if deleted_count > 1 {
             info!(
@@ -457,6 +446,7 @@ where
                 first_block, last_block, "Batch-deleted consecutive invalid proofs"
             );
         }
+        true
     }
 
     async fn delete_single_proof_request(&self, session_id: &str, target_block: u64) -> bool {
@@ -1055,7 +1045,6 @@ mod tests {
                     .is_none()
                 );
             });
-            ProofCollector::<MockRollupClient>::record_batch_delete_summary(3, 100, 300);
         });
 
         let snapshot = snapshotter.snapshot().into_vec();
@@ -1075,11 +1064,6 @@ mod tests {
                     .labels()
                     .any(|label| label.key() == "error_type" && label.value() == "prover")
                 && matches!(value, DebugValue::Counter(1))
-        }));
-        assert!(snapshot.iter().any(|(key, _, _, value)| {
-            key.kind() == MetricKind::Counter
-                && key.key().name() == "base_proposer.proof_cleanup_deleted_total"
-                && matches!(value, DebugValue::Counter(3))
         }));
     }
 }
