@@ -55,6 +55,14 @@ pub struct TestConfig {
     /// Maximum in-flight transactions per sender.
     pub in_flight_per_sender: u32,
 
+    /// Enables open-loop submission mode with pre-signed transactions.
+    #[serde(default)]
+    pub open_loop: bool,
+
+    /// Number of transactions to pre-sign per sender in open-loop mode.
+    #[serde(default)]
+    pub prefill_per_sender: u32,
+
     /// Number of transactions to batch together before submitting to the RPC.
     pub batch_size: u32,
 
@@ -110,6 +118,14 @@ pub struct TestConfig {
     /// Optional real-token setup for mainnet-snapshot bidirectional swap workloads.
     #[serde(default)]
     pub real_token_setup: Option<RealTokenSetupConfig>,
+
+    /// Skip draining native ETH balances back to the funder account after the run.
+    ///
+    /// Useful for harness-driven runs (e.g. via `base-bench`) that only ever pass a
+    /// config file path with no CLI flags, since funder accounts are cheaply
+    /// re-funded via deposit rather than reclaimed.
+    #[serde(default)]
+    pub skip_drain: bool,
 }
 
 impl Default for TestConfig {
@@ -126,6 +142,8 @@ impl Default for TestConfig {
             sender_count: 100,
             sender_offset: 0,
             in_flight_per_sender: 256,
+            open_loop: false,
+            prefill_per_sender: 0,
             batch_size: 50,
             batch_timeout: Some("100ms".to_string()),
             duration: Some("60s".to_string()),
@@ -138,6 +156,7 @@ impl Default for TestConfig {
             swap_token_amount: default_swap_token_amount(),
             b20_mint_amount: default_b20_mint_amount(),
             real_token_setup: None,
+            skip_drain: false,
         }
     }
 }
@@ -154,6 +173,8 @@ impl fmt::Debug for TestConfig {
             .field("sender_count", &self.sender_count)
             .field("sender_offset", &self.sender_offset)
             .field("in_flight_per_sender", &self.in_flight_per_sender)
+            .field("open_loop", &self.open_loop)
+            .field("prefill_per_sender", &self.prefill_per_sender)
             .field("duration", &self.duration)
             .field("target_gps", &self.target_gps)
             .field("seed", &self.seed)
@@ -164,6 +185,7 @@ impl fmt::Debug for TestConfig {
             .field("swap_token_amount", &self.swap_token_amount)
             .field("b20_mint_amount", &self.b20_mint_amount)
             .field("real_token_setup", &self.real_token_setup)
+            .field("skip_drain", &self.skip_drain)
             .finish()
     }
 }
@@ -266,6 +288,13 @@ pub enum TxTypeConfig {
     /// B-20 precompile token transfer. Each sender creates and transfers its own token, created
     /// per run during setup.
     B20,
+
+    /// B-20 EVM contract token transfer. Requires a pre-deployed contract and DB-seeded sender
+    /// balances.
+    B20Evm {
+        /// Pre-deployed EVM token contract address.
+        contract: String,
+    },
 
     /// Aerodrome Slipstream (concentrated liquidity) swap.
     AerodromeCl {
@@ -593,6 +622,8 @@ impl TestConfig {
                 .clone()
                 .ok_or_else(|| BaselineError::Config("flashblocks_ws is required".into()))?,
             fresh_recipient_ratio: self.fresh_recipient_ratio,
+            open_loop: self.open_loop,
+            prefill_per_sender: self.prefill_per_sender,
         })
     }
 
@@ -643,6 +674,10 @@ impl TestConfig {
                 }
             }
             TxTypeConfig::B20 => TxType::B20,
+            TxTypeConfig::B20Evm { contract } => {
+                let address = parse_address(contract, "b20_evm contract")?;
+                TxType::B20Evm { contract: address }
+            }
             TxTypeConfig::Osaka { target } => TxType::Osaka { target: target.clone() },
             TxTypeConfig::UniswapV3 {
                 router,

@@ -90,6 +90,10 @@ struct LoadArgs {
     #[arg(long)]
     recover_real_tokens: bool,
 
+    /// Skip draining native ETH balances back to the funder account.
+    #[arg(long)]
+    skip_drain: bool,
+
     /// Load test YAML configuration.
     #[arg(value_name = "CONFIG")]
     config: PathBuf,
@@ -157,6 +161,10 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
                 "Re-deriving {} accounts from config and draining to funder...",
                 load_config.account_count
             );
+            if args.skip_drain || test_config.skip_drain {
+                println!("Skipping drain due to --skip-drain.");
+                return Ok(());
+            }
             let runner = LoadRunner::new(load_config)?;
             match runner.drain_accounts(funding_key).await {
                 Ok(drained) => println!("Drained {} ETH back to funder.", format_ether(drained)),
@@ -189,9 +197,13 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
                 }
                 Err(e) => bail!("real-token recovery failed: {e}"),
             }
-            match runner.drain_accounts(funding_key).await {
-                Ok(drained) => println!("Drained {} ETH back to funder.", format_ether(drained)),
-                Err(e) => bail!("drain failed: {e}"),
+            if args.skip_drain || test_config.skip_drain {
+                println!("Skipping drain due to --skip-drain.");
+            } else {
+                match runner.drain_accounts(funding_key).await {
+                    Ok(drained) => println!("Drained {} ETH back to funder.", format_ether(drained)),
+                    Err(e) => bail!("drain failed: {e}"),
+                }
             }
             return Ok(());
         }
@@ -343,11 +355,16 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
         }
     }
 
-    println!();
-    println!("Draining accounts back to funder...");
-    match runner.drain_accounts(funding_key).await {
-        Ok(drained) => println!("Drained {} ETH back to funder.", format_ether(drained)),
-        Err(e) => eprintln!("Warning: drain failed: {e}"),
+    if args.skip_drain || test_config.skip_drain {
+        println!();
+        println!("Skipping drain due to --skip-drain.");
+    } else {
+        println!();
+        println!("Draining accounts back to funder...");
+        match runner.drain_accounts(funding_key).await {
+            Ok(drained) => println!("Drained {} ETH back to funder.", format_ether(drained)),
+            Err(e) => eprintln!("Warning: drain failed: {e}"),
+        }
     }
 
     if let Some(e) = run_err {

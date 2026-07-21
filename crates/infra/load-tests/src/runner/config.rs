@@ -58,6 +58,11 @@ pub enum TxType {
     /// B-20 precompile token transfer. Each sender creates and transfers its own token, created
     /// per run during setup.
     B20,
+    /// B-20 EVM contract token transfer against a fixed pre-deployed contract.
+    B20Evm {
+        /// EVM contract address (pre-deployed at DB level).
+        contract: Address,
+    },
     /// Osaka (Base Azul) opcode or precompile transaction.
     Osaka {
         /// Target Osaka feature.
@@ -232,6 +237,10 @@ pub struct LoadConfig {
     /// Fraction of transactions that draw a fresh recipient address instead of cycling through
     /// the sender pool. Used to drive account-trie fan-out for account-create workloads.
     pub fresh_recipient_ratio: f64,
+    /// Enables open-loop submission mode with pre-signed transactions.
+    pub open_loop: bool,
+    /// Number of pre-signed transactions to generate per sender in open-loop mode.
+    pub prefill_per_sender: u32,
 }
 
 impl LoadConfig {
@@ -257,6 +266,8 @@ impl LoadConfig {
             max_gas_price: DEFAULT_MAX_GAS_PRICE,
             flashblocks_ws: "ws://localhost:7111".parse().expect("valid default flashblocks_ws"),
             fresh_recipient_ratio: 0.0,
+            open_loop: false,
+            prefill_per_sender: 0,
         }
     }
 

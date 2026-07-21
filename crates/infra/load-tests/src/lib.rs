@@ -27,10 +27,10 @@ pub use metrics::{
 
 mod workload;
 pub use workload::{
-    AccountPool, AerodromeClPayload, B20TransferPayload, CalldataPayload, Erc20Payload,
-    FundedAccount, KeyStream, OsakaPayload, Payload, PrecompileLooper, PrecompilePayload,
-    SeededRng, StoragePayload, TransferPayload, UniswapV3Payload, WorkloadGenerator,
-    parse_precompile_id,
+    AccountPool, AerodromeClPayload, B20EvmTransferPayload, B20TransferPayload, CalldataPayload,
+    Erc20Payload, FundedAccount, KeyStream, OsakaPayload, Payload, PrecompileLooper,
+    PrecompilePayload, SeededRng, StoragePayload, TransferPayload, UniswapV3Payload,
+    WorkloadGenerator, parse_precompile_id,
 };
 
 mod runner;
@@ -38,7 +38,8 @@ pub use runner::{
     AdaptiveBackoff, BatchTxError, BlockObservation, BlockReceipt, BlockWatcher,
     DEFAULT_MAX_GAS_PRICE, DisplaySnapshot, FlashblockInclusion, FlashblockWatcher, LoadConfig,
     LoadRunner, LoadTestDisplay, MAX_FEE_BASE_FEE_MULTIPLIER, MAX_SENDER_WORKER_COUNT,
-    MAX_SIGNER_WORKER_COUNT, PipelineQueue, PreparedBatch, PreparedTransaction,
+    MAX_SIGNER_WORKER_COUNT, PipelineQueue, PipelineStartConfig, PreparedBatch,
+    PreparedTransaction,
     QueuedSubmitFailures, RateLimiter, RealTokenAcquisition, RealTokenPairTokenSetup,
     RealTokenRecoverySummary, RealTokenSetup, ResultsTracker, SENDER_WORKERS_PER_RPC,
     SIGNER_WORKERS_PER_RPC, SUBMIT_BATCH_QUEUE_BUFFER, SUBMIT_MAX_ATTEMPTS, SenderContext,
