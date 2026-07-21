@@ -172,6 +172,8 @@ impl ServiceArgs {
             .build();
 
         let requester_rpc_module = ProverRequesterApiServer::into_rpc(prover_server.clone());
+        // SECURITY: This unauthenticated requester API is internal.
+        // Deployments must restrict it to trusted clients on a private network.
         let requester_rpc_server = Server::builder()
             .set_config(json_rpc_config.clone())
             .build(self.requester_rpc_listen_addr)
@@ -189,6 +191,8 @@ impl ServiceArgs {
         let requester_server_handle = requester_rpc_server.start(requester_rpc_module);
 
         let worker_rpc_module = ProverWorkerApiServer::into_rpc(prover_server);
+        // SECURITY: This unauthenticated worker API is internal.
+        // Deployments must restrict it to trusted workers on a private network.
         let worker_rpc_server = Server::builder()
             .set_config(json_rpc_config)
             .build(self.worker_rpc_listen_addr)
