@@ -211,7 +211,7 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
                     error = ?err,
                     "Failed to fetch derived L2 block before build fallback"
                 );
-                return Err(ConsolidateTaskError::FailedToFetchUnsafeL2Block);
+                return Err(ConsolidateTaskError::FailedToFetchDerivedL2Block);
             }
         };
         let block_fetch_duration = fetch_start.elapsed();
