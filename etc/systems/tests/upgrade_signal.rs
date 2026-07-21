@@ -34,6 +34,38 @@ async fn rollup_config_via_rpc(rpc_url: &url::Url) -> Result<RollupConfig> {
         .wrap_err("Failed to fetch rollup config via RPC")
 }
 
+/// Reschedules Cobalt on L1 and waits until the process-local runtime registry reflects the
+/// new activation timestamp.
+async fn reschedule_cobalt_and_await_runtime_apply(
+    system: &SystemTestStack,
+    l2_chain_id: u64,
+) -> Result<()> {
+    let contract =
+        system.upgrade_signal().expect("stack was built with the upgrade signal enabled");
+    contract
+        .set_schedule(&[(BaseUpgrade::Cobalt, COBALT_RESCHEDULED_TIMESTAMP)])
+        .await
+        .wrap_err("Failed to reschedule Cobalt on L1")?;
+
+    timeout(LIVE_APPLY_TIMEOUT, async {
+        loop {
+            if RuntimeUpgradeRegistry::activation(l2_chain_id, BaseUpgrade::Cobalt)
+                == Some(UpgradeActivation::Timestamp(COBALT_RESCHEDULED_TIMESTAMP))
+            {
+                return;
+            }
+            sleep(LIVE_APPLY_POLL_INTERVAL).await;
+        }
+    })
+    .await
+    .map_err(|_| {
+        eyre::eyre!(
+            "live L1 reschedule was not re-applied to the runtime registry within {}s",
+            LIVE_APPLY_TIMEOUT.as_secs()
+        )
+    })
+}
+
 /// Starts a stack with the upgrade signal enabled for Cobalt at the given mode and chain ID.
 async fn start_upgrade_signal_system(
     l2_chain_id: u64,
@@ -150,32 +182,7 @@ async fn test_upgrade_signal_execution_runtime_admin_reapplies_live_schedule_cha
         .build()
         .await?;
 
-    let contract =
-        system.upgrade_signal().expect("stack was built with the upgrade signal enabled");
-    contract
-        .set_schedule(&[(BaseUpgrade::Cobalt, COBALT_RESCHEDULED_TIMESTAMP)])
-        .await
-        .wrap_err("Failed to reschedule Cobalt on L1")?;
-
-    timeout(LIVE_APPLY_TIMEOUT, async {
-        loop {
-            if RuntimeUpgradeRegistry::activation(l2_chain_id, BaseUpgrade::Cobalt)
-                == Some(UpgradeActivation::Timestamp(COBALT_RESCHEDULED_TIMESTAMP))
-            {
-                return;
-            }
-            sleep(LIVE_APPLY_POLL_INTERVAL).await;
-        }
-    })
-    .await
-    .map_err(|_| {
-        eyre::eyre!(
-            "live L1 reschedule was not re-applied by the execution node within {}s",
-            LIVE_APPLY_TIMEOUT.as_secs()
-        )
-    })?;
-
-    Ok(())
+    reschedule_cobalt_and_await_runtime_apply(&system, l2_chain_id).await
 }
 
 /// Runtime-admin mode applies the L1 schedule at startup and automatically re-applies observed
@@ -193,30 +200,5 @@ async fn test_upgrade_signal_runtime_admin_reapplies_live_schedule_change() -> R
         "runtime-admin mode should apply the L1 schedule at startup"
     );
 
-    let contract =
-        system.upgrade_signal().expect("stack was built with the upgrade signal enabled");
-    contract
-        .set_schedule(&[(BaseUpgrade::Cobalt, COBALT_RESCHEDULED_TIMESTAMP)])
-        .await
-        .wrap_err("Failed to reschedule Cobalt on L1")?;
-
-    timeout(LIVE_APPLY_TIMEOUT, async {
-        loop {
-            if RuntimeUpgradeRegistry::activation(l2_chain_id, BaseUpgrade::Cobalt)
-                == Some(UpgradeActivation::Timestamp(COBALT_RESCHEDULED_TIMESTAMP))
-            {
-                return;
-            }
-            sleep(LIVE_APPLY_POLL_INTERVAL).await;
-        }
-    })
-    .await
-    .map_err(|_| {
-        eyre::eyre!(
-            "live L1 reschedule was not re-applied to the runtime registry within {}s",
-            LIVE_APPLY_TIMEOUT.as_secs()
-        )
-    })?;
-
-    Ok(())
+    reschedule_cobalt_and_await_runtime_apply(&system, l2_chain_id).await
 }

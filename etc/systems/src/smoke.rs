@@ -373,6 +373,8 @@ impl SystemTestStackBuilder {
             None => None,
         };
 
+        let signal_parts = self.upgrade_signal.as_ref().zip(upgrade_signal.as_ref());
+
         let l1_internal_rpc_url = l1_stack.reth().internal_rpc_url();
         let l2_deployment =
             tokio::task::spawn_blocking(move || setup.deploy_l2_contracts(&l1_internal_rpc_url))
@@ -417,16 +419,11 @@ impl SystemTestStackBuilder {
             tx_forwarding_config: self.tx_forwarding_config,
             verifier_l1_confs: self.verifier_l1_confs,
             client_consensus_mode: self.client_consensus_mode,
-            upgrade_signal: match (&self.upgrade_signal, &upgrade_signal) {
-                (Some(options), Some(client)) => Some(options.signal_config(client.address)),
-                _ => None,
-            },
-            execution_upgrade_signal: match (&self.upgrade_signal, &upgrade_signal) {
-                (Some(options), Some(client)) => {
-                    options.execution_signal_config(client.address, client.l1_rpc_url.clone())
-                }
-                _ => None,
-            },
+            upgrade_signal: signal_parts
+                .map(|(options, client)| options.signal_config(client.address)),
+            execution_upgrade_signal: signal_parts.and_then(|(options, client)| {
+                options.execution_signal_config(client.address, client.l1_rpc_url.clone())
+            }),
             shadow_sequencers,
         };
 
