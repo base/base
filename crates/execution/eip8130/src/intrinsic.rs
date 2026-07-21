@@ -808,7 +808,9 @@ mod tests {
             two_gas.account_changes - one_gas.account_changes,
             per_change_non_state + Eip8130GasSchedule::CONFIG_CHANGE_STATE_COST_SUBSEQUENT
         );
-        assert!(
+        // The subsequent (warm) bump must be strictly cheaper than the first
+        // (cold) write; a `const` assert keeps this a compile-time invariant.
+        const _: () = assert!(
             Eip8130GasSchedule::CONFIG_CHANGE_STATE_COST_SUBSEQUENT
                 < Eip8130GasSchedule::CONFIG_CHANGE_STATE_COST
         );
