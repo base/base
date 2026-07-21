@@ -76,8 +76,10 @@ pub struct IntrinsicGasInput {
     /// Number of actor revokes that execution resolved to the account's inline
     /// secp256k1 self key, whose `actor_config` and policy slots are empty. Each
     /// discounts the conservative three-reset revoke price down to three cold
-    /// zero-to-zero touches. A zero (unresolved) count leaves the conservative
-    /// price, so this can only reduce, never under-price, the charge.
+    /// zero-to-zero touches. The intrinsic computation bounds this hint by the
+    /// number of revoke changes in the transaction body, preventing a mismatched
+    /// caller from discounting uncharged revokes. A zero (unresolved) count leaves
+    /// the conservative price.
     pub inline_self_revokes: u32,
 }
 
@@ -199,6 +201,7 @@ impl IntrinsicGas {
 
         let mut bytecode = 0u64;
         let mut account_changes = 0u64;
+        let mut revoke_change_count = 0u32;
         // All account changes in a transaction target the same (`sender`) packed
         // account-state slot: a create bootstraps it and every config change bumps
         // a sequence in it. Only the first such access is a cold zero-to-nonzero
@@ -260,6 +263,9 @@ impl IntrinsicGas {
                     let auth = Self::auth_cost(cc.auth.as_ref(), AuthWireForm::Prefixed, false)?;
                     account_changes = account_changes.saturating_add(auth);
                     for actor_change in &cc.actor_changes {
+                        if actor_change.change_type == ActorChangeType::Revoke {
+                            revoke_change_count = revoke_change_count.saturating_add(1);
+                        }
                         account_changes = account_changes
                             .saturating_add(Self::actor_change_write_cost(actor_change));
                     }
@@ -279,8 +285,17 @@ impl IntrinsicGas {
         // revoke that execution resolved. Applied here rather than in the per-change
         // loop because whether a self revoke hits the inline home is state-derived,
         // not visible from the transaction body.
+        debug_assert!(
+            input.inline_self_revokes <= revoke_change_count,
+            "resolved inline-self revoke count exceeds transaction revoke count"
+        );
+        // Keep release builds safe if a future caller misthreads the execution
+        // hint: the discount can never cover more revokes than the transaction
+        // body was charged for.
+        let discounted_revoke_count =
+            Self::bounded_inline_self_revoke_count(input.inline_self_revokes, revoke_change_count);
         let inline_self_revoke_discount = Eip8130GasSchedule::INLINE_SELF_REVOKE_DISCOUNT
-            .saturating_mul(u64::from(input.inline_self_revokes));
+            .saturating_mul(u64::from(discounted_revoke_count));
         account_changes = account_changes.saturating_sub(inline_self_revoke_discount);
 
         let auto_delegation = if input.sender_auto_delegated {
@@ -318,6 +333,12 @@ impl IntrinsicGas {
             sender_auth,
             payer_auth,
         })
+    }
+
+    /// Bounds an execution-resolved inline-self revoke count by the number of
+    /// revoke changes that intrinsic accounting actually charged.
+    const fn bounded_inline_self_revoke_count(reported: u32, charged: u32) -> u32 {
+        if reported < charged { reported } else { charged }
     }
 
     /// EIP-2028 data-availability cost over the caller-supplied EIP-2718
@@ -888,9 +909,9 @@ mod tests {
     }
 
     #[test]
-    fn inline_self_revoke_count_clamps_to_charged_revokes() {
-        // A count that would over-discount is bounded by saturating subtraction:
-        // account-changes gas never underflows below zero.
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "resolved inline-self revoke count exceeds transaction revoke count")]
+    fn excess_inline_self_revoke_count_trips_debug_assertion() {
         let mut bytes = [0u8; 32];
         bytes[..20].copy_from_slice(ACCOUNT.as_slice());
         let self_id = alloy_primitives::B256::from(bytes);
@@ -909,12 +930,16 @@ mod tests {
             account_changes: vec![AccountChange::ConfigChange(cc)],
             ..Default::default()
         };
-        let gas = intrinsic(
+        let _ = intrinsic(
             &signed(tx, configured_auth(K1), vec![]),
             &EXISTING_KEY.with_inline_self_revokes(u32::MAX),
         );
-        // No panic / underflow; the floored value is a valid (saturated) total.
-        assert_eq!(gas.account_changes, 0);
+    }
+
+    #[test]
+    fn inline_self_revoke_discount_is_bounded_by_charged_revokes() {
+        assert_eq!(IntrinsicGas::bounded_inline_self_revoke_count(u32::MAX, 1), 1);
+        assert_eq!(IntrinsicGas::bounded_inline_self_revoke_count(1, 2), 1);
     }
 
     #[test]
