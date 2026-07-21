@@ -30,6 +30,10 @@ pub struct AppliedTransaction {
     /// `AccountConfiguration` *storage* transitions are already written to
     /// `storage` by the time this is returned.
     pub applied: AppliedAccountChanges,
+    /// Number of actor revokes that resolved to the account's inline secp256k1
+    /// self key (empty `actor_config` and policy slots). Threaded into intrinsic
+    /// gas to discount their over-conservative three-reset price.
+    pub inline_self_revokes: u32,
 }
 
 /// Authorizes and applies a signed EIP-8130 transaction against a mutable
@@ -102,6 +106,7 @@ impl TransactionAuthorizer {
         //       one delegation) are enforced inline.
         let mut applied = AppliedAccountChanges::default();
         let mut config_changes = Vec::new();
+        let mut inline_self_revokes = 0u32;
         for (index, change) in signed.tx().account_changes.iter().enumerate() {
             match change {
                 AccountChange::Create(entry) => {
@@ -143,13 +148,15 @@ impl TransactionAuthorizer {
                         &state,
                     )?;
                     config_changes.push(resolved);
-                    AccountChangeApplier::apply_config_change_with_account_state(
-                        storage,
-                        sender_account,
-                        &cc.actor_changes,
-                        cc.chain_id,
-                        &mut state,
-                    )?;
+                    inline_self_revokes = inline_self_revokes.saturating_add(
+                        AccountChangeApplier::apply_config_change_with_account_state(
+                            storage,
+                            sender_account,
+                            &cc.actor_changes,
+                            cc.chain_id,
+                            &mut state,
+                        )?,
+                    );
                     storage
                         .set_account_state(sender_account, state)
                         .map_err(ApplyError::Storage)?;
@@ -175,7 +182,7 @@ impl TransactionAuthorizer {
             Self::authorize_delegation(signed, storage, now, &actors.sender)?;
         }
 
-        Ok(AppliedTransaction { actors, config_changes, applied })
+        Ok(AppliedTransaction { actors, config_changes, applied, inline_self_revokes })
     }
 
     /// Requires a delegation's final sender to be the unlocked account's native

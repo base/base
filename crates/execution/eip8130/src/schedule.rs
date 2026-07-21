@@ -100,20 +100,38 @@ impl Eip8130GasSchedule {
     /// this write, and a config change may be the first state established for an
     /// otherwise untouched EOA.
     pub const ACCOUNT_STATE_SET_COST: u64 = Self::COLD_SLOAD + Self::SSTORE_SET;
-    /// Conservative cost for advancing a config-change sequence in the packed
-    /// account-state slot. The same access also supplies the lock status and both
-    /// sequence channels, so those checks must not be charged as extra reads.
+    /// Conservative cost for the **first** access to the packed account-state
+    /// slot in a transaction (a create bootstrap or the first config change). The
+    /// same access also supplies the lock status and both sequence channels, so
+    /// those checks must not be charged as extra reads.
     ///
     /// A previously initialized account would pay the lower reset cost, but the
     /// transaction body cannot prove the pre-state. Pricing the possible
     /// zero-to-nonzero transition prevents first-change undercharging.
     pub const CONFIG_CHANGE_STATE_COST: u64 = Self::ACCOUNT_STATE_SET_COST;
+    /// Cost for a **subsequent** config change to the same account's packed
+    /// account-state slot within one transaction. A create or an earlier config
+    /// change already made this slot warm and non-zero, so the further sequence
+    /// bump is a warm SLOAD plus an `SSTORE` reset — not another cold
+    /// zero-to-nonzero write. All config changes in a transaction target the same
+    /// (`sender`) account, so every change after the first is priced here.
+    pub const CONFIG_CHANGE_STATE_COST_SUBSEQUENT: u64 = Self::WARM_SLOAD + Self::SSTORE_RESET;
     /// Worst-case revoke cost for the actor config and its two policy slots.
     ///
     /// Policy slots are cleared on every revoke. Charging all three as resets is
     /// conservative for ungated actors (whose policy slots are already zero) and
     /// exact for a policy-bearing actor.
     pub const ACTOR_REVOKE_COST: u64 = Self::ACTOR_SLOT_RESET_COST * 3;
+    /// Gas over-charged by [`Self::ACTOR_REVOKE_COST`] when a revoke targets the
+    /// account's **inline** secp256k1 self key. That self key's `actor_config` and
+    /// both policy slots are empty, so the revoke is three cold zero-to-zero
+    /// touches ([`Self::COLD_SLOT_NOOP_COST`]) rather than three resets. Execution
+    /// resolves how many revokes hit this inline home and the intrinsic layer
+    /// subtracts this discount per such revoke; a non-resolved (zero) count leaves
+    /// the conservative reset price in place, so this can only reduce, never
+    /// under-price, the charge.
+    pub const INLINE_SELF_REVOKE_DISCOUNT: u64 =
+        Self::ACTOR_REVOKE_COST - Self::COLD_SLOT_NOOP_COST * 3;
     /// Worst-case extra cost for a config change targeting the account's own
     /// secp256k1 self-actor. The self key's config lives inline in the
     /// account-state slot, so authorizing or revoking it mutates that slot *and*
@@ -195,6 +213,18 @@ mod tests {
         assert_eq!(
             Eip8130GasSchedule::COLD_SLOT_NOOP_COST,
             gas::COLD_SLOAD_COST + gas::WARM_STORAGE_READ_COST
+        );
+        // A subsequent same-account state bump is warm SLOAD + warm SSTORE reset.
+        assert_eq!(
+            Eip8130GasSchedule::CONFIG_CHANGE_STATE_COST_SUBSEQUENT,
+            gas::WARM_STORAGE_READ_COST + gas::WARM_SSTORE_RESET
+        );
+        // An inline self revoke is priced down from three resets to three cold
+        // zero-to-zero touches; the discount is the difference.
+        assert_eq!(
+            Eip8130GasSchedule::INLINE_SELF_REVOKE_DISCOUNT,
+            3 * (gas::COLD_SLOAD_COST + gas::WARM_SSTORE_RESET)
+                - 3 * (gas::COLD_SLOAD_COST + gas::WARM_STORAGE_READ_COST)
         );
         // Nonce-free ring-buffer cost: 2 cold SLOADs + 1 warm SLOAD + 3 warm
         // SSTORE resets = 13,000 gas.

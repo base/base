@@ -703,7 +703,8 @@ impl Eip8130Executor {
             //    calls run against post-change code and create/delegation gas is
             //    priced. Must precede actor/policy resolution so an actor
             //    authorized in this same estimate request is visible.
-            let has_explicit_delegation = Self::apply_account_changes(signed, sctx, sender)?;
+            let (has_explicit_delegation, inline_self_revokes) =
+                Self::apply_account_changes(signed, sctx, sender)?;
 
             // 3. Resolve the acting actor. No signature recovery: the optional
             //    RPC hint names the intended actor (e.g. a session key); absent
@@ -763,10 +764,9 @@ impl Eip8130Executor {
                 Self::resolve_execution_gas(
                     signed,
                     encoded,
-                    nonce_key_first_use,
-                    sender_auto_delegated,
-                    policy_gated,
-                    payer_policy_gated,
+                    &IntrinsicGasInput::new(nonce_key_first_use, sender_auto_delegated)
+                        .with_policy_gates(policy_gated, payer_policy_gated)
+                        .with_inline_self_revokes(inline_self_revokes),
                     gas_limit,
                 )?;
 
@@ -926,10 +926,9 @@ impl Eip8130Executor {
                 Self::resolve_execution_gas(
                     signed,
                     encoded,
-                    nonce_key_first_use,
-                    sender_auto_delegated,
-                    sender_actor.is_policy_gated(),
-                    payer_policy_gated,
+                    &IntrinsicGasInput::new(nonce_key_first_use, sender_auto_delegated)
+                        .with_policy_gates(sender_actor.is_policy_gated(), payer_policy_gated)
+                        .with_inline_self_revokes(applied_tx.inline_self_revokes),
                     gas_limit,
                 )?;
 
@@ -1406,10 +1405,11 @@ impl Eip8130Executor {
         signed: &base_common_consensus::Eip8130Signed,
         sctx: StorageCtx<'_>,
         sender: Address,
-    ) -> Result<bool, BaseTransactionError> {
+    ) -> Result<(bool, u32), BaseTransactionError> {
         let mut acc_mut = AccountConfigurationStorage::new(sctx);
         let mut created_effect: Option<(Address, Bytes)> = None;
         let mut delegation_effect: Option<DelegationEffect> = None;
+        let mut inline_self_revokes = 0u32;
         for (index, change) in signed.tx().account_changes.iter().enumerate() {
             match change {
                 AccountChange::Create(entry) => {
@@ -1426,13 +1426,15 @@ impl Eip8130Executor {
                     created_effect = Some((created.address, created.code));
                 }
                 AccountChange::ConfigChange(cc) => {
-                    AccountChangeApplier::apply_config_change(
-                        &mut acc_mut,
-                        sender,
-                        &cc.actor_changes,
-                        cc.chain_id,
-                    )
-                    .map_err(BaseTransactionError::eip8130)?;
+                    inline_self_revokes = inline_self_revokes.saturating_add(
+                        AccountChangeApplier::apply_config_change(
+                            &mut acc_mut,
+                            sender,
+                            &cc.actor_changes,
+                            cc.chain_id,
+                        )
+                        .map_err(BaseTransactionError::eip8130)?,
+                    );
                 }
                 AccountChange::Delegation(Delegation { target }) => {
                     if delegation_effect.is_some() {
@@ -1453,7 +1455,7 @@ impl Eip8130Executor {
         if let Some(delegation) = delegation_effect {
             delegation.install(sctx).map_err(BaseTransactionError::eip8130)?;
         }
-        Ok(has_explicit_delegation)
+        Ok((has_explicit_delegation, inline_self_revokes))
     }
 
     /// Auto-delegates a code-less sender to [`Eip8130Contracts::DEFAULT_ACCOUNT`]
@@ -1487,19 +1489,11 @@ impl Eip8130Executor {
     fn resolve_execution_gas(
         signed: &base_common_consensus::Eip8130Signed,
         encoded: &[u8],
-        nonce_key_first_use: bool,
-        sender_auto_delegated: bool,
-        sender_policy_gated: bool,
-        payer_policy_gated: bool,
+        input: &IntrinsicGasInput,
         gas_limit: u64,
     ) -> Result<(u64, u64, u64), BaseTransactionError> {
-        let intrinsic = IntrinsicGas::compute(
-            signed,
-            encoded,
-            &IntrinsicGasInput::new(nonce_key_first_use, sender_auto_delegated)
-                .with_policy_gates(sender_policy_gated, payer_policy_gated),
-        )
-        .map_err(BaseTransactionError::eip8130)?;
+        let intrinsic =
+            IntrinsicGas::compute(signed, encoded, input).map_err(BaseTransactionError::eip8130)?;
         let execution_gas_available =
             intrinsic.execution_gas_available(gas_limit).ok_or_else(|| {
                 BaseTransactionError::eip8130("EIP-8130 sender-intrinsic gas exceeds the gas limit")

@@ -73,6 +73,12 @@ pub struct IntrinsicGasInput {
     /// Whether payer authorization resolved a policy-bearing actor and therefore
     /// read its `policy_manager` slot in addition to its config/state slot.
     pub payer_policy_gated: bool,
+    /// Number of actor revokes that execution resolved to the account's inline
+    /// secp256k1 self key, whose `actor_config` and policy slots are empty. Each
+    /// discounts the conservative three-reset revoke price down to three cold
+    /// zero-to-zero touches. A zero (unresolved) count leaves the conservative
+    /// price, so this can only reduce, never under-price, the charge.
+    pub inline_self_revokes: u32,
 }
 
 impl IntrinsicGasInput {
@@ -84,6 +90,7 @@ impl IntrinsicGasInput {
             sender_auto_delegated,
             sender_policy_gated: false,
             payer_policy_gated: false,
+            inline_self_revokes: 0,
         }
     }
 
@@ -96,6 +103,14 @@ impl IntrinsicGasInput {
     ) -> Self {
         self.sender_policy_gated = sender_policy_gated;
         self.payer_policy_gated = payer_policy_gated;
+        self
+    }
+
+    /// Adds the count of inline secp256k1 self-key revokes resolved during
+    /// account-change application, used to discount their over-conservative price.
+    #[must_use]
+    pub const fn with_inline_self_revokes(mut self, inline_self_revokes: u32) -> Self {
+        self.inline_self_revokes = inline_self_revokes;
         self
     }
 }
@@ -184,6 +199,11 @@ impl IntrinsicGas {
 
         let mut bytecode = 0u64;
         let mut account_changes = 0u64;
+        // All account changes in a transaction target the same (`sender`) packed
+        // account-state slot: a create bootstraps it and every config change bumps
+        // a sequence in it. Only the first such access is a cold zero-to-nonzero
+        // write; once warmed, later config-change bumps are warm SLOAD + reset.
+        let mut account_state_touched = false;
         for change in &tx.account_changes {
             match change {
                 AccountChange::Create(entry) => {
@@ -195,8 +215,12 @@ impl IntrinsicGas {
                         .saturating_add(deposit);
                     // Bootstrap `account_state` (`local_sequence = 1` and the
                     // default-EOA-revoked flag) before installing initial actors.
+                    // This is the first (cold) write to the packed slot, so a
+                    // later config change on the same account only pays the warm
+                    // reset.
                     account_changes =
                         account_changes.saturating_add(Eip8130GasSchedule::ACCOUNT_STATE_SET_COST);
+                    account_state_touched = true;
                     // Each initial actor writes one fresh `actor_config` slot, plus
                     // the two policy slots (`policy_manager` + `policy_commitment`)
                     // when it sets `SCOPE_POLICY` — a POLICY initial actor is 3
@@ -219,9 +243,17 @@ impl IntrinsicGas {
                 AccountChange::ConfigChange(cc) => {
                     // One packed account-state fetch supplies lock status and both
                     // sequence channels; the final write advances the selected
-                    // channel. Price the possible first zero-to-nonzero write.
-                    account_changes = account_changes
-                        .saturating_add(Eip8130GasSchedule::CONFIG_CHANGE_STATE_COST);
+                    // channel. The first access to this slot in the transaction is
+                    // a cold zero-to-nonzero write; any earlier create or config
+                    // change already warmed it, so a subsequent bump is only a warm
+                    // SLOAD + reset.
+                    let state_cost = if account_state_touched {
+                        Eip8130GasSchedule::CONFIG_CHANGE_STATE_COST_SUBSEQUENT
+                    } else {
+                        account_state_touched = true;
+                        Eip8130GasSchedule::CONFIG_CHANGE_STATE_COST
+                    };
+                    account_changes = account_changes.saturating_add(state_cost);
                     // `cfg.auth` is always `authenticator || data` (never a bare
                     // signature); an implicit-EOA owner names itself explicitly as
                     // `K1_AUTHENTICATOR || sig` here.
@@ -240,6 +272,16 @@ impl IntrinsicGas {
                 }
             }
         }
+
+        // `actor_change_write_cost` prices every revoke as three slot resets
+        // (worst case). A revoke of the account's inline secp256k1 self key
+        // actually touches three empty (zero-to-zero) slots, so discount each such
+        // revoke that execution resolved. Applied here rather than in the per-change
+        // loop because whether a self revoke hits the inline home is state-derived,
+        // not visible from the transaction body.
+        let inline_self_revoke_discount = Eip8130GasSchedule::INLINE_SELF_REVOKE_DISCOUNT
+            .saturating_mul(u64::from(input.inline_self_revokes));
+        account_changes = account_changes.saturating_sub(inline_self_revoke_discount);
 
         let auto_delegation = if input.sender_auto_delegated {
             Eip8130GasSchedule::DELEGATION_DEPOSIT_COST
@@ -723,6 +765,154 @@ mod tests {
                 + Eip8130GasSchedule::CONFIG_CHANGE_STATE_COST
                 + Eip8130GasSchedule::ACTOR_SLOT_SET_COST * 3
         );
+    }
+
+    #[test]
+    fn subsequent_same_account_config_changes_pay_warm_state_bump() {
+        // Two config changes on the same (sender) account: the first pays the cold
+        // zero-to-nonzero state write, the second only a warm SLOAD + reset because
+        // the packed slot was already warmed and written by the first.
+        let cc = || ConfigChange {
+            chain_id: 0,
+            sequence: 0,
+            actor_changes: vec![ActorChange {
+                change_type: ActorChangeType::Authorize,
+                actor_id: alloy_primitives::B256::repeat_byte(0x07),
+                data: Bytes::from(vec![0u8; 128]),
+            }],
+            auth: Bytes::from(configured_auth(K1)),
+        };
+        let one = TxEip8130 {
+            sender: Some(ACCOUNT),
+            account_changes: vec![AccountChange::ConfigChange(cc())],
+            ..Default::default()
+        };
+        let two = TxEip8130 {
+            sender: Some(ACCOUNT),
+            account_changes: vec![
+                AccountChange::ConfigChange(cc()),
+                AccountChange::ConfigChange(cc()),
+            ],
+            ..Default::default()
+        };
+        let one_gas = intrinsic(&signed(one, configured_auth(K1), vec![]), &EXISTING_KEY);
+        let two_gas = intrinsic(&signed(two, configured_auth(K1), vec![]), &EXISTING_KEY);
+
+        // The second change adds one full change's worth of cost, but the state
+        // component is the subsequent (warm) cost rather than another cold write.
+        let per_change_non_state = Eip8130GasSchedule::AUTH_EXEC_K1
+            + Eip8130GasSchedule::COLD_SLOAD
+            + Eip8130GasSchedule::ACTOR_SLOT_SET_COST
+            + Eip8130GasSchedule::POLICY_SLOTS_NOOP_COST;
+        assert_eq!(
+            two_gas.account_changes - one_gas.account_changes,
+            per_change_non_state + Eip8130GasSchedule::CONFIG_CHANGE_STATE_COST_SUBSEQUENT
+        );
+        assert!(
+            Eip8130GasSchedule::CONFIG_CHANGE_STATE_COST_SUBSEQUENT
+                < Eip8130GasSchedule::CONFIG_CHANGE_STATE_COST
+        );
+    }
+
+    #[test]
+    fn config_change_after_create_pays_warm_state_bump() {
+        // A create bootstraps the packed account-state slot (cold set); a config
+        // change in the same transaction then only pays the warm subsequent bump.
+        let cc = ConfigChange {
+            chain_id: 0,
+            sequence: 0,
+            actor_changes: vec![],
+            auth: Bytes::from(configured_auth(K1)),
+        };
+        let tx = TxEip8130 {
+            sender: Some(ACCOUNT),
+            account_changes: vec![
+                AccountChange::Create(CreateEntry {
+                    user_salt: Default::default(),
+                    code: Bytes::from(vec![0x60u8; 4]),
+                    initial_actors: vec![],
+                }),
+                AccountChange::ConfigChange(cc),
+            ],
+            ..Default::default()
+        };
+        let gas = intrinsic(&signed(tx, configured_auth(K1), vec![]), &EXISTING_KEY);
+        // Create bootstrap (cold set) + config-change auth + subsequent warm bump.
+        let expected = Eip8130GasSchedule::ACCOUNT_STATE_SET_COST
+            + Eip8130GasSchedule::AUTH_EXEC_K1
+            + Eip8130GasSchedule::COLD_SLOAD
+            + Eip8130GasSchedule::CONFIG_CHANGE_STATE_COST_SUBSEQUENT;
+        assert_eq!(gas.account_changes, expected);
+    }
+
+    #[test]
+    fn inline_self_revoke_discounts_reset_to_cold_noop() {
+        // A self-targeted revoke is priced at three slot resets by default. When
+        // execution resolves it to the inline secp256k1 self home (empty actor
+        // config and policy slots), the discount reprices those three touches as
+        // cold zero-to-zero no-ops.
+        let mut bytes = [0u8; 32];
+        bytes[..20].copy_from_slice(ACCOUNT.as_slice());
+        let self_id = alloy_primitives::B256::from(bytes);
+        let cc = || ConfigChange {
+            chain_id: 0,
+            sequence: 0,
+            actor_changes: vec![ActorChange {
+                change_type: ActorChangeType::Revoke,
+                actor_id: self_id,
+                data: Bytes::new(),
+            }],
+            auth: Bytes::from(configured_auth(K1)),
+        };
+        let tx = || TxEip8130 {
+            sender: Some(ACCOUNT),
+            account_changes: vec![AccountChange::ConfigChange(cc())],
+            ..Default::default()
+        };
+        let undiscounted = intrinsic(&signed(tx(), configured_auth(K1), vec![]), &EXISTING_KEY);
+        let discounted = intrinsic(
+            &signed(tx(), configured_auth(K1), vec![]),
+            &EXISTING_KEY.with_inline_self_revokes(1),
+        );
+        assert_eq!(
+            undiscounted.account_changes - discounted.account_changes,
+            Eip8130GasSchedule::INLINE_SELF_REVOKE_DISCOUNT
+        );
+        // The discount is exactly the reset-vs-cold-noop delta over three slots.
+        assert_eq!(
+            Eip8130GasSchedule::INLINE_SELF_REVOKE_DISCOUNT,
+            Eip8130GasSchedule::ACTOR_REVOKE_COST - Eip8130GasSchedule::COLD_SLOT_NOOP_COST * 3
+        );
+    }
+
+    #[test]
+    fn inline_self_revoke_count_clamps_to_charged_revokes() {
+        // A count that would over-discount is bounded by saturating subtraction:
+        // account-changes gas never underflows below zero.
+        let mut bytes = [0u8; 32];
+        bytes[..20].copy_from_slice(ACCOUNT.as_slice());
+        let self_id = alloy_primitives::B256::from(bytes);
+        let cc = ConfigChange {
+            chain_id: 0,
+            sequence: 0,
+            actor_changes: vec![ActorChange {
+                change_type: ActorChangeType::Revoke,
+                actor_id: self_id,
+                data: Bytes::new(),
+            }],
+            auth: Bytes::from(configured_auth(K1)),
+        };
+        let tx = TxEip8130 {
+            sender: Some(ACCOUNT),
+            account_changes: vec![AccountChange::ConfigChange(cc)],
+            ..Default::default()
+        };
+        let gas = intrinsic(
+            &signed(tx, configured_auth(K1), vec![]),
+            &EXISTING_KEY.with_inline_self_revokes(u32::MAX),
+        );
+        // No panic / underflow; the floored value is a valid (saturated) total.
+        assert_eq!(gas.account_changes, 0);
     }
 
     #[test]

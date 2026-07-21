@@ -917,7 +917,7 @@ where
             local_chain_id,
             now,
         ));
-        let (sender, payer, sender_actor, is_create, payer_actor) =
+        let (sender, payer, sender_actor, is_create, payer_actor, inline_self_revokes) =
             StorageCtx::enter(&mut storage, |ctx| {
                 let applied = {
                     let mut account_config = AccountConfigurationStorage::new(ctx);
@@ -943,6 +943,7 @@ where
                     applied.actors.sender.resolved,
                     is_create,
                     applied.actors.payer.map(|actor| actor.resolved),
+                    applied.inline_self_revokes,
                 ))
             })
             .map_err(Self::map_tx_auth_error)?;
@@ -993,7 +994,8 @@ where
                 .with_policy_gates(
                     sender_actor.is_policy_gated(),
                     payer_actor.is_some_and(|actor| actor.is_policy_gated()),
-                ),
+                )
+                .with_inline_self_revokes(inline_self_revokes),
         )
         .map_err(|_| Self::eip8130_error("intrinsic gas computation failed"))?;
         if intrinsic.execution_gas_available(signed.tx().gas_limit).is_none() {

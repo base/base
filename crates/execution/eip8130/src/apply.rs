@@ -256,14 +256,16 @@ impl AccountChangeApplier {
     /// advancing the change-sequence channel selected by `chain_id` (`0` =
     /// multichain, else local). Mirrors the mutation tail of
     /// `applySignedActorChanges`.
+    /// Returns the number of inline secp256k1 self-key revokes applied (see
+    /// [`Self::revoke_actor_with_account_state`]), for intrinsic-gas discounting.
     pub fn apply_config_change(
         storage: &mut AccountConfigurationStorage<'_>,
         account: Address,
         actor_changes: &[ActorChange],
         chain_id: u64,
-    ) -> Result<(), ApplyError> {
+    ) -> Result<u32, ApplyError> {
         let mut state = storage.get_account_state(account)?;
-        Self::apply_config_change_with_account_state(
+        let inline_self_revokes = Self::apply_config_change_with_account_state(
             storage,
             account,
             actor_changes,
@@ -271,7 +273,7 @@ impl AccountChangeApplier {
             &mut state,
         )?;
         storage.set_account_state(account, state)?;
-        Ok(())
+        Ok(inline_self_revokes)
     }
 
     /// Applies one config change while carrying an already-loaded account state
@@ -280,13 +282,16 @@ impl AccountChangeApplier {
     /// The caller owns persistence of `state`, allowing the transaction
     /// orchestrator to perform one final packed-state write after all relevant
     /// mutations in this change.
+    ///
+    /// Returns the number of inline secp256k1 self-key revokes applied (see
+    /// [`Self::revoke_actor_with_account_state`]), for intrinsic-gas discounting.
     pub fn apply_config_change_with_account_state(
         storage: &mut AccountConfigurationStorage<'_>,
         account: Address,
         actor_changes: &[ActorChange],
         chain_id: u64,
         state: &mut AccountState,
-    ) -> Result<(), ApplyError> {
+    ) -> Result<u32, ApplyError> {
         // Advance the channel sequence (post-increment in the contract; the
         // authenticated digest committed to the pre-increment value).
         if chain_id == 0 {
@@ -297,6 +302,7 @@ impl AccountChangeApplier {
                 state.local_sequence.checked_add(1).ok_or(ApplyError::SequenceOverflow)?;
         }
 
+        let mut inline_self_revokes = 0u32;
         for change in actor_changes {
             match change.change_type {
                 ActorChangeType::Authorize => {
@@ -311,16 +317,18 @@ impl AccountChangeApplier {
                     )?;
                 }
                 ActorChangeType::Revoke => {
-                    Self::revoke_actor_with_account_state(
+                    if Self::revoke_actor_with_account_state(
                         storage,
                         account,
                         change.actor_id,
                         state,
-                    )?;
+                    )? {
+                        inline_self_revokes = inline_self_revokes.saturating_add(1);
+                    }
                 }
             }
         }
-        Ok(())
+        Ok(inline_self_revokes)
     }
 
     /// Authorizes (writes) one actor against `account`. Mirrors `_authorizeActor`,
@@ -443,12 +451,18 @@ impl AccountChangeApplier {
 
     /// Revokes an actor while applying inline-self changes to `state` without
     /// independently reading or writing the packed account-state slot.
+    ///
+    /// Returns `true` when the revoke targets the account's **inline** secp256k1
+    /// self key (whose `actor_config` and policy slots are empty, so the revoke is
+    /// three zero-to-zero cold touches), and `false` otherwise. The intrinsic-gas
+    /// layer uses that count to discount the conservative three-reset revoke price
+    /// down to three cold no-op touches for this common shape.
     pub fn revoke_actor_with_account_state(
         storage: &mut AccountConfigurationStorage<'_>,
         account: Address,
         actor_id: B256,
         state: &mut AccountState,
-    ) -> Result<(), ApplyError> {
+    ) -> Result<bool, ApplyError> {
         let config = storage.get_actor_config(account, actor_id)?;
         let is_self = actor_id == AccountConfigurationStorage::self_actor_id(account);
         if config.authenticator != Address::ZERO {
@@ -461,10 +475,12 @@ impl AccountChangeApplier {
             // future direct `set_actor_config` writer cannot leave a live inline
             // secp256k1 home behind an explicit self entry. `state` is already
             // loaded and flushed by the caller, so this adds no storage access.
+            // This clears a populated explicit `actor_config`, so it is not the
+            // discounted inline-self shape.
             if is_self {
                 Self::disable_inline_self(state);
             }
-            return Ok(());
+            return Ok(false);
         }
         if !is_self || state.default_eoa_revoked() {
             return Err(ApplyError::NotAnActor { actor_id });
@@ -474,7 +490,7 @@ impl AccountChangeApplier {
         storage.clear_policy(account, actor_id)?;
         Self::disable_inline_self(state);
         AccountConfigurationEvents::emit_actor_revoked(storage, account, actor_id)?;
-        Ok(())
+        Ok(true)
     }
 
     /// Disables the inline secp256k1 self key in the packed account-state slot:
@@ -875,6 +891,54 @@ mod tests {
             let state = acc.get_account_state(ACCOUNT).unwrap();
             assert!(state.default_eoa_revoked());
             assert_eq!(acc.get_actor_config(ACCOUNT, self_id).unwrap(), config);
+        });
+    }
+
+    #[test]
+    fn apply_config_change_counts_only_inline_self_revokes() {
+        with_storage(|acc| {
+            let self_id = AccountConfigurationStorage::self_actor_id(ACCOUNT);
+
+            // Revoking the live inline k1 self (empty actor_config + policy slots)
+            // is the discounted shape: it reports one inline-self revoke.
+            let revoke_self = vec![ActorChange {
+                change_type: ActorChangeType::Revoke,
+                actor_id: self_id,
+                data: Default::default(),
+            }];
+            let count =
+                AccountChangeApplier::apply_config_change(acc, ACCOUNT, &revoke_self, 0).unwrap();
+            assert_eq!(count, 1);
+        });
+
+        with_storage(|acc| {
+            let self_id = AccountConfigurationStorage::self_actor_id(ACCOUNT);
+            // Install an *explicit* non-k1 self, then revoke it: this clears a
+            // populated actor_config home, so it is not the discounted shape.
+            let config = ungated(AUTHENTICATOR, 0);
+            AccountChangeApplier::authorize_actor(acc, ACCOUNT, self_id, config, &[]).unwrap();
+            let revoke_self = vec![ActorChange {
+                change_type: ActorChangeType::Revoke,
+                actor_id: self_id,
+                data: Default::default(),
+            }];
+            let count =
+                AccountChangeApplier::apply_config_change(acc, ACCOUNT, &revoke_self, 0).unwrap();
+            assert_eq!(count, 0);
+        });
+
+        with_storage(|acc| {
+            // Revoking a non-self actor is never the inline-self shape.
+            let config = ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_SENDER);
+            AccountChangeApplier::authorize_actor(acc, ACCOUNT, NON_SELF, config, &[]).unwrap();
+            let revoke_other = vec![ActorChange {
+                change_type: ActorChangeType::Revoke,
+                actor_id: NON_SELF,
+                data: Default::default(),
+            }];
+            let count =
+                AccountChangeApplier::apply_config_change(acc, ACCOUNT, &revoke_other, 0).unwrap();
+            assert_eq!(count, 0);
         });
     }
 
