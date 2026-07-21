@@ -45,7 +45,6 @@ use base_proof_contracts::{
 };
 use eyre::Result;
 use futures::stream::{self, StreamExt};
-use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, error, info, warn};
 
 use crate::ChallengerMetrics;
@@ -157,19 +156,16 @@ pub struct GameScanner {
     factory_client: Arc<dyn DisputeGameFactoryClient>,
     verifier_client: Arc<dyn AggregateVerifierClient>,
     anchor_registry_client: Arc<dyn AnchorStateRegistryClient>,
-    /// Serializes scan ticks so scanner-local caches are updated from one
-    /// coherent view of the factory and anchor registry.
-    scan_lock: AsyncMutex<()>,
-    /// Cache of `(game_type, impl_address) → intermediate_block_interval` to avoid repeated
-    /// RPC calls. Keyed on both fields so that a governance `setImplementation` call
-    /// (which changes the impl address) automatically causes a cache miss.
-    interval_cache: Mutex<HashMap<(u32, Address), u64>>,
+    /// Cache of `impl_address → intermediate_block_interval` to avoid repeated RPC calls.
+    /// A governance `setImplementation` call changes the address and automatically causes a
+    /// cache miss.
+    interval_cache: Mutex<HashMap<Address, u64>>,
     /// Cached `(anchor_game, factory_index)` for the current anchor game.
-    anchor_index: Mutex<Option<(Address, u64)>>,
+    anchor_index: Option<(Address, u64)>,
     /// Tracked factory indices keyed to their consecutive scan-failure
     /// count (`0` for healthy entries). An index is present iff the game was
     /// observed `IN_PROGRESS` on a previous tick.
-    tracking: Mutex<BTreeMap<u64, u64>>,
+    tracking: BTreeMap<u64, u64>,
 }
 
 impl std::fmt::Debug for GameScanner {
@@ -198,17 +194,16 @@ impl GameScanner {
             factory_client,
             verifier_client,
             anchor_registry_client,
-            scan_lock: AsyncMutex::new(()),
             interval_cache: Mutex::new(HashMap::new()),
-            anchor_index: Mutex::new(None),
-            tracking: Mutex::new(BTreeMap::new()),
+            anchor_index: None,
+            tracking: BTreeMap::new(),
         }
     }
 
     /// Returns the number of game indices currently retained in the
     /// in-progress tracking map.
     pub fn tracked_indices_len(&self) -> usize {
-        self.tracking.lock().expect("tracking lock poisoned").len()
+        self.tracking.len()
     }
 
     /// Scans for candidate games that need validation.
@@ -228,15 +223,14 @@ impl GameScanner {
     /// `base_challenger_games_scanned_total` counter,
     /// `base_challenger_scan_tracked_in_progress` gauge, and
     /// `base_challenger_scan_head` gauge are updated.
-    pub async fn scan(&self) -> Result<Vec<CandidateGame>> {
-        let _scan_guard = self.scan_lock.lock().await;
+    pub async fn scan(&mut self) -> Result<Vec<CandidateGame>> {
         let game_count = self.factory_client.game_count().await?;
 
         if game_count == 0 {
             debug!("factory has no games");
             // A factory with zero games invalidates any tracking we accumulated
             // (e.g. the factory address was reconfigured at runtime).
-            self.tracking.lock().expect("tracking lock poisoned").clear();
+            self.tracking.clear();
             ChallengerMetrics::scan_tracked_in_progress().set(0.0);
             return Ok(vec![]);
         }
@@ -244,8 +238,7 @@ impl GameScanner {
         let end = game_count - 1;
         let scan_start = self.scan_start_index(game_count).await;
 
-        let previous_tracking =
-            mem::take(&mut *self.tracking.lock().expect("tracking lock poisoned"));
+        let previous_tracking = mem::take(&mut self.tracking);
         let pruned_tracking = previous_tracking.keys().filter(|&&i| i < scan_start).count();
         if pruned_tracking > 0 {
             info!(
@@ -256,8 +249,9 @@ impl GameScanner {
         }
         let games_to_scan = game_count.saturating_sub(scan_start);
 
+        let scanner = &*self;
         let results: Vec<(u64, Result<GameEvaluation>)> = stream::iter(scan_start..game_count)
-            .map(|i| async move { (i, self.evaluate_game(i).await) })
+            .map(|i| async move { (i, scanner.evaluate_game(i).await) })
             .buffer_unordered(Self::SCAN_CONCURRENCY)
             .collect()
             .await;
@@ -295,7 +289,7 @@ impl GameScanner {
         candidates.sort_unstable_by_key(|c| c.index);
 
         let tracked_len = next_tracking.len();
-        *self.tracking.lock().expect("tracking lock poisoned") = next_tracking;
+        self.tracking = next_tracking;
 
         ChallengerMetrics::games_scanned_total().increment(games_to_scan);
         ChallengerMetrics::scan_tracked_in_progress().set(tracked_len as f64);
@@ -318,8 +312,8 @@ impl GameScanner {
     /// The start is one past the current anchor game's factory index. When the
     /// registry still has no anchor game, or if the anchor game cannot be
     /// located in this factory, the scanner starts at 0.
-    pub async fn scan_start_index(&self, game_count: u64) -> u64 {
-        let cached_anchor = *self.anchor_index.lock().expect("anchor_index lock poisoned");
+    pub async fn scan_start_index(&mut self, game_count: u64) -> u64 {
+        let cached_anchor = self.anchor_index;
         let cached_scan_start = cached_anchor
             .map(|(_, index)| index)
             .filter(|&index| index < game_count)
@@ -388,7 +382,7 @@ impl GameScanner {
             )
         };
 
-        *self.anchor_index.lock().expect("anchor_index lock poisoned") = next_cached_anchor;
+        self.anchor_index = next_cached_anchor;
         scan_start
     }
 
@@ -577,7 +571,7 @@ impl GameScanner {
     }
 
     /// Resolves the intermediate block interval for a game type, using a cache
-    /// to avoid repeated RPC calls for the same `(game_type, impl_address)` pair.
+    /// to avoid repeated RPC calls for the same implementation address.
     ///
     /// The impl address is always fetched from the factory so that a governance
     /// `setImplementation` call (which changes the address) automatically
@@ -590,11 +584,9 @@ impl GameScanner {
             ));
         }
 
-        let cache_key = (game_type, impl_address);
-
         {
             let cache = self.interval_cache.lock().expect("interval_cache lock poisoned");
-            if let Some(&interval) = cache.get(&cache_key) {
+            if let Some(&interval) = cache.get(&impl_address) {
                 return Ok(interval);
             }
         }
@@ -609,7 +601,7 @@ impl GameScanner {
         );
 
         let mut cache = self.interval_cache.lock().expect("interval_cache lock poisoned");
-        cache.insert(cache_key, interval);
+        cache.insert(impl_address, interval);
 
         Ok(interval)
     }

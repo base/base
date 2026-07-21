@@ -1,9 +1,7 @@
 use alloy_provider::RootProvider;
 use tracing::info;
 
-use super::{
-    UpgradeSignalApplySummary, UpgradeSignalRuntimeApplier, UpgradeSignalRuntimeValidation,
-};
+use super::{UpgradeSignalApplySummary, UpgradeSignalRuntimeApplier};
 use crate::{
     AlloyUpgradeSignalReader, UpgradeSignalConfig, UpgradeSignalError, UpgradeSignalMetricLayer,
     UpgradeSignalSchedule,
@@ -18,8 +16,6 @@ pub struct UpgradeSignalRefresher {
     pub reader: AlloyUpgradeSignalReader,
     /// L2 chain ID whose runtime upgrade view is updated.
     pub chain_id: u64,
-    /// Runtime schedule validation context.
-    pub runtime_validation: UpgradeSignalRuntimeValidation,
     /// Metric layer recorded by this refresher.
     pub metrics_layer: UpgradeSignalMetricLayer,
 }
@@ -30,11 +26,10 @@ impl UpgradeSignalRefresher {
         config: UpgradeSignalConfig,
         l1_provider: RootProvider,
         chain_id: u64,
-        runtime_validation: UpgradeSignalRuntimeValidation,
         metrics_layer: UpgradeSignalMetricLayer,
     ) -> Self {
         let reader = config.reader(l1_provider);
-        Self { config, reader, chain_id, runtime_validation, metrics_layer }
+        Self { config, reader, chain_id, metrics_layer }
     }
 
     /// Validates and applies an already-read schedule without touching L1.
@@ -46,7 +41,6 @@ impl UpgradeSignalRefresher {
         schedule: &UpgradeSignalSchedule,
     ) -> Result<UpgradeSignalApplySummary, UpgradeSignalError> {
         self.config.validate_schedule_protocol_versions(schedule)?;
-        self.runtime_validation.validate_schedule(self.chain_id, schedule)?;
         let summary = UpgradeSignalRuntimeApplier::apply_schedule(self.chain_id, schedule);
         info!(
             target: "upgrade_signal",
@@ -84,15 +78,11 @@ mod tests {
     use super::*;
     use crate::{UpgradeSignal, UpgradeSignalDefaults};
 
-    fn refresher(
-        chain_id: u64,
-        runtime_validation: UpgradeSignalRuntimeValidation,
-    ) -> UpgradeSignalRefresher {
+    fn refresher(chain_id: u64) -> UpgradeSignalRefresher {
         UpgradeSignalRefresher::new(
-            UpgradeSignalConfig::new(Address::ZERO, BaseUpgrade::Azul),
+            UpgradeSignalConfig::new(Address::ZERO),
             RootProvider::new_http("http://127.0.0.1:1".parse().unwrap()),
             chain_id,
-            runtime_validation,
             UpgradeSignalMetricLayer::Consensus,
         )
     }
@@ -115,7 +105,7 @@ mod tests {
         let chain_id = 9_100_001;
         RuntimeUpgradeRegistry::clear_chain(chain_id);
 
-        let summary = refresher(chain_id, UpgradeSignalRuntimeValidation::disabled())
+        let summary = refresher(chain_id)
             .apply(&schedule(BaseUpgrade::Azul, 42, UpgradeSignalDefaults::node_protocol_version()))
             .unwrap();
 
@@ -134,26 +124,8 @@ mod tests {
         RuntimeUpgradeRegistry::clear_chain(chain_id);
 
         let unsupported = UpgradeSignalDefaults::node_protocol_version() + U256::from(1);
-        refresher(chain_id, UpgradeSignalRuntimeValidation::disabled())
-            .apply(&schedule(BaseUpgrade::Azul, 42, unsupported))
-            .unwrap_err();
+        refresher(chain_id).apply(&schedule(BaseUpgrade::Azul, 42, unsupported)).unwrap_err();
 
         assert_eq!(RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Azul), None);
-    }
-
-    #[test]
-    fn apply_rejects_positive_beryl_schedule_when_fail_closed_without_mutating_registry() {
-        let chain_id = 9_100_003;
-        RuntimeUpgradeRegistry::clear_chain(chain_id);
-
-        refresher(chain_id, UpgradeSignalRuntimeValidation::fail_closed())
-            .apply(&schedule(
-                BaseUpgrade::Beryl,
-                42,
-                UpgradeSignalDefaults::node_protocol_version(),
-            ))
-            .unwrap_err();
-
-        assert_eq!(RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Beryl), None);
     }
 }

@@ -53,19 +53,19 @@ impl fmt::Display for RlpxProbeOutcome {
 #[serde(rename_all = "snake_case")]
 pub enum RlpxProbeStage {
     /// Establishing the TCP connection.
-    Tcp,
+    TcpConnect,
     /// Authenticating the encrypted ECIES transport.
-    Ecies,
+    EncryptedHandshake,
     /// Exchanging the devp2p Hello message.
-    Rlpx,
+    Devp2pHello,
 }
 
 impl fmt::Display for RlpxProbeStage {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::Tcp => "tcp",
-            Self::Ecies => "ecies",
-            Self::Rlpx => "rlpx",
+            Self::TcpConnect => "tcp_connect",
+            Self::EncryptedHandshake => "encrypted_handshake",
+            Self::Devp2pHello => "devp2p_hello",
         })
     }
 }
@@ -100,9 +100,9 @@ impl RlpxProbeError {
     /// Returns the protocol stage at which the failure occurred.
     pub const fn stage(&self) -> RlpxProbeStage {
         match self {
-            Self::Tcp(_) => RlpxProbeStage::Tcp,
-            Self::Ecies(_) => RlpxProbeStage::Ecies,
-            Self::Rlpx(_) => RlpxProbeStage::Rlpx,
+            Self::Tcp(_) => RlpxProbeStage::TcpConnect,
+            Self::Ecies(_) => RlpxProbeStage::EncryptedHandshake,
+            Self::Rlpx(_) => RlpxProbeStage::Devp2pHello,
             Self::TimedOut(stage) => *stage,
         }
     }
@@ -177,14 +177,14 @@ impl RlpxProber {
     ) -> Result<Option<String>, RlpxProbeError> {
         let tcp = timeout_at(deadline, TcpStream::connect(target.address))
             .await
-            .map_err(|_| RlpxProbeError::TimedOut(RlpxProbeStage::Tcp))??;
+            .map_err(|_| RlpxProbeError::TimedOut(RlpxProbeStage::TcpConnect))??;
 
         let ecies = timeout_at(
             deadline,
             ECIESStream::connect_without_timeout(tcp, self.secret_key, target.node_id),
         )
         .await
-        .map_err(|_| RlpxProbeError::TimedOut(RlpxProbeStage::Ecies))??;
+        .map_err(|_| RlpxProbeError::TimedOut(RlpxProbeStage::EncryptedHandshake))??;
 
         let hello = HelloMessage::builder(self.local_node_id)
             .client_version(format!("base-telemetry/{}", env!("CARGO_PKG_VERSION")))
@@ -193,11 +193,11 @@ impl RlpxProber {
 
         match timeout_at(deadline, UnauthedP2PStream::new(ecies).handshake(hello))
             .await
-            .map_err(|_| RlpxProbeError::TimedOut(RlpxProbeStage::Rlpx))?
+            .map_err(|_| RlpxProbeError::TimedOut(RlpxProbeStage::Devp2pHello))?
         {
             Ok((_, remote_hello)) => Ok(Some(remote_hello.client_version)),
             Err(P2PStreamError::HandshakeError(P2PHandshakeError::Timeout)) => {
-                Err(RlpxProbeError::TimedOut(RlpxProbeStage::Rlpx))
+                Err(RlpxProbeError::TimedOut(RlpxProbeStage::Devp2pHello))
             }
             Err(P2PStreamError::HandshakeError(P2PHandshakeError::Disconnected(reason))) => {
                 // A Disconnect received here arrived over the authenticated ECIES
@@ -222,7 +222,7 @@ impl ReachabilityProber for RlpxProber {
         match self.try_probe(target, started + self.timeout).await {
             Ok(client_version) => RlpxProbeResult {
                 outcome: RlpxProbeOutcome::Reachable,
-                stage: RlpxProbeStage::Rlpx,
+                stage: RlpxProbeStage::Devp2pHello,
                 elapsed: started.elapsed(),
                 client_version,
             },
@@ -287,7 +287,7 @@ mod tests {
             RlpxProber::ephemeral().probe(RlpxProbeTarget { address, node_id: remote_id }).await;
 
         assert_eq!(result.outcome, RlpxProbeOutcome::Reachable);
-        assert_eq!(result.stage, RlpxProbeStage::Rlpx);
+        assert_eq!(result.stage, RlpxProbeStage::Devp2pHello);
         assert_eq!(result.client_version.as_deref(), Some("test-peer/1.0"));
         server.await.unwrap();
     }
@@ -311,7 +311,7 @@ mod tests {
             RlpxProber::ephemeral().probe(RlpxProbeTarget { address, node_id: remote_id }).await;
 
         assert_eq!(result.outcome, RlpxProbeOutcome::Reachable);
-        assert_eq!(result.stage, RlpxProbeStage::Rlpx);
+        assert_eq!(result.stage, RlpxProbeStage::Devp2pHello);
         assert_eq!(result.client_version, None);
         server.await.unwrap();
     }
@@ -330,7 +330,7 @@ mod tests {
             RlpxProber::ephemeral().probe(RlpxProbeTarget { address, node_id: remote_id }).await;
 
         assert_eq!(result.outcome, RlpxProbeOutcome::HandshakeFailed);
-        assert_eq!(result.stage, RlpxProbeStage::Ecies);
+        assert_eq!(result.stage, RlpxProbeStage::EncryptedHandshake);
         server.await.unwrap();
     }
 
@@ -354,7 +354,7 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(error.outcome(), RlpxProbeOutcome::HandshakeFailed);
-        assert_eq!(error.stage(), RlpxProbeStage::Rlpx);
+        assert_eq!(error.stage(), RlpxProbeStage::Devp2pHello);
         assert!(error.source().is_some());
         server.await.unwrap();
     }
@@ -383,7 +383,7 @@ mod tests {
         let result = probe.await.unwrap();
 
         assert_eq!(result.outcome, RlpxProbeOutcome::TimedOut);
-        assert_eq!(result.stage, RlpxProbeStage::Ecies);
+        assert_eq!(result.stage, RlpxProbeStage::EncryptedHandshake);
         server.abort();
     }
 
@@ -410,7 +410,7 @@ mod tests {
         let result = probe.await.unwrap();
 
         assert_eq!(result.outcome, RlpxProbeOutcome::TimedOut);
-        assert_eq!(result.stage, RlpxProbeStage::Rlpx);
+        assert_eq!(result.stage, RlpxProbeStage::Devp2pHello);
         server.abort();
     }
 
@@ -424,7 +424,7 @@ mod tests {
             RlpxProber::ephemeral().probe(RlpxProbeTarget { address, node_id: B512::ZERO }).await;
 
         assert_eq!(result.outcome, RlpxProbeOutcome::ConnectionFailed);
-        assert_eq!(result.stage, RlpxProbeStage::Tcp);
+        assert_eq!(result.stage, RlpxProbeStage::TcpConnect);
         assert_eq!(result.client_version, None);
     }
 }

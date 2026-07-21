@@ -53,6 +53,12 @@ pub use rollup::{
     run_validator_poller,
 };
 
+mod telemetry;
+pub use telemetry::{
+    ElReachabilityOutcome, ElReachabilityResponse, ElReachabilityStage, TelemetryApiError,
+    TelemetryClient, TelemetryClientError, TelemetryErrorResponse,
+};
+
 mod txpool;
 pub use txpool::{
     BaseTxpoolContent, BaseTxpoolContentFrom, TxpoolClient, TxpoolCounts, TxpoolReport,

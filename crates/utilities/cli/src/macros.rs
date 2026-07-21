@@ -135,7 +135,8 @@ macro_rules! define_log_args {
         #[derive(Debug, Clone, ::clap::Parser, ::serde::Serialize, ::serde::Deserialize)]
         #[command(next_help_heading = "Logging")]
         pub struct LogArgs {
-            /// Increase logging verbosity (1=ERROR, 2=WARN, 3=INFO, 4=DEBUG, 5=TRACE).
+            /// Set logging verbosity: no flag=INFO, -v=ERROR, -vv=WARN, -vvv=INFO,
+            /// -vvvv=DEBUG, -vvvvv=TRACE.
             #[arg(
                 short = 'v',
                 long = "verbose",

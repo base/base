@@ -75,47 +75,6 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
         recorder.record_base_result(ctx, self.route(ctx, calldata, version, false, observer), |b| b)
     }
 
-    /// Decodes calldata and executes the matching operation for `upgrade`.
-    pub fn inner(
-        &mut self,
-        ctx: StorageCtx<'_>,
-        calldata: &[u8],
-        upgrade: BaseUpgrade,
-    ) -> base_precompile_storage::Result<Bytes> {
-        self.inner_with_observer(ctx, calldata, upgrade, NoopPrecompileCallObserver)
-    }
-
-    /// Decodes calldata, observes the decoded operation, and executes the matching handler
-    /// against the version active at `upgrade`.
-    pub fn inner_with_observer<O>(
-        &mut self,
-        ctx: StorageCtx<'_>,
-        calldata: &[u8],
-        upgrade: BaseUpgrade,
-        observer: O,
-    ) -> base_precompile_storage::Result<Bytes>
-    where
-        O: PrecompileCallObserver,
-    {
-        let Some(version) = AssetVersions::from_base_upgrade(upgrade) else {
-            return Err(BasePrecompileError::Revert(Bytes::new()));
-        };
-        self.route(ctx, calldata, version, false, observer)
-    }
-
-    /// Decodes calldata and executes it with factory-init privilege.
-    ///
-    /// Pinned to [`AssetVersion::V1`], the token's introduction version: factory-initiated setup
-    /// calls run before any later fork can be relevant.
-    pub fn inner_with_privilege(
-        &mut self,
-        ctx: StorageCtx<'_>,
-        calldata: &[u8],
-        privileged: bool,
-    ) -> base_precompile_storage::Result<Bytes> {
-        self.route(ctx, calldata, AssetVersion::V1, privileged, NoopPrecompileCallObserver)
-    }
-
     /// Grants `role` to `account` without checking caller authorization.
     ///
     /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and the
@@ -133,7 +92,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
 
     /// Decodes calldata, observes the decoded operation, and routes it to `version` with optional
     /// factory-init privilege.
-    fn route<O>(
+    pub fn route<O>(
         &mut self,
         ctx: StorageCtx<'_>,
         calldata: &[u8],
@@ -509,7 +468,7 @@ mod tests {
 
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
-        AssetV1, B20AssetStorage, B20AssetToken, B20TokenRole, BerylErrorKind,
+        AssetV1, AssetVersion, B20AssetStorage, B20AssetToken, B20TokenRole, BerylErrorKind,
         FakePolicyAccounting, IB20, IB20Asset, InMemoryTokenAccounting, NoopPrecompileCallObserver,
         PolicyVersion, PrecompileCallMetric, PrecompileCallObserver, PrecompileCallOutcome,
         PrecompileCallStatus, Token, TokenAccounting,
@@ -572,7 +531,9 @@ mod tests {
 
     fn call_asset(token: &mut TestAssetToken, caller: Address, calldata: Vec<u8>) -> Result<Bytes> {
         let mut storage = storage_with_caller(caller);
-        StorageCtx::enter(&mut storage, |ctx| token.inner(ctx, calldata.as_ref(), UPGRADE))
+        StorageCtx::enter(&mut storage, |ctx| {
+            token.route(ctx, calldata.as_ref(), AssetVersion::V1, false, NoopPrecompileCallObserver)
+        })
     }
 
     fn batch_mint_calldata(recipients: Vec<Address>, amounts: Vec<U256>) -> Vec<u8> {

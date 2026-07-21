@@ -264,6 +264,8 @@ impl RollupNode {
                 unsafe_head_tx: if mode.is_sequencer() { Some(unsafe_head_tx) } else { None },
                 conductor,
                 sequencer_stopped: self.sequencer_config.sequencer_stopped,
+                shadow_sequencer: mode.is_sequencer()
+                    && self.sequencer_config.is_shadow_sequencer(),
             },
             checkpoint_reader,
             checkpoint_writer,
@@ -573,6 +575,7 @@ impl RollupNode {
                     conductor,
                     engine_client,
                     is_active: self.sequencer_config.sequencer_stopped.not(),
+                    shadow_blocks_per_cycle: self.sequencer_config.shadow_blocks_per_cycle,
                     recovery_mode,
                     rollup_config: Arc::clone(&self.config),
                     unsafe_payload_gossip_client: queued_gossip_client,

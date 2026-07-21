@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{num::NonZeroU64, sync::Arc, time::Duration};
 
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::ExecutionPayloadV1;
@@ -259,6 +259,26 @@ async fn test_seal_payload_success_returns_sealer() {
 }
 
 #[tokio::test]
+async fn test_shadow_seal_payload_returns_private_sealer() {
+    let envelope = dummy_envelope();
+
+    let mut client = MockSequencerEngineClient::new();
+    client.expect_get_sealed_payload().times(1).return_once(move |_, _| Ok(envelope));
+
+    let mut actor = test_actor();
+    actor.engine_client = Arc::new(client);
+    actor.shadow_blocks_per_cycle = NonZeroU64::new(10);
+
+    let handle = UnsealedPayloadHandle {
+        payload_id: Default::default(),
+        attributes_with_parent: dummy_attributes_with_parent(),
+    };
+    let sealer = actor.seal_payload(&handle).await.unwrap();
+
+    assert_eq!(sealer.state, SealState::Private);
+}
+
+#[tokio::test]
 async fn test_seal_payload_failure_propagates() {
     let mut client = MockSequencerEngineClient::new();
     client
@@ -279,6 +299,49 @@ async fn test_seal_payload_failure_propagates() {
 }
 
 // --- PayloadSealer::step tests ---
+
+#[tokio::test]
+async fn test_private_sealer_only_inserts() {
+    let envelope = dummy_envelope();
+
+    let mut conductor = MockConductor::new();
+    conductor.expect_commit_unsafe_payload().times(0);
+
+    let mut gossip = MockUnsafePayloadGossipClient::new();
+    gossip.expect_schedule_execution_payload_gossip().times(0);
+
+    let mut engine = MockSequencerEngineClient::new();
+    engine.expect_insert_unsafe_payload().times(1).return_once(|_| Ok(L2BlockInfo::default()));
+
+    let mut sealer = PayloadSealer::new_private(envelope);
+    let result = sealer.step(&Some(conductor), &gossip, &engine).await;
+
+    assert_eq!(result.unwrap(), SealStepOutcome::Inserted(L2BlockInfo::default()));
+    assert_eq!(sealer.state, SealState::Private);
+}
+
+#[tokio::test]
+async fn test_private_sealer_insert_failure_stays_private() {
+    let envelope = dummy_envelope();
+
+    let mut conductor = MockConductor::new();
+    conductor.expect_commit_unsafe_payload().times(0);
+
+    let mut gossip = MockUnsafePayloadGossipClient::new();
+    gossip.expect_schedule_execution_payload_gossip().times(0);
+
+    let mut engine = MockSequencerEngineClient::new();
+    engine
+        .expect_insert_unsafe_payload()
+        .times(1)
+        .return_once(|_| Err(EngineClientError::RequestError("channel closed".to_string())));
+
+    let mut sealer = PayloadSealer::new_private(envelope);
+    let result = sealer.step(&Some(conductor), &gossip, &engine).await;
+
+    assert!(matches!(result.unwrap_err(), SealStepError::Insert(_)));
+    assert_eq!(sealer.state, SealState::Private);
+}
 
 #[tokio::test]
 async fn test_sealer_full_pipeline_no_conductor() {

@@ -1,12 +1,8 @@
 use alloy_primitives::Address;
-use base_common_genesis::{BaseUpgrade, UpgradeActivationSink};
+use base_common_genesis::UpgradeActivationSink;
 use url::Url;
 
-use super::{
-    UpgradeSignalBlockTag, UpgradeSignalConfig, UpgradeSignalConfigError, UpgradeSignalDefaults,
-    UpgradeSignalMode,
-};
-use crate::UpgradeSignalRuntimeValidation;
+use super::{UpgradeSignalBlockTag, UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalMode};
 
 /// CLI arguments shared by nodes that read the L1 upgrade signal contract.
 #[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
@@ -14,17 +10,6 @@ pub struct UpgradeSignalArgs {
     /// L1 upgrade signal contract or proxy address.
     #[arg(long = "upgrade-signal.contract", env = "BASE_NODE_UPGRADE_SIGNAL_CONTRACT")]
     pub contract_address: Option<Address>,
-
-    /// Upgrade IDs to pass to the L1 upgrade signal contract.
-    ///
-    /// If omitted while the contract is configured, all contract-backed Base upgrade IDs are
-    /// read.
-    #[arg(
-        long = "upgrade-signal.upgrade-id",
-        env = "BASE_NODE_UPGRADE_SIGNAL_UPGRADE_ID",
-        value_delimiter = ','
-    )]
-    pub upgrade_ids: Vec<String>,
 
     /// Upgrade signal application mode.
     #[arg(
@@ -47,48 +32,15 @@ pub struct UpgradeSignalArgs {
 
 impl UpgradeSignalArgs {
     /// Builds a schedule read configuration if the upgrade signal is enabled.
-    pub fn config(&self) -> Result<Option<UpgradeSignalConfig>, UpgradeSignalConfigError> {
-        let Some(contract_address) = self.contract_address else {
-            if !self.upgrade_ids.is_empty() {
-                return Err(UpgradeSignalConfigError::MissingContractAddress);
-            }
-            return Ok(None);
-        };
+    pub fn config(&self) -> Option<UpgradeSignalConfig> {
+        let contract_address = self.contract_address?;
 
-        let upgrade_ids = Self::configured_upgrade_ids(&self.upgrade_ids)?;
-
-        Ok(Some(UpgradeSignalConfig {
+        Some(UpgradeSignalConfig {
             contract_address,
-            upgrade_ids,
             mode: self.mode,
             l1_block_tag: self.l1_block_tag.block_number_or_tag(),
             node_protocol_version: UpgradeSignalDefaults::node_protocol_version(),
-        }))
-    }
-
-    /// Returns the configured upgrade IDs, or the default contract-backed upgrade schedule.
-    pub fn configured_upgrade_ids(
-        upgrade_ids: &[String],
-    ) -> Result<Vec<BaseUpgrade>, UpgradeSignalConfigError> {
-        if upgrade_ids.is_empty() {
-            return Ok(BaseUpgrade::CONTRACT_VARIANTS.to_vec());
-        }
-
-        let mut ids = Vec::new();
-        for upgrade_id in upgrade_ids.iter().map(String::as_str) {
-            let upgrade_id = upgrade_id.trim();
-            if upgrade_id.is_empty() {
-                return Err(UpgradeSignalConfigError::EmptyUpgradeId);
-            }
-            let upgrade_id = BaseUpgrade::from_contract_fork_name(upgrade_id).ok_or_else(|| {
-                UpgradeSignalConfigError::UnknownUpgradeId(upgrade_id.to_string())
-            })?;
-            if !ids.contains(&upgrade_id) {
-                ids.push(upgrade_id);
-            }
-        }
-
-        Ok(ids)
+        })
     }
 
     /// Returns startup config when the selected mode applies the signal before startup.
@@ -96,7 +48,7 @@ impl UpgradeSignalArgs {
         &self,
         l1_rpc_args: &UpgradeSignalL1RpcArgs,
     ) -> eyre::Result<Option<UpgradeSignalStartupConfig>> {
-        let Some(signal_config) = self.config()? else {
+        let Some(signal_config) = self.config() else {
             return Ok(None);
         };
         if !signal_config.mode.applies_at_startup() {
@@ -112,7 +64,6 @@ impl UpgradeSignalArgs {
         &self,
         l1_rpc_args: &UpgradeSignalL1RpcArgs,
         log_context: &'static str,
-        runtime_validation: UpgradeSignalRuntimeValidation,
         chain_id: u64,
         execution_sink: &mut EL,
         consensus_sink: &mut CL,
@@ -125,13 +76,7 @@ impl UpgradeSignalArgs {
     {
         if let Some(startup_config) = self.startup_config(l1_rpc_args)? {
             startup_config
-                .apply_to_sinks(
-                    log_context,
-                    runtime_validation,
-                    chain_id,
-                    execution_sink,
-                    consensus_sink,
-                )
+                .apply_to_sinks(log_context, chain_id, execution_sink, consensus_sink)
                 .await?;
         }
 
@@ -153,7 +98,6 @@ impl UpgradeSignalStartupConfig {
     pub async fn apply_to_sinks<EL, CL>(
         self,
         log_context: &'static str,
-        runtime_validation: UpgradeSignalRuntimeValidation,
         chain_id: u64,
         execution_sink: &mut EL,
         consensus_sink: &mut CL,
@@ -168,7 +112,6 @@ impl UpgradeSignalStartupConfig {
             .apply_startup_to_sinks(
                 self.l1_rpc,
                 log_context,
-                runtime_validation,
                 chain_id,
                 execution_sink,
                 consensus_sink,
@@ -206,39 +149,26 @@ impl UpgradeSignalL1RpcArgs {
 mod tests {
     use alloy_primitives::address;
     use alloy_rpc_types_eth::BlockNumberOrTag;
-    use base_common_genesis::BaseUpgrade;
 
     use super::*;
 
     #[test]
-    fn disabled_when_no_contract_or_upgrade_id() {
+    fn disabled_when_no_contract() {
         let args = UpgradeSignalArgs::default();
 
-        assert_eq!(args.config().unwrap(), None);
+        assert_eq!(args.config(), None);
     }
 
     #[test]
-    fn uses_default_ids_for_contract_without_upgrade_id() {
+    fn enabled_for_contract() {
         let args = UpgradeSignalArgs {
             contract_address: Some(address!("0000000000000000000000000000000000000001")),
             ..Default::default()
         };
 
-        let config = args.config().unwrap().unwrap();
+        let config = args.config().unwrap();
 
-        assert_eq!(config.upgrade_ids, BaseUpgrade::CONTRACT_VARIANTS.to_vec());
         assert_eq!(config.mode, UpgradeSignalMode::MetricsOnly);
-    }
-
-    #[test]
-    fn rejects_upgrade_id_without_contract() {
-        let args =
-            UpgradeSignalArgs { upgrade_ids: vec!["azul".to_string()], ..Default::default() };
-
-        assert!(matches!(
-            args.config().unwrap_err(),
-            UpgradeSignalConfigError::MissingContractAddress
-        ));
     }
 
     #[test]
@@ -249,7 +179,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(args.config().unwrap().unwrap().l1_block_tag, BlockNumberOrTag::Latest);
+        assert_eq!(args.config().unwrap().l1_block_tag, BlockNumberOrTag::Latest);
     }
 
     #[test]
@@ -257,15 +187,13 @@ mod tests {
         let contract = address!("0000000000000000000000000000000000000001");
         let args = UpgradeSignalArgs {
             contract_address: Some(contract),
-            upgrade_ids: vec!["azul".to_string()],
             mode: UpgradeSignalMode::StartupApply,
             ..Default::default()
         };
 
-        let config = args.config().unwrap().unwrap();
+        let config = args.config().unwrap();
 
         assert_eq!(config.contract_address, contract);
-        assert_eq!(config.upgrade_ids, [BaseUpgrade::Azul]);
         assert_eq!(config.mode, UpgradeSignalMode::StartupApply);
         assert_eq!(config.node_protocol_version, UpgradeSignalDefaults::node_protocol_version());
     }

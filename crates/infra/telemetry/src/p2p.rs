@@ -215,7 +215,7 @@ mod tests {
             self.targets.lock().unwrap_or_else(PoisonError::into_inner).push(target);
             RlpxProbeResult {
                 outcome: RlpxProbeOutcome::Reachable,
-                stage: RlpxProbeStage::Rlpx,
+                stage: RlpxProbeStage::Devp2pHello,
                 elapsed: Duration::from_millis(12),
                 client_version: Some("test-peer/1.0".to_string()),
             }
@@ -235,7 +235,7 @@ mod tests {
             self.release.acquire().await.unwrap().forget();
             RlpxProbeResult {
                 outcome: RlpxProbeOutcome::Reachable,
-                stage: RlpxProbeStage::Rlpx,
+                stage: RlpxProbeStage::Devp2pHello,
                 elapsed: Duration::from_millis(1),
                 client_version: None,
             }

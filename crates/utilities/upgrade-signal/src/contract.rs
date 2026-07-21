@@ -134,14 +134,13 @@ impl AlloyUpgradeSignalReader {
     /// maps to the oldest contract-backed hardfork, and each following id maps to the next
     /// hardfork in the ladder. This is a positional mapping by id, not a sort by timestamp, so the
     /// timestamps need not be monotonic. Contract entries beyond the ladder
-    /// belong to upgrades newer than this binary knows and are logged and ignored, hardforks
-    /// without a contract entry produce no signal, and only upgrades in `upgrade_ids` produce
-    /// signals. Every signal carries the contract's global minimum protocol version.
+    /// belong to upgrades newer than this binary knows and are logged and ignored, and hardforks
+    /// without a contract entry produce no signal. Every signal carries the contract's global
+    /// minimum protocol version.
     pub fn map_schedule(
         timestamps: &[u64],
         minimum_protocol_version: U256,
         l1_block_number: u64,
-        upgrade_ids: &[BaseUpgrade],
     ) -> UpgradeSignalSchedule {
         if timestamps.len() > BaseUpgrade::CONTRACT_VARIANTS.len() {
             warn!(
@@ -155,7 +154,6 @@ impl AlloyUpgradeSignalReader {
         let signals: Vec<_> = BaseUpgrade::CONTRACT_VARIANTS
             .iter()
             .zip(timestamps.iter())
-            .filter(|(upgrade_id, _)| upgrade_ids.contains(upgrade_id))
             .map(|(upgrade_id, activation_timestamp)| UpgradeSignal {
                 upgrade_id: *upgrade_id,
                 activation_timestamp: *activation_timestamp,
@@ -167,36 +165,33 @@ impl AlloyUpgradeSignalReader {
         UpgradeSignalSchedule::new(signals)
     }
 
-    /// Reads the upgrade signal schedule for `upgrade_ids`.
+    /// Reads the full contract-backed upgrade signal schedule.
     ///
-    /// Records `l1_read_errors_total` for all upgrade IDs when the L1 block fetch or the schedule
-    /// read fails; the whole schedule is read with one `getSchedule` call, so per-upgrade failures
-    /// no longer exist.
+    /// Records `l1_read_errors_total` for all contract-backed upgrades when the L1 block fetch or
+    /// the schedule read fails; the whole schedule is read with one `getSchedule` call, so
+    /// per-upgrade failures no longer exist.
     pub async fn read_schedule(
         &self,
-        upgrade_ids: &[BaseUpgrade],
         metrics_layers: &[UpgradeSignalMetricLayer],
     ) -> Result<UpgradeSignalSchedule, UpgradeSignalError> {
         let (l1_block_number, l1_block) = match self.pinned_l1_block_id().await {
             Ok(block) => block,
             Err(error) => {
-                UpgradeSignalMetrics::record_l1_read_errors_for_layers(metrics_layers, upgrade_ids);
+                UpgradeSignalMetrics::record_l1_read_errors_for_layers(metrics_layers);
                 return Err(error);
             }
         };
 
-        let (timestamps, minimum_protocol_version) = match self
-            .read_contract_schedule_at_l1_block(l1_block)
-            .await
-        {
-            Ok(values) => values,
-            Err(error) => {
-                UpgradeSignalMetrics::record_l1_read_errors_for_layers(metrics_layers, upgrade_ids);
-                return Err(error);
-            }
-        };
+        let (timestamps, minimum_protocol_version) =
+            match self.read_contract_schedule_at_l1_block(l1_block).await {
+                Ok(values) => values,
+                Err(error) => {
+                    UpgradeSignalMetrics::record_l1_read_errors_for_layers(metrics_layers);
+                    return Err(error);
+                }
+            };
 
-        Ok(Self::map_schedule(&timestamps, minimum_protocol_version, l1_block_number, upgrade_ids))
+        Ok(Self::map_schedule(&timestamps, minimum_protocol_version, l1_block_number))
     }
 
     /// Reads the schedule, retrying transient failures with a fixed backoff before giving up.
@@ -205,7 +200,6 @@ impl AlloyUpgradeSignalReader {
     /// outright; after `max_attempts` failures the last error is returned (fail-fast).
     pub async fn read_schedule_with_retries(
         &self,
-        upgrade_ids: &[BaseUpgrade],
         max_attempts: u32,
         backoff: Duration,
         metrics_layers: &[UpgradeSignalMetricLayer],
@@ -213,7 +207,7 @@ impl AlloyUpgradeSignalReader {
         let max_attempts = max_attempts.max(1);
         let mut attempt = 1;
         loop {
-            match self.read_schedule(upgrade_ids, metrics_layers).await {
+            match self.read_schedule(metrics_layers).await {
                 Ok(schedule) => return Ok(schedule),
                 Err(error) if attempt >= max_attempts => return Err(error),
                 Err(error) => {
@@ -237,10 +231,9 @@ impl AlloyUpgradeSignalReader {
     /// for the live metrics poller, which must not abort the node because a schedule read failed.
     pub async fn read_schedule_tolerant(
         &self,
-        upgrade_ids: &[BaseUpgrade],
         metrics_layers: &[UpgradeSignalMetricLayer],
     ) -> UpgradeSignalSchedule {
-        match self.read_schedule(upgrade_ids, metrics_layers).await {
+        match self.read_schedule(metrics_layers).await {
             Ok(schedule) => schedule,
             Err(error) => {
                 warn!(
@@ -268,12 +261,7 @@ mod tests {
 
     #[test]
     fn maps_partial_schedule_to_oldest_hardforks() {
-        let schedule = AlloyUpgradeSignalReader::map_schedule(
-            &[10, 20, 0],
-            U256::from(7),
-            99,
-            &BaseUpgrade::CONTRACT_VARIANTS,
-        );
+        let schedule = AlloyUpgradeSignalReader::map_schedule(&[10, 20, 0], U256::from(7), 99);
 
         assert_eq!(
             signals(&schedule),
@@ -292,12 +280,7 @@ mod tests {
     fn maps_full_schedule_in_ladder_order() {
         let timestamps: Vec<u64> = (1..=BaseUpgrade::CONTRACT_VARIANTS.len() as u64).collect();
 
-        let schedule = AlloyUpgradeSignalReader::map_schedule(
-            &timestamps,
-            U256::from(7),
-            1,
-            &BaseUpgrade::CONTRACT_VARIANTS,
-        );
+        let schedule = AlloyUpgradeSignalReader::map_schedule(&timestamps, U256::from(7), 1);
 
         assert_eq!(
             signals(&schedule),
@@ -306,28 +289,11 @@ mod tests {
     }
 
     #[test]
-    fn filters_unconfigured_upgrades() {
-        let schedule = AlloyUpgradeSignalReader::map_schedule(
-            &[10, 20, 30],
-            U256::from(7),
-            1,
-            &[BaseUpgrade::Canyon],
-        );
-
-        assert_eq!(signals(&schedule), vec![(BaseUpgrade::Canyon, 20)]);
-    }
-
-    #[test]
     fn ignores_entries_newer_than_known_ladder() {
         let mut timestamps: Vec<u64> = (1..=BaseUpgrade::CONTRACT_VARIANTS.len() as u64).collect();
         timestamps.push(777);
 
-        let schedule = AlloyUpgradeSignalReader::map_schedule(
-            &timestamps,
-            U256::from(7),
-            1,
-            &BaseUpgrade::CONTRACT_VARIANTS,
-        );
+        let schedule = AlloyUpgradeSignalReader::map_schedule(&timestamps, U256::from(7), 1);
 
         assert_eq!(schedule.signals.len(), BaseUpgrade::CONTRACT_VARIANTS.len());
         assert_eq!(signals(&schedule).first().copied(), Some((BaseUpgrade::Regolith, 1)));
@@ -336,12 +302,7 @@ mod tests {
 
     #[test]
     fn produces_no_signal_for_hardforks_without_contract_entries() {
-        let schedule = AlloyUpgradeSignalReader::map_schedule(
-            &[42],
-            U256::from(7),
-            1,
-            &BaseUpgrade::CONTRACT_VARIANTS,
-        );
+        let schedule = AlloyUpgradeSignalReader::map_schedule(&[42], U256::from(7), 1);
 
         assert_eq!(signals(&schedule), vec![(BaseUpgrade::Regolith, 42)]);
     }

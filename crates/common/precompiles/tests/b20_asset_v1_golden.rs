@@ -15,49 +15,36 @@
 //!
 //! Because the per-op suite resolves the version via `AssetVersions::from_base_upgrade`, it breaks
 //! if dispatch ever routes to the wrong version. Privileged behavior is exercised via
-//! `inner_with_privilege`; the guard envelope (nonpayable / uninitialized / pre-Beryl) via the
-//! full `dispatch_with_observer`.
+//! `route` with `privileged = true`; the guard envelope (nonpayable / uninitialized / pre-Beryl)
+//! via the full `dispatch_with_observer`.
 //!
 //! ## Blessing storage hashes
 //! State-root constants below are pinned. To (re)generate them after an intentional change, run:
 //! `BLESS_GOLDEN=1 cargo test -p base-common-precompiles --features test-utils \
 //!    --test b20_asset_v1_golden -- --nocapture` and copy the printed `GOLDEN_ROOT` values.
 
-use alloy_primitives::{Address, B256, Bytes, LogData, U256, b256, keccak256};
+use alloy_primitives::{Address, B256, Bytes, U256, b256, keccak256};
 use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
 use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
     Asset, AssetAccounting, AssetV1, AssetVersion, AssetVersions, B20_MAX_SUPPLY_CAP, B20AssetInit,
     B20AssetStorage, B20AssetToken, B20PolicyType, B20TokenRole, FakePolicyAccounting, IB20,
-    IB20Asset, NoopPrecompileCallObserver, PermitArgs, PolicyVersion, TokenAccounting,
+    IB20Asset, NoopPrecompileCallObserver, PolicyVersion, TokenAccounting,
 };
 use base_precompile_storage::{BasePrecompileError, HashMapStorageProvider, StorageCtx};
-use k256::ecdsa::SigningKey;
+
+mod common;
+use common::{
+    ADMIN, ALICE, BOB, CAROL, CHAIN_ID, MEMO, POLICY_ID, TOKEN, anvil_owner, bless_or_assert_gas,
+    bless_or_assert_root, hash_token_state, ok_true, signed_permit, u,
+};
 
 // --- fixtures ---------------------------------------------------------------
 
-const TOKEN: Address = Address::repeat_byte(0x22);
-const ADMIN: Address = Address::repeat_byte(0xAD);
-const ALICE: Address = Address::repeat_byte(0xA1);
-const BOB: Address = Address::repeat_byte(0xB0);
-const CAROL: Address = Address::repeat_byte(0xCA);
-const CHAIN_ID: u64 = 8453;
 const NAME: &str = "Base Asset";
 const SYMBOL: &str = "bASSET";
 const DECIMALS: u8 = 6;
-const MEMO: B256 = B256::repeat_byte(0x77);
 const LOGIC: AssetV1 = AssetV1;
-
-/// A concrete (non-sentinel) ALLOWLIST policy id (type byte = 1, counter = 7).
-/// Unconfigured scopes default to the `ALWAYS_ALLOW_ID` (0) EVM zero-slot, so
-/// blocking/executor guards are exercised against an explicit id like this one.
-/// Under V1, ALLOWLIST (type = 1) authorizes exactly its members: `.allow(POLICY_ID, acct)`
-/// grants, and unconfigured accounts are blocked.
-const POLICY_ID: u64 = (1u64 << 56) | 7;
-
-// Anvil/Hardhat account 0 — well-known test key, never used in production.
-const PRIVATE_KEY: [u8; 32] =
-    alloy_primitives::hex!("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
 
 // --- pinned storage hashes (bless with BLESS_GOLDEN=1; see module docs) --------
 
@@ -138,16 +125,6 @@ const ROOT_ANNOUNCE: B256 =
 
 // --- harness ----------------------------------------------------------------
 
-/// `U256` from a small literal.
-fn u(n: u64) -> U256 {
-    U256::from(n)
-}
-
-/// The ABI encoding for a boolean-returning op (`transfer`/`approve`).
-fn ok_true() -> Bytes {
-    Bytes::from(true.abi_encode())
-}
-
 /// Fresh provider with an initialized `Base Asset` at [`TOKEN`] (multiplier = 1 WAD).
 fn fresh() -> HashMapStorageProvider {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
@@ -188,12 +165,14 @@ fn op(
 ) -> Result<Bytes, BasePrecompileError> {
     storage.set_caller(caller);
     StorageCtx::enter(storage, |ctx| {
+        let version =
+            AssetVersions::from_base_upgrade(BaseUpgrade::Beryl).expect("Beryl activates V1");
         B20AssetToken::with_storage_and_policy(
             B20AssetStorage::from_address(TOKEN, ctx),
             policy,
             PolicyVersion::V1,
         )
-        .inner(ctx, &calldata, BaseUpgrade::Beryl)
+        .route(ctx, &calldata, version, false, NoopPrecompileCallObserver)
     })
 }
 
@@ -211,7 +190,7 @@ fn op_privileged(
             policy,
             PolicyVersion::V1,
         )
-        .inner_with_privilege(ctx, &calldata, true)
+        .route(ctx, &calldata, AssetVersion::V1, true, NoopPrecompileCallObserver)
     })
 }
 
@@ -220,40 +199,10 @@ fn last_topic0(storage: &HashMapStorageProvider) -> B256 {
     storage.get_events(TOKEN).last().expect("an emitted event").topics()[0]
 }
 
-/// Deterministic keccak hash of the per-case snapshot: the token's emitted events
-/// (topics + data) followed by its sorted `(address, slot, value)` storage triples.
-///
-/// A plain content hash (not an MPT state root). Events are included so a regression in
-/// an event's payload — indexed args or data not otherwise reflected in storage, e.g. a
-/// `Memo`'s bytes — is pinned here even though logs are not storage.
-fn hash_state(storage: HashMapStorageProvider) -> B256 {
-    let events: Vec<LogData> = storage.get_events(TOKEN).clone();
-    let mut triples: Vec<(Address, U256, U256)> = storage.into_storage().collect();
-    triples.sort();
-    let mut buf = Vec::with_capacity(triples.len() * 84 + events.len() * 64);
-    for log in &events {
-        for topic in log.topics() {
-            buf.extend_from_slice(topic.as_slice());
-        }
-        buf.extend_from_slice(&log.data);
-    }
-    for (addr, slot, value) in triples {
-        buf.extend_from_slice(addr.as_slice());
-        buf.extend_from_slice(&slot.to_be_bytes::<32>());
-        buf.extend_from_slice(&value.to_be_bytes::<32>());
-    }
-    keccak256(&buf)
-}
-
-/// Asserts the storage hash, or prints it under `BLESS_GOLDEN` for (re)pinning.
+/// Asserts the token's storage hash, or prints it under `BLESS_GOLDEN` for (re)pinning.
 #[track_caller]
 fn assert_root(label: &str, storage: HashMapStorageProvider, expected: B256) {
-    let got = hash_state(storage);
-    if std::env::var("BLESS_GOLDEN").ok().as_deref() == Some("1") {
-        println!("GOLDEN_ROOT {label} = {got:#x}");
-        return;
-    }
-    assert_eq!(got, expected, "V1 storage hash drift for `{label}`");
+    bless_or_assert_root(label, hash_token_state(storage, TOKEN), expected);
 }
 
 /// Grants `role` to `who` and bumps the role member count (setup only).
@@ -276,13 +225,6 @@ fn operator_role() -> B256 {
     keccak256("OPERATOR_ROLE")
 }
 
-/// Recovers the anvil account-0 address from [`PRIVATE_KEY`].
-fn anvil_owner() -> Address {
-    let key = SigningKey::from_slice(&PRIVATE_KEY).unwrap();
-    let point = key.verifying_key().to_encoded_point(false);
-    Address::from_slice(&keccak256(&point.as_bytes()[1..])[12..])
-}
-
 /// The V1 EIP-712 domain separator for the token at [`TOKEN`] on [`CHAIN_ID`].
 fn domain_separator(storage: &mut HashMapStorageProvider) -> B256 {
     StorageCtx::enter(storage, |ctx| {
@@ -293,35 +235,6 @@ fn domain_separator(storage: &mut HashMapStorageProvider) -> B256 {
         );
         LOGIC.domain_separator(&token, CHAIN_ID).unwrap()
     })
-}
-
-/// Builds a validly-signed `permit` call for `owner`'s current nonce.
-fn signed_permit(
-    domain_sep: B256,
-    nonce: U256,
-    owner: Address,
-    spender: Address,
-    value: U256,
-    deadline: U256,
-) -> IB20::permitCall {
-    let mut args =
-        PermitArgs { owner, spender, value, deadline, v: 0, r: B256::ZERO, s: B256::ZERO };
-    let signing_hash = args.signing_hash(domain_sep, nonce);
-    let key = SigningKey::from_slice(&PRIVATE_KEY).unwrap();
-    let (sig, recid) = key.sign_prehash_recoverable(signing_hash.as_slice()).unwrap();
-    let bytes = sig.to_bytes();
-    args.r = B256::from_slice(&bytes[..32]);
-    args.s = B256::from_slice(&bytes[32..]);
-    args.v = if recid.is_y_odd() { 28 } else { 27 };
-    IB20::permitCall {
-        owner: args.owner,
-        spender: args.spender,
-        value: args.value,
-        deadline: args.deadline,
-        v: args.v,
-        r: args.r,
-        s: args.s,
-    }
 }
 
 // ============================================================================
@@ -1806,7 +1719,7 @@ fn golden_revoke_role_noop_when_not_held() {
 }
 
 // ============================================================================
-// dispatch harness wrappers (no-observer dispatch, inner gating, factory bootstrap)
+// dispatch harness wrappers (no-observer dispatch, version-resolver gating, factory bootstrap)
 // ============================================================================
 
 #[test]
@@ -1829,16 +1742,20 @@ fn golden_dispatch_no_observer_wrapper_reverts_uninitialized() {
 
 #[test]
 fn golden_inner_reverts_before_beryl() {
-    // Exercises the `inner` version-resolution None branch (pre-introduction fork).
+    // Exercises the version-resolution None branch (pre-introduction fork): before Beryl no
+    // version is active, so the resolver-gated path reverts without routing.
     let mut s = fresh();
     let calldata = IB20::balanceOfCall { account: ALICE }.abi_encode();
     let err = StorageCtx::enter(&mut s, |ctx| {
-        B20AssetToken::with_storage_and_policy(
+        let mut token = B20AssetToken::with_storage_and_policy(
             B20AssetStorage::from_address(TOKEN, ctx),
             FakePolicyAccounting::new(),
             PolicyVersion::V1,
+        );
+        AssetVersions::from_base_upgrade(BaseUpgrade::Azul).map_or_else(
+            || Err(BasePrecompileError::Revert(Bytes::new())),
+            |version| token.route(ctx, &calldata, version, false, NoopPrecompileCallObserver),
         )
-        .inner(ctx, &calldata, BaseUpgrade::Azul)
     })
     .unwrap_err();
     assert_eq!(err, BasePrecompileError::Revert(Bytes::new()));
@@ -2385,7 +2302,7 @@ fn gas(
             policy,
             PolicyVersion::V1,
         )
-        .inner_with_privilege(ctx, &calldata, true)
+        .route(ctx, &calldata, AssetVersion::V1, true, NoopPrecompileCallObserver)
     })
     .expect("gas-footprint op must succeed");
     (s.counter_sload(), s.counter_sstore(), s.counter_keccak256())
@@ -2647,13 +2564,7 @@ fn golden_gas_footprints() {
         ("update_extra_metadata", (0, 1, 0)),
     ];
 
-    if std::env::var("BLESS_GOLDEN").ok().as_deref() == Some("1") {
-        for (label, counts) in &actual {
-            println!("GAS {label} = {counts:?}");
-        }
-        return;
-    }
-    assert_eq!(actual, expected, "storage-access footprint (sload, sstore, keccak256) drift");
+    bless_or_assert_gas(&actual, expected);
 }
 
 // ============================================================================

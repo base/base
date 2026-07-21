@@ -93,7 +93,7 @@ mod tests {
             self.release.acquire().await.unwrap().forget();
             RlpxProbeResult {
                 outcome: RlpxProbeOutcome::Reachable,
-                stage: RlpxProbeStage::Rlpx,
+                stage: RlpxProbeStage::Devp2pHello,
                 elapsed: Duration::from_millis(1),
                 client_version: None,
             }
