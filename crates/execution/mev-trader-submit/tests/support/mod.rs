@@ -81,7 +81,7 @@ pub fn finalize_plan_digest(plan: &mut BackrunPlan) {
 
 /// The trusted current-frame identity that EXACTLY matches `plan`'s frame — the
 /// happy-path value for [`mev_trader_submit::assembler::AssembleInput::current_frame`].
-pub fn matching_frame(plan: &BackrunPlan) -> MeasurementContext {
+pub const fn matching_frame(plan: &BackrunPlan) -> MeasurementContext {
     MeasurementContext {
         parent_hash: plan.parent_hash,
         block_number: plan.block_number,

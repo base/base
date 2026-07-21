@@ -104,9 +104,41 @@ impl core::fmt::Display for SignerError {
 
 impl core::error::Error for SignerError {}
 
+/// The raw EIP-2718 bytes of a real-signed EIP-1559 envelope. Carries NO secret —
+/// only the encoded signed transaction. Produced by [`sign_with_key`].
+pub(crate) struct SignedRaw {
+    /// The EIP-2718 (`0x02`) signed envelope bytes.
+    pub raw: Vec<u8>,
+}
+
+/// Behavior-preserving signer core (extracted from
+/// [`build_and_sign_ephemeral_atomic_tx`]): compute the EIP-1559 signature hash,
+/// sign it once with `key`, assemble the recoverable signature, and EIP-2718
+/// encode the signed envelope. Byte-identical to the pre-extraction inline path.
+///
+/// Shared by the ephemeral throwaway path (`key = SigningKey::random`) and the
+/// arm custody path (`key` = the loaded hot-wallet key, `arm/custody.rs`). Takes a
+/// borrowed `&SigningKey` and returns no secret; the key never escapes.
+pub(crate) fn sign_with_key(
+    key: &SigningKey,
+    unsigned: &TxEip1559,
+) -> Result<SignedRaw, SignerError> {
+    let signature_hash = unsigned.signature_hash();
+    let (signature, recovery_id) =
+        key.sign_prehash_recoverable(signature_hash.as_slice()).map_err(|_| SignerError::Sign)?;
+    let signature_bytes = signature.to_bytes();
+    let alloy_signature = Signature::new(
+        U256::from_be_slice(&signature_bytes[..32]),
+        U256::from_be_slice(&signature_bytes[32..]),
+        recovery_id.is_y_odd(),
+    );
+    let raw = unsigned.clone().into_signed(alloy_signature).encoded_2718();
+    Ok(SignedRaw { raw })
+}
+
 /// Derive the Ethereum address of a k256 verifying key (keccak of the
 /// uncompressed public key, low 20 bytes).
-fn address_from_verifying_key(verifying_key: &k256::ecdsa::VerifyingKey) -> Address {
+pub(crate) fn address_from_verifying_key(verifying_key: &k256::ecdsa::VerifyingKey) -> Address {
     let encoded = verifying_key.to_encoded_point(false);
     // Uncompressed SEC1 point: 0x04 || X(32) || Y(32); hash the 64-byte body.
     let hash = keccak256(&encoded.as_bytes()[1..]);
@@ -127,17 +159,7 @@ where
     let signer_address = address_from_verifying_key(signing_key.verifying_key());
     let unsigned_tx = factory(signer_address);
 
-    let signature_hash = unsigned_tx.signature_hash();
-    let (signature, recovery_id) = signing_key
-        .sign_prehash_recoverable(signature_hash.as_slice())
-        .map_err(|_| SignerError::Sign)?;
-    let signature_bytes = signature.to_bytes();
-    let alloy_signature = Signature::new(
-        U256::from_be_slice(&signature_bytes[..32]),
-        U256::from_be_slice(&signature_bytes[32..]),
-        recovery_id.is_y_odd(),
-    );
-    let raw_backrun = unsigned_tx.clone().into_signed(alloy_signature).encoded_2718();
+    let SignedRaw { raw: raw_backrun } = sign_with_key(&signing_key, &unsigned_tx)?;
 
     let verification = verify_ephemeral_signed_tx(&unsigned_tx, &raw_backrun, signer_address)?;
     Ok(EphemeralSignedTx { signer_address, raw_backrun, verification })

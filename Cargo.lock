@@ -13125,7 +13125,11 @@ dependencies = [
  "base-mev-trader",
  "k256",
  "rand 0.8.6",
+ "redb",
+ "reqwest 0.13.4",
  "serde_json",
+ "syn 2.0.117",
+ "zeroize",
 ]
 
 [[package]]

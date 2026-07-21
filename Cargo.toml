@@ -531,6 +531,7 @@ blake3 = "1.8"
 # misc
 snap = "1"
 redb = "2"
+zeroize = "1"
 hex = "0.4"
 imbl = "7.0.0"
 url = "2.5"
