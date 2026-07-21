@@ -9,7 +9,7 @@ use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseTransaction, Predeploys};
 use base_common_evm::L1BlockInfo;
-use base_execution_txpool::{BasePooledTx, estimated_da_size::DataAvailabilitySized};
+use base_execution_txpool::{BasePooledTx, GuardMetrics, estimated_da_size::DataAvailabilitySized};
 use reth_basic_payload_builder::{
     BuildArguments, BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour, PayloadBuilder,
     PayloadConfig, is_better_payload,
@@ -721,7 +721,29 @@ where
         let tx_da_limit = self.builder_config.da_config.max_da_tx_size();
         let base_fee = builder.evm_mut().block().basefee();
 
+        let block_timestamp = self.attributes().timestamp();
         while let Some(tx) = best_txs.next(()) {
+            if self.builder_config.manifest_precheck_enabled
+                && let Some(manifest) = tx.watch_manifest()
+                && let Err(stale) = manifest.revalidate(builder.evm_mut().db_mut(), block_timestamp)
+            {
+                trace!(
+                    target: "payload_builder",
+                    tx_hash = ?tx.hash(),
+                    cause = stale.cause(),
+                    "skipping EIP-8130 transaction with stale authorization manifest"
+                );
+                GuardMetrics::record_builder_precheck_drop(&stale);
+                // Nonce-free replay-ID entries are independent. The upstream
+                // payload adapter invalidates by sender (not by replay ID), so
+                // marking one would suppress unrelated entries from this sender.
+                // This transaction has already been consumed from the iterator.
+                if tx.eip8130_replay_id().is_none() {
+                    best_txs.mark_invalid(tx.sender(), tx.nonce());
+                }
+                continue;
+            }
+
             let tx_da_size = tx.estimated_da_size();
             let tx = tx.into_consensus();
 

@@ -16,6 +16,9 @@ pub use guard::{
 mod invalidation;
 pub use invalidation::{InvalidationIndex, InvalidationKey, WatchSet};
 
+mod manifest;
+pub use manifest::{ConfigSlot, ManifestStale, WatchManifest};
+
 mod limits;
 pub use limits::{InflightCounters, PayerBook};
 
@@ -64,6 +67,6 @@ pub use wire::ValidatedTransaction;
 mod two_d_nonce_pool;
 
 mod metrics;
-pub use metrics::GuardMetrics;
+pub use metrics::{GuardMetrics, ValidatorMetrics};
 
 pub mod estimated_da_size;

@@ -71,6 +71,7 @@ impl SequencerCommand {
         let builder_config = builder.into_builder_config(Arc::clone(&metering_provider))?;
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
+        let manifest_precheck_enabled = builder_config.manifest_precheck_enabled;
 
         CliRunner::try_default_runtime()?.run_command_until_exit(|ctx| async move {
             rollup_args
@@ -101,6 +102,7 @@ impl SequencerCommand {
             let mut runner = BaseNodeRunner::new(rollup_args.clone())
                 .with_da_config(da_config)
                 .with_gas_limit_config(gas_limit_config)
+                .with_manifest_precheck_enabled(manifest_precheck_enabled)
                 .with_service_builder(FlashblocksServiceBuilder(builder_config));
             runner.install_ext::<MeteringStoreExtension>(metering_provider);
             runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig { sequencer_rpc });

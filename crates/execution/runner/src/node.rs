@@ -24,7 +24,7 @@ use reth_rpc_api::eth::RpcTypes;
 use crate::{BaseAddOns, BaseAddOnsBuilder};
 
 /// Type configuration for a regular Base node.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct BaseNode {
     /// Additional Base args
@@ -40,6 +40,15 @@ pub struct BaseNode {
     /// Used to control the gas limit of the blocks produced by the payload builder (configured by the
     /// batcher via the `miner_` api)
     pub gas_limit_config: GasLimitConfig,
+    /// Whether to drop positively stale EIP-8130 transactions using their
+    /// captured authorization manifest before execution.
+    pub manifest_precheck_enabled: bool,
+}
+
+impl Default for BaseNode {
+    fn default() -> Self {
+        Self::new(RollupArgs::default())
+    }
 }
 
 impl BaseNode {
@@ -49,6 +58,7 @@ impl BaseNode {
             args,
             da_config: BaseDAConfig::default(),
             gas_limit_config: GasLimitConfig::default(),
+            manifest_precheck_enabled: true,
         }
     }
 
@@ -61,6 +71,12 @@ impl BaseNode {
     /// Configure the gas limit configuration for the payload builder.
     pub fn with_gas_limit_config(mut self, gas_limit_config: GasLimitConfig) -> Self {
         self.gas_limit_config = gas_limit_config;
+        self
+    }
+
+    /// Configure whether EIP-8130 authorization manifests are checked before execution.
+    pub const fn with_manifest_precheck_enabled(mut self, enabled: bool) -> Self {
+        self.manifest_precheck_enabled = enabled;
         self
     }
 
@@ -95,7 +111,8 @@ impl BaseNode {
             .payload(BasicPayloadServiceBuilder::new(
                 BasePayloadBuilder::new(compute_pending_block)
                     .with_da_config(self.da_config.clone())
-                    .with_gas_limit_config(self.gas_limit_config.clone()),
+                    .with_gas_limit_config(self.gas_limit_config.clone())
+                    .with_manifest_precheck_enabled(self.manifest_precheck_enabled),
             ))
             .network(BaseNetworkBuilder::new(disable_txpool_gossip, !discovery_v4))
             .consensus(BaseConsensusBuilder::default())

@@ -6,6 +6,7 @@ use std::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
+    time::Instant,
 };
 
 use alloy_consensus::{BlockHeader, Transaction, constants::KECCAK_EMPTY};
@@ -48,7 +49,10 @@ use revm::{
     state::{AccountInfo, Bytecode},
 };
 
-use crate::{BasePooledTx, InvalidationKey, LimitClass, WatchSet};
+use crate::{
+    BasePooledTx, ConfigSlot, InvalidationKey, LimitClass, ValidatorMetrics, WatchManifest,
+    WatchSet,
+};
 
 /// Base-specific transaction pool validation errors.
 #[derive(Debug, thiserror::Error)]
@@ -91,6 +95,8 @@ struct Eip8130ValidationState {
     payer_locked: bool,
     payer_trusted: bool,
     payer_max_cost: U256,
+    /// Authorization reads and predicates used for build-time revalidation.
+    manifest: WatchManifest,
 }
 
 const LIMIT_CLASS_CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(100_000).unwrap();
@@ -388,7 +394,8 @@ struct OverlayPrecompileStorage<'a> {
     inner: StateProviderPrecompileStorage<'a>,
     storage: BTreeMap<(Address, U256), U256>,
     transient: BTreeMap<(Address, U256), U256>,
-    reads: BTreeSet<(Address, U256)>,
+    /// First base-state value read from each slot during authorization.
+    reads: BTreeMap<(Address, U256), U256>,
     code_reads: BTreeSet<Address>,
 }
 
@@ -398,9 +405,16 @@ impl<'a> OverlayPrecompileStorage<'a> {
             inner,
             storage: BTreeMap::new(),
             transient: BTreeMap::new(),
-            reads: BTreeSet::new(),
+            reads: BTreeMap::new(),
             code_reads: BTreeSet::new(),
         }
+    }
+
+    fn take_reads(&mut self) -> Vec<ConfigSlot> {
+        core::mem::take(&mut self.reads)
+            .into_iter()
+            .map(|((address, slot), expected)| ConfigSlot { address, slot, expected })
+            .collect()
     }
 }
 
@@ -466,7 +480,7 @@ impl PrecompileStorageProvider for OverlayPrecompileStorage<'_> {
             return Ok(*value);
         }
         let value = self.inner.sload(address, key)?;
-        self.reads.insert((address, key));
+        self.reads.entry((address, key)).or_insert(value);
         Ok(value)
     }
 
@@ -827,6 +841,19 @@ where
         transaction: Tx,
         state: &mut Option<Box<dyn AccountInfoReader + Send>>,
     ) -> TransactionValidationOutcome<Tx> {
+        let kind = if transaction.as_eip8130().is_some() { "eip8130" } else { "standard" };
+        let start = Instant::now();
+        let outcome = self.validate_one_with_state_inner(origin, transaction, state);
+        ValidatorMetrics::validate_seconds(kind).record(start.elapsed().as_secs_f64());
+        outcome
+    }
+
+    fn validate_one_with_state_inner(
+        &self,
+        origin: TransactionOrigin,
+        transaction: Tx,
+        state: &mut Option<Box<dyn AccountInfoReader + Send>>,
+    ) -> TransactionValidationOutcome<Tx> {
         if transaction.is_eip4844() {
             return TransactionValidationOutcome::Invalid(
                 transaction,
@@ -847,6 +874,7 @@ where
             let propagate =
                 matches!(origin, TransactionOrigin::External | TransactionOrigin::Local);
             transaction.set_watch_set(state.watch_set.clone());
+            transaction.set_watch_manifest(state.manifest.clone());
             transaction.set_limit_class(LimitClass {
                 sender: state.sender,
                 payer: state.payer,
@@ -869,6 +897,38 @@ where
         }
         let outcome = self.inner.validate_one_with_state(origin, transaction, state);
         self.apply_base_checks(outcome, 0)
+    }
+
+    /// Returns a low-cardinality sender authenticator label for metrics.
+    fn sender_sig_type(signed: &Eip8130Signed) -> &'static str {
+        if signed.explicit_sender().is_none() {
+            return "k1";
+        }
+        Self::classify_authenticator(signed.sender_auth())
+    }
+
+    fn classify_authenticator(auth: &[u8]) -> &'static str {
+        let Some(selector) = auth.get(..20).map(Address::from_slice) else {
+            return "other";
+        };
+        if selector == Eip8130Constants::K1_AUTHENTICATOR {
+            "k1"
+        } else if selector == Eip8130Contracts::P256_AUTHENTICATOR {
+            "p256"
+        } else if selector == Eip8130Contracts::WEBAUTHN_AUTHENTICATOR {
+            "passkey"
+        } else if selector == Eip8130Contracts::DELEGATE_AUTHENTICATOR {
+            match auth.get(40..60).map(Address::from_slice) {
+                Some(nested) if nested == Eip8130Constants::K1_AUTHENTICATOR => "delegate-k1",
+                Some(nested) if nested == Eip8130Contracts::P256_AUTHENTICATOR => "delegate-p256",
+                Some(nested) if nested == Eip8130Contracts::WEBAUTHN_AUTHENTICATOR => {
+                    "delegate-passkey"
+                }
+                _ => "delegate",
+            }
+        } else {
+            "other"
+        }
     }
 
     /// Runs full EIP-8130 admission checks that require account/precompile state:
@@ -899,37 +959,40 @@ where
             local_chain_id,
             now,
         ));
-        let (sender, payer, sender_actor, is_create, payer_actor) =
-            StorageCtx::enter(&mut storage, |ctx| {
-                let applied = {
-                    let mut account_config = AccountConfigurationStorage::new(ctx);
-                    TransactionAuthorizer::authorize_and_apply(
-                        signed,
-                        &mut account_config,
-                        local_chain_id,
-                        now,
-                    )?
-                };
-                if let Some(delegation) = applied.applied.delegation {
-                    delegation.install(ctx).map_err(TxAuthError::from)?;
-                }
+        let auth_start = Instant::now();
+        let auth_result = StorageCtx::enter(&mut storage, |ctx| {
+            let applied = {
+                let mut account_config = AccountConfigurationStorage::new(ctx);
+                TransactionAuthorizer::authorize_and_apply(
+                    signed,
+                    &mut account_config,
+                    local_chain_id,
+                    now,
+                )?
+            };
+            if let Some(delegation) = applied.applied.delegation {
+                delegation.install(ctx).map_err(TxAuthError::from)?;
+            }
 
-                let sender = applied.actors.sender.account;
-                let payer = applied.actors.payer.map_or(sender, |actor| actor.account);
-                // Thread authoritative applied/actor data through rather than
-                // re-scanning account changes or re-resolving actors below.
-                let is_create = applied.applied.created.is_some();
-                Ok::<_, TxAuthError>((
-                    sender,
-                    payer,
-                    applied.actors.sender.resolved,
-                    is_create,
-                    applied.actors.payer.map(|actor| actor.resolved),
-                ))
-            })
-            .map_err(Self::map_tx_auth_error)?;
-        let authorization_reads = storage.reads.clone();
+            let sender = applied.actors.sender.account;
+            let payer = applied.actors.payer.map_or(sender, |actor| actor.account);
+            // Thread authoritative applied/actor data through rather than
+            // re-scanning account changes or re-resolving actors below.
+            let is_create = applied.applied.created.is_some();
+            Ok::<_, TxAuthError>((
+                sender,
+                payer,
+                applied.actors.sender.resolved,
+                is_create,
+                applied.actors.payer.map(|actor| actor.resolved),
+            ))
+        });
+        ValidatorMetrics::auth_seconds(Self::sender_sig_type(signed))
+            .record(auth_start.elapsed().as_secs_f64());
+        let (sender, payer, sender_actor, is_create, payer_actor) =
+            auth_result.map_err(Self::map_tx_auth_error)?;
         let authorization_code_reads = storage.code_reads.clone();
+        let config_reads = storage.take_reads();
 
         let sender_account = state
             .basic_account(&sender)
@@ -940,6 +1003,9 @@ where
             Self::validate_eip8130_create_freshness(&*state, sender, &sender_account)?;
         }
 
+        // Nonce validity is intentionally checked against canonical state, not
+        // authorization's speculative overlay writes. Those writes are effects
+        // of this transaction and cannot satisfy its own admission nonce.
         let mut storage = StateProviderPrecompileStorage::new(&*state, local_chain_id, now);
         StorageCtx::enter(&mut storage, |ctx| {
             let nonce_storage = NonceManagerStorage::new(ctx);
@@ -1004,17 +1070,15 @@ where
         let payer_auth_charge = U256::from(intrinsic.payer_auth)
             .saturating_mul(U256::from(signed.tx().max_fee_per_gas));
 
-        let effective_expiry = [
-            Self::expiry_or_unbounded(signed.tx().expiry),
-            Self::expiry_or_unbounded(sender_actor.expiry),
-            Self::expiry_or_unbounded(payer_actor.map_or(0, |actor| actor.expiry)),
-        ]
-        .into_iter()
-        .min()
-        .unwrap_or(u64::MAX);
+        let transaction_expiry = Self::expiry_or_unbounded(signed.tx().expiry);
+        let sender_expiry = Self::expiry_or_unbounded(sender_actor.expiry);
+        let payer_expiry = Self::expiry_or_unbounded(payer_actor.map_or(0, |actor| actor.expiry));
+        let effective_expiry =
+            [transaction_expiry, sender_expiry, payer_expiry].into_iter().min().unwrap_or(u64::MAX);
         let mut watch_set = WatchSet::new().watch(InvalidationKey::Balance(payer));
-        for (address, slot) in authorization_reads {
-            watch_set.push(InvalidationKey::Slot { address, slot: B256::from(slot) });
+        for read in &config_reads {
+            watch_set
+                .push(InvalidationKey::Slot { address: read.address, slot: B256::from(read.slot) });
         }
         for address in authorization_code_reads {
             watch_set.push(InvalidationKey::CodeHash(address));
@@ -1088,6 +1152,16 @@ where
         let payer_max_cost = gas_charge
             .saturating_add(additional_fee)
             .saturating_add(if payer == sender { signed.tx().value() } else { U256::ZERO });
+        // Transaction expiry is exclusive (`now < expiry`) while actor expiry
+        // is inclusive (`now <= expiry`). Store the last timestamp at which all
+        // three predicates remain valid so `WatchManifest` can use one boundary.
+        let transaction_valid_through =
+            if signed.tx().expiry == 0 { u64::MAX } else { signed.tx().expiry.saturating_sub(1) };
+        let manifest_expiry = [transaction_valid_through, sender_expiry, payer_expiry]
+            .into_iter()
+            .min()
+            .unwrap_or(u64::MAX);
+        let manifest = WatchManifest::new(config_reads, payer, payer_max_cost, manifest_expiry);
 
         Ok(Eip8130ValidationState {
             sender,
@@ -1103,6 +1177,7 @@ where
             payer_locked,
             payer_trusted,
             payer_max_cost,
+            manifest,
         })
     }
 
@@ -1896,6 +1971,47 @@ mod tests {
             .no_cancun()
             .build(InMemoryBlobStore::default());
         BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
+    }
+
+    #[test]
+    fn classify_authenticator_uses_bounded_labels() {
+        let with = |selector: Address, tail: &[u8]| {
+            let mut blob = selector.as_slice().to_vec();
+            blob.extend_from_slice(tail);
+            blob
+        };
+        assert_eq!(
+            TestValidator::classify_authenticator(&with(
+                Eip8130Constants::K1_AUTHENTICATOR,
+                &[0; 65]
+            )),
+            "k1"
+        );
+        assert_eq!(
+            TestValidator::classify_authenticator(&with(
+                Eip8130Contracts::P256_AUTHENTICATOR,
+                &[0; 129]
+            )),
+            "p256"
+        );
+        assert_eq!(
+            TestValidator::classify_authenticator(&with(
+                Eip8130Contracts::WEBAUTHN_AUTHENTICATOR,
+                &[0; 8]
+            )),
+            "passkey"
+        );
+
+        let mut delegate = Eip8130Contracts::DELEGATE_AUTHENTICATOR.as_slice().to_vec();
+        delegate.extend_from_slice(&[0xbb; 20]);
+        delegate.extend_from_slice(Eip8130Contracts::WEBAUTHN_AUTHENTICATOR.as_slice());
+        assert_eq!(TestValidator::classify_authenticator(&delegate), "delegate-passkey");
+        assert_eq!(TestValidator::classify_authenticator(&[0; 10]), "other");
+    }
+
+    #[test]
+    fn sender_sig_type_identifies_eoa_path_as_k1() {
+        assert_eq!(TestValidator::sender_sig_type(&sign_eoa_eip8130(minimal_valid_eoa_tx())), "k1");
     }
 
     /// Returns the chain id the [`build_test_validator`] is configured against.
@@ -2892,6 +3008,44 @@ mod tests {
 
         assert!(!additional_fees.is_zero(), "fixture must charge L1/operator fees");
         assert_eq!(state.payer_max_cost, gas_charge.saturating_add(additional_fees));
+        assert_eq!(state.manifest.payer_max_cost(), state.payer_max_cost);
+    }
+
+    #[test]
+    fn nonce_free_manifest_uses_exclusive_transaction_expiry() {
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().cobalt_activated().build());
+        let signer = PrivateKeySigner::random();
+        let now = 100;
+        let expiry = now + Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW;
+        let tx = TxEip8130 {
+            nonce_key: Eip8130Constants::NONCE_KEY_MAX,
+            nonce_sequence: 0,
+            expiry,
+            ..minimal_valid_eoa_tx()
+        };
+        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let signed =
+            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+
+        let client = MockEthProvider::<BasePrimitives>::new()
+            .with_chain_spec(Arc::clone(&chain_spec))
+            .with_genesis_block();
+        client.add_account(
+            signer.address(),
+            ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64)),
+        );
+        let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
+        let inner = EthTransactionValidatorBuilder::new(client, evm_config)
+            .no_shanghai()
+            .no_cancun()
+            .build(InMemoryBlobStore::default());
+        let validator: TestValidator =
+            BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default());
+        let header = alloy_consensus::Header { timestamp: now, ..Default::default() };
+        validator.update_l1_block_info::<_, TxEip1559>(&header, None);
+
+        let state = validator.validate_eip8130_full(&signed).expect("valid nonce-free tx");
+        assert_eq!(state.manifest.effective_expiry(), expiry - 1);
     }
 
     /// Builds a K1 authenticator-prefixed auth blob (`K1(20) || r || s || v`,
@@ -3024,6 +3178,22 @@ mod tests {
             .expect("create + config change must be admitted via the overlay");
         assert_eq!(state.sender, derived);
         assert_eq!(state.payer, derived, "self-paid create");
+        assert!(!state.manifest.has_no_config_slots(), "authorization reads must be captured");
+        assert_eq!(state.manifest.payer(), derived);
+        for read in state.manifest.config_slots() {
+            assert_eq!(
+                read.expected,
+                U256::ZERO,
+                "overlay-buffered writes must not become base-state dependencies"
+            );
+            assert!(
+                state.watch_set.contains(&InvalidationKey::Slot {
+                    address: read.address,
+                    slot: B256::from(read.slot),
+                }),
+                "captured read must also be indexed for invalidation: {read:?}"
+            );
+        }
     }
 
     #[test]
