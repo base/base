@@ -264,6 +264,7 @@ impl HarnessBuilder {
                 unsafe_head_tx: None,
                 conductor: None,
                 sequencer_stopped: false,
+                shadow_sequencer: false,
             },
         );
         let engine_handle = engine_processor.start(engine_actor_request_rx);

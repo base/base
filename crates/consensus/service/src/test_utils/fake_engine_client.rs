@@ -17,12 +17,12 @@ use alloy_rpc_types_engine::{
     ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadEnvelopeV2, ExecutionPayloadInputV2,
     ExecutionPayloadV3, ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus,
 };
-use alloy_rpc_types_eth::{Block, EIP1186AccountProofResponse};
+use alloy_rpc_types_eth::EIP1186AccountProofResponse;
 use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_common_network::{Base, BaseEngineApi};
-use base_common_rpc_types::Transaction as BaseTransaction;
+use base_common_rpc_types::{BaseBlockResponse, Transaction as BaseTransaction};
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
     BaseExecutionPayloadV4, BasePayloadAttributes,
@@ -65,7 +65,7 @@ pub enum EngineClientCall {
 struct FakeEngineClientState {
     calls: Vec<EngineClientCall>,
     l2_block_info_by_tag: HashMap<BlockNumberOrTag, L2BlockInfo>,
-    l2_blocks_by_label: HashMap<BlockNumberOrTag, Block<BaseTransaction>>,
+    l2_blocks_by_label: HashMap<BlockNumberOrTag, BaseBlockResponse<BaseTransaction>>,
     scripted_fcu_v3: VecDeque<ScriptedForkchoiceResponse>,
     scripted_new_payload_v3: VecDeque<PayloadStatus>,
     single_new_payload_v3: Option<PayloadStatus>,
@@ -130,7 +130,11 @@ impl FakeEngineClientHandle {
     }
 
     /// Sets the `l2_block_by_label` response for a specific tag.
-    pub fn set_l2_block_by_label(&self, tag: BlockNumberOrTag, block: Block<BaseTransaction>) {
+    pub fn set_l2_block_by_label(
+        &self,
+        tag: BlockNumberOrTag,
+        block: BaseBlockResponse<BaseTransaction>,
+    ) {
         self.state
             .lock()
             .expect("FakeEngineClient state mutex poisoned")
@@ -196,7 +200,7 @@ impl FakeEngineClient {
     pub async fn set_l2_block_by_label(
         &self,
         tag: BlockNumberOrTag,
-        block: Block<BaseTransaction>,
+        block: BaseBlockResponse<BaseTransaction>,
     ) {
         self.state
             .lock()
@@ -266,7 +270,7 @@ impl EngineClient for FakeEngineClient {
     async fn l2_block_by_label(
         &self,
         numtag: BlockNumberOrTag,
-    ) -> Result<Option<Block<BaseTransaction>>, EngineClientError> {
+    ) -> Result<Option<BaseBlockResponse<BaseTransaction>>, EngineClientError> {
         let mut state = self.state.lock().expect("FakeEngineClient state mutex poisoned");
         state.calls.push(EngineClientCall::L2BlockByLabel(numtag));
         Ok(state.l2_blocks_by_label.get(&numtag).cloned())
