@@ -457,6 +457,12 @@ impl AccountChangeApplier {
     /// three zero-to-zero cold touches), and `false` otherwise. The intrinsic-gas
     /// layer uses that count to discount the conservative three-reset revoke price
     /// down to three cold no-op touches for this common shape.
+    ///
+    /// The authorize/create paths maintain mutual exclusion between the inline
+    /// secp256k1 self key and an explicit non-k1 self actor. This method does not
+    /// rely solely on that coupling: when it revokes an explicit self actor, it
+    /// defensively disables and clears the inline key as well, preserving the
+    /// invariant even if a future caller installs the explicit entry directly.
     pub fn revoke_actor_with_account_state(
         storage: &mut AccountConfigurationStorage<'_>,
         account: Address,

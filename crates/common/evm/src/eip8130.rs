@@ -615,19 +615,6 @@ impl Eip8130Executor {
         Ok(highest)
     }
 
-    /// Resolves the [`Eip8130Outcome`] for [`Self::simulate`]: applies account
-    /// changes, then resolves the acting actor (an optional RPC hint, else the
-    /// account's self-actor) and its policy from the post-apply journal — no
-    /// signature recovery — then auto-delegates and prices intrinsic gas without
-    /// validating or advancing the nonce or checking the payer balance. The
-    /// authentication gas for the sender's (and any payer's) declared
-    /// authenticator is priced from the synthesized auth-blob shape via
-    /// [`IntrinsicGas`]. Storage writes land on the journal; the caller's
-    /// checkpoint reverts them.
-    ///
-    /// `acting_actor_hint` is the optional `senderActorId` from the estimate
-    /// request. Without it, simulation publishes the self-actor (backward
-    /// compatible).
     /// Resolves an actor's `scope` from the post-apply journal without recovering
     /// it from an auth blob: an explicit `actor_config` when set, else the inline
     /// secp256k1 self-key scope from `account_state` for the account's own
@@ -651,6 +638,19 @@ impl Eip8130Executor {
         }
     }
 
+    /// Resolves the [`Eip8130Outcome`] for [`Self::simulate`]: applies account
+    /// changes, then resolves the acting actor (an optional RPC hint, else the
+    /// account's self-actor) and its policy from the post-apply journal — no
+    /// signature recovery — then auto-delegates and prices intrinsic gas without
+    /// validating or advancing the nonce or checking the payer balance. The
+    /// authentication gas for the sender's (and any payer's) declared
+    /// authenticator is priced from the synthesized auth-blob shape via
+    /// [`IntrinsicGas`]. Storage writes land on the journal; the caller's
+    /// checkpoint reverts them.
+    ///
+    /// `acting_actor_hint` is the optional `senderActorId` from the estimate
+    /// request. Without it, simulation publishes the self-actor (backward
+    /// compatible).
     fn simulate_resolve<DB>(
         ctx: &mut BaseContext<DB>,
         signed: &base_common_consensus::Eip8130Signed,
