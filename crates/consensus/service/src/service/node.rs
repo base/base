@@ -49,9 +49,9 @@ pub struct L1Config {
     pub chain_config: Arc<GenesisChainConfig>,
     /// Whether to trust the L1 RPC.
     pub trust_rpc: bool,
-    /// The L1 beacon client.
+    /// The L1 beacon API client.
     pub beacon_client: OnlineBeaconClient,
-    /// The L1 engine provider.
+    /// The L1 execution JSON-RPC provider.
     pub engine_provider: RootProvider,
     /// How frequently to poll L1 for a new finalized block.
     ///
