@@ -211,19 +211,40 @@ where
 
 #[inline]
 fn store_bytes_like<S: StorageOps>(bytes: &[u8], storage: &mut S, base_slot: U256) -> Result<()> {
-    let length = bytes.len();
-    if length <= 31 {
+    let new_length = bytes.len();
+
+    // If the previous value was a long string, zero any tail chunks that the new
+    // (shorter) value will not overwrite. Without this, shrinking writes leave
+    // stale data in raw storage even though typed reads are length-bounded.
+    let old_base = storage.load(base_slot)?;
+    if is_long_string(old_base) {
+        let old_chunks = calc_chunks(calc_string_length(old_base, true)?);
+        let new_chunks = if new_length > 31 { calc_chunks(new_length) } else { 0 };
+        if new_chunks < old_chunks {
+            let slot_start = calc_data_slot(base_slot);
+            for i in new_chunks..old_chunks {
+                storage.store(
+                    slot_start
+                        .checked_add(U256::from(i))
+                        .ok_or(BasePrecompileError::SlotOverflow)?,
+                    U256::ZERO,
+                )?;
+            }
+        }
+    }
+
+    if new_length <= 31 {
         storage.store(base_slot, encode_short_string(bytes))
     } else {
-        storage.store(base_slot, encode_long_string_length(length))?;
+        storage.store(base_slot, encode_long_string_length(new_length))?;
         let slot_start = calc_data_slot(base_slot);
-        let chunks = calc_chunks(length);
+        let chunks = calc_chunks(new_length);
 
         for i in 0..chunks {
             let slot =
                 slot_start.checked_add(U256::from(i)).ok_or(BasePrecompileError::SlotOverflow)?;
             let chunk_start = i * 32;
-            let chunk_end = (chunk_start + 32).min(length);
+            let chunk_end = (chunk_start + 32).min(new_length);
             let chunk = &bytes[chunk_start..chunk_end];
             let mut chunk_bytes = [0u8; 32];
             chunk_bytes[..chunk.len()].copy_from_slice(chunk);
@@ -457,5 +478,194 @@ mod tests {
                 Ok(())
             }).unwrap();
         }
+    }
+
+    fn raw_load(
+        storage: &mut crate::hashmap::HashMapStorageProvider,
+        address: Address,
+        slot: U256,
+    ) -> U256 {
+        let mut out = U256::ZERO;
+        StorageCtx::enter(storage, |ctx| -> crate::error::Result<()> {
+            out = Slot::<U256>::new(slot, address, ctx).read().unwrap();
+            Ok(())
+        })
+        .unwrap();
+        out
+    }
+
+    #[test]
+    fn test_long_to_short_clears_stale_chunks() {
+        let (mut storage, address) = setup_storage();
+        let base_slot = U256::from(1u64);
+
+        // Write a 64-byte string (2 chunks).
+        StorageCtx::enter(&mut storage, |ctx| -> crate::error::Result<()> {
+            let mut h = BytesLikeHandler::<String>::new(base_slot, address, ctx);
+            h.write("A".repeat(64)).unwrap();
+            Ok(())
+        })
+        .unwrap();
+
+        let data_start = calc_data_slot(base_slot);
+        let chunk0_before = raw_load(&mut storage, address, data_start);
+        let chunk1_before = raw_load(&mut storage, address, data_start + U256::ONE);
+        assert_ne!(chunk0_before, U256::ZERO, "chunk 0 should be populated");
+        assert_ne!(chunk1_before, U256::ZERO, "chunk 1 should be populated before shrink");
+
+        // Overwrite with a short (≤31 byte) string.
+        StorageCtx::enter(&mut storage, |ctx| -> crate::error::Result<()> {
+            let mut h = BytesLikeHandler::<String>::new(base_slot, address, ctx);
+            h.write("short".to_string()).unwrap();
+            Ok(())
+        })
+        .unwrap();
+
+        // Typed read must return the new value.
+        StorageCtx::enter(&mut storage, |ctx| -> crate::error::Result<()> {
+            let h = BytesLikeHandler::<String>::new(base_slot, address, ctx);
+            assert_eq!(h.read().unwrap(), "short");
+            Ok(())
+        })
+        .unwrap();
+
+        // Both old data chunks must be zeroed.
+        assert_eq!(
+            raw_load(&mut storage, address, data_start),
+            U256::ZERO,
+            "chunk 0 must be cleared"
+        );
+        assert_eq!(
+            raw_load(&mut storage, address, data_start + U256::ONE),
+            U256::ZERO,
+            "chunk 1 must be cleared"
+        );
+    }
+
+    #[test]
+    fn test_long_to_shorter_long_clears_tail_chunk() {
+        let (mut storage, address) = setup_storage();
+        let base_slot = U256::from(2u64);
+
+        // Write a 96-byte string (3 chunks).
+        StorageCtx::enter(&mut storage, |ctx| -> crate::error::Result<()> {
+            let mut h = BytesLikeHandler::<String>::new(base_slot, address, ctx);
+            h.write("B".repeat(96)).unwrap();
+            Ok(())
+        })
+        .unwrap();
+
+        let data_start = calc_data_slot(base_slot);
+        let chunk2_before = raw_load(&mut storage, address, data_start + U256::from(2u64));
+        assert_ne!(chunk2_before, U256::ZERO, "chunk 2 must be populated before shrink");
+
+        // Overwrite with a 33-byte string (1 chunk).
+        StorageCtx::enter(&mut storage, |ctx| -> crate::error::Result<()> {
+            let mut h = BytesLikeHandler::<String>::new(base_slot, address, ctx);
+            h.write("C".repeat(32)).unwrap();
+            Ok(())
+        })
+        .unwrap();
+
+        // Typed read must return the new value.
+        StorageCtx::enter(&mut storage, |ctx| -> crate::error::Result<()> {
+            let h = BytesLikeHandler::<String>::new(base_slot, address, ctx);
+            assert_eq!(h.read().unwrap(), "C".repeat(32));
+            Ok(())
+        })
+        .unwrap();
+
+        // Chunk 0 (kept) must be non-zero; chunks 1 and 2 (stale) must be zeroed.
+        assert_ne!(raw_load(&mut storage, address, data_start), U256::ZERO, "chunk 0 must be kept");
+        assert_eq!(
+            raw_load(&mut storage, address, data_start + U256::ONE),
+            U256::ZERO,
+            "chunk 1 must be cleared"
+        );
+        assert_eq!(
+            raw_load(&mut storage, address, data_start + U256::from(2u64)),
+            U256::ZERO,
+            "chunk 2 must be cleared"
+        );
+    }
+
+    #[test]
+    fn test_long_to_empty_clears_all_chunks() {
+        let (mut storage, address) = setup_storage();
+        let base_slot = U256::from(3u64);
+
+        StorageCtx::enter(&mut storage, |ctx| -> crate::error::Result<()> {
+            let mut h = BytesLikeHandler::<String>::new(base_slot, address, ctx);
+            h.write("D".repeat(64)).unwrap();
+            Ok(())
+        })
+        .unwrap();
+
+        StorageCtx::enter(&mut storage, |ctx| -> crate::error::Result<()> {
+            let mut h = BytesLikeHandler::<String>::new(base_slot, address, ctx);
+            h.write(String::new()).unwrap();
+            Ok(())
+        })
+        .unwrap();
+
+        StorageCtx::enter(&mut storage, |ctx| -> crate::error::Result<()> {
+            let h = BytesLikeHandler::<String>::new(base_slot, address, ctx);
+            assert_eq!(h.read().unwrap(), "");
+            Ok(())
+        })
+        .unwrap();
+
+        let data_start = calc_data_slot(base_slot);
+        assert_eq!(
+            raw_load(&mut storage, address, data_start),
+            U256::ZERO,
+            "chunk 0 must be cleared"
+        );
+        assert_eq!(
+            raw_load(&mut storage, address, data_start + U256::ONE),
+            U256::ZERO,
+            "chunk 1 must be cleared"
+        );
+    }
+
+    #[test]
+    fn test_bytes_long_to_short_clears_stale_chunks() {
+        let (mut storage, address) = setup_storage();
+        let base_slot = U256::from(4u64);
+
+        StorageCtx::enter(&mut storage, |ctx| -> crate::error::Result<()> {
+            let mut h = BytesLikeHandler::<Bytes>::new(base_slot, address, ctx);
+            h.write(Bytes::from(vec![0xFFu8; 64])).unwrap();
+            Ok(())
+        })
+        .unwrap();
+
+        let data_start = calc_data_slot(base_slot);
+        assert_ne!(raw_load(&mut storage, address, data_start + U256::ONE), U256::ZERO);
+
+        StorageCtx::enter(&mut storage, |ctx| -> crate::error::Result<()> {
+            let mut h = BytesLikeHandler::<Bytes>::new(base_slot, address, ctx);
+            h.write(Bytes::from(vec![0xAAu8; 4])).unwrap();
+            Ok(())
+        })
+        .unwrap();
+
+        StorageCtx::enter(&mut storage, |ctx| -> crate::error::Result<()> {
+            let h = BytesLikeHandler::<Bytes>::new(base_slot, address, ctx);
+            assert_eq!(h.read().unwrap(), Bytes::from(vec![0xAAu8; 4]));
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(
+            raw_load(&mut storage, address, data_start),
+            U256::ZERO,
+            "chunk 0 must be cleared"
+        );
+        assert_eq!(
+            raw_load(&mut storage, address, data_start + U256::ONE),
+            U256::ZERO,
+            "chunk 1 must be cleared"
+        );
     }
 }
