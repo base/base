@@ -954,7 +954,7 @@ mod runtime_tests {
     #[test]
     fn known_chains_resolve_activation_boundaries() {
         for (chain_id, config) in
-            [(8_453, UpgradeConfig::BASE_MAINNET), (8_4532, UpgradeConfig::BASE_SEPOLIA)]
+            [(8453, UpgradeConfig::BASE_MAINNET), (84532, UpgradeConfig::BASE_SEPOLIA)]
         {
             let mut previous = BaseUpgrade::Bedrock;
 
@@ -991,7 +991,7 @@ mod runtime_tests {
 
     #[test]
     fn far_future_resolves_latest_scheduled_upgrade() {
-        for chain_id in [8_453, 8_4532] {
+        for chain_id in [8453, 84532] {
             assert_eq!(
                 BaseUpgrade::from_chain_and_timestamp(chain_id, u64::MAX),
                 Some(BaseUpgrade::Beryl)
