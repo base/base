@@ -176,6 +176,10 @@ where
 impl<Pool, Client, S> BasePayloadBuilder<Pool, Client, S> {
     /// Substitute the candidate source, consuming `self` and returning a builder that draws its
     /// candidate stream from `candidate_source` instead of the default pool-backed source.
+    ///
+    /// The substitution lives in the returned builder; a discarded return value is almost certainly
+    /// a bug, hence `#[must_use]`.
+    #[must_use]
     pub fn with_candidate_source<S2>(
         self,
         candidate_source: S2,
