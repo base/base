@@ -26,8 +26,11 @@ pub const ANCHOR_DB: &str = "/home/ubuntu/.config/mev-killstate-anchor/epoch-anc
 pub const PATHS_MOUNT_DOMAIN: &[u8; 28] = b"base-mev:p0a:paths-mount:v1\0";
 /// Byte-exact domain for the pre-bootstrap seed authorization digest.
 pub const SEED_AUTH_DOMAIN: &[u8; 35] = b"base-mev:p0a:seed-authorization:v1\0";
-/// P0-A intentionally ships without an owner-pinned identity and must not start production.
-pub const EXPECTED_ANCHOR_IDENTITY: Option<AnchorStoreIdentity> = None;
+/// Owner-reviewed P0-C identity for the provisioned external anchor store.
+pub const EXPECTED_ANCHOR_IDENTITY: Option<AnchorStoreIdentity> = Some(AnchorStoreIdentity::new([
+    0x95, 0x0a, 0xa8, 0x75, 0x18, 0x75, 0x7d, 0x3d, 0x85, 0x05, 0x37, 0x6b, 0xf2, 0xe0, 0x18, 0xdf,
+    0x9b, 0x85, 0xd2, 0xe8, 0xc9, 0x1d, 0x64, 0xa1, 0x4b, 0x66, 0x42, 0x83, 0x42, 0x1a, 0xec, 0x9f,
+]));
 
 #[cfg(any(test, feature = "p0-provisioning"))]
 const PATHS_MOUNT_INPUT_LEN: usize = 181;
