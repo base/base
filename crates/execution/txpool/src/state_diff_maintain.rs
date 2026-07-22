@@ -21,10 +21,13 @@ use crate::AccountStateDiff;
 pub enum InvalidationCause {
     /// A canonical chain reorg. The committed segment omits state changes caused
     /// solely by rolling back the reverted segment, so targeted invalidation is
-    /// not possible. Common in normal operation.
+    /// not possible. Should effectively never happen on Base — a reorg signals
+    /// something has gone seriously wrong upstream, so this label is a strong
+    /// alerting signal.
     Reorg,
     /// A gap in the canonical-state feed (the broadcast stream lagged and
-    /// dropped notifications). Rare, and a signal worth alerting on.
+    /// dropped notifications). Uncommon, but more likely than a [`Self::Reorg`],
+    /// and likewise a signal worth alerting on.
     FeedGap,
 }
 
