@@ -75,8 +75,8 @@ humantime.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
-alloy-consensus.workspace = true
 alloy-signer.workspace = true
+alloy-consensus.workspace = true
 alloy-rpc-types-eth.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 metrics-util = { workspace = true, features = ["debugging"] }
