@@ -35,7 +35,7 @@ use futures::{StreamExt, TryStreamExt, stream};
 
 use crate::{PreimageMap, Result, WitnessError};
 
-/// Number of prior L2 headers available to the EVM `BLOCKHASH` opcode.
+/// Minimum number of prior L2 headers available to the EVM `BLOCKHASH` opcode.
 // Increase `l2_lookback` if span-batch overlap needs older blocks.
 pub const L2_HEADER_LOOKBACK: u64 = 256;
 
@@ -90,7 +90,7 @@ pub struct WitnessGenerator {
     pub providers: WitnessProviders,
     /// Maximum concurrent block jobs.
     pub concurrency: NonZeroUsize,
-    /// Number of L2 blocks fetched before the agreed head for history reads.
+    /// Minimum number of L2 blocks fetched before the agreed head for history reads.
     pub l2_lookback: u64,
 }
 
@@ -112,7 +112,7 @@ impl WitnessGenerator {
         self
     }
 
-    /// Overrides the L2 history fetched before the agreed head.
+    /// Overrides the minimum L2 history fetched before the agreed head.
     pub const fn with_l2_lookback(mut self, l2_lookback: u64) -> Self {
         self.l2_lookback = l2_lookback;
         self
@@ -130,23 +130,8 @@ impl WitnessGenerator {
             });
         }
 
-        let agreed_consensus = agreed_block
-            .clone()
-            .map_header(|header| header.into_inner())
-            .into_consensus()
-            .map_transactions(|tx| tx.inner.inner.into_inner());
-        let safe_head = L2BlockInfo::from_block_and_genesis(
-            &agreed_consensus,
-            &self.config.rollup_config.genesis,
-        )
-        .map_err(|error| WitnessError::Encoding(error.to_string()))?;
-        let channel_timeout =
-            self.config.rollup_config.channel_timeout(safe_head.block_info.timestamp);
-        let l1_start = safe_head
-            .l1_origin
-            .number
-            .saturating_sub(channel_timeout)
-            .max(self.config.rollup_config.genesis.l1.number);
+        let safe_head = self.l2_block_info(agreed_block.clone())?;
+        let (reset_l2_start, l1_start) = self.find_l2_reset_start(&safe_head).await?;
         let l1_end = self.config.request.l1_head_number;
         if l1_start > l1_end {
             return Err(WitnessError::InvalidL1Ancestry(format!(
@@ -154,9 +139,12 @@ impl WitnessGenerator {
             )));
         }
 
-        let l2_start = agreed_number
-            .saturating_sub(self.l2_lookback)
-            .max(self.config.rollup_config.genesis.l2.number);
+        let l2_start = Self::l2_support_start(
+            reset_l2_start,
+            agreed_number,
+            self.l2_lookback,
+            self.config.rollup_config.genesis.l2.number,
+        );
         let (l2_chunks, l1_chunks, output_chunk) = tokio::try_join!(
             self.fetch_l2_range(
                 l2_start,
@@ -209,6 +197,74 @@ impl WitnessGenerator {
             });
         }
         Ok(block)
+    }
+
+    /// Returns whether an L2 block is old enough to anchor the derivation pipeline reset.
+    pub const fn is_initial_reset_anchor(
+        l1_origin_number: u64,
+        safe_l1_origin_number: u64,
+        channel_timeout: u64,
+    ) -> bool {
+        l1_origin_number.saturating_add(channel_timeout) <= safe_l1_origin_number
+    }
+
+    /// Finds the L2 reset anchor and its L1 origin for the agreed safe head.
+    ///
+    /// L1 origins are monotonic on the canonical L2 chain, so this only probes logarithmically
+    /// many blocks before fetching the complete support range.
+    pub async fn find_l2_reset_start(&self, safe_head: &L2BlockInfo) -> Result<(u64, u64)> {
+        let l1_origin_timestamp_lower_bound = safe_head.block_info.timestamp.saturating_sub(
+            self.config.rollup_config.max_sequencer_drift(safe_head.block_info.timestamp),
+        );
+        let channel_timeout =
+            self.config.rollup_config.channel_timeout(l1_origin_timestamp_lower_bound);
+        let l2_genesis = self.config.rollup_config.genesis.l2.number;
+        let genesis = self.fetch_l2_block_info(l2_genesis).await?;
+        let mut reset_start = (l2_genesis, genesis.l1_origin.number);
+        if !Self::is_initial_reset_anchor(
+            genesis.l1_origin.number,
+            safe_head.l1_origin.number,
+            channel_timeout,
+        ) {
+            return Ok(reset_start);
+        }
+
+        let mut lower = l2_genesis.saturating_add(1);
+        let mut upper = safe_head.block_info.number;
+
+        while lower <= upper {
+            let number = lower + (upper - lower) / 2;
+            let block = if number == safe_head.block_info.number {
+                *safe_head
+            } else {
+                self.fetch_l2_block_info(number).await?
+            };
+            if Self::is_initial_reset_anchor(
+                block.l1_origin.number,
+                safe_head.l1_origin.number,
+                channel_timeout,
+            ) {
+                reset_start = (number, block.l1_origin.number);
+                if number == upper {
+                    break;
+                }
+                lower = number + 1;
+            } else {
+                upper = number - 1;
+            }
+        }
+
+        Ok(reset_start)
+    }
+
+    /// Selects the earliest L2 block required by reset recovery and `BLOCKHASH` reads.
+    pub fn l2_support_start(
+        reset_start: u64,
+        agreed: u64,
+        l2_lookback: u64,
+        l2_genesis: u64,
+    ) -> u64 {
+        reset_start.min(agreed.saturating_sub(l2_lookback)).max(l2_genesis)
     }
 
     /// Fetches an L2 range and its execution witnesses with bounded concurrency.
@@ -324,18 +380,7 @@ impl WitnessGenerator {
         number: u64,
         execute: bool,
     ) -> Result<(u64, B256, B256, PreimageMap)> {
-        let block = self
-            .providers
-            .l2
-            .get_block_by_number(number.into())
-            .full()
-            .await
-            .map_err(|error| WitnessError::Rpc {
-                operation: "fetch L2 block",
-                error: error.to_string(),
-            })?
-            .ok_or(WitnessError::BlockNotFound { layer: "L2", number })?;
-        self.validate_l2_block(&block, number)?;
+        let block = self.fetch_l2_rpc_block(number).await?;
 
         let hash = block.header.hash;
         let parent_hash = block.header.inner.parent_hash;
@@ -376,6 +421,38 @@ impl WitnessGenerator {
         }
 
         Ok((number, hash, parent_hash, chunk))
+    }
+
+    /// Fetches and validates an L2 block by number.
+    pub async fn fetch_l2_rpc_block(&self, number: u64) -> Result<L2RpcBlock> {
+        let block = self
+            .providers
+            .l2
+            .get_block_by_number(number.into())
+            .full()
+            .await
+            .map_err(|error| WitnessError::Rpc {
+                operation: "fetch L2 block",
+                error: error.to_string(),
+            })?
+            .ok_or(WitnessError::BlockNotFound { layer: "L2", number })?;
+        self.validate_l2_block(&block, number)?;
+        Ok(block)
+    }
+
+    /// Fetches the L1 origin information encoded in an L2 block.
+    pub async fn fetch_l2_block_info(&self, number: u64) -> Result<L2BlockInfo> {
+        self.l2_block_info(self.fetch_l2_rpc_block(number).await?)
+    }
+
+    /// Decodes the L1 origin information encoded in an L2 block.
+    pub fn l2_block_info(&self, block: L2RpcBlock) -> Result<L2BlockInfo> {
+        let block = block
+            .map_header(|header| header.into_inner())
+            .into_consensus()
+            .map_transactions(|tx| tx.inner.inner.into_inner());
+        L2BlockInfo::from_block_and_genesis(&block, &self.config.rollup_config.genesis)
+            .map_err(|error| WitnessError::Encoding(error.to_string()))
     }
 
     /// Validates an L2 RPC block's number and hash.
@@ -777,6 +854,13 @@ mod tests {
             ),
             vec![B256::with_last_byte(10), B256::with_last_byte(11)],
         );
+    }
+
+    #[test]
+    fn l2_support_extends_to_the_initial_reset_anchor() {
+        assert!(WitnessGenerator::is_initial_reset_anchor(950, 1_000, 50));
+        assert!(!WitnessGenerator::is_initial_reset_anchor(951, 1_000, 50));
+        assert_eq!(WitnessGenerator::l2_support_start(700, 1_000, 256, 0), 700);
     }
 
     #[test]
