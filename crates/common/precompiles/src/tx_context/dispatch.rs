@@ -2,7 +2,7 @@
 
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolCall;
-use base_precompile_storage::{IntoPrecompileResult, StorageCtx};
+use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
@@ -27,12 +27,16 @@ impl TxContextStorage<'_> {
     /// the precompile call's base cost. The backing transient read is unmetered,
     /// so no TLOAD opcode charge is exposed to the caller.
     pub fn dispatch(&self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
+        // Transaction-context getters are nonpayable; reject attached ETH first.
+        if !ctx.call_value().is_zero() {
+            return BasePrecompileError::revert(ITransactionContext::NonPayable {})
+                .into_precompile_result(ctx.gas_used(), ctx.state_gas_used());
+        }
         let result = self.inner(calldata).and_then(|output| {
             let words = u64::try_from(output.len().div_ceil(32))
-                .map_err(|_| base_precompile_storage::BasePrecompileError::OutOfGas)?;
-            let output_cost = words
-                .checked_mul(OUTPUT_WORD_GAS)
-                .ok_or(base_precompile_storage::BasePrecompileError::OutOfGas)?;
+                .map_err(|_| BasePrecompileError::OutOfGas)?;
+            let output_cost =
+                words.checked_mul(OUTPUT_WORD_GAS).ok_or(BasePrecompileError::OutOfGas)?;
             ctx.deduct_gas(output_cost)?;
             Ok(output)
         });
@@ -62,8 +66,8 @@ impl TxContextStorage<'_> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, B256, address, b256};
-    use alloy_sol_types::SolCall;
+    use alloy_primitives::{Address, B256, Bytes, U256, address, b256};
+    use alloy_sol_types::{SolCall, SolError};
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
     use crate::{ITransactionContext, TxContextStorage};
@@ -163,6 +167,21 @@ mod tests {
             ITransactionContext::getTransactionPayerCall::abi_decode_returns(&payer).unwrap(),
             ORIGIN
         );
+    }
+
+    #[test]
+    fn dispatch_rejects_call_with_nonzero_value() {
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_call_value(U256::from(1u64));
+        let calldata = ITransactionContext::getTransactionSenderCall {}.abi_encode();
+
+        let output = StorageCtx::enter(&mut storage, |ctx| {
+            TxContextStorage::new(ctx).dispatch(ctx, &calldata)
+        })
+        .expect("nonzero value should revert, not fail fatally");
+
+        assert!(output.is_revert());
+        assert_eq!(output.bytes, Bytes::from(ITransactionContext::NonPayable {}.abi_encode()));
     }
 
     #[test]

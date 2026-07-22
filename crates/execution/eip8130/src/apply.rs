@@ -88,9 +88,9 @@ pub enum ApplyError {
 
     /// A create entry's initial actors are not strictly ascending by actor id
     /// (rejects duplicates and unsorted input). Mirrors
-    /// `require(initialActors[i].actorId > previousActorId)`.
+    /// `ActorsNotSortedOrDuplicate`.
     #[error("create initial actors must be strictly ascending by actor id")]
-    UnsortedInitialActors,
+    ActorsNotSortedOrDuplicate,
 
     /// A create entry's bytecode exceeds the 0xFFFF deployment limit. Mirrors
     /// `require(n <= 0xFFFF)`.
@@ -579,7 +579,7 @@ impl AccountChangeApplier {
         let mut previous = B256::ZERO;
         for actor in initial_actors {
             if actor.actor_id <= previous {
-                return Err(ApplyError::UnsortedInitialActors);
+                return Err(ApplyError::ActorsNotSortedOrDuplicate);
             }
             previous = actor.actor_id;
             // Scope is verbatim and expiry is forced to 0 at create; `policyData`
@@ -1100,7 +1100,7 @@ mod tests {
             };
             assert_eq!(
                 AccountChangeApplier::apply_create(acc, &unsorted),
-                Err(ApplyError::UnsortedInitialActors)
+                Err(ApplyError::ActorsNotSortedOrDuplicate)
             );
         });
     }

@@ -26,6 +26,7 @@ use base_common_flashblocks::{
 use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{BaseBuiltPayload, BasePayloadBuilderAttributes};
+use base_execution_txpool::AccountStateDiff;
 use base_observability_events::{GlobalTransactionEventWriter, TransactionEventType};
 use eyre::WrapErr as _;
 use reth_basic_payload_builder::BuildOutcome;
@@ -300,7 +301,7 @@ where
         let skip_flashblocks_building = ctx.attributes().no_tx_pool || flashblocks_per_block == 0;
 
         let prev_flashblock_id = self.previous_flashblock_id();
-        let (payload, fb_payload) = build_block(
+        let (payload, fb_payload, state_diff) = build_block(
             &mut state,
             &ctx,
             &mut info,
@@ -329,6 +330,14 @@ where
                 .publish(&fb_payload, ctx.block_number(), 0)
                 .map_err(PayloadBuilderError::other)?;
             self.record_emitted_flashblock(ctx.block_number(), 0);
+            let invalidated = self.pool.invalidate_from_state_diff(&state_diff);
+            if invalidated > 0 {
+                debug!(
+                    target: "payload_builder",
+                    invalidated,
+                    "transactions invalidated after fallback flashblock publication"
+                );
+            }
             BuilderMetrics::flashblock_byte_size_histogram().record(flashblock_byte_size as f64);
             BuilderMetrics::first_flashblock_time_offset()
                 .record(first_flashblock_offset.as_millis() as f64);
@@ -711,7 +720,7 @@ where
                 BuilderMetrics::invalid_built_blocks_count().increment(1);
                 Err(err).wrap_err("failed to build payload")
             }
-            Ok((new_payload, mut fb_payload)) => {
+            Ok((new_payload, mut fb_payload, state_diff)) => {
                 fb_payload.index = flashblock_index;
                 fb_payload.base = None;
 
@@ -756,6 +765,18 @@ where
                         "Payload building complete, channel closed or job cancelled",
                     );
                     return Ok(None);
+                }
+
+                // Invalidate only after the synchronized publish check accepts
+                // this flashblock. An abandoned build must not evict transactions
+                // based on state that never became visible.
+                let invalidated = self.pool.invalidate_from_state_diff(&state_diff);
+                if invalidated > 0 {
+                    debug!(
+                        target: "payload_builder",
+                        invalidated,
+                        "transactions invalidated after flashblock publication"
+                    );
                 }
 
                 // Send to handler outside mutex.
@@ -919,7 +940,7 @@ where
         let start_time = Instant::now();
 
         // Build the final block WITH state root computed
-        let (final_payload, _) = build_block(state, ctx, info, FlashblockId::default(), true)?;
+        let (final_payload, _, _) = build_block(state, ctx, info, FlashblockId::default(), true)?;
 
         ctx.flush_rejected_txs(info);
         self.emit_final_inclusion_events(ctx, &final_payload);
@@ -1086,7 +1107,7 @@ pub(crate) fn build_block<DB, P>(
     info: &mut ExecutionInfo,
     prev_flashblock_id: FlashblockId,
     calculate_state_root: bool,
-) -> Result<(BaseBuiltPayload, FlashblocksPayloadV1), PayloadBuilderError>
+) -> Result<(BaseBuiltPayload, FlashblocksPayloadV1, Vec<AccountStateDiff>), PayloadBuilderError>
 where
     DB: Database<Error = ProviderError> + AsRef<P> + revm::Database,
     P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
@@ -1213,7 +1234,10 @@ where
     let recovered_block =
         RecoveredBlock::new_unhashed(block.clone(), info.executed_senders.clone());
 
-    // Read account balances BEFORE take_bundle() empties the bundle state.
+    // Read the invalidation diff before take_bundle() empties the bundle state.
+    // The builder prunes included transactions itself, so nonce advances are
+    // omitted to avoid evicting valid successors promoted in the same lane.
+    let state_diff = AccountStateDiff::collect_for_intra_block(&state.bundle_state);
     let new_account_balances = state
         .bundle_state
         .state
@@ -1323,6 +1347,7 @@ where
             None,
         ),
         fb_payload,
+        state_diff,
     ))
 }
 
@@ -1385,7 +1410,7 @@ mod tests {
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let mut info = ExecutionInfo::default();
 
-        let (payload, fb_payload) = build_block::<_, NoopProvider>(
+        let (payload, fb_payload, state_diff) = build_block::<_, NoopProvider>(
             &mut state,
             &ctx,
             &mut info,
@@ -1402,6 +1427,7 @@ mod tests {
 
         // The flashblocks payload must reference the same block.
         assert_eq!(fb_payload.diff.block_hash, payload.block().hash(), "hash mismatch");
+        assert!(state_diff.is_empty(), "empty block must produce no invalidation diff");
     }
 
     /// Verify that [`build_block`] exercises the state root calculation path
@@ -1422,7 +1448,7 @@ mod tests {
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let mut info = ExecutionInfo::default();
 
-        let (payload, _fb_payload) = build_block::<_, NoopProvider>(
+        let (payload, _fb_payload, state_diff) = build_block::<_, NoopProvider>(
             &mut state,
             &ctx,
             &mut info,
@@ -1430,6 +1456,8 @@ mod tests {
             true,
         )
         .expect("build_block with state root should succeed");
+
+        assert!(state_diff.is_empty(), "empty block must produce no invalidation diff");
 
         // NoopProvider returns B256::default() for all state root queries,
         // which equals B256::ZERO.

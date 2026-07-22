@@ -70,6 +70,8 @@ pub(crate) async fn launch_rpc_server(
     config: &RpcBuilder,
     module: RpcModule<()>,
 ) -> Result<ServerHandle, std::io::Error> {
+    // SECURITY: This unauthenticated control-plane RPC is internal.
+    // Deployments must restrict it to trusted operators on a private network.
     let middleware = tower::ServiceBuilder::new()
         .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, config.http_timeout))
         .layer(tower::limit::ConcurrencyLimitLayer::new(config.max_concurrent_requests.get()))

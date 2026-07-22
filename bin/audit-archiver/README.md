@@ -2,6 +2,12 @@
 
 Reads audit log events via RPC and archives them to S3.
 
+## Security Model
+
+The unauthenticated RPC and ingest APIs are internal endpoints. Restrict them to
+trusted producers with private-network controls; never expose them publicly. The
+wildcard bind supports container networking.
+
 When `TIPS_AUDIT_POSTGRES_URL` is set, `audit-archiver` also accepts
 transaction observability event batches over HTTP and stores them in Postgres.
 The HTTP ingest endpoint is intended for Vector and accepts newline-delimited

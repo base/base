@@ -40,6 +40,9 @@ pub struct SequencerConfig {
 }
 
 impl SequencerConfig {
+    /// Maximum number of payloads retained for one shadow reconciliation cycle.
+    pub const MAX_SHADOW_BLOCKS_PER_CYCLE: u64 = 300;
+
     /// Returns whether shadow sequencer mode is enabled.
     pub const fn is_shadow_sequencer(&self) -> bool {
         self.shadow_blocks_per_cycle.is_some()

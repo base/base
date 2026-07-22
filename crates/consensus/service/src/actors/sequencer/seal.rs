@@ -97,6 +97,12 @@ impl PayloadSealer {
         Self { envelope, state: SealState::Private, seal_span, started_at: Instant::now() }
     }
 
+    /// Returns whether the engine acknowledged insertion of this sealer's exact payload.
+    pub fn matches_inserted_head(&self, head: L2BlockInfo) -> bool {
+        self.envelope.execution_payload.block_number() == head.block_info.number
+            && self.envelope.execution_payload.block_hash() == head.block_info.hash
+    }
+
     /// Performs one step of the seal pipeline.
     ///
     /// Returns [`SealStepOutcome::Inserted`] when the pipeline is complete.

@@ -42,7 +42,10 @@ impl DerivationEngineClient for QueuedDerivationEngineClient {
 
         info!(target: "derivation", "Sending reset request to engine.");
         self.engine_actor_request_tx
-            .send(EngineActorRequest::ResetRequest(Box::new(ResetRequest { result_tx })))
+            .send(EngineActorRequest::ResetRequest(Box::new(ResetRequest {
+                result_tx,
+                shadow_cycle_coordinated: false,
+            })))
             .await
             .map_err(|_| EngineClientError::RequestError("request channel closed.".to_string()))?;
 

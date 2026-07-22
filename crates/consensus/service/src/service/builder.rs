@@ -8,7 +8,7 @@ use alloy_transport::TransportResult;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_consensus_engine::BaseEngineClient;
-use base_consensus_providers::OnlineBeaconClient;
+use base_consensus_providers::{L1RpcProvider, OnlineBeaconClient};
 use base_consensus_rpc::RpcBuilder;
 use base_upgrade_signal::UpgradeSignalConfig;
 use url::Url;
@@ -208,7 +208,7 @@ impl RollupNodeBuilder {
             chain_config: Arc::new(self.l1_config_builder.chain_config),
             trust_rpc: self.l1_config_builder.trust_rpc,
             beacon_client: l1_beacon,
-            engine_provider: RootProvider::new_http(self.l1_config_builder.rpc_url.clone()),
+            engine_provider: L1RpcProvider::new_http(self.l1_config_builder.rpc_url.clone()),
             finalized_poll_interval,
             verifier_l1_confs: self.l1_config_builder.verifier_l1_confs,
         };

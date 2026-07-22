@@ -14,6 +14,7 @@ workspace = true
 # workspace
 base-metrics.workspace = true
 base-common-genesis.workspace = true
+base-consensus-providers.workspace = true
 base-protocol = {workspace = true, features = ["serde", "std"]}
 
 # alloy
