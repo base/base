@@ -32,6 +32,8 @@ sol! {
     function mint(address to, uint256 amount) external;
     function balanceOf(address account) external view returns (uint256);
     function setReserves(uint256 r0, uint256 r1) external;
+    function lastAmountIn() external view returns (uint256);
+    function lastPaidIn() external view returns (uint256);
 }
 
 fn anvil_bin() -> PathBuf {
@@ -238,6 +240,19 @@ fn balance(rpc: &Rpc, token: Address, account: Address) -> U256 {
     parse_u256(&result)
 }
 
+/// Read the funding amount a faithful mock recorded for its most recent swap:
+/// `lastAmountIn()` on the V2/Aerodrome mock, `lastPaidIn()` on the V3 mock.
+fn pool_recorded(rpc: &Rpc, pool: Address, selector: &[u8]) -> U256 {
+    let result = rpc.call_str(
+        "eth_call",
+        serde_json::json!([{
+            "to": pool.to_string(),
+            "data": hex::encode_prefixed(selector),
+        }, "latest"]),
+    );
+    parse_u256(&result)
+}
+
 fn seed_aerodrome(rpc: &Rpc, pool: Address, reserve0: U256, reserve1: U256) {
     let receipt =
         send(rpc, Some(pool), &setReservesCall { r0: reserve0, r1: reserve1 }.abi_encode());
@@ -427,11 +442,22 @@ fn r61_manifest_drives_pool_and_adapter_funding_oracle() {
     );
     assert_eq!(balance(&rpc, token, aero_adapter), U256::ZERO, "Aerodrome adapter retained token");
     assert_eq!(balance(&rpc, token, executor), U256::ZERO, "executor retained intermediate token");
-    assert!(
-        balance(&rpc, BASE_WETH, aero_first) > U256::from(RESERVE),
-        "first pool was not funded"
+    // §5.2 funding invariant, asserted against each faithful mock's OWN recorded
+    // funded amount (`lastAmountIn`) rather than a loose `> RESERVE` balance bound.
+    // The first hop funds its pool with EXACTLY the plan's amount_in; the second hop
+    // forwards EXACTLY the first hop's realized output (a fee/price-adjusted amount,
+    // not amount_in), which equals the token the first pool paid out.
+    assert_eq!(
+        pool_recorded(&rpc, aero_first, &lastAmountInCall {}.abi_encode()),
+        U256::from(AMOUNT_IN),
+        "first Aerodrome pool must record exactly AMOUNT_IN funded"
     );
-    assert!(balance(&rpc, token, aero_second) > U256::from(RESERVE), "second pool was not funded");
+    let aero_hop0_out = U256::from(2 * RESERVE) - balance(&rpc, token, aero_first);
+    assert_eq!(
+        pool_recorded(&rpc, aero_second, &lastAmountInCall {}.abi_encode()),
+        aero_hop0_out,
+        "second Aerodrome pool must record exactly the first hop's forwarded output"
+    );
 
     let adapter_funded = calldata_for(
         [ExactProtocol::UniswapV3, ExactProtocol::UniswapV3],
@@ -455,13 +481,17 @@ fn r61_manifest_drives_pool_and_adapter_funding_oracle() {
         U256::ZERO,
         "V3 left intermediate token on executor"
     );
-    assert!(
-        balance(&rpc, BASE_WETH, v3_first) > U256::from(RESERVE),
-        "first V3 callback pool did not receive adapter-funded WETH"
+    // Same §5.2 invariant for the V3 callback convention, via `lastPaidIn`.
+    assert_eq!(
+        pool_recorded(&rpc, v3_first, &lastPaidInCall {}.abi_encode()),
+        U256::from(AMOUNT_IN),
+        "first V3 callback pool must record exactly AMOUNT_IN paid in"
     );
-    assert!(
-        balance(&rpc, token, v3_second) > U256::from(RESERVE),
-        "second V3 callback pool did not receive adapter-funded token"
+    let v3_hop0_out = U256::from(2 * RESERVE) - balance(&rpc, token, v3_first);
+    assert_eq!(
+        pool_recorded(&rpc, v3_second, &lastPaidInCall {}.abi_encode()),
+        v3_hop0_out,
+        "second V3 callback pool must record exactly the first hop's forwarded output"
     );
 
     // Adversarial funding matrix: the WRONG fundingTarget must revert atomically
