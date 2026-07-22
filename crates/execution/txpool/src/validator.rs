@@ -1,6 +1,6 @@
 use std::{
     any::Any,
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     num::NonZeroUsize,
     sync::{
         Arc,
@@ -657,6 +657,13 @@ pub struct BaseTransactionValidator<Client, Tx, Evm> {
     /// L2 block.
     require_l1_data_gas_fee: bool,
     trusted_delegation_targets: Arc<AddressSet>,
+    /// Accepted account code hashes, derived from `trusted_delegation_targets`.
+    ///
+    /// A high-rate payer is trusted iff its on-chain code hash exactly equals the
+    /// canonical immutable ERC-1167 minimal-proxy runtime for one of the trusted
+    /// implementations. Precomputed so classification is an O(1) code-hash lookup
+    /// with no code fetch or bytecode parsing.
+    trusted_proxy_code_hashes: Arc<HashSet<B256>>,
     limit_class_cache: Arc<RwLock<LimitClassCache>>,
     limit_class_cache_generation: Arc<AtomicU64>,
 }
@@ -718,6 +725,15 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
         targets
     }
 
+    /// The accepted account code hashes for the given trusted implementation
+    /// addresses: the canonical ERC-1167 minimal-proxy runtime code hash of each.
+    fn trusted_proxy_code_hashes(targets: &AddressSet) -> HashSet<B256> {
+        targets
+            .iter()
+            .map(|implementation| Eip8130Contracts::erc1167_proxy_code_hash(*implementation))
+            .collect()
+    }
+
     /// Adds trusted wallet implementations used for payer classification.
     pub fn with_additional_trusted_delegation_targets(self, targets: AddressSet) -> Self {
         if targets.is_empty() {
@@ -725,8 +741,10 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
         }
         let mut merged = (*self.trusted_delegation_targets).clone();
         merged.extend(targets);
+        let trusted_proxy_code_hashes = Self::trusted_proxy_code_hashes(&merged);
         Self {
             trusted_delegation_targets: Arc::new(merged),
+            trusted_proxy_code_hashes: Arc::new(trusted_proxy_code_hashes),
             limit_class_cache: Arc::default(),
             limit_class_cache_generation: Arc::default(),
             ..self
@@ -815,11 +833,15 @@ where
         inner: EthTransactionValidator<Client, Tx, Evm>,
         block_info: BaseL1BlockInfo,
     ) -> Self {
+        let trusted_delegation_targets = Self::default_trusted_delegation_targets();
+        let trusted_proxy_code_hashes =
+            Self::trusted_proxy_code_hashes(&trusted_delegation_targets);
         Self {
             inner: Arc::new(inner),
             block_info: Arc::new(block_info),
             require_l1_data_gas_fee: true,
-            trusted_delegation_targets: Arc::new(Self::default_trusted_delegation_targets()),
+            trusted_delegation_targets: Arc::new(trusted_delegation_targets),
+            trusted_proxy_code_hashes: Arc::new(trusted_proxy_code_hashes),
             limit_class_cache: Arc::default(),
             limit_class_cache_generation: Arc::default(),
         }
@@ -1185,7 +1207,6 @@ where
         // — no timed bucket is needed for the trusted dimension.
         let payer_trusted = Self::qualifies_as_high_rate_lock(&payer_status)
             && self.is_high_rate_account(
-                &*state,
                 payer,
                 payer_account.bytecode_hash,
                 classification_generation,
@@ -1342,9 +1363,31 @@ where
         account_state.lock_status(now)
     }
 
+    /// Whether `account` is a trusted high-rate (balance-bounded) payer: its
+    /// on-chain code hash must exactly equal the canonical immutable ERC-1167
+    /// minimal-proxy runtime of a trusted implementation
+    /// ([`Self::trusted_proxy_code_hashes`]).
+    ///
+    /// `bytecode_hash` is the account's code hash the caller already loaded (the
+    /// fee check reads the payer account), so classification is an O(1) code-hash
+    /// set lookup with no extra account read, code fetch, or bytecode parsing.
+    ///
+    /// High-rate payer trust is *balance-bounded*: the mempool reserves against
+    /// the payer's ETH balance and assumes that reservation cannot be pulled out
+    /// from under it. That guarantee only holds if the payer's code — and thus
+    /// the enshrined "block ETH transfers while locked" behavior of the
+    /// high-rate implementation — can never change. Membership of the code hash
+    /// in `trusted_proxy_code_hashes` is exactly that check: it matches only the
+    /// canonical immutable ERC-1167 minimal-proxy runtime (no upgrade slot) of a
+    /// trusted implementation.
+    ///
+    /// An **EIP-7702 delegation** deliberately never qualifies: its code is the
+    /// `0xef0100 ‖ impl` designator, whose hash differs from any proxy runtime,
+    /// and the delegating EOA can broadcast a fresh authorization to re-point or
+    /// clear that code at any time — escaping the lock and draining the balance
+    /// the mempool relied on. Only immutable contract deployments are trusted.
     fn is_high_rate_account(
         &self,
-        state: &dyn StateProvider,
         account: Address,
         bytecode_hash: Option<B256>,
         generation: u64,
@@ -1355,42 +1398,13 @@ where
         if let Some(value) = cached {
             return value;
         }
-        let trusted = match Self::delegation_target(state, bytecode_hash) {
-            Ok(target) => {
-                target.is_some_and(|target| self.trusted_delegation_targets.contains(&target))
-            }
-            Err(error) => {
-                tracing::warn!(
-                    error = %error,
-                    account = %account,
-                    "EIP-8130 trusted delegation classification read failed"
-                );
-                return false;
-            }
-        };
+        let trusted =
+            bytecode_hash.is_some_and(|hash| self.trusted_proxy_code_hashes.contains(&hash));
         let mut cache = self.limit_class_cache.write();
         if generation == self.limit_class_cache_generation() {
             cache.insert_trusted(account, trusted);
         }
         trusted
-    }
-
-    /// Resolves the EIP-7702 delegation target from an account's already-known
-    /// code hash. Takes the `bytecode_hash` the caller has in hand (the fee check
-    /// already reads the payer account) so trust classification does not re-read
-    /// the account info; only the code body itself is fetched, and only when the
-    /// account actually carries code.
-    fn delegation_target(
-        state: &dyn StateProvider,
-        bytecode_hash: Option<B256>,
-    ) -> Result<Option<Address>, reth_storage_api::errors::ProviderError> {
-        let Some(hash) = bytecode_hash else {
-            return Ok(None);
-        };
-        let Some(code) = state.bytecode_by_hash(&hash)? else {
-            return Ok(None);
-        };
-        Ok(code.eip7702_address())
     }
 
     fn validate_eip8130_create_freshness(

@@ -31,11 +31,12 @@ use crate::{
 ///  Because tasks are executed one at a time, they are considered to be atomic operations over the
 /// [`EngineState`], and are given exclusive access to the engine state during execution.
 ///
-/// Tasks within the queue are also considered fallible. If they fail with a temporary error,
-/// they are not popped from the queue, the error is returned, and they are retried on the
-/// next call to [`Engine::drain`]. Tasks that fail with a [`EngineTaskErrorSeverity::Flush`]
-/// error are popped from the queue before the error is returned, so that the derivation
-/// pipeline can be flushed without the offending task being retried in-place.
+/// Tasks within the queue are also considered fallible. If they fail with a temporary or
+/// deferred error, they are not popped from the queue, the error is returned, and they are
+/// retried on the next call to [`Engine::drain`]. Tasks that fail with a
+/// [`EngineTaskErrorSeverity::Flush`] error are popped from the queue before the error is
+/// returned, so that the derivation pipeline can be flushed without the offending task being
+/// retried in-place.
 #[derive(Debug)]
 pub struct Engine<EngineClient_: EngineClient> {
     /// The state of the engine.
@@ -106,6 +107,9 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
                 match severity {
                     EngineTaskErrorSeverity::Temporary => {
                         trace!(target: "engine", error = %err, "Temporary engine error");
+                    }
+                    EngineTaskErrorSeverity::Deferred => {
+                        trace!(target: "engine", error = %err, "Deferred engine error");
                     }
                     EngineTaskErrorSeverity::Critical => {
                         error!(target: "engine", error = %err, "Critical engine error");
@@ -481,6 +485,7 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         {
             match err.severity() {
                 EngineTaskErrorSeverity::Temporary
+                | EngineTaskErrorSeverity::Deferred
                 | EngineTaskErrorSeverity::Flush
                 | EngineTaskErrorSeverity::Reset => {
                     warn!(target: "engine", ?err, "Forkchoice update failed during reset. Trying again...");

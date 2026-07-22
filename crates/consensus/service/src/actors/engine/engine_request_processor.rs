@@ -353,6 +353,10 @@ where
                 trace!(target: "engine", %error, "Temporary engine task error");
                 Ok(ResetOutcome::NotReset)
             }
+            EngineTaskErrorSeverity::Deferred => {
+                trace!(target: "engine", %error, "Deferred engine task error");
+                Ok(ResetOutcome::NotReset)
+            }
         }
     }
 
@@ -1005,7 +1009,7 @@ where
                     }
                     EngineActorRequest::ReconcileShadowRequest(request) => {
                         let ReconcileShadowRequest { shadow_head, result_tx } = *request;
-                        let result = match self.shadow_gate.as_ref() {
+                        let result = match self.shadow_gate.as_mut() {
                             Some(gate) => match gate.prepare(shadow_head) {
                                 Ok(Some(inputs)) => {
                                     self.processor.apply_canonical_inputs(inputs).await

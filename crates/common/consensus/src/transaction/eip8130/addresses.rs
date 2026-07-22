@@ -23,7 +23,7 @@
 //!
 //! [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
 
-use alloy_primitives::{Address, B256, address, b256};
+use alloy_primitives::{Address, B256, address, b256, keccak256};
 
 /// Canonical [EIP-8130] contract addresses and the node authenticator allowlist.
 ///
@@ -153,17 +153,42 @@ impl Eip8130Contracts {
         Self::CANONICAL_AUTHENTICATORS.contains(authenticator)
     }
 
+    /// The 10-byte ERC-1167 minimal-proxy runtime prefix (before the 20-byte
+    /// implementation address).
+    pub const ERC1167_PREFIX: [u8; 10] =
+        [0x36, 0x3d, 0x3d, 0x37, 0x3d, 0x3d, 0x3d, 0x36, 0x3d, 0x73];
+
+    /// The 15-byte ERC-1167 minimal-proxy runtime suffix (after the 20-byte
+    /// implementation address).
+    pub const ERC1167_SUFFIX: [u8; 15] =
+        [0x5a, 0xf4, 0x3d, 0x82, 0x80, 0x3e, 0x90, 0x3d, 0x91, 0x60, 0x2b, 0x57, 0xfd, 0x5b, 0xf3];
+
     /// Builds the ERC-1167 minimal-proxy runtime bytecode for `implementation`.
     #[must_use]
     pub fn erc1167_proxy_runtime(implementation: Address) -> [u8; 45] {
         let mut code = [0u8; 45];
-        code[..10].copy_from_slice(&[0x36, 0x3d, 0x3d, 0x37, 0x3d, 0x3d, 0x3d, 0x36, 0x3d, 0x73]);
+        code[..10].copy_from_slice(&Self::ERC1167_PREFIX);
         code[10..30].copy_from_slice(implementation.as_slice());
-        code[30..].copy_from_slice(&[
-            0x5a, 0xf4, 0x3d, 0x82, 0x80, 0x3e, 0x90, 0x3d, 0x91, 0x60, 0x2b, 0x57, 0xfd, 0x5b,
-            0xf3,
-        ]);
+        code[30..].copy_from_slice(&Self::ERC1167_SUFFIX);
         code
+    }
+
+    /// The account code hash of the canonical ERC-1167 minimal-proxy *runtime*
+    /// for `implementation` — i.e. `keccak256(erc1167_proxy_runtime(impl))`.
+    ///
+    /// This is the immutable, deployment-independent fingerprint used to
+    /// recognize high-rate payer accounts (and other trusted delegations) by
+    /// their on-chain code hash, without fetching or parsing the bytecode. For
+    /// [`Self::CANONICAL_HIGH_RATE_PAYER_ACCOUNT`] it equals
+    /// [`Self::CANONICAL_HIGH_RATE_PAYER_PROXY_CODE_HASH`].
+    ///
+    /// An EIP-7702 delegation (`0xef0100 ‖ impl`) has a different code hash and
+    /// therefore can never match — which is intentional: only immutable proxy
+    /// deployments carry the enshrined "block ETH transfers while locked"
+    /// guarantee the balance-bounded mempool admission relies on.
+    #[must_use]
+    pub fn erc1167_proxy_code_hash(implementation: Address) -> B256 {
+        keccak256(Self::erc1167_proxy_runtime(implementation))
     }
 }
 
@@ -230,5 +255,32 @@ mod tests {
         );
         assert_eq!(runtime.len(), 45);
         assert_eq!(keccak256(runtime), Eip8130Contracts::CANONICAL_HIGH_RATE_PAYER_PROXY_CODE_HASH);
+    }
+
+    #[test]
+    fn erc1167_proxy_code_hash_matches_canonical_and_distinguishes_impls() {
+        // The canonical high-rate payer proxy code hash matches the pinned const.
+        let impl_addr = Eip8130Contracts::CANONICAL_HIGH_RATE_PAYER_ACCOUNT;
+        assert_eq!(
+            Eip8130Contracts::erc1167_proxy_code_hash(impl_addr),
+            Eip8130Contracts::CANONICAL_HIGH_RATE_PAYER_PROXY_CODE_HASH,
+        );
+        // It equals the code hash of the concrete runtime bytecode.
+        let runtime = Eip8130Contracts::erc1167_proxy_runtime(impl_addr);
+        assert_eq!(Eip8130Contracts::erc1167_proxy_code_hash(impl_addr), keccak256(runtime));
+
+        // A different implementation yields a different code hash (the embedded
+        // address changes the runtime, so distinct impls never collide).
+        let other = Eip8130Contracts::DEFAULT_ACCOUNT;
+        assert_ne!(
+            Eip8130Contracts::erc1167_proxy_code_hash(other),
+            Eip8130Contracts::erc1167_proxy_code_hash(impl_addr),
+        );
+
+        // An EIP-7702 designator (`0xef0100 || impl`) hashes to something else,
+        // so a delegated EOA can never match a trusted proxy code hash.
+        let mut eip7702 = vec![0xef, 0x01, 0x00];
+        eip7702.extend_from_slice(impl_addr.as_slice());
+        assert_ne!(keccak256(&eip7702), Eip8130Contracts::erc1167_proxy_code_hash(impl_addr));
     }
 }
