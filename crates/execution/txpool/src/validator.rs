@@ -1,11 +1,12 @@
 use std::{
     any::Any,
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     num::NonZeroUsize,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
+    time::Instant,
 };
 
 use alloy_consensus::{BlockHeader, Transaction, constants::KECCAK_EMPTY};
@@ -14,14 +15,15 @@ use alloy_primitives::{Address, B256, LogData, U256, map::AddressSet};
 use base_common_chains::Upgrades;
 use base_common_consensus::{
     AccountChange, ActorChange, ActorChangeType, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
-    InitialActor,
+    Eip8130TimestampError, InitialActor,
 };
 use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_common_genesis::DaFootprintGasScalarUpdate;
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_eip8130::{
     AccountConfigurationStorage, AccountState, ApplyError, AuthorizeError, FeeCheck, IntrinsicGas,
-    IntrinsicGasInput, NonceError, NonceMode, NonceValidator, TransactionAuthorizer, TxAuthError,
+    IntrinsicGasInput, LockStatus, NonceError, NonceMode, NonceValidator, TransactionAuthorizer,
+    TxAuthError,
 };
 use base_precompile_storage::{
     BasePrecompileError, PrecompileStorageProvider, StorageCtx, validate_loaded_code_presence,
@@ -48,7 +50,10 @@ use revm::{
     state::{AccountInfo, Bytecode},
 };
 
-use crate::{BasePooledTx, InvalidationKey, LimitClass, WatchSet};
+use crate::{
+    BasePooledTx, ConfigSlot, InvalidationKey, LimitClass, ValidatorMetrics, WatchManifest,
+    WatchSet,
+};
 
 /// Base-specific transaction pool validation errors.
 #[derive(Debug, thiserror::Error)]
@@ -91,6 +96,8 @@ struct Eip8130ValidationState {
     payer_locked: bool,
     payer_trusted: bool,
     payer_max_cost: U256,
+    /// Authorization reads and predicates used for build-time revalidation.
+    manifest: WatchManifest,
 }
 
 const LIMIT_CLASS_CACHE_CAPACITY: NonZeroUsize = NonZeroUsize::new(100_000).unwrap();
@@ -119,6 +126,13 @@ impl LimitClassCache {
         self.entries.get(&account).and_then(|entry| entry.1)
     }
 
+    /// Whether the account is cached as a trusted (high-rate) payer, without
+    /// promoting it. Non-promoting so balance-diff bookkeeping cannot bias LRU
+    /// eviction (see [`Self::invalidate_code`]).
+    pub fn is_trusted_cached(&self, account: Address) -> bool {
+        self.entries.peek(&account).is_some_and(|entry| entry.1 == Some(true))
+    }
+
     /// Inserts an account-state classification and removes any reverse slot
     /// belonging to the least-recently-used account evicted by the insertion.
     pub fn insert_account_state(&mut self, account: Address, state: AccountState) {
@@ -145,8 +159,13 @@ impl LimitClassCache {
     }
 
     /// Invalidates an account's trusted-delegation classification.
+    ///
+    /// Uses the non-promoting `peek_mut`: invalidation is driven by every
+    /// canonical state diff, so an account with frequent code churn must not
+    /// promote itself to most-recently-used and displace fresher, fully-valid
+    /// entries. A surviving partially-invalidated entry keeps its recency.
     pub fn invalidate_code(&mut self, account: Address) {
-        let remove = self.entries.get_mut(&account).is_some_and(|entry| {
+        let remove = self.entries.peek_mut(&account).is_some_and(|entry| {
             entry.1 = None;
             entry.0.is_none()
         });
@@ -156,9 +175,13 @@ impl LimitClassCache {
     }
 
     /// Invalidates the account-state classification associated with `slot`.
+    ///
+    /// Uses the non-promoting `peek_mut` for the same reason as
+    /// [`Self::invalidate_code`]: config-slot churn must not bias eviction by
+    /// pinning the affected account at most-recently-used.
     pub fn invalidate_slot(&mut self, slot: &B256) {
         if let Some(account) = self.slots.remove(slot) {
-            let remove = self.entries.get_mut(&account).is_some_and(|entry| {
+            let remove = self.entries.peek_mut(&account).is_some_and(|entry| {
                 entry.0 = None;
                 entry.1.is_none()
             });
@@ -388,7 +411,8 @@ struct OverlayPrecompileStorage<'a> {
     inner: StateProviderPrecompileStorage<'a>,
     storage: BTreeMap<(Address, U256), U256>,
     transient: BTreeMap<(Address, U256), U256>,
-    reads: BTreeSet<(Address, U256)>,
+    /// First base-state value read from each slot during authorization.
+    reads: BTreeMap<(Address, U256), U256>,
     code_reads: BTreeSet<Address>,
 }
 
@@ -398,9 +422,16 @@ impl<'a> OverlayPrecompileStorage<'a> {
             inner,
             storage: BTreeMap::new(),
             transient: BTreeMap::new(),
-            reads: BTreeSet::new(),
+            reads: BTreeMap::new(),
             code_reads: BTreeSet::new(),
         }
+    }
+
+    fn take_reads(&mut self) -> Vec<ConfigSlot> {
+        core::mem::take(&mut self.reads)
+            .into_iter()
+            .map(|((address, slot), expected)| ConfigSlot { address, slot, expected })
+            .collect()
     }
 }
 
@@ -466,7 +497,7 @@ impl PrecompileStorageProvider for OverlayPrecompileStorage<'_> {
             return Ok(*value);
         }
         let value = self.inner.sload(address, key)?;
-        self.reads.insert((address, key));
+        self.reads.entry((address, key)).or_insert(value);
         Ok(value)
     }
 
@@ -626,6 +657,13 @@ pub struct BaseTransactionValidator<Client, Tx, Evm> {
     /// L2 block.
     require_l1_data_gas_fee: bool,
     trusted_delegation_targets: Arc<AddressSet>,
+    /// Accepted account code hashes, derived from `trusted_delegation_targets`.
+    ///
+    /// A high-rate payer is trusted iff its on-chain code hash exactly equals the
+    /// canonical immutable ERC-1167 minimal-proxy runtime for one of the trusted
+    /// implementations. Precomputed so classification is an O(1) code-hash lookup
+    /// with no code fetch or bytecode parsing.
+    trusted_proxy_code_hashes: Arc<HashSet<B256>>,
     limit_class_cache: Arc<RwLock<LimitClassCache>>,
     limit_class_cache_generation: Arc<AtomicU64>,
 }
@@ -687,6 +725,15 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
         targets
     }
 
+    /// The accepted account code hashes for the given trusted implementation
+    /// addresses: the canonical ERC-1167 minimal-proxy runtime code hash of each.
+    fn trusted_proxy_code_hashes(targets: &AddressSet) -> HashSet<B256> {
+        targets
+            .iter()
+            .map(|implementation| Eip8130Contracts::erc1167_proxy_code_hash(*implementation))
+            .collect()
+    }
+
     /// Adds trusted wallet implementations used for payer classification.
     pub fn with_additional_trusted_delegation_targets(self, targets: AddressSet) -> Self {
         if targets.is_empty() {
@@ -694,8 +741,10 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
         }
         let mut merged = (*self.trusted_delegation_targets).clone();
         merged.extend(targets);
+        let trusted_proxy_code_hashes = Self::trusted_proxy_code_hashes(&merged);
         Self {
             trusted_delegation_targets: Arc::new(merged),
+            trusted_proxy_code_hashes: Arc::new(trusted_proxy_code_hashes),
             limit_class_cache: Arc::default(),
             limit_class_cache_generation: Arc::default(),
             ..self
@@ -725,6 +774,22 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
                     changed = true;
                     cache.invalidate_slot(slot);
                 }
+            }
+            // A balance change is not part of the cached classification, but it
+            // seeds a trusted payer's `PayerBook` on first admission.
+            // `on_balance_changed` only corrects payers that already have a book;
+            // a trusted payer with no book yet would otherwise seed it from the
+            // (now stale) validation snapshot. Advance the generation so an
+            // admission whose validation predates this diff re-validates against
+            // the fresh balance.
+            //
+            // Restricted to *known-trusted* payers: only they use the balance
+            // book, and a trusted payer with a pending transaction was just
+            // classified into the cache during that validation. Ordinary balance
+            // churn — the vast majority, and unrelated to any book — must not
+            // advance the generation and bounce unrelated admissions.
+            if diff.balance.is_some() && cache.is_trusted_cached(diff.address) {
+                changed = true;
             }
         }
         if changed {
@@ -768,11 +833,15 @@ where
         inner: EthTransactionValidator<Client, Tx, Evm>,
         block_info: BaseL1BlockInfo,
     ) -> Self {
+        let trusted_delegation_targets = Self::default_trusted_delegation_targets();
+        let trusted_proxy_code_hashes =
+            Self::trusted_proxy_code_hashes(&trusted_delegation_targets);
         Self {
             inner: Arc::new(inner),
             block_info: Arc::new(block_info),
             require_l1_data_gas_fee: true,
-            trusted_delegation_targets: Arc::new(Self::default_trusted_delegation_targets()),
+            trusted_delegation_targets: Arc::new(trusted_delegation_targets),
+            trusted_proxy_code_hashes: Arc::new(trusted_proxy_code_hashes),
             limit_class_cache: Arc::default(),
             limit_class_cache_generation: Arc::default(),
         }
@@ -827,6 +896,19 @@ where
         transaction: Tx,
         state: &mut Option<Box<dyn AccountInfoReader + Send>>,
     ) -> TransactionValidationOutcome<Tx> {
+        let kind = if transaction.as_eip8130().is_some() { "eip8130" } else { "standard" };
+        let start = Instant::now();
+        let outcome = self.validate_one_with_state_inner(origin, transaction, state);
+        ValidatorMetrics::validate_seconds(kind).record(start.elapsed().as_secs_f64());
+        outcome
+    }
+
+    fn validate_one_with_state_inner(
+        &self,
+        origin: TransactionOrigin,
+        transaction: Tx,
+        state: &mut Option<Box<dyn AccountInfoReader + Send>>,
+    ) -> TransactionValidationOutcome<Tx> {
         if transaction.is_eip4844() {
             return TransactionValidationOutcome::Invalid(
                 transaction,
@@ -847,6 +929,7 @@ where
             let propagate =
                 matches!(origin, TransactionOrigin::External | TransactionOrigin::Local);
             transaction.set_watch_set(state.watch_set.clone());
+            transaction.set_watch_manifest(state.manifest.clone());
             transaction.set_limit_class(LimitClass {
                 sender: state.sender,
                 payer: state.payer,
@@ -869,6 +952,38 @@ where
         }
         let outcome = self.inner.validate_one_with_state(origin, transaction, state);
         self.apply_base_checks(outcome, 0)
+    }
+
+    /// Returns a low-cardinality sender authenticator label for metrics.
+    fn sender_sig_type(signed: &Eip8130Signed) -> &'static str {
+        if signed.explicit_sender().is_none() {
+            return "k1";
+        }
+        Self::classify_authenticator(signed.sender_auth())
+    }
+
+    fn classify_authenticator(auth: &[u8]) -> &'static str {
+        let Some(selector) = auth.get(..20).map(Address::from_slice) else {
+            return "other";
+        };
+        if selector == Eip8130Constants::K1_AUTHENTICATOR {
+            "k1"
+        } else if selector == Eip8130Contracts::P256_AUTHENTICATOR {
+            "p256"
+        } else if selector == Eip8130Contracts::WEBAUTHN_AUTHENTICATOR {
+            "passkey"
+        } else if selector == Eip8130Contracts::DELEGATE_AUTHENTICATOR {
+            match auth.get(40..60).map(Address::from_slice) {
+                Some(nested) if nested == Eip8130Constants::K1_AUTHENTICATOR => "delegate-k1",
+                Some(nested) if nested == Eip8130Contracts::P256_AUTHENTICATOR => "delegate-p256",
+                Some(nested) if nested == Eip8130Contracts::WEBAUTHN_AUTHENTICATOR => {
+                    "delegate-passkey"
+                }
+                _ => "delegate",
+            }
+        } else {
+            "other"
+        }
     }
 
     /// Runs full EIP-8130 admission checks that require account/precompile state:
@@ -899,37 +1014,40 @@ where
             local_chain_id,
             now,
         ));
-        let (sender, payer, sender_actor, is_create, payer_actor) =
-            StorageCtx::enter(&mut storage, |ctx| {
-                let applied = {
-                    let mut account_config = AccountConfigurationStorage::new(ctx);
-                    TransactionAuthorizer::authorize_and_apply(
-                        signed,
-                        &mut account_config,
-                        local_chain_id,
-                        now,
-                    )?
-                };
-                if let Some(delegation) = applied.applied.delegation {
-                    delegation.install(ctx).map_err(TxAuthError::from)?;
-                }
+        let auth_start = Instant::now();
+        let auth_result = StorageCtx::enter(&mut storage, |ctx| {
+            let applied = {
+                let mut account_config = AccountConfigurationStorage::new(ctx);
+                TransactionAuthorizer::authorize_and_apply(
+                    signed,
+                    &mut account_config,
+                    local_chain_id,
+                    now,
+                )?
+            };
+            if let Some(delegation) = applied.applied.delegation {
+                delegation.install(ctx).map_err(TxAuthError::from)?;
+            }
 
-                let sender = applied.actors.sender.account;
-                let payer = applied.actors.payer.map_or(sender, |actor| actor.account);
-                // Thread authoritative applied/actor data through rather than
-                // re-scanning account changes or re-resolving actors below.
-                let is_create = applied.applied.created.is_some();
-                Ok::<_, TxAuthError>((
-                    sender,
-                    payer,
-                    applied.actors.sender.resolved,
-                    is_create,
-                    applied.actors.payer.map(|actor| actor.resolved),
-                ))
-            })
-            .map_err(Self::map_tx_auth_error)?;
-        let authorization_reads = storage.reads.clone();
+            let sender = applied.actors.sender.account;
+            let payer = applied.actors.payer.map_or(sender, |actor| actor.account);
+            // Thread authoritative applied/actor data through rather than
+            // re-scanning account changes or re-resolving actors below.
+            let is_create = applied.applied.created.is_some();
+            Ok::<_, TxAuthError>((
+                sender,
+                payer,
+                applied.actors.sender.resolved,
+                is_create,
+                applied.actors.payer.map(|actor| actor.resolved),
+            ))
+        });
+        ValidatorMetrics::auth_seconds(Self::sender_sig_type(signed))
+            .record(auth_start.elapsed().as_secs_f64());
+        let (sender, payer, sender_actor, is_create, payer_actor) =
+            auth_result.map_err(Self::map_tx_auth_error)?;
         let authorization_code_reads = storage.code_reads.clone();
+        let config_reads = storage.take_reads();
 
         let sender_account = state
             .basic_account(&sender)
@@ -940,6 +1058,9 @@ where
             Self::validate_eip8130_create_freshness(&*state, sender, &sender_account)?;
         }
 
+        // Nonce validity is intentionally checked against canonical state, not
+        // authorization's speculative overlay writes. Those writes are effects
+        // of this transaction and cannot satisfy its own admission nonce.
         let mut storage = StateProviderPrecompileStorage::new(&*state, local_chain_id, now);
         StorageCtx::enter(&mut storage, |ctx| {
             let nonce_storage = NonceManagerStorage::new(ctx);
@@ -1004,17 +1125,15 @@ where
         let payer_auth_charge = U256::from(intrinsic.payer_auth)
             .saturating_mul(U256::from(signed.tx().max_fee_per_gas));
 
-        let effective_expiry = [
-            Self::expiry_or_unbounded(signed.tx().expiry),
-            Self::expiry_or_unbounded(sender_actor.expiry),
-            Self::expiry_or_unbounded(payer_actor.map_or(0, |actor| actor.expiry)),
-        ]
-        .into_iter()
-        .min()
-        .unwrap_or(u64::MAX);
+        let transaction_expiry = Self::expiry_or_unbounded(signed.tx().expiry);
+        let sender_expiry = Self::expiry_or_unbounded(sender_actor.expiry);
+        let payer_expiry = Self::expiry_or_unbounded(payer_actor.map_or(0, |actor| actor.expiry));
+        let effective_expiry =
+            [transaction_expiry, sender_expiry, payer_expiry].into_iter().min().unwrap_or(u64::MAX);
         let mut watch_set = WatchSet::new().watch(InvalidationKey::Balance(payer));
-        for (address, slot) in authorization_reads {
-            watch_set.push(InvalidationKey::Slot { address, slot: B256::from(slot) });
+        for read in &config_reads {
+            watch_set
+                .push(InvalidationKey::Slot { address: read.address, slot: B256::from(read.slot) });
         }
         for address in authorization_code_reads {
             watch_set.push(InvalidationKey::CodeHash(address));
@@ -1034,18 +1153,37 @@ where
             });
         }
 
-        let (sender_locked_now, sender_unlocks_at) =
-            self.account_lock(&*state, local_chain_id, now, sender, classification_generation);
-        let (payer_locked_now, payer_unlocks_at) = if payer == sender {
-            (sender_locked_now, sender_unlocks_at)
+        let sender_status = self.account_lock(
+            &*state,
+            local_chain_id,
+            now,
+            sender,
+            classification_generation,
+            Self::prefetched_account_state(&config_reads, sender),
+        );
+        let payer_status = if payer == sender {
+            sender_status
         } else {
-            self.account_lock(&*state, local_chain_id, now, payer, classification_generation)
+            self.account_lock(
+                &*state,
+                local_chain_id,
+                now,
+                payer,
+                classification_generation,
+                Self::prefetched_account_state(&config_reads, payer),
+            )
         };
+        // Only a pending unlock has a knowable timestamp; a hard lock reports
+        // `UNLOCKS_AT_MAX`, which must never surface as a timed expiry-bucket (it
+        // does not unlock on a schedule), so gate on `has_initiated_unlock`.
+        let sender_unlocks_at =
+            sender_status.has_initiated_unlock.then_some(sender_status.unlocks_at);
+        let payer_unlocks_at = payer_status.has_initiated_unlock.then_some(payer_status.unlocks_at);
         let lock_horizon = now.saturating_add(2 * InvalidationKey::EXPIRY_BUCKET_SECS);
-        let sender_locked = sender_locked_now
+        let sender_locked = sender_status.locked
             && sender_unlocks_at.is_none_or(|unlocks_at| unlocks_at > lock_horizon);
-        let payer_locked =
-            payer_locked_now && payer_unlocks_at.is_none_or(|unlocks_at| unlocks_at > lock_horizon);
+        let payer_locked = payer_status.locked
+            && payer_unlocks_at.is_none_or(|unlocks_at| unlocks_at > lock_horizon);
         for (account, locked, unlocks_at) in [
             (sender, sender_locked, sender_unlocks_at),
             (payer, payer != sender && payer_locked, payer_unlocks_at),
@@ -1060,8 +1198,19 @@ where
                 }
             }
         }
-        let payer_trusted =
-            payer_locked && self.is_high_rate_account(&*state, payer, classification_generation);
+        // A high-rate (balance-bounded) payer must be *hard*-locked with an unlock
+        // delay of at least `MIN_HIGH_RATE_PAYER_LOCK_SECS`. A pending unlock or an
+        // unlocked account is never high-rate: once an unlock is initiated the
+        // payer could soon move ETH, so it must not sit in the balance book. The
+        // hard-lock → pending-unlock transition writes the account-state slot, so
+        // the slot watch above drains any already-admitted transactions naturally
+        // — no timed bucket is needed for the trusted dimension.
+        let payer_trusted = Self::qualifies_as_high_rate_lock(&payer_status)
+            && self.is_high_rate_account(
+                payer,
+                payer_account.bytecode_hash,
+                classification_generation,
+            );
         if payer_trusted {
             watch_set.push(InvalidationKey::CodeHash(payer));
         }
@@ -1088,6 +1237,16 @@ where
         let payer_max_cost = gas_charge
             .saturating_add(additional_fee)
             .saturating_add(if payer == sender { signed.tx().value() } else { U256::ZERO });
+        // Transaction expiry is exclusive (`now < expiry`) while actor expiry
+        // is inclusive (`now <= expiry`). Store the last timestamp at which all
+        // three predicates remain valid so `WatchManifest` can use one boundary.
+        let transaction_valid_through =
+            if signed.tx().expiry == 0 { u64::MAX } else { signed.tx().expiry.saturating_sub(1) };
+        let manifest_expiry = [transaction_valid_through, sender_expiry, payer_expiry]
+            .into_iter()
+            .min()
+            .unwrap_or(u64::MAX);
+        let manifest = WatchManifest::new(config_reads, payer, payer_max_cost, manifest_expiry);
 
         Ok(Eip8130ValidationState {
             sender,
@@ -1103,6 +1262,7 @@ where
             payer_locked,
             payer_trusted,
             payer_max_cost,
+            manifest,
         })
     }
 
@@ -1110,8 +1270,44 @@ where
         if expiry == 0 { u64::MAX } else { expiry }
     }
 
+    /// Minimum configured unlock delay (seconds) for a hard-locked payer to
+    /// qualify as a high-rate (balance-bounded) payer. A shorter delay would let
+    /// a payer initiate an unlock and move ETH before admitted transactions can
+    /// be drained, breaking the eth-movement guarantee the balance book relies
+    /// on. One hour gives the pool ample time to react to the unlock-initiation
+    /// state write that demotes the payer.
+    const MIN_HIGH_RATE_PAYER_LOCK_SECS: u64 = 3600;
+
+    /// Whether an account's lock qualifies it as a high-rate (balance-bounded)
+    /// payer: a *hard* lock (`FLAG_LOCKED` set, no pending unlock) whose configured
+    /// unlock delay is at least [`Self::MIN_HIGH_RATE_PAYER_LOCK_SECS`]. A pending
+    /// unlock or an unlocked account never qualifies — see the classification site
+    /// for the eth-movement rationale.
+    fn qualifies_as_high_rate_lock(status: &LockStatus) -> bool {
+        status.locked
+            && !status.has_initiated_unlock
+            && u64::from(status.unlock_delay) >= Self::MIN_HIGH_RATE_PAYER_LOCK_SECS
+    }
+
     fn account_state_slot(account: Address) -> B256 {
         AccountConfigurationStorage::account_state_slot(account)
+    }
+
+    /// Recovers `account`'s account-state word from the authorization read-set
+    /// when it was already loaded during `authorize_and_apply` (the k1 default-EOA
+    /// path reads it to gate the inline self key). Lets the lock classification
+    /// reuse that read instead of issuing a second SLOAD for the same slot. Absent
+    /// for accounts authorized via a bound actor, whose authorization reads the
+    /// actor-config slot rather than the account-state word.
+    fn prefetched_account_state(
+        config_reads: &[ConfigSlot],
+        account: Address,
+    ) -> Option<AccountState> {
+        let slot = U256::from_be_bytes(Self::account_state_slot(account).0);
+        config_reads
+            .iter()
+            .find(|read| read.address == AccountConfigurationStorage::ADDRESS && read.slot == slot)
+            .map(|read| AccountState::from_word(read.expected))
     }
 
     fn account_lock(
@@ -1121,13 +1317,26 @@ where
         now: u64,
         account: Address,
         generation: u64,
-    ) -> (bool, Option<u64>) {
+        prefetched: Option<AccountState>,
+    ) -> LockStatus {
         // Invalidation may advance the generation immediately after this read.
         // Pool admission rejects the captured classification if that happens.
         let cached = self.limit_class_cache.write().account_state(account);
         let account_state = if let Some(value) = cached {
+            ValidatorMetrics::classification_state_reads("cache").increment(1);
+            value
+        } else if let Some(value) = prefetched {
+            // Authorization already read this slot for this snapshot; reuse the
+            // recorded value and seed the cache (generation-gated exactly like a
+            // fresh read) rather than issuing a second SLOAD.
+            ValidatorMetrics::classification_state_reads("prefetch").increment(1);
+            let mut cache = self.limit_class_cache.write();
+            if generation == self.limit_class_cache_generation() {
+                cache.insert_account_state(account, value);
+            }
             value
         } else {
+            ValidatorMetrics::classification_state_reads("sload").increment(1);
             let mut storage = StateProviderPrecompileStorage::new(state, local_chain_id, now);
             let value = match StorageCtx::enter(&mut storage, |ctx| {
                 AccountConfigurationStorage::new(ctx).get_account_state(account)
@@ -1139,7 +1348,10 @@ where
                         account = %account,
                         "EIP-8130 account lock classification read failed"
                     );
-                    return (false, None);
+                    // Fail closed: an unreadable account is treated as unlocked
+                    // (the all-zero state word), so it never earns locked or
+                    // high-rate admission privileges.
+                    return AccountState::from_word(U256::ZERO).lock_status(now);
                 }
             };
             let mut cache = self.limit_class_cache.write();
@@ -1148,17 +1360,36 @@ where
             }
             value
         };
-        let locked = account_state.is_locked(now);
-        let unlocks_at = (locked
-            && account_state.flags & Eip8130Constants::FLAG_UNLOCK_INITIATED != 0)
-            .then_some(account_state.lock_union);
-        (locked, unlocks_at)
+        account_state.lock_status(now)
     }
 
+    /// Whether `account` is a trusted high-rate (balance-bounded) payer: its
+    /// on-chain code hash must exactly equal the canonical immutable ERC-1167
+    /// minimal-proxy runtime of a trusted implementation
+    /// ([`Self::trusted_proxy_code_hashes`]).
+    ///
+    /// `bytecode_hash` is the account's code hash the caller already loaded (the
+    /// fee check reads the payer account), so classification is an O(1) code-hash
+    /// set lookup with no extra account read, code fetch, or bytecode parsing.
+    ///
+    /// High-rate payer trust is *balance-bounded*: the mempool reserves against
+    /// the payer's ETH balance and assumes that reservation cannot be pulled out
+    /// from under it. That guarantee only holds if the payer's code — and thus
+    /// the enshrined "block ETH transfers while locked" behavior of the
+    /// high-rate implementation — can never change. Membership of the code hash
+    /// in `trusted_proxy_code_hashes` is exactly that check: it matches only the
+    /// canonical immutable ERC-1167 minimal-proxy runtime (no upgrade slot) of a
+    /// trusted implementation.
+    ///
+    /// An **EIP-7702 delegation** deliberately never qualifies: its code is the
+    /// `0xef0100 ‖ impl` designator, whose hash differs from any proxy runtime,
+    /// and the delegating EOA can broadcast a fresh authorization to re-point or
+    /// clear that code at any time — escaping the lock and draining the balance
+    /// the mempool relied on. Only immutable contract deployments are trusted.
     fn is_high_rate_account(
         &self,
-        state: &dyn StateProvider,
         account: Address,
+        bytecode_hash: Option<B256>,
         generation: u64,
     ) -> bool {
         // Invalidation may advance the generation immediately after this read.
@@ -1167,38 +1398,13 @@ where
         if let Some(value) = cached {
             return value;
         }
-        let trusted = match Self::delegation_target(state, account) {
-            Ok(target) => {
-                target.is_some_and(|target| self.trusted_delegation_targets.contains(&target))
-            }
-            Err(error) => {
-                tracing::warn!(
-                    error = %error,
-                    account = %account,
-                    "EIP-8130 trusted delegation classification read failed"
-                );
-                return false;
-            }
-        };
+        let trusted =
+            bytecode_hash.is_some_and(|hash| self.trusted_proxy_code_hashes.contains(&hash));
         let mut cache = self.limit_class_cache.write();
         if generation == self.limit_class_cache_generation() {
             cache.insert_trusted(account, trusted);
         }
         trusted
-    }
-
-    fn delegation_target(
-        state: &dyn StateProvider,
-        account: Address,
-    ) -> Result<Option<Address>, reth_storage_api::errors::ProviderError> {
-        let Some(hash) = state.basic_account(&account)?.and_then(|account| account.bytecode_hash)
-        else {
-            return Ok(None);
-        };
-        let Some(code) = state.bytecode_by_hash(&hash)? else {
-            return Ok(None);
-        };
-        Ok(code.eip7702_address())
     }
 
     fn validate_eip8130_create_freshness(
@@ -1301,7 +1507,9 @@ where
             ApplyError::MalformedPolicyData => "actor policy data is malformed",
             ApplyError::NotAnActor { .. } => "revoked actor is not authorized",
             ApplyError::NoInitialActors => "create entry has no initial actors",
-            ApplyError::UnsortedInitialActors => "create initial actors are not strictly ascending",
+            ApplyError::ActorsNotSortedOrDuplicate => {
+                "create initial actors are not strictly ascending"
+            }
             ApplyError::BytecodeTooLarge => "create bytecode exceeds the size limit",
             ApplyError::AlreadyCreated { .. } => "create account already exists",
             ApplyError::CreateAddressMismatch { .. } => "create address does not match the sender",
@@ -1321,6 +1529,53 @@ where
             NonceError::Replay => Self::eip8130_error("nonce-free replay detected"),
             NonceError::Storage(_) => Self::eip8130_error("nonce state read failed"),
         }
+    }
+
+    /// Maps an [`Eip8130TimestampError`] (from
+    /// [`Eip8130Signed::validate_timestamp`]) to a named pool-rejection reason
+    /// and logs the mismatch. This deliberately does *not* collapse into
+    /// `TxTypeNotSupported`: the transaction type is supported, its `expiry` is
+    /// simply outside this node's admission window relative to `now` (the
+    /// head-block timestamp). Emitting the reason plus `now`/`expiry` here makes
+    /// the otherwise-silent, node-local expiry rejection greppable.
+    fn map_timestamp_error(
+        error: Eip8130TimestampError,
+        signed: &Eip8130Signed,
+        now: u64,
+    ) -> InvalidPoolTransactionError {
+        let reason = match error {
+            Eip8130TimestampError::NonceFreeMalformed => {
+                "nonce-free transaction must set a non-zero expiry and a zero nonce sequence"
+            }
+            Eip8130TimestampError::NonceFreeExpired => "nonce-free transaction expiry has elapsed",
+            Eip8130TimestampError::NonceFreeExpiryTooFar => {
+                "nonce-free transaction expiry exceeds the admission window"
+            }
+            Eip8130TimestampError::Expired => "transaction expiry has elapsed",
+        };
+        let tx = signed.tx();
+        // The `window` bound only governs the nonce-free "too far in the future"
+        // rejection; logging it for the other variants (e.g. a nonce-bearing
+        // `Expired`) would wrongly imply the nonce-free window was involved.
+        if matches!(error, Eip8130TimestampError::NonceFreeExpiryTooFar) {
+            tracing::debug!(
+                reason,
+                now,
+                expiry = tx.expiry,
+                nonce_key = %tx.nonce_key,
+                window = Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW,
+                "EIP-8130 timestamp validation failed",
+            );
+        } else {
+            tracing::debug!(
+                reason,
+                now,
+                expiry = tx.expiry,
+                nonce_key = %tx.nonce_key,
+                "EIP-8130 timestamp validation failed",
+            );
+        }
+        Self::eip8130_error(reason)
     }
 
     fn eip8130_error(reason: &'static str) -> InvalidPoolTransactionError {
@@ -1367,7 +1622,9 @@ where
         }
         let local_chain_id = self.inner.chain_spec().chain().id();
         signed.validate_static(local_chain_id).map_err(InvalidPoolTransactionError::from)?;
-        signed.validate_timestamp(now).map_err(InvalidPoolTransactionError::from)?;
+        signed
+            .validate_timestamp(now)
+            .map_err(|error| Self::map_timestamp_error(error, signed, now))?;
         Self::validate_eoa_sender_signature(signed)?;
         Self::validate_sender_auth(signed)?;
         Self::validate_payer_auth(signed)?;
@@ -1847,9 +2104,154 @@ mod tests {
         BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
     }
 
+    #[test]
+    fn classify_authenticator_uses_bounded_labels() {
+        let with = |selector: Address, tail: &[u8]| {
+            let mut blob = selector.as_slice().to_vec();
+            blob.extend_from_slice(tail);
+            blob
+        };
+        assert_eq!(
+            TestValidator::classify_authenticator(&with(
+                Eip8130Constants::K1_AUTHENTICATOR,
+                &[0; 65]
+            )),
+            "k1"
+        );
+        assert_eq!(
+            TestValidator::classify_authenticator(&with(
+                Eip8130Contracts::P256_AUTHENTICATOR,
+                &[0; 129]
+            )),
+            "p256"
+        );
+        assert_eq!(
+            TestValidator::classify_authenticator(&with(
+                Eip8130Contracts::WEBAUTHN_AUTHENTICATOR,
+                &[0; 8]
+            )),
+            "passkey"
+        );
+
+        let mut delegate = Eip8130Contracts::DELEGATE_AUTHENTICATOR.as_slice().to_vec();
+        delegate.extend_from_slice(&[0xbb; 20]);
+        delegate.extend_from_slice(Eip8130Contracts::WEBAUTHN_AUTHENTICATOR.as_slice());
+        assert_eq!(TestValidator::classify_authenticator(&delegate), "delegate-passkey");
+        assert_eq!(TestValidator::classify_authenticator(&[0; 10]), "other");
+    }
+
+    #[test]
+    fn sender_sig_type_identifies_eoa_path_as_k1() {
+        assert_eq!(TestValidator::sender_sig_type(&sign_eoa_eip8130(minimal_valid_eoa_tx())), "k1");
+    }
+
     /// Returns the chain id the [`build_test_validator`] is configured against.
     fn test_chain_id() -> u64 {
         ChainConfig::mainnet().chain_id
+    }
+
+    fn balance_diff(address: Address, balance: u64) -> crate::AccountStateDiff {
+        crate::AccountStateDiff {
+            address,
+            balance: Some(U256::from(balance)),
+            nonce_changed: false,
+            code_changed: false,
+            changed_slots: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn only_trusted_payer_balance_diff_advances_classification_generation() {
+        let validator = build_test_validator();
+        let trusted = Address::repeat_byte(7);
+        let ordinary = Address::repeat_byte(8);
+        let unknown = Address::repeat_byte(9);
+        validator.limit_class_cache.write().insert_trusted(trusted, true);
+        validator.limit_class_cache.write().insert_trusted(ordinary, false);
+
+        // Ordinary (count-limited) and unclassified payers do not seed a balance
+        // book, so their balance churn must not advance the generation and
+        // bounce unrelated admissions.
+        let before = validator.limit_class_cache_generation();
+        validator
+            .invalidate_limit_class_cache(&[balance_diff(ordinary, 1), balance_diff(unknown, 2)]);
+        assert_eq!(
+            validator.limit_class_cache_generation(),
+            before,
+            "ordinary/unknown balance churn must not advance the generation"
+        );
+
+        // A trusted payer's balance change advances it so a pending admission
+        // re-validates against the fresh balance rather than seeding a stale one.
+        validator.invalidate_limit_class_cache(&[balance_diff(trusted, 5)]);
+        assert!(
+            validator.limit_class_cache_generation() > before,
+            "a trusted payer's balance change must advance the generation"
+        );
+
+        // A pure nonce change is neither a classification nor a balance surface.
+        let after_trusted = validator.limit_class_cache_generation();
+        let nonce_diff = crate::AccountStateDiff {
+            address: trusted,
+            balance: None,
+            nonce_changed: true,
+            code_changed: false,
+            changed_slots: Vec::new(),
+        };
+        validator.invalidate_limit_class_cache(&[nonce_diff]);
+        assert_eq!(
+            validator.limit_class_cache_generation(),
+            after_trusted,
+            "a nonce-only change must not advance the generation"
+        );
+    }
+
+    /// Packs an account-state word with the given flags and lock union, leaving
+    /// the sequence and default-EOA fields zero. Mirrors the canonical bit layout
+    /// (`flags` at bits 128..136, `lock_union` at bits 136..176).
+    fn locked_state_word(flags: u8, lock_union: u64) -> AccountState {
+        let word = (U256::from(flags) << 128) | (U256::from(lock_union) << 136);
+        AccountState::from_word(word)
+    }
+
+    #[test]
+    fn high_rate_lock_requires_hard_lock_of_at_least_one_hour() {
+        let now = 1_000u64;
+
+        // Hard lock (FLAG_LOCKED, no unlock initiated); lock_union holds the delay.
+        let one_hour = TestValidator::MIN_HIGH_RATE_PAYER_LOCK_SECS;
+        let hard_hour = locked_state_word(Eip8130Constants::FLAG_LOCKED, one_hour);
+        assert!(
+            TestValidator::qualifies_as_high_rate_lock(&hard_hour.lock_status(now)),
+            "a hard lock with a >=1h delay qualifies as high-rate"
+        );
+
+        // A shorter hard-lock delay does not qualify.
+        let hard_short = locked_state_word(Eip8130Constants::FLAG_LOCKED, one_hour - 1);
+        assert!(
+            !TestValidator::qualifies_as_high_rate_lock(&hard_short.lock_status(now)),
+            "a hard lock shorter than 1h must not qualify"
+        );
+
+        // Pending unlock (FLAG_UNLOCK_INITIATED): lock_union is a far-future
+        // timestamp, so it is still `locked`, but must not qualify as high-rate.
+        let pending = locked_state_word(
+            Eip8130Constants::FLAG_LOCKED | Eip8130Constants::FLAG_UNLOCK_INITIATED,
+            now + 10 * one_hour,
+        );
+        let pending_status = pending.lock_status(now);
+        assert!(pending_status.locked, "pending unlock far in the future is still locked");
+        assert!(
+            !TestValidator::qualifies_as_high_rate_lock(&pending_status),
+            "a pending unlock must never qualify as high-rate"
+        );
+
+        // Unlocked: no flags set.
+        let unlocked = locked_state_word(0, 0);
+        assert!(
+            !TestValidator::qualifies_as_high_rate_lock(&unlocked.lock_status(now)),
+            "an unlocked account must never qualify as high-rate"
+        );
     }
 
     #[test]
@@ -1870,6 +2272,31 @@ mod tests {
         assert!(!cache.slots.contains_key(&AccountConfigurationStorage::account_state_slot(first)));
         assert_eq!(cache.trusted(second), Some(true));
         assert_eq!(cache.trusted(third), Some(false));
+    }
+
+    #[test]
+    fn invalidate_does_not_promote_surviving_entry_to_mru() {
+        let mut cache = LimitClassCache::new(NonZeroUsize::new(2).expect("non-zero capacity"));
+        let (a, b, c) = (Address::repeat_byte(1), Address::repeat_byte(2), Address::repeat_byte(3));
+        let state = AccountState::from_word(U256::ZERO);
+
+        // `a` holds both classification halves and starts as least-recently-used;
+        // `b` is most-recently-used.
+        cache.insert_account_state(a, state);
+        cache.insert_trusted(a, true);
+        cache.insert_account_state(b, state);
+
+        // Partial invalidation keeps `a` alive but must not promote it. `peek`
+        // is non-promoting, so it does not perturb the recency under test.
+        cache.invalidate_code(a);
+        assert!(cache.entries.peek(&a).is_some(), "partially-invalidated entry survives");
+
+        // Inserting a third account evicts the true LRU (`a`), not the fresher
+        // `b`. A promoting invalidation would have wrongly evicted `b` here.
+        cache.insert_account_state(c, state);
+        assert!(cache.entries.peek(&a).is_none(), "non-promoted LRU entry is evicted");
+        assert!(cache.entries.peek(&b).is_some(), "fresher entry is retained");
+        assert!(cache.entries.peek(&c).is_some(), "newest entry is present");
     }
 
     /// Signs `tx` as an EOA-path EIP-8130 transaction and returns the resulting
@@ -1930,6 +2357,26 @@ mod tests {
                 InvalidTransactionError::TipAboveFeeCap,
             )) => {}
             other => panic!("expected TipAboveFeeCap, got {other:?}"),
+        }
+    }
+
+    /// Helper: assert a structural (`()`-returning) validation failed with a
+    /// named [`BaseTxPoolError::Eip8130Validation`] reason.
+    #[track_caller]
+    fn assert_structural_reason(
+        result: Result<(), InvalidPoolTransactionError>,
+        expected: &'static str,
+    ) {
+        match result {
+            Err(InvalidPoolTransactionError::Other(error)) => {
+                match error.as_any().downcast_ref::<BaseTxPoolError>() {
+                    Some(BaseTxPoolError::Eip8130Validation { reason }) => {
+                        assert_eq!(*reason, expected);
+                    }
+                    other => panic!("expected Eip8130Validation, got {other:?}"),
+                }
+            }
+            other => panic!("expected Eip8130Validation, got {other:?}"),
         }
     }
 
@@ -2020,7 +2467,10 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         let signed = sign_eoa_eip8130(tx);
-        assert_unsupported(validator.validate_eip8130_structural(&signed));
+        assert_structural_reason(
+            validator.validate_eip8130_structural(&signed),
+            "nonce-free transaction must set a non-zero expiry and a zero nonce sequence",
+        );
     }
 
     #[test]
@@ -2033,7 +2483,10 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         let signed = sign_eoa_eip8130(tx);
-        assert_unsupported(validator.validate_eip8130_structural(&signed));
+        assert_structural_reason(
+            validator.validate_eip8130_structural(&signed),
+            "nonce-free transaction must set a non-zero expiry and a zero nonce sequence",
+        );
     }
 
     #[test]
@@ -2051,13 +2504,16 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         let signed = sign_eoa_eip8130(tx);
-        assert_unsupported(validator.validate_eip8130_structural(&signed));
+        assert_structural_reason(
+            validator.validate_eip8130_structural(&signed),
+            "nonce-free transaction expiry has elapsed",
+        );
     }
 
     #[test]
     fn rejects_eip8130_nonce_free_expiry_too_far_in_future() {
         let validator = build_test_validator();
-        // block_timestamp returns 0 by default; cap is NONCE_FREE_MAX_EXPIRY_WINDOW (10).
+        // block_timestamp returns 0 by default; cap is NONCE_FREE_MAX_EXPIRY_WINDOW.
         let tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
             nonce_sequence: 0,
@@ -2065,7 +2521,10 @@ mod tests {
             ..minimal_valid_eoa_tx()
         };
         let signed = sign_eoa_eip8130(tx);
-        assert_unsupported(validator.validate_eip8130_structural(&signed));
+        assert_structural_reason(
+            validator.validate_eip8130_structural(&signed),
+            "nonce-free transaction expiry exceeds the admission window",
+        );
     }
 
     #[test]
@@ -2079,6 +2538,25 @@ mod tests {
         };
         let signed = sign_eoa_eip8130(tx);
         assert!(validator.validate_eip8130_structural(&signed).is_ok());
+    }
+
+    /// The mempool pre-filter window must never exceed the authoritative,
+    /// consensus-critical on-chain inclusion window. If it did, the pool would
+    /// admit nonce-free transactions whose `expiry` the block-inclusion replay
+    /// check (`NonceManagerStorage::check_and_mark_expiring_nonce`) rejects,
+    /// wasting block space on transactions that can never land. See the note on
+    /// `Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW`.
+    #[test]
+    fn mempool_expiry_window_within_onchain_inclusion_window() {
+        const {
+            assert!(
+                Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW
+                    <= NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW,
+                "mempool expiry window exceeds the on-chain inclusion window; raising it is a \
+                 fork-level change (bump NONCE_FREE_EXPIRY_WINDOW and resize \
+                 REPLAY_BUFFER_CAPACITY)",
+            );
+        }
     }
 
     #[test]
@@ -2790,6 +3268,44 @@ mod tests {
 
         assert!(!additional_fees.is_zero(), "fixture must charge L1/operator fees");
         assert_eq!(state.payer_max_cost, gas_charge.saturating_add(additional_fees));
+        assert_eq!(state.manifest.payer_max_cost(), state.payer_max_cost);
+    }
+
+    #[test]
+    fn nonce_free_manifest_uses_exclusive_transaction_expiry() {
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().cobalt_activated().build());
+        let signer = PrivateKeySigner::random();
+        let now = 100;
+        let expiry = now + Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW;
+        let tx = TxEip8130 {
+            nonce_key: Eip8130Constants::NONCE_KEY_MAX,
+            nonce_sequence: 0,
+            expiry,
+            ..minimal_valid_eoa_tx()
+        };
+        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let signed =
+            Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+
+        let client = MockEthProvider::<BasePrimitives>::new()
+            .with_chain_spec(Arc::clone(&chain_spec))
+            .with_genesis_block();
+        client.add_account(
+            signer.address(),
+            ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64)),
+        );
+        let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
+        let inner = EthTransactionValidatorBuilder::new(client, evm_config)
+            .no_shanghai()
+            .no_cancun()
+            .build(InMemoryBlobStore::default());
+        let validator: TestValidator =
+            BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default());
+        let header = alloy_consensus::Header { timestamp: now, ..Default::default() };
+        validator.update_l1_block_info::<_, TxEip1559>(&header, None);
+
+        let state = validator.validate_eip8130_full(&signed).expect("valid nonce-free tx");
+        assert_eq!(state.manifest.effective_expiry(), expiry - 1);
     }
 
     /// Builds a K1 authenticator-prefixed auth blob (`K1(20) || r || s || v`,
@@ -2922,6 +3438,22 @@ mod tests {
             .expect("create + config change must be admitted via the overlay");
         assert_eq!(state.sender, derived);
         assert_eq!(state.payer, derived, "self-paid create");
+        assert!(!state.manifest.has_no_config_slots(), "authorization reads must be captured");
+        assert_eq!(state.manifest.payer(), derived);
+        for read in state.manifest.config_slots() {
+            assert_eq!(
+                read.expected,
+                U256::ZERO,
+                "overlay-buffered writes must not become base-state dependencies"
+            );
+            assert!(
+                state.watch_set.contains(&InvalidationKey::Slot {
+                    address: read.address,
+                    slot: B256::from(read.slot),
+                }),
+                "captured read must also be indexed for invalidation: {read:?}"
+            );
+        }
     }
 
     #[test]

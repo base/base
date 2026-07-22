@@ -26,3 +26,5 @@ pub use tx::TxEip8130;
 
 mod signed;
 pub use signed::Eip8130Signed;
+#[cfg(feature = "reth")]
+pub use signed::Eip8130TimestampError;

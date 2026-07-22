@@ -82,6 +82,8 @@ impl NitroProverServer {
 
     /// Start the JSON-RPC HTTP server on the given address.
     pub async fn run(self, addr: SocketAddr) -> eyre::Result<ServerHandle> {
+        // SECURITY: This unauthenticated RPC server is an internal control-plane endpoint.
+        // Deployments must restrict it to trusted components on a private network.
         let middleware = tower::ServiceBuilder::new()
             .layer(ProxyGetRequestLayer::new([("/healthz", "healthz")])?);
         let server = Server::builder().set_http_middleware(middleware).build(addr).await?;
@@ -132,6 +134,8 @@ impl NitroProverServer {
         transports: Vec<Arc<NitroTransport>>,
         registration_checker: Option<Arc<RegistrationChecker>>,
     ) -> eyre::Result<ServerHandle> {
+        // SECURITY: This unauthenticated RPC server is an internal control-plane endpoint.
+        // Deployments must restrict it to trusted components on a private network.
         let middleware = tower::ServiceBuilder::new()
             .layer(ProxyGetRequestLayer::new([("/healthz", "healthz")])?);
         let server = Server::builder().set_http_middleware(middleware).build(addr).await?;

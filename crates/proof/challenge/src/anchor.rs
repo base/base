@@ -310,7 +310,7 @@ mod tests {
     use super::*;
     use crate::test_utils::{
         MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL2Provider,
-        SharedMockTxManager, addr, build_test_header_and_account, mock_state, receipt_with_status,
+        MockTxManager, addr, build_test_header_and_account, mock_state, receipt_with_status,
     };
 
     const ASR_ADDRESS: Address = Address::new([0xAA; 20]);
@@ -346,8 +346,8 @@ mod tests {
 
     fn submitter(
         responses: Vec<base_tx_manager::SendResponse>,
-    ) -> (ChallengeSubmitter<SharedMockTxManager>, SharedMockTxManager) {
-        let tx_manager = SharedMockTxManager::with_responses(responses);
+    ) -> (ChallengeSubmitter<MockTxManager>, MockTxManager) {
+        let tx_manager = MockTxManager::with_responses(responses);
         (ChallengeSubmitter::new(tx_manager.clone()), tx_manager)
     }
 
@@ -373,7 +373,7 @@ mod tests {
         let tx_hash = B256::repeat_byte(0xDD);
         let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
         let anchor_registry = Arc::new(MockAnchorStateRegistry::new(Address::ZERO));
-        let mut l2 = MockL2Provider::new();
+        let mut l2 = MockL2Provider::default();
         let output_root = insert_l2_block(&mut l2, BLOCK_INTERVAL);
         insert_next_game(&factory, ASR_ADDRESS, output_root, game);
         let mut state = mock_state(GameStatus::DefenderWins, Address::ZERO, 100);
@@ -396,7 +396,7 @@ mod tests {
         let game = addr(1);
         let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
         let anchor_registry = Arc::new(MockAnchorStateRegistry::new(Address::ZERO));
-        let mut l2 = MockL2Provider::new();
+        let mut l2 = MockL2Provider::default();
         let output_root = insert_l2_block(&mut l2, BLOCK_INTERVAL);
         insert_next_game(&factory, ASR_ADDRESS, output_root, game);
         let state = mock_state(GameStatus::InProgress, Address::ZERO, 100);
@@ -416,7 +416,7 @@ mod tests {
         let tx_hash = B256::repeat_byte(0xDD);
         let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
         let anchor_registry = Arc::new(MockAnchorStateRegistry::new(Address::ZERO));
-        let mut l2 = MockL2Provider::new();
+        let mut l2 = MockL2Provider::default();
         let output_root = insert_l2_block(&mut l2, BLOCK_INTERVAL);
         insert_next_game(&factory, ASR_ADDRESS, output_root, game);
         let state = mock_state(GameStatus::InProgress, Address::ZERO, 100);
@@ -446,7 +446,7 @@ mod tests {
         let tx_hash = B256::repeat_byte(0xDD);
         let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
         let anchor_registry = Arc::new(MockAnchorStateRegistry::new(Address::ZERO));
-        let mut l2 = MockL2Provider::new();
+        let mut l2 = MockL2Provider::default();
         let output_root = insert_l2_block(&mut l2, BLOCK_INTERVAL);
         insert_next_game(&factory, ASR_ADDRESS, output_root, game);
         let mut state = mock_state(GameStatus::DefenderWins, Address::ZERO, 100);
@@ -470,7 +470,7 @@ mod tests {
         let challenger_win = addr(10);
         let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
         let anchor_registry = Arc::new(MockAnchorStateRegistry::new(Address::ZERO));
-        let mut l2 = MockL2Provider::new();
+        let mut l2 = MockL2Provider::default();
         let output_root = insert_l2_block(&mut l2, BLOCK_INTERVAL);
         insert_next_game(&factory, ASR_ADDRESS, output_root, challenger_win);
 
@@ -496,7 +496,7 @@ mod tests {
         let tx_hash = B256::repeat_byte(0xDD);
         let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
         let anchor_registry = Arc::new(MockAnchorStateRegistry::new(anchor_game));
-        let mut l2 = MockL2Provider::new();
+        let mut l2 = MockL2Provider::default();
         let output_root = insert_l2_block(&mut l2, BLOCK_INTERVAL);
         insert_next_game(&factory, anchor_game, output_root, next_game);
         let mut next_state = mock_state(GameStatus::DefenderWins, Address::ZERO, 200);
@@ -521,7 +521,7 @@ mod tests {
         let game = addr(1);
         let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
         let anchor_registry = Arc::new(MockAnchorStateRegistry::new(Address::ZERO));
-        let mut l2 = MockL2Provider::new();
+        let mut l2 = MockL2Provider::default();
         let output_root = insert_l2_block(&mut l2, BLOCK_INTERVAL);
         insert_next_game(&factory, ASR_ADDRESS, output_root, game);
         let mut state = mock_state(GameStatus::DefenderWins, Address::ZERO, 100);

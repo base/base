@@ -489,7 +489,7 @@ mod tests {
 
     use super::*;
     use crate::test_utils::{
-        MockAggregateVerifier, MockDisputeGameFactory, MockL2Provider, SharedMockTxManager,
+        MockAggregateVerifier, MockDisputeGameFactory, MockL2Provider, MockTxManager,
         TEST_DISCOVERY_INTERVAL, addr, build_test_header_and_account, factory_game, mock_state,
         receipt_with_status,
     };
@@ -551,7 +551,7 @@ mod tests {
         metrics_enabled: bool,
     ) -> BondManager<FixedClock> {
         let factory = Arc::new(MockDisputeGameFactory::new(vec![factory_game(0, 0)]));
-        let mut l2_provider = MockL2Provider::new();
+        let mut l2_provider = MockL2Provider::default();
         let (header, account) = build_test_header_and_account(100, B256::ZERO);
         l2_provider.insert_block(100, header, account);
         BondManager::new(
@@ -570,8 +570,8 @@ mod tests {
 
     fn bond_submitter(
         responses: Vec<base_tx_manager::SendResponse>,
-    ) -> (ChallengeSubmitter<SharedMockTxManager>, SharedMockTxManager) {
-        let tx_manager = SharedMockTxManager::with_responses(responses);
+    ) -> (ChallengeSubmitter<MockTxManager>, MockTxManager) {
+        let tx_manager = MockTxManager::with_responses(responses);
         (ChallengeSubmitter::new(tx_manager.clone()), tx_manager)
     }
 
@@ -719,7 +719,7 @@ mod tests {
         ])));
         let factory =
             Arc::new(MockDisputeGameFactory::new(vec![factory_game(0, 0), factory_game(1, 0)]));
-        let mut l2_provider = MockL2Provider::new();
+        let mut l2_provider = MockL2Provider::default();
         let (header, account) = build_test_header_and_account(100, B256::ZERO);
         l2_provider.insert_block(100, header, account);
         l2_provider.header_delay = Some(FINALITY_METRIC_TIMEOUT + Duration::from_secs(1));

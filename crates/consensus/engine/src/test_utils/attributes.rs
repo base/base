@@ -78,6 +78,12 @@ impl TestAttributesBuilder {
         self
     }
 
+    /// Sets whether these attributes are the last block in the current span.
+    pub const fn with_is_last_in_span(mut self, is_last_in_span: bool) -> Self {
+        self.is_last_in_span = is_last_in_span;
+        self
+    }
+
     /// Builds the `AttributesWithParent`
     pub fn build(self) -> AttributesWithParent {
         let attributes = BasePayloadAttributes {
@@ -88,6 +94,7 @@ impl TestAttributesBuilder {
                 withdrawals: self.withdrawals,
                 parent_beacon_block_root: self.parent_beacon_block_root,
                 slot_number: None,
+                target_gas_limit: None,
             },
             transactions: self.transactions,
             no_tx_pool: self.no_tx_pool,

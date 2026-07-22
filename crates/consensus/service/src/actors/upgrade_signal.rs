@@ -1,6 +1,7 @@
 //! Upgrade signal metrics observer actor.
 
 use alloy_provider::RootProvider;
+use base_consensus_providers::L1RpcProvider;
 use base_upgrade_signal::{
     AlloyUpgradeSignalReader, UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalError,
     UpgradeSignalMetricLayer, UpgradeSignalMonitor, UpgradeSignalRefresher,
@@ -33,7 +34,7 @@ impl UpgradeSignalNodeConfig {
         chain_id: u64,
     ) -> Self {
         let l1_provider =
-            l1_rpc.map(|url| RootProvider::new_http(url.clone())).unwrap_or(default_l1_provider);
+            l1_rpc.map(|url| L1RpcProvider::new_http(url.clone())).unwrap_or(default_l1_provider);
         Self { config, l1_provider, chain_id }
     }
 

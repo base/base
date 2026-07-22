@@ -25,8 +25,8 @@ use tokio::{spawn, sync::mpsc};
 use tracing::debug;
 
 use crate::{
-    Admission, BasePooledTx, BaseTransactionValidator, GuardLimits, GuardMetrics, InvalidationKey,
-    LimitRejection, MempoolGuard, StateDiffInvalidation,
+    Admission, BasePooledTx, BaseTransactionValidator, GuardLimits, GuardMetrics,
+    InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard, StateDiffInvalidation,
     best::MergeBestTransactions,
     two_d_nonce_pool::{InsertOutcome, TwoDNoncePool},
 };
@@ -262,14 +262,18 @@ where
         removed
     }
 
-    /// Clears all guarded transactions after a canonical-feed gap.
-    pub fn invalidate_all_tracked_transactions(&self) -> Vec<Arc<ValidPoolTransaction<T>>> {
+    /// Clears every guarded transaction, attributing the flush to `cause` for
+    /// metrics. Used for the two fail-safe bulk paths (reorg and feed gap).
+    pub fn invalidate_all_tracked_transactions(
+        &self,
+        cause: InvalidationCause,
+    ) -> Vec<Arc<ValidPoolTransaction<T>>> {
         // Keep classification-generation changes atomic with protocol admission.
         let _admission_guard = self.protocol_admission_lock.lock();
         self.validator().validator().clear_limit_class_cache();
         let dropped = self.guard.write().invalidate_all();
         let removed = self.remove_dropped_across_pools(dropped);
-        GuardMetrics::record_feed_gap_invalidations(removed.len());
+        GuardMetrics::record_bulk_invalidations(removed.len(), cause);
         removed
     }
 
@@ -306,11 +310,21 @@ where
         }
     }
 
+    /// Invalidates guarded transactions whose effective expiry has elapsed as of
+    /// `now` (the committed block timestamp).
+    ///
+    /// The horizon is `now / EXPIRY_BUCKET_SECS`, so a bucket fires once its
+    /// window has started — no forward lookahead, which would over-evict still
+    /// valid transactions when blocks are produced faster than the bucket width.
+    /// Driven from `on_canonical_state_change`, so eviction rides block cadence;
+    /// inclusion safety does not depend on it, since the builder's manifest
+    /// precheck drops any past-expiry transaction against the exact build
+    /// timestamp. This path is pure guard hygiene: it frees `PayerBook`
+    /// reservations and count-cap slots held by expired transactions.
     fn expire_due_buckets(&self, now: u64) {
         // Do not expire a protocol reservation between guard and reth insertion.
         let _admission_guard = self.protocol_admission_lock.lock();
-        let horizon = now.saturating_add(InvalidationKey::EXPIRY_BUCKET_SECS)
-            / InvalidationKey::EXPIRY_BUCKET_SECS;
+        let horizon = now / InvalidationKey::EXPIRY_BUCKET_SECS;
         let (dropped, bucket_count) = self.guard.write().invalidate_expiry_buckets_through(horizon);
         GuardMetrics::expiry_buckets_fired().increment(bucket_count as u64);
         let removed = self.remove_dropped_across_pools(dropped);
@@ -715,8 +729,8 @@ where
         self.apply_state_diff(diffs).len()
     }
 
-    fn invalidate_all_tracked(&self) -> usize {
-        self.invalidate_all_tracked_transactions().len()
+    fn invalidate_all_tracked(&self, cause: InvalidationCause) -> usize {
+        self.invalidate_all_tracked_transactions(cause).len()
     }
 }
 
@@ -1323,6 +1337,13 @@ where
         indices_bitarray: B128,
     ) -> Result<Vec<Option<BlobCellsAndProofsV1>>, BlobStoreError> {
         self.protocol_pool.get_blobs_for_versioned_hashes_v4(versioned_hashes, indices_bitarray)
+    }
+
+    fn has_blobs_for_versioned_hashes(
+        &self,
+        versioned_hashes: &[B256],
+    ) -> Result<Vec<bool>, BlobStoreError> {
+        self.protocol_pool.has_blobs_for_versioned_hashes(versioned_hashes)
     }
 
     fn blob_store(&self) -> Box<dyn BlobStore> {
@@ -2217,7 +2238,7 @@ mod tests {
         pool.add_transaction(TransactionOrigin::Local, channel).await.unwrap();
         assert!(pool.guard.read().contains(&channel_hash));
 
-        let removed = pool.invalidate_all_tracked_transactions();
+        let removed = pool.invalidate_all_tracked_transactions(InvalidationCause::Reorg);
         assert_eq!(removed.len(), 1);
         assert_eq!(*removed[0].hash(), channel_hash);
         assert!(pool.get(&channel_hash).is_none());

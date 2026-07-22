@@ -76,6 +76,10 @@ pub struct BuilderConfig {
     /// Maximum number of rejected transactions accumulated per block before
     /// further rejections are dropped. Prevents unbounded `ExecutionInfo` growth.
     pub max_rejected_txs_per_block: usize,
+
+    /// Whether to drop EIP-8130 transactions whose captured authorization
+    /// predicates are positively stale before executing them.
+    pub manifest_precheck_enabled: bool,
 }
 
 impl BuilderConfig {
@@ -109,6 +113,7 @@ impl core::fmt::Debug for BuilderConfig {
             .field("audit_archiver_url", &self.audit_archiver_url)
             .field("rejected_tx_channel_size", &self.rejected_tx_channel_size)
             .field("max_rejected_txs_per_block", &self.max_rejected_txs_per_block)
+            .field("manifest_precheck_enabled", &self.manifest_precheck_enabled)
             .finish()
     }
 }
@@ -134,6 +139,7 @@ impl Default for BuilderConfig {
             audit_archiver_url: None,
             rejected_tx_channel_size: 500,
             max_rejected_txs_per_block: 500,
+            manifest_precheck_enabled: true,
         }
     }
 }
@@ -196,6 +202,13 @@ impl BuilderConfig {
         metering_wait_duration: Option<Duration>,
     ) -> Self {
         self.metering_wait_duration = metering_wait_duration;
+        self
+    }
+
+    /// Toggles the EIP-8130 manifest precheck.
+    #[must_use]
+    pub const fn with_manifest_precheck_enabled(mut self, enabled: bool) -> Self {
+        self.manifest_precheck_enabled = enabled;
         self
     }
 }

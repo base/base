@@ -3,7 +3,9 @@
 use alloy_consensus::Header;
 use base_common_consensus::{BasePrimitives, BaseTransactionSigned};
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_txpool::{BasePooledTx, BundleTransaction, TimestampedTransaction};
+use base_execution_txpool::{
+    BasePooledTx, BundleTransaction, StateDiffInvalidation, TimestampedTransaction,
+};
 use base_node_core::BaseEngineTypes;
 use reth_node_api::{FullNodeTypes, NodeTypes};
 use reth_payload_util::PayloadTransactions;
@@ -40,6 +42,7 @@ pub trait PoolBounds:
                          + BundleTransaction
                          + TimestampedTransaction,
     > + TransactionPoolExt
+    + StateDiffInvalidation
     + Unpin
     + 'static
 where
@@ -55,6 +58,7 @@ where
                              + BundleTransaction
                              + TimestampedTransaction,
         > + TransactionPoolExt
+        + StateDiffInvalidation
         + Unpin
         + 'static,
     <Self as TransactionPool>::Transaction:

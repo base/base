@@ -33,6 +33,7 @@ revm-database.workspace = true
 revm-bytecode.workspace = true
 
 # alloy
+alloy-evm.workspace = true
 alloy-primitives.workspace = true
 alloy-eips = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, features = ["std"] }

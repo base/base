@@ -33,6 +33,23 @@ just devnet logs   # Stream logs from all containers
 just devnet status # Check block numbers and sync status
 ```
 
+`just devnet up` deploys a local L1 `MockProtocolVersions` contract, writes
+`.devnet/l2/configs/upgrade-signal.env`, and starts the normal L2 nodes in
+`runtime-admin` upgrade-signal mode. You can inspect or update the live schedule
+with:
+
+```bash
+just devnet upgrade-signal status
+just devnet upgrade-signal set azul 1800000000
+just devnet upgrade-signal-future azul 120
+```
+
+To observe the L1 schedule without dynamically applying it, start devnet in metrics-only mode:
+
+```bash
+UPGRADE_SIGNAL_MODE=metrics-only just devnet up
+```
+
 To build a specific Rust service image directly:
 
 ```bash

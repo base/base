@@ -488,4 +488,46 @@ mod tests {
         let err = NonceManagerStorage::nonce_slot(ACCOUNT_A, U256::ZERO).unwrap_err();
         assert_eq!(err, BasePrecompileError::revert(INonceManager::ProtocolNonceNotSupported {}));
     }
+
+    /// Sizing invariant: the fixed replay ring buffer must be large enough that
+    /// every nonce-free replay entry recorded within one expiry window has
+    /// expired by the time the write pointer wraps back to its slot. If it is
+    /// not, `check_and_mark_expiring_nonce` starts rejecting valid transactions
+    /// with `ExpiringNonceReplay`/`ExpiringNonceSetFull` under sustained load
+    /// (the pointer laps a still-live entry).
+    ///
+    /// Worst case: the chain is packed end-to-end with the cheapest possible
+    /// nonce-free transactions for the entire window. The number of
+    /// simultaneously-live entries is then
+    /// `(block_gas_limit / min_tx_gas) * ceil(window / block_time)`, which must
+    /// not exceed [`NonceManagerStorage::REPLAY_BUFFER_CAPACITY`].
+    ///
+    /// This test pins the throughput ceiling the buffer is sized for (matching
+    /// the "~10k TPS for ~30s" note on `REPLAY_BUFFER_CAPACITY`). Raising
+    /// [`NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW`] without growing the
+    /// buffer (or shrinking the supported gas limit) breaks the invariant and
+    /// fails here — a deliberate fork-level tripwire.
+    #[test]
+    fn replay_buffer_covers_peak_nonce_free_throughput() {
+        // Conservative Base worst-case chain parameters.
+        const BLOCK_GAS_LIMIT: u64 = 600_000_000;
+        const BLOCK_TIME_SECS: u64 = 2;
+        const MIN_TX_GAS: u64 = 30_000;
+
+        let max_txs_per_block = BLOCK_GAS_LIMIT / MIN_TX_GAS;
+        // Round the window up to whole blocks so we never under-count.
+        let blocks_per_window =
+            NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW.div_ceil(BLOCK_TIME_SECS);
+        let max_live_entries = max_txs_per_block * blocks_per_window;
+
+        assert!(
+            u64::from(NonceManagerStorage::REPLAY_BUFFER_CAPACITY) >= max_live_entries,
+            "replay buffer capacity {} cannot hold peak live entries {max_live_entries} \
+             (block_gas_limit={BLOCK_GAS_LIMIT}, min_tx_gas={MIN_TX_GAS}, \
+             window={}s, block_time={BLOCK_TIME_SECS}s): grow REPLAY_BUFFER_CAPACITY \
+             or lower NONCE_FREE_EXPIRY_WINDOW",
+            NonceManagerStorage::REPLAY_BUFFER_CAPACITY,
+            NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW,
+        );
+    }
 }
