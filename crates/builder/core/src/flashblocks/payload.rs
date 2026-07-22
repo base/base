@@ -53,7 +53,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
 
 use crate::{
-    BuilderConfig, BuilderMetrics, ExecutionInfo, PayloadBuilder, ResourceLimits,
+    BuilderConfig, BuilderMetrics, CandidateSource, DefaultCandidateSource, ExecutionInfo,
+    PayloadBuilder, ResourceLimits,
     flashblocks::{
         FlashblocksExtraCtx, best_txs::BestFlashblocksTxs, context::BasePayloadBuilderCtx,
         generator::BuildArguments,
@@ -190,6 +191,15 @@ where
     Pool: PoolBounds,
     Client: ClientBounds,
 {
+    /// The candidate transaction source drained by the build loop.
+    ///
+    /// Defaults to [`DefaultCandidateSource`] — the pool's priority-ordered best transactions —
+    /// which reproduces the builder's historical behavior exactly. Extracting this behind a trait
+    /// lets the candidate stream be supplied by an alternative source without forking the loop.
+    fn candidate_source(&self) -> impl CandidateSource<Pool> {
+        DefaultCandidateSource
+    }
+
     fn get_base_payload_builder_ctx(
         &self,
         config: reth_basic_payload_builder::PayloadConfig<
@@ -413,7 +423,8 @@ where
         // Create best_transaction iterator
         let mut best_txs = BestFlashblocksTxs::new(
             BestPayloadTransactions::new(
-                self.pool.best_transactions_with_attributes(ctx.best_transaction_attributes()),
+                self.candidate_source()
+                    .best_transactions(&self.pool, ctx.best_transaction_attributes()),
             ),
             self.config.rejection_cache.clone(),
         );
@@ -616,7 +627,8 @@ where
 
         let best_txs_start_time = Instant::now();
         best_txs.refresh_iterator(BestPayloadTransactions::new(
-            self.pool.best_transactions_with_attributes(ctx.best_transaction_attributes()),
+            self.candidate_source()
+                .best_transactions(&self.pool, ctx.best_transaction_attributes()),
         ));
         let transaction_pool_fetch_time = best_txs_start_time.elapsed();
         BuilderMetrics::transaction_pool_fetch_duration().record(transaction_pool_fetch_time);
