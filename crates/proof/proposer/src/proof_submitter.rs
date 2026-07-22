@@ -95,6 +95,9 @@ impl ProofSubmitter {
     }
 
     /// Returns whether the aggregate proof's signer is currently valid onchain.
+    ///
+    /// Proofs are validated against the current proposer address and TEE image hash. Proofs
+    /// generated under an older configuration are intentionally treated as invalid and re-proved.
     pub async fn is_tee_signer_valid(
         &self,
         aggregate_proposal: &Proposal,
@@ -121,10 +124,18 @@ impl ProofSubmitter {
             |error| ProposerError::Internal(format!("failed to recover TEE signer: {error}")),
         )?;
 
-        self.tee_registry
-            .is_valid_signer(signer)
-            .await
-            .map_err(|error| ProposerError::Contract(format!("TEE signer lookup failed: {error}")))
+        let valid = self.tee_registry.is_valid_signer(signer).await.map_err(|error| {
+            ProposerError::Contract(format!("TEE signer lookup failed: {error}"))
+        })?;
+        debug!(
+            signer = %signer,
+            valid,
+            proposer_address = %self.proposer_address,
+            tee_image_hash = ?self.tee_image_hash,
+            target_block,
+            "Checked TEE proof signer against current proposer configuration"
+        );
+        Ok(valid)
     }
 
     /// Validates the completed proof and submits it to L1 as a dispute game.
