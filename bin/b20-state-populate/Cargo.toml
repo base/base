@@ -1,0 +1,35 @@
+[package]
+name = "base-b20-state-populate"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+name = "base_b20_state_populate"
+path = "src/lib.rs"
+
+[[bin]]
+name = "b20-state-populate"
+path = "src/main.rs"
+
+[dependencies]
+eyre.workspace = true
+k256.workspace = true
+rand.workspace = true
+rayon.workspace = true
+tracing.workspace = true
+reth-trie.workspace = true
+indicatif.workspace = true
+reth-db-api.workspace = true
+reth-trie-db.workspace = true
+alloy-primitives.workspace = true
+serde_json.workspace = true
+reth-storage-api.workspace = true
+tracing-subscriber.workspace = true
+reth-primitives-traits.workspace = true
+clap = { workspace = true, features = ["derive"] }
+reth-db = { workspace = true, features = ["mdbx"] }
+
+[lints]
+workspace = true
