@@ -11,12 +11,16 @@ use alloy_primitives::{B256, U256, aliases::U24, keccak256};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_sol_types::SolCall;
 use base_mev_trader::{BackrunPlan, ExactProtocol, MeasurementContext};
-use mev_trader_submit::assembler::{
-    AssembleError, AssembleInput, HopExecutionParams, assemble_unsigned_atomic_tx,
-    encode_executor_calldata,
+use mev_trader_submit::{
+    assembler::{
+        AssembleError, AssembleInput, HopExecutionParams, assemble_unsigned_atomic_tx,
+        encode_executor_calldata,
+    },
+    fee::{FeeParityError, fee_bps_for_executor},
 };
-use mev_trader_submit::fee::{FeeParityError, fee_bps_for_executor};
-use support::{ADAPTER, EXECUTOR, backrun_plan, finalize_plan_digest, matching_frame, victim_with_priority};
+use support::{
+    ADAPTER, EXECUTOR, backrun_plan, finalize_plan_digest, matching_frame, victim_with_priority,
+};
 
 /// The executor entrypoint ABI — used ONLY to decode the emitted calldata and read
 /// back the derived `feeBps` (this is a test-side decoder; production never decodes).
@@ -29,6 +33,7 @@ mod exec_abi {
             address tokenOut;
             uint24 feeBps;
             uint256 minAmountOut;
+            address fundingTarget;
         }
         function executeBlinkOfaAtomic(
             SwapHop firstHop,
@@ -42,7 +47,10 @@ mod exec_abi {
 
 /// Build an `AssembleInput` that exercises ONLY the calldata path (victim-envelope
 /// fields are unused by `encode_executor_calldata` and left minimal here).
-fn calldata_input<'a>(plan: &'a BackrunPlan, current_frame: MeasurementContext) -> AssembleInput<'a> {
+fn calldata_input<'a>(
+    plan: &'a BackrunPlan,
+    current_frame: MeasurementContext,
+) -> AssembleInput<'a> {
     AssembleInput {
         plan,
         current_frame,
@@ -59,6 +67,52 @@ fn calldata_input<'a>(plan: &'a BackrunPlan, current_frame: MeasurementContext) 
         victim_raw_tx: &[],
         victim_tx_hash: plan.victim,
         expected_victim_priority_fee: None,
+    }
+}
+
+fn address_word(address: alloy_primitives::Address) -> [u8; 32] {
+    let mut word = [0u8; 32];
+    word[12..].copy_from_slice(address.as_slice());
+    word
+}
+
+#[test]
+fn selector_and_funding_target_tuple_slots_are_pinned() {
+    const NEW_SELECTOR: u32 = 0x3b83f272;
+    const OLD_SELECTOR: u32 = 0x21def296;
+
+    let selector = u32::from_be_bytes(exec_abi::executeBlinkOfaAtomicCall::SELECTOR);
+    assert_eq!(selector, NEW_SELECTOR);
+    assert_ne!(selector, OLD_SELECTOR);
+
+    for (protocol, first_target_is_adapter) in [
+        (ExactProtocol::UniswapV2, false),
+        (ExactProtocol::AerodromeVolatile, false),
+        (ExactProtocol::AerodromeStable, false),
+        (ExactProtocol::UniswapV3, true),
+    ] {
+        let victim = keccak256(b"funding-target");
+        let plan = backrun_plan([protocol, ExactProtocol::UniswapV2], victim);
+        let calldata = encode_executor_calldata(&calldata_input(&plan, matching_frame(&plan)))
+            .expect("funding-target calldata");
+        let encoded_selector = u32::from_be_bytes(calldata[..4].try_into().expect("selector"));
+        assert_eq!(encoded_selector, NEW_SELECTOR);
+        assert_ne!(encoded_selector, OLD_SELECTOR);
+        assert!(
+            !calldata.windows(4).any(|word| word == OLD_SELECTOR.to_be_bytes()),
+            "old selector remains in emitted calldata"
+        );
+
+        let decoded = exec_abi::executeBlinkOfaAtomicCall::abi_decode(&calldata)
+            .expect("decode executor calldata");
+        let expected_first = if first_target_is_adapter { ADAPTER } else { plan.route[0].pool };
+        assert_eq!(decoded.firstHop.fundingTarget, expected_first);
+        assert_eq!(decoded.secondHop.fundingTarget, plan.route[1].pool);
+
+        // Both static SwapHop tuples are flattened in place. fundingTarget is tuple
+        // word 6, hence calldata words 6 and 13 after the four-byte selector.
+        assert_eq!(&calldata[4 + 6 * 32..4 + 7 * 32], &address_word(expected_first));
+        assert_eq!(&calldata[4 + 13 * 32..4 + 14 * 32], &address_word(plan.route[1].pool));
     }
 }
 
@@ -195,8 +249,7 @@ fn fee_parity_guard_failure_aborts_calldata_emit() {
     // carried fee (sealed into the digest) yields an error, never mispriced bytes.
     let victim = keccak256(b"guard");
 
-    let mut fractional =
-        backrun_plan([ExactProtocol::UniswapV2, ExactProtocol::UniswapV2], victim);
+    let mut fractional = backrun_plan([ExactProtocol::UniswapV2, ExactProtocol::UniswapV2], victim);
     fractional.route[0].fee_pips = 3_050; // fractional bps
     finalize_plan_digest(&mut fractional);
     assert_eq!(
