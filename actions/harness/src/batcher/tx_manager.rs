@@ -12,6 +12,7 @@ use alloy_signer_local::PrivateKeySigner;
 use base_batcher_source::L1HeadEvent;
 use base_tx_manager::{
     BlobTxBuilder, SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError,
+    TxManagerResult,
 };
 use tokio::sync::{mpsc, oneshot};
 use tracing::info;
@@ -56,6 +57,21 @@ pub struct Inner {
     /// Number of upcoming `send_async` calls to immediately fail with
     /// [`TxManagerError::Rpc`] before falling through to normal queuing.
     fail_remaining: usize,
+    /// Number of upcoming `send_async` calls to immediately reject with
+    /// [`TxManagerError::AlreadyReserved`], modelling a txpool nonce slot held
+    /// by a stuck transaction. The [`BatchDriver`] classifies this as
+    /// [`TxOutcome::TxpoolBlocked`] and must clear it via [`cancel_tx`].
+    ///
+    /// [`BatchDriver`]: base_batcher_core::BatchDriver
+    /// [`TxOutcome::TxpoolBlocked`]: base_batcher_core::TxOutcome::TxpoolBlocked
+    /// [`cancel_tx`]: base_tx_manager::TxManager::cancel_tx
+    blocked_remaining: usize,
+    /// Number of times [`cancel_tx`] has been invoked by the driver's txpool
+    /// recovery path. Tests assert on this to prove the blockage was cleared
+    /// through the production recovery flow rather than by chance.
+    ///
+    /// [`cancel_tx`]: base_tx_manager::TxManager::cancel_tx
+    cancellations: usize,
 }
 
 /// Adapts [`L1Miner`] to the [`TxManager`] trait for action tests.
@@ -142,6 +158,32 @@ impl L1MinerTxManager {
     /// [`BatchDriver`]: base_batcher_core::BatchDriver
     pub fn fail_next_n(&self, n: usize) {
         self.inner.lock().unwrap().fail_remaining += n;
+    }
+
+    /// Schedule the next `n` [`send_async`] calls to immediately reject with
+    /// [`TxManagerError::AlreadyReserved`], modelling a txpool nonce slot held
+    /// by a stuck transaction.
+    ///
+    /// The [`BatchDriver`] classifies this as
+    /// [`TxOutcome::TxpoolBlocked`]: it requeues the frames, stops submitting
+    /// new ones, and calls [`cancel_tx`] on the next loop iteration to clear the
+    /// slot before resubmitting. Rejections are consumed one-per-call, so
+    /// `n = 2` blocks the next two separate `send_async` calls.
+    ///
+    /// [`send_async`]: L1MinerTxManager::send_async
+    /// [`BatchDriver`]: base_batcher_core::BatchDriver
+    /// [`TxOutcome::TxpoolBlocked`]: base_batcher_core::TxOutcome::TxpoolBlocked
+    /// [`cancel_tx`]: base_tx_manager::TxManager::cancel_tx
+    pub fn block_next_n(&self, n: usize) {
+        self.inner.lock().unwrap().blocked_remaining += n;
+    }
+
+    /// Returns how many times the driver has called [`cancel_tx`] to recover
+    /// from a txpool blockage.
+    ///
+    /// [`cancel_tx`]: base_tx_manager::TxManager::cancel_tx
+    pub fn cancellation_count(&self) -> usize {
+        self.inner.lock().unwrap().cancellations
     }
 
     /// Drop the first `n` pending submissions without staging them to L1.
@@ -366,6 +408,12 @@ impl TxManager for L1MinerTxManager {
                     tx.send(Err(TxManagerError::Rpc("simulated submission failure".to_string())));
                 return SendHandle::new(rx);
             }
+            if inner.blocked_remaining > 0 {
+                inner.blocked_remaining -= 1;
+                let (tx, rx) = oneshot::channel::<SendResponse>();
+                let _ = tx.send(Err(TxManagerError::AlreadyReserved));
+                return SendHandle::new(rx);
+            }
         }
 
         let nonce = {
@@ -392,13 +440,24 @@ impl TxManager for L1MinerTxManager {
     fn sender_address(&self) -> Address {
         self.signer.address()
     }
+
+    async fn cancel_tx(&self) -> TxManagerResult<()> {
+        // Production `cancel_tx` sends a self-transfer at the stuck nonce with a
+        // higher gas price to evict the transaction and free the slot. The
+        // harness blockage is injected synthetically (no real transaction ever
+        // occupied the slot), so clearing it is simply acknowledging the
+        // cancellation. Record the invocation so tests can prove the driver
+        // drove the production txpool-recovery path.
+        self.inner.lock().unwrap().cancellations += 1;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256};
     use alloy_signer_local::PrivateKeySigner;
-    use base_tx_manager::{TxCandidate, TxManager};
+    use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 
     use super::L1MinerTxManager;
     use crate::L1Miner;
@@ -445,5 +504,36 @@ mod tests {
         assert_eq!(receipt.block_number, Some(block.number()));
         assert_eq!(receipt.transaction_index, Some(0));
         assert_eq!(receipt.to, Some(inbox));
+    }
+
+    #[tokio::test]
+    async fn block_next_n_rejects_with_already_reserved_then_succeeds() {
+        let inbox = Address::repeat_byte(0x42);
+        let manager = L1MinerTxManager::new(TxManagerFixture::signer(), inbox, 1);
+
+        // The next two submissions are rejected as if the nonce slot is held by
+        // a stuck transaction; the third queues normally.
+        manager.block_next_n(2);
+
+        let first = manager.send_async(TxManagerFixture::candidate(inbox)).await;
+        assert!(matches!(first.await, Err(TxManagerError::AlreadyReserved)));
+        assert_eq!(manager.pending_count(), 0, "rejected submission must not queue");
+
+        let second = manager.send_async(TxManagerFixture::candidate(inbox)).await;
+        assert!(matches!(second.await, Err(TxManagerError::AlreadyReserved)));
+
+        let _third = manager.send_async(TxManagerFixture::candidate(inbox)).await;
+        assert_eq!(manager.pending_count(), 1, "third submission must queue normally");
+    }
+
+    #[tokio::test]
+    async fn cancel_tx_records_invocations() {
+        let inbox = Address::repeat_byte(0x42);
+        let manager = L1MinerTxManager::new(TxManagerFixture::signer(), inbox, 1);
+
+        assert_eq!(manager.cancellation_count(), 0);
+        manager.cancel_tx().await.expect("cancel_tx never fails in the harness");
+        manager.cancel_tx().await.expect("cancel_tx never fails in the harness");
+        assert_eq!(manager.cancellation_count(), 2);
     }
 }
