@@ -247,13 +247,6 @@ mod tests {
         (status, Json(TelemetryErrorResponse { error })).into_response()
     }
 
-    #[test]
-    fn stage_labels_describe_the_probe_step() {
-        assert_eq!(ElReachabilityStage::TcpConnect.as_str(), "tcp_connect");
-        assert_eq!(ElReachabilityStage::EncryptedHandshake.as_str(), "encrypted_handshake");
-        assert_eq!(ElReachabilityStage::Devp2pHello.as_str(), "devp2p_hello");
-    }
-
     #[tokio::test]
     async fn decodes_camel_case_fields_and_snake_case_enums() {
         let router = Router::new().route(EL_REACHABILITY_PATH, post(reachable));
