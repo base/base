@@ -144,7 +144,7 @@ pub struct TestRollupNode<P: Pipeline + SignalReceiver + Debug + Send = Verifier
     /// Current L2 finalized head.
     finalized_head: L2BlockInfo,
     /// Most recently signalled finalized L1 block number.
-    finalized_l1_number: u64,
+    finalized_l1_number: Option<u64>,
     /// Most recently signalled L1 safe block number.
     safe_l1_number: u64,
     /// History of safe head updates paired with their L1 origin number.
@@ -202,7 +202,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
             safe_head,
             unsafe_head: safe_head,
             finalized_head: safe_head,
-            finalized_l1_number: 0,
+            finalized_l1_number: None,
             safe_l1_number: 0,
             safe_head_history: Vec::new(),
             derived_tx_counts: Vec::new(),
@@ -340,17 +340,25 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
         Ok(())
     }
 
-    /// Update the L2 finalized head by scanning safe-head history.
-    ///
-    /// Finds the highest L2 safe block whose L1 origin number is ≤
-    /// `head.number` and promotes it to `finalized_head`.
+    /// Update the retained finalized L1 signal and retry finalization.
     pub async fn act_l1_finalized_signal(&mut self, head: BlockInfo) {
-        self.finalized_l1_number = head.number;
+        if self.finalized_l1_number.is_some_and(|previous| head.number < previous) {
+            return;
+        }
+        self.finalized_l1_number = Some(head.number);
+        self.try_finalize_pending();
+    }
+
+    /// Retry finalization using the retained finalized L1 signal.
+    fn try_finalize_pending(&mut self) {
+        let Some(finalized_l1_number) = self.finalized_l1_number else {
+            return;
+        };
         let candidate = self
             .safe_head_history
             .iter()
             .rev()
-            .find(|(_, l1_origin_number)| *l1_origin_number <= self.finalized_l1_number)
+            .find(|(_, l1_origin_number)| *l1_origin_number <= finalized_l1_number)
             .map(|(l2_info, _)| *l2_info);
         if let Some(l2) = candidate
             && l2.block_info.number > self.finalized_head.block_info.number
@@ -363,7 +371,8 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
     ///
     /// Sends a [`ResetSignal`] to the pipeline, resets all head pointers,
     /// clears all per-block metadata, and replaces the engine with a fresh
-    /// instance that will re-execute from genesis on the new fork.
+    /// instance that will re-execute from genesis on the new fork. The finalized L1 signal is
+    /// retained so re-derived safe heads can be finalized without a duplicate signal.
     pub async fn act_reset(&mut self, l2_safe_head: L2BlockInfo) {
         self.pipeline
             .signal(ResetSignal { l2_safe_head }.signal())
@@ -372,7 +381,6 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
         self.safe_head = l2_safe_head;
         self.unsafe_head = l2_safe_head;
         self.finalized_head = l2_safe_head;
-        self.finalized_l1_number = 0;
         self.safe_l1_number = 0;
         self.safe_head_history.clear();
         self.derived_tx_counts.clear();
@@ -690,6 +698,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
         };
         self.l2_provider.insert_block(self.safe_head);
         self.safe_head_history.push((self.safe_head, l1_origin.number));
+        self.try_finalize_pending();
         // `attrs.derived_from` carries the full L1 BlockInfo set by the pipeline's
         // AttributesQueueStage. It is always `Some` for attributes produced by the
         // real derivation pipeline. The `None` fallback is defensive — it triggers

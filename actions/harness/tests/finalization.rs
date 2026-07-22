@@ -214,8 +214,9 @@ async fn finalization_does_not_exceed_safe_head() {
     assert_eq!(node.l2_finalized_number(), 2, "finalized head should be capped at safe head (2)");
 }
 
-/// After a pipeline reset (simulating a reorg), finalization state is cleared
-/// back to genesis. After re-deriving blocks, finalization can proceed again.
+/// After a pipeline reset (simulating a reorg), the finalized L2 head and
+/// reset-sensitive candidate state return to genesis. After re-deriving blocks,
+/// finalization can proceed again.
 #[tokio::test]
 async fn finalization_reorg_clears_state() {
     let batcher_cfg = BatcherConfig {
@@ -326,6 +327,55 @@ async fn finalization_reorg_clears_state() {
         node.l2_finalized_number(),
         1,
         "finalization should work cleanly after reset and re-derivation"
+    );
+}
+
+/// Finalization resumes after a derivation reset without receiving the unchanged
+/// finalized-L1 signal again.
+#[tokio::test]
+async fn finalization_resumes_after_reset_without_new_l1_signal() {
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg.clone());
+
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut sequencer = h.create_l2_sequencer(l1_chain);
+    let block1 = sequencer.build_next_block_with_single_transaction().await;
+    let block2 = sequencer.build_next_block_with_single_transaction().await;
+
+    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
+        &mut sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
+    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg);
+    for block in [block1, block2] {
+        batcher.push_block(block);
+        batcher.advance(&mut h.l1).await;
+        chain.push(h.l1.tip().clone());
+    }
+
+    node.initialize().await;
+    for _ in 1..=2u64 {
+        node.run_until_idle().await;
+    }
+    assert_eq!(node.l2_safe_number(), 2);
+
+    node.act_l1_finalized_signal(h.l1.block_info_at(1)).await;
+    assert_eq!(node.l2_finalized_number(), 2);
+
+    node.act_reset(h.l2_genesis()).await;
+    assert_eq!(node.l2_finalized_number(), 0);
+
+    node.run_until_idle().await;
+
+    assert_eq!(node.l2_safe_number(), 2);
+    assert_eq!(
+        node.l2_finalized_number(),
+        2,
+        "re-derived safe blocks should use the retained finalized L1 signal"
     );
 }
 
