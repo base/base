@@ -70,7 +70,7 @@ where
     /// Client for the aggregate verifier contract.
     pub verifier_client: Arc<dyn AggregateVerifierClient>,
     /// Validates L2 output roots against the local node.
-    validator: OutputValidator<L2>,
+    pub validator: OutputValidator<L2>,
     /// Manages proof sessions, retries, submissions, and TEE-to-ZK fallback.
     pub proof_manager: DisputeProofManager<L2, P>,
     /// Bond lifecycle manager (optional; enabled when claim addresses are configured).
