@@ -389,6 +389,7 @@ where
             };
 
             let session_id = ProposerProofAdapter::tee_session_id_for_root(claimed_l2_output_root);
+            // Missing sessions terminate the contiguous cleanup scan.
             match Self::poll_proof_inner(
                 self.proof_requester.as_ref(),
                 target_block,

@@ -100,10 +100,16 @@ impl TEEProverRegistryContractClient {
         tee_verifier_address: Address,
         l1_rpc_url: url::Url,
     ) -> Result<Self, ContractError> {
+        if tee_verifier_address == Address::ZERO {
+            return Err(ContractError::validation("TEE verifier address is zero"));
+        }
         let provider: RootProvider = RootProvider::new_http(l1_rpc_url);
         let verifier = ITEEVerifier::ITEEVerifierInstance::new(tee_verifier_address, &provider);
         let registry_address =
             contract_call!(verifier.TEE_PROVER_REGISTRY().call(), "TEE_PROVER_REGISTRY failed")?;
+        if registry_address == Address::ZERO {
+            return Err(ContractError::validation("TEE prover registry address is zero"));
+        }
         let contract =
             ITEEProverRegistry::ITEEProverRegistryInstance::new(registry_address, provider);
         Ok(Self { contract })
@@ -166,5 +172,17 @@ mod tests {
         assert_ne!(ITEEProverRegistry::isValidSignerCall::SELECTOR, [0u8; 4]);
         assert_ne!(ITEEProverRegistry::isRegisteredSignerCall::SELECTOR, [0u8; 4]);
         assert_ne!(ITEEProverRegistry::getRegisteredSignersCall::SELECTOR, [0u8; 4]);
+    }
+
+    #[test]
+    fn registry_discovery_rejects_zero_verifier() {
+        let error =
+            futures::executor::block_on(TEEProverRegistryContractClient::from_tee_verifier(
+                Address::ZERO,
+                "http://localhost:8545".parse().unwrap(),
+            ))
+            .unwrap_err();
+
+        assert!(matches!(error, ContractError::Validation(message) if message.contains("zero")));
     }
 }
