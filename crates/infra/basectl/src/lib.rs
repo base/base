@@ -54,8 +54,8 @@ pub use rpc::{
     SyncStatusReport, TelemetryApiError, TelemetryClient, TelemetryClientError,
     TelemetryErrorResponse, TimestampedFlashblock, TxSummary, TxpoolClient, TxpoolCounts,
     TxpoolReport, TxpoolScope, TxpoolSenderSummary, TxpoolTransactionPool, TxpoolTransactionRow,
-    ValidatorNodeStatus, add_peer, ban_peer, conductor_pause_all_nodes, conductor_pause_node,
-    conductor_resume_all_nodes, conductor_resume_node, connect_peer,
+    ValidatorNodeStatus, add_peer, ban_el_peer, ban_peer, conductor_pause_all_nodes,
+    conductor_pause_node, conductor_resume_all_nodes, conductor_resume_node, connect_peer,
     decode_flashblock_transactions, disconnect_peer, fetch_block, fetch_block_transactions,
     fetch_cl_info, fetch_connected_peers, fetch_el_info, fetch_full_system_config, fetch_info,
     fetch_initial_backlog_with_progress, fetch_l1_block_number, fetch_l2_block_number,
@@ -65,7 +65,7 @@ pub use rpc::{
     run_flashblock_ws, run_flashblock_ws_timestamped, run_l1_blob_watcher, run_pods_poller,
     run_proofs_poller, run_rollup_config_poller, run_safe_head_poller, run_validator_poller,
     start_sequencer, start_sequencer_node, stop_sequencer, stop_sequencer_node,
-    transfer_conductor_leader, unban_peer, unpause_sequencer_node,
+    transfer_conductor_leader, unban_el_peer, unban_peer, unpause_sequencer_node,
 };
 
 mod tui;

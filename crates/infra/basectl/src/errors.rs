@@ -82,11 +82,11 @@ pub enum P2pTargetError {
         /// The target supplied by the caller.
         target: String,
     },
-    /// `remove-peer` does not accept ENR targets.
+    /// Peer removal and ban actions do not accept ENR targets.
     #[error(
-        "remove-peer needs a bare libp2p peer ID for CL targets; ENR records are only accepted by add-peer"
+        "peer removal and ban actions need a bare libp2p peer ID for CL targets; ENR records are only accepted by add-peer"
     )]
-    RemoveEnrTarget {
+    PeerActionEnrTarget {
         /// The target supplied by the caller.
         target: String,
     },
@@ -96,15 +96,11 @@ pub enum P2pTargetError {
         /// The target supplied by the caller.
         target: String,
     },
-    /// A remove-peer EL target parsed to something other than an enode.
-    #[error("remove-peer EL targets must be `enode://` records")]
-    RemoveElTargetNotEnode {
-        /// The target supplied by the caller.
-        target: String,
-    },
-    /// A remove-peer CL target was URL-like or multiaddr-like instead of a bare peer ID.
-    #[error("remove-peer needs a bare libp2p peer ID for CL targets, not a URL or multiaddr")]
-    RemoveClTargetNotBarePeerId {
+    /// A CL peer-action target was URL-like or multiaddr-like instead of a bare peer ID.
+    #[error(
+        "peer removal and ban actions need a bare libp2p peer ID for CL targets, not a URL or multiaddr"
+    )]
+    PeerActionClTargetNotBarePeerId {
         /// The target supplied by the caller.
         target: String,
     },

@@ -7,16 +7,15 @@ use base_consensus_peers::BootNode;
 use basectl_cli::{
     ElReachabilityOutcome, JsonOutput, KeyValueTable, MonitoringConfig, P2pCommandError,
     P2pInfoJson, P2pInfoTable, P2pTargetError, PeerListReport, PeerSummary, TelemetryClient,
-    add_peer, ban_peer, connect_peer, disconnect_peer, fetch_connected_peers, fetch_info,
-    fetch_raw_info, fetch_raw_peers, list_banned_peers, remove_peer, unban_peer,
+    add_peer, ban_el_peer, ban_peer, connect_peer, disconnect_peer, fetch_connected_peers,
+    fetch_info, fetch_raw_info, fetch_raw_peers, list_banned_peers, remove_peer, unban_el_peer,
+    unban_peer,
 };
 use serde::Serialize;
 use url::Url;
 
 use crate::{
-    cli::{
-        DestructiveClBulkArgs, DestructiveClPeerArgs, DestructivePeerArgs, P2pArgs, P2pCommands,
-    },
+    cli::{DestructiveClBulkArgs, DestructivePeerArgs, P2pArgs, P2pCommands},
     confirm::confirm,
     helpers::CommandOutcome,
 };
@@ -34,8 +33,12 @@ pub(crate) async fn run(config: &str, command: P2pCommands) -> Result<CommandOut
                 P2pCommands::Info(args) => run_info(config, args).await?,
                 P2pCommands::AddPeer(args) => run_add_peer(config, args).await?,
                 P2pCommands::RemovePeer(args) => run_remove_peer(config, args).await?,
-                P2pCommands::Ban(args) => run_ban_peer(config, args).await?,
-                P2pCommands::Unban(args) => run_unban_peer(config, args).await?,
+                P2pCommands::Ban(args) => {
+                    run_peer_ban_action(config, args, PeerAction::Ban).await?
+                }
+                P2pCommands::Unban(args) => {
+                    run_peer_ban_action(config, args, PeerAction::Unban).await?
+                }
                 P2pCommands::UnbanAll(args) => run_unban_all(config, args).await?,
                 P2pCommands::Reachability { .. } => unreachable!(),
             }
@@ -138,10 +141,10 @@ async fn run_add_peer(config: MonitoringConfig, args: DestructivePeerArgs) -> Re
 async fn run_remove_peer(config: MonitoringConfig, args: DestructivePeerArgs) -> Result<()> {
     let DestructivePeerArgs { target, el_rpc: el_rpc_override, cl_rpc: cl_rpc_override, yes, json } =
         args;
-    let target = parse_remove_target(&target)?;
+    let target = parse_peer_target(&target)?;
 
     match target {
-        RemoveTarget::Enode(enode) => {
+        PeerTarget::Enode(enode) => {
             warn_ignored_rpc_override(
                 cl_rpc_override.as_ref(),
                 "--cl-rpc",
@@ -160,7 +163,7 @@ async fn run_remove_peer(config: MonitoringConfig, args: DestructivePeerArgs) ->
                 json,
             )?;
         }
-        RemoveTarget::PeerId(peer_id) => {
+        PeerTarget::PeerId(peer_id) => {
             warn_ignored_rpc_override(
                 el_rpc_override.as_ref(),
                 "--el-rpc",
@@ -184,43 +187,74 @@ async fn run_remove_peer(config: MonitoringConfig, args: DestructivePeerArgs) ->
     Ok(())
 }
 
-async fn run_ban_peer(config: MonitoringConfig, args: DestructiveClPeerArgs) -> Result<()> {
-    let DestructiveClPeerArgs { peer_id, cl_rpc: cl_rpc_override, yes, json } = args;
-    let peer_id = parse_cl_peer_id(&peer_id)?;
-    let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p ban")?;
-    let prompt = format!("Ban CL peer {peer_id} through {cl_rpc}? [y/N] ");
-    if !confirm(&prompt, yes)? {
-        println!("aborted");
-        return Ok(());
+async fn run_peer_ban_action(
+    config: MonitoringConfig,
+    args: DestructivePeerArgs,
+    action: PeerAction,
+) -> Result<()> {
+    let DestructivePeerArgs { target, el_rpc: el_rpc_override, cl_rpc: cl_rpc_override, yes, json } =
+        args;
+    let (verb, command_name) = match action {
+        PeerAction::Ban => ("Ban", "p2p ban"),
+        PeerAction::Unban => ("Unban", "p2p unban"),
+        _ => unreachable!(),
+    };
+    match parse_peer_target(&target)? {
+        PeerTarget::Enode(enode) => {
+            warn_ignored_rpc_override(
+                cl_rpc_override.as_ref(),
+                "--cl-rpc",
+                "enode targets",
+                PeerLayer::El,
+            );
+            let el_rpc = el_rpc_override.unwrap_or_else(|| config.rpc.clone());
+            let prompt = format!("{verb} EL peer {enode} through {el_rpc}? [y/N] ");
+            if !confirm(&prompt, yes)? {
+                println!("aborted");
+                return Ok(());
+            }
+            let accepted = match action {
+                PeerAction::Ban => ban_el_peer(&el_rpc, &enode).await?,
+                PeerAction::Unban => unban_el_peer(&el_rpc, &enode).await?,
+                _ => unreachable!(),
+            };
+            print_peer_action(&PeerActionJson::el(&config.name, action, enode, accepted), json)?;
+        }
+        PeerTarget::PeerId(peer_id) => {
+            warn_ignored_rpc_override(
+                el_rpc_override.as_ref(),
+                "--el-rpc",
+                "CL targets",
+                PeerLayer::Cl,
+            );
+            let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), command_name)?;
+            let prompt = format!("{verb} CL peer {peer_id} through {cl_rpc}? [y/N] ");
+            if !confirm(&prompt, yes)? {
+                println!("aborted");
+                return Ok(());
+            }
+            let disconnect_error = match action {
+                PeerAction::Ban => {
+                    ban_peer(&cl_rpc, &peer_id).await?;
+                    disconnect_peer(&cl_rpc, &peer_id).await.err().map(|err| err.to_string())
+                }
+                PeerAction::Unban => {
+                    unban_peer(&cl_rpc, &peer_id).await?;
+                    None
+                }
+                _ => unreachable!(),
+            };
+            print_peer_action(
+                &PeerActionJson::cl_with_disconnect_error(
+                    &config.name,
+                    action,
+                    peer_id,
+                    disconnect_error,
+                ),
+                json,
+            )?;
+        }
     }
-
-    ban_peer(&cl_rpc, &peer_id).await?;
-    let disconnect_error =
-        disconnect_peer(&cl_rpc, &peer_id).await.err().map(|err| err.to_string());
-    print_peer_action(
-        &PeerActionJson::cl_with_disconnect_error(
-            &config.name,
-            PeerAction::Ban,
-            peer_id,
-            disconnect_error,
-        ),
-        json,
-    )?;
-    Ok(())
-}
-
-async fn run_unban_peer(config: MonitoringConfig, args: DestructiveClPeerArgs) -> Result<()> {
-    let DestructiveClPeerArgs { peer_id, cl_rpc: cl_rpc_override, yes, json } = args;
-    let peer_id = parse_cl_peer_id(&peer_id)?;
-    let cl_rpc = resolve_cl_rpc(&config, cl_rpc_override.as_ref(), "p2p unban")?;
-    let prompt = format!("Unban CL peer {peer_id} through {cl_rpc}? [y/N] ");
-    if !confirm(&prompt, yes)? {
-        println!("aborted");
-        return Ok(());
-    }
-
-    unban_peer(&cl_rpc, &peer_id).await?;
-    print_peer_action(&PeerActionJson::cl(&config.name, PeerAction::Unban, peer_id), json)?;
     Ok(())
 }
 
@@ -327,7 +361,7 @@ enum AddTarget {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum RemoveTarget {
+enum PeerTarget {
     Enode(String),
     PeerId(String),
 }
@@ -358,34 +392,30 @@ fn parse_add_target(raw: &str) -> Result<AddTarget, P2pTargetError> {
     }
 }
 
-fn parse_remove_target(raw: &str) -> Result<RemoveTarget, P2pTargetError> {
+fn parse_peer_target(raw: &str) -> Result<PeerTarget, P2pTargetError> {
     let target = raw.trim();
     if target.is_empty() {
         return Err(P2pTargetError::EmptyTarget);
     }
     if target.starts_with("enr:") {
-        return Err(P2pTargetError::RemoveEnrTarget { target: target.to_string() });
+        return Err(P2pTargetError::PeerActionEnrTarget { target: target.to_string() });
     }
     if target.split_whitespace().count() != 1 {
         return Err(P2pTargetError::TargetContainsWhitespace { target: target.to_string() });
     }
 
     if target.starts_with("enode://") {
-        let bootnode =
-            BootNode::parse_bootnode(target).map_err(|error| P2pTargetError::InvalidBootnode {
-                target: target.to_string(),
-                message: error.to_string(),
-            })?;
-        if !matches!(bootnode, BootNode::Enode(_)) {
-            return Err(P2pTargetError::RemoveElTargetNotEnode { target: target.to_string() });
-        }
-        return Ok(RemoveTarget::Enode(target.to_string()));
+        BootNode::parse_bootnode(target).map_err(|error| P2pTargetError::InvalidBootnode {
+            target: target.to_string(),
+            message: error.to_string(),
+        })?;
+        return Ok(PeerTarget::Enode(target.to_string()));
     }
     if target.contains(':') || target.contains('/') {
-        return Err(P2pTargetError::RemoveClTargetNotBarePeerId { target: target.to_string() });
+        return Err(P2pTargetError::PeerActionClTargetNotBarePeerId { target: target.to_string() });
     }
 
-    Ok(RemoveTarget::PeerId(parse_cl_peer_id(target)?))
+    Ok(PeerTarget::PeerId(parse_cl_peer_id(target)?))
 }
 
 fn parse_cl_peer_id(raw: &str) -> Result<String, P2pTargetError> {
@@ -568,6 +598,20 @@ fn print_peer_action_pretty(action: &PeerActionJson) -> Result<()> {
                 writeln!(stdout, "OK EL did not remove peer {target}")?;
             }
         }
+        PeerActionJson::El { action: PeerAction::Ban, target, accepted, .. } => {
+            if *accepted {
+                writeln!(stdout, "OK EL accepted ban for peer {target}")?;
+            } else {
+                writeln!(stdout, "OK EL did not accept ban for peer {target}")?;
+            }
+        }
+        PeerActionJson::El { action: PeerAction::Unban, target, accepted, .. } => {
+            if *accepted {
+                writeln!(stdout, "OK EL accepted unban for peer {target}")?;
+            } else {
+                writeln!(stdout, "OK EL did not accept unban for peer {target}")?;
+            }
+        }
         PeerActionJson::Cl { action: PeerAction::Add, target, .. } => {
             writeln!(stdout, "OK CL connected {target}")?;
         }
@@ -665,8 +709,8 @@ mod tests {
     use url::Url;
 
     use super::{
-        AddTarget, PeerAction, PeerActionJson, PeerBulkActionResultJson, RemoveTarget,
-        fail_unban_all_if_partial, parse_add_target, parse_cl_peer_id, parse_remove_target,
+        AddTarget, PeerAction, PeerActionJson, PeerBulkActionResultJson, PeerTarget,
+        fail_unban_all_if_partial, parse_add_target, parse_cl_peer_id, parse_peer_target,
         resolve_cl_rpc, run,
     };
     use crate::cli::P2pCommands;
@@ -793,51 +837,48 @@ mod tests {
     }
 
     #[test]
-    fn parse_remove_target_routes_enode_to_el() {
+    fn parse_peer_target_routes_enode_to_el() {
         assert_eq!(
-            parse_remove_target(VALID_ENODE).unwrap(),
-            RemoveTarget::Enode(VALID_ENODE.to_string())
+            parse_peer_target(VALID_ENODE).unwrap(),
+            PeerTarget::Enode(VALID_ENODE.to_string())
         );
     }
 
     #[test]
-    fn parse_remove_target_routes_peer_id_to_cl() {
+    fn parse_peer_target_routes_peer_id_to_cl() {
         let peer_id = "16Uiu2HAkxp9nAsXsCthNWPkkpm4yG1eW7L4ENpVyzDZM8HE1yr12";
 
-        assert_eq!(
-            parse_remove_target(peer_id).unwrap(),
-            RemoveTarget::PeerId(peer_id.to_string())
-        );
+        assert_eq!(parse_peer_target(peer_id).unwrap(), PeerTarget::PeerId(peer_id.to_string()));
     }
 
     #[test]
-    fn parse_remove_target_rejects_enr() {
+    fn parse_peer_target_rejects_enr() {
         assert!(matches!(
-            parse_remove_target(VALID_ENR).unwrap_err(),
-            P2pTargetError::RemoveEnrTarget { target } if target == VALID_ENR
+            parse_peer_target(VALID_ENR).unwrap_err(),
+            P2pTargetError::PeerActionEnrTarget { target } if target == VALID_ENR
         ));
     }
 
     #[test]
-    fn parse_remove_target_rejects_multiaddr() {
+    fn parse_peer_target_rejects_multiaddr() {
         assert!(matches!(
-            parse_remove_target("/ip4/127.0.0.1/tcp/9000/p2p/16Uiu2HAmExample").unwrap_err(),
-            P2pTargetError::RemoveClTargetNotBarePeerId { .. }
+            parse_peer_target("/ip4/127.0.0.1/tcp/9000/p2p/16Uiu2HAmExample").unwrap_err(),
+            P2pTargetError::PeerActionClTargetNotBarePeerId { .. }
         ));
     }
 
     #[test]
-    fn parse_remove_target_rejects_url_like_target() {
+    fn parse_peer_target_rejects_url_like_target() {
         assert!(matches!(
-            parse_remove_target("https://example.com").unwrap_err(),
-            P2pTargetError::RemoveClTargetNotBarePeerId { target }
+            parse_peer_target("https://example.com").unwrap_err(),
+            P2pTargetError::PeerActionClTargetNotBarePeerId { target }
                 if target == "https://example.com"
         ));
     }
 
     #[test]
-    fn parse_remove_target_rejects_obviously_short_peer_id() {
-        let err = parse_remove_target("hello").expect_err("short peer ID should be rejected");
+    fn parse_peer_target_rejects_obviously_short_peer_id() {
+        let err = parse_peer_target("hello").expect_err("short peer ID should be rejected");
 
         assert!(matches!(
             err,
