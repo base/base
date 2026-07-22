@@ -1060,7 +1060,14 @@ mod tests {
     }
 
     #[test]
-    fn production_factory_refuses_unpinned_identity_before_open() {
-        assert!(matches!(open_anchored_killstate(), Err(StartupError::AnchorIdentityUnpinned)));
+    fn production_factory_has_owner_reviewed_p0c_identity_pin() {
+        assert_eq!(
+            EXPECTED_ANCHOR_IDENTITY.map(|identity| *identity.as_bytes()),
+            Some([
+                0x95, 0x0a, 0xa8, 0x75, 0x18, 0x75, 0x7d, 0x3d, 0x85, 0x05, 0x37, 0x6b, 0xf2, 0xe0,
+                0x18, 0xdf, 0x9b, 0x85, 0xd2, 0xe8, 0xc9, 0x1d, 0x64, 0xa1, 0x4b, 0x66, 0x42, 0x83,
+                0x42, 0x1a, 0xec, 0x9f,
+            ])
+        );
     }
 }
