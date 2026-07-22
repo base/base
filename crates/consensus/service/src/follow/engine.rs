@@ -1,27 +1,16 @@
-use std::{fmt::Debug, sync::Arc, time::Duration};
+use std::{fmt::Debug, sync::Arc};
 
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_engine::{
-    EngineClient, EngineState, EngineSyncStateUpdate, EngineTask, EngineTaskError,
-    EngineTaskErrorSeverity, EngineTaskExt, InsertTask, SynchronizeTask,
+    EngineClient, EngineState, EngineSyncStateUpdate, EngineTask, EngineTaskExt, InsertTask,
+    SynchronizeTask,
 };
 use base_protocol::L2BlockInfo;
-use tokio::{sync::Mutex, time};
-use tokio_util::sync::CancellationToken;
+use tokio::sync::Mutex;
 
 use crate::follow::error::FollowError;
-
-const RESET_RETRY_INITIAL_BACKOFF: Duration = Duration::from_millis(100);
-const RESET_RETRY_MAX_BACKOFF: Duration = Duration::from_secs(1);
-
-/// Statistics collected while resetting the execution engine to a recovery ancestor.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(super) struct ResetStats {
-    /// Number of temporary Engine API failures retried.
-    pub(super) retries: u64,
-}
 
 #[async_trait]
 pub(super) trait FollowEngine: Debug + Send + Sync {
@@ -39,11 +28,7 @@ pub(super) trait FollowEngine: Debug + Send + Sync {
     /// Reorg the local unsafe and safe heads down to `ancestor` — a block the EL already has, so
     /// the forkchoice update returns Valid and the head reorgs immediately (no EL sync). Refuses to
     /// reorg below the finalized head.
-    async fn reset_to_ancestor(
-        &self,
-        ancestor: L2BlockInfo,
-        cancellation: CancellationToken,
-    ) -> Result<ResetStats, FollowError>;
+    async fn reset_to_ancestor(&self, ancestor: L2BlockInfo) -> Result<(), FollowError>;
 }
 
 #[derive(Debug)]
@@ -113,11 +98,7 @@ impl<E: EngineClient + Debug + 'static> FollowEngine for EngineApiFollowEngine<E
         task.execute(&mut *self.state.lock().await).await.map_err(FollowError::engine_task)
     }
 
-    async fn reset_to_ancestor(
-        &self,
-        ancestor: L2BlockInfo,
-        cancellation: CancellationToken,
-    ) -> Result<ResetStats, FollowError> {
+    async fn reset_to_ancestor(&self, ancestor: L2BlockInfo) -> Result<(), FollowError> {
         let mut state = self.state.lock().await;
 
         // Never rewind below finality. `apply_update` does not enforce this, so guard here.
@@ -142,25 +123,7 @@ impl<E: EngineClient + Debug + 'static> FollowEngine for EngineApiFollowEngine<E
                 ..Default::default()
             },
         );
-        let mut retry_backoff = RESET_RETRY_INITIAL_BACKOFF;
-        let mut retries = 0_u64;
-        loop {
-            match task.execute(&mut state).await {
-                Ok(()) => break,
-                Err(error) if error.severity() == EngineTaskErrorSeverity::Temporary => {
-                    retries = retries.saturating_add(1);
-                    // A transport error may mean the EL applied the FCU but the response was
-                    // lost. Repeating the same FCU reconciles the in-memory state once the EL
-                    // responds again.
-                    tokio::select! {
-                        _ = cancellation.cancelled() => return Ok(ResetStats { retries }),
-                        _ = time::sleep(retry_backoff) => {}
-                    }
-                    retry_backoff = retry_backoff.saturating_mul(2).min(RESET_RETRY_MAX_BACKOFF);
-                }
-                Err(error) => return Err(FollowError::engine_task(error)),
-            }
-        }
+        task.execute(&mut state).await.map_err(FollowError::engine_task)?;
 
         if state.sync_state.unsafe_head().block_info.hash != ancestor.block_info.hash {
             return Err(FollowError::ResetToAncestorUnconfirmed {
@@ -169,7 +132,7 @@ impl<E: EngineClient + Debug + 'static> FollowEngine for EngineApiFollowEngine<E
             });
         }
 
-        Ok(ResetStats { retries })
+        Ok(())
     }
 }
 
@@ -188,7 +151,6 @@ mod tests {
     use base_consensus_engine::test_utils::test_engine_client_builder;
     use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
     use tokio::time::{self, Instant};
-    use tokio_util::sync::CancellationToken;
 
     use super::{EngineApiFollowEngine, FollowEngine};
     use crate::follow::error::FollowError;
@@ -315,7 +277,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reset_to_ancestor_retries_temporary_forkchoice_errors() {
+    async fn reset_to_ancestor_returns_temporary_forkchoice_errors() {
         let rollup_config = Arc::new(RollupConfig::default());
         let client =
             Arc::new(test_engine_client_builder().with_config(Arc::clone(&rollup_config)).build());
@@ -328,19 +290,11 @@ mod tests {
             ancestor,
         ));
 
-        let reset_engine = Arc::clone(&engine);
-        let reset = tokio::spawn(async move {
-            reset_engine.reset_to_ancestor(ancestor, CancellationToken::new()).await
-        });
-        time::sleep(Duration::from_millis(10)).await;
-        client.set_fork_choice_updated_v3_response(valid_forkchoice_updated()).await;
-
-        let stats = time::timeout(Duration::from_secs(1), reset)
+        let result = engine
+            .reset_to_ancestor(ancestor)
             .await
-            .expect("reset should finish after temporary error clears")
-            .expect("reset task should not panic")
-            .expect("temporary forkchoice error should be retried");
-        assert!(stats.retries >= 1);
+            .expect_err("temporary forkchoice error should be returned to the safety loop");
+        assert!(matches!(result, FollowError::EngineTask { .. }));
     }
 
     #[tokio::test]
@@ -369,10 +323,7 @@ mod tests {
 
         // Reset to the common ancestor (canonical block 1), a block the EL already has, so the
         // forkchoice update is Valid and the head reorgs down to it without EL sync.
-        engine
-            .reset_to_ancestor(block1, CancellationToken::new())
-            .await
-            .expect("reset to ancestor");
+        engine.reset_to_ancestor(block1).await.expect("reset to ancestor");
         assert_eq!(
             client.stateful_head().await,
             Some(block1.block_info.hash),
@@ -415,7 +366,7 @@ mod tests {
         // unchanged.
         let tip = l2_block(5, B256::with_last_byte(205));
         let error = engine
-            .reset_to_ancestor(tip, CancellationToken::new())
+            .reset_to_ancestor(tip)
             .await
             .expect_err("syncing must be surfaced as a failed reset");
         assert!(matches!(error, FollowError::ResetToAncestorUnconfirmed { number: 5, .. }));
@@ -446,7 +397,7 @@ mod tests {
         ));
 
         let error = engine
-            .reset_to_ancestor(l2_block(4, B256::with_last_byte(4)), CancellationToken::new())
+            .reset_to_ancestor(l2_block(4, B256::with_last_byte(4)))
             .await
             .expect_err("must refuse to rewind below finalized");
         assert!(matches!(error, FollowError::ReorgBelowFinalized { number: 4, finalized: 5 }));
@@ -455,35 +406,5 @@ mod tests {
             Some(head),
             "no forkchoice update should be issued on refusal"
         );
-    }
-
-    #[tokio::test]
-    async fn reset_to_ancestor_stops_retrying_when_cancelled() {
-        let rollup_config = Arc::new(RollupConfig::default());
-        let client =
-            Arc::new(test_engine_client_builder().with_config(Arc::clone(&rollup_config)).build());
-        let ancestor = l2_block_info(1);
-        let engine = Arc::new(EngineApiFollowEngine::new(
-            client,
-            rollup_config,
-            l2_block_info(2),
-            ancestor,
-            ancestor,
-        ));
-        let cancellation = CancellationToken::new();
-        let reset_engine = Arc::clone(&engine);
-        let reset_cancellation = cancellation.clone();
-        let reset = tokio::spawn(async move {
-            reset_engine.reset_to_ancestor(ancestor, reset_cancellation).await
-        });
-
-        time::sleep(Duration::from_millis(10)).await;
-        cancellation.cancel();
-
-        time::timeout(Duration::from_secs(1), reset)
-            .await
-            .expect("cancelled reset should finish promptly")
-            .expect("reset task should not panic")
-            .expect("cancellation should be treated as shutdown");
     }
 }

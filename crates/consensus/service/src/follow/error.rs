@@ -87,15 +87,21 @@ pub enum FollowError {
         remote: B256,
     },
 
-    /// Two source reads for the same block number described different source branches.
-    #[error("source branch mismatch at block {number}: expected {expected}, got {actual}")]
-    SourceBranchMismatch {
-        /// Block number compared across source reads.
-        number: u64,
-        /// Hash from the source branch captured earlier.
-        expected: B256,
-        /// Hash returned by the later source read.
-        actual: B256,
+    /// The local finalized head changed while recovery was being prepared. The safety loop should
+    /// retry the recovery against the newer finality fence.
+    #[error(
+        "local finalized head changed during recovery from {previous_hash} at block {previous_number} \
+         to {current_hash} at block {current_number}"
+    )]
+    FinalizedHeadChanged {
+        /// Finalized block number observed before recovery planning.
+        previous_number: u64,
+        /// Finalized block hash observed before recovery planning.
+        previous_hash: B256,
+        /// Finalized block number observed immediately before reset.
+        current_number: u64,
+        /// Finalized block hash observed immediately before reset.
+        current_hash: B256,
     },
 
     /// A source block's parent lookup did not return its direct parent.
@@ -173,25 +179,6 @@ pub enum FollowError {
         actual: u64,
         /// Block number the insert loop expected next.
         expected: u64,
-    },
-
-    /// The execution engine did not advance to the source payload that was inserted.
-    ///
-    /// The follow runtime treats this as an insertion stall and awaits safety reconciliation so a
-    /// recoverable divergence can reset and replay.
-    #[error(
-        "engine did not advance to source payload {expected_hash} at block {expected_number}; \
-         current head is {actual_hash} at block {actual_number}"
-    )]
-    PayloadNotApplied {
-        /// Source payload block number.
-        expected_number: u64,
-        /// Source payload block hash.
-        expected_hash: B256,
-        /// Engine head block number after insertion.
-        actual_number: u64,
-        /// Engine head block hash after insertion.
-        actual_hash: B256,
     },
 
     /// Joining a follow-mode task failed.

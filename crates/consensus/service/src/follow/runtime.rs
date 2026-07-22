@@ -20,6 +20,8 @@ use crate::follow::{
 };
 
 const SAFETY_POLL_INTERVAL: Duration = Duration::from_secs(30);
+const INSERT_STALL_RETRY_INTERVAL: Duration = Duration::from_secs(1);
+const INSERT_STALL_WARN_INTERVAL: u64 = 5;
 
 /// Outcome of the safety loop / a single safe-finalized update pass.
 #[derive(Debug, PartialEq, Eq)]
@@ -27,7 +29,7 @@ enum SafetyOutcome {
     /// Safe/finalized labels were updated, intentionally skipped, or the loop was cancelled.
     Updated,
     /// The local chain diverged from the source and was reset to the common ancestor; fetch/insert
-    /// must restart from the recovery plan's ancestor to replay the captured source branch.
+    /// must restart from the recovery plan's ancestor to replay through the captured source safe.
     Reorged {
         /// Common ancestor and source branch to replay.
         plan: recovery::RecoveryPlan,
@@ -108,18 +110,56 @@ where
                 });
             }
 
-            let expected_hash = payload.execution_payload.block_hash();
-            info!(target: "follow", block = current_block, "Inserting source payload");
-            let inserted = engine.insert_payload(payload).await?;
-            if inserted.block_info.number != current_block
-                || inserted.block_info.hash != expected_hash
-            {
-                return Err(FollowError::PayloadNotApplied {
-                    expected_number: current_block,
-                    expected_hash,
-                    actual_number: inserted.block_info.number,
-                    actual_hash: inserted.block_info.hash,
-                });
+            let mut stall_attempts = 0;
+            loop {
+                if cancellation.is_cancelled() {
+                    return Ok(());
+                }
+
+                let expected_hash = payload.execution_payload.block_hash();
+                if stall_attempts == 0 {
+                    info!(target: "follow", block = current_block, "Inserting source payload");
+                } else {
+                    debug!(
+                        target: "follow",
+                        block = current_block,
+                        attempt = stall_attempts + 1,
+                        "Retrying source payload insert after a deferred application",
+                    );
+                }
+                let inserted = engine.insert_payload(payload.clone()).await?;
+                if inserted.block_info.number == current_block
+                    && inserted.block_info.hash == expected_hash
+                {
+                    break;
+                }
+
+                stall_attempts += 1;
+                if stall_attempts % INSERT_STALL_WARN_INTERVAL == 0 {
+                    warn!(
+                        target: "follow",
+                        block = current_block,
+                        attempts = stall_attempts,
+                        expected_hash = %expected_hash,
+                        actual_number = inserted.block_info.number,
+                        actual_hash = %inserted.block_info.hash,
+                        "Source payload was not applied; deferring retry while safety reconciles",
+                    );
+                } else {
+                    debug!(
+                        target: "follow",
+                        block = current_block,
+                        attempts = stall_attempts,
+                        expected_hash = %expected_hash,
+                        actual_number = inserted.block_info.number,
+                        actual_hash = %inserted.block_info.hash,
+                        "Source payload was not applied; deferring retry while safety reconciles",
+                    );
+                }
+                tokio::select! {
+                    _ = cancellation.cancelled() => return Ok(()),
+                    _ = time::sleep(INSERT_STALL_RETRY_INTERVAL) => {}
+                }
             }
             if !insert_delay.is_zero() {
                 debug!(
@@ -219,22 +259,14 @@ where
                     source = %remote,
                     "Local chain diverged from source safe head; recovering to common ancestor",
                 );
-                let finalized = local_finalized
-                    .as_ref()
-                    .ok_or(FollowError::LocalBlockUnavailable(BlockNumberOrTag::Finalized))?;
                 let plan = recovery::recover(
                     local.as_ref(),
                     source.as_ref(),
                     &engine,
-                    finalized,
                     &source_safe,
                     local_hash,
-                    generation.clone(),
                 )
                 .await?;
-                if generation.is_cancelled() {
-                    return Ok(SafetyOutcome::Updated);
-                }
                 // Cancel fetch/insert after the reset so this generation can return the restart
                 // point.
                 generation.cancel();
@@ -353,78 +385,38 @@ where
                 generation.clone(),
                 blocks_to_insert_tx,
             );
-            // Pin the safety future so an insert stall can await the same in-flight reconciliation
-            // after catch-up futures are dropped.
-            let mut safety_loop = Box::pin(Self::run_update_safe_finalized_heads_loop(
+            let safety_loop = Self::run_update_safe_finalized_heads_loop(
                 Arc::clone(&self.local),
                 Arc::clone(&self.source),
                 Arc::clone(&self.engine),
                 generation.clone(),
                 self.cancellation.clone(),
-            ));
+            );
 
-            let selected = {
-                let fetch_loop = prefetcher.run(head_number, replay);
-                let insert_loop = Self::run_ordered_insert_loop(
-                    Arc::clone(&self.engine),
-                    generation.clone(),
-                    blocks_to_insert_rx,
-                    next_insert,
-                    &mut self.proof_gate,
-                    self.insert_delay,
-                );
-                tokio::pin!(fetch_loop);
-                tokio::pin!(insert_loop);
+            let fetch_loop = prefetcher.run(head_number, replay);
+            let insert_loop = Self::run_ordered_insert_loop(
+                Arc::clone(&self.engine),
+                generation.clone(),
+                blocks_to_insert_rx,
+                next_insert,
+                &mut self.proof_gate,
+                self.insert_delay,
+            );
+            tokio::pin!(fetch_loop);
+            tokio::pin!(insert_loop);
+            tokio::pin!(safety_loop);
 
-                tokio::select! {
-                    result = &mut fetch_loop => GenerationSelect::Finished(
-                        result.map(|()| SafetyOutcome::Updated),
-                    ),
-                    result = &mut insert_loop => match result {
-                        Ok(()) => GenerationSelect::Finished(Ok(SafetyOutcome::Updated)),
-                        Err(FollowError::PayloadNotApplied {
-                            expected_number,
-                            expected_hash,
-                            actual_number,
-                            actual_hash,
-                        }) => GenerationSelect::InsertionStalled {
-                            expected_number,
-                            expected_hash,
-                            actual_number,
-                            actual_hash,
-                        },
-                        Err(error) => GenerationSelect::Finished(Err(error)),
-                    },
-                    result = &mut safety_loop => GenerationSelect::Finished(result),
-                }
-            };
-
-            let outcome = match selected {
-                GenerationSelect::Finished(result) => result?,
-                GenerationSelect::InsertionStalled {
-                    expected_number,
-                    expected_hash,
-                    actual_number,
-                    actual_hash,
-                } => {
-                    // Pause catch-up and finish reconciliation on the in-flight safety loop.
-                    warn!(
-                        target: "follow",
-                        expected_number,
-                        expected_hash = %expected_hash,
-                        actual_number,
-                        actual_hash = %actual_hash,
-                        "Source payload was not applied; pausing insertion until safety reconciliation completes",
-                    );
-                    safety_loop.await?
-                }
-            };
+            let outcome = tokio::select! {
+                result = &mut fetch_loop => result.map(|()| SafetyOutcome::Updated),
+                result = &mut insert_loop => result.map(|()| SafetyOutcome::Updated),
+                result = &mut safety_loop => result,
+            }?;
 
             match outcome {
                 SafetyOutcome::Reorged { plan } => {
                     // The engine reset the unsafe head down to the common ancestor (a block it
                     // has, so the forkchoice update was Valid). Restart from there and replay the
-                    // captured source branch by hash.
+                    // captured source-safe branch by hash.
                     let ancestor = plan.ancestor.block_info.number;
                     info!(
                         target: "follow",
@@ -438,23 +430,6 @@ where
             }
         }
     }
-}
-
-/// Result of selecting among fetch, insert, and safety work for one follow generation.
-enum GenerationSelect {
-    /// Fetch, insert, or safety finished with a definitive generation outcome.
-    Finished(Result<SafetyOutcome, FollowError>),
-    /// Insert could not apply a source payload; await the in-flight safety loop for reconciliation.
-    InsertionStalled {
-        /// Source payload block number that was not applied.
-        expected_number: u64,
-        /// Source payload block hash that was not applied.
-        expected_hash: B256,
-        /// Engine head block number after the rejected insert.
-        actual_number: u64,
-        /// Engine head block hash after the rejected insert.
-        actual_hash: B256,
-    },
 }
 
 #[cfg(test)]
@@ -480,7 +455,7 @@ mod tests {
     use crate::{
         MockRemoteClient,
         follow::{
-            engine::{FollowEngine, ResetStats},
+            engine::FollowEngine,
             local::MockFollowLocalClient,
             proof_gate::{ActiveProofGate, NoopProofGate},
         },
@@ -611,13 +586,9 @@ mod tests {
             Ok(())
         }
 
-        async fn reset_to_ancestor(
-            &self,
-            ancestor: L2BlockInfo,
-            _cancellation: CancellationToken,
-        ) -> Result<ResetStats, FollowError> {
+        async fn reset_to_ancestor(&self, ancestor: L2BlockInfo) -> Result<(), FollowError> {
             self.reset.lock().await.push(ancestor.block_info.number);
-            Ok(ResetStats::default())
+            Ok(())
         }
     }
 
@@ -742,7 +713,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ordered_insertion_rejects_engine_noop_without_advancing_cursor() {
+    async fn ordered_insertion_defers_engine_noop_without_advancing_cursor() {
         let engine = Arc::new(RecordingEngine::non_advancing(Duration::ZERO));
         let mut proof_gate = NoopProofGate;
         let (blocks_to_insert_tx, blocks_to_insert_rx) = mpsc::channel(PREFETCH_WINDOW);
@@ -750,22 +721,23 @@ mod tests {
         drop(blocks_to_insert_tx);
 
         let engine_for_loop: Arc<dyn FollowEngine> = Arc::<RecordingEngine>::clone(&engine);
-        let error =
+        let cancellation = CancellationToken::new();
+        let loop_cancellation = cancellation.clone();
+        let handle = tokio::spawn(async move {
             FollowRuntime::<MockFollowLocalClient, MockRemoteClient, NoopProofGate>::run_ordered_insert_loop(
-                engine_for_loop,
-                CancellationToken::new(),
-                blocks_to_insert_rx,
-                1,
-                &mut proof_gate,
-                Duration::ZERO,
-            )
-            .await
-            .expect_err("non-advancing insert must fail");
+                    engine_for_loop,
+                    loop_cancellation,
+                    blocks_to_insert_rx,
+                    1,
+                    &mut proof_gate,
+                    Duration::ZERO,
+                )
+                .await
+        });
+        time::sleep(Duration::from_millis(10)).await;
+        cancellation.cancel();
+        handle.await.expect("insert loop should not panic").expect("cancellation");
 
-        assert!(matches!(
-            error,
-            FollowError::PayloadNotApplied { expected_number: 1, actual_number: 0, .. }
-        ));
         assert_eq!(*engine.inserted.lock().await, vec![1]);
     }
 
@@ -870,7 +842,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn payload_not_applied_awaits_safety_recovery() {
+    async fn stalled_insert_allows_safety_recovery() {
         let mut local = MockFollowLocalClient::new();
         local.expect_block_info().returning(|tag| {
             Ok(Some(match tag {
@@ -918,7 +890,7 @@ mod tests {
         );
 
         cancellation.cancel();
-        handle.await.expect("join").expect("follow recovered after PayloadNotApplied");
+        handle.await.expect("join").expect("follow recovered after stalled insert");
     }
 
     #[tokio::test]
@@ -1191,14 +1163,6 @@ mod tests {
                 ..Default::default()
             })
         });
-        source.expect_get_block_info().with(eq(BlockNumberOrTag::Latest)).returning(|_| {
-            Ok(BlockInfo {
-                number: 10,
-                hash: B256::from([99; 32]),
-                parent_hash: B256::from([9; 32]),
-                ..Default::default()
-            })
-        });
         source
             .expect_get_block_info_by_hash()
             .with(eq(B256::from([9; 32])))
@@ -1272,49 +1236,6 @@ mod tests {
             FollowError::SourceL1OriginMismatch { l2_number: 9, l1_number: 0, .. }
         ));
         assert!(engine.labels.lock().await.is_empty());
-    }
-
-    #[tokio::test]
-    async fn recovery_rejects_source_latest_from_different_branch() {
-        let local = Arc::new(local_client(10, 8, 7, 100));
-        let mut source = MockRemoteClient::new();
-        source.expect_get_block_info().with(eq(BlockNumberOrTag::Safe)).returning(|_| {
-            Ok(BlockInfo {
-                number: 10,
-                hash: B256::from([99; 32]),
-                parent_hash: B256::from([9; 32]),
-                ..Default::default()
-            })
-        });
-        source
-            .expect_get_block_info_by_hash()
-            .with(eq(B256::from([9; 32])))
-            .returning(|_| Ok(source_block_info(9)));
-        source.expect_get_block_info().with(eq(BlockNumberOrTag::Latest)).returning(|_| {
-            Ok(BlockInfo {
-                number: 10,
-                hash: B256::from([100; 32]),
-                parent_hash: B256::from([9; 32]),
-                ..Default::default()
-            })
-        });
-        let engine = Arc::new(RecordingEngine::new(Duration::ZERO));
-        let engine_for_update: Arc<dyn FollowEngine> = Arc::<RecordingEngine>::clone(&engine);
-        let generation = CancellationToken::new();
-
-        let error =
-            FollowRuntime::<MockFollowLocalClient, MockRemoteClient, NoopProofGate>::update_safe_and_finalized(
-                local,
-                Arc::new(source),
-                engine_for_update,
-                generation.clone(),
-            )
-            .await
-            .expect_err("incoherent source branch");
-
-        assert!(matches!(error, FollowError::SourceBranchMismatch { number: 10, .. }));
-        assert!(!generation.is_cancelled());
-        assert!(engine.reset.lock().await.is_empty());
     }
 
     #[tokio::test]
@@ -1438,7 +1359,6 @@ mod tests {
             })
         });
         let engine: Arc<dyn FollowEngine> = Arc::new(RecordingEngine::new(Duration::ZERO));
-        let finalized = block_info(7);
         let source_safe = BlockInfo {
             number: 10,
             hash: B256::from([110; 32]),
@@ -1446,17 +1366,9 @@ mod tests {
             ..Default::default()
         };
 
-        let error = recovery::recover(
-            &local,
-            &source,
-            &engine,
-            &finalized,
-            &source_safe,
-            B256::from([7; 32]),
-            CancellationToken::new(),
-        )
-        .await
-        .expect_err("finalized divergence");
+        let error = recovery::recover(&local, &source, &engine, &source_safe, B256::from([7; 32]))
+            .await
+            .expect_err("finalized divergence");
 
         assert!(matches!(error, FollowError::FinalizedDivergence { number: 7, .. }));
     }
@@ -1469,8 +1381,8 @@ mod tests {
         local.expect_block_info().returning(move |tag| {
             Ok(Some(match tag {
                 BlockNumberOrTag::Finalized => {
-                    finalized_reads_for_local.fetch_add(1, Ordering::SeqCst);
-                    block_info(10)
+                    let read = finalized_reads_for_local.fetch_add(1, Ordering::SeqCst);
+                    block_info(if read == 0 { 7 } else { 8 })
                 }
                 BlockNumberOrTag::Number(number) => block_info(number),
                 _ => block_info(0),
@@ -1478,14 +1390,6 @@ mod tests {
         });
 
         let mut source = MockRemoteClient::new();
-        source.expect_get_block_info().with(eq(BlockNumberOrTag::Latest)).returning(|_| {
-            Ok(BlockInfo {
-                number: 10,
-                hash: B256::from([99; 32]),
-                parent_hash: B256::from([9; 32]),
-                ..Default::default()
-            })
-        });
         source
             .expect_get_block_info_by_hash()
             .with(eq(B256::from([9; 32])))
@@ -1497,7 +1401,6 @@ mod tests {
             &local,
             &source,
             &engine_for_recovery,
-            &block_info(7),
             &BlockInfo {
                 number: 10,
                 hash: B256::from([99; 32]),
@@ -1505,13 +1408,12 @@ mod tests {
                 ..Default::default()
             },
             B256::from([10; 32]),
-            CancellationToken::new(),
         )
         .await
         .expect_err("fresh finalized divergence must prevent reset");
 
-        assert!(matches!(error, FollowError::FinalizedDivergence { number: 10, .. }));
-        assert_eq!(finalized_reads.load(Ordering::SeqCst), 1);
+        assert!(matches!(error, FollowError::FinalizedHeadChanged { .. }));
+        assert_eq!(finalized_reads.load(Ordering::SeqCst), 2);
         assert!(engine.reset.lock().await.is_empty());
     }
 

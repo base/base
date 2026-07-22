@@ -47,8 +47,70 @@ where
         start_from_local_head: u64,
         replay: Vec<ReplayBlock>,
     ) -> Result<(), FollowError> {
+        let Some(mut next_fetch) = self.prefetch_replay(start_from_local_head, replay).await?
+        else {
+            return Ok(());
+        };
+        let mut source_latest = next_fetch.saturating_sub(1);
+        let mut consecutive_payload_failures = 0;
+
+        loop {
+            if self.cancellation.is_cancelled() {
+                return Ok(());
+            }
+
+            if next_fetch > source_latest {
+                source_latest = self.refresh_source_latest(source_latest).await;
+                if next_fetch > source_latest {
+                    self.backoff_at_source_head().await;
+                    continue;
+                }
+            }
+
+            let payload = self.source.get_payload_by_number(next_fetch).await;
+
+            match payload {
+                Ok(payload) => {
+                    if self.blocks_to_insert_tx.send(payload).await.is_err() {
+                        return Ok(());
+                    }
+                    consecutive_payload_failures = 0;
+                    next_fetch = next_fetch.saturating_add(1);
+                }
+                Err(e) => {
+                    consecutive_payload_failures += 1;
+                    if consecutive_payload_failures % PREFETCH_FAILURE_WARN_INTERVAL == 0 {
+                        warn!(
+                            target: "follow",
+                            block = next_fetch,
+                            attempts = consecutive_payload_failures,
+                            error = %e,
+                            "Repeatedly failed to prefetch source payload"
+                        );
+                    } else {
+                        debug!(
+                            target: "follow",
+                            block = next_fetch,
+                            attempts = consecutive_payload_failures,
+                            error = %e,
+                            "Failed to prefetch source payload"
+                        );
+                    }
+                    self.backoff_at_source_head().await;
+                }
+            }
+        }
+    }
+
+    /// Fetches the captured recovery branch and returns the first live source block to fetch.
+    ///
+    /// Returns `None` when cancellation or channel closure ends follow mode.
+    async fn prefetch_replay(
+        &self,
+        start_from_local_head: u64,
+        replay: Vec<ReplayBlock>,
+    ) -> Result<Option<u64>, FollowError> {
         let mut next_fetch = start_from_local_head.saturating_add(1);
-        let mut source_latest = start_from_local_head;
         let mut consecutive_payload_failures = 0;
 
         for replay_block in replay {
@@ -61,7 +123,7 @@ where
 
             loop {
                 if self.cancellation.is_cancelled() {
-                    return Ok(());
+                    return Ok(None);
                 }
 
                 match self.source.get_payload_by_hash(replay_block.hash).await {
@@ -72,7 +134,7 @@ where
                                 == replay_block.parent_hash =>
                     {
                         if self.blocks_to_insert_tx.send(payload).await.is_err() {
-                            return Ok(());
+                            return Ok(None);
                         }
                         consecutive_payload_failures = 0;
                         next_fetch = next_fetch.saturating_add(1);
@@ -133,56 +195,7 @@ where
             }
         }
 
-        if next_fetch > start_from_local_head.saturating_add(1) {
-            source_latest = next_fetch.saturating_sub(1);
-        }
-
-        loop {
-            if self.cancellation.is_cancelled() {
-                return Ok(());
-            }
-
-            if next_fetch > source_latest {
-                source_latest = self.refresh_source_latest(source_latest).await;
-                if next_fetch > source_latest {
-                    self.backoff_at_source_head().await;
-                    continue;
-                }
-            }
-
-            let payload = self.source.get_payload_by_number(next_fetch).await;
-
-            match payload {
-                Ok(payload) => {
-                    if self.blocks_to_insert_tx.send(payload).await.is_err() {
-                        return Ok(());
-                    }
-                    consecutive_payload_failures = 0;
-                    next_fetch = next_fetch.saturating_add(1);
-                }
-                Err(e) => {
-                    consecutive_payload_failures += 1;
-                    if consecutive_payload_failures % PREFETCH_FAILURE_WARN_INTERVAL == 0 {
-                        warn!(
-                            target: "follow",
-                            block = next_fetch,
-                            attempts = consecutive_payload_failures,
-                            error = %e,
-                            "Repeatedly failed to prefetch source payload"
-                        );
-                    } else {
-                        debug!(
-                            target: "follow",
-                            block = next_fetch,
-                            attempts = consecutive_payload_failures,
-                            error = %e,
-                            "Failed to prefetch source payload"
-                        );
-                    }
-                    self.backoff_at_source_head().await;
-                }
-            }
-        }
+        Ok(Some(next_fetch))
     }
 
     async fn refresh_source_latest(&self, current: u64) -> u64 {

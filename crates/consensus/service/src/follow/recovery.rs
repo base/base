@@ -13,14 +13,10 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
 use base_protocol::{BlockInfo, L2BlockInfo};
 use tokio::time;
-use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use crate::follow::{
-    engine::{FollowEngine, ResetStats},
-    error::FollowError,
-    local::FollowLocalClient,
-    source::RemoteClient,
+    engine::FollowEngine, error::FollowError, local::FollowLocalClient, source::RemoteClient,
 };
 
 const RECOVERY_DEADLINE: Duration = Duration::from_secs(30);
@@ -37,12 +33,12 @@ pub(super) struct ReplayBlock {
     pub(super) parent_hash: B256,
 }
 
-/// The local reset point and the source branch to replay from it.
+/// The local reset point and the captured source-safe branch to replay from it.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct RecoveryPlan {
     /// Highest block shared by the local and source chains.
     pub(super) ancestor: L2BlockInfo,
-    /// Source blocks after `ancestor`, ordered from oldest to newest.
+    /// Source blocks after `ancestor` through the captured safe head, ordered from oldest to newest.
     pub(super) replay: Vec<ReplayBlock>,
 }
 
@@ -51,8 +47,7 @@ struct RecoveryBudget {
     deadline: Instant,
     lookups: u64,
     max_lookups: u64,
-    ancestor_walk_depth: u64,
-    replay_walk_depth: u64,
+    walk_depth: u64,
 }
 
 impl RecoveryBudget {
@@ -61,13 +56,7 @@ impl RecoveryBudget {
     }
 
     fn with_limits(deadline: Duration, max_lookups: u64) -> Self {
-        Self {
-            deadline: Instant::now() + deadline,
-            lookups: 0,
-            max_lookups,
-            ancestor_walk_depth: 0,
-            replay_walk_depth: 0,
-        }
+        Self { deadline: Instant::now() + deadline, lookups: 0, max_lookups, walk_depth: 0 }
     }
 
     fn next_timeout(&mut self, phase: &'static str) -> Result<Duration, FollowError> {
@@ -104,10 +93,8 @@ pub(super) async fn recover<Local, Remote>(
     local: &Local,
     source: &Remote,
     engine: &Arc<dyn FollowEngine>,
-    finalized: &L2BlockInfo,
     source_safe: &BlockInfo,
     divergence_local_hash: B256,
-    cancellation: CancellationToken,
 ) -> Result<RecoveryPlan, FollowError>
 where
     Local: FollowLocalClient,
@@ -115,8 +102,11 @@ where
 {
     let started_at = Instant::now();
     let mut budget = RecoveryBudget::new();
-    let (mut ancestor, mut source_latest, mut replay) =
-        build_recovery_path(local, source, finalized, source_safe, &mut budget).await?;
+    let finalized = budget
+        .run("finalized fence", local.block_info(BlockNumberOrTag::Finalized))
+        .await?
+        .ok_or(FollowError::LocalBlockUnavailable(BlockNumberOrTag::Finalized))?;
+    let plan = build_recovery_plan(local, source, &finalized, source_safe, &mut budget).await?;
 
     let fresh_finalized = budget
         .run("fresh finalized fence", local.block_info(BlockNumberOrTag::Finalized))
@@ -125,142 +115,34 @@ where
     if fresh_finalized.block_info.number != finalized.block_info.number
         || fresh_finalized.block_info.hash != finalized.block_info.hash
     {
-        (ancestor, source_latest, replay) =
-            build_recovery_path(local, source, &fresh_finalized, source_safe, &mut budget).await?;
-    }
-
-    let reset_stats: ResetStats = engine.reset_to_ancestor(ancestor, cancellation.clone()).await?;
-    if !cancellation.is_cancelled() {
-        info!(
-            target: "follow",
-            divergence_number = source_safe.number,
-            divergence_local = %divergence_local_hash,
-            divergence_source = %source_safe.hash,
-            ancestor_number = ancestor.block_info.number,
-            ancestor_hash = %ancestor.block_info.hash,
-            source_safe_number = source_safe.number,
-            source_safe_hash = %source_safe.hash,
-            source_latest_number = source_latest.number,
-            source_latest_hash = %source_latest.hash,
-            walk_depth = budget.ancestor_walk_depth + budget.replay_walk_depth,
-            ancestor_walk_depth = budget.ancestor_walk_depth,
-            replay_walk_depth = budget.replay_walk_depth,
-            replay_blocks = replay.len(),
-            recovery_lookups = budget.lookups,
-            reset_retries = reset_stats.retries,
-            duration = ?started_at.elapsed(),
-            "Prepared source-coherent follow recovery",
-        );
-    }
-    Ok(RecoveryPlan { ancestor, replay })
-}
-
-async fn build_recovery_path<Local, Remote>(
-    local: &Local,
-    source: &Remote,
-    finalized: &L2BlockInfo,
-    source_safe: &BlockInfo,
-    budget: &mut RecoveryBudget,
-) -> Result<(L2BlockInfo, BlockInfo, Vec<ReplayBlock>), FollowError>
-where
-    Local: FollowLocalClient,
-    Remote: RemoteClient,
-{
-    let ancestor =
-        find_common_ancestor_with_budget(local, source, finalized, source_safe, budget).await?;
-    let source_latest = budget
-        .run("source latest lookup", async {
-            source.get_block_info(BlockNumberOrTag::Latest).await.map_err(FollowError::from)
-        })
-        .await?;
-    let replay = find_replay_path(source, source_latest, source_safe, &ancestor, budget).await?;
-    Ok((ancestor, source_latest, replay))
-}
-
-/// Walks the captured source-latest branch backward to the common ancestor and returns it in
-/// replay order. The source-safe block must occur on this branch; otherwise the source reads were
-/// not coherent and replay must not begin.
-async fn find_replay_path<Remote>(
-    source: &Remote,
-    source_latest: BlockInfo,
-    source_safe: &BlockInfo,
-    ancestor: &L2BlockInfo,
-    budget: &mut RecoveryBudget,
-) -> Result<Vec<ReplayBlock>, FollowError>
-where
-    Remote: RemoteClient,
-{
-    let mut source_block = source_latest;
-    let mut reverse_path = Vec::new();
-    let mut saw_source_safe = source_safe.number == ancestor.block_info.number
-        && source_safe.hash == ancestor.block_info.hash;
-
-    loop {
-        if source_block.number < ancestor.block_info.number {
-            return Err(FollowError::SourceChainDiscontinuity {
-                child_number: source_latest.number,
-                parent_number: source_block.number,
-            });
-        }
-
-        if source_block.number == source_safe.number {
-            if source_block.hash != source_safe.hash {
-                return Err(FollowError::SourceBranchMismatch {
-                    number: source_block.number,
-                    expected: source_safe.hash,
-                    actual: source_block.hash,
-                });
-            }
-            saw_source_safe = true;
-        }
-
-        if source_block.number == ancestor.block_info.number {
-            if source_block.hash != ancestor.block_info.hash {
-                return Err(FollowError::SourceBranchMismatch {
-                    number: source_block.number,
-                    expected: ancestor.block_info.hash,
-                    actual: source_block.hash,
-                });
-            }
-            break;
-        }
-
-        reverse_path.push(ReplayBlock {
-            number: source_block.number,
-            hash: source_block.hash,
-            parent_hash: source_block.parent_hash,
-        });
-
-        let parent = budget
-            .run("replay path parent lookup", async {
-                source
-                    .get_block_info_by_hash(source_block.parent_hash)
-                    .await
-                    .map_err(FollowError::from)
-            })
-            .await?;
-        if !parent.is_parent_of(&source_block) {
-            return Err(FollowError::SourceChainDiscontinuity {
-                child_number: source_block.number,
-                parent_number: parent.number,
-            });
-        }
-        budget.replay_walk_depth = budget.replay_walk_depth.saturating_add(1);
-        source_block = parent;
-    }
-
-    if !saw_source_safe {
-        return Err(FollowError::SourceChainDiscontinuity {
-            child_number: source_latest.number,
-            parent_number: source_safe.number,
+        return Err(FollowError::FinalizedHeadChanged {
+            previous_number: finalized.block_info.number,
+            previous_hash: finalized.block_info.hash,
+            current_number: fresh_finalized.block_info.number,
+            current_hash: fresh_finalized.block_info.hash,
         });
     }
 
-    reverse_path.reverse();
-    Ok(reverse_path)
+    engine.reset_to_ancestor(plan.ancestor).await?;
+    info!(
+        target: "follow",
+        divergence_number = source_safe.number,
+        divergence_local = %divergence_local_hash,
+        divergence_source = %source_safe.hash,
+        ancestor_number = plan.ancestor.block_info.number,
+        ancestor_hash = %plan.ancestor.block_info.hash,
+        source_safe_number = source_safe.number,
+        source_safe_hash = %source_safe.hash,
+        walk_depth = budget.walk_depth,
+        replay_blocks = plan.replay.len(),
+        recovery_lookups = budget.lookups,
+        duration = ?started_at.elapsed(),
+        "Prepared source-safe follow recovery",
+    );
+    Ok(plan)
 }
 
-/// Test helper for [`find_common_ancestor_with_budget`] with a fresh recovery budget.
+/// Walks the captured source-safe branch backward and returns the highest matching local ancestor.
 #[cfg(test)]
 pub(super) async fn find_common_ancestor<Local, Remote>(
     local: &Local,
@@ -273,24 +155,26 @@ where
     Remote: RemoteClient,
 {
     let mut budget = RecoveryBudget::new();
-    find_common_ancestor_with_budget(local, source, finalized, source_safe, &mut budget).await
+    Ok(build_recovery_plan(local, source, finalized, source_safe, &mut budget).await?.ancestor)
 }
 
-/// Walks the source-safe branch backward by parent hash and returns its highest block that matches
-/// the local chain. The finalized head must be common; recovery cannot reorg below it.
-async fn find_common_ancestor_with_budget<Local, Remote>(
+/// Walks the source-safe branch backward by parent hash, collecting the source-safe replay path,
+/// and returns its highest block that matches the local chain. The finalized head must be common;
+/// recovery cannot reorg below it.
+async fn build_recovery_plan<Local, Remote>(
     local: &Local,
     source: &Remote,
     finalized: &L2BlockInfo,
     source_safe: &BlockInfo,
     budget: &mut RecoveryBudget,
-) -> Result<L2BlockInfo, FollowError>
+) -> Result<RecoveryPlan, FollowError>
 where
     Local: FollowLocalClient,
     Remote: RemoteClient,
 {
     let finalized_number = finalized.block_info.number;
     let mut source_block = *source_safe;
+    let mut reverse_replay = Vec::new();
 
     loop {
         let number = source_block.number;
@@ -303,7 +187,8 @@ where
 
         if number == finalized_number {
             if source_block.hash == finalized.block_info.hash {
-                return Ok(*finalized);
+                reverse_replay.reverse();
+                return Ok(RecoveryPlan { ancestor: *finalized, replay: reverse_replay });
             }
             return Err(FollowError::FinalizedDivergence {
                 number,
@@ -316,11 +201,17 @@ where
             budget.run("ancestor local lookup", local.block_info(number.into())).await?
             && local_block.block_info.hash == source_block.hash
         {
-            return Ok(local_block);
+            reverse_replay.reverse();
+            return Ok(RecoveryPlan { ancestor: local_block, replay: reverse_replay });
         }
 
+        reverse_replay.push(ReplayBlock {
+            number: source_block.number,
+            hash: source_block.hash,
+            parent_hash: source_block.parent_hash,
+        });
         let parent = budget
-            .run("ancestor parent lookup", async {
+            .run("recovery parent lookup", async {
                 source
                     .get_block_info_by_hash(source_block.parent_hash)
                     .await
@@ -333,7 +224,7 @@ where
                 parent_number: parent.number,
             });
         }
-        budget.ancestor_walk_depth = budget.ancestor_walk_depth.saturating_add(1);
+        budget.walk_depth = budget.walk_depth.saturating_add(1);
         source_block = parent;
     }
 }
@@ -345,25 +236,25 @@ mod tests {
     use super::{FollowError, RecoveryBudget};
 
     #[tokio::test]
-    async fn recovery_budget_is_shared_across_phases() {
+    async fn recovery_budget_bounds_one_walk() {
         let mut budget = RecoveryBudget::with_limits(Duration::from_secs(1), 2);
 
         budget
-            .run("ancestor", async { Ok::<_, FollowError>(()) })
+            .run("recovery", async { Ok::<_, FollowError>(()) })
             .await
-            .expect("ancestor lookup should fit within budget");
+            .expect("first lookup should fit within budget");
         budget
-            .run("replay", async { Ok::<_, FollowError>(()) })
+            .run("recovery", async { Ok::<_, FollowError>(()) })
             .await
-            .expect("replay lookup should fit within budget");
+            .expect("second lookup should fit within budget");
 
         let error = budget
-            .run("replay", async { Ok::<_, FollowError>(()) })
+            .run("recovery", async { Ok::<_, FollowError>(()) })
             .await
-            .expect_err("shared lookup budget should be exhausted");
+            .expect_err("lookup budget should be exhausted");
         assert!(matches!(
             error,
-            FollowError::RecoveryBudgetExceeded { phase: "replay", lookups: 2 }
+            FollowError::RecoveryBudgetExceeded { phase: "recovery", lookups: 2 }
         ));
     }
 }
