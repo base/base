@@ -23,9 +23,8 @@ use tracing::{debug, info, warn};
 
 use crate::{
     CandidateGame, ChallengeSubmitError, ChallengeSubmitter, ChallengerMetrics,
-    ChallengerProofAdapter, DisputeIntent, IntermediateValidationParams, OutputValidator,
-    PendingProof, PendingProofs, ProofKind, ProofPhase, ProofUpdate, ValidationResult,
-    ValidatorError,
+    ChallengerProofAdapter, DisputeIntent, OutputValidator, PendingProof, PendingProofs,
+    ProofKind, ProofPhase, ProofUpdate,
 };
 
 /// Manages the lifecycle of proofs used to dispute invalid games.
@@ -84,26 +83,6 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
             max_proof_duration,
             tee_submit_retry_limit,
         }
-    }
-
-    /// Validates intermediate output roots against the local L2 node.
-    pub async fn validate_intermediate_roots(
-        &self,
-        params: IntermediateValidationParams<'_>,
-    ) -> Result<ValidationResult, ValidatorError> {
-        self.validator.validate_intermediate_roots(params).await
-    }
-
-    /// Validates a claimed output root at a specific L2 block.
-    pub async fn validate_claimed_root_at_block(
-        &self,
-        game_address: Address,
-        l2_block_number: u64,
-        claimed_root: B256,
-    ) -> Result<ValidationResult, ValidatorError> {
-        self.validator
-            .validate_claimed_root_at_block(game_address, l2_block_number, claimed_root)
-            .await
     }
 
     /// Returns whether a game is terminally ignored.

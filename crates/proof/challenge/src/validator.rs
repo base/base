@@ -9,7 +9,11 @@
 use std::sync::Arc;
 
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{Address, B256, keccak256};
+use alloy_trie::{
+    Nibbles, TrieAccount,
+    proof::verify_proof,
+};
 use base_common_consensus::Predeploys;
 use base_proof_rpc::{L2Provider, RpcError};
 use base_protocol::OutputRoot;
@@ -17,7 +21,7 @@ use futures::stream::{self, StreamExt};
 use thiserror::Error;
 use tracing::{info, warn};
 
-use crate::{AccountProofVerifier, ChallengerMetrics};
+use crate::ChallengerMetrics;
 
 /// Errors that can occur during output root validation.
 #[derive(Debug, Error)]
@@ -128,6 +132,7 @@ pub struct IntermediateValidationParams<'a> {
 ///
 /// Fetches L2 block headers and `L2ToL1MessagePasser` storage proofs to
 /// recompute expected output roots and compare them against onchain claims.
+#[derive(Clone)]
 pub struct OutputValidator<L2: L2Provider + ?Sized> {
     l2_provider: Arc<L2>,
 }
@@ -196,12 +201,35 @@ impl<L2: L2Provider + ?Sized> OutputValidator<L2> {
         let account_result =
             self.l2_provider.get_proof(Predeploys::L2_TO_L1_MESSAGE_PASSER, rpc_hash).await?;
 
-        AccountProofVerifier::verify(
-            &account_result,
+        if account_result.address != Predeploys::L2_TO_L1_MESSAGE_PASSER {
+            return Err(ValidatorError::AccountProofFailed {
+                block_number,
+                reason: format!(
+                    "account proof address mismatch: expected {}, got {}",
+                    Predeploys::L2_TO_L1_MESSAGE_PASSER,
+                    account_result.address
+                ),
+            });
+        }
+
+        let account = TrieAccount {
+            nonce: account_result.nonce,
+            balance: account_result.balance,
+            storage_root: account_result.storage_hash,
+            code_hash: account_result.code_hash,
+        };
+        let key = Nibbles::unpack(keccak256(account_result.address));
+
+        verify_proof(
             consensus_header.state_root,
-            Predeploys::L2_TO_L1_MESSAGE_PASSER,
+            key,
+            Some(alloy_rlp::encode(account)),
+            &account_result.account_proof,
         )
-        .map_err(|e| ValidatorError::AccountProofFailed { block_number, reason: e.to_string() })?;
+        .map_err(|error| ValidatorError::AccountProofFailed {
+            block_number,
+            reason: format!("account proof verification failed: {error}"),
+        })?;
 
         let storage_root = account_result.storage_hash;
         let output_root =
