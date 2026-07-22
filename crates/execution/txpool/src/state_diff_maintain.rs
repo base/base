@@ -221,17 +221,28 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn expiry_sweep_fires_repeatedly_on_interval() {
         let calls = Arc::new(AtomicUsize::new(0));
         let sweeper = CountingSweeper(Arc::clone(&calls));
-        let handle = tokio::spawn(maintain_expiry_sweep(sweeper, Duration::from_millis(5)));
-        tokio::time::sleep(Duration::from_millis(60)).await;
+        let period = Duration::from_millis(10);
+        let handle = tokio::spawn(maintain_expiry_sweep(sweeper, period));
+
+        // The first interval tick is ready immediately.
+        tokio::task::yield_now().await;
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+
+        // MissedTickBehavior::Delay schedules the next tick from completion, so
+        // advance one period at a time rather than jumping the clock forward.
+        tokio::time::advance(period).await;
+        tokio::task::yield_now().await;
+        assert_eq!(calls.load(Ordering::Relaxed), 2);
+
+        tokio::time::advance(period).await;
+        tokio::task::yield_now().await;
+        assert_eq!(calls.load(Ordering::Relaxed), 3);
+
         handle.abort();
-        assert!(
-            calls.load(Ordering::Relaxed) >= 2,
-            "wall-clock sweep must fire repeatedly, not just once"
-        );
     }
 
     fn info(balance: u64, nonce: u64) -> AccountInfo {

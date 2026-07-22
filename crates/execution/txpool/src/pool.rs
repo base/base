@@ -315,8 +315,8 @@ where
     ///
     /// The horizon is `now / EXPIRY_BUCKET_SECS`, so a bucket fires only once
     /// its window has actually started — no forward lookahead. Because
-    /// [`crate::sweep_expired`] drives this on a sub-second wall-clock timer,
-    /// eviction lands within one bucket (`EXPIRY_BUCKET_SECS`) of the true
+    /// [`crate::maintain_expiry_sweep`] drives this on a sub-second wall-clock
+    /// timer, eviction lands within one bucket (`EXPIRY_BUCKET_SECS`) of the true
     /// expiry without depending on block cadence.
     fn expire_due_buckets(&self, now: u64) -> usize {
         // Do not expire a protocol reservation between guard and reth insertion.
