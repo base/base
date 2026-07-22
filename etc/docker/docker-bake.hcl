@@ -3,7 +3,7 @@ variable "PROFILE" {
 }
 
 variable "RUST_VERSION" {
-  default = "1.94.1"
+  default = "1.95.0"
 }
 
 variable "BASE_SUCCINCT_ELF_REQUIRE" {
