@@ -125,6 +125,13 @@ impl LimitClassCache {
         self.entries.get(&account).and_then(|entry| entry.1)
     }
 
+    /// Whether the account is cached as a trusted (high-rate) payer, without
+    /// promoting it. Non-promoting so balance-diff bookkeeping cannot bias LRU
+    /// eviction (see [`Self::invalidate_code`]).
+    pub fn is_trusted_cached(&self, account: Address) -> bool {
+        self.entries.peek(&account).is_some_and(|entry| entry.1 == Some(true))
+    }
+
     /// Inserts an account-state classification and removes any reverse slot
     /// belonging to the least-recently-used account evicted by the insertion.
     pub fn insert_account_state(&mut self, account: Address, state: AccountState) {
@@ -151,8 +158,13 @@ impl LimitClassCache {
     }
 
     /// Invalidates an account's trusted-delegation classification.
+    ///
+    /// Uses the non-promoting `peek_mut`: invalidation is driven by every
+    /// canonical state diff, so an account with frequent code churn must not
+    /// promote itself to most-recently-used and displace fresher, fully-valid
+    /// entries. A surviving partially-invalidated entry keeps its recency.
     pub fn invalidate_code(&mut self, account: Address) {
-        let remove = self.entries.get_mut(&account).is_some_and(|entry| {
+        let remove = self.entries.peek_mut(&account).is_some_and(|entry| {
             entry.1 = None;
             entry.0.is_none()
         });
@@ -162,9 +174,13 @@ impl LimitClassCache {
     }
 
     /// Invalidates the account-state classification associated with `slot`.
+    ///
+    /// Uses the non-promoting `peek_mut` for the same reason as
+    /// [`Self::invalidate_code`]: config-slot churn must not bias eviction by
+    /// pinning the affected account at most-recently-used.
     pub fn invalidate_slot(&mut self, slot: &B256) {
         if let Some(account) = self.slots.remove(slot) {
-            let remove = self.entries.get_mut(&account).is_some_and(|entry| {
+            let remove = self.entries.peek_mut(&account).is_some_and(|entry| {
                 entry.0 = None;
                 entry.1.is_none()
             });
@@ -739,6 +755,22 @@ impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
                     changed = true;
                     cache.invalidate_slot(slot);
                 }
+            }
+            // A balance change is not part of the cached classification, but it
+            // seeds a trusted payer's `PayerBook` on first admission.
+            // `on_balance_changed` only corrects payers that already have a book;
+            // a trusted payer with no book yet would otherwise seed it from the
+            // (now stale) validation snapshot. Advance the generation so an
+            // admission whose validation predates this diff re-validates against
+            // the fresh balance.
+            //
+            // Restricted to *known-trusted* payers: only they use the balance
+            // book, and a trusted payer with a pending transaction was just
+            // classified into the cache during that validation. Ordinary balance
+            // churn — the vast majority, and unrelated to any book — must not
+            // advance the generation and bounce unrelated admissions.
+            if diff.balance.is_some() && cache.is_trusted_cached(diff.address) {
+                changed = true;
             }
         }
         if changed {
@@ -2019,6 +2051,62 @@ mod tests {
         ChainConfig::mainnet().chain_id
     }
 
+    fn balance_diff(address: Address, balance: u64) -> crate::AccountStateDiff {
+        crate::AccountStateDiff {
+            address,
+            balance: Some(U256::from(balance)),
+            nonce_changed: false,
+            code_changed: false,
+            changed_slots: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn only_trusted_payer_balance_diff_advances_classification_generation() {
+        let validator = build_test_validator();
+        let trusted = Address::repeat_byte(7);
+        let ordinary = Address::repeat_byte(8);
+        let unknown = Address::repeat_byte(9);
+        validator.limit_class_cache.write().insert_trusted(trusted, true);
+        validator.limit_class_cache.write().insert_trusted(ordinary, false);
+
+        // Ordinary (count-limited) and unclassified payers do not seed a balance
+        // book, so their balance churn must not advance the generation and
+        // bounce unrelated admissions.
+        let before = validator.limit_class_cache_generation();
+        validator
+            .invalidate_limit_class_cache(&[balance_diff(ordinary, 1), balance_diff(unknown, 2)]);
+        assert_eq!(
+            validator.limit_class_cache_generation(),
+            before,
+            "ordinary/unknown balance churn must not advance the generation"
+        );
+
+        // A trusted payer's balance change advances it so a pending admission
+        // re-validates against the fresh balance rather than seeding a stale one.
+        validator.invalidate_limit_class_cache(&[balance_diff(trusted, 5)]);
+        assert!(
+            validator.limit_class_cache_generation() > before,
+            "a trusted payer's balance change must advance the generation"
+        );
+
+        // A pure nonce change is neither a classification nor a balance surface.
+        let after_trusted = validator.limit_class_cache_generation();
+        let nonce_diff = crate::AccountStateDiff {
+            address: trusted,
+            balance: None,
+            nonce_changed: true,
+            code_changed: false,
+            changed_slots: Vec::new(),
+        };
+        validator.invalidate_limit_class_cache(&[nonce_diff]);
+        assert_eq!(
+            validator.limit_class_cache_generation(),
+            after_trusted,
+            "a nonce-only change must not advance the generation"
+        );
+    }
+
     #[test]
     fn limit_class_cache_evicts_lru_account_and_reverse_slot() {
         let mut cache = LimitClassCache::new(NonZeroUsize::new(2).expect("non-zero capacity"));
@@ -2037,6 +2125,32 @@ mod tests {
         assert!(!cache.slots.contains_key(&AccountConfigurationStorage::account_state_slot(first)));
         assert_eq!(cache.trusted(second), Some(true));
         assert_eq!(cache.trusted(third), Some(false));
+    }
+
+    #[test]
+    fn invalidate_does_not_promote_surviving_entry_to_mru() {
+        let mut cache = LimitClassCache::new(NonZeroUsize::new(2).expect("non-zero capacity"));
+        let (a, b, c) =
+            (Address::repeat_byte(1), Address::repeat_byte(2), Address::repeat_byte(3));
+        let state = AccountState::from_word(U256::ZERO);
+
+        // `a` holds both classification halves and starts as least-recently-used;
+        // `b` is most-recently-used.
+        cache.insert_account_state(a, state);
+        cache.insert_trusted(a, true);
+        cache.insert_account_state(b, state);
+
+        // Partial invalidation keeps `a` alive but must not promote it. `peek`
+        // is non-promoting, so it does not perturb the recency under test.
+        cache.invalidate_code(a);
+        assert!(cache.entries.peek(&a).is_some(), "partially-invalidated entry survives");
+
+        // Inserting a third account evicts the true LRU (`a`), not the fresher
+        // `b`. A promoting invalidation would have wrongly evicted `b` here.
+        cache.insert_account_state(c, state);
+        assert!(cache.entries.peek(&a).is_none(), "non-promoted LRU entry is evicted");
+        assert!(cache.entries.peek(&b).is_some(), "fresher entry is retained");
+        assert!(cache.entries.peek(&c).is_some(), "newest entry is present");
     }
 
     /// Signs `tx` as an EOA-path EIP-8130 transaction and returns the resulting
