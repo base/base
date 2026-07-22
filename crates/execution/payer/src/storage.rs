@@ -23,6 +23,7 @@ use crate::{
     feed::{AnswerShape, FeedConfig, FeedDirection},
     rate::Rate,
     slot::{SlotField, SlotFeed, SlotTimestamp},
+    snapshot::{Erc20, PriceSnapshot, TokenPrice},
 };
 
 /// Read/write view over the on-chain payer-config system contract, mirroring
@@ -177,6 +178,60 @@ impl PayerConfigStorage<'_> {
             }
         };
         self.terms.at_mut(&token).write(terms.to_word())
+    }
+
+    /// Resolves a chain-read-free [`PriceSnapshot`] at `now`, `SLOAD`-ing each
+    /// slot-backed token's price against the current state.
+    ///
+    /// [`PriceSource::Flat`] prices are copied through. [`PriceSource::Slot`]
+    /// prices are read from their configured slots; a token whose price cannot
+    /// be resolved this block (stale/negative oracle answer, malformed field) is
+    /// omitted from the snapshot rather than failing the whole read.
+    /// [`PriceSource::Feed`] (`STATICCALL`) sources are not slot-resolvable and
+    /// are likewise omitted — the builder fast path uses slot sources.
+    ///
+    /// Genuine state-access failures (a failed `SLOAD`) propagate.
+    pub fn price_snapshot(&self, now: u64) -> Result<PriceSnapshot> {
+        let config = self.read()?;
+        let mut prices = Vec::with_capacity(config.tokens.len());
+        for token in &config.tokens {
+            let rate = match &token.price_source {
+                PriceSource::Flat(rate) => *rate,
+                PriceSource::Slot(feed) => {
+                    let answer_word = self.storage.sload(feed.oracle, feed.answer_slot)?;
+                    let timestamp_word = match feed.updated_at_read() {
+                        Some((oracle, slot)) => Some(self.storage.sload(oracle, slot)?),
+                        None => None,
+                    };
+                    match feed.reading(answer_word, timestamp_word).and_then(|r| feed.rate(r, now)) {
+                        Ok(rate) => rate,
+                        // Price unavailable this block (stale/negative/malformed).
+                        Err(_) => continue,
+                    }
+                }
+                // Not resolvable by SLOAD; excluded from the fast snapshot.
+                PriceSource::Feed(_) => continue,
+            };
+            prices.push(TokenPrice {
+                token: token.token,
+                fee_recipient: token.fee_recipient,
+                rate,
+                margin_bps: token.margin_bps,
+            });
+        }
+        Ok(PriceSnapshot { payer: config.payer, enabled: config.enabled, prices })
+    }
+
+    /// Reads `holder`'s balance of `token` with a single `SLOAD`, for a standard
+    /// ERC-20 whose `balances` mapping is at `balances_base_slot`. The builder
+    /// uses this to pre-screen payment before running the phase-0 transfer.
+    pub fn token_balance(
+        &self,
+        token: Address,
+        holder: Address,
+        balances_base_slot: U256,
+    ) -> Result<U256> {
+        self.storage.sload(token, Erc20::balance_slot(holder, balances_base_slot))
     }
 
     /// Removes a token from the accepted set and clears its terms slots.
@@ -386,6 +441,15 @@ mod tests {
     const PAYER: Address = address!("0x0000000000000000000000000000000000000099");
     const TOKEN_A: Address = address!("0x0000000000000000000000000000000000000011");
     const TOKEN_B: Address = address!("0x0000000000000000000000000000000000000022");
+    const ORACLE: Address = address!("0x0000000000000000000000000000000000000abc");
+    /// Slot the slot-backed test token reads its packed answer/timestamp from.
+    const ANSWER_SLOT: U256 = U256::from_limbs([3, 0, 0, 0]);
+
+    /// Packs a `native_per_token` answer (`4e14`, low 192 bits) and `updated_at`
+    /// (high 64 bits) into the shared answer slot word.
+    fn slot_word(updated_at: u64) -> U256 {
+        U256::from(400_000_000_000_000u64) | (U256::from(updated_at) << 192)
+    }
 
     fn flat_token(token: Address) -> TokenConfig {
         TokenConfig {
@@ -432,15 +496,15 @@ mod tests {
 
     fn slot_token(token: Address, staleness_bound: u64) -> TokenConfig {
         let updated_at = (staleness_bound > 0).then_some(SlotTimestamp {
-            slot: U256::from(3u64),
+            slot: ANSWER_SLOT,
             field: SlotField { bit_offset: 192, bit_len: 64, signed: false },
         });
         TokenConfig {
             token,
             fee_recipient: address!("0x00000000000000000000000000000000000000fc"),
             price_source: PriceSource::Slot(SlotFeed {
-                oracle: address!("0x0000000000000000000000000000000000000abc"),
-                answer_slot: U256::from(3u64),
+                oracle: ORACLE,
+                answer_slot: ANSWER_SLOT,
                 answer_field: SlotField { bit_offset: 0, bit_len: 192, signed: true },
                 updated_at,
                 direction: FeedDirection::NativePerToken,
@@ -530,6 +594,66 @@ mod tests {
             // Write a terms word with an out-of-range kind byte directly.
             s.terms.at_mut(&TOKEN_A).write(U256::from(0xffu64)).unwrap();
             assert!(s.read_token(TOKEN_A).is_err());
+        });
+    }
+
+    #[test]
+    fn price_snapshot_resolves_flat_and_slot() {
+        let mut storage = HashMapStorageProvider::new(1);
+        let now = 1_000u64;
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut s = PayerConfigStorage::new(ctx);
+            s.set_payer(PAYER).unwrap();
+            s.set_enabled(true).unwrap();
+            s.upsert_token(&flat_token(TOKEN_A)).unwrap();
+            s.upsert_token(&slot_token(TOKEN_B, 3600)).unwrap();
+            // Seed the oracle answer slot with a fresh reading.
+            ctx.sstore(ORACLE, ANSWER_SLOT, slot_word(now)).unwrap();
+
+            let snapshot = s.price_snapshot(now).unwrap();
+            assert_eq!(snapshot.payer, PAYER);
+            assert!(snapshot.enabled);
+            assert_eq!(snapshot.prices.len(), 2);
+            // Both sources encode the same 2.5e9 base (1 ETH → 2500 token atomic
+            // ×1e6 for a 1e18-wei gas cost); the amounts differ only by each
+            // token's folded margin (flat 250bps, slot 50bps).
+            let flat = snapshot.token(TOKEN_A).unwrap();
+            let slot = snapshot.token(TOKEN_B).unwrap();
+            assert_eq!(
+                flat.payment_amount(1_000_000_000, 1_000_000_000).unwrap(),
+                U256::from(2_562_500_000u64)
+            );
+            assert_eq!(
+                slot.payment_amount(1_000_000_000, 1_000_000_000).unwrap(),
+                U256::from(2_512_500_000u64)
+            );
+        });
+    }
+
+    #[test]
+    fn price_snapshot_omits_stale_slot_token() {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut s = PayerConfigStorage::new(ctx);
+            s.upsert_token(&slot_token(TOKEN_B, 3600)).unwrap();
+            // updated_at=100 with now far beyond the 3600s bound → unavailable.
+            ctx.sstore(ORACLE, ANSWER_SLOT, slot_word(100)).unwrap();
+
+            let snapshot = s.price_snapshot(100_000).unwrap();
+            assert!(snapshot.prices.is_empty());
+            assert!(snapshot.token(TOKEN_B).is_none());
+        });
+    }
+
+    #[test]
+    fn token_balance_reads_mapping_slot() {
+        let mut storage = HashMapStorageProvider::new(1);
+        let holder = address!("0x00000000000000000000000000000000000000aa");
+        let base = U256::from(9u64);
+        StorageCtx::enter(&mut storage, |ctx| {
+            ctx.sstore(TOKEN_A, Erc20::balance_slot(holder, base), U256::from(1_234u64)).unwrap();
+            let balance = PayerConfigStorage::new(ctx).token_balance(TOKEN_A, holder, base).unwrap();
+            assert_eq!(balance, U256::from(1_234u64));
         });
     }
 }

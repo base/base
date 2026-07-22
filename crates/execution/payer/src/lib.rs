@@ -15,6 +15,9 @@ pub use slot::{SlotField, SlotFeed, SlotTimestamp};
 mod config;
 pub use config::{PayerConfig, PriceSource, TokenConfig};
 
+mod snapshot;
+pub use snapshot::{Erc20, PriceSnapshot, TokenPrice};
+
 #[cfg(feature = "storage")]
 mod storage;
 #[cfg(feature = "storage")]
