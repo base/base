@@ -295,12 +295,12 @@ fn r61_manifest_drives_pool_and_adapter_funding_oracle() {
     let manifest: Value = serde_json::from_str(MANIFEST_TEXT).expect("vendored R6-1 manifest JSON");
     assert_eq!(
         manifest.get("generated_from_commit").and_then(Value::as_str),
-        Some("4253d6916698b5f4fa23e87aaf780d3e11279037"),
+        Some("4a41e9fcd63c46b142de568d22a72c1ec9f2b812"),
         "vendored manifest source commit changed"
     );
     assert_eq!(
         manifest.get("artifact_sha256").and_then(Value::as_str),
-        Some("3221c422e286ed92af0bb53baabd6d55a531f4477428fc2d5af58c7905a777f4"),
+        Some("844b5d1876e26c0aa7345fb18e8b6aa6d0d62c88360d1cef10e523349965e1ac"),
         "vendored manifest artifact seal changed"
     );
     let executor_creation = bytecode::executor_creation();
