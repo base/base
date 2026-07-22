@@ -275,22 +275,21 @@ impl WitnessGenerator {
         agreed: u64,
         fetch_eip_2935_proofs: bool,
     ) -> Result<Vec<(u64, B256, B256, PreimageMap)>> {
-        let support_numbers = (start..=agreed).collect::<Vec<_>>();
-        let execution_numbers = agreed
-            .checked_add(1)
-            .filter(|execution_start| execution_start <= &end)
-            .map_or_else(Vec::new, |execution_start| (execution_start..=end).collect());
-        let history_numbers = support_numbers[..support_numbers.len().saturating_sub(1)].to_vec();
+        let execution_end = if agreed < end {
+            Self::l2_execution_end(end, self.fetch_l2_head_number().await?)
+        } else {
+            agreed
+        };
         let history_proofs = async {
-            if fetch_eip_2935_proofs {
-                self.fetch_eip_2935_proofs(agreed, history_numbers).await
+            if fetch_eip_2935_proofs && agreed < execution_end {
+                self.fetch_eip_2935_proofs(agreed, start..agreed).await
             } else {
                 Ok(PreimageMap::new())
             }
         };
         let (mut support, execution, history_proofs) = tokio::try_join!(
-            self.fetch_l2_blocks(support_numbers, false),
-            self.fetch_l2_blocks(execution_numbers, true),
+            self.fetch_l2_blocks(start..=agreed, false),
+            self.fetch_l2_blocks((agreed..execution_end).map(|number| number + 1), true),
             history_proofs,
         )?;
         support
@@ -303,11 +302,16 @@ impl WitnessGenerator {
         Ok(support)
     }
 
+    /// Limits execution prefetches to the current canonical L2 head.
+    pub fn l2_execution_end(claimed: u64, l2_head: u64) -> u64 {
+        claimed.min(l2_head)
+    }
+
     /// Fetches EIP-2935 account and storage proof nodes at the agreed L2 block.
     pub async fn fetch_eip_2935_proofs(
         &self,
         agreed_block_number: u64,
-        target_numbers: Vec<u64>,
+        target_numbers: impl IntoIterator<Item = u64>,
     ) -> Result<PreimageMap> {
         let slots = Self::eip_2935_storage_slots(agreed_block_number, target_numbers);
         let proofs = stream::iter(slots.chunks(MAX_STORAGE_PROOF_KEYS))
@@ -344,7 +348,10 @@ impl WitnessGenerator {
     }
 
     /// Returns EIP-2935 storage keys for historical L2 block numbers at an agreed block.
-    pub fn eip_2935_storage_slots(agreed_block_number: u64, target_numbers: Vec<u64>) -> Vec<B256> {
+    pub fn eip_2935_storage_slots(
+        agreed_block_number: u64,
+        target_numbers: impl IntoIterator<Item = u64>,
+    ) -> Vec<B256> {
         target_numbers
             .into_iter()
             .map(|number| {
@@ -364,7 +371,7 @@ impl WitnessGenerator {
     /// Fetches the provided L2 block numbers with bounded concurrency.
     pub async fn fetch_l2_blocks(
         &self,
-        numbers: Vec<u64>,
+        numbers: impl IntoIterator<Item = u64>,
         execute: bool,
     ) -> Result<Vec<(u64, B256, B256, PreimageMap)>> {
         stream::iter(numbers)
@@ -372,6 +379,14 @@ impl WitnessGenerator {
             .buffer_unordered(self.concurrency.get())
             .try_collect()
             .await
+    }
+
+    /// Fetches the current canonical L2 head number.
+    pub async fn fetch_l2_head_number(&self) -> Result<u64> {
+        self.providers.l2.get_block_number().await.map_err(|error| WitnessError::Rpc {
+            operation: "fetch L2 head",
+            error: error.to_string(),
+        })
     }
 
     /// Fetches one L2 block and optionally its execution witness.
@@ -861,6 +876,12 @@ mod tests {
         assert!(WitnessGenerator::is_initial_reset_anchor(950, 1_000, 50));
         assert!(!WitnessGenerator::is_initial_reset_anchor(951, 1_000, 50));
         assert_eq!(WitnessGenerator::l2_support_start(700, 1_000, 256, 0), 700);
+    }
+
+    #[test]
+    fn l2_execution_prefetch_stops_at_the_canonical_head() {
+        assert_eq!(WitnessGenerator::l2_execution_end(1_000, 900), 900);
+        assert_eq!(WitnessGenerator::l2_execution_end(900, 1_000), 900);
     }
 
     #[test]
