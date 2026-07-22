@@ -17,9 +17,7 @@ use base_challenger::{
         mock_state, mock_state_with_tee, receipt_with_status,
     },
 };
-use base_proof_contracts::{
-    AggregateVerifierClient, DisputeGameFactoryClient, GameStatus,
-};
+use base_proof_contracts::{AggregateVerifierClient, DisputeGameFactoryClient, GameStatus};
 use base_proof_primitives::Proposal;
 use base_proof_rpc::L1Provider;
 use base_protocol::OutputRoot;
