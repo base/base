@@ -181,7 +181,8 @@ impl FlashblockDiagnostics {
             | TxnExecutionError::NonceTooLow
             | TxnExecutionError::InternalError(_)
             | TxnExecutionError::EvmError
-            | TxnExecutionError::MaxGasUsageExceeded => {
+            | TxnExecutionError::MaxGasUsageExceeded
+            | TxnExecutionError::SponsoredPaymentReverted => {
                 self.txs_rejected_other += 1;
             }
         }
@@ -1177,6 +1178,33 @@ impl BasePayloadBuilderCtx {
 
             let gas_used = result.tx_gas_used();
             let is_success = result.is_success();
+
+            // A sponsored EIP-8130 transaction that reverts means its phase-0
+            // token payment (or a later phase) failed. The builder-operated
+            // payer co-signed and pays the gas, so including a reverted
+            // sponsored transaction would spend the payer's gas for no payment.
+            // Drop it (and its descendants) as insufficient payment instead of
+            // committing it.
+            if !is_success && tx.as_eip8130().is_some_and(|signed| signed.tx().payer.is_some()) {
+                let err = TxnExecutionError::SponsoredPaymentReverted;
+                diag.record_rejection(&err);
+                let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
+                record_rejected_tx_priority_fee(&err, priority_fee);
+                if err.is_permanent() {
+                    diag.permanently_rejected_txs.push(tx_hash);
+                }
+                self.emit_builder_decision_event(
+                    &payload_id,
+                    TransactionEventType::BuilderRejected,
+                    tx_hash,
+                    Some(ordering_position),
+                    || BuilderRejectedEventData::from_error(&err, info, limits, Some(&tx_resources)),
+                );
+                log_txn(Ok(TxnOutcome::RevertedAndExcluded));
+                best_txs.mark_invalid(tx.signer(), tx.nonce());
+                continue;
+            }
+
             if is_success {
                 log_txn(Ok(TxnOutcome::Success));
                 num_txs_simulated_success += 1;

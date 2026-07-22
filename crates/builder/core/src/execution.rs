@@ -150,6 +150,13 @@ pub enum TxnExecutionError {
     /// Metering data has not yet arrived for this transaction.
     #[error("metering data pending")]
     MeteringDataPending,
+
+    /// A sponsored EIP-8130 transaction reverted, so its phase-0 token payment
+    /// (or a later phase) failed. The builder-operated payer will not include
+    /// it — doing so would spend the payer's gas for no payment — and drops it
+    /// as insufficient payment.
+    #[error("sponsored EIP-8130 payment reverted")]
+    SponsoredPaymentReverted,
 }
 
 impl TxnExecutionError {
@@ -167,6 +174,7 @@ impl TxnExecutionError {
                     ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _),
                 )
                 | Self::MaxGasUsageExceeded
+                | Self::SponsoredPaymentReverted
         )
     }
 }
