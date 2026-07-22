@@ -10,9 +10,9 @@ use k256::sha2::{Digest, Sha256};
 use serde_json::Value;
 
 const R61_MANIFEST: &str = include_str!("../fixtures/r61-manifest.json");
-const R61_SOURCE_COMMIT: &str = "4a41e9fcd63c46b142de568d22a72c1ec9f2b812";
+const R61_SOURCE_COMMIT: &str = "28889b15c25e2a04e29f187866901efb4c3f2b3a";
 const R61_ARTIFACT_SHA256: &str =
-    "844b5d1876e26c0aa7345fb18e8b6aa6d0d62c88360d1cef10e523349965e1ac";
+    "d4facc1b10da19cb1f820b15087dafff5f6e2abe2425738d5d0b05df2bf9a7c9";
 const EXECUTE_SELECTOR: &str = "3b83f272";
 const RETIRED_EXECUTE_SELECTOR: &str = "21def296";
 

@@ -176,6 +176,17 @@ fn encode_addresses(addresses: &[Address]) -> Vec<u8> {
     encoded
 }
 
+/// Constructor args for the 3-parameter `MockAerodromePool(token0, token1, stable)`.
+/// R6-1 exercises the VOLATILE branch (`stable == false`), which drives the same
+/// constant-product funding path the AerodromeVolatile assembler convention uses.
+fn aerodrome_pool_args(token0: Address, token1: Address, stable: bool) -> Vec<u8> {
+    let mut encoded = encode_addresses(&[token0, token1]);
+    let mut flag = [0u8; 32];
+    flag[31] = u8::from(stable);
+    encoded.extend_from_slice(&flag);
+    encoded
+}
+
 fn deploy(rpc: &Rpc, creation: &str, constructor_args: &[u8]) -> Address {
     let mut data = hex::decode(creation).expect("manifest creation bytecode must be hex");
     data.extend_from_slice(constructor_args);
@@ -231,6 +242,16 @@ fn seed_aerodrome(rpc: &Rpc, pool: Address, reserve0: U256, reserve1: U256) {
     let receipt =
         send(rpc, Some(pool), &setReservesCall { r0: reserve0, r1: reserve1 }.abi_encode());
     assert_eq!(receipt["status"], "0x1", "Aerodrome reserve initialization reverted");
+}
+
+/// Seed the constant-product reserves of a MockUniV3Pool. Like the Aerodrome
+/// mock, `setReserves` mints the reserve balances to the pool AND records them,
+/// so the pool prices the swap from real state (a raw balance mint alone leaves
+/// `reserve0/reserve1 == 0`, which quotes `amountOut == 0` and reverts the hop).
+fn seed_univ3(rpc: &Rpc, pool: Address, reserve0: U256, reserve1: U256) {
+    let receipt =
+        send(rpc, Some(pool), &setReservesCall { r0: reserve0, r1: reserve1 }.abi_encode());
+    assert_eq!(receipt["status"], "0x1", "UniswapV3 reserve initialization reverted");
 }
 
 fn calldata_for(
@@ -290,17 +311,41 @@ fn assert_selector_and_funding(calldata: &[u8], first: Address, second: Address)
     }
 }
 
+/// Overwrite the two `fundingTarget` words (route hop 0 -> word 6, hop 1 -> word
+/// 13) of an already-encoded executor calldata. Used only to inject the WRONG
+/// funding target that the production assembler would never emit, so the oracle
+/// can prove on-chain that the executor + mocks reject it.
+fn with_funding_targets(mut calldata: Vec<u8>, first: Address, second: Address) -> Vec<u8> {
+    for (word, target) in [(6usize, first), (13usize, second)] {
+        let start = 4 + word * 32;
+        calldata[start..start + 12].fill(0);
+        calldata[start + 12..start + 32].copy_from_slice(target.as_slice());
+    }
+    calldata
+}
+
+/// Snapshot every participant's WETH and intermediate-token balance so a reverted
+/// attempt can be proven to have rolled back with no residual movement.
+fn snapshot_balances(rpc: &Rpc, token: Address, accounts: &[Address]) -> Vec<U256> {
+    let mut out = Vec::with_capacity(accounts.len() * 2);
+    for account in accounts {
+        out.push(balance(rpc, BASE_WETH, *account));
+        out.push(balance(rpc, token, *account));
+    }
+    out
+}
+
 #[test]
 fn r61_manifest_drives_pool_and_adapter_funding_oracle() {
     let manifest: Value = serde_json::from_str(MANIFEST_TEXT).expect("vendored R6-1 manifest JSON");
     assert_eq!(
         manifest.get("generated_from_commit").and_then(Value::as_str),
-        Some("4a41e9fcd63c46b142de568d22a72c1ec9f2b812"),
+        Some("28889b15c25e2a04e29f187866901efb4c3f2b3a"),
         "vendored manifest source commit changed"
     );
     assert_eq!(
         manifest.get("artifact_sha256").and_then(Value::as_str),
-        Some("844b5d1876e26c0aa7345fb18e8b6aa6d0d62c88360d1cef10e523349965e1ac"),
+        Some("d4facc1b10da19cb1f820b15087dafff5f6e2abe2425738d5d0b05df2bf9a7c9"),
         "vendored manifest artifact seal changed"
     );
     let executor_creation = bytecode::executor_creation();
@@ -334,12 +379,12 @@ fn r61_manifest_drives_pool_and_adapter_funding_oracle() {
     let aero_first = deploy(
         &rpc,
         manifest_creation(&manifest, "dependency_fixtures", "MockAerodromePool"),
-        &encode_addresses(&[BASE_WETH, token]),
+        &aerodrome_pool_args(BASE_WETH, token, false),
     );
     let aero_second = deploy(
         &rpc,
         manifest_creation(&manifest, "dependency_fixtures", "MockAerodromePool"),
-        &encode_addresses(&[token, BASE_WETH]),
+        &aerodrome_pool_args(token, BASE_WETH, false),
     );
     let v3_first = deploy(
         &rpc,
@@ -357,8 +402,8 @@ fn r61_manifest_drives_pool_and_adapter_funding_oracle() {
     mint(&rpc, BASE_WETH, executor, U256::from(PRINCIPAL));
     seed_aerodrome(&rpc, aero_first, U256::from(RESERVE), U256::from(2 * RESERVE));
     seed_aerodrome(&rpc, aero_second, U256::from(RESERVE), U256::from(RESERVE));
-    mint(&rpc, token, v3_first, U256::from(2 * AMOUNT_IN));
-    mint(&rpc, BASE_WETH, v3_second, U256::from(2 * AMOUNT_IN));
+    seed_univ3(&rpc, v3_first, U256::from(RESERVE), U256::from(2 * RESERVE));
+    seed_univ3(&rpc, v3_second, U256::from(RESERVE), U256::from(RESERVE));
 
     let pool_funded = calldata_for(
         [ExactProtocol::AerodromeVolatile, ExactProtocol::AerodromeVolatile],
@@ -410,16 +455,73 @@ fn r61_manifest_drives_pool_and_adapter_funding_oracle() {
         U256::ZERO,
         "V3 left intermediate token on executor"
     );
-    assert_eq!(
-        balance(&rpc, BASE_WETH, v3_first),
-        U256::from(AMOUNT_IN),
+    assert!(
+        balance(&rpc, BASE_WETH, v3_first) > U256::from(RESERVE),
         "first V3 callback pool did not receive adapter-funded WETH"
     );
-    assert_eq!(
-        balance(&rpc, token, v3_second),
-        U256::from(AMOUNT_IN),
+    assert!(
+        balance(&rpc, token, v3_second) > U256::from(RESERVE),
         "second V3 callback pool did not receive adapter-funded token"
     );
 
-    // TODO(Claude): add wrong-target revert and full rollback assertions with the adversarial mock body.
+    // Adversarial funding matrix: the WRONG fundingTarget must revert atomically
+    // and leave every balance untouched. The executor's own InvalidFundingTarget
+    // gate still passes here (adapter/pool are each a structurally valid target),
+    // so these reverts originate in the real mock bodies — not in an early guard.
+
+    // (1) Aerodrome/V2 convention funds the POOL. Funding the ADAPTER instead
+    // leaves each pool without input, so MockAerodromePool.swap reverts
+    // InsufficientInput.
+    let aero_participants = [executor, aero_adapter, aero_first, aero_second, PROFIT_RECIPIENT];
+    let aero_before = snapshot_balances(&rpc, token, &aero_participants);
+    let aero_wrong = with_funding_targets(
+        calldata_for(
+            [ExactProtocol::AerodromeVolatile, ExactProtocol::AerodromeVolatile],
+            [aero_first, aero_second],
+            [aero_adapter, aero_adapter],
+            token,
+            executor,
+        ),
+        aero_adapter,
+        aero_adapter,
+    );
+    assert_selector_and_funding(&aero_wrong, aero_adapter, aero_adapter);
+    let receipt = send(&rpc, Some(executor), &aero_wrong);
+    assert_eq!(
+        receipt["status"], "0x0",
+        "adapter-funded Aerodrome hop must revert (pool never receives input)"
+    );
+    assert_eq!(
+        snapshot_balances(&rpc, token, &aero_participants),
+        aero_before,
+        "reverted Aerodrome wrong-target attempt must roll back every balance"
+    );
+
+    // (2) UniswapV3 convention funds the ADAPTER (which pays the pool inside the
+    // callback). Funding the POOL instead leaves the adapter with nothing to pay,
+    // so the V3 callback reverts.
+    let v3_participants = [executor, v3_adapter, v3_first, v3_second, PROFIT_RECIPIENT];
+    let v3_before = snapshot_balances(&rpc, token, &v3_participants);
+    let v3_wrong = with_funding_targets(
+        calldata_for(
+            [ExactProtocol::UniswapV3, ExactProtocol::UniswapV3],
+            [v3_first, v3_second],
+            [v3_adapter, v3_adapter],
+            token,
+            executor,
+        ),
+        v3_first,
+        v3_second,
+    );
+    assert_selector_and_funding(&v3_wrong, v3_first, v3_second);
+    let receipt = send(&rpc, Some(executor), &v3_wrong);
+    assert_eq!(
+        receipt["status"], "0x0",
+        "pool-funded V3 hop must revert (adapter empty inside callback)"
+    );
+    assert_eq!(
+        snapshot_balances(&rpc, token, &v3_participants),
+        v3_before,
+        "reverted V3 wrong-target attempt must roll back every balance"
+    );
 }
