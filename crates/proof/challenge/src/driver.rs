@@ -6,7 +6,7 @@
 use std::{sync::Arc, time::Duration};
 
 use base_proof_contracts::AggregateVerifierClient;
-use base_proof_rpc::L2Provider;
+use base_proof_rpc::{L1Provider, L2Provider};
 use base_prover_service_client::ProofRequesterProvider;
 use base_runtime::TokioRuntime;
 use base_tx_manager::TxManager;
@@ -17,7 +17,7 @@ use tracing::{debug, error, info, warn};
 use crate::{
     AnchorUpdater, BondManager, CandidateGame, ChallengeSubmitter, ChallengerMetrics,
     DisputeIntent, DisputeProofManager, GameCategory, GameScanner, IntermediateValidationParams,
-    L1HeadProvider, OutputValidator, ValidatorError,
+    OutputValidator, ValidatorError,
 };
 
 /// Dependencies and runtime settings injected into the [`Driver`].
@@ -30,8 +30,8 @@ pub struct DriverComponents<L2: L2Provider, P: ProofRequesterProvider, T: TxMana
     pub proof_requester: Arc<P>,
     /// Submits challenge transactions to L1.
     pub submitter: ChallengeSubmitter<T>,
-    /// Optional L1 head provider for TEE proof requests.
-    pub tee: Option<Arc<dyn L1HeadProvider>>,
+    /// L1 provider used to construct TEE proof requests.
+    pub l1_provider: Arc<dyn L1Provider>,
     /// Client for the aggregate verifier contract.
     pub verifier_client: Arc<dyn AggregateVerifierClient>,
     /// Bond lifecycle manager (optional; enabled when claim addresses are configured).
@@ -96,7 +96,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager> Driver<L2, P, T> {
             proof_manager: DisputeProofManager::new(
                 components.validator,
                 components.proof_requester,
-                components.tee,
+                components.l1_provider,
                 Arc::clone(&components.verifier_client),
                 components.max_proof_duration,
                 components.tee_submit_retry_limit,

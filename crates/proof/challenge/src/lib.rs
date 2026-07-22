@@ -42,9 +42,6 @@ pub use service::ChallengerService;
 mod submitter;
 pub use submitter::ChallengeSubmitter;
 
-mod tee;
-pub use tee::L1HeadProvider;
-
 mod validator;
 pub use validator::{
     IntermediateValidationParams, OutputValidator, ValidationResult, ValidatorError,

@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, fmt, sync::Arc};
+use std::{fmt, sync::Arc};
 
 use alloy_eips::BlockNumberOrTag;
 use base_common_genesis::RollupConfig;
@@ -20,7 +20,10 @@ use tokio::{
 use crate::{
     BuildRequest, CheckpointWriter, Conductor, EngineActorRequest, EngineClientError,
     EngineDerivationClient, EngineError, GetPayloadRequest, InsertUnsafePayloadRequest, NodeMode,
-    NoopCheckpointWriter,
+    NoopCheckpointWriter, ResetRequest,
+    actors::engine::{
+        CanonicalReconciliationInputs, ReconcileShadowRequest, ShadowReconciliationGate,
+    },
 };
 
 /// Requires that the implementor handles engine requests via the provided channel.
@@ -34,11 +37,42 @@ pub trait EngineRequestReceiver: Send + Sync {
     ) -> JoinHandle<Result<(), EngineError>>;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResetOutcome {
+    NotReset,
+    Reset,
+}
+
+/// Owns the engine processor and routes requests that require shadow reconciliation state.
+#[derive(Debug)]
+pub struct EngineRequestHandler<EngineClient_, DerivationClient>
+where
+    EngineClient_: EngineClient,
+    DerivationClient: EngineDerivationClient,
+{
+    processor: EngineProcessor<EngineClient_, DerivationClient>,
+    shadow_gate: Option<ShadowReconciliationGate>,
+}
+
+impl<EngineClient_, DerivationClient> EngineRequestHandler<EngineClient_, DerivationClient>
+where
+    EngineClient_: EngineClient,
+    DerivationClient: EngineDerivationClient,
+{
+    /// Creates a request handler with optional shadow request routing.
+    pub const fn new(
+        processor: EngineProcessor<EngineClient_, DerivationClient>,
+        shadow_gate: Option<ShadowReconciliationGate>,
+    ) -> Self {
+        Self { processor, shadow_gate }
+    }
+}
+
 /// Classifies the bootstrap behavior for the [`EngineProcessor`].
 ///
 /// Determined once at startup from the node's configuration and (if applicable)
 /// a live conductor leadership check.  Each variant maps to a distinct bootstrap
-/// path in [`EngineProcessor::start`].
+/// path in [`EngineRequestHandler::start`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BootstrapRole {
     /// Pure validator — seed engine state from reth's latest head, no forkchoice update.
@@ -59,8 +93,6 @@ pub struct EngineProcessorOptions {
     pub conductor: Option<Arc<dyn Conductor>>,
     /// Whether the sequencer starts in a stopped state.
     pub sequencer_stopped: bool,
-    /// Whether the sequencer privately builds blocks and reconciles from P2P payloads.
-    pub shadow_sequencer: bool,
 }
 
 impl EngineProcessorOptions {
@@ -69,9 +101,6 @@ impl EngineProcessorOptions {
     /// Larger gaps are treated as deep CL/EL sync and are left to derivation/EL sync rather than
     /// admitting far-future live gossip into reth.
     pub const MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP: u64 = 300;
-
-    /// Maximum number of active-sequencer payloads retained for shadow reconciliation.
-    pub const MAX_SHADOW_PAYLOADS: usize = 300;
 }
 
 impl fmt::Debug for EngineProcessorOptions {
@@ -81,7 +110,6 @@ impl fmt::Debug for EngineProcessorOptions {
             .field("has_unsafe_head_tx", &self.unsafe_head_tx.is_some())
             .field("has_conductor", &self.conductor.is_some())
             .field("sequencer_stopped", &self.sequencer_stopped)
-            .field("shadow_sequencer", &self.shadow_sequencer)
             .finish()
     }
 }
@@ -106,12 +134,6 @@ where
     /// like a [`BootstrapRole::ConductorFollower`] so it does not issue an active-sequencer
     /// forkchoice update before being explicitly started.
     sequencer_stopped: bool,
-    /// Whether the sequencer privately builds blocks and reconciles from P2P payloads.
-    shadow_sequencer: bool,
-    /// Active-sequencer payloads received from authenticated P2P gossip, keyed by block number.
-    shadow_payloads: BTreeMap<u64, BaseExecutionPayloadEnvelope>,
-    /// Whether a conflicting payload or buffer overflow has made reconciliation unsafe.
-    shadow_payload_buffer_faulted: bool,
     /// The configured node mode.
     node_mode: NodeMode,
     /// The last safe head update sent.
@@ -194,20 +216,12 @@ where
             node_mode: options.node_mode,
             rollup: config,
             sequencer_stopped: options.sequencer_stopped,
-            shadow_sequencer: options.shadow_sequencer,
-            shadow_payloads: BTreeMap::new(),
-            shadow_payload_buffer_faulted: false,
             unsafe_head_tx: options.unsafe_head_tx,
         }
     }
 
-    /// Returns whether this processor belongs to a shadow sequencer.
-    pub const fn is_shadow_sequencer(&self) -> bool {
-        self.shadow_sequencer
-    }
-
-    /// Resets the inner [`Engine`] and propagates the reset to the derivation actor.
-    async fn reset(&mut self) -> Result<(), EngineError> {
+    /// Resets the inner [`Engine`] without notifying derivation.
+    async fn reset_engine_state(&mut self) -> Result<L2BlockInfo, EngineError> {
         // Reset the engine, consulting the checkpoint reader if reth has pruned the labeled
         // safe / finalized block bodies (so the L1 info deposit cannot be reconstructed).
         let l2_safe_head = self
@@ -219,12 +233,15 @@ where
             )
             .await?;
 
-        if self.is_shadow_sequencer() {
-            self.clear_shadow_payload_buffer();
-        }
-
         self.checkpoint_forkchoice_state_if_updated().await;
+        Ok(l2_safe_head)
+    }
 
+    /// Propagates a completed engine reset to derivation.
+    async fn notify_derivation_of_reset(
+        &mut self,
+        l2_safe_head: L2BlockInfo,
+    ) -> Result<(), EngineError> {
         // Signal the derivation actor to reset.
         let signal = ResetSignal { l2_safe_head };
         match self.derivation_client.send_signal(signal.signal()).await {
@@ -238,6 +255,12 @@ where
         self.send_derivation_actor_safe_head_if_updated().await?;
 
         Ok(())
+    }
+
+    /// Resets the inner [`Engine`] and propagates the reset to the derivation actor.
+    async fn reset(&mut self) -> Result<(), EngineError> {
+        let l2_safe_head = self.reset_engine_state().await?;
+        self.notify_derivation_of_reset(l2_safe_head).await
     }
 
     async fn checkpoint_forkchoice_state_if_updated(&mut self) {
@@ -281,7 +304,10 @@ where
     }
 
     /// Handles an [`EngineTaskErrors`] according to its severity.
-    async fn handle_engine_task_error(&mut self, err: EngineTaskErrors) -> Result<(), EngineError> {
+    async fn handle_engine_task_error(
+        &mut self,
+        err: EngineTaskErrors,
+    ) -> Result<ResetOutcome, EngineError> {
         let severity = err.severity();
         if severity == EngineTaskErrorSeverity::Critical {
             error!(target: "engine", ?err, "Critical engine task error");
@@ -295,7 +321,7 @@ where
         &mut self,
         severity: EngineTaskErrorSeverity,
         error: String,
-    ) -> Result<(), EngineError> {
+    ) -> Result<ResetOutcome, EngineError> {
         match severity {
             EngineTaskErrorSeverity::Critical => {
                 error!(target: "engine", %error, "Critical engine task error");
@@ -303,7 +329,8 @@ where
             }
             EngineTaskErrorSeverity::Reset => {
                 warn!(target: "engine", %error, "Received reset request");
-                self.reset().await
+                self.reset().await?;
+                Ok(ResetOutcome::Reset)
             }
             EngineTaskErrorSeverity::Flush => {
                 // This error is encountered when the payload is marked INVALID
@@ -314,7 +341,7 @@ where
                 match self.derivation_client.send_signal(Signal::FlushChannel).await {
                     Ok(_) => {
                         debug!(target: "engine", "Sent flush signal to derivation actor");
-                        Ok(())
+                        Ok(ResetOutcome::NotReset)
                     }
                     Err(err) => {
                         error!(target: "engine", ?err, "Failed to send flush signal to the derivation actor.");
@@ -324,33 +351,36 @@ where
             }
             EngineTaskErrorSeverity::Temporary => {
                 trace!(target: "engine", %error, "Temporary engine task error");
-                Ok(())
+                Ok(ResetOutcome::NotReset)
+            }
+            EngineTaskErrorSeverity::Deferred => {
+                trace!(target: "engine", %error, "Deferred engine task error");
+                Ok(ResetOutcome::NotReset)
             }
         }
     }
 
     /// Drains the inner [`Engine`] task queue and attempts to update the safe head.
-    async fn drain(&mut self) -> Result<(), EngineError> {
-        match self.engine.drain().await {
+    async fn drain(&mut self) -> Result<ResetOutcome, EngineError> {
+        let reset_outcome = match self.engine.drain().await {
             Ok(_) => {
                 trace!(target: "engine", "[ENGINE] tasks drained");
+                ResetOutcome::NotReset
             }
-            Err(err) => {
-                self.handle_engine_task_error(err).await?;
-            }
-        }
+            Err(err) => self.handle_engine_task_error(err).await?,
+        };
 
         self.checkpoint_forkchoice_state_if_updated().await;
-        if self.is_shadow_sequencer() {
-            self.prune_shadow_payloads();
-        }
         self.send_derivation_actor_safe_head_if_updated().await?;
 
         if !self.el_sync_complete && self.engine.state().el_sync_finished {
-            self.mark_el_sync_complete_and_notify_derivation_actor().await?;
+            let sync_outcome = self.mark_el_sync_complete_and_notify_derivation_actor().await?;
+            if sync_outcome == ResetOutcome::Reset {
+                return Ok(sync_outcome);
+            }
         }
 
-        Ok(())
+        Ok(reset_outcome)
     }
 
     fn enqueue_unsafe_payload_insert(
@@ -379,11 +409,6 @@ where
 
     fn handle_external_unsafe_l2_block(&mut self, envelope: BaseExecutionPayloadEnvelope) {
         let block_number = envelope.execution_payload.block_number();
-        if self.is_shadow_sequencer() {
-            self.buffer_shadow_payload(envelope);
-            return;
-        }
-
         let sync_state = self.engine.state().sync_state;
         let unsafe_head = sync_state.unsafe_head();
 
@@ -429,87 +454,83 @@ where
         );
     }
 
-    /// Buffers an authenticated active-sequencer payload for later shadow reconciliation.
-    pub fn buffer_shadow_payload(&mut self, envelope: BaseExecutionPayloadEnvelope) {
-        let block_number = envelope.execution_payload.block_number();
-        let block_hash = envelope.execution_payload.block_hash();
-
-        if self.shadow_payload_buffer_faulted {
-            warn!(
-                target: "engine",
-                block_number,
-                %block_hash,
-                "Ignoring shadow reconciliation payload after buffer fault"
-            );
-            return;
+    /// Applies inputs already validated and selected by a shadow reconciliation gate.
+    async fn apply_canonical_inputs(
+        &mut self,
+        inputs: CanonicalReconciliationInputs,
+    ) -> Result<Option<L2BlockInfo>, EngineClientError> {
+        let CanonicalReconciliationInputs {
+            shadow_head,
+            payloads,
+            safe_signals,
+            finalized_block_number,
+        } = inputs;
+        if self.engine.state().sync_state.unsafe_head() != shadow_head {
+            return Err(EngineClientError::InvalidShadowReconciliation(
+                "shadow head is stale or misaligned".to_string(),
+            ));
         }
-
-        if let Some(buffered) = self.shadow_payloads.get(&block_number) {
-            let buffered_hash = buffered.execution_payload.block_hash();
-            if buffered_hash == block_hash {
-                debug!(
-                    target: "engine",
-                    block_number,
-                    %block_hash,
-                    "Ignoring duplicate shadow reconciliation payload"
-                );
-                return;
-            }
-
-            self.shadow_payload_buffer_faulted = true;
-            error!(
-                target: "engine",
-                block_number,
-                %block_hash,
-                %buffered_hash,
-                "Conflicting shadow reconciliation payloads received"
-            );
-            return;
+        let expected_hash = payloads
+            .last()
+            .ok_or_else(|| {
+                EngineClientError::InvalidShadowReconciliation(
+                    "reconciliation range must not be empty".to_string(),
+                )
+            })?
+            .execution_payload
+            .block_hash();
+        let head = self
+            .engine
+            .insert_authoritative_payloads(
+                Arc::clone(&self.client),
+                Arc::clone(&self.rollup),
+                payloads,
+            )
+            .await
+            .map_err(EngineClientError::InsertError)?;
+        if head.block_info.number != shadow_head.block_info.number
+            || head.block_info.hash != expected_hash
+        {
+            return Err(EngineClientError::InvalidShadowReconciliation(
+                "engine returned an unexpected authoritative head".to_string(),
+            ));
         }
-
-        if self.shadow_payloads.len() >= EngineProcessorOptions::MAX_SHADOW_PAYLOADS {
-            self.shadow_payload_buffer_faulted = true;
-            error!(
-                target: "engine",
-                block_number,
-                %block_hash,
-                max_shadow_payloads = EngineProcessorOptions::MAX_SHADOW_PAYLOADS,
-                "Shadow reconciliation payload buffer is full"
-            );
-            return;
+        for safe_signal in safe_signals {
+            self.engine.enqueue(EngineTask::Consolidate(Box::new(ConsolidateTask::new(
+                Arc::clone(&self.client),
+                Arc::clone(&self.rollup),
+                safe_signal,
+            ))));
         }
-
-        debug!(
-            target: "engine",
-            block_number,
-            %block_hash,
-            "Buffered shadow reconciliation payload"
-        );
-        self.shadow_payloads.insert(block_number, envelope);
-    }
-
-    fn prune_shadow_payloads(&mut self) {
-        let safe_head_number = self.engine.state().sync_state.safe_head().block_info.number;
-        self.shadow_payloads.retain(|block_number, _| *block_number > safe_head_number);
-    }
-
-    fn clear_shadow_payload_buffer(&mut self) {
-        self.shadow_payloads.clear();
-        self.shadow_payload_buffer_faulted = false;
+        if let Some(finalized_block_number) = finalized_block_number {
+            self.engine.enqueue(EngineTask::Finalize(Box::new(FinalizeTask::new(
+                Arc::clone(&self.client),
+                Arc::clone(&self.rollup),
+                finalized_block_number,
+            ))));
+        }
+        self.engine
+            .drain()
+            .await
+            .map_err(|error| EngineClientError::ShadowForkchoiceUpdate(error.to_string()))?;
+        let reconciled_head = self.engine.state().sync_state.unsafe_head();
+        if reconciled_head != head {
+            return Err(EngineClientError::InvalidShadowReconciliation(
+                "safe-head consolidation changed the reconciled unsafe head".to_string(),
+            ));
+        }
+        self.checkpoint_forkchoice_state_if_updated().await;
+        self.send_derivation_actor_safe_head_if_updated()
+            .await
+            .map_err(|error| EngineClientError::ShadowForkchoiceUpdate(error.to_string()))?;
+        if let Some(unsafe_head_tx) = &self.unsafe_head_tx {
+            unsafe_head_tx.send_replace(reconciled_head);
+        }
+        Ok(Some(reconciled_head))
     }
 
     /// Handles an unsafe payload supplied through the admin API.
     pub fn handle_admin_unsafe_l2_block(&mut self, envelope: BaseExecutionPayloadEnvelope) {
-        if self.is_shadow_sequencer() {
-            warn!(
-                target: "engine",
-                block_number = envelope.execution_payload.block_number(),
-                block_hash = %envelope.execution_payload.block_hash(),
-                "Ignoring admin unsafe payload on shadow sequencer"
-            );
-            return;
-        }
-
         self.handle_external_unsafe_l2_block(envelope);
     }
 
@@ -530,22 +551,25 @@ where
 
     async fn mark_el_sync_complete_and_notify_derivation_actor(
         &mut self,
-    ) -> Result<(), EngineError> {
+    ) -> Result<ResetOutcome, EngineError> {
         self.el_sync_complete = true;
 
         // Reset the engine if the sync state does not already know about a finalized block.
-        if self.engine.state().sync_state.finalized_head() == L2BlockInfo::default() {
-            // If the sync status is finished, we can reset the engine and start derivation.
-            info!(target: "engine", "Performing initial engine reset");
-            self.reset().await?;
-        } else {
-            info!(target: "engine", "finalized head is not default, so not resetting");
-        }
+        let reset_outcome =
+            if self.engine.state().sync_state.finalized_head() == L2BlockInfo::default() {
+                // If the sync status is finished, we can reset the engine and start derivation.
+                info!(target: "engine", "Performing initial engine reset");
+                self.reset().await?;
+                ResetOutcome::Reset
+            } else {
+                info!(target: "engine", "finalized head is not default, so not resetting");
+                ResetOutcome::NotReset
+            };
 
         self.derivation_client
             .notify_sync_completed(self.engine.state().sync_state.safe_head())
             .await
-            .map(|_| Ok(()))
+            .map(|_| Ok(reset_outcome))
             .map_err(|e| {
                 error!(target: "engine", ?e, "Failed to notify sync completed");
                 EngineError::ChannelClosed
@@ -783,7 +807,7 @@ where
 }
 
 impl<EngineClient_, DerivationClient> EngineRequestReceiver
-    for EngineProcessor<EngineClient_, DerivationClient>
+    for EngineRequestHandler<EngineClient_, DerivationClient>
 where
     EngineClient_: EngineClient + 'static,
     DerivationClient: EngineDerivationClient + 'static,
@@ -808,9 +832,10 @@ where
             //     enter an infinite reset loop. Instead we seed the watch channel from reth's
             //     current head directly; derivation will issue its own FCU once the first Reset
             //     task arrives.
-            let reth_head = self.client.l2_block_info_by_label(BlockNumberOrTag::Latest).await;
+            let reth_head =
+                self.processor.client.l2_block_info_by_label(BlockNumberOrTag::Latest).await;
             let at_genesis = match &reth_head {
-                Ok(Some(head)) => head.block_info.hash == self.rollup.genesis.l2.hash,
+                Ok(Some(head)) => head.block_info.hash == self.processor.rollup.genesis.l2.hash,
                 Ok(None) => true,
                 Err(err) => {
                     warn!(target: "engine", ?err, "Bootstrap: failed to query reth head, falling back to reset");
@@ -818,16 +843,20 @@ where
                 }
             };
 
-            let role = self.resolve_bootstrap_role().await;
+            let role = self.processor.resolve_bootstrap_role().await;
             let opt_head = reth_head.ok().flatten();
             match role {
-                BootstrapRole::Validator => self.bootstrap_validator(opt_head).await,
+                BootstrapRole::Validator => self.processor.bootstrap_validator(opt_head).await,
                 BootstrapRole::ConductorFollower => {
-                    self.bootstrap_conductor_follower(opt_head).await
+                    self.processor.bootstrap_conductor_follower(opt_head).await
                 }
                 BootstrapRole::ActiveSequencer => {
-                    self.bootstrap_active_sequencer(opt_head, at_genesis).await
+                    self.processor.bootstrap_active_sequencer(opt_head, at_genesis).await
                 }
+            }
+
+            if let Some(gate) = self.shadow_gate.as_mut() {
+                gate.reanchor(self.processor.engine.state().sync_state.unsafe_head());
             }
 
             loop {
@@ -839,16 +868,22 @@ where
 
                 // Attempt to drain all outstanding tasks from the engine queue before adding new
                 // ones.
-                base_metrics::time!(EngineMetrics::engine_processor_drain_duration_seconds(), {
-                    self.drain().await.inspect_err(
-                        |err| error!(target: "engine", ?err, "Failed to drain engine tasks"),
-                    )
-                })?;
+                let drain_outcome = base_metrics::time!(
+                    EngineMetrics::engine_processor_drain_duration_seconds(),
+                    {
+                        self.processor.drain().await.inspect_err(
+                            |err| error!(target: "engine", ?err, "Failed to drain engine tasks"),
+                        )
+                    }
+                )?;
+                if self.shadow_gate.is_some() && drain_outcome == ResetOutcome::Reset {
+                    return Err(EngineError::ShadowInternalReset);
+                }
 
                 // If the unsafe head has updated, propagate it to the outbound channels.
-                if let Some(unsafe_head_tx) = self.unsafe_head_tx.as_ref() {
+                if let Some(unsafe_head_tx) = self.processor.unsafe_head_tx.as_ref() {
                     unsafe_head_tx.send_if_modified(|val| {
-                        let new_head = self.engine.state().sync_state.unsafe_head();
+                        let new_head = self.processor.engine.state().sync_state.unsafe_head();
                         (*val != new_head).then(|| *val = new_head).is_some()
                     });
                 }
@@ -866,9 +901,12 @@ where
                 match request {
                     EngineActorRequest::BuildRequest(build_request) => {
                         let BuildRequest { attributes, result_tx, otel_cx } = *build_request;
+                        let client = Arc::clone(&self.processor.client);
+                        let rollup = Arc::clone(&self.processor.rollup);
                         let build_result = self
+                            .processor
                             .engine
-                            .build(Arc::clone(&self.client), Arc::clone(&self.rollup), attributes)
+                            .build(client, rollup, attributes)
                             .with_context(otel_cx)
                             .await;
                         match build_result {
@@ -885,21 +923,25 @@ where
                                     .send(Err(err))
                                     .await
                                     .map_err(|_| EngineError::ChannelClosed)?;
-                                self.handle_engine_task_error_severity(severity, error).await?;
+                                let outcome = self
+                                    .processor
+                                    .handle_engine_task_error_severity(severity, error)
+                                    .await?;
+                                if self.shadow_gate.is_some() && outcome == ResetOutcome::Reset {
+                                    return Err(EngineError::ShadowInternalReset);
+                                }
                             }
                         }
                     }
                     EngineActorRequest::GetPayloadRequest(get_payload_request) => {
                         let GetPayloadRequest { payload_id, attributes, result_tx, otel_cx } =
                             *get_payload_request;
+                        let client = Arc::clone(&self.processor.client);
+                        let rollup = Arc::clone(&self.processor.rollup);
                         let result = self
+                            .processor
                             .engine
-                            .get_payload(
-                                Arc::clone(&self.client),
-                                Arc::clone(&self.rollup),
-                                payload_id,
-                                attributes,
-                            )
+                            .get_payload(client, rollup, payload_id, attributes)
                             .with_context(otel_cx)
                             .await;
 
@@ -909,53 +951,94 @@ where
                             EngineTaskErrors::Seal(SealTaskError::MpscSend(Box::new(err)))
                         })?;
                         if let Some((severity, error)) = error {
-                            self.handle_engine_task_error_severity(severity, error).await?;
+                            let outcome = self
+                                .processor
+                                .handle_engine_task_error_severity(severity, error)
+                                .await?;
+                            if self.shadow_gate.is_some() && outcome == ResetOutcome::Reset {
+                                return Err(EngineError::ShadowInternalReset);
+                            }
                         }
                     }
                     EngineActorRequest::ProcessSafeL2SignalRequest(safe_signal) => {
+                        if let Some(gate) = self.shadow_gate.as_mut() {
+                            gate.buffer_safe_signal(safe_signal);
+                            continue;
+                        }
                         let task = EngineTask::Consolidate(Box::new(ConsolidateTask::new(
-                            Arc::clone(&self.client),
-                            Arc::clone(&self.rollup),
+                            Arc::clone(&self.processor.client),
+                            Arc::clone(&self.processor.rollup),
                             safe_signal,
                         )));
-                        self.engine.enqueue(task);
+                        self.processor.engine.enqueue(task);
                     }
                     EngineActorRequest::ProcessFinalizedL2BlockNumberRequest(
                         finalized_l2_block_number,
                     ) => {
+                        if let Some(gate) = self.shadow_gate.as_mut() {
+                            gate.buffer_finalized(*finalized_l2_block_number);
+                            continue;
+                        }
                         // Finalize the L2 block at the provided block number.
                         let task = EngineTask::Finalize(Box::new(FinalizeTask::new(
-                            Arc::clone(&self.client),
-                            Arc::clone(&self.rollup),
+                            Arc::clone(&self.processor.client),
+                            Arc::clone(&self.processor.rollup),
                             *finalized_l2_block_number,
                         )));
-                        self.engine.enqueue(task);
+                        self.processor.engine.enqueue(task);
                     }
                     EngineActorRequest::ProcessUnsafeL2BlockRequest(envelope) => {
-                        self.handle_external_unsafe_l2_block(*envelope);
+                        if let Some(gate) = self.shadow_gate.as_mut() {
+                            gate.buffer_payload(*envelope);
+                        } else {
+                            self.processor.handle_external_unsafe_l2_block(*envelope);
+                        }
                     }
                     EngineActorRequest::ProcessAdminUnsafeL2BlockRequest(envelope) => {
-                        self.handle_admin_unsafe_l2_block(*envelope);
+                        if self.shadow_gate.is_some() {
+                            warn!(target: "engine", "Ignoring admin unsafe payload on shadow sequencer");
+                        } else {
+                            self.processor.handle_admin_unsafe_l2_block(*envelope);
+                        }
                     }
                     EngineActorRequest::ProcessLocalUnsafeL2BlockRequest(envelope) => {
                         let InsertUnsafePayloadRequest { envelope, result_tx, otel_cx } = *envelope;
                         // Attach for the synchronous enqueue call only — no await, no Send issue.
                         let _guard = otel_cx.attach();
-                        self.handle_local_unsafe_l2_block(envelope, result_tx);
+                        self.processor.handle_local_unsafe_l2_block(envelope, result_tx);
+                    }
+                    EngineActorRequest::ReconcileShadowRequest(request) => {
+                        let ReconcileShadowRequest { shadow_head, result_tx } = *request;
+                        let result = match self.shadow_gate.as_mut() {
+                            Some(gate) => match gate.prepare(shadow_head) {
+                                Ok(Some(inputs)) => {
+                                    self.processor.apply_canonical_inputs(inputs).await
+                                }
+                                Ok(None) => Ok(None),
+                                Err(error) => Err(error),
+                            },
+                            None => Err(EngineClientError::ShadowReconciliationDisabled),
+                        };
+                        if let Ok(Some(head)) = &result {
+                            self.shadow_gate.as_mut().expect("gate checked").commit(*head);
+                        }
+                        let failure = result.as_ref().err().map(ToString::to_string);
+                        if result_tx.send(result).await.is_err() {
+                            warn!(target: "engine", "Shadow reconciliation response receiver dropped");
+                        }
+                        if let Some(error) = failure {
+                            return Err(EngineError::ShadowReconciliationFailed(error));
+                        }
                     }
                     EngineActorRequest::ResetRequest(reset_request) => {
+                        let ResetRequest { result_tx, shadow_cycle_coordinated } = *reset_request;
                         // Do not reset the engine while the EL is still syncing. A Reset sends a
                         // forkchoice_updated to reth pointing at the sync-start block, which will
                         // return Valid and cause reth to set that stale block as canonical,
                         // aborting any in-progress snap sync. Defer until el_sync_finished=true.
-                        if !self.engine.state().el_sync_finished {
+                        if !self.processor.engine.state().el_sync_finished {
                             warn!(target: "engine", "Deferring engine reset: EL sync not yet complete");
-                            if reset_request
-                                .result_tx
-                                .send(Err(EngineClientError::ELSyncing))
-                                .await
-                                .is_err()
-                            {
+                            if result_tx.send(Err(EngineClientError::ELSyncing)).await.is_err() {
                                 warn!(target: "engine", "Sending ELSyncing response failed");
                             }
                             continue;
@@ -963,18 +1046,51 @@ where
 
                         warn!(target: "engine", "Received reset request");
 
-                        let reset_res = self.reset().await;
+                        let reset_res = self.processor.reset_engine_state().await;
+                        if let Ok(safe_head) = &reset_res {
+                            let anchor = self.processor.engine.state().sync_state.unsafe_head();
+                            if let Some(gate) = self.shadow_gate.as_mut() {
+                                gate.reanchor(anchor);
+                            }
+                            if let Some(unsafe_head_tx) = self.processor.unsafe_head_tx.as_ref() {
+                                unsafe_head_tx.send_replace(anchor);
+                            }
+                            if let Err(error) =
+                                self.processor.notify_derivation_of_reset(*safe_head).await
+                            {
+                                if result_tx
+                                    .send(Err(EngineClientError::ResetForkchoiceError(
+                                        error.to_string(),
+                                    )))
+                                    .await
+                                    .is_err()
+                                {
+                                    warn!(target: "engine", "Sending reset response failed");
+                                }
+                                if self.shadow_gate.is_some() {
+                                    return Err(error);
+                                }
+                                continue;
+                            }
+                        }
 
                         // Send the result.
                         let response_payload = reset_res
                             .as_ref()
                             .map(|_| ())
                             .map_err(|e| EngineClientError::ResetForkchoiceError(e.to_string()));
-                        if reset_request.result_tx.send(response_payload).await.is_err() {
+                        let reset_succeeded = reset_res.is_ok();
+                        if result_tx.send(response_payload).await.is_err() {
                             warn!(target: "engine", "Sending reset response failed");
                             // If there was an error and we couldn't notify the caller to handle it,
                             // return the error.
                             reset_res?;
+                        }
+                        if reset_succeeded
+                            && self.shadow_gate.is_some()
+                            && !shadow_cycle_coordinated
+                        {
+                            return Err(EngineError::ShadowInternalReset);
                         }
                     }
                 }
@@ -1014,8 +1130,9 @@ mod tests {
 
     use crate::{
         BuildRequest, EngineActorRequest, EngineClientError, EngineProcessor,
-        EngineProcessorOptions, EngineRequestReceiver, MockConductor, NodeMode,
-        NoopCheckpointWriter, ResetRequest, actors::engine::client::MockEngineDerivationClient,
+        EngineProcessorOptions, EngineRequestHandler, EngineRequestReceiver, MockConductor,
+        NodeMode, NoopCheckpointWriter, ResetRequest,
+        actors::engine::client::MockEngineDerivationClient,
     };
 
     /// Test-only [`ForkchoiceCheckpointReader`] that returns pre-seeded safe/finalized heads.
@@ -1147,7 +1264,6 @@ mod tests {
                     unsafe_head_tx,
                     conductor: None,
                     sequencer_stopped: false,
-                    shadow_sequencer: false,
                 },
             ),
             queue_rx,
@@ -1283,170 +1399,6 @@ mod tests {
         assert_eq!(*queue_rx.borrow(), expected_queue_len);
     }
 
-    #[test]
-    fn shadow_sequencer_buffers_external_payloads_without_enqueuing() {
-        let (mut processor, queue_rx) = unsafe_payload_processor(
-            NodeMode::Sequencer,
-            true,
-            l2_head(10, B256::with_last_byte(10)),
-            None,
-        );
-        processor.shadow_sequencer = true;
-
-        let later = unsafe_payload(12, B256::with_last_byte(11), B256::with_last_byte(12));
-        let earlier = unsafe_payload(11, B256::with_last_byte(10), B256::with_last_byte(11));
-        processor.handle_external_unsafe_l2_block(later);
-        processor.handle_external_unsafe_l2_block(earlier.clone());
-        processor.handle_external_unsafe_l2_block(earlier);
-
-        assert_eq!(*queue_rx.borrow(), 0);
-        assert_eq!(processor.shadow_payloads.len(), 2);
-        assert_eq!(processor.shadow_payloads.keys().copied().collect::<Vec<_>>(), vec![11, 12]);
-        assert!(!processor.shadow_payload_buffer_faulted);
-    }
-
-    #[test]
-    fn shadow_sequencer_rejects_admin_payloads() {
-        let (mut processor, queue_rx) = unsafe_payload_processor(
-            NodeMode::Sequencer,
-            true,
-            l2_head(10, B256::with_last_byte(10)),
-            None,
-        );
-        processor.shadow_sequencer = true;
-
-        processor.handle_admin_unsafe_l2_block(unsafe_payload(
-            11,
-            B256::with_last_byte(10),
-            B256::with_last_byte(11),
-        ));
-
-        assert_eq!(*queue_rx.borrow(), 0);
-        assert!(processor.shadow_payloads.is_empty());
-        assert!(!processor.shadow_payload_buffer_faulted);
-    }
-
-    #[test]
-    fn normal_sequencer_preserves_admin_payload_insertion() {
-        let (mut processor, queue_rx) = unsafe_payload_processor(
-            NodeMode::Sequencer,
-            true,
-            l2_head(10, B256::with_last_byte(10)),
-            None,
-        );
-
-        processor.handle_admin_unsafe_l2_block(unsafe_payload(
-            11,
-            B256::with_last_byte(10),
-            B256::with_last_byte(11),
-        ));
-
-        assert_eq!(*queue_rx.borrow(), 1);
-        assert!(processor.shadow_payloads.is_empty());
-    }
-
-    #[test]
-    fn shadow_payload_conflict_faults_buffer_and_preserves_first_payload() {
-        let (mut processor, queue_rx) = unsafe_payload_processor(
-            NodeMode::Sequencer,
-            true,
-            l2_head(10, B256::with_last_byte(10)),
-            None,
-        );
-        processor.shadow_sequencer = true;
-
-        let first_hash = B256::with_last_byte(11);
-        processor.handle_external_unsafe_l2_block(unsafe_payload(
-            11,
-            B256::with_last_byte(10),
-            first_hash,
-        ));
-        processor.handle_external_unsafe_l2_block(unsafe_payload(
-            11,
-            B256::with_last_byte(10),
-            B256::with_last_byte(12),
-        ));
-        processor.handle_external_unsafe_l2_block(unsafe_payload(
-            12,
-            first_hash,
-            B256::with_last_byte(13),
-        ));
-
-        assert_eq!(*queue_rx.borrow(), 0);
-        assert!(processor.shadow_payload_buffer_faulted);
-        assert_eq!(processor.shadow_payloads.len(), 1);
-        assert_eq!(processor.shadow_payloads[&11].execution_payload.block_hash(), first_hash);
-    }
-
-    #[test]
-    fn shadow_payload_overflow_faults_buffer_without_eviction() {
-        let (mut processor, queue_rx) =
-            unsafe_payload_processor(NodeMode::Sequencer, true, l2_head(0, B256::ZERO), None);
-        processor.shadow_sequencer = true;
-
-        for block_number in 1..=EngineProcessorOptions::MAX_SHADOW_PAYLOADS as u64 {
-            processor.handle_external_unsafe_l2_block(unsafe_payload(
-                block_number,
-                B256::ZERO,
-                B256::with_last_byte(block_number as u8),
-            ));
-        }
-        processor.handle_external_unsafe_l2_block(unsafe_payload(
-            EngineProcessorOptions::MAX_SHADOW_PAYLOADS as u64 + 1,
-            B256::ZERO,
-            B256::with_last_byte(1),
-        ));
-
-        assert_eq!(*queue_rx.borrow(), 0);
-        assert!(processor.shadow_payload_buffer_faulted);
-        assert_eq!(processor.shadow_payloads.len(), EngineProcessorOptions::MAX_SHADOW_PAYLOADS);
-        assert!(processor.shadow_payloads.contains_key(&1));
-    }
-
-    #[test]
-    fn shadow_payload_pruning_discards_payloads_at_or_below_safe_head() {
-        let (mut processor, queue_rx) = unsafe_payload_processor(
-            NodeMode::Sequencer,
-            true,
-            l2_head(11, B256::with_last_byte(11)),
-            Some(l2_head(10, B256::with_last_byte(10))),
-        );
-        processor.shadow_sequencer = true;
-
-        for block_number in 9..=11 {
-            processor.buffer_shadow_payload(unsafe_payload(
-                block_number,
-                B256::ZERO,
-                B256::with_last_byte(block_number as u8),
-            ));
-        }
-        processor.prune_shadow_payloads();
-
-        assert_eq!(*queue_rx.borrow(), 0);
-        assert_eq!(processor.shadow_payloads.keys().copied().collect::<Vec<_>>(), vec![11]);
-    }
-
-    #[test]
-    fn clearing_shadow_payload_buffer_removes_payloads_and_fault() {
-        let (mut processor, queue_rx) = unsafe_payload_processor(
-            NodeMode::Sequencer,
-            true,
-            l2_head(10, B256::with_last_byte(10)),
-            None,
-        );
-        processor.shadow_sequencer = true;
-        processor
-            .shadow_payloads
-            .insert(11, unsafe_payload(11, B256::with_last_byte(10), B256::with_last_byte(11)));
-        processor.shadow_payload_buffer_faulted = true;
-
-        processor.clear_shadow_payload_buffer();
-
-        assert_eq!(*queue_rx.borrow(), 0);
-        assert!(processor.shadow_payloads.is_empty());
-        assert!(!processor.shadow_payload_buffer_faulted);
-    }
-
     /// Verifies that when a standalone sequencer (no conductor) is beyond genesis and reth
     /// responds Valid to the bootstrap FCU probe, `el_sync_finished` is set immediately so
     /// that `schedule_initial_reset` is not permanently blocked by the `ELSyncing` guard.
@@ -1493,12 +1445,11 @@ mod tests {
                 unsafe_head_tx: Some(unsafe_head_tx),
                 conductor: None,
                 sequencer_stopped: false,
-                shadow_sequencer: false,
             },
         );
 
         let (req_tx, req_rx) = mpsc::channel(8);
-        let handle = processor.start(req_rx);
+        let handle = EngineRequestHandler::new(processor, None).start(req_rx);
 
         // probe_el_sync calls state_sender.send_replace with el_sync_finished=true during
         // the bootstrap, before the main loop starts. wait_for resolves as soon as the watch
@@ -1560,12 +1511,11 @@ mod tests {
                 unsafe_head_tx: Some(unsafe_head_tx),
                 conductor: None,
                 sequencer_stopped: false,
-                shadow_sequencer: false,
             },
         );
 
         let (req_tx, req_rx) = mpsc::channel(8);
-        let handle = processor.start(req_rx);
+        let handle = EngineRequestHandler::new(processor, None).start(req_rx);
 
         // In the Syncing path, seed_state sets unsafe_head to reth's reported latest block.
         // Wait for that state to be published before sending the Reset.
@@ -1578,7 +1528,10 @@ mod tests {
         // Send a Reset — the ELSyncing guard must fire and return ELSyncing.
         let (result_tx, mut result_rx) = mpsc::channel(1);
         req_tx
-            .send(EngineActorRequest::ResetRequest(Box::new(ResetRequest { result_tx })))
+            .send(EngineActorRequest::ResetRequest(Box::new(ResetRequest {
+                result_tx,
+                shadow_cycle_coordinated: false,
+            })))
             .await
             .expect("failed to send reset request");
 
@@ -1639,12 +1592,11 @@ mod tests {
                 unsafe_head_tx: Some(unsafe_head_tx),
                 conductor: Some(Arc::new(mock_conductor)),
                 sequencer_stopped: false,
-                shadow_sequencer: false,
             },
         );
 
         let (req_tx, req_rx) = mpsc::channel(8);
-        let handle = processor.start(req_rx);
+        let handle = EngineRequestHandler::new(processor, None).start(req_rx);
 
         // Conductor follower must set el_sync_finished via the probe so it is ready
         // for leadership transfer.
@@ -1714,12 +1666,11 @@ mod tests {
                 unsafe_head_tx: None,
                 conductor: None,
                 sequencer_stopped: false,
-                shadow_sequencer: false,
             },
         );
 
         let (req_tx, req_rx) = mpsc::channel(8);
-        let handle = processor.start(req_rx);
+        let handle = EngineRequestHandler::new(processor, None).start(req_rx);
 
         // Close the channel so the task exits after bootstrap + one drain.
         drop(req_tx);
@@ -1783,12 +1734,11 @@ mod tests {
                 unsafe_head_tx: None,
                 conductor: None,
                 sequencer_stopped: false,
-                shadow_sequencer: false,
             },
         );
 
         let (req_tx, req_rx) = mpsc::channel(8);
-        let handle = processor.start(req_rx);
+        let handle = EngineRequestHandler::new(processor, None).start(req_rx);
 
         // Close the channel so the task exits after bootstrap + one drain.
         drop(req_tx);
@@ -1851,7 +1801,6 @@ mod tests {
                 unsafe_head_tx,
                 conductor,
                 sequencer_stopped,
-                shadow_sequencer: false,
             },
         )
     }
@@ -2008,12 +1957,11 @@ mod tests {
                 unsafe_head_tx: None,
                 conductor: None,
                 sequencer_stopped: false,
-                shadow_sequencer: false,
             },
         );
 
         let (req_tx, req_rx) = mpsc::channel(8);
-        let handle = processor.start(req_rx);
+        let handle = EngineRequestHandler::new(processor, None).start(req_rx);
 
         drop(req_tx);
         let _ = handle.await;
@@ -2201,7 +2149,6 @@ mod tests {
                 unsafe_head_tx: None,
                 conductor: None,
                 sequencer_stopped: false,
-                shadow_sequencer: false,
             },
             Arc::new(TestCheckpointReader { safe: Some(safe_checkpoint), finalized: None }),
             Arc::new(NoopCheckpointWriter),
@@ -2287,12 +2234,11 @@ mod tests {
                 unsafe_head_tx: None,
                 conductor: None,
                 sequencer_stopped: false,
-                shadow_sequencer: false,
             },
         );
 
         let (req_tx, req_rx) = mpsc::channel(8);
-        let handle = processor.start(req_rx);
+        let handle = EngineRequestHandler::new(processor, None).start(req_rx);
 
         let attributes = TestAttributesBuilder::new()
             .with_parent(parent_block)

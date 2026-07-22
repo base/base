@@ -16,11 +16,14 @@ pub use guard::{
 mod invalidation;
 pub use invalidation::{InvalidationIndex, InvalidationKey, WatchSet};
 
+mod manifest;
+pub use manifest::{ConfigSlot, ManifestStale, WatchManifest};
+
 mod limits;
 pub use limits::{InflightCounters, PayerBook};
 
 mod validator;
-pub use validator::{BaseL1BlockInfo, BaseTransactionValidator, BaseTxPoolError};
+pub use validator::{BaseL1BlockInfo, BaseTransactionValidator, BaseTxPoolError, LimitClassCache};
 
 mod best;
 
@@ -41,7 +44,10 @@ mod forwarder;
 pub use forwarder::{Forwarder, ForwarderConfig, ForwarderMetrics, SpawnedForwarder};
 
 mod pool;
-pub use pool::BaseTransactionPool;
+pub use pool::{AccountStateDiff, BaseTransactionPool};
+
+mod state_diff_maintain;
+pub use state_diff_maintain::{StateDiffInvalidation, maintain_state_diff_invalidation};
 
 mod pool_error_label;
 pub use pool_error_label::PoolRejectionLabel;
@@ -59,5 +65,8 @@ mod wire;
 pub use wire::ValidatedTransaction;
 
 mod two_d_nonce_pool;
+
+mod metrics;
+pub use metrics::{GuardMetrics, ValidatorMetrics};
 
 pub mod estimated_da_size;

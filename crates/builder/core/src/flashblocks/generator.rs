@@ -578,7 +578,7 @@ mod tests {
                 attributes: attr.clone(),
                 parent_hash,
                 cache: None,
-                trie_handle: None,
+                state_root_handle: None,
             };
             let job = generator.new_payload_job(input, attr.payload_id(&parent_hash))?;
             let _ = job.await;
@@ -597,7 +597,7 @@ mod tests {
                 attributes: attr.clone(),
                 parent_hash,
                 cache: None,
-                trie_handle: None,
+                state_root_handle: None,
             };
             let mut job = generator.new_payload_job(input, attr.payload_id(&parent_hash))?;
             let _ = job.resolve();

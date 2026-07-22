@@ -216,6 +216,32 @@ impl ChainConfig {
         }
     }
 
+    /// Resolves a Base network selector (`mainnet`, `sepolia`, `zeronet`,
+    /// `dev`) to its built-in config.
+    ///
+    /// # Why this differs from [`by_name`](Self::by_name)
+    ///
+    /// [`by_name`](Self::by_name) matches the *namespaced canonical* names in
+    /// [`SUPPORTED_NAMES`](Self::SUPPORTED_NAMES) (`base`, `base-sepolia`,
+    /// `base-zeronet`, `dev`). Those names stay prefixed with `base-` so they do
+    /// not collide with the Ethereum L1 chain names that share this ecosystem.
+    ///
+    /// `from_base_chain` matches the *Base-centric operator aliases*, where
+    /// `mainnet` means Base mainnet — not Ethereum mainnet. These short names
+    /// are the `base` binary's `--chain` surface and are intentionally kept
+    /// distinct from the canonical names. Do not collapse the two methods: the
+    /// name sets differ on purpose, so `from_base_chain("mainnet")` resolves
+    /// while `by_name("mainnet")` returns `None`.
+    pub fn from_base_chain(name: &str) -> Option<&'static Self> {
+        match name {
+            "mainnet" => Some(Self::mainnet()),
+            "sepolia" => Some(Self::sepolia()),
+            "zeronet" => Some(Self::zeronet()),
+            "dev" => Some(Self::devnet()),
+            _ => None,
+        }
+    }
+
     /// Looks up a chain config by L2 chain ID.
     pub const fn by_chain_id(id: u64) -> Option<&'static Self> {
         match id {
@@ -656,6 +682,20 @@ mod tests {
         assert_eq!(ChainConfig::SEPOLIA, ChainConfig::sepolia());
         assert_eq!(ChainConfig::DEVNET, ChainConfig::devnet());
         assert_eq!(ChainConfig::ZERONET, ChainConfig::zeronet());
+    }
+
+    #[test]
+    fn base_chain_aliases_resolve() {
+        assert_eq!(ChainConfig::from_base_chain("mainnet"), Some(ChainConfig::mainnet()));
+        assert_eq!(ChainConfig::from_base_chain("sepolia"), Some(ChainConfig::sepolia()));
+        assert_eq!(ChainConfig::from_base_chain("zeronet"), Some(ChainConfig::zeronet()));
+        assert_eq!(ChainConfig::from_base_chain("dev"), Some(ChainConfig::devnet()));
+        assert_eq!(ChainConfig::from_base_chain("base"), None);
+
+        // The Base-centric aliases are deliberately distinct from the canonical
+        // namespaced names matched by `by_name`.
+        assert_eq!(ChainConfig::by_name("mainnet"), None);
+        assert_eq!(ChainConfig::from_base_chain(ChainConfig::MAINNET_NAME), None);
     }
 
     #[test]

@@ -65,6 +65,7 @@ pub fn payload_attributes<T>(timestamp: u64) -> BasePayloadBuilderAttributes<T> 
         withdrawals: Some(vec![]),
         parent_beacon_block_root: Some(B256::ZERO),
         slot_number: None,
+        target_gas_limit: None,
     };
 
     BasePayloadBuilderAttributes {

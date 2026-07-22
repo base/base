@@ -10,6 +10,12 @@ and `SyncStatusApiClient` for the `optimism_syncStatus` method, which returns cu
 block references (unsafe, safe, and finalized heads). Enable the `client` feature for the
 generated HTTP client.
 
+## Security Model
+
+Consensus RPC is an internal control-plane endpoint. The `opp2p_*` and opt-in
+`admin_*` methods rely on private-network controls instead of application
+authentication. Restrict access to trusted operators; never expose it publicly.
+
 ## RPC Methods
 
 ### `optimism_syncStatus`

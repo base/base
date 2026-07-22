@@ -9,11 +9,11 @@ use std::{
 use alloy_primitives::{Address, B256, Bytes};
 use base_challenger::{
     AnchorUpdater, ChallengeSubmitter, ChallengerProofAdapter, DisputeIntent, DisputeProofManager,
-    Driver, DriverComponents, GameScanner, L1HeadProvider, OutputValidator, PendingProof,
-    PendingProofs, ProofKind, ProofPhase, ProofUpdate,
+    Driver, DriverComponents, GameScanner, OutputValidator, PendingProof, PendingProofs, ProofKind,
+    ProofPhase, ProofUpdate,
     test_utils::{
         DEFAULT_L1_HEAD, DEFAULT_TEE_PROVER, MockAggregateVerifier, MockDisputeGameFactory,
-        MockGameState, MockL1HeadProvider, MockL2Provider, MockTxManager, MockZkProofProvider,
+        MockGameState, MockL1, MockL2Provider, MockTxManager, MockZkProofProvider,
         MockZkProofState, addr, build_test_header_and_account, factory_game, mock_anchor_registry,
         mock_state, mock_state_with_tee, receipt_with_status,
     },
@@ -22,10 +22,11 @@ use base_proof_contracts::{
     AggregateVerifierClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameStatus,
 };
 use base_proof_primitives::Proposal;
+use base_proof_rpc::L1Provider;
 use base_protocol::OutputRoot;
 use base_prover_service_protocol::{
-    ProofResult as ApiProofResult, ProofStatus, SnarkPlonkProofRequest, TeeKind, TeeProofResult,
-    ZkBackend, ZkProofRequest, ZkVm,
+    ProofRequestKind, ProofResult as ApiProofResult, ProofStatus, SnarkPlonkProofRequest, TeeKind,
+    TeeProofResult, ZkBackend, ZkProofRequest, ZkVm,
 };
 use base_tx_manager::TxManagerError;
 use tokio_util::sync::CancellationToken;
@@ -64,17 +65,24 @@ fn test_driver(
     zk_prover: Arc<MockZkProofProvider>,
     tx_manager: MockTxManager,
 ) -> Driver<MockL2Provider, MockZkProofProvider, MockTxManager> {
-    test_driver_with_tee(factory, verifier, l2_provider, zk_prover, tx_manager, None)
+    test_driver_with_l1_provider(
+        factory,
+        verifier,
+        l2_provider,
+        zk_prover,
+        tx_manager,
+        Arc::new(MockL1::failure("unused")),
+    )
 }
 
-/// Builds a test driver with an optional TEE L1 head provider.
-fn test_driver_with_tee(
+/// Builds a test driver with an L1 provider for TEE proof requests.
+fn test_driver_with_l1_provider(
     factory: Arc<MockDisputeGameFactory>,
     verifier: Arc<MockAggregateVerifier>,
     l2_provider: Arc<MockL2Provider>,
     zk_prover: Arc<MockZkProofProvider>,
     tx_manager: MockTxManager,
-    tee: Option<Arc<dyn L1HeadProvider>>,
+    l1_provider: Arc<dyn L1Provider>,
 ) -> Driver<MockL2Provider, MockZkProofProvider, MockTxManager> {
     let anchor_registry = mock_anchor_registry(Address::ZERO);
     let scanner = GameScanner::new(
@@ -90,7 +98,7 @@ fn test_driver_with_tee(
         validator,
         proof_requester: zk_prover,
         submitter,
-        tee,
+        l1_provider,
         verifier_client: verifier as Arc<dyn AggregateVerifierClient>,
         bond_manager: None,
         anchor_updater: AnchorUpdater::new(
@@ -110,7 +118,7 @@ fn test_driver_with_tee(
 }
 
 fn default_zk_prover() -> Arc<MockZkProofProvider> {
-    Arc::new(MockZkProofProvider { session_id: "test-session".to_string(), ..Default::default() })
+    Arc::new(MockZkProofProvider::default())
 }
 
 fn default_tx_manager() -> MockTxManager {
@@ -118,7 +126,7 @@ fn default_tx_manager() -> MockTxManager {
 }
 
 fn default_l2() -> Arc<MockL2Provider> {
-    Arc::new(MockL2Provider::new())
+    Arc::new(MockL2Provider::default())
 }
 
 fn single_game_factory() -> Arc<MockDisputeGameFactory> {
@@ -160,9 +168,8 @@ fn default_ready_proof(intent: DisputeIntent) -> PendingProof {
     )
 }
 
-fn succeeded_zk_prover(session_id: &str, receipt: Vec<u8>) -> Arc<MockZkProofProvider> {
+fn succeeded_zk_prover(receipt: Vec<u8>) -> Arc<MockZkProofProvider> {
     Arc::new(MockZkProofProvider {
-        session_id: session_id.to_string(),
         state: Mutex::new(MockZkProofState {
             proof_status: ProofStatus::Succeeded,
             proof: receipt,
@@ -171,9 +178,8 @@ fn succeeded_zk_prover(session_id: &str, receipt: Vec<u8>) -> Arc<MockZkProofPro
     })
 }
 
-fn failed_zk_prover(session_id: &str) -> Arc<MockZkProofProvider> {
+fn failed_zk_prover() -> Arc<MockZkProofProvider> {
     Arc::new(MockZkProofProvider {
-        session_id: session_id.to_string(),
         state: Mutex::new(MockZkProofState {
             proof_status: ProofStatus::Failed,
             ..Default::default()
@@ -192,7 +198,7 @@ fn base_game_mocks() -> (Arc<MockL2Provider>, Arc<MockDisputeGameFactory>, B256,
     let root_20 =
         OutputRoot::from_parts(header_20.state_root, STORAGE_HASH, header_20.hash_slow()).hash();
 
-    let mut l2 = MockL2Provider::new();
+    let mut l2 = MockL2Provider::default();
     l2.insert_block(15, header_15, account_15);
     l2.insert_block(20, header_20, account_20);
     let l2 = Arc::new(l2);
@@ -270,7 +276,7 @@ async fn test_step_validation_error_blocks_not_available() {
         ..game_state(20)
     });
 
-    let mut l2 = MockL2Provider::new();
+    let mut l2 = MockL2Provider::default();
     l2.error_blocks.push(15);
     l2.error_blocks.push(20);
     let l2 = Arc::new(l2);
@@ -284,7 +290,7 @@ async fn test_step_validation_error_blocks_not_available() {
 async fn test_step_invalid_game_proof_succeeded() {
     let (l2, factory, verifier) = invalid_game_mocks();
 
-    let zk = succeeded_zk_prover("proof-123", vec![0xDE, 0xAD]);
+    let zk = succeeded_zk_prover(vec![0xDE, 0xAD]);
 
     let tx_manager = default_tx_manager();
 
@@ -315,7 +321,7 @@ async fn test_step_invalid_game_proof_succeeded() {
 async fn test_step_invalid_game_proof_failed() {
     let (l2, factory, verifier) = invalid_game_mocks();
 
-    let zk = failed_zk_prover("proof-fail");
+    let zk = failed_zk_prover();
 
     let tx_manager = default_tx_manager();
 
@@ -400,7 +406,7 @@ async fn test_step_scan_error_propagated() {
         validator,
         proof_requester: default_zk_prover(),
         submitter,
-        tee: None,
+        l1_provider: Arc::new(MockL1::failure("unused")),
         verifier_client: verifier as Arc<dyn AggregateVerifierClient>,
         bond_manager: None,
         anchor_updater: AnchorUpdater::new(
@@ -427,7 +433,6 @@ async fn test_step_pending_proof_skips_prove_block() {
     let (l2, factory, verifier) = invalid_game_mocks();
 
     let zk = Arc::new(MockZkProofProvider {
-        session_id: "pending-session".to_string(),
         state: Mutex::new(MockZkProofState { proof: vec![0xBE, 0xEF], ..Default::default() }),
     });
 
@@ -465,7 +470,7 @@ async fn test_step_pending_proof_skips_prove_block() {
 async fn test_step_nullification_failure_preserves_proof() {
     let (l2, factory, verifier) = invalid_game_mocks();
 
-    let zk = succeeded_zk_prover("proof-ok", vec![0xDE, 0xAD]);
+    let zk = succeeded_zk_prover(vec![0xDE, 0xAD]);
 
     // First tx call fails (NonceTooLow), second succeeds.
     let tx_manager = MockTxManager::with_responses(vec![
@@ -569,7 +574,6 @@ async fn test_step_proof_retry_succeeds() {
     let (l2, factory, verifier) = invalid_game_mocks();
 
     let zk = Arc::new(MockZkProofProvider {
-        session_id: "retry-session".to_string(),
         state: Mutex::new(MockZkProofState {
             proof_status: ProofStatus::Failed,
             proof: vec![0xBE, 0xEF],
@@ -625,7 +629,6 @@ async fn test_step_proof_retry_reuses_deterministic_session_id() {
     let (l2, factory, verifier) = invalid_game_mocks();
 
     let zk = Arc::new(MockZkProofProvider {
-        session_id: String::new(),
         state: Mutex::new(MockZkProofState {
             proof_status: ProofStatus::Failed,
             error_message: Some("transient backend error".into()),
@@ -703,7 +706,7 @@ async fn test_step_proof_retry_reuses_deterministic_session_id() {
 async fn test_step_proof_exceeds_max_retries() {
     let (l2, factory, verifier) = invalid_game_mocks();
 
-    let zk = failed_zk_prover("fail-forever");
+    let zk = failed_zk_prover();
 
     let tx_manager = default_tx_manager();
     let mut driver = test_driver(factory, Arc::clone(&verifier), l2, zk, tx_manager);
@@ -754,13 +757,14 @@ async fn test_step_invalid_game_tee_fails_zk_fallback() {
     let (l2, factory, verifier) = invalid_game_mocks();
 
     let tx_manager = default_tx_manager();
-    let mut driver = test_driver_with_tee(
+    let l1_provider = Arc::new(MockL1::failure("dummy"));
+    let mut driver = test_driver_with_l1_provider(
         factory,
         Arc::clone(&verifier),
         l2,
         default_zk_prover(),
         tx_manager,
-        Some(Arc::new(MockL1HeadProvider::failure("dummy"))),
+        Arc::clone(&l1_provider) as Arc<dyn L1Provider>,
     );
 
     driver.step().await.unwrap();
@@ -774,23 +778,11 @@ async fn test_step_invalid_game_tee_fails_zk_fallback() {
         matches!(entry.phase, ProofPhase::AwaitingProof { .. }),
         "phase should be AwaitingProof (ZK fallback)"
     );
-}
-
-#[tokio::test]
-async fn test_step_invalid_game_no_tee_provider_zk_only() {
-    // No TEE L1 head provider → go straight to ZK.
-    let (l2, factory, verifier) = invalid_game_mocks();
-
-    let tx_manager = default_tx_manager();
-    let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), tx_manager);
-
-    driver.step().await.unwrap();
-
-    let entry =
-        driver.proof_manager.pending_proofs().get(&addr(0)).expect("ZK proof should be pending");
-    assert!(
-        matches!(entry.phase, ProofPhase::AwaitingProof { .. }),
-        "phase should be AwaitingProof (ZK, no TEE provider)"
+    assert!(matches!(entry.kind, ProofKind::Zk { .. }), "fallback must use a ZK proof");
+    assert_eq!(
+        *l1_provider.header_by_hash_requests.lock().unwrap(),
+        vec![DEFAULT_L1_HEAD],
+        "TEE attempt must resolve the game's L1 head before falling back",
     );
 }
 
@@ -798,17 +790,17 @@ async fn test_step_invalid_game_no_tee_provider_zk_only() {
 async fn test_step_invalid_game_tee_fails_zk_succeeds() {
     let (l2, factory, verifier) = invalid_game_mocks();
 
-    let zk = succeeded_zk_prover("zk-after-tee-fail", vec![0xDE, 0xAD]);
+    let zk = succeeded_zk_prover(vec![0xDE, 0xAD]);
 
     let tx_manager = default_tx_manager();
 
-    let mut driver = test_driver_with_tee(
+    let mut driver = test_driver_with_l1_provider(
         factory,
         Arc::clone(&verifier),
         l2,
         zk,
         tx_manager,
-        Some(Arc::new(MockL1HeadProvider::failure("dummy"))),
+        Arc::new(MockL1::failure("dummy")),
     );
 
     // Step 1: TEE path is attempted (fails building request), falls back
@@ -845,7 +837,7 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
         ..game_state(20)
     });
 
-    let l1_head = Arc::new(MockL1HeadProvider::success(DEFAULT_L1_HEAD, 100));
+    let l1_head = Arc::new(MockL1::success(DEFAULT_L1_HEAD, 100));
 
     let aggregate_proposal = Proposal {
         output_root: root_20,
@@ -858,7 +850,6 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
         schedule_id: B256::ZERO,
     };
     let proof_requester = Arc::new(MockZkProofProvider {
-        session_id: String::new(),
         state: Mutex::new(MockZkProofState {
             proof_status: ProofStatus::Succeeded,
             result: Some(tee_api_result(aggregate_proposal)),
@@ -868,16 +859,27 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
 
     let tx_manager = default_tx_manager();
 
-    let mut driver = test_driver_with_tee(
+    let mut driver = test_driver_with_l1_provider(
         factory,
         Arc::clone(&verifier),
         l2,
-        proof_requester,
+        Arc::clone(&proof_requester),
         tx_manager,
-        Some(l1_head),
+        l1_head,
     );
 
     driver.step().await.unwrap();
+    {
+        let prove_block_range_log = &proof_requester.state.lock().unwrap().prove_block_range_log;
+        assert_eq!(prove_block_range_log.len(), 1, "TEE proof should be requested once");
+        assert!(
+            matches!(
+                &prove_block_range_log[0].proof.request,
+                ProofRequestKind::Tee(request) if request.proof.l1_head_number == 100
+            ),
+            "TEE request must include the resolved L1 head number",
+        );
+    }
     verifier.update_game(
         addr(0),
         MockGameState {
@@ -907,7 +909,7 @@ async fn test_step_tee_contract_revert_falls_back_to_zk() {
         ..game_state(20)
     });
 
-    let l1_head = Arc::new(MockL1HeadProvider::success(DEFAULT_L1_HEAD, 100));
+    let l1_head = Arc::new(MockL1::success(DEFAULT_L1_HEAD, 100));
 
     let aggregate_proposal = Proposal {
         output_root: root_20,
@@ -920,7 +922,6 @@ async fn test_step_tee_contract_revert_falls_back_to_zk() {
         schedule_id: B256::ZERO,
     };
     let zk = Arc::new(MockZkProofProvider {
-        session_id: String::new(),
         state: Mutex::new(MockZkProofState {
             proof_status: ProofStatus::Succeeded,
             result: Some(tee_api_result(aggregate_proposal)),
@@ -937,13 +938,13 @@ async fn test_step_tee_contract_revert_falls_back_to_zk() {
         Ok(receipt_with_status(true, DEFAULT_TX_HASH)),
     ]);
 
-    let mut driver = test_driver_with_tee(
+    let mut driver = test_driver_with_l1_provider(
         Arc::clone(&factory),
         Arc::clone(&verifier),
         l2,
         Arc::clone(&zk),
         tx_manager,
-        Some(l1_head),
+        l1_head,
     );
 
     // Step 1: TEE proof job is initiated.
@@ -1002,7 +1003,7 @@ async fn test_step_invalid_tee_result_falls_back_to_zk_without_timeout() {
         ..game_state(20)
     });
 
-    let l1_head = Arc::new(MockL1HeadProvider::success(DEFAULT_L1_HEAD, 100));
+    let l1_head = Arc::new(MockL1::success(DEFAULT_L1_HEAD, 100));
 
     let bad_aggregate_proposal = Proposal {
         output_root: B256::repeat_byte(0x42),
@@ -1015,7 +1016,6 @@ async fn test_step_invalid_tee_result_falls_back_to_zk_without_timeout() {
         schedule_id: B256::ZERO,
     };
     let proof_requester = Arc::new(MockZkProofProvider {
-        session_id: String::new(),
         state: Mutex::new(MockZkProofState {
             proof_status: ProofStatus::Succeeded,
             result: Some(tee_api_result(bad_aggregate_proposal)),
@@ -1023,13 +1023,13 @@ async fn test_step_invalid_tee_result_falls_back_to_zk_without_timeout() {
         }),
     });
 
-    let mut driver = test_driver_with_tee(
+    let mut driver = test_driver_with_l1_provider(
         factory,
         verifier,
         l2,
         proof_requester,
         default_tx_manager(),
-        Some(l1_head),
+        l1_head,
     );
 
     // Step 1: TEE proof job is initiated.
@@ -1310,10 +1310,10 @@ async fn test_step_valid_zk_proposal_skipped() {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn test_step_dual_proof_invalid_without_tee_provider_falls_back_to_zk_nullify() {
+async fn test_step_dual_proof_invalid_tee_request_failure_falls_back_to_zk_nullify() {
     // A game with both TEE and ZK proofs verified (via verifyProposalProof,
-    // not challenge) where the output roots are invalid and no TEE provider is
-    // available should fall back to a ZK proof with DisputeIntent::Nullify.
+    // not challenge) where the output roots are invalid and the TEE request
+    // fails should fall back to a ZK proof with DisputeIntent::Nullify.
     let (l2, factory, root_15, _root_20) = base_game_mocks();
 
     let verifier = single_game_verifier(MockGameState {
@@ -1334,7 +1334,7 @@ async fn test_step_dual_proof_invalid_without_tee_provider_falls_back_to_zk_null
     assert_eq!(
         entry.intent,
         DisputeIntent::Nullify,
-        "dual-proof game without a TEE provider should fall back to ZK Nullify"
+        "dual-proof game with a failed TEE request should fall back to ZK Nullify"
     );
 }
 
@@ -1353,7 +1353,7 @@ async fn test_step_dual_proof_invalid_with_tee_provider_nullifies_tee_first() {
         ..game_state(20)
     });
 
-    let l1_head = Arc::new(MockL1HeadProvider::success(DEFAULT_L1_HEAD, 100));
+    let l1_head = Arc::new(MockL1::success(DEFAULT_L1_HEAD, 100));
 
     let aggregate_proposal = Proposal {
         output_root: root_20,
@@ -1366,7 +1366,6 @@ async fn test_step_dual_proof_invalid_with_tee_provider_nullifies_tee_first() {
         schedule_id: B256::ZERO,
     };
     let proof_requester = Arc::new(MockZkProofProvider {
-        session_id: String::new(),
         state: Mutex::new(MockZkProofState {
             proof_status: ProofStatus::Succeeded,
             result: Some(tee_api_result(aggregate_proposal)),
@@ -1376,13 +1375,13 @@ async fn test_step_dual_proof_invalid_with_tee_provider_nullifies_tee_first() {
 
     let tx_manager = default_tx_manager();
 
-    let mut driver = test_driver_with_tee(
+    let mut driver = test_driver_with_l1_provider(
         factory,
         Arc::clone(&verifier),
         l2,
         proof_requester,
         tx_manager,
-        Some(l1_head),
+        l1_head,
     );
 
     driver.step().await.unwrap();
@@ -1442,13 +1441,13 @@ async fn test_step_dual_proof_tee_fails_falls_back_to_zk_nullify() {
         ..game_state(20)
     });
 
-    let mut driver = test_driver_with_tee(
+    let mut driver = test_driver_with_l1_provider(
         factory,
         verifier,
         l2,
         default_zk_prover(),
         default_tx_manager(),
-        Some(Arc::new(MockL1HeadProvider::failure("dummy"))),
+        Arc::new(MockL1::failure("dummy")),
     );
 
     driver.step().await.unwrap();
@@ -1528,7 +1527,6 @@ const fn minimal_prove_request() -> SnarkPlonkProofRequest {
 #[tokio::test]
 async fn test_poll_failed_status_triggers_retry() {
     let zk = Arc::new(MockZkProofProvider {
-        session_id: "failed-session".to_string(),
         state: Mutex::new(MockZkProofState {
             proof_status: ProofStatus::Failed,
             ..Default::default()
@@ -1557,7 +1555,6 @@ async fn test_poll_failed_status_triggers_retry() {
 #[tokio::test]
 async fn test_poll_running_within_timeout_stays_pending() {
     let zk = Arc::new(MockZkProofProvider {
-        session_id: "running-session".to_string(),
         state: Mutex::new(MockZkProofState {
             proof_status: ProofStatus::Running,
             ..Default::default()
@@ -1589,7 +1586,6 @@ async fn test_poll_running_within_timeout_stays_pending() {
 #[tokio::test]
 async fn test_poll_running_timeout_triggers_retry() {
     let zk = Arc::new(MockZkProofProvider {
-        session_id: "stuck-session".to_string(),
         state: Mutex::new(MockZkProofState {
             proof_status: ProofStatus::Running,
             ..Default::default()
@@ -1687,7 +1683,6 @@ mod metrics_emission {
 
             rt.block_on(async {
                 let zk = Arc::new(MockZkProofProvider {
-                    session_id: "stuck-session".to_string(),
                     state: Mutex::new(MockZkProofState {
                         proof_status: ProofStatus::Running,
                         ..Default::default()
@@ -1728,7 +1723,6 @@ mod metrics_emission {
 
             rt.block_on(async {
                 let zk = Arc::new(MockZkProofProvider {
-                    session_id: "failed-session".to_string(),
                     state: Mutex::new(MockZkProofState {
                         proof_status: ProofStatus::Failed,
                         ..Default::default()
@@ -1770,7 +1764,6 @@ mod metrics_emission {
 
             rt.block_on(async {
                 let zk = Arc::new(MockZkProofProvider {
-                    session_id: "malformed-session".to_string(),
                     state: Mutex::new(MockZkProofState {
                         proof_status: ProofStatus::Succeeded,
                         omit_result_on_success: true,
@@ -1824,7 +1817,6 @@ mod metrics_emission {
                     schedule_id: B256::ZERO,
                 };
                 let zk = Arc::new(MockZkProofProvider {
-                    session_id: "tee-bad-root-session".to_string(),
                     state: Mutex::new(MockZkProofState {
                         proof_status: ProofStatus::Succeeded,
                         result: Some(tee_api_result(bad_proposal)),
@@ -1866,7 +1858,7 @@ mod metrics_emission {
 
             rt.block_on(async {
                 let (l2, factory, verifier) = invalid_game_mocks();
-                let zk = failed_zk_prover("fail-forever");
+                let zk = failed_zk_prover();
                 let tx_manager = default_tx_manager();
                 let mut driver = test_driver(factory, Arc::clone(&verifier), l2, zk, tx_manager);
 

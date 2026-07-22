@@ -3,18 +3,35 @@
 use std::sync::{Arc, atomic::AtomicU64};
 
 /// Settings for the Base payload builder.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct BaseBuilderConfig {
     /// Data availability configuration for the Base payload builder.
     pub da_config: BaseDAConfig,
     /// Gas limit configuration for the Base payload builder.
     pub gas_limit_config: GasLimitConfig,
+    /// Whether to drop positively stale EIP-8130 transactions using their
+    /// captured authorization manifest before execution.
+    pub manifest_precheck_enabled: bool,
+}
+
+impl Default for BaseBuilderConfig {
+    fn default() -> Self {
+        Self {
+            da_config: BaseDAConfig::default(),
+            gas_limit_config: GasLimitConfig::default(),
+            manifest_precheck_enabled: true,
+        }
+    }
 }
 
 impl BaseBuilderConfig {
-    /// Creates a new Base payload builder configuration with the given data availability configuration.
-    pub const fn new(da_config: BaseDAConfig, gas_limit_config: GasLimitConfig) -> Self {
-        Self { da_config, gas_limit_config }
+    /// Creates a new Base payload builder configuration.
+    pub const fn new(
+        da_config: BaseDAConfig,
+        gas_limit_config: GasLimitConfig,
+        manifest_precheck_enabled: bool,
+    ) -> Self {
+        Self { da_config, gas_limit_config, manifest_precheck_enabled }
     }
 
     /// Returns the data availability configuration for the Base payload builder, if it has
@@ -143,6 +160,13 @@ mod tests {
     fn test_da_constrained() {
         let config = BaseBuilderConfig::default();
         assert!(config.constrained_da_config().is_none());
+    }
+
+    #[test]
+    fn new_preserves_manifest_precheck_setting() {
+        let config =
+            BaseBuilderConfig::new(BaseDAConfig::default(), GasLimitConfig::default(), false);
+        assert!(!config.manifest_precheck_enabled);
     }
 
     #[test]

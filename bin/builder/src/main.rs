@@ -45,10 +45,12 @@ fn main() {
             .expect("Failed to convert rollup args to builder config");
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
+        let manifest_precheck_enabled = builder_config.manifest_precheck_enabled;
 
         let mut runner = BaseNodeRunner::new(rollup_args.clone())
             .with_da_config(da_config)
             .with_gas_limit_config(gas_limit_config)
+            .with_manifest_precheck_enabled(manifest_precheck_enabled)
             .with_service_builder(FlashblocksServiceBuilder(builder_config));
         runner.install_ext::<MeteringStoreExtension>(metering_provider);
         runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());

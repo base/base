@@ -20,6 +20,9 @@ pub use contract::AlloyUpgradeSignalReader;
 mod error;
 pub use error::UpgradeSignalError;
 
+mod ids;
+pub use ids::ContractUpgradeIds;
+
 mod metrics;
 pub use metrics::{UpgradeSignalMetricLayer, UpgradeSignalMetrics};
 
