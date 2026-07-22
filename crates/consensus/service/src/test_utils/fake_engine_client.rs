@@ -179,16 +179,7 @@ impl FakeEngineClient {
     }
 
     /// Sets the `l2_block_info_by_label` response for a specific tag.
-    pub async fn set_l2_block_info_by_label(&self, tag: BlockNumberOrTag, block: L2BlockInfo) {
-        self.state
-            .lock()
-            .expect("FakeEngineClient state mutex poisoned")
-            .l2_block_info_by_tag
-            .insert(tag, block);
-    }
-
-    /// Blocking variant of [`Self::set_l2_block_info_by_label`].
-    pub fn set_l2_block_info_by_label_blocking(&self, tag: BlockNumberOrTag, block: L2BlockInfo) {
+    pub fn set_l2_block_info_by_label(&self, tag: BlockNumberOrTag, block: L2BlockInfo) {
         self.state
             .lock()
             .expect("FakeEngineClient state mutex poisoned")
@@ -197,7 +188,7 @@ impl FakeEngineClient {
     }
 
     /// Sets the `l2_block_by_label` response for a specific tag.
-    pub async fn set_l2_block_by_label(
+    pub fn set_l2_block_by_label(
         &self,
         tag: BlockNumberOrTag,
         block: BaseBlockResponse<BaseTransaction>,

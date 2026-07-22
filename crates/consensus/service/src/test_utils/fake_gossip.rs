@@ -42,6 +42,12 @@ impl FakeGossipHandle {
     }
 
     /// Reorders outbound deliveries according to `pattern` indexes.
+    ///
+    /// The pattern is applied once, to whatever messages have accumulated in the outbound queue
+    /// at the moment the next message is published — it is not a permutation guarantee over the
+    /// next N messages published after this call. Indexes past the queue length are silently
+    /// skipped, and repeating an index delivers that message more than once. Callers must size
+    /// `pattern` to match the number of messages actually queued when reordering should apply.
     pub async fn reorder(&self, pattern: Vec<usize>) {
         self.state.lock().await.reorder_pattern = pattern;
     }

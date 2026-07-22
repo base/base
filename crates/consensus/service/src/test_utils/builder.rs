@@ -39,7 +39,7 @@ pub struct Harness {
     engine_request_tx: mpsc::Sender<EngineActorRequest>,
     _fake_gossip: FakeGossipTransport,
     _cancellation: CancellationToken,
-    _engine_handle: JoinHandle<Result<(), crate::EngineError>>,
+    _engine_handle: JoinHandle<()>,
     _derivation_handle: JoinHandle<()>,
 }
 
@@ -243,8 +243,7 @@ impl HarnessBuilder {
         fake_engine_handle.push_scripted_fcu_v3(self.scripted_el_responses);
 
         fake_engine_client
-            .set_l2_block_info_by_label(BlockNumberOrTag::Latest, L2BlockInfo::default())
-            .await;
+            .set_l2_block_info_by_label(BlockNumberOrTag::Latest, L2BlockInfo::default());
         if self.reset_recovery_support {
             fake_engine_handle.set_l2_block_by_label(BlockNumberOrTag::Latest, Default::default());
         }
@@ -266,8 +265,16 @@ impl HarnessBuilder {
                 sequencer_stopped: false,
             },
         );
-        let engine_handle =
-            EngineRequestHandler::new(engine_processor, None).start(engine_actor_request_rx);
+        let engine_handle = tokio::spawn(async move {
+            // Same rationale as the derivation actor above: panic on `Err` so
+            // engine-side failures fail tests fast with the real error instead
+            // of hanging until the tick budget expires and reporting a
+            // misleading `ProgressTimeout`.
+            let engine_handler = EngineRequestHandler::new(engine_processor, None);
+            if let Err(error) = engine_handler.start(engine_actor_request_rx).await {
+                panic!("engine actor exited with error: {error:?}");
+            }
+        });
 
         let derivation_actor = DerivationActor::new(
             QueuedDerivationEngineClient::new(engine_actor_request_tx.clone()),

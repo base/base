@@ -83,6 +83,11 @@ impl FakeL1 {
     /// consumes **two** scripted FCU responses: one synthetic (via `inject_fcu_v3_call`) and one
     /// real (from the engine actor processing `ProcessSafeL2SignalRequest`). Script the response
     /// queue with this in mind.
+    ///
+    /// Not safe to call concurrently: the state mutex is released between the `canonical` push
+    /// and the `dispatch_safe_l2_for` call below, so interleaved `extend` calls could push blocks
+    /// to `canonical` in one order while dispatching them to the engine/derivation actors in a
+    /// different order, producing parent-hash mismatches. Tests must serialize calls to `extend`.
     pub async fn extend(&self, block: BlockInfo) {
         let mut state = self.state.lock().await;
         state.canonical.push(block);
