@@ -216,6 +216,7 @@ base-execution-eip8130-rpc-node = { path = "crates/execution/eip8130-rpc-node" }
 base-execution-eip8130 = { path = "crates/execution/eip8130", default-features = false }
 base-execution-payer = { path = "crates/execution/payer" }
 base-execution-payer-rpc = { path = "crates/execution/payer-rpc" }
+base-execution-payer-rpc-node = { path = "crates/execution/payer-rpc-node" }
 
 # Infra
 basectl-cli = { path = "crates/infra/basectl" }

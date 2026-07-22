@@ -1,0 +1,31 @@
+[package]
+name = "base-execution-payer-rpc-node"
+description = "BaseNodeExtension wiring for the ERC-8168 payer_* RPC (state-backed terms + payer key)"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# base
+base-node-runner.workspace = true
+base-execution-payer-rpc.workspace = true
+base-execution-chainspec.workspace = true
+base-execution-payer = { workspace = true, features = ["storage", "signer"] }
+base-precompile-storage.workspace = true
+
+# reth
+reth-provider.workspace = true
+
+# alloy
+alloy-primitives.workspace = true
+
+# misc
+tracing = { workspace = true, features = ["std"] }

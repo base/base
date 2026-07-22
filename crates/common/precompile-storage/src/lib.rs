@@ -21,6 +21,9 @@ pub use provider::{
     Storable, StorableType, StorageKey, StorageOps, sealed, validate_loaded_code_presence,
 };
 
+mod readonly;
+pub use readonly::{ReadOnlyStorage, StorageReader};
+
 mod registration;
 pub use registration::NativePrecompile;
 
