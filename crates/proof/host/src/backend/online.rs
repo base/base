@@ -233,7 +233,12 @@ mod tests {
             genesis_time: 0,
             slot_interval: 12,
         });
-        HostProviders { l1: base_consensus_providers::L1RpcProvider::Ethereum(l1), blobs, l2 }
+        HostProviders {
+            l1: base_consensus_providers::L1RpcProvider::Ethereum(l1),
+            blobs,
+            l2,
+            alt_da: None,
+        }
     }
 
     fn test_cfg() -> HostConfig {
@@ -247,6 +252,7 @@ mod tests {
                 rollup_config: RollupConfig::default(),
                 l1_config: ChainConfig::default(),
                 enable_experimental_witness_endpoint: false,
+                da_server_url: None,
             },
             data_dir: None,
         }
