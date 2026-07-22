@@ -1255,11 +1255,14 @@ where
             }
             value
         };
-        let locked = account_state.is_locked(now);
-        let unlocks_at = (locked
-            && account_state.flags & Eip8130Constants::FLAG_UNLOCK_INITIATED != 0)
-            .then_some(account_state.lock_union);
-        (locked, unlocks_at)
+        // Reuse the canonical lock view rather than re-deriving it from raw
+        // flags. Only a pending unlock has a knowable timestamp; a hard lock
+        // reports `UNLOCKS_AT_MAX`, which must never surface as a timed
+        // expiry-bucket (it does not unlock on a schedule), so gate on
+        // `has_initiated_unlock`.
+        let status = account_state.lock_status(now);
+        let unlocks_at = status.has_initiated_unlock.then_some(status.unlocks_at);
+        (status.locked, unlocks_at)
     }
 
     fn is_high_rate_account(
