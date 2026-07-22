@@ -904,8 +904,9 @@ mod tests {
 
 #[cfg(test)]
 mod runtime_tests {
-    use super::*;
     use spin::Mutex;
+
+    use super::*;
 
     static RUNTIME_REGISTRY_TEST_LOCK: Mutex<()> = Mutex::new(());
 
