@@ -91,6 +91,10 @@ async fn shadow_builds_privately_then_reconciles_to_canonical() -> Result<()> {
         .inner
         .block_number
         .ok_or_else(|| eyre::eyre!("shadow receipt should reference a block number"))?;
+    let shadow_private_hash = shadow_receipt
+        .inner
+        .block_hash
+        .ok_or_else(|| eyre::eyre!("shadow receipt should reference a block hash"))?;
 
     assert_never_included(&active_builder, shadow_tx, NON_CANONICAL_OBSERVATION_WINDOW)
         .await
@@ -98,6 +102,18 @@ async fn shadow_builds_privately_then_reconciles_to_canonical() -> Result<()> {
     assert_never_included(&client, shadow_tx, NON_CANONICAL_OBSERVATION_WINDOW)
         .await
         .wrap_err("shadow-only tx unexpectedly appeared on the client")?;
+
+    // The shadow built a distinct private block: the canonical chain never saw the
+    // shadow-only tx, so its block at `divergence_height` must differ from the
+    // shadow's private block that included it.
+    let canonical_hash_at_divergence =
+        wait_for_block_hash_at(&active_builder, divergence_height, BLOCK_PRODUCTION_TIMEOUT)
+            .await
+            .wrap_err("active sequencer did not reach the divergence height")?;
+    assert_ne!(
+        shadow_private_hash, canonical_hash_at_divergence,
+        "shadow's private block should differ from the canonical block at the same height"
+    );
 
     // Reconciliation: the shadow reorgs away its private block at
     // `divergence_height` and adopts the canonical block at that height. Proving
@@ -255,6 +271,23 @@ async fn block_hash_at(provider: &RootProvider<Base>, height: u64) -> Result<Opt
         .get_block_by_number(BlockNumberOrTag::Number(height))
         .await?
         .map(|block| block.header.hash))
+}
+
+async fn wait_for_block_hash_at(
+    provider: &RootProvider<Base>,
+    height: u64,
+    within: Duration,
+) -> Result<B256> {
+    timeout(within, async {
+        loop {
+            if let Some(hash) = block_hash_at(provider, height).await? {
+                return Ok::<_, eyre::Error>(hash);
+            }
+            sleep(BLOCK_POLL_INTERVAL).await;
+        }
+    })
+    .await
+    .wrap_err("block at target height not available in time")?
 }
 
 async fn wait_for_shadow_convergence(

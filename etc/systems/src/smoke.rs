@@ -17,7 +17,7 @@ use url::Url;
 use crate::{
     BATCHER, BUILDER, SEQUENCER,
     l1::{L1ContainerConfig, L1Stack, L1StackConfig},
-    l2::{L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig},
+    l2::{L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig, ShadowSequencersConfig},
     setup::{L1GenesisOutput, L2DeploymentOutput, SetupContainer},
     system_config::StableSystemTestConfig,
 };
@@ -359,11 +359,19 @@ impl SystemTestStackBuilder {
         let l1_genesis_bytes =
             std::fs::read(l1_genesis.el_genesis_path()).wrap_err("Failed to read L1 genesis")?;
 
-        let shadow_sequencer_keys: Vec<B256> = (0..self.shadow_sequencer_count)
-            .map(|_| {
-                B256::from_slice(PrivateKeySigner::random().credential().to_bytes().as_slice())
-            })
-            .collect();
+        let shadow_sequencers = (self.shadow_sequencer_count > 0).then(|| {
+            let keys = (0..self.shadow_sequencer_count)
+                .map(|_| {
+                    B256::from_slice(PrivateKeySigner::random().credential().to_bytes().as_slice())
+                })
+                .collect();
+            ShadowSequencersConfig {
+                keys,
+                blocks_per_cycle: self
+                    .shadow_blocks_per_cycle
+                    .unwrap_or(DEFAULT_SHADOW_BLOCKS_PER_CYCLE),
+            }
+        });
 
         let l2_config = L2StackConfig {
             l2_genesis: l2_genesis_bytes,
@@ -379,10 +387,7 @@ impl SystemTestStackBuilder {
             tx_forwarding_config: self.tx_forwarding_config,
             verifier_l1_confs: self.verifier_l1_confs,
             client_consensus_mode: self.client_consensus_mode,
-            shadow_sequencer_keys,
-            shadow_blocks_per_cycle: self
-                .shadow_blocks_per_cycle
-                .unwrap_or(DEFAULT_SHADOW_BLOCKS_PER_CYCLE),
+            shadow_sequencers,
         };
 
         let l2_stack = L2Stack::start(l2_config).await.wrap_err("Failed to start L2 stack")?;

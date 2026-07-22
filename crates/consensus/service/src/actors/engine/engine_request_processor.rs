@@ -40,7 +40,13 @@ pub trait EngineRequestReceiver: Send + Sync {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ResetOutcome {
     NotReset,
+    /// A genuine engine reset (reorg, Holocene activation, or reset-severity task error). For a
+    /// shadow sequencer this invalidates reconciliation state and is fatal.
     Reset,
+    /// The one-time reset performed when EL sync first completes. Benign for a shadow sequencer
+    /// (no reconciliation state exists yet) and fires at most once, since the path that produces
+    /// it flips `el_sync_complete` to `true` before returning.
+    InitialELSyncReset,
 }
 
 /// Owns the engine processor and routes requests that require shadow reconciliation state.
@@ -371,7 +377,11 @@ where
 
         if !self.el_sync_complete && self.engine.state().el_sync_finished {
             let sync_outcome = self.mark_el_sync_complete_and_notify_derivation_actor().await?;
-            if sync_outcome == ResetOutcome::Reset {
+            // A genuine reset from the drain above takes precedence and stays fatal; only surface
+            // the benign initial-sync reset when the drain itself did not reset.
+            if reset_outcome != ResetOutcome::Reset
+                && sync_outcome == ResetOutcome::InitialELSyncReset
+            {
                 return Ok(sync_outcome);
             }
         }
@@ -556,7 +566,7 @@ where
                 // If the sync status is finished, we can reset the engine and start derivation.
                 info!(target: "engine", "Performing initial engine reset");
                 self.reset().await?;
-                ResetOutcome::Reset
+                ResetOutcome::InitialELSyncReset
             } else {
                 info!(target: "engine", "finalized head is not default, so not resetting");
                 ResetOutcome::NotReset
@@ -862,12 +872,6 @@ where
                 let _iter_timer =
                     base_metrics::timed!(EngineMetrics::engine_processor_iteration_duration());
 
-                // Sampled before the drain: the one-time initial EL-sync reset flips
-                // `el_sync_complete` false->true *inside* `drain()` (see
-                // `mark_el_sync_complete_and_notify_derivation_actor`), so it must be read here to
-                // distinguish that benign startup reset from a genuine post-sync reset.
-                let el_sync_was_complete = self.processor.el_sync_complete;
-
                 // Attempt to drain all outstanding tasks from the engine queue before adding new
                 // ones.
                 let drain_outcome = base_metrics::time!(
@@ -878,16 +882,10 @@ where
                         )
                     }
                 )?;
-                // Only treat a drain reset as a fatal reconciliation-invalidating event once
-                // EL sync has already completed. The mandatory initial engine reset performed on
-                // the first drain (when a shadow cold-starts against a genesis/unsynced EL, before
-                // any canonical payload is buffered) is benign: no reconciliation state exists yet,
-                // and the gate anchor set during bootstrap remains valid since the unsafe head does
-                // not change.
-                if self.shadow_gate.is_some()
-                    && drain_outcome == ResetOutcome::Reset
-                    && el_sync_was_complete
-                {
+                // A genuine drain reset invalidates shadow reconciliation state and is fatal. The
+                // one-time `InitialELSyncReset` (a cold-start bootstrap reset) is deliberately
+                // tolerated: it carries no reconciliation state and cannot recur.
+                if self.shadow_gate.is_some() && drain_outcome == ResetOutcome::Reset {
                     return Err(EngineError::ShadowInternalReset);
                 }
 
@@ -1635,9 +1633,10 @@ mod tests {
     ///
     /// The initial reset is performed on the first `drain()` (via
     /// `mark_el_sync_complete_and_notify_derivation_actor`) whenever the finalized head is still
-    /// default. Before the fix the fatal-reset guard fired on this benign reset and killed the
-    /// node before its RPC bound; after the fix the guard is armed only once EL sync has already
-    /// completed, so the node survives and runs until the request channel closes.
+    /// default. That path now yields [`ResetOutcome::InitialELSyncReset`] rather than
+    /// [`ResetOutcome::Reset`], so the fatal-reset guard skips it and the node survives until the
+    /// request channel closes. Genuine resets still yield [`ResetOutcome::Reset`] and remain fatal
+    /// even while EL sync is incomplete.
     #[tokio::test]
     async fn shadow_gate_survives_initial_el_sync_reset() {
         let head = test_block_info(100);

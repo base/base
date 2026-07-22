@@ -66,13 +66,19 @@ pub struct L2StackConfig {
     pub verifier_l1_confs: u64,
     /// Consensus mode for the L2 client node.
     pub client_consensus_mode: L2ClientConsensusMode,
-    /// Signing keys for shadow sequencers. Each entry spawns one shadow sequencer
-    /// running alongside the active sequencer. Each key must be distinct from
-    /// [`sequencer_key`](Self::sequencer_key) so the shadow's blocks are rejected
-    /// as non-canonical by the rest of the network.
-    pub shadow_sequencer_keys: Vec<B256>,
+    /// Shadow sequencer configuration. When [`None`], no shadow sequencers are started.
+    pub shadow_sequencers: Option<ShadowSequencersConfig>,
+}
+
+/// Configuration for the shadow sequencers running alongside the active sequencer.
+#[derive(Debug, Clone)]
+pub struct ShadowSequencersConfig {
+    /// Signing keys for shadow sequencers. Each entry spawns one shadow sequencer. Each key must
+    /// be distinct from [`L2StackConfig::sequencer_key`] so the shadow's blocks are rejected as
+    /// non-canonical by the rest of the network.
+    pub keys: Vec<B256>,
     /// Number of private blocks each shadow sequencer builds per reconciliation cycle.
-    pub shadow_blocks_per_cycle: NonZeroU64,
+    pub blocks_per_cycle: NonZeroU64,
 }
 
 /// Running L2 client consensus node.
@@ -287,24 +293,26 @@ impl L2Stack {
         // so any canonical block sealed before a shadow connects would never reach its
         // reconciliation gate, leaving the shadow unable to reconcile its private branch.
         let active_consensus_p2p_addr = builder_consensus.p2p_addr();
-        let mut shadow_sequencers = Vec::with_capacity(config.shadow_sequencer_keys.len());
-        for (index, shadow_key) in config.shadow_sequencer_keys.iter().enumerate() {
-            let shadow = ShadowSequencer::start(ShadowSequencerConfig {
-                index,
-                sequencer_key: *shadow_key,
-                l2_genesis: config.l2_genesis.clone(),
-                rollup_config: rollup_config.clone(),
-                l1_chain_config: l1_chain_config.clone(),
-                jwt_secret: config.jwt_secret,
-                l1_rpc_url: l1_rpc_url.clone(),
-                l1_beacon_url: l1_beacon_url.clone(),
-                active_consensus_p2p_addr: active_consensus_p2p_addr.clone(),
-                active_sequencer_address: SEQUENCER.address,
-                shadow_blocks_per_cycle: config.shadow_blocks_per_cycle,
-            })
-            .await
-            .wrap_err_with(|| format!("Failed to start shadow sequencer {index}"))?;
-            shadow_sequencers.push(shadow);
+        let mut shadow_sequencers = Vec::new();
+        if let Some(shadow_config) = &config.shadow_sequencers {
+            shadow_sequencers.reserve(shadow_config.keys.len());
+            for (index, shadow_key) in shadow_config.keys.iter().enumerate() {
+                let shadow = ShadowSequencer::start(ShadowSequencerConfig {
+                    sequencer_key: *shadow_key,
+                    l2_genesis: config.l2_genesis.clone(),
+                    rollup_config: rollup_config.clone(),
+                    l1_chain_config: l1_chain_config.clone(),
+                    jwt_secret: config.jwt_secret,
+                    l1_rpc_url: l1_rpc_url.clone(),
+                    l1_beacon_url: l1_beacon_url.clone(),
+                    active_consensus_p2p_addr: active_consensus_p2p_addr.clone(),
+                    active_sequencer_address: SEQUENCER.address,
+                    shadow_blocks_per_cycle: shadow_config.blocks_per_cycle,
+                })
+                .await
+                .wrap_err_with(|| format!("Failed to start shadow sequencer {index}"))?;
+                shadow_sequencers.push(shadow);
+            }
         }
 
         // 7. Start the active sequencer only after every shadow has joined the gossip mesh.

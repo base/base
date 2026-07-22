@@ -32,8 +32,6 @@ use super::{
 /// Configuration for starting a single [`ShadowSequencer`].
 #[derive(Debug, Clone)]
 pub struct ShadowSequencerConfig {
-    /// Zero-based index of this shadow sequencer, used only for logging/identity.
-    pub index: usize,
     /// Distinct sequencer signing key. Must differ from the active sequencer key
     /// so that blocks built by this shadow are rejected as non-canonical.
     pub sequencer_key: B256,
@@ -63,7 +61,6 @@ pub struct ShadowSequencerConfig {
 /// consensus node running in `NodeMode::Sequencer`.
 #[derive(Debug)]
 pub struct ShadowSequencer {
-    index: usize,
     builder: InProcessBuilder,
     consensus: InProcessConsensus,
 }
@@ -122,12 +119,7 @@ impl ShadowSequencer {
 
         consensus.start_sequencer().await.wrap_err("Failed to start shadow sequencer")?;
 
-        Ok(Self { index: config.index, builder, consensus })
-    }
-
-    /// Returns the zero-based index of this shadow sequencer.
-    pub const fn index(&self) -> usize {
-        self.index
+        Ok(Self { builder, consensus })
     }
 
     /// Returns a reference to the shadow's builder execution layer.
@@ -143,10 +135,5 @@ impl ShadowSequencer {
     /// Returns the shadow builder's HTTP RPC URL.
     pub fn rpc_url(&self) -> Result<Url> {
         self.builder.rpc_url()
-    }
-
-    /// Returns the shadow consensus node's RPC URL.
-    pub fn consensus_rpc_url(&self) -> Url {
-        self.consensus.rpc_url()
     }
 }
