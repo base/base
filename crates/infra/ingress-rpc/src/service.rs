@@ -13,7 +13,9 @@ use base_bundles::{AcceptedBundle, Bundle, BundleExtensions, MeterBundleResponse
 use base_common_chains::ChainConfig;
 use base_common_consensus::{BaseTxEnvelope, EIP8130_REJECTION_MSG};
 use base_common_network::Base;
-use base_observability_events::{TransactionEventProducer, TransactionEventType, transaction_event};
+use base_observability_events::{
+    TransactionEventProducer, TransactionEventType, transaction_event,
+};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,

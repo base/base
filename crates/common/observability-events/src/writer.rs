@@ -255,6 +255,8 @@ pub enum WriteEventError {
     Invalid(TransactionEventValidationError),
 }
 
+const MAX_ROTATED_PATH_ATTEMPTS: u32 = 1000;
+
 struct SizeRollingFile {
     file: Option<File>,
     path: PathBuf,
@@ -277,12 +279,9 @@ impl SizeRollingFile {
         })
     }
 
-    fn should_rotate(&self, incoming_bytes: usize) -> bool {
+    const fn should_rotate(&self, incoming_bytes: usize) -> bool {
         self.current_size > 0
-            && self
-                .current_size
-                .saturating_add(incoming_bytes as u64)
-                > self.max_file_bytes
+            && self.current_size.saturating_add(incoming_bytes as u64) > self.max_file_bytes
     }
 
     fn rotate(&mut self) -> io::Result<()> {
@@ -311,7 +310,7 @@ impl SizeRollingFile {
             Ok(file) => {
                 self.file = Some(file);
                 self.current_size = 0;
-                self.prune_rotated_files()?;
+                self.prune_rotated_files();
                 Ok(())
             }
             Err(err) => {
@@ -324,44 +323,55 @@ impl SizeRollingFile {
 
     fn next_rotated_path(&self) -> io::Result<PathBuf> {
         let (parent, stem, extension) = file_name_parts(&self.path)?;
-        let mut timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis();
+        let mut timestamp =
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis();
 
-        loop {
+        for _ in 0..MAX_ROTATED_PATH_ATTEMPTS {
             let candidate = parent.join(format!("{stem}.{timestamp}.{extension}"));
             if !candidate.exists() {
                 return Ok(candidate);
             }
             timestamp = timestamp.saturating_add(1);
         }
+
+        Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "could not allocate a unique rotated transaction event path",
+        ))
     }
 
-    fn prune_rotated_files(&self) -> io::Result<()> {
-        let (parent, stem, extension) = file_name_parts(&self.path)?;
+    fn prune_rotated_files(&self) {
+        let Ok((parent, stem, extension)) = file_name_parts(&self.path) else {
+            return;
+        };
         let prefix = format!("{stem}.");
         let suffix = format!(".{extension}");
-        let mut rotated_files = read_dir(parent)?
+        let Ok(entries) = read_dir(parent) else {
+            return;
+        };
+        let mut rotated_files = entries
             .filter_map(Result::ok)
             .filter_map(|entry| {
                 let name = entry.file_name().into_string().ok()?;
-                let timestamp = name
-                    .strip_prefix(&prefix)?
-                    .strip_suffix(&suffix)?
-                    .parse::<u128>()
-                    .ok()?;
+                let timestamp =
+                    name.strip_prefix(&prefix)?.strip_suffix(&suffix)?.parse::<u128>().ok()?;
                 Some((timestamp, name, entry.path()))
             })
             .collect::<Vec<_>>();
 
-        rotated_files.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+        rotated_files
+            .sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
         let keep_rotated = self.max_files.saturating_sub(1);
         while rotated_files.len() > keep_rotated {
             let (_, _, path) = rotated_files.remove(0);
-            remove_file(path)?;
+            if let Err(err) = remove_file(&path) {
+                warn!(
+                    path = %path.display(),
+                    error = %err,
+                    "failed to prune rotated transaction event file"
+                );
+            }
         }
-        Ok(())
     }
 }
 
@@ -401,16 +411,13 @@ fn file_name_parts(path: &Path) -> io::Result<(&Path, String, String)> {
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    let file_name = path.file_name().and_then(|name| name.to_str()).ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, "transaction event path has no valid filename")
-    })?;
     let stem = path.file_stem().and_then(|name| name.to_str()).ok_or_else(|| {
         io::Error::new(io::ErrorKind::InvalidInput, "transaction event path has no valid stem")
     })?;
     let extension = path.extension().and_then(|name| name.to_str()).ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
-            format!("transaction event path has no extension: {file_name}"),
+            format!("transaction event path has no extension: {}", path.display()),
         )
     })?;
     Ok((parent, stem.to_string(), extension.to_string()))
@@ -719,9 +726,7 @@ mod tests {
             .filter(|entry| {
                 let name = entry.file_name();
                 let name = name.to_string_lossy();
-                name != "events.jsonl"
-                    && name.starts_with("events.")
-                    && name.ends_with(".jsonl")
+                name != "events.jsonl" && name.starts_with("events.") && name.ends_with(".jsonl")
             })
             .count();
         assert_eq!(rotated_count, 2);
