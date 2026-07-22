@@ -281,7 +281,7 @@ impl WitnessGenerator {
             agreed
         };
         let history_proofs = async {
-            if fetch_eip_2935_proofs && agreed < execution_end {
+            if fetch_eip_2935_proofs {
                 self.fetch_eip_2935_proofs(agreed, start..agreed).await
             } else {
                 Ok(PreimageMap::new())
