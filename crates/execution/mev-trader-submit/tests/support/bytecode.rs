@@ -16,6 +16,23 @@ const R61_ARTIFACT_SHA256: &str =
 const EXECUTE_SELECTOR: &str = "3b83f272";
 const RETIRED_EXECUTE_SELECTOR: &str = "21def296";
 
+fn canonicalize(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            for child in object.values_mut() {
+                canonicalize(child);
+            }
+            object.sort_keys();
+        }
+        Value::Array(array) => {
+            for child in array {
+                canonicalize(child);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Parses and seals the vendored manifest, returning its sole executor creation bytecode.
 pub fn executor_creation() -> &'static str {
     static CREATION: OnceLock<String> = OnceLock::new();
@@ -35,6 +52,7 @@ pub fn executor_creation() -> &'static str {
                 .expect("R6-1 manifest artifact_sha256 must be a string");
             assert_eq!(declared_sha, R61_ARTIFACT_SHA256, "R6-1 manifest digest seal changed");
         }
+        canonicalize(&mut manifest);
         let canonical = serde_json::to_vec(&manifest)
             .expect("R6-1 manifest must have a canonical JSON representation");
         assert_eq!(
