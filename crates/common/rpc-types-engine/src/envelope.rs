@@ -579,16 +579,17 @@ impl PayloadHash {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::b256;
-    #[cfg(feature = "std")]
-    use alloy_primitives::hex;
-    #[cfg(feature = "std")]
-    use ssz::{Decode, Encode};
     #[cfg(feature = "std")]
     use std::{
         alloc::{GlobalAlloc, Layout, System},
         cell::Cell,
     };
+
+    use alloy_primitives::b256;
+    #[cfg(feature = "std")]
+    use alloy_primitives::hex;
+    #[cfg(feature = "std")]
+    use ssz::{Decode, Encode};
 
     use super::*;
 
