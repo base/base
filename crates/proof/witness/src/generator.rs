@@ -3,21 +3,21 @@ use std::{
     num::NonZeroUsize,
 };
 
-use alloy_consensus::Transaction;
+use alloy_consensus::{ReceiptEnvelope, Transaction, transaction::SignerRecoverable};
 use alloy_eips::{
-    eip2718::Encodable2718,
+    eip2718::{Decodable2718, Encodable2718},
     eip2935::{HISTORY_SERVE_WINDOW, HISTORY_STORAGE_ADDRESS},
     eip4844::FIELD_ELEMENTS_PER_BLOB,
 };
 use alloy_genesis::ChainConfig;
-use alloy_network::Network;
-use alloy_primitives::{B64, B256, U256, keccak256};
+use alloy_network::{Ethereum, Network};
+use alloy_primitives::{B64, B256, Bytes, U256, keccak256};
 use alloy_provider::Provider;
 use alloy_rlp::Encodable;
 use alloy_rpc_types::{Block, debug::ExecutionWitness};
 use ark_ff::{BigInteger, PrimeField};
 use base_common_consensus::{HoloceneExtraData, JovianExtraData, Predeploys};
-use base_common_genesis::RollupConfig;
+use base_common_genesis::{RollupConfig, SystemConfig};
 use base_common_network::Base;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_providers::{
@@ -30,7 +30,7 @@ use base_proof::{
 };
 use base_proof_preimage::{PreimageKey, PreimageKeyType};
 use base_proof_primitives::ProofRequest;
-use base_protocol::{BlockInfo, L2BlockInfo, OutputRoot};
+use base_protocol::{BlockInfo, L2BlockInfo, OutputRoot, to_system_config};
 use futures::{StreamExt, TryStreamExt, stream};
 
 use crate::{PreimageMap, Result, WitnessError};
@@ -45,6 +45,13 @@ const MAX_STORAGE_PROOF_KEYS: usize = 100;
 /// L2 RPC block type used to reconstruct payload attributes.
 pub type L2RpcBlock =
     Block<<Base as Network>::TransactionResponse, <Base as Network>::HeaderResponse>;
+
+/// L1 RPC transaction type used to identify batcher transactions.
+pub type L1RpcTransaction = <Ethereum as Network>::TransactionResponse;
+
+/// L1 RPC block type used to fetch derivation inputs.
+pub type L1RpcBlock =
+    Block<<Ethereum as Network>::TransactionResponse, <Ethereum as Network>::HeaderResponse>;
 
 /// Inputs that vary by proof or chain.
 #[derive(Debug, Clone)]
@@ -132,6 +139,8 @@ impl WitnessGenerator {
 
         let safe_head = self.l2_block_info(agreed_block.clone())?;
         let (reset_l2_start, l1_start) = self.find_l2_reset_start(&safe_head).await?;
+        let reset_system_config =
+            self.l2_system_config(self.fetch_l2_rpc_block(reset_l2_start).await?)?;
         let l1_end = self.config.request.l1_head_number;
         if l1_start > l1_end {
             return Err(WitnessError::InvalidL1Ancestry(format!(
@@ -153,7 +162,7 @@ impl WitnessGenerator {
                 claimed_number > agreed_number
                     && self.config.rollup_config.is_isthmus_active(safe_head.block_info.timestamp),
             ),
-            self.fetch_l1_range(l1_start, l1_end),
+            self.fetch_l1_range(l1_start, l1_end, reset_system_config),
             self.build_starting_output(&agreed_block),
         )?;
 
@@ -424,6 +433,8 @@ impl WitnessGenerator {
                     operation: "debug_executePayload",
                     error: error.to_string(),
                 })?;
+            // Reth does not implement `debug_dbGet`, so omitted nodes cannot be recovered as
+            // they are in the legacy host. `debug_executePayload` must return a complete witness.
             for preimage in execution
                 .state
                 .into_iter()
@@ -467,6 +478,16 @@ impl WitnessGenerator {
             .into_consensus()
             .map_transactions(|tx| tx.inner.inner.into_inner());
         L2BlockInfo::from_block_and_genesis(&block, &self.config.rollup_config.genesis)
+            .map_err(|error| WitnessError::Encoding(error.to_string()))
+    }
+
+    /// Decodes the system configuration recorded in an L2 block.
+    pub fn l2_system_config(&self, block: L2RpcBlock) -> Result<SystemConfig> {
+        let block = block
+            .map_header(|header| header.into_inner())
+            .into_consensus()
+            .map_transactions(|tx| tx.inner.inner.into_inner());
+        to_system_config(&block, &self.config.rollup_config)
             .map_err(|error| WitnessError::Encoding(error.to_string()))
     }
 
@@ -537,16 +558,91 @@ impl WitnessGenerator {
         &self,
         start: u64,
         end: u64,
+        mut system_config: SystemConfig,
     ) -> Result<Vec<(u64, B256, B256, PreimageMap)>> {
-        stream::iter(start..=end)
-            .map(|number| self.fetch_l1_block(number))
+        let mut blocks = stream::iter(start..=end)
+            .map(|number| async move {
+                let block = self.fetch_l1_rpc_block(number).await?;
+                let receipts = self.fetch_l1_raw_receipts(block.header.hash).await?;
+                Ok((number, block, receipts))
+            })
+            .buffer_unordered(self.concurrency.get())
+            .try_collect::<Vec<_>>()
+            .await?;
+        blocks.sort_by_key(|(number, _, _)| *number);
+
+        let mut block_inputs = Vec::with_capacity(blocks.len());
+        for (number, block, receipts) in blocks {
+            // The reset configuration already includes updates from the starting L1 origin.
+            if number != start {
+                self.update_system_config_from_raw_receipts(
+                    &mut system_config,
+                    &receipts,
+                    block.header.inner.timestamp,
+                )?;
+            }
+
+            let hash = block.header.hash;
+            let parent_hash = block.header.inner.parent_hash;
+            let transactions = block.transactions.into_transactions().collect::<Vec<_>>();
+            let encoded_transactions =
+                transactions.iter().map(|tx| tx.inner.encoded_2718()).collect::<Vec<_>>();
+            let blob_hashes = transactions
+                .iter()
+                .filter(|tx| {
+                    Self::is_batcher_transaction(
+                        tx,
+                        self.config.rollup_config.batch_inbox_address,
+                        system_config.batcher_address,
+                    )
+                })
+                .filter_map(|tx| tx.inner.blob_versioned_hashes())
+                .flatten()
+                .copied()
+                .collect::<Vec<_>>();
+            let block_info =
+                BlockInfo { hash, number, parent_hash, timestamp: block.header.inner.timestamp };
+            let mut chunk = PreimageMap::new();
+            let mut raw_header = Vec::new();
+            block.header.inner.encode(&mut raw_header);
+            chunk.insert_keccak(raw_header)?;
+            chunk.insert_ordered_trie(&encoded_transactions)?;
+            chunk.insert_ordered_trie(&receipts)?;
+            block_inputs.push((number, hash, parent_hash, chunk, block_info, blob_hashes));
+        }
+
+        stream::iter(block_inputs)
+            .map(|(number, hash, parent_hash, mut chunk, block_info, blob_hashes)| async move {
+                let blobs = if blob_hashes.is_empty() {
+                    Vec::new()
+                } else {
+                    self.providers
+                        .blobs
+                        .fetch_blobs_with_proofs(&block_info, &blob_hashes)
+                        .await
+                        .map_err(|error| WitnessError::Rpc {
+                            operation: "fetch blob sidecars",
+                            error: error.to_string(),
+                        })?
+                };
+                if blobs.len() != blob_hashes.len() {
+                    return Err(WitnessError::BlobCountMismatch {
+                        expected: blob_hashes.len(),
+                        actual: blobs.len(),
+                    });
+                }
+                for (blob_hash, blob) in blob_hashes.into_iter().zip(blobs) {
+                    self.insert_blob_preimages(&mut chunk, blob_hash, blob)?;
+                }
+                Ok((number, hash, parent_hash, chunk))
+            })
             .buffer_unordered(self.concurrency.get())
             .try_collect()
             .await
     }
 
-    /// Fetches one L1 block and all derivation preimages addressable from it.
-    pub async fn fetch_l1_block(&self, number: u64) -> Result<(u64, B256, B256, PreimageMap)> {
+    /// Fetches and validates an L1 block by number.
+    pub async fn fetch_l1_rpc_block(&self, number: u64) -> Result<L1RpcBlock> {
         let block = self
             .providers
             .l1
@@ -565,74 +661,58 @@ impl WitnessGenerator {
                 reason: format!("received block number {}", block.header.number),
             });
         }
-        let hash = block.header.hash;
         let actual_hash = block.header.inner.hash_slow();
-        if hash != actual_hash {
+        if block.header.hash != actual_hash {
             return Err(WitnessError::InvalidBlock {
                 layer: "L1",
                 number,
-                reason: format!("reported hash {hash} does not match encoded hash {actual_hash}"),
+                reason: format!(
+                    "reported hash {} does not match encoded hash {actual_hash}",
+                    block.header.hash
+                ),
             });
         }
+        Ok(block)
+    }
 
-        let transactions = block.transactions.clone().into_transactions().collect::<Vec<_>>();
-        let encoded_transactions =
-            transactions.iter().map(|tx| tx.inner.encoded_2718()).collect::<Vec<_>>();
-        let blob_hashes = transactions
+    /// Fetches the raw receipts used by the L1 receipt trie.
+    pub async fn fetch_l1_raw_receipts(&self, hash: B256) -> Result<Vec<Bytes>> {
+        self.providers.l1.client().request("debug_getRawReceipts", [hash]).await.map_err(|error| {
+            WitnessError::Rpc { operation: "debug_getRawReceipts", error: error.to_string() }
+        })
+    }
+
+    /// Updates a system configuration from the raw receipts in one L1 block.
+    pub fn update_system_config_from_raw_receipts(
+        &self,
+        system_config: &mut SystemConfig,
+        raw_receipts: &[Bytes],
+        block_timestamp: u64,
+    ) -> Result<()> {
+        let receipts = raw_receipts
             .iter()
-            .filter(|tx| tx.inner.to() == Some(self.config.rollup_config.batch_inbox_address))
-            .filter_map(|tx| tx.inner.blob_versioned_hashes())
-            .flatten()
-            .copied()
-            .collect::<Vec<_>>();
-        let block_info = BlockInfo {
-            hash,
-            number,
-            parent_hash: block.header.inner.parent_hash,
-            timestamp: block.header.inner.timestamp,
-        };
-        let receipts = async {
-            self.providers.l1.client().request("debug_getRawReceipts", [hash]).await.map_err(
-                |error| WitnessError::Rpc {
-                    operation: "debug_getRawReceipts",
-                    error: error.to_string(),
-                },
-            )
-        };
-        let blobs = async {
-            if blob_hashes.is_empty() {
-                return Ok(Vec::new());
-            }
-            self.providers.blobs.fetch_blobs_with_proofs(&block_info, &blob_hashes).await.map_err(
-                |error| WitnessError::Rpc {
-                    operation: "fetch blob sidecars",
-                    error: error.to_string(),
-                },
-            )
-        };
-        let (receipts, blobs): (Vec<alloy_primitives::Bytes>, Vec<_>) =
-            tokio::try_join!(receipts, blobs)?;
+            .map(|receipt| {
+                ReceiptEnvelope::decode_2718_exact(receipt)
+                    .map(ReceiptEnvelope::into_receipt)
+                    .map_err(|error| WitnessError::Encoding(error.to_string()))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        system_config.update_with_receipts(
+            &receipts,
+            self.config.rollup_config.l1_system_config_address,
+            self.config.rollup_config.is_ecotone_active(block_timestamp),
+        );
+        Ok(())
+    }
 
-        let mut chunk = PreimageMap::new();
-        let mut raw_header = Vec::new();
-        block.header.inner.encode(&mut raw_header);
-        chunk.insert_keccak(raw_header)?;
-        chunk.insert_ordered_trie(&encoded_transactions)?;
-        chunk.insert_ordered_trie(&receipts)?;
-
-        if blobs.len() != blob_hashes.len() {
-            return Err(WitnessError::BlobCountMismatch {
-                expected: blob_hashes.len(),
-                actual: blobs.len(),
-            });
-        }
-        if !blob_hashes.is_empty() {
-            for (blob_hash, blob) in blob_hashes.into_iter().zip(blobs) {
-                self.insert_blob_preimages(&mut chunk, blob_hash, blob)?;
-            }
-        }
-
-        Ok((number, hash, block.header.inner.parent_hash, chunk))
+    /// Returns whether a transaction is a derivation batcher transaction.
+    pub fn is_batcher_transaction(
+        transaction: &L1RpcTransaction,
+        batch_inbox_address: alloy_primitives::Address,
+        batcher_address: alloy_primitives::Address,
+    ) -> bool {
+        transaction.inner.to() == Some(batch_inbox_address)
+            && transaction.inner.inner().recover_signer().ok() == Some(batcher_address)
     }
 
     /// Validates the fetched L1 parent chain and its safe origin/head anchors.
@@ -823,8 +903,12 @@ impl WitnessGenerator {
 mod tests {
     use std::{env, thread, time::Instant};
 
+    use alloy_consensus::{
+        Signed, TxEip4844, TxEip4844Variant, TxEnvelope, transaction::Recovered,
+    };
     use alloy_eips::BlockNumberOrTag;
     use alloy_genesis::ChainConfig;
+    use alloy_primitives::{Address, Signature, address};
     use alloy_provider::Provider;
     use base_common_chains::L1_CONFIGS;
     use base_common_genesis::RollupConfig;
@@ -882,6 +966,29 @@ mod tests {
     fn l2_execution_prefetch_stops_at_the_canonical_head() {
         assert_eq!(WitnessGenerator::l2_execution_end(1_000, 900), 900);
         assert_eq!(WitnessGenerator::l2_execution_end(900, 1_000), 900);
+    }
+
+    #[test]
+    fn blob_candidates_must_match_the_recovered_batcher() {
+        let inbox = address!("000000000000000000000000000000000000beef");
+        let envelope = TxEnvelope::Eip4844(Signed::new_unchecked(
+            TxEip4844Variant::TxEip4844(TxEip4844 { to: inbox, ..Default::default() }),
+            Signature::test_signature(),
+            Default::default(),
+        ));
+        let batcher = envelope.recover_signer().unwrap();
+        let transaction = L1RpcTransaction {
+            inner: Recovered::new_unchecked(envelope, Address::ZERO),
+            block_hash: None,
+            block_number: None,
+            transaction_index: None,
+            effective_gas_price: None,
+            block_timestamp: None,
+        };
+
+        assert!(WitnessGenerator::is_batcher_transaction(&transaction, inbox, batcher));
+        assert!(!WitnessGenerator::is_batcher_transaction(&transaction, inbox, Address::ZERO));
+        assert!(!WitnessGenerator::is_batcher_transaction(&transaction, Address::ZERO, batcher));
     }
 
     #[test]

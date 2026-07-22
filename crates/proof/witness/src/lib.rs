@@ -8,5 +8,6 @@ pub use error::{Result, WitnessError};
 
 mod generator;
 pub use generator::{
-    L2_HEADER_LOOKBACK, L2RpcBlock, WitnessConfig, WitnessGenerator, WitnessProviders,
+    L1RpcBlock, L1RpcTransaction, L2_HEADER_LOOKBACK, L2RpcBlock, WitnessConfig, WitnessGenerator,
+    WitnessProviders,
 };
