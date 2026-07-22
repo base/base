@@ -20,6 +20,7 @@ use base_common_network::Base;
 use base_tx_manager::NonceManager;
 use futures::{StreamExt, stream};
 use indicatif::{ProgressBar, ProgressStyle};
+use rand::random;
 use revm::precompile::PrecompileId;
 use tokio::{sync::{mpsc, watch}, task};
 use tokio_util::sync::CancellationToken;
@@ -66,6 +67,18 @@ const OPEN_LOOP_PRESIGN_CHANNEL_BUFFER: usize = 2;
 const OPEN_LOOP_IDLE_SLEEP: Duration = Duration::from_millis(10);
 const OPEN_LOOP_HEADROOM_RECHECK_INTERVAL: Duration = Duration::from_millis(100);
 const OPEN_LOOP_HEADROOM_STALL_TIMEOUT: Duration = Duration::from_secs(30);
+/// Adaptive open-loop target update cadence, matching closed-loop rate-limiter updates.
+const OPEN_LOOP_TARGET_UPDATE_INTERVAL: Duration = Duration::from_secs(2);
+/// Multiplicative headroom above observed confirmed TPS when deriving open-loop depth.
+const OPEN_LOOP_TARGET_MARGIN_MULTIPLIER: f64 = 1.30;
+/// Conversion window from observed TPS into outstanding transaction depth.
+const OPEN_LOOP_TARGET_LOOKAHEAD_SECONDS: f64 = 1.5;
+/// EWMA alpha for smoothing confirmed-TPS samples and reducing target oscillation.
+const OPEN_LOOP_TARGET_TPS_EWMA_ALPHA: f64 = 0.35;
+/// Minimum open-loop depth, expressed in signed-batch units.
+const OPEN_LOOP_TARGET_MIN_BATCHES: u64 = 1;
+/// Bootstrap open-loop depth before enough confirmations exist to adapt.
+const OPEN_LOOP_TARGET_INITIAL_BATCHES: u64 = 2;
 
 #[derive(Debug)]
 struct OpenLoopSenderJob {
@@ -123,6 +136,106 @@ impl OpenLoopDrainState<'_> {
             .fold(0u64, |total, count| total.saturating_add(*count));
 
         self.results_tracker.total_in_flight().saturating_add(queued)
+    }
+}
+
+#[derive(Debug)]
+struct OpenLoopHeadroomTarget {
+    current_target_in_flight: u64,
+    min_target_in_flight: u64,
+    max_target_in_flight: u64,
+    smoothed_confirmed_tps: f64,
+    last_confirmed_sample_count: u64,
+    last_confirmed_sample_at: Instant,
+}
+
+#[derive(Debug)]
+struct OpenLoopHeadroomUpdate {
+    previous_target_in_flight: u64,
+    updated_target_in_flight: u64,
+    confirmed_delta: u64,
+    sample_tps: f64,
+    smoothed_tps: f64,
+}
+
+impl OpenLoopHeadroomTarget {
+    fn new(max_target_in_flight: u64, initial_confirmed_count: u64, sampled_at: Instant) -> Self {
+        if max_target_in_flight == 0 {
+            return Self {
+                current_target_in_flight: 0,
+                min_target_in_flight: 0,
+                max_target_in_flight: 0,
+                smoothed_confirmed_tps: 0.0,
+                last_confirmed_sample_count: initial_confirmed_count,
+                last_confirmed_sample_at: sampled_at,
+            };
+        }
+
+        let min_target_in_flight = (OPEN_LOOP_SIGNED_BATCH_SIZE as u64)
+            .saturating_mul(OPEN_LOOP_TARGET_MIN_BATCHES)
+            .min(max_target_in_flight);
+        let initial_target_in_flight = (OPEN_LOOP_SIGNED_BATCH_SIZE as u64)
+            .saturating_mul(OPEN_LOOP_TARGET_INITIAL_BATCHES)
+            .clamp(min_target_in_flight, max_target_in_flight);
+
+        Self {
+            current_target_in_flight: initial_target_in_flight,
+            min_target_in_flight,
+            max_target_in_flight,
+            smoothed_confirmed_tps: 0.0,
+            last_confirmed_sample_count: initial_confirmed_count,
+            last_confirmed_sample_at: sampled_at,
+        }
+    }
+
+    const fn current_target_in_flight(&self) -> u64 {
+        self.current_target_in_flight
+    }
+
+    fn maybe_update(
+        &mut self,
+        now: Instant,
+        confirmed_count: u64,
+    ) -> Option<OpenLoopHeadroomUpdate> {
+        if now.saturating_duration_since(self.last_confirmed_sample_at)
+            < OPEN_LOOP_TARGET_UPDATE_INTERVAL
+        {
+            return None;
+        }
+
+        let elapsed = now.saturating_duration_since(self.last_confirmed_sample_at).as_secs_f64();
+        let confirmed_delta = confirmed_count.saturating_sub(self.last_confirmed_sample_count);
+        let sample_tps = if elapsed > 0.0 { confirmed_delta as f64 / elapsed } else { 0.0 };
+
+        if self.smoothed_confirmed_tps == 0.0 {
+            self.smoothed_confirmed_tps = sample_tps;
+        } else {
+            self.smoothed_confirmed_tps = self.smoothed_confirmed_tps
+                * (1.0 - OPEN_LOOP_TARGET_TPS_EWMA_ALPHA)
+                + sample_tps * OPEN_LOOP_TARGET_TPS_EWMA_ALPHA;
+        }
+
+        let adaptive_target = (self.smoothed_confirmed_tps
+            * OPEN_LOOP_TARGET_MARGIN_MULTIPLIER
+            * OPEN_LOOP_TARGET_LOOKAHEAD_SECONDS)
+            .ceil() as u64;
+        let target_with_batch_buffer =
+            adaptive_target.saturating_add(OPEN_LOOP_SIGNED_BATCH_SIZE as u64);
+        let updated_target_in_flight =
+            target_with_batch_buffer.clamp(self.min_target_in_flight, self.max_target_in_flight);
+        let previous_target_in_flight = self.current_target_in_flight;
+
+        self.current_target_in_flight = updated_target_in_flight;
+        self.last_confirmed_sample_count = confirmed_count;
+        self.last_confirmed_sample_at = now;
+
+        Some(OpenLoopHeadroomUpdate {
+            previous_target_in_flight,
+            updated_target_in_flight,
+            confirmed_delta,
+            sample_tps,
+            smoothed_tps: self.smoothed_confirmed_tps,
+        })
     }
 }
 
@@ -212,24 +325,60 @@ impl LoadRunner {
                 config.sender_offset.checked_add(config.account_count).ok_or_else(|| {
                     BaselineError::Config("sender_offset + account_count overflows usize".into())
                 })?;
+            let randomize_recipient_stream = config.fresh_recipient_ratio >= 1.0;
             let stream = if let Some(mnemonic) = &config.mnemonic {
-                let stream = KeyStream::from_mnemonic(mnemonic.clone(), offset)?;
-                info!(
-                    fresh_recipient_ratio = config.fresh_recipient_ratio,
-                    recipient_offset = offset,
-                    "fresh-recipient mode enabled; recover addresses with \
-                     AccountPool::from_mnemonic(mnemonic, n, recipient_offset)",
-                );
-                stream
+                if randomize_recipient_stream {
+                    let random_offset_delta = usize::try_from(random::<u32>()).map_err(|e| {
+                        BaselineError::Config(format!(
+                            "failed to convert randomized recipient offset delta to usize: {e}"
+                        ))
+                    })?;
+                    let randomized_offset = offset.checked_add(random_offset_delta).ok_or_else(|| {
+                        BaselineError::Config(format!(
+                            "recipient_offset {offset} + randomized delta {random_offset_delta} overflows usize"
+                        ))
+                    })?;
+                    let stream = KeyStream::from_mnemonic(mnemonic.clone(), randomized_offset)?;
+                    info!(
+                        fresh_recipient_ratio = config.fresh_recipient_ratio,
+                        recipient_offset = offset,
+                        randomized_recipient_offset = randomized_offset,
+                        recipient_random_offset_delta = random_offset_delta,
+                        "fresh-recipient mode enabled with per-run randomized mnemonic offset; recover addresses with AccountPool::from_mnemonic(mnemonic, n, randomized_recipient_offset)",
+                    );
+                    stream
+                } else {
+                    let stream = KeyStream::from_mnemonic(mnemonic.clone(), offset)?;
+                    info!(
+                        fresh_recipient_ratio = config.fresh_recipient_ratio,
+                        recipient_offset = offset,
+                        "fresh-recipient mode enabled; recover addresses with AccountPool::from_mnemonic(mnemonic, n, recipient_offset)",
+                    );
+                    stream
+                }
             } else {
-                let stream = KeyStream::from_seed(config.seed, offset)?;
-                info!(
-                    seed = config.seed,
-                    fresh_recipient_ratio = config.fresh_recipient_ratio,
-                    recipient_offset = offset,
-                    "fresh-recipient mode enabled; recover addresses with \
-                     AccountPool::with_offset(seed, n, recipient_offset)",
-                );
+                let recipient_seed = if randomize_recipient_stream {
+                    random::<u64>()
+                } else {
+                    config.seed
+                };
+                let stream = KeyStream::from_seed(recipient_seed, offset)?;
+                if randomize_recipient_stream {
+                    info!(
+                        configured_seed = config.seed,
+                        randomized_recipient_seed = recipient_seed,
+                        fresh_recipient_ratio = config.fresh_recipient_ratio,
+                        recipient_offset = offset,
+                        "fresh-recipient mode enabled with per-run randomized seed; recover addresses with AccountPool::with_offset(randomized_recipient_seed, n, recipient_offset)",
+                    );
+                } else {
+                    info!(
+                        seed = config.seed,
+                        fresh_recipient_ratio = config.fresh_recipient_ratio,
+                        recipient_offset = offset,
+                        "fresh-recipient mode enabled; recover addresses with AccountPool::with_offset(seed, n, recipient_offset)",
+                    );
+                }
                 stream
             };
             Some(stream)
@@ -360,18 +509,14 @@ impl LoadRunner {
                     // (salt None) the payload is intentionally not installed.
                     if let Some(run_salt) = b20_run_salt {
                         generator = generator.with_payload(
-                            B20TransferPayload::new(run_salt, U256::from(1000), U256::from(10000)),
+                            B20TransferPayload::new(run_salt, U256::from(1), U256::from(1)),
                             weight_pct,
                         );
                     }
                 }
                 TxType::B20Evm { contract } => {
                     generator = generator.with_payload(
-                        B20EvmTransferPayload::new(
-                            *contract,
-                            U256::from(1000),
-                            U256::from(10000),
-                        ),
+                        B20EvmTransferPayload::new(*contract, U256::from(1), U256::from(1)),
                         weight_pct,
                     );
                 }
@@ -1256,7 +1401,8 @@ impl LoadRunner {
         let next_submit_batch_id = AtomicU64::new(0);
         let mut queued_per_sender: HashMap<Address, u64> =
             self.accounts.accounts().iter().map(|a| (a.address, 0)).collect();
-        let mut presigned_remaining = 0u64;
+        let mut presigned_generated = 0u64;
+        let mut presigned_remaining: Option<u64> = None;
 
         let mut last_base_fee_refresh = Instant::now();
         let mut last_rate_limiter_update = Instant::now();
@@ -1298,9 +1444,10 @@ impl LoadRunner {
                 self.accounts.accounts().iter().map(|account| account.address).collect();
             let sender_start_nonces = self.open_loop_sender_start_nonces(&sender_addresses).await?;
             let sender_count = sender_addresses.len();
-            let prefill_per_sender = self.config.prefill_per_sender as u64;
-            let presigned_total = prefill_per_sender.saturating_mul(sender_count as u64);
-            presigned_remaining = presigned_total;
+            let bounded_prefill_per_sender =
+                (self.config.prefill_per_sender != 0).then_some(self.config.prefill_per_sender as usize);
+            presigned_remaining = bounded_prefill_per_sender
+                .map(|prefill_per_sender| (prefill_per_sender as u64).saturating_mul(sender_count as u64));
 
             let replacement_generator =
                 Self::create_generator(self.workload_config(), &self.config, self.b20_run_salt)?;
@@ -1322,21 +1469,41 @@ impl LoadRunner {
                 self.config.chain_id,
                 self.base_fee,
                 self.config.max_gas_price,
-                self.config.prefill_per_sender as usize,
+                bounded_prefill_per_sender,
                 self.config.fresh_recipient_ratio,
                 signed_chunk_tx,
             ));
 
-            let target_in_flight =
-                max_in_flight_per_sender.saturating_mul(account_count as u64);
-
-            info!(
-                sender_count,
-                prefill_per_sender = self.config.prefill_per_sender,
-                presigned_total,
-                target_in_flight,
-                "started open-loop streaming pre-sign pipeline"
+            let max_target_in_flight = max_in_flight_per_sender.saturating_mul(account_count as u64);
+            let mut open_loop_headroom_target = OpenLoopHeadroomTarget::new(
+                max_target_in_flight,
+                self.collector.confirmed_count() as u64,
+                Instant::now(),
             );
+            let initial_target_in_flight = open_loop_headroom_target.current_target_in_flight();
+
+            if let Some(presigned_total) = presigned_remaining {
+                info!(
+                    sender_count,
+                    prefill_per_sender = self.config.prefill_per_sender,
+                    presigned_total,
+                    initial_target_in_flight,
+                    max_target_in_flight,
+                    target_margin_multiplier = OPEN_LOOP_TARGET_MARGIN_MULTIPLIER,
+                    target_lookahead_seconds = OPEN_LOOP_TARGET_LOOKAHEAD_SECONDS,
+                    "started open-loop streaming pre-sign pipeline"
+                );
+            } else {
+                info!(
+                    sender_count,
+                    prefill_per_sender = self.config.prefill_per_sender,
+                    initial_target_in_flight,
+                    max_target_in_flight,
+                    target_margin_multiplier = OPEN_LOOP_TARGET_MARGIN_MULTIPLIER,
+                    target_lookahead_seconds = OPEN_LOOP_TARGET_LOOKAHEAD_SECONDS,
+                    "started open-loop streaming pre-sign pipeline in unbounded mode"
+                );
+            }
 
             // Restart the measurement clock after pre-sign pipeline startup so the
             // enqueue deadline and main-loop budget are measured from submission start.
@@ -1348,8 +1515,9 @@ impl LoadRunner {
                 &submission_pipeline,
                 &next_submit_batch_id,
                 &mut signed_chunk_rx,
+                &mut presigned_generated,
                 &mut presigned_remaining,
-                target_in_flight,
+                &mut open_loop_headroom_target,
                 enqueue_deadline,
                 &mut OpenLoopDrainState {
                     submit_event_rx: &mut submit_event_rx,
@@ -1386,10 +1554,22 @@ impl LoadRunner {
             }
 
             if let Err(err) = enqueue_result {
-                warn!(%err, presigned_remaining, "open-loop enqueue aborted; proceeding to drain and shutdown");
+                warn!(
+                    error = %err,
+                    presigned_generated,
+                    presigned_remaining = presigned_remaining.unwrap_or(0),
+                    presign_unbounded = presigned_remaining.is_none(),
+                    "open-loop enqueue aborted; proceeding to drain and shutdown"
+                );
                 open_loop_enqueue_error = Some(err);
             } else {
-                info!(presigned_remaining, elapsed_secs = pre_sign_started.elapsed().as_secs_f64(), "open-loop pre-signed enqueue phase complete");
+                info!(
+                    presigned_generated,
+                    presigned_remaining = presigned_remaining.unwrap_or(0),
+                    presign_unbounded = presigned_remaining.is_none(),
+                    elapsed_secs = pre_sign_started.elapsed().as_secs_f64(),
+                    "open-loop pre-signed enqueue phase complete"
+                );
             }
         }
 
@@ -1478,7 +1658,9 @@ impl LoadRunner {
                     pending,
                     total_queued,
                     senders_blocked,
-                    presigned_remaining,
+                    presigned_generated,
+                    presigned_remaining = presigned_remaining.unwrap_or(0),
+                    presign_unbounded = presigned_remaining.is_none(),
                     base_fee = self.base_fee,
                     p50_ms = p50.as_millis() as u64,
                     p99_ms = p99.as_millis() as u64,
@@ -1933,11 +2115,11 @@ impl LoadRunner {
         chain_id: u64,
         base_fee: u128,
         max_gas_price: u128,
-        prefill_per_sender: usize,
+        prefill_per_sender: Option<usize>,
         fresh_recipient_ratio: f64,
         signed_chunk_tx: mpsc::Sender<Vec<Vec<SignedTransaction>>>,
     ) -> Result<OpenLoopPresignProducerState> {
-        if sender_addresses.is_empty() || prefill_per_sender == 0 {
+        if sender_addresses.is_empty() {
             return Ok(producer_state);
         }
 
@@ -1946,8 +2128,13 @@ impl LoadRunner {
         let mut signed_per_sender = 0usize;
         let mut chunk_index = 0usize;
 
-        while signed_per_sender < prefill_per_sender {
-            let txs_per_sender = (prefill_per_sender - signed_per_sender).min(chunk_per_sender);
+        // `prefill_per_sender == None` means unbounded (stream forever); the
+        // producer only stops when the consumer drops `signed_chunk_rx`
+        // (detected below via the `send(...).is_err()` check), which happens
+        // once the enqueue loop returns (deadline reached or channel closed).
+        while prefill_per_sender.is_none_or(|cap| signed_per_sender < cap) {
+            let txs_per_sender = prefill_per_sender
+                .map_or(chunk_per_sender, |cap| (cap - signed_per_sender).min(chunk_per_sender));
             let sender_jobs = Self::build_open_loop_sender_jobs(
                 &mut producer_state.generator,
                 &mut producer_state.recipient_keys,
@@ -2151,8 +2338,9 @@ impl LoadRunner {
         submission_pipeline: &SubmissionPipeline,
         next_submit_batch_id: &AtomicU64,
         signed_chunk_rx: &mut mpsc::Receiver<Vec<Vec<SignedTransaction>>>,
-        presigned_remaining: &mut u64,
-        target_in_flight: u64,
+        presigned_generated: &mut u64,
+        presigned_remaining: &mut Option<u64>,
+        headroom_target: &mut OpenLoopHeadroomTarget,
         deadline: Option<Instant>,
         drain_state: &mut OpenLoopDrainState<'_>,
     ) -> Result<()> {
@@ -2167,6 +2355,11 @@ impl LoadRunner {
                 break;
             };
 
+            for sender_signed in &signed_by_sender {
+                *presigned_generated =
+                    presigned_generated.saturating_add(sender_signed.len() as u64);
+            }
+
             let mut sender_iters = signed_by_sender
                 .into_iter()
                 .map(Vec::into_iter)
@@ -2180,8 +2373,25 @@ impl LoadRunner {
                         pending_signed_batch.push(signed_tx);
 
                         if pending_signed_batch.len() >= OPEN_LOOP_SIGNED_BATCH_SIZE {
-                            Self::wait_for_outstanding_headroom(target_in_flight, deadline, drain_state)
-                                .await?;
+                            if let Some(update) = headroom_target.maybe_update(
+                                Instant::now(),
+                                drain_state.collector.confirmed_count() as u64,
+                            ) {
+                                debug!(
+                                    previous_target_in_flight = update.previous_target_in_flight,
+                                    updated_target_in_flight = update.updated_target_in_flight,
+                                    confirmed_delta = update.confirmed_delta,
+                                    sample_tps = update.sample_tps,
+                                    smoothed_tps = update.smoothed_tps,
+                                    "adjusted open-loop in-flight target"
+                                );
+                            }
+                            Self::wait_for_outstanding_headroom(
+                                headroom_target.current_target_in_flight(),
+                                deadline,
+                                drain_state,
+                            )
+                            .await?;
                             if deadline.is_some_and(|d| Instant::now() >= d) {
                                 return Ok(());
                             }
@@ -2209,7 +2419,24 @@ impl LoadRunner {
         }
 
         if !pending_signed_batch.is_empty() {
-            Self::wait_for_outstanding_headroom(target_in_flight, deadline, drain_state).await?;
+            if let Some(update) = headroom_target
+                .maybe_update(Instant::now(), drain_state.collector.confirmed_count() as u64)
+            {
+                debug!(
+                    previous_target_in_flight = update.previous_target_in_flight,
+                    updated_target_in_flight = update.updated_target_in_flight,
+                    confirmed_delta = update.confirmed_delta,
+                    sample_tps = update.sample_tps,
+                    smoothed_tps = update.smoothed_tps,
+                    "adjusted open-loop in-flight target"
+                );
+            }
+            Self::wait_for_outstanding_headroom(
+                headroom_target.current_target_in_flight(),
+                deadline,
+                drain_state,
+            )
+            .await?;
             let _ = Self::enqueue_open_loop_signed_batch(
                 submission_pipeline,
                 next_submit_batch_id,
@@ -2227,7 +2454,7 @@ impl LoadRunner {
         submission_pipeline: &SubmissionPipeline,
         next_submit_batch_id: &AtomicU64,
         pending_signed_batch: &mut Vec<SignedTransaction>,
-        presigned_remaining: &mut u64,
+        presigned_remaining: &mut Option<u64>,
         drain_state: &mut OpenLoopDrainState<'_>,
     ) -> bool {
         let signed_txs = std::mem::replace(
@@ -2248,8 +2475,10 @@ impl LoadRunner {
         let batch = SignedBatch { id: batch_id, attempt: 0, txs: signed_txs };
         match Self::enqueue_signed_while_draining(submission_pipeline, batch, drain_state).await {
             Ok(()) => {
-                *presigned_remaining = presigned_remaining.saturating_sub(batch_len as u64);
-                debug!(batch_id, batch_len, presigned_remaining = *presigned_remaining, "queued open-loop signed batch");
+                if let Some(remaining) = presigned_remaining.as_mut() {
+                    *remaining = remaining.saturating_sub(batch_len as u64);
+                }
+                debug!(batch_id, batch_len, presigned_remaining = ?*presigned_remaining, "queued open-loop signed batch");
                 true
             }
             Err(batch) => {
