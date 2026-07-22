@@ -223,6 +223,8 @@ pub struct ConfigSummary {
     pub in_flight_per_sender: u32,
     /// Number of transactions per RPC batch.
     pub batch_size: u32,
+    /// Number of transactions per RPC batch during funding/setup phases.
+    pub funding_batch_size: u32,
     /// Maximum wait before flushing a partial batch.
     pub batch_timeout: Option<String>,
     /// Test duration.

@@ -241,6 +241,10 @@ pub struct LoadConfig {
     pub open_loop: bool,
     /// Number of pre-signed transactions to generate per sender in open-loop mode.
     pub prefill_per_sender: u32,
+    /// Number of transactions to batch together when funding/setup phases submit from a single
+    /// funder account. Kept below the target txpool's per-sender slot limit to avoid "txpool is
+    /// full" rejections.
+    pub funding_batch_size: usize,
 }
 
 impl LoadConfig {
@@ -268,6 +272,7 @@ impl LoadConfig {
             fresh_recipient_ratio: 0.0,
             open_loop: false,
             prefill_per_sender: 0,
+            funding_batch_size: 16,
         }
     }
 
@@ -406,6 +411,12 @@ impl LoadConfig {
     /// Sets the batch timeout.
     pub const fn with_batch_timeout(mut self, timeout: Duration) -> Self {
         self.batch_timeout = timeout;
+        self
+    }
+
+    /// Sets the funding-phase batch size.
+    pub const fn with_funding_batch_size(mut self, size: usize) -> Self {
+        self.funding_batch_size = size;
         self
     }
 }

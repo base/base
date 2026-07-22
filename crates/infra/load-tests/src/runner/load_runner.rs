@@ -29,12 +29,6 @@ use tracing::{debug, error, info, instrument, warn};
 /// Maximum number of concurrent RPC requests during funding/draining operations.
 pub(super) const FUNDING_CONCURRENCY: usize = 32;
 
-/// Maximum number of TXs to send before waiting for confirmation.
-/// Kept below typical per-sender txpool limits (e.g. reth default is 16) to
-/// avoid "txpool is full" rejections when all TXs originate from one funder.
-const FUNDING_BATCH_SIZE: usize = 16;
-pub(super) const BATCH_SIZE: usize = FUNDING_BATCH_SIZE;
-
 use super::{
     BlockWatcher, DisplaySnapshot, FlashblockWatcher, LoadConfig, LoadTestDisplay,
     PipelineStartConfig, PreparedBatch, PreparedTransaction, QueuedSubmitFailures, RateLimiter,
@@ -762,7 +756,7 @@ impl LoadRunner {
         let pb_fund = self.progress_bar(total_txs, "Funding accounts");
         let mut txs_remaining = txs.into_iter().peekable();
         while txs_remaining.peek().is_some() {
-            let batch: Vec<_> = txs_remaining.by_ref().take(BATCH_SIZE).collect();
+            let batch: Vec<_> = txs_remaining.by_ref().take(self.config.funding_batch_size).collect();
             let mut batch_pending: Vec<Address> = Vec::with_capacity(batch.len());
             let mut retries: Vec<(Address, U256, u64)> = Vec::new();
             let mut fatal_errors: Vec<String> = Vec::new();
@@ -775,7 +769,7 @@ impl LoadRunner {
                 }
             });
 
-            let mut send_stream = stream::iter(send_futs).buffer_unordered(BATCH_SIZE);
+            let mut send_stream = stream::iter(send_futs).buffer_unordered(self.config.funding_batch_size);
 
             let mut nonce_refresh_needed: Vec<(Address, U256)> = Vec::new();
 
@@ -829,7 +823,7 @@ impl LoadRunner {
                     }
                 });
 
-                let mut retry_stream = stream::iter(retry_futs).buffer_unordered(BATCH_SIZE);
+                let mut retry_stream = stream::iter(retry_futs).buffer_unordered(self.config.funding_batch_size);
 
                 while let Some((result, address, nonce)) = retry_stream.next().await {
                     match result {
@@ -877,7 +871,7 @@ impl LoadRunner {
                         }
                     });
 
-                let mut nonce_retry_stream = stream::iter(nonce_retry_futs).buffered(BATCH_SIZE);
+                let mut nonce_retry_stream = stream::iter(nonce_retry_futs).buffered(self.config.funding_batch_size);
 
                 let mut nonce_retry_pending: Vec<Address> = Vec::new();
                 while let Some((result, address, retry_nonce)) = nonce_retry_stream.next().await {
@@ -1217,7 +1211,7 @@ impl LoadRunner {
         let total_txs = txs.len();
         let mut txs_remaining = txs.into_iter().peekable();
         while txs_remaining.peek().is_some() {
-            let batch: Vec<_> = txs_remaining.by_ref().take(BATCH_SIZE).collect();
+            let batch: Vec<_> = txs_remaining.by_ref().take(self.config.funding_batch_size).collect();
             let mut pending_txs: Vec<(Address, Address)> = Vec::new();
 
             let send_futs = batch.into_iter().map(|(tx, token, sender)| {
@@ -1228,7 +1222,7 @@ impl LoadRunner {
                 }
             });
 
-            let mut send_stream = stream::iter(send_futs).buffer_unordered(BATCH_SIZE);
+            let mut send_stream = stream::iter(send_futs).buffer_unordered(self.config.funding_batch_size);
 
             while let Some((result, token, sender)) = send_stream.next().await {
                 match result {

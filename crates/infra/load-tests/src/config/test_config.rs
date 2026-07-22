@@ -66,6 +66,12 @@ pub struct TestConfig {
     /// Number of transactions to batch together before submitting to the RPC.
     pub batch_size: u32,
 
+    /// Number of transactions to batch together when funding/setup phases submit from a single
+    /// funder account. Kept below the target txpool's per-sender slot limit (e.g. reth default is
+    /// 16) to avoid "txpool is full" rejections.
+    #[serde(default = "default_funding_batch_size")]
+    pub funding_batch_size: u32,
+
     /// Maximum time to wait for a batch to fill before flushing (e.g., "50ms", "200ms").
     pub batch_timeout: Option<String>,
 
@@ -145,6 +151,7 @@ impl Default for TestConfig {
             open_loop: false,
             prefill_per_sender: 0,
             batch_size: 50,
+            funding_batch_size: default_funding_batch_size(),
             batch_timeout: Some("100ms".to_string()),
             duration: Some("60s".to_string()),
             target_gps: Some(20_000_000),
@@ -175,6 +182,7 @@ impl fmt::Debug for TestConfig {
             .field("in_flight_per_sender", &self.in_flight_per_sender)
             .field("open_loop", &self.open_loop)
             .field("prefill_per_sender", &self.prefill_per_sender)
+            .field("funding_batch_size", &self.funding_batch_size)
             .field("duration", &self.duration)
             .field("target_gps", &self.target_gps)
             .field("seed", &self.seed)
@@ -359,6 +367,10 @@ const fn default_aerodrome_tick_spacing() -> i32 {
     100
 }
 
+const fn default_funding_batch_size() -> u32 {
+    16
+}
+
 fn default_swap_token_amount() -> String {
     "1000000000000000000000".to_string() // 1000 tokens (1000e18)
 }
@@ -536,6 +548,7 @@ impl TestConfig {
             sender_offset: self.sender_offset,
             in_flight_per_sender: self.in_flight_per_sender,
             batch_size: self.batch_size,
+            funding_batch_size: self.funding_batch_size,
             batch_timeout: self.batch_timeout.clone(),
             duration: self.duration.clone(),
             target_gps: self.target_gps,
@@ -615,6 +628,7 @@ impl TestConfig {
             duration,
             max_in_flight_per_sender: self.in_flight_per_sender as u64,
             batch_size: self.batch_size.max(1) as usize,
+            funding_batch_size: self.funding_batch_size.max(1) as usize,
             batch_timeout,
             max_gas_price: crate::runner::DEFAULT_MAX_GAS_PRICE,
             flashblocks_ws: self
