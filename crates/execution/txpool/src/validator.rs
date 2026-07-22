@@ -22,7 +22,8 @@ use base_common_genesis::DaFootprintGasScalarUpdate;
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_eip8130::{
     AccountConfigurationStorage, AccountState, ApplyError, AuthorizeError, FeeCheck, IntrinsicGas,
-    IntrinsicGasInput, NonceError, NonceMode, NonceValidator, TransactionAuthorizer, TxAuthError,
+    IntrinsicGasInput, LockStatus, NonceError, NonceMode, NonceValidator, TransactionAuthorizer,
+    TxAuthError,
 };
 use base_precompile_storage::{
     BasePrecompileError, PrecompileStorageProvider, StorageCtx, validate_loaded_code_presence,
@@ -1130,7 +1131,7 @@ where
             });
         }
 
-        let (sender_locked_now, sender_unlocks_at) = self.account_lock(
+        let sender_status = self.account_lock(
             &*state,
             local_chain_id,
             now,
@@ -1138,8 +1139,8 @@ where
             classification_generation,
             Self::prefetched_account_state(&config_reads, sender),
         );
-        let (payer_locked_now, payer_unlocks_at) = if payer == sender {
-            (sender_locked_now, sender_unlocks_at)
+        let payer_status = if payer == sender {
+            sender_status
         } else {
             self.account_lock(
                 &*state,
@@ -1150,11 +1151,17 @@ where
                 Self::prefetched_account_state(&config_reads, payer),
             )
         };
+        // Only a pending unlock has a knowable timestamp; a hard lock reports
+        // `UNLOCKS_AT_MAX`, which must never surface as a timed expiry-bucket (it
+        // does not unlock on a schedule), so gate on `has_initiated_unlock`.
+        let sender_unlocks_at =
+            sender_status.has_initiated_unlock.then_some(sender_status.unlocks_at);
+        let payer_unlocks_at = payer_status.has_initiated_unlock.then_some(payer_status.unlocks_at);
         let lock_horizon = now.saturating_add(2 * InvalidationKey::EXPIRY_BUCKET_SECS);
-        let sender_locked = sender_locked_now
+        let sender_locked = sender_status.locked
             && sender_unlocks_at.is_none_or(|unlocks_at| unlocks_at > lock_horizon);
-        let payer_locked =
-            payer_locked_now && payer_unlocks_at.is_none_or(|unlocks_at| unlocks_at > lock_horizon);
+        let payer_locked = payer_status.locked
+            && payer_unlocks_at.is_none_or(|unlocks_at| unlocks_at > lock_horizon);
         for (account, locked, unlocks_at) in [
             (sender, sender_locked, sender_unlocks_at),
             (payer, payer != sender && payer_locked, payer_unlocks_at),
@@ -1169,7 +1176,14 @@ where
                 }
             }
         }
-        let payer_trusted = payer_locked
+        // A high-rate (balance-bounded) payer must be *hard*-locked with an unlock
+        // delay of at least `MIN_HIGH_RATE_PAYER_LOCK_SECS`. A pending unlock or an
+        // unlocked account is never high-rate: once an unlock is initiated the
+        // payer could soon move ETH, so it must not sit in the balance book. The
+        // hard-lock → pending-unlock transition writes the account-state slot, so
+        // the slot watch above drains any already-admitted transactions naturally
+        // — no timed bucket is needed for the trusted dimension.
+        let payer_trusted = Self::qualifies_as_high_rate_lock(&payer_status)
             && self.is_high_rate_account(
                 &*state,
                 payer,
@@ -1235,6 +1249,25 @@ where
         if expiry == 0 { u64::MAX } else { expiry }
     }
 
+    /// Minimum configured unlock delay (seconds) for a hard-locked payer to
+    /// qualify as a high-rate (balance-bounded) payer. A shorter delay would let
+    /// a payer initiate an unlock and move ETH before admitted transactions can
+    /// be drained, breaking the eth-movement guarantee the balance book relies
+    /// on. One hour gives the pool ample time to react to the unlock-initiation
+    /// state write that demotes the payer.
+    const MIN_HIGH_RATE_PAYER_LOCK_SECS: u64 = 3600;
+
+    /// Whether an account's lock qualifies it as a high-rate (balance-bounded)
+    /// payer: a *hard* lock (`FLAG_LOCKED` set, no pending unlock) whose configured
+    /// unlock delay is at least [`Self::MIN_HIGH_RATE_PAYER_LOCK_SECS`]. A pending
+    /// unlock or an unlocked account never qualifies — see the classification site
+    /// for the eth-movement rationale.
+    fn qualifies_as_high_rate_lock(status: &LockStatus) -> bool {
+        status.locked
+            && !status.has_initiated_unlock
+            && u64::from(status.unlock_delay) >= Self::MIN_HIGH_RATE_PAYER_LOCK_SECS
+    }
+
     fn account_state_slot(account: Address) -> B256 {
         AccountConfigurationStorage::account_state_slot(account)
     }
@@ -1264,7 +1297,7 @@ where
         account: Address,
         generation: u64,
         prefetched: Option<AccountState>,
-    ) -> (bool, Option<u64>) {
+    ) -> LockStatus {
         // Invalidation may advance the generation immediately after this read.
         // Pool admission rejects the captured classification if that happens.
         let cached = self.limit_class_cache.write().account_state(account);
@@ -1294,7 +1327,10 @@ where
                         account = %account,
                         "EIP-8130 account lock classification read failed"
                     );
-                    return (false, None);
+                    // Fail closed: an unreadable account is treated as unlocked
+                    // (the all-zero state word), so it never earns locked or
+                    // high-rate admission privileges.
+                    return AccountState::from_word(U256::ZERO).lock_status(now);
                 }
             };
             let mut cache = self.limit_class_cache.write();
@@ -1303,14 +1339,7 @@ where
             }
             value
         };
-        // Reuse the canonical lock view rather than re-deriving it from raw
-        // flags. Only a pending unlock has a knowable timestamp; a hard lock
-        // reports `UNLOCKS_AT_MAX`, which must never surface as a timed
-        // expiry-bucket (it does not unlock on a schedule), so gate on
-        // `has_initiated_unlock`.
-        let status = account_state.lock_status(now);
-        let unlocks_at = status.has_initiated_unlock.then_some(status.unlocks_at);
-        (status.locked, unlocks_at)
+        account_state.lock_status(now)
     }
 
     fn is_high_rate_account(
@@ -2160,6 +2189,54 @@ mod tests {
             validator.limit_class_cache_generation(),
             after_trusted,
             "a nonce-only change must not advance the generation"
+        );
+    }
+
+    /// Packs an account-state word with the given flags and lock union, leaving
+    /// the sequence and default-EOA fields zero. Mirrors the canonical bit layout
+    /// (`flags` at bits 128..136, `lock_union` at bits 136..176).
+    fn locked_state_word(flags: u8, lock_union: u64) -> AccountState {
+        let word = (U256::from(flags) << 128) | (U256::from(lock_union) << 136);
+        AccountState::from_word(word)
+    }
+
+    #[test]
+    fn high_rate_lock_requires_hard_lock_of_at_least_one_hour() {
+        let now = 1_000u64;
+
+        // Hard lock (FLAG_LOCKED, no unlock initiated); lock_union holds the delay.
+        let one_hour = TestValidator::MIN_HIGH_RATE_PAYER_LOCK_SECS;
+        let hard_hour = locked_state_word(Eip8130Constants::FLAG_LOCKED, one_hour);
+        assert!(
+            TestValidator::qualifies_as_high_rate_lock(&hard_hour.lock_status(now)),
+            "a hard lock with a >=1h delay qualifies as high-rate"
+        );
+
+        // A shorter hard-lock delay does not qualify.
+        let hard_short = locked_state_word(Eip8130Constants::FLAG_LOCKED, one_hour - 1);
+        assert!(
+            !TestValidator::qualifies_as_high_rate_lock(&hard_short.lock_status(now)),
+            "a hard lock shorter than 1h must not qualify"
+        );
+
+        // Pending unlock (FLAG_UNLOCK_INITIATED): lock_union is a far-future
+        // timestamp, so it is still `locked`, but must not qualify as high-rate.
+        let pending = locked_state_word(
+            Eip8130Constants::FLAG_LOCKED | Eip8130Constants::FLAG_UNLOCK_INITIATED,
+            now + 10 * one_hour,
+        );
+        let pending_status = pending.lock_status(now);
+        assert!(pending_status.locked, "pending unlock far in the future is still locked");
+        assert!(
+            !TestValidator::qualifies_as_high_rate_lock(&pending_status),
+            "a pending unlock must never qualify as high-rate"
+        );
+
+        // Unlocked: no flags set.
+        let unlocked = locked_state_word(0, 0);
+        assert!(
+            !TestValidator::qualifies_as_high_rate_lock(&unlocked.lock_status(now)),
+            "an unlocked account must never qualify as high-rate"
         );
     }
 
