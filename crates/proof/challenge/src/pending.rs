@@ -399,11 +399,16 @@ mod tests {
 
             let update = proofs.poll(addr(0), &*zk, max_proof_duration).await.unwrap();
             let should_retry = expected_retry_count != 0;
-            assert_eq!(matches!(update, Some(ProofUpdate::NeedsRetry)), should_retry);
 
             let entry = proofs.get(&addr(0)).unwrap();
             assert_eq!(entry.retry_count, expected_retry_count);
-            assert_eq!(matches!(entry.phase, ProofPhase::NeedsRetry), should_retry);
+            if should_retry {
+                assert!(matches!(update, Some(ProofUpdate::NeedsRetry)));
+                assert!(matches!(entry.phase, ProofPhase::NeedsRetry));
+            } else {
+                assert!(matches!(update, Some(ProofUpdate::Pending)));
+                assert!(matches!(entry.phase, ProofPhase::AwaitingProof { .. }));
+            }
         }
     }
 
