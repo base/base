@@ -8,14 +8,20 @@ pub struct ScheduleId;
 impl ScheduleId {
     /// Derive the schedule ID from upgrade timestamps in canonical field order.
     ///
-    /// This mirrors the onchain `ProtocolVersions.scheduleId()` hash chain:
-    /// `link[i + 1] = keccak256(abi.encode(link[i], i, timestamp_i))`.
+    /// This mirrors the onchain `ProtocolVersions.scheduleId()` hash chain, which links only
+    /// *scheduled* upgrades: `link[i + 1] = keccak256(abi.encode(link[i], i, timestamp_i))` when
+    /// `timestamp_i != 0`, and `link[i + 1] = link[i]` otherwise.
     pub fn from_upgrades(upgrades: &UpgradeConfig) -> B256 {
         let mut schedule_id = B256::ZERO;
         for (index, (_, timestamp)) in upgrades.iter().enumerate() {
-            // unwrap_or_default() maps None (unscheduled) to 0, matching the onchain
-            // ProtocolVersions.scheduleId() which uses 0 for unscheduled entries.
-            schedule_id = Self::next_link(schedule_id, index as u64, timestamp.unwrap_or_default());
+            match timestamp {
+                // Unscheduled (None, or 0 = the contract's "not scheduled" sentinel, which also
+                // covers genesis-active forks like mainnet regolith): carry the link forward.
+                None | Some(0) => {}
+                Some(timestamp) => {
+                    schedule_id = Self::next_link(schedule_id, index as u64, timestamp);
+                }
+            }
         }
 
         schedule_id
@@ -42,13 +48,13 @@ mod tests {
         // Pin the hash against encoding/order drift; MUST equal the onchain
         // `ProtocolVersions.scheduleId()` for the same schedule.
 
-        // All unscheduled: still 13 links of `(index, 0)`, a fixed non-zero hash.
-        assert_eq!(
-            ScheduleId::from_upgrades(&UpgradeConfig::default()),
-            b256!("c61ddfdfe1ff9422919909549df660a43d53127a318e01274a0448443e54146d")
-        );
+        // All unscheduled: no entry contributes a link, so the ID is the bytes32(0) seed.
+        assert_eq!(ScheduleId::from_upgrades(&UpgradeConfig::default()), B256::ZERO);
 
-        // A representative partial schedule.
+        // A representative partial schedule. Only the scheduled entries (regolith at contract
+        // index 0, canyon at 1, azul at 10) contribute links; the unscheduled gap between canyon
+        // and azul is skipped. Independently derived via
+        // `cast keccak (cast abi-encode "f(bytes32,uint256,uint256)" <prev> <index> <timestamp>)`.
         let upgrades = UpgradeConfig {
             regolith_time: Some(10),
             canyon_time: Some(20),
@@ -57,7 +63,69 @@ mod tests {
         };
         assert_eq!(
             ScheduleId::from_upgrades(&upgrades),
-            b256!("8701f0422d18caf7dbd5d2d00321a16c44e9dfa706dd4b0b4ea3c66fbe776f42")
+            b256!("a24ace1024856cce0f999daface9269cbe7c1a8d1069a0e75196635146ee2058")
+        );
+    }
+
+    #[test]
+    fn schedule_id_matches_mainnet_golden_value() {
+        // Cross-implementation golden value for the Base mainnet schedule as of Beryl, shared
+        // with the contracts repo (`test_scheduleId_matchesMainnetGoldenValue_succeeds` in
+        // test/L1/ProtocolVersions.t.sol). The genesis-active regolith (0), the mainnet
+        // pectra_blob_schedule gap (None), and the unscheduled cobalt tail contribute no link.
+        let mainnet = UpgradeConfig {
+            regolith_time: Some(0),
+            canyon_time: Some(1_704_992_401),
+            delta_time: Some(1_708_560_000),
+            ecotone_time: Some(1_710_374_401),
+            fjord_time: Some(1_720_627_201),
+            granite_time: Some(1_726_070_401),
+            holocene_time: Some(1_736_445_601),
+            pectra_blob_schedule_time: None,
+            isthmus_time: Some(1_746_806_401),
+            jovian_time: Some(1_764_691_201),
+            base: BaseUpgradeConfig {
+                azul: Some(1_779_991_200),
+                beryl: Some(1_782_410_400),
+                cobalt: None,
+            },
+        };
+
+        assert_eq!(
+            ScheduleId::from_upgrades(&mainnet),
+            b256!("e7ed922ecb2a9d7704cf21e21c62313eabe90f345c212cad1a4706633dcf4efd")
+        );
+    }
+
+    #[test]
+    fn schedule_id_treats_zero_timestamp_as_unscheduled() {
+        // The contract encodes "not scheduled" as timestamp 0, so `Some(0)` (e.g. mainnet's
+        // genesis-active regolith) must hash identically to `None`.
+        let zero =
+            UpgradeConfig { regolith_time: Some(0), canyon_time: Some(20), ..Default::default() };
+        let none =
+            UpgradeConfig { regolith_time: None, canyon_time: Some(20), ..Default::default() };
+
+        assert_eq!(ScheduleId::from_upgrades(&zero), ScheduleId::from_upgrades(&none));
+    }
+
+    #[test]
+    fn schedule_id_unchanged_when_unscheduled_upgrade_is_registered() {
+        // The async-registration property: a schedule that differs only in unscheduled entries
+        // (here beryl/cobalt None, mirroring a contract that registered them with timestamp 0)
+        // produces the same ID, so contract and prover upgrade lists can grow independently.
+        let scheduled_only =
+            UpgradeConfig { regolith_time: Some(10), canyon_time: Some(20), ..Default::default() };
+        let with_unscheduled_tail = UpgradeConfig {
+            regolith_time: Some(10),
+            canyon_time: Some(20),
+            base: BaseUpgradeConfig { azul: None, beryl: None, cobalt: None },
+            ..Default::default()
+        };
+
+        assert_eq!(
+            ScheduleId::from_upgrades(&scheduled_only),
+            ScheduleId::from_upgrades(&with_unscheduled_tail)
         );
     }
 

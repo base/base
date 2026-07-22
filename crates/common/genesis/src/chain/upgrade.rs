@@ -679,6 +679,8 @@ impl UpgradeConfig {
 #[cfg(test)]
 #[cfg(feature = "serde")]
 mod tests {
+    use alloc::vec::Vec;
+
     use super::*;
 
     #[test]
