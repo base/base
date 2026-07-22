@@ -34,23 +34,24 @@ async fn rollup_config_via_rpc(rpc_url: &url::Url) -> Result<RollupConfig> {
         .wrap_err("Failed to fetch rollup config via RPC")
 }
 
-/// Reschedules Cobalt on L1 and waits until the process-local runtime registry reflects the
-/// new activation timestamp.
-async fn reschedule_cobalt_and_await_runtime_apply(
+/// Writes a Cobalt schedule on L1 and waits until the process-local runtime registry reflects the
+/// activation timestamp.
+async fn set_cobalt_schedule_and_await_runtime_apply(
     system: &SystemTestStack,
     l2_chain_id: u64,
+    activation_timestamp: u64,
 ) -> Result<()> {
     let contract =
         system.upgrade_signal().expect("stack was built with the upgrade signal enabled");
     contract
-        .set_schedule(&[(BaseUpgrade::Cobalt, COBALT_RESCHEDULED_TIMESTAMP)])
+        .set_schedule(&[(BaseUpgrade::Cobalt, activation_timestamp)])
         .await
-        .wrap_err("Failed to reschedule Cobalt on L1")?;
+        .wrap_err("Failed to update Cobalt schedule on L1")?;
 
     timeout(LIVE_APPLY_TIMEOUT, async {
         loop {
             if RuntimeUpgradeRegistry::activation(l2_chain_id, BaseUpgrade::Cobalt)
-                == Some(UpgradeActivation::Timestamp(COBALT_RESCHEDULED_TIMESTAMP))
+                == Some(UpgradeActivation::Timestamp(activation_timestamp))
             {
                 return;
             }
@@ -60,7 +61,7 @@ async fn reschedule_cobalt_and_await_runtime_apply(
     .await
     .map_err(|_| {
         eyre::eyre!(
-            "live L1 reschedule was not re-applied to the runtime registry within {}s",
+            "live L1 Cobalt schedule was not re-applied to the runtime registry within {}s",
             LIVE_APPLY_TIMEOUT.as_secs()
         )
     })
@@ -101,6 +102,32 @@ async fn test_upgrade_signal_startup_apply_sets_rollup_config() -> Result<()> {
         client_config.contract_upgrade_activation_timestamp(BaseUpgrade::Cobalt),
         Some(COBALT_ACTIVATION_TIMESTAMP),
         "client consensus should serve the L1-scheduled Cobalt activation"
+    );
+
+    Ok(())
+}
+
+/// Follow-mode consensus applies the same startup L1 schedule as validator-mode consensus.
+#[tokio::test]
+async fn test_upgrade_signal_follow_mode_startup_apply_sets_rollup_config() -> Result<()> {
+    let system = SystemTestStackBuilder::new()
+        .with_l2_chain_id(84_538_467)
+        .with_follow_mode_client_consensus()
+        .with_upgrade_signal(
+            UpgradeSignalStackOptions::new(UpgradeSignalMode::StartupApply)
+                .with_upgrade(BaseUpgrade::Cobalt, COBALT_ACTIVATION_TIMESTAMP),
+        )
+        .build()
+        .await?;
+
+    let follow_config = system
+        .l2_stack()
+        .client_follow_rollup_config()
+        .expect("client consensus should be running in follow mode");
+    assert_eq!(
+        follow_config.contract_upgrade_activation_timestamp(BaseUpgrade::Cobalt),
+        Some(COBALT_ACTIVATION_TIMESTAMP),
+        "follow consensus should apply the L1-scheduled Cobalt activation"
     );
 
     Ok(())
@@ -166,6 +193,21 @@ async fn test_upgrade_signal_execution_startup_apply_sets_chain_spec() -> Result
     Ok(())
 }
 
+/// Runtime-admin mode applies a new upgrade that was not scheduled at startup when it appears
+/// in a later L1 schedule read.
+#[tokio::test]
+async fn test_upgrade_signal_runtime_admin_applies_new_live_schedule() -> Result<()> {
+    let l2_chain_id = 84_538_466;
+    let system = SystemTestStackBuilder::new()
+        .with_l2_chain_id(l2_chain_id)
+        .with_upgrade_signal(UpgradeSignalStackOptions::new(UpgradeSignalMode::RuntimeAdmin))
+        .build()
+        .await?;
+
+    set_cobalt_schedule_and_await_runtime_apply(&system, l2_chain_id, COBALT_ACTIVATION_TIMESTAMP)
+        .await
+}
+
 /// Execution runtime-admin mode automatically re-applies observed live L1 schedule changes to
 /// the process-local runtime registry; metrics-only consensus nodes cannot be the writers.
 #[tokio::test]
@@ -182,7 +224,15 @@ async fn test_upgrade_signal_execution_runtime_admin_reapplies_live_schedule_cha
         .build()
         .await?;
 
-    reschedule_cobalt_and_await_runtime_apply(&system, l2_chain_id).await
+    set_cobalt_schedule_and_await_runtime_apply(&system, l2_chain_id, COBALT_RESCHEDULED_TIMESTAMP)
+        .await?;
+    drop(system);
+    assert_eq!(
+        RuntimeUpgradeRegistry::activation(l2_chain_id, BaseUpgrade::Cobalt),
+        None,
+        "dropping a runtime-admin stack should clear its runtime overrides"
+    );
+    Ok(())
 }
 
 /// Runtime-admin mode applies the L1 schedule at startup and automatically re-applies observed
@@ -200,5 +250,13 @@ async fn test_upgrade_signal_runtime_admin_reapplies_live_schedule_change() -> R
         "runtime-admin mode should apply the L1 schedule at startup"
     );
 
-    reschedule_cobalt_and_await_runtime_apply(&system, l2_chain_id).await
+    set_cobalt_schedule_and_await_runtime_apply(&system, l2_chain_id, COBALT_RESCHEDULED_TIMESTAMP)
+        .await?;
+    drop(system);
+    assert_eq!(
+        RuntimeUpgradeRegistry::activation(l2_chain_id, BaseUpgrade::Cobalt),
+        None,
+        "dropping a runtime-admin stack should clear its runtime overrides"
+    );
+    Ok(())
 }

@@ -104,6 +104,14 @@ impl L2ClientConsensus {
             Self::Follow(consensus) => consensus.rpc_url(),
         }
     }
+
+    /// Returns the follow-mode rollup configuration, when this is a follow-mode consensus node.
+    pub fn follow_rollup_config(&self) -> Option<&RollupConfig> {
+        match self {
+            Self::Validator(_) => None,
+            Self::Follow(consensus) => Some(consensus.rollup_config()),
+        }
+    }
 }
 
 /// A complete L2 network stack composed of Builder + Consensus + Batcher.
@@ -287,6 +295,7 @@ impl L2Stack {
                     local_l2_rpc_url: client.rpc_url()?,
                     source_l2_rpc_url: builder.rpc_url()?,
                     l2_engine_url: client.engine_url()?,
+                    upgrade_signal: config.upgrade_signal.clone(),
                     rpc_port: container_config.and_then(|c| c.client_consensus_rpc_port),
                     insert_delay: Duration::ZERO,
                 };
@@ -398,5 +407,10 @@ impl L2Stack {
     /// Returns the client consensus node's RPC URL.
     pub fn client_consensus_rpc_url(&self) -> Url {
         self.client_consensus.rpc_url()
+    }
+
+    /// Returns the follow-mode client consensus rollup configuration, when enabled.
+    pub fn client_follow_rollup_config(&self) -> Option<&RollupConfig> {
+        self.client_consensus.follow_rollup_config()
     }
 }

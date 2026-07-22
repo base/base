@@ -8,7 +8,7 @@ use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use alloy_signer_local::PrivateKeySigner;
-use base_common_genesis::BaseUpgrade;
+use base_common_genesis::{BaseUpgrade, RollupConfig};
 use base_execution_cli::ExecutionUpgradeSignalConfig;
 use base_test_utils::MockProtocolVersions;
 use base_upgrade_signal::{UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalMode};
@@ -28,11 +28,12 @@ pub struct UpgradeSignalStackOptions {
     pub mode: UpgradeSignalMode,
     /// Optional mode for the client execution node; `None` leaves execution nodes unwired.
     pub execution_mode: Option<UpgradeSignalMode>,
-    /// Initial `(upgrade, activation timestamp)` entries seeded into the mock contract.
+    /// Explicit `(upgrade, activation timestamp)` entries seeded into the mock contract.
     ///
-    /// The consensus nodes read exactly these upgrades from the contract, so upgrades absent
-    /// from this list are never mutated locally (a `0` contract timestamp clears an upgrade,
-    /// which would wipe genesis-activated hardforks if all contract-backed upgrades were read).
+    /// Nodes always read and apply the full contract schedule, and a `0` contract timestamp
+    /// explicitly clears an upgrade. The stack therefore seeds the contract with a baseline
+    /// derived from the deployed rollup config (see [`Self::baseline_schedule`]) and these
+    /// entries override the baseline per upgrade.
     pub schedule: Vec<(BaseUpgrade, u64)>,
     /// Minimum protocol version seeded into the mock contract (packed semver, must be nonzero
     /// while any activation timestamp is positive).
@@ -68,15 +69,24 @@ impl UpgradeSignalStackOptions {
         self
     }
 
-    /// Returns the upgrades the consensus nodes read from the contract.
-    pub fn upgrade_ids(&self) -> Vec<BaseUpgrade> {
-        let mut ids = Vec::new();
-        for (upgrade, _) in &self.schedule {
-            if !ids.contains(upgrade) {
-                ids.push(*upgrade);
-            }
-        }
-        ids
+    /// Returns the baseline schedule derived from a deployed rollup config.
+    ///
+    /// Every contract-backed upgrade the rollup config already schedules keeps its activation
+    /// timestamp (genesis-activated upgrades map to the L2 genesis time, since the contract
+    /// cannot express `0` as "active"), so applying the full contract schedule never clears an
+    /// upgrade the running chain depends on. Upgrades the rollup config does not schedule stay
+    /// at `0` (not scheduled).
+    pub fn baseline_schedule(rollup_config: &RollupConfig) -> Vec<(BaseUpgrade, u64)> {
+        BaseUpgrade::CONTRACT_VARIANTS
+            .iter()
+            .filter_map(|&upgrade| {
+                rollup_config.upgrades.activation_timestamp(upgrade).map(|timestamp| {
+                    let seeded =
+                        if timestamp == 0 { rollup_config.genesis.l2_time } else { timestamp };
+                    (upgrade, seeded)
+                })
+            })
+            .collect()
     }
 
     /// Builds the consensus-side upgrade signal configuration for a deployed contract.
@@ -107,7 +117,6 @@ impl UpgradeSignalStackOptions {
     ) -> UpgradeSignalConfig {
         UpgradeSignalConfig {
             contract_address,
-            upgrade_ids: self.upgrade_ids(),
             mode,
             l1_block_tag: BlockNumberOrTag::Latest,
             node_protocol_version: UpgradeSignalDefaults::node_protocol_version(),
@@ -126,32 +135,47 @@ pub struct MockProtocolVersionsClient {
     pub l1_rpc_url: Url,
     /// Deployed mock contract address.
     pub address: Address,
+    /// Baseline `(upgrade, activation timestamp)` entries preserved by every schedule write,
+    /// derived from the deployed rollup config.
+    pub baseline: Vec<(BaseUpgrade, u64)>,
 }
 
 impl MockProtocolVersionsClient {
-    /// Deploys the mock contract to L1 and seeds it with the options' schedule.
-    pub async fn deploy(l1_rpc_url: Url, options: &UpgradeSignalStackOptions) -> Result<Self> {
+    /// Deploys the mock contract to L1 and seeds it with the rollup config baseline overlaid
+    /// with the options' explicit schedule entries.
+    pub async fn deploy(
+        l1_rpc_url: Url,
+        options: &UpgradeSignalStackOptions,
+        rollup_config: &RollupConfig,
+    ) -> Result<Self> {
         let provider = Self::wallet_provider(&l1_rpc_url)?;
         let contract = MockProtocolVersions::deploy(provider)
             .await
             .wrap_err("Failed to deploy MockProtocolVersions to L1")?;
 
-        let client = Self { l1_rpc_url, address: *contract.address() };
+        let client = Self {
+            l1_rpc_url,
+            address: *contract.address(),
+            baseline: UpgradeSignalStackOptions::baseline_schedule(rollup_config),
+        };
         client.set_minimum_protocol_version(options.minimum_protocol_version).await?;
         client.set_schedule(&options.schedule).await?;
 
         Ok(client)
     }
 
-    /// Replaces the contract schedule with the given `(upgrade, activation timestamp)` entries.
+    /// Writes the baseline schedule overlaid with the given `(upgrade, activation timestamp)`
+    /// entries to the contract.
     ///
-    /// Entries are expanded to the full id-ordered timestamp array expected by
-    /// `getSchedule()`; upgrades absent from `entries` are written as `0` (not scheduled).
+    /// Nodes always apply the full contract schedule, so every write preserves the baseline;
+    /// `entries` override it per upgrade. Upgrades in neither list are written as `0` (not
+    /// scheduled).
     pub async fn set_schedule(&self, entries: &[(BaseUpgrade, u64)]) -> Result<()> {
+        let merged: Vec<_> = self.baseline.iter().chain(entries).copied().collect();
         let provider = Self::wallet_provider(&self.l1_rpc_url)?;
         let contract = MockProtocolVersions::new(self.address, provider);
         contract
-            .setSchedule(Self::id_ordered_schedule(entries)?)
+            .setSchedule(Self::id_ordered_schedule(&merged)?)
             .send()
             .await
             .wrap_err("Failed to send setSchedule")?
@@ -177,6 +201,8 @@ impl MockProtocolVersionsClient {
     }
 
     /// Expands `(upgrade, timestamp)` entries into the full id-ordered schedule array.
+    ///
+    /// Later entries for the same upgrade overwrite earlier ones; unlisted upgrades are `0`.
     pub fn id_ordered_schedule(entries: &[(BaseUpgrade, u64)]) -> Result<Vec<u64>> {
         let mut schedule = vec![0u64; BaseUpgrade::CONTRACT_VARIANTS.len()];
         for (upgrade, timestamp) in entries {
@@ -203,6 +229,8 @@ impl MockProtocolVersionsClient {
 
 #[cfg(test)]
 mod tests {
+    use base_common_genesis::{ChainGenesis, UpgradeActivation};
+
     use super::*;
 
     #[test]
@@ -220,11 +248,31 @@ mod tests {
     }
 
     #[test]
-    fn upgrade_ids_deduplicates_schedule_entries() {
-        let options = UpgradeSignalStackOptions::new(UpgradeSignalMode::StartupApply)
-            .with_upgrade(BaseUpgrade::Cobalt, 1)
-            .with_upgrade(BaseUpgrade::Cobalt, 2);
+    fn id_ordered_schedule_later_entries_override_earlier() {
+        let schedule = MockProtocolVersionsClient::id_ordered_schedule(&[
+            (BaseUpgrade::Cobalt, 42),
+            (BaseUpgrade::Cobalt, 84),
+        ])
+        .unwrap();
 
-        assert_eq!(options.upgrade_ids(), vec![BaseUpgrade::Cobalt]);
+        assert_eq!(*schedule.last().unwrap(), 84);
+    }
+
+    #[test]
+    fn baseline_schedule_keeps_scheduled_upgrades_and_maps_genesis_activations() {
+        let mut rollup_config = RollupConfig {
+            genesis: ChainGenesis { l2_time: 1_000, ..Default::default() },
+            ..Default::default()
+        };
+        rollup_config
+            .apply_upgrade_activation(BaseUpgrade::Regolith, UpgradeActivation::Timestamp(0));
+        rollup_config
+            .apply_upgrade_activation(BaseUpgrade::Azul, UpgradeActivation::Timestamp(2_000));
+
+        let baseline = UpgradeSignalStackOptions::baseline_schedule(&rollup_config);
+
+        assert!(baseline.contains(&(BaseUpgrade::Regolith, 1_000)));
+        assert!(baseline.contains(&(BaseUpgrade::Azul, 2_000)));
+        assert!(!baseline.iter().any(|(upgrade, _)| *upgrade == BaseUpgrade::Cobalt));
     }
 }

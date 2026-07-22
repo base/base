@@ -28,7 +28,6 @@ use base_consensus_rpc::{AdminApiClient, BaseP2PApiClient, RollupNodeApiClient, 
 use base_consensus_sources::BlockSigner;
 use base_upgrade_signal::{
     UpgradeSignalConfig, UpgradeSignalMetricLayer, UpgradeSignalRuntimeApplier,
-    UpgradeSignalRuntimeValidation,
 };
 use eyre::{Result, WrapErr};
 use jsonrpsee::http_client::HttpClientBuilder;
@@ -118,9 +117,8 @@ impl InProcessConsensus {
         let mut rollup_config = config.rollup_config;
         let l1_chain_config = config.l1_chain_config;
 
-        // Mirror the standalone consensus CLI: with no chain-specific activation admin source,
-        // runtime validation is fail-closed (positive Beryl signals are rejected).
-        let runtime_validation = UpgradeSignalRuntimeValidation::fail_closed();
+        // Mirror the standalone consensus CLI: read the validated L1 schedule and apply it to
+        // the rollup config before the node starts.
         if let Some(signal_config) = &config.upgrade_signal
             && signal_config.mode.applies_at_startup()
         {
@@ -133,10 +131,8 @@ impl InProcessConsensus {
                 )
                 .await
                 .wrap_err("Failed to read upgrade signal schedule at startup")?;
-            let chain_id = rollup_config.l2_chain_id.id();
-            runtime_validation.validate_schedule(chain_id, &schedule)?;
             UpgradeSignalRuntimeApplier::apply_schedule_to_sink(
-                chain_id,
+                rollup_config.l2_chain_id.id(),
                 &schedule,
                 &mut rollup_config,
             )
@@ -238,7 +234,6 @@ impl InProcessConsensus {
         .with_upgrade_signal_config(UpgradeSignalBuilderConfig {
             metrics_config: config.upgrade_signal,
             l1_rpc: None,
-            runtime_validation: Some(runtime_validation),
         })
         .with_checkpoint_path(checkpoint_path);
 

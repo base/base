@@ -1,6 +1,11 @@
 //! System test stack orchestration and lifecycle management.
 
-use std::{num::NonZeroU64, path::PathBuf};
+use std::{
+    collections::BTreeSet,
+    num::NonZeroU64,
+    path::PathBuf,
+    sync::{Mutex, OnceLock},
+};
 
 use alloy_network::Ethereum;
 use alloy_primitives::B256;
@@ -8,9 +13,10 @@ use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_engine::JwtSecret;
 use alloy_signer_local::PrivateKeySigner;
+use base_common_genesis::{RollupConfig, RuntimeUpgradeRegistry};
 use base_common_network::Base;
 use base_tx_forwarding::TxForwardingConfig;
-use eyre::{OptionExt, Result, WrapErr};
+use eyre::{OptionExt, Result, WrapErr, ensure};
 use tempfile::TempDir;
 use url::Url;
 
@@ -30,6 +36,50 @@ const DEFAULT_L2_CHAIN_ID: u64 = 84538453;
 const DEFAULT_SLOT_DURATION: u64 = 2;
 const DEFAULT_SHADOW_BLOCKS_PER_CYCLE: NonZeroU64 = NonZeroU64::new(3).unwrap();
 
+static RUNTIME_UPGRADE_SIGNAL_OWNERS: OnceLock<Mutex<BTreeSet<u64>>> = OnceLock::new();
+
+/// Exclusive ownership of the process-global [`RuntimeUpgradeRegistry`] entries for one L2
+/// chain ID, cleared when dropped.
+///
+/// A runtime-admin [`SystemTestStack`] acquires this guard before its nodes start so that its
+/// live schedule overrides never outlive the stack and never contaminate a later stack reusing
+/// the same chain ID. Ownership is exclusive: acquiring a chain ID that another live guard
+/// already owns fails, because the registry is shared by every in-process node in the test
+/// binary and two concurrent writers for the same chain cannot be isolated from each other.
+#[derive(Debug)]
+pub struct RuntimeUpgradeSignalGuard {
+    chain_id: u64,
+}
+
+impl RuntimeUpgradeSignalGuard {
+    /// Acquires exclusive runtime-registry ownership of the given L2 chain ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if another live guard already owns the chain ID; use a unique L2 chain
+    /// ID per concurrently running runtime-admin stack.
+    pub fn acquire(chain_id: u64) -> Result<Self> {
+        let owners = RUNTIME_UPGRADE_SIGNAL_OWNERS.get_or_init(|| Mutex::new(BTreeSet::new()));
+        ensure!(
+            owners.lock().expect("runtime upgrade signal owner lock poisoned").insert(chain_id),
+            "another running runtime-admin SystemTestStack already owns runtime upgrade \
+             overrides for L2 chain ID {chain_id}; use a unique L2 chain ID per stack"
+        );
+        Ok(Self { chain_id })
+    }
+}
+
+impl Drop for RuntimeUpgradeSignalGuard {
+    fn drop(&mut self) {
+        RuntimeUpgradeRegistry::clear_chain(self.chain_id);
+        RUNTIME_UPGRADE_SIGNAL_OWNERS
+            .get_or_init(|| Mutex::new(BTreeSet::new()))
+            .lock()
+            .expect("runtime upgrade signal owner lock poisoned")
+            .remove(&self.chain_id);
+    }
+}
+
 /// A complete L1+L2 stack for system tests.
 pub struct SystemTestStack {
     _temp_dir: TempDir,
@@ -38,6 +88,9 @@ pub struct SystemTestStack {
     l1_stack: L1Stack,
     l2_stack: L2Stack,
     upgrade_signal: Option<MockProtocolVersionsClient>,
+    /// Must be the last field: it clears the runtime registry on drop, so the stacks above
+    /// (and their upgrade-signal writer tasks) must shut down first.
+    _runtime_upgrade_signal_guard: Option<RuntimeUpgradeSignalGuard>,
 }
 
 impl std::fmt::Debug for SystemTestStack {
@@ -282,6 +335,19 @@ impl SystemTestStackBuilder {
         let l2_chain_id = self.l2_chain_id.unwrap_or(DEFAULT_L2_CHAIN_ID);
         let slot_duration = self.slot_duration.unwrap_or(DEFAULT_SLOT_DURATION);
 
+        // Acquire runtime-registry ownership before any node starts, so live overrides are
+        // cleared even when a later startup step fails, and so a chain-ID conflict with a
+        // concurrently running runtime-admin stack fails fast.
+        let runtime_upgrade_signal_guard = self
+            .upgrade_signal
+            .as_ref()
+            .filter(|options| {
+                options.mode.allows_runtime_admin()
+                    || options.execution_mode.is_some_and(|mode| mode.allows_runtime_admin())
+            })
+            .map(|_| RuntimeUpgradeSignalGuard::acquire(l2_chain_id))
+            .transpose()?;
+
         let temp_dir = TempDir::new().wrap_err("Failed to create temp directory")?;
         let output_dir = self.output_dir.unwrap_or_else(|| temp_dir.path().to_path_buf());
 
@@ -362,19 +428,6 @@ impl SystemTestStackBuilder {
 
         let l1_stack = L1Stack::start(l1_config).await.wrap_err("Failed to start L1 stack")?;
 
-        let upgrade_signal = match &self.upgrade_signal {
-            Some(options) => {
-                let l1_public_rpc_url = l1_stack.rpc_url().await?;
-                let client = MockProtocolVersionsClient::deploy(l1_public_rpc_url, options)
-                    .await
-                    .wrap_err("Failed to deploy upgrade signal mock contract")?;
-                Some(client)
-            }
-            None => None,
-        };
-
-        let signal_parts = self.upgrade_signal.as_ref().zip(upgrade_signal.as_ref());
-
         let l1_internal_rpc_url = l1_stack.reth().internal_rpc_url();
         let l2_deployment =
             tokio::task::spawn_blocking(move || setup.deploy_l2_contracts(&l1_internal_rpc_url))
@@ -404,6 +457,22 @@ impl SystemTestStackBuilder {
                     .unwrap_or(DEFAULT_SHADOW_BLOCKS_PER_CYCLE),
             }
         });
+
+        let upgrade_signal = match &self.upgrade_signal {
+            Some(options) => {
+                let rollup_config: RollupConfig = serde_json::from_slice(&rollup_config_bytes)
+                    .wrap_err("Failed to parse rollup config for upgrade signal baseline")?;
+                let l1_public_rpc_url = l1_stack.rpc_url().await?;
+                let client =
+                    MockProtocolVersionsClient::deploy(l1_public_rpc_url, options, &rollup_config)
+                        .await
+                        .wrap_err("Failed to deploy upgrade signal mock contract")?;
+                Some(client)
+            }
+            None => None,
+        };
+
+        let signal_parts = self.upgrade_signal.as_ref().zip(upgrade_signal.as_ref());
 
         let l2_config = L2StackConfig {
             l2_genesis: l2_genesis_bytes,
@@ -436,6 +505,7 @@ impl SystemTestStackBuilder {
             l1_stack,
             l2_stack,
             upgrade_signal,
+            _runtime_upgrade_signal_guard: runtime_upgrade_signal_guard,
         })
     }
 }
