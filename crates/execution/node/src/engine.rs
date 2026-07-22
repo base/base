@@ -5,11 +5,12 @@ use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_engine::{ExecutionPayloadEnvelopeV2, ExecutionPayloadV1};
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseBlock, BaseTransaction, Predeploys};
+use base_common_evm::BaseTime;
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
     ExecutionData,
 };
-use base_execution_consensus::isthmus;
+use base_execution_consensus::{BaseConsensusError, isthmus};
 use base_execution_payload_builder::{
     Attributes, BaseExecutionPayloadValidator, BasePayloadBuilderAttributes, BasePayloadTypes,
 };
@@ -156,18 +157,58 @@ where
         &self,
         state_updates: impl FnOnce() -> &'a HashedPostState,
         block: &RecoveredBlock<Self::Block>,
-        _parent_header: &SealedHeader<<Self::Block as Block>::Header>,
+        parent_header: &SealedHeader<<Self::Block as Block>::Header>,
         parent_state: impl FnOnce() -> ProviderResult<StateProviderBox>,
     ) -> Result<(), InsertBlockErrorKind> {
         let timestamp = block.timestamp();
+        let validate_base_time = self.chain_spec().is_zombie_active_at_timestamp(timestamp)
+            && self.chain_spec().is_zombie_active_at_timestamp(parent_header.timestamp());
+        let validate_isthmus = self.chain_spec().is_isthmus_active_at_timestamp(timestamp);
 
-        if !self.chain_spec().is_isthmus_active_at_timestamp(timestamp) {
+        if !validate_base_time && !validate_isthmus {
             return Ok(());
         }
 
         let parent_state = parent_state()?;
-        self.validate_isthmus_post_execution(state_updates(), parent_state.as_ref(), block.header())
-            .map_err(Into::into)
+
+        if validate_base_time {
+            let parent_millis = BaseTime::decode_timestamp_millis_part(
+                parent_state
+                    .storage(Predeploys::BASE_TIME, BaseTime::TIMESTAMP_MILLIS_PART_SLOT.into())?
+                    .unwrap_or_default(),
+            );
+            let child_millis = BaseTimeUpdateTx::extract_from_transactions(
+                &block.body().transactions,
+                block.number(),
+            )
+            .map_err(ConsensusError::other)?
+            .timestamp_millis_part();
+            let parent_timestamp_ms =
+                u128::from(parent_header.timestamp()) * 1_000 + u128::from(parent_millis);
+            let child_timestamp_ms = u128::from(timestamp) * 1_000 + u128::from(child_millis);
+
+            if child_timestamp_ms
+                != parent_timestamp_ms + u128::from(BaseTimeUpdateTx::BLOCK_INTERVAL_MILLIS)
+            {
+                return Err(ConsensusError::other(
+                    BaseConsensusError::BaseTimeProgressionInvalid {
+                        parent_timestamp_ms,
+                        child_timestamp_ms,
+                    },
+                )
+                .into());
+            }
+        }
+
+        if validate_isthmus {
+            self.validate_isthmus_post_execution(
+                state_updates(),
+                parent_state.as_ref(),
+                block.header(),
+            )?;
+        }
+
+        Ok(())
     }
 
     fn convert_payload_to_block(
@@ -367,16 +408,19 @@ pub fn validate_withdrawals_presence(
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{EMPTY_ROOT_HASH, Header};
-    use alloy_primitives::{Address, B64, B256, b64};
+    use alloy_consensus::{BlockBody, EMPTY_ROOT_HASH, Header, Sealable};
+    use alloy_primitives::{Address, B64, B256, U256, b64};
     use alloy_rpc_types_engine::PayloadAttributes;
     use base_common_chains::{BaseUpgrade, ChainConfig};
-    use base_common_consensus::BaseTxEnvelope;
+    use base_common_consensus::{BasePrimitives, BaseTxEnvelope, TxDeposit};
     use base_common_rpc_types_engine::BasePayloadAttributes;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_consensus::BaseConsensusError;
     use reth_ethereum_forks::ForkCondition;
-    use reth_provider::noop::NoopProvider;
+    use reth_provider::{
+        noop::NoopProvider,
+        test_utils::{ExtendedAccount, MockEthProvider},
+    };
     use reth_trie_common::KeccakKeyHasher;
 
     use super::*;
@@ -721,6 +765,60 @@ mod tests {
         RecoveredBlock::new_sealed(SealedBlock::seal_slow(block), vec![])
     }
 
+    fn base_time_block(timestamp: u64, millis_part: u16) -> RecoveredBlock<BaseBlock> {
+        let number = 9;
+        let metadata = BaseTimeUpdateTx::new(millis_part).unwrap().into_deposit_tx(number);
+        let block = BaseBlock {
+            header: Header { number, timestamp, ..Default::default() },
+            body: BlockBody {
+                transactions: vec![TxDeposit::default().seal_slow().into(), metadata.into()],
+                ..Default::default()
+            },
+        };
+        RecoveredBlock::new_sealed(
+            SealedBlock::seal_slow(block),
+            vec![Address::ZERO, Address::ZERO],
+        )
+    }
+
+    fn parent_state(millis_part: u16) -> MockEthProvider<BasePrimitives> {
+        let provider = MockEthProvider::<BasePrimitives>::new();
+        provider.add_account(
+            Predeploys::BASE_TIME,
+            ExtendedAccount::new(0, U256::ZERO).extend_storage([(
+                BaseTime::TIMESTAMP_MILLIS_PART_SLOT.into(),
+                U256::from(millis_part),
+            )]),
+        );
+        provider
+    }
+
+    fn validate_base_time_progression(
+        parent_timestamp: u64,
+        parent_millis_part: u16,
+        child_timestamp: u64,
+        child_millis_part: u16,
+    ) -> Result<(), InsertBlockErrorKind> {
+        let validator = validator_with_chain_spec(
+            BaseChainSpecBuilder::base_mainnet()
+                .with_fork(BaseUpgrade::Isthmus, ForkCondition::Never)
+                .with_fork(BaseUpgrade::Zombie, ForkCondition::Timestamp(ZOMBIE_TIMESTAMP))
+                .build(),
+        );
+        let block = base_time_block(child_timestamp, child_millis_part);
+        let parent =
+            SealedHeader::seal_slow(Header { timestamp: parent_timestamp, ..Default::default() });
+        let parent_state = parent_state(parent_millis_part);
+
+        PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
+            &validator,
+            || panic!("BaseTime validation must not request hashed state"),
+            &block,
+            &parent,
+            || Ok(Box::new(parent_state)),
+        )
+    }
+
     fn base_consensus_error(error: &InsertBlockErrorKind) -> Option<&BaseConsensusError> {
         let InsertBlockErrorKind::Consensus(ConsensusError::Other(error)) = error else {
             return None;
@@ -729,15 +827,19 @@ mod tests {
     }
 
     #[test]
-    fn generic_post_execution_validation_checks_isthmus() {
+    fn post_execution_skips_base_time_at_activation_but_checks_isthmus() {
         let block = post_execution_block(EMPTY_ROOT_HASH);
+        let parent = SealedHeader::seal_slow(Header {
+            timestamp: ZOMBIE_TIMESTAMP - 1,
+            ..Default::default()
+        });
         let state_updates = HashedPostState::default();
         let error =
             PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
                 &zombie_validator(),
                 || &state_updates,
                 &block,
-                block.sealed_header(),
+                &parent,
                 || Ok(Box::new(NoopProvider::default())),
             )
             .unwrap_err();
@@ -745,6 +847,23 @@ mod tests {
         assert!(matches!(
             base_consensus_error(&error),
             Some(BaseConsensusError::L2WithdrawalsRootMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn post_execution_validates_exact_200ms_progression() {
+        validate_base_time_progression(ZOMBIE_TIMESTAMP, 200, ZOMBIE_TIMESTAMP, 400).unwrap();
+        validate_base_time_progression(ZOMBIE_TIMESTAMP, 800, ZOMBIE_TIMESTAMP + 1, 0).unwrap();
+
+        let error =
+            validate_base_time_progression(ZOMBIE_TIMESTAMP, 200, ZOMBIE_TIMESTAMP + 1, 400)
+                .unwrap_err();
+        assert!(matches!(
+            base_consensus_error(&error),
+            Some(BaseConsensusError::BaseTimeProgressionInvalid {
+                parent_timestamp_ms: 1_800_000_001_200,
+                child_timestamp_ms: 1_800_000_002_400,
+            })
         ));
     }
 }
