@@ -63,11 +63,18 @@ const CANONICAL_PAYLOAD: &[u8] = include_bytes!(concat!(
 ));
 
 /// Owner arm-attestation signature over the domain-separated arm message (r‖s‖v).
-/// PLACEHOLDER `[0u8; 65]` (unarmed): recovery fails, so [`production_arming_criteria`]
-/// is structurally UNARMED. This is the G4 owner-injection point — arming requires the
-/// owner to replace this with the real 65-byte `cast wallet sign` output AND pin
-/// [`OWNER_ATTEST_ADDRESS`], then rebuild + re-review (never a runtime toggle).
-const OWNER_ARM_SIGNATURE: [u8; 65] = [0u8; 65];
+/// G4-PINNED: the real 65-byte owner `cast wallet sign` output (v=0x1b). It recovers
+/// to [`OWNER_ATTEST_ADDRESS`] over [`arm_message`], so [`production_arming_criteria`]
+/// is structurally ARMED on the criteria-pin predicate. This is a compile-time pin: it
+/// was injected by a deliberate code change + rebuild + re-review, never a runtime
+/// toggle. (Arming is still gated downstream — see [`production_arming_criteria`].)
+const OWNER_ARM_SIGNATURE: [u8; 65] = [
+    0x23, 0x5d, 0xaf, 0xf9, 0xf5, 0xb2, 0x51, 0xb5, 0x72, 0x58, 0xc6, 0x59, 0x7c, 0xc8, 0x7e, 0x43,
+    0xd2, 0x68, 0xe9, 0x21, 0x67, 0x4a, 0x99, 0xf8, 0x0c, 0xe0, 0x0c, 0x8b, 0xea, 0xf1, 0x7f, 0x19,
+    0x34, 0x0f, 0xb7, 0xfe, 0xa8, 0xda, 0xa4, 0x39, 0xa0, 0x9a, 0xcf, 0x58, 0xdb, 0x18, 0xf5, 0xc1,
+    0xee, 0x6d, 0xf1, 0x48, 0x26, 0x43, 0xd8, 0x3e, 0xad, 0xaa, 0x79, 0x31, 0x57, 0xaa, 0xf3, 0xc7,
+    0x1b,
+];
 
 /// Domain-separator prefix for the owner arm attestation (byte-exact ASCII).
 const ARM_DOMAIN_PREFIX: &str = "base-mev:p2-prereg-v2:arm:";
@@ -75,12 +82,16 @@ const ARM_DOMAIN_PREFIX: &str = "base-mev:p2-prereg-v2:arm:";
 /// Domain-separator prefix for the owner kill-reset attestation (byte-exact ASCII).
 const KILLRESET_DOMAIN_PREFIX: &str = "base-mev:p2-killreset:";
 
-/// Owner attestation address (trust root). UNSET in B1 (G4 unsigned): production
-/// arming and kill-reset are structurally impossible until the owner G4 signature
-/// exists, at which point pinning the real address is a deliberate code change +
-/// rebuild + review — never a mutable config toggle.
+/// Owner attestation address (trust root). G4-PINNED to the owner-attest address that
+/// signed the arm message; production arming and kill-reset recover against it. Pinning
+/// this address is a deliberate code change + rebuild + review — never a mutable config
+/// toggle. (Setting the trust root does not itself broadcast: no production caller of
+/// [`production_arming_criteria`] exists and the capability seal forbids signer/egress.)
 #[cfg(not(test))]
-pub const OWNER_ATTEST_ADDRESS: Option<Address> = None;
+pub const OWNER_ATTEST_ADDRESS: Option<Address> = Some(Address::new([
+    0x58, 0x1f, 0x5c, 0x5e, 0xc1, 0xd6, 0x3b, 0xa0, 0x8d, 0x60, 0x24, 0xe8, 0xb1, 0xcf, 0x88, 0xb8,
+    0x3d, 0x57, 0x28, 0x5b,
+]));
 
 /// Test-only trust root: pins the well-known first Anvil address so the
 /// verify-only paths can be exercised with precomputed (never in-process)
@@ -1362,19 +1373,18 @@ mod tests {
         assert_eq!(criteria.unarmed_reason(), Some(UnarmedReason::SignatureRecoveryFailed));
     }
 
-    // LOCK B (pre-G4): the production `OWNER_ARM_SIGNATURE` placeholder closes the
-    // load with an EXACT single reason even under an explicit valid owner. This
-    // exercises the production canonical payload/commit/signature triple (not a test
-    // fixture signature) against a known trust root, proving the placeholder cannot
-    // arm. It is intentionally an EXACT (non-OR) reason: G4 (real signature) will make
-    // this reason change under a test owner, so at G4 this test is removed/converted
-    // per the arming-loader spec §4 two-stage gate contract.
+    // LOCK B (post-G4 decoupled): an all-zero signature closes the load with an EXACT
+    // single reason even under an explicit valid owner, proving a null/placeholder
+    // signature cannot arm regardless of trust root. This asserts the recovery-failure
+    // path directly with a literal `[0u8; 65]` (decoupled from the now-pinned real
+    // production `OWNER_ARM_SIGNATURE`, which recovers to the G4 owner ≠ the test
+    // trust root here) per the arming-loader spec §4 two-stage gate contract.
     #[test]
-    fn production_placeholder_signature_closes_under_explicit_owner() {
+    fn zero_signature_closes_under_explicit_owner() {
         let artifact = CriteriaArtifact {
             canonical_payload: CANONICAL_PAYLOAD.to_vec(),
             criteria_source_commit_sha: EXPECTED_CRITERIA_COMMIT.to_owned(),
-            owner_signature: OWNER_ARM_SIGNATURE,
+            owner_signature: [0u8; 65],
         };
         let criteria = ArmedCriteria::load_with_owner(&artifact, Some(TEST_OWNER_ADDRESS));
         assert!(!criteria.is_armed());
