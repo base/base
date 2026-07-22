@@ -56,11 +56,10 @@ impl PreimageMap {
         Ok(())
     }
 
-    /// Inserts a Keccak-256-addressed value and returns its key.
-    pub fn insert_keccak(&mut self, value: Vec<u8>) -> Result<PreimageKey> {
+    /// Inserts a Keccak-256-addressed value.
+    pub fn insert_keccak(&mut self, value: Vec<u8>) -> Result<()> {
         let key = PreimageKey::new_keccak256(keccak256(&value).0);
-        self.insert(key, value)?;
-        Ok(key)
+        self.insert(key, value)
     }
 
     /// Merges another validated map.
