@@ -2263,8 +2263,7 @@ mod tests {
     #[test]
     fn invalidate_does_not_promote_surviving_entry_to_mru() {
         let mut cache = LimitClassCache::new(NonZeroUsize::new(2).expect("non-zero capacity"));
-        let (a, b, c) =
-            (Address::repeat_byte(1), Address::repeat_byte(2), Address::repeat_byte(3));
+        let (a, b, c) = (Address::repeat_byte(1), Address::repeat_byte(2), Address::repeat_byte(3));
         let state = AccountState::from_word(U256::ZERO);
 
         // `a` holds both classification halves and starts as least-recently-used;
