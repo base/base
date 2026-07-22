@@ -311,7 +311,7 @@ where
     }
 
     /// Invalidates guarded transactions whose effective expiry has elapsed as of
-    /// `now` (the committed block timestamp), returning the number removed.
+    /// `now` (the committed block timestamp).
     ///
     /// The horizon is `now / EXPIRY_BUCKET_SECS`, so a bucket fires once its
     /// window has started — no forward lookahead, which would over-evict still
@@ -321,7 +321,7 @@ where
     /// precheck drops any past-expiry transaction against the exact build
     /// timestamp. This path is pure guard hygiene: it frees `PayerBook`
     /// reservations and count-cap slots held by expired transactions.
-    fn expire_due_buckets(&self, now: u64) -> usize {
+    fn expire_due_buckets(&self, now: u64) {
         // Do not expire a protocol reservation between guard and reth insertion.
         let _admission_guard = self.protocol_admission_lock.lock();
         let horizon = now / InvalidationKey::EXPIRY_BUCKET_SECS;
@@ -332,7 +332,6 @@ where
         if !removed.is_empty() {
             debug!(count = removed.len(), "EIP-8130 transactions invalidated by expiry");
         }
-        removed.len()
     }
 
     fn reconcile_guard(&self) {

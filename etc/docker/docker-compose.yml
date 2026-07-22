@@ -311,7 +311,7 @@ services:
       - --builder.enable-resource-metering
       - --builder.max-rejected-txs-per-block=${BUILDER_MAX_REJECTED_TXS_PER_BLOCK}
       - --txpool.nolocals
-      - --rollup.txpool-max-inflight-delegated-slots=4
+      - --rollup.txpool-max-inflight-delegated-slots=32768
       - --txpool.pending-max-count=200000
       - --txpool.pending-max-size=512
       - --txpool.basefee-max-count=200000
@@ -456,7 +456,7 @@ services:
       - --nat=extip:${L2_CLIENT_ADVERTISE_IP}
       - --metrics=0.0.0.0:${L2_CLIENT_METRICS_PORT}
       - --txpool.nolocals
-      - --rollup.txpool-max-inflight-delegated-slots=4
+      - --rollup.txpool-max-inflight-delegated-slots=32768
       - --txpool.pending-max-count=200000
       - --txpool.pending-max-size=512
       - --txpool.basefee-max-count=200000
@@ -472,7 +472,7 @@ services:
       - --bootnodes=${L2_EL_BOOTNODE_ENODE}
       - --rollup.discovery.v4
       - --rpc.forwarding-endpoint=http://base-builder:${L2_BUILDER_HTTP_PORT}
-      - --enable-transaction-tracing-logs
+      - --enable-transaction-event-journal
       - --enable-metering
       - --metering.gas-limit=${METERING_GAS_LIMIT}
       - --metering.da-bytes=${METERING_DA_BYTES}
