@@ -25,6 +25,25 @@ pub enum FeedDirection {
     TokenPerNative,
 }
 
+impl FeedDirection {
+    /// On-chain discriminant byte for this direction.
+    pub const fn to_u8(self) -> u8 {
+        match self {
+            Self::NativePerToken => 0,
+            Self::TokenPerNative => 1,
+        }
+    }
+
+    /// Parses an on-chain discriminant byte, or `None` if unrecognized.
+    pub const fn from_u8(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(Self::NativePerToken),
+            1 => Some(Self::TokenPerNative),
+            _ => None,
+        }
+    }
+}
+
 /// Layout of an external price feed's ABI-encoded return, so the node knows
 /// which 32-byte word carries the answer and (when present) the update
 /// timestamp used for staleness enforcement.
@@ -42,6 +61,23 @@ pub enum AnswerShape {
 }
 
 impl AnswerShape {
+    /// On-chain discriminant byte for this shape.
+    pub const fn to_u8(self) -> u8 {
+        match self {
+            Self::SingleWord => 0,
+            Self::ChainlinkRoundData => 1,
+        }
+    }
+
+    /// Parses an on-chain discriminant byte, or `None` if unrecognized.
+    pub const fn from_u8(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(Self::SingleWord),
+            1 => Some(Self::ChainlinkRoundData),
+            _ => None,
+        }
+    }
+
     /// Minimum number of return-data bytes this shape reads.
     pub const fn min_len(&self) -> usize {
         match self {
@@ -210,6 +246,22 @@ mod tests {
             reading,
             FeedReading { answer: U256::from(400_000_000_000_000u64), updated_at: Some(1234) }
         );
+    }
+
+    #[test]
+    fn direction_discriminant_roundtrips() {
+        for dir in [FeedDirection::NativePerToken, FeedDirection::TokenPerNative] {
+            assert_eq!(FeedDirection::from_u8(dir.to_u8()), Some(dir));
+        }
+        assert_eq!(FeedDirection::from_u8(2), None);
+    }
+
+    #[test]
+    fn shape_discriminant_roundtrips() {
+        for shape in [AnswerShape::SingleWord, AnswerShape::ChainlinkRoundData] {
+            assert_eq!(AnswerShape::from_u8(shape.to_u8()), Some(shape));
+        }
+        assert_eq!(AnswerShape::from_u8(2), None);
     }
 
     #[test]

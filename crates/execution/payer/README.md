@@ -28,5 +28,16 @@ staleness bound. New oracle providers are onboarded by adding a decode shape
 here and pointing the on-chain config at the new selector/shape — no contract
 migration.
 
+## `storage` feature
+
+The optional `storage` feature adds `PayerConfigStorage`, the native
+read/write mirror of the on-chain payer-config system contract. It decodes the
+contract's storage — an enumerable accepted-token set plus per-token terms
+packed into a single word — into the pure [`PayerConfig`] model, and exposes the
+admin mutations that back the round-trip tests. This is the concrete reader the
+builder and node RPC use against head/pending state; enabling it pulls in the
+native `base-precompile-storage` machinery (and, transitively, `revm`), so the
+default build stays the pure pricing core.
+
 [ERC-8168]: https://ethereum-magicians.org/t/erc-8168-payer-services-for-erc-8130/28762
 [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130

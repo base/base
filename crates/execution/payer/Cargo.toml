@@ -17,5 +17,22 @@ workspace = true
 # alloy
 alloy-primitives.workspace = true
 
+# base
+base-precompile-macros = { workspace = true, optional = true }
+base-precompile-storage = { workspace = true, optional = true }
+
+# revm
+revm = { workspace = true, optional = true }
+
 # misc
 thiserror.workspace = true
+
+[dev-dependencies]
+base-precompile-storage = { workspace = true, features = ["test-utils"] }
+
+[features]
+# On-chain payer-config storage mirror + reader (pulls in the native
+# precompile-storage machinery and, transitively, revm). The default build is
+# the pure, chain-read-free pricing core.
+storage = ["dep:base-precompile-macros", "dep:base-precompile-storage", "dep:revm"]
+test-utils = ["storage", "base-precompile-storage/test-utils"]

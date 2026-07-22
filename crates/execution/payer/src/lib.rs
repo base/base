@@ -11,3 +11,8 @@ pub use feed::{AnswerShape, FeedConfig, FeedDirection, FeedReading};
 
 mod config;
 pub use config::{PayerConfig, PriceSource, TokenConfig};
+
+#[cfg(feature = "storage")]
+mod storage;
+#[cfg(feature = "storage")]
+pub use storage::PayerConfigStorage;
