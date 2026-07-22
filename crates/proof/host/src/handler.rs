@@ -17,7 +17,7 @@ use base_common_consensus::{HoloceneExtraData, JovianExtraData, Predeploys};
 use base_common_network::Base;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_providers::BlobWithCommitmentAndProof;
-use base_proof::{Hint, HintType, ROOTS_OF_UNITY};
+use base_proof::{Hint, HintType, ROOTS_OF_UNITY, preimage_key_for_commitment};
 use base_proof_preimage::{PreimageKey, PreimageKeyType};
 use base_protocol::{BlockInfo, GENERIC_COMMITMENT_LEN, OutputRoot};
 use futures::FutureExt;
@@ -1038,11 +1038,12 @@ async fn handle_hint_inner(
                 .await
                 .map_err(|e| HostError::Custom(format!("alt-da fetch failed: {e}")))?;
 
-            // Key by keccak256(commitment) — the client program derives the same key. Generic
-            // commitments are not content hashes, so this is a host-trusted mapping (see
-            // `OracleAltDaResolver`).
-            let key_hash = keccak256(commitment);
-            kv.write().await.set(PreimageKey::new_keccak256(*key_hash).into(), bytes)?;
+            // Store under the same key the client program derives (single source of truth). The
+            // key type follows the commitment type: generic commitments are served on trust,
+            // keccak256 commitments are re-verified against their content hash by the oracle (see
+            // `preimage_key_for_commitment`).
+            let key = preimage_key_for_commitment(commitment);
+            kv.write().await.set(key.into(), bytes)?;
         }
         HintType::L1Precompile => {
             if hint.data.len() < 28 {
@@ -1348,6 +1349,7 @@ mod tests {
                 rollup_config: RollupConfig::default(),
                 l1_config: ChainConfig::default(),
                 enable_experimental_witness_endpoint: false,
+                da_server_url: None,
             },
             data_dir: None,
         }
@@ -1366,6 +1368,7 @@ mod tests {
             blobs,
             l2,
             l2_node,
+            alt_da: None,
         }
     }
 

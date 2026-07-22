@@ -239,6 +239,7 @@ mod tests {
             blobs,
             l2,
             l2_node,
+            alt_da: None,
         }
     }
 
@@ -254,6 +255,7 @@ mod tests {
                 rollup_config: RollupConfig::default(),
                 l1_config: ChainConfig::default(),
                 enable_experimental_witness_endpoint: false,
+                da_server_url: None,
             },
             data_dir: None,
         }

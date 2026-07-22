@@ -329,6 +329,7 @@ mod tests {
                 rollup_config: RollupConfig::default(),
                 l1_config,
                 enable_experimental_witness_endpoint: false,
+                da_server_url: None,
             },
             data_dir: None,
         }
