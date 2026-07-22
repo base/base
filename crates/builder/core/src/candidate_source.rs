@@ -80,7 +80,9 @@ mod tests {
 
     use reth_transaction_pool::test_utils::MockTransaction;
 
-    use super::{BestTransactionsAttributes, BoxedBestTransactions, CandidateSource, PoolTransaction};
+    use super::{
+        BestTransactionsAttributes, BoxedBestTransactions, CandidateSource, PoolTransaction,
+    };
 
     /// A [`CandidateSource`] that draws from no transaction pool at all: it captures nothing and
     /// yields an empty stream. Its existence proves the seam is genuinely pluggable — an alternative
