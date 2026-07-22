@@ -1,0 +1,21 @@
+[package]
+name = "base-execution-payer"
+description = "ERC-8168 payer-service pricing: on-chain payer config, price-feed decoding, and EIP-8130 token-payment math"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# alloy
+alloy-primitives.workspace = true
+
+# misc
+thiserror.workspace = true
