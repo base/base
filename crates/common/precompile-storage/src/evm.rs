@@ -19,7 +19,7 @@ use revm::{
 
 use crate::{
     error::{BasePrecompileError, Result},
-    provider::{PrecompileStorageProvider, StorageSemantics, validate_loaded_code_presence},
+    provider::{PrecompileStorageProvider, StorageFeatures, validate_loaded_code_presence},
 };
 
 /// Production [`PrecompileStorageProvider`] backed by a live EVM journal.
@@ -41,7 +41,7 @@ pub struct EvmPrecompileStorageProvider<'a> {
     beneficiary: Address,
     origin: Address,
     state_gas_used: u64,
-    storage_semantics: StorageSemantics,
+    storage_features: StorageFeatures,
 }
 
 impl<'a> EvmPrecompileStorageProvider<'a> {
@@ -50,14 +50,14 @@ impl<'a> EvmPrecompileStorageProvider<'a> {
     /// `gas_params` drives all EIP-2929/2200/3529 cost calculations.
     /// Pass [`GasParams::default`] when the active spec is unknown at call site.
     pub fn new(input: PrecompileInput<'a>, gas_params: GasParams) -> Self {
-        Self::new_with_storage_semantics(input, gas_params, StorageSemantics::Legacy)
+        Self::new_with_storage_features(input, gas_params, StorageFeatures::Legacy)
     }
 
-    /// Consume a [`PrecompileInput`] and build the provider with fork-specific storage semantics.
-    pub fn new_with_storage_semantics(
+    /// Consume a [`PrecompileInput`] and build the provider with fork-specific storage features.
+    pub fn new_with_storage_features(
         input: PrecompileInput<'a>,
         gas_params: GasParams,
-        storage_semantics: StorageSemantics,
+        storage_features: StorageFeatures,
     ) -> Self {
         let PrecompileInput { gas, caller, value, is_static, internals, .. } = input;
 
@@ -80,7 +80,7 @@ impl<'a> EvmPrecompileStorageProvider<'a> {
             beneficiary,
             origin,
             state_gas_used: 0,
-            storage_semantics,
+            storage_features,
         }
     }
 }
@@ -324,8 +324,8 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
         0
     }
 
-    fn storage_semantics(&self) -> StorageSemantics {
-        self.storage_semantics
+    fn storage_features(&self) -> StorageFeatures {
+        self.storage_features
     }
 
     fn is_static(&self) -> bool {
@@ -387,7 +387,7 @@ mod tests {
         BytesLikeHandler, Handler, StorageCtx,
         error::BasePrecompileError,
         hashmap::HashMapStorageProvider,
-        provider::{PrecompileStorageProvider, StorageSemantics},
+        provider::{PrecompileStorageProvider, StorageFeatures},
     };
 
     fn amsterdam_provider() -> HashMapStorageProvider {
@@ -402,15 +402,15 @@ mod tests {
         gas: u64,
         is_static: bool,
     ) -> super::EvmPrecompileStorageProvider<'a> {
-        make_evm_provider_with_semantics(ctx, gas_params, gas, is_static, StorageSemantics::Legacy)
+        make_evm_provider_with_features(ctx, gas_params, gas, is_static, StorageFeatures::Legacy)
     }
 
-    fn make_evm_provider_with_semantics<'a>(
+    fn make_evm_provider_with_features<'a>(
         ctx: &'a mut EthEvmContext<EmptyDB>,
         gas_params: GasParams,
         gas: u64,
         is_static: bool,
-        storage_semantics: StorageSemantics,
+        storage_features: StorageFeatures,
     ) -> super::EvmPrecompileStorageProvider<'a> {
         let input = PrecompileInput {
             data: &[],
@@ -423,10 +423,10 @@ mod tests {
             bytecode_address: Address::ZERO,
             internals: EvmInternals::from_context(ctx),
         };
-        super::EvmPrecompileStorageProvider::new_with_storage_semantics(
+        super::EvmPrecompileStorageProvider::new_with_storage_features(
             input,
             gas_params,
-            storage_semantics,
+            storage_features,
         )
     }
 
@@ -476,12 +476,12 @@ mod tests {
         let mut ctx = EthEvmContext::new(EmptyDB::default(), SpecId::OSAKA);
         let address = Address::repeat_byte(0x42);
         let base_slot = U256::from(10u64);
-        let mut provider = make_evm_provider_with_semantics(
+        let mut provider = make_evm_provider_with_features(
             &mut ctx,
             gas_params,
             1_000_000,
             false,
-            StorageSemantics::Cobalt,
+            StorageFeatures::Cobalt,
         );
 
         StorageCtx::enter(&mut provider, |storage| {

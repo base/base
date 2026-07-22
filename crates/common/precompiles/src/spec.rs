@@ -1,17 +1,17 @@
 use base_common_genesis::BaseUpgrade;
-use base_precompile_storage::StorageSemantics;
+use base_precompile_storage::StorageFeatures;
 
-/// Resolves Base upgrades into fork-dependent persistent-storage semantics.
+/// Resolves Base upgrades into fork-dependent persistent-storage features.
 #[derive(Debug, Clone, Copy)]
-pub struct BaseStorageSemantics;
+pub struct BaseStorageFeatures;
 
-impl BaseStorageSemantics {
-    /// Returns the persistent-storage semantics active at `upgrade`.
-    pub const fn from_upgrade(upgrade: BaseUpgrade) -> StorageSemantics {
-        if upgrade as u8 >= BaseUpgrade::Cobalt as u8 {
-            StorageSemantics::Cobalt
+impl BaseStorageFeatures {
+    /// Returns the persistent-storage features active at `upgrade`.
+    pub fn from_upgrade(upgrade: BaseUpgrade) -> StorageFeatures {
+        if upgrade >= BaseUpgrade::Cobalt {
+            StorageFeatures::Cobalt
         } else {
-            StorageSemantics::Legacy
+            StorageFeatures::Legacy
         }
     }
 }
@@ -36,14 +36,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn storage_semantics_activate_at_cobalt() {
-        assert_eq!(
-            BaseStorageSemantics::from_upgrade(BaseUpgrade::Beryl),
-            StorageSemantics::Legacy,
-        );
-        assert_eq!(
-            BaseStorageSemantics::from_upgrade(BaseUpgrade::Cobalt),
-            StorageSemantics::Cobalt,
-        );
+    fn storage_features_activate_at_cobalt() {
+        assert_eq!(BaseStorageFeatures::from_upgrade(BaseUpgrade::Beryl), StorageFeatures::Legacy,);
+        assert_eq!(BaseStorageFeatures::from_upgrade(BaseUpgrade::Cobalt), StorageFeatures::Cobalt,);
     }
 }

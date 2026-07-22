@@ -3,10 +3,10 @@
 use alloy_evm::precompiles::DynPrecompile;
 use alloy_primitives::{Address, Bytes};
 use base_common_genesis::BaseUpgrade;
-use base_precompile_storage::{BasePrecompileError, StorageSemantics};
+use base_precompile_storage::BasePrecompileError;
 
 use crate::{
-    B20StablecoinStorage, B20StablecoinToken, BaseStorageSemantics, NoopPrecompileCallObserver,
+    B20StablecoinStorage, B20StablecoinToken, BaseStorageFeatures, NoopPrecompileCallObserver,
     PolicyRegistryStorage, PolicyVersions, PrecompileCallObserver, macros::base_precompile,
 };
 
@@ -33,27 +33,10 @@ impl B20StablecoinPrecompile {
     where
         O: PrecompileCallObserver,
     {
-        Self::create_precompile_with_observer_and_storage_semantics(
-            token_address,
-            upgrade,
-            observer,
-            BaseStorageSemantics::from_upgrade(upgrade),
-        )
-    }
-
-    /// Returns an observed [`DynPrecompile`] with storage semantics.
-    pub fn create_precompile_with_observer_and_storage_semantics<O>(
-        token_address: Address,
-        upgrade: BaseUpgrade,
-        observer: O,
-        storage_semantics: StorageSemantics,
-    ) -> DynPrecompile
-    where
-        O: PrecompileCallObserver,
-    {
+        let storage_features = BaseStorageFeatures::from_upgrade(upgrade);
         base_precompile!(
             alloc::format!("B20StablecoinToken@{token_address}"),
-            storage_semantics: storage_semantics,
+            storage_features: storage_features,
             |ctx, calldata| {
             let observer = observer.clone();
             let Some(version) = PolicyVersions::from_base_upgrade(upgrade) else {

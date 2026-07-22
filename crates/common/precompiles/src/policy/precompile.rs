@@ -2,11 +2,10 @@
 
 use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
 use base_common_genesis::BaseUpgrade;
-use base_precompile_storage::StorageSemantics;
 
 use crate::{
-    BaseStorageSemantics, NoopPrecompileCallObserver, PolicyRegistryStorage,
-    PrecompileCallObserver, macros::base_precompile,
+    BaseStorageFeatures, NoopPrecompileCallObserver, PolicyRegistryStorage, PrecompileCallObserver,
+    macros::base_precompile,
 };
 
 /// EVM entry point for the `PolicyRegistry` precompile.
@@ -29,30 +28,9 @@ impl PolicyRegistryPrecompile {
     ) where
         O: PrecompileCallObserver,
     {
-        Self::install_with_observer_and_storage_semantics(
-            precompiles,
-            upgrade,
-            observer,
-            BaseStorageSemantics::from_upgrade(upgrade),
-        );
-    }
-
-    /// Installs the `PolicyRegistryPrecompile` precompile with storage semantics.
-    pub fn install_with_observer_and_storage_semantics<O>(
-        precompiles: &mut PrecompilesMap,
-        upgrade: BaseUpgrade,
-        observer: O,
-        storage_semantics: StorageSemantics,
-    ) where
-        O: PrecompileCallObserver,
-    {
         precompiles.extend_precompiles(core::iter::once((
             PolicyRegistryStorage::ADDRESS,
-            Self::precompile_with_observer_and_storage_semantics(
-                upgrade,
-                observer,
-                storage_semantics,
-            ),
+            Self::precompile_with_observer(upgrade, observer),
         )));
     }
 
@@ -62,25 +40,10 @@ impl PolicyRegistryPrecompile {
     where
         O: PrecompileCallObserver,
     {
-        Self::precompile_with_observer_and_storage_semantics(
-            upgrade,
-            observer,
-            BaseStorageSemantics::from_upgrade(upgrade),
-        )
-    }
-
-    /// Creates the EVM precompile wrapper with storage semantics.
-    pub fn precompile_with_observer_and_storage_semantics<O>(
-        upgrade: BaseUpgrade,
-        observer: O,
-        storage_semantics: StorageSemantics,
-    ) -> DynPrecompile
-    where
-        O: PrecompileCallObserver,
-    {
+        let storage_features = BaseStorageFeatures::from_upgrade(upgrade);
         base_precompile!(
             "PolicyRegistryPrecompile",
-            storage_semantics: storage_semantics,
+            storage_features: storage_features,
             |ctx, calldata| {
             let observer = observer.clone();
             PolicyRegistryStorage::new(ctx)

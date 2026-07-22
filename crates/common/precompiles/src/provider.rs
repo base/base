@@ -4,7 +4,7 @@ use alloy_evm::precompiles::PrecompilesMap;
 use alloy_primitives::Address;
 use base_common_chains::BaseUpgradeExt;
 use base_common_genesis::BaseUpgrade;
-use base_precompile_storage::StorageSemantics;
+use base_precompile_storage::StorageFeatures;
 use revm::{
     context::Cfg,
     context_interface::ContextTr,
@@ -15,9 +15,9 @@ use revm::{
 };
 
 use crate::{
-    ActivationAdminConfig, ActivationRegistry, B20Factory, BasePrecompileSpec,
-    BaseStorageSemantics, BerylLookup, NonceManager, NoopPrecompileCallObserver,
-    PolicyRegistryPrecompile, PrecompileCallObserver, TxContext, bls12_381, bn254_pair,
+    ActivationAdminConfig, ActivationRegistry, B20Factory, BasePrecompileSpec, BaseStorageFeatures,
+    BerylLookup, NonceManager, NoopPrecompileCallObserver, PolicyRegistryPrecompile,
+    PrecompileCallObserver, TxContext, bls12_381, bn254_pair,
 };
 
 /// Base precompile provider.
@@ -77,9 +77,9 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
         self.activation_admin_address
     }
 
-    /// Returns the persistent-storage semantics selected by this Base upgrade.
-    pub fn storage_semantics(&self) -> StorageSemantics {
-        BaseStorageSemantics::from_upgrade(self.spec.upgrade())
+    /// Returns the persistent-storage features selected by this Base upgrade.
+    pub fn storage_features(&self) -> StorageFeatures {
+        BaseStorageFeatures::from_upgrade(self.spec.upgrade())
     }
 
     /// Converts a Base upgrade into its Ethereum precompile spec.
@@ -209,34 +209,30 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
         // installed precompile below — Beryl's factory/registries and Cobalt's
         // EIP-8130 precompiles alike — uses plain `install`; none is observed, by
         // design, since metrics are scoped to the B-20 token call path.
-        let storage_semantics = self.storage_semantics();
         if self.spec.upgrade() >= BaseUpgrade::Beryl {
-            B20Factory::install_with_observer_and_storage_semantics(
+            B20Factory::install_with_observer(
                 &mut precompiles,
                 self.spec.upgrade(),
                 observer.clone(),
-                storage_semantics,
             );
-            BerylLookup::install_with_observer_and_storage_semantics(
+            BerylLookup::install_with_observer(
                 &mut precompiles,
                 self.spec.upgrade(),
                 observer.clone(),
-                storage_semantics,
             );
-            PolicyRegistryPrecompile::install_with_observer_and_storage_semantics(
+            PolicyRegistryPrecompile::install_with_observer(
                 &mut precompiles,
                 self.spec.upgrade(),
                 observer.clone(),
-                storage_semantics,
             );
-            ActivationRegistry::install_with_observer_and_storage_semantics(
+            ActivationRegistry::install_with_observer(
                 &mut precompiles,
                 ActivationAdminConfig::new(
                     self.activation_admin_address,
                     self.spec.upgrade() >= BaseUpgrade::Cobalt,
                 ),
+                self.spec.upgrade(),
                 observer,
-                storage_semantics,
             );
         }
         if self.spec.upgrade() >= BaseUpgrade::Cobalt {
@@ -296,7 +292,7 @@ mod tests {
 
     use alloy_primitives::{Address, B256};
     use base_common_genesis::BaseUpgrade;
-    use base_precompile_storage::StorageSemantics;
+    use base_precompile_storage::StorageFeatures;
     use revm::{
         precompile::{Precompiles, bls12_381_const, bn254, modexp, secp256r1},
         primitives::eip7823,
@@ -594,13 +590,13 @@ mod tests {
     }
 
     #[rstest]
-    #[case::beryl(BaseUpgrade::Beryl, StorageSemantics::Legacy)]
-    #[case::cobalt(BaseUpgrade::Cobalt, StorageSemantics::Cobalt)]
-    fn storage_semantics_activate_at_cobalt(
+    #[case::beryl(BaseUpgrade::Beryl, StorageFeatures::Legacy)]
+    #[case::cobalt(BaseUpgrade::Cobalt, StorageFeatures::Cobalt)]
+    fn storage_features_activate_at_cobalt(
         #[case] spec: BaseUpgrade,
-        #[case] expected: StorageSemantics,
+        #[case] expected: StorageFeatures,
     ) {
-        assert_eq!(BasePrecompiles::new_with_spec(spec).storage_semantics(), expected);
+        assert_eq!(BasePrecompiles::new_with_spec(spec).storage_features(), expected);
     }
 
     #[test]

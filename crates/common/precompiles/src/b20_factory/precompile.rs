@@ -2,10 +2,9 @@
 
 use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
 use base_common_genesis::BaseUpgrade;
-use base_precompile_storage::StorageSemantics;
 
 use crate::{
-    B20FactoryStorage, BaseStorageSemantics, PrecompileCallObserver, macros::base_precompile,
+    B20FactoryStorage, BaseStorageFeatures, PrecompileCallObserver, macros::base_precompile,
 };
 
 /// Entry point for the `B20Factory` precompile.
@@ -22,30 +21,9 @@ impl B20Factory {
     ) where
         O: PrecompileCallObserver,
     {
-        Self::install_with_observer_and_storage_semantics(
-            precompiles,
-            upgrade,
-            observer,
-            BaseStorageSemantics::from_upgrade(upgrade),
-        );
-    }
-
-    /// Installs the `B20Factory` precompile with an observer and storage semantics.
-    pub fn install_with_observer_and_storage_semantics<O>(
-        precompiles: &mut PrecompilesMap,
-        upgrade: BaseUpgrade,
-        observer: O,
-        storage_semantics: StorageSemantics,
-    ) where
-        O: PrecompileCallObserver,
-    {
         precompiles.extend_precompiles(core::iter::once((
             B20FactoryStorage::ADDRESS,
-            Self::precompile_with_observer_and_storage_semantics(
-                upgrade,
-                observer,
-                storage_semantics,
-            ),
+            Self::precompile_with_observer(upgrade, observer),
         )));
     }
 
@@ -55,25 +33,10 @@ impl B20Factory {
     where
         O: PrecompileCallObserver,
     {
-        Self::precompile_with_observer_and_storage_semantics(
-            upgrade,
-            observer,
-            BaseStorageSemantics::from_upgrade(upgrade),
-        )
-    }
-
-    /// Creates the EVM precompile wrapper for `B20Factory` with storage semantics.
-    pub fn precompile_with_observer_and_storage_semantics<O>(
-        upgrade: BaseUpgrade,
-        observer: O,
-        storage_semantics: StorageSemantics,
-    ) -> DynPrecompile
-    where
-        O: PrecompileCallObserver,
-    {
+        let storage_features = BaseStorageFeatures::from_upgrade(upgrade);
         base_precompile!(
             "B20Factory",
-            storage_semantics: storage_semantics,
+            storage_features: storage_features,
             |ctx, calldata| {
             let observer = observer.clone();
             B20FactoryStorage::new(ctx).dispatch_with_observer(ctx, &calldata, upgrade, observer)

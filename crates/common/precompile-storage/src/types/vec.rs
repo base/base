@@ -59,7 +59,9 @@ where
         debug_assert!(ctx.is_full(), "Dynamic arrays cannot be packed");
 
         let data_start = calc_data_slot(len_slot);
-        if storage.storage_semantics().clears_dynamic_storage_tail() {
+        if storage.storage_features().dynamic_storage_tail_cleanup_enabled() {
+            // Cobalt intentionally charges an old-length SLOAD on every full Vec write so
+            // shrinking values can be detected, including when reusing storage written pre-fork.
             storage.ensure_writable()?;
             let old_len = load_checked_len(storage, len_slot)?;
             if self.len() < old_len {
@@ -505,6 +507,8 @@ where
         return Ok(());
     }
     if T::BYTES <= 16 {
+        // Only fully retired slots are cleared here. `store_packed_elements` rebuilds every
+        // retained slot from zero, which clears stale lanes in the shared boundary slot.
         let first_tail_slot = calc_packed_slot_count(new_len, T::BYTES);
         let old_slot_count = calc_packed_slot_count(old_len, T::BYTES);
         for slot_idx in first_tail_slot..old_slot_count {
@@ -557,7 +561,7 @@ where
 mod tests {
     use super::*;
     use crate::{
-        StorageSemantics, hashmap::setup_storage, packing::gen_word_from, storage_ctx::StorageCtx,
+        StorageFeatures, hashmap::setup_storage, packing::gen_word_from, storage_ctx::StorageCtx,
     };
 
     #[derive(Debug, Default, Clone, PartialEq, Eq, base_precompile_macros::Storable)]
@@ -809,7 +813,7 @@ mod tests {
     #[test]
     fn test_vec_store_shrink_clears_unpacked_tail_when_cleanup_enabled() {
         let (mut storage, address) = setup_storage();
-        storage.set_storage_semantics(StorageSemantics::Cobalt);
+        storage.set_storage_features(StorageFeatures::Cobalt);
 
         StorageCtx::enter(&mut storage, |ctx| {
             let len_slot = U256::from(651u64);
@@ -832,7 +836,7 @@ mod tests {
     #[test]
     fn test_vec_store_shrink_clears_packed_tail_when_cleanup_enabled() {
         let (mut storage, address) = setup_storage();
-        storage.set_storage_semantics(StorageSemantics::Cobalt);
+        storage.set_storage_features(StorageFeatures::Cobalt);
 
         StorageCtx::enter(&mut storage, |ctx| {
             let len_slot = U256::from(652u64);
@@ -858,7 +862,7 @@ mod tests {
     #[test]
     fn test_vec_store_packed_boundary_shrink_avoids_redundant_storage_ops() {
         let (mut storage, address) = setup_storage();
-        storage.set_storage_semantics(StorageSemantics::Cobalt);
+        storage.set_storage_features(StorageFeatures::Cobalt);
 
         StorageCtx::enter(&mut storage, |ctx| {
             let len_slot = U256::from(653u64);
@@ -890,7 +894,7 @@ mod tests {
                 U256::ZERO
             );
         });
-        storage.set_storage_semantics(StorageSemantics::Cobalt);
+        storage.set_storage_features(StorageFeatures::Cobalt);
 
         StorageCtx::enter(&mut storage, |ctx| {
             let handler = VecHandler::<String>::new(len_slot, address, ctx);
@@ -908,7 +912,7 @@ mod tests {
     #[test]
     fn test_vec_store_cleans_nested_dynamic_struct_fields() {
         let (mut storage, address) = setup_storage();
-        storage.set_storage_semantics(StorageSemantics::Cobalt);
+        storage.set_storage_features(StorageFeatures::Cobalt);
 
         StorageCtx::enter(&mut storage, |ctx| {
             let len_slot = U256::from(655u64);

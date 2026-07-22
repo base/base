@@ -19,7 +19,7 @@ use revm::{
 
 use crate::{
     error::{BasePrecompileError, IntoPrecompileResult, Result},
-    provider::{PrecompileStorageProvider, StorageSemantics},
+    provider::{PrecompileStorageProvider, StorageFeatures},
 };
 
 type ScopedProvider<'a> = dyn PrecompileStorageProvider + 'a;
@@ -190,9 +190,9 @@ impl<'a> StorageCtx<'a> {
     pub fn reservoir(&self) -> u64 {
         self.with_storage(|s| s.reservoir())
     }
-    /// Returns the active persistent-storage semantics.
-    pub fn storage_semantics(&self) -> StorageSemantics {
-        self.with_storage(|s| s.storage_semantics())
+    /// Returns the active persistent-storage features.
+    pub fn storage_features(&self) -> StorageFeatures {
+        self.with_storage(|s| s.storage_features())
     }
     /// Returns whether the current call context is static.
     pub fn is_static(&self) -> bool {

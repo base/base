@@ -5,11 +5,11 @@ macro_rules! base_precompile {
     ($id:expr, |$ctx:ident, $calldata:ident| $impl:expr $(,)?) => {{
         $crate::macros::base_precompile!(
             $id,
-            storage_semantics: ::base_precompile_storage::StorageSemantics::Legacy,
+            storage_features: ::base_precompile_storage::StorageFeatures::Legacy,
             |$ctx, $calldata| $impl,
         )
     }};
-    ($id:expr, storage_semantics: $storage_semantics:expr, |$ctx:ident, $calldata:ident| $impl:expr $(,)?) => {{
+    ($id:expr, storage_features: $storage_features:expr, |$ctx:ident, $calldata:ident| $impl:expr $(,)?) => {{
         ::alloy_evm::precompiles::DynPrecompile::new_stateful(
             ::revm::precompile::PrecompileId::Custom($id.into()),
             move |input| {
@@ -21,30 +21,11 @@ macro_rules! base_precompile {
                 }
 
                 let $calldata: ::alloy_primitives::Bytes = input.data.to_vec().into();
-                let mut provider = ::base_precompile_storage::EvmPrecompileStorageProvider::new_with_storage_semantics(
+                let mut provider = ::base_precompile_storage::EvmPrecompileStorageProvider::new_with_storage_features(
                     input,
                     ::revm::context_interface::cfg::GasParams::default(),
-                    $storage_semantics,
+                    $storage_features,
                 );
-
-                ::base_precompile_storage::StorageCtx::enter(&mut provider, |$ctx| $impl)
-            },
-        )
-    }};
-    ($id:expr, |$input:ident, $ctx:ident, $calldata:ident| $impl:expr $(,)?) => {{
-        ::alloy_evm::precompiles::DynPrecompile::new_stateful(
-            ::revm::precompile::PrecompileId::Custom($id.into()),
-            move |$input| {
-                if !$input.is_direct_call() {
-                    return ::base_precompile_storage::BasePrecompileError::revert(
-                        ::base_precompile_storage::DelegateCallNotAllowed {},
-                    )
-                    .into_precompile_result(0, 0);
-                }
-
-                let $calldata: ::alloy_primitives::Bytes = $input.data.to_vec().into();
-                let mut provider =
-                    ::base_precompile_storage::EvmPrecompileStorageProvider::new($input);
 
                 ::base_precompile_storage::StorageCtx::enter(&mut provider, |$ctx| $impl)
             },

@@ -94,9 +94,9 @@ pub trait PrecompileStorageProvider {
     /// Returns zero when no reservoir was provided at construction time.
     fn reservoir(&self) -> u64;
 
-    /// Returns the active persistent-storage semantics.
-    fn storage_semantics(&self) -> StorageSemantics {
-        StorageSemantics::Legacy
+    /// Returns the active persistent-storage features.
+    fn storage_features(&self) -> StorageFeatures {
+        StorageFeatures::Legacy
     }
 
     /// Returns whether the current call context is static.
@@ -135,22 +135,20 @@ pub trait PrecompileStorageProvider {
 /// Abstracts over persistent (SLOAD/SSTORE) and transient (TLOAD/TSTORE) storage.
 pub trait StorageOps {
     /// Checks whether writes are allowed before any preparatory reads occur.
-    fn ensure_writable(&self) -> Result<()> {
-        Ok(())
-    }
+    fn ensure_writable(&self) -> Result<()>;
     /// Stores a value at the provided slot.
     fn store(&mut self, slot: U256, value: U256) -> Result<()>;
     /// Loads a value from the provided slot.
     fn load(&self, slot: U256) -> Result<U256>;
-    /// Returns the active persistent-storage semantics.
-    fn storage_semantics(&self) -> StorageSemantics {
-        StorageSemantics::Legacy
+    /// Returns the active persistent-storage features.
+    fn storage_features(&self) -> StorageFeatures {
+        StorageFeatures::Legacy
     }
 }
 
-/// Fork-dependent behavior for persistent storage writes.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum StorageSemantics {
+/// Fork-dependent features for persistent storage writes.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum StorageFeatures {
     /// Preserve storage behavior from before Cobalt activation.
     #[default]
     Legacy,
@@ -158,10 +156,10 @@ pub enum StorageSemantics {
     Cobalt,
 }
 
-impl StorageSemantics {
-    /// Returns whether shrinking dynamic values clears retired backing slots.
-    pub const fn clears_dynamic_storage_tail(self) -> bool {
-        matches!(self, Self::Cobalt)
+impl StorageFeatures {
+    /// Returns whether dynamic storage tail cleanup is enabled.
+    pub fn dynamic_storage_tail_cleanup_enabled(self) -> bool {
+        self >= Self::Cobalt
     }
 }
 

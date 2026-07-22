@@ -214,7 +214,9 @@ fn store_bytes_like<S: StorageOps>(bytes: &[u8], storage: &mut S, base_slot: U25
     let new_length = bytes.len();
     let new_chunks = if new_length <= 31 { 0 } else { calc_chunks(new_length) };
 
-    if storage.storage_semantics().clears_dynamic_storage_tail() {
+    if storage.storage_features().dynamic_storage_tail_cleanup_enabled() {
+        // Cobalt intentionally charges an old-metadata SLOAD on every bytes-like write so
+        // shrinking values can be detected, including when reusing storage written pre-fork.
         storage.ensure_writable()?;
         clear_stale_long_tail(storage, base_slot, new_chunks)?;
     }
@@ -341,7 +343,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        StorageSemantics, hashmap::setup_storage, provider::Handler, storage_ctx::StorageCtx,
+        StorageFeatures, hashmap::setup_storage, provider::Handler, storage_ctx::StorageCtx,
     };
 
     fn arb_safe_slot() -> impl Strategy<Value = U256> {
@@ -442,7 +444,7 @@ mod tests {
     #[test]
     fn store_short_clears_stale_long_tail_when_cleanup_enabled() {
         let (mut storage, address) = setup_storage();
-        storage.set_storage_semantics(StorageSemantics::Cobalt);
+        storage.set_storage_features(StorageFeatures::Cobalt);
 
         StorageCtx::enter(&mut storage, |ctx| {
             let base_slot = U256::from(5001u64);
@@ -463,7 +465,7 @@ mod tests {
     #[test]
     fn store_shorter_long_clears_only_retired_chunks_when_cleanup_enabled() {
         let (mut storage, address) = setup_storage();
-        storage.set_storage_semantics(StorageSemantics::Cobalt);
+        storage.set_storage_features(StorageFeatures::Cobalt);
 
         StorageCtx::enter(&mut storage, |ctx| {
             let base_slot = U256::from(5002u64);
@@ -484,7 +486,7 @@ mod tests {
     #[test]
     fn malformed_previous_length_fails_before_overwrite() {
         let (mut storage, address) = setup_storage();
-        storage.set_storage_semantics(StorageSemantics::Cobalt);
+        storage.set_storage_features(StorageFeatures::Cobalt);
 
         StorageCtx::enter(&mut storage, |ctx| {
             let base_slot = U256::from(5003u64);
@@ -509,7 +511,7 @@ mod tests {
                 .write(Bytes::from(vec![0x11; 64]))
                 .unwrap();
         });
-        storage.set_storage_semantics(StorageSemantics::Cobalt);
+        storage.set_storage_features(StorageFeatures::Cobalt);
         storage.set_static(true);
         storage.reset_counters();
 
