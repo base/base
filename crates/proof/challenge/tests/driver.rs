@@ -110,7 +110,7 @@ fn test_driver_with_l1_provider(
     })
 }
 
-fn tee_proposal(output_root: B256, prev_output_root: B256) -> Proposal {
+const fn tee_proposal(output_root: B256, prev_output_root: B256) -> Proposal {
     Proposal {
         output_root,
         signature: Bytes::from_static(&[0; 65]),
@@ -653,7 +653,7 @@ async fn test_step_tee_contract_revert_falls_back_to_zk() {
     ]);
 
     let mut driver = test_driver_with_l1_provider(
-        factory.clone(),
+        Arc::<MockDisputeGameFactory>::clone(&factory),
         Arc::clone(&verifier),
         l2,
         Arc::clone(&zk),
