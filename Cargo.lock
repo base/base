@@ -10379,7 +10379,7 @@ dependencies = [
  "parking_lot",
  "portable-atomic",
  "quanta",
- "rand 0.8.6",
+ "rand 0.8.7",
  "smallvec",
  "spinning_top",
 ]
