@@ -38,6 +38,12 @@ pub use ticker::ScheduledTicker;
 mod pool;
 pub use pool::PoolActivation;
 
+mod pipeline_state;
+pub use pipeline_state::BuildPipelineState;
+
+mod shadow_state;
+pub use shadow_state::ShadowSequencingState;
+
 mod actor;
 pub use actor::{PendingStopSender, SequencerActor};
 

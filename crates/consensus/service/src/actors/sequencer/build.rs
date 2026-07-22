@@ -33,6 +33,13 @@ pub struct UnsealedPayloadHandle {
     pub attributes_with_parent: AttributesWithParent,
 }
 
+impl UnsealedPayloadHandle {
+    /// Returns the number of the block represented by this payload.
+    pub const fn block_number(&self) -> u64 {
+        self.attributes_with_parent.parent().block_info.number.saturating_add(1)
+    }
+}
+
 /// Drives payload attribute preparation and block build initiation.
 ///
 /// Owns the build-side dependencies (`attributes_builder`, `origin_selector`,
