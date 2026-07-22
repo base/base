@@ -23,9 +23,12 @@ mod sidecar;
 pub use sidecar::BaseExecutionPayloadSidecar;
 
 mod payload;
+#[cfg(feature = "std")]
+pub use payload::{BoundedTransactions, BoundedWithdrawals};
 pub use payload::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4,
     BaseExecutionPayloadEnvelopeV5, BaseExecutionPayloadV4, BasePayloadError,
+    MAX_TRANSACTIONS_PER_PAYLOAD, MAX_WITHDRAWALS_PER_PAYLOAD,
 };
 
 #[cfg(feature = "reth")]

@@ -7,7 +7,12 @@ mod v3;
 pub use v3::BaseExecutionPayloadEnvelopeV3;
 
 mod v4;
-pub use v4::{BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadV4};
+#[cfg(feature = "std")]
+pub use v4::{BoundedTransactions, BoundedWithdrawals};
+pub use v4::{
+    BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadV4, MAX_TRANSACTIONS_PER_PAYLOAD,
+    MAX_WITHDRAWALS_PER_PAYLOAD,
+};
 
 mod v5;
 use alloc::vec::Vec;
