@@ -6,7 +6,7 @@
 
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
-    num::NonZeroUsize,
+    num::{NonZeroU64, NonZeroUsize},
     sync::Arc,
     time::Duration,
 };
@@ -72,6 +72,12 @@ pub struct InProcessConsensusConfig {
     pub sequencer_stopped: bool,
     /// Number of L1 blocks to keep distance from the L1 head for the verifier.
     pub verifier_l1_confs: u64,
+    /// Number of private blocks to build per cycle when running as a shadow sequencer.
+    ///
+    /// When [`None`], the node runs as a normal sequencer. When [`Some`], the node runs as a
+    /// shadow sequencer: it buffers canonical payloads gossiped by the active sequencer, builds
+    /// the given number of private blocks per cycle, then reconciles back to the canonical chain.
+    pub shadow_blocks_per_cycle: Option<NonZeroU64>,
 }
 
 /// A running in-process consensus node.
@@ -194,6 +200,7 @@ impl InProcessConsensus {
         if config.mode == NodeMode::Sequencer {
             builder = builder.with_sequencer_config(SequencerConfig {
                 sequencer_stopped: config.sequencer_stopped,
+                shadow_blocks_per_cycle: config.shadow_blocks_per_cycle,
                 ..Default::default()
             });
         }

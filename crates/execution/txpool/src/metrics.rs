@@ -13,10 +13,10 @@ base_metrics::define_metrics! {
     #[describe("EIP-8130 transactions invalidated and evicted ahead of the builder")]
     #[label(
         name = "cause",
-        default = ["state_diff", "balance_update", "expiry", "feed_gap", "reconcile"]
+        default = ["state_diff", "balance_update", "expiry", "reorg", "feed_gap", "reconcile"]
     )]
     invalidated: counter,
-    #[describe("Occupied expiry buckets fired on canonical updates (one-block lookahead eviction)")]
+    #[describe("Occupied expiry buckets fired on canonical state updates")]
     expiry_buckets_fired: counter,
     #[describe("Transactions currently tracked by the admission/invalidation guard")]
     tracked: gauge,
@@ -57,10 +57,11 @@ impl GuardMetrics {
         }
     }
 
-    /// Records bulk invalidations after a canonical-state feed gap or reorg.
-    pub fn record_feed_gap_invalidations(count: usize) {
+    /// Records bulk invalidations that flush every guarded transaction, labeled
+    /// by cause so a common reorg is distinguishable from a rare feed gap.
+    pub fn record_bulk_invalidations(count: usize, cause: crate::InvalidationCause) {
         if count > 0 {
-            Self::invalidated("feed_gap").increment(count as u64);
+            Self::invalidated(cause.as_label()).increment(count as u64);
         }
     }
 
@@ -86,4 +87,7 @@ base_metrics::define_metrics! {
     #[describe("EIP-8130 authorization wall time by sender authenticator type")]
     #[label(name = "sig_type", default = ["k1", "p256", "passkey", "delegate", "delegate-k1", "delegate-p256", "delegate-passkey", "other"])]
     auth_seconds: histogram,
+    #[describe("EIP-8130 lock-classification account-state resolutions by read source")]
+    #[label(name = "source", default = ["cache", "prefetch", "sload"])]
+    classification_state_reads: counter,
 }

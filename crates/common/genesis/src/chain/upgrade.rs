@@ -85,9 +85,9 @@ hardfork!(
         /// Jovian: Base network upgrade.
         Jovian,
         /// Azul: First Base-specific network upgrade.
-        #[default]
         Azul,
         /// Beryl: Second Base-specific network upgrade.
+        #[default]
         Beryl,
         /// Cobalt: Third Base-specific network upgrade.
         Cobalt,
@@ -99,7 +99,7 @@ hardfork!(
 
 impl BaseUpgrade {
     /// Latest Base upgrade used by default.
-    pub const LATEST: Self = Self::Azul;
+    pub const LATEST: Self = Self::Beryl;
 
     /// The execution fork ladder, in activation order.
     ///
@@ -258,6 +258,18 @@ impl BaseUpgrade {
             .filter(|b| !b.is_ascii_whitespace() && !matches!(b, b'_' | b'-'))
             .map(|b| b.to_ascii_lowercase() as char)
             .collect()
+    }
+
+    /// Returns the active upgrade at the given timestamp for the specified chain.
+    pub fn from_chain_and_timestamp(chain_id: u64, timestamp: u64) -> Option<Self> {
+        let config = UpgradeConfig::for_chain_id(chain_id)?;
+
+        Self::EXECUTION_VARIANTS.into_iter().rev().find(|&upgrade| {
+            upgrade == Self::Bedrock
+                || config
+                    .activation_timestamp(upgrade)
+                    .is_some_and(|activation| timestamp >= activation)
+        })
     }
 }
 
@@ -559,6 +571,62 @@ impl Display for UpgradeConfig {
 }
 
 impl UpgradeConfig {
+    /// Base Mainnet upgrade schedule used by [`BaseUpgrade::from_chain_and_timestamp`].
+    ///
+    /// This schedule lives here because `base-common-chains` already depends on this crate;
+    /// importing its `ChainConfig` would create a circular crate dependency.
+    pub const BASE_MAINNET: Self = Self {
+        regolith_time: Some(0),
+        canyon_time: Some(1_704_992_401),
+        delta_time: Some(1_708_560_000),
+        ecotone_time: Some(1_710_374_401),
+        fjord_time: Some(1_720_627_201),
+        granite_time: Some(1_726_070_401),
+        holocene_time: Some(1_736_445_601),
+        pectra_blob_schedule_time: None,
+        isthmus_time: Some(1_746_806_401),
+        jovian_time: Some(1_764_691_201),
+        base: BaseUpgradeConfig {
+            azul: Some(1_779_991_200),
+            beryl: Some(1_782_410_400),
+            cobalt: None,
+        },
+    };
+
+    /// Base Sepolia upgrade schedule used by [`BaseUpgrade::from_chain_and_timestamp`].
+    ///
+    /// This schedule lives here because `base-common-chains` already depends on this crate;
+    /// importing its `ChainConfig` would create a circular crate dependency.
+    pub const BASE_SEPOLIA: Self = Self {
+        regolith_time: Some(0),
+        canyon_time: Some(1_699_981_200),
+        delta_time: Some(1_703_203_200),
+        ecotone_time: Some(1_708_534_800),
+        fjord_time: Some(1_716_998_400),
+        granite_time: Some(1_723_478_400),
+        holocene_time: Some(1_732_633_200),
+        pectra_blob_schedule_time: Some(1_742_486_400),
+        isthmus_time: Some(1_744_905_600),
+        jovian_time: Some(1_763_568_001),
+        base: BaseUpgradeConfig {
+            azul: Some(1_776_708_000),
+            beryl: Some(1_781_805_600),
+            cobalt: None,
+        },
+    };
+
+    /// Returns the upgrade schedule for a chain ID.
+    ///
+    /// This function is used by [`BaseUpgrade::from_chain_and_timestamp`] to determine the
+    /// upgrade schedule for a given chain ID.
+    pub const fn for_chain_id(chain_id: u64) -> Option<Self> {
+        match chain_id {
+            8453 => Some(Self::BASE_MAINNET),
+            84532 => Some(Self::BASE_SEPOLIA),
+            _ => None,
+        }
+    }
+
     /// Clears all timestamp-based upgrade activation times.
     pub fn clear_activation_timestamps(&mut self) {
         self.regolith_time = None;
@@ -881,5 +949,53 @@ mod runtime_tests {
         assert_eq!(upgrades.base.azul, Some(42));
         assert_eq!(upgrades.base.cobalt, Some(84));
         assert_eq!(upgrades.activation(BaseUpgrade::Zombie), UpgradeActivation::Never);
+    }
+
+    #[test]
+    fn known_chains_resolve_activation_boundaries() {
+        for (chain_id, config) in
+            [(8453, UpgradeConfig::BASE_MAINNET), (84532, UpgradeConfig::BASE_SEPOLIA)]
+        {
+            let mut previous = BaseUpgrade::Bedrock;
+
+            for upgrade in BaseUpgrade::EXECUTION_VARIANTS {
+                let Some(activation) = config.activation_timestamp(upgrade) else {
+                    continue;
+                };
+
+                if activation > 0 {
+                    assert_eq!(
+                        BaseUpgrade::from_chain_and_timestamp(chain_id, activation - 1),
+                        Some(previous),
+                        "chain {chain_id} immediately before {upgrade:?}",
+                    );
+                }
+
+                assert_eq!(
+                    BaseUpgrade::from_chain_and_timestamp(chain_id, activation),
+                    Some(upgrade),
+                    "chain {chain_id} at {upgrade:?} activation",
+                );
+
+                previous = upgrade;
+            }
+        }
+    }
+
+    #[test]
+    fn unknown_chains_do_not_resolve() {
+        for chain_id in [1, 10, 9_999_999] {
+            assert_eq!(BaseUpgrade::from_chain_and_timestamp(chain_id, u64::MAX), None);
+        }
+    }
+
+    #[test]
+    fn far_future_resolves_latest_scheduled_upgrade() {
+        for chain_id in [8453, 84532] {
+            assert_eq!(
+                BaseUpgrade::from_chain_and_timestamp(chain_id, u64::MAX),
+                Some(BaseUpgrade::Beryl)
+            );
+        }
     }
 }

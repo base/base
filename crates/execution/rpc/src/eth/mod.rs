@@ -7,6 +7,7 @@ pub mod transaction;
 mod block;
 mod call;
 mod pending_block;
+mod pubsub;
 
 use std::{
     fmt::{self, Formatter},
@@ -27,8 +28,8 @@ use reth_rpc_eth_api::{
     EthApiTypes, FromEvmError, FullEthApiServer, RpcConvert, RpcConverter, RpcNodeCore,
     RpcNodeCoreExt, RpcTypes,
     helpers::{
-        EthApiSpec, EthFees, EthState, EthSubscriptions, GetBlockAccessList, LoadFee,
-        LoadPendingBlock, LoadState, SpawnBlocking, Trace, pending_block::BuildPendingEnv,
+        EthApiSpec, EthFees, EthState, GetBlockAccessList, LoadFee, LoadPendingBlock, LoadState,
+        SpawnBlocking, Trace, pending_block::BuildPendingEnv,
     },
 };
 use reth_rpc_eth_types::{EthStateCache, FeeHistoryCache, GasPriceOracle};
@@ -160,13 +161,6 @@ where
     fn starting_block(&self) -> U256 {
         self.inner.eth_api.starting_block()
     }
-}
-
-impl<N, Rpc> EthSubscriptions for BaseEthApi<N, Rpc>
-where
-    N: RpcNodeCore,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
-{
 }
 
 impl<N, Rpc> SpawnBlocking for BaseEthApi<N, Rpc>

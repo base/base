@@ -664,6 +664,30 @@ mod tests {
     }
 
     #[test]
+    fn activation_schedule_matches_upgrade_config() {
+        // Guard against drift between canonical `ChainConfig` schedules, the duplicated
+        // `UpgradeConfig` constants, and their chain-ID lookup.
+        for (chain, schedule) in [
+            (ChainConfig::mainnet(), UpgradeConfig::BASE_MAINNET),
+            (ChainConfig::sepolia(), UpgradeConfig::BASE_SEPOLIA),
+        ] {
+            assert_eq!(
+                schedule,
+                chain.upgrade_config(),
+                "upgrade schedule drift for chain {}",
+                chain.chain_id
+            );
+
+            assert_eq!(
+                UpgradeConfig::for_chain_id(chain.chain_id),
+                Some(schedule),
+                "upgrade schedule lookup drift for chain {}",
+                chain.chain_id
+            );
+        }
+    }
+
+    #[test]
     fn supported_chain_names_resolve() {
         for name in ChainConfig::SUPPORTED_NAMES {
             assert!(ChainConfig::by_name(name).is_some(), "{name} should resolve");
