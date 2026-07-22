@@ -15,8 +15,8 @@ impl ScheduleId {
         let mut schedule_id = B256::ZERO;
         for (index, (_, timestamp)) in upgrades.iter().enumerate() {
             match timestamp {
-                // Unscheduled (None, or 0 = the contract's "not scheduled" sentinel, which also
-                // covers genesis-active forks like mainnet regolith): carry the link forward.
+                // Unscheduled (None, or 0 = the contract's "not scheduled" sentinel): carry the
+                // link forward.
                 None | Some(0) => {}
                 Some(timestamp) => {
                     schedule_id = Self::next_link(schedule_id, index as u64, timestamp);
@@ -71,10 +71,11 @@ mod tests {
     fn schedule_id_matches_mainnet_golden_value() {
         // Cross-implementation golden value for the Base mainnet schedule as of Beryl, shared
         // with the contracts repo (`test_scheduleId_matchesMainnetGoldenValue_succeeds` in
-        // test/L1/ProtocolVersions.t.sol). The genesis-active regolith (0), the mainnet
-        // pectra_blob_schedule gap (None), and the unscheduled cobalt tail contribute no link.
+        // test/L1/ProtocolVersions.t.sol). Genesis-active regolith is pinned to the genesis
+        // timestamp (0 is the contract's "not scheduled" sentinel); the mainnet
+        // pectra_blob_schedule gap (None) and the unscheduled cobalt tail contribute no link.
         let mainnet = UpgradeConfig {
-            regolith_time: Some(0),
+            regolith_time: Some(1_686_789_347),
             canyon_time: Some(1_704_992_401),
             delta_time: Some(1_708_560_000),
             ecotone_time: Some(1_710_374_401),
@@ -93,14 +94,14 @@ mod tests {
 
         assert_eq!(
             ScheduleId::from_upgrades(&mainnet),
-            b256!("e7ed922ecb2a9d7704cf21e21c62313eabe90f345c212cad1a4706633dcf4efd")
+            b256!("689503a0192dda23fbb770faf397d562a78ff4ec69df10b596c94c9a437e0f72")
         );
     }
 
     #[test]
     fn schedule_id_treats_zero_timestamp_as_unscheduled() {
-        // The contract encodes "not scheduled" as timestamp 0, so `Some(0)` (e.g. mainnet's
-        // genesis-active regolith) must hash identically to `None`.
+        // The contract encodes "not scheduled" as timestamp 0, so `Some(0)` must hash
+        // identically to `None`.
         let zero =
             UpgradeConfig { regolith_time: Some(0), canyon_time: Some(20), ..Default::default() };
         let none =
