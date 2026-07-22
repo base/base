@@ -254,7 +254,7 @@ services:
   # Post-genesis dev-multiproof registration — two ordered one-shots.
   # AggregateVerifier.CONFIG_HASH is immutable and depends on the L2 rollup config, which only
   # exists after genesis, so SystemDeploy defers the verifier (MULTIPROOF_DEFER_REGISTRATION).
-  # 1) compute-config-hash: read the real hash from the running op-node.
+  # 1) compute-config-hash: compute the hash from the committed rollup config file (no node).
   # 2) register-aggregate-verifier: deploy + register the verifier with that hash.
   # base-l1 profile only: this flow is specific to the L3 / dev-multiproof devnet. In eth-l1 mode
   # multiproof is disabled and the deploy is not deferred, so these services are not created.
@@ -266,8 +266,6 @@ services:
     container_name: compute-config-hash
     profiles: ["base-l1"]
     depends_on:
-      base-builder:
-        condition: service_healthy
       patch-genesis-hash:
         condition: service_completed_successfully
     volumes:
@@ -275,7 +273,7 @@ services:
       - ../../etc/scripts/devnet/compute-config-hash.sh:/compute-config-hash.sh:ro
     user: root
     environment:
-      - L2_CL_URL=http://base-builder:${L2_BUILDER_CL_RPC_PORT}
+      - ROLLUP_CONFIG=/configs/rollup.json
       - OUTPUT_DIR=/configs
     entrypoint: ["/bin/bash", "/compute-config-hash.sh"]
     restart: on-failure
@@ -752,9 +750,10 @@ services:
   # prover_prove JSON-RPC on :8000. L3 (base-l1) only. Runs the enclave in-process and signs with
   # BASE_ENCLAVE_SIGNER_KEY — which must equal DEV_TEE_SIGNER_KEY (the key behind DEV_TEE_SIGNER
   # registered on-chain during SystemDeploy); otherwise proofs are signed by a random key and fail
-  # on-chain verification. FETCH_ROLLUP_CONFIG + L2_CL_URL make it derive the rollup config (and
-  # thus the config hash) from the live op-node, so the ephemeral L2 chain id works without a
-  # built-in config. L1_BEACON_URL is intentionally unset so the entrypoint selects calldata-only.
+  # on-chain verification. ROLLUP_CONFIG points it at the committed rollup.json so it resolves the
+  # rollup config (and thus the config hash) from the file — letting the ephemeral L2 chain id work
+  # without a built-in config or a running op-node. L1_BEACON_URL is intentionally unset so the
+  # entrypoint selects calldata-only.
   nitro-local:
     image: nitro-host-local:local
     build:
@@ -765,13 +764,16 @@ services:
     depends_on:
       base-rpc:
         condition: service_healthy
+      patch-genesis-hash:
+        condition: service_completed_successfully
+    volumes:
+      - ../../.devnet/l2/configs:/configs
     environment:
       - LISTEN_ADDR=0.0.0.0:8000
       - L1_ETH_URL=http://l1-el:${L1_HTTP_PORT}
       - L2_ETH_URL=http://base-rpc:${L2_BASE_RPC_HTTP_PORT}
       - L2_CHAIN_ID=${L2_CHAIN_ID}
-      - FETCH_ROLLUP_CONFIG=true
-      - L2_CL_URL=http://base-rpc:${L2_BASE_RPC_CL_RPC_PORT}
+      - ROLLUP_CONFIG=/configs/rollup.json
       - BASE_ENCLAVE_SIGNER_KEY=${DEV_TEE_SIGNER_KEY}
     healthcheck:
       test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/8000"]
