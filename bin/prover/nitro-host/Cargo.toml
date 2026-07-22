@@ -29,6 +29,7 @@ base-proof-tee-nitro-enclave = { workspace = true, optional = true }
 # CLI / errors
 eyre.workspace = true
 base-cli-utils.workspace = true
+serde_json = { workspace = true, features = ["std"] }
 clap = { workspace = true, features = ["derive", "env"] }
 serde = { workspace = true, features = ["derive", "std"] }
 
@@ -38,7 +39,6 @@ tokio = { workspace = true, features = ["full"] }
 
 # Primitives / identifiers
 alloy-primitives.workspace = true
-alloy-provider = { workspace = true, features = ["reqwest"] }
 uuid = { workspace = true, features = ["v4"] }
 
 # Tracing
@@ -46,6 +46,9 @@ tracing.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 base-proof-tee-nitro-enclave.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [features]
 local = [ "dep:base-proof-tee-nitro-enclave" ]

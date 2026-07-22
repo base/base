@@ -6,9 +6,12 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use std::time::Duration;
+use std::{
+    fs::File,
+    path::{Path, PathBuf},
+};
 
 use alloy_primitives::Address;
-use alloy_provider::{Provider, ProviderBuilder};
 use base_cli_utils::{LogConfig, RuntimeManager};
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_common_chains::rollup_config;
@@ -67,10 +70,10 @@ pub(crate) struct Cli {
 enum Command {
     /// Compute the on-chain config hash for a chain and print it as `0x…`.
     ///
-    /// Resolves the chain's `RollupConfig` (from op-node via `optimism_rollupConfig`)
-    /// and hashes it with the same `PerChainConfig` encoding the enclave uses, so the
-    /// printed value is exactly what must be set as `AggregateVerifier.CONFIG_HASH`.
-    /// Available on all targets — no enclave/NSM required.
+    /// Reads the chain's `RollupConfig` from a JSON file (e.g. `rollup.json`) and hashes
+    /// it with the same `PerChainConfig` encoding the enclave uses, so the printed value is
+    /// exactly what must be set as `AggregateVerifier.CONFIG_HASH`. Computed offline with no
+    /// RPC and no running nodes. Available on all targets — no enclave/NSM required.
     ConfigHash(ConfigHashArgs),
 
     /// Claim Nitro TEE jobs from prover-service and forward them to the enclave over vsock.
@@ -85,14 +88,14 @@ enum Command {
 /// Arguments for the `config-hash` subcommand.
 #[derive(Parser)]
 struct ConfigHashArgs {
-    /// L2 consensus-layer (op-node) RPC URL serving `optimism_rollupConfig`.
-    #[arg(long, env = "L2_CL_URL")]
-    l2_cl_url: String,
+    /// Path to the chain's rollup config JSON (e.g. `rollup.json`).
+    #[arg(long, env = "ROLLUP_CONFIG")]
+    rollup_config: PathBuf,
 }
 
 impl ConfigHashArgs {
-    async fn run(self) -> eyre::Result<()> {
-        let rollup_config = fetch_rollup_config_from_rpc(&self.l2_cl_url).await?;
+    fn run(self) -> eyre::Result<()> {
+        let rollup_config = load_rollup_config(&self.rollup_config)?;
         let mut per_chain = PerChainConfig::from_rollup_config(&rollup_config)
             .ok_or_else(|| eyre!("rollup config is missing genesis.system_config"))?;
         per_chain.force_defaults();
@@ -138,18 +141,12 @@ struct ProverRuntimeArgs {
     #[arg(long, env = "TEE_PROVER_REGISTRY_ADDRESS")]
     tee_prover_registry_address: Option<Address>,
 
-    /// Fetch the full rollup config via `optimism_rollupConfig` RPC at startup.
-    /// Requires `--l2-cl-url`. Intended for devnet/ephemeral chains whose
-    /// chain ID is not in the built-in config table. For built-in chain IDs,
-    /// the enclave's `BootInfo::load` will use the hardcoded config regardless.
-    #[arg(long, env = "FETCH_ROLLUP_CONFIG", requires = "l2_cl_url")]
-    fetch_rollup_config: bool,
-
-    /// L2 consensus-layer (op-node) RPC URL. Required when
-    /// `--fetch-rollup-config` is set — `optimism_rollupConfig` is served by
-    /// op-node, not the execution-layer endpoint.
-    #[arg(long, env = "L2_CL_URL")]
-    l2_cl_url: Option<String>,
+    /// Path to the chain's rollup config JSON (e.g. `rollup.json`), read at startup.
+    /// Intended for devnet/ephemeral chains whose chain ID is not in the built-in
+    /// config table. For built-in chain IDs, the enclave's `BootInfo::load` uses the
+    /// hardcoded config regardless.
+    #[arg(long, env = "ROLLUP_CONFIG")]
+    rollup_config: Option<PathBuf>,
 }
 
 #[cfg(any(target_os = "linux", feature = "local"))]
@@ -179,41 +176,39 @@ impl ProverRuntimeArgs {
         })
     }
 
-    async fn prover_config(self) -> eyre::Result<ProverConfig> {
+    fn prover_config(self) -> eyre::Result<ProverConfig> {
         let l1_beacon_url = self.l1_beacon_url()?;
 
-        let rollup_config = if self.fetch_rollup_config {
-            let cl_url = self
-                .l2_cl_url
-                .as_deref()
-                .expect("clap `requires` guarantees --l2-cl-url is present");
-            let rpc = fetch_rollup_config_from_rpc(cl_url).await?;
+        let rollup_config = if let Some(path) = self.rollup_config.as_deref() {
+            let cfg = load_rollup_config(path)?;
 
-            if rpc.l2_chain_id.id() != self.l2_chain_id {
+            if cfg.l2_chain_id.id() != self.l2_chain_id {
                 return Err(eyre!(
-                    "chain ID mismatch: --l2-chain-id is {} but the L2 node returned {}",
+                    "chain ID mismatch: --l2-chain-id is {} but {} contains {}",
                     self.l2_chain_id,
-                    rpc.l2_chain_id.id(),
+                    path.display(),
+                    cfg.l2_chain_id.id(),
                 ));
             }
 
-            let rpc_sc = rpc.genesis.system_config.as_ref();
+            let sc = cfg.genesis.system_config.as_ref();
             info!(
-                genesis_l1_hash = %rpc.genesis.l1.hash,
-                genesis_l1_number = rpc.genesis.l1.number,
-                genesis_l2_hash = %rpc.genesis.l2.hash,
-                genesis_l2_number = rpc.genesis.l2.number,
-                genesis_l2_time = rpc.genesis.l2_time,
-                block_time = rpc.block_time,
-                deposit_contract = %rpc.deposit_contract_address,
-                system_config_address = %rpc.l1_system_config_address,
-                batcher_address = %rpc_sc.map(|sc| sc.batcher_address.to_string()).unwrap_or_default(),
-                gas_limit = rpc_sc.map(|sc| sc.gas_limit).unwrap_or_default(),
-                scalar = %rpc_sc.map(|sc| sc.scalar).unwrap_or_default(),
-                "using rollup config from L2 node RPC"
+                path = %path.display(),
+                genesis_l1_hash = %cfg.genesis.l1.hash,
+                genesis_l1_number = cfg.genesis.l1.number,
+                genesis_l2_hash = %cfg.genesis.l2.hash,
+                genesis_l2_number = cfg.genesis.l2.number,
+                genesis_l2_time = cfg.genesis.l2_time,
+                block_time = cfg.block_time,
+                deposit_contract = %cfg.deposit_contract_address,
+                system_config_address = %cfg.l1_system_config_address,
+                batcher_address = %sc.map(|sc| sc.batcher_address.to_string()).unwrap_or_default(),
+                gas_limit = sc.map(|sc| sc.gas_limit).unwrap_or_default(),
+                scalar = %sc.map(|sc| sc.scalar).unwrap_or_default(),
+                "using rollup config from file"
             );
 
-            rpc
+            cfg
         } else {
             rollup_config!(self.l2_chain_id)
                 .ok_or_else(|| eyre!("unknown L2 chain ID: {}", self.l2_chain_id))?
@@ -324,7 +319,7 @@ impl Cli {
                 let _ = cancel;
 
                 match command {
-                    Command::ConfigHash(args) => args.run().await,
+                    Command::ConfigHash(args) => args.run(),
                     #[cfg(target_os = "linux")]
                     Command::Server(args) => args.run(cancel).await,
                     #[cfg(feature = "local")]
@@ -410,7 +405,7 @@ async fn run_worker(
 ) -> eyre::Result<()> {
     let registration_health = runtime.registration_health_config();
     let registry_configured = registration_health.is_some();
-    let config = runtime.prover_config().await?;
+    let config = runtime.prover_config()?;
 
     if transports.is_empty() {
         return Err(eyre!("at least one enclave transport is required"));
@@ -514,67 +509,85 @@ enum WorkerTransportMode {
     Local,
 }
 
-async fn fetch_rollup_config_from_rpc(
-    cl_url: &str,
-) -> eyre::Result<base_common_genesis::RollupConfig> {
-    let provider = ProviderBuilder::new()
-        .connect(cl_url)
-        .await
-        .map_err(|e| eyre!("failed to connect to L2 CL node at {cl_url}: {e}"))?;
-
-    provider.raw_request("optimism_rollupConfig".into(), ()).await.map_err(|e| {
-        eyre!(
-            "optimism_rollupConfig RPC failed on {cl_url}: {e}. \
-                 Ensure the L2 node supports this method"
-        )
-    })
+fn load_rollup_config(path: &Path) -> eyre::Result<base_common_genesis::RollupConfig> {
+    let file = File::open(path)
+        .map_err(|e| eyre!("failed to open rollup config file {}: {e}", path.display()))?;
+    serde_json::from_reader(file)
+        .map_err(|e| eyre!("failed to parse rollup config file {}: {e}", path.display()))
 }
 
-#[cfg(all(test, feature = "local"))]
+#[cfg(test)]
 mod tests {
-    use super::ProverRuntimeArgs;
+    use alloy_primitives::b256;
+    use base_common_chains::rollup_config;
 
-    fn args(l1_beacon_url: Option<&str>, l1_calldata_only: bool) -> ProverRuntimeArgs {
-        ProverRuntimeArgs {
-            l1_eth_url: "http://localhost:8545".to_string(),
-            l2_eth_url: "http://localhost:9545".to_string(),
-            l2_node_url: "http://localhost:9546".to_string(),
-            l1_beacon_url: l1_beacon_url.map(str::to_string),
-            l1_calldata_only,
-            l2_chain_id: 8453,
-            enable_experimental_witness_endpoint: false,
-            tee_prover_registry_address: None,
-            fetch_rollup_config: false,
-            l2_cl_url: None,
+    use super::{PerChainConfig, load_rollup_config};
+
+    /// The config hash computed from a `rollup.json` file must be byte-identical to the value
+    /// the enclave derives on the proving path (`server.rs` `config_hash`) for the same chain.
+    /// Round-trips a built-in config through JSON to exercise the file loader end to end.
+    #[test]
+    fn config_hash_from_file_matches_enclave_value() {
+        let rollup = rollup_config!(8453).expect("base mainnet rollup config");
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("rollup.json");
+        std::fs::write(&path, serde_json::to_vec(&rollup).expect("serialize rollup config"))
+            .expect("write rollup config");
+
+        let loaded = load_rollup_config(&path).expect("load rollup config");
+        let mut per_chain =
+            PerChainConfig::from_rollup_config(&loaded).expect("per-chain config from rollup");
+        per_chain.force_defaults();
+
+        assert_eq!(
+            per_chain.hash(),
+            b256!("1607709d90d40904f790574404e2ad614eac858f6162faa0ec34c6bf5e5f3c57"),
+        );
+    }
+
+    #[cfg(any(target_os = "linux", feature = "local"))]
+    mod runtime_args {
+        use super::super::ProverRuntimeArgs;
+
+        fn args(l1_beacon_url: Option<&str>, l1_calldata_only: bool) -> ProverRuntimeArgs {
+            ProverRuntimeArgs {
+                l1_eth_url: "http://localhost:8545".to_string(),
+                l2_eth_url: "http://localhost:9545".to_string(),
+                l2_node_url: "http://localhost:9546".to_string(),
+                l1_beacon_url: l1_beacon_url.map(str::to_string),
+                l1_calldata_only,
+                l2_chain_id: 8453,
+                enable_experimental_witness_endpoint: false,
+                tee_prover_registry_address: None,
+                rollup_config: None,
+            }
         }
-    }
 
-    #[test]
-    fn beacon_mode_is_valid() {
-        let l1_beacon_url = args(Some("http://localhost:5052"), false).l1_beacon_url().unwrap();
+        #[test]
+        fn beacon_mode_is_valid() {
+            let l1_beacon_url = args(Some("http://localhost:5052"), false).l1_beacon_url().unwrap();
+            assert_eq!(l1_beacon_url, Some("http://localhost:5052".to_string()));
+        }
 
-        assert_eq!(l1_beacon_url, Some("http://localhost:5052".to_string()));
-    }
+        #[test]
+        fn calldata_only_mode_is_valid() {
+            let l1_beacon_url = args(None, true).l1_beacon_url().unwrap();
+            assert_eq!(l1_beacon_url, None);
+        }
 
-    #[test]
-    fn calldata_only_mode_is_valid() {
-        let l1_beacon_url = args(None, true).l1_beacon_url().unwrap();
+        #[test]
+        fn neither_mode_is_an_error() {
+            assert!(args(None, false).l1_beacon_url().is_err());
+        }
 
-        assert_eq!(l1_beacon_url, None);
-    }
+        #[test]
+        fn both_modes_are_an_error() {
+            assert!(args(Some("http://localhost:5052"), true).l1_beacon_url().is_err());
+        }
 
-    #[test]
-    fn neither_mode_is_an_error() {
-        assert!(args(None, false).l1_beacon_url().is_err());
-    }
-
-    #[test]
-    fn both_modes_are_an_error() {
-        assert!(args(Some("http://localhost:5052"), true).l1_beacon_url().is_err());
-    }
-
-    #[test]
-    fn empty_beacon_url_is_treated_as_missing() {
-        assert!(args(Some("  "), false).l1_beacon_url().is_err());
+        #[test]
+        fn empty_beacon_url_is_treated_as_missing() {
+            assert!(args(Some("  "), false).l1_beacon_url().is_err());
+        }
     }
 }
