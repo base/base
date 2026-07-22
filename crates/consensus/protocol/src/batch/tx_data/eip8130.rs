@@ -126,6 +126,23 @@ impl SpanBatchEip8130TransactionData {
         }
     }
 
+    /// Enforces the decode-side invariant binding an actor's presence to the
+    /// length of its authenticator column: on the configured path (`configured`)
+    /// the authenticator is exactly the 20-byte leading account address, and on
+    /// the EOA/self-pay path it is empty. This is the counterpart of the split
+    /// [`Self::split_auth`] performs on the encode side, rejecting a span batch
+    /// whose columns disagree instead of silently reconstructing a corrupt auth
+    /// blob in [`Self::to_tx`].
+    fn validate_authenticator(authenticator: &Bytes, configured: bool) -> alloy_rlp::Result<()> {
+        let valid = if configured { authenticator.len() == 20 } else { authenticator.is_empty() };
+        if !valid {
+            return Err(alloy_rlp::Error::Custom(
+                "EIP-8130 authenticator length inconsistent with actor presence",
+            ));
+        }
+        Ok(())
+    }
+
     /// Reconstructs the signed [`Eip8130Signed`] from the remainder, the shared
     /// columns, and the trailing-column auth proofs.
     pub fn to_tx(
@@ -195,6 +212,8 @@ impl Decodable for SpanBatchEip8130TransactionData {
             sender_authenticator: Decodable::decode(buf)?,
             payer_authenticator: Decodable::decode(buf)?,
         };
+        Self::validate_authenticator(&this.sender_authenticator, this.sender.is_some())?;
+        Self::validate_authenticator(&this.payer_authenticator, this.payer.is_some())?;
         let consumed = started - buf.len();
         if consumed != header.payload_length {
             return Err(alloy_rlp::Error::ListLengthMismatch {
@@ -289,5 +308,53 @@ mod tests {
         assert_eq!(&auth[..], &[1u8; 20]);
         assert_eq!(&proof[..], &[9u8; 32]);
         assert_eq!(SpanBatchEip8130TransactionData::join_auth(&auth, &proof, true), full);
+    }
+
+    #[test]
+    fn decode_rejects_authenticator_actor_mismatch() {
+        // A configured-sender, self-pay tx with a valid 20-byte sender authenticator.
+        // Each case clones it and breaks exactly one presence<->length invariant, so
+        // decoding must reject it rather than reconstruct a corrupt auth blob.
+        let base = SpanBatchEip8130TransactionData {
+            sender: Some(Address::ZERO),
+            nonce_key: U256::ZERO,
+            expiry: 0,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 0,
+            payer: None,
+            account_changes: vec![],
+            calls: vec![],
+            metadata: Bytes::new(),
+            sender_authenticator: Bytes::from_static(&[0u8; 20]),
+            payer_authenticator: Bytes::new(),
+        };
+        let encode = |tx: &SpanBatchEip8130TransactionData| {
+            let mut buf = Vec::new();
+            SpanBatchTransactionData::Eip8130(tx.clone()).encode(&mut buf);
+            buf
+        };
+
+        // Sanity: the untampered, consistent tx decodes cleanly.
+        assert!(SpanBatchTransactionData::decode(&mut encode(&base).as_slice()).is_ok());
+
+        // Configured sender must carry a 20-byte authenticator, not empty.
+        let mut sender_empty = base.clone();
+        sender_empty.sender_authenticator = Bytes::new();
+        assert!(SpanBatchTransactionData::decode(&mut encode(&sender_empty).as_slice()).is_err());
+
+        // Configured sender must carry exactly 20 bytes, not more.
+        let mut sender_long = base.clone();
+        sender_long.sender_authenticator = Bytes::from_static(&[0u8; 21]);
+        assert!(SpanBatchTransactionData::decode(&mut encode(&sender_long).as_slice()).is_err());
+
+        // EOA sender (None) must carry an empty authenticator.
+        let mut sender_eoa = base.clone();
+        sender_eoa.sender = None;
+        assert!(SpanBatchTransactionData::decode(&mut encode(&sender_eoa).as_slice()).is_err());
+
+        // Absent payer must carry an empty authenticator.
+        let mut payer_set = base.clone();
+        payer_set.payer_authenticator = Bytes::from_static(&[0u8; 20]);
+        assert!(SpanBatchTransactionData::decode(&mut encode(&payer_set).as_slice()).is_err());
     }
 }
