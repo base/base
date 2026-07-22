@@ -801,7 +801,8 @@ where
         block_info: BaseL1BlockInfo,
     ) -> Self {
         let trusted_delegation_targets = Self::default_trusted_delegation_targets();
-        let trusted_proxy_code_hashes = Self::trusted_proxy_code_hashes(&trusted_delegation_targets);
+        let trusted_proxy_code_hashes =
+            Self::trusted_proxy_code_hashes(&trusted_delegation_targets);
         Self {
             inner: Arc::new(inner),
             block_info: Arc::new(block_info),
