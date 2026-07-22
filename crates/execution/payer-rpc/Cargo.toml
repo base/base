@@ -1,0 +1,42 @@
+[package]
+name = "base-execution-payer-rpc"
+description = "ERC-8168 payer-service JSON-RPC (payer_getTerms / payer_sendTransaction) for the Base builder-operated payer"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# base
+base-execution-payer = { workspace = true, features = ["signer"] }
+base-execution-txpool.workspace = true
+base-common-consensus = { workspace = true, features = ["reth"] }
+
+# reth
+reth-transaction-pool.workspace = true
+
+# alloy
+alloy-eips.workspace = true
+alloy-consensus.workspace = true
+alloy-primitives = { workspace = true, features = ["serde"] }
+
+# rpc
+jsonrpsee.workspace = true
+async-trait.workspace = true
+
+# misc
+serde = { workspace = true, features = ["derive"] }
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+serde_json.workspace = true
+reth-transaction-pool = { workspace = true, features = ["test-utils"] }

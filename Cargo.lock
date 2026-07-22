@@ -4604,6 +4604,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-execution-payer-rpc"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus 2.0.5",
+ "alloy-eips 2.0.5",
+ "alloy-primitives",
+ "async-trait",
+ "base-common-consensus",
+ "base-execution-payer",
+ "base-execution-txpool",
+ "jsonrpsee",
+ "reth-transaction-pool",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "base-execution-payload-builder"
 version = "0.0.0"
 dependencies = [
