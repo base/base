@@ -8,12 +8,12 @@
 //!     private key;
 //!   * a latched kill-state store with atomic persistence and reset anti-replay.
 //!
-//! It holds ZERO submission/signing/egress capability. Owner-signature handling
-//! is recover-only (EIP-191 `recover_address_from_msg`); the trust root is a
-//! compile-time immutable address that is UNSET in B1, so production arming is
-//! structurally impossible (`is_armed()` is always false) until an owner G4
-//! signature exists. Enforcement wiring (blocking real sends) is B3; this rung
-//! only computes decisions.
+//! It holds ZERO submission/signing/egress capability. The pre-arm P0 policy lift records
+//! P0-A/P0-C completion and the owner's P0-B minimal-path decision, including acceptance
+//! of the same-disk/whole-host rollback residual. It changes no arming gate: owner-signature
+//! handling is recover-only (EIP-191 `recover_address_from_msg`), the compile-time trust
+//! root remains UNSET, and the signature remains a placeholder. Production `is_armed()`
+//! therefore stays false until the separate owner G4 injection, rebuild, and review.
 
 #[cfg(test)]
 use std::{
@@ -693,9 +693,13 @@ pub enum KillStoreError {
 /// Test-only legacy two-file store retained solely for its existing regression corpus.
 ///
 /// Production construction and transitions are owned exclusively by the external-anchor-backed
-/// store. The anchor records both kill and anchor device evidence, but P0-C must still establish
-/// and review mount separation. Arming remains FORBIDDEN until P0-A merge, P0-B host isolation,
-/// P0-C provisioning evidence and identity pinning, and G4 re-review are all complete.
+/// store. P0-A is merged, P0-C provisioning and identity pinning are complete, and the owner
+/// accepted the P0-B minimal path: no separate host, mount, or backup; a no-rollback operational
+/// invariant; and residual exposure when a same-disk or whole-host restore retreats all three
+/// stores. Those facts permit lifting the pre-arm FORBIDDEN posture once G4 re-review approves
+/// this policy change; they do not arm the system. Until the separate owner injection pins
+/// `OWNER_ATTEST_ADDRESS` and replaces `OWNER_ARM_SIGNATURE`, production remains unarmed; the
+/// anchor's fail-closed Engaged seed and every submit/egress path remain unchanged.
 #[cfg(test)]
 #[derive(Debug, Clone)]
 pub(crate) struct FileKillStateStore {
