@@ -17,7 +17,9 @@ use url::Url;
 use crate::{
     BATCHER, BUILDER, SEQUENCER,
     l1::{L1ContainerConfig, L1Stack, L1StackConfig},
-    l2::{L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig, ShadowSequencersConfig},
+    l2::{
+        L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig, ShadowSequencersConfig,
+    },
     setup::{L1GenesisOutput, L2DeploymentOutput, SetupContainer},
     system_config::StableSystemTestConfig,
 };
