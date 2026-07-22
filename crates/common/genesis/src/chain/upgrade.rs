@@ -262,7 +262,11 @@ impl BaseUpgrade {
 
     /// Returns the active upgrade at the given timestamp for the specified chain.
     pub fn from_chain_and_timestamp(chain_id: u64, timestamp: u64) -> Option<Self> {
-        let config = UpgradeConfig::for_chain_id(chain_id)?;
+        let mut config = UpgradeConfig::for_chain_id(chain_id)?;
+
+        if let Some(overrides) = RuntimeUpgradeRegistry::overrides(chain_id) {
+            config.apply_activation_overrides(&overrides);
+        }
 
         Self::EXECUTION_VARIANTS.into_iter().rev().find(|&upgrade| {
             upgrade == Self::Bedrock
@@ -980,6 +984,37 @@ mod runtime_tests {
                 previous = upgrade;
             }
         }
+    }
+
+    #[test]
+    fn activation_boundaries_respect_overrides() {
+        const CHAIN_ID: u64 = 8453;
+
+        RuntimeUpgradeRegistry::clear_chain(CHAIN_ID);
+
+        let beryl = UpgradeConfig::BASE_MAINNET.base.beryl.unwrap();
+        let cobalt = beryl + 100;
+
+        RuntimeUpgradeRegistry::set_activation_timestamp(CHAIN_ID, BaseUpgrade::Cobalt, cobalt);
+
+        assert_eq!(
+            BaseUpgrade::from_chain_and_timestamp(CHAIN_ID, cobalt - 1),
+            Some(BaseUpgrade::Beryl)
+        );
+        assert_eq!(
+            BaseUpgrade::from_chain_and_timestamp(CHAIN_ID, cobalt),
+            Some(BaseUpgrade::Cobalt)
+        );
+
+        RuntimeUpgradeRegistry::clear_chain(CHAIN_ID);
+        RuntimeUpgradeRegistry::clear_activation_timestamp(CHAIN_ID, BaseUpgrade::Beryl);
+
+        assert_eq!(
+            BaseUpgrade::from_chain_and_timestamp(CHAIN_ID, u64::MAX),
+            Some(BaseUpgrade::Azul),
+        );
+
+        RuntimeUpgradeRegistry::clear_chain(CHAIN_ID);
     }
 
     #[test]
