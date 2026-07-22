@@ -19,7 +19,7 @@ use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_providers::BlobWithCommitmentAndProof;
 use base_proof::{Hint, HintType, ROOTS_OF_UNITY};
 use base_proof_preimage::{PreimageKey, PreimageKeyType};
-use base_protocol::{BlockInfo, OutputRoot};
+use base_protocol::{BlockInfo, GENERIC_COMMITMENT_LEN, OutputRoot};
 use futures::FutureExt;
 use tokio::sync::Semaphore;
 use tracing::{debug, error, warn};
@@ -1021,6 +1021,28 @@ async fn handle_hint_inner(
                 PreimageKey::new(*blob_key_hash, PreimageKeyType::Blob).into(),
                 proof.to_vec(),
             )?;
+        }
+        HintType::AltDaCommitment => {
+            if hint.data.len() != GENERIC_COMMITMENT_LEN {
+                return Err(HostError::InvalidHintDataLength);
+            }
+            let commitment = hint.data.as_ref();
+
+            let client = providers.alt_da.as_ref().ok_or_else(|| {
+                HostError::Custom(
+                    "alt-da commitment hint received but no da-server is configured".into(),
+                )
+            })?;
+            let bytes = client
+                .get(commitment)
+                .await
+                .map_err(|e| HostError::Custom(format!("alt-da fetch failed: {e}")))?;
+
+            // Key by keccak256(commitment) — the client program derives the same key. Generic
+            // commitments are not content hashes, so this is a host-trusted mapping (see
+            // `OracleAltDaResolver`).
+            let key_hash = keccak256(commitment);
+            kv.write().await.set(PreimageKey::new_keccak256(*key_hash).into(), bytes)?;
         }
         HintType::L1Precompile => {
             if hint.data.len() < 28 {

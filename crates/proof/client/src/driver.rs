@@ -4,7 +4,7 @@ use core::fmt::Debug;
 use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded, revm::context::BlockEnv};
 use alloy_primitives::B256;
 use base_common_evm::{BaseSpecId, BaseTxEnv};
-use base_consensus_derive::EthereumDataSource;
+use base_consensus_derive::{AltDaDataSource, EthereumDataSource};
 use base_proof::{
     BaseExecutor, CachingOracle, OracleBlobProvider, OracleL1ChainProvider, OracleL2ChainProvider,
     OraclePipeline,
@@ -18,7 +18,11 @@ use crate::{Epilogue, FaultProofProgramError};
 type OracleL1Provider<P, H> = OracleL1ChainProvider<CachingOracle<P, H>>;
 type OracleL2Provider<P, H> = OracleL2ChainProvider<CachingOracle<P, H>>;
 type OracleBeacon<P, H> = OracleBlobProvider<CachingOracle<P, H>>;
-type OracleDA<P, H> = EthereumDataSource<OracleL1Provider<P, H>, OracleBeacon<P, H>>;
+type OracleEthDA<P, H> = EthereumDataSource<OracleL1Provider<P, H>, OracleBeacon<P, H>>;
+// The inner Ethereum (calldata/blob) source is always wrapped in an alt-DA source. With no
+// resolver it is a transparent pass-through; with a resolver (alt-DA chains) it resolves
+// `DERIVATION_VERSION_1` generic commitments into off-chain batch bytes.
+type OracleDA<P, H> = AltDaDataSource<OracleEthDA<P, H>>;
 type ConcreteOraclePipeline<P, H> = OraclePipeline<
     CachingOracle<P, H>,
     OracleL1Provider<P, H>,

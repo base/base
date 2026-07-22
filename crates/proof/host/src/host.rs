@@ -272,11 +272,32 @@ impl Host {
         let l2_provider = rpc_provider::<Base>(&self.config.prover.l2_eth_url).await?;
         let l2_node_provider = rpc_provider(&self.config.prover.l2_node_url).await?;
 
+        let alt_da =
+            match self
+                .config
+                .prover
+                .da_server_url
+                .as_deref()
+                .map(str::trim)
+                .filter(|url| !url.is_empty())
+            {
+                Some(url) => {
+                    let parsed = url.parse().map_err(|e| {
+                        HostError::Custom(format!("invalid da-server url {url:?}: {e}"))
+                    })?;
+                    Some(base_alt_da::Client::new(parsed).map_err(|e| {
+                        HostError::Custom(format!("da-server client init failed: {e}"))
+                    })?)
+                }
+                None => None,
+            };
+
         Ok(HostProviders {
             l1: l1_provider,
             blobs: blob_provider,
             l2: l2_provider,
             l2_node: l2_node_provider,
+            alt_da,
         })
     }
 }
