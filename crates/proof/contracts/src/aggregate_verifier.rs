@@ -48,6 +48,9 @@ sol! {
         /// Returns the address that provided a TEE proof.
         function teeProver() external view returns (address);
 
+        /// Returns the TEE proof verifier.
+        function TEE_VERIFIER() external view returns (address);
+
         /// Returns the address that provided a ZK proof.
         function zkProver() external view returns (address);
 
@@ -342,6 +345,18 @@ impl AggregateVerifierContractClient {
     pub fn new(l1_rpc_url: url::Url) -> Result<Self, ContractError> {
         let provider = RootProvider::new_http(l1_rpc_url);
         Ok(Self { provider })
+    }
+
+    /// Returns the TEE verifier configured on an `AggregateVerifier` implementation.
+    pub async fn tee_verifier_address(
+        &self,
+        implementation_address: Address,
+    ) -> Result<Address, ContractError> {
+        let contract = IAggregateVerifier::IAggregateVerifierInstance::new(
+            implementation_address,
+            &self.provider,
+        );
+        contract_call!(contract.TEE_VERIFIER().call(), "TEE_VERIFIER failed")
     }
 }
 

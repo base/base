@@ -6,17 +6,19 @@ use std::{
 };
 
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_rpc_types_eth::{EIP1186AccountProofResponse, Header};
+use alloy_signer::SignerSync;
+use alloy_signer_local::PrivateKeySigner;
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_optimism_rpc::{L1BlockId, L1BlockRef, L2BlockRef, OutputAtBlock, SyncStatus};
 use base_proof_contracts::{
     AggregateVerifierClient, AnchorPreflight, AnchorRoot, AnchorSnapshot,
     AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,
-    GameStatus,
+    GameStatus, TEEProverRegistryClient, game_lookup_blocks,
 };
-use base_proof_primitives::Proposal;
+use base_proof_primitives::{ProofJournal, Proposal};
 use base_proof_rpc::{
     BaseBlock, BaseHeader, L1Provider, L2Provider, RollupProvider, RpcError, RpcResult,
 };
@@ -244,6 +246,28 @@ pub struct MockAggregateVerifier {
     pub l1_head: B256,
 }
 
+/// Mock TEE signer registry for proposer tests.
+#[derive(Debug, Default)]
+pub struct MockTEEProverRegistry {
+    /// Signers considered valid.
+    pub valid_signers: Mutex<HashSet<Address>>,
+}
+
+#[async_trait]
+impl TEEProverRegistryClient for MockTEEProverRegistry {
+    async fn is_valid_signer(&self, signer: Address) -> Result<bool, ContractError> {
+        Ok(self.valid_signers.lock().unwrap().contains(&signer))
+    }
+
+    async fn is_registered_signer(&self, signer: Address) -> Result<bool, ContractError> {
+        self.is_valid_signer(signer).await
+    }
+
+    async fn get_registered_signers(&self) -> Result<Vec<Address>, ContractError> {
+        Ok(self.valid_signers.lock().unwrap().iter().copied().collect())
+    }
+}
+
 #[async_trait]
 impl AggregateVerifierClient for MockAggregateVerifier {
     async fn game_info(&self, _: Address) -> Result<GameInfo, ContractError> {
@@ -386,6 +410,11 @@ pub fn test_proposal(block_number: u64) -> Proposal {
     }
 }
 
+/// Returns the deterministic TEE signer used by mock proof results.
+pub fn test_tee_signer() -> PrivateKeySigner {
+    PrivateKeySigner::from_bytes(&B256::repeat_byte(0x11)).unwrap()
+}
+
 /// Mock prover-service requester for pipeline tests.
 #[derive(Debug, Default)]
 pub struct MockProofRequester {
@@ -477,7 +506,7 @@ impl ProofRequesterProvider for MockProofRequester {
         let interval = tee_request.proof.intermediate_block_interval.max(1);
         let start = target.saturating_sub(interval);
         let proposals = ((start + 1)..=target).map(test_proposal).collect::<Vec<_>>();
-        let aggregate_proposal = Proposal {
+        let mut aggregate_proposal = Proposal {
             output_root: tee_request.proof.claimed_l2_output_root,
             l1_origin_hash: tee_request.proof.l1_head,
             l1_origin_number: tee_request.proof.l1_head_number,
@@ -485,6 +514,33 @@ impl ProofRequesterProvider for MockProofRequester {
             prev_output_root: tee_request.proof.agreed_l2_output_root,
             ..test_proposal(target)
         };
+        let intermediate_blocks =
+            game_lookup_blocks(start, interval, interval).map_err(|error| {
+                ProverServiceClientError::UnexpectedResultPayload(error.to_string())
+            })?;
+        let intermediate_roots = intermediate_blocks
+            .iter()
+            .map(|block| proposals[(block - start - 1) as usize].output_root)
+            .collect();
+        let journal = ProofJournal {
+            proposer: tee_request.proof.proposer,
+            l1_origin_hash: aggregate_proposal.l1_origin_hash,
+            prev_output_root: aggregate_proposal.prev_output_root,
+            starting_l2_block: start,
+            output_root: aggregate_proposal.output_root,
+            ending_l2_block: target,
+            intermediate_roots,
+            config_hash: aggregate_proposal.config_hash,
+            tee_image_hash: tee_request.proof.image_hash,
+            schedule_id: aggregate_proposal.schedule_id,
+        };
+        aggregate_proposal.signature = Bytes::from(
+            test_tee_signer()
+                .sign_hash_sync(&keccak256(journal.encode()))
+                .unwrap()
+                .as_rsy()
+                .to_vec(),
+        );
         Ok(GetProofResponse {
             status: ProofStatus::Succeeded,
             error_message: None,

@@ -13,6 +13,13 @@ use crate::ContractError;
 // Interface mirrored from the canonical contract source:
 // https://github.com/base/contracts/blob/96b132077b86bdc77f3f96dd40e09dad363df32e/src/multiproof/tee/TEEProverRegistry.sol
 sol! {
+    /// `TEEVerifier` registry discovery interface.
+    #[sol(rpc)]
+    interface ITEEVerifier {
+        /// Returns the registry used to validate TEE signers.
+        function TEE_PROVER_REGISTRY() external view returns (address);
+    }
+
     /// `TEEProverRegistry` contract interface.
     #[sol(rpc)]
     interface ITEEProverRegistry {
@@ -86,6 +93,20 @@ impl TEEProverRegistryContractClient {
         let provider = RootProvider::new_http(l1_rpc_url);
         let contract = ITEEProverRegistry::ITEEProverRegistryInstance::new(address, provider);
         Self { contract }
+    }
+
+    /// Creates a registry client by reading the registry from a TEE verifier.
+    pub async fn from_tee_verifier(
+        tee_verifier_address: Address,
+        l1_rpc_url: url::Url,
+    ) -> Result<Self, ContractError> {
+        let provider: RootProvider = RootProvider::new_http(l1_rpc_url);
+        let verifier = ITEEVerifier::ITEEVerifierInstance::new(tee_verifier_address, &provider);
+        let registry_address =
+            contract_call!(verifier.TEE_PROVER_REGISTRY().call(), "TEE_PROVER_REGISTRY failed")?;
+        let contract =
+            ITEEProverRegistry::ITEEProverRegistryInstance::new(registry_address, provider);
+        Ok(Self { contract })
     }
 }
 

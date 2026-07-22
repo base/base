@@ -124,26 +124,12 @@ where
                         error = %error,
                         "Deleting proof request after proof collection failure"
                     );
-                    return self
-                        .delete_proof_batch(
-                            &session_id,
-                            target_block,
-                            finalized_head.min(dispatched_through),
-                            cancel,
-                        )
-                        .await;
+                    return self.delete_proof_batch(&session_id, target_block, cancel).await;
                 }
             };
 
             match self
-                .submit_proof(
-                    target_block,
-                    &session_id,
-                    proof,
-                    current.parent_address,
-                    finalized_head.min(dispatched_through),
-                    cancel,
-                )
+                .submit_proof(target_block, &session_id, proof, current.parent_address, cancel)
                 .await
             {
                 SubmitOutcome::Advanced(next) => *current = next,
@@ -290,7 +276,6 @@ where
         session_id: &str,
         proof: (Proposal, Vec<Proposal>),
         parent_address: Address,
-        delete_through: u64,
         cancel: &CancellationToken,
     ) -> SubmitOutcome {
         info!(target_block, parent_address = %parent_address, "Submitting proof");
@@ -361,10 +346,7 @@ where
                     error = %error,
                     "Submission discarded, deleting proof request for re-prove"
                 );
-                return if self
-                    .delete_proof_batch(session_id, target_block, delete_through, cancel)
-                    .await
-                {
+                return if self.delete_proof_batch(session_id, target_block, cancel).await {
                     SubmitOutcome::Restart
                 } else {
                     SubmitOutcome::Idle
@@ -379,7 +361,6 @@ where
         &self,
         session_id: &str,
         mut target_block: u64,
-        delete_through: u64,
         cancel: &CancellationToken,
     ) -> bool {
         let first_block = target_block;
@@ -401,10 +382,6 @@ where
             };
             target_block = next_target;
 
-            if target_block > delete_through {
-                break;
-            }
-
             let Some(claimed_l2_output_root) =
                 ProofTarget::canonical_output_root(self.rollup_client.as_ref(), target_block).await
             else {
@@ -420,7 +397,32 @@ where
             )
             .await
             {
-                Ok(Some(_)) => {}
+                Ok(Some((aggregate_proposal, proposals))) => {
+                    match self
+                        .submitter
+                        .is_tee_signer_valid(&aggregate_proposal, &proposals, target_block)
+                        .await
+                    {
+                        Ok(true) => {
+                            info!(
+                                target_block,
+                                session_id = %session_id,
+                                "Keeping proof request signed by valid TEE signer"
+                            );
+                            continue;
+                        }
+                        Ok(false) => {}
+                        Err(error) => {
+                            warn!(
+                                target_block,
+                                session_id = %session_id,
+                                error = %error,
+                                "Stopping proof cleanup after TEE signer validation failure"
+                            );
+                            break;
+                        }
+                    }
+                }
                 Ok(None) => break,
                 Err(error) => warn!(
                     target_block,
@@ -495,7 +497,8 @@ mod tests {
         DriverConfig, OutputProposer,
         test_utils::{
             MockAggregateVerifier, MockDisputeGameFactory, MockOutputProposer, MockProofRequester,
-            MockRollupClient, test_proposal, test_sync_status,
+            MockRollupClient, MockTEEProverRegistry, test_proposal, test_sync_status,
+            test_tee_signer,
         },
     };
 
@@ -545,6 +548,7 @@ mod tests {
             output_proposer,
             Arc::new(MockDisputeGameFactory::default()),
             Arc::new(MockAggregateVerifier::default()),
+            Arc::new(MockTEEProverRegistry::default()),
         )
     }
 
@@ -554,12 +558,14 @@ mod tests {
         output_proposer: Arc<dyn OutputProposer>,
         factory_client: Arc<dyn DisputeGameFactoryClient>,
         verifier_client: Arc<dyn AggregateVerifierClient>,
+        tee_registry: Arc<dyn base_proof_contracts::TEEProverRegistryClient>,
     ) -> ProofCollector<MockRollupClient> {
         let submitter = ProofSubmitter::new(
             output_proposer,
             Arc::<MockRollupClient>::clone(&rollup_client),
             factory_client,
             verifier_client,
+            tee_registry,
             &DriverConfig {
                 block_interval: BLOCK_INTERVAL,
                 intermediate_block_interval: BLOCK_INTERVAL,
@@ -681,6 +687,7 @@ mod tests {
             Arc::new(MockOutputProposer::default()),
             Arc::new(factory),
             Arc::new(MockAggregateVerifier::default()),
+            Arc::new(MockTEEProverRegistry::default()),
         );
         let mut current = recovered(100);
 
@@ -799,7 +806,6 @@ mod tests {
                 &session_id,
                 (aggregate_proposal, vec![]),
                 Address::ZERO,
-                target_block,
                 &CancellationToken::new(),
             )
             .await;
@@ -915,7 +921,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tick_batch_delete_removes_succeeded_proof_after_collection_failure() {
+    async fn tick_batch_delete_keeps_valid_signer_and_continues() {
         let requester = Arc::new(MockProofRequester::default());
         let first_target = 200;
         let second_target = 300;
@@ -931,7 +937,9 @@ mod tests {
             (first_session.clone(), "simulated first proof failure".to_owned()),
             (third_session.clone(), "simulated third proof failure".to_owned()),
         ]);
-        let collector = make_collector(
+        let registry = Arc::new(MockTEEProverRegistry::default());
+        registry.valid_signers.lock().unwrap().insert(test_tee_signer().address());
+        let collector = make_collector_with_contracts(
             Arc::clone(&requester) as Arc<dyn ProofRequesterProvider>,
             Arc::new(MockRollupClient {
                 sync_status: test_sync_status(third_target, B256::ZERO),
@@ -945,6 +953,9 @@ mod tests {
                 max_safe_block: None,
             }),
             Arc::new(MockOutputProposer::default()),
+            Arc::new(MockDisputeGameFactory::default()),
+            Arc::new(MockAggregateVerifier::default()),
+            registry,
         );
 
         let mut current = recovered(100);
@@ -954,7 +965,7 @@ mod tests {
 
         assert!(restart);
         assert!(!requester.failed_sessions.lock().unwrap().contains_key(&first_session));
-        assert!(!requester.requests.lock().unwrap().contains_key(&second_session));
+        assert!(requester.requests.lock().unwrap().contains_key(&second_session));
         assert!(!requester.failed_sessions.lock().unwrap().contains_key(&third_session));
     }
 

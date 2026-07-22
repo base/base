@@ -16,6 +16,7 @@ use base_health::HealthServer;
 use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryClient,
     AnchorStateRegistryContractClient, DisputeGameFactoryClient, DisputeGameFactoryContractClient,
+    TEEProverRegistryClient, TEEProverRegistryContractClient,
 };
 use base_proof_rpc::{
     L1Client, L1ClientConfig, L2Client, L2ClientConfig, RollupClient, RollupClientConfig,
@@ -126,10 +127,11 @@ impl ProposerService {
                 config.game_type
             ));
         }
-        let (block_interval, intermediate_block_interval, init_bond) = tokio::try_join!(
+        let (block_interval, intermediate_block_interval, init_bond, tee_verifier_address) = tokio::try_join!(
             verifier_client.read_block_interval(impl_address),
             verifier_client.read_intermediate_block_interval(impl_address),
             factory_client.init_bonds(config.game_type),
+            verifier_client.tee_verifier_address(impl_address),
         )?;
         if block_interval < 2 {
             return Err(eyre::eyre!(
@@ -149,6 +151,13 @@ impl ProposerService {
             impl_address = %impl_address,
             game_type = config.game_type,
             "Read onchain config from AggregateVerifier and DisputeGameFactory"
+        );
+        let tee_registry: Arc<dyn TEEProverRegistryClient> = Arc::new(
+            TEEProverRegistryContractClient::from_tee_verifier(
+                tee_verifier_address,
+                config.l1_eth_rpc.clone(),
+            )
+            .await?,
         );
 
         let factory_client: Arc<dyn DisputeGameFactoryClient> = Arc::new(factory_client);
@@ -239,6 +248,7 @@ impl ProposerService {
             Arc::<RollupClient>::clone(&rollup_client),
             Arc::clone(&factory_client),
             Arc::clone(&verifier_client),
+            tee_registry,
             &driver_config,
         );
         let proof_recovery = Arc::new(ProofRecovery::new(

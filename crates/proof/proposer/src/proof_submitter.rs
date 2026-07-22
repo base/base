@@ -2,9 +2,11 @@
 
 use std::{sync::Arc, time::Duration};
 
-use alloy_primitives::{Address, B256, Bytes};
-use base_proof_contracts::{AggregateVerifierClient, DisputeGameFactoryClient, game_lookup_key};
-use base_proof_primitives::Proposal;
+use alloy_primitives::{Address, B256, Bytes, Signature, keccak256};
+use base_proof_contracts::{
+    AggregateVerifierClient, DisputeGameFactoryClient, TEEProverRegistryClient, game_lookup_key,
+};
+use base_proof_primitives::{ProofJournal, Proposal};
 use base_proof_rpc::RollupProvider;
 use base_proof_submission::ProofSubmissionError;
 use futures::{StreamExt, stream};
@@ -47,10 +49,13 @@ pub struct ProofSubmitter {
     rollup_client: Arc<dyn RollupProvider>,
     factory_client: Arc<dyn DisputeGameFactoryClient>,
     verifier_client: Arc<dyn AggregateVerifierClient>,
+    tee_registry: Arc<dyn TEEProverRegistryClient>,
     game_type: u32,
     block_interval: u64,
     intermediate_block_interval: u64,
     output_fetch_concurrency: usize,
+    proposer_address: Address,
+    tee_image_hash: B256,
 }
 
 impl std::fmt::Debug for ProofSubmitter {
@@ -71,6 +76,7 @@ impl ProofSubmitter {
         rollup_client: Arc<dyn RollupProvider>,
         factory_client: Arc<dyn DisputeGameFactoryClient>,
         verifier_client: Arc<dyn AggregateVerifierClient>,
+        tee_registry: Arc<dyn TEEProverRegistryClient>,
         config: &DriverConfig,
     ) -> Self {
         Self {
@@ -78,11 +84,47 @@ impl ProofSubmitter {
             rollup_client,
             factory_client,
             verifier_client,
+            tee_registry,
             game_type: config.game_type,
             block_interval: config.block_interval,
             intermediate_block_interval: config.intermediate_block_interval,
             output_fetch_concurrency: config.recovery_scan_concurrency,
+            proposer_address: config.proposer_address,
+            tee_image_hash: config.tee_image_hash,
         }
+    }
+
+    /// Returns whether the aggregate proof's signer is currently valid onchain.
+    pub async fn is_tee_signer_valid(
+        &self,
+        aggregate_proposal: &Proposal,
+        proposals: &[Proposal],
+        target_block: u64,
+    ) -> Result<bool, ProposerError> {
+        let (starting_block_number, _, intermediate_roots) =
+            self.proof_intermediates(target_block, proposals)?;
+        let journal = ProofJournal {
+            proposer: self.proposer_address,
+            l1_origin_hash: aggregate_proposal.l1_origin_hash,
+            prev_output_root: aggregate_proposal.prev_output_root,
+            starting_l2_block: starting_block_number,
+            output_root: aggregate_proposal.output_root,
+            ending_l2_block: target_block,
+            intermediate_roots,
+            config_hash: aggregate_proposal.config_hash,
+            tee_image_hash: self.tee_image_hash,
+            schedule_id: aggregate_proposal.schedule_id,
+        };
+        let signature = Signature::from_raw(aggregate_proposal.signature.as_ref())
+            .map_err(|error| ProposerError::Internal(format!("invalid TEE signature: {error}")))?;
+        let signer = signature.recover_address_from_prehash(&keccak256(journal.encode())).map_err(
+            |error| ProposerError::Internal(format!("failed to recover TEE signer: {error}")),
+        )?;
+
+        self.tee_registry
+            .is_valid_signer(signer)
+            .await
+            .map_err(|error| ProposerError::Contract(format!("TEE signer lookup failed: {error}")))
     }
 
     /// Validates the completed proof and submits it to L1 as a dispute game.
@@ -117,26 +159,8 @@ impl ProofSubmitter {
             return Err(SubmitAction::RootMismatch);
         }
 
-        // Extract intermediate roots.
-        let starting_block_number =
-            target_block.checked_sub(self.block_interval).ok_or_else(|| {
-                SubmitAction::Failed(ProposerError::Internal(format!(
-                    "target_block {target_block} < block_interval {}",
-                    self.block_interval
-                )))
-            })?;
-        let intermediate_blocks = ProposalIntervals::intermediate_block_numbers(
-            self.block_interval,
-            self.intermediate_block_interval,
-            starting_block_number,
-        )
-        .map_err(SubmitAction::Failed)?;
-        let intermediate_roots = Self::extract_intermediate_roots(
-            starting_block_number,
-            proposals,
-            &intermediate_blocks,
-        )
-        .map_err(SubmitAction::Failed)?;
+        let (starting_block_number, intermediate_blocks, intermediate_roots) =
+            self.proof_intermediates(target_block, proposals).map_err(SubmitAction::Failed)?;
 
         let rollup_client = Arc::clone(&self.rollup_client);
         let target_root = canonical_output.output_root;
@@ -419,6 +443,31 @@ impl ProofSubmitter {
             })
             .collect()
     }
+
+    fn proof_intermediates(
+        &self,
+        target_block: u64,
+        proposals: &[Proposal],
+    ) -> Result<(u64, Vec<u64>, Vec<B256>), ProposerError> {
+        let starting_block_number =
+            target_block.checked_sub(self.block_interval).ok_or_else(|| {
+                ProposerError::Internal(format!(
+                    "target_block {target_block} < block_interval {}",
+                    self.block_interval
+                ))
+            })?;
+        let intermediate_blocks = ProposalIntervals::intermediate_block_numbers(
+            self.block_interval,
+            self.intermediate_block_interval,
+            starting_block_number,
+        )?;
+        let intermediate_roots = Self::extract_intermediate_roots(
+            starting_block_number,
+            proposals,
+            &intermediate_blocks,
+        )?;
+        Ok((starting_block_number, intermediate_blocks, intermediate_roots))
+    }
 }
 
 #[cfg(test)]
@@ -434,7 +483,7 @@ mod tests {
     use super::*;
     use crate::test_utils::{
         MockAggregateVerifier, MockDisputeGameFactory, MockOutputProposer, MockRollupClient,
-        test_proposal, test_sync_status,
+        MockTEEProverRegistry, test_proposal, test_sync_status,
     };
 
     const TEST_GAME_TYPE: u32 = 42;
@@ -461,6 +510,7 @@ mod tests {
             }),
             Arc::new(factory),
             Arc::new(verifier),
+            Arc::new(MockTEEProverRegistry::default()),
             &DriverConfig {
                 game_type: TEST_GAME_TYPE,
                 block_interval: TEST_BLOCK_INTERVAL,
@@ -538,6 +588,7 @@ mod tests {
             }),
             Arc::new(MockDisputeGameFactory::with_uuid_game_responses([game_address])),
             Arc::new(MockAggregateVerifier::default()),
+            Arc::new(MockTEEProverRegistry::default()),
             &DriverConfig {
                 game_type: TEST_GAME_TYPE,
                 block_interval: TEST_BLOCK_INTERVAL,

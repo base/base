@@ -220,7 +220,8 @@ mod tests {
         OutputProposer, ProofDispatcherConfig, ProofRecoveryConfig, ProofSubmitter,
         test_utils::{
             MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
-            MockOutputProposer, MockRollupClient, test_anchor_root, test_sync_status,
+            MockOutputProposer, MockRollupClient, MockTEEProverRegistry, test_anchor_root,
+            test_sync_status,
         },
     };
 
@@ -314,6 +315,7 @@ mod tests {
             Arc::<MockRollupClient>::clone(&rollup),
             Arc::new(MockDisputeGameFactory::default()),
             verifier,
+            Arc::new(MockTEEProverRegistry::default()),
             &config,
         );
         let proof_collector = ProofCollector::new(

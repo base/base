@@ -5906,6 +5906,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-provider 2.0.5",
  "alloy-rpc-types-eth 2.0.5",
+ "alloy-signer 2.0.5",
  "alloy-signer-local 2.0.5",
  "async-trait",
  "base-balance-monitor",
