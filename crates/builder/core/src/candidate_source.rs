@@ -32,7 +32,12 @@ pub type BoxedBestTransactions<T> = Box<dyn BestTransactions<Item = Arc<ValidPoo
 /// transaction pool (or any other backing store) through on every call — an alternative source that
 /// draws from, say, an external API is not forced to accept a `&Pool` it would ignore. The builder
 /// calls [`CandidateSource::best_transactions`] once per flashblock to (re)build its iterator.
-pub trait CandidateSource: Send + Sync + std::fmt::Debug {
+///
+/// `'static` is required up front: the source is stored in a `BasePayloadBuilder` that is driven
+/// from async, `'static` build jobs, so a borrowing source could compile in isolation yet fail with
+/// a confusing error only once plugged into the builder. Requiring it here surfaces the constraint
+/// at the source.
+pub trait CandidateSource: Send + Sync + std::fmt::Debug + 'static {
     /// The pool transaction type yielded by this source.
     type Transaction: PoolTransaction;
 
@@ -62,7 +67,7 @@ impl<Pool> DefaultCandidateSource<Pool> {
 
 impl<Pool> CandidateSource for DefaultCandidateSource<Pool>
 where
-    Pool: TransactionPool + std::fmt::Debug,
+    Pool: TransactionPool + std::fmt::Debug + 'static,
 {
     type Transaction = Pool::Transaction;
 
@@ -92,7 +97,7 @@ mod tests {
 
     impl<T> CandidateSource for EmptyCandidateSource<T>
     where
-        T: PoolTransaction,
+        T: PoolTransaction + 'static,
     {
         type Transaction = T;
 
