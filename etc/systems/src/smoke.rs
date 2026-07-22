@@ -1,21 +1,25 @@
 //! System test stack orchestration and lifecycle management.
 
-use std::path::PathBuf;
+use std::{num::NonZeroU64, path::PathBuf};
 
 use alloy_network::Ethereum;
+use alloy_primitives::B256;
 use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_engine::JwtSecret;
+use alloy_signer_local::PrivateKeySigner;
 use base_common_network::Base;
 use base_tx_forwarding::TxForwardingConfig;
-use eyre::{Result, WrapErr};
+use eyre::{OptionExt, Result, WrapErr};
 use tempfile::TempDir;
 use url::Url;
 
 use crate::{
     BATCHER, BUILDER, SEQUENCER,
     l1::{L1ContainerConfig, L1Stack, L1StackConfig},
-    l2::{L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig},
+    l2::{
+        L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig, ShadowSequencersConfig,
+    },
     setup::{L1GenesisOutput, L2DeploymentOutput, SetupContainer},
     system_config::StableSystemTestConfig,
 };
@@ -23,6 +27,7 @@ use crate::{
 const DEFAULT_L1_CHAIN_ID: u64 = 1337;
 const DEFAULT_L2_CHAIN_ID: u64 = 84538453;
 const DEFAULT_SLOT_DURATION: u64 = 2;
+const DEFAULT_SHADOW_BLOCKS_PER_CYCLE: NonZeroU64 = NonZeroU64::new(3).unwrap();
 
 /// A complete L1+L2 stack for system tests.
 pub struct SystemTestStack {
@@ -109,6 +114,22 @@ impl SystemTestStack {
         Ok(RootProvider::<Base>::new(client))
     }
 
+    /// Returns the number of shadow sequencers running in this stack.
+    pub fn shadow_sequencer_count(&self) -> usize {
+        self.l2_stack().shadow_sequencers().len()
+    }
+
+    /// Returns a builder provider for the shadow sequencer at `index`.
+    pub fn l2_shadow_builder_provider(&self, index: usize) -> Result<RootProvider<Base>> {
+        let shadow = self
+            .l2_stack()
+            .shadow_sequencer(index)
+            .ok_or_eyre("no shadow sequencer at the requested index")?;
+        let url = shadow.rpc_url()?;
+        let client = RpcClient::builder().http(url);
+        Ok(RootProvider::<Base>::new(client))
+    }
+
     /// Returns all RPC URLs for this system test stack.
     pub async fn urls(&self) -> Result<crate::SystemTestUrls> {
         Ok(crate::SystemTestUrls {
@@ -136,6 +157,8 @@ pub struct SystemTestStackBuilder {
     tx_forwarding_config: Option<TxForwardingConfig>,
     verifier_l1_confs: u64,
     client_consensus_mode: L2ClientConsensusMode,
+    shadow_sequencer_count: usize,
+    shadow_blocks_per_cycle: Option<NonZeroU64>,
 }
 
 impl SystemTestStackBuilder {
@@ -216,6 +239,23 @@ impl SystemTestStackBuilder {
     /// Runs the L2 client consensus node in follow mode against the builder RPC.
     pub const fn with_follow_mode_client_consensus(mut self) -> Self {
         self.client_consensus_mode = L2ClientConsensusMode::Follow;
+        self
+    }
+
+    /// Runs `count` shadow sequencers alongside the active sequencer.
+    ///
+    /// Each shadow sequencer builds real blocks from its own mempool but signs
+    /// them with a distinct key, so its blocks are non-canonical to the rest of
+    /// the network.
+    pub const fn with_shadow_sequencers(mut self, count: usize) -> Self {
+        self.shadow_sequencer_count = count;
+        self
+    }
+
+    /// Sets the number of private blocks each shadow sequencer builds per
+    /// reconciliation cycle. Defaults to [`DEFAULT_SHADOW_BLOCKS_PER_CYCLE`].
+    pub const fn with_shadow_blocks_per_cycle(mut self, blocks: NonZeroU64) -> Self {
+        self.shadow_blocks_per_cycle = Some(blocks);
         self
     }
 
@@ -321,6 +361,20 @@ impl SystemTestStackBuilder {
         let l1_genesis_bytes =
             std::fs::read(l1_genesis.el_genesis_path()).wrap_err("Failed to read L1 genesis")?;
 
+        let shadow_sequencers = (self.shadow_sequencer_count > 0).then(|| {
+            let keys = (0..self.shadow_sequencer_count)
+                .map(|_| {
+                    B256::from_slice(PrivateKeySigner::random().credential().to_bytes().as_slice())
+                })
+                .collect();
+            ShadowSequencersConfig {
+                keys,
+                blocks_per_cycle: self
+                    .shadow_blocks_per_cycle
+                    .unwrap_or(DEFAULT_SHADOW_BLOCKS_PER_CYCLE),
+            }
+        });
+
         let l2_config = L2StackConfig {
             l2_genesis: l2_genesis_bytes,
             rollup_config: rollup_config_bytes,
@@ -335,6 +389,7 @@ impl SystemTestStackBuilder {
             tx_forwarding_config: self.tx_forwarding_config,
             verifier_l1_confs: self.verifier_l1_confs,
             client_consensus_mode: self.client_consensus_mode,
+            shadow_sequencers,
         };
 
         let l2_stack = L2Stack::start(l2_config).await.wrap_err("Failed to start L2 stack")?;
