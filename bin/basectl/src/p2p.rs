@@ -33,11 +33,9 @@ pub(crate) async fn run(config: &str, command: P2pCommands) -> Result<CommandOut
                 P2pCommands::Info(args) => run_info(config, args).await?,
                 P2pCommands::AddPeer(args) => run_add_peer(config, args).await?,
                 P2pCommands::RemovePeer(args) => run_remove_peer(config, args).await?,
-                P2pCommands::Ban(args) => {
-                    run_peer_ban_action(config, args, PeerAction::Ban).await?
-                }
+                P2pCommands::Ban(args) => run_peer_ban_action(config, args, BanAction::Ban).await?,
                 P2pCommands::Unban(args) => {
-                    run_peer_ban_action(config, args, PeerAction::Unban).await?
+                    run_peer_ban_action(config, args, BanAction::Unban).await?
                 }
                 P2pCommands::UnbanAll(args) => run_unban_all(config, args).await?,
                 P2pCommands::Reachability { .. } => unreachable!(),
@@ -190,14 +188,13 @@ async fn run_remove_peer(config: MonitoringConfig, args: DestructivePeerArgs) ->
 async fn run_peer_ban_action(
     config: MonitoringConfig,
     args: DestructivePeerArgs,
-    action: PeerAction,
+    action: BanAction,
 ) -> Result<()> {
     let DestructivePeerArgs { target, el_rpc: el_rpc_override, cl_rpc: cl_rpc_override, yes, json } =
         args;
     let (verb, command_name) = match action {
-        PeerAction::Ban => ("Ban", "p2p ban"),
-        PeerAction::Unban => ("Unban", "p2p unban"),
-        _ => unreachable!(),
+        BanAction::Ban => ("Ban", "p2p ban"),
+        BanAction::Unban => ("Unban", "p2p unban"),
     };
     match parse_peer_target(&target)? {
         PeerTarget::Enode(enode) => {
@@ -214,11 +211,13 @@ async fn run_peer_ban_action(
                 return Ok(());
             }
             let accepted = match action {
-                PeerAction::Ban => ban_el_peer(&el_rpc, &enode).await?,
-                PeerAction::Unban => unban_el_peer(&el_rpc, &enode).await?,
-                _ => unreachable!(),
+                BanAction::Ban => ban_el_peer(&el_rpc, &enode).await?,
+                BanAction::Unban => unban_el_peer(&el_rpc, &enode).await?,
             };
-            print_peer_action(&PeerActionJson::el(&config.name, action, enode, accepted), json)?;
+            print_peer_action(
+                &PeerActionJson::el(&config.name, action.peer_action(), enode, accepted),
+                json,
+            )?;
         }
         PeerTarget::PeerId(peer_id) => {
             warn_ignored_rpc_override(
@@ -234,20 +233,19 @@ async fn run_peer_ban_action(
                 return Ok(());
             }
             let disconnect_error = match action {
-                PeerAction::Ban => {
+                BanAction::Ban => {
                     ban_peer(&cl_rpc, &peer_id).await?;
                     disconnect_peer(&cl_rpc, &peer_id).await.err().map(|err| err.to_string())
                 }
-                PeerAction::Unban => {
+                BanAction::Unban => {
                     unban_peer(&cl_rpc, &peer_id).await?;
                     None
                 }
-                _ => unreachable!(),
             };
             print_peer_action(
                 &PeerActionJson::cl_with_disconnect_error(
                     &config.name,
-                    action,
+                    action.peer_action(),
                     peer_id,
                     disconnect_error,
                 ),
@@ -487,6 +485,24 @@ enum PeerAction {
     Unban,
     #[serde(rename = "unbanAll")]
     UnbanAll,
+}
+
+/// The two peer actions handled by `run_peer_ban_action`, so the shared handler
+/// is exhaustive over exactly the cases it supports rather than the wider
+/// `PeerAction`.
+#[derive(Debug, Clone, Copy)]
+enum BanAction {
+    Ban,
+    Unban,
+}
+
+impl BanAction {
+    const fn peer_action(self) -> PeerAction {
+        match self {
+            Self::Ban => PeerAction::Ban,
+            Self::Unban => PeerAction::Unban,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
