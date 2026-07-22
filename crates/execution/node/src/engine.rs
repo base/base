@@ -161,51 +161,44 @@ where
         parent_state: impl FnOnce() -> ProviderResult<StateProviderBox>,
     ) -> Result<(), InsertBlockErrorKind> {
         let timestamp = block.timestamp();
-        let validate_base_time = self.chain_spec().is_zombie_active_at_timestamp(timestamp)
-            && self.chain_spec().is_zombie_active_at_timestamp(parent_header.timestamp());
-        let validate_isthmus = self.chain_spec().is_isthmus_active_at_timestamp(timestamp);
-
-        if !validate_base_time && !validate_isthmus {
+        if !self.chain_spec().is_isthmus_active_at_timestamp(timestamp) {
             return Ok(());
         }
 
         let parent_state = parent_state()?;
+        self.validate_isthmus_post_execution(
+            state_updates(),
+            parent_state.as_ref(),
+            block.header(),
+        )?;
 
-        if validate_base_time {
-            let parent_millis = BaseTime::decode_timestamp_millis_part(
-                parent_state
-                    .storage(Predeploys::BASE_TIME, BaseTime::TIMESTAMP_MILLIS_PART_SLOT.into())?
-                    .unwrap_or_default(),
-            );
-            let child_millis = BaseTimeUpdateTx::extract_from_transactions(
-                &block.body().transactions,
-                block.number(),
-            )
-            .map_err(ConsensusError::other)?
-            .timestamp_millis_part();
-            let parent_timestamp_ms =
-                u128::from(parent_header.timestamp()) * 1_000 + u128::from(parent_millis);
-            let child_timestamp_ms = u128::from(timestamp) * 1_000 + u128::from(child_millis);
-
-            if child_timestamp_ms
-                != parent_timestamp_ms + u128::from(BaseTimeUpdateTx::BLOCK_INTERVAL_MILLIS)
-            {
-                return Err(ConsensusError::other(
-                    BaseConsensusError::BaseTimeProgressionInvalid {
-                        parent_timestamp_ms,
-                        child_timestamp_ms,
-                    },
-                )
-                .into());
-            }
+        if !self.chain_spec().is_zombie_active_at_timestamp(timestamp)
+            || !self.chain_spec().is_zombie_active_at_timestamp(parent_header.timestamp())
+        {
+            return Ok(());
         }
 
-        if validate_isthmus {
-            self.validate_isthmus_post_execution(
-                state_updates(),
-                parent_state.as_ref(),
-                block.header(),
-            )?;
+        let parent_millis = BaseTime::decode_timestamp_millis_part(
+            parent_state
+                .storage(Predeploys::BASE_TIME, BaseTime::TIMESTAMP_MILLIS_PART_SLOT.into())?
+                .unwrap_or_default(),
+        );
+        let child_millis =
+            BaseTimeUpdateTx::extract_from_transactions(&block.body().transactions, block.number())
+                .map_err(ConsensusError::other)?
+                .timestamp_millis_part();
+        let parent_timestamp_ms =
+            u128::from(parent_header.timestamp()) * 1_000 + u128::from(parent_millis);
+        let child_timestamp_ms = u128::from(timestamp) * 1_000 + u128::from(child_millis);
+
+        if child_timestamp_ms
+            != parent_timestamp_ms + u128::from(BaseTimeUpdateTx::BLOCK_INTERVAL_MILLIS)
+        {
+            return Err(ConsensusError::other(BaseConsensusError::BaseTimeProgressionInvalid {
+                parent_timestamp_ms,
+                child_timestamp_ms,
+            })
+            .into());
         }
 
         Ok(())
@@ -765,11 +758,20 @@ mod tests {
         RecoveredBlock::new_sealed(SealedBlock::seal_slow(block), vec![])
     }
 
-    fn base_time_block(timestamp: u64, millis_part: u16) -> RecoveredBlock<BaseBlock> {
+    fn base_time_block(
+        timestamp: u64,
+        millis_part: u16,
+        withdrawals_root: B256,
+    ) -> RecoveredBlock<BaseBlock> {
         let number = 9;
         let metadata = BaseTimeUpdateTx::new(millis_part).unwrap().into_deposit_tx(number);
         let block = BaseBlock {
-            header: Header { number, timestamp, ..Default::default() },
+            header: Header {
+                number,
+                timestamp,
+                withdrawals_root: Some(withdrawals_root),
+                ..Default::default()
+            },
             body: BlockBody {
                 transactions: vec![TxDeposit::default().seal_slow().into(), metadata.into()],
                 ..Default::default()
@@ -798,21 +800,22 @@ mod tests {
         parent_millis_part: u16,
         child_timestamp: u64,
         child_millis_part: u16,
+        withdrawals_root: B256,
     ) -> Result<(), InsertBlockErrorKind> {
         let validator = validator_with_chain_spec(
             BaseChainSpecBuilder::base_mainnet()
-                .with_fork(BaseUpgrade::Isthmus, ForkCondition::Never)
                 .with_fork(BaseUpgrade::Zombie, ForkCondition::Timestamp(ZOMBIE_TIMESTAMP))
                 .build(),
         );
-        let block = base_time_block(child_timestamp, child_millis_part);
+        let block = base_time_block(child_timestamp, child_millis_part, withdrawals_root);
         let parent =
             SealedHeader::seal_slow(Header { timestamp: parent_timestamp, ..Default::default() });
+        let state_updates = HashedPostState::default();
         let parent_state = parent_state(parent_millis_part);
 
         PayloadValidator::<BaseEngineTypes>::validate_block_post_execution_with_hashed_state(
             &validator,
-            || panic!("BaseTime validation must not request hashed state"),
+            || &state_updates,
             &block,
             &parent,
             || Ok(Box::new(parent_state)),
@@ -852,18 +855,54 @@ mod tests {
 
     #[test]
     fn post_execution_validates_exact_200ms_progression() {
-        validate_base_time_progression(ZOMBIE_TIMESTAMP, 200, ZOMBIE_TIMESTAMP, 400).unwrap();
-        validate_base_time_progression(ZOMBIE_TIMESTAMP, 800, ZOMBIE_TIMESTAMP + 1, 0).unwrap();
+        validate_base_time_progression(
+            ZOMBIE_TIMESTAMP,
+            200,
+            ZOMBIE_TIMESTAMP,
+            400,
+            EMPTY_ROOT_HASH,
+        )
+        .unwrap();
+        validate_base_time_progression(
+            ZOMBIE_TIMESTAMP,
+            800,
+            ZOMBIE_TIMESTAMP + 1,
+            0,
+            EMPTY_ROOT_HASH,
+        )
+        .unwrap();
 
-        let error =
-            validate_base_time_progression(ZOMBIE_TIMESTAMP, 200, ZOMBIE_TIMESTAMP + 1, 400)
-                .unwrap_err();
+        let error = validate_base_time_progression(
+            ZOMBIE_TIMESTAMP,
+            200,
+            ZOMBIE_TIMESTAMP + 1,
+            400,
+            EMPTY_ROOT_HASH,
+        )
+        .unwrap_err();
         assert!(matches!(
             base_consensus_error(&error),
             Some(BaseConsensusError::BaseTimeProgressionInvalid {
                 parent_timestamp_ms: 1_800_000_001_200,
                 child_timestamp_ms: 1_800_000_002_400,
             })
+        ));
+    }
+
+    #[test]
+    fn post_execution_validates_isthmus_before_base_time() {
+        let error = validate_base_time_progression(
+            ZOMBIE_TIMESTAMP,
+            200,
+            ZOMBIE_TIMESTAMP + 1,
+            400,
+            B256::ZERO,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            base_consensus_error(&error),
+            Some(BaseConsensusError::L2WithdrawalsRootMismatch { .. })
         ));
     }
 }
