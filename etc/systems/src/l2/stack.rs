@@ -282,13 +282,10 @@ impl L2Stack {
             }
         };
 
-        // 6. Start the sequencer after the client consensus is ready.
-        builder_consensus
-            .start_sequencer()
-            .await
-            .wrap_err("Failed to start sequencer after peer connection")?;
-
-        // 7. Start shadow sequencers, each peered to the active sequencer.
+        // 6. Start shadow sequencers, each peered to the active sequencer. Shadows must join the
+        // gossip mesh before the active begins producing blocks: gossip does not backfill history,
+        // so any canonical block sealed before a shadow connects would never reach its
+        // reconciliation gate, leaving the shadow unable to reconcile its private branch.
         let active_consensus_p2p_addr = builder_consensus.p2p_addr();
         let mut shadow_sequencers = Vec::with_capacity(config.shadow_sequencer_keys.len());
         for (index, shadow_key) in config.shadow_sequencer_keys.iter().enumerate() {
@@ -309,6 +306,12 @@ impl L2Stack {
             .wrap_err_with(|| format!("Failed to start shadow sequencer {index}"))?;
             shadow_sequencers.push(shadow);
         }
+
+        // 7. Start the active sequencer only after every shadow has joined the gossip mesh.
+        builder_consensus
+            .start_sequencer()
+            .await
+            .wrap_err("Failed to start sequencer after peer connection")?;
 
         Ok(Self {
             builder,
