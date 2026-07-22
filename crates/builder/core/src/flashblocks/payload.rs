@@ -138,7 +138,7 @@ pub struct BasePayloadBuilder<Pool, Client, S = DefaultCandidateSource<Pool>> {
 
 impl<Pool, Client> BasePayloadBuilder<Pool, Client>
 where
-    Pool: Clone,
+    Pool: TransactionPool,
 {
     /// `BasePayloadBuilder` constructor.
     ///
