@@ -26,7 +26,7 @@ use tracing::debug;
 
 use crate::{
     Admission, BasePooledTx, BaseTransactionValidator, ExpirySweep, GuardLimits, GuardMetrics,
-    InvalidationKey, LimitRejection, MempoolGuard, StateDiffInvalidation,
+    InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard, StateDiffInvalidation,
     best::MergeBestTransactions,
     two_d_nonce_pool::{InsertOutcome, TwoDNoncePool},
 };
@@ -262,14 +262,18 @@ where
         removed
     }
 
-    /// Clears all guarded transactions after a canonical-feed gap.
-    pub fn invalidate_all_tracked_transactions(&self) -> Vec<Arc<ValidPoolTransaction<T>>> {
+    /// Clears every guarded transaction, attributing the flush to `cause` for
+    /// metrics. Used for the two fail-safe bulk paths (reorg and feed gap).
+    pub fn invalidate_all_tracked_transactions(
+        &self,
+        cause: InvalidationCause,
+    ) -> Vec<Arc<ValidPoolTransaction<T>>> {
         // Keep classification-generation changes atomic with protocol admission.
         let _admission_guard = self.protocol_admission_lock.lock();
         self.validator().validator().clear_limit_class_cache();
         let dropped = self.guard.write().invalidate_all();
         let removed = self.remove_dropped_across_pools(dropped);
-        GuardMetrics::record_feed_gap_invalidations(removed.len());
+        GuardMetrics::record_bulk_invalidations(removed.len(), cause);
         removed
     }
 
@@ -739,8 +743,8 @@ where
         self.apply_state_diff(diffs).len()
     }
 
-    fn invalidate_all_tracked(&self) -> usize {
-        self.invalidate_all_tracked_transactions().len()
+    fn invalidate_all_tracked(&self, cause: InvalidationCause) -> usize {
+        self.invalidate_all_tracked_transactions(cause).len()
     }
 }
 
@@ -2255,7 +2259,7 @@ mod tests {
         pool.add_transaction(TransactionOrigin::Local, channel).await.unwrap();
         assert!(pool.guard.read().contains(&channel_hash));
 
-        let removed = pool.invalidate_all_tracked_transactions();
+        let removed = pool.invalidate_all_tracked_transactions(InvalidationCause::Reorg);
         assert_eq!(removed.len(), 1);
         assert_eq!(*removed[0].hash(), channel_hash);
         assert!(pool.get(&channel_hash).is_none());

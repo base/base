@@ -17,13 +17,38 @@ use tracing::{debug, warn};
 
 use crate::AccountStateDiff;
 
+/// Why every guarded transaction was flushed in one shot. Both paths are
+/// fail-safe (the guard cannot prove any admission current), but they differ
+/// wildly in frequency, so they carry distinct metric labels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InvalidationCause {
+    /// A canonical chain reorg. The committed segment omits state changes caused
+    /// solely by rolling back the reverted segment, so targeted invalidation is
+    /// not possible. Common in normal operation.
+    Reorg,
+    /// A gap in the canonical-state feed (the broadcast stream lagged and
+    /// dropped notifications). Rare, and a signal worth alerting on.
+    FeedGap,
+}
+
+impl InvalidationCause {
+    /// Low-cardinality static metric label.
+    #[must_use]
+    pub const fn as_label(self) -> &'static str {
+        match self {
+            Self::Reorg => "reorg",
+            Self::FeedGap => "feed_gap",
+        }
+    }
+}
+
 /// Applies canonical state diffs to a pool's EIP-8130 invalidation guard.
 pub trait StateDiffInvalidation: Clone + Send + Sync + 'static {
     /// Invalidates guarded transactions affected by an executed state diff.
     fn invalidate_from_state_diff(&self, diffs: &[AccountStateDiff]) -> usize;
 
-    /// Invalidates every guarded transaction after a state-feed gap.
-    fn invalidate_all_tracked(&self) -> usize;
+    /// Invalidates every guarded transaction, attributing the flush to `cause`.
+    fn invalidate_all_tracked(&self, cause: InvalidationCause) -> usize;
 }
 
 /// Expires guarded transactions on a wall-clock timer, independent of blocks.
@@ -69,7 +94,7 @@ pub async fn maintain_state_diff_invalidation<P, N>(
         let notification = match events.next().await {
             Some(Ok(notification)) => notification,
             Some(Err(BroadcastStreamRecvError::Lagged(missed))) => {
-                let removed = pool.invalidate_all_tracked();
+                let removed = pool.invalidate_all_tracked(InvalidationCause::FeedGap);
                 warn!(
                     missed = missed,
                     removed = removed,
@@ -84,7 +109,7 @@ pub async fn maintain_state_diff_invalidation<P, N>(
             // The committed segment omits state changes caused solely by rolling
             // back the reverted segment. Correct targeted handling would need
             // both key sets, so conservatively flush this exceptional path.
-            let removed = pool.invalidate_all_tracked();
+            let removed = pool.invalidate_all_tracked(InvalidationCause::Reorg);
             warn!(
                 removed = removed,
                 "canonical chain reorged; invalidated all guarded transactions"
