@@ -181,12 +181,35 @@ impl Eip8130Constants {
     /// delegation) if the intent is for the total cap to stay the binding limit.
     pub const MAX_ACCOUNT_CHANGES_PER_TX: usize = 3;
 
-    /// Maximum `expiry` window (in seconds beyond the current wall-clock time)
+    /// Maximum `expiry` window (in seconds beyond the current reference time)
     /// the mempool accepts for nonce-free-mode transactions
     /// (`nonce_key == NONCE_KEY_MAX`). Per the spec ("Nodes SHOULD reject
     /// `NONCE_KEY_MAX` transactions whose `expiry` exceeds a short window"),
     /// a tight window bounds the replay surface in the absence of nonce state.
-    pub const NONCE_FREE_MAX_EXPIRY_WINDOW: u64 = 10;
+    ///
+    /// Sized at 20 seconds (~10 Base block times at 2s) so a single `expiry`
+    /// picked by a client stays inside the window on every node despite the
+    /// spread between each node's head-block timestamp and wall-clock time
+    /// (followers lag the sequencer), while still keeping the nonce-free replay
+    /// surface small.
+    ///
+    /// # Invariant: must stay `<=` the on-chain inclusion window
+    ///
+    /// This is only the mempool *pre-filter*; the authoritative, consensus-critical
+    /// window is `NonceManagerStorage::NONCE_FREE_EXPIRY_WINDOW` (currently **30s**),
+    /// enforced against the block timestamp when the nonce-free replay entry is
+    /// recorded at inclusion. This value MUST remain `<=` that on-chain window so the
+    /// pool never admits a transaction whose `expiry` the block-inclusion check would
+    /// reject (which would waste block space on transactions that can never land). The
+    /// gap between the two (20 vs 30) is deliberate headroom that also absorbs the
+    /// skew between the pool's reference clock and the inclusion block timestamp.
+    ///
+    /// Raising this at or beyond the on-chain window is a coordinated **consensus /
+    /// fork-level** change: the on-chain `NONCE_FREE_EXPIRY_WINDOW` must be raised
+    /// too, and `NonceManagerStorage::REPLAY_BUFFER_CAPACITY` resized to keep
+    /// `peak nonce-free throughput x window` within capacity (see the buffer-sizing
+    /// invariant test in `base-common-precompiles`).
+    pub const NONCE_FREE_MAX_EXPIRY_WINDOW: u64 = 20;
 
     /// Maximum number of actor entries the mempool accepts in a single
     /// `Create.initial_actors` slice. Bounds per-transaction memory and CPU

@@ -3,7 +3,6 @@
 use std::{path::PathBuf, sync::Arc};
 
 use alloy_primitives::Address;
-use alloy_provider::RootProvider;
 use alloy_rpc_types_engine::JwtSecret;
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_chains::ChainConfig;
@@ -12,6 +11,7 @@ use base_consensus_node::{
     EngineConfig, L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder,
     UpgradeSignalBuilderConfig,
 };
+use base_consensus_providers::L1RpcProvider;
 use base_upgrade_signal::{
     UpgradeSignalArgs, UpgradeSignalConfig, UpgradeSignalMetricLayer, UpgradeSignalRuntimeApplier,
     UpgradeSignalSchedule, UpgradeSignalStartupMode,
@@ -504,7 +504,7 @@ impl ConsensusNodeArgs {
         signal_config: &UpgradeSignalConfig,
         upgrade_signal_l1_rpc: Option<&Url>,
     ) -> eyre::Result<()> {
-        let reader = signal_config.reader(RootProvider::new_http(
+        let reader = signal_config.reader(L1RpcProvider::new_http(
             self.resolved_upgrade_signal_l1_rpc(upgrade_signal_l1_rpc),
         ));
         let schedule = signal_config

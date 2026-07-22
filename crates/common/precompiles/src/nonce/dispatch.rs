@@ -2,7 +2,7 @@
 
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolCall;
-use base_precompile_storage::{IntoPrecompileResult, StorageCtx};
+use base_precompile_storage::{BasePrecompileError, IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
 use crate::{
@@ -21,6 +21,11 @@ impl NonceManagerStorage<'_> {
     /// nonce-mutating entry points (`increment_nonce`, `check_and_mark_expiring_nonce`)
     /// are driven by the EIP-8130 execution layer, not by EVM calls.
     pub fn dispatch(&self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
+        // `getNonce` is nonpayable; reject attached ETH before charging calldata gas.
+        if !ctx.call_value().is_zero() {
+            return BasePrecompileError::revert(INonceManager::NonPayable {})
+                .into_precompile_result(ctx.gas_used(), ctx.state_gas_used());
+        }
         let calldata_cost = (calldata.len() as u64).div_ceil(32).saturating_mul(CALLDATA_WORD_GAS);
         if let Err(error) = ctx.deduct_gas(calldata_cost) {
             return error.into_precompile_result(ctx.gas_used(), ctx.state_gas_used());
@@ -46,8 +51,8 @@ impl NonceManagerStorage<'_> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, U256, address};
-    use alloy_sol_types::SolCall;
+    use alloy_primitives::{Address, Bytes, U256, address};
+    use alloy_sol_types::{SolCall, SolError};
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
     use crate::{INonceManager, NonceManagerStorage};
@@ -88,6 +93,19 @@ mod tests {
         let output = dispatch(&mut storage, &calldata);
 
         assert!(output.is_revert());
+    }
+
+    #[test]
+    fn dispatch_rejects_call_with_nonzero_value() {
+        let mut storage = HashMapStorageProvider::new(1);
+        storage.set_call_value(U256::from(1u64));
+        let calldata =
+            INonceManager::getNonceCall { account: ACCOUNT, nonceKey: U256::from(9) }.abi_encode();
+
+        let output = dispatch(&mut storage, &calldata);
+
+        assert!(output.is_revert());
+        assert_eq!(output.bytes, Bytes::from(INonceManager::NonPayable {}.abi_encode()));
     }
 
     #[test]

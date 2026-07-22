@@ -14,7 +14,7 @@ use std::{
 use alloy_primitives::{Address, B256};
 use base_proof_contracts::{AggregateVerifierClient, GameStatus};
 use base_proof_primitives::ProofRequest as TeeProofRequest;
-use base_proof_rpc::L2Provider;
+use base_proof_rpc::{L1Provider, L2Provider};
 use base_proof_submission::KnownRevert;
 use base_prover_service_client::ProofRequesterProvider;
 use base_prover_service_protocol::{SnarkPlonkProofRequest, ZkBackend, ZkProofRequest, ZkVm};
@@ -23,9 +23,8 @@ use tracing::{debug, info, warn};
 
 use crate::{
     CandidateGame, ChallengeSubmitError, ChallengeSubmitter, ChallengerMetrics,
-    ChallengerProofAdapter, DisputeIntent, IntermediateValidationParams, L1HeadProvider,
-    OutputValidator, PendingProof, PendingProofs, ProofKind, ProofPhase, ProofUpdate,
-    ValidationResult, ValidatorError,
+    ChallengerProofAdapter, DisputeIntent, OutputValidator, PendingProof, PendingProofs, ProofKind,
+    ProofPhase, ProofUpdate,
 };
 
 /// Manages the lifecycle of proofs used to dispute invalid games.
@@ -34,7 +33,8 @@ pub struct DisputeProofManager<L2: L2Provider, P: ProofRequesterProvider> {
     validator: OutputValidator<L2>,
     /// Prover-service requester used to generate and poll fault proofs.
     proof_requester: Arc<P>,
-    tee: Option<Arc<dyn L1HeadProvider>>,
+    /// L1 provider used to construct TEE proof requests.
+    l1_provider: Arc<dyn L1Provider>,
     verifier_client: Arc<dyn AggregateVerifierClient>,
     /// In-flight proof sessions keyed by game address.
     pending_proofs: PendingProofs,
@@ -67,7 +67,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
     pub fn new(
         validator: OutputValidator<L2>,
         proof_requester: Arc<P>,
-        tee: Option<Arc<dyn L1HeadProvider>>,
+        l1_provider: Arc<dyn L1Provider>,
         verifier_client: Arc<dyn AggregateVerifierClient>,
         max_proof_duration: Duration,
         tee_submit_retry_limit: u32,
@@ -75,7 +75,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
         Self {
             validator,
             proof_requester,
-            tee,
+            l1_provider,
             verifier_client,
             pending_proofs: PendingProofs::new(),
             ignored_games: HashSet::new(),
@@ -83,26 +83,6 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
             max_proof_duration,
             tee_submit_retry_limit,
         }
-    }
-
-    /// Validates intermediate output roots against the local L2 node.
-    pub async fn validate_intermediate_roots(
-        &self,
-        params: IntermediateValidationParams<'_>,
-    ) -> Result<ValidationResult, ValidatorError> {
-        self.validator.validate_intermediate_roots(params).await
-    }
-
-    /// Validates a claimed output root at a specific L2 block.
-    pub async fn validate_claimed_root_at_block(
-        &self,
-        game_address: Address,
-        l2_block_number: u64,
-        claimed_root: B256,
-    ) -> Result<ValidationResult, ValidatorError> {
-        self.validator
-            .validate_claimed_root_at_block(game_address, l2_block_number, claimed_root)
-            .await
     }
 
     /// Returns whether a game is terminally ignored.
@@ -170,10 +150,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
     ) -> eyre::Result<()> {
         let game_address = candidate.factory.proxy;
 
-        if candidate.tee_prover != Address::ZERO
-            && try_tee_first
-            && let Some(tee) = &self.tee
-        {
+        if candidate.tee_prover != Address::ZERO && try_tee_first {
             ChallengerMetrics::tee_proof_attempts_total().increment(1);
             match self
                 .build_tee_request(
@@ -181,7 +158,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
                     &candidate,
                     invalid_index,
                     expected_root,
-                    tee.as_ref(),
+                    self.l1_provider.as_ref(),
                 )
                 .await
             {
@@ -294,7 +271,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
         candidate: &CandidateGame,
         invalid_index: u64,
         expected_root: B256,
-        l1_head_provider: &dyn L1HeadProvider,
+        l1_provider: &dyn L1Provider,
     ) -> eyre::Result<TeeProofRequest> {
         let start_block_number = candidate.checkpoint_start_block(invalid_index)?;
 
@@ -303,11 +280,11 @@ impl<L2: L2Provider, P: ProofRequesterProvider> DisputeProofManager<L2, P> {
             .ok_or_else(|| eyre::eyre!("claimed_l2_block_number overflow"))?;
 
         let l1_head = candidate.l1_head;
-        let (l1_head_number_result, output_root_result) = tokio::join!(
-            l1_head_provider.block_number_by_hash(l1_head),
+        let (l1_header_result, output_root_result) = tokio::join!(
+            l1_provider.header_by_hash(l1_head),
             self.validator.compute_output_root_with_hash(start_block_number),
         );
-        let l1_head_number = l1_head_number_result?;
+        let l1_head_number = l1_header_result?.number;
         let (agreed_l2_head_hash, agreed_l2_output_root) = output_root_result?;
 
         Ok(TeeProofRequest {
@@ -647,12 +624,13 @@ mod tests {
 
     use alloy_primitives::{Address, B256, Bytes};
     use base_proof_contracts::{AggregateVerifierClient, GameStatus, l1_origin_too_old_selector};
+    use base_proof_rpc::L1Provider;
     use base_prover_service_protocol::{SnarkPlonkProofRequest, ZkProofRequest, ZkVm};
     use base_tx_manager::TxManagerError;
 
     use super::*;
     use crate::test_utils::{
-        MockAggregateVerifier, MockL2Provider, MockTxManager, MockZkProofProvider, addr,
+        MockAggregateVerifier, MockL1, MockL2Provider, MockTxManager, MockZkProofProvider, addr,
         mock_state, receipt_with_status,
     };
 
@@ -689,9 +667,9 @@ mod tests {
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
         let proof_requester = Arc::new(MockZkProofProvider::default());
         let manager = DisputeProofManager::new(
-            OutputValidator::new(Arc::new(MockL2Provider::new())),
+            OutputValidator::new(Arc::new(MockL2Provider::default())),
             Arc::clone(&proof_requester),
-            None,
+            Arc::new(MockL1::failure("unused")) as Arc<dyn L1Provider>,
             verifier as Arc<dyn AggregateVerifierClient>,
             Duration::from_secs(60),
             3,

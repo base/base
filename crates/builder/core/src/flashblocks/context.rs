@@ -21,7 +21,8 @@ use base_execution_payload_builder::{
     BasePayloadBuilderAttributes, error::BasePayloadBuilderError,
 };
 use base_execution_txpool::{
-    BundleTransaction, TimestampedTransaction, estimated_da_size::DataAvailabilitySized,
+    BasePooledTx, BundleTransaction, GuardMetrics, TimestampedTransaction,
+    estimated_da_size::DataAvailabilitySized,
 };
 use base_observability_events::TransactionEventType;
 use reth_basic_payload_builder::PayloadConfig;
@@ -796,6 +797,54 @@ impl BasePayloadBuilderCtx {
                     },
                 );
                 best_txs.mark_invalid(tx.sender(), tx.nonce());
+                continue;
+            }
+
+            if self.builder_config.manifest_precheck_enabled
+                && let Some(manifest) = tx.watch_manifest()
+                && let Err(stale) = manifest.revalidate(evm.db_mut(), block_timestamp)
+            {
+                let tx_hash = *tx.hash();
+                num_txs_considered += 1;
+                let ordering_position = num_txs_considered;
+                trace!(
+                    target: "payload_builder",
+                    tx_hash = ?tx_hash,
+                    cause = stale.cause(),
+                    "skipping EIP-8130 transaction with stale authorization manifest"
+                );
+                GuardMetrics::record_builder_precheck_drop(&stale);
+                self.emit_builder_decision_event(
+                    &payload_id,
+                    TransactionEventType::BuilderConsidered,
+                    tx_hash,
+                    Some(ordering_position),
+                    || BuilderConsideredEventData::new(info, limits, None),
+                );
+                self.emit_builder_decision_event(
+                    &payload_id,
+                    TransactionEventType::BuilderRejected,
+                    tx_hash,
+                    Some(ordering_position),
+                    || {
+                        BuilderRejectedEventData::new(
+                            "manifest_precheck_stale",
+                            stale.cause(),
+                            false,
+                            info,
+                            limits,
+                            None,
+                        )
+                    },
+                );
+                diag.txs_rejected_other += 1;
+                // Nonce-free replay-ID entries are independent. The upstream
+                // payload adapter invalidates by sender (not by replay ID), so
+                // marking one would suppress unrelated entries from this sender.
+                // This transaction has already been consumed from the iterator.
+                if tx.eip8130_replay_id().is_none() {
+                    best_txs.mark_invalid(tx.sender(), tx.nonce());
+                }
                 continue;
             }
 

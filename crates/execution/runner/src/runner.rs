@@ -36,6 +36,9 @@ pub struct BaseNodeRunner<SB: PayloadServiceBuilder = DefaultPayloadServiceBuild
     da_config: Option<BaseDAConfig>,
     /// Shared gas-limit configuration for the node and payload builder.
     gas_limit_config: Option<GasLimitConfig>,
+    /// Whether to drop positively stale EIP-8130 transactions using their
+    /// captured authorization manifest before execution.
+    manifest_precheck_enabled: bool,
     /// Binary-owned callbacks to run after the node has started.
     started_callbacks: Vec<StartedCallback>,
 }
@@ -49,6 +52,7 @@ impl BaseNodeRunner<DefaultPayloadServiceBuilder> {
             service_builder: DefaultPayloadServiceBuilder,
             da_config: None,
             gas_limit_config: None,
+            manifest_precheck_enabled: true,
             started_callbacks: Vec::new(),
         }
     }
@@ -61,6 +65,7 @@ impl<SB: PayloadServiceBuilder> fmt::Debug for BaseNodeRunner<SB> {
             .field("extensions", &self.extensions.len())
             .field("da_config", &self.da_config)
             .field("gas_limit_config", &self.gas_limit_config)
+            .field("manifest_precheck_enabled", &self.manifest_precheck_enabled)
             .field("started_callbacks", &self.started_callbacks.len())
             .finish()
     }
@@ -79,6 +84,12 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
         self
     }
 
+    /// Configures whether EIP-8130 authorization manifests are checked before execution.
+    pub const fn with_manifest_precheck_enabled(mut self, enabled: bool) -> Self {
+        self.manifest_precheck_enabled = enabled;
+        self
+    }
+
     /// Swap the payload service builder.
     pub fn with_service_builder<SB2: PayloadServiceBuilder>(self, sb: SB2) -> BaseNodeRunner<SB2> {
         BaseNodeRunner {
@@ -87,6 +98,7 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
             service_builder: sb,
             da_config: self.da_config,
             gas_limit_config: self.gas_limit_config,
+            manifest_precheck_enabled: self.manifest_precheck_enabled,
             started_callbacks: self.started_callbacks,
         }
     }
@@ -116,38 +128,22 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
     /// Applies all Base-specific wiring to the supplied builder and returns a launched node
     /// handle without waiting for shutdown.
     pub async fn launch(self, builder: BaseNodeBuilder) -> Result<LaunchedBaseNode> {
+        let handle = self.launch_node(builder).await?;
+        Ok(LaunchedBaseNode { handle })
+    }
+
+    async fn launch_node(self, builder: BaseNodeBuilder) -> Result<NodeHandleFor<BaseNode>> {
+        info!(target: "base-runner", "starting custom Base node");
+
         let Self {
             rollup_args,
             extensions,
             service_builder,
             da_config,
             gas_limit_config,
+            manifest_precheck_enabled,
             started_callbacks,
         } = self;
-        let handle = Self::launch_node(
-            rollup_args,
-            extensions,
-            service_builder,
-            da_config,
-            gas_limit_config,
-            started_callbacks,
-            builder,
-        )
-        .await?;
-        Ok(LaunchedBaseNode { handle })
-    }
-
-    async fn launch_node(
-        rollup_args: RollupArgs,
-        extensions: Vec<Box<dyn BaseNodeExtension>>,
-        service_builder: SB,
-        da_config: Option<BaseDAConfig>,
-        gas_limit_config: Option<GasLimitConfig>,
-        started_callbacks: Vec<StartedCallback>,
-        builder: BaseNodeBuilder,
-    ) -> Result<NodeHandleFor<BaseNode>> {
-        info!(target: "base-runner", "starting custom Base node");
-
         let mut base_node = BaseNode::new(rollup_args);
         if let Some(da_config) = da_config {
             base_node = base_node.with_da_config(da_config);
@@ -155,6 +151,7 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
         if let Some(gas_limit_config) = gas_limit_config {
             base_node = base_node.with_gas_limit_config(gas_limit_config);
         }
+        base_node = base_node.with_manifest_precheck_enabled(manifest_precheck_enabled);
         let components = service_builder.build_components(&base_node);
 
         let builder = builder
@@ -195,8 +192,10 @@ mod tests {
         let runner = BaseNodeRunner::new(RollupArgs::default())
             .with_da_config(da_config.clone())
             .with_gas_limit_config(gas_limit_config.clone())
+            .with_manifest_precheck_enabled(false)
             .with_service_builder(TestPayloadServiceBuilder);
 
+        assert!(!runner.manifest_precheck_enabled);
         let configured_da = runner.da_config.expect("DA config should be preserved");
         let configured_gas = runner.gas_limit_config.expect("gas-limit config should be preserved");
 

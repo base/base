@@ -10,7 +10,7 @@ use alloc::string::ToString;
 use alloy_evm::precompiles::PrecompileInput;
 use alloy_primitives::{Address, B256, Log, LogData, U256};
 use revm::{
-    context::{Block, journaled_state::JournalCheckpoint},
+    context::journaled_state::JournalCheckpoint,
     context_interface::cfg::GasParams,
     interpreter::gas::{Gas, KECCAK256, KECCAK256WORD, LOG},
     primitives::keccak256,

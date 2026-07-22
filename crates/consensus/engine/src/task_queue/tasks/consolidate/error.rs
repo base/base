@@ -16,6 +16,9 @@ pub enum ConsolidateTaskError {
     /// Failed to fetch the unsafe L2 block.
     #[error("Failed to fetch the unsafe L2 block")]
     FailedToFetchUnsafeL2Block,
+    /// Failed to fetch the derived L2 block before build fallback.
+    #[error("Failed to fetch the derived L2 block")]
+    FailedToFetchDerivedL2Block,
     /// The build task failed.
     #[error(transparent)]
     BuildTaskFailed(#[from] BuildTaskError),
@@ -25,6 +28,9 @@ pub enum ConsolidateTaskError {
     /// The consolidation forkchoice update call to the engine api failed.
     #[error(transparent)]
     ForkchoiceUpdateFailed(#[from] SynchronizeTaskError),
+    /// The forkchoice update completed without applying the requested heads.
+    #[error("Forkchoice update did not apply the requested heads")]
+    ForkchoiceUpdateDidNotApply,
 }
 
 impl From<BuildAndSealError> for ConsolidateTaskError {
@@ -40,7 +46,10 @@ impl EngineTaskError for ConsolidateTaskError {
     fn severity(&self) -> EngineTaskErrorSeverity {
         match self {
             Self::MissingUnsafeL2Block(_) => EngineTaskErrorSeverity::Reset,
-            Self::FailedToFetchUnsafeL2Block => EngineTaskErrorSeverity::Temporary,
+            Self::FailedToFetchUnsafeL2Block | Self::FailedToFetchDerivedL2Block => {
+                EngineTaskErrorSeverity::Temporary
+            }
+            Self::ForkchoiceUpdateDidNotApply => EngineTaskErrorSeverity::Deferred,
             Self::BuildTaskFailed(inner) => inner.severity(),
             Self::SealTaskFailed(inner) => inner.severity(),
             Self::ForkchoiceUpdateFailed(inner) => inner.severity(),
