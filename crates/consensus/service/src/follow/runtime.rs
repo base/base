@@ -233,12 +233,21 @@ where
                     "Local L1 origin block unavailable; promoting label without local L1 confirmation"
                 );
             }
+            Err(FollowError::LocalL1BlockFetch { number, source }) => {
+                info!(
+                    target: "follow",
+                    error = %source,
+                    l2_block = block.block_info.number,
+                    l1_block = number,
+                    "L1 origin fetch failed; promoting label without local L1 confirmation"
+                );
+            }
             Err(error) => {
                 warn!(
                     target: "follow",
                     error = %error,
                     l2_block = block.block_info.number,
-                    "L2 origin check failed; promoting label without local L1 confirmation"
+                    "L2 origin not canonical on local L1; promoting label anyway"
                 );
             }
         }
