@@ -160,12 +160,9 @@ impl ProofDispatcher {
 
     /// Dispatches every target from the current dispatcher cursor up to `finalized_head`.
     pub async fn tick(&self, current: &mut RecoveredState, finalized_head: u64) {
-        loop {
-            let Some(target_block) =
-                ProofTarget::next_block(current.l2_block_number, self.config.block_interval)
-            else {
-                break;
-            };
+        while let Some(target_block) =
+            ProofTarget::next_block(current.l2_block_number, self.config.block_interval)
+        {
             if target_block > finalized_head {
                 debug!(
                     current_block = current.l2_block_number,

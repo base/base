@@ -12,7 +12,7 @@
 FROM --platform=linux/amd64 ghcr.io/mdehoog/aws-nitro-enclaves-sdk-bootstrap@sha256:6e5e53bd47370dbc1920208e93d222533a36f9f5dc85615591cbfe56a03312b0 AS bootstrap
 
 # Stage 2: Rust base image - Alpine musl for fully static enclave binary
-FROM --platform=linux/amd64 rust:1.93-alpine3.21@sha256:3d805575c739eafbec6e0e81caa8e8daa0700831a7363755b88b75de69af7341 AS rust
+FROM --platform=linux/amd64 rust:1.95-alpine3.21@sha256:3ccb4699768d7097f0b3e2c0b3f31cb403983873d69f5865a1e66ec154eb1786 AS rust
 WORKDIR /app
 
 ENV SOURCE_DATE_EPOCH=0
@@ -59,7 +59,7 @@ RUN linuxkit build --format kernel+initrd --no-sbom --name init-ramdisk ./etc/do
 RUN linuxkit build --format kernel+initrd --no-sbom --name user-ramdisk ./etc/docker/nitro-enclave/user-ramdisk.yaml
 
 # Stage 4: EIF - Build EIF using aws-nitro-enclaves-image-format
-FROM --platform=linux/amd64 rust:1.93@sha256:f7c649bf7cc388826273a4977e8304778b7f8ad2e20838c1d52283cf23e49f7a AS eif
+FROM --platform=linux/amd64 rust:1.95@sha256:443dd9a3260cf23c22fc05051dd5661dd7b4028d3d25dbaffab6563b63c3539c AS eif
 
 ENV SOURCE_DATE_EPOCH=0
 
@@ -95,7 +95,7 @@ RUN eif_build \
     --output eif.bin
 
 # Stage 5: Nitro CLI - build aws-nitro-enclaves-cli from source
-FROM --platform=linux/amd64 rust:1.93@sha256:f7c649bf7cc388826273a4977e8304778b7f8ad2e20838c1d52283cf23e49f7a AS nitro-cli
+FROM --platform=linux/amd64 rust:1.95@sha256:443dd9a3260cf23c22fc05051dd5661dd7b4028d3d25dbaffab6563b63c3539c AS nitro-cli
 
 WORKDIR /app
 
