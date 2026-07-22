@@ -262,7 +262,11 @@ impl BaseUpgrade {
 
     /// Returns the active upgrade at the given timestamp for the specified chain.
     pub fn from_chain_and_timestamp(chain_id: u64, timestamp: u64) -> Option<Self> {
-        let config = UpgradeConfig::for_chain_id(chain_id)?;
+        let mut config = UpgradeConfig::for_chain_id(chain_id)?;
+
+        if let Some(overrides) = RuntimeUpgradeRegistry::overrides(chain_id) {
+            config.apply_activation_overrides(&overrides);
+        }
 
         Self::EXECUTION_VARIANTS.into_iter().rev().find(|&upgrade| {
             upgrade == Self::Bedrock
@@ -900,7 +904,11 @@ mod tests {
 
 #[cfg(test)]
 mod runtime_tests {
+    use spin::Mutex;
+
     use super::*;
+
+    static RUNTIME_REGISTRY_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn runtime_registry_tracks_timestamp_and_never_overrides() {
@@ -953,6 +961,9 @@ mod runtime_tests {
 
     #[test]
     fn known_chains_resolve_activation_boundaries() {
+        let _guard = RUNTIME_REGISTRY_TEST_LOCK.lock();
+        RuntimeUpgradeRegistry::clear_chain(8453);
+        RuntimeUpgradeRegistry::clear_chain(84532);
         for (chain_id, config) in
             [(8453, UpgradeConfig::BASE_MAINNET), (84532, UpgradeConfig::BASE_SEPOLIA)]
         {
@@ -983,6 +994,38 @@ mod runtime_tests {
     }
 
     #[test]
+    fn activation_boundaries_respect_overrides() {
+        let _guard = RUNTIME_REGISTRY_TEST_LOCK.lock();
+        RuntimeUpgradeRegistry::clear_chain(8453);
+        RuntimeUpgradeRegistry::clear_chain(84532);
+        const CHAIN_ID: u64 = 8453;
+
+        let beryl = UpgradeConfig::BASE_MAINNET.base.beryl.unwrap();
+        let cobalt = beryl + 100;
+
+        RuntimeUpgradeRegistry::set_activation_timestamp(CHAIN_ID, BaseUpgrade::Cobalt, cobalt);
+
+        assert_eq!(
+            BaseUpgrade::from_chain_and_timestamp(CHAIN_ID, cobalt - 1),
+            Some(BaseUpgrade::Beryl)
+        );
+        assert_eq!(
+            BaseUpgrade::from_chain_and_timestamp(CHAIN_ID, cobalt),
+            Some(BaseUpgrade::Cobalt)
+        );
+
+        RuntimeUpgradeRegistry::clear_chain(CHAIN_ID);
+        RuntimeUpgradeRegistry::clear_activation_timestamp(CHAIN_ID, BaseUpgrade::Beryl);
+
+        assert_eq!(
+            BaseUpgrade::from_chain_and_timestamp(CHAIN_ID, u64::MAX),
+            Some(BaseUpgrade::Azul),
+        );
+
+        RuntimeUpgradeRegistry::clear_chain(CHAIN_ID);
+    }
+
+    #[test]
     fn unknown_chains_do_not_resolve() {
         for chain_id in [1, 10, 9_999_999] {
             assert_eq!(BaseUpgrade::from_chain_and_timestamp(chain_id, u64::MAX), None);
@@ -991,6 +1034,9 @@ mod runtime_tests {
 
     #[test]
     fn far_future_resolves_latest_scheduled_upgrade() {
+        let _guard = RUNTIME_REGISTRY_TEST_LOCK.lock();
+        RuntimeUpgradeRegistry::clear_chain(8453);
+        RuntimeUpgradeRegistry::clear_chain(84532);
         for chain_id in [8453, 84532] {
             assert_eq!(
                 BaseUpgrade::from_chain_and_timestamp(chain_id, u64::MAX),
