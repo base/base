@@ -1,10 +1,17 @@
-use std::{collections::BTreeMap, num::NonZeroUsize};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    num::NonZeroUsize,
+};
 
 use alloy_consensus::Transaction;
-use alloy_eips::{eip2718::Encodable2718, eip4844::FIELD_ELEMENTS_PER_BLOB};
+use alloy_eips::{
+    eip2718::Encodable2718,
+    eip2935::{HISTORY_SERVE_WINDOW, HISTORY_STORAGE_ADDRESS},
+    eip4844::FIELD_ELEMENTS_PER_BLOB,
+};
 use alloy_genesis::ChainConfig;
 use alloy_network::Network;
-use alloy_primitives::{B64, B256, keccak256};
+use alloy_primitives::{B64, B256, U256, keccak256};
 use alloy_provider::Provider;
 use alloy_rlp::Encodable;
 use alloy_rpc_types::{Block, debug::ExecutionWitness};
@@ -31,6 +38,9 @@ use crate::{PreimageMap, Result, WitnessError};
 /// Number of prior L2 headers available to the EVM `BLOCKHASH` opcode.
 // Increase `l2_lookback` if span-batch overlap needs older blocks.
 pub const L2_HEADER_LOOKBACK: u64 = 256;
+
+/// Maximum number of storage keys accepted by `eth_getProof`.
+const MAX_STORAGE_PROOF_KEYS: usize = 100;
 
 /// L2 RPC block type used to reconstruct payload attributes.
 pub type L2RpcBlock =
@@ -148,7 +158,13 @@ impl WitnessGenerator {
             .saturating_sub(self.l2_lookback)
             .max(self.config.rollup_config.genesis.l2.number);
         let (l2_chunks, l1_chunks, output_chunk) = tokio::try_join!(
-            self.fetch_l2_range(l2_start, claimed_number, agreed_number),
+            self.fetch_l2_range(
+                l2_start,
+                claimed_number,
+                agreed_number,
+                claimed_number > agreed_number
+                    && self.config.rollup_config.is_isthmus_active(safe_head.block_info.timestamp),
+            ),
             self.fetch_l1_range(l1_start, l1_end),
             self.build_starting_output(&agreed_block),
         )?;
@@ -201,18 +217,92 @@ impl WitnessGenerator {
         start: u64,
         end: u64,
         agreed: u64,
+        fetch_eip_2935_proofs: bool,
     ) -> Result<Vec<(u64, B256, B256, PreimageMap)>> {
         let support_numbers = (start..=agreed).collect::<Vec<_>>();
         let execution_numbers = agreed
             .checked_add(1)
             .filter(|execution_start| execution_start <= &end)
             .map_or_else(Vec::new, |execution_start| (execution_start..=end).collect());
-        let (mut support, execution) = tokio::try_join!(
+        let history_numbers = support_numbers[..support_numbers.len().saturating_sub(1)].to_vec();
+        let history_proofs = async {
+            if fetch_eip_2935_proofs {
+                self.fetch_eip_2935_proofs(agreed, history_numbers).await
+            } else {
+                Ok(PreimageMap::new())
+            }
+        };
+        let (mut support, execution, history_proofs) = tokio::try_join!(
             self.fetch_l2_blocks(support_numbers, false),
             self.fetch_l2_blocks(execution_numbers, true),
+            history_proofs,
         )?;
+        support
+            .iter_mut()
+            .find(|(number, _, _, _)| *number == agreed)
+            .expect("support range must contain agreed block")
+            .3
+            .extend(history_proofs)?;
         support.extend(execution);
         Ok(support)
+    }
+
+    /// Fetches EIP-2935 account and storage proof nodes at the agreed L2 block.
+    pub async fn fetch_eip_2935_proofs(
+        &self,
+        agreed_block_number: u64,
+        target_numbers: Vec<u64>,
+    ) -> Result<PreimageMap> {
+        let slots = Self::eip_2935_storage_slots(agreed_block_number, target_numbers);
+        let proofs = stream::iter(slots.chunks(MAX_STORAGE_PROOF_KEYS))
+            .map(|slots| async move {
+                let proof = self
+                    .providers
+                    .l2
+                    .get_proof(HISTORY_STORAGE_ADDRESS, slots.to_vec())
+                    .block_id(self.config.request.agreed_l2_head_hash.into())
+                    .await
+                    .map_err(|error| WitnessError::Rpc {
+                        operation: "fetch EIP-2935 storage proof",
+                        error: error.to_string(),
+                    })?;
+                let mut chunk = PreimageMap::new();
+                for node in proof.account_proof {
+                    chunk.insert_keccak(node.into())?;
+                }
+                for storage_proof in proof.storage_proof {
+                    for node in storage_proof.proof {
+                        chunk.insert_keccak(node.into())?;
+                    }
+                }
+                Ok(chunk)
+            })
+            .buffer_unordered(self.concurrency.get())
+            .try_collect::<Vec<_>>()
+            .await?;
+        let mut chunk = PreimageMap::new();
+        for proof in proofs {
+            chunk.extend(proof)?;
+        }
+        Ok(chunk)
+    }
+
+    /// Returns EIP-2935 storage keys for historical L2 block numbers at an agreed block.
+    pub fn eip_2935_storage_slots(agreed_block_number: u64, target_numbers: Vec<u64>) -> Vec<B256> {
+        target_numbers
+            .into_iter()
+            .map(|number| {
+                let slot =
+                    if agreed_block_number.saturating_sub(number) <= HISTORY_SERVE_WINDOW as u64 {
+                        number
+                    } else {
+                        agreed_block_number
+                    } % HISTORY_SERVE_WINDOW as u64;
+                B256::from(U256::from(slot).to_be_bytes())
+            })
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
     }
 
     /// Fetches the provided L2 block numbers with bounded concurrency.
@@ -675,6 +765,18 @@ mod tests {
         let generator = WitnessGenerator::new(config, WitnessProviders::new(l1, l2, blobs));
 
         assert_eq!(generator.boot_preimages().unwrap().len(), 10);
+    }
+
+    #[test]
+    fn eip_2935_storage_slots_wrap_and_deduplicate() {
+        let agreed = HISTORY_SERVE_WINDOW as u64 * 2 + 10;
+        assert_eq!(
+            WitnessGenerator::eip_2935_storage_slots(
+                agreed,
+                vec![0, HISTORY_SERVE_WINDOW as u64 + 11, agreed - HISTORY_SERVE_WINDOW as u64],
+            ),
+            vec![B256::with_last_byte(10), B256::with_last_byte(11)],
+        );
     }
 
     #[test]
