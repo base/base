@@ -11,16 +11,16 @@ use anyhow::Context;
 use axum::{Router, middleware};
 use base_health::HealthServer;
 use base_http_utils::TrustedProxyConfig;
-use clap::Args;
+use clap::{Args, builder::RangedU64ValueParser};
 use ipnet::IpNet;
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, sync::Semaphore};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use crate::{
-    CLIENT_IP_HEADER, DEFAULT_P2P_PROBE_REQUESTS_PER_MINUTE, IpRateLimiter,
-    P2P_REACHABILITY_MAX_CONCURRENT_PROBES, P2pRoutes, PerIpRateLimit, ReachabilityProber,
-    RlpxProber,
+    CLIENT_IP_HEADER, DEFAULT_P2P_PROBE_REQUESTS_PER_MINUTE,
+    DEFAULT_P2P_REACHABILITY_MAX_CONCURRENT_PROBES, IpRateLimiter, P2pRoutes, PerIpRateLimit,
+    ReachabilityProber, RlpxProber,
 };
 
 /// Configuration for the Base telemetry HTTP server.
@@ -39,6 +39,14 @@ pub struct ServerConfig {
         default_value_t = DEFAULT_P2P_PROBE_REQUESTS_PER_MINUTE
     )]
     pub p2p_probe_requests_per_minute: NonZeroU32,
+    /// Maximum number of P2P reachability probes allowed in flight globally.
+    #[arg(
+        long,
+        env = "BASE_TELEMETRY_P2P_MAX_CONCURRENT_PROBES",
+        default_value_t = DEFAULT_P2P_REACHABILITY_MAX_CONCURRENT_PROBES,
+        value_parser = RangedU64ValueParser::<usize>::new().range(1..=Semaphore::MAX_PERMITS as u64)
+    )]
+    pub p2p_max_concurrent_probes: usize,
 }
 
 /// Base telemetry Axum server scaffold.
@@ -50,12 +58,13 @@ impl BaseTelemetryServer {
     pub fn router_with_prober<P>(
         ready: Arc<AtomicBool>,
         per_ip: PerIpRateLimit,
+        max_concurrent_probes: usize,
         prober: Arc<P>,
     ) -> Router
     where
         P: ReachabilityProber + 'static,
     {
-        let p2p = P2pRoutes::router_with_prober(P2P_REACHABILITY_MAX_CONCURRENT_PROBES, prober)
+        let p2p = P2pRoutes::router_with_prober(max_concurrent_probes, prober)
             .layer(middleware::from_fn_with_state(per_ip, PerIpRateLimit::enforce));
         HealthServer::router(ready).merge(p2p)
     }
@@ -74,6 +83,7 @@ impl BaseTelemetryServer {
         let app = Self::router_with_prober(
             Arc::clone(&ready),
             PerIpRateLimit::new(limiter, proxy),
+            config.p2p_max_concurrent_probes,
             Arc::new(RlpxProber::ephemeral()),
         );
         let listener = TcpListener::bind(listen_addr)
@@ -106,50 +116,26 @@ mod tests {
         time::Duration,
     };
 
-    use async_trait::async_trait;
     use axum::{Router, http::StatusCode};
     use base_http_utils::TrustedProxyConfig;
     use tokio::{net::TcpListener, sync::Semaphore, task::JoinHandle};
 
     use crate::{
-        BaseTelemetryServer, IpRateLimiter, P2P_REACHABILITY_PATH, P2pReachabilityRequest,
-        PerIpRateLimit, ReachabilityProber, RlpxProbeOutcome, RlpxProbeResult, RlpxProbeStage,
-        RlpxProbeTarget, TEST_NODE_ID,
+        BaseTelemetryServer, BlockingProber, DEFAULT_P2P_REACHABILITY_MAX_CONCURRENT_PROBES,
+        IpRateLimiter, MockReachabilityProber, P2P_REACHABILITY_PATH, P2pReachabilityRequest,
+        PerIpRateLimit, RlpxProbeOutcome, RlpxProbeResult, RlpxProbeStage, TEST_NODE_ID,
     };
 
-    #[derive(Debug, Clone, Default)]
-    struct FakeProber;
-
-    #[async_trait]
-    impl ReachabilityProber for FakeProber {
-        async fn probe(&self, _: RlpxProbeTarget) -> RlpxProbeResult {
-            RlpxProbeResult {
-                outcome: RlpxProbeOutcome::Reachable,
-                stage: RlpxProbeStage::Devp2pHello,
-                elapsed: Duration::from_millis(1),
-                client_version: None,
-            }
-        }
-    }
-
-    #[derive(Debug, Clone)]
-    struct BlockingProber {
-        entered: Arc<Semaphore>,
-        release: Arc<Semaphore>,
-    }
-
-    #[async_trait]
-    impl ReachabilityProber for BlockingProber {
-        async fn probe(&self, _: RlpxProbeTarget) -> RlpxProbeResult {
-            self.entered.add_permits(1);
-            self.release.acquire().await.unwrap().forget();
-            RlpxProbeResult {
-                outcome: RlpxProbeOutcome::Reachable,
-                stage: RlpxProbeStage::Devp2pHello,
-                elapsed: Duration::from_millis(1),
-                client_version: None,
-            }
-        }
+    /// Returns a mock prober that answers every probe as reachable.
+    fn reachable_prober() -> Arc<MockReachabilityProber> {
+        let mut prober = MockReachabilityProber::new();
+        prober.expect_probe().returning(|_| RlpxProbeResult {
+            outcome: RlpxProbeOutcome::Reachable,
+            stage: RlpxProbeStage::Devp2pHello,
+            elapsed: Duration::from_millis(1),
+            client_version: None,
+        });
+        Arc::new(prober)
     }
 
     fn per_ip(per_minute: u32, trusted_proxy_cidrs: Vec<&str>) -> PerIpRateLimit {
@@ -175,7 +161,8 @@ mod tests {
         start_router(BaseTelemetryServer::router_with_prober(
             Arc::new(AtomicBool::new(true)),
             per_ip(1000, vec![]),
-            Arc::new(FakeProber),
+            DEFAULT_P2P_REACHABILITY_MAX_CONCURRENT_PROBES,
+            reachable_prober(),
         ))
         .await
     }
@@ -215,6 +202,7 @@ mod tests {
         let router = BaseTelemetryServer::router_with_prober(
             Arc::new(AtomicBool::new(true)),
             per_ip(1000, vec![]),
+            DEFAULT_P2P_REACHABILITY_MAX_CONCURRENT_PROBES,
             Arc::clone(&prober),
         );
         let (addr, handle) = start_router(router).await;
@@ -253,7 +241,8 @@ mod tests {
         let router = BaseTelemetryServer::router_with_prober(
             Arc::new(AtomicBool::new(true)),
             per_ip(1, vec![]),
-            Arc::new(FakeProber),
+            DEFAULT_P2P_REACHABILITY_MAX_CONCURRENT_PROBES,
+            reachable_prober(),
         );
         let (addr, handle) = start_router(router).await;
         let client = reqwest::Client::new();
@@ -279,7 +268,8 @@ mod tests {
         let router = BaseTelemetryServer::router_with_prober(
             Arc::new(AtomicBool::new(true)),
             per_ip(1, vec![]),
-            Arc::new(FakeProber),
+            DEFAULT_P2P_REACHABILITY_MAX_CONCURRENT_PROBES,
+            reachable_prober(),
         );
         let (addr, handle) = start_router(router).await;
         let client = reqwest::Client::new();
@@ -312,7 +302,8 @@ mod tests {
         let router = BaseTelemetryServer::router_with_prober(
             Arc::new(AtomicBool::new(true)),
             per_ip(1, vec!["127.0.0.0/8"]),
-            Arc::new(FakeProber),
+            DEFAULT_P2P_REACHABILITY_MAX_CONCURRENT_PROBES,
+            reachable_prober(),
         );
         let (addr, handle) = start_router(router).await;
         let client = reqwest::Client::new();
@@ -351,11 +342,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn last_forwarded_header_line_wins_over_spoofed_first() {
+        let router = BaseTelemetryServer::router_with_prober(
+            Arc::new(AtomicBool::new(true)),
+            per_ip(1, vec!["127.0.0.0/8"]),
+            DEFAULT_P2P_REACHABILITY_MAX_CONCURRENT_PROBES,
+            reachable_prober(),
+        );
+        let (addr, handle) = start_router(router).await;
+        let client = reqwest::Client::new();
+        let url = format!("http://{addr}{P2P_REACHABILITY_PATH}");
+
+        // The client smuggles its own X-Forwarded-For line; the trusted proxy
+        // appends a second line with the real address. The proxy-appended
+        // line must key the rate limit.
+        let first = client
+            .post(&url)
+            .header("x-forwarded-for", "203.0.113.1")
+            .header("x-forwarded-for", "198.51.100.1")
+            .json(&test_request())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+
+        // Rotating the smuggled first line must not open a fresh bucket.
+        let second = client
+            .post(&url)
+            .header("x-forwarded-for", "203.0.113.2")
+            .header("x-forwarded-for", "198.51.100.1")
+            .json(&test_request())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        handle.abort();
+    }
+
+    #[tokio::test]
     async fn rejects_missing_forwarded_header_from_trusted_proxy() {
         let router = BaseTelemetryServer::router_with_prober(
             Arc::new(AtomicBool::new(true)),
             per_ip(1, vec!["127.0.0.0/8"]),
-            Arc::new(FakeProber),
+            DEFAULT_P2P_REACHABILITY_MAX_CONCURRENT_PROBES,
+            reachable_prober(),
         );
         let (addr, handle) = start_router(router).await;
 

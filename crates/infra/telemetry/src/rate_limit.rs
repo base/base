@@ -2,7 +2,7 @@
 
 use std::{
     fmt,
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, Ipv6Addr, SocketAddr},
     num::NonZeroU32,
     sync::Arc,
     time::Duration,
@@ -17,7 +17,6 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use axum_client_ip::{Rejection as ClientIpRejection, RightmostXForwardedFor};
 use base_http_utils::TrustedProxyConfig;
 use governor::{
     DefaultKeyedRateLimiter, Quota, RateLimiter,
@@ -25,7 +24,7 @@ use governor::{
 };
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// Default P2P probe requests allowed per client IP per minute.
 pub const DEFAULT_P2P_PROBE_REQUESTS_PER_MINUTE: NonZeroU32 = NonZeroU32::new(2).unwrap();
@@ -85,9 +84,25 @@ impl IpRateLimiter {
         Self { limiter: RateLimiter::dashmap_with_clock(quota, clock.clone()), clock }
     }
 
+    /// Returns the rate-limit bucket key for `ip`.
+    ///
+    /// `IPv4` addresses key individually, while `IPv6` addresses key by
+    /// their /64 prefix: clients routinely hold an entire /64 delegation, so
+    /// keying on exact addresses would let them defeat the quota by rotating
+    /// the interface identifier on every request.
+    pub const fn bucket_key(ip: IpAddr) -> IpAddr {
+        match ip.to_canonical() {
+            ip @ IpAddr::V4(_) => ip,
+            IpAddr::V6(v6) => {
+                let seg = v6.segments();
+                IpAddr::V6(Ipv6Addr::new(seg[0], seg[1], seg[2], seg[3], 0, 0, 0, 0))
+            }
+        }
+    }
+
     /// Checks one request for `ip`, returning the retry delay when limited.
     pub fn check(&self, ip: IpAddr) -> Result<(), RateLimitExceeded> {
-        self.limiter.check_key(&ip).map_err(|not_until| RateLimitExceeded {
+        self.limiter.check_key(&Self::bucket_key(ip)).map_err(|not_until| RateLimitExceeded {
             retry_after: not_until.wait_time_from(self.clock.now()),
         })
     }
@@ -124,18 +139,19 @@ impl PerIpRateLimit {
     pub async fn enforce(
         State(state): State<Self>,
         ConnectInfo(peer): ConnectInfo<SocketAddr>,
-        forwarded_ip: Result<RightmostXForwardedFor, ClientIpRejection>,
         request: Request,
         next: Next,
     ) -> Response {
-        let peer_ip = peer.ip().to_canonical();
-        let client_ip = if state.proxy.is_trusted_proxy(peer_ip) {
-            match forwarded_ip {
-                Ok(RightmostXForwardedFor(ip)) => ip.to_canonical(),
-                Err(error) => return error.into_response(),
+        let peer_ip = peer.ip();
+        let client_ip = match state.proxy.try_client_ip(peer_ip, request.headers()) {
+            Ok(ip) => ip,
+            Err(error) => {
+                // A trusted proxy must always supply the client IP header;
+                // its absence means the fronting infrastructure is
+                // misconfigured, not that the client erred.
+                warn!(error = %error, peer = %peer_ip, "trusted proxy sent no valid client IP");
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
             }
-        } else {
-            peer_ip
         };
         match state.limiter.check(client_ip) {
             Ok(()) => next.run(request).await,
@@ -170,6 +186,18 @@ mod tests {
         let exceeded = limiter.check(first).unwrap_err();
         assert!(exceeded.retry_after > Duration::ZERO);
         assert!(limiter.check(second).is_ok());
+    }
+
+    #[test]
+    fn ipv6_clients_share_one_bucket_per_64_prefix() {
+        let limiter = IpRateLimiter::per_minute(nz(1));
+        let first: IpAddr = "2001:db8:1:2:aaaa::1".parse().unwrap();
+        let rotated: IpAddr = "2001:db8:1:2:bbbb::2".parse().unwrap();
+        let other_prefix: IpAddr = "2001:db8:1:3::1".parse().unwrap();
+
+        assert!(limiter.check(first).is_ok());
+        assert!(limiter.check(rotated).is_err());
+        assert!(limiter.check(other_prefix).is_ok());
     }
 
     #[test]

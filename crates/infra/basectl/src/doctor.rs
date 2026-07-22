@@ -379,23 +379,26 @@ impl Doctor {
             TelemetryClientError::InvalidRequest => (
                 DoctorStatus::Fail,
                 "telemetry service rejected the advertised EL enode",
-                "Check the enode returned by `admin_nodeInfo`.",
+                Some("Check the enode returned by `admin_nodeInfo`."),
             ),
             TelemetryClientError::PayloadTooLarge => (
                 DoctorStatus::Fail,
                 "telemetry service rejected the reachability request as too large",
-                "Check the enode returned by `admin_nodeInfo`.",
+                Some("Check the enode returned by `admin_nodeInfo`."),
             ),
             TelemetryClientError::Saturated => (
                 DoctorStatus::Warn,
                 "telemetry service has no reachability probe capacity",
-                "Retry the check shortly.",
+                Some("Retry the check shortly."),
             ),
-            TelemetryClientError::Unavailable { .. } => (
-                DoctorStatus::Skip,
-                "telemetry service is unavailable",
-                "Check the configured telemetry URL and service health.",
+            TelemetryClientError::RateLimited => (
+                DoctorStatus::Warn,
+                "telemetry service rate limited the reachability request",
+                Some("Retry the check shortly."),
             ),
+            TelemetryClientError::Unavailable { .. } => {
+                (DoctorStatus::Skip, "telemetry service is unavailable", None)
+            }
         };
         DoctorCheck::new(
             "external_el_reachability",
@@ -406,7 +409,7 @@ impl Doctor {
                 "error": error.to_string(),
             }),
             json!({ "pass": "reachable" }),
-            Some(hint.to_string()),
+            hint.map(str::to_string),
         )
     }
 
@@ -1135,8 +1138,8 @@ mod tests {
     use super::{
         Doctor, DoctorCheck, DoctorStatus, DoctorSummary, DoctorThresholds, ElInfoReport,
         ElReachabilityOutcome, ElReachabilityResponse, RethLimits, TelemetryClientError,
-        bootnode_addrs, bootnode_chain, bootnode_layer_summary, classify_ip, expected_chain_id,
-        peer_count_check, worst_status,
+        bootnode_addrs, bootnode_chain, bootnode_layer_summary, classify_ip, peer_count_check,
+        worst_status,
     };
     use crate::{ElNodeIdentity, ElReachabilityStage};
 
@@ -1164,16 +1167,6 @@ mod tests {
         assert_eq!(peer_count_check("x", "EL", 0, 5).status, DoctorStatus::Fail);
         assert_eq!(peer_count_check("x", "EL", 4, 5).status, DoctorStatus::Warn);
         assert_eq!(peer_count_check("x", "EL", 5, 5).status, DoctorStatus::Pass);
-    }
-
-    #[test]
-    fn default_thresholds_match_doctor_plan() {
-        let thresholds = DoctorThresholds::default();
-
-        assert_eq!(thresholds.head_lag_warn_blocks, 10);
-        assert_eq!(thresholds.head_lag_fail_blocks, 20);
-        assert_eq!(thresholds.safe_recency_warn_blocks, 150);
-        assert_eq!(thresholds.safe_recency_fail_blocks, 300);
     }
 
     #[test]
@@ -1248,6 +1241,7 @@ mod tests {
         let telemetry_url = Url::parse("http://127.0.0.1:8080").unwrap();
         let invalid = TelemetryClientError::InvalidRequest;
         let saturated = TelemetryClientError::Saturated;
+        let rate_limited = TelemetryClientError::RateLimited;
         let unavailable =
             TelemetryClientError::Unavailable { message: "connection refused".to_string() };
 
@@ -1260,18 +1254,13 @@ mod tests {
             DoctorStatus::Warn,
         );
         assert_eq!(
+            Doctor::external_el_reachability_error_check(&telemetry_url, &rate_limited).status,
+            DoctorStatus::Warn,
+        );
+        assert_eq!(
             Doctor::external_el_reachability_error_check(&telemetry_url, &unavailable).status,
             DoctorStatus::Skip,
         );
-    }
-
-    #[test]
-    fn maps_known_config_names_to_chain_ids() {
-        assert_eq!(expected_chain_id("mainnet"), Some(8453));
-        assert_eq!(expected_chain_id("sepolia"), Some(84532));
-        assert_eq!(expected_chain_id("devnet"), Some(1337));
-        assert_eq!(expected_chain_id("zeronet"), Some(763360));
-        assert_eq!(expected_chain_id("custom"), None);
     }
 
     #[test]

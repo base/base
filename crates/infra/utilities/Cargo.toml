@@ -15,3 +15,4 @@ workspace = true
 http.workspace = true
 ipnet.workspace = true
 tracing = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }

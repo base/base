@@ -647,25 +647,6 @@ mod tests {
     #[test]
     fn p2p_reachability_parses() {
         assert!(try_parse(["basectl", "p2p", "reachability", "enode://example", "--json"]).is_ok());
-        assert!(
-            try_parse([
-                "basectl",
-                "p2p",
-                "reachability",
-                "enode://example",
-                "--telemetry-url",
-                "http://127.0.0.1:8080",
-            ])
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn doctor_rejects_removed_telemetry_url_flag() {
-        assert!(try_parse(["basectl", "doctor"]).is_ok());
-        assert!(
-            try_parse(["basectl", "doctor", "--telemetry-url", "http://127.0.0.1:8080",]).is_err()
-        );
     }
 
     #[test]

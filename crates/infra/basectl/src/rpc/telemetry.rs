@@ -94,6 +94,8 @@ pub enum TelemetryApiError {
     PayloadTooLarge,
     /// Probe capacity was exhausted.
     Saturated,
+    /// The client IP exceeded the request rate limit.
+    RateLimited,
 }
 
 /// Error returned by the Base telemetry HTTP client.
@@ -109,6 +111,9 @@ pub enum TelemetryClientError {
     /// The telemetry service had no reachability probe capacity available.
     #[error("telemetry service reachability probe capacity is saturated")]
     Saturated,
+    /// The telemetry service rate limited the client IP.
+    #[error("telemetry service rate limited the reachability request")]
+    RateLimited,
     /// The telemetry service could not be reached or returned an unusable response.
     #[error("telemetry service unavailable: {message}")]
     Unavailable {
@@ -178,6 +183,9 @@ impl TelemetryClient {
             (StatusCode::TOO_MANY_REQUESTS, TelemetryApiError::Saturated) => {
                 Err(TelemetryClientError::Saturated)
             }
+            (StatusCode::TOO_MANY_REQUESTS, TelemetryApiError::RateLimited) => {
+                Err(TelemetryClientError::RateLimited)
+            }
             _ => Err(TelemetryClientError::Unavailable {
                 message: format!("unexpected HTTP {status} response with error {error:?}"),
             }),
@@ -242,6 +250,7 @@ mod tests {
             "invalid" => (StatusCode::BAD_REQUEST, TelemetryApiError::InvalidRequest),
             "large" => (StatusCode::PAYLOAD_TOO_LARGE, TelemetryApiError::PayloadTooLarge),
             "saturated" => (StatusCode::TOO_MANY_REQUESTS, TelemetryApiError::Saturated),
+            "limited" => (StatusCode::TOO_MANY_REQUESTS, TelemetryApiError::RateLimited),
             _ => panic!("unexpected test request"),
         };
         (status, Json(TelemetryErrorResponse { error })).into_response()
@@ -298,6 +307,10 @@ mod tests {
         assert_eq!(
             client.check_el_reachability("saturated").await.unwrap_err(),
             TelemetryClientError::Saturated
+        );
+        assert_eq!(
+            client.check_el_reachability("limited").await.unwrap_err(),
+            TelemetryClientError::RateLimited
         );
         handle.abort();
     }

@@ -19,7 +19,6 @@ reth-ecies.workspace = true
 reth-eth-wire.workspace = true
 base-http-utils.workspace = true
 alloy-primitives.workspace = true
-axum-client-ip.workspace = true
 anyhow = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
@@ -32,4 +31,5 @@ reth-network-peers = { workspace = true, features = ["secp256k1"] }
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 
 [dev-dependencies]
+mockall.workspace = true
 reqwest = { workspace = true, features = ["json"] }

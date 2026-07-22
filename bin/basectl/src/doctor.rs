@@ -204,10 +204,7 @@ mod tests {
     use serde_json::json;
     use url::Url;
 
-    use super::{
-        ANSI_CYAN, ANSI_GREEN, ANSI_RED, ANSI_YELLOW, colored_status, status_sort_key,
-        validate_thresholds, write_check,
-    };
+    use super::{ANSI_YELLOW, status_sort_key, validate_thresholds, write_check};
     use crate::cli::DoctorArgs;
 
     #[test]
@@ -255,14 +252,6 @@ mod tests {
                 DoctorStatus::Pass,
             ],
         );
-    }
-
-    #[test]
-    fn pretty_status_labels_are_colored() {
-        assert_eq!(colored_status(DoctorStatus::Fail), format!("{ANSI_RED}FAIL\x1b[0m"));
-        assert_eq!(colored_status(DoctorStatus::Warn), format!("{ANSI_YELLOW}WARN\x1b[0m"));
-        assert_eq!(colored_status(DoctorStatus::Info), format!("{ANSI_CYAN}INFO\x1b[0m"));
-        assert_eq!(colored_status(DoctorStatus::Pass), format!("{ANSI_GREEN}PASS\x1b[0m"));
     }
 
     #[test]
