@@ -6,7 +6,7 @@
 use std::{sync::Arc, time::Duration};
 
 use base_proof_contracts::AggregateVerifierClient;
-use base_proof_rpc::L2Provider;
+use base_proof_rpc::{L1Provider, L2Provider};
 use base_prover_service_client::ProofRequesterProvider;
 use base_runtime::TokioRuntime;
 use base_tx_manager::TxManager;
@@ -17,7 +17,7 @@ use tracing::{debug, error, info, warn};
 use crate::{
     AnchorUpdater, BondManager, CandidateGame, ChallengeSubmitter, ChallengerMetrics,
     DisputeIntent, DisputeProofManager, GameCategory, GameScanner, IntermediateValidationParams,
-    L1HeadProvider, OutputValidator, ValidatorError,
+    OutputValidator, ValidatorError,
 };
 
 /// Dependencies and runtime settings injected into the [`Driver`].
@@ -30,8 +30,8 @@ pub struct DriverComponents<L2: L2Provider, P: ProofRequesterProvider, T: TxMana
     pub proof_requester: Arc<P>,
     /// Submits challenge transactions to L1.
     pub submitter: ChallengeSubmitter<T>,
-    /// Optional L1 head provider for TEE proof requests.
-    pub tee: Option<Arc<dyn L1HeadProvider>>,
+    /// L1 provider used to construct TEE proof requests.
+    pub l1_provider: Arc<dyn L1Provider>,
     /// Client for the aggregate verifier contract.
     pub verifier_client: Arc<dyn AggregateVerifierClient>,
     /// Bond lifecycle manager (optional; enabled when claim addresses are configured).
@@ -69,6 +69,8 @@ where
     pub submitter: ChallengeSubmitter<T>,
     /// Client for the aggregate verifier contract.
     pub verifier_client: Arc<dyn AggregateVerifierClient>,
+    /// Validates L2 output roots against the local node.
+    pub validator: OutputValidator<L2>,
     /// Manages proof sessions, retries, submissions, and TEE-to-ZK fallback.
     pub proof_manager: DisputeProofManager<L2, P>,
     /// Bond lifecycle manager (optional; enabled when claim addresses are configured).
@@ -90,18 +92,20 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager> std::fmt::Debug fo
 impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager> Driver<L2, P, T> {
     /// Creates a new driver with the given components.
     pub fn new(components: DriverComponents<L2, P, T>) -> Self {
+        let validator = components.validator;
         Self {
             scanner: components.scanner,
             submitter: components.submitter,
             proof_manager: DisputeProofManager::new(
-                components.validator,
+                validator.clone(),
                 components.proof_requester,
-                components.tee,
+                components.l1_provider,
                 Arc::clone(&components.verifier_client),
                 components.max_proof_duration,
                 components.tee_submit_retry_limit,
             ),
             verifier_client: components.verifier_client,
+            validator,
             bond_manager: components.bond_manager,
             anchor_updater: components.anchor_updater,
             poll_interval: components.poll_interval,
@@ -203,7 +207,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager> Driver<L2, P, T> {
             intermediate_roots: &intermediate_roots,
         };
 
-        match self.proof_manager.validate_intermediate_roots(params).await {
+        match self.validator.validate_intermediate_roots(params).await {
             Ok(result) => Ok(Some(result)),
             Err(e) => match &e {
                 ValidatorError::BlockNotAvailable { .. } => {
@@ -315,7 +319,7 @@ impl<L2: L2Provider, P: ProofRequesterProvider, T: TxManager> Driver<L2, P, T> {
         let checkpoint_block = candidate.checkpoint_start_block(challenged_index + 1)?;
 
         let validation = match self
-            .proof_manager
+            .validator
             .validate_claimed_root_at_block(game_address, checkpoint_block, on_chain_root)
             .await
         {

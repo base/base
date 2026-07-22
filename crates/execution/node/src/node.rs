@@ -175,6 +175,7 @@ impl PayloadAttributesBuilder<BasePayloadBuilderAttributes<BaseTxEnvelope>>
                     .is_ecotone_active_at_timestamp(timestamp)
                     .then(B256::random),
                 slot_number: None,
+                target_gas_limit: None,
             },
             transactions: Some(vec![TX_SET_L1_BLOCK_BASE_MAINNET_BLOCK_1.into()]),
             no_tx_pool: None,
@@ -1431,16 +1432,12 @@ where
     <<Node::Types as NodeTypes>::Primitives as NodePrimitives>::SignedTx: BaseTransaction,
 {
     type Validator = BaseEngineValidator<
-        Node::Provider,
         <<Node::Types as NodeTypes>::Primitives as NodePrimitives>::SignedTx,
         <Node::Types as NodeTypes>::ChainSpec,
     >;
 
     async fn build(self, ctx: &AddOnsContext<'_, Node>) -> eyre::Result<Self::Validator> {
-        Ok(BaseEngineValidator::new::<KeccakKeyHasher>(
-            Arc::clone(&ctx.config.chain),
-            ctx.node.provider().clone(),
-        ))
+        Ok(BaseEngineValidator::new::<KeccakKeyHasher>(Arc::clone(&ctx.config.chain)))
     }
 }
 

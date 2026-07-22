@@ -71,7 +71,6 @@ cargo_metadata.workspace = true
 
 # logging and telemetry
 tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
-tracing-opentelemetry.workspace = true
 opentelemetry.workspace = true
 opentelemetry_sdk = { workspace = true, features = ["logs", "trace"] }
 opentelemetry-otlp = { workspace = true, features = ["logs", "grpc-tonic"] }

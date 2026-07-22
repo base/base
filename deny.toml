@@ -222,6 +222,7 @@ skip = [
     # SP1 + risc0/boundless transitive dependency mismatches
     "opentelemetry",
     "opentelemetry-appender-tracing",
+    "opentelemetry-http",
     "opentelemetry-otlp",
     "opentelemetry-proto",
     "opentelemetry_sdk",

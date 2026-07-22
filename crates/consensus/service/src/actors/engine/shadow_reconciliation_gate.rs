@@ -85,9 +85,14 @@ impl ShadowReconciliationGate {
         });
     }
 
-    /// Selects a complete reconciliation range without consuming it.
+    /// Selects a complete reconciliation range, removing the matched payloads from the buffer.
+    ///
+    /// Validates the whole range before mutating anything: an incomplete range (`Ok(None)`) or
+    /// an invalid one (`Err`) leaves the buffer untouched. Only once every payload in the range
+    /// is confirmed present and parent-hash-chained does it remove them from the buffer, moving
+    /// ownership into the returned inputs instead of cloning.
     pub fn prepare(
-        &self,
+        &mut self,
         shadow_head: L2BlockInfo,
     ) -> Result<Option<CanonicalReconciliationInputs>, EngineClientError> {
         if self.faulted {
@@ -105,9 +110,9 @@ impl ShadowReconciliationGate {
                 "invalid reconciliation range".into(),
             ));
         }
+        let range = self.anchor.block_info.number + 1..=shadow_head.block_info.number;
         let mut parent = self.anchor.block_info.hash;
-        let mut payloads = Vec::with_capacity(length as usize);
-        for number in self.anchor.block_info.number + 1..=shadow_head.block_info.number {
+        for number in range.clone() {
             let Some(payload) = self.payloads.get(&number) else { return Ok(None) };
             if payload.execution_payload.parent_hash() != parent {
                 return Err(EngineClientError::InvalidShadowReconciliation(
@@ -115,12 +120,15 @@ impl ShadowReconciliationGate {
                 ));
             }
             parent = payload.execution_payload.block_hash();
-            payloads.push(payload.clone());
+        }
+        let mut payloads = Vec::with_capacity(length as usize);
+        for number in range {
+            payloads.push(self.payloads.remove(&number).expect("presence validated above"));
         }
         Ok(Some(CanonicalReconciliationInputs {
             shadow_head,
             payloads,
-            safe_signals: self.safe_signals.clone(),
+            safe_signals: std::mem::take(&mut self.safe_signals),
             finalized_block_number: self.latest_finalized,
         }))
     }
@@ -189,7 +197,7 @@ mod tests {
     }
 
     #[test]
-    fn selects_out_of_order_contiguous_range_without_consuming_it() {
+    fn selects_out_of_order_contiguous_range_and_removes_it_from_the_buffer() {
         let anchor = head(10, B256::with_last_byte(10));
         let mut gate = ShadowReconciliationGate::new(anchor);
         gate.buffer_payload(payload(12, B256::with_last_byte(11), B256::with_last_byte(12)));
@@ -197,7 +205,18 @@ mod tests {
 
         let prepared = gate.prepare(head(12, B256::with_last_byte(99))).unwrap().unwrap();
         assert_eq!(prepared.payloads.len(), 2);
-        assert_eq!(gate.payloads.len(), 2);
+        assert!(gate.payloads.is_empty());
+    }
+
+    #[test]
+    fn incomplete_range_leaves_buffer_untouched() {
+        let anchor = head(10, B256::with_last_byte(10));
+        let mut gate = ShadowReconciliationGate::new(anchor);
+        gate.buffer_payload(payload(11, anchor.block_info.hash, B256::with_last_byte(11)));
+
+        let prepared = gate.prepare(head(12, B256::with_last_byte(99))).unwrap();
+        assert!(prepared.is_none());
+        assert_eq!(gate.payloads.len(), 1);
     }
 
     #[test]

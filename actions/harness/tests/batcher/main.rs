@@ -7,4 +7,5 @@ mod production_da;
 mod sequencer_drift;
 mod submission;
 mod submission_failure;
+mod txpool_blocked;
 mod upgrade_transitions;

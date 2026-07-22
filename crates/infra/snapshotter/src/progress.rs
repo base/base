@@ -26,8 +26,8 @@ const INTERACTIVE_UPLOAD_RENDER_INTERVAL: Duration = Duration::from_millis(250);
 const INTERACTIVE_UPLOAD_ROWS: usize = 10;
 const UPLOAD_PROGRESS_BAR_WIDTH: usize = 24;
 
-const fn percent(done: u64, total: u64) -> u64 {
-    if total == 0 { 100 } else { done.saturating_mul(100) / total }
+fn percent(done: u64, total: u64) -> u64 {
+    done.saturating_mul(100).checked_div(total).unwrap_or(100)
 }
 
 fn human_bytes(bytes: u64) -> String {
