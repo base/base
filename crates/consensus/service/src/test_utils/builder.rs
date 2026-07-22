@@ -21,7 +21,7 @@ use super::{
 };
 use crate::{
     DerivationActor, DerivationActorRequest, DerivationState, EngineActorRequest, EngineProcessor,
-    EngineProcessorOptions, EngineRequestReceiver, NodeActor, NodeMode,
+    EngineProcessorOptions, EngineRequestHandler, EngineRequestReceiver, NodeActor, NodeMode,
     QueuedDerivationEngineClient, QueuedEngineDerivationClient,
 };
 
@@ -264,10 +264,10 @@ impl HarnessBuilder {
                 unsafe_head_tx: None,
                 conductor: None,
                 sequencer_stopped: false,
-                shadow_sequencer: false,
             },
         );
-        let engine_handle = engine_processor.start(engine_actor_request_rx);
+        let engine_handle =
+            EngineRequestHandler::new(engine_processor, None).start(engine_actor_request_rx);
 
         let derivation_actor = DerivationActor::new(
             QueuedDerivationEngineClient::new(engine_actor_request_tx.clone()),
