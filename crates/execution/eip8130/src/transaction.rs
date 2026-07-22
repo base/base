@@ -30,10 +30,10 @@ pub struct AppliedTransaction {
     /// `AccountConfiguration` *storage* transitions are already written to
     /// `storage` by the time this is returned.
     pub applied: AppliedAccountChanges,
-    /// Number of actor revokes that resolved to the account's inline secp256k1
-    /// self key (empty `actor_config` and policy slots). Threaded into intrinsic
-    /// gas to discount their over-conservative three-reset price.
-    pub inline_self_revokes: u32,
+    /// Number of empty zero-to-zero revoke slots resolved during application
+    /// (see [`crate::IntrinsicGasInput::revoke_discount_slots`]). Threaded into
+    /// intrinsic gas to discount the over-conservative three-reset revoke price.
+    pub revoke_discount_slots: u32,
 }
 
 /// Authorizes and applies a signed EIP-8130 transaction against a mutable
@@ -106,7 +106,7 @@ impl TransactionAuthorizer {
         //       one delegation) are enforced inline.
         let mut applied = AppliedAccountChanges::default();
         let mut config_changes = Vec::new();
-        let mut inline_self_revokes = 0u32;
+        let mut revoke_discount_slots = 0u32;
         for (index, change) in signed.tx().account_changes.iter().enumerate() {
             match change {
                 AccountChange::Create(entry) => {
@@ -148,7 +148,7 @@ impl TransactionAuthorizer {
                         &state,
                     )?;
                     config_changes.push(resolved);
-                    inline_self_revokes = inline_self_revokes.saturating_add(
+                    revoke_discount_slots = revoke_discount_slots.saturating_add(
                         AccountChangeApplier::apply_config_change_with_account_state(
                             storage,
                             sender_account,
@@ -182,7 +182,7 @@ impl TransactionAuthorizer {
             Self::authorize_delegation(signed, storage, now, &actors.sender)?;
         }
 
-        Ok(AppliedTransaction { actors, config_changes, applied, inline_self_revokes })
+        Ok(AppliedTransaction { actors, config_changes, applied, revoke_discount_slots })
     }
 
     /// Requires a delegation's final sender to be the unlocked account's native

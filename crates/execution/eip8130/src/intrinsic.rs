@@ -5,7 +5,7 @@ use base_common_consensus::{
     AccountChange, ActorChange, ActorChangeType, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
 };
 
-use crate::{AccountConfigurationStorage, Eip8130GasSchedule};
+use crate::Eip8130GasSchedule;
 
 /// Reason intrinsic gas cannot be computed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -73,14 +73,20 @@ pub struct IntrinsicGasInput {
     /// Whether payer authorization resolved a policy-bearing actor and therefore
     /// read its `policy_manager` slot in addition to its config/state slot.
     pub payer_policy_gated: bool,
-    /// Number of actor revokes that execution resolved to the account's inline
-    /// secp256k1 self key, whose `actor_config` and policy slots are empty. Each
-    /// discounts the conservative three-reset revoke price down to three cold
-    /// zero-to-zero touches. The intrinsic computation bounds this hint by the
-    /// number of revoke changes in the transaction body, preventing a mismatched
-    /// caller from discounting uncharged revokes. A zero (unresolved) count leaves
-    /// the conservative price.
-    pub inline_self_revokes: u32,
+    /// Number of a transaction's revoke slots that execution resolved to be empty
+    /// zero-to-zero touches, which [`Eip8130GasSchedule::ACTOR_REVOKE_COST`] priced
+    /// conservatively as `SSTORE` resets. Each such slot discounts the charge by
+    /// the reset-vs-cold-noop delta ([`Eip8130GasSchedule::COLD_SLOT_RESET_DISCOUNT`]).
+    ///
+    /// A revoke of the account's inline secp256k1 self key contributes 3 empty
+    /// slots when the inline self was ungated (empty `actor_config` and both policy
+    /// slots) and 1 when it was policy-gated (only `actor_config` is empty; the two
+    /// policy slots are real resets). The intrinsic computation bounds this hint by
+    /// three slots per charged revoke, preventing a mismatched caller from
+    /// discounting uncharged slots. A zero (unresolved) count leaves the
+    /// conservative reset price, so this can only reduce, never under-price, the
+    /// charge.
+    pub revoke_discount_slots: u32,
 }
 
 impl IntrinsicGasInput {
@@ -92,7 +98,7 @@ impl IntrinsicGasInput {
             sender_auto_delegated,
             sender_policy_gated: false,
             payer_policy_gated: false,
-            inline_self_revokes: 0,
+            revoke_discount_slots: 0,
         }
     }
 
@@ -108,11 +114,12 @@ impl IntrinsicGasInput {
         self
     }
 
-    /// Adds the count of inline secp256k1 self-key revokes resolved during
-    /// account-change application, used to discount their over-conservative price.
+    /// Adds the count of empty zero-to-zero revoke slots resolved during
+    /// account-change application, used to discount their over-conservative
+    /// reset price. See [`Self::revoke_discount_slots`].
     #[must_use]
-    pub const fn with_inline_self_revokes(mut self, inline_self_revokes: u32) -> Self {
-        self.inline_self_revokes = inline_self_revokes;
+    pub const fn with_revoke_discount_slots(mut self, revoke_discount_slots: u32) -> Self {
+        self.revoke_discount_slots = revoke_discount_slots;
         self
     }
 }
@@ -269,8 +276,6 @@ impl IntrinsicGas {
                         account_changes = account_changes
                             .saturating_add(Self::actor_change_write_cost(actor_change));
                     }
-                    account_changes = account_changes
-                        .saturating_add(Self::self_actor_change_cost(tx.sender, &cc.actor_changes));
                 }
                 AccountChange::Delegation(_) => {
                     account_changes =
@@ -280,23 +285,24 @@ impl IntrinsicGas {
         }
 
         // `actor_change_write_cost` prices every revoke as three slot resets
-        // (worst case). A revoke of the account's inline secp256k1 self key
-        // actually touches three empty (zero-to-zero) slots, so discount each such
-        // revoke that execution resolved. Applied here rather than in the per-change
-        // loop because whether a self revoke hits the inline home is state-derived,
-        // not visible from the transaction body.
+        // (worst case). Some of those slots are actually empty zero-to-zero touches
+        // (an inline secp256k1 self revoke's `actor_config` slot always, and its
+        // policy slots when the self was ungated), so discount each empty slot that
+        // execution resolved. Applied here rather than in the per-change loop
+        // because whether a revoke's slots are empty is state-derived, not visible
+        // from the transaction body.
         debug_assert!(
-            input.inline_self_revokes <= revoke_change_count,
-            "resolved inline-self revoke count exceeds transaction revoke count"
+            input.revoke_discount_slots <= revoke_change_count.saturating_mul(3),
+            "resolved revoke discount slots exceed the three-slot-per-revoke maximum"
         );
         // Keep release builds safe if a future caller misthreads the execution
-        // hint: the discount can never cover more revokes than the transaction
-        // body was charged for.
-        let discounted_revoke_count =
-            Self::bounded_inline_self_revoke_count(input.inline_self_revokes, revoke_change_count);
-        let inline_self_revoke_discount = Eip8130GasSchedule::INLINE_SELF_REVOKE_DISCOUNT
-            .saturating_mul(u64::from(discounted_revoke_count));
-        account_changes = account_changes.saturating_sub(inline_self_revoke_discount);
+        // hint: the discount can never cover more slots than the transaction body
+        // was charged resets for (three per revoke).
+        let discounted_slots =
+            Self::bounded_revoke_discount_slots(input.revoke_discount_slots, revoke_change_count);
+        let revoke_discount = Eip8130GasSchedule::COLD_SLOT_RESET_DISCOUNT
+            .saturating_mul(u64::from(discounted_slots));
+        account_changes = account_changes.saturating_sub(revoke_discount);
 
         let auto_delegation = if input.sender_auto_delegated {
             Eip8130GasSchedule::DELEGATION_DEPOSIT_COST
@@ -335,10 +341,11 @@ impl IntrinsicGas {
         })
     }
 
-    /// Bounds an execution-resolved inline-self revoke count by the number of
-    /// revoke changes that intrinsic accounting actually charged.
-    const fn bounded_inline_self_revoke_count(reported: u32, charged: u32) -> u32 {
-        if reported < charged { reported } else { charged }
+    /// Bounds an execution-resolved empty-slot discount count by the maximum the
+    /// intrinsic accounting actually charged resets for: three slots per revoke.
+    const fn bounded_revoke_discount_slots(reported: u32, revoke_change_count: u32) -> u32 {
+        let max = revoke_change_count.saturating_mul(3);
+        if reported < max { reported } else { max }
     }
 
     /// EIP-2028 data-availability cost over the caller-supplied EIP-2718
@@ -477,31 +484,6 @@ impl IntrinsicGas {
         data.len() >= 64 && data[63] & Eip8130Constants::SCOPE_POLICY != 0
     }
 
-    /// Worst-case extra cost for self-targeted actor changes in a config change.
-    ///
-    /// A change to the account's own secp256k1 self-actor is a dual-home write:
-    /// the self key's config lives inline in the account-state slot, and the
-    /// change also touches the mutually-exclusive `actor_config(self)` home — a
-    /// second storage home a non-self actor change never writes. `tx.sender` is
-    /// the config-change account when wire-visible, so each self-targeted change
-    /// is matched exactly. On the empty-`sender` (EOA) path the account is
-    /// recovered off-wire and can't be matched here; the self-actorId is unique,
-    /// so at most one change can target it and a single worst-case bump covers
-    /// the config change.
-    fn self_actor_change_cost(sender: Option<Address>, actor_changes: &[ActorChange]) -> u64 {
-        let self_changes = sender.map_or_else(
-            || u64::from(!actor_changes.is_empty()),
-            |account| {
-                // Delegate to the canonical self-actor id (the authorize layer's
-                // `AccountConfigurationStorage::self_actor_id`) so the gas layer and
-                // the authorize layer can never match different actors.
-                let self_id = AccountConfigurationStorage::self_actor_id(account);
-                let count = actor_changes.iter().filter(|c| c.actor_id == self_id).count();
-                u64::try_from(count).unwrap_or(u64::MAX)
-            },
-        );
-        Eip8130GasSchedule::SELF_ACTOR_DUAL_HOME_COST.saturating_mul(self_changes)
-    }
 }
 
 #[cfg(test)]
@@ -752,8 +734,7 @@ mod tests {
         };
         let gas = intrinsic(&signed(tx, configured_auth(K1), vec![]), &EXISTING_KEY);
         // Explicit `K1_AUTHENTICATOR` auth resolves in a single cold SLOAD (the
-        // inline self config or a non-self k1 actor's `actor_config`). The actor
-        // ids are non-self, so no self-actor dual-home bump applies.
+        // inline self config or a non-self k1 actor's `actor_config`).
         let auth_cost = Eip8130GasSchedule::AUTH_EXEC_K1 + Eip8130GasSchedule::COLD_SLOAD;
         let expected = auth_cost
             + Eip8130GasSchedule::CONFIG_CHANGE_STATE_COST
@@ -869,11 +850,12 @@ mod tests {
     }
 
     #[test]
-    fn inline_self_revoke_discounts_reset_to_cold_noop() {
+    fn revoke_slot_discount_reprices_resets_to_cold_noops() {
         // A self-targeted revoke is priced at three slot resets by default. When
-        // execution resolves it to the inline secp256k1 self home (empty actor
-        // config and policy slots), the discount reprices those three touches as
-        // cold zero-to-zero no-ops.
+        // execution resolves empty zero-to-zero slots (an ungated inline secp256k1
+        // self revoke has all three empty; a policy-gated one has only its
+        // actor_config slot empty), each empty slot is repriced from a reset to a
+        // cold zero-to-zero no-op.
         let mut bytes = [0u8; 32];
         bytes[..20].copy_from_slice(ACCOUNT.as_slice());
         let self_id = alloy_primitives::B256::from(bytes);
@@ -893,25 +875,35 @@ mod tests {
             ..Default::default()
         };
         let undiscounted = intrinsic(&signed(tx(), configured_auth(K1), vec![]), &EXISTING_KEY);
-        let discounted = intrinsic(
+        // Ungated inline self: all three slots empty.
+        let ungated = intrinsic(
             &signed(tx(), configured_auth(K1), vec![]),
-            &EXISTING_KEY.with_inline_self_revokes(1),
+            &EXISTING_KEY.with_revoke_discount_slots(3),
         );
         assert_eq!(
-            undiscounted.account_changes - discounted.account_changes,
-            Eip8130GasSchedule::INLINE_SELF_REVOKE_DISCOUNT
+            undiscounted.account_changes - ungated.account_changes,
+            3 * Eip8130GasSchedule::COLD_SLOT_RESET_DISCOUNT
         );
-        // The discount is exactly the reset-vs-cold-noop delta over three slots.
+        // Policy-gated inline self: only the actor_config slot is empty.
+        let gated = intrinsic(
+            &signed(tx(), configured_auth(K1), vec![]),
+            &EXISTING_KEY.with_revoke_discount_slots(1),
+        );
         assert_eq!(
-            Eip8130GasSchedule::INLINE_SELF_REVOKE_DISCOUNT,
-            Eip8130GasSchedule::ACTOR_REVOKE_COST - Eip8130GasSchedule::COLD_SLOT_NOOP_COST * 3
+            undiscounted.account_changes - gated.account_changes,
+            Eip8130GasSchedule::COLD_SLOT_RESET_DISCOUNT
+        );
+        // The per-slot discount is exactly the reset-vs-cold-noop delta.
+        assert_eq!(
+            Eip8130GasSchedule::COLD_SLOT_RESET_DISCOUNT,
+            Eip8130GasSchedule::ACTOR_SLOT_RESET_COST - Eip8130GasSchedule::COLD_SLOT_NOOP_COST
         );
     }
 
     #[test]
     #[cfg(debug_assertions)]
-    #[should_panic(expected = "resolved inline-self revoke count exceeds transaction revoke count")]
-    fn excess_inline_self_revoke_count_trips_debug_assertion() {
+    #[should_panic(expected = "resolved revoke discount slots exceed the three-slot-per-revoke maximum")]
+    fn excess_revoke_discount_slots_trips_debug_assertion() {
         let mut bytes = [0u8; 32];
         bytes[..20].copy_from_slice(ACCOUNT.as_slice());
         let self_id = alloy_primitives::B256::from(bytes);
@@ -932,19 +924,29 @@ mod tests {
         };
         let _ = intrinsic(
             &signed(tx, configured_auth(K1), vec![]),
-            &EXISTING_KEY.with_inline_self_revokes(u32::MAX),
+            &EXISTING_KEY.with_revoke_discount_slots(u32::MAX),
         );
     }
 
     #[test]
-    fn inline_self_revoke_discount_is_bounded_by_charged_revokes() {
-        assert_eq!(IntrinsicGas::bounded_inline_self_revoke_count(u32::MAX, 1), 1);
-        assert_eq!(IntrinsicGas::bounded_inline_self_revoke_count(1, 2), 1);
+    fn revoke_discount_slots_bounded_by_three_per_charged_revoke() {
+        // One charged revoke allows at most three discounted slots.
+        assert_eq!(IntrinsicGas::bounded_revoke_discount_slots(u32::MAX, 1), 3);
+        assert_eq!(IntrinsicGas::bounded_revoke_discount_slots(2, 1), 2);
+        // Two charged revokes allow up to six.
+        assert_eq!(IntrinsicGas::bounded_revoke_discount_slots(5, 2), 5);
+        assert_eq!(IntrinsicGas::bounded_revoke_discount_slots(u32::MAX, 2), 6);
     }
 
     #[test]
-    fn self_targeted_config_change_charges_dual_home_bump() {
-        // bytes32(bytes20(account)) — the account's own self-actor id.
+    fn self_targeted_config_change_charges_no_extra_dual_home_bump() {
+        // A self-actor change writes the inline-self home (the packed
+        // account_state slot), but that write is already covered by
+        // `CONFIG_CHANGE_STATE_COST` (the config change's sequence bump touches the
+        // same slot), and the `actor_config(self)` home is already covered by the
+        // per-change `actor_change_write_cost`. So a self-targeted change costs the
+        // same as a non-self change — there is no separate dual-home bump (an
+        // earlier over-conservative addition that double-charged account_state).
         let mut bytes = [0u8; 32];
         bytes[..20].copy_from_slice(ACCOUNT.as_slice());
         let self_id = alloy_primitives::B256::from(bytes);
@@ -975,19 +977,10 @@ mod tests {
             + Eip8130GasSchedule::ACTOR_SLOT_SET_COST
             + Eip8130GasSchedule::POLICY_SLOTS_NOOP_COST;
 
-        // Configured sender targeting a non-self actor: no dual-home bump.
+        // Self, non-self, and the off-wire EOA path all cost the same `base`.
         assert_eq!(account_changes(other_id, Some(ACCOUNT)), base);
-        // Configured sender targeting its own self-actor: + dual-home bump.
-        assert_eq!(
-            account_changes(self_id, Some(ACCOUNT)),
-            base + Eip8130GasSchedule::SELF_ACTOR_DUAL_HOME_COST
-        );
-        // EOA sender (`sender == None`): the account is off-wire, so the unique
-        // self-actorId can't be matched and a single worst-case bump is charged.
-        assert_eq!(
-            account_changes(other_id, None),
-            base + Eip8130GasSchedule::SELF_ACTOR_DUAL_HOME_COST
-        );
+        assert_eq!(account_changes(self_id, Some(ACCOUNT)), base);
+        assert_eq!(account_changes(other_id, None), base);
     }
 
     #[test]

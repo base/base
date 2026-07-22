@@ -1058,12 +1058,11 @@ where
                 applied.actors.sender.resolved,
                 is_create,
                 applied.actors.payer.map(|actor| actor.resolved),
-                applied.inline_self_revokes,
             ))
         });
         ValidatorMetrics::auth_seconds(Self::sender_sig_type(signed))
             .record(auth_start.elapsed().as_secs_f64());
-        let (sender, payer, sender_actor, is_create, payer_actor, inline_self_revokes) =
+        let (sender, payer, sender_actor, is_create, payer_actor) =
             auth_result.map_err(Self::map_tx_auth_error)?;
         let authorization_code_reads = storage.code_reads.clone();
         let config_reads = storage.take_reads();
@@ -1108,15 +1107,17 @@ where
         // is a no-op and the reserved gas flows into execution gas instead.
         let sender_auto_delegated = Self::sender_auto_delegated(&signed.tx().account_changes);
         let encoded = self.eip8130_encoded(signed);
+        // Variant B: admission uses the same safe ceiling as `eth_estimateGas`, so
+        // a tx whose `gas_limit` was set from the estimate is never rejected here
+        // and can never be admitted only to OOG at inclusion. The non-monotonic,
+        // state-dependent costs are pinned to their worst case: both policy gates
+        // charged and zero revoke discount. Execution reprices them precisely.
         let intrinsic = IntrinsicGas::compute(
             signed,
             encoded.as_ref(),
             &IntrinsicGasInput::new(nonce_key_first_use, sender_auto_delegated)
-                .with_policy_gates(
-                    sender_actor.is_policy_gated(),
-                    payer_actor.is_some_and(|actor| actor.is_policy_gated()),
-                )
-                .with_inline_self_revokes(inline_self_revokes),
+                .with_policy_gates(true, signed.tx().payer.is_some())
+                .with_revoke_discount_slots(0),
         )
         .map_err(|_| Self::eip8130_error("intrinsic gas computation failed"))?;
         if intrinsic.execution_gas_available(signed.tx().gas_limit).is_none() {
@@ -3242,7 +3243,9 @@ mod tests {
         let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().cobalt_activated().build());
         let signer = PrivateKeySigner::random();
         let sender = signer.address();
-        let tx = minimal_valid_eoa_tx();
+        // Headroom above the worst-case intrinsic: admission (Variant B) pins the
+        // sender policy gate on, which the tight 50k fixture limit no longer covers.
+        let tx = TxEip8130 { gas_limit: 100_000, ..minimal_valid_eoa_tx() };
         let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
         let signed =
             Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
