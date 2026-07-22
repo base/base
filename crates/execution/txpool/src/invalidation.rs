@@ -67,9 +67,11 @@ pub enum InvalidationKey {
 
 impl InvalidationKey {
     /// Width, in seconds, of an [`InvalidationKey::ExpiryBucket`] chunk —
-    /// approximately one block-time. Coarse enough that each block fires only the
-    /// newly-due bucket(s); fine enough that eviction is at most ~one chunk early
-    /// under the proactive (one-block-ahead) firing policy.
+    /// approximately one block-time. Coarse enough that each canonical update
+    /// fires only the newly-due bucket(s); a bucket fires at its window start, so
+    /// guard eviction is at most ~one chunk early. Inclusion is unaffected: the
+    /// builder's manifest precheck enforces the exact expiry against the build
+    /// timestamp regardless of when the guard drops the transaction.
     pub const EXPIRY_BUCKET_SECS: u64 = 2;
 
     /// Returns the [`InvalidationKey::ExpiryBucket`] for an absolute Unix-seconds

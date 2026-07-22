@@ -4,7 +4,6 @@ use std::{
     marker::PhantomData,
     net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
     sync::Arc,
-    time::Duration,
 };
 
 use alloy_consensus::BlockHeader;
@@ -29,8 +28,7 @@ use base_execution_rpc::{
 };
 use base_execution_txpool::{
     BaseOrdering, BasePooledTransaction, BasePooledTx, BaseTransactionPool,
-    BaseTransactionValidator, GuardLimits, TimestampedTransaction, maintain_expiry_sweep,
-    maintain_state_diff_invalidation,
+    BaseTransactionValidator, GuardLimits, TimestampedTransaction, maintain_state_diff_invalidation,
 };
 use reth_chain_state::CanonStateSubscriptions;
 use reth_chainspec::{BaseFeeParams, ChainSpecProvider, EthChainSpec, Hardforks};
@@ -81,11 +79,6 @@ use crate::{
 
 /// Discovery v5 protocol version for Base.
 pub const BASE_V0_PROTOCOL_VERSION: [u8; 6] = *b"basev0";
-
-/// Wall-clock cadence for the EIP-8130 mempool expiry sweep. Kept well under
-/// `EXPIRY_BUCKET_SECS` so expiries are enforced promptly regardless of block
-/// production, and independent of the canonical-state-change handler.
-const MEMPOOL_EXPIRY_SWEEP_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Marker trait for Base node types with standard engine, chain spec, and primitives.
 pub trait BaseNodeTypes:
@@ -1017,10 +1010,6 @@ where
         ctx.task_executor().spawn_critical_task(
             "mempool-invalidation",
             maintain_state_diff_invalidation(transaction_pool.clone(), state_diff_events),
-        );
-        ctx.task_executor().spawn_critical_task(
-            "mempool-expiry-sweep",
-            maintain_expiry_sweep(transaction_pool.clone(), MEMPOOL_EXPIRY_SWEEP_INTERVAL),
         );
 
         info!(
