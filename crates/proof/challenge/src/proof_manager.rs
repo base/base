@@ -23,8 +23,8 @@ use tracing::{debug, info, warn};
 
 use crate::{
     CandidateGame, ChallengeSubmitError, ChallengeSubmitter, ChallengerMetrics,
-    ChallengerProofAdapter, DisputeIntent, OutputValidator, PendingProof, PendingProofs,
-    ProofKind, ProofPhase, ProofUpdate,
+    ChallengerProofAdapter, DisputeIntent, OutputValidator, PendingProof, PendingProofs, ProofKind,
+    ProofPhase, ProofUpdate,
 };
 
 /// Manages the lifecycle of proofs used to dispute invalid games.

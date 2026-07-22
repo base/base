@@ -10,10 +10,7 @@ use std::sync::Arc;
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, keccak256};
-use alloy_trie::{
-    Nibbles, TrieAccount,
-    proof::verify_proof,
-};
+use alloy_trie::{Nibbles, TrieAccount, proof::verify_proof};
 use base_common_consensus::Predeploys;
 use base_proof_rpc::{L2Provider, RpcError};
 use base_protocol::OutputRoot;
