@@ -139,8 +139,10 @@ impl WitnessGenerator {
 
         let safe_head = self.l2_block_info(agreed_block.clone())?;
         let (reset_l2_start, l1_start) = self.find_l2_reset_start(&safe_head).await?;
-        let reset_system_config =
-            self.l2_system_config(self.fetch_l2_rpc_block(reset_l2_start).await?)?;
+        let (span_l2_start, reset_system_config) =
+            tokio::try_join!(self.find_l2_span_start(&safe_head, l1_start), async {
+                self.l2_system_config(self.fetch_l2_rpc_block(reset_l2_start).await?)
+            },)?;
         let l1_end = self.config.request.l1_head_number;
         if l1_start > l1_end {
             return Err(WitnessError::InvalidL1Ancestry(format!(
@@ -150,6 +152,7 @@ impl WitnessGenerator {
 
         let l2_start = Self::l2_support_start(
             reset_l2_start,
+            span_l2_start,
             agreed_number,
             self.l2_lookback,
             self.config.rollup_config.genesis.l2.number,
@@ -266,14 +269,54 @@ impl WitnessGenerator {
         Ok(reset_start)
     }
 
-    /// Selects the earliest L2 block required by reset recovery and `BLOCKHASH` reads.
+    /// Selects the earliest L2 block required by reset recovery, span validation, and
+    /// `BLOCKHASH` reads.
     pub fn l2_support_start(
         reset_start: u64,
+        span_start: u64,
         agreed: u64,
         l2_lookback: u64,
         l2_genesis: u64,
     ) -> u64 {
-        reset_start.min(agreed.saturating_sub(l2_lookback)).max(l2_genesis)
+        reset_start.min(span_start).min(agreed.saturating_sub(l2_lookback)).max(l2_genesis)
+    }
+
+    /// Returns the earliest L1 origin a valid span batch's parent can have.
+    pub const fn earliest_span_parent_l1_origin(l1_start: u64, seq_window_size: u64) -> u64 {
+        l1_start.saturating_sub(seq_window_size).saturating_sub(1)
+    }
+
+    /// Finds the earliest L2 header that can be required to validate a span batch.
+    ///
+    /// A batch included at the reset origin may use the whole sequencing window and may build on
+    /// the preceding L1 origin. L2 origins are monotonic, so binary search finds the first
+    /// header in that parent-history range without fetching every intervening block.
+    pub async fn find_l2_span_start(&self, safe_head: &L2BlockInfo, l1_start: u64) -> Result<u64> {
+        let l2_genesis = self.config.rollup_config.genesis.l2.number;
+        let min_parent_origin = Self::earliest_span_parent_l1_origin(
+            l1_start,
+            self.config.rollup_config.seq_window_size,
+        );
+        if min_parent_origin <= self.config.rollup_config.genesis.l1.number {
+            return Ok(l2_genesis);
+        }
+
+        let mut lower = l2_genesis;
+        let mut upper = safe_head.block_info.number;
+        while lower < upper {
+            let number = lower + (upper - lower) / 2;
+            let block = if number == safe_head.block_info.number {
+                *safe_head
+            } else {
+                self.fetch_l2_block_info(number).await?
+            };
+            if block.l1_origin.number < min_parent_origin {
+                lower = number + 1;
+            } else {
+                upper = number;
+            }
+        }
+        Ok(lower)
     }
 
     /// Fetches an L2 range and its execution witnesses with bounded concurrency.
@@ -959,7 +1002,13 @@ mod tests {
     fn l2_support_extends_to_the_initial_reset_anchor() {
         assert!(WitnessGenerator::is_initial_reset_anchor(950, 1_000, 50));
         assert!(!WitnessGenerator::is_initial_reset_anchor(951, 1_000, 50));
-        assert_eq!(WitnessGenerator::l2_support_start(700, 1_000, 256, 0), 700);
+        assert_eq!(WitnessGenerator::l2_support_start(700, 900, 1_000, 256, 0), 700);
+    }
+
+    #[test]
+    fn l2_support_extends_to_the_span_parent_before_the_header_lookback() {
+        assert_eq!(WitnessGenerator::earliest_span_parent_l1_origin(1_000, 300), 699);
+        assert_eq!(WitnessGenerator::l2_support_start(900, 700, 1_000, 256, 0), 700);
     }
 
     #[test]
