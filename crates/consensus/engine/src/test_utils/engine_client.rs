@@ -70,8 +70,12 @@ pub struct MockEngineStorage {
     // Version-specific fork_choice_updated responses
     /// Storage for `fork_choice_updated_v2` responses.
     pub fork_choice_updated_v2_response: Option<ForkchoiceUpdated>,
+    /// Storage for `fork_choice_updated_v2` requests and whether they included payload attributes.
+    pub fork_choice_updated_v2_requests: Vec<(ForkchoiceState, bool)>,
     /// Storage for `fork_choice_updated_v3` responses.
     pub fork_choice_updated_v3_response: Option<ForkchoiceUpdated>,
+    /// Storage for `fork_choice_updated_v3` requests and whether they included payload attributes.
+    pub fork_choice_updated_v3_requests: Vec<(ForkchoiceState, bool)>,
 
     // Version-specific fork_choice_updated error overrides
     /// Error to return for `fork_choice_updated_v2` instead of a response.
@@ -602,10 +606,13 @@ impl BaseEngineApi for MockEngineClient {
 
     async fn fork_choice_updated_v2(
         &self,
-        _fork_choice_state: ForkchoiceState,
-        _payload_attributes: Option<BasePayloadAttributes>,
+        fork_choice_state: ForkchoiceState,
+        payload_attributes: Option<BasePayloadAttributes>,
     ) -> TransportResult<ForkchoiceUpdated> {
-        let storage = self.storage.read().await;
+        let mut storage = self.storage.write().await;
+        storage
+            .fork_choice_updated_v2_requests
+            .push((fork_choice_state, payload_attributes.is_some()));
         if let Some(error) = storage.fork_choice_updated_v2_error.clone() {
             return Err(TransportError::ErrorResp(error));
         }
@@ -619,10 +626,13 @@ impl BaseEngineApi for MockEngineClient {
 
     async fn fork_choice_updated_v3(
         &self,
-        _fork_choice_state: ForkchoiceState,
-        _payload_attributes: Option<BasePayloadAttributes>,
+        fork_choice_state: ForkchoiceState,
+        payload_attributes: Option<BasePayloadAttributes>,
     ) -> TransportResult<ForkchoiceUpdated> {
-        let storage = self.storage.read().await;
+        let mut storage = self.storage.write().await;
+        storage
+            .fork_choice_updated_v3_requests
+            .push((fork_choice_state, payload_attributes.is_some()));
         if let Some(error) = storage.fork_choice_updated_v3_error.clone() {
             return Err(TransportError::ErrorResp(error));
         }

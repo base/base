@@ -78,6 +78,12 @@ impl TestAttributesBuilder {
         self
     }
 
+    /// Sets whether these attributes are the last block in the current span.
+    pub const fn with_is_last_in_span(mut self, is_last_in_span: bool) -> Self {
+        self.is_last_in_span = is_last_in_span;
+        self
+    }
+
     /// Builds the `AttributesWithParent`
     pub fn build(self) -> AttributesWithParent {
         let attributes = BasePayloadAttributes {
