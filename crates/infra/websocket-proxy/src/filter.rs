@@ -34,37 +34,82 @@ pub enum FilterType {
     None,
 }
 
+/// Maximum number of addresses or topics permitted in a single filter.
+///
+/// Filter matching is `O(transactions × entries)` per upstream message and runs
+/// synchronously on a runtime worker, so an unbounded entry count lets one
+/// connection monopolize a worker and stall the fan-out for every other client
+/// (CWE-400). This caps the per-connection matching cost.
+pub const MAX_FILTER_ENTRIES: usize = 1000;
+
+/// Error returned when untrusted filter input cannot be turned into a
+/// [`FilterType`].
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum FilterError {
+    /// The filter declares more entries than [`MAX_FILTER_ENTRIES`].
+    #[error("filter specifies {count} {kind}, exceeding the maximum of {max}")]
+    TooManyEntries {
+        /// Which list overflowed (`"addresses"` or `"topics"`).
+        kind: &'static str,
+        /// The number of entries supplied.
+        count: usize,
+        /// The permitted maximum ([`MAX_FILTER_ENTRIES`]).
+        max: usize,
+    },
+}
+
 impl FilterType {
+    /// Rejects a list that exceeds [`MAX_FILTER_ENTRIES`].
+    const fn check_len(kind: &'static str, count: usize) -> Result<(), FilterError> {
+        if count > MAX_FILTER_ENTRIES {
+            return Err(FilterError::TooManyEntries { kind, count, max: MAX_FILTER_ENTRIES });
+        }
+        Ok(())
+    }
+
     /// Creates an address-only filter, or [`FilterType::None`] if the list is empty.
-    pub fn new_addresses(addresses: Vec<String>) -> Self {
+    ///
+    /// Returns [`FilterError::TooManyEntries`] if more than [`MAX_FILTER_ENTRIES`]
+    /// addresses are supplied.
+    pub fn new_addresses(addresses: Vec<String>) -> Result<Self, FilterError> {
+        Self::check_len("addresses", addresses.len())?;
         if addresses.is_empty() {
-            Self::None
+            Ok(Self::None)
         } else {
             let normalized: HashSet<String> =
                 addresses.into_iter().map(|addr| addr.to_lowercase()).collect();
-            Self::Addresses(normalized)
+            Ok(Self::Addresses(normalized))
         }
     }
 
     /// Creates a topic-only filter, or [`FilterType::None`] if the list is empty.
-    pub fn new_topics(topics: Vec<String>) -> Self {
+    ///
+    /// Returns [`FilterError::TooManyEntries`] if more than [`MAX_FILTER_ENTRIES`]
+    /// topics are supplied.
+    pub fn new_topics(topics: Vec<String>) -> Result<Self, FilterError> {
+        Self::check_len("topics", topics.len())?;
         if topics.is_empty() {
-            Self::None
+            Ok(Self::None)
         } else {
             let normalized: HashSet<String> =
                 topics.into_iter().map(|topic| topic.to_lowercase()).collect();
-            Self::Topics(normalized)
+            Ok(Self::Topics(normalized))
         }
     }
 
     /// Creates a combined address-and-topic filter with the specified [`MatchMode`].
+    ///
+    /// Returns [`FilterError::TooManyEntries`] if either list exceeds
+    /// [`MAX_FILTER_ENTRIES`].
     pub fn new_combined_with_mode(
         addresses: Vec<String>,
         topics: Vec<String>,
         match_mode: MatchMode,
-    ) -> Self {
+    ) -> Result<Self, FilterError> {
+        Self::check_len("addresses", addresses.len())?;
+        Self::check_len("topics", topics.len())?;
         if addresses.is_empty() && topics.is_empty() {
-            Self::None
+            Ok(Self::None)
         } else if addresses.is_empty() {
             Self::new_topics(topics)
         } else if topics.is_empty() {
@@ -74,11 +119,11 @@ impl FilterType {
                 addresses.into_iter().map(|addr| addr.to_lowercase()).collect();
             let normalized_topics: HashSet<String> =
                 topics.into_iter().map(|topic| topic.to_lowercase()).collect();
-            Self::Combined {
+            Ok(Self::Combined {
                 addresses: normalized_addresses,
                 topics: normalized_topics,
                 match_mode,
-            }
+            })
         }
     }
 
@@ -285,7 +330,7 @@ mod tests {
             "0x1111111111111111111111111111111111111111".to_string(),
             "0x4200000000000000000000000000000000000010".to_string(),
         ];
-        let filter = FilterType::new_addresses(addresses);
+        let filter = FilterType::new_addresses(addresses).unwrap();
         assert!(filter.matches(&payload, false));
 
         // Test with multiple addresses, none should match
@@ -293,7 +338,7 @@ mod tests {
             "0x1111111111111111111111111111111111111111".to_string(),
             "0x2222222222222222222222222222222222222222".to_string(),
         ];
-        let filter = FilterType::new_addresses(addresses);
+        let filter = FilterType::new_addresses(addresses).unwrap();
         assert!(!filter.matches(&payload, false));
     }
 
@@ -306,7 +351,7 @@ mod tests {
             "0x1111111111111111111111111111111111111111111111111111111111111111".to_string(),
             "0xb0444523268717a02698be47d0803aa7468c00acbed2f8bd93a0459cde61dd89".to_string(),
         ];
-        let filter = FilterType::new_topics(topics);
+        let filter = FilterType::new_topics(topics).unwrap();
         assert!(filter.matches(&payload, false));
     }
 
@@ -318,28 +363,28 @@ mod tests {
         let addresses = vec!["0x4200000000000000000000000000000000000010".to_string()];
         let topics =
             vec!["0xb0444523268717a02698be47d0803aa7468c00acbed2f8bd93a0459cde61dd89".to_string()];
-        let filter = FilterType::new_combined_with_mode(addresses, topics, MatchMode::Any);
+        let filter = FilterType::new_combined_with_mode(addresses, topics, MatchMode::Any).unwrap();
         assert!(filter.matches(&payload, false));
 
         // Test combined filter with ANY mode where only address matches (should pass)
         let addresses = vec!["0x4200000000000000000000000000000000000010".to_string()];
         let topics =
             vec!["0x1111111111111111111111111111111111111111111111111111111111111111".to_string()];
-        let filter = FilterType::new_combined_with_mode(addresses, topics, MatchMode::Any);
+        let filter = FilterType::new_combined_with_mode(addresses, topics, MatchMode::Any).unwrap();
         assert!(filter.matches(&payload, false));
 
         // Test combined filter with ANY mode where only topic matches (should pass)
         let addresses = vec!["0x1111111111111111111111111111111111111111".to_string()];
         let topics =
             vec!["0xb0444523268717a02698be47d0803aa7468c00acbed2f8bd93a0459cde61dd89".to_string()];
-        let filter = FilterType::new_combined_with_mode(addresses, topics, MatchMode::Any);
+        let filter = FilterType::new_combined_with_mode(addresses, topics, MatchMode::Any).unwrap();
         assert!(filter.matches(&payload, false));
 
         // Test combined filter with ANY mode where neither matches (should fail)
         let addresses = vec!["0x1111111111111111111111111111111111111111".to_string()];
         let topics =
             vec!["0x1111111111111111111111111111111111111111111111111111111111111111".to_string()];
-        let filter = FilterType::new_combined_with_mode(addresses, topics, MatchMode::Any);
+        let filter = FilterType::new_combined_with_mode(addresses, topics, MatchMode::Any).unwrap();
         assert!(!filter.matches(&payload, false));
     }
 
@@ -351,21 +396,21 @@ mod tests {
         let addresses = vec!["0x4200000000000000000000000000000000000010".to_string()];
         let topics =
             vec!["0xb0444523268717a02698be47d0803aa7468c00acbed2f8bd93a0459cde61dd89".to_string()];
-        let filter = FilterType::new_combined_with_mode(addresses, topics, MatchMode::All);
+        let filter = FilterType::new_combined_with_mode(addresses, topics, MatchMode::All).unwrap();
         assert!(filter.matches(&payload, false));
 
         // Test combined filter with ALL mode where only address matches (should fail)
         let addresses = vec!["0x4200000000000000000000000000000000000010".to_string()];
         let topics =
             vec!["0x1111111111111111111111111111111111111111111111111111111111111111".to_string()];
-        let filter = FilterType::new_combined_with_mode(addresses, topics, MatchMode::All);
+        let filter = FilterType::new_combined_with_mode(addresses, topics, MatchMode::All).unwrap();
         assert!(!filter.matches(&payload, false));
 
         // Test combined filter with ALL mode where only topic matches (should fail)
         let addresses = vec!["0x1111111111111111111111111111111111111111".to_string()];
         let topics =
             vec!["0xb0444523268717a02698be47d0803aa7468c00acbed2f8bd93a0459cde61dd89".to_string()];
-        let filter = FilterType::new_combined_with_mode(addresses, topics, MatchMode::All);
+        let filter = FilterType::new_combined_with_mode(addresses, topics, MatchMode::All).unwrap();
         assert!(!filter.matches(&payload, false));
     }
 
@@ -409,31 +454,106 @@ mod tests {
         // Test address filter that should match (in logs)
         let filter = FilterType::new_addresses(vec![
             "0x4200000000000000000000000000000000000010".to_string(),
-        ]);
+        ])
+        .unwrap();
         assert!(filter.matches(&payload, false));
 
         // Test address filter that should match (in account balances)
         let filter = FilterType::new_addresses(vec![
             "0x4200000000000000000000000000000000000007".to_string(),
-        ]);
+        ])
+        .unwrap();
         assert!(filter.matches(&payload, false));
 
         // Test address filter that should not match
         let filter = FilterType::new_addresses(vec![
             "0x1111111111111111111111111111111111111111".to_string(),
-        ]);
+        ])
+        .unwrap();
         assert!(!filter.matches(&payload, false));
 
         // Test topic filter that should match
         let filter = FilterType::new_topics(vec![
             "0xb0444523268717a02698be47d0803aa7468c00acbed2f8bd93a0459cde61dd89".to_string(),
-        ]);
+        ])
+        .unwrap();
         assert!(filter.matches(&payload, false));
 
         // Test topic filter that should not match
         let filter = FilterType::new_topics(vec![
             "0x1111111111111111111111111111111111111111111111111111111111111111".to_string(),
-        ]);
+        ])
+        .unwrap();
         assert!(!filter.matches(&payload, false));
+    }
+
+    /// Regression test for the filter CPU denial-of-service (CWE-400): an
+    /// attacker-controlled filter must not be able to declare an unbounded number
+    /// of entries. Before the fix, a `?addresses=z0,z1,...` query with tens of
+    /// thousands of tokens built a filter whose per-message match took seconds,
+    /// monopolizing a runtime worker and stalling the fan-out for every client.
+    ///
+    /// Construction must reject any list exceeding [`MAX_FILTER_ENTRIES`].
+    #[test]
+    fn oversized_filter_is_rejected() {
+        let too_many = MAX_FILTER_ENTRIES + 1;
+        let addresses: Vec<String> = (0..too_many).map(|i| format!("addr{i}")).collect();
+        assert!(matches!(
+            FilterType::new_addresses(addresses),
+            Err(FilterError::TooManyEntries { kind: "addresses", .. })
+        ));
+
+        let topics: Vec<String> = (0..too_many).map(|i| format!("topic{i}")).collect();
+        assert!(matches!(
+            FilterType::new_topics(topics),
+            Err(FilterError::TooManyEntries { kind: "topics", .. })
+        ));
+
+        // The combined constructor guards both lists.
+        let addresses: Vec<String> = (0..too_many).map(|i| format!("addr{i}")).collect();
+        assert!(FilterType::new_combined_with_mode(addresses, vec![], MatchMode::Any).is_err());
+
+        // A filter at the limit is still accepted.
+        let at_limit: Vec<String> = (0..MAX_FILTER_ENTRIES).map(|i| format!("addr{i}")).collect();
+        assert!(FilterType::new_addresses(at_limit).is_ok());
+    }
+
+    /// Worst-case latency regression test for the filter CPU denial-of-service
+    /// (CWE-400). `matches()` runs synchronously on a runtime worker for every
+    /// upstream flashblock (~every 200ms), so a single match must complete within
+    /// that interval or one connection alone falls behind and starves its worker.
+    ///
+    /// With the entry count bounded to [`MAX_FILTER_ENTRIES`], even the largest
+    /// permitted filter against a worst-case flashblock stays well within budget.
+    /// (Before the bound, a ~50k-address filter took ~3s here — ~15x over.)
+    #[test]
+    fn max_permitted_filter_match_stays_within_flashblock_interval() {
+        use std::time::{Duration, Instant};
+
+        const FLASHBLOCK_INTERVAL: Duration = Duration::from_millis(200);
+        // Worst-case flashblock: many transactions, each a long raw-tx hex string.
+        const TRANSACTIONS: usize = 200;
+        const TX_HEX_LEN: usize = 1024;
+
+        let tx = format!("0x{}", "0123456789abcdef".repeat(TX_HEX_LEN / 16));
+        let transactions: Vec<String> = (0..TRANSACTIONS).map(|_| tx.clone()).collect();
+        let flashblock = serde_json::json!({ "diff": { "transactions": transactions } }).to_string();
+
+        // The maximum permitted filter, of non-matching entries so the scan never
+        // short-circuits (the attacker's worst case within the bound).
+        let addresses: Vec<String> =
+            (0..MAX_FILTER_ENTRIES).map(|i| format!("zzzz{i:036}")).collect();
+        let filter = FilterType::new_addresses(addresses).unwrap();
+
+        let start = Instant::now();
+        let matched = filter.matches(flashblock.as_bytes(), false);
+        let elapsed = start.elapsed();
+        assert!(!matched, "sanity: junk tokens must not match");
+
+        assert!(
+            elapsed < FLASHBLOCK_INTERVAL,
+            "largest permitted filter ({MAX_FILTER_ENTRIES} entries) over a {TRANSACTIONS}-tx \
+             flashblock took {elapsed:?}, exceeding the {FLASHBLOCK_INTERVAL:?} flashblock interval",
+        );
     }
 }

@@ -22,7 +22,7 @@ use tracing::{debug, info, warn};
 use crate::{
     auth::Authentication,
     client::ClientConnection,
-    filter::{FilterType, MatchMode},
+    filter::{FilterError, FilterType, MatchMode},
     metrics::Metrics,
     rate_limit::{RateLimit, RateLimitError, RateLimitType},
     registry::Registry,
@@ -205,7 +205,7 @@ fn parse_comma_separated(input: Option<String>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn create_filter_from_query(query: FilterQuery) -> FilterType {
+fn create_filter_from_query(query: FilterQuery) -> Result<FilterType, FilterError> {
     let addresses = parse_comma_separated(query.addresses);
     let topics = parse_comma_separated(query.topics);
 
@@ -219,12 +219,13 @@ fn create_filter_from_query(query: FilterQuery) -> FilterType {
         }
     };
 
-    let filter = FilterType::new_combined_with_mode(addresses.clone(), topics.clone(), match_mode);
+    let filter =
+        FilterType::new_combined_with_mode(addresses.clone(), topics.clone(), match_mode)?;
     debug!(
         "Created filter: {:?} from addresses: {:?}, topics: {:?}, match_mode: {:?}",
         filter, addresses, topics, match_mode
     );
-    filter
+    Ok(filter)
 }
 
 async fn authenticated_websocket_handler(
@@ -273,8 +274,19 @@ async fn authenticated_filter_websocket_handler(
         },
         |app| {
             Metrics::connections_by_app(app).increment(1);
-            let filter = create_filter_from_query(query.0);
-            websocket_handler(state, ws, addr, headers, filter)
+            match create_filter_from_query(query.0) {
+                Ok(filter) => {
+                    websocket_handler(state, ws, addr, headers, filter).into_response()
+                }
+                Err(err) => {
+                    warn!(error = %err, "Rejecting connection with invalid filter");
+                    Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(Body::from(json!({ "message": err.to_string() }).to_string()))
+                        .unwrap()
+                        .into_response()
+                }
+            }
         },
     )
 }
@@ -380,7 +392,7 @@ mod tests {
         // Test addresses only
         let query =
             FilterQuery { addresses: Some("0x123,0x456".to_string()), topics: None, r#match: None };
-        let filter = create_filter_from_query(query);
+        let filter = create_filter_from_query(query).unwrap();
         match filter {
             FilterType::Addresses(_) => (),
             _ => panic!("Expected Addresses filter"),
@@ -389,7 +401,7 @@ mod tests {
         // Test topics only
         let query =
             FilterQuery { addresses: None, topics: Some("0xabc,0xdef".to_string()), r#match: None };
-        let filter = create_filter_from_query(query);
+        let filter = create_filter_from_query(query).unwrap();
         match filter {
             FilterType::Topics(_) => (),
             _ => panic!("Expected Topics filter"),
@@ -401,7 +413,7 @@ mod tests {
             topics: Some("0xabc".to_string()),
             r#match: Some("all".to_string()),
         };
-        let filter = create_filter_from_query(query);
+        let filter = create_filter_from_query(query).unwrap();
         match filter {
             FilterType::Combined { .. } => (),
             _ => panic!("Expected Combined filter"),
@@ -409,11 +421,23 @@ mod tests {
 
         // Test none
         let query = FilterQuery { addresses: None, topics: None, r#match: None };
-        let filter = create_filter_from_query(query);
+        let filter = create_filter_from_query(query).unwrap();
         match filter {
             FilterType::None => (),
             _ => panic!("Expected None filter"),
         }
+    }
+
+    #[test]
+    fn test_create_filter_rejects_oversized_query() {
+        // An address list beyond the cap is rejected at the query boundary rather
+        // than building an unbounded filter (CWE-400 guard).
+        let addresses = (0..=crate::filter::MAX_FILTER_ENTRIES)
+            .map(|i| format!("0x{i:040x}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let query = FilterQuery { addresses: Some(addresses), topics: None, r#match: None };
+        assert!(create_filter_from_query(query).is_err());
     }
 
     #[test]
