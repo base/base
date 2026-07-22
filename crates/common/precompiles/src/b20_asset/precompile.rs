@@ -6,8 +6,8 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::BasePrecompileError;
 
 use crate::{
-    B20AssetStorage, B20AssetToken, BaseStorageFeatures, NoopPrecompileCallObserver,
-    PolicyRegistryStorage, PolicyVersions, PrecompileCallObserver, macros::base_precompile,
+    B20AssetStorage, B20AssetToken, NoopPrecompileCallObserver, PolicyRegistryStorage,
+    PolicyVersions, PrecompileCallObserver, UpgradeGatedStorageFeatures, macros::base_precompile,
 };
 
 /// Entry point for the asset B-20 token precompile.
@@ -34,7 +34,7 @@ impl B20AssetPrecompile {
     where
         O: PrecompileCallObserver,
     {
-        let storage_features = BaseStorageFeatures::from_upgrade(upgrade);
+        let storage_features = UpgradeGatedStorageFeatures::from_upgrade(upgrade);
         base_precompile!(
             alloc::format!("B20AssetToken@{token_address}"),
             storage_features: storage_features,

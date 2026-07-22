@@ -4,8 +4,8 @@ use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
 use base_common_genesis::BaseUpgrade;
 
 use crate::{
-    BaseStorageFeatures, NoopPrecompileCallObserver, PolicyRegistryStorage, PrecompileCallObserver,
-    macros::base_precompile,
+    NoopPrecompileCallObserver, PolicyRegistryStorage, PrecompileCallObserver,
+    UpgradeGatedStorageFeatures, macros::base_precompile,
 };
 
 /// EVM entry point for the `PolicyRegistry` precompile.
@@ -40,7 +40,7 @@ impl PolicyRegistryPrecompile {
     where
         O: PrecompileCallObserver,
     {
-        let storage_features = BaseStorageFeatures::from_upgrade(upgrade);
+        let storage_features = UpgradeGatedStorageFeatures::from_upgrade(upgrade);
         base_precompile!(
             "PolicyRegistryPrecompile",
             storage_features: storage_features,

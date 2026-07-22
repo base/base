@@ -6,8 +6,8 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_macros::precompile;
 
 use crate::{
-    ActivationAdminConfig, ActivationRegistryStorage, BaseStorageFeatures,
-    NoopPrecompileCallObserver, PrecompileCallObserver, macros::base_precompile,
+    ActivationAdminConfig, ActivationRegistryStorage, NoopPrecompileCallObserver,
+    PrecompileCallObserver, UpgradeGatedStorageFeatures, macros::base_precompile,
 };
 
 /// Entry point for the activation registry precompile.
@@ -65,7 +65,7 @@ impl ActivationRegistry {
     where
         O: PrecompileCallObserver,
     {
-        let storage_features = BaseStorageFeatures::from_upgrade(upgrade);
+        let storage_features = UpgradeGatedStorageFeatures::from_upgrade(upgrade);
         base_precompile!(
             "ActivationRegistry",
             storage_features: storage_features,

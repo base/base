@@ -3,9 +3,9 @@ use base_precompile_storage::StorageFeatures;
 
 /// Resolves Base upgrades into fork-dependent persistent-storage features.
 #[derive(Debug, Clone, Copy)]
-pub struct BaseStorageFeatures;
+pub struct UpgradeGatedStorageFeatures;
 
-impl BaseStorageFeatures {
+impl UpgradeGatedStorageFeatures {
     /// Returns the persistent-storage features active at `upgrade`.
     pub fn from_upgrade(upgrade: BaseUpgrade) -> StorageFeatures {
         if upgrade >= BaseUpgrade::Cobalt {
@@ -37,7 +37,13 @@ mod tests {
 
     #[test]
     fn storage_features_activate_at_cobalt() {
-        assert_eq!(BaseStorageFeatures::from_upgrade(BaseUpgrade::Beryl), StorageFeatures::Legacy,);
-        assert_eq!(BaseStorageFeatures::from_upgrade(BaseUpgrade::Cobalt), StorageFeatures::Cobalt,);
+        assert_eq!(
+            UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Beryl),
+            StorageFeatures::Legacy,
+        );
+        assert_eq!(
+            UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Cobalt),
+            StorageFeatures::Cobalt,
+        );
     }
 }

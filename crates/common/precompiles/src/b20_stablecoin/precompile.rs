@@ -6,8 +6,8 @@ use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::BasePrecompileError;
 
 use crate::{
-    B20StablecoinStorage, B20StablecoinToken, BaseStorageFeatures, NoopPrecompileCallObserver,
-    PolicyRegistryStorage, PolicyVersions, PrecompileCallObserver, macros::base_precompile,
+    B20StablecoinStorage, B20StablecoinToken, NoopPrecompileCallObserver, PolicyRegistryStorage,
+    PolicyVersions, PrecompileCallObserver, UpgradeGatedStorageFeatures, macros::base_precompile,
 };
 
 /// Entry point for the stablecoin B-20 variant.
@@ -33,7 +33,7 @@ impl B20StablecoinPrecompile {
     where
         O: PrecompileCallObserver,
     {
-        let storage_features = BaseStorageFeatures::from_upgrade(upgrade);
+        let storage_features = UpgradeGatedStorageFeatures::from_upgrade(upgrade);
         base_precompile!(
             alloc::format!("B20StablecoinToken@{token_address}"),
             storage_features: storage_features,
