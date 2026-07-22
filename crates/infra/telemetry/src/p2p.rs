@@ -2,7 +2,7 @@
 //! and probe concurrency limits.
 
 use std::{
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, SocketAddr},
     str::FromStr,
     sync::Arc,
 };
@@ -53,10 +53,10 @@ impl P2pReachabilityRequest {
             .then_some(RlpxProbeTarget { address, node_id: record.id })
     }
 
-    /// Returns whether `ip` is a publicly routable unicast address. Rejecting
-    /// everything else keeps untrusted enodes from steering probes at
-    /// loopback, link-local (including cloud metadata), or private networks.
-    pub fn is_public_ip(ip: IpAddr) -> bool {
+    /// Returns whether `ip` is a supported, publicly routable `IPv4` address.
+    /// `IPv6` and non-public targets are rejected because the execution P2P
+    /// network currently supports only public `IPv4` reachability probes.
+    pub const fn is_public_ip(ip: IpAddr) -> bool {
         match ip {
             IpAddr::V4(v4) => {
                 !(v4.is_unspecified()
@@ -67,41 +67,9 @@ impl P2pReachabilityRequest {
                     || v4.is_documentation()
                     || v4.is_multicast()
                     // Carrier-grade NAT (100.64.0.0/10).
-                    || (v4.octets()[0] == 100 && v4.octets()[1] & 0xc0 == 0x40))
+                    || matches!(v4.octets(), [100, 64..=127, _, _]))
             }
-            IpAddr::V6(v6) => {
-                let seg = v6.segments();
-                // IPv6 forms embedding an IPv4 address are judged by that
-                // address, so NAT64/6to4 gateways cannot be steered at
-                // internal targets: IPv4-mapped (::ffff:0:0/96), deprecated
-                // IPv4-compatible (::/96, excluding `::` and `::1`), the
-                // NAT64 well-known prefix (64:ff9b::/96), and 6to4
-                // (2002::/16).
-                let low_32 = || Ipv4Addr::from((u32::from(seg[6]) << 16) | u32::from(seg[7]));
-                let embedded_v4 = v6
-                    .to_ipv4_mapped()
-                    .or_else(|| {
-                        (seg[..6] == [0; 6] && !(v6.is_unspecified() || v6.is_loopback()))
-                            .then(low_32)
-                    })
-                    .or_else(|| (seg[..6] == [0x64, 0xff9b, 0, 0, 0, 0]).then(low_32))
-                    .or_else(|| {
-                        (seg[0] == 0x2002)
-                            .then(|| Ipv4Addr::from((u32::from(seg[1]) << 16) | u32::from(seg[2])))
-                    });
-                embedded_v4.map_or_else(
-                    || {
-                        !(v6.is_unspecified()
-                            || v6.is_loopback()
-                            || v6.is_multicast()
-                            // Unique local (fc00::/7).
-                            || seg[0] & 0xfe00 == 0xfc00
-                            // Link local (fe80::/10).
-                            || seg[0] & 0xffc0 == 0xfe80)
-                    },
-                    |v4| Self::is_public_ip(IpAddr::V4(v4)),
-                )
-            }
+            IpAddr::V6(_) => false,
         }
     }
 }
@@ -332,11 +300,6 @@ mod tests {
         };
         assert!(invalid_discport.target().is_none());
 
-        let ipv6 = P2pReachabilityRequest {
-            enode: format!("enode://{TEST_NODE_ID}@[2606:4700:4700::1111]:30303"),
-        };
-        assert_eq!(ipv6.target().unwrap().address, "[2606:4700:4700::1111]:30303".parse().unwrap());
-
         let zero_port =
             P2pReachabilityRequest { enode: format!("enode://{TEST_NODE_ID}@8.8.8.8:0") };
         assert!(zero_port.target().is_none());
@@ -361,11 +324,11 @@ mod tests {
             "169.254.169.254",
             "100.64.0.1",
             "0.0.0.0",
+            "[2606:4700:4700::1111]",
             "[::1]",
             "[fc00::1]",
             "[fe80::1]",
             "[::ffff:10.0.0.1]",
-            // NAT64, 6to4, and IPv4-compatible, all embedding 10.0.0.1.
             "[64:ff9b::a00:1]",
             "[2002:a00:1::]",
             "[::a00:1]",

@@ -228,7 +228,7 @@ impl Doctor {
                 let telemetry_url = chain_id
                     .as_ref()
                     .ok()
-                    .and_then(|chain_id| TelemetryClient::reachability_url_for_chain_id(*chain_id));
+                    .and_then(|chain_id| TelemetryClient::backend_base_url(*chain_id));
                 let enode = el_info.as_ref().ok().and_then(|info| info.identity.enode.clone());
                 let reachability = match (telemetry_url.as_ref(), enode) {
                     (Some(url), Some(enode)) => Some(match TelemetryClient::new(url.clone()) {
@@ -265,15 +265,59 @@ impl Doctor {
             telemetry_url: telemetry_url.clone(),
         };
 
+        let external_el_reachability =
+            match (chain_id.as_ref(), telemetry_url.as_ref(), el_reachability.as_ref()) {
+                (Err(error), _, _) => DoctorCheck::new(
+                    "external_el_reachability",
+                    DoctorStatus::Skip,
+                    "could not detect network for external EL reachability check",
+                    json!({
+                        "telemetryUrl": null,
+                        "error": error.to_string(),
+                    }),
+                    json!({ "pass": "reachable" }),
+                    Some(
+                        "Check the effective `--el-rpc` endpoint and ensure `eth_chainId` is available."
+                            .to_string(),
+                    ),
+                ),
+                (Ok(chain_id), None, _) => DoctorCheck::new(
+                    "external_el_reachability",
+                    DoctorStatus::Skip,
+                    format!(
+                        "external EL reachability checks are unavailable for chain ID {chain_id}"
+                    ),
+                    json!({
+                        "chainId": chain_id,
+                        "telemetryUrl": null,
+                    }),
+                    json!({ "pass": "reachable" }),
+                    Some(
+                        "Hosted reachability checks support Base mainnet (8453) and Base Sepolia (84532)."
+                            .to_string(),
+                    ),
+                ),
+                (Ok(_), Some(telemetry_url), None) => DoctorCheck::new(
+                    "external_el_reachability",
+                    DoctorStatus::Skip,
+                    "EL enode is unavailable from admin_nodeInfo",
+                    json!({ "telemetryUrl": telemetry_url }),
+                    json!({ "pass": "reachable" }),
+                    Some("Point `--el-rpc` at an admin-enabled execution node RPC.".to_string()),
+                ),
+                (Ok(_), Some(telemetry_url), Some(Ok(response))) => {
+                    Self::external_el_reachability_check(telemetry_url, response)
+                }
+                (Ok(_), Some(telemetry_url), Some(Err(error))) => {
+                    Self::external_el_reachability_error_check(telemetry_url, error)
+                }
+            };
+
         let checks = vec![
             Self::p2p_config_check(&el_info, cl_info.as_ref()),
             Self::bootnode_check(chain_id.as_ref().ok(), &config),
             Self::advertised_endpoint_check(&el_info, cl_info.as_ref()),
-            Self::external_el_reachability_check(
-                &chain_id,
-                telemetry_url.as_ref(),
-                el_reachability.as_ref(),
-            ),
+            external_el_reachability,
             Self::declared_network_check(&config, &chain_id),
             Self::reth_limits_check(options.reth_config.as_deref()),
             Self::consensus_rpc_check(options.cl_rpc.as_ref()),
@@ -295,119 +339,75 @@ impl Doctor {
 
     /// Builds the external execution-layer reachability doctor check.
     fn external_el_reachability_check(
-        chain_id: &Result<u64>,
-        telemetry_url: Option<&Url>,
-        result: Option<&Result<ElReachabilityResponse, TelemetryClientError>>,
+        telemetry_url: &Url,
+        response: &ElReachabilityResponse,
     ) -> DoctorCheck {
-        let chain_id = match chain_id {
-            Ok(chain_id) => *chain_id,
-            Err(error) => {
-                return DoctorCheck::new(
-                    "external_el_reachability",
-                    DoctorStatus::Skip,
-                    "could not detect network for external EL reachability check",
-                    json!({
-                        "telemetryUrl": null,
-                        "error": error.to_string(),
-                    }),
-                    json!({ "pass": "reachable" }),
-                    Some(
-                        "Check the effective `--el-rpc` endpoint and ensure `eth_chainId` is available."
-                            .to_string(),
-                    ),
-                );
-            }
+        let status = if response.outcome == ElReachabilityOutcome::Reachable {
+            DoctorStatus::Pass
+        } else {
+            DoctorStatus::Fail
         };
-        let Some(telemetry_url) = telemetry_url else {
-            return DoctorCheck::new(
-                "external_el_reachability",
-                DoctorStatus::Skip,
-                format!("external EL reachability checks are unavailable for chain ID {chain_id}"),
-                json!({
-                    "chainId": chain_id,
-                    "telemetryUrl": null,
-                }),
-                json!({ "pass": "reachable" }),
-                Some(
-                    "Hosted reachability checks support Base mainnet (8453) and Base Sepolia (84532)."
-                        .to_string(),
-                ),
-            );
-        };
-        match result {
-            Some(Ok(response)) => {
-                let status = if response.outcome == ElReachabilityOutcome::Reachable {
-                    DoctorStatus::Pass
-                } else {
-                    DoctorStatus::Fail
-                };
-                DoctorCheck::new(
-                    "external_el_reachability",
-                    status,
-                    if status == DoctorStatus::Pass {
-                        "telemetry service reached the advertised EL endpoint"
-                    } else {
-                        "telemetry service could not complete the advertised EL handshake"
-                    },
-                    json!({
-                        "telemetryUrl": telemetry_url,
-                        "outcome": response.outcome,
-                        "stage": response.stage,
-                        "observedAddress": response.observed_address,
-                        "elapsedMs": response.elapsed_ms,
-                        "clientVersion": response.client_version.as_deref(),
-                    }),
-                    json!({ "pass": "reachable" }),
-                    (status == DoctorStatus::Fail).then(|| {
-                        "Check the advertised enode, firewall, NAT, and EL p2p listener."
-                            .to_string()
-                    }),
-                )
-            }
-            Some(Err(error)) => {
-                let (status, message, hint) = match error {
-                    TelemetryClientError::InvalidRequest => (
-                        DoctorStatus::Fail,
-                        "telemetry service rejected the advertised EL enode",
-                        "Check the enode returned by `admin_nodeInfo`.",
-                    ),
-                    TelemetryClientError::PayloadTooLarge => (
-                        DoctorStatus::Fail,
-                        "telemetry service rejected the reachability request as too large",
-                        "Check the enode returned by `admin_nodeInfo`.",
-                    ),
-                    TelemetryClientError::Saturated => (
-                        DoctorStatus::Warn,
-                        "telemetry service has no reachability probe capacity",
-                        "Retry the check shortly.",
-                    ),
-                    TelemetryClientError::Unavailable { .. } => (
-                        DoctorStatus::Skip,
-                        "telemetry service is unavailable",
-                        "Check the configured telemetry URL and service health.",
-                    ),
-                };
-                DoctorCheck::new(
-                    "external_el_reachability",
-                    status,
-                    message,
-                    json!({
-                        "telemetryUrl": telemetry_url,
-                        "error": error.to_string(),
-                    }),
-                    json!({ "pass": "reachable" }),
-                    Some(hint.to_string()),
-                )
-            }
-            None => DoctorCheck::new(
-                "external_el_reachability",
-                DoctorStatus::Skip,
-                "EL enode is unavailable from admin_nodeInfo",
-                json!({ "telemetryUrl": telemetry_url }),
-                json!({ "pass": "reachable" }),
-                Some("Point `--el-rpc` at an admin-enabled execution node RPC.".to_string()),
+        DoctorCheck::new(
+            "external_el_reachability",
+            status,
+            if status == DoctorStatus::Pass {
+                "telemetry service reached the advertised EL endpoint"
+            } else {
+                "telemetry service could not complete the advertised EL handshake"
+            },
+            json!({
+                "telemetryUrl": telemetry_url,
+                "outcome": response.outcome,
+                "stage": response.stage,
+                "observedAddress": response.observed_address,
+                "elapsedMs": response.elapsed_ms,
+                "clientVersion": response.client_version.as_deref(),
+            }),
+            json!({ "pass": "reachable" }),
+            (status == DoctorStatus::Fail).then(|| {
+                "Check the advertised enode, firewall, NAT, and EL p2p listener.".to_string()
+            }),
+        )
+    }
+
+    /// Builds a doctor check from a telemetry client error.
+    fn external_el_reachability_error_check(
+        telemetry_url: &Url,
+        error: &TelemetryClientError,
+    ) -> DoctorCheck {
+        let (status, message, hint) = match error {
+            TelemetryClientError::InvalidRequest => (
+                DoctorStatus::Fail,
+                "telemetry service rejected the advertised EL enode",
+                "Check the enode returned by `admin_nodeInfo`.",
             ),
-        }
+            TelemetryClientError::PayloadTooLarge => (
+                DoctorStatus::Fail,
+                "telemetry service rejected the reachability request as too large",
+                "Check the enode returned by `admin_nodeInfo`.",
+            ),
+            TelemetryClientError::Saturated => (
+                DoctorStatus::Warn,
+                "telemetry service has no reachability probe capacity",
+                "Retry the check shortly.",
+            ),
+            TelemetryClientError::Unavailable { .. } => (
+                DoctorStatus::Skip,
+                "telemetry service is unavailable",
+                "Check the configured telemetry URL and service health.",
+            ),
+        };
+        DoctorCheck::new(
+            "external_el_reachability",
+            status,
+            message,
+            json!({
+                "telemetryUrl": telemetry_url,
+                "error": error.to_string(),
+            }),
+            json!({ "pass": "reachable" }),
+            Some(hint.to_string()),
+        )
     }
 
     fn p2p_config_check(
@@ -1129,7 +1129,6 @@ mod tests {
         path::PathBuf,
     };
 
-    use anyhow::anyhow;
     use serde_json::json;
     use url::Url;
 
@@ -1231,22 +1230,15 @@ mod tests {
     #[test]
     fn external_reachability_classifies_probe_outcomes() {
         let telemetry_url = Url::parse("http://127.0.0.1:8080").unwrap();
-        let chain_id = Ok(8453);
-        let reachable = Ok(reachability(ElReachabilityOutcome::Reachable));
-        let failed = Ok(reachability(ElReachabilityOutcome::ConnectionFailed));
+        let reachable = reachability(ElReachabilityOutcome::Reachable);
+        let failed = reachability(ElReachabilityOutcome::ConnectionFailed);
 
         assert_eq!(
-            Doctor::external_el_reachability_check(
-                &chain_id,
-                Some(&telemetry_url),
-                Some(&reachable),
-            )
-            .status,
+            Doctor::external_el_reachability_check(&telemetry_url, &reachable).status,
             DoctorStatus::Pass,
         );
         assert_eq!(
-            Doctor::external_el_reachability_check(&chain_id, Some(&telemetry_url), Some(&failed),)
-                .status,
+            Doctor::external_el_reachability_check(&telemetry_url, &failed).status,
             DoctorStatus::Fail,
         );
     }
@@ -1254,56 +1246,22 @@ mod tests {
     #[test]
     fn external_reachability_preserves_client_error_classification() {
         let telemetry_url = Url::parse("http://127.0.0.1:8080").unwrap();
-        let chain_id = Ok(8453);
-        let invalid = Err(TelemetryClientError::InvalidRequest);
-        let saturated = Err(TelemetryClientError::Saturated);
+        let invalid = TelemetryClientError::InvalidRequest;
+        let saturated = TelemetryClientError::Saturated;
         let unavailable =
-            Err(TelemetryClientError::Unavailable { message: "connection refused".to_string() });
+            TelemetryClientError::Unavailable { message: "connection refused".to_string() };
 
         assert_eq!(
-            Doctor::external_el_reachability_check(
-                &chain_id,
-                Some(&telemetry_url),
-                Some(&invalid),
-            )
-            .status,
+            Doctor::external_el_reachability_error_check(&telemetry_url, &invalid).status,
             DoctorStatus::Fail,
         );
         assert_eq!(
-            Doctor::external_el_reachability_check(
-                &chain_id,
-                Some(&telemetry_url),
-                Some(&saturated),
-            )
-            .status,
+            Doctor::external_el_reachability_error_check(&telemetry_url, &saturated).status,
             DoctorStatus::Warn,
         );
         assert_eq!(
-            Doctor::external_el_reachability_check(
-                &chain_id,
-                Some(&telemetry_url),
-                Some(&unavailable),
-            )
-            .status,
+            Doctor::external_el_reachability_error_check(&telemetry_url, &unavailable).status,
             DoctorStatus::Skip,
-        );
-    }
-
-    #[test]
-    fn external_reachability_skips_unsupported_and_undetected_networks() {
-        let unsupported = Doctor::external_el_reachability_check(&Ok(1), None, None);
-        let undetected = Doctor::external_el_reachability_check(
-            &Err(anyhow!("eth_chainId unavailable")),
-            None,
-            None,
-        );
-
-        assert_eq!(unsupported.status, DoctorStatus::Skip);
-        assert!(unsupported.message.contains("chain ID 1"));
-        assert_eq!(undetected.status, DoctorStatus::Skip);
-        assert_eq!(
-            undetected.message,
-            "could not detect network for external EL reachability check"
         );
     }
 

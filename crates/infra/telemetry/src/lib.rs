@@ -17,8 +17,8 @@ pub use prober::{
 
 mod rate_limit;
 pub use rate_limit::{
-    CLIENT_IP_HEADER, IpRateLimiter, PerIpRateLimit, RATE_LIMIT_EVICTION_INTERVAL,
-    RATE_LIMIT_PER_IP_REQUESTS_PER_MINUTE, RATE_LIMITED_BODY, RateLimitExceeded,
+    CLIENT_IP_HEADER, DEFAULT_P2P_PROBE_REQUESTS_PER_MINUTE, IpRateLimiter, PerIpRateLimit,
+    RATE_LIMIT_EVICTION_INTERVAL, RATE_LIMITED_BODY, RateLimitExceeded,
 };
 
 mod server;

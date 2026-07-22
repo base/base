@@ -20,9 +20,8 @@ because it is at peer capacity) is still `reachable`; its response omits
 `clientVersion`.
 
 The caller may be the node, an operator, or a monitoring system. The enode must
-contain a literal `IPv4` or `IPv6` address; hostnames are not resolved. Private
-addresses are allowed, so results describe reachability from the service's
-network rather than necessarily from the public internet.
+contain a public literal `IPv4` address; hostnames, private addresses, and `IPv6`
+addresses are rejected.
 
 Request:
 
@@ -60,17 +59,19 @@ running globally. These limits do not apply to the health routes.
 
 ## Rate limiting
 
-Reachability requests are rate limited to 2 per minute per client IP,
-enforced with in-memory GCRA token buckets. The client IP is taken from the
-peer socket address unless the peer is inside a configured set of trusted
-proxy CIDRs, in which case the last `X-Forwarded-For` entry is used. Limited
-requests return `429` with a `Retry-After` header and a JSON body of
+Reachability requests default to 2 per minute per client IP, configurable with
+`--p2p-probe-requests-per-minute` or
+`BASE_TELEMETRY_P2P_PROBE_REQUESTS_PER_MINUTE`, and enforced with in-memory GCRA
+token buckets. The client IP is taken from the peer socket address unless the
+peer is inside a configured set of trusted proxy CIDRs, in which case the last
+`X-Forwarded-For` entry is extracted with `axum-client-ip`. A missing or
+malformed header from a trusted proxy is treated as a proxy misconfiguration.
+Limited requests return `429` with a `Retry-After` header and a JSON body of
 `{"error":"rate_limited"}`. Limits are tracked per replica; health routes are
 never rate limited.
 
 ## Target selection
 
-The service probes the exact literal `IPv4` or `IPv6` socket address advertised
-by the enode. Non-public addresses (loopback, private, link-local,
-carrier-grade NAT, unique-local, multicast, and unspecified) are rejected with
-`400` so untrusted enodes cannot steer probes at internal networks.
+The service probes the exact literal public `IPv4` socket address advertised by
+the enode. `IPv6` and non-public `IPv4` addresses (loopback, private, link-local,
+carrier-grade NAT, multicast, and unspecified) are rejected with `400`.

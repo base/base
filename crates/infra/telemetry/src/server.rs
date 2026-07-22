@@ -1,5 +1,6 @@
 use std::{
     net::SocketAddr,
+    num::NonZeroU32,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -17,8 +18,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use crate::{
-    CLIENT_IP_HEADER, IpRateLimiter, P2P_REACHABILITY_MAX_CONCURRENT_PROBES, P2pRoutes,
-    PerIpRateLimit, RATE_LIMIT_PER_IP_REQUESTS_PER_MINUTE, ReachabilityProber, RlpxProber,
+    CLIENT_IP_HEADER, DEFAULT_P2P_PROBE_REQUESTS_PER_MINUTE, IpRateLimiter,
+    P2P_REACHABILITY_MAX_CONCURRENT_PROBES, P2pRoutes, PerIpRateLimit, ReachabilityProber,
+    RlpxProber,
 };
 
 /// Configuration for the Base telemetry HTTP server.
@@ -30,6 +32,13 @@ pub struct ServerConfig {
     /// Comma-separated CIDRs of proxies trusted to supply the `X-Forwarded-For` client IP.
     #[arg(long, env = "BASE_TELEMETRY_TRUSTED_PROXY_CIDRS", value_delimiter = ',')]
     pub trusted_proxy_cidrs: Vec<IpNet>,
+    /// P2P reachability probe requests allowed per minute for each client IP.
+    #[arg(
+        long,
+        env = "BASE_TELEMETRY_P2P_PROBE_REQUESTS_PER_MINUTE",
+        default_value_t = DEFAULT_P2P_PROBE_REQUESTS_PER_MINUTE
+    )]
+    pub p2p_probe_requests_per_minute: NonZeroU32,
 }
 
 /// Base telemetry Axum server scaffold.
@@ -58,7 +67,7 @@ impl BaseTelemetryServer {
             CLIENT_IP_HEADER.to_string(),
             config.trusted_proxy_cidrs,
         ));
-        let limiter = Arc::new(IpRateLimiter::per_minute(RATE_LIMIT_PER_IP_REQUESTS_PER_MINUTE));
+        let limiter = Arc::new(IpRateLimiter::per_minute(config.p2p_probe_requests_per_minute));
         let eviction = limiter.spawn_eviction_task(cancel.clone());
 
         let ready = Arc::new(AtomicBool::new(false));
@@ -278,7 +287,7 @@ mod tests {
 
         let first = client
             .post(&url)
-            .header("x-forwarded-for", "198.51.100.1")
+            .header("x-forwarded-for", "203.0.113.1, 198.51.100.1")
             .json(&test_request())
             .send()
             .await
@@ -288,7 +297,7 @@ mod tests {
         // A spoofed header must not open a fresh rate-limit bucket.
         let second = client
             .post(&url)
-            .header("x-forwarded-for", "198.51.100.2")
+            .header("x-forwarded-for", "203.0.113.1, 198.51.100.2")
             .json(&test_request())
             .send()
             .await
@@ -331,13 +340,33 @@ mod tests {
         // The same forwarded client is limited.
         let third = client
             .post(&url)
-            .header("x-forwarded-for", "198.51.100.1")
+            .header("x-forwarded-for", "203.0.113.2, 198.51.100.1")
             .json(&test_request())
             .send()
             .await
             .unwrap();
         assert_eq!(third.status(), StatusCode::TOO_MANY_REQUESTS);
 
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn rejects_missing_forwarded_header_from_trusted_proxy() {
+        let router = BaseTelemetryServer::router_with_prober(
+            Arc::new(AtomicBool::new(true)),
+            per_ip(1, vec!["127.0.0.0/8"]),
+            Arc::new(FakeProber),
+        );
+        let (addr, handle) = start_router(router).await;
+
+        let response = reqwest::Client::new()
+            .post(format!("http://{addr}{P2P_REACHABILITY_PATH}"))
+            .json(&test_request())
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
         handle.abort();
     }
 }

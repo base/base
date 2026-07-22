@@ -19,6 +19,12 @@ impl TrustedProxyConfig {
         Self { ip_addr_http_header, trusted_proxy_cidrs }
     }
 
+    /// Returns whether the direct peer belongs to a configured trusted proxy CIDR.
+    pub fn is_trusted_proxy(&self, connect_addr: IpAddr) -> bool {
+        let connect_addr = connect_addr.to_canonical();
+        self.trusted_proxy_cidrs.iter().any(|cidr| cidr.contains(&connect_addr))
+    }
+
     /// Resolves the client IP, trusting forwarding headers only from configured proxy CIDRs.
     pub fn client_ip(&self, connect_addr: IpAddr, headers: &HeaderMap) -> IpAddr {
         // Dual-stack listeners present IPv4 peers as IPv4-mapped IPv6 (`::ffff:x.x.x.x`).
@@ -26,7 +32,7 @@ impl TrustedProxyConfig {
         // consistent across address forms.
         let connect_addr = connect_addr.to_canonical();
 
-        if !self.trusted_proxy_cidrs.iter().any(|cidr| cidr.contains(&connect_addr)) {
+        if !self.is_trusted_proxy(connect_addr) {
             return connect_addr;
         }
 

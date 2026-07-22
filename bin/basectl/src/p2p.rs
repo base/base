@@ -56,12 +56,11 @@ async fn run_reachability(
     let chain_id = fetch_l2_chain_id(&config.rpc).await.with_context(|| {
         format!("could not detect network from selected config RPC {}", config.rpc)
     })?;
-    let telemetry_url =
-        TelemetryClient::reachability_url_for_chain_id(chain_id).ok_or_else(|| {
-            anyhow!(
-                "hosted reachability checks are unavailable for chain ID {chain_id}; supported chain IDs are 8453 (Base mainnet) and 84532 (Base Sepolia)"
-            )
-        })?;
+    let telemetry_url = TelemetryClient::backend_base_url(chain_id).ok_or_else(|| {
+        anyhow!(
+            "hosted reachability checks are unavailable for chain ID {chain_id}; supported chain IDs are 8453 (Base mainnet) and 84532 (Base Sepolia)"
+        )
+    })?;
     let response = TelemetryClient::new(telemetry_url)?.check_el_reachability(enode).await?;
     let reachable = response.outcome == ElReachabilityOutcome::Reachable;
     if json {

@@ -17,6 +17,7 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
+use axum_client_ip::{Rejection as ClientIpRejection, RightmostXForwardedFor};
 use base_http_utils::TrustedProxyConfig;
 use governor::{
     DefaultKeyedRateLimiter, Quota, RateLimiter,
@@ -26,8 +27,8 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
-/// Requests allowed per client IP per minute.
-pub const RATE_LIMIT_PER_IP_REQUESTS_PER_MINUTE: NonZeroU32 = NonZeroU32::new(2).unwrap();
+/// Default P2P probe requests allowed per client IP per minute.
+pub const DEFAULT_P2P_PROBE_REQUESTS_PER_MINUTE: NonZeroU32 = NonZeroU32::new(2).unwrap();
 /// Interval between stale rate-limit bucket eviction passes.
 pub const RATE_LIMIT_EVICTION_INTERVAL: Duration = Duration::from_secs(60);
 /// HTTP header carrying the client IP, set by the fronting proxy.
@@ -123,10 +124,19 @@ impl PerIpRateLimit {
     pub async fn enforce(
         State(state): State<Self>,
         ConnectInfo(peer): ConnectInfo<SocketAddr>,
+        forwarded_ip: Result<RightmostXForwardedFor, ClientIpRejection>,
         request: Request,
         next: Next,
     ) -> Response {
-        let client_ip = state.proxy.client_ip(peer.ip(), request.headers());
+        let peer_ip = peer.ip().to_canonical();
+        let client_ip = if state.proxy.is_trusted_proxy(peer_ip) {
+            match forwarded_ip {
+                Ok(RightmostXForwardedFor(ip)) => ip.to_canonical(),
+                Err(error) => return error.into_response(),
+            }
+        } else {
+            peer_ip
+        };
         match state.limiter.check(client_ip) {
             Ok(()) => next.run(request).await,
             Err(exceeded) => {
