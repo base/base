@@ -384,7 +384,15 @@ pub trait Asset<S: AssetAccounting, A: PolicyAccounting> {
     fn effective_multiplier(&self, token: &B20AssetToken<S, A>, now: U256) -> Result<U256> {
         let effective_at = token.accounting().pending_effective_at()?;
         if effective_at != 0 && now >= U256::from(effective_at) {
-            return Ok(U256::from(token.accounting().pending_multiplier()?));
+            let pending = token.accounting().pending_multiplier()?;
+            // Invariant: both setters reject a zero (or `> u128::MAX`) multiplier, so a stored
+            // pending is never zero. There is deliberately NO zero-to-WAD fallback here — the
+            // Solidity reference returns the raw `pending.multiplier` too, so adding one would
+            // diverge from it (the Rust would succeed where the reference reverts on a corrupt
+            // zero divisor). The debug assertion pins the invariant in debug/test builds without
+            // altering release/consensus behavior.
+            debug_assert!(pending != 0, "matured pending multiplier must be non-zero");
+            return Ok(U256::from(pending));
         }
         token.accounting().multiplier()
     }
@@ -476,6 +484,8 @@ pub trait Asset<S: AssetAccounting, A: PolicyAccounting> {
         }
 
         let old = token.accounting().multiplier()?;
+        // Narrowing is safe: the guards above enforce `new_multiplier <= u128::MAX` and
+        // `effective_at <= u64::MAX`, so neither `to::<..>()` can overflow.
         token
             .accounting_mut()
             .set_pending(new_multiplier.to::<u128>(), effective_at.to::<u64>())?;
@@ -491,6 +501,12 @@ pub trait Asset<S: AssetAccounting, A: PolicyAccounting> {
 
     /// Cancels the single live pending update, restoring the no-pending state. Reverts
     /// `NoScheduledMultiplier` when no live pending exists. Emits `MultiplierUpdateCancelled`.
+    ///
+    /// A *live* pending is `pending_effective_at > now`. A pending that matures at exactly `now`
+    /// (`pending_effective_at == now`) has already taken effect and is therefore NOT cancellable —
+    /// it reverts `NoScheduledMultiplier`. This matches the `effective_at <= now` maturity boundary
+    /// used by the read path (`effective_multiplier`) and by `set_ui_multiplier`'s `EffectiveAtInPast`
+    /// guard, so the boundary is consistent across the whole surface.
     fn cancel_scheduled_multiplier(
         &self,
         token: &mut B20AssetToken<S, A>,
