@@ -432,6 +432,7 @@ services:
       - NODE_HEALTHCHECK_HTTP_PORT=${L2_CLIENT_HTTP_PORT}
       - NODE_HEALTHCHECK_CL_RPC_PORT=${L2_CLIENT_CL_RPC_PORT}
       - OTEL_SERVICE_NAME=base-client
+      - BASE_TRANSACTION_EVENTS_ENABLED=true
       - BASE_TRANSACTION_EVENTS_PATH=/var/log/transaction-events/base-client/events.jsonl
       - BASE_TRANSACTION_EVENTS_NETWORK=base-devnet
       - BASE_TRANSACTION_EVENTS_NODE_ROLE=devnet-client
