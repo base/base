@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, U256};
 use alloy_provider::RootProvider;
 use alloy_rpc_types_eth::BlockNumberOrTag;
-use base_common_genesis::{BaseUpgrade, UpgradeActivationSink};
+use base_common_genesis::UpgradeActivationSink;
 use tracing::info;
 use url::Url;
 
@@ -10,7 +10,7 @@ use crate::{
     contract::AlloyUpgradeSignalReader,
     error::UpgradeSignalError,
     metrics::{UpgradeSignalMetricLayer, UpgradeSignalMetrics},
-    runtime::{UpgradeSignalRuntimeApplier, UpgradeSignalRuntimeValidation},
+    runtime::UpgradeSignalRuntimeApplier,
     state::{UpgradeSignal, UpgradeSignalSchedule},
 };
 
@@ -19,8 +19,6 @@ use crate::{
 pub struct UpgradeSignalConfig {
     /// L1 upgrade signal contract or proxy address.
     pub contract_address: Address,
-    /// Contract-backed upgrades to pass to the contract.
-    pub upgrade_ids: Vec<BaseUpgrade>,
     /// Local schedule mutation mode.
     pub mode: UpgradeSignalMode,
     /// L1 block tag used to read the contract.
@@ -30,11 +28,10 @@ pub struct UpgradeSignalConfig {
 }
 
 impl UpgradeSignalConfig {
-    /// Creates a new schedule read configuration for one contract-backed upgrade.
-    pub fn new(contract_address: Address, upgrade_id: BaseUpgrade) -> Self {
+    /// Creates a new schedule read configuration for the full contract-backed upgrade set.
+    pub fn new(contract_address: Address) -> Self {
         Self {
             contract_address,
-            upgrade_ids: vec![upgrade_id],
             mode: UpgradeSignalMode::MetricsOnly,
             l1_block_tag: BlockNumberOrTag::Finalized,
             node_protocol_version: UpgradeSignalDefaults::node_protocol_version(),
@@ -113,7 +110,7 @@ impl UpgradeSignalConfig {
         Ok(())
     }
 
-    /// Reads the L1 startup schedule, validates runtime invariants, and applies it to both sinks.
+    /// Reads the L1 startup schedule and applies it to both sinks.
     ///
     /// Execution is applied before consensus so an execution-only validation failure leaves the
     /// rollup config unchanged.
@@ -121,7 +118,6 @@ impl UpgradeSignalConfig {
         &self,
         l1_rpc: Url,
         log_context: &'static str,
-        runtime_validation: UpgradeSignalRuntimeValidation,
         chain_id: u64,
         execution_sink: &mut EL,
         consensus_sink: &mut CL,
@@ -141,8 +137,6 @@ impl UpgradeSignalConfig {
             )
             .await?;
 
-        runtime_validation.validate_schedule(chain_id, &schedule)?;
-
         UpgradeSignalRuntimeApplier::apply_schedule_to_sink(chain_id, &schedule, execution_sink)
             .map_err(eyre::Report::new)?
             .log("execution chain spec");
@@ -154,8 +148,8 @@ impl UpgradeSignalConfig {
         Ok(())
     }
 
-    /// Reads, records, logs, and validates the L1 schedule.
-    pub async fn read_validated_schedule(
+    /// Reads the L1 schedule with retries, recording metrics and logging each signal.
+    pub async fn read_schedule(
         &self,
         reader: &AlloyUpgradeSignalReader,
         log_context: &'static str,
@@ -163,7 +157,6 @@ impl UpgradeSignalConfig {
     ) -> Result<UpgradeSignalSchedule, UpgradeSignalError> {
         let schedule = reader
             .read_schedule_with_retries(
-                &self.upgrade_ids,
                 UpgradeSignalDefaults::READ_ATTEMPTS,
                 UpgradeSignalDefaults::READ_BACKOFF,
                 metrics_layers,
@@ -184,6 +177,17 @@ impl UpgradeSignalConfig {
             );
         }
 
+        Ok(schedule)
+    }
+
+    /// Reads the L1 schedule via [`Self::read_schedule`] and validates its protocol versions.
+    pub async fn read_validated_schedule(
+        &self,
+        reader: &AlloyUpgradeSignalReader,
+        log_context: &'static str,
+        metrics_layers: &[UpgradeSignalMetricLayer],
+    ) -> Result<UpgradeSignalSchedule, UpgradeSignalError> {
+        let schedule = self.read_schedule(reader, log_context, metrics_layers).await?;
         self.validate_schedule_protocol_versions(&schedule)?;
 
         Ok(schedule)
@@ -194,6 +198,7 @@ impl UpgradeSignalConfig {
 mod tests {
     use alloy_primitives::{U256, address};
     use alloy_rpc_types_eth::BlockNumberOrTag;
+    use base_common_genesis::BaseUpgrade;
     use rstest::rstest;
 
     use super::*;
@@ -203,23 +208,16 @@ mod tests {
         BaseUpgrade::from_contract_fork_name(upgrade_id).unwrap()
     }
 
-    fn supported_config(upgrade_id: &str) -> UpgradeSignalConfig {
-        let mut config = UpgradeSignalConfig::new(
-            address!("0000000000000000000000000000000000000001"),
-            upgrade(upgrade_id),
-        );
+    fn supported_config() -> UpgradeSignalConfig {
+        let mut config =
+            UpgradeSignalConfig::new(address!("0000000000000000000000000000000000000001"));
         config.node_protocol_version = UpgradeSignalDefaults::packed_protocol_version(1, 1, 0);
         config
     }
 
-    #[rstest]
-    #[case("azul")]
-    #[case("beryl")]
-    fn defaults_to_finalized_block_tag(#[case] upgrade_id: &str) {
-        let config = UpgradeSignalConfig::new(
-            address!("0000000000000000000000000000000000000001"),
-            upgrade(upgrade_id),
-        );
+    #[test]
+    fn defaults_to_finalized_block_tag() {
+        let config = UpgradeSignalConfig::new(address!("0000000000000000000000000000000000000001"));
 
         assert_eq!(config.l1_block_tag, BlockNumberOrTag::Finalized);
     }
@@ -233,25 +231,18 @@ mod tests {
         }
     }
 
-    #[rstest]
-    #[case("azul")]
-    #[case("beryl")]
-    fn accepts_signal_at_node_protocol_version(#[case] upgrade_id: &str) {
-        let config = UpgradeSignalConfig::new(
-            address!("0000000000000000000000000000000000000001"),
-            upgrade(upgrade_id),
-        );
+    #[test]
+    fn accepts_signal_at_node_protocol_version() {
+        let config = UpgradeSignalConfig::new(address!("0000000000000000000000000000000000000001"));
 
         assert!(
             config.validate_signal_protocol_version(&signal(config.node_protocol_version)).is_ok()
         );
     }
 
-    #[rstest]
-    #[case("azul")]
-    #[case("beryl")]
-    fn rejects_signal_above_node_protocol_version(#[case] upgrade_id: &str) {
-        let config = supported_config(upgrade_id);
+    #[test]
+    fn rejects_signal_above_node_protocol_version() {
+        let config = supported_config();
         let minimum_protocol_version = config.node_protocol_version + U256::from(1);
 
         assert!(matches!(
@@ -260,14 +251,9 @@ mod tests {
         ));
     }
 
-    #[rstest]
-    #[case("azul")]
-    #[case("beryl")]
-    fn rejects_positive_signal_without_protocol_version(#[case] upgrade_id: &str) {
-        let config = UpgradeSignalConfig::new(
-            address!("0000000000000000000000000000000000000001"),
-            upgrade(upgrade_id),
-        );
+    #[test]
+    fn rejects_positive_signal_without_protocol_version() {
+        let config = UpgradeSignalConfig::new(address!("0000000000000000000000000000000000000001"));
 
         assert!(matches!(
             config.validate_signal_protocol_version(&signal(U256::ZERO)).unwrap_err(),
@@ -289,10 +275,7 @@ mod tests {
 
     #[test]
     fn schedule_validation_rejects_missing_protocol_version() {
-        let config = UpgradeSignalConfig::new(
-            address!("0000000000000000000000000000000000000001"),
-            BaseUpgrade::Azul,
-        );
+        let config = UpgradeSignalConfig::new(address!("0000000000000000000000000000000000000001"));
         let schedule = malformed_schedule(&config);
 
         assert!(matches!(
@@ -303,7 +286,7 @@ mod tests {
 
     #[test]
     fn schedule_validation_rejects_unsupported_protocol_version() {
-        let config = supported_config("azul");
+        let config = supported_config();
 
         let schedule = UpgradeSignalSchedule::new(vec![
             UpgradeSignal {
@@ -332,10 +315,7 @@ mod tests {
     fn schedule_validation_allows_clear_with_unsupported_protocol_version(
         #[case] upgrade_id: &str,
     ) {
-        let config = UpgradeSignalConfig::new(
-            address!("0000000000000000000000000000000000000001"),
-            upgrade(upgrade_id),
-        );
+        let config = UpgradeSignalConfig::new(address!("0000000000000000000000000000000000000001"));
         let schedule = UpgradeSignalSchedule::new(vec![UpgradeSignal {
             upgrade_id: upgrade(upgrade_id),
             activation_timestamp: 0,

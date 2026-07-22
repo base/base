@@ -13,6 +13,7 @@ use base_builder_core::test_utils::get_available_port;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_consensus_node::{EngineConfig, FollowNode, FollowNodeConfig, NodeMode, RemoteL2Client};
+use base_consensus_providers::L1RpcProvider;
 use base_consensus_rpc::RpcBuilder;
 use eyre::{Result, WrapErr};
 use tokio::task::JoinHandle;
@@ -65,7 +66,7 @@ impl InProcessFollowConsensus {
             config: Arc::clone(&rollup_config),
             l2_url: config.l2_engine_url,
             l2_jwt_secret: config.jwt_secret,
-            l1_url: config.l1_rpc_url,
+            l1_url: config.l1_rpc_url.clone(),
             mode: NodeMode::Validator,
         };
         let engine_client = Arc::new(
@@ -75,6 +76,7 @@ impl InProcessFollowConsensus {
                 .map_err(eyre::Report::from)
                 .wrap_err("failed to build follow engine client")?,
         );
+        let l1_provider = L1RpcProvider::new_http(config.l1_rpc_url);
         let local_l2_provider = RootProvider::<Base>::new_http(config.local_l2_rpc_url);
         let l2_source = RemoteL2Client::new(config.source_l2_rpc_url);
         let rpc_builder = RpcBuilder {
@@ -91,6 +93,7 @@ impl InProcessFollowConsensus {
         let node = FollowNode::new(FollowNodeConfig {
             rollup_config,
             engine_client,
+            l1_provider,
             local_l2_provider,
             l2_source,
             rpc_builder: Some(rpc_builder),

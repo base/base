@@ -56,6 +56,10 @@ The crate keeps the protocol stages explicit while avoiding crate sprawl:
   sequence per applied entry — into one authorization verdict (`TransactionAuthorizer`),
   shared by mempool admission and block inclusion. It reads state but never
   mutates it; nonce, gas, and fee/balance checks remain separate stages.
+- **Protocol logs** inject `ActorAuthorized` / `ActorRevoked` / `AccountCreated` /
+  `DelegationApplied` into the journal from the enshrined apply path
+  (`AccountConfigurationEvents`), matching the `IAccountConfiguration` event ABIs
+  so indexers can enumerate actors from 8130 transaction receipts.
 
 ## Intrinsic gas
 

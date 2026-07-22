@@ -28,10 +28,9 @@ impl Network for Base {
 
     type ReceiptResponse = base_common_rpc_types::BaseTransactionReceipt;
 
-    type HeaderResponse = alloy_rpc_types_eth::Header;
+    type HeaderResponse = base_common_rpc_types::BaseHeaderResponse;
 
-    type BlockResponse =
-        alloy_rpc_types_eth::Block<Self::TransactionResponse, Self::HeaderResponse>;
+    type BlockResponse = base_common_rpc_types::BaseBlockResponse<Self::TransactionResponse>;
 }
 
 impl RecommendedFillers for Base {

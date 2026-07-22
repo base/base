@@ -1,12 +1,13 @@
 //! Precompile entry point for the asset B-20 variant.
 
 use alloy_evm::precompiles::DynPrecompile;
-use alloy_primitives::Address;
+use alloy_primitives::{Address, Bytes};
 use base_common_genesis::BaseUpgrade;
+use base_precompile_storage::BasePrecompileError;
 
 use crate::{
-    B20AssetStorage, B20AssetToken, NoopPrecompileCallObserver, PolicyHandle,
-    PrecompileCallObserver, macros::base_precompile,
+    B20AssetStorage, B20AssetToken, NoopPrecompileCallObserver, PolicyRegistryStorage,
+    PolicyVersions, PrecompileCallObserver, macros::base_precompile,
 };
 
 /// Entry point for the asset B-20 token precompile.
@@ -35,9 +36,13 @@ impl B20AssetPrecompile {
     {
         base_precompile!(alloc::format!("B20AssetToken@{token_address}"), |ctx, calldata| {
             let observer = observer.clone();
+            let Some(version) = PolicyVersions::from_base_upgrade(upgrade) else {
+                return BasePrecompileError::Revert(Bytes::new()).into_precompile_result(0, 0);
+            };
             B20AssetToken::with_storage_and_policy(
                 B20AssetStorage::from_address(token_address, ctx),
-                PolicyHandle::new(ctx),
+                PolicyRegistryStorage::new(ctx),
+                version,
             )
             .dispatch_with_observer(ctx, &calldata, upgrade, observer)
         })

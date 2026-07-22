@@ -15,8 +15,8 @@ pub(crate) struct Cli {
 impl Cli {
     /// Run the challenger service.
     pub(crate) fn run(self) -> eyre::Result<()> {
+        base_cli_utils::LogConfig::from(self.args.logging.clone()).init_tracing_subscriber()?;
         let config = base_challenger::ChallengerConfig::from_cli(self.args)?;
-        config.log.init_tracing_subscriber()?;
         config
             .metrics
             .init_with(|| {

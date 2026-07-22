@@ -4,7 +4,7 @@
 use alloy_primitives::{Address, B256, U256};
 use base_common_consensus::{Eip8130Constants, Eip8130Contracts};
 use base_precompile_macros::contract;
-use base_precompile_storage::{Handler, Mapping, Result};
+use base_precompile_storage::{Handler, Mapping, Result, StorageKey};
 
 /// Read-only view over the EIP-8130 `AccountConfiguration` system contract's
 /// storage, mirroring its layout (plain sequential slots, no ERC-7201
@@ -39,6 +39,14 @@ impl AccountConfigurationStorage<'_> {
     /// Pinned to [`Eip8130Contracts::ACCOUNT_CONFIG`]; provisional and tracks the
     /// reference contract's bytecode (see the crate docs).
     pub const ADDRESS: Address = Eip8130Contracts::ACCOUNT_CONFIG;
+
+    /// Base storage slot of the per-account state mapping.
+    pub const ACCOUNT_STATE_BASE_SLOT: U256 = slots::ACCOUNT_STATE;
+
+    /// Returns the storage slot that holds the state for `account`.
+    pub fn account_state_slot(account: Address) -> B256 {
+        B256::from(account.mapping_slot(Self::ACCOUNT_STATE_BASE_SLOT).to_be_bytes::<32>())
+    }
 
     /// Reads the raw `actor_config[actor_id][account]` storage slot verbatim,
     /// with **no** inline-self blend. An absent entry reads back as an all-zero
@@ -508,6 +516,19 @@ mod tests {
             | (U256::from(lock_union) << 136)
             | (U256::from(default_eoa_scope) << 176)
             | (U256::from(default_eoa_expiry) << 184)
+    }
+
+    #[test]
+    fn account_state_slot_matches_generated_storage_layout() {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let account_config = AccountConfigurationStorage::new(ctx);
+            let generated = account_config.account_state.at(&ACCOUNT).slot();
+            assert_eq!(
+                AccountConfigurationStorage::account_state_slot(ACCOUNT),
+                B256::from(generated.to_be_bytes::<32>())
+            );
+        });
     }
 
     #[test]

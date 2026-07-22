@@ -13,6 +13,9 @@ sol! {
         /// Precompile cannot be executed via delegatecall or callcode.
         error DelegateCallNotAllowed();
 
+        /// ETH was attached to a call targeting a nonpayable nonce-manager selector.
+        error NonPayable();
+
         /// Nonce key `0` is the protocol nonce and is not served by this precompile.
         error ProtocolNonceNotSupported();
 

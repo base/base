@@ -29,6 +29,7 @@ nitro-local-worker *args:
         cargo run --package base-prover-nitro-host --bin base-prover-nitro-host --features local -- local \
         --l1-eth-url "${L1_ETH_URL:-http://localhost:8545}" \
         --l2-eth-url "${L2_ETH_URL:-http://localhost:9545}" \
+        --l2-node-url "${L2_NODE_URL:-http://localhost:7545}" \
         --l1-beacon-url "${L1_BEACON_URL:-http://localhost:5052}" \
         --l2-chain-id "${L2_CHAIN_ID:-8453}" \
         --prover-service-endpoint "${PROVER_SERVICE_ENDPOINT:?PROVER_SERVICE_ENDPOINT is required}" \

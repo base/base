@@ -41,12 +41,18 @@ Completed probes return HTTP `200` with an outcome of `reachable`,
 ```json
 {
   "outcome": "reachable",
-  "stage": "rlpx",
+  "stage": "devp2p_hello",
   "observedAddress": "YOUR_NODE_IP:30303",
   "elapsedMs": 42,
   "clientVersion": "reth/v1.0.0"
 }
 ```
+
+`stage` identifies where the probe stopped:
+
+- `tcp_connect`: opening the advertised TCP address.
+- `encrypted_handshake`: authenticating the encrypted connection with the enode identity.
+- `devp2p_hello`: exchanging the Ethereum devp2p Hello message.
 
 Invalid requests return `400`, bodies over 1 `KiB` return `413`, and exhausted
 probe capacity returns `429`. Probes have a 10-second deadline, with at most 32

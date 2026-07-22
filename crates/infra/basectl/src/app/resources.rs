@@ -5,7 +5,7 @@ use std::{
 };
 
 use base_common_flashblocks::Flashblock;
-use base_common_genesis::SystemConfig;
+use base_common_genesis::{SystemConfig, UpgradeConfig};
 use base_consensus_rpc::ClusterMembership;
 use tokio::sync::{mpsc, watch};
 use url::Url;
@@ -237,6 +237,7 @@ pub struct Resources {
     /// L1 system config fetched from the contract.
     pub system_config: Option<SystemConfig>,
     sys_config_rx: Option<mpsc::Receiver<SystemConfig>>,
+    upgrades_rx: Option<mpsc::Receiver<UpgradeConfig>>,
 }
 
 /// State for DA (data availability) monitoring.
@@ -297,6 +298,7 @@ impl Resources {
             pods: PodsState::default(),
             system_config: None,
             sys_config_rx: None,
+            upgrades_rx: None,
         }
     }
 
@@ -310,12 +312,26 @@ impl Resources {
         self.sys_config_rx = Some(rx);
     }
 
+    /// Sets the channel for receiving live upgrade schedule updates.
+    pub fn set_upgrades_channel(&mut self, rx: mpsc::Receiver<UpgradeConfig>) {
+        self.upgrades_rx = Some(rx);
+    }
+
     /// Polls for a new system config from the background task.
     pub fn poll_sys_config(&mut self) {
         if let Some(ref mut rx) = self.sys_config_rx
             && let Ok(cfg) = rx.try_recv()
         {
             self.system_config = Some(cfg);
+        }
+    }
+
+    /// Polls for live upgrade schedule updates from the consensus node.
+    pub fn poll_upgrades(&mut self) {
+        if let Some(ref mut rx) = self.upgrades_rx {
+            while let Ok(upgrades) = rx.try_recv() {
+                self.config.upgrades = Some(upgrades);
+            }
         }
     }
 }

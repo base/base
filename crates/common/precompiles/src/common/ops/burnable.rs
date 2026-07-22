@@ -85,7 +85,7 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        B20PausableFeature, B20PolicyType, B20TokenRole, Burnable, IB20, InMemoryPolicy,
+        B20PausableFeature, B20PolicyType, B20TokenRole, Burnable, FakePolicyAccounting, IB20,
         InMemoryTokenAccounting, PolicyRegistryStorage, TestToken, Token, TokenAccounting,
     };
 
@@ -97,7 +97,7 @@ mod tests {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
         accounting.balances.insert(ALICE, balance);
         accounting.total_supply = balance;
-        TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
+        TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new())
     }
 
     fn token_with_role(role: B20TokenRole, account: Address, balance: U256) -> TestToken {
@@ -105,7 +105,7 @@ mod tests {
         accounting.balances.insert(ALICE, balance);
         accounting.total_supply = balance;
         accounting.roles.insert((role.id(), account), true);
-        TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
+        TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new())
     }
 
     #[test]
@@ -148,7 +148,7 @@ mod tests {
         accounting.balances.insert(ALICE, U256::from(10u64));
         accounting.total_supply = U256::from(10u64);
         accounting.paused = B20PausableFeature::mask(IB20::PausableFeature::BURN);
-        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+        let mut token = TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new());
 
         assert_eq!(
             token.burn(CALLER, ALICE, U256::ONE, true).unwrap_err(),
@@ -162,7 +162,7 @@ mod tests {
     fn burn_blocked_paused_gets_pause_error_not_blocked_error() {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
         accounting.paused = B20PausableFeature::mask(IB20::PausableFeature::BURN);
-        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+        let mut token = TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new());
 
         assert_eq!(
             token.burn_blocked(CALLER, ALICE, U256::ONE, true).unwrap_err(),
@@ -190,7 +190,7 @@ mod tests {
         accounting
             .policy_ids
             .insert(B20PolicyType::TransferSender.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
-        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+        let mut token = TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new());
 
         token.burn_blocked(CALLER, ALICE, U256::from(25u64), true).unwrap();
 
@@ -207,7 +207,7 @@ mod tests {
         accounting
             .policy_ids
             .insert(B20PolicyType::TransferSender.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
-        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+        let mut token = TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new());
 
         assert_eq!(
             token.burn_blocked(CALLER, ALICE, U256::ONE, false).unwrap_err(),
@@ -257,7 +257,7 @@ mod tests {
         if has_role {
             accounting.roles.insert((B20TokenRole::Burn.id(), CALLER), true);
         }
-        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+        let mut token = TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new());
 
         assert_eq!(token.burn(CALLER, ALICE, U256::ONE, privileged).unwrap_err(), expected_error);
     }
@@ -315,7 +315,7 @@ mod tests {
                 .policy_ids
                 .insert(B20PolicyType::TransferSender.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
         }
-        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+        let mut token = TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new());
 
         assert_eq!(
             token.burn_blocked(CALLER, ALICE, U256::ONE, privileged).unwrap_err(),

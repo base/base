@@ -7,11 +7,11 @@ use base_proof_zk_host::{ZkBackend, ZkProver};
 use thiserror::Error;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::info;
 use url::Url;
 
 use crate::succinct::{
-    ClusterZkProver, DryRunZkProver, MockZkProver, NetworkZkProver, OpSuccinctWitnessProvider,
+    ClusterZkProver, DryRunZkProver, NetworkZkProver, OpSuccinctWitnessProvider,
     SuccinctClusterBackendConfig, SuccinctNetworkBackendConfig,
 };
 
@@ -71,8 +71,6 @@ impl SuccinctZkProverBuildError {
 /// Succinct backend implementation to build.
 #[derive(Clone, Debug)]
 pub enum SuccinctZkBackendConfig {
-    /// Return placeholder proof bytes without an external backend.
-    Mock,
     /// Generate a witness and run local SP1 execution without producing proof bytes.
     DryRun {
         /// Shared RPC settings.
@@ -104,8 +102,6 @@ pub struct SuccinctRpcConfig {
 /// Configuration for all Succinct proving backends available to one worker.
 #[derive(Clone)]
 pub struct SuccinctZkProversConfig {
-    /// Enables the mock backend.
-    pub enable_mock: bool,
     /// Base consensus node RPC URL.
     pub base_consensus_rpc: Option<Url>,
     /// L1 execution node RPC URL.
@@ -143,7 +139,6 @@ pub struct SuccinctZkProversConfig {
 impl fmt::Debug for SuccinctZkProversConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SuccinctZkProversConfig")
-            .field("enable_mock", &self.enable_mock)
             .field("cluster_configured", &self.cluster_rpc.is_some())
             .field("network_configured", &self.network_private_key.is_some())
             .field("use_kms_requester", &self.use_kms_requester)
@@ -244,14 +239,6 @@ impl SuccinctZkProversConfig {
         Ok(Duration::from_secs(seconds))
     }
 
-    fn cluster_requires_rpc(&self) -> bool {
-        self.cluster_rpc.as_deref().is_some_and(|value| !value.trim().is_empty())
-    }
-
-    fn network_requires_rpc(&self) -> bool {
-        self.network_private_key.as_deref().is_some_and(|value| !value.trim().is_empty())
-    }
-
     fn cluster_config(
         &self,
         rpc: Option<&SuccinctRpcConfig>,
@@ -324,29 +311,10 @@ impl SuccinctZkProversConfig {
     }
 
     fn backend_configs(&self) -> Result<BackendConfigs, SuccinctZkProverBuildError> {
-        let (rpc, ignored_rpc_error) = match self.rpc_config() {
-            Ok(rpc) => (rpc, None),
-            Err(error)
-                if self.enable_mock
-                    && !self.cluster_requires_rpc()
-                    && !self.network_requires_rpc() =>
-            {
-                (None, Some(error))
-            }
-            Err(error) => return Err(error),
-        };
+        let rpc = self.rpc_config()?;
         let cluster = self.cluster_config(rpc.as_ref())?;
         let network = self.network_config(rpc.as_ref())?;
-        if let Some(error) = ignored_rpc_error {
-            warn!(
-                error = %error,
-                "ignoring incomplete RPC configuration for mock-only host"
-            );
-        }
         let mut configs = Vec::new();
-        if self.enable_mock {
-            configs.push((ZkBackend::Mock, SuccinctZkBackendConfig::Mock));
-        }
 
         if let Some(rpc) = rpc.clone() {
             configs.push((
@@ -365,7 +333,7 @@ impl SuccinctZkProversConfig {
 
         if configs.is_empty() {
             return Err(SuccinctZkProverBuildError::config(
-                "no ZK backend enabled; configure RPC URLs or explicitly enable the mock backend",
+                "no ZK backend enabled; configure RPC URLs for dry-run, cluster, or network",
             ));
         }
 
@@ -405,7 +373,6 @@ impl SuccinctZkProverBuilder {
         }
 
         match self.config {
-            SuccinctZkBackendConfig::Mock => Ok(Some(Arc::new(MockZkProver))),
             SuccinctZkBackendConfig::DryRun { rpc, range_cycle_limit } => {
                 DryRunZkProver::build_until_cancelled(
                     rpc,
@@ -487,7 +454,6 @@ mod tests {
 
     fn config() -> SuccinctZkProversConfig {
         SuccinctZkProversConfig {
-            enable_mock: false,
             base_consensus_rpc: None,
             l1_rpc: None,
             l1_beacon_rpc: None,
@@ -519,7 +485,7 @@ mod tests {
         let mut config = config();
         assert_eq!(
             config.backend_configs().unwrap_err().to_string(),
-            "configuration error: no ZK backend enabled; configure RPC URLs or explicitly enable the mock backend"
+            "configuration error: no ZK backend enabled; configure RPC URLs for dry-run, cluster, or network"
         );
 
         config.use_kms_requester = true;
@@ -534,12 +500,6 @@ mod tests {
         assert!(config.backend_configs().is_err());
         config.cluster_rpc = None;
 
-        config.enable_mock = true;
-        let (configs, _) = config.backend_configs().unwrap();
-        assert_eq!(configs.len(), 1);
-        assert_eq!(configs[0].0, ZkBackend::Mock);
-
-        config.enable_mock = false;
         set_rpc_config(&mut config);
         let (configs, _) = config.backend_configs().unwrap();
         assert_eq!(configs.len(), 1);
@@ -548,24 +508,15 @@ mod tests {
         config.base_consensus_rpc = None;
         assert!(config.backend_configs().is_err());
 
-        config.enable_mock = true;
-        let (configs, _) = config.backend_configs().unwrap();
-        assert_eq!(configs.len(), 1);
-        assert_eq!(configs[0].0, ZkBackend::Mock);
-
+        set_rpc_config(&mut config);
         config.s3_bucket = Some("bucket".to_owned());
         config.s3_region = Some("region".to_owned());
-        let (configs, _) = config.backend_configs().unwrap();
-        assert_eq!(configs.len(), 1);
-        assert_eq!(configs[0].0, ZkBackend::Mock);
-
-        set_rpc_config(&mut config);
         config.cluster_rpc = Some("http://cluster".to_owned());
         config.network_private_key = Some("network-key".to_owned());
         let (configs, _) = config.backend_configs().unwrap();
         assert_eq!(
             configs.iter().map(|(backend, _)| *backend).collect::<Vec<_>>(),
-            vec![ZkBackend::Mock, ZkBackend::DryRun, ZkBackend::Cluster, ZkBackend::Network]
+            vec![ZkBackend::DryRun, ZkBackend::Cluster, ZkBackend::Network]
         );
     }
 }

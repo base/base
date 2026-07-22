@@ -42,6 +42,11 @@ pub use nonce_error::NonceError;
 mod validate;
 pub use validate::{NonceMode, NonceStatus, NonceValidator};
 
+mod events;
+pub use events::{
+    AccountConfigurationEvents, AccountCreated, ActorAuthorized, ActorRevoked, DelegationApplied,
+};
+
 mod apply;
 pub use apply::{
     AccountChangeApplier, AppliedAccountChanges, ApplyError, CreatedAccount, DelegationEffect,

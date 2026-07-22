@@ -115,6 +115,7 @@ skip = [
     # System/platform crates
     "socket2",
     "bitflags",
+    "redox_syscall",
     "redox_users",
     "windows-collections",
     "windows-future",
@@ -128,7 +129,6 @@ skip = [
     "axum-core",
     "hyper-timeout",
     "tonic",
-    "tonic-build",
     "tower",
 
     # Other common duplicates from upstream
@@ -150,13 +150,11 @@ skip = [
     "num_enum",
     "num_enum_derive",
     "ordered-float",
-    "petgraph",
     "proc-macro-crate",
     "gloo-timers",
     "miniz_oxide",
     "prost-derive",
     "prost",
-    "prost-build",
     "prost-types",
     "rustc-hash",
     "shlex",

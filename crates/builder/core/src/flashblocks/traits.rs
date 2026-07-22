@@ -2,8 +2,9 @@
 
 use reth_payload_builder::PayloadBuilderError;
 use reth_payload_primitives::{BuiltPayload, PayloadAttributes};
+use tokio::sync::watch;
 
-use crate::{BlockCell, BuildArguments};
+use crate::BuildArguments;
 
 /// A trait for building payloads that encapsulate Ethereum transactions.
 ///
@@ -25,6 +26,10 @@ pub trait PayloadBuilder: Send + Sync + Clone {
     /// # Arguments
     ///
     /// - `args`: Build arguments containing necessary components.
+    /// - `payload_tx`: Watch sender; send the finalized payload here when ready.
+    ///   Dropping it without sending signals failure to [`ResolvePayload`]. Taken by
+    ///   reference so the caller retains ownership and controls when it drops, ensuring
+    ///   any failure cause is recorded before the drop is observable by the receiver.
     ///
     /// # Returns
     ///
@@ -32,6 +37,6 @@ pub trait PayloadBuilder: Send + Sync + Clone {
     async fn try_build(
         &self,
         args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
-        best_payload: BlockCell<Self::BuiltPayload>,
+        payload_tx: &watch::Sender<Option<Self::BuiltPayload>>,
     ) -> Result<(), PayloadBuilderError>;
 }

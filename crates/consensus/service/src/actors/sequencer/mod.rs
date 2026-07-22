@@ -20,6 +20,9 @@ pub use recovery::RecoveryModeGuard;
 mod seal;
 pub use seal::{PayloadSealer, SealState, SealStepError, SealStepOutcome};
 
+mod shadow_cycle;
+pub use shadow_cycle::{ShadowCycle, ShadowReconciliationTask};
+
 mod ticker;
 pub use ticker::ScheduledTicker;
 

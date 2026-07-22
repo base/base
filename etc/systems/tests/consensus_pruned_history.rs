@@ -21,7 +21,7 @@ use base_consensus_engine::{
 };
 use base_consensus_node::{
     DerivationClientResult, EngineActorRequest, EngineDerivationClient, EngineError,
-    EngineProcessor, EngineProcessorOptions, NodeMode, NoopCheckpointWriter,
+    EngineProcessor, EngineProcessorOptions, EngineRequestHandler, NodeMode, NoopCheckpointWriter,
 };
 use base_protocol::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
 use tokio::{
@@ -161,7 +161,8 @@ impl PrunedHistoryStartup {
             Arc::new(NoopCheckpointWriter),
         );
         let (request_tx, request_rx) = mpsc::channel(8);
-        let handle = base_consensus_node::EngineRequestReceiver::start(processor, request_rx);
+        let handler = EngineRequestHandler::new(processor, None);
+        let handle = base_consensus_node::EngineRequestReceiver::start(handler, request_rx);
 
         RunningValidatorProcessor {
             state_rx,

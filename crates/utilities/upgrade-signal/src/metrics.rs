@@ -81,23 +81,20 @@ impl UpgradeSignalMetrics {
         Self::last_l1_read_block(layer, upgrade_id).set(signal.l1_block_number as f64);
     }
 
-    /// Records failed L1 reads for all configured upgrade IDs.
-    pub fn record_l1_read_errors(layer: UpgradeSignalMetricLayer, upgrade_ids: &[BaseUpgrade]) {
+    /// Records failed L1 reads for all contract-backed upgrades.
+    pub fn record_l1_read_errors(layer: UpgradeSignalMetricLayer) {
         Self::init();
-        for upgrade_id in upgrade_ids {
+        for upgrade_id in BaseUpgrade::CONTRACT_VARIANTS {
             Self::l1_read_errors_total(layer.label(), upgrade_id.contract_id().to_string())
                 .increment(1);
         }
     }
 
-    /// Records failed L1 reads for all configured upgrade IDs across all enabled layers.
-    pub fn record_l1_read_errors_for_layers(
-        layers: &[UpgradeSignalMetricLayer],
-        upgrade_ids: &[BaseUpgrade],
-    ) {
+    /// Records failed L1 reads for all contract-backed upgrades across all enabled layers.
+    pub fn record_l1_read_errors_for_layers(layers: &[UpgradeSignalMetricLayer]) {
         Self::init();
         for layer in layers {
-            Self::record_l1_read_errors(*layer, upgrade_ids);
+            Self::record_l1_read_errors(*layer);
         }
     }
 

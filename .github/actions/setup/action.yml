@@ -32,6 +32,9 @@ inputs:
   rust-cache-save:
     description: Whether to save the Rust cache
     default: "false"
+  just:
+    description: Install just
+    default: "true"
 
 runs:
   using: composite
@@ -107,6 +110,7 @@ runs:
         cache-targets: "false"
 
     - name: Install just
+      if: inputs.just == 'true'
       uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
       with:
         just-version: "1.43.1"

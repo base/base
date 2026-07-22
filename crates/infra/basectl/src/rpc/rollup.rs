@@ -7,6 +7,7 @@ use alloy_rpc_types_eth::{BlockNumberOrTag, SyncStatus as EthSyncStatus};
 use alloy_sol_types::sol;
 use alloy_transport_http::Http;
 use anyhow::{Context, Result};
+use base_common_genesis::UpgradeConfig;
 use base_common_network::Base;
 use base_consensus_rpc::{BaseP2PApiClient, RollupNodeApiClient};
 use base_protocol::SyncStatus;
@@ -19,6 +20,8 @@ use crate::{
     config::{ProofsConfig, ValidatorNodeConfig},
     tui::Toast,
 };
+
+const ROLLUP_CONFIG_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Combined CL `optimism_syncStatus` + EL `eth_syncing` snapshot.
 ///
@@ -468,4 +471,57 @@ async fn find_latest_proposal<P: Provider + Clone>(
     }
 
     None
+}
+
+/// Polls the consensus node's live rollup config for upgrade schedule updates.
+pub async fn run_rollup_config_poller(
+    consensus_rpc: Url,
+    tx: mpsc::Sender<UpgradeConfig>,
+    toast_tx: mpsc::Sender<Toast>,
+) {
+    let client = match HttpClientBuilder::default()
+        .request_timeout(ROLLUP_CONFIG_POLL_INTERVAL)
+        .build(consensus_rpc.as_str())
+    {
+        Ok(client) => client,
+        Err(error) => {
+            warn!(
+                error = %error,
+                consensus_rpc = %consensus_rpc,
+                "failed to create consensus RPC client for rollup config polling"
+            );
+            let _ = toast_tx.try_send(Toast::warning("Rollup config poller connection failed"));
+            return;
+        }
+    };
+
+    let mut interval = tokio::time::interval(ROLLUP_CONFIG_POLL_INTERVAL);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut last_upgrades = None;
+
+    loop {
+        interval.tick().await;
+        let config = match RollupNodeApiClient::rollup_config(&client).await {
+            Ok(config) => config,
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    consensus_rpc = %consensus_rpc,
+                    "failed to poll live rollup config"
+                );
+                continue;
+            }
+        };
+
+        if last_upgrades == Some(config.upgrades) {
+            continue;
+        }
+        if tx.send(config.upgrades).await.is_err() {
+            break;
+        }
+        if last_upgrades.is_some() {
+            let _ = toast_tx.try_send(Toast::info("Upgrade schedule updated"));
+        }
+        last_upgrades = Some(config.upgrades);
+    }
 }

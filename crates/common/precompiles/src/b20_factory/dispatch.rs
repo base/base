@@ -55,18 +55,24 @@ impl<'a> B20FactoryStorage<'a> {
             return recorder
                 .record_base_error_result(ctx, BasePrecompileError::Revert(Bytes::new()));
         };
-        recorder.record_base_result(ctx, self.route(ctx, calldata, version, observer), |b| b)
+        recorder.record_base_result(
+            ctx,
+            self.route(ctx, calldata, version, upgrade, observer),
+            |b| b,
+        )
     }
 
     /// Creates a token at a deterministic address derived from `(caller, variant, salt)`,
-    /// pinned to `V1`.
+    /// pinned to factory `V1`. `upgrade` selects the policy-logic version the created token
+    /// is bound to.
     pub fn create_b20(
         &mut self,
         caller: Address,
         call: IB20Factory::createB20Call,
+        upgrade: BaseUpgrade,
     ) -> Result<Address> {
         let address_hash = keccak256((caller, call.salt).abi_encode());
-        FactoryV1.create_b20(self, call, address_hash)
+        FactoryV1.create_b20(self, call, address_hash, upgrade)
     }
 
     /// Decodes calldata and routes it to `version`'s logic.
@@ -75,6 +81,7 @@ impl<'a> B20FactoryStorage<'a> {
         ctx: StorageCtx<'_>,
         calldata: &[u8],
         version: FactoryVersion,
+        upgrade: BaseUpgrade,
         observer: O,
     ) -> Result<Bytes>
     where
@@ -92,7 +99,7 @@ impl<'a> B20FactoryStorage<'a> {
                 let address_hash = ctx.metered_keccak256(&(caller, call.salt).abi_encode())?;
                 let internal_call_count = call.initCalls.len();
                 let internal_call_bytes = call.initCalls.iter().map(|c| c.len()).sum();
-                let token = logic.create_b20(self, call, address_hash)?;
+                let token = logic.create_b20(self, call, address_hash, upgrade)?;
                 observer.record_internal_calls(
                     &BerylAuxiliaryMetrics::singleton("factory", "createB20"),
                     internal_call_count,
@@ -133,7 +140,7 @@ mod tests {
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
         B20AssetStorage, B20AssetToken, B20FactoryStorage, B20StablecoinStorage, B20Variant, IB20,
-        IB20Factory, PolicyHandle,
+        IB20Factory, PolicyRegistryStorage, PolicyVersion,
     };
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
@@ -175,10 +182,11 @@ mod tests {
     fn token_at<'a>(
         addr: Address,
         ctx: StorageCtx<'a>,
-    ) -> B20AssetToken<B20AssetStorage<'a>, PolicyHandle<'a>> {
+    ) -> B20AssetToken<B20AssetStorage<'a>, PolicyRegistryStorage<'a>> {
         B20AssetToken::with_storage_and_policy(
             B20AssetStorage::from_address(addr, ctx),
-            PolicyHandle::new(ctx),
+            PolicyRegistryStorage::new(ctx),
+            PolicyVersion::V1,
         )
     }
 

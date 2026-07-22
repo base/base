@@ -33,6 +33,7 @@ base-consensus-node.workspace = true
 base-consensus-peers.workspace = true
 base-consensus-gossip.workspace = true
 base-consensus-sources.workspace = true
+base-consensus-providers.workspace = true
 base-common-genesis.workspace = true
 
 # reth
@@ -93,6 +94,9 @@ testcontainers = { workspace = true, features = ["blocking", "host-port-exposure
 # cli
 clap = { workspace = true, features = ["derive"] }
 
+# load testing
+base-load-tests.workspace = true
+
 # consensus
 base-consensus-derive.workspace = true
 base-consensus-engine = { workspace = true, features = ["test-utils"] }
@@ -105,7 +109,6 @@ base-common-consensus.workspace = true
 base-common-rpc-types-engine.workspace = true
 
 # proof
-base-proof-rpc.workspace = true
 base-optimism-rpc.workspace = true
 base-prover-service-client.workspace = true
 base-prover-service-protocol.workspace = true

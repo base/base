@@ -19,3 +19,35 @@ Use structured tracing instead of interpolated strings. Always use key=value fie
 Keep unit tests colocated with their implementation. Do not introduce standalone `tests.rs` modules for unit tests; define tests in the same `.rs` implementation file/module inside a `#[cfg(test)] mod tests { ... }` block.
 
 `#[cfg(test)] mod tests { ... }` must always be placed at the end of the file, after all non-test code.
+
+Do not destructure a type into its fields with `let Self { .. } = self` (or similar `let T { .. } = value`) just to read fields. Access fields directly via `self.field` for readability.
+
+```rust
+// Avoid
+fn area(&self) -> u32 {
+    let Self { width, height } = self;
+    width * height
+}
+
+// Prefer
+fn area(&self) -> u32 {
+    self.width * self.height
+}
+```
+
+Prefer simplifying call chains over adding indirection. If a method only performs a single internal operation, inline that logic at the call site rather than introducing the method. If a method merely forwards to another type, call that type's method directly instead of wrapping it in a new method.
+
+```rust
+// Avoid: a wrapper that just forwards to the inner type
+impl Wallet {
+    fn balance(&self) -> u64 {
+        self.account.balance()
+    }
+}
+let bal = wallet.balance();
+
+// Prefer: call the inner type's method directly
+let bal = wallet.account.balance();
+```
+
+For test doubles of internal traits, default to `#[cfg_attr(test, mockall::automock)]` (see `crates/consensus/service/src/actors/*/client.rs`, `crates/consensus/service/src/actors/network/gossip.rs`, `crates/consensus/service/src/follow/local.rs`, `crates/consensus/service/src/follow/source.rs` for examples) rather than hand-rolling a fake. Only hand-roll a fake (as in `crates/consensus/service/src/test_utils/fake_engine_client.rs`, `fake_l1.rs`, `fake_gossip.rs`) when `automock` cannot express the required behavior — e.g. the trait method returns a non-constructible builder type (such as alloy's `ProviderCall`/`EthGetBlock`), the double needs a single call log ordered across multiple trait methods, or scripted responses must be mutated by the test while calls are in flight. Document the specific reason a hand-rolled fake was chosen in the module doc comment.

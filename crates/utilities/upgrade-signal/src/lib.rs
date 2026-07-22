@@ -9,8 +9,8 @@
 
 mod config;
 pub use config::{
-    UpgradeSignalArgs, UpgradeSignalBlockTag, UpgradeSignalConfig, UpgradeSignalConfigError,
-    UpgradeSignalDefaults, UpgradeSignalL1RpcArgs, UpgradeSignalMode, UpgradeSignalStartupConfig,
+    UpgradeSignalArgs, UpgradeSignalBlockTag, UpgradeSignalConfig, UpgradeSignalDefaults,
+    UpgradeSignalL1RpcArgs, UpgradeSignalMode, UpgradeSignalStartupConfig,
     UpgradeSignalStartupMode,
 };
 
@@ -20,6 +20,9 @@ pub use contract::AlloyUpgradeSignalReader;
 mod error;
 pub use error::UpgradeSignalError;
 
+mod ids;
+pub use ids::ContractUpgradeIds;
+
 mod metrics;
 pub use metrics::{UpgradeSignalMetricLayer, UpgradeSignalMetrics};
 
@@ -27,7 +30,6 @@ mod runtime;
 pub use runtime::{
     RuntimeRegistrySink, UpgradeSignalApplyAction, UpgradeSignalApplyChange,
     UpgradeSignalApplySummary, UpgradeSignalRefresher, UpgradeSignalRuntimeApplier,
-    UpgradeSignalRuntimeValidation,
 };
 
 mod state;

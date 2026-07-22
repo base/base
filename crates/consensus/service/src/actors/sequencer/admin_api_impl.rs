@@ -55,7 +55,8 @@ where
         &mut self,
         next_payload: &mut Option<UnsealedPayloadHandle>,
         query: SequencerAdminQuery,
-    ) {
+    ) -> bool {
+        let mut reset_requested = false;
         match query {
             SequencerAdminQuery::SequencerActive(tx) => {
                 if tx.send(self.is_sequencer_active().await).is_err() {
@@ -91,11 +92,14 @@ where
                 }
             }
             SequencerAdminQuery::ResetDerivationPipeline(tx) => {
-                if tx.send(self.reset_derivation_pipeline().await).is_err() {
+                let result = self.reset_derivation_pipeline().await;
+                reset_requested = result.is_ok();
+                if tx.send(result).is_err() {
                     warn!(target: "sequencer", "Failed to send response for reset_derivation_pipeline query");
                 }
             }
         }
+        reset_requested
     }
 
     /// Returns whether the sequencer is active.
@@ -253,7 +257,12 @@ where
 
     pub(super) async fn reset_derivation_pipeline(&self) -> Result<(), SequencerAdminAPIError> {
         info!(target: "sequencer", "Resetting derivation pipeline");
-        self.engine_client.reset_engine_forkchoice().await.map_err(|e| {
+        let result = if self.is_shadow_sequencer() {
+            self.engine_client.reset_engine_forkchoice_coordinated().await
+        } else {
+            self.engine_client.reset_engine_forkchoice().await
+        };
+        result.map_err(|e| {
             error!(target: "sequencer", err=?e, "Failed to reset engine forkchoice");
             SequencerAdminAPIError::RequestError(format!("Failed to reset engine: {e}"))
         })

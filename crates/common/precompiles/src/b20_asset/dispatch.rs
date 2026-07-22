@@ -22,11 +22,11 @@ use crate::{
     BerylSelector,
     IB20::{self, IB20Calls as C},
     IB20Asset::{self, IB20AssetCalls as SC},
-    NoopPrecompileCallObserver, PermitArgs, Policy, PrecompileCallObserver,
+    NoopPrecompileCallObserver, PermitArgs, PolicyAccounting, PrecompileCallObserver,
     macros::decode_precompile_call,
 };
 
-impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
+impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
     /// ABI-dispatches `calldata` to the appropriate handler for `upgrade`.
     pub fn dispatch(
         &mut self,
@@ -75,47 +75,6 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
         recorder.record_base_result(ctx, self.route(ctx, calldata, version, false, observer), |b| b)
     }
 
-    /// Decodes calldata and executes the matching operation for `upgrade`.
-    pub fn inner(
-        &mut self,
-        ctx: StorageCtx<'_>,
-        calldata: &[u8],
-        upgrade: BaseUpgrade,
-    ) -> base_precompile_storage::Result<Bytes> {
-        self.inner_with_observer(ctx, calldata, upgrade, NoopPrecompileCallObserver)
-    }
-
-    /// Decodes calldata, observes the decoded operation, and executes the matching handler
-    /// against the version active at `upgrade`.
-    pub fn inner_with_observer<O>(
-        &mut self,
-        ctx: StorageCtx<'_>,
-        calldata: &[u8],
-        upgrade: BaseUpgrade,
-        observer: O,
-    ) -> base_precompile_storage::Result<Bytes>
-    where
-        O: PrecompileCallObserver,
-    {
-        let Some(version) = AssetVersions::from_base_upgrade(upgrade) else {
-            return Err(BasePrecompileError::Revert(Bytes::new()));
-        };
-        self.route(ctx, calldata, version, false, observer)
-    }
-
-    /// Decodes calldata and executes it with factory-init privilege.
-    ///
-    /// Pinned to [`AssetVersion::V1`], the token's introduction version: factory-initiated setup
-    /// calls run before any later fork can be relevant.
-    pub fn inner_with_privilege(
-        &mut self,
-        ctx: StorageCtx<'_>,
-        calldata: &[u8],
-        privileged: bool,
-    ) -> base_precompile_storage::Result<Bytes> {
-        self.route(ctx, calldata, AssetVersion::V1, privileged, NoopPrecompileCallObserver)
-    }
-
     /// Grants `role` to `account` without checking caller authorization.
     ///
     /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and the
@@ -133,7 +92,7 @@ impl<S: AssetAccounting, P: Policy> B20AssetToken<S, P> {
 
     /// Decodes calldata, observes the decoded operation, and routes it to `version` with optional
     /// factory-init privilege.
-    fn route<O>(
+    pub fn route<O>(
         &mut self,
         ctx: StorageCtx<'_>,
         calldata: &[u8],
@@ -509,13 +468,13 @@ mod tests {
 
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
-        AssetV1, B20AssetStorage, B20AssetToken, B20TokenRole, BerylErrorKind, IB20, IB20Asset,
-        InMemoryPolicy, InMemoryTokenAccounting, NoopPrecompileCallObserver, PrecompileCallMetric,
-        PrecompileCallObserver, PrecompileCallOutcome, PrecompileCallStatus, Token,
-        TokenAccounting,
+        AssetV1, AssetVersion, B20AssetStorage, B20AssetToken, B20TokenRole, BerylErrorKind,
+        FakePolicyAccounting, IB20, IB20Asset, InMemoryTokenAccounting, NoopPrecompileCallObserver,
+        PolicyVersion, PrecompileCallMetric, PrecompileCallObserver, PrecompileCallOutcome,
+        PrecompileCallStatus, Token, TokenAccounting,
     };
 
-    type TestAssetToken = B20AssetToken<InMemoryTokenAccounting, InMemoryPolicy>;
+    type TestAssetToken = B20AssetToken<InMemoryTokenAccounting, FakePolicyAccounting>;
 
     /// Upgrade at which the asset precompile is active for every dispatch test.
     const UPGRADE: BaseUpgrade = BaseUpgrade::Beryl;
@@ -547,7 +506,11 @@ mod tests {
     fn make_token() -> TestAssetToken {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
         accounting.multiplier = B20AssetStorage::WAD; // 1:1 multiplier
-        TestAssetToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
+        TestAssetToken::with_storage_and_policy(
+            accounting,
+            FakePolicyAccounting::new(),
+            PolicyVersion::V1,
+        )
     }
 
     fn activate_b20_asset(storage: &mut HashMapStorageProvider) {
@@ -568,7 +531,9 @@ mod tests {
 
     fn call_asset(token: &mut TestAssetToken, caller: Address, calldata: Vec<u8>) -> Result<Bytes> {
         let mut storage = storage_with_caller(caller);
-        StorageCtx::enter(&mut storage, |ctx| token.inner(ctx, calldata.as_ref(), UPGRADE))
+        StorageCtx::enter(&mut storage, |ctx| {
+            token.route(ctx, calldata.as_ref(), AssetVersion::V1, false, NoopPrecompileCallObserver)
+        })
     }
 
     fn batch_mint_calldata(recipients: Vec<Address>, amounts: Vec<U256>) -> Vec<u8> {

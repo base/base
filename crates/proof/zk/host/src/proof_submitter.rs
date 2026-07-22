@@ -71,6 +71,7 @@ mod tests {
             l2_block_number: 11,
             prev_output_root: alloy_primitives::B256::repeat_byte(3),
             config_hash: alloy_primitives::B256::repeat_byte(4),
+            schedule_id: alloy_primitives::B256::repeat_byte(5),
         }
     }
 

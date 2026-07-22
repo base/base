@@ -13,7 +13,7 @@ use base_precompile_storage::{BasePrecompileError, Result};
 use crate::{
     Asset, AssetAccounting, B20_MAX_SUPPLY_CAP, B20AssetStorage, B20AssetToken, B20Guards,
     B20PausableFeature, B20PolicyType, B20TokenRole, Eip712Domain, IB20, IB20Asset, PermitArgs,
-    Policy, Token,
+    PolicyAccounting, Token,
 };
 
 /// `keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)")`
@@ -36,9 +36,9 @@ impl AssetV1 {
         b256!("97667070c54ef182b0f5858b034beac1b6f3089aa2d3188bb1e8929f4fa9b929");
 
     /// Balance-moving core of `transfer`/`transferFrom`, without the pause check.
-    fn transfer_inner<S: AssetAccounting, P: Policy>(
+    fn transfer_inner<S: AssetAccounting, A: PolicyAccounting>(
         &self,
-        token: &mut B20AssetToken<S, P>,
+        token: &mut B20AssetToken<S, A>,
         from: Address,
         to: Address,
         amount: U256,
@@ -73,9 +73,9 @@ impl AssetV1 {
     }
 
     /// Supply-reducing core of the burn operations, without pause or role checks.
-    fn burn_inner<S: AssetAccounting, P: Policy>(
+    fn burn_inner<S: AssetAccounting, A: PolicyAccounting>(
         &self,
-        token: &mut B20AssetToken<S, P>,
+        token: &mut B20AssetToken<S, A>,
         from: Address,
         amount: U256,
     ) -> Result<()> {
@@ -103,9 +103,9 @@ impl AssetV1 {
     /// authorized [`grant_role`](Asset::grant_role) path is not reachable. Bumps the `DefaultAdmin`
     /// member count and emits `RoleGranted`. Kept inherent to V1 (off the `Asset` trait) so it stays
     /// frozen with this version and off `&dyn Asset`.
-    pub(crate) fn grant_role_unchecked<S: AssetAccounting, P: Policy>(
+    pub(crate) fn grant_role_unchecked<S: AssetAccounting, A: PolicyAccounting>(
         &self,
-        token: &mut B20AssetToken<S, P>,
+        token: &mut B20AssetToken<S, A>,
         role: B256,
         account: Address,
         sender: Address,
@@ -126,9 +126,9 @@ impl AssetV1 {
     }
 
     /// Revokes `role` from `account` without checking caller authorization.
-    fn revoke_role_unchecked<S: AssetAccounting, P: Policy>(
+    fn revoke_role_unchecked<S: AssetAccounting, A: PolicyAccounting>(
         &self,
-        token: &mut B20AssetToken<S, P>,
+        token: &mut B20AssetToken<S, A>,
         role: B256,
         account: Address,
         sender: Address,
@@ -149,9 +149,9 @@ impl AssetV1 {
     }
 
     /// Ensures role-admin mutations are still reachable.
-    fn ensure_role_admin_mutations_available<S: AssetAccounting, P: Policy>(
+    fn ensure_role_admin_mutations_available<S: AssetAccounting, A: PolicyAccounting>(
         &self,
-        token: &B20AssetToken<S, P>,
+        token: &B20AssetToken<S, A>,
         caller: Address,
     ) -> Result<()> {
         let admin_role = B20TokenRole::DefaultAdmin.id();
@@ -176,9 +176,9 @@ impl AssetV1 {
     }
 
     /// Ensures the caller holds the asset operator role (unless privileged).
-    fn ensure_operator_role<S: AssetAccounting, P: Policy>(
+    fn ensure_operator_role<S: AssetAccounting, A: PolicyAccounting>(
         &self,
-        token: &B20AssetToken<S, P>,
+        token: &B20AssetToken<S, A>,
         caller: Address,
         privileged: bool,
     ) -> Result<()> {
@@ -186,9 +186,9 @@ impl AssetV1 {
     }
 
     /// Ensures the caller holds the metadata role (unless privileged).
-    fn ensure_metadata_role<S: AssetAccounting, P: Policy>(
+    fn ensure_metadata_role<S: AssetAccounting, A: PolicyAccounting>(
         &self,
-        token: &B20AssetToken<S, P>,
+        token: &B20AssetToken<S, A>,
         caller: Address,
         privileged: bool,
     ) -> Result<()> {
@@ -200,10 +200,10 @@ impl AssetV1 {
     }
 }
 
-impl<S: AssetAccounting, P: Policy> Asset<S, P> for AssetV1 {
+impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV1 {
     fn transfer(
         &self,
-        token: &mut B20AssetToken<S, P>,
+        token: &mut B20AssetToken<S, A>,
         caller: Address,
         to: Address,
         amount: U256,
@@ -215,7 +215,7 @@ impl<S: AssetAccounting, P: Policy> Asset<S, P> for AssetV1 {
 
     fn transfer_from(
         &self,
-        token: &mut B20AssetToken<S, P>,
+        token: &mut B20AssetToken<S, A>,
         caller: Address,
         from: Address,
         to: Address,
@@ -250,7 +250,7 @@ impl<S: AssetAccounting, P: Policy> Asset<S, P> for AssetV1 {
 
     fn approve(
         &self,
-        token: &mut B20AssetToken<S, P>,
+        token: &mut B20AssetToken<S, A>,
         caller: Address,
         spender: Address,
         amount: U256,
@@ -269,7 +269,7 @@ impl<S: AssetAccounting, P: Policy> Asset<S, P> for AssetV1 {
 
     fn emit_memo(
         &self,
-        token: &mut B20AssetToken<S, P>,
+        token: &mut B20AssetToken<S, A>,
         caller: Address,
         memo: B256,
     ) -> Result<()> {
@@ -278,7 +278,7 @@ impl<S: AssetAccounting, P: Policy> Asset<S, P> for AssetV1 {
 
     fn mint(
         &self,
-        token: &mut B20AssetToken<S, P>,
+        token: &mut B20AssetToken<S, A>,
         caller: Address,
         to: Address,
         amount: U256,
@@ -312,7 +312,7 @@ impl<S: AssetAccounting, P: Policy> Asset<S, P> for AssetV1 {
             .emit_event(IB20::Transfer { from: Address::ZERO, to, amount }.encode_log_data())
     }
 
-    fn burn(&self, token: &mut B20AssetToken<S, P>, caller: Address, amount: U256) -> Result<()> {
+    fn burn(&self, token: &mut B20AssetToken<S, A>, caller: Address, amount: U256) -> Result<()> {
         // Self-burn: `from == caller`, never factory-privileged.
         B20Guards::ensure_not_paused(token, IB20::PausableFeature::BURN)?;
         B20Guards::ensure_token_role(token, caller, B20TokenRole::Burn)?;
@@ -321,7 +321,7 @@ impl<S: AssetAccounting, P: Policy> Asset<S, P> for AssetV1 {
 
     fn burn_blocked(
         &self,
-        token: &mut B20AssetToken<S, P>,
+        token: &mut B20AssetToken<S, A>,
         caller: Address,
         from: Address,
         amount: U256,
@@ -340,7 +340,7 @@ impl<S: AssetAccounting, P: Policy> Asset<S, P> for AssetV1 {
 
     fn pause(
         &self,
-        token: &mut B20AssetToken<S, P>,
+        token: &mut B20AssetToken<S, A>,
         caller: Address,
         features: Vec<IB20::PausableFeature>,
         privileged: bool,
@@ -366,7 +366,7 @@ impl<S: AssetAccounting, P: Policy> Asset<S, P> for AssetV1 {
 
     fn unpause(
         &self,
-        token: &mut B20AssetToken<S, P>,
+        token: &mut B20AssetToken<S, A>,
         caller: Address,
         features: Vec<IB20::PausableFeature>,
         privileged: bool,
@@ -392,7 +392,7 @@ impl<S: AssetAccounting, P: Policy> Asset<S, P> for AssetV1 {
 
     fn update_supply_cap(
         &self,
-        token: &mut B20AssetToken<S, P>,
+        token: &mut B20AssetToken<S, A>,
         caller: Address,
         new_cap: U256,
         privileged: bool,
@@ -417,7 +417,7 @@ impl<S: AssetAccounting, P: Policy> Asset<S, P> for AssetV1 {
 
     fn update_name(
         &self,
-        token: &mut B20AssetToken<S, P>,
+        token: &mut B20AssetToken<S, A>,
         caller: Address,
         name: String,
         privileged: bool,
@@ -434,7 +434,7 @@ impl<S: AssetAccounting, P: Policy> Asset<S, P> for AssetV1 {
 
     fn update_symbol(
         &self,
-        token: &mut B20AssetToken<S, P>,
+        token: &mut B20AssetToken<S, A>,
         caller: Address,
         symbol: String,
         privileged: bool,
@@ -450,7 +450,7 @@ impl<S: AssetAccounting, P: Policy> Asset<S, P> for AssetV1 {
 
     fn update_contract_uri(
         &self,
-        token: &mut B20AssetToken<S, P>,
+        token: &mut B20AssetToken<S, A>,
         caller: Address,
         uri: String,
         privileged: bool,
@@ -464,7 +464,7 @@ impl<S: AssetAccounting, P: Policy> Asset<S, P> for AssetV1 {
 
     fn grant_role(
         &self,
-        token: &mut B20AssetToken<S, P>,
+        token: &mut B20AssetToken<S, A>,
         caller: Address,
         role: B256,
         account: Address,
@@ -482,7 +482,7 @@ impl<S: AssetAccounting, P: Policy> Asset<S, P> for AssetV1 {
 
     fn revoke_role(
         &self,
-        token: &mut B20AssetToken<S, P>,
+        token: &mut B20AssetToken<S, A>,
         caller: Address,
         role: B256,
         account: Address,
@@ -504,7 +504,7 @@ impl<S: AssetAccounting, P: Policy> Asset<S, P> for AssetV1 {
 
     fn renounce_role(
         &self,
-        token: &mut B20AssetToken<S, P>,
+        token: &mut B20AssetToken<S, A>,
         caller: Address,
         role: B256,
         confirmation: Address,
@@ -521,7 +521,7 @@ impl<S: AssetAccounting, P: Policy> Asset<S, P> for AssetV1 {
         self.revoke_role_unchecked(token, role, caller, caller)
     }
 
-    fn renounce_last_admin(&self, token: &mut B20AssetToken<S, P>, caller: Address) -> Result<()> {
+    fn renounce_last_admin(&self, token: &mut B20AssetToken<S, A>, caller: Address) -> Result<()> {
         let admin_role = B20TokenRole::DefaultAdmin.id();
         B20Guards::ensure_role(token, caller, admin_role)?;
         if token.accounting().role_member_count(admin_role)? != U256::ONE {
@@ -535,7 +535,7 @@ impl<S: AssetAccounting, P: Policy> Asset<S, P> for AssetV1 {
 
     fn set_role_admin(
         &self,
-        token: &mut B20AssetToken<S, P>,
+        token: &mut B20AssetToken<S, A>,
         caller: Address,
         role: B256,
         new_admin_role: B256,
@@ -559,7 +559,7 @@ impl<S: AssetAccounting, P: Policy> Asset<S, P> for AssetV1 {
 
     fn update_policy(
         &self,
-        token: &mut B20AssetToken<S, P>,
+        token: &mut B20AssetToken<S, A>,
         caller: Address,
         policy_scope: B256,
         new_policy_id: u64,
@@ -569,7 +569,7 @@ impl<S: AssetAccounting, P: Policy> Asset<S, P> for AssetV1 {
             B20Guards::ensure_token_role(token, caller, B20TokenRole::DefaultAdmin)?;
         }
         let old_policy_id = self.policy_id(token, policy_scope)?;
-        if !token.policy().policy_exists(new_policy_id)? {
+        if !token.policy().policy_exists(token.policy_storage(), new_policy_id)? {
             return Err(BasePrecompileError::revert(IB20::PolicyNotFound {
                 policyId: new_policy_id,
             }));
@@ -587,7 +587,7 @@ impl<S: AssetAccounting, P: Policy> Asset<S, P> for AssetV1 {
 
     fn permit(
         &self,
-        token: &mut B20AssetToken<S, P>,
+        token: &mut B20AssetToken<S, A>,
         chain_id: u64,
         now: U256,
         args: PermitArgs,
@@ -610,7 +610,7 @@ impl<S: AssetAccounting, P: Policy> Asset<S, P> for AssetV1 {
 
     fn update_multiplier(
         &self,
-        token: &mut B20AssetToken<S, P>,
+        token: &mut B20AssetToken<S, A>,
         caller: Address,
         new_multiplier: U256,
         privileged: bool,
@@ -627,7 +627,7 @@ impl<S: AssetAccounting, P: Policy> Asset<S, P> for AssetV1 {
 
     fn update_extra_metadata(
         &self,
-        token: &mut B20AssetToken<S, P>,
+        token: &mut B20AssetToken<S, A>,
         caller: Address,
         key: String,
         value: String,
@@ -645,7 +645,7 @@ impl<S: AssetAccounting, P: Policy> Asset<S, P> for AssetV1 {
 
     fn batch_mint(
         &self,
-        token: &mut B20AssetToken<S, P>,
+        token: &mut B20AssetToken<S, A>,
         caller: Address,
         recipients: Vec<Address>,
         amounts: Vec<U256>,
@@ -675,7 +675,7 @@ impl<S: AssetAccounting, P: Policy> Asset<S, P> for AssetV1 {
 
     fn begin_announce(
         &self,
-        token: &mut B20AssetToken<S, P>,
+        token: &mut B20AssetToken<S, A>,
         caller: Address,
         id: String,
         description: String,
@@ -692,7 +692,7 @@ impl<S: AssetAccounting, P: Policy> Asset<S, P> for AssetV1 {
             .emit_event(IB20Asset::Announcement { caller, id, description, uri }.encode_log_data())
     }
 
-    fn end_announce(&self, token: &mut B20AssetToken<S, P>, id: String) -> Result<()> {
+    fn end_announce(&self, token: &mut B20AssetToken<S, A>, id: String) -> Result<()> {
         token.accounting_mut().emit_event(IB20Asset::EndAnnouncement { id }.encode_log_data())
     }
 
@@ -700,14 +700,14 @@ impl<S: AssetAccounting, P: Policy> Asset<S, P> for AssetV1 {
 
     fn is_paused(
         &self,
-        token: &B20AssetToken<S, P>,
+        token: &B20AssetToken<S, A>,
         feature: IB20::PausableFeature,
     ) -> Result<bool> {
         B20PausableFeature::ensure_valid(feature)?;
         Ok((token.accounting().paused()? & B20PausableFeature::mask(feature)) != U256::ZERO)
     }
 
-    fn paused_features(&self, token: &B20AssetToken<S, P>) -> Result<Vec<IB20::PausableFeature>> {
+    fn paused_features(&self, token: &B20AssetToken<S, A>) -> Result<Vec<IB20::PausableFeature>> {
         let paused = token.accounting().paused()?;
         let mut features = Vec::new();
         for feature in [
@@ -722,12 +722,12 @@ impl<S: AssetAccounting, P: Policy> Asset<S, P> for AssetV1 {
         Ok(features)
     }
 
-    fn policy_id(&self, token: &B20AssetToken<S, P>, policy_scope: B256) -> Result<u64> {
+    fn policy_id(&self, token: &B20AssetToken<S, A>, policy_scope: B256) -> Result<u64> {
         Self::ensure_supported_policy_type(policy_scope)?;
         token.accounting().policy_id(policy_scope)
     }
 
-    fn domain_separator(&self, token: &B20AssetToken<S, P>, chain_id: u64) -> Result<B256> {
+    fn domain_separator(&self, token: &B20AssetToken<S, A>, chain_id: u64) -> Result<B256> {
         let name = token.accounting().name()?;
         let name_hash = keccak256(name.as_bytes());
         let version_hash = keccak256(VERSION);
@@ -737,7 +737,7 @@ impl<S: AssetAccounting, P: Policy> Asset<S, P> for AssetV1 {
         Ok(keccak256(&encoded))
     }
 
-    fn eip712_domain(&self, token: &B20AssetToken<S, P>, chain_id: u64) -> Result<Eip712Domain> {
+    fn eip712_domain(&self, token: &B20AssetToken<S, A>, chain_id: u64) -> Result<Eip712Domain> {
         let name = token.accounting().name()?;
         Ok((
             // bits 0+1+2+3: name + version + chainId + verifyingContract
@@ -751,14 +751,14 @@ impl<S: AssetAccounting, P: Policy> Asset<S, P> for AssetV1 {
         ))
     }
 
-    fn to_scaled_balance(&self, token: &B20AssetToken<S, P>, balance: U256) -> Result<U256> {
+    fn to_scaled_balance(&self, token: &B20AssetToken<S, A>, balance: U256) -> Result<U256> {
         let multiplier = token.accounting().multiplier()?;
         let product =
             balance.checked_mul(multiplier).ok_or_else(BasePrecompileError::under_overflow)?;
         Ok(product / B20AssetStorage::WAD)
     }
 
-    fn to_raw_balance(&self, token: &B20AssetToken<S, P>, balance: U256) -> Result<U256> {
+    fn to_raw_balance(&self, token: &B20AssetToken<S, A>, balance: U256) -> Result<U256> {
         let multiplier = token.accounting().multiplier()?;
         let product = balance
             .checked_mul(B20AssetStorage::WAD)
@@ -766,7 +766,7 @@ impl<S: AssetAccounting, P: Policy> Asset<S, P> for AssetV1 {
         Ok(product / multiplier)
     }
 
-    fn scaled_balance_of(&self, token: &B20AssetToken<S, P>, account: Address) -> Result<U256> {
+    fn scaled_balance_of(&self, token: &B20AssetToken<S, A>, account: Address) -> Result<U256> {
         let balance = token.accounting().balance_of(account)?;
         self.to_scaled_balance(token, balance)
     }
@@ -792,7 +792,8 @@ mod tests {
 
     use crate::{
         Asset, AssetAccounting, AssetV1, B20_MAX_SUPPLY_CAP, B20AssetStorage, B20AssetToken,
-        B20PolicyType, B20TokenRole, IB20, IB20Asset, PermitArgs, Policy, Token, TokenAccounting,
+        B20PolicyType, B20TokenRole, IB20, IB20Asset, PackedPolicy, PermitArgs, PolicyAccounting,
+        PolicyRegistryStorage, PolicyVersion, Token, TokenAccounting,
     };
 
     // --- Self-contained in-memory fakes (no dependency on `common::test_utils`, so shared test
@@ -998,33 +999,97 @@ mod tests {
         }
     }
 
-    /// Account-keyed authorization fake. `is_authorized` is scope-agnostic — enough to exercise
-    /// the version's guard composition without modelling the real policy registry.
+    /// Minimal [`PolicyAccounting`] backed by in-memory maps.
     #[derive(Debug)]
-    struct FakePolicy {
-        authorized: BTreeSet<Address>,
-        existing: BTreeSet<u64>,
+    struct FakePolicyAccounting {
+        caller: Address,
+        initialized: bool,
+        policies: BTreeMap<u64, U256>,
+        members: BTreeMap<(u64, Address), bool>,
+        pending_admins: BTreeMap<u64, Address>,
+        next_counter: u64,
+        events: Vec<LogData>,
     }
 
-    impl FakePolicy {
+    impl FakePolicyAccounting {
         fn new() -> Self {
-            Self { authorized: BTreeSet::new(), existing: BTreeSet::new() }
+            Self {
+                caller: ADMIN,
+                initialized: false,
+                policies: BTreeMap::new(),
+                members: BTreeMap::new(),
+                pending_admins: BTreeMap::new(),
+                next_counter: 0,
+                events: Vec::new(),
+            }
+        }
+
+        fn create_existing_policy(&mut self, policy_id: u64) {
+            self.policies.insert(policy_id, PackedPolicy::new(Address::ZERO).into_u256());
         }
     }
 
-    impl Policy for FakePolicy {
-        fn is_authorized(&self, _policy_id: u64, account: Address) -> Result<bool> {
-            Ok(self.authorized.contains(&account))
+    impl PolicyAccounting for FakePolicyAccounting {
+        fn registry_address(&self) -> Address {
+            Address::repeat_byte(0x02)
         }
-        fn policy_exists(&self, policy_id: u64) -> Result<bool> {
-            Ok(self.existing.contains(&policy_id))
+        fn caller(&self) -> Address {
+            self.caller
+        }
+        fn read_policy_word(&self, policy_id: u64) -> Result<U256> {
+            Ok(self.policies.get(&policy_id).copied().unwrap_or(U256::ZERO))
+        }
+        fn write_policy_word(&mut self, policy_id: u64, word: U256) -> Result<()> {
+            self.policies.insert(policy_id, word);
+            Ok(())
+        }
+        fn read_member(&self, policy_id: u64, account: Address) -> Result<bool> {
+            Ok(self.members.get(&(policy_id, account)).copied().unwrap_or(false))
+        }
+        fn set_member(&mut self, policy_id: u64, account: Address) -> Result<()> {
+            self.members.insert((policy_id, account), true);
+            Ok(())
+        }
+        fn delete_member(&mut self, policy_id: u64, account: Address) -> Result<()> {
+            self.members.remove(&(policy_id, account));
+            Ok(())
+        }
+        fn read_pending_admin(&self, policy_id: u64) -> Result<Address> {
+            Ok(self.pending_admins.get(&policy_id).copied().unwrap_or(Address::ZERO))
+        }
+        fn write_pending_admin(&mut self, policy_id: u64, admin: Address) -> Result<()> {
+            self.pending_admins.insert(policy_id, admin);
+            Ok(())
+        }
+        fn delete_pending_admin(&mut self, policy_id: u64) -> Result<()> {
+            self.pending_admins.remove(&policy_id);
+            Ok(())
+        }
+        fn read_next_counter(&self) -> Result<u64> {
+            Ok(self.next_counter)
+        }
+        fn write_next_counter(&mut self, counter: u64) -> Result<()> {
+            self.next_counter = counter;
+            Ok(())
+        }
+        fn emit_event(&mut self, log: LogData) -> Result<()> {
+            self.events.push(log);
+            Ok(())
+        }
+        fn mark_initialized(&mut self) -> Result<()> {
+            self.initialized = true;
+            Ok(())
         }
     }
 
-    type Tok = B20AssetToken<FakeAccounting, FakePolicy>;
+    type Tok = B20AssetToken<FakeAccounting, FakePolicyAccounting>;
 
     fn token() -> Tok {
-        B20AssetToken::with_storage_and_policy(FakeAccounting::new(), FakePolicy::new())
+        B20AssetToken::with_storage_and_policy(
+            FakeAccounting::new(),
+            FakePolicyAccounting::new(),
+            PolicyVersion::V1,
+        )
     }
 
     /// Grants `role` to `account` and keeps the admin member-count consistent.
@@ -1155,7 +1220,6 @@ mod tests {
     #[test]
     fn mint_privileged_increases_supply_and_balance() {
         let mut tok = token();
-        tok.policy_mut().authorized.insert(BOB);
         LOGIC.mint(&mut tok, ADMIN, BOB, U256::from(100u64), true).unwrap();
         assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(100u64));
         assert_eq!(tok.accounting().total_supply().unwrap(), U256::from(100u64));
@@ -1164,7 +1228,6 @@ mod tests {
     #[test]
     fn mint_reverts_over_supply_cap() {
         let mut tok = token();
-        tok.policy_mut().authorized.insert(BOB);
         tok.accounting_mut().set_supply_cap(U256::from(50u64)).unwrap();
         let err = LOGIC.mint(&mut tok, ADMIN, BOB, U256::from(100u64), true).unwrap_err();
         assert_eq!(
@@ -1179,7 +1242,6 @@ mod tests {
     #[test]
     fn mint_unprivileged_requires_mint_role() {
         let mut tok = token();
-        tok.policy_mut().authorized.insert(BOB);
         let err = LOGIC.mint(&mut tok, ALICE, BOB, U256::from(1u64), false).unwrap_err();
         assert_eq!(
             err,
@@ -1214,6 +1276,12 @@ mod tests {
     fn burn_blocked_destroys_from_unauthorized_account() {
         let mut tok = token();
         fund(&mut tok, ALICE, U256::from(100u64));
+        tok.accounting_mut()
+            .set_policy_id(
+                B20PolicyType::TransferSender.id(),
+                PolicyRegistryStorage::ALWAYS_BLOCK_ID,
+            )
+            .unwrap();
         LOGIC.burn_blocked(&mut tok, ADMIN, ALICE, U256::from(40u64), true).unwrap();
         assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(60u64));
         assert_eq!(last_event_sig(&tok), IB20::BurnedBlocked::SIGNATURE_HASH);
@@ -1268,7 +1336,7 @@ mod tests {
     #[test]
     fn update_policy_sets_new_id() {
         let mut tok = token();
-        tok.policy_mut().existing.insert(7);
+        tok.policy_storage_mut().create_existing_policy(7);
         LOGIC.update_policy(&mut tok, ADMIN, B20PolicyType::TransferSender.id(), 7, true).unwrap();
         assert_eq!(tok.accounting().policy_id(B20PolicyType::TransferSender.id()).unwrap(), 7);
     }
@@ -1377,8 +1445,6 @@ mod tests {
         let mut tok = token();
         grant(&mut tok, B20TokenRole::Mint.id(), ALICE);
         // The inner mints enforce the MintReceiver policy even when privileged.
-        tok.policy_mut().authorized.insert(ALICE);
-        tok.policy_mut().authorized.insert(BOB);
         LOGIC
             .batch_mint(
                 &mut tok,

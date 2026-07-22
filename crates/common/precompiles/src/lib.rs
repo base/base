@@ -41,10 +41,10 @@ mod common;
 pub use common::{
     B20_MAX_SUPPLY_CAP, B20CoreStorage, B20Guards, B20PausableFeature, B20PolicyType, B20TokenRole,
     Burnable, Configurable, Eip712Domain, IB20, Mintable, Pausable, PermitArgs, Permittable,
-    Policy, PolicyRegistry, RoleManaged, Token, TokenAccounting, Transferable,
+    RoleManaged, Token, TokenAccounting, Transferable,
 };
 #[cfg(any(test, feature = "test-utils"))]
-pub use common::{InMemoryPolicy, InMemoryTokenAccounting, TestStablecoinToken, TestToken};
+pub use common::{FakePolicyAccounting, InMemoryTokenAccounting, TestStablecoinToken, TestToken};
 
 mod observer;
 pub use observer::{EndGuard, NoopPrecompileCallObserver, PrecompileCallObserver};
@@ -77,7 +77,8 @@ pub use b20_factory::{
 
 mod policy;
 pub use policy::{
-    IPolicyRegistry, PackedPolicy, PolicyHandle, PolicyRegistryPrecompile, PolicyRegistryStorage,
+    IPolicyRegistry, PackedPolicy, PolicyAccounting, PolicyRegistryLogic, PolicyRegistryPrecompile,
+    PolicyRegistryStorage, PolicyRegistryV1, PolicyVersion, PolicyVersions,
 };
 
 mod tx_context;

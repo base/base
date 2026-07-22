@@ -79,7 +79,7 @@ mod tests {
     use base_precompile_storage::BasePrecompileError;
 
     use crate::{
-        B20_MAX_SUPPLY_CAP, B20TokenRole, Configurable, IB20, InMemoryPolicy,
+        B20_MAX_SUPPLY_CAP, B20TokenRole, Configurable, FakePolicyAccounting, IB20,
         InMemoryTokenAccounting, TestToken, Token, TokenAccounting,
     };
 
@@ -89,14 +89,14 @@ mod tests {
     fn make_token() -> TestToken {
         TestToken::with_storage_and_policy(
             InMemoryTokenAccounting::new(TOKEN_ADDR),
-            InMemoryPolicy::new(),
+            FakePolicyAccounting::new(),
         )
     }
 
     fn token_with_default_admin(account: Address) -> TestToken {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
         accounting.roles.insert((B20TokenRole::DefaultAdmin.id(), account), true);
-        TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
+        TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new())
     }
 
     #[test]
@@ -214,7 +214,7 @@ mod tests {
     fn token_with_metadata_role(account: Address) -> TestToken {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
         accounting.roles.insert((B20TokenRole::Metadata.id(), account), true);
-        TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
+        TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new())
     }
 
     #[test]

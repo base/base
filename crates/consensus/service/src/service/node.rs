@@ -28,13 +28,13 @@ use crate::{
     AlloyL1BlockFetcher, CheckpointActor, CheckpointClient, CheckpointDB, CheckpointWriter,
     Conductor, ConductorClient, DelayedL1OriginSelectorProvider, DelegateDerivationActor,
     DerivationActor, DerivationDelegateClient, DerivationError, EngineActor, EngineActorRequest,
-    EngineConfig, EngineProcessor, EngineProcessorOptions, EngineRpcProcessor, L1OriginSelector,
-    L1WatcherActor, L1WatcherQueryProcessor, NetworkActor, NetworkBuilder, NetworkConfig,
-    NodeActor, NodeMode, PayloadBuilder, QueuedDerivationEngineClient,
-    QueuedEngineDerivationClient, QueuedEngineRpcClient, QueuedL1WatcherDerivationClient,
-    QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient,
-    RecoveryModeGuard, RpcActor, RpcContext, SequencerActor, SequencerConfig,
-    UpgradeSignalNodeConfig,
+    EngineConfig, EngineProcessor, EngineProcessorOptions, EngineRequestHandler,
+    EngineRpcProcessor, L1OriginSelector, L1WatcherActor, L1WatcherQueryProcessor, NetworkActor,
+    NetworkBuilder, NetworkConfig, NodeActor, NodeMode, PayloadBuilder,
+    QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
+    QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
+    QueuedSequencerEngineClient, RecoveryModeGuard, RpcActor, RpcContext, SequencerActor,
+    SequencerConfig, ShadowReconciliationGate, UpgradeSignalNodeConfig,
     actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
 };
 
@@ -49,9 +49,9 @@ pub struct L1Config {
     pub chain_config: Arc<GenesisChainConfig>,
     /// Whether to trust the L1 RPC.
     pub trust_rpc: bool,
-    /// The L1 beacon client.
+    /// The L1 beacon API client.
     pub beacon_client: OnlineBeaconClient,
-    /// The L1 engine provider.
+    /// The L1 execution JSON-RPC provider.
     pub engine_provider: RootProvider,
     /// How frequently to poll L1 for a new finalized block.
     ///
@@ -243,7 +243,7 @@ impl RollupNode {
         unsafe_head_tx: watch::Sender<L2BlockInfo>,
         conductor: Option<Arc<dyn Conductor>>,
         checkpoint_client: CheckpointClient,
-    ) -> (EngineActor<EngineProcessor<E, QueuedEngineDerivationClient>>, EngineRpcProcessor<E>)
+    ) -> (EngineActor<EngineRequestHandler<E, QueuedEngineDerivationClient>>, EngineRpcProcessor<E>)
     {
         let engine_state = EngineState::default();
         let (engine_state_tx, engine_state_rx) = watch::channel(engine_state);
@@ -254,6 +254,9 @@ impl RollupNode {
         let checkpoint_reader: Arc<dyn ForkchoiceCheckpointReader> =
             Arc::new(checkpoint_client.clone());
         let checkpoint_writer: Arc<dyn CheckpointWriter> = Arc::new(checkpoint_client);
+        let shadow_sequencer = mode.is_sequencer() && self.sequencer_config.is_shadow_sequencer();
+        let shadow_gate = shadow_sequencer
+            .then(|| ShadowReconciliationGate::new(engine.state().sync_state.unsafe_head()));
         let engine_processor = EngineProcessor::new_with_checkpoint(
             Arc::clone(&engine_client),
             Arc::clone(&self.config),
@@ -276,8 +279,8 @@ impl RollupNode {
             engine_queue_length_rx,
         );
 
-        let engine_actor =
-            EngineActor::new(cancellation_token, engine_request_rx, engine_processor);
+        let engine_handler = EngineRequestHandler::new(engine_processor, shadow_gate);
+        let engine_actor = EngineActor::new(cancellation_token, engine_request_rx, engine_handler);
 
         (engine_actor, engine_rpc_processor)
     }
@@ -535,10 +538,14 @@ impl RollupNode {
             derivation_origin_rx,
             cancellation.clone(),
         );
-        let upgrade_signal_metrics_actor =
-            self.upgrade_signal_config.as_ref().map(|c| c.metrics_actor(cancellation.clone()));
+        // One refresher instance is shared between the metrics actor (live auto-apply) and the
+        // sequencer admin RPC.
         let upgrade_signal_refresher =
             self.upgrade_signal_config.as_ref().and_then(|c| c.refresher());
+        let upgrade_signal_metrics_actor = self
+            .upgrade_signal_config
+            .as_ref()
+            .map(|c| c.metrics_actor(upgrade_signal_refresher.clone(), cancellation.clone()));
         let node_mode = self.mode();
         // Create the sequencer if needed
         let (sequencer_actor, sequencer_admin_client) = if node_mode.is_sequencer() {
@@ -569,6 +576,7 @@ impl RollupNode {
                     conductor,
                     engine_client,
                     is_active: self.sequencer_config.sequencer_stopped.not(),
+                    shadow_blocks_per_cycle: self.sequencer_config.shadow_blocks_per_cycle,
                     recovery_mode,
                     rollup_config: Arc::clone(&self.config),
                     unsafe_payload_gossip_client: queued_gossip_client,

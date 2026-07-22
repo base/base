@@ -59,7 +59,7 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        B20PausableFeature, B20PolicyType, B20TokenRole, IB20, InMemoryPolicy,
+        B20PausableFeature, B20PolicyType, B20TokenRole, FakePolicyAccounting, IB20,
         InMemoryTokenAccounting, Mintable, PolicyRegistryStorage, TestToken, Token,
         TokenAccounting,
     };
@@ -71,14 +71,14 @@ mod tests {
     fn make_token() -> TestToken {
         TestToken::with_storage_and_policy(
             InMemoryTokenAccounting::new(TOKEN_ADDR),
-            InMemoryPolicy::new(),
+            FakePolicyAccounting::new(),
         )
     }
 
     fn token_with_role(role: B20TokenRole, account: Address) -> TestToken {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
         accounting.roles.insert((role.id(), account), true);
-        TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
+        TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new())
     }
 
     #[test]
@@ -150,7 +150,7 @@ mod tests {
     fn mint_reverts_when_mint_feature_paused() {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN_ADDR);
         accounting.paused = B20PausableFeature::mask(IB20::PausableFeature::MINT);
-        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+        let mut token = TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new());
 
         assert_eq!(
             token.mint(CALLER, ALICE, U256::ONE, true).unwrap_err(),
@@ -167,7 +167,7 @@ mod tests {
         accounting
             .policy_ids
             .insert(B20PolicyType::MintReceiver.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
-        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+        let mut token = TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new());
 
         assert_eq!(
             token.mint(CALLER, ALICE, U256::ONE, true).unwrap_err(),
@@ -183,7 +183,7 @@ mod tests {
         accounting
             .policy_ids
             .insert(B20PolicyType::MintReceiver.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
-        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+        let mut token = TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new());
 
         assert_eq!(
             token.mint(CALLER, ALICE, U256::ONE, true).unwrap_err(),
@@ -250,7 +250,7 @@ mod tests {
                 .policy_ids
                 .insert(B20PolicyType::MintReceiver.id(), PolicyRegistryStorage::ALWAYS_BLOCK_ID);
         }
-        let mut token = TestToken::with_storage_and_policy(accounting, InMemoryPolicy::new());
+        let mut token = TestToken::with_storage_and_policy(accounting, FakePolicyAccounting::new());
 
         assert_eq!(token.mint(CALLER, to, U256::ONE, privileged).unwrap_err(), expected_error);
     }

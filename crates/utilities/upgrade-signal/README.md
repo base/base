@@ -10,8 +10,48 @@ Three graduated rollout modes are supported:
 
 - **metrics-only** — observe signals and record metrics without applying them
 - **startup-apply** — pin activation timestamps into the chain spec at node startup
-- **runtime-admin** — write live overrides into `RuntimeUpgradeRegistry` so fork checks reflect
-  contract-sourced signals without a node restart
+- **runtime-admin** — apply the startup schedule, automatically re-apply changed live L1 schedules
+  into `RuntimeUpgradeRegistry`, and expose a manual admin refresh RPC
+
+## Configuration
+
+The shared CLI flags are:
+
+| Flag | Env var | Default | Description |
+| ---- | ------- | ------- | ----------- |
+| `--upgrade-signal.contract <ADDRESS>` | `BASE_NODE_UPGRADE_SIGNAL_CONTRACT` | unset | Enables L1 schedule reads from the `ProtocolVersions` contract or proxy. The full contract-backed upgrade schedule is always read; application depends on the selected mode. |
+| `--upgrade-signal.mode <metrics-only\|startup-apply\|runtime-admin>` | `BASE_NODE_UPGRADE_SIGNAL_MODE` | `metrics-only` | Selects whether reads are observation-only, startup-applied, or runtime-applied. |
+| `--upgrade-signal.l1-block-tag <finalized\|safe\|latest>` | `BASE_NODE_UPGRADE_SIGNAL_L1_BLOCK_TAG` | `finalized` | Selects the L1 block tag used for contract calls. |
+
+Execution-side readers also need `--upgrade-signal.l1-rpc` or
+`BASE_NODE_UPGRADE_SIGNAL_L1_RPC`. Integrated `base rpc` and `base sequencer` commands derive this
+from their consensus `--l1-eth-rpc` by default so execution and consensus read the same L1 source
+unless an explicit override is supplied.
+
+## Runtime Behavior
+
+All modes with a configured contract start a live observer. The observer polls L1 every 12 seconds,
+records the latest schedule metrics, and records update counters when a contract-backed signal changes.
+Read failures are metrics-only failures: they are logged and counted, but they do not clear the last
+observed schedule or stop the node.
+
+`startup-apply` reads and validates the L1 schedule before the node starts serving.
+Execution-side callers apply the schedule to the chain spec, consensus-side callers apply it to the
+rollup config, and integrated `base` commands apply one startup read to both. Live polling remains
+observation-only after startup.
+
+`runtime-admin` includes the startup application path and also auto-applies live changes. On the
+first live observation and on each later signal change, the schedule is validated again and applied
+to `RuntimeUpgradeRegistry` so fork checks can see contract-sourced activation updates without a
+restart. The same mode exposes `admin_refreshUpgradeSignal` for a manual refresh against the
+execution or consensus admin RPC when the admin namespace is enabled.
+
+Applying a positive timestamp installs or replaces a runtime activation override. Applying `0`
+clears the activation by installing an explicit never-active override for that upgrade.
+Protocol-version failures fail the
+refresh without mutation. Entries that a specific activation sink does not support are reported as
+ignored, and contract schedule entries for upgrades newer than the binary knows are logged and
+ignored while mapping the contract schedule.
 
 ## Protocol Versions
 
@@ -21,10 +61,10 @@ every signal in a schedule.
 
 The node advertises its supported level with
 [`UpgradeSignalDefaults::node_protocol_version()`](src/config/mod.rs), which packs the Cargo
-package semver synced from the `GitHub` release tag on release branches. Mainline `0.0.0` builds use
-the latest protocol version implemented on main. A signal is supported when:
+package semver synced from the `GitHub` release tag on release branches. Development `0.0.0` builds
+advertise `U256::MAX` so contract minimums do not reject untagged local builds. A positive
+activation signal is supported when:
 
-- the activation timestamp is positive
 - the contract provides a non-zero minimum protocol version
 - the signaled minimum protocol version is less than or equal to the node's supported protocol
   version

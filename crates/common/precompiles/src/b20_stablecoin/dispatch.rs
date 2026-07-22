@@ -19,12 +19,12 @@ use crate::{
     BerylMetricLabels, BerylSelector,
     IB20::{self, IB20Calls as C},
     IB20Stablecoin::{self, IB20StablecoinCalls as SC},
-    NoopPrecompileCallObserver, PermitArgs, Policy, PrecompileCallObserver, StablecoinAccounting,
-    StablecoinV1, StablecoinVersion, StablecoinVersions,
+    NoopPrecompileCallObserver, PermitArgs, PolicyAccounting, PrecompileCallObserver,
+    StablecoinAccounting, StablecoinV1, StablecoinVersion, StablecoinVersions,
     macros::decode_precompile_call,
 };
 
-impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
+impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
     /// ABI-dispatches `calldata` to the appropriate `IB20` handler for `upgrade`.
     pub fn dispatch(
         &mut self,
@@ -75,44 +75,6 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
         recorder.record_base_result(ctx, self.route(ctx, calldata, version, false, observer), |b| b)
     }
 
-    /// Decodes calldata and executes the matching `IB20` operation for `upgrade`.
-    pub fn inner(
-        &mut self,
-        ctx: StorageCtx<'_>,
-        calldata: &[u8],
-        upgrade: BaseUpgrade,
-    ) -> base_precompile_storage::Result<Bytes> {
-        self.inner_with_observer(ctx, calldata, upgrade, NoopPrecompileCallObserver)
-    }
-
-    /// Decodes calldata, observes the decoded operation, and executes the matching handler
-    /// against the version active at `upgrade`.
-    pub fn inner_with_observer<O>(
-        &mut self,
-        ctx: StorageCtx<'_>,
-        calldata: &[u8],
-        upgrade: BaseUpgrade,
-        observer: O,
-    ) -> base_precompile_storage::Result<Bytes>
-    where
-        O: PrecompileCallObserver,
-    {
-        let Some(version) = StablecoinVersions::from_base_upgrade(upgrade) else {
-            return Err(BasePrecompileError::Revert(Bytes::new()));
-        };
-        self.route(ctx, calldata, version, false, observer)
-    }
-
-    /// Decodes calldata and executes it with factory-init privilege.
-    pub fn inner_with_privilege(
-        &mut self,
-        ctx: StorageCtx<'_>,
-        calldata: &[u8],
-        privileged: bool,
-    ) -> base_precompile_storage::Result<Bytes> {
-        self.route(ctx, calldata, StablecoinVersion::V1, privileged, NoopPrecompileCallObserver)
-    }
-
     /// Grants `role` to `account` without checking caller authorization.
     ///
     /// The one token-level mutation the factory needs at bootstrap, when no admin exists yet and the
@@ -129,7 +91,7 @@ impl<S: StablecoinAccounting, P: Policy> B20StablecoinToken<S, P> {
 
     /// Decodes calldata, observes the decoded operation, and routes it to `version` with optional
     /// factory-init privilege.
-    fn route<O>(
+    pub fn route<O>(
         &mut self,
         ctx: StorageCtx<'_>,
         calldata: &[u8],
@@ -374,8 +336,8 @@ mod tests {
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
     use crate::{
-        B20StablecoinToken, IB20, InMemoryPolicy, InMemoryTokenAccounting,
-        NoopPrecompileCallObserver, TestStablecoinToken,
+        B20StablecoinToken, FakePolicyAccounting, IB20, InMemoryTokenAccounting,
+        NoopPrecompileCallObserver, PolicyVersion, StablecoinVersion, TestStablecoinToken,
     };
 
     const TOKEN: Address = Address::repeat_byte(0x01);
@@ -383,21 +345,28 @@ mod tests {
     fn make_stablecoin_token_with_decimals(decimals: u8) -> TestStablecoinToken {
         let mut accounting = InMemoryTokenAccounting::new(TOKEN);
         accounting.decimals = decimals;
-        TestStablecoinToken::with_storage_and_policy(accounting, InMemoryPolicy::new())
+        TestStablecoinToken::with_storage_and_policy(
+            accounting,
+            FakePolicyAccounting::new(),
+            PolicyVersion::V1,
+        )
     }
 
     fn call_inner(token: &mut TestStablecoinToken, calldata: &[u8]) -> Vec<u8> {
         let mut storage = HashMapStorageProvider::new(1);
         storage.set_caller(TOKEN);
-        StorageCtx::enter(&mut storage, |ctx| token.inner(ctx, calldata, BaseUpgrade::Beryl))
-            .unwrap()
-            .to_vec()
+        StorageCtx::enter(&mut storage, |ctx| {
+            token.route(ctx, calldata, StablecoinVersion::V1, false, NoopPrecompileCallObserver)
+        })
+        .unwrap()
+        .to_vec()
     }
 
-    fn make_token() -> B20StablecoinToken<InMemoryTokenAccounting, InMemoryPolicy> {
+    fn make_token() -> B20StablecoinToken<InMemoryTokenAccounting, FakePolicyAccounting> {
         B20StablecoinToken::with_storage_and_policy(
             InMemoryTokenAccounting::new(TOKEN),
-            InMemoryPolicy::new(),
+            FakePolicyAccounting::new(),
+            PolicyVersion::V1,
         )
     }
 

@@ -3184,7 +3184,6 @@ dependencies = [
  "base-common-genesis",
  "base-common-network",
  "base-common-precompiles",
- "base-common-rpc-types",
  "base-common-rpc-types-engine",
  "base-consensus-derive",
  "base-consensus-engine",
@@ -3330,7 +3329,6 @@ dependencies = [
  "base-common-consensus",
  "base-common-genesis",
  "base-common-network",
- "base-common-rpc-types",
  "base-consensus-derive",
  "base-consensus-providers",
  "base-consensus-rpc",
@@ -3819,7 +3817,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-provider 2.0.5",
  "alloy-rpc-types-engine",
- "alloy-rpc-types-eth 2.0.5",
  "alloy-transport 2.0.5",
  "async-trait",
  "base-common-consensus",
@@ -3863,6 +3860,7 @@ dependencies = [
  "base-common-evm",
  "derive_more 2.1.1",
  "rand 0.9.4",
+ "reth-primitives-traits",
  "reth-rpc-convert",
  "revm",
  "serde",
@@ -4070,6 +4068,7 @@ dependencies = [
  "base-common-network",
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
+ "base-consensus-providers",
  "base-metrics",
  "base-protocol",
  "derive_more 2.1.1",
@@ -4240,6 +4239,7 @@ dependencies = [
  "alloy-rpc-client 2.0.5",
  "alloy-rpc-types-beacon",
  "alloy-rpc-types-engine",
+ "alloy-rpc-types-eth 2.0.5",
  "alloy-serde 2.0.5",
  "alloy-transport 2.0.5",
  "alloy-transport-http 2.0.5",
@@ -4448,6 +4448,7 @@ dependencies = [
  "base-common-genesis",
  "base-execution-chainspec",
  "base-node-core",
+ "base-protocol",
  "reth-chainspec",
  "reth-consensus",
  "reth-consensus-common",
@@ -4657,6 +4658,7 @@ dependencies = [
  "base-execution-trie",
  "base-execution-txpool",
  "base-metrics",
+ "base-protocol",
  "derive_more 2.1.1",
  "eyre",
  "futures",
@@ -4772,6 +4774,7 @@ dependencies = [
  "derive_more 2.1.1",
  "futures",
  "jsonrpsee",
+ "lru 0.16.4",
  "metrics",
  "parking_lot",
  "reth-chainspec",
@@ -4976,7 +4979,6 @@ dependencies = [
  "futures",
  "indicatif 0.18.4",
  "tokio",
- "tokio-util",
  "tracing",
  "tracing-subscriber 0.3.23",
  "url",
@@ -4995,6 +4997,7 @@ dependencies = [
  "alloy-signer 2.0.5",
  "alloy-signer-local 2.0.5",
  "alloy-sol-types",
+ "base-cli-utils",
  "base-common-flashblocks",
  "base-common-network",
  "base-common-precompiles",
@@ -5026,6 +5029,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-consensus 2.0.5",
  "alloy-eips 2.0.5",
+ "alloy-evm",
  "alloy-genesis 2.0.5",
  "alloy-network 2.0.5",
  "alloy-primitives",
@@ -5111,6 +5115,7 @@ dependencies = [
  "eyre",
  "futures",
  "humantime",
+ "reth-chain-state",
  "reth-chainspec",
  "reth-codecs",
  "reth-consensus",
@@ -5149,6 +5154,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tokio-stream",
  "tracing",
 ]
 
@@ -5415,6 +5421,7 @@ dependencies = [
  "base-common-rpc-types-engine",
  "base-consensus-providers",
  "base-metrics",
+ "base-optimism-rpc",
  "base-proof",
  "base-proof-client",
  "base-proof-mpt",
@@ -5593,7 +5600,6 @@ dependencies = [
  "base-proof-host",
  "base-proof-preimage",
  "base-proof-primitives",
- "base-proof-rpc",
  "base-proof-succinct-client-utils",
  "base-protocol",
  "bincode 2.0.1",
@@ -6030,7 +6036,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
- "tracing-subscriber 0.3.23",
  "uuid",
 ]
 
@@ -6291,6 +6296,7 @@ dependencies = [
  "base-consensus-gossip",
  "base-consensus-node",
  "base-consensus-peers",
+ "base-consensus-providers",
  "base-consensus-rpc",
  "base-consensus-sources",
  "base-execution-chainspec",
@@ -6298,10 +6304,10 @@ dependencies = [
  "base-execution-txpool",
  "base-flashblocks",
  "base-flashblocks-node",
+ "base-load-tests",
  "base-node-core",
  "base-node-runner",
  "base-optimism-rpc",
- "base-proof-rpc",
  "base-protocol",
  "base-prover-service-client",
  "base-prover-service-protocol",
@@ -6537,6 +6543,33 @@ checksum = "4cbbc9d0964165b47557570cce6c952866c2678457aca742aafc9fb771d30270"
 [[package]]
 name = "base-zk-benchmarks"
 version = "0.0.0"
+dependencies = [
+ "alloy-eips 2.0.5",
+ "alloy-primitives",
+ "base-load-tests",
+ "base-optimism-rpc",
+ "base-prover-service-client",
+ "base-prover-service-protocol",
+ "eyre",
+ "nanoid",
+ "serde",
+ "serde_json",
+ "tokio",
+ "url",
+]
+
+[[package]]
+name = "base-zk-benchmarks-bin"
+version = "0.0.0"
+dependencies = [
+ "base-cli-utils",
+ "base-load-tests",
+ "base-prover-service-protocol",
+ "base-zk-benchmarks",
+ "clap",
+ "eyre",
+ "url",
+]
 
 [[package]]
 name = "base16ct"
@@ -6624,6 +6657,7 @@ dependencies = [
  "alloy-transport-http 2.0.5",
  "anyhow",
  "arboard",
+ "axum 0.8.9",
  "base-common-chains",
  "base-common-consensus",
  "base-common-flashblocks",

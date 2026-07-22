@@ -2,7 +2,7 @@
 //!
 //! [`SequencerActor`]: super::SequencerActor
 
-use std::time::Duration;
+use std::{num::NonZeroU64, time::Duration};
 
 use url::Url;
 
@@ -18,6 +18,10 @@ pub struct SequencerConfig {
     pub sequencer_stopped: bool,
     /// Whether or not the sequencer is in recovery mode.
     pub sequencer_recovery_mode: bool,
+    /// Number of private blocks to build per cycle when running as a shadow sequencer.
+    ///
+    /// When [`None`], the node runs as a normal sequencer.
+    pub shadow_blocks_per_cycle: Option<NonZeroU64>,
     /// The [`Url`] for the conductor RPC endpoint. If [`Some`], enables the conductor service.
     pub conductor_rpc_url: Option<Url>,
     /// Use the conductor's SSZ-binary commit endpoint (`POST /commit-unsafe-payload`)
@@ -35,11 +39,22 @@ pub struct SequencerConfig {
     pub l1_conf_delay: u64,
 }
 
+impl SequencerConfig {
+    /// Maximum number of payloads retained for one shadow reconciliation cycle.
+    pub const MAX_SHADOW_BLOCKS_PER_CYCLE: u64 = 300;
+
+    /// Returns whether shadow sequencer mode is enabled.
+    pub const fn is_shadow_sequencer(&self) -> bool {
+        self.shadow_blocks_per_cycle.is_some()
+    }
+}
+
 impl Default for SequencerConfig {
     fn default() -> Self {
         Self {
             sequencer_stopped: false,
             sequencer_recovery_mode: false,
+            shadow_blocks_per_cycle: None,
             conductor_rpc_url: None,
             conductor_binary_commit: false,
             conductor_rpc_timeout: DEFAULT_CONDUCTOR_RPC_TIMEOUT,

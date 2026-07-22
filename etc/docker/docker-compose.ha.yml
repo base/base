@@ -6,7 +6,7 @@ x-sequencer-base: &sequencer-base
     args:
       PROFILE: "${CARGO_PROFILE:-dev}"
     target: base
-  entrypoint: /app/base
+  entrypoint: /app/base-entrypoint.sh
   depends_on:
     setup-l2:
       condition: service_completed_successfully

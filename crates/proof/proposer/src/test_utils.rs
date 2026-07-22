@@ -17,7 +17,9 @@ use base_proof_contracts::{
     GameStatus,
 };
 use base_proof_primitives::Proposal;
-use base_proof_rpc::{BaseBlock, L1Provider, L2Provider, RollupProvider, RpcError, RpcResult};
+use base_proof_rpc::{
+    BaseBlock, BaseHeader, L1Provider, L2Provider, RollupProvider, RpcError, RpcResult,
+};
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
 use base_prover_service_protocol::{
     DeleteProofRequest, GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse,
@@ -100,11 +102,12 @@ impl L2Provider for MockL2 {
     async fn get_proof(&self, _: Address, _: B256) -> RpcResult<EIP1186AccountProofResponse> {
         unimplemented!()
     }
-    async fn header_by_number(
-        &self,
-        _: BlockNumberOrTag,
-    ) -> RpcResult<alloy_rpc_types_eth::Header> {
-        Ok(alloy_rpc_types_eth::Header { hash: B256::repeat_byte(0x30), ..Default::default() })
+    async fn header_by_number(&self, _: BlockNumberOrTag) -> RpcResult<BaseHeader> {
+        Ok(Header::<alloy_consensus::Header> {
+            hash: B256::repeat_byte(0x30),
+            ..Default::default()
+        }
+        .into())
     }
     async fn block_by_number(&self, _: BlockNumberOrTag) -> RpcResult<BaseBlock> {
         unimplemented!()
@@ -379,6 +382,7 @@ pub fn test_proposal(block_number: u64) -> Proposal {
         l2_block_number: block_number,
         prev_output_root: B256::repeat_byte(0x03),
         config_hash: B256::repeat_byte(0x04),
+        schedule_id: B256::repeat_byte(0x05),
     }
 }
 

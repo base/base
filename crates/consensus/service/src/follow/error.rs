@@ -26,6 +26,34 @@ pub enum FollowError {
     #[error("failed to build local L2 block info: {0}")]
     LocalBlockInfo(#[from] FromBlockError),
 
+    /// Fetching a block from the local L1 node failed.
+    #[error("failed to fetch local L1 block {number}: {source}")]
+    LocalL1BlockFetch {
+        /// Requested L1 block number.
+        number: u64,
+        /// Underlying transport error.
+        source: alloy_transport::TransportError,
+    },
+
+    /// The local L1 node did not return the source label's claimed L1 origin.
+    #[error("local L1 block unavailable at block {0}")]
+    LocalL1BlockUnavailable(u64),
+
+    /// A source L2 label claims an L1 origin that is not canonical locally.
+    #[error(
+        "source L2 block {l2_number} claims L1 origin {remote} at block {l1_number}, but local L1 has {local}"
+    )]
+    SourceL1OriginMismatch {
+        /// Source L2 label block number.
+        l2_number: u64,
+        /// Claimed L1 origin block number.
+        l1_number: u64,
+        /// Hash from the local canonical L1 provider.
+        local: B256,
+        /// L1 origin hash encoded in the source L2 block.
+        remote: B256,
+    },
+
     /// Fetching the local proofs sync status failed.
     #[error("failed to fetch proofs sync status: {0}")]
     ProofsStatus(alloy_transport::TransportError),

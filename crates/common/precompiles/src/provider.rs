@@ -214,7 +214,11 @@ impl<S: BasePrecompileSpec> BasePrecompiles<S> {
                 self.spec.upgrade(),
                 observer.clone(),
             );
-            PolicyRegistryPrecompile::install_with_observer(&mut precompiles, observer.clone());
+            PolicyRegistryPrecompile::install_with_observer(
+                &mut precompiles,
+                self.spec.upgrade(),
+                observer.clone(),
+            );
             ActivationRegistry::install_with_observer(
                 &mut precompiles,
                 ActivationAdminConfig::new(

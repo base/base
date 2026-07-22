@@ -1,10 +1,8 @@
-use alloc::vec::Vec;
-
-use alloy_primitives::{Address, U256, address};
+use alloy_primitives::{Address, LogData, U256, address};
 use base_precompile_macros::contract;
-use base_precompile_storage::{BasePrecompileError, Handler, Mapping, Result};
+use base_precompile_storage::{Handler, Mapping, Result};
 
-use crate::{IPolicyRegistry, IPolicyRegistry::PolicyType};
+use crate::PolicyAccounting;
 
 /// A packed policy storage word.
 ///
@@ -77,454 +75,97 @@ impl PolicyRegistryStorage<'_> {
     pub const ADDRESS: Address = address!("8453000000000000000000000000000000000002");
 
     /// Built-in policy ID that always authorizes every account.
-    /// Encoded as BLOCKLIST (type=0) with counter=0 — an empty blocklist authorizes everyone.
-    /// Also the EVM zero default: zero-initialized policy ID fields map here.
-    pub const ALWAYS_ALLOW_ID: u64 = 0;
+    ///
+    /// A stable protocol sentinel consumed by B-20 tokens as their default policy; the
+    /// encoding is owned by the frozen [`crate::PolicyRegistryV1`] logic and re-exported
+    /// here for the registry's public API.
+    pub const ALWAYS_ALLOW_ID: u64 = crate::PolicyRegistryV1::ALWAYS_ALLOW_ID;
 
     /// Built-in policy ID that always rejects every account.
-    /// Encoded as ALLOWLIST (type=1) with counter=1 and an empty member set,
-    /// so no account is on the allowlist and nobody passes.
-    pub const ALWAYS_BLOCK_ID: u64 = (1u64 << Self::POLICY_ID_TYPE_SHIFT) | 1;
+    ///
+    /// A stable protocol sentinel; encoding owned by [`crate::PolicyRegistryV1`].
+    pub const ALWAYS_BLOCK_ID: u64 = crate::PolicyRegistryV1::ALWAYS_BLOCK_ID;
+}
 
-    const ALLOWLIST_TYPE: u8 = PolicyType::ALLOWLIST as u8;
-    const BLOCKLIST_TYPE: u8 = PolicyType::BLOCKLIST as u8;
-    const COUNTER_MASK: u64 = (1u64 << 56) - 1;
-    const POLICY_ID_TYPE_SHIFT: usize = 56;
-    /// Number of built-in policies; the counter is set to this value after
-    /// `ensure_initialized_and_get_counter`.
-    const BUILTIN_POLICY_COUNT: u64 = 2;
-    /// Maximum number of accounts per membership batch (`createPolicyWithAccounts`,
-    /// `updateAllowlist`, `updateBlocklist`).
-    const MAX_ACCOUNTS_PER_BATCH: usize = 64;
-
-    const fn policy_id_type(policy_id: u64) -> u8 {
-        (policy_id >> Self::POLICY_ID_TYPE_SHIFT) as u8
+impl PolicyAccounting for PolicyRegistryStorage<'_> {
+    fn registry_address(&self) -> Address {
+        Self::ADDRESS
     }
 
-    fn require_custom(&self, policy_id: u64) -> Result<PackedPolicy> {
-        let packed: PackedPolicy = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
-        if !packed.exists() {
-            return Err(BasePrecompileError::revert(IPolicyRegistry::PolicyNotFound {}));
-        }
-        Ok(packed)
+    fn caller(&self) -> Address {
+        self.storage.caller()
     }
 
-    fn require_account_batch_size(accounts: &[Address]) -> Result<()> {
-        if accounts.len() > Self::MAX_ACCOUNTS_PER_BATCH {
-            return Err(BasePrecompileError::revert(IPolicyRegistry::BatchSizeTooLarge {
-                maxBatchSize: U256::from(Self::MAX_ACCOUNTS_PER_BATCH),
-            }));
-        }
-        Ok(())
+    fn read_policy_word(&self, policy_id: u64) -> Result<U256> {
+        self.policies.at(&policy_id).read()
     }
 
-    fn next_counter(&self) -> Result<u64> {
+    fn write_policy_word(&mut self, policy_id: u64, word: U256) -> Result<()> {
+        self.policies.at_mut(&policy_id).write(word)
+    }
+
+    fn read_member(&self, policy_id: u64, account: Address) -> Result<bool> {
+        self.members.at(&policy_id).at(&account).read()
+    }
+
+    fn set_member(&mut self, policy_id: u64, account: Address) -> Result<()> {
+        self.members.at_mut(&policy_id).at_mut(&account).write(true)
+    }
+
+    fn delete_member(&mut self, policy_id: u64, account: Address) -> Result<()> {
+        self.members.at_mut(&policy_id).at_mut(&account).delete()
+    }
+
+    fn read_pending_admin(&self, policy_id: u64) -> Result<Address> {
+        self.pending_admins.at(&policy_id).read()
+    }
+
+    fn write_pending_admin(&mut self, policy_id: u64, admin: Address) -> Result<()> {
+        self.pending_admins.at_mut(&policy_id).write(admin)
+    }
+
+    fn delete_pending_admin(&mut self, policy_id: u64) -> Result<()> {
+        self.pending_admins.at_mut(&policy_id).delete()
+    }
+
+    fn read_next_counter(&self) -> Result<u64> {
         self.next_counter.read()
     }
 
-    const fn make_id(policy_type: u8, counter: u64) -> u64 {
-        (policy_type as u64) << Self::POLICY_ID_TYPE_SHIFT | (counter & Self::COUNTER_MASK)
+    fn write_next_counter(&mut self, counter: u64) -> Result<()> {
+        self.next_counter.write(counter)
     }
 
-    /// Validates policy-creation inputs and returns the raw policy type discriminator.
-    pub fn validate_create_policy_inputs(admin: Address, policy_type: PolicyType) -> Result<u8> {
-        if !policy_type.is_valid() {
-            return Err(BasePrecompileError::enum_conversion_error());
-        }
-        if admin == Address::ZERO {
-            return Err(BasePrecompileError::revert(IPolicyRegistry::ZeroAddress {}));
-        }
-        Ok(policy_type.as_discriminant())
+    fn emit_event(&mut self, log: LogData) -> Result<()> {
+        PolicyRegistryStorage::emit_event(self, log)
     }
 
-    /// Validates the policy exists and the caller is its current admin.
-    /// Returns `(packed, caller)` on success.
-    fn require_admin(&self, policy_id: u64) -> Result<(PackedPolicy, Address)> {
-        let packed = self.require_custom(policy_id)?;
-        let caller = self.storage.caller();
-        if packed.admin() != caller {
-            return Err(BasePrecompileError::revert(IPolicyRegistry::Unauthorized {}));
-        }
-        Ok((packed, caller))
-    }
-
-    /// First-touch setup for the registry: sets the bytecode marker and writes the two
-    /// built-in policies into the `policies` mapping.
-    ///
-    /// Gated on `next_counter`, so all subsequent calls cost a single SLOAD and bail.
-    /// The bytecode marker must precede any storage write because the EVM path can prune
-    /// writes made under an empty native-precompile account.
-    /// Returns the next custom-policy counter after any first-touch setup.
-    ///
-    /// Consumes counters 0 and 1, leaving the counter at 2 so custom policies start there.
-    /// Both built-ins have a renounced (zero) admin.
-    /// - `ALWAYS_ALLOW_ID` (counter=0, BLOCKLIST): no members blocked — everyone is authorized.
-    /// - `ALWAYS_BLOCK_ID` (counter=1, ALLOWLIST): no members allowed — nobody is authorized.
-    pub fn ensure_initialized_and_get_counter(&mut self) -> Result<u64> {
-        let counter = self.next_counter()?;
-        if counter >= Self::BUILTIN_POLICY_COUNT {
-            return Ok(counter);
-        }
-        // Assert that the ID constants match the enum discriminants and counter slots,
-        // catching any future drift from enum reordering or constant changes.
-        debug_assert_eq!(
-            Self::make_id(PolicyType::BLOCKLIST.as_discriminant(), 0),
-            Self::ALWAYS_ALLOW_ID
-        );
-        debug_assert_eq!(
-            Self::make_id(PolicyType::ALLOWLIST.as_discriminant(), 1),
-            Self::ALWAYS_BLOCK_ID
-        );
-        self.__initialize()?;
-        let builtin = PackedPolicy::new(Address::ZERO).into_u256();
-        self.policies.at_mut(&Self::ALWAYS_ALLOW_ID).write(builtin)?;
-        self.policies.at_mut(&Self::ALWAYS_BLOCK_ID).write(builtin)?;
-        self.next_counter.write(Self::BUILTIN_POLICY_COUNT)?;
-        Ok(Self::BUILTIN_POLICY_COUNT)
-    }
-
-    /// Creates a new ALLOWLIST or BLOCKLIST policy, returning its encoded ID.
-    pub fn create_policy(&mut self, admin: Address, policy_type: PolicyType) -> Result<u64> {
-        let policy_type_u8 = Self::validate_create_policy_inputs(admin, policy_type)?;
-        self.create_policy_inner(admin, policy_type, policy_type_u8)
-    }
-
-    fn create_policy_inner(
-        &mut self,
-        admin: Address,
-        policy_type: PolicyType,
-        policy_type_u8: u8,
-    ) -> Result<u64> {
-        let counter = self.ensure_initialized_and_get_counter()?;
-        let is_counter_overflowed = counter >= Self::COUNTER_MASK;
-        if is_counter_overflowed {
-            return Err(BasePrecompileError::under_overflow());
-        }
-        self.next_counter.write(counter + 1)?;
-        let policy_id = Self::make_id(policy_type_u8, counter);
-        self.policies.at_mut(&policy_id).write(PackedPolicy::new(admin).into_u256())?;
-
-        let caller = self.storage.caller();
-        self.emit_event(IPolicyRegistry::PolicyCreated {
-            policyId: policy_id,
-            creator: caller,
-            policyType: policy_type,
-        })?;
-        self.emit_event(IPolicyRegistry::PolicyAdminUpdated {
-            policyId: policy_id,
-            previousAdmin: Address::ZERO,
-            newAdmin: admin,
-        })?;
-
-        Ok(policy_id)
-    }
-
-    /// Creates a new policy and populates its initial member list.
-    pub fn create_policy_with_accounts(
-        &mut self,
-        admin: Address,
-        policy_type: PolicyType,
-        accounts: Vec<Address>,
-    ) -> Result<u64> {
-        let policy_type_u8 = Self::validate_create_policy_inputs(admin, policy_type)?;
-        Self::require_account_batch_size(&accounts)?;
-        let policy_id = self.create_policy_inner(admin, policy_type, policy_type_u8)?;
-        let caller = self.storage.caller();
-        for account in &accounts {
-            self.members.at_mut(&policy_id).at_mut(account).write(true)?;
-        }
-        match policy_type {
-            PolicyType::ALLOWLIST => self.emit_event(IPolicyRegistry::AllowlistUpdated {
-                policyId: policy_id,
-                updater: caller,
-                allowed: true,
-                accounts,
-            })?,
-            PolicyType::BLOCKLIST => self.emit_event(IPolicyRegistry::BlocklistUpdated {
-                policyId: policy_id,
-                updater: caller,
-                blocked: true,
-                accounts,
-            })?,
-            _ => return Err(BasePrecompileError::enum_conversion_error()),
-        }
-        Ok(policy_id)
-    }
-
-    /// Stages `new_admin` as the pending admin for `policy_id`.
-    ///
-    /// Passing `address(0)` clears a previously-staged transfer per the interface spec.
-    pub fn stage_update_admin(&mut self, policy_id: u64, new_admin: Address) -> Result<()> {
-        let (_, caller) = self.require_admin(policy_id)?;
-        if new_admin == Address::ZERO {
-            self.pending_admins.at_mut(&policy_id).delete()?;
-        } else {
-            self.pending_admins.at_mut(&policy_id).write(new_admin)?;
-        }
-        self.emit_event(IPolicyRegistry::PolicyAdminStaged {
-            policyId: policy_id,
-            currentAdmin: caller,
-            pendingAdmin: new_admin,
-        })?;
-        Ok(())
-    }
-
-    /// Completes a pending admin transfer; caller must be the staged pending admin.
-    pub fn finalize_update_admin(&mut self, policy_id: u64) -> Result<()> {
-        let packed = self.require_custom(policy_id)?;
-        let pending = self.pending_admins.at(&policy_id).read()?;
-        if pending == Address::ZERO {
-            return Err(BasePrecompileError::revert(IPolicyRegistry::NoPendingAdmin {}));
-        }
-        let caller = self.storage.caller();
-        if pending != caller {
-            return Err(BasePrecompileError::revert(IPolicyRegistry::Unauthorized {}));
-        }
-        let previous_admin = packed.admin();
-        self.policies.at_mut(&policy_id).write(packed.with_admin(caller).into_u256())?;
-        self.pending_admins.at_mut(&policy_id).delete()?;
-        self.emit_event(IPolicyRegistry::PolicyAdminUpdated {
-            policyId: policy_id,
-            previousAdmin: previous_admin,
-            newAdmin: caller,
-        })?;
-        Ok(())
-    }
-
-    /// Clears the admin of `policy_id`, leaving it permanently un-administered.
-    pub fn renounce_admin(&mut self, policy_id: u64) -> Result<()> {
-        let (packed, caller) = self.require_admin(policy_id)?;
-        self.policies.at_mut(&policy_id).write(packed.with_admin(Address::ZERO).into_u256())?;
-        self.pending_admins.at_mut(&policy_id).delete()?;
-        self.emit_event(IPolicyRegistry::PolicyAdminUpdated {
-            policyId: policy_id,
-            previousAdmin: caller,
-            newAdmin: Address::ZERO,
-        })?;
-        Ok(())
-    }
-
-    /// Adds or removes `accounts` from the allowlist for an ALLOWLIST policy.
-    pub fn update_allowlist(
-        &mut self,
-        policy_id: u64,
-        allowed: bool,
-        accounts: Vec<Address>,
-    ) -> Result<()> {
-        let caller = self.update_membership(policy_id, Self::ALLOWLIST_TYPE, allowed, &accounts)?;
-        self.emit_event(IPolicyRegistry::AllowlistUpdated {
-            policyId: policy_id,
-            updater: caller,
-            allowed,
-            accounts,
-        })
-    }
-
-    /// Adds or removes `accounts` from the blocklist for a BLOCKLIST policy.
-    pub fn update_blocklist(
-        &mut self,
-        policy_id: u64,
-        blocked: bool,
-        accounts: Vec<Address>,
-    ) -> Result<()> {
-        let caller = self.update_membership(policy_id, Self::BLOCKLIST_TYPE, blocked, &accounts)?;
-        self.emit_event(IPolicyRegistry::BlocklistUpdated {
-            policyId: policy_id,
-            updater: caller,
-            blocked,
-            accounts,
-        })
-    }
-
-    fn update_membership(
-        &mut self,
-        policy_id: u64,
-        expected_type: u8,
-        add: bool,
-        accounts: &[Address],
-    ) -> Result<Address> {
-        // Check order matches Solidity canonical: existence → type → admin → batch size.
-        let packed = self.require_custom(policy_id)?;
-        if Self::policy_id_type(policy_id) != expected_type {
-            return Err(BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {}));
-        }
-        let caller = self.storage.caller();
-        if packed.admin() != caller {
-            return Err(BasePrecompileError::revert(IPolicyRegistry::Unauthorized {}));
-        }
-        Self::require_account_batch_size(accounts)?;
-        for account in accounts {
-            if add {
-                self.members.at_mut(&policy_id).at_mut(account).write(true)?;
-            } else {
-                self.members.at_mut(&policy_id).at_mut(account).delete()?;
-            }
-        }
-        Ok(caller)
-    }
-
-    /// Returns `true` if `account` is authorized under `policy_id`.
-    ///
-    /// Malformed policy IDs (type byte > 1) return `Ok(false)` rather than reverting.
-    ///
-    /// If the policy slot has never been written, the function falls back to default
-    /// semantics for that type: an ALLOWLIST with no members authorizes nobody (`false`),
-    /// a BLOCKLIST with no members blocks nobody (`true`). `PolicyNotFound` is never returned.
-    pub fn is_authorized(&self, policy_id: u64, account: Address) -> Result<bool> {
-        // Malformed IDs (type byte > 1) are treated as unauthorized rather than reverting.
-        if Self::policy_id_type(policy_id) > PolicyType::ALLOWLIST as u8 {
-            return Ok(false);
-        }
-        // Fast-paths for built-in IDs: ALWAYS_ALLOW_ID = 0 is the EVM default for any
-        // uninitialized policy field, so this must work before initialization has run.
-        if policy_id == Self::ALWAYS_ALLOW_ID {
-            return Ok(true);
-        }
-        if policy_id == Self::ALWAYS_BLOCK_ID {
-            return Ok(false);
-        }
-        // Read membership directly without requiring the policy slot to be written first.
-        // If the slot is unwritten the mapping returns false, which naturally gives:
-        //   ALLOWLIST  => false  (no members => not authorized)
-        //   BLOCKLIST  => !false (no members blocked => authorized)
-        let member = self.members.at(&policy_id).at(&account).read()?;
-        match Self::policy_id_type(policy_id) {
-            Self::ALLOWLIST_TYPE => Ok(member),
-            Self::BLOCKLIST_TYPE => Ok(!member),
-            _ => unreachable!("type byte > 1 was rejected by the malformed-ID guard above"),
-        }
-    }
-
-    /// Returns `true` if `policy_id` refers to an existing policy.
-    ///
-    /// Malformed policy IDs (type byte > 1) return `Ok(false)` rather than reverting.
-    /// Built-in IDs always return `true` via a fast-path, without reading storage.
-    /// This is necessary because `ALWAYS_ALLOW_ID = 0` is the EVM default for any
-    /// uninitialized policy field, so it must be recognized as valid before
-    /// `ensure_initialized_and_get_counter` has run.
-    pub fn policy_exists(&self, policy_id: u64) -> Result<bool> {
-        // Malformed IDs (type byte > 1) are not well-formed, so they do not exist.
-        if Self::policy_id_type(policy_id) > PolicyType::ALLOWLIST as u8 {
-            return Ok(false);
-        }
-        if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
-            return Ok(true);
-        }
-        let packed = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
-        Ok(packed.exists())
-    }
-
-    /// Returns the current admin of `policy_id`, or `address(0)` for policies with renounced admin.
-    ///
-    /// Returns `address(0)` without reverting for malformed policy IDs (type byte > 1) and for
-    /// policy IDs that have never been written to storage.
-    pub fn get_policy_admin(&self, policy_id: u64) -> Result<Address> {
-        if Self::policy_id_type(policy_id) > PolicyType::ALLOWLIST as u8 {
-            return Ok(Address::ZERO);
-        }
-        let packed = PackedPolicy::from_raw(self.policies.at(&policy_id).read()?);
-        if !packed.exists() {
-            return Ok(Address::ZERO);
-        }
-        Ok(packed.admin())
-    }
-
-    /// Returns the pending admin staged for `policy_id`, or `address(0)` if none.
-    ///
-    /// Returns `address(0)` without reverting for malformed policy IDs (type byte > 1). For
-    /// policy IDs that exist but have no pending transfer, the storage slot returns `address(0)`
-    /// naturally.
-    pub fn pending_policy_admin(&self, policy_id: u64) -> Result<Address> {
-        if Self::policy_id_type(policy_id) > PolicyType::ALLOWLIST as u8 {
-            return Ok(Address::ZERO);
-        }
-        if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
-            return Ok(Address::ZERO);
-        }
-        self.pending_admins.at(&policy_id).read()
-    }
-}
-
-impl crate::Policy for PolicyRegistryStorage<'_> {
-    fn is_authorized(&self, policy_id: u64, account: Address) -> Result<bool> {
-        PolicyRegistryStorage::is_authorized(self, policy_id, account)
-    }
-
-    fn policy_exists(&self, policy_id: u64) -> Result<bool> {
-        PolicyRegistryStorage::policy_exists(self, policy_id)
-    }
-}
-
-impl crate::PolicyRegistry for PolicyRegistryStorage<'_> {
-    fn create_policy(&mut self, admin: Address, policy_type: PolicyType) -> Result<u64> {
-        PolicyRegistryStorage::create_policy(self, admin, policy_type)
-    }
-
-    fn create_policy_with_accounts(
-        &mut self,
-        admin: Address,
-        policy_type: PolicyType,
-        accounts: alloc::vec::Vec<Address>,
-    ) -> Result<u64> {
-        PolicyRegistryStorage::create_policy_with_accounts(self, admin, policy_type, accounts)
-    }
-
-    fn stage_update_admin(&mut self, policy_id: u64, new_admin: Address) -> Result<()> {
-        PolicyRegistryStorage::stage_update_admin(self, policy_id, new_admin)
-    }
-
-    fn finalize_update_admin(&mut self, policy_id: u64) -> Result<()> {
-        PolicyRegistryStorage::finalize_update_admin(self, policy_id)
-    }
-
-    fn renounce_admin(&mut self, policy_id: u64) -> Result<()> {
-        PolicyRegistryStorage::renounce_admin(self, policy_id)
-    }
-
-    fn update_allowlist(
-        &mut self,
-        policy_id: u64,
-        allowed: bool,
-        accounts: alloc::vec::Vec<Address>,
-    ) -> Result<()> {
-        PolicyRegistryStorage::update_allowlist(self, policy_id, allowed, accounts)
-    }
-
-    fn update_blocklist(
-        &mut self,
-        policy_id: u64,
-        blocked: bool,
-        accounts: alloc::vec::Vec<Address>,
-    ) -> Result<()> {
-        PolicyRegistryStorage::update_blocklist(self, policy_id, blocked, accounts)
-    }
-
-    fn get_policy_admin(&self, policy_id: u64) -> Result<Address> {
-        PolicyRegistryStorage::get_policy_admin(self, policy_id)
-    }
-
-    fn pending_policy_admin(&self, policy_id: u64) -> Result<Address> {
-        PolicyRegistryStorage::pending_policy_admin(self, policy_id)
+    fn mark_initialized(&mut self) -> Result<()> {
+        self.__initialize()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, Bytes, U256, address, uint};
-    use alloy_sol_types::SolEvent;
     use base_precompile_storage::{
-        BasePrecompileError, Handler, HashMapStorageProvider, PrecompileStorageProvider,
-        StorageCtx, StorageKey,
+        BasePrecompileError, HashMapStorageProvider, PrecompileStorageProvider, StorageCtx,
+        StorageKey,
     };
     use revm::state::Bytecode;
 
     use crate::{
-        IPolicyRegistry,
         IPolicyRegistry::PolicyType,
+        PolicyRegistryLogic, PolicyRegistryV1,
         policy::storage::{PackedPolicy, PolicyRegistryStorage, slots},
     };
 
-    // --- PackedPolicy unit tests ---
+    const ADMIN: Address = address!("0x1000000000000000000000000000000000000001");
+    const ALICE: Address = address!("0xA000000000000000000000000000000000000001");
+    const POLICY_REGISTRY_ROOT: U256 =
+        uint!(0x00503aeb06982fa1fe3151dc68f90b3946c55c449dfd447e49dcaece71ba4a00_U256);
+
+    // --- PackedPolicy value-type unit tests ---
 
     #[test]
     fn packed_policy_new_roundtrips_admin() {
@@ -564,7 +205,6 @@ mod tests {
 
     #[test]
     fn packed_policy_new_roundtrips_admin_for_various_addresses() {
-        // Verify that admin round-trips correctly for a range of addresses.
         let addrs = [
             ADMIN,
             Address::ZERO,
@@ -581,56 +221,34 @@ mod tests {
     #[test]
     fn exists_bit_does_not_bleed_into_admin_bits() {
         // The EXISTS_BIT is at bit 255; the admin is extracted from bits [159:0].
-        // These must not overlap.
         let p = PackedPolicy::new(ADMIN);
         assert_eq!(p.admin(), ADMIN, "exists bit must not corrupt the admin field");
-        // A raw word with only the exists bit set should have zero admin.
         let exists_only = PackedPolicy::from_raw(PackedPolicy::EXISTS_BIT);
         assert_eq!(exists_only.admin(), Address::ZERO, "exists-only word must have zero admin");
         assert!(exists_only.exists());
     }
 
-    const ADMIN: Address = address!("0x1000000000000000000000000000000000000001");
-    const ALICE: Address = address!("0xA000000000000000000000000000000000000001");
-    const BOB: Address = address!("0xB000000000000000000000000000000000000001");
-    const NEW_ADMIN: Address = address!("0x2000000000000000000000000000000000000002");
-    const POLICY_REGISTRY_ROOT: U256 =
-        uint!(0x00503aeb06982fa1fe3151dc68f90b3946c55c449dfd447e49dcaece71ba4a00_U256);
+    // --- Storage layout / namespace (consensus-critical slot mapping) ---
 
-    /// Returns a storage provider with both built-in policies pre-written.
-    fn storage() -> HashMapStorageProvider {
+    /// Seeds both built-in policies via the pinned V1 bootstrap and returns the provider.
+    fn seeded_storage() -> HashMapStorageProvider {
         let mut s = HashMapStorageProvider::new(1);
         s.set_caller(ADMIN);
         StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).ensure_initialized_and_get_counter()
+            let mut storage = PolicyRegistryStorage::new(ctx);
+            PolicyRegistryV1.ensure_initialized_and_get_counter(&mut storage)
         })
         .unwrap();
         s
     }
 
+    /// Creates an ALLOWLIST policy through the pinned V1 logic.
     fn create_allowlist(s: &mut HashMapStorageProvider) -> u64 {
         StorageCtx::enter(s, |ctx| {
-            PolicyRegistryStorage::new(ctx).create_policy(ADMIN, PolicyType::ALLOWLIST)
+            let mut storage = PolicyRegistryStorage::new(ctx);
+            PolicyRegistryV1.create_policy(&mut storage, ADMIN, PolicyType::ALLOWLIST)
         })
         .unwrap()
-    }
-
-    fn create_blocklist(s: &mut HashMapStorageProvider) -> u64 {
-        StorageCtx::enter(s, |ctx| {
-            PolicyRegistryStorage::new(ctx).create_policy(ADMIN, PolicyType::BLOCKLIST)
-        })
-        .unwrap()
-    }
-
-    fn is_authorized(s: &mut HashMapStorageProvider, policy_id: u64, account: Address) -> bool {
-        StorageCtx::enter(s, |ctx| {
-            PolicyRegistryStorage::new(ctx).is_authorized(policy_id, account)
-        })
-        .unwrap()
-    }
-
-    fn many_accounts(count: usize) -> Vec<Address> {
-        (0..count).map(|i| Address::from_word(U256::from(i as u64 + 1).into())).collect()
     }
 
     #[test]
@@ -643,7 +261,7 @@ mod tests {
 
     #[test]
     fn policy_registry_writes_use_base_std_namespace_slots() {
-        let mut s = storage();
+        let mut s = seeded_storage();
         let id = create_allowlist(&mut s);
 
         StorageCtx::enter(&mut s, |ctx| {
@@ -663,106 +281,8 @@ mod tests {
         });
     }
 
-    // --- built-in IDs ---
-
     #[test]
-    fn always_allow_id_authorizes_any_account() {
-        let mut s = storage();
-        assert!(is_authorized(&mut s, PolicyRegistryStorage::ALWAYS_ALLOW_ID, ALICE));
-        assert!(is_authorized(&mut s, PolicyRegistryStorage::ALWAYS_ALLOW_ID, BOB));
-    }
-
-    #[test]
-    fn always_block_id_rejects_any_account() {
-        let mut s = storage();
-        assert!(!is_authorized(&mut s, PolicyRegistryStorage::ALWAYS_BLOCK_ID, ALICE));
-        assert!(!is_authorized(&mut s, PolicyRegistryStorage::ALWAYS_BLOCK_ID, BOB));
-    }
-
-    #[test]
-    fn unknown_blocklist_policy_id_authorizes_account() {
-        // 0xdeadbeef has type byte 0 (BLOCKLIST); no members blocked => authorized.
-        let mut s = storage();
-        assert!(is_authorized(&mut s, 0xdeadbeef, ALICE));
-    }
-
-    #[test]
-    fn unknown_allowlist_policy_id_does_not_authorize_account() {
-        // A well-formed ALLOWLIST ID that was never written to storage.
-        // No members exist => not authorized.
-        let unknown_allowlist = PolicyRegistryStorage::make_id(PolicyType::ALLOWLIST as u8, 9999);
-        let mut s = storage();
-        assert!(!is_authorized(&mut s, unknown_allowlist, ALICE));
-    }
-
-    #[test]
-    fn malformed_policy_id_is_authorized_returns_false() {
-        // Type byte > 1 => malformed; is_authorized must return false, not revert.
-        let malformed: u64 = (2u64 << 56) | 42;
-        let mut s = storage();
-        let result = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).is_authorized(malformed, ALICE)
-        })
-        .unwrap();
-        assert!(!result);
-    }
-
-    #[test]
-    fn malformed_policy_id_policy_exists_returns_false() {
-        // Type byte > 1 => malformed; policy_exists must return false, not revert.
-        let malformed: u64 = (5u64 << 56) | 100;
-        let mut s = storage();
-        let result = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).policy_exists(malformed)
-        })
-        .unwrap();
-        assert!(!result);
-    }
-
-    // --- ensure_initialized_and_get_counter ---
-
-    #[test]
-    fn first_create_policy_initializes_builtins_and_starts_counter_at_two() {
-        // Start from bare storage — initialization has NOT been called yet.
-        let mut s = HashMapStorageProvider::new(1);
-        s.set_caller(ADMIN);
-        let id = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).create_policy(ADMIN, PolicyType::ALLOWLIST)
-        })
-        .unwrap();
-        // Builtins claimed counters 0 and 1; first custom policy gets 2.
-        assert_eq!(id & PolicyRegistryStorage::COUNTER_MASK, 2);
-        // Builtins are now in storage.
-        assert!(
-            StorageCtx::enter(&mut s, |ctx| PolicyRegistryStorage::new(ctx)
-                .policy_exists(PolicyRegistryStorage::ALWAYS_ALLOW_ID))
-            .unwrap()
-        );
-        assert!(
-            StorageCtx::enter(&mut s, |ctx| PolicyRegistryStorage::new(ctx)
-                .policy_exists(PolicyRegistryStorage::ALWAYS_BLOCK_ID))
-            .unwrap()
-        );
-    }
-
-    #[test]
-    fn ensure_initialized_and_get_counter_is_idempotent() {
-        let mut s = HashMapStorageProvider::new(1);
-        for _ in 0..3 {
-            StorageCtx::enter(&mut s, |ctx| {
-                PolicyRegistryStorage::new(ctx).ensure_initialized_and_get_counter()
-            })
-            .unwrap();
-        }
-        // Counter must be exactly BUILTIN_POLICY_COUNT regardless of how many times called.
-        let counter =
-            StorageCtx::enter(&mut s, |ctx| PolicyRegistryStorage::new(ctx).next_counter.read())
-                .unwrap();
-        assert_eq!(counter, PolicyRegistryStorage::BUILTIN_POLICY_COUNT);
-    }
-
-    #[test]
-    fn ensure_initialized_and_get_counter_seeds_builtins_when_bytecode_is_pre_warmed() {
+    fn seeds_builtins_when_bytecode_is_pre_warmed() {
         // Harnesses (anvil/foundry forks) may pre-warm precompile bytecode to satisfy Solidity's
         // EXTCODESIZE check before any policy is created. The gate keys on next_counter, not on
         // bytecode presence, so seeding still runs and the counter still lands at 2.
@@ -775,887 +295,47 @@ mod tests {
         )
         .unwrap();
 
-        let id = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).create_policy(ADMIN, PolicyType::ALLOWLIST)
-        })
-        .unwrap();
-
-        assert_eq!(id & PolicyRegistryStorage::COUNTER_MASK, 2);
-        assert!(
-            StorageCtx::enter(&mut s, |ctx| PolicyRegistryStorage::new(ctx)
-                .policy_exists(PolicyRegistryStorage::ALWAYS_ALLOW_ID))
-            .unwrap()
-        );
-        assert!(
-            StorageCtx::enter(&mut s, |ctx| PolicyRegistryStorage::new(ctx)
-                .policy_exists(PolicyRegistryStorage::ALWAYS_BLOCK_ID))
-            .unwrap()
-        );
-    }
-
-    // --- createPolicy ---
-
-    #[test]
-    fn create_policy_zero_admin_reverts() {
-        let mut s = storage();
-        let err = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).create_policy(Address::ZERO, PolicyType::ALLOWLIST)
-        })
-        .unwrap_err();
-        assert!(matches!(err, BasePrecompileError::Revert(_)));
-    }
-
-    #[test]
-    fn create_policy_ids_encode_type_in_top_byte_and_increment_counter() {
-        let mut s = storage();
-        let id1 = create_allowlist(&mut s);
-        let id2 = create_blocklist(&mut s);
-        assert_eq!((id1 >> 56) as u8, PolicyType::ALLOWLIST as u8);
-        assert_eq!((id2 >> 56) as u8, PolicyType::BLOCKLIST as u8);
-        assert_eq!(id1 & PolicyRegistryStorage::COUNTER_MASK, 2);
-        assert_eq!(id2 & PolicyRegistryStorage::COUNTER_MASK, 3);
-    }
-
-    #[test]
-    fn create_policy_at_counter_mask_reverts_with_under_overflow() {
-        // Seed next_counter at COUNTER_MASK. Any further create would produce a
-        // policy_id whose low 56 bits alias an existing ID, so the guard must fire.
-        let mut s = storage();
-        StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).next_counter.write(PolicyRegistryStorage::COUNTER_MASK)
-        })
-        .unwrap();
-        let err = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).create_policy(ADMIN, PolicyType::ALLOWLIST)
-        })
-        .unwrap_err();
-        assert_eq!(err, BasePrecompileError::under_overflow());
-    }
-
-    #[test]
-    fn create_policy_at_counter_mask_minus_one_consumes_last_slot_then_reverts() {
-        // The last valid counter value is COUNTER_MASK - 1: it produces a policy_id
-        // whose low 56 bits equal COUNTER_MASK - 1 (no aliasing), and bumps next_counter
-        // to COUNTER_MASK. The very next create must then revert.
-        let mut s = storage();
-        StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx)
-                .next_counter
-                .write(PolicyRegistryStorage::COUNTER_MASK - 1)
-        })
-        .unwrap();
-        let id = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).create_policy(ADMIN, PolicyType::ALLOWLIST)
-        })
-        .unwrap();
-        assert_eq!(
-            id & PolicyRegistryStorage::COUNTER_MASK,
-            PolicyRegistryStorage::COUNTER_MASK - 1
-        );
-        let err = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).create_policy(ADMIN, PolicyType::ALLOWLIST)
-        })
-        .unwrap_err();
-        assert_eq!(err, BasePrecompileError::under_overflow());
-    }
-
-    #[test]
-    fn create_policy_emits_policy_created_and_admin_updated_events() {
-        let mut s = storage();
         let id = create_allowlist(&mut s);
-        let events = s.get_events(PolicyRegistryStorage::ADDRESS);
-        assert_eq!(events.len(), 2);
-        let created = IPolicyRegistry::PolicyCreated::decode_log_data(&events[0]).unwrap();
-        assert_eq!(created.policyId, id);
-        assert_eq!(created.creator, ADMIN);
-        assert_eq!(created.policyType, PolicyType::ALLOWLIST);
-    }
-
-    #[test]
-    fn update_allowlist_emits_allowlist_updated_event() {
-        let mut s = storage();
-        let id = create_allowlist(&mut s);
-        s.set_caller(ADMIN);
+        assert_eq!(id & PolicyRegistryV1::COUNTER_MASK, 2);
         StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).update_allowlist(id, true, vec![ALICE])
-        })
-        .unwrap();
-        let events = s.get_events(PolicyRegistryStorage::ADDRESS);
-        let updated =
-            IPolicyRegistry::AllowlistUpdated::decode_log_data(events.last().unwrap()).unwrap();
-        assert_eq!(updated.policyId, id);
-        assert_eq!(updated.updater, ADMIN);
-        assert!(updated.allowed);
-        assert_eq!(updated.accounts, vec![ALICE]);
-    }
-
-    // --- ALLOWLIST membership ---
-
-    #[test]
-    fn allowlist_non_member_is_not_authorized() {
-        let mut s = storage();
-        let id = create_allowlist(&mut s);
-        assert!(!is_authorized(&mut s, id, ALICE));
-    }
-
-    #[test]
-    fn allowlist_add_then_remove_member() {
-        let mut s = storage();
-        let id = create_allowlist(&mut s);
-
-        StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).update_allowlist(id, true, vec![ALICE])
-        })
-        .unwrap();
-        assert!(is_authorized(&mut s, id, ALICE));
-
-        StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).update_allowlist(id, false, vec![ALICE])
-        })
-        .unwrap();
-        assert!(!is_authorized(&mut s, id, ALICE));
-    }
-
-    #[test]
-    fn allowlist_batch_update_flips_all_accounts() {
-        let mut s = storage();
-        let id = create_allowlist(&mut s);
-
-        StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).update_allowlist(id, true, vec![ALICE, BOB])
-        })
-        .unwrap();
-        assert!(is_authorized(&mut s, id, ALICE));
-        assert!(is_authorized(&mut s, id, BOB));
-
-        StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).update_allowlist(id, false, vec![ALICE, BOB])
-        })
-        .unwrap();
-        assert!(!is_authorized(&mut s, id, ALICE));
-        assert!(!is_authorized(&mut s, id, BOB));
-    }
-
-    #[test]
-    fn update_allowlist_too_many_accounts_reverts() {
-        let mut s = storage();
-        let id = create_allowlist(&mut s);
-        let accounts = many_accounts(PolicyRegistryStorage::MAX_ACCOUNTS_PER_BATCH + 1);
-        let err = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).update_allowlist(id, true, accounts)
-        })
-        .unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IPolicyRegistry::BatchSizeTooLarge {
-                maxBatchSize: U256::from(PolicyRegistryStorage::MAX_ACCOUNTS_PER_BATCH),
-            })
-        );
-    }
-
-    #[test]
-    fn update_allowlist_max_batch_size_succeeds() {
-        let mut s = storage();
-        let id = create_allowlist(&mut s);
-        let accounts = many_accounts(PolicyRegistryStorage::MAX_ACCOUNTS_PER_BATCH);
-        StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).update_allowlist(id, true, accounts)
-        })
-        .unwrap();
-    }
-
-    #[test]
-    fn allowlist_readding_existing_member_is_idempotent() {
-        let mut s = storage();
-        let id = create_allowlist(&mut s);
-        for _ in 0..2 {
-            StorageCtx::enter(&mut s, |ctx| {
-                PolicyRegistryStorage::new(ctx).update_allowlist(id, true, vec![ALICE])
-            })
-            .unwrap();
-        }
-        assert!(is_authorized(&mut s, id, ALICE));
-    }
-
-    #[test]
-    fn allowlist_removing_non_member_is_idempotent() {
-        let mut s = storage();
-        let id = create_allowlist(&mut s);
-        StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).update_allowlist(id, false, vec![ALICE])
-        })
-        .unwrap();
-        assert!(!is_authorized(&mut s, id, ALICE));
-    }
-
-    #[test]
-    fn update_allowlist_on_blocklist_policy_reverts() {
-        let mut s = storage();
-        let id = create_blocklist(&mut s);
-        let err = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).update_allowlist(id, true, vec![ALICE])
-        })
-        .unwrap_err();
-        assert!(matches!(err, BasePrecompileError::Revert(_)));
-    }
-
-    // --- BLOCKLIST membership ---
-
-    #[test]
-    fn blocklist_non_member_is_authorized() {
-        let mut s = storage();
-        let id = create_blocklist(&mut s);
-        assert!(is_authorized(&mut s, id, ALICE));
-    }
-
-    #[test]
-    fn blocklist_block_then_unblock_member() {
-        let mut s = storage();
-        let id = create_blocklist(&mut s);
-
-        StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).update_blocklist(id, true, vec![ALICE])
-        })
-        .unwrap();
-        assert!(!is_authorized(&mut s, id, ALICE));
-
-        StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).update_blocklist(id, false, vec![ALICE])
-        })
-        .unwrap();
-        assert!(is_authorized(&mut s, id, ALICE));
-    }
-
-    #[test]
-    fn update_blocklist_on_allowlist_policy_reverts() {
-        let mut s = storage();
-        let id = create_allowlist(&mut s);
-        let err = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).update_blocklist(id, true, vec![ALICE])
-        })
-        .unwrap_err();
-        assert!(matches!(err, BasePrecompileError::Revert(_)));
-    }
-
-    #[test]
-    fn update_blocklist_too_many_accounts_reverts() {
-        let mut s = storage();
-        let id = create_blocklist(&mut s);
-        let accounts = many_accounts(PolicyRegistryStorage::MAX_ACCOUNTS_PER_BATCH + 1);
-        let err = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).update_blocklist(id, true, accounts)
-        })
-        .unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IPolicyRegistry::BatchSizeTooLarge {
-                maxBatchSize: U256::from(PolicyRegistryStorage::MAX_ACCOUNTS_PER_BATCH),
-            })
-        );
-    }
-
-    #[test]
-    fn update_allowlist_on_blocklist_policy_by_non_admin_reverts_with_incompatible_type() {
-        let mut s = storage();
-        let id = create_blocklist(&mut s);
-        s.set_caller(ALICE);
-        let err = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).update_allowlist(id, true, vec![BOB])
-        })
-        .unwrap_err();
-        assert_eq!(err, BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {}));
-    }
-
-    #[test]
-    fn update_blocklist_on_allowlist_policy_by_non_admin_reverts_with_incompatible_type() {
-        let mut s = storage();
-        let id = create_allowlist(&mut s);
-        s.set_caller(ALICE);
-        let err = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).update_blocklist(id, true, vec![BOB])
-        })
-        .unwrap_err();
-        assert_eq!(err, BasePrecompileError::revert(IPolicyRegistry::IncompatiblePolicyType {}));
-    }
-
-    // --- createPolicyWithAccounts ---
-
-    #[test]
-    fn create_policy_with_accounts_seeds_members() {
-        let mut s = storage();
-        let id = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).create_policy_with_accounts(
-                ADMIN,
-                PolicyType::ALLOWLIST,
-                vec![ALICE, BOB],
-            )
-        })
-        .unwrap();
-        assert!(is_authorized(&mut s, id, ALICE));
-        assert!(is_authorized(&mut s, id, BOB));
-    }
-
-    #[test]
-    fn create_policy_with_accounts_empty_batch_emits_seed_event() {
-        let mut s = storage();
-        let id = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).create_policy_with_accounts(
-                ADMIN,
-                PolicyType::ALLOWLIST,
-                Vec::new(),
-            )
-        })
-        .unwrap();
-
-        let events = s.get_events(PolicyRegistryStorage::ADDRESS);
-        assert_eq!(events.len(), 3);
-        let updated =
-            IPolicyRegistry::AllowlistUpdated::decode_log_data(events.last().unwrap()).unwrap();
-        assert_eq!(updated.policyId, id);
-        assert_eq!(updated.updater, ADMIN);
-        assert!(updated.allowed);
-        assert!(updated.accounts.is_empty());
-    }
-
-    // --- two-step admin transfer ---
-
-    #[test]
-    fn admin_transfer_two_step() {
-        let mut s = storage();
-        let id = create_allowlist(&mut s);
-
-        StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).stage_update_admin(id, NEW_ADMIN)
-        })
-        .unwrap();
-
-        s.set_caller(NEW_ADMIN);
-        StorageCtx::enter(&mut s, |ctx| PolicyRegistryStorage::new(ctx).finalize_update_admin(id))
-            .unwrap();
-
-        s.set_caller(NEW_ADMIN);
-        StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).update_allowlist(id, true, vec![ALICE])
-        })
-        .unwrap();
-        assert!(is_authorized(&mut s, id, ALICE));
-    }
-
-    #[test]
-    fn finalize_update_admin_without_pending_reverts() {
-        let mut s = storage();
-        let id = create_allowlist(&mut s);
-        let err = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).finalize_update_admin(id)
-        })
-        .unwrap_err();
-        assert!(matches!(err, BasePrecompileError::Revert(_)));
-    }
-
-    // --- renounceAdmin ---
-
-    #[test]
-    fn renounce_admin_freezes_policy() {
-        let mut s = storage();
-        let id = create_allowlist(&mut s);
-
-        StorageCtx::enter(&mut s, |ctx| PolicyRegistryStorage::new(ctx).renounce_admin(id))
-            .unwrap();
-
-        let err = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).update_allowlist(id, true, vec![ALICE])
-        })
-        .unwrap_err();
-        assert!(matches!(err, BasePrecompileError::Revert(_)));
-    }
-
-    // --- static call guard ---
-
-    #[test]
-    fn write_in_static_context_reverts() {
-        let mut s = storage();
-        s.set_static(true);
-        let err = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).create_policy(ADMIN, PolicyType::ALLOWLIST)
-        })
-        .unwrap_err();
-        assert_eq!(err, BasePrecompileError::StaticCallViolation);
-    }
-
-    // --- create_policy_with_accounts edge cases ---
-
-    #[test]
-    fn create_policy_with_accounts_zero_account_is_seeded() {
-        let mut s = storage();
-        let id = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).create_policy_with_accounts(
-                ADMIN,
-                PolicyType::ALLOWLIST,
-                vec![ALICE, Address::ZERO],
-            )
-        })
-        .unwrap();
-        StorageCtx::enter(&mut s, |ctx| {
-            assert!(PolicyRegistryStorage::new(ctx).is_authorized(id, Address::ZERO).unwrap());
+            let storage = PolicyRegistryStorage::new(ctx);
+            assert!(
+                PolicyRegistryV1
+                    .policy_exists(&storage, PolicyRegistryV1::ALWAYS_ALLOW_ID)
+                    .unwrap()
+            );
+            assert!(
+                PolicyRegistryV1
+                    .policy_exists(&storage, PolicyRegistryV1::ALWAYS_BLOCK_ID)
+                    .unwrap()
+            );
         });
     }
 
-    #[test]
-    fn create_policy_with_accounts_too_many_accounts_reverts() {
-        let mut s = storage();
-        let accounts = many_accounts(PolicyRegistryStorage::MAX_ACCOUNTS_PER_BATCH + 1);
-        let err = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).create_policy_with_accounts(
-                ADMIN,
-                PolicyType::ALLOWLIST,
-                accounts,
-            )
-        })
-        .unwrap_err();
-        assert_eq!(
-            err,
-            BasePrecompileError::revert(IPolicyRegistry::BatchSizeTooLarge {
-                maxBatchSize: U256::from(PolicyRegistryStorage::MAX_ACCOUNTS_PER_BATCH),
-            })
-        );
-    }
+    // --- static-call guard (storage-layer write protection) ---
 
     #[test]
-    fn create_policy_with_accounts_zero_admin_precedes_batch_size_revert() {
-        let mut s = storage();
-        let accounts = many_accounts(PolicyRegistryStorage::MAX_ACCOUNTS_PER_BATCH + 1);
-        let err = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).create_policy_with_accounts(
-                Address::ZERO,
-                PolicyType::ALLOWLIST,
-                accounts,
-            )
-        })
-        .unwrap_err();
-        assert_eq!(err, BasePrecompileError::revert(IPolicyRegistry::ZeroAddress {}));
-    }
-
-    #[test]
-    fn create_policy_with_accounts_invalid_policy_type_precedes_batch_size_revert() {
-        let mut s = storage();
-        let accounts = many_accounts(PolicyRegistryStorage::MAX_ACCOUNTS_PER_BATCH + 1);
-        let err = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).create_policy_with_accounts(
-                ADMIN,
-                PolicyType::__Invalid,
-                accounts,
-            )
-        })
-        .unwrap_err();
-        assert_eq!(err, BasePrecompileError::enum_conversion_error());
-    }
-
-    #[test]
-    fn create_policy_with_accounts_blocklist_seeds_blocked_members() {
-        let mut s = storage();
-        let id = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).create_policy_with_accounts(
-                ADMIN,
-                PolicyType::BLOCKLIST,
-                vec![ALICE, BOB],
-            )
-        })
-        .unwrap();
-        assert!(!is_authorized(&mut s, id, ALICE));
-        assert!(!is_authorized(&mut s, id, BOB));
-    }
-
-    // --- stage_update_admin authorization ---
-
-    #[test]
-    fn stage_update_admin_unauthorized_reverts() {
-        let mut s = storage();
-        let id = create_allowlist(&mut s);
-        s.set_caller(ALICE);
-        let err = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).stage_update_admin(id, NEW_ADMIN)
-        })
-        .unwrap_err();
-        assert!(matches!(err, BasePrecompileError::Revert(_)));
-    }
-
-    // --- finalize_update_admin authorization ---
-
-    #[test]
-    fn finalize_update_admin_unauthorized_reverts() {
-        let mut s = storage();
-        let id = create_allowlist(&mut s);
-        StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).stage_update_admin(id, NEW_ADMIN)
-        })
-        .unwrap();
-        s.set_caller(ALICE);
-        let err = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).finalize_update_admin(id)
-        })
-        .unwrap_err();
-        assert!(matches!(err, BasePrecompileError::Revert(_)));
-    }
-
-    // --- renounce_admin authorization ---
-
-    #[test]
-    fn renounce_admin_unauthorized_reverts() {
-        let mut s = storage();
-        let id = create_allowlist(&mut s);
-        s.set_caller(ALICE);
-        let err =
-            StorageCtx::enter(&mut s, |ctx| PolicyRegistryStorage::new(ctx).renounce_admin(id))
-                .unwrap_err();
-        assert!(matches!(err, BasePrecompileError::Revert(_)));
-    }
-
-    // --- update_allowlist static call ---
-
-    #[test]
-    fn update_allowlist_static_call_reverts() {
-        let mut s = storage();
-        let id = create_allowlist(&mut s);
+    fn write_in_static_context_reverts() {
+        let mut s = seeded_storage();
         s.set_static(true);
         let err = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).update_allowlist(id, true, vec![ALICE])
+            let mut storage = PolicyRegistryStorage::new(ctx);
+            PolicyRegistryV1.create_policy(&mut storage, ADMIN, PolicyType::ALLOWLIST)
         })
         .unwrap_err();
         assert_eq!(err, BasePrecompileError::StaticCallViolation);
     }
 
-    // --- policy_exists for built-in IDs ---
-
     #[test]
-    fn policy_exists_builtin_ids_always_return_true() {
-        let mut s = HashMapStorageProvider::new(1);
-        assert!(
-            StorageCtx::enter(&mut s, |ctx| {
-                PolicyRegistryStorage::new(ctx)
-                    .policy_exists(PolicyRegistryStorage::ALWAYS_ALLOW_ID)
-            })
-            .unwrap()
-        );
-        assert!(
-            StorageCtx::enter(&mut s, |ctx| {
-                PolicyRegistryStorage::new(ctx)
-                    .policy_exists(PolicyRegistryStorage::ALWAYS_BLOCK_ID)
-            })
-            .unwrap()
-        );
-    }
-
-    // --- get_policy_admin for built-in IDs ---
-
-    #[test]
-    fn get_policy_admin_builtin_ids_return_zero_address() {
-        let mut s = storage();
-        assert_eq!(
-            StorageCtx::enter(&mut s, |ctx| {
-                PolicyRegistryStorage::new(ctx)
-                    .get_policy_admin(PolicyRegistryStorage::ALWAYS_ALLOW_ID)
-            })
-            .unwrap(),
-            Address::ZERO
-        );
-        assert_eq!(
-            StorageCtx::enter(&mut s, |ctx| {
-                PolicyRegistryStorage::new(ctx)
-                    .get_policy_admin(PolicyRegistryStorage::ALWAYS_BLOCK_ID)
-            })
-            .unwrap(),
-            Address::ZERO
-        );
-    }
-
-    // --- pending_policy_admin for built-in IDs and unknown IDs ---
-
-    #[test]
-    fn pending_policy_admin_builtin_ids_return_zero_address() {
-        let mut s = storage();
-        assert_eq!(
-            StorageCtx::enter(&mut s, |ctx| {
-                PolicyRegistryStorage::new(ctx)
-                    .pending_policy_admin(PolicyRegistryStorage::ALWAYS_ALLOW_ID)
-            })
-            .unwrap(),
-            Address::ZERO
-        );
-        assert_eq!(
-            StorageCtx::enter(&mut s, |ctx| {
-                PolicyRegistryStorage::new(ctx)
-                    .pending_policy_admin(PolicyRegistryStorage::ALWAYS_BLOCK_ID)
-            })
-            .unwrap(),
-            Address::ZERO
-        );
-    }
-
-    #[test]
-    fn pending_policy_admin_builtin_ids_short_circuit_staged_slot() {
-        let mut s = storage();
-        for policy_id in
-            [PolicyRegistryStorage::ALWAYS_ALLOW_ID, PolicyRegistryStorage::ALWAYS_BLOCK_ID]
-        {
-            StorageCtx::enter(&mut s, |ctx| {
-                PolicyRegistryStorage::new(ctx).pending_admins.at_mut(&policy_id).write(NEW_ADMIN)
-            })
-            .unwrap();
-
-            let pending = StorageCtx::enter(&mut s, |ctx| {
-                PolicyRegistryStorage::new(ctx).pending_policy_admin(policy_id)
-            })
-            .unwrap();
-            assert_eq!(
-                pending,
-                Address::ZERO,
-                "built-in policy {policy_id} must ignore a staged pending slot"
-            );
-        }
-    }
-
-    #[test]
-    fn pending_policy_admin_counter_one_blocklist_reads_staged_slot() {
-        // BLOCKLIST counter=1 is not ALWAYS_BLOCK_ID, which is ALLOWLIST counter=1.
-        let counter_one_blocklist = PolicyRegistryStorage::make_id(PolicyType::BLOCKLIST as u8, 1);
-        assert_ne!(counter_one_blocklist, PolicyRegistryStorage::ALWAYS_BLOCK_ID);
-
-        let mut s = storage();
-        StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx)
-                .pending_admins
-                .at_mut(&counter_one_blocklist)
-                .write(NEW_ADMIN)
-        })
-        .unwrap();
-
-        let pending = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).pending_policy_admin(counter_one_blocklist)
-        })
-        .unwrap();
-        assert_eq!(pending, NEW_ADMIN);
-    }
-
-    #[test]
-    fn pending_policy_admin_unknown_id_returns_zero_address() {
-        let mut s = storage();
-        let pending = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).pending_policy_admin(0xdeadbeef)
-        })
-        .unwrap();
-        assert_eq!(pending, Address::ZERO);
-    }
-
-    // A policy ID whose type byte is 2 (> ALLOWLIST=1) is malformed.
-    const MALFORMED_POLICY_ID: u64 = (2u64 << 56) | 42;
-
-    #[test]
-    fn get_policy_admin_malformed_policy_id_returns_zero_address() {
-        let mut s = storage();
-        let admin = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).get_policy_admin(MALFORMED_POLICY_ID)
-        })
-        .unwrap();
-        assert_eq!(admin, Address::ZERO);
-    }
-
-    #[test]
-    fn get_policy_admin_nonexistent_policy_returns_zero_address() {
-        let mut s = storage();
-        // 0xdeadbeef has type byte 0, so it is well-formed but was never created.
-        let admin = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).get_policy_admin(0xdeadbeef)
-        })
-        .unwrap();
-        assert_eq!(admin, Address::ZERO);
-    }
-
-    #[test]
-    fn pending_policy_admin_malformed_policy_id_returns_zero_address() {
-        let mut s = storage();
-        let pending = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).pending_policy_admin(MALFORMED_POLICY_ID)
-        })
-        .unwrap();
-        assert_eq!(pending, Address::ZERO);
-    }
-
-    #[test]
-    fn pending_policy_admin_nonexistent_well_formed_policy_returns_zero_address() {
-        // A well-formed ID (type byte in range) that was never created: storage
-        // slot is unwritten, so the read returns Address::ZERO without reverting.
-        let mut s = storage();
-        let nonexistent = PolicyRegistryStorage::make_id(0, 999);
-        let pending = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).pending_policy_admin(nonexistent)
-        })
-        .unwrap();
-        assert_eq!(pending, Address::ZERO);
-    }
-
-    // --- builtin policies block mutations via Unauthorized ---
-
-    #[test]
-    fn builtin_policies_reject_admin_mutations() {
-        let mut s = storage();
-        // Both built-in policies have zero admin, so any caller gets Unauthorized.
-        for policy_id in
-            [PolicyRegistryStorage::ALWAYS_ALLOW_ID, PolicyRegistryStorage::ALWAYS_BLOCK_ID]
-        {
-            let err = StorageCtx::enter(&mut s, |ctx| {
-                PolicyRegistryStorage::new(ctx).stage_update_admin(policy_id, ALICE)
-            })
-            .unwrap_err();
-            assert!(matches!(err, BasePrecompileError::Revert(_)));
-        }
-    }
-
-    // --- PolicyRegistryTrait delegation ---
-
-    #[test]
-    fn trait_create_policy_delegates() {
-        let mut s = storage();
-        let id = StorageCtx::enter(&mut s, |ctx| {
-            let mut reg = PolicyRegistryStorage::new(ctx);
-            crate::PolicyRegistry::create_policy(&mut reg, ADMIN, PolicyType::ALLOWLIST)
-        })
-        .unwrap();
-        assert_eq!((id >> 56) as u8, PolicyType::ALLOWLIST as u8);
-    }
-
-    #[test]
-    fn trait_create_policy_with_accounts_delegates() {
-        let mut s = storage();
-        let id = StorageCtx::enter(&mut s, |ctx| {
-            let mut reg = PolicyRegistryStorage::new(ctx);
-            crate::PolicyRegistry::create_policy_with_accounts(
-                &mut reg,
-                ADMIN,
-                PolicyType::ALLOWLIST,
-                vec![ALICE],
-            )
-        })
-        .unwrap();
-        assert!(is_authorized(&mut s, id, ALICE));
-    }
-
-    #[test]
-    fn trait_stage_update_admin_delegates() {
-        let mut s = storage();
+    fn update_allowlist_static_call_reverts() {
+        let mut s = seeded_storage();
         let id = create_allowlist(&mut s);
-        StorageCtx::enter(&mut s, |ctx| {
-            let mut reg = PolicyRegistryStorage::new(ctx);
-            crate::PolicyRegistry::stage_update_admin(&mut reg, id, NEW_ADMIN)
+        s.set_static(true);
+        let err = StorageCtx::enter(&mut s, |ctx| {
+            let mut storage = PolicyRegistryStorage::new(ctx);
+            PolicyRegistryV1.update_allowlist(&mut storage, id, true, alloc::vec![ALICE])
         })
-        .unwrap();
-        let pending = StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).pending_policy_admin(id)
-        })
-        .unwrap();
-        assert_eq!(pending, NEW_ADMIN);
-    }
-
-    #[test]
-    fn trait_finalize_update_admin_delegates() {
-        let mut s = storage();
-        let id = create_allowlist(&mut s);
-        StorageCtx::enter(&mut s, |ctx| {
-            PolicyRegistryStorage::new(ctx).stage_update_admin(id, NEW_ADMIN)
-        })
-        .unwrap();
-        s.set_caller(NEW_ADMIN);
-        StorageCtx::enter(&mut s, |ctx| {
-            let mut reg = PolicyRegistryStorage::new(ctx);
-            crate::PolicyRegistry::finalize_update_admin(&mut reg, id)
-        })
-        .unwrap();
-        let admin =
-            StorageCtx::enter(&mut s, |ctx| PolicyRegistryStorage::new(ctx).get_policy_admin(id))
-                .unwrap();
-        assert_eq!(admin, NEW_ADMIN);
-    }
-
-    #[test]
-    fn trait_renounce_admin_delegates() {
-        let mut s = storage();
-        let id = create_allowlist(&mut s);
-        StorageCtx::enter(&mut s, |ctx| {
-            let mut reg = PolicyRegistryStorage::new(ctx);
-            crate::PolicyRegistry::renounce_admin(&mut reg, id)
-        })
-        .unwrap();
-        let admin =
-            StorageCtx::enter(&mut s, |ctx| PolicyRegistryStorage::new(ctx).get_policy_admin(id))
-                .unwrap();
-        assert_eq!(admin, Address::ZERO);
-    }
-
-    #[test]
-    fn trait_update_allowlist_delegates() {
-        let mut s = storage();
-        let id = create_allowlist(&mut s);
-        StorageCtx::enter(&mut s, |ctx| {
-            let mut reg = PolicyRegistryStorage::new(ctx);
-            crate::PolicyRegistry::update_allowlist(&mut reg, id, true, vec![ALICE])
-        })
-        .unwrap();
-        assert!(is_authorized(&mut s, id, ALICE));
-    }
-
-    #[test]
-    fn trait_update_blocklist_delegates() {
-        let mut s = storage();
-        let id = create_blocklist(&mut s);
-        StorageCtx::enter(&mut s, |ctx| {
-            let mut reg = PolicyRegistryStorage::new(ctx);
-            crate::PolicyRegistry::update_blocklist(&mut reg, id, true, vec![ALICE])
-        })
-        .unwrap();
-        assert!(!is_authorized(&mut s, id, ALICE));
-    }
-
-    #[test]
-    fn trait_is_authorized_delegates() {
-        let mut s = storage();
-        let authorized = StorageCtx::enter(&mut s, |ctx| {
-            let reg = PolicyRegistryStorage::new(ctx);
-            crate::Policy::is_authorized(&reg, PolicyRegistryStorage::ALWAYS_ALLOW_ID, ALICE)
-        })
-        .unwrap();
-        assert!(authorized);
-    }
-
-    #[test]
-    fn trait_policy_exists_delegates() {
-        let mut s = storage();
-        let exists = StorageCtx::enter(&mut s, |ctx| {
-            let reg = PolicyRegistryStorage::new(ctx);
-            crate::Policy::policy_exists(&reg, PolicyRegistryStorage::ALWAYS_ALLOW_ID)
-        })
-        .unwrap();
-        assert!(exists);
-    }
-
-    #[test]
-    fn trait_get_policy_admin_delegates() {
-        let mut s = storage();
-        let admin = StorageCtx::enter(&mut s, |ctx| {
-            let reg = PolicyRegistryStorage::new(ctx);
-            crate::PolicyRegistry::get_policy_admin(&reg, PolicyRegistryStorage::ALWAYS_ALLOW_ID)
-        })
-        .unwrap();
-        assert_eq!(admin, Address::ZERO);
-    }
-
-    #[test]
-    fn trait_pending_policy_admin_delegates() {
-        let mut s = storage();
-        let id = create_allowlist(&mut s);
-        let pending = StorageCtx::enter(&mut s, |ctx| {
-            let reg = PolicyRegistryStorage::new(ctx);
-            crate::PolicyRegistry::pending_policy_admin(&reg, id)
-        })
-        .unwrap();
-        assert_eq!(pending, Address::ZERO);
+        .unwrap_err();
+        assert_eq!(err, BasePrecompileError::StaticCallViolation);
     }
 }

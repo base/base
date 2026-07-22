@@ -26,7 +26,6 @@ base-batcher-core.workspace = true
 base-batcher-admin.workspace = true
 base-balance-monitor.workspace = true
 base-common-network.workspace = true
-base-common-rpc-types.workspace = true
 base-batcher-source.workspace = true
 base-batcher-encoder.workspace = true
 metrics = { workspace = true, optional = true }

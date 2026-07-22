@@ -139,6 +139,15 @@ impl<'a> CertChain<'a> {
             })?;
             expiries.push(not_after_secs);
 
+            // Only the trust anchor may be self-issued. Allowing a later
+            // self-issued certificate lets a duplicated root alter every
+            // subsequent accumulated path digest.
+            if i > 0 && parsed.cert.issuer() == parsed.cert.subject() {
+                return Err(VerifierError::CertificateVerification(format!(
+                    "certificate {i}: self-issued certificate is only allowed at the trust anchor"
+                )));
+            }
+
             // Skip validation for trusted prefix certs.
             if i < trusted_prefix_len {
                 continue;
@@ -455,6 +464,24 @@ mod tests {
                 expiries[i - 1]
             );
         }
+    }
+
+    #[rstest]
+    #[case::untrusted_duplicate_root(1)]
+    #[case::trusted_duplicate_root(2)]
+    fn duplicate_root_rejected(full_chain_der: Vec<Vec<u8>>, #[case] trusted_prefix_len: usize) {
+        let refs = [
+            full_chain_der[0].as_slice(),
+            full_chain_der[0].as_slice(),
+            full_chain_der[1].as_slice(),
+            full_chain_der[2].as_slice(),
+            full_chain_der[3].as_slice(),
+            full_chain_der[4].as_slice(),
+        ];
+        let chain = CertChain::from_der(&refs).unwrap();
+        let err = chain.verify_chain(trusted_prefix_len, VALID_TIMESTAMP_MS).unwrap_err();
+
+        assert!(err.to_string().contains("self-issued"), "unexpected error: {err}");
     }
 
     #[rstest]

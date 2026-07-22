@@ -73,6 +73,19 @@ pub struct BasePooledTransaction<
     /// Optional maximum timestamp (millis since Unix epoch) from bundle submission.
     /// The transaction should be evicted after this time.
     max_timestamp: Option<u64>,
+    /// The set of on-chain state surfaces whose change invalidates this
+    /// transaction, computed once during validation and consumed by the pool's
+    /// invalidation index. Empty until set; see [`crate::WatchSet`].
+    watch_set: OnceLock<crate::WatchSet>,
+    /// The admission limit classification (resolved sender/payer, lock/trusted
+    /// status, payer balance and max cost), computed once during validation and
+    /// consumed by the pool's admission guard. Unset until classified; see
+    /// [`crate::LimitClass`].
+    limit_class: OnceLock<crate::LimitClass>,
+    /// The authorization read-set and build-time predicates captured during
+    /// EIP-8130 validation. Unset for other transaction types; see
+    /// [`crate::WatchManifest`].
+    watch_manifest: OnceLock<crate::WatchManifest>,
 }
 
 impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
@@ -87,6 +100,9 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             target_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            watch_set: OnceLock::new(),
+            limit_class: OnceLock::new(),
+            watch_manifest: OnceLock::new(),
         }
     }
 
@@ -107,6 +123,9 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             target_block_number: None,
             min_timestamp: None,
             max_timestamp: None,
+            watch_set: OnceLock::new(),
+            limit_class: OnceLock::new(),
+            watch_manifest: OnceLock::new(),
         }
     }
 
@@ -216,7 +235,20 @@ impl<Cons: Typed2718, Pooled> Typed2718 for BasePooledTransaction<Cons, Pooled> 
 
 impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Pooled> {
     fn size(&self) -> usize {
-        self.inner.size() + core::mem::size_of::<u128>() + core::mem::size_of::<Option<u64>>() * 3
+        let watch_keys_size =
+            self.watch_set.get().map_or(0, |watch_set| core::mem::size_of_val(watch_set.keys()));
+        let manifest_slots_size = self
+            .watch_manifest
+            .get()
+            .map_or(0, |manifest| core::mem::size_of_val(manifest.config_slots()));
+        self.inner.size()
+            + core::mem::size_of::<u128>()
+            + core::mem::size_of::<Option<u64>>() * 3
+            + core::mem::size_of::<OnceLock<crate::WatchSet>>()
+            + watch_keys_size
+            + core::mem::size_of::<OnceLock<crate::LimitClass>>()
+            + core::mem::size_of::<OnceLock<crate::WatchManifest>>()
+            + manifest_slots_size
     }
 }
 
@@ -352,6 +384,47 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
     fn eip8130_replay_id(&self) -> Option<B256> {
         None
     }
+
+    /// Returns the invalidation watch set computed during validation, if set.
+    ///
+    /// Defaults to `None` for implementers that do not track invalidation
+    /// surfaces.
+    fn watch_set(&self) -> Option<&crate::WatchSet> {
+        None
+    }
+
+    /// Records the invalidation watch set computed during validation.
+    ///
+    /// Defaults to a no-op for implementers that do not track invalidation
+    /// surfaces.
+    fn set_watch_set(&self, _watch_set: crate::WatchSet) {}
+
+    /// Returns the admission limit classification computed during validation, if
+    /// set. Defaults to `None`.
+    fn limit_class(&self) -> Option<&crate::LimitClass> {
+        None
+    }
+
+    /// Records the admission limit classification computed during validation.
+    /// Defaults to a no-op.
+    fn set_limit_class(&self, _limit_class: crate::LimitClass) {}
+
+    /// Returns build-time predicates captured during EIP-8130 authorization.
+    ///
+    /// Defaults to `None` for transaction types that do not carry a manifest.
+    fn watch_manifest(&self) -> Option<&crate::WatchManifest> {
+        None
+    }
+
+    /// Records build-time predicates captured during EIP-8130 authorization.
+    ///
+    /// Defaults to a no-op for transaction types that do not carry a manifest.
+    fn set_watch_manifest(&self, _watch_manifest: crate::WatchManifest) {}
+
+    /// Returns whether this transaction belongs in the EIP-8130 sidecar.
+    fn is_eip8130_sidecar_transaction(&self) -> bool {
+        self.eip8130_nonce_channel_key().is_some() || self.eip8130_replay_id().is_some()
+    }
 }
 
 impl<Pooled> BasePooledTx for BasePooledTransaction<BaseTransactionSigned, Pooled>
@@ -386,6 +459,30 @@ where
             return None;
         }
         Some(signed.tx().replay_id(self.sender()))
+    }
+
+    fn watch_set(&self) -> Option<&crate::WatchSet> {
+        self.watch_set.get()
+    }
+
+    fn set_watch_set(&self, watch_set: crate::WatchSet) {
+        let _ = self.watch_set.set(watch_set);
+    }
+
+    fn limit_class(&self) -> Option<&crate::LimitClass> {
+        self.limit_class.get()
+    }
+
+    fn watch_manifest(&self) -> Option<&crate::WatchManifest> {
+        self.watch_manifest.get()
+    }
+
+    fn set_watch_manifest(&self, watch_manifest: crate::WatchManifest) {
+        let _ = self.watch_manifest.set(watch_manifest);
+    }
+
+    fn set_limit_class(&self, limit_class: crate::LimitClass) {
+        let _ = self.limit_class.set(limit_class);
     }
 }
 
@@ -478,7 +575,7 @@ mod tests {
 
     use alloy_consensus::transaction::Recovered;
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{Bytes, TxKind, U256};
+    use alloy_primitives::{Address, Bytes, TxKind, U256};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
@@ -488,13 +585,17 @@ mod tests {
     };
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
+    use reth_primitives_traits::InMemorySize;
     use reth_provider::test_utils::MockEthProvider;
     use reth_transaction_pool::{
         PoolTransaction, TransactionOrigin, TransactionValidationOutcome,
         blobstore::InMemoryBlobStore, validate::EthTransactionValidatorBuilder,
     };
 
-    use crate::{BasePooledTransaction, BaseTransactionValidator};
+    use crate::{
+        BasePooledTransaction, BasePooledTx, BaseTransactionValidator, ConfigSlot, InvalidationKey,
+        WatchManifest, WatchSet,
+    };
 
     fn signer() -> PrivateKeySigner {
         PrivateKeySigner::random()
@@ -566,5 +667,43 @@ mod tests {
         assert!(eip8130_pooled(U256::ZERO).requires_nonce_check());
         assert!(!eip8130_pooled(U256::from(1)).requires_nonce_check());
         assert!(!eip8130_pooled(Eip8130Constants::NONCE_KEY_MAX).requires_nonce_check());
+    }
+
+    #[test]
+    fn in_memory_size_includes_watch_keys() {
+        let transaction = eip8130_pooled(U256::ZERO);
+        let size_without_keys = transaction.size();
+        let watch_set = WatchSet::new()
+            .watch(InvalidationKey::Balance(Address::ZERO))
+            .watch(InvalidationKey::ProtocolNonce(Address::ZERO));
+        let keys_size = core::mem::size_of_val(watch_set.keys());
+
+        transaction.set_watch_set(watch_set);
+
+        assert_eq!(transaction.size(), size_without_keys + keys_size);
+    }
+
+    #[test]
+    fn in_memory_size_includes_manifest_slots() {
+        let transaction = eip8130_pooled(U256::ZERO);
+        let size_without_slots = transaction.size();
+        let manifest = WatchManifest::new(
+            vec![
+                ConfigSlot { address: Address::ZERO, slot: U256::ZERO, expected: U256::ZERO },
+                ConfigSlot {
+                    address: Address::repeat_byte(1),
+                    slot: U256::from(1),
+                    expected: U256::from(2),
+                },
+            ],
+            Address::ZERO,
+            U256::ZERO,
+            u64::MAX,
+        );
+        let slots_size = core::mem::size_of_val(manifest.config_slots());
+
+        transaction.set_watch_manifest(manifest);
+
+        assert_eq!(transaction.size(), size_without_slots + slots_size);
     }
 }

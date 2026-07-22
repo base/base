@@ -8,9 +8,9 @@ use alloy_transport::TransportResult;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_consensus_engine::BaseEngineClient;
-use base_consensus_providers::OnlineBeaconClient;
+use base_consensus_providers::{L1RpcProvider, OnlineBeaconClient};
 use base_consensus_rpc::RpcBuilder;
-use base_upgrade_signal::{UpgradeSignalConfig, UpgradeSignalRuntimeValidation};
+use base_upgrade_signal::UpgradeSignalConfig;
 use url::Url;
 
 use crate::{
@@ -25,8 +25,6 @@ pub struct UpgradeSignalBuilderConfig {
     pub metrics_config: Option<UpgradeSignalConfig>,
     /// Optional L1 RPC endpoint override for upgrade signal reads.
     pub l1_rpc: Option<Url>,
-    /// Optional runtime upgrade signal validation context.
-    pub runtime_validation: Option<UpgradeSignalRuntimeValidation>,
 }
 
 /// Configuration for Derivation Delegate mode.
@@ -138,7 +136,6 @@ impl RollupNodeBuilder {
             upgrade_signal_config: UpgradeSignalBuilderConfig {
                 metrics_config: None,
                 l1_rpc: None,
-                runtime_validation: None,
             },
         }
     }
@@ -211,7 +208,7 @@ impl RollupNodeBuilder {
             chain_config: Arc::new(self.l1_config_builder.chain_config),
             trust_rpc: self.l1_config_builder.trust_rpc,
             beacon_client: l1_beacon,
-            engine_provider: RootProvider::new_http(self.l1_config_builder.rpc_url.clone()),
+            engine_provider: L1RpcProvider::new_http(self.l1_config_builder.rpc_url.clone()),
             finalized_poll_interval,
             verifier_l1_confs: self.l1_config_builder.verifier_l1_confs,
         };
@@ -243,7 +240,6 @@ impl RollupNodeBuilder {
                 self.upgrade_signal_config.l1_rpc.as_ref(),
                 l1_config.engine_provider.clone(),
                 rollup_config.l2_chain_id.id(),
-                self.upgrade_signal_config.runtime_validation,
             )
         });
 

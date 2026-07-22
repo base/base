@@ -49,7 +49,14 @@ pub use prover::{ProofFinalizeRequest, ProofsClient};
 mod rollup;
 pub use rollup::{
     LatestProposal, ProofsSnapshot, SyncStatusReport, ValidatorNodeStatus, fetch_safe_and_latest,
-    fetch_sync_status, run_proofs_poller, run_safe_head_poller, run_validator_poller,
+    fetch_sync_status, run_proofs_poller, run_rollup_config_poller, run_safe_head_poller,
+    run_validator_poller,
+};
+
+mod telemetry;
+pub use telemetry::{
+    ElReachabilityOutcome, ElReachabilityResponse, ElReachabilityStage, TelemetryApiError,
+    TelemetryClient, TelemetryClientError, TelemetryErrorResponse,
 };
 
 mod txpool;
