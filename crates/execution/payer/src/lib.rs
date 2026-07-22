@@ -22,3 +22,8 @@ pub use snapshot::{Erc20, PriceSnapshot, TokenPrice};
 mod storage;
 #[cfg(feature = "storage")]
 pub use storage::PayerConfigStorage;
+
+#[cfg(feature = "signer")]
+mod signer;
+#[cfg(feature = "signer")]
+pub use signer::{LocalPayerSigner, PayerCosigner, PayerDigestSigner, PayerSignerError};

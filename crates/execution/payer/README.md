@@ -50,5 +50,16 @@ builder and node RPC use against head/pending state; enabling it pulls in the
 native `base-precompile-storage` machinery (and, transitively, `revm`), so the
 default build stays the pure pricing core.
 
+## `signer` feature
+
+The optional `signer` feature adds the payer co-signer. The builder-operated
+payer is a full-owner secp256k1 EOA (scope `0x00`); `PayerCosigner` authorizes a
+sponsored EIP-8130 transaction just-in-time by signing its payer digest and
+wrapping the signature as the canonical k1 `payer_auth` blob
+(`K1_AUTHENTICATOR || r || s || v`). The key backend is the
+`PayerDigestSigner` trait — `LocalPayerSigner` holds a local key today, and a
+remote (KMS/HSM) backend can implement the same trait. This is a distinct key
+from the pricing core and pulls in `base-common-consensus` and `k256`.
+
 [ERC-8168]: https://ethereum-magicians.org/t/erc-8168-payer-services-for-erc-8130/28762
 [EIP-8130]: https://eips.ethereum.org/EIPS/eip-8130
