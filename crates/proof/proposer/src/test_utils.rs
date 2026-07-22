@@ -250,13 +250,13 @@ pub struct MockAggregateVerifier {
 #[derive(Debug, Default)]
 pub struct MockTEEProverRegistry {
     /// Signers considered valid.
-    pub valid_signers: Mutex<HashSet<Address>>,
+    pub valid_signers: HashSet<Address>,
 }
 
 #[async_trait]
 impl TEEProverRegistryClient for MockTEEProverRegistry {
     async fn is_valid_signer(&self, signer: Address) -> Result<bool, ContractError> {
-        Ok(self.valid_signers.lock().unwrap().contains(&signer))
+        Ok(self.valid_signers.contains(&signer))
     }
 
     async fn is_registered_signer(&self, signer: Address) -> Result<bool, ContractError> {
@@ -264,7 +264,7 @@ impl TEEProverRegistryClient for MockTEEProverRegistry {
     }
 
     async fn get_registered_signers(&self) -> Result<Vec<Address>, ContractError> {
-        Ok(self.valid_signers.lock().unwrap().iter().copied().collect())
+        Ok(self.valid_signers.iter().copied().collect())
     }
 }
 

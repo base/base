@@ -938,8 +938,9 @@ mod tests {
             (first_session.clone(), "simulated first proof failure".to_owned()),
             (third_session.clone(), "simulated third proof failure".to_owned()),
         ]);
-        let registry = Arc::new(MockTEEProverRegistry::default());
-        registry.valid_signers.lock().unwrap().insert(test_tee_signer().address());
+        let registry = Arc::new(MockTEEProverRegistry {
+            valid_signers: [test_tee_signer().address()].into_iter().collect(),
+        });
         let collector = make_collector_with_contracts(
             Arc::clone(&requester) as Arc<dyn ProofRequesterProvider>,
             Arc::new(MockRollupClient {

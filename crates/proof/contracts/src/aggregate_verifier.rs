@@ -346,18 +346,6 @@ impl AggregateVerifierContractClient {
         let provider = RootProvider::new_http(l1_rpc_url);
         Ok(Self { provider })
     }
-
-    /// Returns the TEE verifier configured on an `AggregateVerifier` implementation.
-    pub async fn tee_verifier_address(
-        &self,
-        implementation_address: Address,
-    ) -> Result<Address, ContractError> {
-        let contract = IAggregateVerifier::IAggregateVerifierInstance::new(
-            implementation_address,
-            &self.provider,
-        );
-        contract_call!(contract.TEE_VERIFIER().call(), "TEE_VERIFIER failed")
-    }
 }
 
 #[async_trait]

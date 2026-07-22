@@ -8,7 +8,7 @@ use alloy_provider::RootProvider;
 use alloy_sol_types::sol;
 use async_trait::async_trait;
 
-use crate::ContractError;
+use crate::{ContractError, aggregate_verifier::IAggregateVerifier};
 
 // Interface mirrored from the canonical contract source:
 // https://github.com/base/contracts/blob/96b132077b86bdc77f3f96dd40e09dad363df32e/src/multiproof/tee/TEEProverRegistry.sol
@@ -95,15 +95,24 @@ impl TEEProverRegistryContractClient {
         Self { contract }
     }
 
-    /// Creates a registry client by reading the registry from a TEE verifier.
-    pub async fn from_tee_verifier(
-        tee_verifier_address: Address,
+    /// Creates a registry client from an `AggregateVerifier` implementation.
+    pub async fn from_aggregate_verifier(
+        aggregate_verifier_address: Address,
         l1_rpc_url: url::Url,
     ) -> Result<Self, ContractError> {
+        if aggregate_verifier_address == Address::ZERO {
+            return Err(ContractError::validation("AggregateVerifier address is zero"));
+        }
+        let provider: RootProvider = RootProvider::new_http(l1_rpc_url);
+        let aggregate_verifier = IAggregateVerifier::IAggregateVerifierInstance::new(
+            aggregate_verifier_address,
+            &provider,
+        );
+        let tee_verifier_address =
+            contract_call!(aggregate_verifier.TEE_VERIFIER().call(), "TEE_VERIFIER failed")?;
         if tee_verifier_address == Address::ZERO {
             return Err(ContractError::validation("TEE verifier address is zero"));
         }
-        let provider: RootProvider = RootProvider::new_http(l1_rpc_url);
         let verifier = ITEEVerifier::ITEEVerifierInstance::new(tee_verifier_address, &provider);
         let registry_address =
             contract_call!(verifier.TEE_PROVER_REGISTRY().call(), "TEE_PROVER_REGISTRY failed")?;
@@ -175,9 +184,9 @@ mod tests {
     }
 
     #[test]
-    fn registry_discovery_rejects_zero_verifier() {
+    fn registry_discovery_rejects_zero_aggregate_verifier() {
         let error =
-            futures::executor::block_on(TEEProverRegistryContractClient::from_tee_verifier(
+            futures::executor::block_on(TEEProverRegistryContractClient::from_aggregate_verifier(
                 Address::ZERO,
                 "http://localhost:8545".parse().unwrap(),
             ))

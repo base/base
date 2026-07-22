@@ -127,11 +127,10 @@ impl ProposerService {
                 config.game_type
             ));
         }
-        let (block_interval, intermediate_block_interval, init_bond, tee_verifier_address) = tokio::try_join!(
+        let (block_interval, intermediate_block_interval, init_bond) = tokio::try_join!(
             verifier_client.read_block_interval(impl_address),
             verifier_client.read_intermediate_block_interval(impl_address),
             factory_client.init_bonds(config.game_type),
-            verifier_client.tee_verifier_address(impl_address),
         )?;
         if block_interval < 2 {
             return Err(eyre::eyre!(
@@ -153,8 +152,8 @@ impl ProposerService {
             "Read onchain config from AggregateVerifier and DisputeGameFactory"
         );
         let tee_registry: Arc<dyn TEEProverRegistryClient> = Arc::new(
-            TEEProverRegistryContractClient::from_tee_verifier(
-                tee_verifier_address,
+            TEEProverRegistryContractClient::from_aggregate_verifier(
+                impl_address,
                 config.l1_eth_rpc.clone(),
             )
             .await?,
