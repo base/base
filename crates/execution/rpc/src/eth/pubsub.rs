@@ -30,7 +30,7 @@ where
                         })
                         .ok()?;
                     header.timestamp_ms = BaseTimeUpdateTx::extract_timestamp_ms(
-                        &block.body().transactions,
+                        block.body().transactions(),
                         block.number,
                         block.timestamp,
                     )
