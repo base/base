@@ -4,11 +4,14 @@
 //! drops committed storage diffs. This task feeds complete canonical account
 //! deltas into the EIP-8130 invalidation index.
 
+use std::time::Duration;
+
 use alloy_primitives::{B256, U256};
 use base_common_precompiles::NonceManagerStorage;
 use futures::StreamExt;
 use reth_provider::CanonStateNotification;
 use revm::database::BundleState;
+use tokio::time::{MissedTickBehavior, interval};
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tracing::{debug, warn};
 
@@ -21,6 +24,37 @@ pub trait StateDiffInvalidation: Clone + Send + Sync + 'static {
 
     /// Invalidates every guarded transaction after a state-feed gap.
     fn invalidate_all_tracked(&self) -> usize;
+}
+
+/// Expires guarded transactions on a wall-clock timer, independent of blocks.
+pub trait ExpirySweep: Clone + Send + Sync + 'static {
+    /// Invalidates guarded transactions whose effective expiry has elapsed at
+    /// the current wall-clock time, returning the number removed.
+    fn sweep_expired(&self) -> usize;
+}
+
+/// Drives [`ExpirySweep::sweep_expired`] on a fixed wall-clock interval.
+///
+/// Expiry-bucket sweeps otherwise ride the canonical-state-change handler, so a
+/// block stall or sparse block production would let expired EIP-8130
+/// transactions linger — holding `PayerBook` reservations and count-cap slots —
+/// until the next block. This timer enforces expiry promptly regardless of
+/// block cadence. `period` should be well under `EXPIRY_BUCKET_SECS`.
+pub async fn maintain_expiry_sweep<P>(pool: P, period: Duration)
+where
+    P: ExpirySweep,
+{
+    let mut ticker = interval(period);
+    // A stalled runtime must not fire a burst of catch-up ticks; the next sweep
+    // is idempotent and covers everything due, so delaying missed ticks is fine.
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    loop {
+        ticker.tick().await;
+        let removed = pool.sweep_expired();
+        if removed > 0 {
+            debug!(removed = removed, "expired EIP-8130 transactions on wall-clock timer");
+        }
+    }
 }
 
 /// Feeds each canonical block's account and storage diff into the pool.
@@ -138,6 +172,11 @@ impl AccountStateDiff {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
     use alloy_primitives::Address;
     use revm::{
         database::{BundleAccount, states::StorageSlot},
@@ -146,6 +185,29 @@ mod tests {
     };
 
     use super::*;
+
+    #[derive(Clone)]
+    struct CountingSweeper(Arc<AtomicUsize>);
+
+    impl ExpirySweep for CountingSweeper {
+        fn sweep_expired(&self) -> usize {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            0
+        }
+    }
+
+    #[tokio::test]
+    async fn expiry_sweep_fires_repeatedly_on_interval() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let sweeper = CountingSweeper(Arc::clone(&calls));
+        let handle = tokio::spawn(maintain_expiry_sweep(sweeper, Duration::from_millis(5)));
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        handle.abort();
+        assert!(
+            calls.load(Ordering::Relaxed) >= 2,
+            "wall-clock sweep must fire repeatedly, not just once"
+        );
+    }
 
     fn info(balance: u64, nonce: u64) -> AccountInfo {
         AccountInfo { balance: U256::from(balance), nonce, ..Default::default() }

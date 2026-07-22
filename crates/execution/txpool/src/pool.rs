@@ -25,8 +25,8 @@ use tokio::{spawn, sync::mpsc};
 use tracing::debug;
 
 use crate::{
-    Admission, BasePooledTx, BaseTransactionValidator, GuardLimits, GuardMetrics, InvalidationKey,
-    LimitRejection, MempoolGuard, StateDiffInvalidation,
+    Admission, BasePooledTx, BaseTransactionValidator, ExpirySweep, GuardLimits, GuardMetrics,
+    InvalidationKey, LimitRejection, MempoolGuard, StateDiffInvalidation,
     best::MergeBestTransactions,
     two_d_nonce_pool::{InsertOutcome, TwoDNoncePool},
 };
@@ -306,11 +306,18 @@ where
         }
     }
 
-    fn expire_due_buckets(&self, now: u64) {
+    /// Invalidates guarded transactions whose effective expiry has elapsed as of
+    /// `now` (wall-clock seconds), returning the number removed.
+    ///
+    /// The horizon is `now / EXPIRY_BUCKET_SECS`, so a bucket fires only once
+    /// its window has actually started — no forward lookahead. Because
+    /// [`crate::sweep_expired`] drives this on a sub-second wall-clock timer,
+    /// eviction lands within one bucket (`EXPIRY_BUCKET_SECS`) of the true
+    /// expiry without depending on block cadence.
+    fn expire_due_buckets(&self, now: u64) -> usize {
         // Do not expire a protocol reservation between guard and reth insertion.
         let _admission_guard = self.protocol_admission_lock.lock();
-        let horizon = now.saturating_add(InvalidationKey::EXPIRY_BUCKET_SECS)
-            / InvalidationKey::EXPIRY_BUCKET_SECS;
+        let horizon = now / InvalidationKey::EXPIRY_BUCKET_SECS;
         let (dropped, bucket_count) = self.guard.write().invalidate_expiry_buckets_through(horizon);
         GuardMetrics::expiry_buckets_fired().increment(bucket_count as u64);
         let removed = self.remove_dropped_across_pools(dropped);
@@ -318,6 +325,23 @@ where
         if !removed.is_empty() {
             debug!(count = removed.len(), "EIP-8130 transactions invalidated by expiry");
         }
+        removed.len()
+    }
+
+    /// Expires guarded transactions due at the current wall-clock time. Driven
+    /// off block cadence by [`crate::maintain_expiry_sweep`] so expiries are
+    /// enforced promptly during block stalls or sparse block production.
+    pub fn sweep_expired_transactions(&self) -> usize {
+        self.expire_due_buckets(Self::wall_clock_secs())
+    }
+
+    /// Current wall-clock time in whole seconds since the Unix epoch, matching
+    /// the units of an EIP-8130 transaction's effective expiry.
+    fn wall_clock_secs() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
     }
 
     fn reconcile_guard(&self) {
@@ -717,6 +741,20 @@ where
 
     fn invalidate_all_tracked(&self) -> usize {
         self.invalidate_all_tracked_transactions().len()
+    }
+}
+
+impl<Client, S, Evm, T, O> ExpirySweep for BaseTransactionPool<Client, S, Evm, T, O>
+where
+    Client: 'static,
+    Evm: 'static,
+    BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
+    T: BasePooledTx + reth_transaction_pool::EthPoolTransaction + 'static,
+    O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
+    S: BlobStore + Clone,
+{
+    fn sweep_expired(&self) -> usize {
+        self.sweep_expired_transactions()
     }
 }
 
