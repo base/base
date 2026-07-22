@@ -688,7 +688,7 @@ mod tests {
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
         let proof_requester = Arc::new(MockZkProofProvider::default());
         let manager = DisputeProofManager::new(
-            OutputValidator::new(Arc::new(MockL2Provider::new())),
+            OutputValidator::new(Arc::new(MockL2Provider::default())),
             Arc::clone(&proof_requester),
             Arc::new(MockL1::failure("unused")) as Arc<dyn L1Provider>,
             verifier as Arc<dyn AggregateVerifierClient>,
