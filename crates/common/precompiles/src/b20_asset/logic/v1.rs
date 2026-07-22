@@ -613,6 +613,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV1 {
         token: &mut B20AssetToken<S, A>,
         caller: Address,
         new_multiplier: U256,
+        _now: U256,
         privileged: bool,
     ) -> Result<()> {
         self.ensure_operator_role(token, caller, privileged)?;
@@ -751,14 +752,24 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV1 {
         ))
     }
 
-    fn to_scaled_balance(&self, token: &B20AssetToken<S, A>, balance: U256) -> Result<U256> {
+    fn to_scaled_balance(
+        &self,
+        token: &B20AssetToken<S, A>,
+        balance: U256,
+        _now: U256,
+    ) -> Result<U256> {
         let multiplier = token.accounting().multiplier()?;
         let product =
             balance.checked_mul(multiplier).ok_or_else(BasePrecompileError::under_overflow)?;
         Ok(product / B20AssetStorage::WAD)
     }
 
-    fn to_raw_balance(&self, token: &B20AssetToken<S, A>, balance: U256) -> Result<U256> {
+    fn to_raw_balance(
+        &self,
+        token: &B20AssetToken<S, A>,
+        balance: U256,
+        _now: U256,
+    ) -> Result<U256> {
         let multiplier = token.accounting().multiplier()?;
         let product = balance
             .checked_mul(B20AssetStorage::WAD)
@@ -766,9 +777,14 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV1 {
         Ok(product / multiplier)
     }
 
-    fn scaled_balance_of(&self, token: &B20AssetToken<S, A>, account: Address) -> Result<U256> {
+    fn scaled_balance_of(
+        &self,
+        token: &B20AssetToken<S, A>,
+        account: Address,
+        now: U256,
+    ) -> Result<U256> {
         let balance = token.accounting().balance_of(account)?;
-        self.to_scaled_balance(token, balance)
+        self.to_scaled_balance(token, balance, now)
     }
 
     fn operator_role(&self) -> B256 {
@@ -822,6 +838,8 @@ mod tests {
         symbol: String,
         decimals: u8,
         multiplier: U256,
+        pending_multiplier: u128,
+        pending_effective_at: u64,
         paused: U256,
         nonces: BTreeMap<Address, U256>,
         contract_uri: String,
@@ -846,6 +864,8 @@ mod tests {
                 symbol: "RWA".to_string(),
                 decimals: 6,
                 multiplier: B20AssetStorage::WAD,
+                pending_multiplier: 0,
+                pending_effective_at: 0,
                 paused: U256::ZERO,
                 nonces: BTreeMap::new(),
                 contract_uri: String::new(),
@@ -974,6 +994,22 @@ mod tests {
         }
         fn set_multiplier(&mut self, multiplier: U256) -> Result<()> {
             self.multiplier = multiplier;
+            Ok(())
+        }
+        fn pending_multiplier(&self) -> Result<u128> {
+            Ok(self.pending_multiplier)
+        }
+        fn pending_effective_at(&self) -> Result<u64> {
+            Ok(self.pending_effective_at)
+        }
+        fn set_pending(&mut self, multiplier: u128, effective_at: u64) -> Result<()> {
+            self.pending_multiplier = multiplier;
+            self.pending_effective_at = effective_at;
+            Ok(())
+        }
+        fn clear_pending(&mut self) -> Result<()> {
+            self.pending_multiplier = 0;
+            self.pending_effective_at = 0;
             Ok(())
         }
         fn extra_metadata(&self, key: &str) -> Result<String> {
@@ -1381,21 +1417,27 @@ mod tests {
     #[test]
     fn to_scaled_balance_one_to_one_multiplier() {
         let tok = token();
-        assert_eq!(LOGIC.to_scaled_balance(&tok, U256::from(100u64)).unwrap(), U256::from(100u64));
+        assert_eq!(
+            LOGIC.to_scaled_balance(&tok, U256::from(100u64), U256::ZERO).unwrap(),
+            U256::from(100u64)
+        );
     }
 
     #[test]
     fn to_scaled_balance_two_to_one_multiplier() {
         let mut tok = token();
         tok.accounting_mut().set_multiplier(B20AssetStorage::WAD * U256::from(2u64)).unwrap();
-        assert_eq!(LOGIC.to_scaled_balance(&tok, U256::from(50u64)).unwrap(), U256::from(100u64));
+        assert_eq!(
+            LOGIC.to_scaled_balance(&tok, U256::from(50u64), U256::ZERO).unwrap(),
+            U256::from(100u64)
+        );
     }
 
     #[test]
     fn scaled_balance_of_derives_from_balance() {
         let mut tok = token();
         tok.accounting_mut().set_balance(ALICE, U256::from(75u64)).unwrap();
-        assert_eq!(LOGIC.scaled_balance_of(&tok, ALICE).unwrap(), U256::from(75u64));
+        assert_eq!(LOGIC.scaled_balance_of(&tok, ALICE, U256::ZERO).unwrap(), U256::from(75u64));
     }
 
     #[test]
@@ -1403,7 +1445,7 @@ mod tests {
         let mut tok = token();
         tok.accounting_mut().set_multiplier(U256::MAX / U256::from(2u64) + U256::ONE).unwrap();
         assert_eq!(
-            LOGIC.to_scaled_balance(&tok, U256::from(2u64)).unwrap_err(),
+            LOGIC.to_scaled_balance(&tok, U256::from(2u64), U256::ZERO).unwrap_err(),
             BasePrecompileError::under_overflow()
         );
     }
@@ -1411,8 +1453,9 @@ mod tests {
     #[test]
     fn update_multiplier_requires_operator_role() {
         let mut tok = token();
-        let err =
-            LOGIC.update_multiplier(&mut tok, ALICE, B20AssetStorage::WAD, false).unwrap_err();
+        let err = LOGIC
+            .update_multiplier(&mut tok, ALICE, B20AssetStorage::WAD, U256::ZERO, false)
+            .unwrap_err();
         assert_eq!(
             err,
             BasePrecompileError::revert(IB20::AccessControlUnauthorizedAccount {
@@ -1425,7 +1468,8 @@ mod tests {
     #[test]
     fn update_multiplier_rejects_zero() {
         let mut tok = token();
-        let err = LOGIC.update_multiplier(&mut tok, ADMIN, U256::ZERO, true).unwrap_err();
+        let err =
+            LOGIC.update_multiplier(&mut tok, ADMIN, U256::ZERO, U256::ZERO, true).unwrap_err();
         assert_eq!(err, BasePrecompileError::revert(IB20Asset::InvalidMultiplier {}));
     }
 
@@ -1433,7 +1477,7 @@ mod tests {
     fn update_multiplier_persists_and_emits() {
         let mut tok = token();
         let new_multiplier = B20AssetStorage::WAD * U256::from(3u64);
-        LOGIC.update_multiplier(&mut tok, ADMIN, new_multiplier, true).unwrap();
+        LOGIC.update_multiplier(&mut tok, ADMIN, new_multiplier, U256::ZERO, true).unwrap();
         assert_eq!(tok.accounting().multiplier().unwrap(), new_multiplier);
         assert_eq!(last_event_sig(&tok), IB20Asset::MultiplierUpdated::SIGNATURE_HASH);
     }

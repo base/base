@@ -9,7 +9,7 @@
 
 use base_common_genesis::BaseUpgrade;
 
-use crate::{Asset, AssetAccounting, AssetV1, PolicyAccounting};
+use crate::{Asset, AssetAccounting, AssetV1, AssetV2, PolicyAccounting};
 
 /// An activated version of the asset B-20 precompile logic.
 ///
@@ -18,6 +18,8 @@ use crate::{Asset, AssetAccounting, AssetV1, PolicyAccounting};
 pub enum AssetVersion {
     /// Introduced at Beryl, the asset's activation fork.
     V1,
+    /// Introduced at Cobalt. Adds the ERC-8056 scheduled-multiplier surface
+    V2,
 }
 
 impl AssetVersion {
@@ -28,9 +30,19 @@ impl AssetVersion {
         A: PolicyAccounting + 'l,
     {
         static V1: AssetV1 = AssetV1;
+        static V2: AssetV2 = AssetV2;
         match self {
             Self::V1 => &V1,
+            Self::V2 => &V2,
         }
+    }
+
+    /// Whether this version advertises the ERC-8056 scheduled-multiplier surface
+    ///
+    /// Earlier versions must treat those selectors as unknown,
+    /// so the dispatcher gates them on this predicate.
+    pub const fn supports_scheduled_multiplier(self) -> bool {
+        matches!(self, Self::V2)
     }
 }
 
@@ -44,8 +56,16 @@ pub struct AssetVersions;
 impl AssetVersions {
     /// Returns the version active at `upgrade`, or `None` before the introduction
     /// fork (Beryl), where the asset precompile is not installed at all.
+    ///
+    /// V1 is active from Beryl; V2 supersedes it from Cobalt.
     pub fn from_base_upgrade(upgrade: BaseUpgrade) -> Option<AssetVersion> {
-        if upgrade >= BaseUpgrade::Beryl { Some(AssetVersion::V1) } else { None }
+        if upgrade >= BaseUpgrade::Cobalt {
+            Some(AssetVersion::V2)
+        } else if upgrade >= BaseUpgrade::Beryl {
+            Some(AssetVersion::V1)
+        } else {
+            None
+        }
     }
 }
 
@@ -66,7 +86,13 @@ mod tests {
     }
 
     #[test]
-    fn resolves_v1_at_cobalt() {
-        assert_eq!(AssetVersions::from_base_upgrade(BaseUpgrade::Cobalt), Some(AssetVersion::V1));
+    fn resolves_v2_at_cobalt() {
+        assert_eq!(AssetVersions::from_base_upgrade(BaseUpgrade::Cobalt), Some(AssetVersion::V2));
+    }
+
+    #[test]
+    fn only_v2_supports_scheduled_multiplier() {
+        assert!(!AssetVersion::V1.supports_scheduled_multiplier());
+        assert!(AssetVersion::V2.supports_scheduled_multiplier());
     }
 }

@@ -2,11 +2,13 @@
 
 use alloc::{string::String, vec::Vec};
 
-use alloy_primitives::{Address, B256, U256};
-use base_precompile_storage::Result;
+use alloy_primitives::{Address, B256, FixedBytes, U256};
+use alloy_sol_types::SolEvent;
+use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
-    AssetAccounting, B20AssetToken, Eip712Domain, IB20, PermitArgs, PolicyAccounting, Token,
+    AssetAccounting, B20AssetStorage, B20AssetToken, B20Guards, Eip712Domain, IB20, IB20Asset,
+    PermitArgs, PolicyAccounting, Token,
 };
 
 /// The asset logic interface.
@@ -189,12 +191,14 @@ pub trait Asset<S: AssetAccounting, A: PolicyAccounting> {
 
     // --- Asset-specific mutations ---
 
-    /// Sets a new multiplier. Requires the operator role unless privileged.
+    /// Instant failsafe: sets the current multiplier immediately. Requires the operator role
+    /// unless privileged.
     fn update_multiplier(
         &self,
         token: &mut B20AssetToken<S, A>,
         caller: Address,
         new_multiplier: U256,
+        now: U256,
         privileged: bool,
     ) -> Result<()>;
 
@@ -306,7 +310,10 @@ pub trait Asset<S: AssetAccounting, A: PolicyAccounting> {
     }
 
     /// Returns the current multiplier, scaled to WAD.
-    fn multiplier(&self, token: &B20AssetToken<S, A>) -> Result<U256> {
+    ///
+    /// The default returns the stored (materialized) multiplier and ignores `now`; versions with
+    /// lazy scheduling (`AssetV2`+) override this to return the effective value at `now`.
+    fn multiplier(&self, token: &B20AssetToken<S, A>, _now: U256) -> Result<U256> {
         token.accounting().multiplier()
     }
 
@@ -341,15 +348,177 @@ pub trait Asset<S: AssetAccounting, A: PolicyAccounting> {
     /// Returns the ERC-5267 `eip712Domain()` tuple for this token.
     fn eip712_domain(&self, token: &B20AssetToken<S, A>, chain_id: u64) -> Result<Eip712Domain>;
 
-    /// Converts a raw balance to its scaled view: `rawBalance * multiplier / WAD`.
-    fn to_scaled_balance(&self, token: &B20AssetToken<S, A>, balance: U256) -> Result<U256>;
+    /// Converts a raw balance to its scaled view: `rawBalance * multiplier / WAD` at `now`.
+    fn to_scaled_balance(
+        &self,
+        token: &B20AssetToken<S, A>,
+        balance: U256,
+        now: U256,
+    ) -> Result<U256>;
 
-    /// Converts a scaled balance back to its raw representation: `scaledBalance * WAD / multiplier`.
-    fn to_raw_balance(&self, token: &B20AssetToken<S, A>, balance: U256) -> Result<U256>;
+    /// Converts a scaled balance back to its raw representation: `scaledBalance * WAD / multiplier`
+    fn to_raw_balance(&self, token: &B20AssetToken<S, A>, balance: U256, now: U256)
+    -> Result<U256>;
 
-    /// Returns the scaled balance for `account`.
-    fn scaled_balance_of(&self, token: &B20AssetToken<S, A>, account: Address) -> Result<U256>;
+    /// Returns the scaled balance for `account` at `now`.
+    fn scaled_balance_of(
+        &self,
+        token: &B20AssetToken<S, A>,
+        account: Address,
+        now: U256,
+    ) -> Result<U256>;
 
     /// Returns the asset operator role identifier (required for `announce` / `updateMultiplier`).
     fn operator_role(&self) -> B256;
+
+    // --- ERC-8056 scheduled multiplier (introduced at `AssetV2`, Cobalt) ---
+    //
+    // These are defaulted here with the full scheduling semantics; every version that advertises
+    // the ERC-8056 surface (currently only `AssetV2`) shares them. `AssetV1` never reaches these:
+    // the dispatcher gates the ERC-8056 selectors to versions that support them, so on Beryl the
+    // selectors stay unknown (identical revert to before the enum grew).
+
+    /// The effective multiplier at `now`: the pending target once matured (`now >= effectiveAt`),
+    /// otherwise the current (materialized) multiplier. This is the ERC-8056 `_multiplier()` and the
+    /// value every scaled read routes through in scheduling-aware versions.
+    fn effective_multiplier(&self, token: &B20AssetToken<S, A>, now: U256) -> Result<U256> {
+        let effective_at = token.accounting().pending_effective_at()?;
+        if effective_at != 0 && now >= U256::from(effective_at) {
+            return Ok(U256::from(token.accounting().pending_multiplier()?));
+        }
+        token.accounting().multiplier()
+    }
+
+    /// ERC-8056 `uiMultiplier()` — alias of the (effective) `multiplier()`.
+    fn ui_multiplier(&self, token: &B20AssetToken<S, A>, now: U256) -> Result<U256> {
+        self.multiplier(token, now)
+    }
+
+    /// ERC-8056 `newUIMultiplier()` — the live pending target, or the effective multiplier when no
+    /// live pending exists.
+    fn new_ui_multiplier(&self, token: &B20AssetToken<S, A>, now: U256) -> Result<U256> {
+        let effective_at = token.accounting().pending_effective_at()?;
+        if U256::from(effective_at) > now {
+            return Ok(U256::from(token.accounting().pending_multiplier()?));
+        }
+        self.multiplier(token, now)
+    }
+
+    /// ERC-8056 `effectiveAt()` — the raw stored pending timestamp (a matured pending keeps its
+    /// past value until the next set/cancel materializes it; cancel resets it to 0).
+    fn effective_at(&self, token: &B20AssetToken<S, A>) -> Result<U256> {
+        Ok(U256::from(token.accounting().pending_effective_at()?))
+    }
+
+    /// ERC-8056 Balances extension `balanceOfUI()` — alias of `scaled_balance_of`.
+    fn balance_of_ui(
+        &self,
+        token: &B20AssetToken<S, A>,
+        account: Address,
+        now: U256,
+    ) -> Result<U256> {
+        self.scaled_balance_of(token, account, now)
+    }
+
+    /// ERC-8056 Balances extension `totalSupplyUI()` — `totalSupply * multiplier / WAD` at `now`.
+    fn total_supply_ui(&self, token: &B20AssetToken<S, A>, now: U256) -> Result<U256> {
+        let multiplier = self.effective_multiplier(token, now)?;
+        let supply = token.accounting().total_supply()?;
+        let product =
+            supply.checked_mul(multiplier).ok_or_else(BasePrecompileError::under_overflow)?;
+        Ok(product / B20AssetStorage::WAD)
+    }
+
+    /// Schedules a single pending multiplier update effective at `effective_at`.
+    ///
+    /// Reverts `InvalidMultiplier` (zero or `> u128::MAX`), `EffectiveAtInPast`
+    /// (`effective_at <= now`), `EffectiveAtTooFar` (`effective_at > u64::MAX`), or `ScheduleOverlap`
+    /// (a live pending already exists). A *matured* pending is first folded into the current
+    /// multiplier so a scheduled change is never silently lost. Emits `UIMultiplierUpdated`.
+    fn set_ui_multiplier(
+        &self,
+        token: &mut B20AssetToken<S, A>,
+        caller: Address,
+        new_multiplier: U256,
+        effective_at: U256,
+        now: U256,
+        privileged: bool,
+    ) -> Result<()> {
+        if !privileged {
+            B20Guards::ensure_role(token, caller, self.operator_role())?;
+        }
+        if new_multiplier.is_zero() || new_multiplier > U256::from(u128::MAX) {
+            return Err(BasePrecompileError::revert(IB20Asset::InvalidMultiplier {}));
+        }
+        if effective_at <= now {
+            return Err(BasePrecompileError::revert(IB20Asset::EffectiveAtInPast {
+                effectiveAt: effective_at,
+            }));
+        }
+        if effective_at > U256::from(u64::MAX) {
+            return Err(BasePrecompileError::revert(IB20Asset::EffectiveAtTooFar {
+                effectiveAt: effective_at,
+            }));
+        }
+
+        let pending_effective_at = token.accounting().pending_effective_at()?;
+        // A live pending blocks a new schedule.
+        if U256::from(pending_effective_at) > now {
+            return Err(BasePrecompileError::revert(IB20Asset::ScheduleOverlap {
+                pendingEffectiveAt: U256::from(pending_effective_at),
+            }));
+        }
+        // Fold a matured-but-uncancelled pending into the current multiplier before overwriting it,
+        // so it is never lost.
+        if pending_effective_at != 0 {
+            let matured = U256::from(token.accounting().pending_multiplier()?);
+            token.accounting_mut().set_multiplier(matured)?;
+        }
+
+        let old = token.accounting().multiplier()?;
+        token
+            .accounting_mut()
+            .set_pending(new_multiplier.to::<u128>(), effective_at.to::<u64>())?;
+        token.accounting_mut().emit_event(
+            IB20Asset::UIMultiplierUpdated {
+                oldMultiplier: old,
+                newMultiplier: new_multiplier,
+                effectiveAtTimestamp: effective_at,
+            }
+            .encode_log_data(),
+        )
+    }
+
+    /// Cancels the single live pending update, restoring the no-pending state. Reverts
+    /// `NoScheduledMultiplier` when no live pending exists. Emits `MultiplierUpdateCancelled`.
+    fn cancel_scheduled_multiplier(
+        &self,
+        token: &mut B20AssetToken<S, A>,
+        caller: Address,
+        now: U256,
+        privileged: bool,
+    ) -> Result<()> {
+        if !privileged {
+            B20Guards::ensure_role(token, caller, self.operator_role())?;
+        }
+        let pending_multiplier = U256::from(token.accounting().pending_multiplier()?);
+        let pending_effective_at = U256::from(token.accounting().pending_effective_at()?);
+        // Only a live pending can be cancelled.
+        if pending_effective_at <= now {
+            return Err(BasePrecompileError::revert(IB20Asset::NoScheduledMultiplier {}));
+        }
+        token.accounting_mut().clear_pending()?;
+        token.accounting_mut().emit_event(
+            IB20Asset::MultiplierUpdateCancelled {
+                cancelledMultiplier: pending_multiplier,
+                cancelledEffectiveAt: pending_effective_at,
+            }
+            .encode_log_data(),
+        )
+    }
+
+    /// ERC-165; advertises ERC-165 itself plus three claimed ERC-8056 interfaces
+    fn supports_interface(&self, interface_id: FixedBytes<4>) -> bool {
+        crate::ERC8056_INTERFACE_IDS.contains(&interface_id)
+    }
 }
