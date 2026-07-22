@@ -227,7 +227,7 @@ impl ActorAuthorizer {
         if actor_id.is_zero() {
             return Err(AuthorizeError::ZeroActor);
         }
-        let config = storage.get_actor_config(account, actor_id)?;
+        let config = storage.actor_config_slot(account, actor_id)?;
         if config.authenticator != authenticator {
             return Err(AuthorizeError::NotBound { actor_id, authenticator });
         }

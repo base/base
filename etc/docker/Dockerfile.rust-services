@@ -1,4 +1,4 @@
-ARG RUST_VERSION=1.94.1
+ARG RUST_VERSION=1.95.0
 FROM public.ecr.aws/docker/library/rust:${RUST_VERSION}-trixie AS rust-builder-base
 WORKDIR /app
 RUN apt-get update && \

@@ -190,7 +190,7 @@ impl SnapshotUploader {
             }
         }
 
-        run_prefixes.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+        run_prefixes.sort_unstable_by_key(|run| std::cmp::Reverse(run.0));
 
         let mut runs = Vec::new();
         for (timestamp, run_prefix) in run_prefixes {

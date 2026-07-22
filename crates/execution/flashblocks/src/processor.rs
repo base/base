@@ -191,7 +191,8 @@ where
                     StateProcessorError::Provider(ProviderError::MissingCanonicalHeader {
                         ..
                     }) => {
-                        if self.cache.lock().await.insert(flashblock) {
+                        let inserted = self.cache.lock().await.insert(flashblock);
+                        if inserted {
                             debug!(message = "cached flashblock pending canonical block", error = %e);
                             return;
                         }

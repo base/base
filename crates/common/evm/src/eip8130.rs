@@ -615,42 +615,6 @@ impl Eip8130Executor {
         Ok(highest)
     }
 
-    /// Resolves, from the post-apply journal without recovering an auth blob,
-    /// whether an actor is policy-gated (`scope & SCOPE_POLICY`) — the only bit
-    /// this estimation path needs, used to price the extra `policy_manager` SLOAD
-    /// for both the sender and the payer. The scope comes from an explicit
-    /// `actor_config` when set, else the inline secp256k1 self-key scope from
-    /// `account_state` for the account's own self-actor (a revoked default EOA
-    /// resolves as ungated, mirroring `get_policy`), else the actor is absent.
-    ///
-    /// Returns a `bool`, not a `scope`, deliberately: a missing/ungated actor is
-    /// simply "not policy-gated". This makes no authorization decision, so it must
-    /// never be repurposed for one — note that a raw `0` scope is
-    /// `SCOPE_UNRESTRICTED` (full admin), so surfacing the absent-actor case as a
-    /// scope would conflate "unknown actor" with "admin".
-    fn resolve_actor_policy_gated(
-        acc: &AccountConfigurationStorage<'_>,
-        account: Address,
-        actor_id: B256,
-    ) -> Result<bool, BaseTransactionError> {
-        let actor_config =
-            acc.get_actor_config(account, actor_id).map_err(BaseTransactionError::eip8130)?;
-        let scope = if !actor_config.authenticator.is_zero() {
-            actor_config.scope
-        } else if actor_id == AccountConfigurationStorage::self_actor_id(account) {
-            let state = acc.get_account_state(account).map_err(BaseTransactionError::eip8130)?;
-            if state.default_eoa_revoked() {
-                return Ok(false);
-            }
-            state.default_eoa_scope
-        } else {
-            // No explicit entry and not the self-actor: the actor is absent, so it
-            // carries no policy. (Do not surface this as a `0` scope; see above.)
-            return Ok(false);
-        };
-        Ok(scope & Eip8130Constants::SCOPE_POLICY != 0)
-    }
-
     /// Resolves the [`Eip8130Outcome`] for [`Self::simulate`]: applies account
     /// changes, then resolves the acting actor (an optional RPC hint, else the
     /// account's self-actor) and its policy from the post-apply journal — no
@@ -728,13 +692,17 @@ impl Eip8130Executor {
             let acc = AccountConfigurationStorage::new(sctx);
             let sender_actor_id = acting_actor_hint
                 .unwrap_or_else(|| AccountConfigurationStorage::self_actor_id(sender));
-            // Resolve the acting actor's policy gate with a single `actor_config`
-            // read (plus one `account_state` read only for the inline self-key
-            // path), then read the target via `get_policy_manager` only when gated.
-            // This avoids `get_policy`'s extra
-            // `actor_config`/`account_state`/`policy_commitment` SLOADs on this
-            // estimation hot path (the commitment is unused here).
-            let policy_gated = Self::resolve_actor_policy_gated(&acc, sender, sender_actor_id)?;
+            // Resolve the acting scope via the effective-config resolver: an
+            // explicit `actor_config` entry, or the inline secp256k1 self (a
+            // revoked default EOA resolves to the empty config, i.e. scope 0).
+            // Then read the policy target with `get_policy_manager` only when
+            // gated, avoiding `get_policy`'s extra `policy_commitment` SLOAD on
+            // this estimation hot path (the commitment is unused here).
+            let actor_scope = acc
+                .resolve_actor_config(sender, sender_actor_id)
+                .map_err(BaseTransactionError::eip8130)?
+                .scope;
+            let policy_gated = actor_scope & Eip8130Constants::SCOPE_POLICY != 0;
             let policy_target = if policy_gated {
                 acc.get_policy_manager(sender, sender_actor_id)
                     .map_err(BaseTransactionError::eip8130)?
@@ -751,7 +719,11 @@ impl Eip8130Executor {
             let payer_policy_gated = match tx.payer {
                 Some(payer_addr) => {
                     let payer_actor_id = AccountConfigurationStorage::self_actor_id(payer_addr);
-                    Self::resolve_actor_policy_gated(&acc, payer_addr, payer_actor_id)?
+                    let payer_scope = acc
+                        .resolve_actor_config(payer_addr, payer_actor_id)
+                        .map_err(BaseTransactionError::eip8130)?
+                        .scope;
+                    payer_scope & Eip8130Constants::SCOPE_POLICY != 0
                 }
                 None => false,
             };

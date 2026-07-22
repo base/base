@@ -445,7 +445,7 @@ impl AccountChangeApplier {
             storage.set_account_state(account, state)?;
             return Ok(());
         }
-        let config = storage.get_actor_config(account, actor_id)?;
+        let config = storage.actor_config_slot(account, actor_id)?;
         Self::revoke_explicit_actor(storage, account, actor_id, config)
     }
 
@@ -469,7 +469,7 @@ impl AccountChangeApplier {
         actor_id: B256,
         state: &mut AccountState,
     ) -> Result<bool, ApplyError> {
-        let config = storage.get_actor_config(account, actor_id)?;
+        let config = storage.actor_config_slot(account, actor_id)?;
         let is_self = actor_id == AccountConfigurationStorage::self_actor_id(account);
         if config.authenticator != Address::ZERO {
             Self::revoke_explicit_actor(storage, account, actor_id, config)?;
@@ -779,17 +779,17 @@ mod tests {
         with_storage(|acc| {
             let config = ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_SENDER);
             AccountChangeApplier::authorize_actor(acc, ACCOUNT, NON_SELF, config, &[]).unwrap();
-            assert_eq!(acc.get_actor_config(ACCOUNT, NON_SELF).unwrap(), config);
+            assert_eq!(acc.actor_config_slot(ACCOUNT, NON_SELF).unwrap(), config);
             assert!(acc.is_actor(ACCOUNT, NON_SELF).unwrap());
 
             // Upsert: re-authorizing an occupied slot overwrites it in place.
             let rescoped = ungated(AUTHENTICATOR, Eip8130Constants::SCOPE_SELF_PAYER);
             AccountChangeApplier::authorize_actor(acc, ACCOUNT, NON_SELF, rescoped, &[]).unwrap();
-            assert_eq!(acc.get_actor_config(ACCOUNT, NON_SELF).unwrap(), rescoped);
+            assert_eq!(acc.actor_config_slot(ACCOUNT, NON_SELF).unwrap(), rescoped);
 
             // Revoke clears the slot.
             AccountChangeApplier::revoke_actor(acc, ACCOUNT, NON_SELF).unwrap();
-            assert!(acc.get_actor_config(ACCOUNT, NON_SELF).unwrap().is_empty());
+            assert!(acc.actor_config_slot(ACCOUNT, NON_SELF).unwrap().is_empty());
             assert_eq!(
                 AccountChangeApplier::revoke_actor(acc, ACCOUNT, NON_SELF),
                 Err(ApplyError::NotAnActor { actor_id: NON_SELF })
@@ -870,7 +870,7 @@ mod tests {
             assert!(!state.default_eoa_revoked());
             assert_eq!(state.default_eoa_scope, Eip8130Constants::SCOPE_SENDER);
             // No explicit actor_config slot is used for the k1 self.
-            assert!(acc.get_actor_config(ACCOUNT, self_id).unwrap().is_empty());
+            assert!(acc.actor_config_slot(ACCOUNT, self_id).unwrap().is_empty());
 
             // Upsert: re-authorizing a live self rescopes the inline config in
             // place (no prior revoke required).
@@ -896,7 +896,7 @@ mod tests {
             AccountChangeApplier::authorize_actor(acc, ACCOUNT, self_id, config, &[]).unwrap();
             let state = acc.get_account_state(ACCOUNT).unwrap();
             assert!(state.default_eoa_revoked());
-            assert_eq!(acc.get_actor_config(ACCOUNT, self_id).unwrap(), config);
+            assert_eq!(acc.actor_config_slot(ACCOUNT, self_id).unwrap(), config);
         });
     }
 
@@ -1037,7 +1037,7 @@ mod tests {
             assert!(state.default_eoa_revoked());
             // Initial actor registered as an unrestricted owner.
             assert_eq!(
-                acc.get_actor_config(expected, NON_SELF).unwrap(),
+                acc.actor_config_slot(expected, NON_SELF).unwrap(),
                 ungated(AUTHENTICATOR, 0)
             );
 
