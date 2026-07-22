@@ -126,7 +126,12 @@ pub struct BasePayloadBuilder<Pool, Client, S = DefaultCandidateSource<Pool>> {
     /// Sender for forwarding per-block batches of rejected transactions to the audit-archiver.
     pub rejected_tx_sender: Option<mpsc::Sender<Vec<RejectedTransaction>>>,
     /// Source of the priority-ordered candidate transaction stream drained by the build loop.
-    pub candidate_source: S,
+    ///
+    /// Private so it can only be set through [`BasePayloadBuilder::new`] (default) or swapped via
+    /// [`BasePayloadBuilder::with_candidate_source`], which is the sole type-changing injection
+    /// point. This keeps the `Transaction = Pool::Transaction` invariant from being bypassed by a
+    /// direct field write.
+    candidate_source: S,
     /// Last flashblock emitted by this builder instance.
     last_emitted_flashblock_id: Arc<LastEmittedFlashblockId>,
 }
@@ -151,6 +156,11 @@ where
     ) -> Self {
         Self {
             evm_config,
+            // The default source captures its own handle to the pool to fetch candidates, while the
+            // `pool` field below is retained for mempool maintenance (invalidation, pruning, account
+            // updates) — operations every source needs regardless of where candidates come from.
+            // `TransactionPool` is `Clone` and `Arc`-backed, so this is a cheap handle copy, not a
+            // second pool.
             candidate_source: DefaultCandidateSource::new(pool.clone()),
             pool,
             client,
@@ -195,9 +205,9 @@ impl<Pool, Client, S> BasePayloadBuilder<Pool, Client, S> {
 impl<Pool, Client, S> reth_basic_payload_builder::PayloadBuilder
     for BasePayloadBuilder<Pool, Client, S>
 where
-    Pool: Clone + Send + Sync,
-    Client: Clone + Send + Sync,
-    S: Clone + Send + Sync,
+    Pool: PoolBounds,
+    Client: ClientBounds,
+    S: CandidateSource<Transaction = Pool::Transaction> + Clone,
 {
     type Attributes = BasePayloadBuilderAttributes<BaseTransactionSigned>;
     type BuiltPayload = BaseBuiltPayload;
